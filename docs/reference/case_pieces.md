@@ -13,29 +13,22 @@ the same regime remains executable under `GridSearch`.
 ```python
 import lcm
 
-
-@lcm.case_boundary(
-    lcm.boundary(
-        variable="liquid",
-        threshold="asset_limit",
-        equality="otherwise",
-        kind="jump",
-    )
+eligible = lcm.case_boundary(
+    lcm.ref("liquid") < lcm.ref("asset_limit"),
+    kind="jump",
 )
-def eligible(liquid, asset_limit):
-    return liquid < asset_limit
 ```
 
-`boundary(...)` fields are:
+The declaration records:
 
-- `variable`: the named liquid variable;
-- `threshold`: a flat parameter name;
-- `equality`: `"when"` or `"otherwise"`, identifying the side that owns the exact
-  threshold;
+- both named operands from the `lcm.ref(...)` comparison;
+- exact-boundary ownership from the comparison operator (`<` above leaves equality to
+  the `otherwise` side, while `<=` gives it to `when`);
 - `kind`: `"continuous_kink"`, `"jump"`, or `"hard_constraint"`.
 
-Do not use a bare `(variable, threshold)` pair: equality ownership and economic kind
-would be ambiguous.
+The condition must be one `<`, `<=`, `>`, or `>=` comparison. Compound conditions and
+bare callable predicates cannot declare a case-piece boundary because they do not
+identify one ordered split with unambiguous ownership.
 
 ## Piece formulas
 

@@ -44,7 +44,7 @@ curvature, boundaries, or regions visited frequently in simulation.
 locations. They do not declare a budget kink or cliff to NBEGM; use the structured
 [budget declarations](../methods/nonconvex_budgets.md) for that.
 
-## Stream work—or understand an admitted request
+## Stream work with explicit batch widths
 
 Some controls reduce live intermediates. Grid `batch_size`,
 `stochastic_node_batch_size`, `envelope_segment_block_size`, `subject_batch_size`, and
@@ -53,26 +53,15 @@ can lower temporary workspace. The exact effect still depends on retained banks 
 downstream folds; for example, `NEGM.outer_batch_size` can lower temporary evaluation
 memory without capping the retained candidate bank.
 
-NBEGM's `interval_batch_size`, `cell_block_size`, and `branch_batch_size` are different.
-Their production kernels evaluate a fixed profile window rather than compiling the
-requested width. Under the currently shipped geometry, `interval_batch_size` and
-`cell_block_size` are accepted compatibility requests but operationally inert: the ride
-microtile and profile window are both 256 rows, so every nonnegative request is admitted
-as a stride of 256. These two fields therefore have no current effect on iteration
-count, compiled width, or workspace.
+NBEGM's `interval_batch_size`, `cell_block_size`, and `branch_batch_size` are compiled
+batch widths for the corresponding `lax.map` axes. A positive value smaller than the
+axis bounds how many entries are evaluated together; `0`, or a value covering the axis,
+uses one vectorized pass. Lower values can reduce live intermediates inside that mapped
+core at the cost of more sequential execution. They do not cap surrounding arrays,
+retained candidate banks, compilation memory, or total device memory.
 
-`branch_batch_size` can change scheduling only when the branch axis exceeds its four-row
-microtile. Positive requests are rounded up to a multiple of four and capped by the
-axis's static window (at most the 64-row profile window); `0` selects the largest
-admitted stride. When the branch axis has four or fewer rows, every request admits the
-same four-row stride. Distinct admitted branch strides change iteration count and
-scheduling, not compiled width or fixed per-iteration workspace.
-
-First identify which contract the field has in Reference. For a true streaming control,
-choose the largest chunk that meets the measured memory target and verify values. For a
-fixed-window request, inspect the admitted stride before measuring scheduling and
-runtime. Do not tune an inert ride request, and do not use any fixed-window request as a
-memory budget.
+Choose the largest batch that meets the measured memory target, then verify values and
+runtime against the whole-axis setting on the model and backend you will use.
 
 Exact solver fields are in [Solvers and capabilities](../reference/solvers.md),
 [Upper envelopes](../reference/envelopes.md), and

@@ -63,6 +63,14 @@ def coh_nonlinear(
     return liquid + curvature * liquid**2 + subsidy
 
 
+def coh_nonlinear_above_ten(
+    liquid: ContinuousState, subsidy: FloatND, curvature: float
+) -> FloatND:
+    """Cash-on-hand is affine below ten and curved above ten."""
+    excess = jnp.maximum(liquid - 10.0, 0.0)
+    return liquid + curvature * excess**2 + subsidy
+
+
 def build_model(
     *,
     variant: str = "brute",
@@ -74,6 +82,7 @@ def build_model(
     savings_max: float = 28.0,
     non_additive: bool = False,
     nonlinear: bool = False,
+    nonlinear_above_ten: bool = False,
 ) -> Model:
     """Create the two-regime (alive, dead) jump-schedule one-asset toy.
 
@@ -87,6 +96,8 @@ def build_model(
         resources_func = coh_non_additive
     elif nonlinear:
         resources_func = coh_nonlinear
+    elif nonlinear_above_ten:
+        resources_func = coh_nonlinear_above_ten
     alive_functions = {
         "utility": utility,
         "subsidy": subsidy,
@@ -124,13 +135,14 @@ def build_params(
     coh_slope: float = 0.8,
     nonlinear: bool = False,
     curvature: float = 0.05,
+    nonlinear_above_ten: bool = False,
 ) -> dict:
     """Get parameters for the jump-schedule one-asset toy."""
     alive_budget = {"return_liquid": return_liquid, "income": income}
     resources_params = {}
     if non_additive:
         resources_params = {"resources": {"coh_slope": coh_slope}}
-    elif nonlinear:
+    elif nonlinear or nonlinear_above_ten:
         resources_params = {"resources": {"curvature": curvature}}
     return {
         "alive": {

@@ -8,12 +8,10 @@ coefficients that only exist once the user supplies params, so the check cannot
 run in `Solver.validate`, which the engine calls while building kernels at
 `Model` construction.
 
-Such a solver publishes its checks as `SolutionKernels.param_checks`, and
-`Model` calls `check_solver_params` once, the first time it solves. Running once
-is deliberate: the checks differentiate the model's DAG and are far too
-expensive for every iteration of an estimation loop, and what they test —
-affinity, constancy, functional structure — does not move with the parameter
-vector inside one estimation.
+Such a solver publishes its checks as `SolutionKernels.param_checks`. `Model`
+calls `check_solver_params` for every solve because the evaluated functions can
+change with every parameter draw; a precondition established for one draw says
+nothing about another.
 """
 
 from types import MappingProxyType

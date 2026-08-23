@@ -1,10 +1,9 @@
-"""Certified exact-affine capability fails at each route's documented boundary.
+"""Exact-kernel capability is checked after portable model semantics.
 
-Importing pylcm remains possible without a compiled kernel. A semantically valid model
-selecting ``ExactEnvelope`` fails during ``Model(...)``; certified NBEGM requires the
-same payload before returning a certified result, while ordinary NBEGM avoids it.
-Low-level verdict entry points retain their own fail-loud guard. File presence,
-rather than loadability, distinguishes a supported absence from a
+Importing pylcm remains possible without a compiled kernel. A semantically valid
+model selecting ``ExactEnvelope`` fails during ``Model(...)`` when that backend is
+absent, while low-level verdict entry points retain their own fail-loud guard.
+File presence, rather than loadability, distinguishes a supported absence from a
 present-but-broken build.
 """
 
@@ -17,7 +16,7 @@ import pytest
 from _lcm.egm.upper_envelope._exact_affine import ffi
 from lcm.exceptions import ExactAffineKernelUnavailableError, ModelInitializationError
 from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
-from tests.test_models import nbegm_tax_toy, negm_kinked_toy
+from tests.test_models import nbegm_medicaid_toy, negm_kinked_toy
 from tests.test_models.dcegm_paper_twin import build_dcegm_model
 
 
@@ -27,6 +26,16 @@ def test_a_selected_exact_backend_fails_during_model_construction(monkeypatch):
 
     with pytest.raises(ExactAffineKernelUnavailableError, match="ExactEnvelope"):
         build_dcegm_model()
+
+
+def test_certified_nbegm_requires_the_exact_kernel_at_construction(monkeypatch):
+    """Certified NBEGM fails before solving while ordinary arithmetic still builds."""
+    monkeypatch.setattr(ffi, "kernel_available_for_current_backend", lambda: False)
+
+    with pytest.raises(ExactAffineKernelUnavailableError, match="certified"):
+        nbegm_medicaid_toy.build_model(variant="nbegm")
+
+    nbegm_medicaid_toy.build_model(variant="nbegm", envelope_arithmetic="ordinary")
 
 
 def test_construction_on_a_kernelless_platform_reports_the_absence_as_such(
@@ -40,31 +49,6 @@ def test_construction_on_a_kernelless_platform_reports_the_absence_as_such(
 
     assert excinfo.errisinstance(ExactAffineKernelUnavailableError)
     assert not excinfo.errisinstance(ModelInitializationError)
-
-
-def test_ordinary_nbegm_does_not_request_the_installed_kernel(monkeypatch):
-    """Ordinary NBEGM remains available without the exact-affine payload."""
-    calls = 0
-
-    def record_request() -> None:
-        nonlocal calls
-        calls += 1
-
-    monkeypatch.setattr(ffi, "_ensure_registered", record_request)
-    model = nbegm_tax_toy.build_model(
-        variant="nbegm",
-        envelope_arithmetic="ordinary",
-        n_periods=2,
-        n_liquid=8,
-        n_savings=8,
-        savings_max=20.0,
-    )
-
-    model.solve(
-        params=nbegm_tax_toy.build_params(final_age_alive=1.0), log_level="debug"
-    )
-
-    assert calls == 0
 
 
 def test_current_cpu_backend_requires_the_cpu_library_file(monkeypatch, tmp_path):

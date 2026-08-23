@@ -126,8 +126,8 @@ def test_specialized_authoring_examples_solve_and_simulate() -> None:
         ]
 
 
-def test_certified_nbegm_and_commit_strides_have_actionable_user_contracts() -> None:
-    """User docs separate native capability from fixed-window scheduling."""
+def test_certified_nbegm_and_batch_widths_have_actionable_user_contracts() -> None:
+    """User docs separate native capability from mapped batch widths."""
     installation = " ".join(
         (_DOCS / "getting_started" / "installation.md")
         .read_text(encoding="utf-8")
@@ -149,10 +149,9 @@ def test_certified_nbegm_and_commit_strides_have_actionable_user_contracts() -> 
     assert "during an NBEGM solve" not in installation
     assert "ExactAffineKernelUnavailableError" in installation
     assert "installed exact-affine CPU/CUDA payload" in solver_reference
-    assert "fixed profile window" in tuning
-    assert "operationally inert" in tuning
-    assert "every nonnegative request is admitted as a stride of 256" in tuning
-    assert "only when the branch axis exceeds its four-row microtile" in tuning
+    assert "compiled batch widths" in tuning
+    assert "bounds how many entries are evaluated together" in tuning
+    assert "They do not cap surrounding arrays" in tuning
     assert "explicit paper-mode scheduling profile" not in paper_source
     assert "Commit one `labor_supply` branch" not in paper_source
     assert "value-invariant memory knobs" not in tuning

@@ -208,6 +208,27 @@ def resolve_periodized_nodes(
     )
 
 
+def resolve_periodized_tree(
+    tree: Mapping[str, object], period: int
+) -> Mapping[str, object]:
+    """Resolve periodized leaves recursively while preserving mapping structure."""
+    if not any(
+        isinstance(node, (Mapping, PeriodizedUserFunction, PeriodizedEconFunction))
+        for node in tree.values()
+    ):
+        return tree
+    return MappingProxyType(
+        {
+            name: (
+                resolve_periodized_tree(node, period)
+                if isinstance(node, Mapping)
+                else resolve_periodized_node(node, period)
+            )
+            for name, node in tree.items()
+        }
+    )
+
+
 def periodized_tree_signature(tree: Mapping[str, object], period: int) -> Hashable:
     """Fingerprint a (possibly nested) mapping of nodes at `period`.
 

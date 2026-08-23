@@ -62,8 +62,7 @@ and the correctness of destinations require page-specific documentation and test
 | [`lcm.Condition`](conditions.md)                                  | Structured Boolean expression      |
 | [`lcm.ref`](conditions.md#syntax)                                 | Named reference                    |
 | [`lcm.implies`](conditions.md#syntax)                             | Conditional requirement            |
-| [`lcm.boundary`](case_pieces.md#boundary-predicate)               | Case boundary                      |
-| [`lcm.case_boundary`](case_pieces.md#boundary-predicate)          | Boundary decorator                 |
+| [`lcm.case_boundary`](case_pieces.md#boundary-predicate)          | Structured case boundary           |
 | [`lcm.piece`](case_pieces.md#piece-formulas)                      | Piece decorator                    |
 | [`lcm.smooth_helper`](case_pieces.md#piece-formulas)              | Reviewed smooth-helper attestation |
 | [`lcm.affine_breakpoint`](piecewise_affine.md#affine-breakpoint)  | Schedule breakpoint                |

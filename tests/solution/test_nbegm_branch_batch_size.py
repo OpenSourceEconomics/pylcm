@@ -1,38 +1,53 @@
-"""NBEGM distinguishes requested branch sizes from admitted commit strides."""
+"""NBEGM's branch axis streams in blocks without changing the solution.
 
-import pytest
+`branch_batch_size` bounds how many discrete-action branches the two ride-along
+cores hold in flight at once: `0` runs the whole branch axis in one vectorized
+pass, `1` runs branch-by-branch (memory-minimal). The knob trades peak memory
+against sequential execution and changes no arithmetic.
+"""
 
-from _lcm.egm.fixed_width_map import (
-    admitted_block_size,
-    max_block_size_for_axis,
-)
-from _lcm.solution.nbegm import _BRANCH_MAP_GEOMETRY
+from collections.abc import Mapping
+
+from tests.conftest import assert_agrees_to_ulp
+from tests.test_models import nbegm_ride_discrete_toy as toy
+
+# Partitioning the branch axis leaves every operation and its operand order
+# untouched, so the two solves differ only by the vectorized kernel XLA emits for
+# each block width — a gap of a few ULP, not of an economic magnitude. The band
+# is wider here than for the shallower partitions elsewhere in the suite because
+# the branch axis accumulates over every declared discrete-action combination.
+# The bound keeps headroom over backend code-generation variation while staying
+# orders of magnitude below a partition-dependent reduction over a batch.
+_PARTITION_ULP = 64
 
 
-def _admitted(*, n_rows: int, requested: int) -> int:
-    max_block_size = max_block_size_for_axis(
-        n_rows=n_rows,
-        geometry=_BRANCH_MAP_GEOMETRY,
+def _solve(*, branch_batch_size: int) -> Mapping[int, Mapping]:
+    model = toy.build_model(
+        variant="nbegm",
+        n_liquid=40,
+        liquid_max=30.0,
+        n_savings=60,
+        savings_max=28.0,
+        n_consumption=40,
+        action_in_costate=True,
+        action_in_utility=True,
+        action_in_regime_transition=True,
+        branch_batch_size=branch_batch_size,
     )
-    return admitted_block_size(
-        requested=requested,
-        max_block_size=max_block_size,
-        microtile_width=_BRANCH_MAP_GEOMETRY.microtile_width,
-    )
+    return model.solve(params=toy.build_params(), log_level="debug")
 
 
-def test_request_one_is_default_equivalent_for_a_binary_branch_axis() -> None:
-    """A two-branch model admits one four-row microtile for requests zero and one."""
-    assert _admitted(n_rows=2, requested=0) == 4
-    assert _admitted(n_rows=2, requested=1) == 4
-
-
-@pytest.mark.parametrize(
-    ("requested", "expected"),
-    [(0, 20), (1, 4), (4, 4), (5, 8), (8, 8)],
-)
-def test_wide_branch_axis_exposes_distinct_admitted_strides(
-    requested: int, expected: int
-) -> None:
-    """A 20-branch axis can schedule more than one admitted four-row multiple."""
-    assert _admitted(n_rows=20, requested=requested) == expected
+def test_branch_batch_size_one_matches_whole_axis() -> None:
+    """Streaming the branch axis one branch at a time yields the same `V` as the
+    whole-axis pass, with the action feeding co-state, utility, and transition."""
+    whole = _solve(branch_batch_size=0)
+    streamed = _solve(branch_batch_size=1)
+    assert whole.keys() == streamed.keys()
+    for period in whole:
+        for regime in whole[period]:
+            assert_agrees_to_ulp(
+                streamed[period][regime],
+                whole[period][regime],
+                n_ulp=_PARTITION_ULP,
+                err_msg=f"period={period} regime={regime}",
+            )

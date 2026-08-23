@@ -1,44 +1,33 @@
-"""Case-boundary and formula-piece decorators for the NBEGM solver.
+"""Structured case boundaries and formula-piece declarations for NBEGM.
 
 A *case* is a region of the state space carved out by a Boolean predicate (e.g.
 Medicaid eligibility); a *piece* is the smooth formula a DAG output takes inside
-one side of that predicate. The decorators here only attach metadata to a user's
-existing DAG functions and return them unchanged — they never wrap or alter
-runtime behavior, so a model still solves identically under `GridSearch`. NBEGM
-reads the metadata to lower each case to a smooth per-case DAG and to apply
-open/closed endpoint eligibility at the exact boundary query.
+one side of that predicate. A case boundary is one executable, inspectable
+`Condition`; the piece decorators attach that same object to each user formula.
+Model finalization composes every complete pair into its declared output with
+``where(predicate, when, otherwise)``, so all solvers read the same predicate;
+NBEGM additionally lowers its comparison and applies the declared open/closed
+ownership at the exact boundary query.
 """
 
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
+from _lcm.constraints.ir import Compare, Condition
 from lcm.exceptions import NBEGMCaseError
 
 type BoundaryKind = Literal["continuous_kink", "jump", "hard_constraint"]
 type EqualityOwner = Literal["when", "otherwise"]
+type CoordinateEqualityOwner = Literal["below", "above"]
 
 
-@dataclass(frozen=True)
-class BoundarySurface:
-    """One equality surface `variable == threshold` of a case boundary."""
+@dataclass(frozen=True, eq=False)
+class CaseBoundary(Condition):
+    """A structured binary comparison that partitions a case-piece output."""
 
-    variable: str
-    """Name of the DAG variable compared against the threshold."""
-    threshold: str
-    """Name of the DAG variable (or parameter) holding the threshold value."""
-    equality_owner: EqualityOwner
-    """Predicate side that owns the exact-equality point (`when` or `otherwise`)."""
     kind: BoundaryKind
-    """Discontinuity kind at the surface: kink, jump, or hard constraint."""
-
-
-@dataclass(frozen=True)
-class CaseBoundaryMeta:
-    """Metadata attached to a predicate declaring its case boundaries."""
-
-    boundaries: tuple[BoundarySurface, ...]
-    """Tuple of equality surfaces that together define the case boundary."""
+    """Discontinuity kind at the comparison surface."""
 
 
 @dataclass(frozen=True)
@@ -47,8 +36,8 @@ class PieceMeta:
 
     output: str
     """Name of the DAG output this piece produces."""
-    predicate_name: str
-    """Name of the case-boundary predicate that splits the output."""
+    predicate: CaseBoundary
+    """Structured case boundary that splits the output."""
     side: Literal["when", "otherwise"]
     """Predicate side this piece applies to."""
 
@@ -63,6 +52,8 @@ class AffineBreakpoint:
     `threshold_subkey` selects the entry within it."""
     kind: BoundaryKind
     """Discontinuity kind at the threshold (a bracket edge is a continuous kink)."""
+    equality_owner: CoordinateEqualityOwner = "above"
+    """Side of the schedule coordinate containing the exact threshold."""
     indexed_by: str | None = None
     """Name of the ride-along state indexing the threshold table, or `None` for a
     scalar threshold. When set, the threshold parameter is a table read per
@@ -94,67 +85,46 @@ class PiecewiseAffineMeta:
     """Ordered thresholds splitting the schedule into affine segments."""
 
 
-def boundary(
+def case_boundary(
+    condition: Condition,
     *,
-    variable: str,
-    threshold: str,
-    equality: EqualityOwner,
     kind: BoundaryKind,
-) -> BoundarySurface:
-    """Declare one equality surface of a case boundary.
+) -> CaseBoundary:
+    """Declare an executable binary case split from one structured condition.
 
     Args:
-        variable: Name of the DAG variable compared against the threshold.
-        threshold: Name of the DAG variable or parameter holding the threshold.
-        equality: Predicate side that owns the exact-equality point.
-        kind: Discontinuity kind at the surface.
+        condition: One comparison built from `lcm.ref`.
+        kind: Discontinuity kind at the comparison surface.
 
     Returns:
-        The equality surface as a `BoundarySurface`.
+        The same expression as an executable, inspectable case boundary.
+
+    Raises:
+        NBEGMCaseError: If the expression is not one supported binary ordering.
 
     """
-    return BoundarySurface(
-        variable=variable,
-        threshold=threshold,
-        equality_owner=equality,
-        kind=kind,
-    )
-
-
-def case_boundary[F: Callable[..., object]](
-    *boundaries: BoundarySurface | tuple[str, str],
-) -> Callable[[F], F]:
-    """Mark a Boolean DAG function as a case boundary with declared surfaces.
-
-    The decorated function stays an ordinary DAG node returning a Boolean array;
-    the decorator only records its equality surfaces in `__lcm_case_boundary__`.
-
-    Args:
-        *boundaries: One or more `boundary(...)` surfaces. A bare
-            `(variable, threshold)` tuple is rejected because it cannot declare
-            which side owns equality — use `lcm.boundary(...)` instead.
-
-    Returns:
-        A decorator that attaches the metadata and returns the function
-        unchanged.
-
-    """
-    coerced = tuple(
-        _coerce_boundary(spec=boundary_spec) for boundary_spec in boundaries
-    )
-
-    def attach_boundary(func: F) -> F:
-        func.__lcm_case_boundary__ = CaseBoundaryMeta(coerced)  # ty: ignore[unresolved-attribute]
-        return func
-
-    return attach_boundary
+    expression = condition.expression
+    if not isinstance(expression, Compare) or expression.op not in {
+        "<",
+        "<=",
+        ">",
+        ">=",
+    }:
+        msg = (
+            "A case boundary is exactly one `<`, `<=`, `>`, or `>=` "
+            "comparison built from `lcm.ref`; conjunctions, unions, "
+            "complements, implications, equality tests, and opaque callables "
+            "cannot define one binary split."
+        )
+        raise NBEGMCaseError(msg)
+    return CaseBoundary(expression=expression, kind=kind)
 
 
 def piece[F: Callable[..., object]](
     *,
     output: str,
-    when: Callable[..., object] | None = None,
-    otherwise: Callable[..., object] | None = None,
+    when: CaseBoundary | None = None,
+    otherwise: CaseBoundary | None = None,
 ) -> Callable[[F], F]:
     """Mark a DAG function as the formula for one side of a case boundary.
 
@@ -168,12 +138,11 @@ def piece[F: Callable[..., object]](
         function unchanged.
 
     Raises:
-        NBEGMCaseError: If neither or both of `when`/`otherwise` are given, or the
-            predicate has no resolvable name (a lambda) to key the piece by.
+        NBEGMCaseError: If neither or both of `when`/`otherwise` are given.
 
     """
     if when is not None and otherwise is None:
-        predicate: Callable[..., object] = when
+        predicate = when
         side: Literal["when", "otherwise"] = "when"
     elif otherwise is not None and when is None:
         predicate = otherwise
@@ -184,19 +153,11 @@ def piece[F: Callable[..., object]](
             "`otherwise=`."
         )
         raise NBEGMCaseError(msg)
-    predicate_name = getattr(predicate, "__name__", "<lambda>")
-    if predicate_name == "<lambda>":
-        msg = (
-            f"Piece for output {output!r} names a lambda as its case boundary. "
-            "Pieces are keyed by the predicate's name, so every lambda would "
-            "collide on '<lambda>'; declare the predicate with `def`."
-        )
-        raise NBEGMCaseError(msg)
 
     def attach_piece(func: F) -> F:
         func.__lcm_piece__ = PieceMeta(  # ty: ignore[unresolved-attribute]
             output=output,
-            predicate_name=predicate_name,
+            predicate=predicate,
             side=side,
         )
         return func
@@ -208,6 +169,7 @@ def affine_breakpoint(
     *,
     threshold: str,
     kind: BoundaryKind = "continuous_kink",
+    equality: CoordinateEqualityOwner = "above",
     indexed_by: str | None = None,
     static_index: int | None = None,
 ) -> AffineBreakpoint:
@@ -220,6 +182,7 @@ def affine_breakpoint(
             within its `.data`.
         kind: Discontinuity kind at the threshold; a bracket edge is a continuous
             kink (the schedule is continuous, only its slope changes).
+        equality: Side of the schedule coordinate that owns the exact threshold.
         indexed_by: Name of the ride-along state indexing the threshold table. When
             given, the threshold parameter is a table and NBEGM reads each cell's
             threshold as `threshold[cell_state, static_index]`; the bare scalar
@@ -246,6 +209,7 @@ def affine_breakpoint(
     return AffineBreakpoint(
         threshold=leaf,
         kind=kind,
+        equality_owner=equality,
         indexed_by=indexed_by,
         static_index=static_index,
         threshold_subkey=subkey or None,
@@ -306,20 +270,3 @@ def smooth_helper[F: Callable[..., object]](func: F) -> F:
     """
     func.__lcm_smooth_helper__ = True  # ty: ignore[unresolved-attribute]
     return func
-
-
-def _coerce_boundary(*, spec: BoundarySurface | tuple[str, str]) -> BoundarySurface:
-    """Coerce a boundary specification into a `BoundarySurface`.
-
-    A `BoundarySurface` passes through. A bare `(variable, threshold)` tuple is
-    rejected: equality ownership cannot be inferred without the validator, so the
-    explicit `lcm.boundary(..., equality=..., kind=...)` form is required.
-    """
-    if isinstance(spec, BoundarySurface):
-        return spec
-    msg = (
-        f"Cannot infer equality ownership from {spec!r}. Declare the boundary "
-        f"explicitly with `lcm.boundary(variable, threshold, equality=..., "
-        f"kind=...)`."
-    )
-    raise NBEGMCaseError(msg)

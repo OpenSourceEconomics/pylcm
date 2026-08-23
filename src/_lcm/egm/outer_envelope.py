@@ -30,6 +30,8 @@ convention; `outer_envelope_at_query` is a self-contained reference for the
 query-side max, not a byte-for-byte oracle of the production aggregation.
 """
 
+from dataclasses import replace
+
 import jax
 import jax.numpy as jnp
 
@@ -41,6 +43,35 @@ from _lcm.egm.interp import (
     interp_right_germ_on_padded_grid,
 )
 from lcm.typing import Bool1D, BoolND, Float1D, FloatND, IntND
+
+
+def stack_candidate_carries(
+    *, candidates: tuple[EGMCarry, ...], nan_is_infeasible: bool = False
+) -> EGMCarry:
+    """Stack finite outer candidates without taking a nodewise maximum."""
+    if not candidates:
+        raise ValueError("At least one outer candidate is required.")
+    first = candidates[0]
+    values = tuple(
+        jnp.where(jnp.isnan(candidate.value), -jnp.inf, candidate.value)
+        if nan_is_infeasible
+        else candidate.value
+        for candidate in candidates
+    )
+    marginals = tuple(
+        jnp.where(jnp.isnan(candidate.value), 0.0, candidate.marginal_utility)
+        if nan_is_infeasible
+        else candidate.marginal_utility
+        for candidate in candidates
+    )
+    return EGMCarry(
+        endog_grid=jnp.stack(
+            [candidate.endog_grid for candidate in candidates], axis=-2
+        ),
+        value=jnp.stack(values, axis=-2),
+        marginal_utility=jnp.stack(marginals, axis=-2),
+        taste_shock_scale=first.taste_shock_scale,
+    )
 
 
 def build_stacked_outer_carry(
@@ -96,18 +127,13 @@ def build_stacked_outer_carry(
     broadcast_list[normalized_axis] = n_durable
     broadcast = tuple(broadcast_list)
 
-    lifted_endog = [keeper_carry.endog_grid]
+    lifted = [keeper_carry]
     for adjuster_index, adjuster_carry in enumerate(adjuster_carries):
         shift = coh_shifts[:, adjuster_index].reshape(broadcast)
-        lifted_endog.append(adjuster_carry.endog_grid + shift)
-
-    candidates = (keeper_carry, *adjuster_carries)
-    return EGMCarry(
-        endog_grid=jnp.stack(lifted_endog, axis=-2),
-        value=jnp.stack([c.value for c in candidates], axis=-2),
-        marginal_utility=jnp.stack([c.marginal_utility for c in candidates], axis=-2),
-        taste_shock_scale=keeper_carry.taste_shock_scale,
-    )
+        lifted.append(
+            replace(adjuster_carry, endog_grid=adjuster_carry.endog_grid + shift)
+        )
+    return stack_candidate_carries(candidates=tuple(lifted))
 
 
 def outer_envelope_at_query(
