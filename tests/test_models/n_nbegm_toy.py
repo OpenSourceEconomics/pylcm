@@ -39,6 +39,7 @@ from lcm.consumption_savings_regime import (
     outer_unchanged,
 )
 from lcm.solvers import DCEGM, NBEGM, NEGM, NNBEGM, GridSearch, TwoMarginSolver
+from lcm.transition import AgeSpecializedFunction
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -198,6 +199,7 @@ def build_model(
     consumption_grid: Grid = CONSUMPTION_GRID,
     durable_law: Callable[..., object] | None = None,
     constraints: Mapping[str, Callable[..., object]] | None = None,
+    utility_function: Callable[..., object] | AgeSpecializedFunction = utility,
 ) -> Model:
     """Build the smooth two-asset toy under the requested solver flavour.
 
@@ -221,7 +223,7 @@ def build_model(
     """
     final_age_alive = 20 + (n_periods - 2) * 5
     functions = {
-        "utility": utility,
+        "utility": utility_function,
         "new_illiquid": new_illiquid,
         "resources": resources,
         "liquid_savings": liquid_savings,

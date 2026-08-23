@@ -196,9 +196,8 @@ def test_round_trip_cost_creates_an_inaction_wedge():
     assert float(nudge) > 0.9 * tau * housing
 
 
-@pytest.mark.requires(device="gpu", native=("exact_affine",))
+@pytest.mark.requires(device="gpu")
 @pytest.mark.coverage(backends=("gpu-small", "gpu-large"), precisions="representative")
-@pytest.mark.resources(wall="m", wall_seconds=180, gpu_mem_gb=8, compile="heavy")
 def test_reduced_housing_model_solves_on_gpu():
     """A reduced DS App.2 model exercises the nested solve on every pull request.
 
@@ -214,10 +213,9 @@ def test_reduced_housing_model_solves_on_gpu():
     assert np.all(np.isfinite(working))
 
 
-@pytest.mark.requires(device="gpu", native=("exact_affine",))
+@pytest.mark.requires(device="gpu")
 @pytest.mark.coverage(backends=("gpu-small", "gpu-large"), precisions="both")
-@pytest.mark.resources(wall="production", gpu_mem_gb=16, compile="heavy")
-@pytest.mark.isolation(process="fresh", gpu="exclusive", cache="isolated")
+@pytest.mark.isolation(process="fresh")
 @pytest.mark.ci(tier="nightly")
 def test_production_housing_model_solves_on_gpu():
     """The production DS App.2 grid remains available to nightly and full runs."""

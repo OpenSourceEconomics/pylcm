@@ -1,10 +1,10 @@
-"""Solver preconditions that need parameter values run on the first solve.
+"""Solver preconditions that need parameter values run on every solve.
 
 A solver may declare a precondition it can only check against the model's actual
 parameters — an affine-budget probe that differentiates the budget DAG, say, whose
 tax-schedule arguments have no values until `solve` is called. Such a solver
-publishes the check alongside its kernels; the engine runs it once, on the first
-solve, and never again for the life of the model.
+publishes the check alongside its kernels; the engine runs it for every parameter
+draw before dispatching the numerical kernels.
 """
 
 from collections.abc import Mapping
@@ -167,15 +167,15 @@ def test_param_check_sees_a_parameter_the_model_fixed_at_construction() -> None:
     assert float(cast("FloatND", crra)) == 2.0
 
 
-def test_param_check_runs_once_across_repeated_solves() -> None:
-    """A second solve does not re-run the check — an estimation loop pays once."""
+def test_param_check_runs_for_each_parameter_draw() -> None:
+    """Every solve re-checks the actual draw before numerical dispatch."""
     check = _RecordingCheck()
     model = _build_model(check=check)
 
     model.solve(params=_PARAMS, log_level="off")
     model.solve(params=_PARAMS, log_level="off")
 
-    assert len(check.calls) == 1
+    assert len(check.calls) == 2
 
 
 def test_param_check_failure_surfaces_from_solve() -> None:

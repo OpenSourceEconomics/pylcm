@@ -26,9 +26,7 @@ def test_native_payload_is_resolved_from_the_installed_distribution(
     assert ffi._installed_native_directory() == installed_root / "_pylcm_native"
 
 
-@pytest.mark.requires(device="any", native=("exact_affine",))
 @pytest.mark.coverage(backends=("cpu", "gpu-small"), precisions="both")
-@pytest.mark.resources(wall="xs", compile="light")
 @pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 def test_exact_kernel_answers_in_the_active_precision():
     """The native comparator answers one finite strict ordering in each profile."""

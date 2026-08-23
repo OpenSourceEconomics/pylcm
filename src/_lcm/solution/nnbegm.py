@@ -11,7 +11,7 @@ The kernel-building imports are function-local so the public `lcm.solvers`
 façade stays a thin re-export that pulls in no numerical engine modules.
 """
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, fields, replace
 from types import MappingProxyType
 from typing import cast
@@ -22,7 +22,7 @@ from beartype import beartype
 
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.constraints.routes import ConstraintRoute
-from _lcm.continuation import EGMContinuationLayout
+from _lcm.continuation import EGMContinuationLayout, EGMContinuationSpec
 from _lcm.egm.carry import EGMCarry
 from _lcm.engine import StateActionSpace
 from _lcm.grids import ContinuousGrid, Grid
@@ -39,13 +39,23 @@ from _lcm.solution.contract import (
     _BoundLiquidMargin,
     _BoundOuterContinuousMargin,
 )
-from _lcm.solution.nbegm import NBEGM, _BoundNBEGM, proved_post_decision_of
+from _lcm.solution.nbegm import (
+    NBEGM,
+    _BoundNBEGM,
+    _validate_nbegm_case_piece_declarations,
+    proved_post_decision_of,
+)
 from _lcm.solution.negm import (
     _fail_if_outer_batch_size_negative,
     _fail_if_outer_grid_is_stochastic,
+    _stack_carry_template,
     _with_no_adjustment_outer_function,
     _with_outer_post_decision,
     _without_outer_post_decision,
+)
+from _lcm.solution.periodization import (
+    resolve_solver_build_context,
+    solver_period_group_key,
 )
 from _lcm.typing import FlatParams, RegimeName
 from lcm.ages import AgeGrid
@@ -128,8 +138,11 @@ class NNBEGM(TwoMarginSolver):
 
     @property
     def egm_continuation_layout(self) -> EGMContinuationLayout:
-        """The bridged outer envelope republishes the inner solver's rows."""
-        return self.inner.egm_continuation_layout
+        """The carry keeps the keeper plus every finite outer-grid candidate."""
+        return replace(
+            self.inner.egm_continuation_layout,
+            n_stacked_candidates=int(self.outer_grid.to_jax().shape[0]) + 1,
+        )
 
     def build_constraint_routes(
         self, *, context: ConstraintRouteContext
@@ -235,6 +248,7 @@ class NNBEGM(TwoMarginSolver):
             solver=bound.inner,
             solver_name="NNBEGM",
         )
+        _validate_nbegm_case_piece_declarations(context=context, solver=bound.inner)
 
     def validate_build(self, *, context: SolverBuildContext) -> None:
         """Apply the inner solver's build-time gates to the liquid margin.
@@ -247,17 +261,8 @@ class NNBEGM(TwoMarginSolver):
         the regime's first state, because the regime also carries the outer
         margin the pieces never see.
         """
-        from _lcm.solution.nbegm import (  # noqa: PLC0415
-            fail_if_taste_shocks_declared,
-            validate_case_piece_smoothness,
-        )
-
         bound = cast("_BoundNNBEGM", self)
-        fail_if_taste_shocks_declared(context=context)
-        validate_case_piece_smoothness(
-            context=context,
-            liquid_state_name=bound.inner.continuous_state,
-        )
+        bound.inner.validate_build(context=context)
 
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         r"""Build one nested period adapter per period, wrapping inner kernels.
@@ -283,54 +288,82 @@ class NNBEGM(TwoMarginSolver):
         # `next_<durable>` $= (1 - \delta)\, s_t^\textit{post-dec}$ is therefore
         # the stock the continuation is read at, not the raw node the outer
         # search picked.
-        adjuster_context = replace(
-            context,
-            functions=_without_outer_post_decision(
-                functions=context.functions,
-                outer_post_decision=bound.outer_post_decision,
-            ),
-            flat_param_names=context.flat_param_names | {bound.outer_post_decision},
-            constraint_plan=(
-                None
-                if context.constraint_plan is None
-                else context.constraint_plan.for_solver_path(
-                    solver_path=("nnbegm", "adjuster")
+        grouped_periods: dict[Hashable, list[int]] = {}
+        for period in context.regimes_to_active_periods[context.regime_name]:
+            targets = (
+                ()
+                if period == context.solution_reachability.n_periods - 1
+                else context.solution_reachability.targets(
+                    period=period, source=context.regime_name
                 )
-            ),
-        )
-        adjuster_kernels = bound.inner.build_period_kernels(context=adjuster_context)
-        no_adjustment_func = (
-            context.functions[bound.outer_no_adjustment_candidate]
-            if bound.outer_no_adjustment_candidate is not None
-            else None
-        )
-        # The keeper computes the post-decision from the durable leaf instead of
-        # taking it as a bound param, so the declared law again stands and what
-        # the keeper carries is `next_<durable>(keep(<durable>))`.
-        keeper_context = replace(
-            context,
-            functions=_with_no_adjustment_outer_function(
-                functions=context.functions,
-                durable_state=bound.outer_state,
-                outer_post_decision=bound.outer_post_decision,
-                no_adjustment_func=no_adjustment_func,
-            ),
-            constraint_plan=(
-                None
-                if context.constraint_plan is None
-                else context.constraint_plan.for_solver_path(
-                    solver_path=("nnbegm", "keeper")
-                )
-            ),
-        )
-        keeper_kernels = bound.inner.build_period_kernels(context=keeper_context)
-        keeper_continuation_spec = keeper_kernels.continuation_spec
+            )
+            key = solver_period_group_key(
+                context=context,
+                period=period,
+                continuation_targets=targets,
+                solver_path=("nnbegm",),
+            )
+            grouped_periods.setdefault(key, []).append(period)
+
+        adjuster_by_period: dict[int, PeriodKernel] = {}
+        keeper_by_period: dict[int, PeriodKernel] = {}
+        grouped_param_checks = []
+        keeper_continuation_spec = None
+        for periods in grouped_periods.values():
+            representative_period = periods[0]
+            resolved = resolve_solver_build_context(
+                context=context, period=representative_period
+            )
+            adjuster_context = replace(
+                resolved,
+                functions=_without_outer_post_decision(
+                    functions=resolved.functions,
+                    outer_post_decision=bound.outer_post_decision,
+                ),
+                flat_param_names=context.flat_param_names | {bound.outer_post_decision},
+                constraint_plan=(
+                    None
+                    if context.constraint_plan is None
+                    else context.constraint_plan.for_solver_path(
+                        solver_path=("nnbegm", "adjuster")
+                    )
+                ),
+            )
+            adjuster_group = bound.inner.build_period_kernels(context=adjuster_context)
+            no_adjustment_func = (
+                resolved.functions[bound.outer_no_adjustment_candidate]
+                if bound.outer_no_adjustment_candidate is not None
+                else None
+            )
+            keeper_context = replace(
+                resolved,
+                functions=_with_no_adjustment_outer_function(
+                    functions=resolved.functions,
+                    durable_state=bound.outer_state,
+                    outer_post_decision=bound.outer_post_decision,
+                    no_adjustment_func=no_adjustment_func,
+                ),
+                constraint_plan=(
+                    None
+                    if context.constraint_plan is None
+                    else context.constraint_plan.for_solver_path(
+                        solver_path=("nnbegm", "keeper")
+                    )
+                ),
+            )
+            keeper_group = bound.inner.build_period_kernels(context=keeper_context)
+            for period in periods:
+                adjuster_by_period[period] = adjuster_group.period_kernels[period]
+                keeper_by_period[period] = keeper_group.period_kernels[period]
+            grouped_param_checks.extend(adjuster_group.param_checks)
+            grouped_param_checks.extend(keeper_group.param_checks)
+            if keeper_continuation_spec is None:
+                keeper_continuation_spec = keeper_group.continuation_spec
         template = (
             None
             if keeper_continuation_spec is None
             else keeper_continuation_spec.template
         )
-        _fail_if_inner_carry_rows_not_grid_aligned(inner=bound.inner)
         if not (
             context.constraint_plan and context.constraint_plan.compiled_boundaries
         ):
@@ -339,29 +372,32 @@ class NNBEGM(TwoMarginSolver):
         period_kernels = MappingProxyType(
             {
                 period: _NNBEGMPeriodKernel(
-                    keeper_kernel=keeper_kernels.period_kernels[period],
+                    keeper_kernel=keeper_by_period[period],
                     adjuster_kernel=adjuster_kernel,
                     regime_name=context.regime_name,
                     outer_grid_values=outer_grid_values,
                     outer_post_decision=bound.outer_post_decision,
                     outer_batch_size=self.outer_batch_size,
                 )
-                for period, adjuster_kernel in (adjuster_kernels.period_kernels.items())
+                for period, adjuster_kernel in adjuster_by_period.items()
             }
         )
-        # The bridged outer envelope folds candidates pointwise on shared inner
-        # abscissae. Plain rows use the liquid grid; compiled feasibility augments
-        # keeper and adjuster identically, and the forwarded spec retains that
-        # one-sided geometry for the parent read.
+        n_candidates = int(outer_grid_values.shape[0]) + 1
+        stacked_template = _stack_carry_template(
+            template=template, n_candidates=n_candidates
+        )
         return SolutionKernels(
             period_kernels=period_kernels,
-            continuation_spec=keeper_continuation_spec,
+            continuation_spec=(
+                None
+                if stacked_template is None
+                else EGMContinuationSpec(
+                    template=stacked_template, layout=self.egm_continuation_layout
+                )
+            ),
             # Both inner margins are solved by the inner solver, so both sets of
             # parameter-dependent preconditions still apply to this regime.
-            param_checks=(
-                *adjuster_kernels.param_checks,
-                *keeper_kernels.param_checks,
-            ),
+            param_checks=tuple(grouped_param_checks),
         )
 
 
@@ -525,7 +561,8 @@ class _NNBEGMPeriodKernel:
             ages=ages,
         )
         V_arr = keeper_result.V_arr
-        carry = cast("EGMCarry", keeper_result.continuation)
+        keeper_carry = cast("EGMCarry", keeper_result.continuation)
+        adjuster_carries: list[EGMCarry] = []
         adjuster_cores = _subcores(compiled_cores=compiled_cores, role="adjuster")
         nodes = list(self.outer_grid_values)
         chunk_size = self.outer_batch_size or len(nodes)
@@ -553,21 +590,20 @@ class _NNBEGMPeriodKernel:
                 # must not poison a cell another candidate solves. A cell stays
                 # NaN only when every candidate is infeasible there.
                 V_arr = jnp.fmax(V_arr, adjuster_result.V_arr)
-                carry = _fold_bridged_outer_carry(
-                    running=carry,
-                    candidate=cast("EGMCarry", adjuster_result.continuation),
-                )
-            # Force the running maximum to device before the next chunk so the
-            # lazy fold's peak stays bounded to one chunk of candidates and the
-            # chunk's independent solves can overlap.
-            V_arr, carry = jax.block_until_ready((V_arr, carry))
-        # The simulate phase re-optimizes the outer durable action by grid
-        # argmax over the next-period value array, so the keeper's published
-        # simulation policy rides through unchanged.
+                adjuster_carries.append(cast("EGMCarry", adjuster_result.continuation))
+            V_arr, _ = jax.block_until_ready((V_arr, adjuster_carries[chunk_start:]))
+        from _lcm.egm.outer_envelope import stack_candidate_carries  # noqa: PLC0415
+
+        carry = stack_candidate_carries(
+            candidates=(keeper_carry, *adjuster_carries),
+            nan_is_infeasible=True,
+        )
+        # A keeper-only proposal cannot represent the joint durable/liquid
+        # decision. Publish no finite replay policy so simulation retains its
+        # canonical full-grid action pair.
         return KernelResult(
             V_arr=V_arr,
             continuation=carry,
-            simulation_policy=keeper_result.simulation_policy,
         )
 
 
@@ -582,28 +618,6 @@ def _subcores(
             for key, core in compiled_cores.items()
             if key.startswith(token)
         }
-    )
-
-
-def _fold_bridged_outer_carry(*, running: EGMCarry, candidate: EGMCarry) -> EGMCarry:
-    """Fold one adjuster candidate into the running bridged outer envelope.
-
-    Every candidate's carry rows live on the shared liquid state grid, so the
-    outer envelope is a pointwise maximum: where the candidate's value row
-    beats the running one, its value and marginal replace them. The row
-    abscissae and the taste-shock scale are shared, so they ride through.
-    NaN-dead cells never win, and a candidate that solves a cell the running
-    envelope holds as NaN-dead takes it over.
-    """
-    take = (candidate.value > running.value) | (
-        jnp.isnan(running.value) & ~jnp.isnan(candidate.value)
-    )
-    return replace(
-        running,
-        value=jnp.where(take, candidate.value, running.value),
-        marginal_utility=jnp.where(
-            take, candidate.marginal_utility, running.marginal_utility
-        ),
     )
 
 

@@ -14,9 +14,50 @@ fingerprint of an admitted off-grid candidate.
 import jax.numpy as jnp
 import numpy as np
 
-from _lcm.egm.nbegm_step import nbegm_multi_interval_step, nbegm_unified_step
+from _lcm.egm.nbegm_step import (
+    _law_at_savings,
+    _savings_reaching,
+    nbegm_multi_interval_step,
+    nbegm_unified_step,
+)
 from tests.solution._crra_preferences import crra_preferences
 from tests.solution._nbegm_step_helpers import crra_utility, dense_brute_value
+
+
+def test_boundary_inverse_rejects_a_target_outside_the_law_image():
+    """A clamped inverse is not credited with an unreachable landing point."""
+    savings = jnp.asarray([0.0, 5.0, 10.0])
+    landing = jnp.asarray([0.0, 5.0, 10.0])
+
+    recovered = _savings_reaching(
+        target=jnp.asarray(20.0),
+        savings_grid=savings,
+        next_liquid=landing,
+        side="above",
+    )
+
+    assert bool(jnp.isnan(recovered))
+
+
+def test_boundary_inverse_nudges_fp32_savings_onto_the_requested_side():
+    """A rounded inverse lands strictly above a strict upper-side boundary."""
+    dtype = jnp.float32
+    savings = jnp.linspace(
+        dtype(-1.2120126485824585), dtype(15.608104705810547), 13, dtype=dtype
+    )
+    landing = dtype(2.3379552364349365) * savings + dtype(-2.2215158939361572)
+    boundary = dtype(8.0)
+    target = jnp.nextafter(boundary, dtype(jnp.inf))
+
+    recovered = _savings_reaching(
+        target=target, savings_grid=savings, next_liquid=landing, side="above"
+    )
+    reached = _law_at_savings(
+        savings=recovered, savings_grid=savings, next_liquid=landing
+    )
+
+    assert bool(reached >= target)
+    assert bool(reached > boundary)
 
 
 def test_multi_interval_step_drops_off_grid_inverse_at_the_upper_boundary():

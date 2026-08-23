@@ -801,14 +801,12 @@ class _NEGMPeriodKernel:
             coh_shifts=coh_shifts,
             durable_axis=self.durable_axis_in_carry,
         )
-        # The simulate phase re-optimizes the outer durable action by grid argmax
-        # over the next-period value array, so the published `sim_policy` (the
-        # keeper's off-grid inner consumption function) is not the channel that
-        # drives simulated durable choice; it rides through unchanged.
+        # A keeper-only proposal cannot represent the joint durable/liquid
+        # decision. Publish no finite replay policy so simulation retains its
+        # canonical full-grid action pair.
         return KernelResult(
             V_arr=V_arr,
             continuation=carry,
-            simulation_policy=keeper_result.simulation_policy,
         )
 
     def _outer_nodes(self) -> list[ScalarFloat]:
