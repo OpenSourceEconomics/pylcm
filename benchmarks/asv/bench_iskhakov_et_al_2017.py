@@ -357,7 +357,9 @@ class IskhakovEtAl2017Simulate:
     """Simulate with Gumbel-max discrete choices from a pre-solved model."""
 
     version = "1"
-    timeout = 600
+    # Setup includes the pre-solve and cold simulation compile. The current GPU
+    # runner measures that at about 9.1 minutes, before the benchmark body runs.
+    timeout = 1200
 
     def _build(self) -> None:
         self.model, self.model_params = _make_model_and_params(
@@ -423,7 +425,8 @@ class IskhakovEtAl2017DCEGMSimulate:
     """
 
     version = "1"
-    timeout = 600
+    # As above, ASV's timeout covers the pre-solve and cold simulation compile.
+    timeout = 1200
 
     def _build(self) -> None:
         self.model, self.model_params = _make_model_and_params(
