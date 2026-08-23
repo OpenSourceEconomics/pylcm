@@ -131,6 +131,7 @@ jobs:
         run: >-
           mkdir -p reports &&
           pixi run -e tests-cpu tests ${{ matrix.pytest_extra }}
+          --policy-child --ci-policy=full --hardware-profile=cpu
           --junitxml=reports/junit-cpu-${{ runner.os }}.xml
         if: runner.os != 'Linux' || matrix.python-version != '3.14'
       - name: Run pytest and collect coverage
@@ -144,17 +145,20 @@ jobs:
         run: |
           mkdir -p reports
           pixi run -e tests-cpu pytest tests -m "not slow" \
+            --policy-child --ci-policy=full --hardware-profile=cpu \
             --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
             --durations=25 --junitxml=reports/junit-cpu-fp64-notslow.xml \
             --cov=./ --cov-report= -n 4 \
           && XLA_FLAGS=--xla_backend_optimization_level=0 \
             pixi run -e tests-cpu pytest \
             tests/solution/test_nbegm_multi_discrete_agreement.py \
+            --policy-child --ci-policy=full --hardware-profile=cpu \
             -m slow -k certified \
             --timeout=2400 --timeout-method=thread \
             --durations=25 --junitxml=reports/junit-cpu-fp64-certified.xml \
             --cov=./ --cov-append --cov-report= -n 0 \
           && pixi run -e tests-cpu pytest tests --ignore=tests/solution -m slow \
+            --policy-child --ci-policy=full --hardware-profile=cpu \
             --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
             --durations=25 --junitxml=reports/junit-cpu-fp64-rest-slow.xml \
             --cov=./ --cov-append --cov-report=xml -n 2
@@ -292,11 +296,13 @@ jobs:
         run: |
           mkdir -p reports
           pixi run -e tests-cpu pytest tests --precision=32 -m "not slow" \
+            --policy-child --ci-policy=full --hardware-profile=cpu \
             --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
             --durations=25 --junitxml=reports/junit-cpu-fp32-notslow.xml \
             -n 4 \
           && pixi run -e tests-cpu pytest tests --ignore=tests/solution \
             --precision=32 -m slow \
+            --policy-child --ci-policy=full --hardware-profile=cpu \
             --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
             --durations=25 --junitxml=reports/junit-cpu-fp32-rest-slow.xml -n 2
       - name: Upload JUnit reports
@@ -423,6 +429,7 @@ jobs:
           pylcm_junit_report="reports/junit-$PYLCM_CI_PRECISION-$PYLCM_CI_SHARD.xml"
           pixi run -e tests-cpu pytest "${files[@]}" \
             --precision="$PYLCM_CI_PRECISION" -m slow \
+            --policy-child --ci-policy=full --hardware-profile=cpu \
             --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
             --durations=25 \
             --junitxml="$pylcm_junit_report" \

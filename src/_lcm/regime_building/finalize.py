@@ -11,18 +11,23 @@ containers, and per-target dicts survive untouched, so the params template
 reads the user's coarseness off it.
 """
 
+import functools
+import inspect
 from collections.abc import Mapping
 from types import MappingProxyType
 from typing import cast
 
+import jax.numpy as jnp
 from dags import get_annotations, with_signature
 from dags.annotations import ensure_annotations_are_strings
 
 from _lcm.certainty_equivalent import CertaintyEquivalent
+from _lcm.constraints.ir import Condition
 from _lcm.grids import DiscreteGrid
 from _lcm.typing import FunctionName, RegimeName
 from _lcm.user_regime_validation import _validate_completeness
 from _lcm.utils.error_messages import format_messages
+from lcm.case_piece import CaseBoundary
 from lcm.consumption_savings_regime import (
     NetOfAdjustmentCost,
     _composition_rule_message,
@@ -86,6 +91,7 @@ def finalize_regimes(
             derived_categoricals=derived_categoricals,
         )
         functions = dict(user_regime.functions)
+        _compose_case_piece_outputs(functions=functions)
         _compose_margin_resources(
             regime_name=regime_name,
             user_regime=user_regime,
@@ -123,6 +129,122 @@ def finalize_regimes(
         finalized._validate_finalized_structure(regime_name=regime_name)  # noqa: SLF001
         result[regime_name] = finalized
     return MappingProxyType(result)
+
+
+def _compose_case_piece_outputs(
+    *, functions: dict[FunctionName, UserFunction | Phased | None]
+) -> None:
+    """Build each split output declared by a complete pair of case pieces."""
+    from _lcm.egm.nbegm import PieceSet, collect_nbegm_metadata  # noqa: PLC0415
+
+    def build(piece_set: PieceSet) -> UserFunction:
+        producer_names = (
+            piece_set.predicate_name,
+            piece_set.when_func,
+            piece_set.otherwise_func,
+        )
+
+        @with_signature(
+            args={name: _return_annotation(functions[name]) for name in producer_names},
+            return_annotation=_case_output_annotation(
+                functions=functions,
+                output=piece_set.output,
+                branch_names=(piece_set.when_func, piece_set.otherwise_func),
+            ),
+        )
+        def composed_case_output(**kwargs: FloatND) -> FloatND:
+            return jnp.where(
+                kwargs[piece_set.predicate_name],
+                kwargs[piece_set.when_func],
+                kwargs[piece_set.otherwise_func],
+            )
+
+        composed_case_output.__name__ = piece_set.output
+        return cast("UserFunction", composed_case_output)
+
+    registry = collect_nbegm_metadata(functions=functions)
+    producer_names = dict.fromkeys(
+        name
+        for piece_set in registry.piece_sets
+        for name in (
+            piece_set.predicate_name,
+            piece_set.when_func,
+            piece_set.otherwise_func,
+        )
+    )
+    for name in producer_names:
+        function = functions[name]
+        if callable(function) and not isinstance(function, _AgeSpecialized):
+            annotated = _with_inferred_case_annotations(
+                function=cast("UserFunction", function), functions=functions
+            )
+            if isinstance(function, CaseBoundary):
+                annotated.__lcm_case_boundary__ = function  # ty: ignore[unresolved-attribute]
+            functions[name] = annotated
+    for piece_set in registry.piece_sets:
+        functions[piece_set.output] = build(piece_set)
+
+
+def _with_inferred_case_annotations(
+    *,
+    function: UserFunction,
+    functions: Mapping[FunctionName, UserFunction | Phased | None],
+) -> UserFunction:
+    """Fill only missing DAG annotations on an internal case-function proxy."""
+    annotations = ensure_annotations_are_strings(get_annotations(function))
+    argument_annotations = {}
+    for name in inspect.signature(function).parameters:
+        inferred = _annotation_for_argument(functions=functions, name=name)
+        declared = annotations.get(name)
+        argument_annotations[name] = (
+            inferred
+            if isinstance(function, Condition) and inferred != "no_annotation_found"
+            else declared
+            if declared not in {None, "no_annotation_found"}
+            else inferred
+        )
+
+    @with_signature(
+        args=argument_annotations,
+        return_annotation=annotations.get("return", "no_annotation_found"),
+    )
+    @functools.wraps(function)
+    def annotated_case_function(**kwargs: object) -> object:
+        return function(**kwargs)
+
+    return cast("UserFunction", annotated_case_function)
+
+
+def _annotation_for_argument(
+    *,
+    functions: Mapping[FunctionName, UserFunction | Phased | None],
+    name: str,
+) -> str:
+    """Return a concrete annotation used for a generated function argument."""
+    for func in functions.values():
+        if not callable(func) or isinstance(func, (Condition, _AgeSpecialized)):
+            continue
+        annotation = ensure_annotations_are_strings(get_annotations(func)).get(name)
+        if annotation not in {None, "no_annotation_found"}:
+            return annotation
+    return "no_annotation_found"
+
+
+def _case_output_annotation(
+    *,
+    functions: Mapping[FunctionName, UserFunction | Phased | None],
+    output: str,
+    branch_names: tuple[str, str],
+) -> str:
+    """Return the declared output annotation from a consumer or piece branch."""
+    consumer_annotation = _annotation_for_argument(functions=functions, name=output)
+    if consumer_annotation != "no_annotation_found":
+        return consumer_annotation
+    for name in branch_names:
+        annotation = _return_annotation(functions[name])
+        if annotation != "no_annotation_found":
+            return annotation
+    return "no_annotation_found"
 
 
 def _compose_margin_resources(

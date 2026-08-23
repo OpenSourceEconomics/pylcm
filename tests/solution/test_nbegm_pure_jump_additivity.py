@@ -49,6 +49,22 @@ def test_schedule_over_a_nonlinear_budget_is_refused() -> None:
         _check_probes(model, toy.build_params(nonlinear=True))
 
 
+def test_affinity_check_covers_the_budget_s_upper_grid_region() -> None:
+    """Curvature confined above ten is still rejected on a grid reaching twenty."""
+    model = toy.build_model(
+        variant="nbegm",
+        nonlinear_above_ten=True,
+        n_liquid=40,
+        liquid_max=20.0,
+        n_savings=40,
+    )
+
+    with pytest.raises(RegimeInitializationError, match=r"affine|second derivative"):
+        _check_probes(
+            model, toy.build_params(nonlinear_above_ten=True, nonlinear=False)
+        )
+
+
 def test_all_jump_schedule_with_a_unit_liquid_slope_builds() -> None:
     """The additive jump-only schedule (unit liquid slope) builds without error."""
     toy.build_model(variant="nbegm", non_additive=False, n_liquid=40, n_savings=40)

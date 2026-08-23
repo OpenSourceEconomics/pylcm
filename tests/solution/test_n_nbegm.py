@@ -71,6 +71,21 @@ def test_constructing_nnbegm_with_a_non_nbegm_inner_is_refused() -> None:
         )
 
 
+@pytest.mark.parametrize("variant", ["negm", "n_nbegm"])
+def test_nested_solver_does_not_publish_a_keeper_only_simulation_policy(
+    variant: str,
+) -> None:
+    """A two-margin solve publishes no policy until both actions can replay."""
+    _, policies = toy.build_model(variant=variant, n_periods=2).solve(
+        params=_PARAMS,
+        log_level="debug",
+        return_simulation_policy=True,
+    )
+    assert all(
+        "alive" not in regime_to_policy for regime_to_policy in policies.values()
+    )
+
+
 def test_two_period_toy_agrees_with_nested_dcegm() -> None:
     """On the two-period smooth toy, `NNBEGM` tracks `NEGM(inner=DCEGM)`.
 

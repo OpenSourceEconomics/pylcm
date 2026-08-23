@@ -93,16 +93,15 @@ class NBEGMCaseError(PyLCMError):
 
     Covers three families of checks:
 
-    - Invalid boundary/piece declarations: a bare `(variable, threshold)` tuple
-      that does not declare equality ownership, a case boundary with no
-      `lcm.boundary(...)` surface, a piece referencing an undeclared predicate,
-      or a duplicate/missing `when`/`otherwise` side for an output.
+    - Invalid boundary/piece declarations: a case split that is not one ordered
+      structured comparison, a piece referencing a boundary absent from the
+      function mapping, or a duplicate/missing `when`/`otherwise` side.
     - The AST/JAXPR smoothness gate: hidden branching (a Python `if`, a bare
       comparison, a piecewise primitive inside a helper) in a case's economic
       nodes.
     - The case-piece scope gate: a non-`'subsidy'` split output, a
-      state-dependent piece, a `'when'`-owned equality, a non-`'jump'` boundary
-      kind, or a boundary on a variable other than the liquid state.
+      state-dependent piece, a non-`'jump'` boundary kind, or a boundary that
+      does not compare the liquid state with a state-independent threshold.
     """
 
 

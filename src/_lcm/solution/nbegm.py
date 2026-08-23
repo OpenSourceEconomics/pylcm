@@ -41,6 +41,7 @@ from _lcm.axis_boundaries import (
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from _lcm.constraints.dispositions import CompileBoundary
+from _lcm.constraints.ir import Compare, Const, Ref
 from _lcm.constraints.routes import ConstraintPlan, ConstraintRoute
 from _lcm.continuation import EGMContinuationLayout, EGMContinuationSpec
 from _lcm.dtypes import canonical_float_dtype
@@ -50,11 +51,6 @@ from _lcm.egm.continuation_grids import (
     continuation_v_interpolation_info,
 )
 from _lcm.egm.declared_law import build_declared_liquid_law
-from _lcm.egm.fixed_width_map import (
-    FixedWidthMapGeometry,
-    PyTree,
-    map_partitioned,
-)
 from _lcm.egm.nbegm import NBEGMRegistry
 from _lcm.egm.nbegm_constraint_boundaries import (
     NBEGMFeasibilityBoundaryProgram,
@@ -84,21 +80,26 @@ from _lcm.solution.contract import (
     SolverModelContext,
     _BoundLiquidMargin,
 )
-from _lcm.solution.dcegm import _carry_subset
+from _lcm.solution.dcegm import (
+    _carry_subset,
+    _fail_if_exact_affine_kernel_unavailable,
+)
 from _lcm.solution.egm import _EGMPeriodKernel
+from _lcm.solution.periodization import (
+    resolve_solver_build_context,
+    solver_period_group_key,
+)
 from _lcm.typing import (
     EconFunctionsMapping,
     FlatParams,
     RegimeName,
     TransitionFunctionsMapping,
 )
+from _lcm.utils.dispatchers import map_over_leading_axis
 from lcm.ages import AgeGrid
-from lcm.case_piece import EqualityOwner
+from lcm.case_piece import CaseBoundary, EqualityOwner
 from lcm.exceptions import RegimeInitializationError
-from lcm.fixed_forms import (
-    FIXED_FORM_ATTRIBUTE,
-    cash_on_hand_with_subsidy,
-)
+from lcm.fixed_forms import cash_on_hand_with_subsidy
 from lcm.phased import Phased
 from lcm.typing import (
     ActionName,
@@ -123,45 +124,24 @@ type _RideAlongGroupKey = tuple[RegimeName | Hashable, ...]
 type DiscreteActionCodes = tuple[tuple[ActionName, tuple[int, ...]], ...]
 
 
-# A reference sweep on A100 hardware selected one 256-row ride microtile against
-# a four-row branch microtile.  The fixed-width production map carries no GPU
-# timing of its own, so these constants record that measured geometry without
-# claiming a production speedup.  One ride microtile is also one ride window, so
-# a request below the microtile is served by the admitted 256-row partition
-# rather than by evaluating a wider block than it commits.  Branches keep the
-# bounded 64-row window.
-_RIDE_MAP_GEOMETRY = FixedWidthMapGeometry(
-    microtile_width=256,
-    profile_window=256,
-)
-_BRANCH_MAP_GEOMETRY = FixedWidthMapGeometry(
-    microtile_width=4,
-    profile_window=64,
-)
+def _map_ride_partitioned[InputTree, OutputTree](
+    *,
+    func: Callable[[InputTree], OutputTree],
+    xs: InputTree,
+    requested_block_size: int,
+) -> OutputTree:
+    """Map a ride/cell axis using the requested production batch window."""
+    return map_over_leading_axis(func=func, xs=xs, batch_size=requested_block_size)
 
 
-def _map_ride_partitioned(
-    *, func: Callable[[PyTree], PyTree], xs: PyTree, requested_block_size: int
-) -> PyTree:
-    """Route one ride/cell axis through the wide ride geometry."""
-    return map_partitioned(
-        func=func,
-        xs=xs,
-        requested_block_size=requested_block_size,
-        geometry=_RIDE_MAP_GEOMETRY,
-    )
-
-
-def _map_branch_partitioned(
-    *, func: Callable[[PyTree], PyTree], xs: PyTree, requested_block_size: int
-) -> PyTree:
-    """Route one case/discrete branch axis through the narrow branch geometry."""
-    return map_partitioned(
-        func=func,
-        xs=xs,
-        requested_block_size=requested_block_size,
-        geometry=_BRANCH_MAP_GEOMETRY,
-    )
+def _map_branch_partitioned[InputTree, OutputTree](
+    *,
+    func: Callable[[InputTree], OutputTree],
+    xs: InputTree,
+    requested_block_size: int,
+) -> OutputTree:
+    """Map a case/discrete branch axis using its requested batch window."""
+    return map_over_leading_axis(func=func, xs=xs, batch_size=requested_block_size)
 
 
 @beartype(conf=REGIME_CONF)
@@ -248,43 +228,25 @@ class NBEGM(OneMarginSolver):
       their own magnitude — the usual case away from a crossing.
     """
     interval_batch_size: int = 0
-    """Intervals committed per iteration of the per-interval continuation read.
+    """Compiled batch width for the per-interval continuation read.
 
-    When a carry target's next-state law reads the current liquid state, the
-    continuation core evaluates the continuation DAG once per declared liquid
-    interval. The body runs at a fixed vector width, so peak intermediates
-    follow that width and not this value. `0` commits the whole axis in one
-    iteration, which is the fewest iterations and so the least work; a positive
-    value commits that many intervals per iteration, rounded up to a multiple of
-    the vector width. Every admitted value runs one executable and
-    publishes bit-identical values, because the partition is a loop stride
-    rather than part of the compilation key.
+    A positive value smaller than the interval axis is the actual ``lax.map``
+    batch size and bounds the intervals evaluated together. ``0`` or a value
+    covering the axis uses one vectorized pass.
     """
     cell_block_size: int = 0
-    """Ride cells committed per iteration of the ride-along solve.
+    """Compiled batch width for ride cells in both ride-along cores.
 
-    Both ride-along cores fan out per cell — the continuation core's transition/
-    child-interpolation read and the envelope core's candidate solve. Each
-    evaluates cells at a fixed vector width, so no cell's buffers wait on the
-    whole mesh and peak intermediates follow that width rather than this value.
-    `0` commits the whole mesh in one iteration, which is the fewest iterations
-    and so the least work; a positive value commits that many cells per
-    iteration, rounded up to a multiple of the vector width. Every admitted
-    value runs one executable and publishes bit-identical values, because the
-    partition is a loop stride rather than part of the compilation key.
+    A positive value smaller than the flattened ride-cell axis is the actual
+    ``lax.map`` batch size for both continuation fan-out and envelope solving.
+    ``0`` or a value covering the axis uses one vectorized pass.
     """
     branch_batch_size: int = 0
-    """Discrete-action branches committed per iteration.
+    """Compiled batch width for discrete-action branches in both cores.
 
-    Both ride-along cores evaluate one instance per discrete-action branch — the
-    continuation core one continuation row per branch, the envelope core one
-    continuous subproblem per branch. Each evaluates branches at a fixed vector
-    width, so per-branch intermediates follow that width rather than this value.
-    `0` commits the whole axis in one iteration, which is the fewest iterations
-    and so the least work; a positive value commits that many branches per
-    iteration, rounded up to a multiple of the vector width. Every admitted
-    value runs one executable and publishes bit-identical values, because the
-    partition is a loop stride rather than part of the compilation key.
+    A positive value smaller than the joint branch axis is the actual
+    ``lax.map`` batch size. ``0`` or a value covering the axis uses one
+    vectorized pass.
     """
     probe_failure: Literal["reject", "assume_declared"] = "reject"
     """What to do when a derivative probe cannot evaluate the model.
@@ -411,39 +373,28 @@ class NBEGM(OneMarginSolver):
             solver=bound,
             solver_name="NBEGM",
         )
+        _validate_nbegm_case_piece_declarations(context=context, solver=self)
 
     def validate_build(self, *, context: SolverBuildContext) -> None:
-        """Check case coverage and reject hidden branching in user pieces.
-
-        Collecting the metadata enforces strict coverage (each split output has a
-        `when` and an `otherwise` piece, every boundary declares a surface). Two
-        complementary gates then run on the user pieces:
-
-        - AST: rejects Python branching / hidden comparisons in a smooth piece and
-          any non-comparison branching in the boundary predicate.
-        - JAXPR: traces each smooth piece and rejects piecewise primitives
-          (`select_n`, `lt`, …) hidden inside a called helper that the AST cannot
-          see. A piece attested with `lcm.smooth_helper` is exempt.
-
-        The boundary predicate is meant to compare, so only the AST gate runs on
-        it; the JAXPR gate runs on the smooth pieces alone. Declared EV1 taste
-        shocks are refused here too — the kernels solve the hard maximum.
-        """
-        bound = cast("_BoundNBEGM", self)
+        """Check build-only capabilities after declaration validation."""
+        if self.envelope_arithmetic == "certified":
+            _fail_if_exact_affine_kernel_unavailable(
+                regime_name=context.regime_name,
+                selection="certified NBEGM envelope arithmetic",
+            )
         fail_if_taste_shocks_declared(context=context)
-        validate_case_piece_smoothness(
-            context=context,
-            liquid_state_name=resolve_liquid_state_name(
-                context=context, declared=bound.continuous_state
-            ),
-            probe_failure=self.probe_failure,
-        )
 
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Build one case-piece EGM period adapter per active period."""
         from _lcm.egm.nbegm import collect_nbegm_metadata  # noqa: PLC0415
 
         bound = cast("_BoundNBEGM", self)
+        representative_period = context.regimes_to_active_periods[context.regime_name][
+            0
+        ]
+        representative_context = resolve_solver_build_context(
+            context=context, period=representative_period
+        )
         feasibility_constraints = _consume_nbegm_feasibility_constraints(
             context=context,
             solver_path=("nbegm",),
@@ -487,17 +438,18 @@ class NBEGM(OneMarginSolver):
         is_discrete = not has_schedule and not registry.piece_sets and has_discrete
         schedule_discrete_spec = (
             _collect_nbegm_schedule_discrete_spec(
-                context=context,
+                context=representative_context,
                 budget_target=bound.budget_target,
                 continuous_state=bound.continuous_state,
                 post_decision_function=bound.post_decision_function,
+                probe_failure=self.probe_failure,
             )
             if is_schedule_discrete
             else None
         )
         schedule_spec = (
             _collect_nbegm_schedule_spec(
-                context=context,
+                context=representative_context,
                 budget_target=bound.budget_target,
                 continuous_state=bound.continuous_state,
                 consumption_action_name=bound.continuous_action,
@@ -547,24 +499,26 @@ class NBEGM(OneMarginSolver):
         )
         post_decision_name = bound.post_decision_function
         fail_if_liquid_law_is_not_written_through_savings(
-            context=context,
+            context=representative_context,
             liquid_state_name=liquid_state_name,
             post_decision_name=post_decision_name,
         )
         liquid_grid = context.grids[liquid_state_name].to_jax()
         discrete_spec = (
             _collect_nbegm_discrete_spec(
-                context=context,
+                context=representative_context,
                 budget_target=bound.budget_target,
                 post_decision_function=bound.post_decision_function,
                 continuous_state=bound.continuous_state,
+                probe_failure=self.probe_failure,
             )
             if is_discrete
             else None
         )
         case_spec = (
             _collect_nbegm_case_spec(
-                context=context, continuous_state=bound.continuous_state
+                context=representative_context,
+                continuous_state=bound.continuous_state,
             )
             if not is_schedule and not is_discrete and schedule_discrete_spec is None
             else None
@@ -582,73 +536,49 @@ class NBEGM(OneMarginSolver):
         )
 
         period_to_target = _period_to_continuation_target(context=context)
-        cores: dict[RegimeName, Callable] = {}
-        laws: dict[RegimeName, Callable[..., tuple[Float1D, Float1D]]] = {}
+        cores: dict[Hashable, Callable] = {}
+        laws: dict[Hashable, Callable[..., tuple[Float1D, Float1D]]] = {}
         period_kernels: dict[int, PeriodKernel] = {}
-        consumption_action = bound.continuous_action
         variable_names = (
             frozenset(context.state_action_space.states)
             | frozenset(context.state_action_space.continuous_actions)
             | frozenset(context.state_action_space.discrete_actions)
         )
+        route: Literal["schedule_discrete", "schedule", "discrete", "case"] = (
+            "schedule_discrete"
+            if schedule_discrete_spec is not None
+            else "schedule"
+            if schedule_spec is not None
+            else "discrete"
+            if discrete_spec is not None
+            else "case"
+        )
+        grouped_param_checks: list[ParamCheck] = []
         for period, target in period_to_target.items():
-            if target not in cores:
-                laws[target] = build_declared_liquid_law(
-                    transitions=context.transitions,
-                    functions=context.functions,
-                    post_decision_name=post_decision_name,
+            group_key = solver_period_group_key(
+                context=context,
+                period=period,
+                continuation_targets=(target,),
+                solver_path=("nbegm",),
+            )
+            if group_key not in cores:
+                resolved = resolve_solver_build_context(context=context, period=period)
+                core, law, checks = _build_nbegm_single_axis_group(
+                    context=resolved,
+                    solver=bound,
+                    route=route,
                     target=target,
-                    target_state=liquid_state_name,
+                    liquid_state_name=liquid_state_name,
                     variable_names=variable_names,
+                    savings_grid=savings_grid,
+                    feasibility_constraints=feasibility_constraints,
                 )
-                if schedule_discrete_spec is not None:
-                    core = _build_nbegm_schedule_discrete_core(
-                        savings_grid=savings_grid,
-                        functions=context.functions,
-                        consumption_action=consumption_action,
-                        spec=schedule_discrete_spec,
-                        taste_shock_scale=0.0,
-                        envelope_arithmetic=self.envelope_arithmetic,
-                    )
-                elif schedule_spec is not None:
-                    core = _build_nbegm_continuous_core(
-                        savings_grid=savings_grid,
-                        functions=context.functions,
-                        consumption_action=consumption_action,
-                        schedule_spec=schedule_spec,
-                        envelope_arithmetic=self.envelope_arithmetic,
-                        feasibility_constraints=feasibility_constraints,
-                    )
-                elif discrete_spec is not None:
-                    core = _build_nbegm_discrete_core(
-                        savings_grid=savings_grid,
-                        functions=context.functions,
-                        consumption_action=consumption_action,
-                        discrete_spec=discrete_spec,
-                        taste_shock_scale=0.0,
-                        envelope_arithmetic=self.envelope_arithmetic,
-                    )
-                else:
-                    if case_spec is None:
-                        msg = (
-                            f"Regime {context.regime_name!r} declares neither case "
-                            "pieces, a piecewise-affine schedule, nor a discrete "
-                            "action, so NBEGM has no kernel to build for it. "
-                            "Declare one of them, or use `GridSearch` for this "
-                            "regime."
-                        )
-                        raise RegimeInitializationError(msg)
-                    core = _build_nbegm_core(
-                        savings_grid=savings_grid,
-                        functions=context.functions,
-                        consumption_action=consumption_action,
-                        case_spec=case_spec,
-                        envelope_arithmetic=self.envelope_arithmetic,
-                    )
-                cores[target] = jax.jit(core) if context.enable_jit else core
+                laws[group_key] = law
+                grouped_param_checks.extend(checks)
+                cores[group_key] = jax.jit(core) if context.enable_jit else core
             period_kernels[period] = _EGMPeriodKernel(
-                core=cores[target],
-                declared_law=laws[target],
+                core=cores[group_key],
+                declared_law=laws[group_key],
                 savings_grid=savings_grid,
                 regime_name=context.regime_name,
                 continuation_target=target,
@@ -676,9 +606,7 @@ class NBEGM(OneMarginSolver):
                     rows_share_state_grid=not feasibility_constraints,
                 ),
             ),
-            param_checks=(
-                schedule_spec.param_checks if schedule_spec is not None else ()
-            ),
+            param_checks=tuple(grouped_param_checks),
         )
 
     def _fail_if_unsupported_ride_discrete(
@@ -801,19 +729,7 @@ class NBEGM(OneMarginSolver):
             int(context.grids[name].to_jax().shape[0])
             for name in schedule_spec.ride_along_state_names
         )
-        probe_arguments = _probe_arguments(context=context)
-        param_checks: list[ParamCheck] = list(schedule_spec.param_checks)
-        if _aggregates_nonlinearly(context.certainty_equivalent):
-            param_checks.append(
-                _deferred_probe(
-                    _fail_if_flow_not_single_power,
-                    regime_name=context.regime_name,
-                    probe_arguments=probe_arguments,
-                    utility_dag=schedule_spec.utility_dag,
-                    consumption_action_name=bound.continuous_action,
-                    probe_failure=self.probe_failure,
-                )
-            )
+        param_checks: list[ParamCheck] = []
         transition_target_names = tuple(context.transitions)
 
         # The ride-along kernel takes the continuation as a probability-weighted
@@ -828,8 +744,25 @@ class NBEGM(OneMarginSolver):
         cliff_candidates_by_key: dict[_RideAlongGroupKey, bool] = {}
         period_kernels: dict[int, PeriodKernel] = {}
         for period in active_periods:
+            resolved = resolve_solver_build_context(context=context, period=period)
+            group_spec = _collect_nbegm_schedule_spec(
+                context=resolved,
+                budget_target=bound.budget_target,
+                continuous_state=bound.continuous_state,
+                consumption_action_name=bound.continuous_action,
+                probe_failure=self.probe_failure,
+            )
+            group_constraints = tuple(
+                replace(
+                    constraint,
+                    predicate=resolved.constraint_functions[
+                        constraint.program.constraint_name
+                    ],
+                )
+                for constraint in feasibility_constraints
+            )
             plan = _build_nbegm_continuation_plan(
-                context=context,
+                context=resolved,
                 period=period,
                 post_decision_name=bound.post_decision_function,
                 stochastic_node_batch_size=self.stochastic_node_batch_size,
@@ -849,21 +782,40 @@ class NBEGM(OneMarginSolver):
                         context.period_to_regime_grid_signature
                     ),
                 ),
+                solver_period_group_key(
+                    context=context,
+                    period=period,
+                    continuation_targets=(plan.stateful_targets + plan.scalar_targets),
+                    solver_path=("nbegm", "ride_along"),
+                ),
             )
             if key not in continuation_cores:
+                probe_arguments = _probe_arguments(context=resolved)
+                param_checks.extend(group_spec.param_checks)
+                if _aggregates_nonlinearly(resolved.certainty_equivalent):
+                    param_checks.append(
+                        _deferred_probe(
+                            _fail_if_flow_not_single_power,
+                            regime_name=context.regime_name,
+                            probe_arguments=probe_arguments,
+                            utility_dag=group_spec.utility_dag,
+                            consumption_action_name=bound.continuous_action,
+                            probe_failure=self.probe_failure,
+                        )
+                    )
                 param_checks.append(
                     _deferred_probe(
                         _fail_if_liquid_reading_next_state_varies_within_interval,
                         regime_name=context.regime_name,
                         probe_arguments=probe_arguments,
                         continuation_plan=plan,
-                        liquid_name=schedule_spec.liquid_state_name,
+                        liquid_name=group_spec.liquid_state_name,
                         probe_failure=self.probe_failure,
                     )
                 )
                 statics = _nbegm_ride_along_statics(
                     savings_grid=savings_grid,
-                    schedule_spec=schedule_spec,
+                    schedule_spec=group_spec,
                     continuation_plan=plan,
                     envelope_segment_block_size=self.envelope_segment_block_size,
                     envelope_arithmetic=self.envelope_arithmetic,
@@ -871,14 +823,14 @@ class NBEGM(OneMarginSolver):
                     interval_batch_size=self.interval_batch_size,
                     branch_batch_size=self.branch_batch_size,
                     publish_jump_topology=self.jump_read == "one_sided",
-                    co_map_state_names=context.co_map_state_names,
+                    co_map_state_names=resolved.co_map_state_names,
                 )
                 # The Epstein-Zin kernels cover smooth and pure-kink budgets;
                 # the unified jump-and-kink candidate step is additive. Reject
                 # the combination here, at model build, rather than midway
                 # through a traced solve.
                 if (
-                    _aggregates_nonlinearly(context.certainty_equivalent)
+                    _aggregates_nonlinearly(resolved.certainty_equivalent)
                     and statics.has_jump
                 ):
                     msg = (
@@ -894,7 +846,7 @@ class NBEGM(OneMarginSolver):
                 # combining it with a certainty equivalent would compare
                 # candidates under the wrong objective. Reject at model build.
                 if (
-                    _aggregates_nonlinearly(context.certainty_equivalent)
+                    _aggregates_nonlinearly(resolved.certainty_equivalent)
                     and statics.continuation_reads_liquid
                 ):
                     msg = (
@@ -922,16 +874,16 @@ class NBEGM(OneMarginSolver):
                     statics=statics,
                     regime_name=context.regime_name,
                     cliff_candidates=cliff_candidates,
-                    schedule_spec=schedule_spec,
+                    schedule_spec=group_spec,
                 )
                 envelope_core = _build_nbegm_envelope_core(
                     savings_grid=savings_grid,
-                    schedule_spec=schedule_spec,
+                    schedule_spec=group_spec,
                     statics=statics,
                     is_epstein_zin=_aggregates_nonlinearly(
                         context.certainty_equivalent
                     ),
-                    feasibility_constraints=feasibility_constraints,
+                    feasibility_constraints=group_constraints,
                 )
                 continuation_cores[key] = (
                     jax.jit(continuation_core)
@@ -1573,24 +1525,22 @@ class _RideAlongNBEGMPeriodKernel:
 class _NBEGMCaseSpec:
     """Build-time statics describing one binary case split."""
 
-    when_callable: Callable
-    """The `when` piece — its contribution applies where the predicate holds."""
-    otherwise_callable: Callable
-    """The `otherwise` piece — its contribution applies where the predicate fails."""
-    when_func: FunctionName
-    """Qualified-name prefix of the `when` piece's params."""
-    otherwise_func: FunctionName
-    """Qualified-name prefix of the `otherwise` piece's params."""
-    when_param_names: tuple[str, ...]
-    """Parameter names of the `when` piece."""
-    otherwise_param_names: tuple[str, ...]
-    """Parameter names of the `otherwise` piece."""
-    predicate_name: FunctionName
-    """Qualified-name prefix of the boundary predicate's params."""
-    threshold_name: str
-    """Name of the predicate's threshold parameter."""
+    below_callable: Callable
+    """Piece contribution on the lower side of the liquid boundary."""
+    above_callable: Callable
+    """Piece contribution on the upper side of the liquid boundary."""
+    below_func: FunctionName
+    """Qualified-name prefix of the lower piece's params."""
+    above_func: FunctionName
+    """Qualified-name prefix of the upper piece's params."""
+    below_param_names: tuple[str, ...]
+    """Parameter names of the lower piece."""
+    above_param_names: tuple[str, ...]
+    """Parameter names of the upper piece."""
+    threshold_resolver: Callable[[Mapping[str, FloatND]], FloatND]
+    """Resolve the literal, parameter, or computed boundary value."""
     equality_owner: EqualityOwner
-    """Predicate side owning the exact-boundary point (`when` or `otherwise`)."""
+    """Coordinate side owning equality (`when` is below, `otherwise` above)."""
 
 
 # The only split output the case-piece route knows how to route — an additive
@@ -1627,11 +1577,10 @@ def fail_if_taste_shocks_declared(*, context: SolverBuildContext) -> None:
         raise RegimeInitializationError(msg)
 
 
-def validate_case_piece_smoothness(
+def _validate_nbegm_case_piece_declarations(
     *,
-    context: SolverBuildContext,
-    liquid_state_name: StateName,
-    probe_failure: Literal["reject", "assume_declared"] = "reject",
+    context: SolverModelContext,
+    solver: NBEGM,
 ) -> None:
     """Check case coverage and reject hidden branching in a regime's pieces.
 
@@ -1640,13 +1589,9 @@ def validate_case_piece_smoothness(
     bare `NBEGM` would.
 
     Args:
-        context: The regime's solver build context.
-        liquid_state_name: The state the case boundaries are declared on. Named
-            explicitly rather than taken as the regime's first state, because a
-            nested regime carries an outer margin the pieces never see.
-        probe_failure: What to do with a piece the build-time scalar fills
-            cannot trace — `"reject"` refuses the build, `"assume_declared"`
-            warns and leaves the smoothness claim to the model author.
+        context: Finalized declarations for the regime and its model.
+        solver: Bound inner NB-EGM configuration whose liquid role and tracing
+            policy govern the declarations.
 
     Raises:
         NBEGMCaseError: A split output is not fully covered, a boundary declares
@@ -1665,16 +1610,21 @@ def validate_case_piece_smoothness(
         is_smooth_helper,
     )
 
+    user_regime = context.user_regimes[context.regime_name]
+    bound = cast("_BoundNBEGM", solver)
     functions = cast(
-        "Mapping[FunctionName, Callable[..., object]]",
-        context.user_regimes[context.regime_name].functions,
+        "Mapping[FunctionName, Callable[..., object]]", user_regime.functions
     )
     registry = collect_nbegm_metadata(functions=functions)
-    space = context.state_action_space
-    if registry.piece_sets and space.discrete_actions:
+    discrete_actions = frozenset(
+        name
+        for name, grid in user_regime.actions.items()
+        if isinstance(grid, DiscreteGrid)
+    )
+    if registry.piece_sets and discrete_actions:
         msg = (
             f"Regime '{context.regime_name}' declares case pieces alongside the "
-            f"discrete action(s) {sorted(space.discrete_actions)}. The "
+            f"discrete action(s) {sorted(discrete_actions)}. The "
             "case-piece kernels solve a one-asset consumption-saving problem "
             "and maximize over the continuous action only, so the discrete "
             "choice would never enter the published value and simulation would "
@@ -1686,17 +1636,16 @@ def validate_case_piece_smoothness(
     _validate_nbegm_boundary_scope(
         registry=registry,
         functions=functions,
-        liquid_state_name=liquid_state_name,
-        reserved_names=frozenset(space.state_names) | frozenset(space.action_names),
+        liquid_state_name=bound.continuous_state,
+        reserved_names=frozenset(user_regime.states) | frozenset(user_regime.actions),
     )
     violations: list[str] = []
-    for predicate_name in registry.boundaries:
-        violations += find_ast_violations(functions[predicate_name], mode="boundary")
     for piece_set in registry.piece_sets:
         for piece_name in (piece_set.when_func, piece_set.otherwise_func):
-            piece = functions[piece_name]
-            if is_smooth_helper(piece):
+            declared_piece = functions[piece_name]
+            if is_smooth_helper(declared_piece):
                 continue
+            piece = inspect.unwrap(declared_piece)
             violations += find_ast_violations(piece, mode="smooth_user")
             n_params = len(inspect.signature(piece).parameters)
             abstract_args = tuple(jnp.asarray(1.0) for _ in range(n_params))
@@ -1704,7 +1653,7 @@ def validate_case_piece_smoothness(
                 piece,
                 abstract_args=abstract_args,
                 mode="smooth_user",
-                probe_failure=probe_failure,
+                probe_failure=solver.probe_failure,
             )
     if violations:
         from lcm.exceptions import NBEGMCaseError  # noqa: PLC0415
@@ -1723,11 +1672,10 @@ def _validate_nbegm_boundary_scope(
     """Reject case-piece declarations the case-piece kernels cannot solve.
 
     The case-piece route splits exactly one additive cash-on-hand `subsidy`
-    across one jump boundary on the liquid state, owned by the `otherwise` side,
-    with pieces that read only the flat params (not states or actions). Anything
-    else (a `when`-owned boundary, a continuous kink or hard constraint, a
-    boundary on another variable, a non-`subsidy` output, a state-dependent piece)
-    is rejected here rather than silently solved under the wrong convention.
+    across one jump boundary on the liquid state, with pieces that read only the
+    flat params (not states or actions). The comparison operator and operand
+    direction jointly determine which formula lies below the boundary and which
+    side owns equality.
     A budget outside that shape is declarable as a `lcm.piecewise_affine`
     schedule, which carries kinks, jumps, and floors together.
     """
@@ -1753,48 +1701,72 @@ def _validate_nbegm_boundary_scope(
                     f"{state_action_deps!r}."
                 )
                 raise NBEGMCaseError(msg)
-    for predicate_name, meta in registry.boundaries.items():
-        for surface in meta.boundaries:
-            if surface.equality_owner != "otherwise":
-                msg = (
-                    f"NBEGM case boundaries own equality on the "
-                    f"`otherwise` side; "
-                    f"{predicate_name!r} owns equality on the "
-                    f"{surface.equality_owner!r} side."
-                )
-                raise NBEGMCaseError(msg)
-            if surface.kind != "jump":
-                msg = (
-                    f"NBEGM case boundaries declare `kind='jump'`; "
-                    f"{predicate_name!r} declares {surface.kind!r}."
-                )
-                raise NBEGMCaseError(msg)
-            if surface.variable != liquid_state_name:
-                msg = (
-                    f"NBEGM case boundaries compare the liquid state "
-                    f"{liquid_state_name!r}; {predicate_name!r} compares "
-                    f"{surface.variable!r}."
-                )
-                raise NBEGMCaseError(msg)
+    for predicate_name, boundary in registry.boundaries.items():
+        _normalize_case_boundary(
+            boundary=boundary,
+            predicate_name=predicate_name,
+            liquid_state_name=liquid_state_name,
+            reserved_names=reserved_names,
+        )
 
 
-# The cash-on-hand the case-piece kernels form themselves, rather than calling
-# the regime's declared budget node.
-_KERNEL_BUDGET_NODES = frozenset({cash_on_hand_with_subsidy.__name__})
+def _normalize_case_boundary(
+    *,
+    boundary: CaseBoundary,
+    predicate_name: FunctionName,
+    liquid_state_name: StateName,
+    reserved_names: frozenset[str],
+) -> tuple[Const | Ref, bool, EqualityOwner]:
+    """Normalize either operand direction to lower/upper coordinate ownership."""
+    from lcm.exceptions import NBEGMCaseError  # noqa: PLC0415
 
-
-def _declares_fixed_form(func: object, *, allowed: frozenset[str]) -> bool:
-    """Report whether `func` is one of `allowed`, seen through the DAG's wrappers.
-
-    The declaration reaches the solver wrapped, so the marker is followed along
-    the `__wrapped__` chain rather than compared by identity.
-    """
-    seen: object | None = func
-    while seen is not None:
-        if getattr(seen, FIXED_FORM_ATTRIBUTE, None) in allowed:
-            return True
-        seen = getattr(seen, "__wrapped__", None)
-    return False
+    if boundary.kind != "jump":
+        msg = (
+            "NBEGM case boundaries declare `kind='jump'`; "
+            f"{predicate_name!r} declares {boundary.kind!r}."
+        )
+        raise NBEGMCaseError(msg)
+    expression = boundary.expression
+    if not isinstance(expression, Compare):
+        msg = f"NBEGM case boundary {predicate_name!r} is not one comparison."
+        raise NBEGMCaseError(msg)
+    left_is_liquid = (
+        isinstance(expression.left, Ref) and expression.left.name == liquid_state_name
+    )
+    right_is_liquid = (
+        isinstance(expression.right, Ref) and expression.right.name == liquid_state_name
+    )
+    if left_is_liquid == right_is_liquid:
+        msg = (
+            f"NBEGM case boundary {predicate_name!r} must compare the liquid "
+            f"state {liquid_state_name!r} with one threshold."
+        )
+        raise NBEGMCaseError(msg)
+    threshold = expression.right if left_is_liquid else expression.left
+    if not isinstance(threshold, (Const, Ref)):
+        msg = f"NBEGM case boundary {predicate_name!r} has an invalid threshold."
+        raise NBEGMCaseError(msg)
+    if isinstance(threshold, Ref) and threshold.name in reserved_names:
+        msg = (
+            f"NBEGM case boundary {predicate_name!r} uses state/action "
+            f"{threshold.name!r} as its threshold. The case-piece boundary must "
+            "be a literal, parameter, or state-independent computed value."
+        )
+        raise NBEGMCaseError(msg)
+    if isinstance(threshold, Const) and isinstance(threshold.value, bool):
+        msg = (
+            f"NBEGM case boundary {predicate_name!r} uses a Boolean threshold; "
+            "the liquid boundary must be numerical."
+        )
+        raise NBEGMCaseError(msg)
+    when_is_below = (left_is_liquid and expression.op in {"<", "<="}) or (
+        right_is_liquid and expression.op in {">", ">="}
+    )
+    below_owns_equality = (
+        expression.admits_equality if when_is_below else not expression.admits_equality
+    )
+    equality_owner: EqualityOwner = "when" if below_owns_equality else "otherwise"
+    return threshold, when_is_below, equality_owner
 
 
 _KERNEL_LIQUID_STATE = "liquid"
@@ -1918,7 +1890,7 @@ def _fail_if_budget_node_differs_from_kernel_cash_on_hand(
             "use `GridSearch` for this regime."
         )
         raise RegimeInitializationError(msg)
-    if not _declares_fixed_form(budget_node, allowed=_KERNEL_BUDGET_NODES):
+    if budget_node is not cash_on_hand_with_subsidy:
         msg = (
             f"NBEGM's case-piece kernels add the split output to the liquid state "
             f"themselves rather than calling the declared budget node, so this "
@@ -2050,13 +2022,6 @@ def _collect_nbegm_case_spec(
         )
         raise RegimeInitializationError(msg)
     piece_set = registry.piece_sets[0]
-    surfaces = registry.boundaries[piece_set.predicate_name].boundaries
-    if len(surfaces) != 1:
-        msg = (
-            "NBEGM case boundaries declare exactly one surface; the predicate "
-            f"{piece_set.predicate_name!r} declares {len(surfaces)}."
-        )
-        raise RegimeInitializationError(msg)
     space = context.state_action_space
     liquid_state_name = _single_liquid_state_name(
         context=context, declared=continuous_state, path="case-piece path"
@@ -2067,19 +2032,85 @@ def _collect_nbegm_case_spec(
         liquid_state_name=liquid_state_name,
         reserved_names=frozenset(space.state_names) | frozenset(space.action_names),
     )
-    when_callable = functions[piece_set.when_func]
-    otherwise_callable = functions[piece_set.otherwise_func]
-    return _NBEGMCaseSpec(
-        when_callable=when_callable,
-        otherwise_callable=otherwise_callable,
-        when_func=piece_set.when_func,
-        otherwise_func=piece_set.otherwise_func,
-        when_param_names=tuple(inspect.signature(when_callable).parameters),
-        otherwise_param_names=tuple(inspect.signature(otherwise_callable).parameters),
+    threshold, when_is_below, equality_owner = _normalize_case_boundary(
+        boundary=registry.boundaries[piece_set.predicate_name],
         predicate_name=piece_set.predicate_name,
-        threshold_name=surfaces[0].threshold,
-        equality_owner=surfaces[0].equality_owner,
+        liquid_state_name=liquid_state_name,
+        reserved_names=frozenset(space.state_names) | frozenset(space.action_names),
     )
+    when_func = piece_set.when_func
+    otherwise_func = piece_set.otherwise_func
+    below_func, above_func = (
+        (when_func, otherwise_func) if when_is_below else (otherwise_func, when_func)
+    )
+    below_callable = functions[below_func]
+    above_callable = functions[above_func]
+    return _NBEGMCaseSpec(
+        below_callable=below_callable,
+        above_callable=above_callable,
+        below_func=below_func,
+        above_func=above_func,
+        below_param_names=tuple(inspect.signature(below_callable).parameters),
+        above_param_names=tuple(inspect.signature(above_callable).parameters),
+        threshold_resolver=_case_threshold_resolver(
+            context=context,
+            predicate_name=piece_set.predicate_name,
+            threshold=threshold,
+        ),
+        equality_owner=equality_owner,
+    )
+
+
+def _case_threshold_resolver(
+    *,
+    context: SolverBuildContext,
+    predicate_name: FunctionName,
+    threshold: Const | Ref,
+) -> Callable[[Mapping[str, FloatND]], FloatND]:
+    """Compile a case threshold without inventing a second predicate."""
+    import inspect  # noqa: PLC0415
+
+    from lcm.exceptions import NBEGMCaseError  # noqa: PLC0415
+
+    if isinstance(threshold, Const):
+        literal = threshold.value
+
+        def resolve_literal(_params: Mapping[str, FloatND]) -> FloatND:
+            return jnp.asarray(literal)
+
+        return resolve_literal
+
+    threshold_name = threshold.name
+    if threshold_name not in context.functions:
+        qualified_name = f"{predicate_name}__{threshold_name}"
+
+        def resolve_parameter(params: Mapping[str, FloatND]) -> FloatND:
+            return params[qualified_name]
+
+        return resolve_parameter
+
+    threshold_dag = concatenate_functions(
+        dict(context.functions), targets=threshold_name
+    )
+    argument_names = tuple(inspect.signature(threshold_dag).parameters)
+    state_action_names = frozenset(context.state_action_space.state_names) | frozenset(
+        context.state_action_space.action_names
+    )
+    dynamic_names = sorted(set(argument_names) & state_action_names)
+    if dynamic_names:
+        msg = (
+            f"NBEGM case threshold {threshold_name!r} depends on the "
+            f"state/action names {dynamic_names}; the case-piece kernel requires "
+            "one state-independent boundary value per solve."
+        )
+        raise NBEGMCaseError(msg)
+
+    def resolve_computed(params: Mapping[str, FloatND]) -> FloatND:
+        return jnp.asarray(
+            threshold_dag(**{name: params[name] for name in argument_names})
+        )
+
+    return resolve_computed
 
 
 def _build_nbegm_core(
@@ -2121,19 +2152,19 @@ def _build_nbegm_core(
         **params: FloatND,
     ) -> tuple[Float1D, EGMCarry]:
         preferences = build_preferences(params)
-        subsidy_when = case_spec.when_callable(
+        subsidy_below = case_spec.below_callable(
             **{
-                p: params[f"{case_spec.when_func}__{p}"]
-                for p in case_spec.when_param_names
+                p: params[f"{case_spec.below_func}__{p}"]
+                for p in case_spec.below_param_names
             }
         )
-        subsidy_otherwise = case_spec.otherwise_callable(
+        subsidy_above = case_spec.above_callable(
             **{
-                p: params[f"{case_spec.otherwise_func}__{p}"]
-                for p in case_spec.otherwise_param_names
+                p: params[f"{case_spec.above_func}__{p}"]
+                for p in case_spec.above_param_names
             }
         )
-        asset_limit = params[f"{case_spec.predicate_name}__{case_spec.threshold_name}"]
+        asset_limit = case_spec.threshold_resolver(params)
         value, marginal, _policy = nbegm_one_asset_step(
             next_value=next_value,
             next_marginal=next_marginal,
@@ -2144,8 +2175,8 @@ def _build_nbegm_core(
             preferences=preferences,
             next_liquid=next_liquid,
             marginal_return=marginal_return,
-            subsidy_when=subsidy_when,
-            subsidy_otherwise=subsidy_otherwise,
+            subsidy_when=subsidy_below,
+            subsidy_otherwise=subsidy_above,
             asset_limit=asset_limit,
             equality_owner=case_spec.equality_owner,
             arithmetic=envelope_arithmetic,
@@ -2177,6 +2208,8 @@ class _NBEGMSource:
     """Qualified parameter name of this breakpoint's threshold."""
     kind: str
     """Discontinuity kind: `continuous_kink`, `jump`, or `hard_constraint`."""
+    equality_owner: Literal["below", "above"]
+    """Side of the schedule coordinate containing the exact threshold."""
     derived_of_liquid_dag: Callable | None
     """Composed schedule variable as a function of the liquid state, or `None`
     when the schedule varies in the liquid state directly (no preimage needed)."""
@@ -2454,6 +2487,38 @@ def _branch_bindings(
     )
 
 
+def _liquid_affinity_samples(
+    *, context: SolverBuildContext, liquid_state_name: StateName
+) -> Float1D:
+    """Return liquid-grid nodes and cell interiors for affinity checks."""
+    grid = context.grids[liquid_state_name].to_jax()
+    midpoints = 0.5 * (grid[:-1] + grid[1:])
+    return jnp.sort(jnp.concatenate([grid, midpoints]))
+
+
+def _budget_affinity_check(
+    *,
+    context: SolverBuildContext,
+    coh_dag: Callable[..., object],
+    liquid_state_name: StateName,
+    require_unit_slope: bool,
+    probe_failure: Literal["reject", "assume_declared"],
+) -> ParamCheck:
+    """Configure the shared all-branch, full-liquid-domain affinity preflight."""
+    return _deferred_probe(
+        _fail_if_budget_nonaffine_in_liquid,
+        regime_name=context.regime_name,
+        probe_arguments=_probe_arguments(context=context),
+        coh_dag=coh_dag,
+        liquid_name=liquid_state_name,
+        liquid_samples=_liquid_affinity_samples(
+            context=context, liquid_state_name=liquid_state_name
+        ),
+        require_unit_slope=require_unit_slope,
+        probe_failure=probe_failure,
+    )
+
+
 def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901
     *,
     coh_dag: Callable[..., object],
@@ -2461,6 +2526,7 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901
     require_unit_slope: bool,
     regime_name: str,
     probe_arguments: _ProbeArguments,
+    liquid_samples: Float1D,
     probe_failure: Literal["reject", "assume_declared"] = "reject",
 ) -> None:
     """Reject a budget that is not affine in the liquid state within an interval.
@@ -2572,7 +2638,7 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901
                 for overrides in _int_code_sweeps(
                     arg_names=arg_names, int_arg_values=probe_arguments.int_arg_values
                 )
-                for sample in (0.37, 1.63, 2.71)
+                for sample in liquid_samples
             ]
 
         try:
@@ -3638,6 +3704,7 @@ def _collect_nbegm_schedule_spec(
                 variable=schedule.variable,
                 threshold_param_name=f"{schedule.output}__{bracket.threshold}",
                 kind=bracket.kind,
+                equality_owner=bracket.equality_owner,
                 derived_of_liquid_dag=dag,
                 derived_param_names=params,
                 derived_state_names=states_read,
@@ -3679,14 +3746,11 @@ def _collect_nbegm_schedule_spec(
     )
     breakpoint_kinds = tuple(bp.kind for bp in first_breakpoints)
     all_kinds = tuple(bp.kind for schedule in schedules for bp in schedule.breakpoints)
-    affinity_check = _deferred_probe(
-        _fail_if_budget_nonaffine_in_liquid,
-        regime_name=context.regime_name,
-        probe_arguments=_probe_arguments(context=context),
+    affinity_check = _budget_affinity_check(
+        context=context,
         coh_dag=coh_dag,
-        liquid_name=liquid_state_name,
-        # The pure-jump step (liquid-direct, non-ride, all-jump) reads only
-        # intercepts and assumes unit slope; every other path recovers the slope.
+        liquid_state_name=liquid_state_name,
+        # The pure-jump step reads only intercepts and assumes unit slope.
         require_unit_slope=(
             not ride_along_state_names
             and not has_derived
@@ -4370,8 +4434,7 @@ class _NBEGMRideAlongStatics:
     """Which arithmetic decides envelope ownership (see
     `NBEGM.envelope_arithmetic`)."""
     cell_block_size: int
-    """Block size for streaming both ride-along cores over ride cells; `0` vmaps
-    the whole flattened mesh at once (see `NBEGM.cell_block_size`)."""
+    """Batch width for both ride-along cores; `0` vmaps the whole cell mesh."""
     n_action_branches: int
     """Number of discrete-action branches the continuation carries a leading axis
     over; `0` when the regime carries no discrete action (no branch axis). A branch
@@ -4567,7 +4630,7 @@ def _nbegm_cell_breakpoints(
 
     from _lcm.egm.nbegm_breakpoints import (  # noqa: PLC0415
         clamp_breakpoints_to_grid,
-        linear_asset_preimage,
+        linear_asset_selection_preimage,
     )
 
     liquid_name = statics.liquid_name
@@ -4582,7 +4645,11 @@ def _nbegm_cell_breakpoints(
         )
         threshold = jnp.asarray(threshold_value, dtype=dtype)
         if source.derived_of_liquid_dag is None:
-            return threshold
+            return jnp.where(
+                source.equality_owner == "above",
+                threshold,
+                jnp.nextafter(threshold, jnp.inf),
+            )
         dag = source.derived_of_liquid_dag
         derived_params = {name: kwargs[name] for name in source.derived_param_names}
         cell_for_dag = {name: cell[name] for name in source.derived_state_names}
@@ -4601,7 +4668,11 @@ def _nbegm_cell_breakpoints(
                 **dag_action_binding,
             )
 
-        return linear_asset_preimage(derived_of_liquid, threshold=threshold)
+        return linear_asset_selection_preimage(
+            derived_of_liquid,
+            threshold=threshold,
+            equality_owner=source.equality_owner,
+        )
 
     # Zero declared breakpoints ⇒ an empty partition (one interval per cell).
     preimages = (
@@ -5343,10 +5414,9 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
                 name for name, _ in schedule_spec.discrete_actions
             )
             if branch_action_names:
-                # `lax.map` compiles the branch subproblem once and streams it in
-                # `branch_batch_size` blocks (the whole axis in one vectorized pass
-                # by default) — per-branch EGM intermediates never all sit in
-                # flight, and the branch axis is never Python-unrolled. Optional
+                # The shared EGM dispatcher batches the branch subproblem at
+                # `branch_batch_size`, or vectorizes the whole axis when it is 0.
+                # The branch axis is never Python-unrolled. Optional
                 # branch inputs enter the mapped pytree only when present.
                 branch_inputs = _branch_inputs(
                     codes=_stacked_branch_codes(
@@ -5454,6 +5524,8 @@ class _NBEGMDiscreteSpec:
     """Name of the liquid state the budget varies in."""
     discrete_actions: DiscreteActionCodes
     """Each discrete action enveloped over, paired with its grid codes."""
+    param_checks: tuple[ParamCheck, ...] = ()
+    """Parameter-dependent preconditions for every discrete budget branch."""
 
     @property
     def branch_bindings(self) -> tuple[MappingProxyType[ActionName, int], ...]:
@@ -5467,6 +5539,7 @@ def _collect_nbegm_discrete_spec(
     budget_target: FunctionName,
     post_decision_function: FunctionName,
     continuous_state: StateName,
+    probe_failure: Literal["reject", "assume_declared"],
 ) -> _NBEGMDiscreteSpec:
     """Collect the discrete actions of a smooth regime and their grid codes."""
     import inspect  # noqa: PLC0415
@@ -5492,11 +5565,19 @@ def _collect_nbegm_discrete_spec(
         for name in coh_args
         if name != liquid_state_name and name not in action_names
     )
+    affinity_check = _budget_affinity_check(
+        context=context,
+        coh_dag=coh_dag,
+        liquid_state_name=liquid_state_name,
+        require_unit_slope=False,
+        probe_failure=probe_failure,
+    )
     return _NBEGMDiscreteSpec(
         coh_of_liquid_dag=coh_dag,
         coh_param_names=coh_param_names,
         liquid_state_name=liquid_state_name,
         discrete_actions=discrete_actions,
+        param_checks=(affinity_check,),
     )
 
 
@@ -5525,6 +5606,8 @@ class _NBEGMScheduleDiscreteSpec:
     """Qualified parameter names of the schedule's thresholds (liquid breakpoints)."""
     breakpoint_kinds: tuple[str, ...]
     """Discontinuity kind per threshold, in the schedule's declared order."""
+    param_checks: tuple[ParamCheck, ...] = ()
+    """Parameter-dependent preconditions for every schedule-action branch."""
 
     @property
     def branch_bindings(self) -> tuple[MappingProxyType[ActionName, int], ...]:
@@ -5538,6 +5621,7 @@ def _collect_nbegm_schedule_discrete_spec(
     budget_target: FunctionName,
     continuous_state: StateName,
     post_decision_function: FunctionName,
+    probe_failure: Literal["reject", "assume_declared"],
 ) -> _NBEGMScheduleDiscreteSpec:
     """Collect the discrete actions layered over a single-liquid cliff schedule."""
     import inspect  # noqa: PLC0415
@@ -5589,6 +5673,15 @@ def _collect_nbegm_schedule_discrete_spec(
         f"{first.output}__{bp.threshold}" for bp in first.breakpoints
     )
     breakpoint_kinds = tuple(bp.kind for bp in first.breakpoints)
+    affinity_check = _budget_affinity_check(
+        context=context,
+        coh_dag=coh_dag,
+        liquid_state_name=liquid_state_name,
+        require_unit_slope=(
+            bool(breakpoint_kinds) and all(kind == "jump" for kind in breakpoint_kinds)
+        ),
+        probe_failure=probe_failure,
+    )
     return _NBEGMScheduleDiscreteSpec(
         coh_of_liquid_action_dag=coh_dag,
         coh_param_names=coh_param_names,
@@ -5596,6 +5689,7 @@ def _collect_nbegm_schedule_discrete_spec(
         discrete_actions=discrete_actions,
         threshold_param_names=threshold_param_names,
         breakpoint_kinds=breakpoint_kinds,
+        param_checks=(affinity_check,),
     )
 
 
@@ -5681,7 +5775,6 @@ def _build_nbegm_schedule_discrete_core(
         marginal_return: Float1D,
         **params: FloatND,
     ) -> tuple[Float1D, EGMCarry]:
-        preferences = build_preferences(params)
         coh_params = {name: params[name] for name in spec.coh_param_names}
         breakpoints = _sorted_thresholds(
             jnp.stack([params[name] for name in spec.threshold_param_names]),
@@ -5691,6 +5784,7 @@ def _build_nbegm_schedule_discrete_core(
         values: list[Float1D] = []
         marginals: list[Float1D] = []
         for binding in spec.branch_bindings:
+            preferences = build_preferences({**params, **binding})
 
             def coh_of_liquid(
                 scalar_liquid: FloatND,
@@ -5786,8 +5880,11 @@ def _build_nbegm_discrete_core(
         marginal_return: Float1D,
         **params: FloatND,
     ) -> tuple[Float1D, EGMCarry]:
-        preferences = build_preferences(params)
         coh_params = {name: params[name] for name in discrete_spec.coh_param_names}
+        branch_preferences = tuple(
+            build_preferences({**params, **binding})
+            for binding in discrete_spec.branch_bindings
+        )
         empty_breakpoints = jnp.zeros((0,), dtype=liquid.dtype)
         choices: list[dict[str, Float1D]] = []
         for binding in discrete_spec.branch_bindings:
@@ -5817,7 +5914,7 @@ def _build_nbegm_discrete_core(
             next_liquid_grid=next_liquid_grid,
             savings_grid=savings_grid,
             discount_factor=params["koopmans_aggregator__discount_factor"],
-            preferences=preferences,
+            preferences=branch_preferences,
             next_liquid=next_liquid,
             marginal_return=marginal_return,
             choices=tuple(choices),
@@ -5833,6 +5930,104 @@ def _build_nbegm_discrete_core(
         return value, carry
 
     return core
+
+
+def _build_nbegm_single_axis_group(
+    *,
+    context: SolverBuildContext,
+    solver: _BoundNBEGM,
+    route: Literal["schedule_discrete", "schedule", "discrete", "case"],
+    target: RegimeName,
+    liquid_state_name: StateName,
+    variable_names: frozenset[StateOrActionName],
+    savings_grid: Float1D,
+    feasibility_constraints: tuple[_NBEGMFeasibilityConstraint, ...],
+) -> tuple[
+    Callable,
+    Callable[..., tuple[Float1D, Float1D]],
+    tuple[ParamCheck, ...],
+]:
+    """Build one periodized single-axis core and its declared liquid law."""
+    resolved_feasibility_constraints = tuple(
+        replace(
+            constraint,
+            predicate=context.constraint_functions[constraint.program.constraint_name],
+        )
+        for constraint in feasibility_constraints
+    )
+    law = build_declared_liquid_law(
+        transitions=context.transitions,
+        functions=context.functions,
+        post_decision_name=solver.post_decision_function,
+        target=target,
+        target_state=liquid_state_name,
+        variable_names=variable_names,
+    )
+    if route == "schedule_discrete":
+        spec = _collect_nbegm_schedule_discrete_spec(
+            context=context,
+            budget_target=solver.budget_target,
+            continuous_state=solver.continuous_state,
+            post_decision_function=solver.post_decision_function,
+            probe_failure=solver.probe_failure,
+        )
+        core = _build_nbegm_schedule_discrete_core(
+            savings_grid=savings_grid,
+            functions=context.functions,
+            consumption_action=solver.continuous_action,
+            spec=spec,
+            taste_shock_scale=0.0,
+            envelope_arithmetic=solver.envelope_arithmetic,
+        )
+        checks = spec.param_checks
+    elif route == "schedule":
+        spec = _collect_nbegm_schedule_spec(
+            context=context,
+            budget_target=solver.budget_target,
+            continuous_state=solver.continuous_state,
+            consumption_action_name=solver.continuous_action,
+            probe_failure=solver.probe_failure,
+        )
+        core = _build_nbegm_continuous_core(
+            savings_grid=savings_grid,
+            functions=context.functions,
+            consumption_action=solver.continuous_action,
+            schedule_spec=spec,
+            feasibility_constraints=resolved_feasibility_constraints,
+            envelope_arithmetic=solver.envelope_arithmetic,
+        )
+        checks = spec.param_checks
+    elif route == "discrete":
+        spec = _collect_nbegm_discrete_spec(
+            context=context,
+            budget_target=solver.budget_target,
+            post_decision_function=solver.post_decision_function,
+            continuous_state=solver.continuous_state,
+            probe_failure=solver.probe_failure,
+        )
+        core = _build_nbegm_discrete_core(
+            savings_grid=savings_grid,
+            functions=context.functions,
+            consumption_action=solver.continuous_action,
+            discrete_spec=spec,
+            taste_shock_scale=0.0,
+            envelope_arithmetic=solver.envelope_arithmetic,
+        )
+        checks = spec.param_checks
+    else:
+        spec = _collect_nbegm_case_spec(
+            context=context,
+            continuous_state=solver.continuous_state,
+        )
+        core = _build_nbegm_core(
+            savings_grid=savings_grid,
+            functions=context.functions,
+            consumption_action=solver.continuous_action,
+            case_spec=spec,
+            envelope_arithmetic=solver.envelope_arithmetic,
+        )
+        checks = ()
+    return core, law, checks
 
 
 def _assemble_ride_carry(

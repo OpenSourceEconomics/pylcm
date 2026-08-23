@@ -51,8 +51,7 @@ from tests.conftest import DECIMAL_PRECISION, X64_ENABLED
 _GPU_X64_MARKS = (
     pytest.mark.requires(device="gpu"),
     pytest.mark.coverage(backends=("gpu-small", "gpu-large"), precisions="64"),
-    pytest.mark.resources(wall="l", wall_seconds=1800, gpu_mem_gb=16, compile="heavy"),
-    pytest.mark.isolation(process="fresh", gpu="exclusive", cache="isolated"),
+    pytest.mark.isolation(process="fresh"),
     pytest.mark.ci(tier="pr"),
     pytest.mark.skipif(jax.devices()[0].platform != "gpu", reason="requires GPU"),
     pytest.mark.skipif(
