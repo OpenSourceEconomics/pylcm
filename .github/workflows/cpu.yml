@@ -131,6 +131,7 @@ jobs:
         run: >-
           mkdir -p reports &&
           pixi run -e tests-cpu tests ${{ matrix.pytest_extra }}
+          --policy-child --ci-policy=full --hardware-profile=cpu
           --junitxml=reports/junit-cpu-${{ runner.os }}.xml
         if: runner.os != 'Linux' || matrix.python-version != '3.14'
       - name: Run pytest and collect coverage
@@ -430,6 +431,7 @@ jobs:
           pylcm_junit_report="reports/junit-$PYLCM_CI_PRECISION-$PYLCM_CI_SHARD.xml"
           pixi run -e tests-cpu pytest "${files[@]}" \
             --precision="$PYLCM_CI_PRECISION" -m slow \
+            --policy-child --ci-policy=full --hardware-profile=cpu \
             --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
             --durations=25 \
             --junitxml="$pylcm_junit_report" \
