@@ -80,7 +80,8 @@ boundary between ordinary callables and retained structure.
 Plain EGM is for a smooth concave margin. A borrowing corner, discrete branch, or
 institutional cliff changes how candidates are generated and compared:
 
-- `DCEGM` handles discrete-continuous non-concavity with an upper envelope.
+- `DCEGM` handles a genuine resources node, supported passive or process states, and
+  optional discrete-continuous non-concavity with an upper envelope.
 - `NBEGM` handles declared budget runs, kinks, jumps, and supported hard constraints.
 - `NEGM` and `NNBEGM` place one of those liquid solves inside an outer search.
 

@@ -176,22 +176,22 @@ class NBEGM(OneMarginSolver):
     savings_grid: ContinuousGrid
     """Exogenous post-decision savings grid `s = coh - consumption` (>= 0)."""
     jump_read: Literal["one_sided", "bridged"] = "one_sided"
-    """How the parent's continuation read treats the child value's cliffs.
+    """How the parent's continuation interpolation treats the child value's cliffs.
 
-    The within-period case solve is jump-aware in both modes (masked cases,
-    boundary-owner equality); the mode selects what the carry publishes for the
-    parents that read it:
+    The within-period solve is jump-aware in both modes: cases are masked and the
+    declared equality owner receives the boundary. The mode changes only the rows
+    published for a parent to interpolate:
 
-    - `"one_sided"` — each carry row holds every jump preimage as a duplicated
-      abscissa carrying the exact one-sided value and marginal limits, so reads
-      near a cliff are one-sided by construction. Publishing breakpoints gates
-      the stochastic-dim fold off on jump-bearing reads, so this mode trades
-      runtime for cliff fidelity.
-    - `"bridged"` — plain liquid-grid rows with no breakpoints; the parent's
-      interpolation may average across a cliff, like any finite-grid solver
-      reading the same rows. The fold stays available, so this is the fast
-      mode for solves whose consumer tolerates finite-grid cliff error (e.g.
-      inner estimation loops, polished afterwards under `"one_sided"`).
+    - `"one_sided"` publishes every jump preimage twice, once with each one-sided
+      value and marginal limit, so a parent approaching the cliff reads the matching
+      side.
+    - `"bridged"` publishes one value per point on the ordinary liquid grid. A parent
+      may then interpolate across a cliff, accepting finite-grid cliff error in return
+      for the simpler representation.
+
+    In both modes, the solver interpolates each stochastic row before applying the
+    parent expectation; `"bridged"` does not expose an unfurled stochastic-row
+    representation for a later fold.
     """
     stochastic_node_batch_size: int = 0
     """Block size for splaying the child stochastic-node expectation.
@@ -218,14 +218,17 @@ class NBEGM(OneMarginSolver):
     Every case, corner, and node candidate is read at each liquid query point and
     the largest owns it. How that comparison is made is this knob:
 
-    - `"certified"` compares in double-double precision and publishes NaN wherever
-      no candidate is separated, so a reported winner is one the arithmetic could
-      prove. Ordering survives the cancellation a nearly-tied crossing produces.
+    - `"certified"` compares the exact affine values represented by the stored
+      floating-point operands using fixed-width integer arithmetic. Exact value is
+      ordered first, followed by deterministic geometric and stable-index tie-breaks.
+      NaNs and other non-finite or invalid geometry are refused rather than ordered as
+      ordinary candidates. This mode requires pylcm's installed exact-affine payload
+      for the active backend and fails before returning a certified result when that
+      capability is unavailable.
     - `"ordinary"` takes the largest read in the working format. It decides every
-      bracketed query and costs a small fraction of the certified read, which is
-      the dominant per-cell arithmetic in a case-piece solve. Adequate wherever
-      candidate values are separated by much more than the format's resolution at
-      their own magnitude — the usual case away from a crossing.
+      bracketed query at a fraction of the certified read's cost and is adequate only
+      where model-specific checks show candidates are separated by much more than the
+      format's resolution at their magnitude.
     """
     interval_batch_size: int = 0
     """Compiled batch width for the per-interval continuation read.

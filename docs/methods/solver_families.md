@@ -8,26 +8,26 @@ pylcm exposes one broad solver and a family of structural specializations.
 
 ## The map
 
-| Economic problem                                            | Solver       | Continuous maximization                             |
-| ----------------------------------------------------------- | ------------ | --------------------------------------------------- |
-| General discrete-continuous regime                          | `GridSearch` | Full action-grid product                            |
-| Smooth one-margin consumption-saving problem                | `EGM`        | One Euler inversion                                 |
-| One liquid margin plus discrete choice                      | `DCEGM`      | EGM per discrete branch, then upper envelope        |
-| Liquid inner margin plus finite outer margin                | `NEGM`       | `DCEGM` conditional on each outer candidate         |
-| One liquid margin with declared non-convex budget structure | `NBEGM`      | EGM per smooth run/case, then branch-aware envelope |
-| Nested outer margin with declared inner budget structure    | `NNBEGM`     | `NBEGM` conditional on outer candidates             |
+| Economic problem                                                     | Solver       | Continuous maximization                                      |
+| -------------------------------------------------------------------- | ------------ | ------------------------------------------------------------ |
+| General discrete-continuous regime                                   | `GridSearch` | Full action-grid product                                     |
+| Smooth one-margin consumption-saving problem                         | `EGM`        | One Euler inversion                                          |
+| One liquid margin with general resources or optional discrete choice | `DCEGM`      | Euler inversion over supported branches, then upper envelope |
+| Liquid inner margin plus finite outer margin                         | `NEGM`       | `DCEGM` conditional on each outer candidate                  |
+| One liquid margin with declared non-convex budget structure          | `NBEGM`      | EGM per smooth run/case, then branch-aware envelope          |
+| Nested outer margin with declared inner budget structure             | `NNBEGM`     | `NBEGM` conditional on outer candidates                      |
 
 The table is not a ranking. Each row solves a different declared problem class.
 
 ## EGM-family glossary
 
-| Acronym  | Problem shape                                               | Required regime                  | Main algorithmic device                                                |
-| -------- | ----------------------------------------------------------- | -------------------------------- | ---------------------------------------------------------------------- |
-| `EGM`    | Smooth one-margin consumption-saving                        | `ConsumptionSavingsRegime`       | Euler inversion on a savings grid                                      |
-| `DCEGM`  | One liquid margin with competing discrete branches          | `ConsumptionSavingsRegime`       | EGM by branch plus an upper envelope                                   |
-| `NBEGM`  | One liquid margin with declared non-convex budget structure | `ConsumptionSavingsRegime`       | EGM by smooth run/case plus a topology-aware envelope                  |
-| `NEGM`   | DCEGM liquid problem conditional on a finite outer choice   | `NestedConsumptionSavingsRegime` | Complete inner DCEGM solves followed by an outer maximum               |
-| `NNBEGM` | NBEGM liquid problem inside an outer choice                 | `NestedConsumptionSavingsRegime` | Complete inner NBEGM solves plus configurable outer search/aggregation |
+| Acronym  | Problem shape                                                         | Required regime                  | Main algorithmic device                                                |
+| -------- | --------------------------------------------------------------------- | -------------------------------- | ---------------------------------------------------------------------- |
+| `EGM`    | Smooth one-margin consumption-saving                                  | `ConsumptionSavingsRegime`       | Euler inversion on a savings grid                                      |
+| `DCEGM`  | One liquid margin with a general resources node or competing branches | `ConsumptionSavingsRegime`       | EGM by branch plus an upper envelope                                   |
+| `NBEGM`  | One liquid margin with declared non-convex budget structure           | `ConsumptionSavingsRegime`       | EGM by smooth run/case plus a topology-aware envelope                  |
+| `NEGM`   | DCEGM liquid problem conditional on a finite outer choice             | `NestedConsumptionSavingsRegime` | Complete inner DCEGM solves followed by an outer maximum               |
+| `NNBEGM` | NBEGM liquid problem inside an outer choice                           | `NestedConsumptionSavingsRegime` | Complete inner NBEGM solves plus configurable outer search/aggregation |
 
 ## Grid search is the baseline
 
@@ -57,9 +57,11 @@ sometimes recover amortization; otherwise grid search may be the better represen
 ## Envelopes recover non-concave choices
 
 A discrete choice or a non-convex budget can produce several candidate value branches.
-`DCEGM` and `NBEGM` construct those branches and take an upper envelope. Envelope
-configuration affects accuracy, topology handling, memory, and accelerator suitability;
-it is not cosmetic post-processing.
+`DCEGM` also supplies the general resources route when plain `EGM` is too narrow. When a
+discrete choice or non-convex schedule produces several branches, `DCEGM` and `NBEGM`
+construct them and take an upper envelope. Envelope configuration affects accuracy,
+topology handling, memory, and accelerator suitability; it is not cosmetic
+post-processing.
 
 ## Nesting avoids a coupled two-dimensional inversion
 

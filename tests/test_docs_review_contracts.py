@@ -5,13 +5,17 @@ import json
 from pathlib import Path
 
 import jax.numpy as jnp
+import numpy as np
 import yaml
+from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm import GridBreakpoint, JointTransition
 from lcm.consumption_savings_regime import (
     ConsumptionSavingsRegime,
     NestedConsumptionSavingsRegime,
 )
+from lcm.solvers import NBEGM
+from tests.conftest import DECIMAL_PRECISION
 
 _ROOT = Path(__file__).parents[1]
 _DOCS = _ROOT / "docs"
@@ -68,6 +72,33 @@ def test_specialized_authoring_examples_build_the_declared_regime_types() -> Non
     assert isinstance(nested.user_regimes["working"], NestedConsumptionSavingsRegime)
 
 
+def test_kinked_tax_example_runs_nbegm_on_both_sides_of_the_bracket() -> None:
+    """The small NBEGM example solves and exposes both sides of its tax kink."""
+    examples = importlib.import_module("lcm_examples.specialized_consumption_savings")
+
+    model = examples.build_kinked_tax_model(enable_jit=False)
+    regime = model.user_regimes["working"]
+    params = examples.kinked_tax_params()
+    solution = model.solve(params=params, log_level="debug")
+    result = model.simulate(
+        params=params,
+        initial_conditions=examples.kinked_tax_initial_conditions(),
+        period_to_regime_to_V_arr=solution,
+        log_level="debug",
+    )
+    working = result.to_dataframe(additional_targets=["tax"]).query(
+        "regime_name == 'working'"
+    )
+
+    assert isinstance(regime, ConsumptionSavingsRegime)
+    assert isinstance(regime.solver, NBEGM)
+    aaae(
+        working["tax"].to_numpy(),
+        np.array([0.0, 0.6]),
+        decimal=DECIMAL_PRECISION,
+    )
+
+
 def test_curated_egm_examples_instantiate_the_specialized_paths() -> None:
     """Curated EGM pages run their specialized builders as the principal path."""
     iskhakov = (_DOCS / "examples" / "iskhakov_et_al_2017.md").read_text(
@@ -99,7 +130,7 @@ def test_curated_egm_examples_instantiate_the_specialized_paths() -> None:
 
 
 def test_specialized_authoring_examples_solve_and_simulate() -> None:
-    """Both specialized User Guide declarations run through their public workflow."""
+    """The smooth and nested User Guide declarations run through their workflow."""
     examples = importlib.import_module("lcm_examples.specialized_consumption_savings")
 
     for builder, nested in (
@@ -124,6 +155,60 @@ def test_specialized_authoring_examples_solve_and_simulate() -> None:
             "working",
             "dead",
         ]
+
+
+def test_nested_example_demonstrates_adjustment_and_no_adjustment() -> None:
+    """The small NEGM example contains both an adjuster and a keeper."""
+    examples = importlib.import_module("lcm_examples.specialized_consumption_savings")
+
+    model = examples.build_nested_model(enable_jit=False)
+    params = examples.example_params()
+    solution = model.solve(params=params, log_level="debug")
+    result = model.simulate(
+        params=params,
+        initial_conditions=examples.example_initial_conditions(nested=True),
+        period_to_regime_to_V_arr=solution,
+        log_level="debug",
+    )
+    working = result.to_dataframe().query("regime_name == 'working'")
+    investments = working["illiquid_investment"].to_numpy()
+
+    assert np.any(investments == 0.0)
+    assert np.any(investments > 0.0)
+
+
+def test_solver_capability_guidance_stays_aligned() -> None:
+    """Guide, Methods, Reference, and public docstrings state one capability map."""
+    chooser = (_DOCS / "user_guide" / "choosing_a_solver.md").read_text(
+        encoding="utf-8"
+    )
+    authoring = (_DOCS / "user_guide" / "authoring_specialized_solvers.md").read_text(
+        encoding="utf-8"
+    )
+    reference = (_DOCS / "reference" / "solvers.md").read_text(encoding="utf-8")
+    notebook = json.loads(
+        (_DOCS / "examples" / "epstein_zin.ipynb").read_text(encoding="utf-8")
+    )
+    notebook_text = "\n".join(
+        "".join(cell.get("source", [])) for cell in notebook["cells"]
+    )
+    solver_source = (_ROOT / "src" / "_lcm" / "solution" / "nbegm.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'plain_egm{"Plain `EGM` contract satisfied?"}' in chooser
+    assert "DCEGM-compatible resources, states, or processes" in chooser
+    assert "genuine resources node and optional discrete choice" in reference
+    assert "## Nonlinear certainty equivalents" in reference
+    assert "`NBEGM` and `NNBEGM` implement" in reference
+    assert "supported only with the\n  `GridSearch` solver" not in notebook_text
+    assert "not GridSearch-only" in notebook_text
+    assert "## A kinked tax schedule" in authoring
+    assert "@lcm.piecewise_affine" in authoring
+    assert 'additional_targets=["consumption"' not in authoring
+    assert "double-double precision" not in solver_source
+    assert "The fold stays available" not in solver_source
+    assert "fixed-width integer arithmetic" in solver_source
 
 
 def test_certified_nbegm_and_batch_widths_have_actionable_user_contracts() -> None:

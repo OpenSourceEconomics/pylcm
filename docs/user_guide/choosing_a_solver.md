@@ -53,8 +53,11 @@ flowchart TD
     start -->|"Liquid margin nested inside an outer durable/illiquid choice"| two{"Declared structure on the liquid margin?"}
     one -->|"No"| disc{"Discrete choice creates competing branches?"}
     one -->|"Yes"| nb["NBEGM + ConsumptionSavingsRegime"]
-    disc -->|"No; smooth and concave"| egm["EGM + ConsumptionSavingsRegime"]
+    disc -->|"No; smooth and concave"| plain_egm{"Plain `EGM` contract satisfied?"}
     disc -->|"Yes"| dc["DCEGM + ConsumptionSavingsRegime"]
+    plain_egm -->|"Yes"| egm["EGM + ConsumptionSavingsRegime"]
+    plain_egm -->|"No; DCEGM-compatible resources, states, or processes"| dc
+    plain_egm -->|"No; unsupported structure"| gs
     two -->|"No"| ne["NEGM + NestedConsumptionSavingsRegime"]
     two -->|"Yes"| nn["NNBEGM + NestedConsumptionSavingsRegime"]
 ```
@@ -63,7 +66,7 @@ flowchart TD
 | ----------------------------------------- | ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `GridSearch + Regime`                     | General discrete-continuous action product                                                           | Ordinary callable constraints                                   | Broadest representation; cost grows with the full action product                                      |
 | `EGM + ConsumptionSavingsRegime`          | Smooth, concave, one-state/one-action cash-on-hand problem                                           | Declared savings lower bound only                               | Fastest and simplest EGM route; very narrow contract                                                  |
-| `DCEGM + ConsumptionSavingsRegime`        | One liquid margin with competing discrete-continuous branches                                        | Intrinsic budget and declared savings lower bound               | Off-grid Euler inversion plus an upper envelope; envelope work and simulation re-decision matter      |
+| `DCEGM + ConsumptionSavingsRegime`        | One liquid Euler margin with a genuine resources node and optional discrete choice                   | Intrinsic budget and declared savings lower bound               | Off-grid Euler inversion plus an upper envelope; envelope work and simulation re-decision matter      |
 | `NBEGM + ConsumptionSavingsRegime`        | One liquid margin with supported declared kinks, jumps, hard boundaries, or smooth discrete branches | Supported structured boundary declarations; no EV1 taste shocks | Preserves topology that ordinary DCEGM cannot; more validation and candidate geometry                 |
 | `NEGM + NestedConsumptionSavingsRegime`   | A DCEGM liquid solve conditional on a finite outer candidate grid                                    | Inner DCEGM contract plus declared outer roles                  | Exact relative to the outer candidate set; work scales with its size                                  |
 | `NNBEGM + NestedConsumptionSavingsRegime` | An NBEGM liquid solve inside a finite or adaptive outer search                                       | Inner NBEGM contract plus supported outer search/aggregation    | Handles both declared inner boundaries and an outer margin; highest structural and computational cost |
@@ -100,14 +103,14 @@ There is no universal break-even point. Benchmark the actual model and device. S
 
 ## Solver summary
 
-| Solver       | Represents                                                          | Main numerical configuration                              |
-| ------------ | ------------------------------------------------------------------- | --------------------------------------------------------- |
-| `GridSearch` | Broad discrete-continuous problems                                  | No solver-specific fields                                 |
-| `EGM`        | Smooth one-margin cash-on-hand problem                              | Savings grid                                              |
-| `DCEGM`      | One liquid margin with discrete-choice non-concavity                | Savings grid, envelope, refinement/batching               |
-| `NEGM`       | `DCEGM` inner solve conditional on a finite outer grid              | Inner solver, outer grid, batch size                      |
-| `NBEGM`      | Declared liquid kinks, jumps, hard boundaries, or discrete branches | Savings grid, jump read, comparison and batching controls |
-| `NNBEGM`     | Nested outer choice with inner `NBEGM`                              | Inner solver, outer search, branch aggregation            |
+| Solver       | Represents                                                           | Main numerical configuration                              |
+| ------------ | -------------------------------------------------------------------- | --------------------------------------------------------- |
+| `GridSearch` | Broad discrete-continuous problems                                   | No solver-specific fields                                 |
+| `EGM`        | Smooth one-margin cash-on-hand problem                               | Savings grid                                              |
+| `DCEGM`      | Genuine resources or supported extra dimensions on one liquid margin | Savings grid, envelope, refinement/batching               |
+| `NEGM`       | `DCEGM` inner solve conditional on a finite outer grid               | Inner solver, outer grid, batch size                      |
+| `NBEGM`      | Declared liquid kinks, jumps, hard boundaries, or discrete branches  | Savings grid, jump read, comparison and batching controls |
+| `NNBEGM`     | Nested outer choice with inner `NBEGM`                               | Inner solver, outer search, branch aggregation            |
 
 Exact constructors and limitations are in
 [Solvers and capabilities](../reference/solvers.md).

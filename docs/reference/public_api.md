@@ -114,7 +114,7 @@ surfaces remain outside that top-level namespace:
 | ------------------------------------------------------------------------------------ | ------------------------------- |
 | [`lcm.solvers.GridSearch`](solvers.md#gridsearch)                                    | General grid search             |
 | [`lcm.solvers.EGM`](solvers.md#egm)                                                  | Plain endogenous-grid method    |
-| [`lcm.solvers.DCEGM`](solvers.md#dcegm)                                              | Discrete-continuous EGM         |
+| [`lcm.solvers.DCEGM`](solvers.md#dcegm)                                              | General-resources EGM           |
 | [`lcm.solvers.NEGM`](solvers.md#negm)                                                | Nested DCEGM                    |
 | [`lcm.solvers.NBEGM`](solvers.md#nbegm)                                              | Declared non-convex-budget EGM  |
 | [`lcm.solvers.NNBEGM`](solvers.md#nnbegm)                                            | Nested NBEGM                    |

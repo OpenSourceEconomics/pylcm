@@ -7,14 +7,14 @@ title: Choose your starting declaration
 Do not begin every model by copying the tiny model. Decide first how its continuous
 choices will be solved:
 
-| Expected route                               | Start with                                       | Declare now                             |
-| -------------------------------------------- | ------------------------------------------------ | --------------------------------------- |
-| General brute-force solution                 | `Regime` + `GridSearch()`                        | States, actions, functions, constraints |
-| One smooth liquid Euler margin               | `ConsumptionSavingsRegime` + `EGM(...)`          | `LiquidMargin` roles and savings grid   |
-| Liquid margin with discrete choice           | `ConsumptionSavingsRegime` + `DCEGM(...)`        | Liquid roles and envelope configuration |
-| Nested liquid and durable/illiquid margins   | `NestedConsumptionSavingsRegime` + `NEGM(...)`   | Liquid and outer margin roles           |
-| Declared institutional kinks or cliffs       | `ConsumptionSavingsRegime` + `NBEGM(...)`        | Margin roles and boundary structure     |
-| Nested outer margin plus liquid kinks/cliffs | `NestedConsumptionSavingsRegime` + `NNBEGM(...)` | Both margins, boundaries, outer search  |
+| Expected route                                                       | Start with                                       | Declare now                             |
+| -------------------------------------------------------------------- | ------------------------------------------------ | --------------------------------------- |
+| General brute-force solution                                         | `Regime` + `GridSearch()`                        | States, actions, functions, constraints |
+| One smooth liquid Euler margin                                       | `ConsumptionSavingsRegime` + `EGM(...)`          | `LiquidMargin` roles and savings grid   |
+| One liquid margin with genuine resources or optional discrete choice | `ConsumptionSavingsRegime` + `DCEGM(...)`        | Liquid roles and envelope configuration |
+| Nested liquid and durable/illiquid margins                           | `NestedConsumptionSavingsRegime` + `NEGM(...)`   | Liquid and outer margin roles           |
+| Declared institutional kinks or cliffs                               | `ConsumptionSavingsRegime` + `NBEGM(...)`        | Margin roles and boundary structure     |
+| Nested outer margin plus liquid kinks/cliffs                         | `NestedConsumptionSavingsRegime` + `NNBEGM(...)` | Both margins, boundaries, outer search  |
 
 This is an authoring decision. A specialized solver cannot infer that an arbitrary DAG
 node is “resources” or that a hidden `where` encodes a policy cliff. pylcm asks you to

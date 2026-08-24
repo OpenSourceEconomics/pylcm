@@ -57,8 +57,20 @@ quasi-hyperbolic discounting. See the executable
 [beta-delta notebook](../explanations/beta_delta.ipynb).
 
 Solver support for nonlinear certainty equivalents is narrower than support for linear
-expectations and is validated when the model is built. Confirm the selected solver
-before authoring the preference specification.
+expectations:
+
+- `GridSearch` aggregates any supported certainty equivalent directly on the action
+  grid;
+- `EGM`, `DCEGM`, and `NEGM` reject nonlinear certainty equivalents because their Euler
+  inversions assume `LinearExpectation()`;
+- `NBEGM` and `NNBEGM` implement `PowerMean()` paired with `CESAggregator()` through the
+  NBEGM inner kernel, but only on qualified ride-along routes. A current-period jump,
+  liquid-dependent continuation read, taste shock, or another incompatible declaration
+  is still rejected.
+
+These restrictions are validated when the model is built. The canonical matrix is in
+[Solvers and capabilities](../reference/solvers.md#nonlinear-certainty-equivalents);
+choose the solver before authoring the preference specification.
 
 A runnable nonlinear example is [Epstein–Zin lifecycle](../examples/epstein_zin.ipynb).
 Exact public names are listed in the

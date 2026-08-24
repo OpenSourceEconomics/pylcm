@@ -2826,14 +2826,6 @@ def _degenerate_inversion(*, marginal: Float1D, consumption: Float1D) -> BoolND:
     Args:
         marginal: Expected marginal continuation at each savings node.
         consumption: The consumption the Euler inversion recovered there.
-        arithmetic: Which arithmetic decides envelope ownership; see
-            `envelope_at_query`. `"certified"` delegates to the installed
-            exact-affine kernel and orders stored operands by exact affine value,
-            right extension, exact slope, and stable stored index; invalid or
-            non-finite geometry refuses the query and publishes NaN in all channels.
-            `"ordinary"` takes the largest read in the working format, at a
-            fraction of the cost, and is adequate where candidate values are
-            separated by much more than the format's resolution.
 
     Returns:
         Per-node flag, `True` where the node contributes no usable candidate.

@@ -8,8 +8,8 @@ EGM-family solvers are not drop-in replacements for `GridSearch`. They solve mod
 whose economic roles are declared in a specialized regime. Choose the declaration first,
 then write the model around that contract.
 
-This page gives two complete, executable starting points. Keep the roles and structural
-constraints visible while replacing the toy economics with your own.
+This page gives three complete, executable starting points. Keep the roles and
+structural constraints visible while replacing the toy economics with your own.
 
 ## One liquid margin
 
@@ -78,7 +78,7 @@ result = model.simulate(
     period_to_regime_to_V_arr=solution,
     log_level="debug",
 )
-df = result.to_dataframe(additional_targets=["consumption", "savings"])
+df = result.to_dataframe(additional_targets=["savings"])
 ```
 
 `ONE_MARGIN` names the four roles the solver consumes:
@@ -97,9 +97,146 @@ Naming the state directly as `resources` avoids an identity function such as
 constraint the savings grid enforces. Other constraints may make plain `EGM` invalid;
 check the [solver capability table](../reference/solvers.md#capability-table).
 
+## A kinked tax schedule
+
+Plain `EGM` becomes ineligible as soon as cash on hand is a genuine function rather than
+the liquid state itself. If that function has a declared kink, write the model for
+`NBEGM` from the outset. This complete two-period model taxes liquid wealth above an
+exemption:
+
+```python
+import jax.numpy as jnp
+
+import lcm
+from lcm import AgeGrid, Model
+from lcm.consumption_savings_regime import (
+    ConsumptionSavingsRegime,
+    LiquidMargin,
+    post_decision_lower_bound,
+)
+from lcm.regime import Regime
+from lcm.solvers import NBEGM
+from lcm.typing import ContinuousAction, ContinuousState, FloatND
+from lcm_examples.specialized_consumption_savings import (
+    CONSUMPTION_GRID,
+    RegimeId,
+    SAVINGS_GRID,
+    WEALTH_GRID as LIQUID_GRID,
+    inverse_marginal_utility,
+    next_regime,
+    utility,
+)
+
+
+@lcm.piecewise_affine(
+    output="tax",
+    variable="liquid",
+    breakpoints=(
+        lcm.affine_breakpoint(
+            threshold="tax_exemption",
+            kind="continuous_kink",
+        ),
+    ),
+)
+def tax(
+    liquid: ContinuousState,
+    tax_rate: float,
+    tax_exemption: float,
+) -> FloatND:
+    return tax_rate * jnp.maximum(liquid - tax_exemption, 0.0)
+
+
+def resources(liquid: ContinuousState, tax: FloatND, income: float) -> FloatND:
+    return liquid + income - tax
+
+
+def savings(resources: FloatND, consumption: ContinuousAction) -> ContinuousState:
+    return resources - consumption
+
+
+def next_liquid(savings: ContinuousState) -> ContinuousState:
+    return savings
+
+
+def terminal_utility(liquid: ContinuousState) -> FloatND:
+    return jnp.log1p(liquid)
+
+
+margin = LiquidMargin(
+    state="liquid",
+    action="consumption",
+    resources="resources",
+    post_decision_state="savings",
+)
+
+working = ConsumptionSavingsRegime(
+    transition=next_regime,
+    states={"liquid": LIQUID_GRID},
+    actions={"consumption": CONSUMPTION_GRID},
+    state_transitions={"liquid": next_liquid},
+    functions={
+        "utility": utility,
+        "tax": tax,
+        "resources": resources,
+        "savings": savings,
+        "inverse_marginal_utility": inverse_marginal_utility,
+    },
+    constraints={
+        "borrowing_limit": post_decision_lower_bound(margin=margin, lower=0.0)
+    },
+    liquid=margin,
+    solver=NBEGM(savings_grid=SAVINGS_GRID),
+    active=lambda age: age == 0,
+)
+
+dead = Regime(
+    transition=None,
+    states={"liquid": LIQUID_GRID},
+    functions={"utility": terminal_utility},
+    active=lambda age: age == 1,
+)
+
+model = Model(
+    regimes={"working": working, "dead": dead},
+    regime_id_class=RegimeId,
+    ages=AgeGrid(start=0, stop=1, step="Y"),
+)
+
+params = {
+    "working": {
+        "koopmans_aggregator": {"discount_factor": 0.95},
+        "tax": {"tax_rate": 0.2, "tax_exemption": 7.0},
+        "resources": {"income": 2.0},
+    },
+    "dead": {},
+}
+initial_conditions = {
+    "age": jnp.array([0, 0]),
+    "liquid": jnp.array([5.0, 10.0]),
+    "regime_id": jnp.array([RegimeId.working, RegimeId.working]),
+}
+
+solution = model.solve(params=params, log_level="debug")
+result = model.simulate(
+    params=params,
+    initial_conditions=initial_conditions,
+    period_to_regime_to_V_arr=solution,
+    log_level="debug",
+)
+df = result.to_dataframe(additional_targets=["tax", "resources", "savings"])
+```
+
+The `piecewise_affine` declaration tells NBEGM where the slope changes; the decorated
+`tax` function remains ordinary executable economics. The margin identifies the genuine
+`resources` node and the lower-bound constraint certifies the first savings-grid point.
+The tested source version is `build_kinked_tax_model()` in
+`lcm_examples.specialized_consumption_savings`. See
+[Piecewise-affine schedules](../reference/piecewise_affine.md) for multiple brackets,
+jumps, indexed thresholds, and the exact validation contract.
+
 ## A liquid margin nested inside an outer choice
 
-The second model adds an illiquid stock and an investment action. Conditional on the
+The third model adds an illiquid stock and an investment action. Conditional on the
 post-decision illiquid stock, `NEGM` runs a one-dimensional `DCEGM` liquid solve and
 then compares the outer candidates.
 
@@ -189,10 +326,13 @@ result = model.simulate(
     period_to_regime_to_V_arr=solution,
     log_level="debug",
 )
-df = result.to_dataframe(
-    additional_targets=["consumption", "illiquid_investment", "liquid_savings"]
-)
+df = result.to_dataframe(additional_targets=["liquid_savings"])
 ```
+
+The two demonstration subjects choose `illiquid_investment` values 2 and 0, so the
+example contains both the adjuster and the no-adjustment keeper. State and action
+values, including `consumption` and `illiquid_investment`, are already ordinary result
+columns; `additional_targets` is only for derived DAG outputs such as `liquid_savings`.
 
 The liquid resources declaration also makes the adjustment-cost composition explicit:
 

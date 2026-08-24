@@ -2,6 +2,7 @@
 
 import jax.numpy as jnp
 
+import lcm
 from lcm import AgeGrid, LinSpacedGrid, Model, categorical
 from lcm.consumption_savings_regime import (
     ConsumptionSavingsRegime,
@@ -13,7 +14,7 @@ from lcm.consumption_savings_regime import (
     post_decision_lower_bound,
 )
 from lcm.regime import Regime
-from lcm.solvers import DCEGM, EGM, NEGM, LTMEnvelope
+from lcm.solvers import DCEGM, EGM, NBEGM, NEGM, LTMEnvelope
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -100,6 +101,119 @@ def build_one_margin_model(*, enable_jit: bool = True) -> Model:
     )
 
 
+@lcm.piecewise_affine(
+    output="tax",
+    variable="liquid",
+    breakpoints=(
+        lcm.affine_breakpoint(
+            threshold="tax_exemption",
+            kind="continuous_kink",
+        ),
+    ),
+)
+def tax(
+    liquid: ContinuousState,
+    tax_rate: float,
+    tax_exemption: float,
+) -> FloatND:
+    """Tax only liquid wealth above the exemption."""
+    return tax_rate * jnp.maximum(liquid - tax_exemption, 0.0)
+
+
+def resources(
+    liquid: ContinuousState,
+    tax: FloatND,
+    income: float,
+) -> FloatND:
+    """Cash on hand after the kinked tax schedule."""
+    return liquid + income - tax
+
+
+def savings_after_tax(
+    resources: FloatND,
+    consumption: ContinuousAction,
+) -> ContinuousState:
+    """Post-decision savings out of after-tax resources."""
+    return resources - consumption
+
+
+def next_liquid(savings: ContinuousState) -> ContinuousState:
+    """Carry post-decision savings into the terminal period."""
+    return savings
+
+
+def tax_terminal_utility(liquid: ContinuousState) -> FloatND:
+    """Consume terminal liquid wealth."""
+    return jnp.log1p(liquid)
+
+
+TAX_MARGIN = LiquidMargin(
+    state="liquid",
+    action="consumption",
+    resources="resources",
+    post_decision_state="savings",
+)
+
+
+def build_kinked_tax_model(*, enable_jit: bool = True) -> Model:
+    """Build the smallest NBEGM model with a continuous tax-bracket kink."""
+    working = ConsumptionSavingsRegime(
+        transition=next_regime,
+        states={"liquid": WEALTH_GRID},
+        actions={"consumption": CONSUMPTION_GRID},
+        state_transitions={"liquid": next_liquid},
+        functions={
+            "utility": utility,
+            "tax": tax,
+            "resources": resources,
+            "savings": savings_after_tax,
+            "inverse_marginal_utility": inverse_marginal_utility,
+        },
+        constraints={
+            "borrowing_limit": post_decision_lower_bound(
+                margin=TAX_MARGIN,
+                lower=0.0,
+            )
+        },
+        liquid=TAX_MARGIN,
+        solver=NBEGM(savings_grid=SAVINGS_GRID),
+        active=lambda age: age == 0,
+    )
+    dead = Regime(
+        transition=None,
+        states={"liquid": WEALTH_GRID},
+        functions={"utility": tax_terminal_utility},
+        active=lambda age: age == 1,
+    )
+    return Model(
+        regimes={"working": working, "dead": dead},
+        regime_id_class=RegimeId,
+        ages=AgeGrid(start=0, stop=1, step="Y"),
+        enable_jit=enable_jit,
+    )
+
+
+def kinked_tax_params() -> dict:
+    """Parameters for the kinked-tax example."""
+    return {
+        "working": {
+            "koopmans_aggregator": {"discount_factor": 0.95},
+            "tax": {"tax_rate": 0.2, "tax_exemption": 7.0},
+            "resources": {"income": 2.0},
+        },
+        "dead": {},
+    }
+
+
+def kinked_tax_initial_conditions() -> dict:
+    """Two subjects on opposite sides of the tax exemption."""
+    return {
+        "age": jnp.array([0, 0]),
+        "liquid": jnp.array([5.0, 10.0]),
+        "regime_id": jnp.array([RegimeId.working, RegimeId.working]),
+    }
+
+
 def new_illiquid(
     illiquid: ContinuousState, illiquid_investment: ContinuousAction
 ) -> ContinuousState:
@@ -152,7 +266,7 @@ def nested_terminal_utility(
     wealth: ContinuousState, illiquid: ContinuousState
 ) -> FloatND:
     """Terminal value of both assets."""
-    return jnp.log1p(wealth) + 0.05 * jnp.log1p(illiquid)
+    return jnp.log1p(wealth) + 0.5 * jnp.log1p(illiquid)
 
 
 NESTED_LIQUID_MARGIN = LiquidMargin(
@@ -239,7 +353,8 @@ def example_initial_conditions(*, nested: bool = False) -> dict:
         "regime_id": jnp.array([RegimeId.working, RegimeId.working]),
     }
     if nested:
-        conditions["illiquid"] = jnp.array([1.0, 3.0])
+        conditions["wealth"] = jnp.array([10.0, 2.0])
+        conditions["illiquid"] = jnp.array([0.0, 5.0])
     return conditions
 
 
@@ -251,24 +366,33 @@ __all__ = [
     "ONE_MARGIN",
     "OUTER_MARGIN",
     "SAVINGS_GRID",
+    "TAX_MARGIN",
     "WEALTH_GRID",
     "RegimeId",
     "adjustment_cost",
+    "build_kinked_tax_model",
     "build_nested_model",
     "build_one_margin_model",
     "example_initial_conditions",
     "example_params",
     "inverse_marginal_utility",
+    "kinked_tax_initial_conditions",
+    "kinked_tax_params",
     "liquid_savings",
     "nested_terminal_utility",
     "nested_utility",
     "new_illiquid",
     "next_illiquid",
+    "next_liquid",
     "next_regime",
     "next_wealth",
     "next_wealth_from_liquid_savings",
+    "resources",
     "resources_before_cost",
     "savings",
+    "savings_after_tax",
+    "tax",
+    "tax_terminal_utility",
     "terminal_utility",
     "utility",
 ]
