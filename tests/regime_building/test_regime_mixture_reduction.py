@@ -199,6 +199,78 @@ def test_two_target_reduction_preserves_stored_product_bits():
     assert int(_bits(got)) == 684585997
 
 
+@pytest.mark.parametrize("precision", ["fp32", "fp64"])
+def test_two_target_value_order_is_invariant_across_separate_compilations(
+    precision: str,
+):
+    """Swapping two valid targets cannot change mixture bits or the argmax."""
+    use_x64 = precision == "fp64"
+    with _x64(enabled=use_x64):
+        dtype = jnp.float64 if use_x64 else jnp.float32
+        if use_x64:
+            p0 = 0.39074607530255345
+            p1 = 0.6092539246974465
+            v0 = 711.1235208253597
+            v1 = -455.481208676875
+            competing = 0.36501080552022324
+        else:
+            p0 = 0.41636961698532104
+            p1 = 0.583630383014679
+            v0 = -89.87742614746094
+            v1 = 63.76618576049805
+            competing = -0.20634535
+
+        probabilities = jnp.asarray([p0, p1], dtype=dtype)
+        values = jnp.asarray([v0, v1], dtype=dtype)
+
+        @jax.jit
+        def forward(probability: FloatND, value: FloatND) -> FloatND:
+            return _sum_regime_mixture(
+                [("r0", probability[0], value[0]), ("r1", probability[1], value[1])],
+                like=value[0],
+            )
+
+        @jax.jit
+        def reverse(probability: FloatND, value: FloatND) -> FloatND:
+            return _sum_regime_mixture(
+                [("r1", probability[1], value[1]), ("r0", probability[0], value[0])],
+                like=value[0],
+            )
+
+        @jax.jit
+        def oracle(probability: FloatND, value: FloatND) -> FloatND:
+            contributions = zero_safe_weighted_term(
+                weight=probability,
+                value=value,
+                subnormal_is_accounted_for=False,
+            )
+            return jnp.sum(jnp.sort(contributions), axis=0)
+
+        got_forward = forward(probabilities, values)
+        got_reverse = reverse(probabilities, values)
+        expected = oracle(probabilities, values)
+        np.testing.assert_array_equal(_bits(got_forward), _bits(got_reverse))
+        np.testing.assert_array_equal(_bits(got_forward), _bits(expected))
+
+        competitor = jnp.asarray(competing, dtype=dtype)
+        assert bool((got_forward > competitor) == (got_reverse > competitor))
+
+
+def test_two_target_compare_swap_preserves_duplicate_contribution_gradients():
+    """The one-comparison K=2 path preserves the derivative of the full sum."""
+    weights = jnp.asarray([0.5, 0.25])
+    values = jnp.asarray([2.0, 4.0])
+
+    def mixture(w: FloatND, v: FloatND) -> FloatND:
+        return _sum_regime_mixture([("r0", w[0], v[0]), ("r1", w[1], v[1])], like=v[0])
+
+    grad_weights, grad_values = jax.jit(jax.grad(mixture, argnums=(0, 1)))(
+        weights, values
+    )
+    np.testing.assert_array_equal(np.asarray(grad_weights), np.asarray(values))
+    np.testing.assert_array_equal(np.asarray(grad_values), np.asarray(weights))
+
+
 def test_value_ordering_preserves_gradients_at_duplicate_contributions():
     """The compare keys are nondifferentiable; the selected values are not."""
     weights = jnp.asarray([0.5, 0.25, 0.25])
@@ -278,3 +350,23 @@ def test_optimized_hlo_has_no_materialized_target_axis():
         * np.dtype(np.float64 if jax.config.jax_enable_x64 else np.float32).itemsize
     )
     assert temp_bytes <= 5 * cell_bytes
+
+
+def test_full_shape_mixture_stays_within_profile_temporary_memory_budget():
+    """The application-sized compile stays below the declared temporary budget."""
+    k = 3
+    cell_shape = (100_000, 2, 500)
+    dtype = jnp.float64 if jax.config.jax_enable_x64 else jnp.float32
+    abstract = jax.ShapeDtypeStruct(cell_shape, dtype)
+
+    def kernel(*args: FloatND) -> FloatND:
+        probabilities = args[:k]
+        values = args[k:]
+        terms = [(f"r{i}", probabilities[i], values[i]) for i in range(k)]
+        return _sum_regime_mixture(terms, like=values[0])
+
+    compiled = jax.jit(kernel).lower(*([abstract] * (2 * k))).compile()
+    memory_analysis = compiled.memory_analysis()
+    assert memory_analysis is not None
+    budget_mib = 20 if jax.config.jax_enable_x64 else 10
+    assert memory_analysis.temp_size_in_bytes <= budget_mib * 1024**2

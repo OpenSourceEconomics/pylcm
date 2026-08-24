@@ -129,14 +129,14 @@ THE CONTRACT. `zero_safe_average` / `zero_safe_weighted_term` are:
    vectorised reduction — and NOT extending to the regime mixture below.
 
 The `Q_and_F` regime mixture is `_sum_regime_mixture`. It forms each
-target's zero-safe contribution on its native cell shape, preserves its stored
-bits, orders the separate arrays by VALUE with a static compare-swap network,
-then uses a deterministic left fold. No target axis is materialized. Two
-properties follow, both MEASURED under jit on a valid all-positive 5-target
+target's zero-safe contribution on its native cell shape, orders every
+multi-target mixture by VALUE with a static compare-swap network, then uses a
+deterministic left fold. No target axis or optimization barrier is materialized.
+Two properties follow, both MEASURED under jit on a valid all-positive 5-target
 float64 mixture:
 
 - It lands on the exact-policy side of a pinned knife-edge fixture (bits ...858
-  against an alternative at ...843, exact at ...851) where accumulating
+  against an alternative at ...843, exact at ...851) where
   declaration-ordered accumulation does not. A sequential left-fold
   `E += zero_safe_weighted_term(p_r, V_r)` returns the wrong-side bits ...842.
   Value ordering is the distinction. Beware the trap: an eager (non-jit) run

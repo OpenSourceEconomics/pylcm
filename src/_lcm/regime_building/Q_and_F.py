@@ -66,44 +66,6 @@ from lcm.typing import (
     IntND,
 )
 
-_MIN_TARGETS_REQUIRING_VALUE_ORDER = 3
-
-
-def _float_bits(values: FloatND) -> jax.Array:
-    """Return canonical float32/float64 values as same-width unsigned bits."""
-    arr = jnp.asarray(values)
-    if arr.dtype == jnp.float32:
-        return jax.lax.bitcast_convert_type(arr, jnp.uint32)
-    return jax.lax.bitcast_convert_type(arr, jnp.uint64)
-
-
-def _stored_rounding_barrier_bits(values: FloatND) -> FloatND:
-    """Expose one contribution's stored bits without changing them.
-
-    The bitcast plus optimization barrier prevents XLA from contracting the
-    contribution's final multiply into a later two-target addition. The
-    round-trip is a representation identity and creates no target axis.
-    """
-    arr = jnp.asarray(values)
-    bits = jax.lax.optimization_barrier(_float_bits(arr))
-    return jax.lax.bitcast_convert_type(bits, arr.dtype)
-
-
-def _stored_rounding_barrier_jvp(
-    primals: tuple[FloatND], tangents: tuple[FloatND]
-) -> tuple[FloatND, FloatND]:
-    """Differentiate the representation identity as the identity map."""
-    (values,) = primals
-    (values_dot,) = tangents
-    return _stored_rounding_barrier(values), values_dot
-
-
-# Built by call rather than decorator for the same reason as the custom-JVP
-# arithmetic in `_lcm.probability`: the package-wide beartype claw must not
-# replace the callable object before `defjvp` is attached.
-_stored_rounding_barrier = jax.custom_jvp(_stored_rounding_barrier_bits)
-_stored_rounding_barrier.defjvp(_stored_rounding_barrier_jvp)
-
 
 def _compare_swap_values(
     left: FloatND, right: FloatND, *, ascending: bool
@@ -173,7 +135,7 @@ def _sum_regime_mixture(
     """Reduce ``E[V'] = Σ p_r V_r`` without a materialized target axis.
 
     Each target's zero-safe contribution is formed on its native cell shape.
-    For three or more targets, a static bitonic compare-swap network orders the
+    For two or more targets, a static bitonic compare-swap network orders the
     separate arrays by contribution value before a deterministic left fold. XLA
     therefore sees only cell-shaped broadcasts, selects, and additions; no
     ``(K, *cell)`` or ``(*cell, K)`` tensor exists for the target cardinality.
@@ -189,12 +151,14 @@ def _sum_regime_mixture(
     zero probability still annihilates an admissible
     non-finite continuation inside ``zero_safe_weighted_term``.
 
-    One or two targets need no ordering. Every multi-target contribution passes
-    through a bit-preserving rounding barrier before it reaches a comparison or
-    addition, reproducing the former target-axis reduce's stored-product bits
-    without a target array; its custom tangent is the identity. The network uses
-    O(K log² K) comparisons rather than the prototype's quadratic bubble pass,
-    keeping trace growth bounded without reintroducing a target-shaped array.
+    The one-comparison two-target network is semantically necessary, not merely
+    a uniform spelling. Treating the final addition as commutative before each
+    product has crossed a value comparison lets XLA contract one multiply into
+    the add; swapping target declarations can then change the bits and a strict
+    argmax. The compare-swap establishes the same stored contribution values and
+    canonical value order as larger mixtures without a target-shaped buffer.
+    One target needs no ordering. The network uses O(K log² K) comparisons rather
+    than the prototype's quadratic bubble pass, keeping trace growth bounded.
     An empty terminal mixture is exactly ``zeros_like(like)``.
     """
     contributions: list[FloatND] = []
@@ -220,17 +184,6 @@ def _sum_regime_mixture(
         return jnp.zeros_like(like)
 
     if len(contributions) > 1:
-        # The former stack spelling reduced already-rounded products. Without an
-        # explicit storage boundary XLA may contract a target's final multiply
-        # into an add or comparison, changing valid mixtures by result-space ULPs.
-        # Reinterpret every contribution via its bits so all products reach the
-        # value-ordering machinery at stored precision. The optimization barriers
-        # prevent elimination; the bitcasts are code-free.
-        contributions = [
-            _stored_rounding_barrier(contribution) for contribution in contributions
-        ]
-
-    if len(contributions) >= _MIN_TARGETS_REQUIRING_VALUE_ORDER:
         for left, right, ascending in _bitonic_value_order_network(len(contributions)):
             contributions[left], contributions[right] = _compare_swap_values(
                 contributions[left],
@@ -1701,8 +1654,8 @@ def _get_compute_CE(
                 # helper for why the order must not depend on regime LABELS.
                 #
                 # Multiplying here would put the term outside the helper's
-                # zero-safe storage and value-ordering boundaries. The `0 * -inf`
-                # hazard that multiplication would raise (a
+                # zero-safe contribution and value-ordering boundaries. The
+                # `0 * -inf` hazard that multiplication would raise (a
                 # zero-probability target carrying an admissible `-inf`) is handled one
                 # level in, by `zero_safe_weighted_term` inside `_sum_regime_mixture`.
                 mixture_terms.append(
@@ -2307,12 +2260,12 @@ def _scalar_target_contribution(
             weights.append(weighted_nodes)
             shifts.append(shift)
         else:
-            # UNMULTIPLIED, like every carry target: `_sum_regime_mixture` forms
-            # `p_r * V_r` once inside a single zero-safe contraction, masking the
-            # VALUE on the `prob == 0` predicate before the multiply. So no
-            # neutralization is owed here -- while multiplying here would raise
-            # `0 * -inf = nan` for a zero-mass stateless target and put this term
-            # outside the value-ordered reduction.
+            # Keep the pair unmultiplied, like every carry target.
+            # `_sum_regime_mixture` forms its zero-safe contribution on the native
+            # cell shape, masking the value on `prob == 0`, then includes it in
+            # the common value-order network. No neutralization is owed here;
+            # multiplying here would raise `0 * -inf = nan` for a zero-mass
+            # stateless target and bypass the canonical reduction.
             mixture_terms.append((target_regime_name, prob, scalar_V))
     return (
         mixture_terms,
