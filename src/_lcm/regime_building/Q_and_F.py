@@ -56,7 +56,6 @@ from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
 from _lcm.zero_safe import (
     scaled_joint_weight,
-    sum_in_value_order,
     zero_safe_weighted_term,
 )
 from lcm.exceptions import ModelInitializationError
@@ -68,105 +67,134 @@ from lcm.typing import (
 )
 
 
+def _compare_swap_values(
+    left: FloatND, right: FloatND, *, ascending: bool
+) -> tuple[FloatND, FloatND]:
+    """Order two arrays while preserving both original operands.
+
+    ``minimum``/``maximum`` supply the canonical numeric order, including
+    ``-0 < +0`` and infinities, but each returns NaN when exactly one operand is
+    NaN. Used as a compare-swap pair they would therefore duplicate the NaN and
+    discard the finite operand. The two explicit NaN branches restore that
+    operand before returning the pair. When both operands are NaN they are
+    swapped, so even distinct payloads remain a permutation; NaNs form the
+    terminal invalid-input equivalence class and still poison the final sum.
+    """
+    left_arr, right_arr = jnp.broadcast_arrays(jnp.asarray(left), jnp.asarray(right))
+    left_is_nan = jnp.isnan(left_arr)
+    right_is_nan = jnp.isnan(right_arr)
+
+    lower = jnp.where(
+        left_is_nan,
+        right_arr,
+        jnp.where(right_is_nan, left_arr, jnp.minimum(left_arr, right_arr)),
+    )
+    upper = jnp.where(
+        left_is_nan,
+        left_arr,
+        jnp.where(right_is_nan, right_arr, jnp.maximum(left_arr, right_arr)),
+    )
+    return (lower, upper) if ascending else (upper, lower)
+
+
+def _bitonic_value_order_network(
+    n_items: int,
+) -> tuple[tuple[int, int, bool], ...]:
+    """Return a static O(K log² K) compare-swap network for arbitrary ``K``."""
+    comparisons: list[tuple[int, int, bool]] = []
+
+    def greatest_power_of_two_less_than(n: int) -> int:
+        out = 1
+        while out < n:
+            out *= 2
+        return out // 2
+
+    def merge(lo: int, n: int, *, ascending: bool) -> None:
+        if n <= 1:
+            return
+        split = greatest_power_of_two_less_than(n)
+        comparisons.extend((i, i + split, ascending) for i in range(lo, lo + n - split))
+        merge(lo, split, ascending=ascending)
+        merge(lo + split, n - split, ascending=ascending)
+
+    def sort(lo: int, n: int, *, ascending: bool) -> None:
+        if n <= 1:
+            return
+        split = n // 2
+        sort(lo, split, ascending=not ascending)
+        sort(lo + split, n - split, ascending=ascending)
+        merge(lo, n, ascending=ascending)
+
+    sort(0, n_items, ascending=True)
+    return tuple(comparisons)
+
+
 def _sum_regime_mixture(
     mixture_terms: list[tuple[RegimeName, FloatND, FloatND]], *, like: FloatND
 ) -> FloatND:
-    """Reduce the regime mixture `E[V']=Σ p_r·V_r` as ONE zero-safe contraction.
+    """Reduce ``E[V'] = Σ p_r V_r`` without a materialized target axis.
 
-    `mixture_terms` is a list of `(target_name, prob_r, expected_V_r)` — the
-    UNMULTIPLIED per-target probability and expected continuation. The per-target
-    probabilities and continuations are stacked along a new leading (target) axis and
-    multiplied ONCE inside a single `zero_safe_weighted_term`; the resulting
-    per-target contributions `p_r·V_r` are then reduced by a VALUE-ORDERED `jnp.sum`
-    — the contributions are `jnp.sort`-ed along the target axis before the sum. Two
-    properties this buys over a sequential left-fold
-    `E = 0; for r: E += zero_safe_weighted_term(p_r, V_r)`, both MEASURED:
+    Each target's zero-safe contribution is formed on its native cell shape.
+    For two or more targets, a static bitonic compare-swap network orders the
+    separate arrays by contribution value before a deterministic left fold. XLA
+    therefore sees only cell-shaped broadcasts, selects, and additions; no
+    ``(K, *cell)`` or ``(*cell, K)`` tensor exists for the target cardinality.
 
-    - **Accuracy.** Stacking the OPERANDS and multiplying once inside the reduction —
-      NOT stacking the already-formed products — lands on the exact-policy side of a
-      pinned 5-target fixture (`> alternative` bits ...843) where the left-fold and
-      `jnp.sum(jnp.stack(products))` both land on the wrong side (bits ...842). It is
-      still NOT correctly-rounded: under cancellation (Σ|p_r·V_r| ≫ |Σ p_r·V_r|) the
-      error scales with Σ|p_r·V_r|, hundreds of result-ULP, so a genuine knife-edge
-      argmax can still resolve either way. Deterministic resolution AT a genuine
-      knife-edge would need compensated/exact summation, which is not implemented — and
-      a value-sorted Neumaier compensated sum does not supply it: MEASURED, on a
-      counterexample it lands on the WRONG side of the competing action where the plain
-      value-sorted reduction lands exact-side.
-    - **Reproducibility (label-independence).** The reduction ORDER is a deterministic
-      function of the contribution VALUES — economically meaningful — and NEVER of the
-      arbitrary regime NAMES. Sorting by name (`sorted(mixture_terms, key=name)`)
-      would remove the transition-mapping ITERATION-ORDER dependence but make the
-      float64 summation order a function of the user's regime LABELS: a pure
-      ALPHA-RENAMING of the regimes (same probabilities, same continuations, only the
-      dict keys change) reorders the non-associative float64 sum and, MEASURED, moves
-      the result across 37 distinct outputs over the 120 name bijections of a valid
-      5-target float64 mixture — reversing a non-tied household argmax.
-      Sorting the CONTRIBUTION MULTISET (`jnp.sort` along the target axis) makes the
-      sum provably invariant to alpha-renaming: the multiset `{p_r·V_r}` is unchanged
-      by relabeling, and the sorted order (hence the summation order and its bits) is a
-      function of that multiset alone. The stacking order of `mixture_terms` is
-      therefore irrelevant (the sort canonicalises it), so no name-sort is needed.
+    The ordering is the same supported invariant as the former stack-and-sort
+    spelling: it depends only on the contribution multiset, never on regime
+    labels or declaration order. It is explicit rather than expressed with
+    bare ``minimum``/``maximum`` because those operations turn one
+    ``(NaN, finite)`` pair into two NaNs and cease to be a permutation. The
+    corrected comparator preserves both operands, puts numeric values before
+    NaNs, canonicalizes signed zero, and leaves equal finite values and infinities
+    unchanged. A live NaN consequently remains visible in the final sum, while a
+    zero probability still annihilates an admissible
+    non-finite continuation inside ``zero_safe_weighted_term``.
 
-    Zero-mass safety holds throughout (a zero `p_r` beside an admissible `±inf` V_r is
-    masked to exactly 0 by `zero_safe_weighted_term` BEFORE the sort, so a zero-mass
-    `-inf` contributes 0 and never survives the sort as `-inf`). Cost: the K
-    per-target contributions are materialised together and sorted along the (small)
-    target axis, an O(K log K) sort on a tiny axis, rather than folded one at a time — K
-    is the number of active next-period targets. `mixture_terms` is empty in a
-    terminal period with no active target; the mixture is then exactly `zeros_like`.
+    The one-comparison two-target network is semantically necessary, not merely
+    a uniform spelling. Treating the final addition as commutative before each
+    product has crossed a value comparison lets XLA contract one multiply into
+    the add; swapping target declarations can then change the bits and a strict
+    argmax. The compare-swap establishes the same stored contribution values and
+    canonical value order as larger mixtures without a target-shaped buffer.
+    One target needs no ordering. The network uses O(K log² K) comparisons rather
+    than the prototype's quadratic bubble pass, keeping trace growth bounded.
+    An empty terminal mixture is exactly ``zeros_like(like)``.
     """
-    if not mixture_terms:
+    contributions: list[FloatND] = []
+    for _, probability, value in mixture_terms:
+        probability_arr = jnp.asarray(probability)
+        value_arr = jnp.asarray(value)
+        # Regime probabilities carry the cell axes. A collective continuation
+        # adds a trailing stakeholder axis, over which one scalar probability is
+        # constant; right-padding aligns that axis without stacking targets.
+        if probability_arr.ndim < value_arr.ndim:
+            probability_arr = probability_arr.reshape(
+                probability_arr.shape + (1,) * (value_arr.ndim - probability_arr.ndim)
+            )
+        contributions.append(
+            zero_safe_weighted_term(
+                weight=probability_arr,
+                value=value_arr,
+                subnormal_is_accounted_for=False,
+            )
+        )
+
+    if not contributions:
         return jnp.zeros_like(like)
-    prob_list = [prob for _, prob, _ in mixture_terms]
-    value_list = [value for _, _, value in mixture_terms]
-    # Targets do not all arrive at the same rank: a CARRY target's expected
-    # continuation carries the cell axes (and, collectively, a trailing stakeholder
-    # axis), while a STATELESS target's V is rank-zero -- there is no next state to
-    # evaluate it at. `jnp.stack` needs one shape, so lift the rank-deficient ones
-    # to the common value shape first. `broadcast_to` replicates, it does not
-    # resample, so this changes no number; it only makes the target axis stackable.
-    #
-    # The `len < len` guard covers the all-stateless case: with no carry target the
-    # common value shape is `()` while the probabilities still carry the cell axes,
-    # and `zero_safe_weighted_term` right-aligns -- it would weight a cell axis by
-    # the target axis. Lifting values to the probability shape keeps axis 0 the
-    # target axis, which is what the right-padding below then assumes.
-    value_shape = jnp.broadcast_shapes(*(v.shape for v in value_list))
-    prob_shape = jnp.broadcast_shapes(*(p.shape for p in prob_list))
-    if len(value_shape) < len(prob_shape):
-        value_shape = jnp.broadcast_shapes(value_shape, prob_shape)
-    # `jnp.stack` needs one shape. The values are lifted to their common shape
-    # below; the probabilities are lifted to theirs for the same reason, so a
-    # target whose probability arrives at a lower rank than its siblings' aligns
-    # on the target axis the right-padding further down assumes, rather than
-    # making the stack raise.
-    probs = jnp.stack([jnp.broadcast_to(p, prob_shape) for p in prob_list], axis=0)
-    values = jnp.stack([jnp.broadcast_to(v, value_shape) for v in value_list], axis=0)
-    # Right-pad the probability rank to the value rank so the per-target weight
-    # broadcasts over the TARGET axis (leading, axis 0) and is constant across any
-    # trailing value-only axes. The collective site carries a trailing stakeholder
-    # axis on the continuation (`values` is (K, *cell, S)) that the scalar regime
-    # probability (K, *cell) does not: without this alignment `zero_safe_weighted_
-    # term` right-aligns and weights the STAKEHOLDER axis instead of the target axis
-    # -- silently reversing a household action when K==S, leaking a zero-mass -inf,
-    # or raising when K!=S. A no-op at the scalar/singleton sites (equal ranks).
-    if probs.ndim < values.ndim:
-        probs = probs.reshape(probs.shape + (1,) * (values.ndim - probs.ndim))
-    # Reduce in VALUE order, not label order. `zero_safe_weighted_term` forms the
-    # zero-mass-safe per-target contributions `p_r*V_r` (masking a zero-mass `+-inf`
-    # to 0); sorting them along the target axis (axis 0) before `jnp.sum` makes the
-    # non-associative float64 reduction order a deterministic function of the
-    # contribution multiset -- provably invariant to an economically-inert
-    # alpha-renaming of the regimes. Sorting by regime label instead would make the
-    # bits (and a non-tied argmax) depend on the arbitrary names. See the docstring.
-    # `subnormal_is_accounted_for=False`: these weights are regime transition
-    # probabilities straight from the model, and nothing has put them on a common
-    # scale, so the term has to move the exponent itself.
-    contributions = zero_safe_weighted_term(
-        weight=probs, value=values, subnormal_is_accounted_for=False
-    )
-    return sum_in_value_order(contributions, axis=0)
+
+    if len(contributions) > 1:
+        for left, right, ascending in _bitonic_value_order_network(len(contributions)):
+            contributions[left], contributions[right] = _compare_swap_values(
+                contributions[left],
+                contributions[right],
+                ascending=ascending,
+            )
+
+    total = contributions[0]
+    for contribution in contributions[1:]:
+        total = total + contribution
+    return total
 
 
 def _normalized_regime_mixture(
@@ -1620,14 +1648,14 @@ def _get_compute_CE(
                     n_stakeholders=n_stakeholders,
                 )
                 # Collect the UNMULTIPLIED `(prob, expected V)`; the mixture is
-                # reduced ONCE by `_sum_regime_mixture` -- stack the operands, one
-                # zero-safe contraction, value-ordered sum. See that helper for why
-                # this beats a sequential left-fold on accuracy and why the
-                # order must not depend on regime LABELS.
+                # reduced ONCE by `_sum_regime_mixture`: form each target's
+                # zero-safe contribution on its native cell shape, put the
+                # separate contributions in value order, then sum. See that
+                # helper for why the order must not depend on regime LABELS.
                 #
-                # Multiplying here would put this term outside that single
-                # value-ordered reduction -- which is the point of the unmultiplied
-                # form. The `0 * -inf` hazard multiplying would raise (a
+                # Multiplying here would put the term outside the helper's
+                # zero-safe contribution and value-ordering boundaries. The
+                # `0 * -inf` hazard that multiplication would raise (a
                 # zero-probability target carrying an admissible `-inf`) is handled one
                 # level in, by `zero_safe_weighted_term` inside `_sum_regime_mixture`.
                 mixture_terms.append(
@@ -1664,12 +1692,11 @@ def _get_compute_CE(
                 lottery_weights.append(weighted_nodes)
                 lottery_shifts.append(product_shift + node_shifts)
 
-        # ONE reduction for the whole regime mixture: stack the operands and
-        # contract once, value-ordered, rather than folding `CE = CE + p*V` per
-        # target. Accuracy and a sum order that must not depend on
-        # regime LABELS. `mixture_terms` is empty on the lottery route, where
-        # `_sum_regime_mixture` returns `zeros_like(like)` -- the additive
-        # identity the branches below then compose with.
+        # ONE value-ordered reduction for the whole regime mixture, expressed
+        # without a materialized target axis. Its order must not depend on regime
+        # LABELS. `mixture_terms` is empty on the lottery route, where
+        # `_sum_regime_mixture` returns `zeros_like(like)` -- the additive identity
+        # the branches below then compose with.
         # `like` is the shape of a VALUE, so collectively it carries the trailing
         # stakeholder axis the mass-shaped `zero` does not.
         CE = _sum_regime_mixture(
@@ -2233,12 +2260,12 @@ def _scalar_target_contribution(
             weights.append(weighted_nodes)
             shifts.append(shift)
         else:
-            # UNMULTIPLIED, like every carry target: `_sum_regime_mixture` forms
-            # `p_r * V_r` once inside a single zero-safe contraction, masking the
-            # VALUE on the `prob == 0` predicate before the multiply. So no
-            # neutralization is owed here -- while multiplying here would raise
-            # `0 * -inf = nan` for a zero-mass stateless target and put this term
-            # outside the value-ordered reduction.
+            # Keep the pair unmultiplied, like every carry target.
+            # `_sum_regime_mixture` forms its zero-safe contribution on the native
+            # cell shape, masking the value on `prob == 0`, then includes it in
+            # the common value-order network. No neutralization is owed here;
+            # multiplying here would raise `0 * -inf = nan` for a zero-mass
+            # stateless target and bypass the canonical reduction.
             mixture_terms.append((target_regime_name, prob, scalar_V))
     return (
         mixture_terms,

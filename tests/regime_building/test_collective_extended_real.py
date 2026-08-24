@@ -350,10 +350,9 @@ def test_zero_safe_average_does_not_reverse_a_nontied_action():
 def _product_left_fold_mixture(terms: list[FloatND]) -> FloatND:
     """A Python left-fold over already-multiplied terms.
 
-    The accumulating form `E = 0; for r: E += zero_safe_weighted_term(p_r, V_r)`,
-    against which `_sum_regime_mixture` is a deferred vectorised zero-safe
-    contraction over the UNMULTIPLIED operands. Run in-process so the regression
-    can show the left fold lands on the wrong knife-edge side, without touching
+    The declaration-ordered accumulation against which `_sum_regime_mixture`'s
+    value-ordered reduction is compared. Run in-process so the regression can
+    show why canonical contribution ordering is load-bearing without touching
     `src/`.
     """
     total = jnp.zeros_like(terms[0])
@@ -362,8 +361,8 @@ def _product_left_fold_mixture(terms: list[FloatND]) -> FloatND:
     return total
 
 
-def _deferred_mixture(w: FloatND, v: FloatND, order: tuple[int, ...]) -> FloatND:
-    """Run `_sum_regime_mixture` from traced arrays: names are STATIC, arrays traced.
+def _value_ordered_mixture(w: FloatND, v: FloatND, order: tuple[int, ...]) -> FloatND:
+    """Run `_sum_regime_mixture` from traced arrays: names are static, arrays traced.
 
     `order` fixes the list order the terms are appended in; each value keeps its own
     canonical name `r{i}`, so a permuted `order` must not change the sorted result.
@@ -381,22 +380,22 @@ def test_sum_regime_mixture_is_zero_mass_safe():
     """
     values = jnp.array([1.5, -jnp.inf, 2.0, 0.5], dtype=jnp.float32)
     probs = jnp.array([0.5, 0.0, 0.3, 0.2], dtype=jnp.float32)
-    result = jax.jit(lambda w, v: _deferred_mixture(w, v, (0, 1, 2, 3)))(probs, values)
+    result = jax.jit(lambda w, v: _value_ordered_mixture(w, v, (0, 1, 2, 3)))(
+        probs, values
+    )
     assert jnp.isfinite(result)
     # exact mixture over the positive-mass terms: .5*1.5 + .3*2 + .2*.5 = 1.45
     assert float(result) == pytest.approx(1.45, abs=1e-6)
 
 
-def test_sum_regime_mixture_lands_on_the_exact_side_where_the_left_fold_did_not():
-    """The deferred vectorised reduction crosses to the exact-policy side.
+def test_value_ordered_mixture_lands_on_the_exact_side_where_left_fold_did_not():
+    """Canonical contribution ordering crosses to the exact-policy side.
 
-    On a pinned 5-target float64 fixture the exact mixture is bits ...851, above a
-    representable knife-edge alternative at bits ...843. `_sum_regime_mixture`
-    (stack the UNMULTIPLIED operands, one zero-safe contraction) lands on the
-    exact side (> alternative), while the left fold lands at bits ...842, BELOW
-    the alternative -- the opposite action. Stacking the already-MULTIPLIED
-    products, by contrast, reproduces the left fold's wrong-side bits: the
-    operand-vs-product distinction is the point.
+    On a pinned 5-target float64 fixture the exact mixture is above a representable
+    competing action. `_sum_regime_mixture` orders the separately formed zero-safe
+    contributions by value and lands above the alternative, while declaration-order
+    accumulation lands below it. The witness pins the supported reduction order; it
+    does not require a target-axis stack or one vectorized multiplication.
     """
     vals = [
         0.812941999835589,
@@ -417,7 +416,9 @@ def test_sum_regime_mixture_lands_on_the_exact_side_where_the_left_fold_did_not(
     with _x64(enabled=True):
         v = jnp.asarray(vals, dtype=jnp.float64)
         w = jnp.asarray(probs, dtype=jnp.float64)
-        deferred = float(jax.jit(lambda w, v: _deferred_mixture(w, v, order))(w, v))
+        value_ordered = float(
+            jax.jit(lambda w, v: _value_ordered_mixture(w, v, order))(w, v)
+        )
         left_fold = float(
             jax.jit(
                 lambda w, v: _product_left_fold_mixture(
@@ -430,17 +431,17 @@ def test_sum_regime_mixture_lands_on_the_exact_side_where_the_left_fold_did_not(
                 )
             )(w, v)
         )
-    assert deferred > alternative  # exact-policy side
+    assert value_ordered > alternative  # exact-policy side
     assert left_fold < alternative  # wrong side
-    assert (deferred > alternative) != (left_fold > alternative)
+    assert (value_ordered > alternative) != (left_fold > alternative)
 
 
 def test_sum_regime_mixture_is_independent_of_target_declaration_order():
     """The sorted reduction is invariant to target permutation.
 
     A left fold changes a pinned-fixture policy under a mere target permutation on
-    the same backend. `_sum_regime_mixture` sorts by target name before stacking, so any
-    permutation of the same (name, prob, value) terms yields bit-identical results.
+    the same backend. `_sum_regime_mixture` orders by contribution value, so any
+    permutation of the same `(name, probability, value)` terms is bit-identical.
     """
     vals = [0.81, 1.14, -0.58, -2.64, 1.28]
     probs = [0.1227, 0.2780, 0.0803, 0.2570, 0.2619]
@@ -448,11 +449,13 @@ def test_sum_regime_mixture_is_independent_of_target_declaration_order():
         v = jnp.asarray(vals, dtype=jnp.float64)
         w = jnp.asarray(probs, dtype=jnp.float64)
         base = _bits(
-            jax.jit(lambda w, v: _deferred_mixture(w, v, (0, 1, 2, 3, 4)))(w, v)
+            jax.jit(lambda w, v: _value_ordered_mixture(w, v, (0, 1, 2, 3, 4)))(w, v)
         )
         for perm in [(4, 0, 3, 1, 2), (2, 1, 0, 4, 3)]:
             got = _bits(
-                jax.jit(lambda w, v, perm=perm: _deferred_mixture(w, v, perm))(w, v)
+                jax.jit(lambda w, v, perm=perm: _value_ordered_mixture(w, v, perm))(
+                    w, v
+                )
             )
             assert got == base
 
@@ -486,7 +489,7 @@ def test_sum_regime_mixture_accuracy_scales_with_summand_magnitude_not_result_ul
         v = jnp.asarray(vals, dtype=jnp.float64)
         w = jnp.asarray(probs, dtype=jnp.float64)
         got = float(
-            jax.jit(lambda w, v: _deferred_mixture(w, v, (0, 1, 2, 3, 4)))(w, v)
+            jax.jit(lambda w, v: _value_ordered_mixture(w, v, (0, 1, 2, 3, 4)))(w, v)
         )
     # Cancellation: the result-ULP gap is large, but the SUMMAND-scale bound holds.
     result_ulp = abs(got - exact) / np.spacing(abs(exact))
@@ -616,9 +619,9 @@ def test_sum_regime_mixture_is_invariant_to_alpha_renaming_of_the_regimes():
 
     A pure alpha-renaming is economically inert (same probabilities, same
     continuations, only the dict keys change), so the household argmax must not
-    depend on it. `_sum_regime_mixture` reduces the per-target contributions in
-    VALUE order (`jnp.sort` of the zero-safe `p_r*V_r` along the target axis before
-    `jnp.sum`), which is a deterministic function of the contribution MULTISET and
+    depend on it. `_sum_regime_mixture` reduces the separate zero-safe per-target
+    contributions in VALUE order, which is a deterministic function of the
+    contribution MULTISET and
     hence provably invariant to relabeling. This asserts bit-identity AND a single
     policy across ALL 120 name bijections, and shows the name-sort
     (`_name_sorted_mixture`, run in-process) produces many distinct bit patterns
