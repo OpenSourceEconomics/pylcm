@@ -128,20 +128,19 @@ THE CONTRACT. `zero_safe_average` / `zero_safe_weighted_term` are:
    diverges 1 ULP in float32). Scoped to the AVERAGE HELPER — a single
    vectorised reduction — and NOT extending to the regime mixture below.
 
-The `Q_and_F` regime mixture is `_sum_regime_mixture`, a single zero-safe
-contraction over the STACKED UNMULTIPLIED operands whose per-target
-contributions are reduced in VALUE order (a `jnp.sort` along the target axis
-before `jnp.sum`). Two properties follow, both MEASURED under jit on a valid
-all-positive 5-target float64 mixture:
+The `Q_and_F` regime mixture is `_sum_regime_mixture`. It forms each
+target's zero-safe contribution on its native cell shape, preserves its stored
+bits, orders the separate arrays by VALUE with a static compare-swap network,
+then uses a deterministic left fold. No target axis is materialized. Two
+properties follow, both MEASURED under jit on a valid all-positive 5-target
+float64 mixture:
 
 - It lands on the exact-policy side of a pinned knife-edge fixture (bits ...858
   against an alternative at ...843, exact at ...851) where accumulating
-  ALREADY-MULTIPLIED terms does not — a sequential left-fold
-  `E += zero_safe_weighted_term(p_r, V_r)` and `jnp.sum(jnp.stack(products))`
-  both return the identical wrong-side bits ...842. Stacking OPERANDS rather
-  than PRODUCTS is the whole distinction. Beware the trap: an eager (non-jit)
-  run of the same fixture returns bits ...848 for every form and hides the
-  reversal, so validate on the jitted path.
+  declaration-ordered accumulation does not. A sequential left-fold
+  `E += zero_safe_weighted_term(p_r, V_r)` returns the wrong-side bits ...842.
+  Value ordering is the distinction. Beware the trap: an eager (non-jit) run
+  of the same fixture hides the reversal, so validate on the jitted path.
 - It is invariant to target-declaration order AND to an economically-inert
   alpha-renaming of the regimes. Sorting by target NAME instead fixes iteration
   order but leaves the float64 bits — and a non-tied argmax — a function of the
