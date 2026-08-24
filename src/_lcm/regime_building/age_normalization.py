@@ -125,6 +125,46 @@ class PeriodizedEconFunction:
         raise TypeError(msg)
 
 
+def function_declaration_graphs_are_equivalent(
+    left: Mapping[str, object],
+    right: Mapping[str, object],
+) -> bool:
+    """Whether two normalized function graphs have identical provenance.
+
+    Bare declarations are equivalent only by object identity. Separately built
+    `PeriodizedUserFunction` wrappers are equivalent when they carry the same
+    explicit signatures and the same concrete callable at every period. Mapping
+    nodes recurse by key. This is deliberately conservative: numerical agreement,
+    matching bytecode, or equal closure values never authorize role sharing.
+    """
+    if left.keys() != right.keys():
+        return False
+    return all(
+        _function_declaration_nodes_are_equivalent(left[name], right[name])
+        for name in left
+    )
+
+
+def _function_declaration_nodes_are_equivalent(left: object, right: object) -> bool:
+    """Compare one node in a normalized function declaration graph."""
+    if left is right:
+        return True
+    if isinstance(left, Mapping) and isinstance(right, Mapping):
+        return function_declaration_graphs_are_equivalent(left, right)
+    if isinstance(left, PeriodizedUserFunction) and isinstance(
+        right, PeriodizedUserFunction
+    ):
+        return (
+            left.signature_by_period == right.signature_by_period
+            and left.concrete_by_period.keys() == right.concrete_by_period.keys()
+            and all(
+                left.concrete_by_period[period] is right.concrete_by_period[period]
+                for period in left.concrete_by_period
+            )
+        )
+    return False
+
+
 @dataclass(frozen=True, kw_only=True)
 class ResolvedAgeGrid:
     """One age-specialized grid resolved concretely for one period."""
