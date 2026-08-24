@@ -70,7 +70,6 @@ from _lcm.regime_building.age_normalization import (
     continuation_group_key,
     continuation_info_lookup,
     expand_groups_to_periods,
-    function_declaration_graphs_are_equivalent,
     group_periods_by_key,
     normalize_age_specialization,
     periodized_tree_signature,
@@ -1521,11 +1520,6 @@ def _build_simulation_phase(
     decision_functions = dict(spec.simulation.functions) | {
         name: spec.solution.functions[name] for name in carried_only
     }
-    shared_continuation_declarations = not regime_declares_phased(
-        user_regime
-    ) and function_declaration_graphs_are_equivalent(
-        decision_functions, spec.solution.functions
-    )
     flat_param_names = _engine_flat_param_names(
         regime_params_template=regime_params_template,
         granular_param_expansions=granular_param_expansions,
@@ -1651,15 +1645,14 @@ def _build_simulation_phase(
         # it evaluates on the Cartesian grid, not per-subject. The solve
         # phase built that function unconditionally for non-terminal regimes.
         assert solve_compute_regime_transition_probs is not None  # noqa: S101
-        # Q is built from two phase-closed roles — the agent acts on its beliefs
+        # Q is built from two phase-closed halves — the agent acts on its beliefs
         # about the future and lives in the truth now:
-        #   flow         = simulate transitions + simulate declarations
-        #   continuation = solve transitions    + solve declarations
-        # `dags` resolves a law's arguments transitively against its role's pool.
-        # When the regime has no `Phased` declaration and its normalized function
-        # graphs are structurally identical, the decision pool fulfills both roles
-        # and no second graph is retained. Any belief/truth declaration keeps the
-        # solve pool explicit, including transition-generated stochastic weights.
+        #   flow         = simulate transitions + simulate pool (`functions`)
+        #   continuation = solve transitions    + solve pool (`solve_functions`)
+        # Each half takes its own function pool as well as its own transitions,
+        # because `dags` resolves a law's arguments against the pool it is handed,
+        # transitively. The contract, and its one exception for carried states, is
+        # documented on `lcm.phased.Phased`.
         #
         # The decision functions evaluate the solve representation, so any
         # weight law the solve phase built and this phase did not — the split
@@ -1685,9 +1678,7 @@ def _build_simulation_phase(
             flat_param_names=flat_param_names,
             koopmans_aggregator=cast("EconFunction", core.koopmans_aggregator),
             certainty_equivalent=certainty_equivalent,
-            continuation_functions=(
-                None if shared_continuation_declarations else solve_functions
-            ),
+            continuation_functions=solve_functions,
             grid_schedule=grid_schedule,
             period_to_regime_v_interp=period_to_regime_v_interp,
         )
@@ -3956,7 +3947,7 @@ def _build_Q_and_F_per_period(
         certainty_equivalent: Nonlinear certainty equivalent declared by the
             regime, or `None`.
         continuation_functions: Solve-phase pool the continuation sub-DAG resolves
-            against; `None` when it structurally coincides with `functions`.
+            against; `None` in the solve phase, where it coincides with `functions`.
         grid_schedule: Concrete age-specialized grid schedule, or `None`.
         period_to_regime_v_interp: Per-period continuation interpolation info
             built from the schedule, or `None`.
