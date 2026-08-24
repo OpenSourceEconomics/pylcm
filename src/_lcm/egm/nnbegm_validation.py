@@ -68,12 +68,62 @@ def validate_nnbegm_regime(
 ) -> None:
     """Reject an outer transition coupled to the inner solved margin."""
     solver = cast("_BoundNNBEGM", user_regime.solver)
+    _fail_if_removed_outer_action_is_reachable(
+        regime_name=regime_name,
+        user_regime=user_regime,
+        functions=_resolve_solve_functions(user_regime=user_regime),
+        solver=solver,
+    )
     _fail_if_outer_law_reads_the_inner_margin(
         regime_name=regime_name,
         user_regime=user_regime,
         functions=_resolve_solve_functions(user_regime=user_regime),
         solver=solver,
     )
+
+
+def _fail_if_removed_outer_action_is_reachable(
+    *,
+    regime_name: RegimeName,
+    user_regime: UserRegime,
+    functions: dict[FunctionName, UserFunction],
+    solver: _BoundNNBEGM,
+) -> None:
+    """Reject solve functions that still require the enumerated outer action."""
+    opaque_functions = _without(functions=functions, names={solver.outer_post_decision})
+    sibling_laws = {
+        f"next_{state_name}": value
+        for state_name, value in user_regime.state_transitions.items()
+    }
+    targets: list[tuple[str, UserFunction, Mapping[str, object]]] = [
+        (f"function {name!r}", func, sibling_laws)
+        for name, func in opaque_functions.items()
+    ]
+    for state_name, law in user_regime.state_transitions.items():
+        siblings = {
+            name: value
+            for name, value in sibling_laws.items()
+            if name != f"next_{state_name}"
+        }
+        targets.extend(
+            (f"transition of state {state_name!r}{label}", variant, siblings)
+            for label, variant in _transition_variants(value=law)
+        )
+    for label, target, siblings in targets:
+        ancestors = _ancestors_through_sibling_laws(
+            functions=opaque_functions,
+            target_func=target,
+            sibling_laws=siblings,
+        )
+        if solver.outer_action not in ancestors:
+            continue
+        msg = (
+            f"In regime {regime_name!r}, {label} reads the outer action "
+            f"{solver.outer_action!r}. NNBEGM removes that action while its "
+            f"inner solves bind {solver.outer_post_decision!r} to one finite "
+            "outer candidate. Depend on the bound post-decision value instead."
+        )
+        raise ModelInitializationError(msg)
 
 
 def _fail_if_outer_law_reads_the_inner_margin(

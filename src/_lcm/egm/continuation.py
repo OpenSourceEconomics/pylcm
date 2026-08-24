@@ -39,7 +39,6 @@ from _lcm.egm.interp import (
     locate_on_grid,
     prepare_padded_grid,
 )
-from _lcm.egm.nbegm import jump_moving_state_names
 from _lcm.egm.outer_envelope import right_germ_winner
 from _lcm.egm.regime_introspection import (
     _get_child_discrete_actions,
@@ -80,11 +79,9 @@ from lcm.typing import (
     ScalarInt,
 )
 
-# The anchored Epstein-Zin partials `(a, W, E, b, T~)` a child reader returns
-# when a certainty equivalent is active.
-type _EZPartials = tuple[
-    ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat
-]
+# Stable Epstein-Zin partials `(nu, W, b, T~)` returned by a child reader
+# when a power certainty equivalent is active.
+type _EZPartials = tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]
 
 
 def _is_runtime_process(grid: Grid) -> bool:
@@ -190,32 +187,6 @@ class _ChildRead:
 
     stochastic_state_names: tuple[StateName, ...]
     """Child stochastic node-axis names (process or Markov) in carry-axis order."""
-
-    foldable_stochastic_flags: tuple[bool, ...]
-    """Per stochastic dimension: whether its expectation folds into the carry.
-
-    A dimension folds when its nodes cannot move the per-row resources
-    queries or the aggregation those queries feed, so its expectation
-    commutes with the row-linear carry interpolation and pre-folds into an
-    expected carry once per cell (instead of looping its nodes per savings
-    query). All three conditions are static model topology:
-
-    - the child's resources DAG does not read the dimension's node value;
-    - the child's carry rows share the state grid as abscissae
-      (`Solver.egm_continuation_layout.rows_share_state_grid`), so every node
-      row interpolates with the same bracket structure;
-    - the carry keeps no per-discrete-action rows
-      (`Solver.egm_continuation_layout.retains_discrete_action_rows` is `False`), so no
-      per-node choice aggregation sits between interpolation and the fold;
-    - for a topology-publishing child, no jump source reads the dimension's
-      node value, so the published jump preimages (and the rows' duplicated
-      abscissae) are identical along it.
-
-    The fold commutes with the read exactly wherever the value read's
-    monotone slope limiter is inactive; where it binds (near jumps) the
-    folded read is a different valid interpolant of the same data, deviating
-    at interpolation-error order.
-    """
 
     stochastic_node_values: tuple[FloatND | IntND, ...]
     """Per stochastic dimension: the node values fed into the resources query.
@@ -401,72 +372,64 @@ def bind_continuation(
 
         Linear (expected-utility) mode returns the regime-probability-weighted
         expected value and marginal. Epstein-Zin mode blends each target's
-        anchored transform-space partials `(a_r, S~_r, b_r, T~_r)` with the
+        stable partials `(CE_r, W_r, ell_r, M_r)` with the
         regime probabilities (`ez_blend_partials`) and inverts once, so the
         certainty equivalent spans the joint (regime x shock) lottery — the
         regime split (e.g. survival) is inside the CE, not a linear average of
         per-regime certainty equivalents.
         """
         if risk_aversion is not None:
-            anchors: list[ScalarFloat] = []
+            certainty_equivalents: list[ScalarFloat] = []
             weight_sums: list[ScalarFloat] = []
-            scaled_values: list[ScalarFloat] = []
             marginal_log_scales: list[ScalarFloat] = []
             marginal_mantissas: list[ScalarFloat] = []
             probs: list[ScalarFloat] = []
             for target in plan.stateful_targets:
-                # The reader returns the anchored quint whenever risk_aversion
-                # is set (this branch); ty cannot correlate the union's arity
-                # with the mode.
                 (
-                    anchor,
+                    certainty_equivalent,
                     weight_sum,
-                    scaled_value,
                     marginal_log_scale,
                     marginal_mantissa,
                 ) = cast(
                     "_EZPartials",
                     child_readers[target](savings_value),
                 )
-                anchors.append(anchor)
+                certainty_equivalents.append(certainty_equivalent)
                 weight_sums.append(weight_sum)
-                scaled_values.append(scaled_value)
                 marginal_log_scales.append(marginal_log_scale)
                 marginal_mantissas.append(marginal_mantissa)
                 probs.append(regime_transition_probs[target])
             for target in plan.scalar_targets:
-                # A stateless target (a constant bequest) contributes only to
-                # the value channel; its constant enters transform space as its
-                # own anchor, and its marginal channel is exactly zero.
                 constant_value = next_regime_to_continuation[target].value[0]
-                anchor, weight_sum, scaled_value = ez_transform_scalar(
+                (
+                    certainty_equivalent,
+                    weight_sum,
+                    marginal_log_scale,
+                    marginal_mantissa,
+                ) = ez_transform_scalar(
                     value=constant_value, risk_aversion=risk_aversion
                 )
-                anchors.append(anchor)
+                certainty_equivalents.append(certainty_equivalent)
                 weight_sums.append(weight_sum)
-                scaled_values.append(scaled_value)
-                marginal_log_scales.append(jnp.asarray(0.0, dtype=dtype))
-                marginal_mantissas.append(jnp.asarray(0.0, dtype=dtype))
+                marginal_log_scales.append(marginal_log_scale)
+                marginal_mantissas.append(marginal_mantissa)
                 probs.append(regime_transition_probs[target])
             (
-                joint_anchor,
+                joint_certainty_equivalent,
                 blended_weight,
-                blended_value,
                 joint_marginal_scale,
                 blended_mantissa,
             ) = ez_blend_partials(
-                log_anchors=jnp.stack(anchors),
+                certainty_equivalents=jnp.stack(certainty_equivalents),
                 weight_sums=jnp.stack(weight_sums),
-                scaled_values=jnp.stack(scaled_values),
                 marginal_log_scales=jnp.stack(marginal_log_scales),
                 marginal_mantissas=jnp.stack(marginal_mantissas),
                 probs=jnp.stack(probs),
                 risk_aversion=risk_aversion,
             )
             return ez_invert_partials(
-                log_anchor=joint_anchor,
+                certainty_equivalent=joint_certainty_equivalent,
                 weight_sum=blended_weight,
-                scaled_value=blended_value,
                 marginal_log_scale=joint_marginal_scale,
                 marginal_mantissa=blended_mantissa,
                 risk_aversion=risk_aversion,
@@ -549,132 +512,6 @@ def build_continuation_plan(
     )
 
 
-def _fold_stochastic_dims(
-    *,
-    read: _ChildRead,
-    carry: EGMCarry,
-    stochastic_node_values: tuple[FloatND | IntND, ...],
-    weight_vecs: tuple[Float1D, ...],
-) -> tuple[_ChildRead, EGMCarry, tuple[FloatND | IntND, ...], tuple[Float1D, ...]]:
-    """Pre-apply the foldable stochastic dims' expectation to the carry rows.
-
-    Each foldable dimension's intrinsic weights are savings-independent, its
-    node values never reach the resources queries, and (under the fold gates)
-    every node row shares the abscissae — so its expectation commutes with the
-    per-row interpolation and folds into the carry once per cell. The folded
-    carry's value and marginal rows are the guarded weighted sums over the
-    dimension's node axis (`w * 0` on zero-weight nodes, so a `-inf`
-    infeasible row on a zero-weight node contributes exactly zero and a NaN
-    weight still poisons the sum); the abscissae are taken from the first
-    node (identical across nodes under the gate). The read's per-dimension
-    tuples shrink to the unfolded dims, so the remaining node loop — or, when
-    everything folds, the loop-free branch — runs unchanged downstream.
-
-    Returns:
-        Tuple of the reduced read, the folded carry, and the unfolded dims'
-        node values and weight vectors.
-
-    """
-    folded_names = frozenset(
-        name
-        for name, foldable in zip(
-            read.stochastic_state_names, read.foldable_stochastic_flags, strict=True
-        )
-        if foldable
-    )
-
-    def fold_rows(rows: FloatND, axis: int, weights: Float1D) -> FloatND:
-        moved = jnp.moveaxis(rows, axis, 0)
-        broadcast_weights = weights.reshape(
-            (weights.shape[0],) + (1,) * (moved.ndim - 1)
-        )
-        # One axis's own marginal weights, folded as they were declared, so
-        # nothing upstream has moved an exponent onto them.
-        return jnp.sum(
-            zero_safe_weighted_term(
-                weight=broadcast_weights,
-                value=moved,
-                subnormal_is_accounted_for=False,
-            ),
-            axis=0,
-        )
-
-    weight_by_name = dict(zip(read.stochastic_state_names, weight_vecs, strict=True))
-    endog_grid = carry.endog_grid
-    value = carry.value
-    marginal_utility = carry.marginal_utility
-    breakpoints = carry.breakpoints
-
-    def _carry_axis(name: StateName) -> int:
-        """Axis of a discrete state in the carry rows.
-
-        A co-mapped fixed distributed state is sliced off the carry's leading
-        axis before the continuation reads it, so its axis is absent from the
-        rows. The carry axis of any other state is its position in
-        `discrete_state_names` less the co-mapped states that precede it.
-        """
-        position = read.discrete_state_names.index(name)
-        co_mapped_before = sum(
-            1
-            for earlier in read.discrete_state_names[:position]
-            if earlier in read.co_map_state_names
-        )
-        return position - co_mapped_before
-
-    for name in sorted(folded_names, key=_carry_axis, reverse=True):
-        axis = _carry_axis(name)
-        node_weights = weight_by_name[name]
-        endog_grid = jnp.take(endog_grid, 0, axis=axis)
-        value = fold_rows(value, axis, node_weights)
-        marginal_utility = fold_rows(marginal_utility, axis, node_weights)
-        if breakpoints is not None:
-            # Jump locations are identical along a foldable dim (its rows
-            # share the duplicated abscissae), so the first node's row stands
-            # for all of them.
-            breakpoints = jnp.take(breakpoints, 0, axis=axis)
-    folded_carry = replace(
-        carry,
-        endog_grid=endog_grid,
-        value=value,
-        marginal_utility=marginal_utility,
-        breakpoints=breakpoints,
-    )
-
-    keep_stochastic = tuple(
-        name not in folded_names for name in read.stochastic_state_names
-    )
-
-    def kept[T](entries: tuple[T, ...]) -> tuple[T, ...]:
-        return tuple(
-            entry for entry, keep in zip(entries, keep_stochastic, strict=True) if keep
-        )
-
-    reduced_read = replace(
-        read,
-        discrete_state_names=tuple(
-            name for name in read.discrete_state_names if name not in folded_names
-        ),
-        stochastic_flags=tuple(
-            flag
-            for name, flag in zip(
-                read.discrete_state_names, read.stochastic_flags, strict=True
-            )
-            if name not in folded_names
-        ),
-        stochastic_state_names=kept(read.stochastic_state_names),
-        foldable_stochastic_flags=kept(read.foldable_stochastic_flags),
-        stochastic_node_values=kept(read.stochastic_node_values),
-        process_grid_names=kept(read.process_grid_names),
-        weight_keys=kept(read.weight_keys),
-    )
-    return (
-        reduced_read,
-        folded_carry,
-        kept(stochastic_node_values),
-        kept(weight_vecs),
-    )
-
-
 def _with_co_map_states(
     read: _ChildRead, co_map_state_names: tuple[StateName, ...]
 ) -> _ChildRead:
@@ -704,7 +541,7 @@ def _get_child_carry_reader(
 ) -> Callable[
     [ScalarFloat],
     tuple[ScalarFloat, ScalarFloat]
-    | tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat],
+    | tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat],
 ]:
     """Build the per-savings-node carry read of one target for one combo.
 
@@ -738,24 +575,9 @@ def _get_child_carry_reader(
     if read.weights_func is not None:
         weights = read.weights_func(**combo_pool)
         weight_vecs = tuple(weights[key] for key in read.weight_keys)
-    # A foldable dim of a topology-bearing carry shares the duplicated jump
-    # abscissae across its rows (no jump source reads it — enforced by the fold
-    # flags), so averaging preserves both one-sided limits. This is exact for a
-    # linear value interpolant. The monotone Hermite read is nonlinear where its
-    # slope limiter binds, so the optimized ordering `interp(E[V])` may differ
-    # from `E[interp(V)]` at interpolation-error order; the focused regression in
-    # `test_egm_interp.py` pins that declared accuracy-for-runtime tradeoff.
-    # Folding is still valid only for the linear *lottery* expectation: a
-    # nonlinear certainty equivalent must transform every node's value before
-    # the lottery sum (`E[g(V)] != g(E[V])`), so under Epstein-Zin the node axis
-    # stays and the per-node loop transforms each row.
-    if risk_aversion is None and any(read.foldable_stochastic_flags):
-        read, carry, stochastic_node_values, weight_vecs = _fold_stochastic_dims(
-            read=read,
-            carry=carry,
-            stochastic_node_values=stochastic_node_values,
-            weight_vecs=weight_vecs,
-        )
+    # Every stochastic row is interpolated before expectation. Monotone Hermite
+    # interpolation is nonlinear where its slope limiter binds, so pre-folding
+    # rows would compute `interp(E[V])` instead of the required `E[interp(V)]`.
     resources_reads_stochastic = bool(
         set(read.stochastic_state_names) & read.resources_arg_names
     )
@@ -777,7 +599,7 @@ def _get_child_carry_reader(
         savings_value: ScalarFloat,
     ) -> (
         tuple[ScalarFloat, ScalarFloat]
-        | tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]
+        | tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]
     ):
         """Read the child's carry at one savings node."""
         # The solution-phase next-state function returns a flat mapping of
@@ -858,7 +680,7 @@ def _get_child_carry_reader(
                 # A target whose continuation carries no shock lottery at this
                 # seam — a stateless terminal value, or one whose stochastic
                 # states are ride-along co-states integrated in the outer
-                # envelope — contributes its anchored Epstein-Zin partials to
+                # envelope — contributes its stable Epstein-Zin partials to
                 # the joint regime blend: `ez_transform_partials` on a single
                 # unit-weight node.
                 return ez_transform_partials(
@@ -975,7 +797,7 @@ def _expect_over_stochastic_nodes(
     risk_aversion: FloatND | None = None,
 ) -> (
     tuple[ScalarFloat, ScalarFloat]
-    | tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]
+    | tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]
 ):
     """Weight the carry read over the child's stochastic-node combos.
 
@@ -993,6 +815,18 @@ def _expect_over_stochastic_nodes(
     # reads a stochastic state; otherwise compute them once and share.
     if not resources_reads_stochastic:
         shared_queries, shared_gradients = queries_and_gradients(())
+
+    # Co-mapped deterministic axes have already been sliced from the carry and
+    # therefore have no corresponding entry in ``deterministic_index``.
+    carry_axis_stochastic_flags = tuple(
+        is_stochastic
+        for name, is_stochastic in zip(
+            read.discrete_state_names,
+            read.stochastic_flags,
+            strict=True,
+        )
+        if name not in read.co_map_state_names
+    )
 
     def read_at_nodes(
         node_indices: tuple[ScalarInt, ...],
@@ -1016,7 +850,7 @@ def _expect_over_stochastic_nodes(
             child_index=_interleave_child_index(
                 deterministic_index=deterministic_index,
                 node_indices=node_indices,
-                stochastic_flags=read.stochastic_flags,
+                stochastic_flags=carry_axis_stochastic_flags,
             ),
             child_passive_values=child_passive_values,
             child_passive_grids=read.passive_grids,
@@ -1207,31 +1041,20 @@ def _on_node_scale(*, values: FloatND, shift: IntND) -> FloatND:
 
 def _partials_on_node_scale(
     *,
-    partials: tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat],
+    partials: tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat],
     shift: IntND,
-) -> tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]:
-    """Undo the node weights' common scale in the Epstein-Zin partial sums.
+) -> tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]:
+    """Undo the common node-weight scale in PowerMean partials.
 
-    The anchored partials are `(a, W, E, b, T~)`, and the scale reaches exactly
-    three of them:
-
-    - the weight sum `W` and the deviation sum `E` are sums of the weights
-      themselves, so both carry the factor and come back down by it;
-    - the marginal log scale `b` is the peak of `log w - gamma log V +
-      log |dV/ds|`, so it carries `shift * log 2` additively;
-    - the value log anchor `a` is a log value and the marginal mantissa `T~` is
-      a ratio against `b`; neither moves.
-
-    The partials of different targets are blended at the regime probabilities
-    before the single inversion, so each target's own scale has to be gone by
-    the time it leaves here.
+    The certainty equivalent and marginal mantissa are ratios and do not move.
+    The mass returns to the model scale multiplicatively, while the marginal
+    log scale loses the same power of two additively.
     """
-    anchor, weight_sum, deviation, marginal_log_scale, marginal_mantissa = partials
+    certainty_equivalent, weight_sum, marginal_log_scale, marginal_mantissa = partials
     ln_two = jnp.log(jnp.asarray(2.0, dtype=jnp.asarray(marginal_log_scale).dtype))
     return (
-        anchor,
+        certainty_equivalent,
         _on_node_scale(values=weight_sum, shift=shift),
-        _on_node_scale(values=deviation, shift=shift),
         marginal_log_scale - shift * ln_two,
         marginal_mantissa,
     )
@@ -1245,59 +1068,41 @@ def _accumulate_ez_partials_over_blocks(
     blocked_indices: tuple[IntND, ...],
     blocked_weights: FloatND,
     risk_aversion: ScalarFloat,
-) -> tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]:
-    """Accumulate one target's Epstein-Zin transform partials in node blocks.
-
-    The anchored partials `(a, W, E, b, T~)` are additive across node blocks —
-    each block is a partial sum of the same lottery — so each scan step
-    transforms its block and folds it into the carry with a unit-probability
-    blend. The single inversion happens downstream of the regime blend,
-    exactly as in the fused path, so the block scan is a memory lever only.
-    """
+) -> tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]:
+    """Accumulate one target PowerMean over streamed node blocks."""
     dtype = blocked_weights.dtype
-    exponent = 1.0 - risk_aversion
-    neutral_anchor = jnp.where(
-        exponent == 0.0,
-        0.0,
-        jnp.where(exponent >= 0.0, -jnp.inf, jnp.inf),
-    ).astype(dtype)
     unit_probs = jnp.ones(2, dtype=dtype)
     zero = jnp.zeros((), dtype=dtype)
+    one = jnp.ones((), dtype=dtype)
 
     def accumulate_partials(
-        carry: tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat],
+        carry: tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat],
         block: tuple[tuple[IntND, ...], FloatND],
-    ) -> tuple[
-        tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat], None
-    ]:
+    ) -> tuple[tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat], None]:
         block_indices, block_weights = block
         block_values, block_marginals = jax.vmap(read_at_nodes)(block_indices)
-        block_quint = ez_transform_partials(
+        block_partials = ez_transform_partials(
             child_values=block_values,
             child_marginals=block_marginals,
             weights=block_weights,
             risk_aversion=risk_aversion,
         )
         combined = ez_blend_partials(
-            log_anchors=jnp.stack([carry[0], block_quint[0]]),
-            weight_sums=jnp.stack([carry[1], block_quint[1]]),
-            scaled_values=jnp.stack([carry[2], block_quint[2]]),
-            marginal_log_scales=jnp.stack([carry[3], block_quint[3]]),
-            marginal_mantissas=jnp.stack([carry[4], block_quint[4]]),
+            certainty_equivalents=jnp.stack([carry[0], block_partials[0]]),
+            weight_sums=jnp.stack([carry[1], block_partials[1]]),
+            marginal_log_scales=jnp.stack([carry[2], block_partials[2]]),
+            marginal_mantissas=jnp.stack([carry[3], block_partials[3]]),
             probs=unit_probs,
             risk_aversion=risk_aversion,
         )
         return combined, None
 
-    # The neutral carry: an empty partial sum whose anchor sits on the
-    # non-dominating side, so the first real block's anchor wins the joint
-    # extremum and the empty term contributes exactly zero.
-    quint, _ = jax.lax.scan(
+    partials, _ = jax.lax.scan(
         accumulate_partials,
-        (neutral_anchor, zero, zero, zero, zero),
+        (one, zero, zero, zero),
         (blocked_indices, blocked_weights),
     )
-    return quint
+    return partials
 
 
 def _interleave_child_index(
@@ -2141,29 +1946,6 @@ def _build_child_reads(
             | set(action_names)
         )
         resources_param_names = resources_arg_names - child_binding_names
-        child_carry_rows_uniform = (
-            layout.rows_share_state_grid and not layout.retains_discrete_action_rows
-        )
-        # A child resolving declared jumps one-sidedly publishes two rows at the
-        # same abscissa, and those abscissae move with any state feeding the
-        # jump's variable or threshold. Folding a stochastic node axis into one
-        # read would then average across jump locations that differ per state,
-        # so those states pin their axis open.
-        jump_moving: frozenset[StateName] = (
-            jump_moving_state_names(
-                functions=target_regime.functions,
-                state_names=frozenset(target_regime.states),
-                euler_state_name=euler_state_name,
-            )
-            if target_regime.solver.publishes_one_sided_jump_reads
-            else frozenset()
-        )
-        foldable_stochastic_flags = tuple(
-            child_carry_rows_uniform
-            and name not in resources_arg_names
-            and name not in jump_moving
-            for name in stochastic_state_names
-        )
         row_grids = passive_grids + action_values
         if row_grids:
             row_mesh = jnp.meshgrid(*row_grids, indexing="ij")
@@ -2196,7 +1978,6 @@ def _build_child_reads(
             discrete_state_names=discrete_state_names,
             stochastic_flags=stochastic_flags,
             stochastic_state_names=stochastic_state_names,
-            foldable_stochastic_flags=foldable_stochastic_flags,
             stochastic_node_values=stochastic_node_values,
             process_grid_names=process_grid_names,
             weight_keys=weight_keys,

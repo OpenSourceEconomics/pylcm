@@ -1,27 +1,22 @@
 """Lowering a case-piece model into per-case smooth DAG variants.
 
-The lowering reads the decorator metadata off a regime's function pool, checks
-that every split output is fully covered, and produces one producer-swap map per
-(predicate, side) case — the specialized smooth DAG NBEGM runs EGM on.
+The lowering reads structured predicates and piece metadata from a regime's
+function pool, checks that every split output is fully covered, and produces one
+producer-swap map per (predicate, side) case — the specialized smooth DAG NBEGM
+runs EGM on.
 """
 
 import pytest
 
 from _lcm.egm.nbegm import PieceSet, collect_nbegm_metadata
-from lcm.case_piece import boundary, case_boundary, piece
+from lcm import ref
+from lcm.case_piece import case_boundary, piece
 from lcm.exceptions import NBEGMCaseError
 
-
-@case_boundary(
-    boundary(
-        variable="assets",
-        threshold="medicaid_asset_limit",
-        equality="otherwise",
-        kind="jump",
-    )
+medicaid_eligible = case_boundary(
+    ref("assets") < ref("medicaid_asset_limit"),
+    kind="jump",
 )
-def medicaid_eligible(assets, medicaid_asset_limit):
-    return assets < medicaid_asset_limit
 
 
 @piece(output="oop", when=medicaid_eligible)
@@ -72,44 +67,19 @@ def test_collect_rejects_a_split_missing_its_otherwise_side():
         collect_nbegm_metadata(functions=pool)
 
 
-def test_collect_rejects_a_boundary_with_no_declared_surface():
-    """A `case_boundary()` with no surfaces cannot guide endpoint eligibility."""
-
-    @case_boundary()
-    def empty_predicate(assets):
-        return assets < 0.0
-
-    @piece(output="oop", when=empty_predicate)
-    def oop_a(medical_expense):
-        return medical_expense
-
-    @piece(output="oop", otherwise=empty_predicate)
-    def oop_b(medical_expense):
-        return medical_expense
-
-    pool = {
-        "empty_predicate": empty_predicate,
-        "oop_a": oop_a,
-        "oop_b": oop_b,
-    }
-    with pytest.raises(NBEGMCaseError, match="surface"):
-        collect_nbegm_metadata(functions=pool)
-
-
 def test_collect_rejects_a_piece_referencing_an_undeclared_boundary():
     """A piece whose predicate is not a `case_boundary` cannot be lowered."""
 
-    def not_a_boundary(assets):
-        return assets < 0.0
+    undeclared_boundary = case_boundary(ref("assets") < 0.0, kind="jump")
 
-    @piece(output="oop", when=not_a_boundary)
+    @piece(output="oop", when=undeclared_boundary)
     def oop_a(medical_expense):
         return medical_expense
 
-    @piece(output="oop", otherwise=not_a_boundary)
+    @piece(output="oop", otherwise=undeclared_boundary)
     def oop_b(medical_expense):
         return medical_expense
 
     pool = {"oop_a": oop_a, "oop_b": oop_b}
-    with pytest.raises(NBEGMCaseError, match="case_boundary"):
+    with pytest.raises(NBEGMCaseError, match="not present"):
         collect_nbegm_metadata(functions=pool)

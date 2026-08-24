@@ -18,7 +18,7 @@ from tests.ci.execution_policy import (
     contract_from_marker_kwargs,
 )
 
-_POLICY_MARKERS = ("requires", "coverage", "resources", "isolation", "ci")
+_POLICY_MARKERS = ("requires", "coverage", "isolation", "ci")
 _REPORT_KEY: pytest.StashKey[list[dict[str, object]]] = pytest.StashKey()
 _PROFILE_KEY: pytest.StashKey[Profile | None] = pytest.StashKey()
 _POLICY_KEY: pytest.StashKey[Policy | None] = pytest.StashKey()
@@ -178,10 +178,8 @@ def _contract_from_item(item: pytest.Item) -> ExecutionContract:
                 backends=(Profile.GPU_SMALL, Profile.GPU_LARGE),
                 precisions=contract.coverage.precisions,
             ),
-            resources=contract.resources,
             isolation=contract.isolation,
             tier=contract.tier,
-            paths=contract.paths,
         )
     return contract
 

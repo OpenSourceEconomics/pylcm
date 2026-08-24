@@ -90,7 +90,14 @@ def prob_stop(age: int, last_age: float) -> FloatND:
     return jnp.where(age + 1 >= last_age, 1.0, 0.0)
 
 
-def _model(*, solver, n_consumption=200, resources_func=None, liquid=None):
+def _model(
+    *,
+    solver,
+    n_consumption=200,
+    resources_func=None,
+    liquid=None,
+    utility_function=utility,
+):
     """A pure consumption--saving lifecycle with no income and no kinks.
 
     `resources_func` and `liquid` let a caller vary the two declarations the
@@ -101,7 +108,7 @@ def _model(*, solver, n_consumption=200, resources_func=None, liquid=None):
     last_age = float(_N_PERIODS - 1)
     regime_type = ConsumptionSavingsRegime if isinstance(solver, EGM) else Regime
     functions = {
-        "utility": utility,
+        "utility": utility_function,
         "savings": savings,
     }
     if resources_func is not None:

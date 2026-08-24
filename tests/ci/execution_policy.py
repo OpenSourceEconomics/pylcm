@@ -7,8 +7,8 @@ The policy keeps four decisions separate:
 - tier: which bounded CI policy includes the test; and
 - full-suite expansion: every tier supported by the current machine.
 
-Process isolation and resource admission are represented by pytest markers too,
-but scheduling them belongs to the launcher rather than this classifier.
+Fresh-process isolation is scheduled by the launcher. Other resource and platform
+metadata is deliberately not accepted here because no launcher enforces it.
 """
 
 from collections.abc import Mapping
@@ -57,12 +57,7 @@ class Capability:
     """Hard requirements that decide whether execution would be meaningful."""
 
     device: Literal["any", "cpu", "gpu"] = "any"
-    native: tuple[str, ...] = ()
     min_devices: int = 1
-    min_compute_capability: int | None = None
-    min_gpu_mem_gb: float | None = None
-    os: tuple[str, ...] = ()
-    arch: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -76,26 +71,10 @@ class Coverage:
 
 
 @dataclass(frozen=True)
-class Resources:
-    """Measured resource needs used by admission and budget planning."""
-
-    wall: Literal["xs", "s", "m", "l", "production"] = "s"
-    wall_seconds: int | None = None
-    host_mem_gb: float | None = None
-    gpu_mem_gb: float | None = None
-    cpu_cores: int = 1
-    compile: Literal["light", "heavy"] = "light"
-
-
-@dataclass(frozen=True)
 class Isolation:
     """Process-global state and physical-device isolation requirements."""
 
     process: Literal["shared", "fresh"] = "shared"
-    gpu: Literal["shared", "exclusive", "multi-device"] = "shared"
-    cache: Literal["ordinary", "isolated", "cold", "warm"] = "ordinary"
-    env_group: str = "ordinary"
-    serial_group: str | None = None
 
 
 @dataclass(frozen=True)
@@ -104,40 +83,22 @@ class ExecutionContract:
 
     requires: Capability = field(default_factory=Capability)
     coverage: Coverage = field(default_factory=Coverage)
-    resources: Resources = field(default_factory=Resources)
     isolation: Isolation = field(default_factory=Isolation)
     tier: Policy = Policy.PR
-    paths: tuple[str, ...] = ()
 
 
 _MARKER_ARGUMENTS = {
-    "requires": {
-        "device",
-        "native",
-        "min_devices",
-        "min_compute_capability",
-        "min_gpu_mem_gb",
-        "os",
-        "arch",
-    },
+    "requires": {"device", "min_devices"},
     "coverage": {"backends", "precisions"},
-    "resources": {
-        "wall",
-        "wall_seconds",
-        "host_mem_gb",
-        "gpu_mem_gb",
-        "cpu_cores",
-        "compile",
-    },
-    "isolation": {"process", "gpu", "cache", "env_group", "serial_group"},
-    "ci": {"tier", "paths"},
+    "isolation": {"process"},
+    "ci": {"tier"},
 }
 
 
 def contract_from_marker_kwargs(
     markers: Mapping[str, Mapping[str, Any]],
 ) -> ExecutionContract:
-    """Parse and validate the five independent pytest policy dimensions."""
+    """Parse and validate the four enforced pytest policy dimensions."""
     unknown_markers = set(markers) - set(_MARKER_ARGUMENTS)
     if unknown_markers:
         msg = f"unknown policy markers: {sorted(unknown_markers)!r}"
@@ -150,7 +111,6 @@ def contract_from_marker_kwargs(
 
     requires = markers.get("requires", {})
     coverage = markers.get("coverage", {})
-    resources = markers.get("resources", {})
     isolation = markers.get("isolation", {})
     ci = markers.get("ci", {})
 
@@ -176,59 +136,16 @@ def contract_from_marker_kwargs(
     return ExecutionContract(
         requires=Capability(
             device=device,
-            native=tuple(str(value) for value in requires.get("native", ())),
             min_devices=int(requires.get("min_devices", 1)),
-            min_compute_capability=_optional_int(
-                requires.get("min_compute_capability")
-            ),
-            min_gpu_mem_gb=_optional_float(requires.get("min_gpu_mem_gb")),
-            os=tuple(str(value) for value in requires.get("os", ())),
-            arch=tuple(str(value) for value in requires.get("arch", ())),
         ),
         coverage=Coverage(backends=backends, precisions=precisions),
-        resources=Resources(
-            wall=cast(
-                "Literal['xs', 's', 'm', 'l', 'production']",
-                resources.get("wall", "s"),
-            ),
-            wall_seconds=_optional_int(resources.get("wall_seconds")),
-            host_mem_gb=_optional_float(resources.get("host_mem_gb")),
-            gpu_mem_gb=_optional_float(resources.get("gpu_mem_gb")),
-            cpu_cores=int(resources.get("cpu_cores", 1)),
-            compile=cast(
-                "Literal['light', 'heavy']", resources.get("compile", "light")
-            ),
-        ),
         isolation=Isolation(
             process=cast(
                 "Literal['shared', 'fresh']", isolation.get("process", "shared")
             ),
-            gpu=cast(
-                "Literal['shared', 'exclusive', 'multi-device']",
-                isolation.get("gpu", "shared"),
-            ),
-            cache=cast(
-                "Literal['ordinary', 'isolated', 'cold', 'warm']",
-                isolation.get("cache", "ordinary"),
-            ),
-            env_group=str(isolation.get("env_group", "ordinary")),
-            serial_group=(
-                None
-                if isolation.get("serial_group") is None
-                else str(isolation["serial_group"])
-            ),
         ),
         tier=tier,
-        paths=tuple(str(value) for value in ci.get("paths", ())),
     )
-
-
-def _optional_int(value: Any | None) -> int | None:
-    return None if value is None else int(value)
-
-
-def _optional_float(value: Any | None) -> float | None:
-    return None if value is None else float(value)
 
 
 class DispositionKind(StrEnum):
@@ -296,10 +213,14 @@ def classify(  # noqa: PLR0911
             f"routine coverage belongs to {contract.coverage.backends!r}",
         )
 
-    if precision is not None and not _precision_matches(
-        coverage=contract.coverage,
-        profile=profile,
-        precision=precision,
+    if (
+        policy is not Policy.FULL
+        and precision is not None
+        and not _precision_matches(
+            coverage=contract.coverage,
+            profile=profile,
+            precision=precision,
+        )
     ):
         return Disposition(
             DispositionKind.MATRIX_DESELECTED,

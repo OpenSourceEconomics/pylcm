@@ -158,6 +158,19 @@ def resources_with_surcharge(
     return liquid + base_income - tax - surcharge - premium * buy_private
 
 
+def resources_nonlinear_above_ten(
+    liquid: ContinuousState,
+    tax: FloatND,
+    buy_private: DiscreteAction,
+    base_income: float,
+    premium: float,
+    curvature: float,
+) -> FloatND:
+    """The discrete budget is affine below ten and curved above ten."""
+    excess = jnp.maximum(liquid - 10.0, 0.0)
+    return liquid + curvature * excess**2 + base_income - tax - premium * buy_private
+
+
 def next_liquid_from_savings(
     savings: FloatND,
     income: ContinuousState,
@@ -165,6 +178,13 @@ def next_liquid_from_savings(
 ) -> ContinuousState:
     """Liquid law in post-decision form: saved cash earns the return, plus income."""
     return (1.0 + return_liquid) * savings + INCOME_SCALE * jnp.exp(income)
+
+
+def next_liquid_without_income(
+    savings: FloatND, return_liquid: float
+) -> ContinuousState:
+    """Liquid law for the single-state discrete-route witness."""
+    return (1.0 + return_liquid) * savings
 
 
 def next_streak(
@@ -334,7 +354,9 @@ def build_model(  # noqa: C901, PLR0912
     transition_reads_liquid: bool = False,
     transition_smooth: bool = False,
     action_in_discount: bool = False,
+    nonlinear_budget_above_ten: bool = False,
     branch_batch_size: int = 0,
+    include_income: bool = True,
     probe_failure: str = "reject",
 ) -> Model:
     """Create the (alive, dead) ride-along toy with a discrete insurance choice.
@@ -361,7 +383,14 @@ def build_model(  # noqa: C901, PLR0912
     income_grid = NormalIIDProcess(n_points=N_INCOME_NODES, gauss_hermite=True)
     tax_func = tax_jump if jump_schedule else tax
     utility_func = utility_with_action if action_in_utility else utility
-    alive_functions = {"utility": utility_func, "tax": tax_func, "resources": resources}
+    resources_func = (
+        resources_nonlinear_above_ten if nonlinear_budget_above_ten else resources
+    )
+    alive_functions = {
+        "utility": utility_func,
+        "tax": tax_func,
+        "resources": resources_func,
+    }
     if action_in_discount:
         alive_functions = {
             **alive_functions,
@@ -386,7 +415,7 @@ def build_model(  # noqa: C901, PLR0912
             "tax": tax_derived_jump if jump_schedule else tax_derived,
             "derived_income": derived_income,
         }
-    extra_states: dict[str, Grid] = {"income": income_grid}
+    extra_states: dict[str, Grid] = {"income": income_grid} if include_income else {}
     extra_state_transitions: dict[str, object] = {}
     if action_in_costate:
         extra_states["streak"] = LinSpacedGrid(start=0.0, stop=4.0, n_points=5)
@@ -419,7 +448,9 @@ def build_model(  # noqa: C901, PLR0912
         alive_functions = {**alive_functions, "oop": oop}
         liquid_law = next_liquid_from_savings_with_oop
     else:
-        liquid_law = next_liquid_from_savings
+        liquid_law = (
+            next_liquid_from_savings if include_income else next_liquid_without_income
+        )
     constraints = {} if variant == "nbegm" else {"feasible": feasible}
 
     if action_in_regime_transition:
@@ -457,6 +488,7 @@ def build_model(  # noqa: C901, PLR0912
 
 def build_params(
     *,
+    include_income: bool = True,
     discount_factor: float = 0.95,
     crra: float = 2.0,
     return_liquid: float = 0.03,
@@ -474,6 +506,8 @@ def build_params(
     derived_kink_alongside_jump: bool = False,
     surcharge_rate: float = 0.1,
     surcharge_start: float = 8.0,
+    nonlinear_budget_above_ten: bool = False,
+    curvature: float = 0.05,
 ) -> dict:
     """Get parameters for the ride-along discrete-choice toy."""
     alive_budget = {"return_liquid": return_liquid}
@@ -500,24 +534,26 @@ def build_params(
     oop_params = (
         {"oop": {"oop_uninsured": oop_uninsured}} if action_in_liquid_law else {}
     )
-    return {
-        "alive": {
-            "utility": {"crra": crra},
-            "koopmans_aggregator": {"discount_factor": discount_factor},
-            "resources": {"base_income": base_income, "premium": premium},
-            "income": {"mu": 0.0, "sigma": 1.0},
-            "tax": tax_params,
-            **oop_params,
-            **derived_income_params,
-            **surcharge_params,
-            "alive": {
-                "next_liquid": alive_budget,
-                "next_regime": {"final_age_alive": final_age_alive},
-            },
-            "dead": {
-                "next_liquid": alive_budget,
-                "next_regime": {"final_age_alive": final_age_alive},
-            },
+    alive = {
+        "utility": {"crra": crra},
+        "koopmans_aggregator": {"discount_factor": discount_factor},
+        "resources": {
+            "base_income": base_income,
+            "premium": premium,
+            **({"curvature": curvature} if nonlinear_budget_above_ten else {}),
         },
-        "dead": {"utility": {"crra": crra}},
+        **({"income": {"mu": 0.0, "sigma": 1.0}} if include_income else {}),
+        "tax": tax_params,
+        **oop_params,
+        **derived_income_params,
+        **surcharge_params,
+        "alive": {
+            "next_liquid": alive_budget,
+            "next_regime": {"final_age_alive": final_age_alive},
+        },
+        "dead": {
+            "next_liquid": alive_budget,
+            "next_regime": {"final_age_alive": final_age_alive},
+        },
     }
+    return {"alive": alive, "dead": {"utility": {"crra": crra}}}

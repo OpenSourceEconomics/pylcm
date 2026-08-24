@@ -1,18 +1,49 @@
 import itertools
 from types import MappingProxyType
 
+import jax
 import jax.numpy as jnp
 import pytest
 from beartype.roar import BeartypeCallHintViolation
 from numpy.testing import assert_array_almost_equal as aaae
 
 from _lcm.utils.dispatchers import (
+    map_over_leading_axis,
     productmap,
     simulation_spacemap,
     vmap_1d,
 )
 from _lcm.utils.functools import allow_args
 from lcm.exceptions import FunctionDispatchError
+
+
+@pytest.mark.parametrize(("batch_size", "expected"), [(0, "vmap"), (2, "lax")])
+def test_map_over_leading_axis_selects_the_declared_execution_window(
+    monkeypatch: pytest.MonkeyPatch, batch_size: int, expected: str
+) -> None:
+    """A positive batch size reaches ``lax.map`` as its actual static window."""
+    selected: list[tuple[str, int | None]] = []
+    original_lax_map = jax.lax.map
+    original_vmap = jax.vmap
+
+    def lax_spy(func, xs, *, batch_size=None):
+        selected.append(("lax", batch_size))
+        return original_lax_map(func, xs, batch_size=batch_size)
+
+    def vmap_spy(func, *args, **kwargs):
+        selected.append(("vmap", None))
+        return original_vmap(func, *args, **kwargs)
+
+    monkeypatch.setattr(jax.lax, "map", lax_spy)
+    monkeypatch.setattr(jax, "vmap", vmap_spy)
+    result = map_over_leading_axis(
+        func=lambda row: row + 1,
+        xs=jnp.arange(4),
+        batch_size=batch_size,
+    )
+
+    assert result.tolist() == [1, 2, 3, 4]
+    assert selected == [(expected, batch_size if expected == "lax" else None)]
 
 
 def f(a, *, b, c):
