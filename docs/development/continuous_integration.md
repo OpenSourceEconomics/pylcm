@@ -64,6 +64,17 @@ Marker arguments are validated during collection. The selection report records e
 collected node as selected, policy-deselected, matrix-deselected, isolation-deselected,
 or capability-skipped.
 
+## Python line coverage
+
+Codecov combines four reports from the fp64 Linux CPU jobs: the base suite and the three
+slow-solution shards. Statuses and the pull-request comment wait for the complete set,
+and every upload carries the `cpu-python` flag. Reports are not carried across commits.
+
+This percentage measures Python lines exercised on CPU. The fp32 and GPU jobs do not
+repeat coverage instrumentation; they test dtype and hardware behavior directly, while
+native C++ and CUDA kernels remain outside `coverage.py`. Benchmark jobs never run under
+coverage instrumentation.
+
 ## Native payload setup
 
 The exact-affine C++/CUDA libraries are part of the installed pylcm payload, including

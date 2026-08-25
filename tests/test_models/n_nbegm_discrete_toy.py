@@ -16,6 +16,7 @@ investment, and the branch on dense grids, and is the agreement oracle.
 
 import jax.numpy as jnp
 
+from _lcm.grids.base import Grid
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -84,8 +85,13 @@ def build_solver(*, variant: str) -> TwoMarginSolver | GridSearch:
     raise ValueError(msg)
 
 
-def build_model(*, variant: str, n_periods: int = 3) -> Model:
-    """Build the two-asset discrete-branch toy under the requested flavour."""
+def build_model(
+    *,
+    variant: str,
+    n_periods: int = 3,
+    illiquid_investment_grid: Grid = smooth.ILLIQUID_INVESTMENT_GRID,
+) -> Model:
+    """Build the toy, optionally changing only the foreign outer action grid."""
     final_age_alive = 20 + (n_periods - 2) * 5
     functions = {
         "utility": utility,
@@ -101,7 +107,7 @@ def build_model(*, variant: str, n_periods: int = 3) -> Model:
     }
     actions = {
         "consumption": smooth.CONSUMPTION_GRID,
-        "illiquid_investment": smooth.ILLIQUID_INVESTMENT_GRID,
+        "illiquid_investment": illiquid_investment_grid,
         "buy_private": DiscreteGrid(BuyPrivate),
     }
     active = lambda age, n=final_age_alive: age <= n  # noqa: E731

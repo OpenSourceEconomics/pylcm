@@ -48,7 +48,11 @@ from _lcm.continuation import (
     EGMContinuationLayout,
     EGMContinuationSpec,
 )
-from _lcm.egm.published_policy import EGMSimPolicy
+from _lcm.egm.published_policy import (
+    EGMSimPolicy,
+    NBEGMGridPolicy,
+    NNBEGMSimPolicy,
+)
 from _lcm.engine import ParamCheck, StateActionSpace, Variables
 from _lcm.grids import Grid
 from _lcm.reachability import PhaseReachability
@@ -85,7 +89,7 @@ from lcm.typing import Float1D, FloatND
 # a second implementation has to publish both. Any *further* field the engine
 # reaches for is the signal to introduce a protocol rather than to grow this
 # one — the seam is a stated read set, not permission to read whatever is there.
-type SimulationPolicy = EGMSimPolicy
+type SimulationPolicy = EGMSimPolicy | NBEGMGridPolicy | NNBEGMSimPolicy
 
 if TYPE_CHECKING:
     from _lcm.regime_building.finalize import FinalizedUserRegime
