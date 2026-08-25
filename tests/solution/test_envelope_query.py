@@ -12,20 +12,8 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.egm.upper_envelope.query import (
-    _candidate_terms,
-    _dekker_split_factor,
-    _dyadic_product,
-    _exact_compare,
-    _exact_difference,
-    _exact_ratio,
-    _exact_slope_compare,
-    _exactly_maximal,
-    _framed_affine,
-    _framed_difference,
-    _right_continuous_winner,
-    envelope_at_query,
-)
+from _lcm.egm.framed_arithmetic import framed_difference
+from _lcm.egm.upper_envelope.query import envelope_at_query
 from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
 from tests.solution._envelope_oracle import exact_envelope
 
@@ -407,39 +395,6 @@ def test_one_ulp_interior_gap_resolves_to_the_higher_branch(dtype, order, block_
         segment_block_size=block_size,
     )
     assert float(got_policy[0]) == 2.0, "the one-ULP-higher branch must win"
-
-
-@pytest.mark.parametrize("dtype", _JNP_DTYPES)
-def test_certified_radius_is_zero_at_nodes_and_outward_interior(dtype):
-    """The certified rounding radius tracks the arithmetic actually performed.
-
-    At a node event the candidate value is stored data — the radius is exactly
-    zero, so no tolerance can ever separate exactly-equal stored floats or
-    merge distinct ones. At an interior query the compensated evaluation's
-    residual radius covers working-precision backend rounding at the operand
-    scale.
-    """
-    # One segment from (0, 1) to (2, 3): columns are (lx, rx, lv, rv, lp, rp,
-    # lm, rm); queries hit the left node, the right node, and an interior point.
-    block = jnp.asarray([[0.0, 2.0, 1.0, 3.0, 0.0, 1.0, 0.5, 0.5]], dtype=dtype)
-    terms = _candidate_terms(
-        block=block,
-        live=jnp.asarray([True]),
-        flat=jnp.asarray([0.0, 2.0, 1.234567], dtype=dtype),
-    )
-    radius = np.asarray(terms.radius)[:, 0]
-    value_hi = np.asarray(terms.value_hi)[:, 0]
-    value_lo = np.asarray(terms.value_lo)[:, 0]
-    assert radius[0] == 0.0, "left node event carries zero radius"
-    assert radius[1] == 0.0, "right node event carries zero radius"
-    assert value_hi[0] == 1.0, "left node value is stored data"
-    assert value_hi[1] == 3.0, "right node value is stored data"
-    assert value_lo[0] == 0.0
-    assert value_lo[1] == 0.0
-    eps = float(jnp.finfo(dtype).eps)
-    assert 0.0 < radius[2] <= 64.0 * eps * abs(value_hi[2]), (
-        "interior radius is strictly positive and working-precision outward"
-    )
 
 
 @pytest.mark.parametrize("dtype", _JNP_DTYPES)
@@ -862,43 +817,6 @@ def test_selection_survives_a_power_of_two_rescaling_of_the_whole_model(
         assert float(got_marginal[0]) == 20.0, context
 
 
-@pytest.mark.parametrize("dtype", _NP_DTYPES)
-def test_both_exact_predicates_match_a_rational_oracle_at_every_scale(dtype):
-    """Value and slope predicates match `Fraction` across the same scale ladder."""
-    (_, low_node, low_rise), (_, high_node, high_rise) = _SLOPE_COLLISIONS[dtype][0]
-    one = dtype(1.0)
-    low_run, high_run = dtype(low_node) - one, dtype(high_node) - one
-    low_rise, high_rise = dtype(low_rise), dtype(high_rise)
-    base = [low_run, high_run, low_rise, high_rise]
-
-    checked = 0
-    for exponent in _rescaling_exponents(base, dtype):
-        scale = dtype(np.ldexp(1.0, exponent))
-        lr, hr = dtype(low_run * scale), dtype(high_run * scale)
-        lv, hv = dtype(low_rise * scale), dtype(high_rise * scale)
-        cols_low = jnp.asarray([[-lr, lr, -lv, lv]], dtype=dtype)
-        cols_high = jnp.asarray([[-hr, hr, -hv, hv]], dtype=dtype)
-        q = jnp.asarray([0.0], dtype=dtype)
-
-        # Both segments pass exactly through the origin: a TRUE value tie.
-        value_sign = float(
-            np.asarray(_exact_compare(cols_a=cols_low, cols_b=cols_high, q=q))[0]
-        )
-        assert value_sign == 0.0, f"2**{exponent}: exact value tie not detected"
-
-        slope_sign = float(
-            np.asarray(_exact_slope_compare(cols_a=cols_low, cols_b=cols_high))[0]
-        )
-        expected = Fraction(float(lv)) / Fraction(float(lr)) - Fraction(
-            float(hv)
-        ) / Fraction(float(hr))
-        assert slope_sign == float(np.sign(float(expected))), (
-            f"2**{exponent}: slope sign {slope_sign} disagrees with the oracle"
-        )
-        checked += 1
-    assert checked >= 5
-
-
 def _far_segment_exponents(dtype):
     """Exponents for a remote segment that stay finite normal, spanning the range.
 
@@ -997,16 +915,11 @@ def _slope_overflow_cases(dtype):
 @pytest.mark.parametrize("dtype", _NP_DTYPES)
 @pytest.mark.parametrize("block_size", [0, 3])
 def test_an_overflowing_slope_screen_defers_to_the_exact_comparison(dtype, block_size):
-    """The rounded slope screen must never decide by falling silent.
+    """An overflowing rounded slope must defer to exact ownership.
 
-    `slope` is computed in ORIGINAL units on purpose -- it is a key compared
-    ACROSS candidates, so every candidate has to express it in the same units.
-    That makes it overflow to an infinity when a large value gap meets a small
-    grid width, while every stored input is still finite normal. The screen
-    band `reach = 8*eps*(|slope| + |lead_slope|)` is then infinite,
-    `lead_slope - reach` is NaN, and every `>=` against it is False -- so the
-    contender set empties, `_exact_slope_compare` never runs, and the winner is
-    whatever `argmax` over the rounded key returned: candidate order.
+    A large value gap over a small grid width can overflow the working-format
+    slope while every stored input remains finite. The live owner kernel must
+    still decide from exact stored operands rather than candidate order.
 
     The value is tied either way, so policy and marginal directly witness that
     the answer does not depend on branch order.
@@ -1266,55 +1179,6 @@ def test_a_power_of_two_value_rescaling_cannot_change_the_winner(dtype, block_si
     assert tiny_value / float(tiny) == unit_value, context
 
 
-@pytest.mark.parametrize("dtype", _NP_DTYPES)
-def test_a_certified_tie_never_coexists_with_a_strict_exact_sign(dtype):
-    """A certified tie never coexists with a strict exact ordering.
-
-    `_exactly_maximal` may skip `_exact_compare` only for candidates certified
-    tied. If it ever certifies a tie between two candidates that `_exact_compare`
-    strictly orders, the exact comparator has been bypassed on precisely the
-    input it exists for, and the answer is whatever the approximate layer said.
-
-    `radius == 0` is not sufficient because the radius itself can underflow.
-    The certificate is structural: a node event publishes stored data without
-    arithmetic, so a rounded residual cannot manufacture a tie.
-    """
-    lower, upper = _smallest_value_scale_case(dtype)
-    q = dtype(0.75)
-    # `[left_grid, right_grid, left_value, right_value, l/r policy, l/r marginal]`
-    flat = [0.0, 1.0, lower, lower, 0.0, 0.0, 10.0, 10.0]
-    rising = [0.0, 1.0, lower, upper, 1.0, 1.0, 20.0, 20.0]
-    block = jnp.asarray([flat, rising], dtype=dtype)
-
-    terms = _candidate_terms(
-        block=block,
-        live=jnp.asarray([True, True]),
-        flat=jnp.asarray([q], dtype=dtype),
-    )
-    tied = _exactly_maximal(
-        terms=terms, gather=lambda index: block[index], q=jnp.asarray([q], dtype=dtype)
-    )
-    sign = float(
-        _exact_compare(cols_a=block[1], cols_b=block[0], q=jnp.asarray(q, dtype=dtype))
-    )
-
-    context = f"{np.dtype(dtype)} tied={np.asarray(tied)} sign={sign}"
-    # Self-check: the invariant is only meaningful if the exact comparator does
-    # separate these two. A vacuous pass here would hide the whole defect.
-    assert sign == 1.0, f"exact comparator must strictly order this pair: {context}"
-    assert not bool(np.asarray(tied)[0, 0]), (
-        f"the strictly LOWER candidate was certified tied with the winner: {context}"
-    )
-    assert bool(np.asarray(tied)[0, 1]), (
-        f"the strict winner must be selected: {context}"
-    )
-    # The interior lane's radius underflows to zero at this scale, so exactness
-    # must remain structural rather than inferred from that radius.
-    assert not bool(np.asarray(terms.exact)[0, 1]), (
-        f"an interpolated interior lane must NOT be structurally exact: {context}"
-    )
-
-
 def _wide_segment_case(dtype):
     """A bracketing segment whose own endpoints span most of the exponent range.
 
@@ -1392,27 +1256,6 @@ def test_a_wide_segments_own_range_cannot_erase_its_interpolation_fraction(
     assert float(got_marginal[0]) == 20.0, context
     # The published level is the correctly rounded exact interpolant.
     assert float(got_value[0]) == float(dtype(float(exact))), context
-
-
-@pytest.mark.parametrize("dtype", _NP_DTYPES)
-def test_exact_compare_orders_a_wide_segment_against_a_lower_competitor(dtype):
-    """The certified comparator must not need the screen's help to order these.
-
-    The direct probe isolates `_exact_compare`; the public path can resolve the
-    gap in its value screen without exercising the comparator.
-    """
-    x0, q, x1, competitor, exact = _wide_segment_case(dtype)
-    cols_wide = jnp.asarray(
-        [[x0, x1, dtype(0.0), x1, 1.0, 20.0, 1.0, 20.0]], dtype=dtype
-    )
-    cols_flat = jnp.asarray(
-        [[x0, dtype(2.0), competitor, competitor, 0.0, 10.0, 0.0, 10.0]], dtype=dtype
-    )
-    sign = _exact_compare(
-        cols_a=cols_wide, cols_b=cols_flat, q=jnp.asarray([float(q)], dtype=dtype)
-    )
-    assert exact > Fraction(float(competitor))
-    assert float(sign[0]) == 1.0
 
 
 # The exponent-preserving exact ordering kernel.
@@ -1508,184 +1351,14 @@ def test_a_completely_cancelling_branch_still_outranks_a_lower_constant(
 
 
 @pytest.mark.parametrize("dtype", _NP_DTYPES)
-def test_every_cross_product_term_reaches_the_exact_accumulator(dtype):
-    """No cross product may be lost, merged or rounded before the sign is read.
-
-    Reads the dyadic term list straight out of `_dyadic_product` and sums it in
-    `Fraction`. The result must equal the cross difference computed independently
-    from the two ratios. Dropping either product must collapse that difference
-    to zero, so the test cannot pass vacuously.
-    """
-    info = np.finfo(dtype)
-    tiny = dtype(info.tiny)
-    cols_a = jnp.asarray([0, 1, 0.5, -0.5, 1, 1, 20, 20], dtype=dtype)
-    cols_b = jnp.asarray([0, 1, -tiny, -tiny, 0, 0, 10, 10], dtype=dtype)
-    q = jnp.asarray(0.5, dtype=dtype)
-
-    def total(dyadic):
-        mantissa = np.asarray(dyadic.mantissa).reshape(-1)
-        exponent = np.asarray(dyadic.exponent).reshape(-1)
-        return sum(
-            (
-                Fraction(float(m)) * Fraction(2) ** int(e)
-                for m, e in zip(mantissa, exponent, strict=True)
-            ),
-            Fraction(0),
-        )
-
-    ratio_a = _exact_ratio(cols=cols_a, q=q)
-    ratio_b = _exact_ratio(cols=cols_b, q=q)
-    expected = total(ratio_a.numerator) * total(ratio_b.denominator) - total(
-        ratio_b.numerator
-    ) * total(ratio_a.denominator)
-
-    split = _dekker_split_factor(cols_a.dtype)
-    forward = total(_dyadic_product(ratio_a.numerator, ratio_b.denominator, split))
-    reverse = total(_dyadic_product(ratio_b.numerator, ratio_a.denominator, split))
-
-    assert expected > 0, "the witness must be a strict gap"
-    assert forward - reverse == expected
-    # The witness is constructed so omitting `reverse` makes the difference
-    # exactly zero; this guards against a vacuous strict-gap assertion.
-    assert forward == 0
-    assert float(_exact_compare(cols_a=cols_a, cols_b=cols_b, q=q)) == 1.0
-
-
-@pytest.mark.parametrize("dtype", _NP_DTYPES)
-@pytest.mark.parametrize("order", ["AB", "BA"])
-def test_the_winner_is_always_one_of_the_exactly_tied_candidates(dtype, order):
-    """An overflowing slope key must not seed the lead outside the tie set.
-
-    `_right_continuous_winner` masks non-competitors with `-inf`, and `-inf` is
-    also a REACHABLE rounded slope key: `fl(v1-v0) / fl(x1-x0)` overflows when a
-    large value gap meets a small grid width, with every stored input still
-    finite normal. `argmax` then cannot tell the sole competitor from the masked
-    candidates, returns index 0, and the loop seeds its lead there and never
-    revisits it — so the published policy and marginal follow branch ORDER while
-    the value stays right.
-
-    The invariant is structural and survives any future screen: whatever wins
-    must be a candidate the exact value comparison declared maximal.
-    """
-    a_row, b_row, midpoint, _ = _cancelling_pair_case(
-        dtype,
-        value_exponent=int(np.finfo(dtype).maxexp) - 1,
-        grid_exponent=-60,
-        ulp_offset=0,
-    )
-    a_columns = [0.0, float(a_row[0][1]), *(float(v) for v in a_row[1]), 1, 1, 20, 20]
-    b_columns = [0.0, float(b_row[0][1]), *(float(v) for v in b_row[1]), 0, 0, 10, 10]
-    rows = [a_columns, b_columns] if order == "AB" else [b_columns, a_columns]
-    columns = jnp.asarray(rows, dtype=dtype)
-    live = jnp.asarray([True, True])
-    flat = jnp.asarray([float(midpoint)], dtype=dtype)
-
-    terms = _candidate_terms(block=columns, live=live, flat=flat)
-    tied = _exactly_maximal(terms=terms, gather=lambda index: columns[index], q=flat)
-    _, winner = _right_continuous_winner(
-        tied=tied, terms=terms, gather=lambda index: columns[index]
-    )
-    # The witness must actually exercise the collision, or it asserts nothing.
-    assert bool(jnp.any(jnp.isinf(jnp.where(tied, terms.slope, 0.0)))), (
-        "no tied candidate carries an overflowed slope key"
-    )
-    assert bool(jnp.any(tied)), "the exact comparison resolved nothing"
-    assert bool(tied[0, int(winner[0])]), (
-        f"{np.dtype(dtype)} order={order}: winner {int(winner[0])} is not in the "
-        f"tie set {np.asarray(tied)[0]}"
-    )
-
-
-@pytest.mark.parametrize("dtype", _NP_DTYPES)
-def test_no_finite_input_overflows_the_exact_accumulator(dtype):
-    """A randomised sweep across the WHOLE exponent range against a rational oracle.
-
-    The accumulator is sized from the format, and a term that fell off its end
-    would surface as a NaN sign rather than a wrong one — this asserts neither
-    happens. Grid points, query and endpoint values are drawn from binades
-    spanning most of the representable range.
-    """
-    info = np.finfo(dtype)
-    limit = int(info.maxexp) - 8
-    generator = np.random.default_rng(20260731)
-
-    def draw():
-        return dtype(
-            np.ldexp(
-                generator.uniform(-2.0, 2.0), int(generator.integers(-limit, limit))
-            )
-        )
-
-    def rational(cols, q):
-        x0, x1, v0, v1 = (Fraction(float(c)) for c in cols[:4])
-        query = Fraction(float(q))
-        if query == x0:
-            return v0
-        if query == x1:
-            return v1
-        return (v0 * (x1 - query) + v1 * (query - x0)) / (x1 - x0)
-
-    checks = 0
-    for _ in range(300):
-        x0, x1 = sorted([draw(), draw()])
-        if x0 == x1 or not np.isfinite(x1 - x0):
-            continue
-        q = dtype(x0 + (x1 - x0) * dtype(generator.uniform(0.0, 1.0)))
-        if not x0 <= q <= x1:
-            continue
-        cols_a = [x0, x1, draw(), draw(), 1.0, 20.0, 1.0, 20.0]
-        cols_b = [x0, x1, draw(), draw(), 0.0, 10.0, 0.0, 10.0]
-        sign = float(
-            _exact_compare(
-                cols_a=jnp.asarray(cols_a, dtype=dtype),
-                cols_b=jnp.asarray(cols_b, dtype=dtype),
-                q=jnp.asarray(q, dtype=dtype),
-            )
-        )
-        expected = rational(cols_a, q) - rational(cols_b, q)
-        want = 0.0 if expected == 0 else (1.0 if expected > 0 else -1.0)
-        assert sign == want, f"{cols_a} vs {cols_b} at {q}: {sign} != {want}"
-        checks += 1
-    assert checks > 200, f"only {checks} usable draws — the sweep degenerated"
-
-
-@pytest.mark.parametrize("dtype", _NP_DTYPES)
-def test_a_difference_is_never_formed_in_the_working_dtype(dtype):
-    """`H - (-H)` must be represented, not computed.
-
-    Opposite-signed top-binade operands are finite normals while their
-    mathematical difference is not representable in the working dtype.
-
-    So the assertion is not that the difference is finite — it is that no float
-    is ever asked to hold it. Every mantissa stays inside its own binade and the
-    magnitude lives in the integer exponent.
-    """
-    top = dtype(np.ldexp(1.0, int(np.finfo(dtype).maxexp) - 1))
-    terms = _exact_difference(
-        jnp.asarray(top, dtype=dtype), jnp.asarray(-top, dtype=dtype)
-    )
-    mantissa = np.asarray(terms.mantissa)
-    exponent = np.asarray(terms.exponent)
-
-    assert np.all(np.isfinite(mantissa)), f"a mantissa left the format: {mantissa}"
-    assert np.all(np.abs(mantissa) < 1.0), f"a mantissa is not normalized: {mantissa}"
-    total = sum(
-        Fraction(float(m)) * Fraction(2) ** int(e)
-        for m, e in zip(mantissa.ravel(), exponent.ravel(), strict=True)
-    )
-    assert total == 2 * Fraction(float(top)), f"terms sum to {total}, not 2H"
-
-
-@pytest.mark.parametrize("dtype", _NP_DTYPES)
 def test_a_framed_difference_is_exact_at_the_top_of_the_range(dtype):
-    """The screen's difference must not overflow where the exact one does not.
+    """The live NB-EGM geometry helper preserves opposite top-binade inputs.
 
-    `_candidate_terms` formed its grid width, its endpoint gap and its slope key
-    as working-dtype subtractions after a lift-only shift, so the public path
-    carried the same defect as the exact kernel and published `(NaN, NaN, NaN)`.
+    A raw subtraction overflows even though the exact difference is representable
+    as a framed head, tail, and integer exponent.
     """
     top = dtype(np.ldexp(1.0, int(np.finfo(dtype).maxexp) - 1))
-    head, tail, exponent = _framed_difference(
+    head, tail, exponent = framed_difference(
         jnp.asarray(top, dtype=dtype), jnp.asarray(-top, dtype=dtype)
     )
     assert np.isfinite(np.asarray(head)), f"framed head is {head}"
@@ -1846,29 +1519,3 @@ def test_every_published_channel_survives_its_own_affine(dtype, family, block_si
     assert (policy, marginal) == (expected, expected), (
         f"{family} at block {block_size}: ({policy}, {marginal}) != {expected}"
     )
-
-
-@pytest.mark.parametrize("dtype", _NP_DTYPES)
-def test_the_affine_evaluator_never_materializes_the_ratio(dtype):
-    """`_framed_affine` must beat what a working-dtype `left + r*d` can do.
-
-    The point is not that the helper is accurate but that it is accurate where
-    the naive form is not representable at all, so this compares against the
-    naive expression rather than against a tolerance.
-    """
-    info = np.finfo(dtype)
-    top = dtype(np.ldexp(1.0, int(info.maxexp) - 1))
-    left, right = top, -top
-    # r = 1/2 as an exact significand pair with a zero exponent offset.
-    got = _framed_affine(
-        left=jnp.asarray(left, dtype=dtype),
-        right=jnp.asarray(right, dtype=dtype),
-        ratio_hi=jnp.asarray(dtype(0.5)),
-        ratio_lo=jnp.asarray(dtype(0.0)),
-        ratio_exp=jnp.asarray(0, dtype=jnp.int32),
-        split=_dekker_split_factor(np.dtype(dtype)),
-    )
-    with np.errstate(over="ignore"):
-        naive = left + dtype(0.5) * (right - left)
-    assert not np.isfinite(naive), "the naive form must be the thing that fails"
-    assert float(np.asarray(got.hi)) == 0.0, f"framed affine gave {got.hi}"

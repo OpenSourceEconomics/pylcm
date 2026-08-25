@@ -191,6 +191,15 @@ class SolverBuildContext:
     regime_name: RegimeName
     """Name of the regime the kernels are built for."""
 
+    ages: AgeGrid
+    """The model's lifecycle age grid.
+
+    A solver whose kernels or preconditions depend on the age a period
+    prices — an age-varying schedule, a per-period cost scale — reads it
+    here, so a precondition it defers to solve time can close over the
+    ages rather than take them through the `ParamCheck` call.
+    """
+
     user_regimes: UserRegimesMapping
     """Mapping of regime names to user-provided `Regime` instances."""
 

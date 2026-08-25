@@ -1,12 +1,14 @@
 """Outer-search strategy configs and how `NNBEGM` carries them.
 
-Covers the config-level validation of `FiniteOuterGrid` / `AdaptiveOuterMesh`
-/ `LegacyGoldenSection`, and that `NNBEGM.outer_search` is mandatory: the
-strategy object is the only way to describe the outer margin's candidates, so
-there is no field pair to keep consistent.
+Covers the config-level validation of `FiniteOuterGrid` / `AdaptiveOuterMesh`,
+that every knob they publish reaches the numerics, and that
+`NNBEGM.outer_search` is mandatory: the strategy object is the only way to
+describe the outer margin's candidates, so there is no field pair to keep
+consistent.
 """
 
 from collections.abc import Callable
+from dataclasses import fields
 
 import numpy as np
 import pytest
@@ -18,7 +20,6 @@ from lcm.solvers import (
     NNBEGM,
     AdaptiveOuterMesh,
     FiniteOuterGrid,
-    LegacyGoldenSection,
     OuterSearch,
 )
 from tests.conftest import assert_agrees_to_ulp
@@ -59,16 +60,24 @@ def test_adaptive_outer_mesh_rejects_bad_config(
         build()
 
 
-def test_legacy_golden_section_rejects_inverted_domain() -> None:
-    with pytest.raises(RegimeInitializationError, match="upper"):
-        LegacyGoldenSection(
-            lower=1.0,
-            upper=0.0,
-            iterations=40,
-            tolerance=1e-8,
-            endpoint_rule="fortran",
-            tie_break="fortran",
-        )
+def test_adaptive_outer_mesh_publishes_only_knobs_the_numerics_read() -> None:
+    """Every `AdaptiveOuterMesh` field changes the computation.
+
+    A public setting the solver never reads describes behaviour the model
+    does not have: a caller who sets it gets the default silently. The field
+    set is pinned here so a new knob has to arrive with a reader.
+    """
+    assert {f.name for f in fields(AdaptiveOuterMesh)} == {
+        "initial_grid",
+        "max_nodes",
+        "max_refinement_rounds",
+        "batch_size",
+        "value_atol",
+        "value_rtol",
+        "outer_lipschitz_bound",
+        "golden_iterations",
+        "fail_closed",
+    }
 
 
 def test_outer_search_is_stored_as_given() -> None:

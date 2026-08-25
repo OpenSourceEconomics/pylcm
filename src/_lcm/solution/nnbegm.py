@@ -50,7 +50,7 @@ from _lcm.egm.published_policy import (
     NBEGMGridPolicy,
     NNBEGMSimPolicy,
 )
-from _lcm.engine import StateActionSpace
+from _lcm.engine import ParamCheck, StateActionSpace
 from _lcm.grids import ContinuousGrid, DiscreteGrid, Grid
 from _lcm.solution.contract import (
     ConstraintRouteContext,
@@ -147,6 +147,7 @@ class NNBEGM(TwoMarginSolver):
                 _fail_if_outer_grid_is_stochastic(search.initial_grid)
             case _:
                 pass
+        _fail_if_aggregator_unsupported(self.branch_aggregator)
         if isinstance(
             self.branch_aggregator, UniformObservedFixedCost
         ) and not isinstance(search, AdaptiveOuterMesh):
@@ -568,6 +569,13 @@ class NNBEGM(TwoMarginSolver):
         # abscissae. Plain rows use the liquid grid; compiled feasibility augments
         # keeper and adjuster identically, and the forwarded spec retains that
         # one-sided geometry for the parent read.
+        # The fixed cost's scale is a per-period scalar read off the params,
+        # so its supported range can only be checked once params exist.
+        scale_check = _branch_scale_check(
+            regime_name=context.regime_name,
+            ages=context.ages,
+            branch_aggregation_by_period=branch_aggregation_by_period,
+        )
         return SolutionKernels(
             period_kernels=period_kernels,
             continuation_spec=(
@@ -577,7 +585,11 @@ class NNBEGM(TwoMarginSolver):
             ),
             # Both inner margins are solved by the inner solver, so both sets of
             # parameter-dependent preconditions still apply to this regime.
-            param_checks=tuple(grouped_param_checks),
+            param_checks=(
+                tuple(grouped_param_checks)
+                if scale_check is None
+                else (*grouped_param_checks, scale_check)
+            ),
         )
 
 
@@ -1453,9 +1465,14 @@ def _resolve_branch_fixed_cost(
     - the scale function must exist and read only `period`, `age`, and flat
       params — the collapse applies one scalar scale per period, so a state-
       dependent scale is out of the supported scope.
+
+    An aggregator outside the supported set is rejected rather than run as
+    the deterministic maximum, which would publish a value function for an
+    aggregation the caller did not ask for.
     """
     import inspect  # noqa: PLC0415
 
+    _fail_if_aggregator_unsupported(aggregator)
     if not isinstance(aggregator, UniformObservedFixedCost):
         return None, None
     if aggregator.shock_name in context.state_action_space.states:
@@ -1488,6 +1505,102 @@ def _resolve_branch_fixed_cost(
         )
         raise RegimeInitializationError(msg)
     return aggregator, scale_function
+
+
+def _fail_if_aggregator_unsupported(aggregator: OuterBranchAggregator) -> None:
+    """Reject a branch aggregator whose fold the kernels do not implement.
+
+    `NNBEGM` executes exactly two folds — the deterministic hard maximum and
+    the analytically integrated uniform observed fixed cost. Any other
+    concrete `OuterBranchAggregator` names an aggregation with no kernel
+    behind it, so it is refused here instead of silently taking the
+    deterministic branch.
+    """
+    if isinstance(aggregator, DeterministicOuterMaximum | UniformObservedFixedCost):
+        return
+    msg = (
+        f"NNBEGM does not implement the branch aggregation "
+        f"{type(aggregator).__name__}; use DeterministicOuterMaximum() or "
+        "UniformObservedFixedCost(...)."
+    )
+    raise RegimeInitializationError(msg)
+
+
+def _branch_scale_check(
+    *,
+    regime_name: RegimeName,
+    ages: AgeGrid,
+    branch_aggregation_by_period: Mapping[
+        int, tuple[UniformObservedFixedCost | None, Callable[..., FloatND] | None]
+    ],
+) -> ParamCheck | None:
+    """Build the preflight over the fixed cost's per-period scale, if any.
+
+    The ages are closed over here rather than taken through the check's own
+    call, which stays `(*, flat_params)` — the signature every solver author
+    writes a `ParamCheck` against.
+
+    Returns `None` when no period aggregates a fixed cost, so a deterministic
+    regime carries no check at all.
+    """
+    periods = tuple(
+        period
+        for period, (fixed_cost, _) in branch_aggregation_by_period.items()
+        if fixed_cost is not None
+    )
+    if not periods:
+        return None
+
+    def _check(*, flat_params: FlatParams) -> None:
+        _fail_if_branch_scale_outside_support(
+            regime_name=regime_name,
+            periods=periods,
+            branch_aggregation_by_period=branch_aggregation_by_period,
+            regime_params=flat_params[regime_name],
+            ages=ages,
+        )
+
+    return _check
+
+
+def _fail_if_branch_scale_outside_support(
+    *,
+    regime_name: RegimeName,
+    periods: tuple[int, ...],
+    branch_aggregation_by_period: Mapping[
+        int, tuple[UniformObservedFixedCost | None, Callable[..., FloatND] | None]
+    ],
+    regime_params: Mapping[str, object],
+    ages: AgeGrid,
+) -> None:
+    """Reject a fixed-cost scale outside the closed form's support.
+
+    The analytic fold is defined for finite `B >= 0`. Negative values are
+    adjustment subsidies rather than costs; NaN and infinity poison or
+    degenerate the cutoff calculation. Every period carrying a fixed cost is
+    checked because an age-varying schedule can leave the range only once.
+    """
+    for period in periods:
+        _, scale_function = branch_aggregation_by_period[period]
+        scale = _resolve_branch_scale(
+            scale_function=scale_function,
+            regime_params=regime_params,
+            period=period,
+            ages=ages,
+        )
+        values = np.asarray(scale, dtype=float).reshape(-1)
+        supported = np.isfinite(values) & (values >= 0.0)
+        if np.all(supported):
+            continue
+        msg = (
+            f"UniformObservedFixedCost in regime '{regime_name}' needs a "
+            f"finite scale `B >= 0`; the scale function evaluates to "
+            f"{values[~supported][0]} at period {period}. The closed form "
+            "reads every nonpositive scale as `B = 0` (the deterministic "
+            "maximum), so a negative or nonfinite draw would publish an "
+            "aggregation that was never requested."
+        )
+        raise RegimeInitializationError(msg)
 
 
 def _resolve_branch_scale(

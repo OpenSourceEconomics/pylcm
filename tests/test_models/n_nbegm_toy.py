@@ -178,6 +178,11 @@ def adjustment_scale(period: int) -> FloatND:
     return jnp.asarray(0.3 + 0.05 * period)
 
 
+def adjustment_scale_from_param(adjustment_scale_level: float) -> FloatND:
+    """Fixed-cost scale read straight from a flat param."""
+    return jnp.asarray(adjustment_scale_level)
+
+
 def build_solver(
     *,
     variant: str,
@@ -230,6 +235,7 @@ def build_model(
     illiquid_grid: Grid = ILLIQUID_GRID,
     outer_search: OuterSearch | None = None,
     branch_aggregator: OuterBranchAggregator | None = None,
+    scale_function: Callable[..., object] | None = None,
     illiquid_investment_grid: Grid = ILLIQUID_INVESTMENT_GRID,
     consumption_grid: Grid = CONSUMPTION_GRID,
     durable_law: Callable[..., object] | None = None,
@@ -253,6 +259,8 @@ def build_model(
     `durable_law` overrides the durable's law of motion; every variant reads the
     chosen stock through `new_illiquid`, so one law serves them all and the
     variants keep solving the same model.
+    `scale_function` overrides the fixed cost's `adjustment_scale` function,
+    so a caller can drive the scale from a flat param.
     `constraints` overrides the constraint pool, which otherwise carries the
     budget predicate on the grid-search arm and is empty on the endogenous-grid
     arms, whose kernels enforce the budget identity intrinsically.
@@ -277,7 +285,9 @@ def build_model(
         functions["resources_before_outer_cost"] = resources_before_outer_cost
         functions["inverse_marginal_utility"] = inverse_marginal_utility
     if branch_aggregator is not None:
-        functions["adjustment_scale"] = adjustment_scale
+        functions["adjustment_scale"] = (
+            adjustment_scale if scale_function is None else scale_function
+        )
     if constraints is None:
         constraints = {"budget_feasible": budget_feasible} if variant == "brute" else {}
     active = lambda age, n=final_age_alive: age <= n  # noqa: E731

@@ -8,15 +8,20 @@ maximum; boundary continuity holds across the regime switches; and the
 feasibility degeneracies keep the fold's vocabulary.
 """
 
+from dataclasses import dataclass
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from _lcm.egm.branch_aggregation import (
+    OuterBranchAggregator,
     UniformObservedFixedCost,
     aggregate_uniform_observed_fixed_cost,
 )
 from lcm.exceptions import RegimeInitializationError
+from lcm.solvers import AdaptiveOuterMesh
+from tests.test_models import n_nbegm_toy as toy
 
 _N_QUADRATURE = 1_000_001
 
@@ -158,4 +163,27 @@ def test_config_requires_positive_support_width() -> None:
             scale_function="adjustment_cost_scale",
             lower=1.0,
             upper=1.0,
+        )
+
+
+def test_unsupported_aggregator_subclass_is_rejected_at_solver_construction() -> None:
+    """A branch aggregator the solver cannot execute fails loudly, not silently.
+
+    `OuterBranchAggregator` is a closed set as far as `NNBEGM` is concerned.
+    A third concrete subclass names an aggregation the kernels do not
+    implement, and running it as the deterministic maximum would publish a
+    value function for a model nobody specified.
+    """
+
+    @dataclass(frozen=True, kw_only=True)
+    class LogitAdjustment(OuterBranchAggregator):
+        """A stand-in for an aggregation the kernels do not implement."""
+
+        temperature: float = 1.0
+
+    with pytest.raises(RegimeInitializationError, match="LogitAdjustment"):
+        toy.build_solver(
+            variant="n_nbegm",
+            outer_search=AdaptiveOuterMesh(initial_grid=toy.OUTER_GRID),
+            branch_aggregator=LogitAdjustment(),
         )

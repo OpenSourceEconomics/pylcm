@@ -26,9 +26,13 @@ discretizations of the brute-force example with their exact counterparts:
   KNOWN DEVIATION from the Fortran's
   `c = max(coh - a', mincon)`: on the floor the Fortran tops up consumption
   no matter how much is saved (saving capped at own resources), while the
-  floored budget here lets the agent split `min_consumption` between
-  consumption and saving. The two differ only at states with
-  `net_income + R*wealth < min_consumption` (bottom wealth node, zero-income
+  floored budget here lets the agent split `min_consumption` between consumption
+  and saving. The Fortran rule is economically unusual: once the floor binds,
+  each additional dollar saved raises the implied government transfer by one
+  dollar. Because the expression has no asset test, a household can preserve all
+  of its own resources while the government finances the entire consumption
+  floor. The two implementations differ only at states with `net_income +
+  R*wealth < min_consumption` (bottom wealth node, zero-income
   branches); resolving the floor exactly needs a kinked-utility (case-piece)
   Euler action, which the ride-along route does not yet compose with.
 
@@ -90,7 +94,6 @@ from lcm_examples.mahler_yum_2024 import (
     health_type_coefficient,
     income,
     lagged_health_effort_coefficient,
-    legacy,
     next_health,
     pension,
     prod_shock_grid,
@@ -437,53 +440,61 @@ def create_mahler_yum_model(
     *,
     implementation: str = "paper",
     outer_search: AdaptiveOuterMesh | None = None,
-    compatibility: legacy.MahlerLegacyCompatibility | None = None,
     enable_jit: bool = True,
 ) -> Model:
     """Build the Mahler-Yum model in the requested implementation.
 
-    `"paper"` is the canonical continuous-outer configuration; `"brute"`
-    returns the historical grid-search model unchanged; `"legacy_fortran"`
-    builds toward the historical-algorithm compatibility set in
-    `compatibility` (defaulting to the full `legacy.LEGACY_FORTRAN`).
+    `"paper"` is the continuous-outer configuration built from the paper's
+    equations; `"brute"` returns the grid-search model unchanged, as the
+    oracle the paper configuration is checked against.
 
-    Legacy support is per switch and honest: the historical finite-grid
-    effort/saving searches over the five-node adjustment-cost grid ARE the
-    brute configuration and are returned for that switch subset; a request
-    enabling any solver switch the engine cannot yet build (the old-habit
-    continuation needs solve-phase-only transition support) raises
-    `NotImplementedError` naming exactly those switches instead of
-    returning a model that does not implement its own manifest.
-    Measurement-side switches never affect the model object and are
-    consumed by the replication's `legacy_fortran` module.
+    Reproducing the authors' Fortran is deliberately not offered here.
+    Doing it honestly needs per-switch model variants — an effort-only, a
+    saving-only, a cost-grid-only configuration — that do not exist: the
+    historical finite-grid searches and the five-node adjustment-cost grid
+    are one bundle in the brute module, not three independent settings. A
+    factory that accepted a single switch would return a model using all of
+    them, so a run manifest naming that switch would understate what
+    produced the numbers. The comparison belongs after the paper
+    configuration is settled, against it.
+
+    Structural approximation in `"paper"` mode
+    ------------------------------------------
+    `"paper"` is canonical in its treatment of the outer effort margin, the
+    inner Euler inversion, and the adjustment cost — not an exact
+    reproduction of the authors' Fortran feasible set. The guaranteed
+    minimum consumption enters as a declared flat budget piece,
+    `cash_on_hand = max(raw_cash_on_hand, min_consumption)`, whereas the
+    Fortran applies `c = max(cash_on_hand - saving, min_consumption)`:
+
+    - Fortran: on the floor, consumption is topped up to `min_consumption`
+      however much is saved, so a household with own resources `0.50` and a
+      floor of `1.00` consumes `1.00` *and* still saves out of its own
+      resources. This is economically unusual: once the floor binds, each
+      additional dollar saved raises the implied government transfer by one
+      dollar. The Fortran expression has no asset test, so the household may
+      preserve all of its own resources while the government finances the
+      entire consumption floor.
+    - Here: consumption and saving must divide the floored `1.00`, so
+      consumption `1.00` implies zero saving.
+
+    The two coincide except at states with
+    `net_income + R*wealth < min_consumption` — the bottom wealth node and
+    the zero-income branches. Resolving the floor exactly needs a
+    kinked-utility (case-piece) Euler action, which the ride-along route
+    does not yet compose with. Report results at those states as an
+    approximation, or bound their contribution.
     """
     if implementation == "brute":
         from lcm_examples.mahler_yum_2024 import MAHLER_YUM_MODEL  # noqa: PLC0415
 
         return MAHLER_YUM_MODEL
-    if implementation == "legacy_fortran":
-        compat = legacy.LEGACY_FORTRAN if compatibility is None else compatibility
-        unbuildable = legacy.unimplemented_solver_switches(compat)
-        if unbuildable:
-            msg = (
-                "legacy_fortran solver switches not implemented yet: "
-                + ", ".join(unbuildable)
-                + " (the historical finite-grid searches ARE implemented; "
-                "restrict the compatibility object to those switches for a "
-                "partial historical build)"
-            )
-            raise NotImplementedError(msg)
-        from lcm_examples.mahler_yum_2024 import MAHLER_YUM_MODEL  # noqa: PLC0415
-
-        return MAHLER_YUM_MODEL
     if implementation != "paper":
-        msg = f"unknown implementation: {implementation!r}"
-        raise ValueError(msg)
-    if compatibility is not None and compatibility != legacy.CANONICAL:
         msg = (
-            "the paper implementation is canonical by definition; historical "
-            "switches require implementation='legacy_fortran': "
-            + ", ".join(legacy.enabled_switches(compatibility))
+            f"unknown implementation: {implementation!r}; "
+            "create_mahler_yum_model builds 'paper' or 'brute'. "
+            "Historical-Fortran reproduction ('legacy_fortran') is not one "
+            "of them — see this function's docstring for why."
         )
         raise ValueError(msg)
     return Model(

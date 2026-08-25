@@ -1065,6 +1065,7 @@ def _build_solution_phase(
     # max-Q-over-a grid search; `DCEGM` wraps the EGM step.
     context = SolverBuildContext(
         regime_name=regime_name,
+        ages=ages,
         user_regimes=user_regimes,
         state_action_space=state_action_space,
         solution_reachability=phase_reachability,

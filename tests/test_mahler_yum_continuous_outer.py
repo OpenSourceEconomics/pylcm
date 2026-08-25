@@ -19,6 +19,8 @@ enough to make them cheap would remove the off-grid and convergence behavior
 they are meant to test.
 """
 
+import inspect
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -154,6 +156,20 @@ def test_paper_solver_wiring_matches_the_public_interface() -> None:
     assert isinstance(aggregator, UniformObservedFixedCost)
     assert aggregator.scale_function == "adjustment_cost_scale"
     assert (aggregator.lower, aggregator.upper) == (0.0, 1.0)
+
+
+def test_the_factory_builds_only_the_paper_and_brute_implementations() -> None:
+    """`create_mahler_yum_model` offers the paper equations and the brute oracle.
+
+    Reproducing the authors' Fortran is a separate exercise from encoding the
+    paper: it needs per-switch model variants that do not exist, and a factory
+    that accepts a switch it cannot honour would describe a model it did not
+    build. The mode is therefore absent rather than approximate, and asking
+    for it is an unknown implementation like any other.
+    """
+    assert "compatibility" not in inspect.signature(create_mahler_yum_model).parameters
+    with pytest.raises(ValueError, match="legacy_fortran"):
+        create_mahler_yum_model(implementation="legacy_fortran")
 
 
 def test_paper_model_has_separate_working_and_retirement_regimes() -> None:
