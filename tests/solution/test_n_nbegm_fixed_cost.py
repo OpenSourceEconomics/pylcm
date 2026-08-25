@@ -14,7 +14,7 @@ import pytest
 from jax import config as jax_config
 
 import _lcm.solution.nnbegm as solvers_mod
-from lcm.exceptions import RegimeInitializationError
+from lcm.exceptions import RegimeInitializationError, UnsupportedOperationError
 from lcm.solvers import AdaptiveOuterMesh, UniformObservedFixedCost
 from tests.test_models import n_nbegm_toy as toy
 
@@ -134,6 +134,34 @@ def test_aggregated_solve_publishes_probabilities_and_bounded_values(
     # The expected marginal stays finite and the carry keeps its shape.
     carry = cast("EGMCarry", agg.continuation)
     assert np.all(np.isfinite(np.asarray(carry.marginal_utility)))
+
+
+def test_fixed_cost_simulation_fails_before_an_automatic_solve() -> None:
+    """Do not silently replace the unobserved contingent decision by a grid pair."""
+    model = toy.build_model(
+        variant="n_nbegm",
+        n_periods=2,
+        outer_search=_MESH,
+        branch_aggregator=_AGGREGATOR,
+    )
+    initial_conditions = {
+        "wealth": np.asarray([4.0]),
+        "illiquid": np.asarray([2.0]),
+        "age": np.asarray([20.0]),
+        "regime_id": np.asarray([toy.RegimeId.alive], dtype=np.int32),
+    }
+
+    with pytest.raises(
+        UnsupportedOperationError,
+        match=r"UniformObservedFixedCost.*draw.*keeper/adjuster",
+    ):
+        model.simulate(
+            params=_PARAMS,
+            initial_conditions=initial_conditions,
+            period_to_regime_to_V_arr=None,
+            log_level="debug",
+            seed=0,
+        )
 
 
 def test_zero_width_support_is_rejected() -> None:

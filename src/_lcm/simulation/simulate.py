@@ -983,7 +983,7 @@ def _replace_continuous_action_with_policy_read(  # noqa: PLR0911
         # The nested (continuous-outer) payload is self-describing (it names
         # both actions, the liquid state, and the search settings), so it
         # needs no build-time `egm_policy_read` qualification of its own.
-        nested_actions, nested_fallback = _read_nested_policy(
+        nested_actions, nested_fallback, nested_policy_value = _read_nested_policy(
             payload=sim_policy,
             optimal_actions=optimal_actions,
             regime=regime,
@@ -1023,10 +1023,19 @@ def _replace_continuous_action_with_policy_read(  # noqa: PLR0911
             period=period,
             age=age,
         )
+        value_atol = getattr(sim_policy, "value_atol", 1e-10)
+        value_rtol = getattr(sim_policy, "value_rtol", 1e-8)
+        policy_value_band = value_atol + value_rtol * jnp.maximum(
+            jnp.abs(nested_policy_value), jnp.abs(nested_value)
+        )
+        policy_value_consistent = jnp.isfinite(nested_policy_value) & (
+            nested_value + policy_value_band >= nested_policy_value
+        )
         accepted = (
             ~nested_fallback
             & nested_feasible
             & nested_admissible
+            & policy_value_consistent
             & jnp.isfinite(nested_value)
             & ((~baseline_admissible) | (nested_value >= baseline_value))
         )
@@ -1351,7 +1360,7 @@ def _read_nested_policy(
     flat_params: FlatRegimeParams,
     period: int,
     age: ScalarFloat | ScalarInt,
-) -> tuple[MappingProxyType[ActionName, FloatND | IntND], BoolND]:
+) -> tuple[MappingProxyType[ActionName, FloatND | IntND], BoolND, FloatND]:
     """Replay the continuous-outer keeper/adjuster decision off-grid.
 
     Reconstructs, per subject, exactly the solve's decision problem in the
@@ -1378,10 +1387,12 @@ def _read_nested_policy(
     support, or the winning consumption is non-finite, non-positive, or
     outside the intrinsic budget (`c <= resources - savings_lower_bound`).
 
-    Returns the recovered actions and a per-subject Boolean `fallback` flag
-    (True where the off-grid read was refused and the grid-argmax pair kept):
-    all-True on the whole-regime fallbacks above, `~accepted` on the normal
-    path. Inference must refuse whenever any entry is True; the flag reaches
+    Returns the recovered actions, a per-subject Boolean fallback flag,
+    and the winning value from the solve's policy surrogate. The last value
+    lets the caller refuse an emitted pair whose canonical Q is materially
+    below the surrogate value that selected it. Whole-regime fallbacks return
+    all-True and NaN surrogate values.
+    Inference must refuse whenever any fallback entry is True; the flag reaches
     the user as the `nested_policy_fallback` column.
     """
     keeper_pol = payload.keeper
@@ -1392,7 +1403,11 @@ def _read_nested_policy(
         or bank.policies.row_discrete_action_names
         or len(keeper_pol.row_passive_state_names) > 1
     ):
-        return optimal_actions, jnp.ones(n_subjects, dtype=bool)
+        return (
+            optimal_actions,
+            jnp.ones(n_subjects, dtype=bool),
+            jnp.full(n_subjects, jnp.nan),
+        )
     liquid = jnp.asarray(states[payload.liquid_state_name])
 
     def grid_position(name: StateOrActionName) -> IntND:
@@ -1495,7 +1510,11 @@ def _read_nested_policy(
         n_subjects=n_subjects,
     )
     if outer_offset_slope is None:
-        return optimal_actions, jnp.ones(n_subjects, dtype=bool)
+        return (
+            optimal_actions,
+            jnp.ones(n_subjects, dtype=bool),
+            jnp.full(n_subjects, jnp.nan),
+        )
     offset, slope_is_unit, transition_at = outer_offset_slope
     keep_value = _keeper_post_decision(
         payload=payload,
@@ -1507,7 +1526,11 @@ def _read_nested_policy(
         n_subjects=n_subjects,
     )
     if keep_value is None:
-        return optimal_actions, jnp.ones(n_subjects, dtype=bool)
+        return (
+            optimal_actions,
+            jnp.ones(n_subjects, dtype=bool),
+            jnp.full(n_subjects, jnp.nan),
+        )
 
     chosen_post_decision = jnp.where(adjust, search.x, keep_value)
     outer_action = chosen_post_decision - offset
@@ -1553,7 +1576,7 @@ def _read_nested_policy(
     new_actions[payload.outer_action_name] = jnp.where(
         accepted, outer_action, jnp.asarray(optimal_actions[payload.outer_action_name])
     )
-    return MappingProxyType(new_actions), ~accepted
+    return MappingProxyType(new_actions), ~accepted, winner_value
 
 
 def _nested_actions_are_intrinsically_admissible(

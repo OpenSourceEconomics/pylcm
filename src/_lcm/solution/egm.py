@@ -143,7 +143,6 @@ class EGM(OneMarginSolver):
             _dag_ancestors,
             _grid_sample,
             _isclose,
-            _resolve_solve_functions,
             _solve_grids,
             fail_if_custom_koopmans_aggregator,
         )
@@ -207,7 +206,7 @@ class EGM(OneMarginSolver):
                 f"post-decision function '{bound.post_decision_function}'."
             )
             raise ModelInitializationError(msg)
-        functions = _resolve_solve_functions(user_regime=user_regime)
+        functions = context.solve_functions
         post_func = functions[bound.post_decision_function]
         post_ancestors = _dag_ancestors(functions=functions, target_func=post_func)
         missing_roles = sorted({liquid_state, consumption_action} - set(post_ancestors))

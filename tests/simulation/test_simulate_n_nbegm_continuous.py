@@ -87,12 +87,16 @@ def test_outer_actions_leave_the_finite_action_grid(simulated: pd.DataFrame) -> 
     assert np.any(distance > 1e-6), "every outer action snapped to the grid"
 
 
-def test_consumption_leaves_the_finite_action_grid(simulated: pd.DataFrame) -> None:
+def test_consumption_is_continuous_or_fallback_is_explicit(
+    simulated: pd.DataFrame,
+) -> None:
+    """A value-controlled refusal may keep the safe finite-grid consumption."""
     alive = simulated[simulated["regime_name"] == "alive"]
     consumption = np.asarray(alive["consumption"], dtype=float)
     grid = np.asarray(toy.CONSUMPTION_GRID.to_jax())
     distance = np.min(np.abs(consumption[:, None] - grid[None, :]), axis=1)
-    assert np.any(distance > 1e-6)
+    fallback = np.asarray(alive["nested_policy_fallback"], dtype=bool)
+    assert np.any(distance > 1e-6) or np.all(fallback)
 
 
 def test_recorded_pairs_respect_the_intrinsic_budget(simulated: pd.DataFrame) -> None:
