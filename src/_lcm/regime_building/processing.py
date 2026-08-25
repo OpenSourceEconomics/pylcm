@@ -170,6 +170,7 @@ from _lcm.variables import (
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
+from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, NNBEGM, Solver
 from lcm.transition import MarkovTransition
