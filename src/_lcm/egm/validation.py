@@ -1566,7 +1566,7 @@ def _without(
 
 def _dag_ancestors(
     *,
-    functions: dict[FunctionName, UserFunction],
+    functions: Mapping[FunctionName, UserFunction],
     target_func: UserFunction,
 ) -> set[str]:
     """Ancestors (function names and leaf inputs) of a standalone callable.
