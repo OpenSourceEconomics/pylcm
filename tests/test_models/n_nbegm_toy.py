@@ -28,6 +28,7 @@ from lcm import (
     AgeGrid,
     LinSpacedGrid,
     Model,
+    Phased,
     Regime,
     categorical,
 )
@@ -144,6 +145,18 @@ def next_regime(age: int, final_age_alive: float) -> ScalarInt:
     return jnp.where(age >= final_age_alive, RegimeId.dead, RegimeId.alive)
 
 
+def impute_permanent_income(wealth: ContinuousState) -> ContinuousState:
+    """Solve-phase imputation for the carried-state capability witness."""
+    return 0.1 * wealth
+
+
+def evolve_permanent_income(
+    permanent_income: ContinuousState,
+) -> ContinuousState:
+    """Simulation law for the carried-state capability witness."""
+    return permanent_income
+
+
 WEALTH_GRID = LinSpacedGrid(start=0.0, stop=30.0, n_points=N_WEALTH)
 ILLIQUID_GRID = LinSpacedGrid(start=0.0, stop=20.0, n_points=N_ILLIQUID)
 CONSUMPTION_GRID = LinSpacedGrid(start=0.1, stop=20.0, n_points=N_CONSUMPTION)
@@ -197,9 +210,12 @@ def build_model(
     illiquid_grid: Grid = ILLIQUID_GRID,
     illiquid_investment_grid: Grid = ILLIQUID_INVESTMENT_GRID,
     consumption_grid: Grid = CONSUMPTION_GRID,
-    durable_law: Callable[..., object] | None = None,
+    durable_law: Callable[..., object] | Phased | None = None,
     constraints: Mapping[str, Callable[..., object]] | None = None,
-    utility_function: Callable[..., object] | AgeSpecializedFunction = utility,
+    utility_function: Callable[..., object] | AgeSpecializedFunction | Phased = utility,
+    regime_transition: Callable[..., object] | Phased = next_regime,
+    koopmans_aggregator: Callable[..., object] | Phased | None = None,
+    carried_state: bool = False,
 ) -> Model:
     """Build the smooth two-asset toy under the requested solver flavour.
 
@@ -217,6 +233,10 @@ def build_model(
     `durable_law` overrides the durable's law of motion; every variant reads the
     chosen stock through `new_illiquid`, so one law serves them all and the
     variants keep solving the same model.
+    `regime_transition` and `koopmans_aggregator` expose the other public phase
+    slots to build-time capability tests without changing the numerical toy.
+    `carried_state=True` adds an otherwise unused solve-imputed/simulate-carried
+    state for the NNBEGM replay-capability boundary witness.
     `constraints` overrides the constraint pool, which otherwise carries the
     budget predicate on the grid-search arm and is empty on the endogenous-grid
     arms, whose kernels enforce the budget identity intrinsically.
@@ -239,11 +259,20 @@ def build_model(
     if constraints is None:
         constraints = {"budget_feasible": budget_feasible} if variant == "brute" else {}
     active = lambda age, n=final_age_alive: age <= n  # noqa: E731
-    states = {"wealth": WEALTH_GRID, "illiquid": illiquid_grid}
+    states: dict[str, Grid | Phased] = {
+        "wealth": WEALTH_GRID,
+        "illiquid": illiquid_grid,
+    }
     state_transitions = {
         "wealth": next_wealth,
         "illiquid": durable_law if durable_law is not None else durable_transition,
     }
+    if carried_state:
+        states["permanent_income"] = Phased(
+            solve=impute_permanent_income,
+            simulate=LinSpacedGrid(start=0.0, stop=3.0, n_points=4),
+        )
+        state_transitions["permanent_income"] = evolve_permanent_income
     actions = {
         "consumption": consumption_grid,
         "illiquid_investment": illiquid_investment_grid,
@@ -275,10 +304,11 @@ def build_model(
             states=states,
             state_transitions=state_transitions,
             actions=actions,
-            transition=next_regime,
+            transition=regime_transition,
             functions=functions,
             constraints=constraints,
             solver=solver,
+            koopmans_aggregator=koopmans_aggregator,
         )
     else:
         liquid_resources = (
@@ -295,10 +325,11 @@ def build_model(
             states=states,
             state_transitions=state_transitions,
             actions=actions,
-            transition=next_regime,
+            transition=regime_transition,
             functions=functions,
             constraints=constraints,
             solver=solver,
+            koopmans_aggregator=koopmans_aggregator,
             liquid=LiquidMargin(
                 state="wealth",
                 action="consumption",

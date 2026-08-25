@@ -15,7 +15,7 @@ import inspect
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, fields, replace
 from types import MappingProxyType
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import jax
 import jax.numpy as jnp
@@ -29,6 +29,7 @@ from _lcm.egm.carry import EGMCarry
 from _lcm.egm.published_policy import NBEGMGridPolicy, NNBEGMSimPolicy
 from _lcm.engine import StateActionSpace
 from _lcm.grids import ContinuousGrid, Grid
+from _lcm.regime_building.phases import phase_variation_paths
 from _lcm.solution.contract import (
     ConstraintRouteContext,
     ContinuationPayload,
@@ -63,8 +64,16 @@ from _lcm.solution.periodization import (
 )
 from _lcm.typing import FlatParams, RegimeName
 from lcm.ages import AgeGrid
-from lcm.exceptions import RegimeInitializationError
+from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.typing import ActionName, FloatND, FunctionName, IntND, StateName
+
+if TYPE_CHECKING:
+    from lcm.regime import Regime as UserRegime
+else:
+    # Importing the public regime class here closes a cycle through the
+    # `lcm.solvers` facade, which re-exports `NNBEGM` from this module. ty sees
+    # the precise type above; the runtime annotation stays deliberately broad.
+    UserRegime = object
 
 
 @beartype(conf=REGIME_CONF)
@@ -225,6 +234,10 @@ class NNBEGM(TwoMarginSolver):
         )
 
         user_regime = context.user_regimes[context.regime_name]
+        _fail_if_nnbegm_phase_variation(
+            regime_name=context.regime_name,
+            user_regime=user_regime,
+        )
         validate_nnbegm_regime(
             regime_name=context.regime_name,
             user_regime=user_regime,
@@ -441,6 +454,33 @@ class _BoundNNBEGM(NNBEGM):
     outer_state: StateName
     outer_post_decision: FunctionName
     outer_no_adjustment_candidate: FunctionName | None
+
+
+def _fail_if_nnbegm_phase_variation(
+    *,
+    regime_name: RegimeName,
+    user_regime: UserRegime,
+) -> None:
+    """Reject phase variation before NNBEGM period kernels are constructed.
+
+    NNBEGM publishes only the keeper-plus-outer-grid candidates solved during
+    backward induction. A genuinely phase-varying declaration would require a
+    separate simulate-phase policy over that same candidate set; generic
+    action-grid maximization is not an equivalent fallback.
+    """
+    variations = phase_variation_paths(user_regime=user_regime)
+    if not variations:
+        return
+    raise ModelInitializationError(
+        f"NNBEGM replay capability for regime {regime_name!r} does not support "
+        "phase variation. The solve policy ranks keeper plus NNBEGM.outer_grid "
+        "candidates, so simulation cannot silently fall back to generic "
+        "action-grid maximization when declarations differ between solve and "
+        f"simulate. Unsupported slots: {list(variations)}. Any carried-only "
+        "state is phase-varying by construction. Use identical declaration "
+        "objects in both phases, remove carried-only state, or use GridSearch "
+        "until phase-specific NNBEGM replay is implemented."
+    )
 
 
 def _conditional_nnbegm_banks(
