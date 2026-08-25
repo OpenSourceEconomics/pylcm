@@ -16,6 +16,7 @@ from _lcm.egm.published_policy import NNBEGMSimPolicy
 from lcm import NormalIIDProcess
 from lcm.exceptions import RegimeInitializationError
 from lcm.solvers import NBEGM, NNBEGM, FiniteOuterGrid
+from lcm.typing import ContinuousAction, ContinuousState
 from tests.test_models import n_nbegm_toy as toy
 
 _PARAMS = {"discount_factor": 0.95}
@@ -26,6 +27,24 @@ def _nbegm_inner() -> NBEGM:
         savings_grid=toy.SAVINGS_GRID,
         envelope_arithmetic="ordinary",
     )
+
+
+def _cubic_outer_target(
+    illiquid: ContinuousState, illiquid_investment: ContinuousAction
+) -> ContinuousState:
+    return illiquid + illiquid_investment**3
+
+
+def _zero_slope_outer_target(
+    illiquid: ContinuousState, illiquid_investment: ContinuousAction
+) -> ContinuousState:
+    return illiquid + 0 * illiquid_investment
+
+
+def _affine_outer_target(
+    illiquid: ContinuousState, illiquid_investment: ContinuousAction
+) -> ContinuousState:
+    return illiquid + 2 * illiquid_investment
 
 
 def test_public_nnbegm_contains_only_numerical_configuration() -> None:
@@ -87,6 +106,47 @@ def test_nnbegm_publishes_every_ranked_candidate_inner_policy() -> None:
     n_candidates = 1 + toy.OUTER_GRID.to_jax().shape[0]
     assert policy.candidate_inner_action.shape[0] == n_candidates
     assert policy.candidate_value.shape == policy.candidate_inner_action.shape
+
+
+def test_nnbegm_rejects_a_nonlinear_outer_action_mapping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """NNBEGM requires an affine map from outer action to its target."""
+    monkeypatch.setattr(toy, "new_illiquid", _cubic_outer_target)
+    model = toy.build_model(variant="n_nbegm", n_periods=2)
+
+    with pytest.raises(RegimeInitializationError, match=r"affine.*outer action"):
+        model.solve(params=_PARAMS, log_level="off")
+
+
+def test_nnbegm_rejects_a_zero_slope_outer_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """NNBEGM requires a nonzero conditional outer-action slope."""
+    monkeypatch.setattr(toy, "new_illiquid", _zero_slope_outer_target)
+    model = toy.build_model(variant="n_nbegm", n_periods=2)
+
+    with pytest.raises(RegimeInitializationError, match="nonzero slope"):
+        model.solve(params=_PARAMS, log_level="off")
+
+
+def test_nnbegm_recovers_actions_from_a_nonunit_affine_outer_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An affine target with slope two replays its exact inverse actions."""
+    monkeypatch.setattr(toy, "new_illiquid", _affine_outer_target)
+    _values, policies = toy.build_model(variant="n_nbegm", n_periods=2).solve(
+        params=_PARAMS,
+        log_level="off",
+        return_simulation_policy=True,
+    )
+    policy = policies[0]["alive"]
+    assert isinstance(policy, NNBEGMSimPolicy)
+    expected = np.concatenate(([0.0], np.asarray(toy.OUTER_GRID.to_jax()) / 2))
+    np.testing.assert_allclose(
+        np.asarray(policy.candidate_outer_action)[:, -1, 0],
+        expected,
+    )
 
 
 def test_two_period_toy_agrees_with_nested_dcegm() -> None:
