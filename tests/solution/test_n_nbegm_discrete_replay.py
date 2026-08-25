@@ -11,11 +11,13 @@ from collections.abc import Sequence
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import pytest
 from jax.typing import DTypeLike
 
 from _lcm.egm.published_policy import NNBEGMSimPolicy
 from lcm import IrregSpacedGrid, LinSpacedGrid
+from lcm.exceptions import InvalidSimulationInputError
 from lcm.typing import UserParams
 from tests.test_models import n_nbegm_discrete_toy as toy
 from tests.test_models import n_nbegm_toy as smooth
@@ -203,6 +205,73 @@ def test_policy_bank_is_the_declared_outer_times_discrete_product() -> None:
         np.asarray(policy.candidate_discrete_actions)[:, 0],
         np.tile([toy.BuyPrivate.no, toy.BuyPrivate.yes], n_outer),
     )
+
+
+def test_separate_solve_and_simulate_replays_the_exact_nnbegm_policy() -> None:
+    """A returned NNBEGM policy reproduces automatic solve-and-simulate."""
+    foreign_grid = IrregSpacedGrid(points=(-20.0, 0.01, 20.0))
+    model = toy.build_model(
+        variant="n_nbegm",
+        n_periods=2,
+        illiquid_investment_grid=foreign_grid,
+    )
+    initial_conditions = {
+        "wealth": jnp.asarray([4.0, 15.0, 24.0]),
+        "illiquid": jnp.asarray([0.0, 12.0, 20.0]),
+        "age": jnp.full(3, 20.0),
+        "regime_id": jnp.full(3, RegimeId.alive, dtype=jnp.int32),
+    }
+
+    automatic = model.simulate(
+        params=_PARAMS,
+        initial_conditions=initial_conditions,
+        period_to_regime_to_V_arr=None,
+        log_level="off",
+        seed=41,
+    ).to_dataframe()
+    values, policies = model.solve(
+        params=_PARAMS,
+        log_level="off",
+        return_simulation_policy=True,
+    )
+    separate = model.simulate(
+        params=_PARAMS,
+        initial_conditions=initial_conditions,
+        period_to_regime_to_V_arr=values,
+        policies=policies,
+        log_level="off",
+        seed=41,
+    ).to_dataframe()
+
+    pd.testing.assert_frame_equal(separate, automatic)
+
+
+def test_separate_nnbegm_simulation_requires_the_returned_policy() -> None:
+    """NNBEGM values alone fail closed instead of selecting a foreign grid action."""
+    model = toy.build_model(
+        variant="n_nbegm",
+        n_periods=2,
+        illiquid_investment_grid=IrregSpacedGrid(points=(-20.0, 0.01, 20.0)),
+    )
+    initial_conditions = {
+        "wealth": jnp.asarray([4.0]),
+        "illiquid": jnp.asarray([12.0]),
+        "age": jnp.asarray([20.0]),
+        "regime_id": jnp.asarray([RegimeId.alive], dtype=jnp.int32),
+    }
+    values = model.solve(params=_PARAMS, log_level="off")
+
+    with pytest.raises(
+        InvalidSimulationInputError,
+        match=r"NNBEGM.*policy",
+    ):
+        model.simulate(
+            params=_PARAMS,
+            initial_conditions=initial_conditions,
+            period_to_regime_to_V_arr=values,
+            log_level="off",
+            seed=41,
+        )
 
 
 @pytest.mark.parametrize("use_x64", [False, True], ids=["fp32", "fp64"])

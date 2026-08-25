@@ -36,11 +36,13 @@ class InvalidInitialConditionsError(PyLCMError):
 
 
 class InvalidSimulationInputError(PyLCMError):
-    """Raised when a caller-supplied `period_to_regime_to_V_arr` is incomplete.
+    """Raised when caller-supplied solve artifacts cannot drive simulation.
 
-    Every solution-graph continuation target for the current
-    `(period, source regime)` decision must have a value-function array
-    present; a missing one is a simulation-input error, not a solver defect.
+    Covers:
+
+    - A missing value-function array for a solution-graph continuation target.
+    - A missing or mismatched replay policy where the solver's decision cannot
+      be reconstructed from value functions alone.
     """
 
 
