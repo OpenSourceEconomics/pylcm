@@ -24,17 +24,26 @@ _INTERIOR = (_LIQUID > 1.5) & (_LIQUID < 27.0)
 _AWAY_FROM_CLIFF = _INTERIOR & (np.abs(_LIQUID - _MEDICAID_LIMIT) > 0.4)
 
 
-def _solve(variant: str, *, n_consumption: int = 120) -> Mapping[int, Mapping]:
+def _solve(
+    variant: str,
+    *,
+    n_consumption: int = 120,
+    savings_floor: float = 0.0,
+    discount_factor: float = 0.95,
+) -> Mapping[int, Mapping]:
     """Solve the next-asset-cliff toy on the shared comparison grids."""
     model = toy.build_model(
         variant=variant,
         n_liquid=120,
         liquid_max=30.0,
         n_savings=180,
+        savings_floor=savings_floor,
         savings_max=28.0,
         n_consumption=n_consumption,
     )
-    return model.solve(params=toy.build_params(), log_level="debug")
+    return model.solve(
+        params=toy.build_params(discount_factor=discount_factor), log_level="debug"
+    )
 
 
 def test_nbegm_matches_brute_with_a_next_asset_cliff_terminal_adjacent():
@@ -49,6 +58,23 @@ def test_nbegm_matches_brute_with_a_next_asset_cliff_terminal_adjacent():
     terminal_adjacent = max(p for p in brute if "alive" in brute[p])
     brute_v = np.asarray(brute[terminal_adjacent]["alive"])
     nbegm_v = np.asarray(nbegm[terminal_adjacent]["alive"])
+    for kind in range(brute_v.shape[0]):
+        np.testing.assert_allclose(
+            nbegm_v[kind, _AWAY_FROM_CLIFF],
+            brute_v[kind, _AWAY_FROM_CLIFF],
+            atol=2e-2,
+            rtol=5e-3,
+            err_msg=f"kind={kind}",
+        )
+
+
+def test_each_interval_uses_the_declared_positive_savings_floor():
+    """Each lower corner represents the first declared savings-grid node."""
+    nbegm = _solve("nbegm", savings_floor=1.0, discount_factor=0.0)
+    brute = _solve("brute", n_consumption=1500, savings_floor=1.0, discount_factor=0.0)
+    period = max(p for p in brute if "alive" in brute[p])
+    brute_v = np.asarray(brute[period]["alive"])
+    nbegm_v = np.asarray(nbegm[period]["alive"])
     for kind in range(brute_v.shape[0]):
         np.testing.assert_allclose(
             nbegm_v[kind, _AWAY_FROM_CLIFF],

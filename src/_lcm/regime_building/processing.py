@@ -33,6 +33,7 @@ from _lcm.egm.terminal import (
 from _lcm.egm.validation import savings_stage_reads_euler_state
 from _lcm.engine import (
     EGMPolicyRead,
+    NNBEGMPolicyRead,
     Regime,
     SimulationPhase,
     SolutionPhase,
@@ -104,6 +105,7 @@ from _lcm.regime_building.phases import (
 
 if TYPE_CHECKING:
     from _lcm.solution.dcegm import _BoundDCEGM
+    from _lcm.solution.nnbegm import _BoundNNBEGM
 
 from _lcm.constraints.dispositions import ConstraintContext, Evaluate, Reject
 from _lcm.constraints.materialize import as_constraint_function
@@ -190,7 +192,7 @@ from lcm.exceptions import ModelInitializationError
 from lcm.phased import Phased
 from lcm.regime import GatedEdge, SamePeriodRef
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import DCEGM, Solver
+from lcm.solvers import DCEGM, NNBEGM, Solver
 from lcm.transition import JointTransition, MarkovTransition
 from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, UserFunction
 
@@ -2760,7 +2762,7 @@ def _build_egm_child_carry_producer(
     return producer, template
 
 
-def _build_simulation_phase(
+def _build_simulation_phase(  # noqa: PLR0915
     *,
     spec: PhasedRegimeSpec,
     user_regime: UserRegime,
@@ -3119,7 +3121,24 @@ def _build_simulation_phase(
     own_v_info = regime_to_v_interpolation_info[regime_name]
     egm_policy_read = None
     bound_solver = cast("_BoundDCEGM", solver) if isinstance(solver, DCEGM) else None
-    if (
+    bound_nnbegm = cast("_BoundNNBEGM", solver) if isinstance(solver, NNBEGM) else None
+    if bound_nnbegm is not None and phase_invariant and not has_taste_shocks:
+        replay_actions = frozenset(
+            (bound_nnbegm.inner.continuous_action, bound_nnbegm.outer_action)
+        )
+        declared_continuous_actions = frozenset(
+            simulation_variables.continuous_action_names
+        )
+        if declared_continuous_actions != replay_actions:
+            raise ModelInitializationError(
+                f"NNBEGM simulation replay for regime {regime_name!r} requires "
+                "exactly the bound inner and outer actions as its continuous "
+                "actions; additional declared actions must be discrete. Got "
+                f"continuous actions "
+                f"{tuple(simulation_variables.continuous_action_names)!r}."
+            )
+        egm_policy_read = NNBEGMPolicyRead()
+    elif (
         bound_solver is not None
         and _envelope_publishes_crossings(bound_solver)
         and phase_invariant

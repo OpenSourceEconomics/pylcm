@@ -39,6 +39,23 @@ def resources(liquid: ContinuousState, subsidy: FloatND) -> FloatND:
     return liquid + subsidy
 
 
+@lcm.piecewise_affine(
+    output="resources",
+    variable="liquid",
+    breakpoints=(lcm.affine_breakpoint(threshold="cliff", kind="jump"),),
+)
+def resources_non_unit_above_cliff(
+    liquid: ContinuousState,
+    subsidy_low: float,
+    subsidy_high: float,
+    cliff: float,
+) -> FloatND:
+    """Cash-on-hand has slope one below the cliff and slope two above it."""
+    below = liquid + subsidy_high
+    above = 2.0 * liquid + subsidy_low
+    return jnp.where(liquid < cliff, below, above)
+
+
 def coh_non_additive(
     liquid: ContinuousState, subsidy: FloatND, coh_slope: float
 ) -> FloatND:
@@ -81,6 +98,7 @@ def build_model(
     n_savings: int = 150,
     savings_max: float = 28.0,
     non_additive: bool = False,
+    non_additive_above_cliff: bool = False,
     nonlinear: bool = False,
     nonlinear_above_ten: bool = False,
 ) -> Model:
@@ -91,19 +109,26 @@ def build_model(
     pure-jump unit-slope guard rejects. With `nonlinear`, cash-on-hand is smooth but
     not affine in the liquid state — the case the affinity guard rejects.
     """
-    resources_func = resources
-    if non_additive:
-        resources_func = coh_non_additive
-    elif nonlinear:
-        resources_func = coh_nonlinear
-    elif nonlinear_above_ten:
-        resources_func = coh_nonlinear_above_ten
-    alive_functions = {
-        "utility": utility,
-        "subsidy": subsidy,
-        "resources": resources_func,
-        "savings": savings,
-    }
+    if non_additive_above_cliff:
+        alive_functions = {
+            "utility": utility,
+            "resources": resources_non_unit_above_cliff,
+            "savings": savings,
+        }
+    else:
+        resources_func = resources
+        if non_additive:
+            resources_func = coh_non_additive
+        elif nonlinear:
+            resources_func = coh_nonlinear
+        elif nonlinear_above_ten:
+            resources_func = coh_nonlinear_above_ten
+        alive_functions = {
+            "utility": utility,
+            "subsidy": subsidy,
+            "resources": resources_func,
+            "savings": savings,
+        }
     alive_solver = resolve_solver(
         variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
@@ -132,6 +157,7 @@ def build_params(
     cliff: float = 8.0,
     final_age_alive: float = 3.0,
     non_additive: bool = False,
+    non_additive_above_cliff: bool = False,
     coh_slope: float = 0.8,
     nonlinear: bool = False,
     curvature: float = 0.05,
@@ -140,7 +166,15 @@ def build_params(
     """Get parameters for the jump-schedule one-asset toy."""
     alive_budget = {"return_liquid": return_liquid, "income": income}
     resources_params = {}
-    if non_additive:
+    if non_additive_above_cliff:
+        resources_params = {
+            "resources": {
+                "subsidy_low": subsidy_low,
+                "subsidy_high": subsidy_high,
+                "cliff": cliff,
+            }
+        }
+    elif non_additive:
         resources_params = {"resources": {"coh_slope": coh_slope}}
     elif nonlinear or nonlinear_above_ten:
         resources_params = {"resources": {"curvature": curvature}}
@@ -149,11 +183,17 @@ def build_params(
             "utility": {"crra": crra},
             "koopmans_aggregator": {"discount_factor": discount_factor},
             **resources_params,
-            "subsidy": {
-                "subsidy_low": subsidy_low,
-                "subsidy_high": subsidy_high,
-                "cliff": cliff,
-            },
+            **(
+                {}
+                if non_additive_above_cliff
+                else {
+                    "subsidy": {
+                        "subsidy_low": subsidy_low,
+                        "subsidy_high": subsidy_high,
+                        "cliff": cliff,
+                    }
+                }
+            ),
             "alive": {
                 "next_liquid": alive_budget,
                 "next_regime": {"final_age_alive": final_age_alive},

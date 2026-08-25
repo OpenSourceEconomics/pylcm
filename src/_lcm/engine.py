@@ -575,6 +575,11 @@ class EGMPolicyRead:
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
+class NNBEGMPolicyRead:
+    """Marker requesting collection of the NNBEGM joint replay payload."""
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class SimulationPhase:
     """Simulate-phase view of a canonical regime.
 
@@ -645,7 +650,7 @@ class SimulationPhase:
     from `functions` (e.g. `additional_targets`) must reject targets that depend
     on these names."""
 
-    egm_policy_read: EGMPolicyRead | None = None
+    egm_policy_read: EGMPolicyRead | NNBEGMPolicyRead | None = None
     """Off-grid read of the published EGM simulation policy, or `None`.
 
     Present only where replaying the solve-phase policy is valid:

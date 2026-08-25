@@ -922,7 +922,7 @@ def _interval_corner_candidates(
     lower: ScalarFloat,
     upper: ScalarFloat,
     flat: BoolND,
-    value_at_no_save: ScalarFloat,
+    value_at_lower_bound: ScalarFloat,
     interval_value: Float1D,
     coh_slope: ScalarFloat,
     coh_intercept: ScalarFloat,
@@ -931,12 +931,12 @@ def _interval_corner_candidates(
     base: ScalarFloat,
     next_segment: ScalarFloat,
 ) -> tuple[Float1D, ...]:
-    """Build one interval's no-save and upper-savings corner candidates.
+    """Build one interval lower- and upper-savings corner candidates.
 
-    Both corners consume `corner_coh_grid` — the true per-grid-point cash-on-hand — so
-    a corner is always a real feasible action's value, robust to an interval whose
-    recovered affine budget extrapolates below zero where a kink binds only in part of
-    the interval.
+    `corner_coh_grid` is the true per-grid-point cash-on-hand. Each corner
+    subtracts its represented savings node, so every published corner corresponds to
+    a real feasible action even where a recovered affine budget extrapolates below
+    zero around a partially binding kink.
 
     Both corners span the interval's liquid range and are each duplicated into an
     interleaved self-segment pair, so a corner in an interval that holds a single liquid
@@ -945,15 +945,14 @@ def _interval_corner_candidates(
     two corners from cross-linking.
 
     Returns the flattened `(endog, value, policy, marginal, segment)` columns of the
-    no-save corner followed by those of the upper-savings corner.
+    lower-savings corner followed by those of the upper-savings corner.
     """
     in_interval = (liquid_grid >= lower) & (liquid_grid < upper)
 
-    # No-save / floor corner (`s = 0`). Where the budget is flat the consumption floor
-    # binds, cash-on-hand is the constant `coh_intercept` for every liquid, so the value
-    # is the dense Bellman max over savings at the constant budget, robust to the
-    # degenerate Euler inversion. Where the budget slopes it is the ordinary no-save
-    # candidate `u(coh(liquid)) + beta * V'(0)`.
+    # Lower-savings corner (`s = savings_grid[0]`). A flat budget uses the dense
+    # Bellman maximum across savings because its Euler inversion is degenerate. A sloped
+    # budget consumes cash-on-hand net of the first declared savings node and reads the
+    # continuation value at that same node.
     floor_consumption = coh_intercept - savings_grid
     floor_feasible = floor_consumption > 0.0
     floor_node_value = jnp.where(
@@ -966,25 +965,24 @@ def _interval_corner_candidates(
     # `argmax` returns node 0 when every node is infeasible, so the `-jnp.inf`
     # sentinel would be published on a finite abscissa across the whole
     # interval and the envelope's own interpolation would turn it into NaN.
-    # A floor no savings node can afford has no corner at all.
+    # A floor with no affordable savings node has no corner at all.
     floor_affordable = jnp.any(floor_feasible)
-    # A no-save corner consumes the whole cash-on-hand. `corner_coh_grid` is the true
-    # per-grid-point cash-on-hand, so consumption is feasible (positive) at every grid
-    # point where the budget is defined; the positivity guard drops any point where an
-    # undeclared kink still leaves it non-positive rather than letting `u(<=0)` = NaN
-    # leak into the envelope as a live candidate.
-    s0_consumption_safe = jnp.where(corner_coh_grid > 0.0, corner_coh_grid, 1.0)
-    s0 = mask_dead_candidates(
+    # Subtract the declared lower savings node before checking affordability. This
+    # prevents an implicit `s = 0` action outside the represented savings grid.
+    lower_consumption = corner_coh_grid - savings_grid[0]
+    lower_feasible = affords_an_action(lower_consumption)
+    lower_consumption_safe = jnp.where(lower_feasible, lower_consumption, 1.0)
+    lower_corner = mask_dead_candidates(
         endog_grid=liquid_grid,
         value=jnp.where(
             flat,
             floor_node_value[best_floor],
-            preferences.utility(s0_consumption_safe)
-            + discount_factor * value_at_no_save,
+            preferences.utility(lower_consumption_safe)
+            + discount_factor * value_at_lower_bound,
         ),
-        policy=jnp.where(flat, floor_consumption[best_floor], corner_coh_grid),
-        marginal=coh_slope * preferences.marginal_utility(s0_consumption_safe),
-        valid=in_interval & jnp.where(flat, floor_affordable, corner_coh_grid > 0.0),
+        policy=jnp.where(flat, floor_consumption[best_floor], lower_consumption),
+        marginal=coh_slope * preferences.marginal_utility(lower_consumption_safe),
+        valid=in_interval & jnp.where(flat, floor_affordable, lower_feasible),
     )
 
     # Upper-savings corner (`s = savings_grid[-1]`). With a finite savings grid the
@@ -1004,11 +1002,11 @@ def _interval_corner_candidates(
         valid=smax_feasible,
     )
 
-    s0_pair = tuple(jnp.repeat(channel, 2) for channel in s0)
+    lower_pair = tuple(jnp.repeat(channel, 2) for channel in lower_corner)
     smax_pair = tuple(jnp.repeat(channel, 2) for channel in smax)
-    s0_segment = jnp.repeat(jnp.full_like(liquid_grid, base + next_segment), 2)
+    lower_segment = jnp.repeat(jnp.full_like(liquid_grid, base + next_segment), 2)
     smax_segment = jnp.repeat(jnp.full_like(liquid_grid, base + next_segment + 1.0), 2)
-    return (*s0_pair, s0_segment, *smax_pair, smax_segment)
+    return (*lower_pair, lower_segment, *smax_pair, smax_segment)
 
 
 def nbegm_per_interval_continuation_step_savings(
@@ -1104,10 +1102,10 @@ def nbegm_per_interval_continuation_step_savings(
         lower: ScalarFloat,
         upper: ScalarFloat,
     ) -> tuple[Float1D, ...]:
-        """Solve one interval's EGM case and its no-save corner.
+        """Solve one interval EGM case and its savings-boundary corners.
 
         Returns the interior candidate (endog grid, value, policy, marginal,
-        segment id) followed by the s=0 corner candidate, each on its own grid.
+        segment id) followed by the lower- and upper-savings corner candidates.
         The segment ids are offset by `interval_index * interval_stride` so the
         per-interval folds stay disjoint when the cases merge under one envelope.
         """
@@ -1121,7 +1119,7 @@ def nbegm_per_interval_continuation_step_savings(
         interp_value = (
             preferences.utility(consumption) + discount_factor * interval_value
         )
-        value_at_no_save = interval_value[0]
+        value_at_lower_bound = interval_value[0]
         degenerate = _degenerate_inversion(
             marginal=interval_marginal, consumption=consumption
         )
@@ -1158,9 +1156,9 @@ def nbegm_per_interval_continuation_step_savings(
         segment = segment_ids_from_folds(endog_grid=interior[0])
         next_segment = _next_segment_id(segment)
 
-        # Corners consume the true cash-on-hand at each grid point when supplied, so a
-        # no-save/upper-savings corner stays feasible where the interval's affine budget
-        # extrapolates below zero; without it they fall back to the affine budget.
+        # Corners use true cash-on-hand when supplied, so lower- and upper-savings
+        # actions remain feasible where the affine interval budget extrapolates
+        # below zero.
         corner_coh_grid = coh_case_grid if coh_grid is None else coh_grid
         corners = _interval_corner_candidates(
             corner_coh_grid=corner_coh_grid,
@@ -1169,7 +1167,7 @@ def nbegm_per_interval_continuation_step_savings(
             lower=lower,
             upper=upper,
             flat=flat,
-            value_at_no_save=value_at_no_save,
+            value_at_lower_bound=value_at_lower_bound,
             interval_value=interval_value,
             coh_slope=coh_slope,
             coh_intercept=coh_intercept,

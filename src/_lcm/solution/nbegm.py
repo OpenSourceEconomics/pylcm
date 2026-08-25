@@ -57,6 +57,7 @@ from _lcm.egm.nbegm_constraint_boundaries import (
     feasibility_axis_boundaries,
 )
 from _lcm.egm.preferences import Preferences
+from _lcm.egm.published_policy import NBEGMGridPolicy
 from _lcm.egm.upper_envelope.query import ComparisonArithmetic
 from _lcm.engine import StateActionSpace
 from _lcm.grids import ContinuousGrid, DiscreteGrid
@@ -1455,7 +1456,7 @@ class _RideAlongNBEGMPeriodKernel:
         else:
             cont_value_stack, cont_marginal_stack = continuation_stacks
             cliff_kwargs = {}
-        V_arr, carry = compiled_cores["envelope"](
+        envelope_result = compiled_cores["envelope"](
             **states,
             cont_value_stack=cont_value_stack,
             cont_marginal_stack=cont_marginal_stack,
@@ -1464,7 +1465,30 @@ class _RideAlongNBEGMPeriodKernel:
             period=jnp.int32(period),
             age=ages.values[period],
         )
-        return KernelResult(V_arr=V_arr, continuation=carry)
+        if self.statics.n_action_branches:
+            V_arr, carry, inner_action, branch_value, branch_inner_action = (
+                envelope_result
+            )
+            branch_discrete_actions = jnp.asarray(
+                self.statics.discrete_action_codes, dtype=jnp.int32
+            )
+        else:
+            V_arr, carry, inner_action = envelope_result
+            branch_value = None
+            branch_inner_action = None
+            branch_discrete_actions = None
+        return KernelResult(
+            V_arr=V_arr,
+            continuation=carry,
+            simulation_policy=NBEGMGridPolicy(
+                action=inner_action,
+                state_names=tuple(state_action_space.states),
+                branch_inner_action=branch_inner_action,
+                branch_value=branch_value,
+                branch_discrete_actions=branch_discrete_actions,
+                discrete_action_names=self.statics.discrete_action_names,
+            ),
+        )
 
     def _stack_placeholders(self, *, states: Mapping[str, object]) -> dict[str, object]:
         """Zero placeholders for the envelope core's continuation stacks.
@@ -2512,7 +2536,7 @@ def _branch_bindings(
 def _liquid_affinity_samples(
     *, context: SolverBuildContext, liquid_state_name: StateName
 ) -> Float1D:
-    """Return liquid-grid nodes and cell interiors for affinity checks."""
+    """Return broad liquid-grid nodes and cell interiors for affinity checks."""
     grid = context.grids[liquid_state_name].to_jax()
     midpoints = 0.5 * (grid[:-1] + grid[1:])
     return jnp.sort(jnp.concatenate([grid, midpoints]))
@@ -2525,63 +2549,86 @@ def _budget_affinity_check(
     liquid_state_name: StateName,
     require_unit_slope: bool,
     probe_failure: Literal["reject", "assume_declared"],
+    breakpoint_sources: tuple[_NBEGMSource, ...] = (),
 ) -> ParamCheck:
-    """Configure the shared all-branch, full-liquid-domain affinity preflight."""
+    """Configure the shared all-branch, resolved-interval affinity preflight."""
+    liquid_grid = context.grids[liquid_state_name].to_jax()
     return _deferred_probe(
         _fail_if_budget_nonaffine_in_liquid,
         regime_name=context.regime_name,
         probe_arguments=_probe_arguments(context=context),
         coh_dag=coh_dag,
         liquid_name=liquid_state_name,
+        liquid_grid=liquid_grid,
         liquid_samples=_liquid_affinity_samples(
             context=context, liquid_state_name=liquid_state_name
         ),
+        breakpoint_sources=breakpoint_sources,
         require_unit_slope=require_unit_slope,
         probe_failure=probe_failure,
     )
 
 
-def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901
+def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901, PLR0915
     *,
     coh_dag: Callable[..., object],
     liquid_name: str,
     require_unit_slope: bool,
     regime_name: str,
     probe_arguments: _ProbeArguments,
+    liquid_grid: Float1D,
     liquid_samples: Float1D,
+    breakpoint_sources: tuple[_NBEGMSource, ...] = (),
     probe_failure: Literal["reject", "assume_declared"] = "reject",
 ) -> None:
-    """Reject a budget that is not affine in the liquid state within an interval.
+    """Reject budgets violating affinity or required slope on any live interval.
 
-    NBEGM recovers each interval's budget from its slope and value at one interior
-    point (`interval_segment_coefficients`), exact only when the composed budget is
-    affine in the liquid state on the interval — a smooth nonlinear budget would be
-    mis-tangented at every other point. A declared jump / kink is a *selection*
-    between affine branches, so its second derivative in the liquid state stays zero
-    at interior points; a genuine nonlinearity (a square, a product of the liquid
-    state with itself, a reciprocal) shows a nonzero second derivative.
+    NBEGM reconstructs each declared economic interval from the cash-on-hand value
+    and derivative at an interior point. The pure all-jump path reconstructs only
+    intercepts and therefore additionally requires derivative one. A fixed set of
+    liquid-grid probes cannot certify those assumptions when a parameter-dependent
+    breakpoint creates a branch between or beyond the sampled points.
 
-    With `require_unit_slope` — the liquid-direct, non-ride, all-jump path solved by
-    the pure-jump step, which reads only per-interval intercepts — the budget must
-    additionally have unit slope in the liquid state: a non-unit affine slope
-    declared as jump-only would be solved as if `coh = liquid + intercept`.
-
-    The probe evaluates the composed budget's first and second liquid-derivatives
-    at a few interior points, with every declared parameter set to its own value —
-    the real tax schedules and tables, so the real bracket structure is what gets
-    differentiated — and every remaining argument filled by two constant sets so a
-    parameter-dependent slope is caught; each integer-coded argument is additionally
-    swept over its grid's actual codes one at a time. The probe is a finite
-    diagnostic, not a certificate — a nonlinearity whose curvature vanishes at every
-    probed point passes undetected. A budget the probe cannot differentiate is
-    refused: the per-interval inversion's affinity precondition would otherwise go
-    unverified.
+    For every fill/rank rung and integer-code override already used by the preflight,
+    this check resolves the declaration's liquid-space breakpoint selection values
+    with the current parameter draw, intersects their sorted partition with the
+    closed liquid domain, and differentiates at one representable strict interior of
+    every live cell. The previous grid-node/midpoint samples remain as broad
+    diagnostics for undeclared curvature. Breakpoint work is host-side pre-solve
+    validation only; no solve or simulation kernel changes.
     """
     import inspect  # noqa: PLC0415
+
+    from _lcm.egm.nbegm_breakpoints import (  # noqa: PLC0415
+        clamp_breakpoints_to_grid,
+        linear_asset_selection_preimage,
+    )
 
     arg_names = tuple(inspect.signature(coh_dag).parameters)
     if liquid_name not in arg_names:
         return
+
+    dtype = canonical_float_dtype()
+    tol = max(1e-6, 64.0 * float(jnp.finfo(dtype).eps))
+
+    def _argument_value(
+        name: str,
+        fill: float,
+        *,
+        array_floats: bool,
+        array_rank: int,
+        leaf_rank: int,
+        int_overrides: Mapping[str, int],
+    ) -> object:
+        if name in int_overrides:
+            return jnp.asarray(int_overrides[name], dtype=jnp.int32)
+        return probe_arguments.fill(
+            name,
+            fill,
+            array_floats=array_floats,
+            array_rank=array_rank,
+            leaf_rank=leaf_rank,
+        )
 
     def _budget_of_liquid(
         liquid_value: FloatND,
@@ -2596,27 +2643,159 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901
             name: (
                 liquid_value
                 if name == liquid_name
-                else jnp.asarray(int_overrides[name], dtype=jnp.int32)
-                if name in int_overrides
-                else probe_arguments.fill(
+                else _argument_value(
                     name,
                     fill,
                     array_floats=array_floats,
                     array_rank=array_rank,
                     leaf_rank=leaf_rank,
+                    int_overrides=int_overrides,
                 )
             )
             for name in arg_names
         }
         return jnp.asarray(coh_dag(**kwargs)).reshape(())
 
-    tol = 1e-6
+    def _resolved_breakpoint(
+        source: _NBEGMSource,
+        fill: float,
+        *,
+        array_floats: bool,
+        array_rank: int,
+        leaf_rank: int,
+        int_overrides: Mapping[str, int],
+    ) -> FloatND:
+        cell_names = frozenset(
+            name
+            for name in (
+                *source.derived_state_names,
+                source.threshold_index_state,
+            )
+            if name is not None
+        )
+        cell = {
+            name: _argument_value(
+                name,
+                fill,
+                array_floats=array_floats,
+                array_rank=array_rank,
+                leaf_rank=leaf_rank,
+                int_overrides=int_overrides,
+            )
+            for name in cell_names
+        }
+        threshold_value = _indexed_threshold_value(
+            table=_argument_value(
+                source.threshold_param_name,
+                fill,
+                array_floats=array_floats,
+                array_rank=array_rank,
+                leaf_rank=leaf_rank,
+                int_overrides=int_overrides,
+            ),
+            subkey=source.threshold_subkey,
+            index_state=source.threshold_index_state,
+            static_index=source.threshold_static_index,
+            cell=cell,
+        )
+        threshold = jnp.asarray(threshold_value, dtype=dtype).reshape(())
+        if source.derived_of_liquid_dag is None:
+            return jnp.where(
+                source.equality_owner == "above",
+                threshold,
+                jnp.nextafter(threshold, jnp.asarray(jnp.inf, dtype=dtype)),
+            )
+
+        dag = source.derived_of_liquid_dag
+        derived_arg_names = tuple(inspect.signature(dag).parameters)
+
+        def derived_of_liquid(scalar_liquid: FloatND) -> FloatND:
+            kwargs = {
+                name: (
+                    scalar_liquid
+                    if name == liquid_name
+                    else _argument_value(
+                        name,
+                        fill,
+                        array_floats=array_floats,
+                        array_rank=array_rank,
+                        leaf_rank=leaf_rank,
+                        int_overrides=int_overrides,
+                    )
+                )
+                for name in derived_arg_names
+            }
+            return jnp.asarray(dag(**kwargs)).reshape(())
+
+        return linear_asset_selection_preimage(
+            derived_of_liquid,
+            threshold=threshold,
+            equality_owner=source.equality_owner,
+        )
+
+    def _strict_interval_samples(
+        fill: float,
+        *,
+        array_floats: bool,
+        array_rank: int,
+        leaf_rank: int,
+        int_overrides: Mapping[str, int],
+    ) -> tuple[FloatND, ...]:
+        raw = (
+            jnp.stack(
+                [
+                    _resolved_breakpoint(
+                        source,
+                        fill,
+                        array_floats=array_floats,
+                        array_rank=array_rank,
+                        leaf_rank=leaf_rank,
+                        int_overrides=int_overrides,
+                    )
+                    for source in breakpoint_sources
+                ]
+            )
+            if breakpoint_sources
+            else jnp.zeros((0,), dtype=dtype)
+        )
+        clamped = clamp_breakpoints_to_grid(
+            breakpoints=jnp.asarray(raw, dtype=dtype),
+            liquid_grid=jnp.asarray(liquid_grid, dtype=dtype),
+        )
+        domain_start = jnp.asarray(liquid_grid[0], dtype=dtype).reshape(())
+        domain_stop = jnp.asarray(liquid_grid[-1], dtype=dtype).reshape(())
+
+        internal: list[FloatND] = []
+        for raw_boundary in jnp.sort(clamped):
+            boundary = jnp.asarray(raw_boundary, dtype=dtype).reshape(())
+            if bool((boundary > domain_start) & (boundary < domain_stop)) and (
+                not internal or bool(boundary != internal[-1])
+            ):
+                internal.append(boundary)
+
+        edges = (domain_start, *internal, domain_stop)
+        representatives: list[FloatND] = []
+        for lower, upper in itertools.pairwise(edges):
+            if not bool(upper > lower):
+                continue
+            midpoint = 0.5 * lower + 0.5 * upper
+            if not bool((midpoint > lower) & (midpoint < upper)):
+                midpoint = jnp.nextafter(lower, upper)
+            if not bool((midpoint > lower) & (midpoint < upper)):
+                msg = (
+                    "resolved economic interval has positive width but no "
+                    "representable strict interior in the active float dtype: "
+                    f"[{float(lower):.17g}, {float(upper):.17g}]"
+                )
+                raise ValueError(msg)
+            representatives.append(midpoint)
+        return tuple(representatives)
 
     def _fail_unprobeable(probe_error: Exception) -> None:
         msg = (
             f"NBEGM could not verify that regime {regime_name!r}'s budget is affine "
-            f"in the liquid state {liquid_name!r}: the probe failed to "
-            "differentiate the budget on scalar inputs "
+            f"in the liquid state {liquid_name!r}: the resolved-interval probe "
+            "failed on scalar inputs "
             f"({type(probe_error).__name__}: {probe_error}). The per-interval EGM "
             "inversion is exact only for an affine within-interval budget."
         )
@@ -2635,33 +2814,43 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901
             "the brute-force solver for this regime."
         ) from probe_error
 
+    int_sweeps = _int_code_sweeps(
+        arg_names=arg_names, int_arg_values=probe_arguments.int_arg_values
+    )
+
     def _max_abs_second() -> float | None:
         def _values(
             *, array_floats: bool, array_rank: int, leaf_rank: int
         ) -> list[float]:
-            return [
-                abs(
-                    float(
-                        jax.grad(
-                            jax.grad(
-                                lambda a, f=fill, o=overrides: _budget_of_liquid(
-                                    a,
-                                    f,
-                                    array_floats=array_floats,
-                                    array_rank=array_rank,
-                                    leaf_rank=leaf_rank,
-                                    int_overrides=o,
-                                )
-                            )
-                        )(jnp.asarray(sample))
+            values: list[float] = []
+            for fill in (1.0, 3.0):
+                for overrides in int_sweeps:
+                    interval_samples = _strict_interval_samples(
+                        fill,
+                        array_floats=array_floats,
+                        array_rank=array_rank,
+                        leaf_rank=leaf_rank,
+                        int_overrides=overrides,
                     )
-                )
-                for fill in (1.0, 3.0)
-                for overrides in _int_code_sweeps(
-                    arg_names=arg_names, int_arg_values=probe_arguments.int_arg_values
-                )
-                for sample in liquid_samples
-            ]
+                    for sample in (*tuple(liquid_samples), *interval_samples):
+                        value = float(
+                            jax.grad(
+                                jax.grad(
+                                    lambda a, f=fill, o=overrides: _budget_of_liquid(
+                                        a,
+                                        f,
+                                        array_floats=array_floats,
+                                        array_rank=array_rank,
+                                        leaf_rank=leaf_rank,
+                                        int_overrides=o,
+                                    )
+                                )
+                            )(jnp.asarray(sample, dtype=dtype))
+                        )
+                        if not math.isfinite(value):
+                            raise ValueError("non-finite second derivative")
+                        values.append(abs(value))
+            return values
 
         try:
             values = _evaluate_on_first_workable_fill(_values)
@@ -2674,24 +2863,33 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901
         def _slopes(
             *, array_floats: bool, array_rank: int, leaf_rank: int
         ) -> tuple[float, ...]:
-            return tuple(
-                float(
-                    jax.grad(
-                        lambda a, f=fill, o=overrides: _budget_of_liquid(
-                            a,
-                            f,
-                            array_floats=array_floats,
-                            array_rank=array_rank,
-                            leaf_rank=leaf_rank,
-                            int_overrides=o,
+            slopes: list[float] = []
+            for fill in (1.0, 3.0):
+                for overrides in int_sweeps:
+                    interval_samples = _strict_interval_samples(
+                        fill,
+                        array_floats=array_floats,
+                        array_rank=array_rank,
+                        leaf_rank=leaf_rank,
+                        int_overrides=overrides,
+                    )
+                    for sample in interval_samples:
+                        slope = float(
+                            jax.grad(
+                                lambda a, f=fill, o=overrides: _budget_of_liquid(
+                                    a,
+                                    f,
+                                    array_floats=array_floats,
+                                    array_rank=array_rank,
+                                    leaf_rank=leaf_rank,
+                                    int_overrides=o,
+                                )
+                            )(jnp.asarray(sample, dtype=dtype))
                         )
-                    )(jnp.asarray(x))
-                )
-                for fill, x in ((1.0, 1.0), (3.0, 2.0))
-                for overrides in _int_code_sweeps(
-                    arg_names=arg_names, int_arg_values=probe_arguments.int_arg_values
-                )
-            )
+                        if not math.isfinite(slope):
+                            raise ValueError("non-finite first derivative")
+                        slopes.append(slope)
+            return tuple(slopes)
 
         try:
             return _evaluate_on_first_workable_fill(_slopes)
@@ -2703,16 +2901,23 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901
     if worst_second is not None and worst_second > tol:
         msg = (
             f"NBEGM's budget must be affine in the liquid state {liquid_name!r} "
-            f"within each interval, but regime {regime_name!r} has a nonzero second "
-            "derivative there — a smooth nonlinear budget is not recovered by the "
-            "per-interval affine segment. Declare the nonsmoothness as breakpoints or "
-            "keep the budget affine per interval."
+            f"within each resolved interval, but regime {regime_name!r} has a "
+            "nonzero second derivative there — a smooth nonlinear budget is not "
+            "recovered by the per-interval affine segment. Declare every economic "
+            "boundary or keep the budget affine per interval."
         )
         raise RegimeInitializationError(msg)
 
     slopes = _liquid_slopes() if require_unit_slope else None
     offending = (
-        next((slope for slope in slopes if abs(slope - 1.0) > tol), None)
+        next(
+            (
+                slope
+                for slope in slopes
+                if abs(slope - 1.0) > tol * max(1.0, abs(slope))
+            ),
+            None,
+        )
         if slopes is not None
         else None
     )
@@ -3772,6 +3977,7 @@ def _collect_nbegm_schedule_spec(
         context=context,
         coh_dag=coh_dag,
         liquid_state_name=liquid_state_name,
+        breakpoint_sources=tuple(sources),
         # The pure-jump step reads only intercepts and assumes unit slope.
         require_unit_slope=(
             not ride_along_state_names
@@ -4462,6 +4668,10 @@ class _NBEGMRideAlongStatics:
     over; `0` when the regime carries no discrete action (no branch axis). A branch
     reads its own next-state continuation, so a co-state-feeding action gets a
     distinct row per branch and a budget-only action gets identical rows."""
+    discrete_action_names: tuple[ActionName, ...]
+    """Declared discrete actions in the branch product's column order."""
+    discrete_action_codes: tuple[tuple[int, ...], ...]
+    """Exact branch-code rows in the inner envelope's product order."""
     co_map_state_names: tuple[str, ...] = ()
     """Fixed, distributed ride-along states co-mapped with the child carry.
 
@@ -4624,6 +4834,13 @@ def _nbegm_ride_along_statics(
             0
             if not schedule_spec.discrete_actions
             else len(schedule_spec.branch_bindings)
+        ),
+        discrete_action_names=tuple(
+            name for name, _codes in schedule_spec.discrete_actions
+        ),
+        discrete_action_codes=tuple(
+            tuple(binding[name] for name, _codes in schedule_spec.discrete_actions)
+            for binding in schedule_spec.branch_bindings
         ),
         co_map_state_names=co_map_ride_names,
     )
@@ -5210,13 +5427,16 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
     n_published_boundaries = statics.n_published_jumps + n_feasibility_boundaries
     schedule_kinds = tuple(source.kind for source in statics.sources)
 
-    def envelope_core(  # noqa: C901, PLR0915
+    def envelope_core(  # noqa: PLR0915
         *,
         cont_value_stack: FloatND,
         cont_marginal_stack: FloatND,
         cliff_savings_stack: FloatND | None = None,
         **kwargs: Any,  # noqa: ANN401  # state grids + flat params (mixed dtypes)
-    ) -> tuple[FloatND, EGMCarry]:
+    ) -> (
+        tuple[FloatND, EGMCarry, FloatND]
+        | tuple[FloatND, EGMCarry, FloatND, FloatND, FloatND]
+    ):
         dtype = canonical_float_dtype()
         liquid = jnp.asarray(kwargs[liquid_name], dtype=dtype)
         coh_params = {name: kwargs[name] for name in schedule_spec.coh_param_names}
@@ -5233,12 +5453,12 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
             else None
         )
 
-        def solve_one_cell(  # noqa: C901
+        def solve_one_cell(
             ride_values: tuple[Any, ...],
             cont_value: FloatND,
             cont_marginal: FloatND,
             cliff_savings: FloatND | None = None,
-        ) -> tuple[Float1D, ...]:
+        ) -> tuple[FloatND, ...]:
             cont_value, cont_marginal, extra_cont_value = _split_cliff_columns(
                 cont_value=cont_value,
                 cont_marginal=cont_marginal,
@@ -5453,7 +5673,7 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
 
                 def solve_one_branch(
                     inputs: dict[str, Any],
-                ) -> tuple[Float1D, Float1D]:
+                ) -> tuple[Float1D, Float1D, Float1D]:
                     binding = {
                         name: inputs["codes"][position]
                         for position, name in enumerate(branch_action_names)
@@ -5465,44 +5685,35 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
                         inputs.get("extra_cont_value"),
                         inputs.get("cliff_savings"),
                     )
-                    return step[0], step[1]
+                    return step[0], step[1], step[2]
 
-                value_stack, marginal_stack = _map_branch_partitioned(
+                value_stack, marginal_stack, policy_stack = _map_branch_partitioned(
                     func=solve_one_branch,
                     xs=branch_inputs,
                     requested_block_size=statics.branch_batch_size,
                 )
-                value_row, marginal_row = _discrete_envelope_over_branches(
-                    value_stack=value_stack,
-                    marginal_stack=marginal_stack,
-                    taste_shock_scale=0.0,
-                )
-                policy_row = None
+                modal = jnp.argmax(value_stack, axis=0)
+                index = jnp.arange(value_stack.shape[1])
+                value_row = value_stack[modal, index]
+                marginal_row = marginal_stack[modal, index]
+                policy_row = policy_stack[modal, index]
+                branch_stacks = (value_stack, policy_stack)
             else:
                 value_row, marginal_row, policy_row = solve_branch(
                     {}, cont_value, cont_marginal, extra_cont_value, cliff_savings
                 )
+                branch_stacks = None
 
-            if n_published_boundaries == 0:
-                # Continuous-only, jump-free rows carry the exact consumption so
-                # the continuous-outer replay reads it instead of re-inverting a
-                # slope-scaled marginal. Discrete-branch rows
-                # never reach that replay, so they keep the two-array shape.
-                if policy_row is not None:
-                    return (value_row, marginal_row, policy_row)
-                return (value_row, marginal_row)
-            # The carry keeps the whole augmented row — topology rides inside
-            # the endogenous grid as a duplicated abscissa carrying its exact
-            # one-sided value and marginal limits. Only the published value
-            # array needs the original liquid nodes, sliced back out through
-            # the sort permutation.
-            value_at_liquid = value_row[unsort][: liquid.shape[0]]
-            return (
-                value_at_liquid,
-                endog_row,
-                value_row,
-                marginal_row,
-                published_boundaries,
+            return _package_nbegm_cell_result(
+                value_row=value_row,
+                marginal_row=marginal_row,
+                policy_row=policy_row,
+                branch_stacks=branch_stacks,
+                n_published_boundaries=n_published_boundaries,
+                unsort=unsort,
+                n_liquid=liquid.shape[0],
+                endog_row=endog_row,
+                published_boundaries=published_boundaries,
             )
 
         ride_grids = tuple(jnp.asarray(kwargs[name]) for name in ride_names)
@@ -5521,20 +5732,56 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
             xs=stream_inputs,
             requested_block_size=statics.cell_block_size,
         )
-        value_arr, carry = _assemble_ride_carry(
+        return _assemble_ride_carry(
             stacks=stacks,
             n_jumps=n_published_boundaries,
-            carry_policy=(
-                not schedule_spec.discrete_actions and n_published_boundaries == 0
-            ),
+            n_action_branches=statics.n_action_branches,
             liquid=liquid,
             ride_shape=ride_shape,
             liquid_axis_pos=schedule_spec.liquid_axis_pos,
             dtype=dtype,
         )
-        return value_arr, carry
 
     return envelope_core
+
+
+def _package_nbegm_cell_result(
+    *,
+    value_row: FloatND,
+    marginal_row: FloatND,
+    policy_row: FloatND,
+    branch_stacks: tuple[FloatND, FloatND] | None,
+    n_published_boundaries: int,
+    unsort: IntND,
+    n_liquid: int,
+    endog_row: FloatND,
+    published_boundaries: FloatND,
+) -> tuple[FloatND, ...]:
+    """Package a cell's collapsed rows and optional conditional branch banks."""
+    if n_published_boundaries == 0:
+        if branch_stacks is None:
+            return (value_row, marginal_row, policy_row)
+        value_stack, policy_stack = branch_stacks
+        return value_row, marginal_row, policy_row, value_stack, policy_stack
+
+    # The carry keeps the augmented row, while published values use the original
+    # liquid nodes recovered through the sort permutation.
+    value_at_liquid = value_row[unsort][:n_liquid]
+    policy_at_liquid = policy_row[unsort][:n_liquid]
+    collapsed = (
+        value_at_liquid,
+        endog_row,
+        value_row,
+        marginal_row,
+        policy_at_liquid,
+        published_boundaries,
+    )
+    if branch_stacks is None:
+        return collapsed
+    value_stack, policy_stack = branch_stacks
+    branch_value_at_liquid = value_stack[:, unsort][:, :n_liquid]
+    branch_policy_at_liquid = policy_stack[:, unsort][:, :n_liquid]
+    return (*collapsed, branch_value_at_liquid, branch_policy_at_liquid)
 
 
 @dataclass(frozen=True)
@@ -5711,10 +5958,25 @@ def _collect_nbegm_schedule_discrete_spec(
         f"{first.output}__{bp.threshold}" for bp in first.breakpoints
     )
     breakpoint_kinds = tuple(bp.kind for bp in first.breakpoints)
+    breakpoint_sources = tuple(
+        _NBEGMSource(
+            variable=liquid_state_name,
+            threshold_param_name=f"{first.output}__{bp.threshold}",
+            kind=bp.kind,
+            equality_owner=bp.equality_owner,
+            derived_of_liquid_dag=None,
+            derived_param_names=(),
+            threshold_index_state=bp.indexed_by,
+            threshold_static_index=bp.static_index,
+            threshold_subkey=bp.threshold_subkey,
+        )
+        for bp in first.breakpoints
+    )
     affinity_check = _budget_affinity_check(
         context=context,
         coh_dag=coh_dag,
         liquid_state_name=liquid_state_name,
+        breakpoint_sources=breakpoint_sources,
         require_unit_slope=(
             bool(breakpoint_kinds) and all(kind == "jump" for kind in breakpoint_kinds)
         ),
@@ -6072,19 +6334,25 @@ def _assemble_ride_carry(
     *,
     stacks: tuple[FloatND, ...],
     n_jumps: int,
-    carry_policy: bool,
+    n_action_branches: int,
     liquid: Float1D,
     ride_shape: tuple[int, ...],
     liquid_axis_pos: int,
     dtype: Any,  # noqa: ANN401  # jnp dtype object
-) -> tuple[FloatND, EGMCarry]:
-    """Reshape the per-cell solve stacks into the value array and the carry.
+) -> (
+    tuple[FloatND, EGMCarry, FloatND]
+    | tuple[FloatND, EGMCarry, FloatND, FloatND, FloatND]
+):
+    """Reshape per-cell value, carry, policy, and optional branch stacks.
 
     - With jump breakpoints, the cell solve returns the value at the liquid
       nodes plus the augmented carry rows (duplicated jump abscissae with
       one-sided limits) and the jump locations.
     - Without jumps, it returns plain liquid-grid rows and the carry sits on
       the shared broadcast grid.
+    - A discrete inner envelope additionally returns every conditional branch's
+      value and inner action on the original state grid. Those banks are absent
+      for the smooth path, preserving its output/storage contract.
 
     The published value array follows the productmap state order, so the
     liquid axis moves from the working layout's trailing position to its
@@ -6093,14 +6361,29 @@ def _assemble_ride_carry(
     produced it, so the round-trip stays self-consistent.
     """
     n_liquid = liquid.shape[0]
+    has_discrete_branches = n_action_branches > 0
+    carry_policy = not has_discrete_branches and n_jumps == 0
     if n_jumps:
-        (
-            value_stack,
-            endog_stack,
-            row_value_stack,
-            row_marginal_stack,
-            breakpoint_stack,
-        ) = stacks
+        if has_discrete_branches:
+            (
+                value_stack,
+                endog_stack,
+                row_value_stack,
+                row_marginal_stack,
+                policy_stack,
+                breakpoint_stack,
+                branch_value_stack,
+                branch_policy_stack,
+            ) = stacks
+        else:
+            (
+                value_stack,
+                endog_stack,
+                row_value_stack,
+                row_marginal_stack,
+                policy_stack,
+                breakpoint_stack,
+            ) = stacks
         n_row = n_liquid + 2 * n_jumps
         carry_rows = (
             endog_stack.reshape(*ride_shape, n_row).astype(dtype),
@@ -6121,7 +6404,16 @@ def _assemble_ride_carry(
         breakpoint_rows = None
         policy_rows = policy_stack.reshape(*ride_shape, n_liquid).astype(dtype)
     else:
-        value_stack, marginal_stack = stacks
+        if has_discrete_branches:
+            (
+                value_stack,
+                marginal_stack,
+                policy_stack,
+                branch_value_stack,
+                branch_policy_stack,
+            ) = stacks
+        else:
+            value_stack, marginal_stack, policy_stack = stacks
         carry_rows = (
             jnp.broadcast_to(liquid, (*ride_shape, n_liquid)).astype(dtype),
             value_stack.reshape(*ride_shape, n_liquid).astype(dtype),
@@ -6132,6 +6424,9 @@ def _assemble_ride_carry(
     value_arr = jnp.moveaxis(
         value_stack.reshape(*ride_shape, n_liquid), -1, liquid_axis_pos
     )
+    policy_arr = jnp.moveaxis(
+        policy_stack.reshape(*ride_shape, n_liquid), -1, liquid_axis_pos
+    )
     carry = EGMCarry(
         endog_grid=carry_rows[0],
         value=carry_rows[1],
@@ -6140,7 +6435,21 @@ def _assemble_ride_carry(
         breakpoints=breakpoint_rows,
         policy=policy_rows,
     )
-    return value_arr, carry
+    if not has_discrete_branches:
+        return value_arr, carry, policy_arr
+
+    def assemble_branch_bank(stack: FloatND) -> FloatND:
+        working = stack.reshape(*ride_shape, n_action_branches, n_liquid)
+        branch_leading = jnp.moveaxis(working, -2, 0)
+        return jnp.moveaxis(branch_leading, -1, liquid_axis_pos + 1)
+
+    return (
+        value_arr,
+        carry,
+        policy_arr,
+        assemble_branch_bank(branch_value_stack),
+        assemble_branch_bank(branch_policy_stack),
+    )
 
 
 def _augment_liquid_with_jump_sides(

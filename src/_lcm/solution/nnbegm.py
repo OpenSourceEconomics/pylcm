@@ -11,6 +11,7 @@ The kernel-building imports are function-local so the public `lcm.solvers`
 façade stays a thin re-export that pulls in no numerical engine modules.
 """
 
+import inspect
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, field, fields, replace
 from types import MappingProxyType
@@ -20,6 +21,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from beartype import beartype
+from dags import concatenate_functions
 
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.constraints.routes import ConstraintRoute
@@ -43,7 +45,11 @@ from _lcm.egm.outer_candidates import (
 from _lcm.egm.outer_carry import collapse_continuous_candidate_bank
 from _lcm.egm.outer_refinement import refine_outer_mesh
 from _lcm.egm.outer_search import AdaptiveOuterMesh, FiniteOuterGrid, OuterSearch
-from _lcm.egm.published_policy import EGMSimPolicy
+from _lcm.egm.published_policy import (
+    EGMSimPolicy,
+    NBEGMGridPolicy,
+    NNBEGMSimPolicy,
+)
 from _lcm.engine import StateActionSpace
 from _lcm.grids import ContinuousGrid, DiscreteGrid, Grid
 from _lcm.solution.contract import (
@@ -68,6 +74,7 @@ from _lcm.solution.nbegm import (
 )
 from _lcm.solution.negm import (
     _fail_if_outer_grid_is_stochastic,
+    _stack_carry_template,
     _with_no_adjustment_outer_function,
     _with_outer_post_decision,
     _without_outer_post_decision,
@@ -81,7 +88,7 @@ from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from _lcm.typing import FlatParams, RegimeName
 from lcm.ages import AgeGrid
 from lcm.exceptions import RegimeInitializationError
-from lcm.typing import ActionName, Float1D, FloatND, FunctionName, StateName
+from lcm.typing import ActionName, Float1D, FloatND, FunctionName, IntND, StateName
 
 
 @beartype(conf=REGIME_CONF)
@@ -324,7 +331,9 @@ class NNBEGM(TwoMarginSolver):
         bound = cast("_BoundNNBEGM", self)
         bound.inner.validate_build(context=context)
 
-    def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
+    def build_period_kernels(  # noqa: PLR0915
+        self, *, context: SolverBuildContext
+    ) -> SolutionKernels:
         r"""Build one nested period adapter per period, wrapping inner kernels.
 
         Mirrors the NEGM keeper/adjuster split with an NB-EGM inner:
@@ -368,6 +377,7 @@ class NNBEGM(TwoMarginSolver):
         adjuster_by_period: dict[int, PeriodKernel] = {}
         keeper_by_period: dict[int, PeriodKernel] = {}
         resolved_by_period: dict[int, SolverBuildContext] = {}
+        outer_target_function_by_period: dict[int, Callable] = {}
         grouped_param_checks = []
         keeper_continuation_spec = None
         for periods in grouped_periods.values():
@@ -426,46 +436,55 @@ class NNBEGM(TwoMarginSolver):
                 ),
             )
             keeper_group = bound.inner.build_period_kernels(context=keeper_context)
+            replay_targets = [bound.outer_post_decision]
+            if bound.outer_no_adjustment_candidate is not None:
+                replay_targets.append(bound.outer_no_adjustment_candidate)
+            outer_target_function = concatenate_functions(
+                functions=group_context.functions,
+                targets=replay_targets,
+                return_type="dict",
+                set_annotations=True,
+            )
             for period in group_periods:
                 resolved_by_period[period] = group_context
                 adjuster_by_period[period] = adjuster_group.period_kernels[period]
                 keeper_by_period[period] = keeper_group.period_kernels[period]
+                outer_target_function_by_period[period] = outer_target_function
             grouped_param_checks.extend(adjuster_group.param_checks)
             grouped_param_checks.extend(keeper_group.param_checks)
             if keeper_continuation_spec is None:
                 keeper_continuation_spec = keeper_group.continuation_spec
-        # The inner ride-along template may carry the exact-consumption `policy`
-        # leaf so a STANDALONE ride-along NBEGM continuation matches its
-        # policy-carrying runtime carry. NNBEGM,
-        # though, republishes the BRIDGED outer collapse as its cross-period
-        # continuation, and that collapse is policy-free (publication reads the
-        # RAW keeper/adjuster carries, not the collapsed one). Strip the leaf from
-        # the republished template so the cross-period roll sees the same pytree
-        # as the policy-free continuation — the standalone leaf must not leak
-        # into the NNBEGM continuation template.
         inner_template = (
             None
             if keeper_continuation_spec is None
             else keeper_continuation_spec.template
         )
-        template = (
-            replace(inner_template, policy=None)
-            if isinstance(inner_template, EGMCarry)
-            else inner_template
-        )
         _fail_if_inner_carry_rows_not_grid_aligned(inner=bound.inner)
         if not (
             context.constraint_plan and context.constraint_plan.compiled_boundaries
         ):
-            _fail_if_nnbegm_carry_publishes_topology_rows(template=template)
+            _fail_if_nnbegm_carry_publishes_topology_rows(template=inner_template)
         search = self.outer_search
         match search:
             case FiniteOuterGrid():
                 outer_grid_values = search.grid.to_jax()
                 outer_batch_size = search.batch_size
+                template = _stack_carry_template(
+                    template=inner_template,
+                    n_candidates=int(outer_grid_values.shape[0]) + 1,
+                )
             case AdaptiveOuterMesh():
                 outer_grid_values = search.initial_grid.to_jax()
                 outer_batch_size = search.batch_size
+                # The continuous collapse republishes a policy-free carry. Its
+                # nested simulation payload reads the raw keeper/adjuster rows
+                # instead, so the standalone inner policy leaf must not leak into
+                # the cross-period continuation template.
+                template = (
+                    replace(inner_template, policy=None)
+                    if isinstance(inner_template, EGMCarry)
+                    else inner_template
+                )
             case _:
                 msg = (
                     f"NNBEGM outer search strategy {type(search).__name__} "
@@ -509,11 +528,12 @@ class NNBEGM(TwoMarginSolver):
                     adjuster_kernel=adjuster_kernel,
                     regime_name=context.regime_name,
                     outer_grid_values=outer_grid_values,
+                    outer_state_name=bound.outer_state,
                     outer_post_decision=bound.outer_post_decision,
+                    outer_target_function=outer_target_function_by_period[period],
                     outer_batch_size=outer_batch_size,
                     outer_search=search,
                     outer_action=bound.outer_action,
-                    outer_state_name=bound.outer_state,
                     inner_action=inner_action,
                     resources_target=spec.budget_target,
                     savings_lower_bound=float(spec.savings_grid.to_jax()[0]),
@@ -565,6 +585,59 @@ class _BoundNNBEGM(NNBEGM):
     outer_no_adjustment_candidate: FunctionName | None
 
 
+def _conditional_nnbegm_banks(
+    *,
+    policy: NBEGMGridPolicy,
+    collapsed_value: FloatND,
+    state_names: tuple[StateName, ...],
+    discrete_action_names: tuple[ActionName, ...],
+    branch_codes: IntND | None,
+) -> tuple[FloatND, FloatND]:
+    """Validate and return one outer candidate's conditional inner banks."""
+    if policy.state_names != state_names:
+        raise ValueError("NNBEGM candidate policies disagree on state-axis order.")
+    if policy.discrete_action_names != discrete_action_names:
+        raise ValueError("NNBEGM candidate policies disagree on discrete-action order.")
+    if discrete_action_names:
+        if (
+            policy.branch_inner_action is None
+            or policy.branch_value is None
+            or policy.branch_discrete_actions is None
+            or branch_codes is None
+        ):
+            raise ValueError("NNBEGM discrete replay requires every inner branch bank.")
+        codes_match = bool(
+            jax.device_get(
+                jnp.array_equal(policy.branch_discrete_actions, branch_codes)
+            )
+        )
+        if not codes_match:
+            raise ValueError(
+                "NNBEGM candidate policies disagree on discrete branch codes."
+            )
+        if (
+            policy.branch_inner_action.shape != policy.branch_value.shape
+            or policy.branch_inner_action.shape[0]
+            != policy.branch_discrete_actions.shape[0]
+        ):
+            raise ValueError(
+                "NNBEGM inner branch action/value/code banks are misaligned."
+            )
+        return policy.branch_inner_action, policy.branch_value
+    if any(
+        field is not None
+        for field in (
+            policy.branch_inner_action,
+            policy.branch_value,
+            policy.branch_discrete_actions,
+        )
+    ):
+        raise ValueError(
+            "NNBEGM smooth replay received unexpected discrete branch banks."
+        )
+    return policy.action[None, ...], collapsed_value[None, ...]
+
+
 @dataclass(frozen=True, kw_only=True)
 class _NNBEGMPeriodKernel:
     """The NNBEGM period adapter — a keeper plus an adjuster outer sweep.
@@ -594,8 +667,14 @@ class _NNBEGMPeriodKernel:
     outer_grid_values: FloatND
     r"""Exogenous grid over the outer post-decision margin $s_t^\textit{post-dec}$."""
 
+    outer_state_name: StateName
+    """Name of the state-specific keeper source."""
+
     outer_post_decision: FunctionName
     """Name of the outer post-decision function bound per outer-grid node."""
+
+    outer_target_function: Callable
+    """Resolved solve-phase DAG used to recover the outer action bank."""
 
     outer_batch_size: int
     """Outer-grid nodes solved per chunk before folding into the running
@@ -609,9 +688,6 @@ class _NNBEGMPeriodKernel:
     outer_action: ActionName
     """The regime's outer continuous action (published for the nested
     simulation reader)."""
-
-    outer_state_name: StateName
-    """Name of the durable state held unchanged by the keeper."""
 
     inner_action: ActionName
     """The regime's inner continuous action (the consumption the published
@@ -766,7 +842,8 @@ class _NNBEGMPeriodKernel:
         """Solve the keeper, then dispatch to the configured outer search.
 
         The finite strategy folds completed chunks immediately, so
-        `outer_batch_size` bounds retained candidate data. The adaptive
+        `outer_batch_size` bounds retained candidate data while publishing the
+        complete finite candidate identities for exact replay. The adaptive
         strategy keeps its exact-node bank because interpolation and policy
         publication consume every refined node.
         """
@@ -814,40 +891,105 @@ class _NNBEGMPeriodKernel:
         period: int,
         ages: AgeGrid,
     ) -> KernelResult:
-        """Fold finite candidates in node order, retaining at most one chunk."""
+        """Fold finite candidates and retain their complete replay identities."""
         V_arr = keeper_result.V_arr
-        carry = cast("EGMCarry", keeper_result.continuation)
+        keeper_carry = cast("EGMCarry", keeper_result.continuation)
+        keeper_policy = cast("NBEGMGridPolicy", keeper_result.simulation_policy)
+        discrete_action_names = keeper_policy.discrete_action_names
+        branch_codes = keeper_policy.branch_discrete_actions
+        keeper_inner, keeper_values = _conditional_nnbegm_banks(
+            policy=keeper_policy,
+            collapsed_value=keeper_result.V_arr,
+            state_names=keeper_policy.state_names,
+            discrete_action_names=discrete_action_names,
+            branch_codes=branch_codes,
+        )
+        candidate_inner_by_outer = [keeper_inner]
+        candidate_value_by_outer = [keeper_values]
+        adjuster_carries: list[EGMCarry] = []
         adjuster_cores = _subcores(compiled_cores=compiled_cores, role="adjuster")
         nodes = list(self.outer_grid_values)
         chunk_size = self.outer_batch_size or len(nodes)
         for chunk_start in range(0, len(nodes), chunk_size):
             chunk_results = [
-                self._solve_adjuster_node(
-                    node=node,
-                    adjuster_cores=adjuster_cores,
+                self.adjuster_kernel(
+                    compiled_cores=adjuster_cores,
                     state_action_space=state_action_space,
                     next_regime_to_V_arr=next_regime_to_V_arr,
                     next_regime_to_continuation=next_regime_to_continuation,
-                    flat_params=flat_params,
+                    flat_params=_with_outer_post_decision(
+                        flat_params=flat_params,
+                        regime_name=self.regime_name,
+                        outer_post_decision=self.outer_post_decision,
+                        value=node,
+                    ),
                     period=period,
                     ages=ages,
                 )
                 for node in nodes[chunk_start : chunk_start + chunk_size]
             ]
-            for candidate in chunk_results:
-                V_arr = jnp.fmax(V_arr, candidate.V_arr)
-                carry = _fold_bridged_outer_carry(
-                    running=carry,
-                    candidate=candidate.carry,
+            for adjuster_result in chunk_results:
+                V_arr = jnp.fmax(V_arr, adjuster_result.V_arr)
+                adjuster_carries.append(cast("EGMCarry", adjuster_result.continuation))
+                adjuster_policy = cast(
+                    "NBEGMGridPolicy", adjuster_result.simulation_policy
                 )
-            # Materialize the ordered fold before the next chunk is dispatched
-            # so the completed candidate arrays can be released.
-            V_arr, carry = jax.block_until_ready((V_arr, carry))
+                adjuster_inner, adjuster_values = _conditional_nnbegm_banks(
+                    policy=adjuster_policy,
+                    collapsed_value=adjuster_result.V_arr,
+                    state_names=keeper_policy.state_names,
+                    discrete_action_names=discrete_action_names,
+                    branch_codes=branch_codes,
+                )
+                candidate_inner_by_outer.append(adjuster_inner)
+                candidate_value_by_outer.append(adjuster_values)
+            V_arr, _ = jax.block_until_ready((V_arr, adjuster_carries[chunk_start:]))
+
+        from _lcm.egm.outer_envelope import stack_candidate_carries  # noqa: PLC0415
+
+        carry = stack_candidate_carries(
+            candidates=(keeper_carry, *adjuster_carries),
+            nan_is_infeasible=True,
+        )
+        n_outer_candidates = len(candidate_inner_by_outer)
+        n_discrete_branches = int(candidate_inner_by_outer[0].shape[0])
+        state_shape = candidate_inner_by_outer[0].shape[1:]
+        candidate_inner_action = jnp.stack(candidate_inner_by_outer).reshape(
+            n_outer_candidates * n_discrete_branches, *state_shape
+        )
+        candidate_value = jnp.stack(candidate_value_by_outer).reshape(
+            n_outer_candidates * n_discrete_branches, *state_shape
+        )
+        if discrete_action_names:
+            candidate_discrete_actions = jnp.tile(
+                cast("IntND", branch_codes), (n_outer_candidates, 1)
+            )
+        else:
+            candidate_discrete_actions = None
+        candidate_outer_action = self._candidate_outer_actions(
+            candidate_inner_action=candidate_inner_action,
+            candidate_discrete_actions=candidate_discrete_actions,
+            discrete_action_names=discrete_action_names,
+            n_discrete_branches=n_discrete_branches,
+            state_action_space=state_action_space,
+            flat_params=flat_params,
+            period=period,
+            ages=ages,
+            state_names=keeper_policy.state_names,
+        )
         return KernelResult(
             V_arr=V_arr,
-            # The continuation template deliberately omits the policy leaf.
-            continuation=replace(carry, policy=None),
-            simulation_policy=keeper_result.simulation_policy,
+            continuation=carry,
+            simulation_policy=NNBEGMSimPolicy(
+                candidate_inner_action=candidate_inner_action,
+                candidate_outer_action=candidate_outer_action,
+                candidate_value=candidate_value,
+                candidate_discrete_actions=candidate_discrete_actions,
+                discrete_action_names=discrete_action_names,
+                state_names=keeper_policy.state_names,
+                inner_action_name=self.inner_action,
+                outer_action_name=self.outer_action,
+            ),
         )
 
     def _solve_continuous(
@@ -1077,6 +1219,114 @@ class _NNBEGMPeriodKernel:
             ),
         )
 
+    def _candidate_outer_actions(
+        self,
+        *,
+        candidate_inner_action: FloatND,
+        candidate_discrete_actions: IntND | None,
+        discrete_action_names: tuple[ActionName, ...],
+        n_discrete_branches: int,
+        state_action_space: StateActionSpace,
+        flat_params: FlatParams,
+        period: int,
+        ages: AgeGrid,
+        state_names: tuple[StateName, ...],
+    ) -> FloatND:
+        """Recover each complete candidate's outer action on the solve state grid."""
+        state_shape = candidate_inner_action.shape[1:]
+        n_state_axes = len(state_names)
+        state_inputs = {
+            name: jnp.asarray(state_action_space.states[name]).reshape(
+                (1,) * axis
+                + (jnp.asarray(state_action_space.states[name]).shape[0],)
+                + (1,) * (n_state_axes - axis - 1)
+            )
+            for axis, name in enumerate(state_names)
+        }
+        if discrete_action_names:
+            if candidate_discrete_actions is None:
+                raise ValueError("NNBEGM discrete replay is missing candidate codes.")
+            discrete_inputs = {
+                name: candidate_discrete_actions[:, position].reshape(
+                    (candidate_inner_action.shape[0],) + (1,) * n_state_axes
+                )
+                for position, name in enumerate(discrete_action_names)
+            }
+        else:
+            discrete_inputs = {}
+        params = dict(flat_params[self.regime_name])
+        accepted = inspect.signature(self.outer_target_function).parameters
+
+        def evaluate(outer_action: FloatND) -> Mapping[str, FloatND]:
+            pool = {
+                **params,
+                **state_inputs,
+                **discrete_inputs,
+                self.inner_action: candidate_inner_action,
+                self.outer_action: outer_action,
+                "period": jnp.int32(period),
+                "age": ages.values[period],
+            }
+            return self.outer_target_function(
+                **{name: value for name, value in pool.items() if name in accepted}
+            )
+
+        zeros = jnp.zeros_like(candidate_inner_action)
+        at_zero_results = evaluate(zeros)
+        at_zero = jnp.broadcast_to(
+            jnp.asarray(at_zero_results[self.outer_post_decision]),
+            candidate_inner_action.shape,
+        )
+        at_one = jnp.broadcast_to(
+            jnp.asarray(
+                evaluate(jnp.ones_like(candidate_inner_action))[
+                    self.outer_post_decision
+                ]
+            ),
+            candidate_inner_action.shape,
+        )
+        slope = at_one - at_zero
+
+        if self.outer_no_adjustment_name is None:
+            keeper_base = jnp.broadcast_to(
+                state_inputs[self.outer_state_name], state_shape
+            )
+            keeper_targets = jnp.broadcast_to(
+                keeper_base, (n_discrete_branches, *state_shape)
+            )
+        else:
+            keeper_targets = jnp.broadcast_to(
+                jnp.asarray(at_zero_results[self.outer_no_adjustment_name]),
+                candidate_inner_action.shape,
+            )[:n_discrete_branches]
+        adjuster_nodes = jnp.repeat(self.outer_grid_values, repeats=n_discrete_branches)
+        adjuster_shape = (adjuster_nodes.shape[0],) + (1,) * len(state_shape)
+        adjuster_targets = jnp.broadcast_to(
+            adjuster_nodes.reshape(adjuster_shape),
+            (adjuster_nodes.shape[0], *state_shape),
+        )
+        candidate_targets = jnp.concatenate((keeper_targets, adjuster_targets), axis=0)
+        if candidate_targets.shape != candidate_inner_action.shape:
+            raise ValueError(
+                "NNBEGM outer/discrete candidate target bank is misaligned."
+            )
+
+        candidate_outer_action = (candidate_targets - at_zero) / slope
+        reconstructed = jnp.broadcast_to(
+            jnp.asarray(evaluate(candidate_outer_action)[self.outer_post_decision]),
+            candidate_inner_action.shape,
+        )
+        eps = jnp.finfo(candidate_inner_action.dtype).eps
+        tolerance = 64 * eps * jnp.maximum(1.0, jnp.abs(candidate_targets))
+        represented = (
+            jnp.isfinite(candidate_inner_action)
+            & jnp.isfinite(candidate_outer_action)
+            & jnp.isfinite(slope)
+            & (slope != 0)
+            & (jnp.abs(reconstructed - candidate_targets) <= tolerance)
+        )
+        return jnp.where(represented, candidate_outer_action, jnp.nan)
+
 
 def _subcores(
     *, compiled_cores: Mapping[str, Callable], role: str
@@ -1089,28 +1339,6 @@ def _subcores(
             for key, core in compiled_cores.items()
             if key.startswith(token)
         }
-    )
-
-
-def _fold_bridged_outer_carry(*, running: EGMCarry, candidate: EGMCarry) -> EGMCarry:
-    """Fold one adjuster candidate into the running bridged outer envelope.
-
-    Every candidate's carry rows live on the shared liquid state grid, so the
-    outer envelope is a pointwise maximum: where the candidate's value row
-    beats the running one, its value and marginal replace them. The row
-    abscissae and the taste-shock scale are shared, so they ride through.
-    NaN-dead cells never win, and a candidate that solves a cell the running
-    envelope holds as NaN-dead takes it over.
-    """
-    take = (candidate.value > running.value) | (
-        jnp.isnan(running.value) & ~jnp.isnan(candidate.value)
-    )
-    return replace(
-        running,
-        value=jnp.where(take, candidate.value, running.value),
-        marginal_utility=jnp.where(
-            take, candidate.marginal_utility, running.marginal_utility
-        ),
     )
 
 
