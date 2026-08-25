@@ -860,7 +860,7 @@ class _NNBEGMPeriodKernel:
             candidate_inner_action.shape,
         )
         eps = jnp.finfo(candidate_inner_action.dtype).eps
-        tolerance = 64 * eps * jnp.maximum(1.0, jnp.abs(candidate_targets))
+        tolerance = 128 * eps * jnp.maximum(1.0, jnp.abs(candidate_targets))
         represented = (
             jnp.isfinite(candidate_inner_action)
             & jnp.isfinite(candidate_outer_action)
@@ -868,6 +868,17 @@ class _NNBEGMPeriodKernel:
             & (slope != 0)
             & (jnp.abs(reconstructed - candidate_targets) <= tolerance)
         )
+        inversion_failed = jnp.isfinite(candidate_inner_action) & ~represented
+        if bool(jax.device_get(jnp.any(inversion_failed))):
+            raise RegimeInitializationError(
+                "NNBEGM requires the outer post-decision target to depend "
+                "affinely on the outer action with a finite, nonzero slope "
+                "conditional on its other inputs. The declared target could "
+                "not be inverted and reconstructed for every represented "
+                "candidate. Use an affine mapping such as "
+                "`new = old + 2 * action`, or select a solver that supports "
+                "an explicit inverse for the declared mapping."
+            )
         return jnp.where(represented, candidate_outer_action, jnp.nan)
 
 
