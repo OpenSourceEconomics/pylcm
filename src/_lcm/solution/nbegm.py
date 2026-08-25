@@ -63,10 +63,6 @@ from _lcm.engine import StateActionSpace
 from _lcm.grids import ContinuousGrid, DiscreteGrid
 from _lcm.grids.base import Grid
 from _lcm.params.mapping_leaf import MappingLeaf, UserMappingLeaf
-from _lcm.regime_building.phases import (
-    _resolve_solve_functions,
-    phase_variation_paths,
-)
 from _lcm.solution.continuation_target import (
     _period_to_continuation_target,
     _union_fixed_params,
@@ -405,9 +401,7 @@ class NBEGM(OneMarginSolver):
         )
         savings_grid = self.savings_grid.to_jax()
 
-        functions = _resolve_solve_functions(
-            user_regime=context.user_regimes[context.regime_name]
-        )
+        functions = context.solve_functions
         registry = collect_nbegm_metadata(functions=functions)
         has_discrete = bool(context.state_action_space.discrete_actions)
         has_ride_along = self._schedule_has_ride_along(context=context)
@@ -1638,7 +1632,7 @@ def _validate_nbegm_case_piece_declarations(
 
     user_regime = context.user_regimes[context.regime_name]
     bound = cast("_BoundNBEGM", solver)
-    functions = _resolve_solve_functions(user_regime=user_regime)
+    functions = context.solve_functions
     registry = collect_nbegm_metadata(functions=functions)
     discrete_actions = frozenset(
         name
@@ -1906,7 +1900,7 @@ def _fail_if_budget_node_differs_from_kernel_cash_on_hand(
     if not routes_to_case_piece_core or raw_budget_node is None:
         return
     budget_path = f"functions[{budget_target!r}]"
-    if budget_path in phase_variation_paths(user_regime=user_regime):
+    if budget_path in context.phase_variation_paths:
         msg = (
             f"NBEGM's case-piece kernels form cash-on-hand as "
             f"`{liquid_state_name} + {split_output}` in both phases, so regime "
@@ -1916,7 +1910,7 @@ def _fail_if_budget_node_differs_from_kernel_cash_on_hand(
             "use `GridSearch` for this regime."
         )
         raise RegimeInitializationError(msg)
-    budget_node = _resolve_solve_functions(user_regime=user_regime).get(budget_target)
+    budget_node = context.solve_functions.get(budget_target)
     if budget_node is not cash_on_hand_with_subsidy:
         msg = (
             f"NBEGM's case-piece kernels add the split output to the liquid state "
@@ -2037,9 +2031,7 @@ def _collect_nbegm_case_spec(
 
     from _lcm.egm.nbegm import collect_nbegm_metadata  # noqa: PLC0415
 
-    functions = _resolve_solve_functions(
-        user_regime=context.user_regimes[context.regime_name]
-    )
+    functions = context.solve_functions
     registry = collect_nbegm_metadata(functions=functions)
     if len(registry.piece_sets) != 1:
         msg = (
@@ -3829,9 +3821,7 @@ def _collect_nbegm_schedule_spec(
 
     from _lcm.egm.nbegm import collect_nbegm_metadata  # noqa: PLC0415
 
-    user_functions = _resolve_solve_functions(
-        user_regime=context.user_regimes[context.regime_name]
-    )
+    user_functions = context.solve_functions
     registry = collect_nbegm_metadata(functions=user_functions)
     # Zero declared schedules produce an empty breakpoint partition: one
     # interval covering the whole liquid axis, solved as plain EGM.

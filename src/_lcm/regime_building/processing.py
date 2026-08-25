@@ -329,6 +329,8 @@ def process_regimes(
             context=SolverModelContext(
                 regime_name=regime_name,
                 user_regimes=representative_user_regimes,
+                solve_functions=phased_specs[regime_name].solution.functions,
+                phase_variation_paths=phase_variation_paths(user_regime=user_regime),
                 solution_reachability=reachability.solution,
             )
         )
@@ -1048,6 +1050,10 @@ def _build_solution_phase(
     context = SolverBuildContext(
         regime_name=regime_name,
         user_regimes=user_regimes,
+        solve_functions=spec.solution.functions,
+        phase_variation_paths=phase_variation_paths(
+            user_regime=user_regimes[regime_name]
+        ),
         state_action_space=state_action_space,
         solution_reachability=phase_reachability,
         Q_and_F_functions=Q_and_F_functions,
@@ -1419,7 +1425,7 @@ def _validated_bound_nnbegm(
 
     _fail_if_nnbegm_phase_variation(
         regime_name=regime_name,
-        user_regime=user_regime,
+        variations=phase_variation_paths(user_regime=user_regime),
     )
     return cast("_BoundNNBEGM", solver)
 
