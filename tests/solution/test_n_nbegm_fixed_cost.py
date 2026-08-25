@@ -144,3 +144,53 @@ def test_zero_width_support_is_rejected() -> None:
             lower=0.5,
             upper=0.5,
         )
+
+
+@pytest.mark.parametrize(
+    ("level", "reported"),
+    [(-2.0, "-2"), (float("nan"), "nan"), (float("inf"), "inf")],
+)
+def test_scale_outside_the_supported_range_is_rejected_before_the_solve(
+    level: float, reported: str
+) -> None:
+    """Reject negative and nonfinite scales before compiling the solve."""
+    aggregator = UniformObservedFixedCost(
+        shock_name="adjustment_cost",
+        scale_function="adjustment_scale",
+        lower=0.0,
+        upper=1.0,
+    )
+    model = toy.build_model(
+        variant="n_nbegm",
+        n_periods=2,
+        outer_search=_MESH,
+        branch_aggregator=aggregator,
+        scale_function=toy.adjustment_scale_from_param,
+    )
+    with pytest.raises(RegimeInitializationError, match=reported):
+        model.solve(
+            params={**_PARAMS, "adjustment_scale_level": level},
+            log_level="debug",
+        )
+
+
+def test_nonnegative_finite_scale_from_a_param_solves() -> None:
+    """A finite nonnegative scale supplied as a flat param passes preflight."""
+    aggregator = UniformObservedFixedCost(
+        shock_name="adjustment_cost",
+        scale_function="adjustment_scale",
+        lower=0.0,
+        upper=1.0,
+    )
+    model = toy.build_model(
+        variant="n_nbegm",
+        n_periods=2,
+        outer_search=_MESH,
+        branch_aggregator=aggregator,
+        scale_function=toy.adjustment_scale_from_param,
+    )
+    solution = model.solve(
+        params={**_PARAMS, "adjustment_scale_level": 0.4},
+        log_level="debug",
+    )
+    assert np.any(np.isfinite(np.asarray(solution[0]["alive"])))

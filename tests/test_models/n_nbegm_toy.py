@@ -28,6 +28,7 @@ from lcm import (
     AgeGrid,
     LinSpacedGrid,
     Model,
+    Phased,
     Regime,
     categorical,
 )
@@ -154,6 +155,18 @@ def next_regime(age: int, final_age_alive: float) -> ScalarInt:
     return jnp.where(age >= final_age_alive, RegimeId.dead, RegimeId.alive)
 
 
+def impute_permanent_income(wealth: ContinuousState) -> ContinuousState:
+    """Solve-phase imputation for the carried-state capability witness."""
+    return 0.1 * wealth
+
+
+def evolve_permanent_income(
+    permanent_income: ContinuousState,
+) -> ContinuousState:
+    """Simulation law for the carried-state capability witness."""
+    return permanent_income
+
+
 WEALTH_GRID = LinSpacedGrid(start=0.0, stop=30.0, n_points=N_WEALTH)
 ILLIQUID_GRID = LinSpacedGrid(start=0.0, stop=20.0, n_points=N_ILLIQUID)
 CONSUMPTION_GRID = LinSpacedGrid(start=0.1, stop=20.0, n_points=N_CONSUMPTION)
@@ -176,6 +189,11 @@ def budget_feasible(liquid_savings: FloatND) -> FloatND:
 def adjustment_scale(period: int) -> FloatND:
     """Per-period scale of the uniform observed fixed adjustment cost."""
     return jnp.asarray(0.3 + 0.05 * period)
+
+
+def adjustment_scale_from_param(adjustment_scale_level: float) -> FloatND:
+    """Fixed-cost scale read straight from a flat param."""
+    return jnp.asarray(adjustment_scale_level)
 
 
 def build_solver(
@@ -230,11 +248,15 @@ def build_model(
     illiquid_grid: Grid = ILLIQUID_GRID,
     outer_search: OuterSearch | None = None,
     branch_aggregator: OuterBranchAggregator | None = None,
+    scale_function: Callable[..., object] | None = None,
     illiquid_investment_grid: Grid = ILLIQUID_INVESTMENT_GRID,
     consumption_grid: Grid = CONSUMPTION_GRID,
-    durable_law: Callable[..., object] | None = None,
+    durable_law: Callable[..., object] | Phased | None = None,
     constraints: Mapping[str, Callable[..., object]] | None = None,
-    utility_function: Callable[..., object] | AgeSpecializedFunction = utility,
+    utility_function: Callable[..., object] | AgeSpecializedFunction | Phased = utility,
+    regime_transition: Callable[..., object] | Phased = next_regime,
+    koopmans_aggregator: Callable[..., object] | Phased | None = None,
+    carried_state: bool = False,
     terminal_active_from_start: bool = False,
 ) -> Model:
     """Build the smooth two-asset toy under the requested solver flavour.
@@ -253,6 +275,12 @@ def build_model(
     `durable_law` overrides the durable's law of motion; every variant reads the
     chosen stock through `new_illiquid`, so one law serves them all and the
     variants keep solving the same model.
+    `scale_function` overrides the fixed cost's `adjustment_scale` function,
+    so a caller can drive the scale from a flat param.
+    `regime_transition` and `koopmans_aggregator` expose the other public phase
+    slots to build-time capability tests without changing the numerical toy.
+    `carried_state=True` adds an otherwise unused solve-imputed/simulate-carried
+    state for the NNBEGM replay-capability boundary witness.
     `constraints` overrides the constraint pool, which otherwise carries the
     budget predicate on the grid-search arm and is empty on the endogenous-grid
     arms, whose kernels enforce the budget identity intrinsically.
@@ -277,15 +305,26 @@ def build_model(
         functions["resources_before_outer_cost"] = resources_before_outer_cost
         functions["inverse_marginal_utility"] = inverse_marginal_utility
     if branch_aggregator is not None:
-        functions["adjustment_scale"] = adjustment_scale
+        functions["adjustment_scale"] = (
+            adjustment_scale if scale_function is None else scale_function
+        )
     if constraints is None:
         constraints = {"budget_feasible": budget_feasible} if variant == "brute" else {}
     active = lambda age, n=final_age_alive: age <= n  # noqa: E731
-    states = {"wealth": WEALTH_GRID, "illiquid": illiquid_grid}
+    states: dict[str, Grid | Phased] = {
+        "wealth": WEALTH_GRID,
+        "illiquid": illiquid_grid,
+    }
     state_transitions = {
         "wealth": next_wealth,
         "illiquid": durable_law if durable_law is not None else durable_transition,
     }
+    if carried_state:
+        states["permanent_income"] = Phased(
+            solve=impute_permanent_income,
+            simulate=LinSpacedGrid(start=0.0, stop=3.0, n_points=4),
+        )
+        state_transitions["permanent_income"] = evolve_permanent_income
     actions = {
         "consumption": consumption_grid,
         "illiquid_investment": illiquid_investment_grid,
@@ -322,10 +361,11 @@ def build_model(
             states=states,
             state_transitions=state_transitions,
             actions=actions,
-            transition=next_regime,
+            transition=regime_transition,
             functions=functions,
             constraints=constraints,
             solver=solver,
+            koopmans_aggregator=koopmans_aggregator,
         )
     else:
         liquid_resources = (
@@ -342,10 +382,11 @@ def build_model(
             states=states,
             state_transitions=state_transitions,
             actions=actions,
-            transition=next_regime,
+            transition=regime_transition,
             functions=functions,
             constraints=constraints,
             solver=solver,
+            koopmans_aggregator=koopmans_aggregator,
             liquid=LiquidMargin(
                 state="wealth",
                 action="consumption",

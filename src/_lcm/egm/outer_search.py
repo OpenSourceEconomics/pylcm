@@ -20,10 +20,6 @@ is configured here, separately from the solver's economic wiring:
   absent a smoothness bound it cannot rule out an arbitrarily narrow peak that
   falls between the samples. Set `outer_lipschitz_bound` to make refinement a
   genuine global branch-and-bound certificate under that Lipschitz constant.
-- `LegacyGoldenSection` — historical-algorithm compatibility (a single
-  golden-section search with source-specific endpoint and tie rules); never
-  the canonical paper mode.
-
 These are user-facing configuration leaves (re-exported through
 `lcm.outer_search`); the numerical machinery that consumes them lives in
 `_lcm.egm.outer_interpolation` / `_lcm.egm.outer_refinement` and in the
@@ -32,7 +28,6 @@ solver kernels.
 
 from abc import ABC
 from dataclasses import dataclass
-from typing import Literal
 
 from _lcm.grids import ContinuousGrid
 from lcm.exceptions import RegimeInitializationError
@@ -122,24 +117,10 @@ class AdaptiveOuterMesh(OuterSearch):
     Lipschitz constant forfeits the global guarantee (garbage-in), a large
     value is safe but costs nodes."""
 
-    # Local continuous refinement.
-    local_refiner: Literal["golden", "quadratic"] = "golden"
-    """Bracket-local refinement method; brackets always come from the exact
-    candidate mesh."""
-
+    # Local continuous refinement. Brackets always come from the exact
+    # candidate mesh, and refinement inside one is golden section.
     golden_iterations: int = 32
     """Static golden-section iteration count per retained bracket."""
-
-    # Safeguards.
-    evaluate_all_endpoints: bool = True
-    """Always evaluate both domain endpoints exactly as candidates."""
-
-    retain_second_best: bool = True
-    """Track the second-best candidate for branch-margin diagnostics."""
-
-    freeze_mesh_for_derivatives: bool = True
-    """Derivative batches must re-run on one frozen union mesh rather than
-    letting each perturbation adapt its own."""
 
     fail_closed: bool = True
     """Whether an exhausted refinement budget with marked intervals remaining
@@ -150,7 +131,21 @@ class AdaptiveOuterMesh(OuterSearch):
     is known not to validate to tolerance (e.g. a genuinely kinked outer value),
     so a diagnostic-grade solve is reachable while a convergence fix lands. It
     does NOT loosen tolerances — the residual is measured, surfaced, and left to
-    the caller to accept, not hidden."""
+    the caller to accept, not hidden.
+
+    The guarantee is mesh convergence and nothing wider. These stay
+    diagnostics under `True` and never raise:
+
+    - an optimum sitting on a domain bound (`outer_at_lower_bound` /
+      `outer_at_upper_bound`);
+    - a close keeper-vs-adjuster branch margin
+      (`keeper_adjuster_margin`);
+    - a close best-vs-runner-up margin (`best_second_best_margin`);
+    - a withheld simulation policy (`policy_fallback_mask`);
+    - cells where every outer candidate was invalid
+      (`n_outer_all_invalid_cells`).
+
+    An inference release gate over those is the caller's to build."""
 
     def __post_init__(self) -> None:
         _fail_if_batch_size_negative(self.batch_size, field="batch_size")
@@ -181,46 +176,6 @@ class AdaptiveOuterMesh(OuterSearch):
                 "outer_lipschitz_bound must be > 0 when set, got "
                 f"{self.outer_lipschitz_bound}."
             )
-            raise RegimeInitializationError(msg)
-
-
-@dataclass(frozen=True, kw_only=True)
-class LegacyGoldenSection(OuterSearch):
-    """Historical-algorithm compatibility; not canonical paper mode.
-
-    A single golden-section search over the full outer domain with
-    source-specific endpoint and tie rules, reproducing a historical
-    implementation. It assumes unimodality the canonical mode refuses to
-    assume — use only for labeled historical reproduction.
-    """
-
-    lower: float
-    """Lower edge of the searched outer domain."""
-
-    upper: float
-    """Upper edge of the searched outer domain."""
-
-    iterations: int
-    """Golden-section iteration count of the historical implementation."""
-
-    tolerance: float
-    """Width/convergence tolerance of the historical implementation."""
-
-    endpoint_rule: Literal["fortran"]
-    """Which historical endpoint handling to reproduce."""
-
-    tie_break: Literal["fortran"]
-    """Which historical tie-breaking rule to reproduce."""
-
-    def __post_init__(self) -> None:
-        if not self.upper >= self.lower:
-            msg = f"upper must be >= lower, got lower={self.lower}, upper={self.upper}."
-            raise RegimeInitializationError(msg)
-        if self.iterations < 1:
-            msg = f"iterations must be >= 1, got {self.iterations}."
-            raise RegimeInitializationError(msg)
-        if not self.tolerance > 0.0:
-            msg = f"tolerance must be > 0, got {self.tolerance}."
             raise RegimeInitializationError(msg)
 
 
