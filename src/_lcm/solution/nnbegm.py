@@ -860,7 +860,7 @@ class _NNBEGMPeriodKernel:
             candidate_inner_action.shape,
         )
         eps = jnp.finfo(candidate_inner_action.dtype).eps
-        tolerance = 64 * eps * jnp.maximum(1.0, jnp.abs(candidate_targets))
+        tolerance = 128 * eps * jnp.maximum(1.0, jnp.abs(candidate_targets))
         represented = (
             jnp.isfinite(candidate_inner_action)
             & jnp.isfinite(candidate_outer_action)
