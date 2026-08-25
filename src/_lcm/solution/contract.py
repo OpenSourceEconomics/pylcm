@@ -77,7 +77,7 @@ from _lcm.typing import (
     TransitionFunctionsMapping,
 )
 from lcm.ages import AgeGrid
-from lcm.typing import BoolND, Float1D, FloatND
+from lcm.typing import BoolND, Float1D, FloatND, UserFunction
 
 # The continuation channel is defined once in `_lcm.continuation`. Backward
 # induction treats `ContinuationPayload` opaquely; EGM solvers additionally
@@ -135,6 +135,16 @@ class SolverModelContext:
 
     user_regimes: UserRegimesMapping
     """Mapping of every finalized user regime in the model."""
+
+    solve_functions: MappingProxyType[FunctionName, UserFunction]
+    """Normalized solve-phase declarations for this regime.
+
+    Model construction owns phase normalization. Solver validation receives the
+    resulting pool instead of importing declaration-topology builders.
+    """
+
+    phase_variation_paths: tuple[str, ...]
+    """Public declaration paths whose solve/simulate objects differ."""
 
     solution_reachability: PhaseReachability | None = None
     """Static solution graph when available; `None` during early validation."""
@@ -203,6 +213,12 @@ class SolverBuildContext:
 
     user_regimes: UserRegimesMapping
     """Mapping of regime names to user-provided `Regime` instances."""
+
+    solve_functions: MappingProxyType[FunctionName, UserFunction]
+    """Normalized, unprocessed solve-phase declarations for this regime."""
+
+    phase_variation_paths: tuple[str, ...]
+    """Public declaration paths whose solve/simulate objects differ."""
 
     state_action_space: StateActionSpace
     """The regime's state-action space."""

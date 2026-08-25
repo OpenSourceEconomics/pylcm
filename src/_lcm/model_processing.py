@@ -35,7 +35,10 @@ from _lcm.regime_building.age_specialization import resolve_node
 from _lcm.regime_building.broadcast import root_functions
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.max_Q_over_a import TASTE_SHOCK_SCALE_PARAM
-from _lcm.regime_building.phases import normalize_all_regime_phases
+from _lcm.regime_building.phases import (
+    normalize_all_regime_phases,
+    phase_variation_paths,
+)
 from _lcm.regime_building.processing import (
     PreparedModelStructure,
     Regime,
@@ -225,6 +228,9 @@ def validate_model_inputs(  # noqa: C901
     solver_validation_regimes = _representative_for_validation(
         user_regimes=user_regimes, ages=ages
     )
+    solver_validation_phase_specs = normalize_all_regime_phases(
+        user_regimes=solver_validation_regimes
+    )
     for regime_name, user_regime in solver_validation_regimes.items():
         fail_if_solver_is_not_shipped(
             solver=user_regime.solver, regime_name=regime_name
@@ -233,6 +239,10 @@ def validate_model_inputs(  # noqa: C901
             context=SolverModelContext(
                 regime_name=regime_name,
                 user_regimes=solver_validation_regimes,
+                solve_functions=solver_validation_phase_specs[
+                    regime_name
+                ].solution.functions,
+                phase_variation_paths=phase_variation_paths(user_regime=user_regime),
             )
         )
 

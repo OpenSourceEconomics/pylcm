@@ -46,6 +46,10 @@ class InvalidSimulationInputError(PyLCMError):
     """
 
 
+class UnsupportedOperationError(PyLCMError):
+    """Raised when a valid model requests an unsupported runtime operation."""
+
+
 class InvalidParamsError(PyLCMError):
     """Raised when the params structure does not match the params template."""
 

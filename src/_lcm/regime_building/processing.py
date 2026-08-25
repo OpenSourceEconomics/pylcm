@@ -198,7 +198,7 @@ from lcm.exceptions import ModelInitializationError
 from lcm.phased import Phased
 from lcm.regime import GatedEdge, SamePeriodRef
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import DCEGM, NNBEGM, Solver
+from lcm.solvers import DCEGM, NNBEGM, Solver, UniformObservedFixedCost
 from lcm.transition import JointTransition, MarkovTransition
 from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, UserFunction
 
@@ -366,6 +366,8 @@ def process_regimes(
             context=SolverModelContext(
                 regime_name=regime_name,
                 user_regimes=representative_user_regimes,
+                solve_functions=phased_specs[regime_name].solution.functions,
+                phase_variation_paths=phase_variation_paths(user_regime=user_regime),
                 solution_reachability=reachability.solution,
             )
         )
@@ -2359,6 +2361,10 @@ def _build_solution_phase(
         regime_name=regime_name,
         ages=ages,
         user_regimes=user_regimes,
+        solve_functions=spec.solution.functions,
+        phase_variation_paths=phase_variation_paths(
+            user_regime=user_regimes[regime_name]
+        ),
         state_action_space=state_action_space,
         solution_reachability=phase_reachability,
         Q_and_F_functions=Q_and_F_functions,
@@ -2785,7 +2791,7 @@ def _validated_bound_nnbegm(
 
     _fail_if_nnbegm_phase_variation(
         regime_name=regime_name,
-        user_regime=user_regime,
+        variations=phase_variation_paths(user_regime=user_regime),
     )
     return cast("_BoundNNBEGM", solver)
 
@@ -3169,7 +3175,12 @@ def _build_simulation_phase(  # noqa: PLR0915
                 f"continuous actions "
                 f"{tuple(simulation_variables.continuous_action_names)!r}."
             )
-        egm_policy_read = NNBEGMPolicyRead()
+        egm_policy_read = NNBEGMPolicyRead(
+            fixed_cost_simulation_unsupported=isinstance(
+                bound_nnbegm.branch_aggregator,
+                UniformObservedFixedCost,
+            )
+        )
     elif (
         bound_solver is not None
         and _envelope_publishes_crossings(bound_solver)

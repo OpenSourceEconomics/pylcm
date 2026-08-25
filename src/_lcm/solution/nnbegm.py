@@ -15,7 +15,7 @@ import inspect
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, field, fields, replace
 from types import MappingProxyType
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 import jax
 import jax.numpy as jnp
@@ -52,7 +52,6 @@ from _lcm.egm.published_policy import (
 )
 from _lcm.engine import ParamCheck, StateActionSpace
 from _lcm.grids import ContinuousGrid, DiscreteGrid, Grid
-from _lcm.regime_building.phases import phase_variation_paths
 from _lcm.solution.contract import (
     ConstraintRouteContext,
     ContinuationPayload,
@@ -90,14 +89,6 @@ from _lcm.typing import FlatParams, RegimeName
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.typing import ActionName, Float1D, FloatND, FunctionName, IntND, StateName
-
-if TYPE_CHECKING:
-    from lcm.regime import Regime as UserRegime
-else:
-    # Importing the public regime class here closes a cycle through the
-    # `lcm.solvers` facade, which re-exports `NNBEGM` from this module. ty sees
-    # the precise type above; the runtime annotation stays deliberately broad.
-    UserRegime = object
 
 
 @beartype(conf=REGIME_CONF)
@@ -302,7 +293,7 @@ class NNBEGM(TwoMarginSolver):
         user_regime = context.user_regimes[context.regime_name]
         _fail_if_nnbegm_phase_variation(
             regime_name=context.regime_name,
-            user_regime=user_regime,
+            variations=context.phase_variation_paths,
         )
         validate_nnbegm_regime(
             regime_name=context.regime_name,
@@ -620,7 +611,7 @@ class _BoundNNBEGM(NNBEGM):
 def _fail_if_nnbegm_phase_variation(
     *,
     regime_name: RegimeName,
-    user_regime: UserRegime,
+    variations: tuple[str, ...],
 ) -> None:
     """Reject phase variation before NNBEGM period kernels are constructed.
 
@@ -629,7 +620,6 @@ def _fail_if_nnbegm_phase_variation(
     separate simulate-phase policy over that same candidate set; generic
     action-grid maximization is not an equivalent fallback.
     """
-    variations = phase_variation_paths(user_regime=user_regime)
     if not variations:
         return
     raise ModelInitializationError(
@@ -1208,6 +1198,8 @@ class _NNBEGMPeriodKernel:
                 resources_target_name=self.resources_target,
                 savings_lower_bound=self.savings_lower_bound,
                 golden_iterations=config.golden_iterations,
+                value_atol=config.value_atol,
+                value_rtol=config.value_rtol,
             )
         return KernelResult(
             V_arr=collapse.V_arr,

@@ -194,7 +194,11 @@ def test_nested_policy_replacement_keeps_only_canonically_better_pairs(
     monkeypatch.setattr(
         simulation_module,
         "_read_nested_policy",
-        lambda **_kwargs: (nested_actions, intrinsic_fallback),
+        lambda **_kwargs: (
+            nested_actions,
+            intrinsic_fallback,
+            jnp.array([7.0, 4.0, 9.0, 8.0]),
+        ),
     )
     monkeypatch.setattr(
         simulation_module,
@@ -271,6 +275,8 @@ def test_nested_policy_replay_scores_the_published_pair_without_reoptimizing(
     payload = object.__new__(NestedEGMSimPolicy)
     object.__setattr__(payload, "inner_action_name", "consumption")
     object.__setattr__(payload, "golden_iterations", 24)
+    object.__setattr__(payload, "value_atol", 0.1)
+    object.__setattr__(payload, "value_rtol", 0.0)
     regime = _StubRegime(
         simulation=SimpleNamespace(
             grids={
@@ -284,7 +290,11 @@ def test_nested_policy_replay_scores_the_published_pair_without_reoptimizing(
     monkeypatch.setattr(
         simulation_module,
         "_read_nested_policy",
-        lambda **_kwargs: (proposed_actions, jnp.asarray([False])),
+        lambda **_kwargs: (
+            proposed_actions,
+            jnp.asarray([False]),
+            jnp.asarray([2.0]),
+        ),
     )
     monkeypatch.setattr(
         simulation_module,
@@ -332,6 +342,80 @@ def test_nested_policy_replay_scores_the_published_pair_without_reoptimizing(
     np.testing.assert_array_equal(np.asarray(fallback), np.asarray([False]))
 
 
+def test_nested_policy_rejects_an_inner_action_below_its_surrogate_value(
+    monkeypatch,
+) -> None:
+    """A material conditional policy loss is controlled by the fallback gate."""
+    nested_actions = MappingProxyType(
+        {
+            "consumption": jnp.asarray([1.856252064]),
+            "investment": jnp.asarray([4.592250281]),
+        }
+    )
+    baseline_actions = MappingProxyType(
+        {
+            "consumption": jnp.asarray([1.5]),
+            "investment": jnp.asarray([4.0]),
+        }
+    )
+    payload = object.__new__(NestedEGMSimPolicy)
+    object.__setattr__(payload, "value_atol", 1e-4)
+    object.__setattr__(payload, "value_rtol", 1e-4)
+    monkeypatch.setattr(
+        simulation_module,
+        "_read_nested_policy",
+        lambda **_kwargs: (
+            nested_actions,
+            jnp.asarray([False]),
+            jnp.asarray([10.0]),
+        ),
+    )
+    monkeypatch.setattr(
+        simulation_module,
+        "_score_nested_action_pair",
+        lambda **_kwargs: (
+            nested_actions,
+            jnp.asarray([10.0 - 0.007090397]),
+            jnp.asarray([True]),
+        ),
+    )
+    monkeypatch.setattr(
+        simulation_module,
+        "_nested_actions_are_intrinsically_admissible",
+        lambda **_kwargs: jnp.asarray([True]),
+    )
+    monkeypatch.setattr(
+        simulation_module,
+        "_nested_grid_baseline",
+        lambda **_kwargs: (
+            baseline_actions,
+            jnp.asarray([9.0]),
+            jnp.asarray([True]),
+        ),
+    )
+
+    actions, reported_value, fallback = _replace_continuous_action_with_policy_read(
+        optimal_actions=baseline_actions,
+        regime=_StubRegime(simulation=SimpleNamespace()),
+        sim_policy=payload,
+        states=MappingProxyType({"wealth": jnp.ones(1)}),
+        flat_params=MappingProxyType({}),
+        period=0,
+        age=jnp.asarray(40.0),
+        canonical_states=MappingProxyType({"wealth": jnp.ones(1)}),
+        action_names=("consumption", "investment"),
+        next_regime_to_V_arr=MappingProxyType({}),
+        grid_values=jnp.asarray([9.0]),
+        in_regime=jnp.asarray([True]),
+    )
+
+    np.testing.assert_array_equal(
+        actions["consumption"], baseline_actions["consumption"]
+    )
+    np.testing.assert_array_equal(reported_value, jnp.asarray([9.0]))
+    np.testing.assert_array_equal(fallback, jnp.asarray([True]))
+
+
 def test_nested_policy_acceptance_truth_table(monkeypatch) -> None:
     """Every accepted pair is safe.
 
@@ -363,6 +447,7 @@ def test_nested_policy_acceptance_truth_table(monkeypatch) -> None:
         lambda **_kwargs: (
             nested_actions,
             jnp.asarray([cell["nested_fallback"]]),
+            jnp.asarray([cell["nested_value"]]),
         ),
     )
     monkeypatch.setattr(
@@ -534,6 +619,7 @@ def test_nested_policy_replacement_never_emits_a_degraded_interpolated_pair(
         lambda **_kwargs: (
             nested_actions,
             jnp.zeros(len(grid_values), dtype=bool),
+            proposed_values_arr,
         ),
     )
     monkeypatch.setattr(
@@ -604,7 +690,11 @@ def test_nested_policy_accepts_improvement_over_a_canonically_unsafe_grid_pair(
     monkeypatch.setattr(
         simulation_module,
         "_read_nested_policy",
-        lambda **_kwargs: (nested_actions, jnp.asarray([False])),
+        lambda **_kwargs: (
+            nested_actions,
+            jnp.asarray([False]),
+            jnp.asarray([-10.75]),
+        ),
     )
     monkeypatch.setattr(
         simulation_module,
@@ -679,7 +769,11 @@ def test_nested_policy_emits_a_safe_baseline_when_the_policy_read_falls_back(
     monkeypatch.setattr(
         simulation_module,
         "_read_nested_policy",
-        lambda **_kwargs: (proposed_actions, jnp.asarray([True])),
+        lambda **_kwargs: (
+            proposed_actions,
+            jnp.asarray([True]),
+            jnp.asarray([-8.0]),
+        ),
     )
     monkeypatch.setattr(
         simulation_module,
@@ -776,7 +870,11 @@ def test_nested_policy_rejection_projects_an_out_of_domain_grid_pair(
     monkeypatch.setattr(
         simulation_module,
         "_read_nested_policy",
-        lambda **_kwargs: (grid_actions, jnp.asarray([True])),
+        lambda **_kwargs: (
+            grid_actions,
+            jnp.asarray([True]),
+            jnp.asarray([-jnp.inf]),
+        ),
     )
     monkeypatch.setattr(
         simulation_module,
@@ -885,7 +983,11 @@ def test_nested_policy_rejection_uses_the_safe_opposite_endpoint(
     monkeypatch.setattr(
         simulation_module,
         "_read_nested_policy",
-        lambda **_kwargs: (grid_actions, jnp.asarray([True])),
+        lambda **_kwargs: (
+            grid_actions,
+            jnp.asarray([True]),
+            jnp.asarray([-jnp.inf]),
+        ),
     )
     monkeypatch.setattr(
         simulation_module,
@@ -1092,7 +1194,11 @@ def test_nested_policy_rejection_fails_when_no_candidate_is_safe(
     monkeypatch.setattr(
         simulation_module,
         "_read_nested_policy",
-        lambda **_kwargs: (nested_actions, jnp.asarray([True])),
+        lambda **_kwargs: (
+            nested_actions,
+            jnp.asarray([True]),
+            jnp.asarray([-jnp.inf]),
+        ),
     )
     monkeypatch.setattr(
         simulation_module,
@@ -1164,6 +1270,7 @@ def test_nested_policy_failure_ignores_out_of_regime_placeholders(
         lambda **_kwargs: (
             nested_actions,
             ~in_regime,
+            jnp.where(in_regime, 2.0, -jnp.inf),
         ),
     )
     monkeypatch.setattr(

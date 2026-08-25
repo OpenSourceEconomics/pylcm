@@ -578,6 +578,10 @@ class EGMPolicyRead:
 class NNBEGMPolicyRead:
     """Marker requesting collection of the NNBEGM joint replay payload."""
 
+    fixed_cost_simulation_unsupported: bool = False
+    """Whether solution analytically integrates an observed fixed cost whose
+    realized keeper/adjuster branch simulation cannot yet replay."""
+
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class SimulationPhase:
