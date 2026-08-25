@@ -1208,6 +1208,8 @@ class _NNBEGMPeriodKernel:
                 resources_target_name=self.resources_target,
                 savings_lower_bound=self.savings_lower_bound,
                 golden_iterations=config.golden_iterations,
+                value_atol=config.value_atol,
+                value_rtol=config.value_rtol,
             )
         return KernelResult(
             V_arr=collapse.V_arr,

@@ -200,6 +200,13 @@ class NestedEGMSimPolicy:
     """Static golden-section budget of the subject-level outer refinement —
     the same setting the solve's search used."""
 
+    value_atol: float = 1e-10
+    """Absolute band for agreement between the policy surrogate's winning
+    value and canonical Q at the emitted action pair."""
+
+    value_rtol: float = 1e-8
+    """Relative band for the policy-surrogate/canonical-Q agreement check."""
+
 
 _NESTED_STATIC_FIELDS = (
     "outer_action_name",
@@ -211,6 +218,8 @@ _NESTED_STATIC_FIELDS = (
     "resources_target_name",
     "savings_lower_bound",
     "golden_iterations",
+    "value_atol",
+    "value_rtol",
 )
 
 

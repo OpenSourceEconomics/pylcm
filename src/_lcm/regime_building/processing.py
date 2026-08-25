@@ -172,7 +172,7 @@ from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import DCEGM, NNBEGM, Solver
+from lcm.solvers import DCEGM, NNBEGM, Solver, UniformObservedFixedCost
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, UserFunction
 
@@ -1778,7 +1778,12 @@ def _build_simulation_phase(
                 f"continuous actions "
                 f"{tuple(simulation_variables.continuous_action_names)!r}."
             )
-        egm_policy_read = NNBEGMPolicyRead()
+        egm_policy_read = NNBEGMPolicyRead(
+            fixed_cost_simulation_unsupported=isinstance(
+                bound_nnbegm.branch_aggregator,
+                UniformObservedFixedCost,
+            )
+        )
     elif (
         bound_solver is not None
         and _envelope_publishes_crossings(bound_solver)

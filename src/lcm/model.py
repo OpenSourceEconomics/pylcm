@@ -91,6 +91,7 @@ from lcm.exceptions import (
     InvalidInitialConditionsError,
     InvalidSimulationInputError,
     InvalidValueFunctionError,
+    UnsupportedOperationError,
 )
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import Regime as UserRegime
@@ -684,6 +685,24 @@ class Model:
             )
             raise InvalidSimulationInputError(msg)
 
+    def _fail_if_simulation_is_unsupported(self) -> None:
+        """Refuse model configurations whose solved decision cannot be replayed."""
+        fixed_cost_regimes = tuple(
+            regime_name
+            for regime_name, regime in self._regimes.items()
+            if isinstance(regime.simulation.egm_policy_read, NNBEGMPolicyRead)
+            and regime.simulation.egm_policy_read.fixed_cost_simulation_unsupported
+        )
+        if not fixed_cost_regimes:
+            return
+        msg = (
+            "Simulation for NNBEGM with UniformObservedFixedCost is not implemented: "
+            "solution integrates the observed cost analytically, but simulation "
+            "cannot yet draw it and replay the contingent keeper/adjuster policy. "
+            f"Affected regimes: {fixed_cost_regimes}. Solve-only use remains supported."
+        )
+        raise UnsupportedOperationError(msg)
+
     @beartype(conf=PARAMS_CONF)
     def simulate(
         self,
@@ -765,6 +784,7 @@ class Model:
 
         """
         log = get_logger(log_level=log_level)
+        self._fail_if_simulation_is_unsupported()
         if isinstance(initial_conditions, pd.DataFrame):
             initial_conditions = initial_conditions_from_dataframe(
                 df=initial_conditions,
