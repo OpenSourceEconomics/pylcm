@@ -12,6 +12,8 @@ import pandas as pd
 from beartype import beartype
 
 from _lcm.beartype_conf import MODEL_CONF, PARAMS_CONF
+from _lcm.egm.published_policy import NNBEGMSimPolicy
+from _lcm.engine import NNBEGMPolicyRead
 from _lcm.grids import DiscreteGrid
 from _lcm.model_processing import (
     _validate_param_types,
@@ -87,6 +89,7 @@ from lcm.ages import AgeGrid
 from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from lcm.exceptions import (
     InvalidInitialConditionsError,
+    InvalidSimulationInputError,
     InvalidValueFunctionError,
 )
 from lcm.koopmans_aggregation import LinearAggregator
@@ -487,9 +490,10 @@ class Model:
                 solvers, as `(value_functions, policies)`. A policy is what
                 `simulate` interpolates at a subject's resources where the
                 regime qualifies for the off-grid read; a fresh `simulate`
-                publishes and consumes it internally, so returning it here is
-                for inspection rather than for handing back. Regimes whose
-                solver publishes no policy have no entry in the policy
+                publishes and consumes it internally. Return it to inspect the
+                artifact or to pass the exact `(value_functions, policies)` pair
+                into a separate `simulate` call. Regimes whose solver publishes
+                no policy have no entry in the policy
                 mapping. Defaults to `False` (value functions only).
 
         Returns:
@@ -646,6 +650,40 @@ class Model:
         except InvalidValueFunctionError as error:
             raise_or_warn(logger=log, error=error)
 
+    def _check_supplied_replay_policies(
+        self,
+        *,
+        period_to_regime_to_V_arr: PeriodToRegimeToVArr | None,
+        policies: PeriodToRegimeToSimulationPolicy | None,
+    ) -> None:
+        """Require replay artifacts where values do not determine the decision."""
+        if period_to_regime_to_V_arr is None:
+            return
+
+        missing_or_mismatched = tuple(
+            (period, regime_name)
+            for period, regime_to_V_arr in period_to_regime_to_V_arr.items()
+            for regime_name in regime_to_V_arr
+            if isinstance(
+                self._regimes[regime_name].simulation.egm_policy_read,
+                NNBEGMPolicyRead,
+            )
+            and not isinstance(
+                (policies or {}).get(period, {}).get(regime_name),
+                NNBEGMSimPolicy,
+            )
+        )
+        if missing_or_mismatched:
+            msg = (
+                "NNBEGM simulation with caller-supplied value functions requires "
+                "a matching replay policy for every solved period and regime. "
+                f"Missing or mismatched entries: {missing_or_mismatched}. Supply "
+                "the exact `(values, policies)` returned by "
+                "`solve(return_simulation_policy=True)`, or pass "
+                "`period_to_regime_to_V_arr=None` to solve automatically."
+            )
+            raise InvalidSimulationInputError(msg)
+
     @beartype(conf=PARAMS_CONF)
     def simulate(
         self,
@@ -653,6 +691,7 @@ class Model:
         params: UserParams,
         initial_conditions: UserInitialConditions | pd.DataFrame,
         period_to_regime_to_V_arr: PeriodToRegimeToVArr | None,
+        policies: PeriodToRegimeToSimulationPolicy | None = None,
         log_level: LogLevel,
         seed: int | None = None,
         subject_batch_size: int = 0,
@@ -685,6 +724,10 @@ class Model:
                 (auto-converted via `initial_conditions_from_dataframe`).
             period_to_regime_to_V_arr: Value function arrays from `solve()`.
                 When `None`, the model is solved automatically before simulating.
+            policies: Simulation-policy artifacts returned alongside the value
+                functions by `solve(return_simulation_policy=True)`. Supply the
+                exact pair to replay solver decisions that cannot be recovered
+                from value functions alone.
             seed: Random seed.
             subject_batch_size: How to partition the subject axis of the forward
                 simulation. Results are invariant to this knob — per-subject RNG
@@ -789,20 +832,18 @@ class Model:
         self._check_supplied_V_shapes(
             period_to_regime_to_V_arr=period_to_regime_to_V_arr, log=log
         )
-        period_to_regime_to_sim_policy = None
+        self._check_supplied_replay_policies(
+            period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+            policies=policies,
+        )
+        period_to_regime_to_sim_policy = policies
         if period_to_regime_to_V_arr is None:
-            # A fresh solve also publishes the off-grid DC-EGM policy, which
-            # simulation interpolates at each subject's resources where the
-            # regime qualifies (`SimulationPhase.egm_policy_read`). With
-            # user-supplied V arrays there is no published policy, so the
-            # grid-argmax path decides the continuous action.
-            # Two signals, because the flat and nested reads qualify
-            # differently. The flat endogenous-grid read is announced
-            # regime-side by `egm_policy_read`; a self-describing payload
-            # (N-NB-EGM's `NestedEGMSimPolicy`) is announced solver-side and
-            # deliberately leaves that field unset. Testing only the first drops
-            # the nested payload before simulation sees it, and simulation then
-            # falls back to the grid argmax with nothing reporting that it did.
+            # A fresh solve also publishes the off-grid EGM policy consumed by
+            # simulation. Policies paired with caller-supplied values enter
+            # through the public argument above and do not reach this branch.
+            # Two signals are required because the flat endogenous-grid read is
+            # announced regime-side by `egm_policy_read`, while a self-describing
+            # nested payload is announced solver-side and leaves that field unset.
             collect_simulation_policies = any(
                 regime.simulation.egm_policy_read is not None
                 or self.user_regimes[regime_name].solver.publishes_simulation_policy

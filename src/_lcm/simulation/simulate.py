@@ -115,8 +115,9 @@ def simulate(
             value function arrays.
         ages: AgeGrid for the model, used to convert periods to ages.
         period_to_regime_to_sim_policy: Immutable mapping of periods to each
-            EGM regime's published off-grid simulation policy, or `None`
-            (user-supplied V arrays carry no policy). Sparse over regimes.
+            EGM regime's published off-grid simulation policy, or `None` when
+            the caller supplies no compatible policy mapping. Sparse over
+            regimes.
             Where a regime qualifies (`SimulationPhase.egm_policy_read`), the
             continuous action is interpolated from the policy at the
             subject's resources instead of argmaxed over the action grid.
@@ -1870,6 +1871,76 @@ def _select_nnbegm_discrete_actions(
     return selected_codes, selected_actions
 
 
+def _score_nnbegm_candidate_bank(
+    *,
+    optimal_actions: MappingProxyType[ActionName, FloatND | IntND],
+    regime: Regime,
+    sim_policy: NNBEGMSimPolicy,
+    candidate_inner: FloatND,
+    candidate_outer: FloatND,
+    flat_params: FlatRegimeParams,
+    period: int,
+    age: ScalarFloat | ScalarInt,
+    canonical_states: Mapping[StateName, FloatND | IntND],
+    action_names: tuple[ActionName, ...],
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+) -> tuple[FloatND, BoolND]:
+    """Construct complete candidate action tuples and score canonical Q."""
+    n_candidates, n_subjects = candidate_inner.shape
+    excluded_action_names = {
+        sim_policy.inner_action_name,
+        sim_policy.outer_action_name,
+        *sim_policy.discrete_action_names,
+    }
+    candidate_actions = {
+        name: jnp.broadcast_to(
+            jnp.asarray(optimal_actions[name])[None, :],
+            (n_candidates, n_subjects),
+        )
+        for name in action_names
+        if name not in excluded_action_names
+    }
+    candidate_actions[sim_policy.inner_action_name] = candidate_inner
+    candidate_actions[sim_policy.outer_action_name] = candidate_outer
+
+    candidate_codes = sim_policy.candidate_discrete_actions
+    if sim_policy.discrete_action_names:
+        if candidate_codes is None:
+            raise ValueError("NNBEGM discrete replay payload is missing exact codes.")
+        if candidate_codes.shape != (
+            n_candidates,
+            len(sim_policy.discrete_action_names),
+        ):
+            raise ValueError("NNBEGM discrete replay code bank is misaligned.")
+        candidate_actions.update(
+            {
+                name: jnp.broadcast_to(
+                    candidate_codes[:, position, None],
+                    (n_candidates, n_subjects),
+                )
+                for position, name in enumerate(sim_policy.discrete_action_names)
+            }
+        )
+    elif candidate_codes is not None:
+        raise ValueError(
+            "NNBEGM smooth replay received an unexpected discrete code bank."
+        )
+
+    score_actions = functools.partial(
+        _canonical_Q_at_actions,
+        regime=regime,
+        canonical_states=canonical_states,
+        action_names=action_names,
+        next_regime_to_V_arr=next_regime_to_V_arr,
+        flat_params=flat_params,
+        period=period,
+        age=age,
+    )
+    return jax.vmap(lambda actions: score_actions(candidate_actions=actions))(
+        candidate_actions
+    )
+
+
 def _replay_nnbegm_candidates(
     *,
     optimal_actions: MappingProxyType[ActionName, FloatND | IntND],
@@ -1883,7 +1954,7 @@ def _replay_nnbegm_candidates(
     action_names: tuple[ActionName, ...],
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
 ) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND]:
-    """Replay the exact solve candidate product and canonical-score its winner."""
+    """Replay and canonical-score the exact solve candidate product."""
     n_subjects = next(iter(states.values())).shape[0]
     coordinates = []
     in_support = jnp.ones((n_subjects,), dtype=bool)
@@ -1918,7 +1989,23 @@ def _replay_nnbegm_candidates(
         & jnp.isfinite(candidate_outer)
         & jnp.isfinite(candidate_value)
     )
-    ranking_values = jnp.where(represented, candidate_value, -jnp.inf)
+
+    n_candidates = candidate_inner.shape[0]
+    canonical_values, canonical_feasible = _score_nnbegm_candidate_bank(
+        optimal_actions=optimal_actions,
+        regime=regime,
+        sim_policy=sim_policy,
+        candidate_inner=candidate_inner,
+        candidate_outer=candidate_outer,
+        flat_params=flat_params,
+        period=period,
+        age=age,
+        canonical_states=canonical_states,
+        action_names=action_names,
+        next_regime_to_V_arr=next_regime_to_V_arr,
+    )
+    valid = represented & canonical_feasible & jnp.isfinite(canonical_values)
+    ranking_values = jnp.where(valid, canonical_values, -jnp.inf)
     # JAX argmax returns the first maximum, preserving keeper/outer-major then
     # declared discrete-product order exactly.
     winner = jnp.asarray(jnp.argmax(ranking_values, axis=0), dtype=jnp.int32)
@@ -1926,50 +2013,24 @@ def _replay_nnbegm_candidates(
     def at_winner(stacked: FloatND) -> FloatND:
         return jnp.take_along_axis(stacked, winner[None, :], axis=0)[0]
 
-    any_represented = jnp.any(represented, axis=0)
+    any_valid = jnp.any(valid, axis=0)
     selected_inner = at_winner(candidate_inner)
     selected_outer = at_winner(candidate_outer)
     selected_codes, selected_discrete_actions = _select_nnbegm_discrete_actions(
         sim_policy=sim_policy,
         winner=winner,
-        n_candidates=candidate_inner.shape[0],
+        n_candidates=n_candidates,
     )
-    selected_actions = MappingProxyType(
-        {
-            **optimal_actions,
-            sim_policy.inner_action_name: selected_inner,
-            sim_policy.outer_action_name: selected_outer,
-            **selected_discrete_actions,
-        }
-    )
-    selected_value, selected_feasible = _canonical_Q_at_actions(
-        candidate_actions=selected_actions,
-        regime=regime,
-        canonical_states=canonical_states,
-        action_names=action_names,
-        next_regime_to_V_arr=next_regime_to_V_arr,
-        flat_params=flat_params,
-        period=period,
-        age=age,
-    )
-    selected_valid = (
-        any_represented
-        & selected_feasible
-        & jnp.isfinite(selected_inner)
-        & jnp.isfinite(selected_outer)
-        & jnp.isfinite(selected_value)
-    )
-    chosen_inner = jnp.where(selected_valid, selected_inner, jnp.nan)
-    chosen_outer = jnp.where(selected_valid, selected_outer, jnp.nan)
-    chosen_value = jnp.where(selected_valid, selected_value, -jnp.inf)
+    selected_value = at_winner(canonical_values)
+    chosen_inner = jnp.where(any_valid, selected_inner, jnp.nan)
+    chosen_outer = jnp.where(any_valid, selected_outer, jnp.nan)
+    chosen_value = jnp.where(any_valid, selected_value, -jnp.inf)
     if selected_codes is None:
         chosen_discrete_actions = {}
     else:
-        invalid_codes = jnp.full_like(selected_codes, -1)
-        chosen_codes = jnp.where(selected_valid[:, None], selected_codes, invalid_codes)
         chosen_discrete_actions = {
-            name: chosen_codes[:, position]
-            for position, name in enumerate(sim_policy.discrete_action_names)
+            name: jnp.where(any_valid, selected_discrete_actions[name], -1)
+            for name in sim_policy.discrete_action_names
         }
     return (
         MappingProxyType(
