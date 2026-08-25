@@ -77,8 +77,15 @@ also the baseline against which specialized solutions should be checked.
 
 The EGM routes require named liquid roles. Nested routes add named outer roles.
 Institutional kinks and cliffs must be declared as case pieces or a piecewise-affine
-schedule from the outset. Read
-[Consumption-saving regimes and margins](../reference/consumption_savings.md) and
+schedule from the outset.
+
+Plan phase topology before choosing `NNBEGM`. Simulation replays the candidate bank
+ranked during the solve, so a bare declaration or `Phased(solve=f, simulate=f)` is
+accepted only when `f` is the exact same callable object in both fields. Genuine phase
+variation and carried-only states are rejected during `Model(...)` construction. See
+[NNBEGM replay capability](../reference/solvers.md#nnbegm).
+
+Read [Consumption-saving regimes and margins](../reference/consumption_savings.md) and
 [Declared non-convex budgets](../methods/nonconvex_budgets.md) before authoring those
 models.
 

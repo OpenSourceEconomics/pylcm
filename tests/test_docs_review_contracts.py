@@ -211,6 +211,28 @@ def test_solver_capability_guidance_stays_aligned() -> None:
     assert "fixed-width integer arithmetic" in solver_source
 
 
+def test_nnbegm_phase_replay_boundary_is_linked_across_docs() -> None:
+    """Solver choice and phase grammar point to NNBEGM's replay restriction."""
+    chooser = (_DOCS / "user_guide" / "choosing_a_solver.md").read_text(
+        encoding="utf-8"
+    )
+    methods = (_DOCS / "methods" / "nested_egm.md").read_text(encoding="utf-8")
+    reference = (_DOCS / "reference" / "solvers.md").read_text(encoding="utf-8")
+    notebook = json.loads(
+        (_DOCS / "explanations" / "phase_grammar.ipynb").read_text(encoding="utf-8")
+    )
+    phase_grammar = "\n".join(
+        "".join(cell.get("source", [])) for cell in notebook["cells"]
+    )
+
+    assert "exact same callable object" in chooser
+    assert "rejected during `Model(...)` construction" in chooser
+    assert "../reference/solvers.md#nnbegm" in chooser
+    assert "../reference/solvers.md#nnbegm" in methods
+    assert "../reference/solvers.md#nnbegm" in phase_grammar
+    assert "two distinct functions" in reference
+
+
 def test_certified_nbegm_and_batch_widths_have_actionable_user_contracts() -> None:
     """User docs separate native capability from mapped batch widths."""
     installation = " ".join(

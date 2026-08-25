@@ -59,6 +59,13 @@ constraints inside every outer candidate. Its outer search is itself configurabl
 `DeterministicOuterMaximum` takes the hard maximum. `UniformObservedFixedCost`
 analytically integrates a narrowly specified observed uniform adjustment-cost shock.
 
+Simulation replays that solve-time candidate bank. Current `NNBEGM` therefore requires
+every declaration affecting replay to be phase-invariant by object identity: a bare
+declaration or identical-object `Phased(solve=f, simulate=f)` is accepted, while genuine
+phase variation requires `GridSearch`. This is a candidate-set restriction, not a
+general restriction on `Phased`; see
+[NNBEGM replay capability](../reference/solvers.md#nnbegm).
+
 ## What the model must declare
 
 A `NestedConsumptionSavingsRegime` supplies:

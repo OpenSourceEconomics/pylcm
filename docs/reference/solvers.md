@@ -189,7 +189,9 @@ identity: a bare declaration and `Phased(solve=f, simulate=f)` are accepted, whi
 distinct solve/simulate functions, state or regime transitions, Koopmans aggregators,
 and carried-only states are rejected during `Model(...)` construction. Use identical
 declaration objects, remove the carried-only state, or use `GridSearch` until
-phase-specific NNBEGM replay is implemented.
+phase-specific NNBEGM replay is implemented. In the `Phased` spelling, `f` must be the
+exact same callable object in both fields; two distinct functions that compute the same
+formula still count as phase variation.
 
 ## Capability is validated, not inferred from class names
 
