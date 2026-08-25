@@ -112,8 +112,9 @@ def simulate(
             value function arrays.
         ages: AgeGrid for the model, used to convert periods to ages.
         period_to_regime_to_sim_policy: Immutable mapping of periods to each
-            EGM regime's published off-grid simulation policy, or `None`
-            (user-supplied V arrays carry no policy). Sparse over regimes.
+            EGM regime's published off-grid simulation policy, or `None` when
+            the caller supplies no compatible policy mapping. Sparse over
+            regimes.
             Where a regime qualifies (`SimulationPhase.egm_policy_read`), the
             continuous action is interpolated from the policy at the
             subject's resources instead of argmaxed over the action grid.
