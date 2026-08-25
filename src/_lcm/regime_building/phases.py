@@ -248,6 +248,58 @@ def normalize_all_regime_phases(
     )
 
 
+def _resolve_solve_functions(
+    *,
+    user_regime: lcm.regime.Regime,
+) -> dict[FunctionName, UserFunction]:
+    """Return the single normalized solve-phase declaration pool.
+
+    Every EGM-family validator that reasons about callable ancestry or solver
+    metadata must see the same pool as the solve builder: phase-resolved user
+    functions, regime-specific augmentations, and carried-state imputations.
+    Keeping that projection at the phase-normalization seam prevents consumers
+    from independently unwrapping only a subset of the public phase grammar.
+    """
+    return dict(normalize_regime_phases(user_regime).solution.functions)
+
+
+def phase_variation_paths(
+    *,
+    user_regime: lcm.regime.Regime,
+) -> tuple[str, ...]:
+    """Names of public phase-capable slots whose variants differ by identity.
+
+    Bare values broadcast one object to both phases. A ``Phased`` declaration
+    is replay-invariant only when ``solve is simulate``; semantic equality is
+    deliberately irrelevant. The scan follows the complete public grammar:
+    functions, states, state transitions, the regime transition, and the
+    singleton Koopmans aggregator.
+    """
+    varied: list[str] = []
+    for slot_name, declarations in (
+        ("functions", user_regime.functions),
+        ("states", user_regime.states),
+        ("state_transitions", user_regime.state_transitions),
+    ):
+        for name in sorted(declarations):
+            declaration = declarations[name]
+            if (
+                isinstance(declaration, Phased)
+                and declaration.solve is not declaration.simulate
+            ):
+                varied.append(f"{slot_name}[{name!r}]")
+
+    transition = user_regime.transition
+    if isinstance(transition, Phased) and transition.solve is not transition.simulate:
+        varied.append("transition")
+
+    aggregator = user_regime.koopmans_aggregator
+    if isinstance(aggregator, Phased) and aggregator.solve is not aggregator.simulate:
+        varied.append("koopmans_aggregator")
+
+    return tuple(varied)
+
+
 @dataclass(frozen=True, kw_only=True)
 class PhasedRegimeSpec:
     """A regime expanded into per-phase slices.

@@ -8,8 +8,6 @@ outer action is searched:
 - `AdaptiveOuterMesh(...)`: the canonical continuous-outer approximation —
   exact solves on an adaptive shared mesh, a validated interpolant between
   nodes, and globally safeguarded bracket-local refinement.
-- `LegacyGoldenSection(...)`: historical-algorithm compatibility with
-  source-specific endpoint and tie rules; never the canonical paper mode.
 
 The strategies are defined engine-side in `_lcm.egm.outer_search`; this
 module is a thin re-export so user code can name them, and the abstract
@@ -19,13 +17,11 @@ module is a thin re-export so user code can name them, and the abstract
 from _lcm.egm.outer_search import (
     AdaptiveOuterMesh,
     FiniteOuterGrid,
-    LegacyGoldenSection,
     OuterSearch,
 )
 
 __all__ = [
     "AdaptiveOuterMesh",
     "FiniteOuterGrid",
-    "LegacyGoldenSection",
     "OuterSearch",
 ]

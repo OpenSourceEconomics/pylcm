@@ -40,9 +40,12 @@ from lcm.typing import FloatND, FunctionName, StateName
 class OuterBranchAggregator(ABC):  # noqa: B024
     """Configuration for combining keeper and adjuster branch values.
 
-    Abstract marker base: a nested solver accepts any concrete aggregator
-    and dispatches polymorphically. Pure configuration — the numerics live
-    in the module-level kernels.
+    Abstract marker base over a closed set: `DeterministicOuterMaximum` and
+    `UniformObservedFixedCost` are the two folds the nested kernels
+    implement, and a nested solver rejects any other concrete subclass at
+    construction rather than running one of the two in its place. The base
+    class names the slot; it is not an extension point. Pure configuration —
+    the numerics live in the module-level kernels.
     """
 
 

@@ -80,7 +80,6 @@ from lcm.branch_aggregation import (
 from lcm.outer_search import (
     AdaptiveOuterMesh,
     FiniteOuterGrid,
-    LegacyGoldenSection,
     OuterSearch,
 )
 
@@ -99,7 +98,6 @@ __all__ = [
     "FiniteOuterGrid",
     "GridSearch",
     "LTMEnvelope",
-    "LegacyGoldenSection",
     "MSSEnvelope",
     "OneMarginSolver",
     "OuterBranchAggregator",

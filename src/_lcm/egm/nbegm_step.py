@@ -51,18 +51,14 @@ from _lcm.egm.ez_kernel import (
     ez_marginal_of_resource,
     ez_period_value,
 )
+from _lcm.egm.framed_arithmetic import binade_exponent, framed_difference
 from _lcm.egm.nbegm_segments import (
     affords_an_action,
     mask_dead_candidates,
     segment_ids_from_folds,
 )
 from _lcm.egm.preferences import Preferences
-from _lcm.egm.upper_envelope.query import (
-    ComparisonArithmetic,
-    _binade_exponent,
-    _framed_difference,
-    envelope_at_query,
-)
+from _lcm.egm.upper_envelope.query import ComparisonArithmetic, envelope_at_query
 from lcm.case_piece import EqualityOwner
 from lcm.typing import BoolND, Float1D, FloatND, IntND, ScalarFloat, ScalarInt
 
@@ -407,17 +403,17 @@ def _linear_extension(
     computed in a branch `jnp.where` would only later drop — which would poison
     the reverse-mode gradient through the live branch.
     """
-    tx_head, _, tx_frame = _framed_difference(x, x_node)
-    dy_head, _, dy_frame = _framed_difference(y_next, y_node)
-    dx_head, _, dx_frame = _framed_difference(x_next, x_node)
+    tx_head, _, tx_frame = framed_difference(x, x_node)
+    dy_head, _, dy_frame = framed_difference(y_next, y_node)
+    dx_head, _, dx_frame = framed_difference(x_next, x_node)
 
     degenerate = x_next == x_node
     dx_head = jnp.where(degenerate, jnp.ones_like(dx_head), dx_head)
     dx_frame = jnp.where(degenerate, jnp.zeros_like(dx_frame), dx_frame)
 
-    tx_shift = _binade_exponent(jnp.abs(tx_head))
-    dx_shift = _binade_exponent(jnp.abs(dx_head))
-    dy_shift = _binade_exponent(jnp.abs(dy_head))
+    tx_shift = binade_exponent(jnp.abs(tx_head))
+    dx_shift = binade_exponent(jnp.abs(dx_head))
+    dy_shift = binade_exponent(jnp.abs(dy_head))
 
     # Each factor is now a significand in `[0.5, 1)`, so the product is O(1) and
     # the whole magnitude lives in the exponent sum.
@@ -566,7 +562,7 @@ def _invert_coh_with_linear_extension(
     """
     inner = jnp.interp(coh_endog, coh_case_grid, liquid_grid)
     # Every difference here is framed rather than formed in the working dtype,
-    # for the reason given in `_framed_difference`: a raw `a - b` overflows on
+    # for the reason given in `framed_difference`: a raw `a - b` overflows on
     # opposite-signed top-binade operands even though both are finite normals,
     # and one `inf` in a boundary width poisons the whole inversion with NaN
     # — the same defect class as in the envelope query.

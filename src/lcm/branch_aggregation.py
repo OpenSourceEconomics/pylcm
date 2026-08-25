@@ -10,6 +10,10 @@ adjuster branch values combine:
   cost, integrated analytically — no solve-state grid for the shock, and
   the adjustment probability becomes an analytic moment.
 
+These two are the whole set: a nested solver refuses any other concrete
+`OuterBranchAggregator` at construction, so the base class names the slot
+rather than opening an extension point.
+
 The configurations and the closed-form kernel are defined engine-side in
 `_lcm.egm.branch_aggregation`; this module is a thin re-export.
 """
