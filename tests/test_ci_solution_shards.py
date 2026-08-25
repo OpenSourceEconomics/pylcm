@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+import yaml
 
 from tests.ci.shard_test_files import assign_test_files
 
@@ -35,3 +36,32 @@ def test_solution_shards_require_a_positive_shard_count(n_shards: int) -> None:
             files=(Path("tests/solution/test_case.py"),),
             n_shards=n_shards,
         )
+
+
+def test_codecov_waits_for_the_complete_cpu_python_report_set() -> None:
+    """Coverage statuses use the base leg and all three fp64 solution shards."""
+    config = yaml.safe_load(Path("codecov.yml").read_text(encoding="utf-8"))
+
+    assert config["codecov"]["require_ci_to_pass"] is True
+    assert config["comment"]["after_n_builds"] == 4
+    assert config["codecov"]["notify"]["after_n_builds"] == 4
+    assert config["flags"]["cpu-python"] == {
+        "carryforward": False,
+        "after_n_builds": 4,
+    }
+
+
+def test_every_cpu_coverage_upload_uses_the_cpu_python_flag() -> None:
+    """The four fp64 reports identify themselves as CPU Python coverage."""
+    workflow = yaml.safe_load(
+        Path(".github/workflows/cpu.yml").read_text(encoding="utf-8")
+    )
+    uploads = [
+        step
+        for job in workflow["jobs"].values()
+        for step in job.get("steps", ())
+        if step.get("uses") == "codecov/codecov-action@v7.0.0"
+    ]
+
+    assert len(uploads) == 2
+    assert all(step["with"]["flags"] == "cpu-python" for step in uploads)

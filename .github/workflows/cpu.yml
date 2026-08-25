@@ -193,6 +193,9 @@ jobs:
         uses: codecov/codecov-action@v7.0.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.xml
+          flags: cpu-python
+          disable_search: true
           fail_ci_if_error: true
       - name: Prune superseded JAX caches for this ref
         # `github.sha` in the key means every run writes a fresh entry instead of
@@ -449,6 +452,7 @@ jobs:
         uses: codecov/codecov-action@v7.0.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
+          flags: cpu-python
           files: >-
             reports/coverage-64-${{ matrix.shard }}.xml
           disable_search: true
