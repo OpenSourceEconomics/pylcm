@@ -10,9 +10,9 @@ rolled cross-period and lowered against the template — sees a template pytree 
 differs from the runtime carry, and the compiled solve rejects it.
 
 These tests pin the template's pytree against the real runtime producer
-(`_assemble_ride_carry`) on both the `carry_policy=True` and `carry_policy=False`
-paths, so a regression to a policy-free template fails structurally without
-needing the full model solve.
+(`_assemble_ride_carry`) on both the continuous-only and discrete-branch
+paths, so a regression to a policy-free continuous template fails structurally
+without needing the full model solve.
 """
 
 import jax
@@ -33,15 +33,24 @@ def _runtime_carry(*, carry_policy: bool):
     n_cell = _RIDE_SHAPE[0] * _N_LIQUID
     value_stack = jnp.zeros((n_cell,), dtype=dtype)
     marginal_stack = jnp.ones((n_cell,), dtype=dtype)
-    stacks = (
-        (value_stack, marginal_stack, jnp.ones((n_cell,), dtype=dtype))
-        if carry_policy
-        else (value_stack, marginal_stack)
-    )
-    _, carry = _assemble_ride_carry(
+    policy_stack = jnp.ones((n_cell,), dtype=dtype)
+    if carry_policy:
+        n_action_branches = 0
+        stacks = (value_stack, marginal_stack, policy_stack)
+    else:
+        n_action_branches = 2
+        branch_shape = (n_cell * n_action_branches,)
+        stacks = (
+            value_stack,
+            marginal_stack,
+            policy_stack,
+            jnp.zeros(branch_shape, dtype=dtype),
+            jnp.ones(branch_shape, dtype=dtype),
+        )
+    _, carry, *_ = _assemble_ride_carry(
         stacks=stacks,
         n_jumps=0,
-        carry_policy=carry_policy,
+        n_action_branches=n_action_branches,
         liquid=liquid,
         ride_shape=_RIDE_SHAPE,
         liquid_axis_pos=0,

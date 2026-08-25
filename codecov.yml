@@ -1,7 +1,10 @@
 ---
 codecov:
+  require_ci_to_pass: true
   notify:
-    require_ci_to_pass: true
+    after_n_builds: 4
+comment:
+  after_n_builds: 4
 coverage:
   precision: 2
   round: down
@@ -13,5 +16,9 @@ coverage:
     project:
       default:
         target: 90%
+flags:
+  cpu-python:
+    after_n_builds: 4
+    carryforward: false
 ignore:
   - tests/**/*
