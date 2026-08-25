@@ -162,3 +162,94 @@ def _unflatten_egm_sim_policy(
 jax.tree_util.register_pytree_node(
     EGMSimPolicy, _flatten_egm_sim_policy, _unflatten_egm_sim_policy
 )
+
+
+@dataclass(frozen=True, kw_only=True)
+class NBEGMGridPolicy:
+    """Inner NBEGM action on the regime state grid.
+
+    This is an intermediate solve artifact. A nested outer solver stacks one
+    instance per candidate before publishing the joint replay payload.
+    """
+
+    action: FloatND
+    """Conditional inner action, aligned with ``state_names`` axes."""
+
+    state_names: tuple[StateName, ...]
+    """State-grid axis names in the array order of ``action``."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class NNBEGMSimPolicy:
+    """Candidate-aligned NNBEGM joint policies for forward replay.
+
+    Candidate axis zero is the state-specific keeper; the remaining entries
+    follow ``NNBEGM.outer_grid`` exactly. Both continuous actions and each
+    candidate's represented solve value are stored on the same state grid.
+    Simulation performs only aligned multilinear reads, retains the solve's
+    finite-set ordering, and canonical-scores the selected pair once.
+    """
+
+    candidate_inner_action: FloatND
+    """Shape ``(1 + n_outer, *state_shape)`` in keeper/adjuster order."""
+
+    candidate_outer_action: FloatND
+    """Outer action on exactly the same candidate/state axes."""
+
+    candidate_value: FloatND
+    """Conditional solve value on exactly the same candidate/state axes."""
+
+    state_names: tuple[StateName, ...]
+    """State-grid axis names following the leading candidate axis."""
+
+    inner_action_name: ActionName
+    outer_action_name: ActionName
+
+
+def _flatten_grid_policy(
+    policy: NBEGMGridPolicy,
+) -> tuple[tuple[Any, ...], tuple[Any, ...]]:
+    return (policy.action,), policy.state_names
+
+
+def _unflatten_grid_policy(
+    state_names: tuple[Any, ...], children: Sequence[Any]
+) -> NBEGMGridPolicy:
+    return NBEGMGridPolicy(action=children[0], state_names=state_names)
+
+
+def _flatten_nnbegm_policy(
+    policy: NNBEGMSimPolicy,
+) -> tuple[tuple[Any, ...], tuple[Any, ...]]:
+    aux = (
+        policy.state_names,
+        policy.inner_action_name,
+        policy.outer_action_name,
+    )
+    return (
+        policy.candidate_inner_action,
+        policy.candidate_outer_action,
+        policy.candidate_value,
+    ), aux
+
+
+def _unflatten_nnbegm_policy(
+    aux: tuple[Any, ...], children: Sequence[Any]
+) -> NNBEGMSimPolicy:
+    state_names, inner_action_name, outer_action_name = aux
+    return NNBEGMSimPolicy(
+        candidate_inner_action=children[0],
+        candidate_outer_action=children[1],
+        candidate_value=children[2],
+        state_names=state_names,
+        inner_action_name=inner_action_name,
+        outer_action_name=outer_action_name,
+    )
+
+
+jax.tree_util.register_pytree_node(
+    NBEGMGridPolicy, _flatten_grid_policy, _unflatten_grid_policy
+)
+jax.tree_util.register_pytree_node(
+    NNBEGMSimPolicy, _flatten_nnbegm_policy, _unflatten_nnbegm_policy
+)

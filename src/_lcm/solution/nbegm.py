@@ -57,6 +57,7 @@ from _lcm.egm.nbegm_constraint_boundaries import (
     feasibility_axis_boundaries,
 )
 from _lcm.egm.preferences import Preferences
+from _lcm.egm.published_policy import NBEGMGridPolicy
 from _lcm.egm.upper_envelope.query import ComparisonArithmetic
 from _lcm.engine import StateActionSpace
 from _lcm.grids import ContinuousGrid, DiscreteGrid
@@ -1433,7 +1434,7 @@ class _RideAlongNBEGMPeriodKernel:
         else:
             cont_value_stack, cont_marginal_stack = continuation_stacks
             cliff_kwargs = {}
-        V_arr, carry = compiled_cores["envelope"](
+        V_arr, carry, inner_action = compiled_cores["envelope"](
             **states,
             cont_value_stack=cont_value_stack,
             cont_marginal_stack=cont_marginal_stack,
@@ -1442,7 +1443,14 @@ class _RideAlongNBEGMPeriodKernel:
             period=jnp.int32(period),
             age=ages.values[period],
         )
-        return KernelResult(V_arr=V_arr, continuation=carry)
+        return KernelResult(
+            V_arr=V_arr,
+            continuation=carry,
+            simulation_policy=NBEGMGridPolicy(
+                action=inner_action,
+                state_names=tuple(state_action_space.states),
+            ),
+        )
 
     def _stack_placeholders(self, *, states: Mapping[str, object]) -> dict[str, object]:
         """Zero placeholders for the envelope core's continuation stacks.
@@ -5376,7 +5384,7 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
         cont_marginal_stack: FloatND,
         cliff_savings_stack: FloatND | None = None,
         **kwargs: Any,  # noqa: ANN401  # state grids + flat params (mixed dtypes)
-    ) -> tuple[FloatND, EGMCarry]:
+    ) -> tuple[FloatND, EGMCarry, FloatND]:
         dtype = canonical_float_dtype()
         liquid = jnp.asarray(kwargs[liquid_name], dtype=dtype)
         coh_params = {name: kwargs[name] for name in schedule_spec.coh_param_names}
@@ -5613,7 +5621,7 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
 
                 def solve_one_branch(
                     inputs: dict[str, Any],
-                ) -> tuple[Float1D, Float1D]:
+                ) -> tuple[Float1D, Float1D, Float1D]:
                     binding = {
                         name: inputs["codes"][position]
                         for position, name in enumerate(branch_action_names)
@@ -5625,36 +5633,38 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
                         inputs.get("extra_cont_value"),
                         inputs.get("cliff_savings"),
                     )
-                    return step[0], step[1]
+                    return step[0], step[1], step[2]
 
-                value_stack, marginal_stack = _map_branch_partitioned(
+                value_stack, marginal_stack, policy_stack = _map_branch_partitioned(
                     func=solve_one_branch,
                     xs=branch_inputs,
                     requested_block_size=statics.branch_batch_size,
                 )
-                value_row, marginal_row = _discrete_envelope_over_branches(
-                    value_stack=value_stack,
-                    marginal_stack=marginal_stack,
-                    taste_shock_scale=0.0,
-                )
+                modal = jnp.argmax(value_stack, axis=0)
+                index = jnp.arange(value_stack.shape[1])
+                value_row = value_stack[modal, index]
+                marginal_row = marginal_stack[modal, index]
+                policy_row = policy_stack[modal, index]
             else:
-                value_row, marginal_row, _policy_row = solve_branch(
+                value_row, marginal_row, policy_row = solve_branch(
                     {}, cont_value, cont_marginal, extra_cont_value, cliff_savings
                 )
 
             if n_published_boundaries == 0:
-                return (value_row, marginal_row)
+                return (value_row, marginal_row, policy_row)
             # The carry keeps the whole augmented row — topology rides inside
             # the endogenous grid as a duplicated abscissa carrying its exact
             # one-sided value and marginal limits. Only the published value
             # array needs the original liquid nodes, sliced back out through
             # the sort permutation.
             value_at_liquid = value_row[unsort][: liquid.shape[0]]
+            policy_at_liquid = policy_row[unsort][: liquid.shape[0]]
             return (
                 value_at_liquid,
                 endog_row,
                 value_row,
                 marginal_row,
+                policy_at_liquid,
                 published_boundaries,
             )
 
@@ -5674,7 +5684,7 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
             xs=stream_inputs,
             requested_block_size=statics.cell_block_size,
         )
-        value_arr, carry = _assemble_ride_carry(
+        value_arr, carry, policy_arr = _assemble_ride_carry(
             stacks=stacks,
             n_jumps=n_published_boundaries,
             liquid=liquid,
@@ -5682,7 +5692,7 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
             liquid_axis_pos=schedule_spec.liquid_axis_pos,
             dtype=dtype,
         )
-        return value_arr, carry
+        return value_arr, carry, policy_arr
 
     return envelope_core
 
@@ -6235,8 +6245,8 @@ def _assemble_ride_carry(
     ride_shape: tuple[int, ...],
     liquid_axis_pos: int,
     dtype: Any,  # noqa: ANN401  # jnp dtype object
-) -> tuple[FloatND, EGMCarry]:
-    """Reshape the per-cell solve stacks into the value array and the carry.
+) -> tuple[FloatND, EGMCarry, FloatND]:
+    """Reshape per-cell value, carry, and policy stacks.
 
     - With jump breakpoints, the cell solve returns the value at the liquid
       nodes plus the augmented carry rows (duplicated jump abscissae with
@@ -6257,6 +6267,7 @@ def _assemble_ride_carry(
             endog_stack,
             row_value_stack,
             row_marginal_stack,
+            policy_stack,
             breakpoint_stack,
         ) = stacks
         n_row = n_liquid + 2 * n_jumps
@@ -6267,7 +6278,7 @@ def _assemble_ride_carry(
         )
         breakpoint_rows = breakpoint_stack.reshape(*ride_shape, n_jumps).astype(dtype)
     else:
-        value_stack, marginal_stack = stacks
+        value_stack, marginal_stack, policy_stack = stacks
         carry_rows = (
             jnp.broadcast_to(liquid, (*ride_shape, n_liquid)).astype(dtype),
             value_stack.reshape(*ride_shape, n_liquid).astype(dtype),
@@ -6277,6 +6288,9 @@ def _assemble_ride_carry(
     value_arr = jnp.moveaxis(
         value_stack.reshape(*ride_shape, n_liquid), -1, liquid_axis_pos
     )
+    policy_arr = jnp.moveaxis(
+        policy_stack.reshape(*ride_shape, n_liquid), -1, liquid_axis_pos
+    )
     carry = EGMCarry(
         endog_grid=carry_rows[0],
         value=carry_rows[1],
@@ -6284,7 +6298,7 @@ def _assemble_ride_carry(
         taste_shock_scale=jnp.asarray(0.0, dtype=dtype),
         breakpoints=breakpoint_rows,
     )
-    return value_arr, carry
+    return value_arr, carry, policy_arr
 
 
 def _augment_liquid_with_jump_sides(

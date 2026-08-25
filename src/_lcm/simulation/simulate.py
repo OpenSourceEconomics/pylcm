@@ -4,7 +4,7 @@ import logging
 import time
 from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
-from typing import Literal
+from typing import Literal, cast
 
 import jax
 import jax.numpy as jnp
@@ -13,13 +13,20 @@ import pandas as pd
 from jax import vmap
 
 from _lcm.egm.interp import interp_on_padded_grid
-from _lcm.egm.published_policy import EGMSimPolicy
+from _lcm.egm.published_policy import (
+    EGMSimPolicy,
+    NBEGMGridPolicy,
+    NNBEGMSimPolicy,
+)
 from _lcm.engine import (
     EGMPolicyRead,
+    NNBEGMPolicyRead,
     PeriodRegimeSimulationData,
     Regime,
     StateActionSpace,
 )
+from _lcm.grids import ContinuousGrid, DiscreteGrid
+from _lcm.regime_building.ndimage import map_coordinates
 from _lcm.simulation.additional_targets import _compute_targets
 from _lcm.simulation.initial_conditions import (
     MISSING_CAT_CODE,
@@ -484,7 +491,7 @@ def _simulate_regime_in_period(
     n_subjects: int,
     subject_slice: slice,
     original_n_subjects: int | None = None,
-    sim_policy: EGMSimPolicy | None = None,
+    sim_policy: EGMSimPolicy | NBEGMGridPolicy | NNBEGMSimPolicy | None = None,
 ) -> tuple[PeriodRegimeSimulationData, StatesPerRegime, Int1D, PRNGKeyND]:
     """Simulate one regime for one period.
 
@@ -552,35 +559,71 @@ def _simulate_regime_in_period(
         source_period=period,
     )
 
-    # The Q-function values contain the information of how much value each
-    # action combination is worth. To find the optimal discrete action, we
-    # therefore only need to maximize the Q-function values over all actions.
-    argmax_and_max_Q_over_a = regime.simulation.argmax_and_max_Q_over_a[period]
-
-    taste_shock_kwargs = {}
-    if regime.has_taste_shocks:
-        # Per-subject Gumbel keys are generated for the full population and
-        # sliced by global subject index, so a subject's draw is invariant to
-        # how the population is chunked.
-        key, gumbel_keys = generate_simulation_keys(
-            key=key,
-            names=["taste_shock"],
-            n_initial_states=n_subjects,
-            subject_slice=subject_slice,
-            original_n_subjects=original_n_subjects,
-        )
-        taste_shock_kwargs = {"taste_shock_key": gumbel_keys["key_taste_shock"]}
-
-    indices_optimal_actions, V_arr = argmax_and_max_Q_over_a(
-        **state_action_space.states,
-        **state_action_space.discrete_actions,
-        **state_action_space.continuous_actions,
-        **taste_shock_kwargs,
-        next_regime_to_V_arr=next_regime_to_V_arr,
-        **flat_params[regime_name],
-        period=jnp.int32(period),
-        age=age,
+    direct_nnbegm_replay = isinstance(sim_policy, NNBEGMSimPolicy) and isinstance(
+        regime.simulation.egm_policy_read, NNBEGMPolicyRead
     )
+    if direct_nnbegm_replay:
+        # The published payload already names the complete finite candidate set.
+        # Do not compile or execute the unrelated Cartesian simulate-action argmax.
+        optimal_actions, V_arr = _replay_nnbegm_candidates(
+            optimal_actions=MappingProxyType({}),
+            regime=regime,
+            sim_policy=sim_policy,
+            states=states[regime_name],
+            flat_params=flat_params[regime_name],
+            period=period,
+            age=age,
+            canonical_states=state_action_space.states,
+            action_names=state_action_space.action_names,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+        )
+    else:
+        # The Q-function values contain the information of how much value each
+        # action combination is worth. To find the optimal discrete action, we
+        # therefore only need to maximize the Q-function values over all actions.
+        argmax_and_max_Q_over_a = regime.simulation.argmax_and_max_Q_over_a[period]
+
+        taste_shock_kwargs = {}
+        if regime.has_taste_shocks:
+            # Per-subject Gumbel keys are generated for the full population and
+            # sliced by global subject index, so a subject's draw is invariant to
+            # how the population is chunked.
+            key, gumbel_keys = generate_simulation_keys(
+                key=key,
+                names=["taste_shock"],
+                n_initial_states=n_subjects,
+                subject_slice=subject_slice,
+                original_n_subjects=original_n_subjects,
+            )
+            taste_shock_kwargs = {"taste_shock_key": gumbel_keys["key_taste_shock"]}
+
+        indices_optimal_actions, V_arr = argmax_and_max_Q_over_a(
+            **state_action_space.states,
+            **state_action_space.discrete_actions,
+            **state_action_space.continuous_actions,
+            **taste_shock_kwargs,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            **flat_params[regime_name],
+            period=jnp.int32(period),
+            age=age,
+        )
+        optimal_actions = _lookup_values_from_indices(
+            flat_indices=indices_optimal_actions,
+            grids=state_action_space.actions,
+        )
+        optimal_actions, V_arr = _replace_continuous_action_with_policy_read(
+            optimal_actions=optimal_actions,
+            regime=regime,
+            sim_policy=sim_policy,
+            states=states[regime_name],
+            flat_params=flat_params[regime_name],
+            period=period,
+            age=age,
+            canonical_states=state_action_space.states,
+            action_names=state_action_space.action_names,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            grid_values=V_arr,
+        )
     if validation_enabled(logger):
         try:
             # Out-of-regime subjects carry placeholder entries (their state is
@@ -594,23 +637,6 @@ def _simulate_regime_in_period(
         except InvalidValueFunctionError as error:
             raise_or_warn(logger=logger, error=error)
 
-    optimal_actions = _lookup_values_from_indices(
-        flat_indices=indices_optimal_actions,
-        grids=state_action_space.actions,
-    )
-    optimal_actions, V_arr = _replace_continuous_action_with_policy_read(
-        optimal_actions=optimal_actions,
-        regime=regime,
-        sim_policy=sim_policy,
-        states=states[regime_name],
-        flat_params=flat_params[regime_name],
-        period=period,
-        age=age,
-        canonical_states=state_action_space.states,
-        action_names=state_action_space.action_names,
-        next_regime_to_V_arr=next_regime_to_V_arr,
-        grid_values=V_arr,
-    )
     # Store results for this regime-period
     # For state-less regimes (e.g., terminal regimes with no states), V_arr may be a
     # scalar. We need to broadcast it to match this chunk's subject count.
@@ -672,7 +698,7 @@ def _replace_continuous_action_with_policy_read(
     *,
     optimal_actions: MappingProxyType[ActionName, FloatND | IntND],
     regime: Regime,
-    sim_policy: EGMSimPolicy | None,
+    sim_policy: EGMSimPolicy | NBEGMGridPolicy | NNBEGMSimPolicy | None,
     states: Mapping[StateOrActionName, FloatND | IntND],
     flat_params: FlatRegimeParams,
     period: int,
@@ -708,6 +734,22 @@ def _replace_continuous_action_with_policy_read(
     read = regime.simulation.egm_policy_read
     if sim_policy is None or read is None:
         return optimal_actions, grid_values
+    if isinstance(sim_policy, NNBEGMSimPolicy):
+        return _replay_nnbegm_candidates(
+            optimal_actions=optimal_actions,
+            regime=regime,
+            sim_policy=sim_policy,
+            states=states,
+            flat_params=flat_params,
+            period=period,
+            age=age,
+            canonical_states=canonical_states,
+            action_names=action_names,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+        )
+    if isinstance(sim_policy, NBEGMGridPolicy):
+        return optimal_actions, grid_values
+    read = cast("EGMPolicyRead", read)
     if sim_policy.row_passive_state_names:
         return optimal_actions, grid_values
 
@@ -995,6 +1037,102 @@ def _interp_rows_with_support(
     last_live = jnp.take_along_axis(rows_x, (valid_length - 1)[:, None], axis=-1)[:, 0]
     in_support = (resources >= rows_x[:, 0]) & (resources <= last_live)
     return values, in_support
+
+
+def _replay_nnbegm_candidates(
+    *,
+    optimal_actions: MappingProxyType[ActionName, FloatND | IntND],
+    regime: Regime,
+    sim_policy: NNBEGMSimPolicy,
+    states: Mapping[StateOrActionName, FloatND | IntND],
+    flat_params: FlatRegimeParams,
+    period: int,
+    age: ScalarFloat | ScalarInt,
+    canonical_states: Mapping[StateName, FloatND | IntND],
+    action_names: tuple[ActionName, ...],
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND]:
+    """Replay the aligned keeper-plus-outer candidate surfaces NNBEGM solved."""
+    n_subjects = next(iter(states.values())).shape[0]
+    coordinates = []
+    in_support = jnp.ones((n_subjects,), dtype=bool)
+    for name in sim_policy.state_names:
+        values = jnp.asarray(states[name])
+        grid = regime.simulation.grids[name]
+        points = jnp.asarray(grid.to_jax())
+        if isinstance(grid, DiscreteGrid):
+            coordinate = jnp.clip(
+                jnp.searchsorted(points, values), 0, points.shape[0] - 1
+            )
+            in_support &= points[coordinate] == values
+        else:
+            continuous_grid = cast("ContinuousGrid", grid)
+            coordinate = continuous_grid.get_coordinate(values)
+            in_support &= (
+                jnp.isfinite(values) & (values >= points[0]) & (values <= points[-1])
+            )
+        coordinates.append(coordinate)
+
+    def read_bank(bank: FloatND) -> FloatND:
+        return jax.vmap(
+            lambda surface: map_coordinates(input=surface, coordinates=coordinates)
+        )(bank)
+
+    candidate_inner = read_bank(sim_policy.candidate_inner_action)
+    candidate_outer = read_bank(sim_policy.candidate_outer_action)
+    candidate_value = read_bank(sim_policy.candidate_value)
+    represented = (
+        in_support[None, :]
+        & jnp.isfinite(candidate_inner)
+        & jnp.isfinite(candidate_outer)
+        & jnp.isfinite(candidate_value)
+    )
+    ranking_values = jnp.where(represented, candidate_value, -jnp.inf)
+    winner = jnp.argmax(ranking_values, axis=0)
+
+    def at_winner(stacked: FloatND) -> FloatND:
+        return jnp.take_along_axis(stacked, winner[None, :], axis=0)[0]
+
+    any_represented = jnp.any(represented, axis=0)
+    selected_inner = at_winner(candidate_inner)
+    selected_outer = at_winner(candidate_outer)
+    selected_actions = MappingProxyType(
+        {
+            **optimal_actions,
+            sim_policy.inner_action_name: selected_inner,
+            sim_policy.outer_action_name: selected_outer,
+        }
+    )
+    selected_value, selected_feasible = _canonical_Q_at_actions(
+        candidate_actions=selected_actions,
+        regime=regime,
+        canonical_states=canonical_states,
+        action_names=action_names,
+        next_regime_to_V_arr=next_regime_to_V_arr,
+        flat_params=flat_params,
+        period=period,
+        age=age,
+    )
+    selected_valid = (
+        any_represented
+        & selected_feasible
+        & jnp.isfinite(selected_inner)
+        & jnp.isfinite(selected_outer)
+        & jnp.isfinite(selected_value)
+    )
+    chosen_inner = jnp.where(selected_valid, selected_inner, jnp.nan)
+    chosen_outer = jnp.where(selected_valid, selected_outer, jnp.nan)
+    chosen_value = jnp.where(selected_valid, selected_value, -jnp.inf)
+    return (
+        MappingProxyType(
+            {
+                **optimal_actions,
+                sim_policy.inner_action_name: chosen_inner,
+                sim_policy.outer_action_name: chosen_outer,
+            }
+        ),
+        chosen_value,
+    )
 
 
 def _canonical_Q_at_actions(

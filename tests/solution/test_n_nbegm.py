@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 from beartype.roar import BeartypeCallHintParamViolation
 
+from _lcm.egm.published_policy import NNBEGMSimPolicy
 from lcm import NormalIIDProcess
 from lcm.exceptions import RegimeInitializationError
 from lcm.solvers import NBEGM, NNBEGM
@@ -71,19 +72,28 @@ def test_constructing_nnbegm_with_a_non_nbegm_inner_is_refused() -> None:
         )
 
 
-@pytest.mark.parametrize("variant", ["negm", "n_nbegm"])
-def test_nested_solver_does_not_publish_a_keeper_only_simulation_policy(
-    variant: str,
-) -> None:
-    """A two-margin solve publishes no policy until both actions can replay."""
-    _, policies = toy.build_model(variant=variant, n_periods=2).solve(
+def test_negm_does_not_publish_a_keeper_only_simulation_policy() -> None:
+    """The unrelated NEGM path remains on its existing no-policy contract."""
+    _, policies = toy.build_model(variant="negm", n_periods=2).solve(
         params=_PARAMS,
         log_level="debug",
         return_simulation_policy=True,
     )
-    assert all(
-        "alive" not in regime_to_policy for regime_to_policy in policies.values()
+    assert all("alive" not in mapping for mapping in policies.values())
+
+
+def test_nnbegm_publishes_every_ranked_candidate_inner_policy() -> None:
+    """Replay carries keeper plus each outer-grid candidate, in solve order."""
+    _, policies = toy.build_model(variant="n_nbegm", n_periods=2).solve(
+        params=_PARAMS,
+        log_level="debug",
+        return_simulation_policy=True,
     )
+    policy = policies[0]["alive"]
+    assert isinstance(policy, NNBEGMSimPolicy)
+    n_candidates = 1 + toy.OUTER_GRID.to_jax().shape[0]
+    assert policy.candidate_inner_action.shape[0] == n_candidates
+    assert policy.candidate_value.shape == policy.candidate_inner_action.shape
 
 
 def test_two_period_toy_agrees_with_nested_dcegm() -> None:

@@ -11,6 +11,7 @@ The kernel-building imports are function-local so the public `lcm.solvers`
 façade stays a thin re-export that pulls in no numerical engine modules.
 """
 
+import inspect
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, fields, replace
 from types import MappingProxyType
@@ -19,11 +20,13 @@ from typing import cast
 import jax
 import jax.numpy as jnp
 from beartype import beartype
+from dags import concatenate_functions
 
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.constraints.routes import ConstraintRoute
 from _lcm.continuation import EGMContinuationLayout, EGMContinuationSpec
 from _lcm.egm.carry import EGMCarry
+from _lcm.egm.published_policy import NBEGMGridPolicy, NNBEGMSimPolicy
 from _lcm.engine import StateActionSpace
 from _lcm.grids import ContinuousGrid, Grid
 from _lcm.solution.contract import (
@@ -308,6 +311,7 @@ class NNBEGM(TwoMarginSolver):
 
         adjuster_by_period: dict[int, PeriodKernel] = {}
         keeper_by_period: dict[int, PeriodKernel] = {}
+        outer_target_function_by_period: dict[int, Callable] = {}
         grouped_param_checks = []
         keeper_continuation_spec = None
         for periods in grouped_periods.values():
@@ -364,9 +368,19 @@ class NNBEGM(TwoMarginSolver):
                 ),
             )
             keeper_group = bound.inner.build_period_kernels(context=keeper_context)
+            replay_targets = [bound.outer_post_decision]
+            if bound.outer_no_adjustment_candidate is not None:
+                replay_targets.append(bound.outer_no_adjustment_candidate)
+            outer_target_function = concatenate_functions(
+                functions=group_context.functions,
+                targets=replay_targets,
+                return_type="dict",
+                set_annotations=True,
+            )
             for period in group_periods:
                 adjuster_by_period[period] = adjuster_group.period_kernels[period]
                 keeper_by_period[period] = keeper_group.period_kernels[period]
+                outer_target_function_by_period[period] = outer_target_function
             grouped_param_checks.extend(adjuster_group.param_checks)
             grouped_param_checks.extend(keeper_group.param_checks)
             if keeper_continuation_spec is None:
@@ -388,7 +402,12 @@ class NNBEGM(TwoMarginSolver):
                     adjuster_kernel=adjuster_kernel,
                     regime_name=context.regime_name,
                     outer_grid_values=outer_grid_values,
+                    inner_action_name=bound.inner.continuous_action,
+                    outer_action_name=bound.outer_action,
+                    outer_state_name=bound.outer_state,
                     outer_post_decision=bound.outer_post_decision,
+                    outer_no_adjustment_target=bound.outer_no_adjustment_candidate,
+                    outer_target_function=outer_target_function_by_period[period],
                     outer_batch_size=self.outer_batch_size,
                 )
                 for period, adjuster_kernel in adjuster_by_period.items()
@@ -453,8 +472,23 @@ class _NNBEGMPeriodKernel:
     outer_grid_values: FloatND
     r"""Exogenous grid over the outer post-decision margin $s_t^\textit{post-dec}$."""
 
+    inner_action_name: ActionName
+    """Name of the conditional inner action retained per candidate."""
+
+    outer_action_name: ActionName
+    """Name of the outer action reconstructed from the candidate target."""
+
+    outer_state_name: StateName
+    """Name of the state-specific keeper source."""
+
     outer_post_decision: FunctionName
     """Name of the outer post-decision function bound per outer-grid node."""
+
+    outer_no_adjustment_target: FunctionName | None
+    """Custom keeper target, or ``None`` for identity in the outer state."""
+
+    outer_target_function: Callable
+    """Resolved solve-phase DAG used to recover the outer action bank."""
 
     outer_batch_size: int
     """Outer-grid nodes solved per chunk before folding into the running
@@ -574,6 +608,9 @@ class _NNBEGMPeriodKernel:
         )
         V_arr = keeper_result.V_arr
         keeper_carry = cast("EGMCarry", keeper_result.continuation)
+        keeper_policy = cast("NBEGMGridPolicy", keeper_result.simulation_policy)
+        candidate_inner_actions = [keeper_policy.action]
+        candidate_values = [keeper_result.V_arr]
         adjuster_carries: list[EGMCarry] = []
         adjuster_cores = _subcores(compiled_cores=compiled_cores, role="adjuster")
         nodes = list(self.outer_grid_values)
@@ -603,6 +640,15 @@ class _NNBEGMPeriodKernel:
                 # NaN only when every candidate is infeasible there.
                 V_arr = jnp.fmax(V_arr, adjuster_result.V_arr)
                 adjuster_carries.append(cast("EGMCarry", adjuster_result.continuation))
+                adjuster_policy = cast(
+                    "NBEGMGridPolicy", adjuster_result.simulation_policy
+                )
+                if adjuster_policy.state_names != keeper_policy.state_names:
+                    raise ValueError(
+                        "NNBEGM candidate policies disagree on state-axis order."
+                    )
+                candidate_inner_actions.append(adjuster_policy.action)
+                candidate_values.append(adjuster_result.V_arr)
             V_arr, _ = jax.block_until_ready((V_arr, adjuster_carries[chunk_start:]))
         from _lcm.egm.outer_envelope import stack_candidate_carries  # noqa: PLC0415
 
@@ -610,13 +656,115 @@ class _NNBEGMPeriodKernel:
             candidates=(keeper_carry, *adjuster_carries),
             nan_is_infeasible=True,
         )
-        # A keeper-only proposal cannot represent the joint durable/liquid
-        # decision. Publish no finite replay policy so simulation retains its
-        # canonical full-grid action pair.
+        candidate_inner_action = jnp.stack(candidate_inner_actions)
+        candidate_value = jnp.stack(candidate_values)
+        candidate_outer_action = self._candidate_outer_actions(
+            candidate_inner_action=candidate_inner_action,
+            state_action_space=state_action_space,
+            flat_params=flat_params,
+            period=period,
+            ages=ages,
+            state_names=keeper_policy.state_names,
+        )
         return KernelResult(
             V_arr=V_arr,
             continuation=carry,
+            simulation_policy=NNBEGMSimPolicy(
+                candidate_inner_action=candidate_inner_action,
+                candidate_outer_action=candidate_outer_action,
+                candidate_value=candidate_value,
+                state_names=keeper_policy.state_names,
+                inner_action_name=self.inner_action_name,
+                outer_action_name=self.outer_action_name,
+            ),
         )
+
+    def _candidate_outer_actions(
+        self,
+        *,
+        candidate_inner_action: FloatND,
+        state_action_space: StateActionSpace,
+        flat_params: FlatParams,
+        period: int,
+        ages: AgeGrid,
+        state_names: tuple[StateName, ...],
+    ) -> FloatND:
+        """Recover every candidate's outer action once on the solve state grid."""
+        state_shape = candidate_inner_action.shape[1:]
+        n_state_axes = len(state_names)
+        state_inputs = {
+            name: jnp.asarray(state_action_space.states[name]).reshape(
+                (1,) * axis
+                + (jnp.asarray(state_action_space.states[name]).shape[0],)
+                + (1,) * (n_state_axes - axis - 1)
+            )
+            for axis, name in enumerate(state_names)
+        }
+        params = dict(flat_params[self.regime_name])
+        accepted = inspect.signature(self.outer_target_function).parameters
+
+        def evaluate(outer_action: FloatND) -> Mapping[str, FloatND]:
+            pool = {
+                **params,
+                **state_inputs,
+                self.inner_action_name: candidate_inner_action,
+                self.outer_action_name: outer_action,
+                "period": jnp.int32(period),
+                "age": ages.values[period],
+            }
+            return self.outer_target_function(
+                **{name: value for name, value in pool.items() if name in accepted}
+            )
+
+        zeros = jnp.zeros_like(candidate_inner_action)
+        at_zero_results = evaluate(zeros)
+        at_zero = jnp.broadcast_to(
+            jnp.asarray(at_zero_results[self.outer_post_decision]),
+            candidate_inner_action.shape,
+        )
+        at_one = jnp.broadcast_to(
+            jnp.asarray(
+                evaluate(jnp.ones_like(candidate_inner_action))[
+                    self.outer_post_decision
+                ]
+            ),
+            candidate_inner_action.shape,
+        )
+        slope = at_one - at_zero
+
+        if self.outer_no_adjustment_target is None:
+            keeper_target = jnp.broadcast_to(
+                state_inputs[self.outer_state_name], state_shape
+            )
+        else:
+            keeper_target = jnp.broadcast_to(
+                jnp.asarray(at_zero_results[self.outer_no_adjustment_target]),
+                candidate_inner_action.shape,
+            )[0]
+        adjuster_shape = (self.outer_grid_values.shape[0],) + (1,) * len(state_shape)
+        adjuster_targets = jnp.broadcast_to(
+            self.outer_grid_values.reshape(adjuster_shape),
+            (self.outer_grid_values.shape[0], *state_shape),
+        )
+        candidate_targets = jnp.concatenate(
+            (keeper_target[None, ...], adjuster_targets), axis=0
+        )
+
+        candidate_outer_action = (candidate_targets - at_zero) / slope
+        reconstructed = jnp.broadcast_to(
+            jnp.asarray(evaluate(candidate_outer_action)[self.outer_post_decision]),
+            candidate_inner_action.shape,
+        )
+        eps = jnp.finfo(candidate_inner_action.dtype).eps
+        tolerance = 64 * eps * jnp.maximum(1.0, jnp.abs(candidate_targets))
+        represented = (
+            jnp.isfinite(candidate_inner_action)
+            & jnp.isfinite(candidate_outer_action)
+            & jnp.isfinite(slope)
+            & (slope != 0)
+            & (jnp.abs(reconstructed - candidate_targets) <= tolerance)
+        )
+        return jnp.where(represented, candidate_outer_action, jnp.nan)
 
 
 def _subcores(
