@@ -88,11 +88,17 @@ from _lcm.regime_building.phases import (
     PhasedRegimeSpec,
     RegimePhaseSpec,
     normalize_all_regime_phases,
+    phase_variation_paths,
 )
 
 if TYPE_CHECKING:
     from _lcm.solution.dcegm import _BoundDCEGM
     from _lcm.solution.nnbegm import _BoundNNBEGM
+else:
+    # Importing the private bound solver here would close the solution/processing
+    # cycle. Static analysis sees the precise type above; runtime validation only
+    # needs a decoratable broad alias.
+    _BoundNNBEGM = object
 
 from _lcm.constraints.dispositions import ConstraintContext, Evaluate, Reject
 from _lcm.constraints.materialize import as_constraint_function
@@ -163,7 +169,6 @@ from _lcm.variables import (
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
-from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, NNBEGM, Solver
 from lcm.transition import MarkovTransition
@@ -1416,6 +1421,27 @@ def _build_egm_child_carry_producer(
     return producer, template
 
 
+def _validated_bound_nnbegm(
+    *,
+    solver: Solver,
+    regime_name: RegimeName,
+    user_regime: UserRegime,
+) -> _BoundNNBEGM | None:
+    """Return a bound NNBEGM after validating replay-phase invariance."""
+    if not isinstance(solver, NNBEGM):
+        return None
+
+    from _lcm.solution.nnbegm import (  # noqa: PLC0415
+        _fail_if_nnbegm_phase_variation,
+    )
+
+    _fail_if_nnbegm_phase_variation(
+        regime_name=regime_name,
+        user_regime=user_regime,
+    )
+    return cast("_BoundNNBEGM", solver)
+
+
 def _build_simulation_phase(
     *,
     spec: PhasedRegimeSpec,
@@ -1710,7 +1736,11 @@ def _build_simulation_phase(
     own_v_info = regime_to_v_interpolation_info[regime_name]
     egm_policy_read = None
     bound_solver = cast("_BoundDCEGM", solver) if isinstance(solver, DCEGM) else None
-    bound_nnbegm = cast("_BoundNNBEGM", solver) if isinstance(solver, NNBEGM) else None
+    bound_nnbegm = _validated_bound_nnbegm(
+        solver=solver,
+        regime_name=regime_name,
+        user_regime=user_regime,
+    )
     if bound_nnbegm is not None and phase_invariant and not has_taste_shocks:
         replay_actions = frozenset(
             (bound_nnbegm.inner.continuous_action, bound_nnbegm.outer_action)
@@ -1875,26 +1905,13 @@ def _regime_has_passive_state(
 
 
 def regime_declares_phased(user_regime: UserRegime) -> bool:
-    """Whether any regime slot carries a `Phased` (phase-variant) declaration.
+    """Whether the regime has genuine solve/simulate declaration variation.
 
-    Scans `functions`, `state_transitions` (including per-target dicts), the
-    regime `transition`, and `states`. `Phased` is outermost-only in every
-    slot except a per-target transition dict, whose cells it may wrap.
+    ``Phased(solve=value, simulate=value)`` is invariant because both sides are
+    the same object. The complete public phase grammar, including the Koopmans
+    aggregator, is classified by the shared phase-normalization helper.
     """
-
-    def is_phased(value: object) -> bool:
-        if isinstance(value, Phased):
-            return True
-        if isinstance(value, Mapping):
-            return any(isinstance(cell, Phased) for cell in value.values())
-        return False
-
-    return (
-        any(is_phased(value) for value in user_regime.functions.values())
-        or any(is_phased(value) for value in user_regime.state_transitions.values())
-        or is_phased(user_regime.transition)
-        or any(is_phased(value) for value in user_regime.states.values())
-    )
+    return bool(phase_variation_paths(user_regime=user_regime))
 
 
 @dataclass(frozen=True)

@@ -67,6 +67,7 @@ from _lcm.grids import ContinuousGrid, DiscreteGrid, Grid, IrregSpacedGrid
 from _lcm.post_decision_bound import _PostDecisionLowerBound
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.reachability import PhaseReachability
+from _lcm.regime_building.phases import _resolve_solve_functions
 from _lcm.solution.dcegm import _BoundDCEGM
 from _lcm.solution.nbegm import _BoundNBEGM
 from _lcm.typing import (
@@ -1497,30 +1498,6 @@ def _combo_contexts(
         {name: sample[min(j, sample.shape[0] - 1)] for name, sample in samples.items()}
         for j in range(n_contexts)
     ]
-
-
-def _resolve_solve_functions(
-    *,
-    user_regime: UserRegime,
-) -> dict[FunctionName, UserFunction]:
-    """Return the regime's solve-phase function pool.
-
-    `Regime.functions` with solve-phase variants resolved, plus the solve
-    imputation of every carried (`Phased`) state under the state's name. The
-    imputations make DAG-ancestor checks see through carried states: a
-    function reading a carried state imputed from the Euler state genuinely
-    depends on the Euler state at the savings stage.
-    """
-    resolved: dict[FunctionName, UserFunction] = {}
-    for name, func in user_regime.functions.items():
-        if isinstance(func, Phased):
-            resolved[name] = cast("UserFunction", func.solve)
-        elif func is not None:
-            resolved[name] = func
-    for state_name, grid in user_regime.states.items():
-        if isinstance(grid, Phased):
-            resolved[state_name] = cast("UserFunction", grid.solve)
-    return user_regime._augment_phase_functions(resolved)  # noqa: SLF001
 
 
 def _solve_grids(
