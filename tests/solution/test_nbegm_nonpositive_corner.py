@@ -174,7 +174,7 @@ def _infeasible_interval_corner_value(*, flat: bool) -> np.ndarray:
         lower=jnp.asarray(-jnp.inf),
         upper=jnp.asarray(jnp.inf),
         flat=jnp.asarray(flat),
-        value_at_no_save=jnp.asarray(0.0),
+        value_at_lower_bound=jnp.asarray(0.0),
         interval_value=jnp.zeros_like(SAVINGS_GRID),
         coh_slope=jnp.asarray(0.0 if flat else 1.0),
         coh_intercept=jnp.asarray(-0.5),

@@ -18,13 +18,21 @@ slices — the value oracle for the per-interval continuation.
 import jax.numpy as jnp
 
 import lcm
-from lcm import DiscreteGrid, LinSpacedGrid, Model, categorical
+from lcm import (
+    DiscreteGrid,
+    LinSpacedGrid,
+    LiquidMargin,
+    Model,
+    categorical,
+    post_decision_lower_bound,
+)
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
     DiscreteState,
     FloatND,
     ScalarInt,
+    UserFunction,
 )
 from tests.test_models.nbegm_common import (
     feasible,
@@ -95,6 +103,7 @@ def build_model(
     n_consumption: int = 150,
     liquid_max: float = 30.0,
     n_savings: int = 150,
+    savings_floor: float = 0.0,
     savings_max: float = 28.0,
     **solver_kwargs: object,
 ) -> Model:
@@ -106,12 +115,26 @@ def build_model(
     }
     alive_solver = resolve_solver(
         variant,
-        savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
+        savings_grid=LinSpacedGrid(
+            start=savings_floor, stop=savings_max, n_points=n_savings
+        ),
         **solver_kwargs,
     )
     alive_functions = {**alive_functions, "savings": savings}
     liquid_law = next_liquid_from_savings
-    constraints = {} if variant == "nbegm" else {"feasible": feasible}
+    constraints: dict[str, UserFunction] = (
+        {} if variant == "nbegm" else {"feasible": feasible}
+    )
+    if savings_floor != 0.0:
+        constraints["savings_floor"] = post_decision_lower_bound(
+            margin=LiquidMargin(
+                state="liquid",
+                action="consumption",
+                resources="resources",
+                post_decision_state="savings",
+            ),
+            lower=savings_floor,
+        )
 
     return make_alive_dead_model(
         n_periods=n_periods,
