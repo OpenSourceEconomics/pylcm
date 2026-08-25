@@ -49,7 +49,11 @@ from _lcm.continuation import (
     EGMContinuationSpec,
 )
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
-from _lcm.egm.published_policy import EGMSimPolicy
+from _lcm.egm.published_policy import (
+    EGMSimPolicy,
+    NBEGMGridPolicy,
+    NNBEGMSimPolicy,
+)
 from _lcm.engine import ParamCheck, StateActionSpace, Variables
 from _lcm.grids import Grid
 from _lcm.reachability import PhaseReachability
@@ -92,12 +96,16 @@ from lcm.typing import Float1D, FloatND
 # exist, and the two are separate rules. The simulation read dispatches on the
 # concrete payload type over this CLOSED union: a
 # `NestedEGMSimPolicy` routes to the engine-owned nested continuous-outer reader
-# (`_read_nested_policy`, which the self-describing payload parameterizes), a
-# flat `EGMSimPolicy` routes to the solver-supplied `egm_policy_read`. So it is
+# (`_read_nested_policy`, which the self-describing payload parameterizes), an
+# `NNBEGMSimPolicy` routes to direct finite-candidate replay, an
+# `NBEGMGridPolicy` carries the conditional inner candidate rows, and a flat
+# `EGMSimPolicy` routes to the solver-supplied `egm_policy_read`. So it is
 # a deliberate closed-union dispatch in the engine's simulation loop, not an
 # open solver-owned reader seam; adding a payload class means extending both
 # this union and that dispatch.
-type SimulationPolicy = EGMSimPolicy | NestedEGMSimPolicy
+type SimulationPolicy = (
+    EGMSimPolicy | NBEGMGridPolicy | NNBEGMSimPolicy | NestedEGMSimPolicy
+)
 
 if TYPE_CHECKING:
     from _lcm.regime_building.finalize import FinalizedUserRegime
