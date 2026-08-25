@@ -1697,12 +1697,16 @@ def _build_simulation_phase(
         replay_actions = frozenset(
             (bound_nnbegm.inner.continuous_action, bound_nnbegm.outer_action)
         )
-        declared_actions = frozenset(simulation_variables.action_names)
-        if declared_actions != replay_actions:
+        declared_continuous_actions = frozenset(
+            simulation_variables.continuous_action_names
+        )
+        if declared_continuous_actions != replay_actions:
             raise ModelInitializationError(
                 f"NNBEGM simulation replay for regime {regime_name!r} requires "
-                "exactly the bound inner and outer continuous actions; got "
-                f"{tuple(simulation_variables.action_names)!r}."
+                "exactly the bound inner and outer actions as its continuous "
+                "actions; additional declared actions must be discrete. Got "
+                f"continuous actions "
+                f"{tuple(simulation_variables.continuous_action_names)!r}."
             )
         egm_policy_read = NNBEGMPolicyRead()
     elif (

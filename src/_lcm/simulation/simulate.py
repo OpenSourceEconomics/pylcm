@@ -1039,6 +1039,36 @@ def _interp_rows_with_support(
     return values, in_support
 
 
+def _select_nnbegm_discrete_actions(
+    *,
+    sim_policy: NNBEGMSimPolicy,
+    winner: IntND,
+    n_candidates: int,
+) -> tuple[IntND | None, dict[ActionName, IntND]]:
+    """Select exact discrete codes from the winning solve candidates."""
+    if not sim_policy.discrete_action_names:
+        if sim_policy.candidate_discrete_actions is not None:
+            raise ValueError(
+                "NNBEGM smooth replay received an unexpected discrete code bank."
+            )
+        return None, {}
+
+    candidate_codes = sim_policy.candidate_discrete_actions
+    if candidate_codes is None:
+        raise ValueError("NNBEGM discrete replay payload is missing exact codes.")
+    if candidate_codes.shape != (
+        n_candidates,
+        len(sim_policy.discrete_action_names),
+    ):
+        raise ValueError("NNBEGM discrete replay code bank is misaligned.")
+    selected_codes = jnp.take(candidate_codes, winner, axis=0)
+    selected_actions = {
+        name: selected_codes[:, position]
+        for position, name in enumerate(sim_policy.discrete_action_names)
+    }
+    return selected_codes, selected_actions
+
+
 def _replay_nnbegm_candidates(
     *,
     optimal_actions: MappingProxyType[ActionName, FloatND | IntND],
@@ -1052,7 +1082,7 @@ def _replay_nnbegm_candidates(
     action_names: tuple[ActionName, ...],
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
 ) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND]:
-    """Replay the aligned keeper-plus-outer candidate surfaces NNBEGM solved."""
+    """Replay the exact solve candidate product and canonical-score its winner."""
     n_subjects = next(iter(states.values())).shape[0]
     coordinates = []
     in_support = jnp.ones((n_subjects,), dtype=bool)
@@ -1088,7 +1118,9 @@ def _replay_nnbegm_candidates(
         & jnp.isfinite(candidate_value)
     )
     ranking_values = jnp.where(represented, candidate_value, -jnp.inf)
-    winner = jnp.argmax(ranking_values, axis=0)
+    # JAX argmax returns the first maximum, preserving keeper/outer-major then
+    # declared discrete-product order exactly.
+    winner = jnp.asarray(jnp.argmax(ranking_values, axis=0), dtype=jnp.int32)
 
     def at_winner(stacked: FloatND) -> FloatND:
         return jnp.take_along_axis(stacked, winner[None, :], axis=0)[0]
@@ -1096,11 +1128,17 @@ def _replay_nnbegm_candidates(
     any_represented = jnp.any(represented, axis=0)
     selected_inner = at_winner(candidate_inner)
     selected_outer = at_winner(candidate_outer)
+    selected_codes, selected_discrete_actions = _select_nnbegm_discrete_actions(
+        sim_policy=sim_policy,
+        winner=winner,
+        n_candidates=candidate_inner.shape[0],
+    )
     selected_actions = MappingProxyType(
         {
             **optimal_actions,
             sim_policy.inner_action_name: selected_inner,
             sim_policy.outer_action_name: selected_outer,
+            **selected_discrete_actions,
         }
     )
     selected_value, selected_feasible = _canonical_Q_at_actions(
@@ -1123,12 +1161,22 @@ def _replay_nnbegm_candidates(
     chosen_inner = jnp.where(selected_valid, selected_inner, jnp.nan)
     chosen_outer = jnp.where(selected_valid, selected_outer, jnp.nan)
     chosen_value = jnp.where(selected_valid, selected_value, -jnp.inf)
+    if selected_codes is None:
+        chosen_discrete_actions = {}
+    else:
+        invalid_codes = jnp.full_like(selected_codes, -1)
+        chosen_codes = jnp.where(selected_valid[:, None], selected_codes, invalid_codes)
+        chosen_discrete_actions = {
+            name: chosen_codes[:, position]
+            for position, name in enumerate(sim_policy.discrete_action_names)
+        }
     return (
         MappingProxyType(
             {
                 **optimal_actions,
                 sim_policy.inner_action_name: chosen_inner,
                 sim_policy.outer_action_name: chosen_outer,
+                **chosen_discrete_actions,
             }
         ),
         chosen_value,

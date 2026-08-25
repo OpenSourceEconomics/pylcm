@@ -1434,7 +1434,7 @@ class _RideAlongNBEGMPeriodKernel:
         else:
             cont_value_stack, cont_marginal_stack = continuation_stacks
             cliff_kwargs = {}
-        V_arr, carry, inner_action = compiled_cores["envelope"](
+        envelope_result = compiled_cores["envelope"](
             **states,
             cont_value_stack=cont_value_stack,
             cont_marginal_stack=cont_marginal_stack,
@@ -1443,12 +1443,28 @@ class _RideAlongNBEGMPeriodKernel:
             period=jnp.int32(period),
             age=ages.values[period],
         )
+        if self.statics.n_action_branches:
+            V_arr, carry, inner_action, branch_value, branch_inner_action = (
+                envelope_result
+            )
+            branch_discrete_actions = jnp.asarray(
+                self.statics.discrete_action_codes, dtype=jnp.int32
+            )
+        else:
+            V_arr, carry, inner_action = envelope_result
+            branch_value = None
+            branch_inner_action = None
+            branch_discrete_actions = None
         return KernelResult(
             V_arr=V_arr,
             continuation=carry,
             simulation_policy=NBEGMGridPolicy(
                 action=inner_action,
                 state_names=tuple(state_action_space.states),
+                branch_inner_action=branch_inner_action,
+                branch_value=branch_value,
+                branch_discrete_actions=branch_discrete_actions,
+                discrete_action_names=self.statics.discrete_action_names,
             ),
         )
 
@@ -4630,6 +4646,10 @@ class _NBEGMRideAlongStatics:
     over; `0` when the regime carries no discrete action (no branch axis). A branch
     reads its own next-state continuation, so a co-state-feeding action gets a
     distinct row per branch and a budget-only action gets identical rows."""
+    discrete_action_names: tuple[ActionName, ...]
+    """Declared discrete actions in the branch product's column order."""
+    discrete_action_codes: tuple[tuple[int, ...], ...]
+    """Exact branch-code rows in the inner envelope's product order."""
     co_map_state_names: tuple[str, ...] = ()
     """Fixed, distributed ride-along states co-mapped with the child carry.
 
@@ -4792,6 +4812,13 @@ def _nbegm_ride_along_statics(
             0
             if not schedule_spec.discrete_actions
             else len(schedule_spec.branch_bindings)
+        ),
+        discrete_action_names=tuple(
+            name for name, _codes in schedule_spec.discrete_actions
+        ),
+        discrete_action_codes=tuple(
+            tuple(binding[name] for name, _codes in schedule_spec.discrete_actions)
+            for binding in schedule_spec.branch_bindings
         ),
         co_map_state_names=co_map_ride_names,
     )
@@ -5378,13 +5405,16 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
     n_published_boundaries = statics.n_published_jumps + n_feasibility_boundaries
     schedule_kinds = tuple(source.kind for source in statics.sources)
 
-    def envelope_core(  # noqa: C901, PLR0915
+    def envelope_core(  # noqa: PLR0915
         *,
         cont_value_stack: FloatND,
         cont_marginal_stack: FloatND,
         cliff_savings_stack: FloatND | None = None,
         **kwargs: Any,  # noqa: ANN401  # state grids + flat params (mixed dtypes)
-    ) -> tuple[FloatND, EGMCarry, FloatND]:
+    ) -> (
+        tuple[FloatND, EGMCarry, FloatND]
+        | tuple[FloatND, EGMCarry, FloatND, FloatND, FloatND]
+    ):
         dtype = canonical_float_dtype()
         liquid = jnp.asarray(kwargs[liquid_name], dtype=dtype)
         coh_params = {name: kwargs[name] for name in schedule_spec.coh_param_names}
@@ -5406,7 +5436,7 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
             cont_value: FloatND,
             cont_marginal: FloatND,
             cliff_savings: FloatND | None = None,
-        ) -> tuple[Float1D, ...]:
+        ) -> tuple[FloatND, ...]:
             cont_value, cont_marginal, extra_cont_value = _split_cliff_columns(
                 cont_value=cont_value,
                 cont_marginal=cont_marginal,
@@ -5645,27 +5675,23 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
                 value_row = value_stack[modal, index]
                 marginal_row = marginal_stack[modal, index]
                 policy_row = policy_stack[modal, index]
+                branch_stacks = (value_stack, policy_stack)
             else:
                 value_row, marginal_row, policy_row = solve_branch(
                     {}, cont_value, cont_marginal, extra_cont_value, cliff_savings
                 )
+                branch_stacks = None
 
-            if n_published_boundaries == 0:
-                return (value_row, marginal_row, policy_row)
-            # The carry keeps the whole augmented row — topology rides inside
-            # the endogenous grid as a duplicated abscissa carrying its exact
-            # one-sided value and marginal limits. Only the published value
-            # array needs the original liquid nodes, sliced back out through
-            # the sort permutation.
-            value_at_liquid = value_row[unsort][: liquid.shape[0]]
-            policy_at_liquid = policy_row[unsort][: liquid.shape[0]]
-            return (
-                value_at_liquid,
-                endog_row,
-                value_row,
-                marginal_row,
-                policy_at_liquid,
-                published_boundaries,
+            return _package_nbegm_cell_result(
+                value_row=value_row,
+                marginal_row=marginal_row,
+                policy_row=policy_row,
+                branch_stacks=branch_stacks,
+                n_published_boundaries=n_published_boundaries,
+                unsort=unsort,
+                n_liquid=liquid.shape[0],
+                endog_row=endog_row,
+                published_boundaries=published_boundaries,
             )
 
         ride_grids = tuple(jnp.asarray(kwargs[name]) for name in ride_names)
@@ -5684,17 +5710,56 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
             xs=stream_inputs,
             requested_block_size=statics.cell_block_size,
         )
-        value_arr, carry, policy_arr = _assemble_ride_carry(
+        return _assemble_ride_carry(
             stacks=stacks,
             n_jumps=n_published_boundaries,
+            n_action_branches=statics.n_action_branches,
             liquid=liquid,
             ride_shape=ride_shape,
             liquid_axis_pos=schedule_spec.liquid_axis_pos,
             dtype=dtype,
         )
-        return value_arr, carry, policy_arr
 
     return envelope_core
+
+
+def _package_nbegm_cell_result(
+    *,
+    value_row: FloatND,
+    marginal_row: FloatND,
+    policy_row: FloatND,
+    branch_stacks: tuple[FloatND, FloatND] | None,
+    n_published_boundaries: int,
+    unsort: IntND,
+    n_liquid: int,
+    endog_row: FloatND,
+    published_boundaries: FloatND,
+) -> tuple[FloatND, ...]:
+    """Package a cell's collapsed rows and optional conditional branch banks."""
+    if n_published_boundaries == 0:
+        if branch_stacks is None:
+            return (value_row, marginal_row, policy_row)
+        value_stack, policy_stack = branch_stacks
+        return value_row, marginal_row, policy_row, value_stack, policy_stack
+
+    # The carry keeps the augmented row, while published values use the original
+    # liquid nodes recovered through the sort permutation.
+    value_at_liquid = value_row[unsort][:n_liquid]
+    policy_at_liquid = policy_row[unsort][:n_liquid]
+    collapsed = (
+        value_at_liquid,
+        endog_row,
+        value_row,
+        marginal_row,
+        policy_at_liquid,
+        published_boundaries,
+    )
+    if branch_stacks is None:
+        return collapsed
+    value_stack, policy_stack = branch_stacks
+    branch_value_at_liquid = value_stack[:, unsort][:, :n_liquid]
+    branch_policy_at_liquid = policy_stack[:, unsort][:, :n_liquid]
+    return (*collapsed, branch_value_at_liquid, branch_policy_at_liquid)
 
 
 @dataclass(frozen=True)
@@ -6241,18 +6306,25 @@ def _assemble_ride_carry(
     *,
     stacks: tuple[FloatND, ...],
     n_jumps: int,
+    n_action_branches: int,
     liquid: Float1D,
     ride_shape: tuple[int, ...],
     liquid_axis_pos: int,
     dtype: Any,  # noqa: ANN401  # jnp dtype object
-) -> tuple[FloatND, EGMCarry, FloatND]:
-    """Reshape per-cell value, carry, and policy stacks.
+) -> (
+    tuple[FloatND, EGMCarry, FloatND]
+    | tuple[FloatND, EGMCarry, FloatND, FloatND, FloatND]
+):
+    """Reshape per-cell value, carry, policy, and optional branch stacks.
 
     - With jump breakpoints, the cell solve returns the value at the liquid
       nodes plus the augmented carry rows (duplicated jump abscissae with
       one-sided limits) and the jump locations.
     - Without jumps, it returns plain liquid-grid rows and the carry sits on
       the shared broadcast grid.
+    - A discrete inner envelope additionally returns every conditional branch's
+      value and inner action on the original state grid. Those banks are absent
+      for the smooth path, preserving its output/storage contract.
 
     The published value array follows the productmap state order, so the
     liquid axis moves from the working layout's trailing position to its
@@ -6261,15 +6333,28 @@ def _assemble_ride_carry(
     produced it, so the round-trip stays self-consistent.
     """
     n_liquid = liquid.shape[0]
+    has_discrete_branches = n_action_branches > 0
     if n_jumps:
-        (
-            value_stack,
-            endog_stack,
-            row_value_stack,
-            row_marginal_stack,
-            policy_stack,
-            breakpoint_stack,
-        ) = stacks
+        if has_discrete_branches:
+            (
+                value_stack,
+                endog_stack,
+                row_value_stack,
+                row_marginal_stack,
+                policy_stack,
+                breakpoint_stack,
+                branch_value_stack,
+                branch_policy_stack,
+            ) = stacks
+        else:
+            (
+                value_stack,
+                endog_stack,
+                row_value_stack,
+                row_marginal_stack,
+                policy_stack,
+                breakpoint_stack,
+            ) = stacks
         n_row = n_liquid + 2 * n_jumps
         carry_rows = (
             endog_stack.reshape(*ride_shape, n_row).astype(dtype),
@@ -6278,7 +6363,16 @@ def _assemble_ride_carry(
         )
         breakpoint_rows = breakpoint_stack.reshape(*ride_shape, n_jumps).astype(dtype)
     else:
-        value_stack, marginal_stack, policy_stack = stacks
+        if has_discrete_branches:
+            (
+                value_stack,
+                marginal_stack,
+                policy_stack,
+                branch_value_stack,
+                branch_policy_stack,
+            ) = stacks
+        else:
+            value_stack, marginal_stack, policy_stack = stacks
         carry_rows = (
             jnp.broadcast_to(liquid, (*ride_shape, n_liquid)).astype(dtype),
             value_stack.reshape(*ride_shape, n_liquid).astype(dtype),
@@ -6298,7 +6392,21 @@ def _assemble_ride_carry(
         taste_shock_scale=jnp.asarray(0.0, dtype=dtype),
         breakpoints=breakpoint_rows,
     )
-    return value_arr, carry, policy_arr
+    if not has_discrete_branches:
+        return value_arr, carry, policy_arr
+
+    def assemble_branch_bank(stack: FloatND) -> FloatND:
+        working = stack.reshape(*ride_shape, n_action_branches, n_liquid)
+        branch_leading = jnp.moveaxis(working, -2, 0)
+        return jnp.moveaxis(branch_leading, -1, liquid_axis_pos + 1)
+
+    return (
+        value_arr,
+        carry,
+        policy_arr,
+        assemble_branch_bank(branch_value_stack),
+        assemble_branch_bank(branch_policy_stack),
+    )
 
 
 def _augment_liquid_with_jump_sides(

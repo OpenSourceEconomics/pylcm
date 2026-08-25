@@ -69,7 +69,7 @@ from typing import Any
 
 import jax
 
-from lcm.typing import ActionName, FloatND, StateName
+from lcm.typing import ActionName, FloatND, IntND, StateName
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -169,29 +169,46 @@ class NBEGMGridPolicy:
     """Inner NBEGM action on the regime state grid.
 
     This is an intermediate solve artifact. A nested outer solver stacks one
-    instance per candidate before publishing the joint replay payload.
+    instance per candidate before publishing the joint replay payload. A
+    discrete inner envelope additionally retains every branch's conditional
+    action and value; smooth solves leave those optional banks absent so their
+    hot path and storage stay unchanged.
     """
 
     action: FloatND
-    """Conditional inner action, aligned with ``state_names`` axes."""
+    """Collapsed optimal inner action, aligned with ``state_names`` axes."""
 
     state_names: tuple[StateName, ...]
     """State-grid axis names in the array order of ``action``."""
+
+    branch_inner_action: FloatND | None = None
+    """Shape ``(n_discrete, *state_shape)`` before the branch upper envelope."""
+
+    branch_value: FloatND | None = None
+    """Conditional values on exactly the same branch/state axes."""
+
+    branch_discrete_actions: IntND | None = None
+    """Exact code matrix of shape ``(n_discrete, n_discrete_actions)``."""
+
+    discrete_action_names: tuple[ActionName, ...] = ()
+    """Columns of ``branch_discrete_actions`` in declared product order."""
 
 
 @dataclass(frozen=True, kw_only=True)
 class NNBEGMSimPolicy:
     """Candidate-aligned NNBEGM joint policies for forward replay.
 
-    Candidate axis zero is the state-specific keeper; the remaining entries
-    follow ``NNBEGM.outer_grid`` exactly. Both continuous actions and each
-    candidate's represented solve value are stored on the same state grid.
-    Simulation performs only aligned multilinear reads, retains the solve's
-    finite-set ordering, and canonical-scores the selected pair once.
+    Candidate order is outer-major: the state-specific keeper first, then
+    ``NNBEGM.outer_grid`` order; within each outer candidate, the inner
+    solver's declared discrete Cartesian-product order. Continuous surfaces
+    and represented solve values share that leading candidate axis. Discrete
+    codes are exact metadata and are selected, never interpolated. Simulation
+    retains this finite-set ordering and canonical-scores the complete selected
+    tuple once.
     """
 
     candidate_inner_action: FloatND
-    """Shape ``(1 + n_outer, *state_shape)`` in keeper/adjuster order."""
+    """Shape ``(n_candidates, *state_shape)`` in solve candidate order."""
 
     candidate_outer_action: FloatND
     """Outer action on exactly the same candidate/state axes."""
@@ -205,17 +222,37 @@ class NNBEGMSimPolicy:
     inner_action_name: ActionName
     outer_action_name: ActionName
 
+    candidate_discrete_actions: IntND | None = None
+    """Exact shape ``(n_candidates, n_discrete_actions)`` code metadata."""
+
+    discrete_action_names: tuple[ActionName, ...] = ()
+    """Columns of ``candidate_discrete_actions`` in declaration order."""
+
 
 def _flatten_grid_policy(
     policy: NBEGMGridPolicy,
 ) -> tuple[tuple[Any, ...], tuple[Any, ...]]:
-    return (policy.action,), policy.state_names
+    aux = (policy.state_names, policy.discrete_action_names)
+    return (
+        policy.action,
+        policy.branch_inner_action,
+        policy.branch_value,
+        policy.branch_discrete_actions,
+    ), aux
 
 
 def _unflatten_grid_policy(
-    state_names: tuple[Any, ...], children: Sequence[Any]
+    aux: tuple[Any, ...], children: Sequence[Any]
 ) -> NBEGMGridPolicy:
-    return NBEGMGridPolicy(action=children[0], state_names=state_names)
+    state_names, discrete_action_names = aux
+    return NBEGMGridPolicy(
+        action=children[0],
+        branch_inner_action=children[1],
+        branch_value=children[2],
+        branch_discrete_actions=children[3],
+        state_names=state_names,
+        discrete_action_names=discrete_action_names,
+    )
 
 
 def _flatten_nnbegm_policy(
@@ -225,25 +262,29 @@ def _flatten_nnbegm_policy(
         policy.state_names,
         policy.inner_action_name,
         policy.outer_action_name,
+        policy.discrete_action_names,
     )
     return (
         policy.candidate_inner_action,
         policy.candidate_outer_action,
         policy.candidate_value,
+        policy.candidate_discrete_actions,
     ), aux
 
 
 def _unflatten_nnbegm_policy(
     aux: tuple[Any, ...], children: Sequence[Any]
 ) -> NNBEGMSimPolicy:
-    state_names, inner_action_name, outer_action_name = aux
+    state_names, inner_action_name, outer_action_name, discrete_action_names = aux
     return NNBEGMSimPolicy(
         candidate_inner_action=children[0],
         candidate_outer_action=children[1],
         candidate_value=children[2],
+        candidate_discrete_actions=children[3],
         state_names=state_names,
         inner_action_name=inner_action_name,
         outer_action_name=outer_action_name,
+        discrete_action_names=discrete_action_names,
     )
 
 
