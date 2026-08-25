@@ -183,6 +183,14 @@ Nests an `NBEGM` liquid solve inside a configurable outer search. The inner solv
 use a bridged carry compatible with the outer fold. See
 [Outer search and branch aggregation](outer_search.md).
 
+NNBEGM replays the keeper-plus-outer-grid candidates ranked during the solve. Every
+declaration that can affect that replay must therefore be phase-invariant by object
+identity: a bare declaration and `Phased(solve=f, simulate=f)` are accepted, while
+distinct solve/simulate functions, state or regime transitions, Koopmans aggregators,
+and carried-only states are rejected during `Model(...)` construction. Use identical
+declaration objects, remove the carried-only state, or use `GridSearch` until
+phase-specific NNBEGM replay is implemented.
+
 ## Capability is validated, not inferred from class names
 
 The selected solver inspects finalized declarations before numerical lowering. A model
