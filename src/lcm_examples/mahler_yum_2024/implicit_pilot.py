@@ -112,7 +112,7 @@ def capture_pilot_problem(
         capturing_call,
     )
     try:
-        model.solve(params={"alive": params}, log_level="off")
+        model.solve(params=params, log_level="off")
         msg = f"period {period} was never entered by the NNBEGM kernel"
         raise RuntimeError(msg)
     except _StopAfterCaptureError:
