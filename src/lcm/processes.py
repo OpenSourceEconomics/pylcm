@@ -21,6 +21,7 @@ from _lcm.processes.ar1 import (
     TauchenAR1Process,
     TauchenNormalMixtureAR1Process,
 )
+from _lcm.processes.base import StateConditioned
 from _lcm.processes.iid import (
     LogNormalIIDProcess,
     NormalIIDProcess,
@@ -33,6 +34,7 @@ __all__ = [
     "NormalIIDProcess",
     "NormalMixtureIIDProcess",
     "RouwenhorstAR1Process",
+    "StateConditioned",
     "TauchenAR1Process",
     "TauchenNormalMixtureAR1Process",
     "UniformIIDProcess",
