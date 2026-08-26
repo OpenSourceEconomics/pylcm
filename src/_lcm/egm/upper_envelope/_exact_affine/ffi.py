@@ -306,6 +306,18 @@ def exact_affine_read(
     """
     _ensure_registered()
     operands = _broadcast(x0, x1, v0, v1, x_query)
+    return _exact_affine_read_impl(*operands)
+
+
+def _exact_affine_read_ffi(
+    x0: FloatND,
+    x1: FloatND,
+    v0: FloatND,
+    v1: FloatND,
+    x_query: FloatND,
+) -> tuple[FloatND, IntND]:
+    """Invoke the exact rounded affine reader without derivative semantics."""
+    operands = (x0, x1, v0, v1, x_query)
     target = _target_for(
         operands=operands, f32="ExactAffineReadF32", f64="ExactAffineReadF64"
     )
@@ -317,6 +329,67 @@ def exact_affine_read(
         target, result_shapes, vmap_method="broadcast_all"
     )(*operands)
     return published, status
+
+
+# Bound by assignment rather than decorator syntax: the package-wide beartype
+# claw preserves plain functions but can rebind callable decorator instances to
+# ``__call__`` and thereby hide ``defjvp``.
+_exact_affine_read_impl = jax.custom_jvp(_exact_affine_read_ffi)
+
+
+@_exact_affine_read_impl.defjvp
+def _exact_affine_read_jvp(
+    primals: tuple[FloatND, FloatND, FloatND, FloatND, FloatND],
+    tangents: tuple[FloatND, FloatND, FloatND, FloatND, FloatND],
+) -> tuple[
+    tuple[FloatND, IntND],
+    tuple[FloatND, IntND],
+]:
+    """Differentiate the represented affine line at a fixed exact owner.
+
+    The native exact reader remains the primal source of truth. Its operands are
+    stopped before entering the opaque call so forward-over-forward AD never
+    asks JAX to differentiate the FFI. The tangent is the complete differential
+    of the unrounded affine rational in all five floating operands.
+    """
+    x0, x1, v0, v1, x_query = primals
+    dx0, dx1, dv0, dv1, dx_query = tangents
+    stopped = tuple(jax.lax.stop_gradient(value) for value in primals)
+    published, status = _exact_affine_read_ffi(*stopped)
+
+    width = x1 - x0
+    alpha = (x_query - x0) / width
+    slope = (v1 - v0) / width
+    one_minus_alpha = 1.0 - alpha
+    published_dot = (
+        one_minus_alpha * dv0
+        + alpha * dv1
+        + slope * (dx_query - one_minus_alpha * dx0 - alpha * dx1)
+    )
+    finite_primals = (
+        jnp.isfinite(x0)
+        & jnp.isfinite(x1)
+        & jnp.isfinite(v0)
+        & jnp.isfinite(v1)
+        & jnp.isfinite(x_query)
+    )
+    finite_tangents = (
+        jnp.isfinite(dx0)
+        & jnp.isfinite(dx1)
+        & jnp.isfinite(dv0)
+        & jnp.isfinite(dv1)
+        & jnp.isfinite(dx_query)
+    )
+    decided = (
+        (status == 0)
+        & finite_primals
+        & finite_tangents
+        & (width > 0)
+        & jnp.isfinite(published_dot)
+    )
+    published_dot = jnp.where(decided, published_dot, jnp.nan)
+    status_dot = jnp.zeros(jnp.shape(status), dtype=jax.dtypes.float0)
+    return (published, status), (published_dot, status_dot)
 
 
 def exact_query_winner(
@@ -466,7 +539,7 @@ def exact_query_winner_batched(
     return _batched_segment_winner_impl(*floating, live_array, query)
 
 
-def _batched_segment_winner_impl(
+def _batched_segment_winner_ffi(
     left_grid: FloatND,
     right_grid: FloatND,
     left_value: FloatND,
@@ -490,7 +563,24 @@ def _batched_segment_winner_impl(
     return winner, status
 
 
-def _shared_segment_winner_impl(
+_batched_segment_winner_impl = jax.custom_jvp(_batched_segment_winner_ffi)
+
+
+@_batched_segment_winner_impl.defjvp
+def _batched_segment_winner_jvp(
+    primals: tuple[FloatND, FloatND, FloatND, FloatND, IntND, FloatND],
+    tangents: tuple[FloatND, FloatND, FloatND, FloatND, IntND, FloatND],
+) -> tuple[tuple[IntND, IntND], tuple[IntND, IntND]]:
+    """Keep exact batched ownership discrete under differentiation."""
+    del tangents
+    stopped = tuple(jax.lax.stop_gradient(value) for value in primals)
+    winner, status = _batched_segment_winner_ffi(*stopped)
+    winner_dot = jnp.zeros(jnp.shape(winner), dtype=jax.dtypes.float0)
+    status_dot = jnp.zeros(jnp.shape(status), dtype=jax.dtypes.float0)
+    return (winner, status), (winner_dot, status_dot)
+
+
+def _shared_segment_winner_ffi(
     left_grid: FloatND,
     right_grid: FloatND,
     left_value: FloatND,
@@ -568,18 +658,40 @@ def _shared_segment_winner_vmap(
             query.reshape(axis_size, -1),
         )
     else:
-        winner, status = _shared_segment_winner_impl(
+        winner, status = _shared_segment_winner_ffi(
             left_grid, right_grid, left_value, right_value, live, query.reshape(-1)
         )
     published = (winner.reshape(query.shape), status.reshape(query.shape))
     return published, (True, True)
 
 
-# Bound by assignment rather than by decorating the `def`: `custom_vmap` returns
-# a callable instance, and a package-wide beartype claw rebinds such an instance
-# to its own `__call__`, which would leave `def_vmap` unreachable at import.
-_shared_segment_winner = jax.custom_batching.custom_vmap(_shared_segment_winner_impl)
-_shared_segment_winner.def_vmap(_shared_segment_winner_vmap)
+# Preserve the existing custom batching rule as the complete primal first, then
+# put the JVP around it. This order matters: putting ``custom_vmap`` outside the
+# JVP lets ``jacfwd``'s tangent-basis vmap manufacture a batch axis on an
+# invariant primal. Real primal batching still reaches exactly one shared or
+# batched native winner call.
+_shared_segment_winner_primal = jax.custom_batching.custom_vmap(
+    _shared_segment_winner_ffi
+)
+_shared_segment_winner_primal.def_vmap(_shared_segment_winner_vmap)
+_shared_segment_winner_impl = jax.custom_jvp(_shared_segment_winner_primal)
+
+
+@_shared_segment_winner_impl.defjvp
+def _shared_segment_winner_jvp(
+    primals: tuple[FloatND, FloatND, FloatND, FloatND, IntND, FloatND],
+    tangents: tuple[FloatND, FloatND, FloatND, FloatND, IntND, FloatND],
+) -> tuple[tuple[IntND, IntND], tuple[IntND, IntND]]:
+    """Keep exact shared ownership discrete under differentiation."""
+    del tangents
+    stopped = tuple(jax.lax.stop_gradient(value) for value in primals)
+    winner, status = _shared_segment_winner_primal(*stopped)
+    winner_dot = jnp.zeros(jnp.shape(winner), dtype=jax.dtypes.float0)
+    status_dot = jnp.zeros(jnp.shape(status), dtype=jax.dtypes.float0)
+    return (winner, status), (winner_dot, status_dot)
+
+
+_shared_segment_winner = _shared_segment_winner_impl
 
 
 def exact_affine_handover(
