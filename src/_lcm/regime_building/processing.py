@@ -172,7 +172,13 @@ from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
 from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import DCEGM, NNBEGM, Solver, UniformObservedFixedCost
+from lcm.solvers import (
+    DCEGM,
+    NNBEGM,
+    AdaptiveOuterMesh,
+    Solver,
+    UniformObservedFixedCost,
+)
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, UserFunction
 
@@ -1797,6 +1803,10 @@ def _build_simulation_phase(
             fixed_cost_simulation_unsupported=isinstance(
                 bound_nnbegm.branch_aggregator,
                 UniformObservedFixedCost,
+            ),
+            replay_policy_is_nested=isinstance(
+                bound_nnbegm.outer_search,
+                AdaptiveOuterMesh,
             ),
         )
     elif (
