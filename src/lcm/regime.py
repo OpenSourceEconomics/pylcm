@@ -525,8 +525,8 @@ class Regime:
         # out-of-scope features — taste shocks, nonlinear certainty
         # equivalents, non-GridSearch solvers — are rejected). What a
         # model-level slot may still supply — the per-stakeholder
-        # `utility_<s>` functions and at least one discrete action — is
-        # checked when the model finalizes its regimes. The default `None`
+        # `utility_<s>` functions — is checked when the model finalizes its
+        # regimes. The default `None`
         # (singleton) path never enters this branch.
         if self.gated_edges:
             _validate_gated_edges(self)

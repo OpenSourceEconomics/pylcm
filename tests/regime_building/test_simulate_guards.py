@@ -58,7 +58,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.ages import AgeGrid
-from lcm.exceptions import ModelInitializationError, RegimeInitializationError
+from lcm.exceptions import ModelInitializationError
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
 from tests.regime_building.test_collective_regime_simulate import (
@@ -552,31 +552,32 @@ def test_stateless_collective_regime_simulate_carries_subject_axis():
     assert period_0.in_regime.shape == (n_subjects,)
 
 
-def test_stateless_collective_without_any_action_is_rejected_when_regimes_finalize():
-    """A collective regime declaring no discrete action is rejected at model build.
+def test_stateless_collective_without_any_action_finalizes():
+    """A collective regime needs no action at all to be complete.
 
-    The household argmax runs over the discrete-action product, so a collective
-    regime that offers none has nothing to maximize over. Completeness is a
-    property of the merged regime, so the rejection happens when the model
-    finalizes its regimes rather than at `Regime` construction — a bare regime
-    may legitimately receive its actions from a model-level slot.
+    The household argmax runs over whatever action product the regime declares,
+    and an empty product is a single cell — a terminal regime whose payoff its
+    states already determine has no decision to take. Such a regime finalizes
+    with its action mapping still empty, rather than being made to carry a
+    placeholder discrete action.
     """
-    with pytest.raises(RegimeInitializationError, match="discrete action"):
-        finalize_regimes(
-            user_regimes={
-                "couple": Regime(
-                    transition=None,
-                    stakeholders=("f", "m"),
-                    functions={
-                        "utility_f": lambda: jnp.asarray(3.0),
-                        "utility_m": lambda: jnp.asarray(7.0),
-                    },
-                )
-            },
-            derived_categoricals={},
-            koopmans_aggregator=LinearAggregator(),
-            certainty_equivalent=LinearExpectation(),
-        )
+    finalized = finalize_regimes(
+        user_regimes={
+            "couple": Regime(
+                transition=None,
+                stakeholders=("f", "m"),
+                functions={
+                    "utility_f": lambda: jnp.asarray(3.0),
+                    "utility_m": lambda: jnp.asarray(7.0),
+                },
+            )
+        },
+        derived_categoricals={},
+        koopmans_aggregator=LinearAggregator(),
+        certainty_equivalent=LinearExpectation(),
+    )
+
+    assert dict(finalized["couple"].actions) == {}
 
 
 def test_stateful_collective_regime_simulate_shape_is_byte_identical():

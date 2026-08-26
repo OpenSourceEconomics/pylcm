@@ -115,9 +115,10 @@ def _validate_collective_regime(regime: lcm.regime.Regime) -> None:
     household objective rather than erroring).
 
     What a collective regime needs but a model-level slot may supply — the
-    per-stakeholder `utility_<s>` functions and at least one discrete action —
-    is completeness, so `_validate_completeness` checks it once the regimes are
-    finalized at model build.
+    per-stakeholder `utility_<s>` functions — is completeness, so
+    `_validate_completeness` checks it once the regimes are finalized at model
+    build. The household argmax runs over whatever action product the regime
+    declares, which may be continuous or empty.
 
     Features the collective solve does not implement raise `NotImplementedError`:
     EV1 taste shocks
@@ -281,6 +282,8 @@ def _collective_value_constraint_errors(regime: lcm.regime.Regime) -> list[str]:
             "names must be unambiguous."
         )
 
+    error_messages.extend(_reference_projection_free_param_errors(regime))
+
     if regime.value_constraints:
         shadowed_q = sorted({f"Q_{s}" for s in stakeholders} & taken)
         if shadowed_q:
@@ -292,6 +295,46 @@ def _collective_value_constraint_errors(regime: lcm.regime.Regime) -> list[str]:
             )
 
     return error_messages
+
+
+def _reference_projection_free_param_errors(regime: lcm.regime.Regime) -> list[str]:
+    """Reject regime-level reference projections that introduce free parameters.
+
+    A `same_period_refs` projection resolves through the DECLARING regime's DAG
+    and additionally receives that regime's `period` / `age`. Anything else in
+    its signature is supplied by nothing: it never reaches the params template,
+    so the accepted model has no valid parameter assignment. (Inside a
+    `GatedEdge`, extra arguments ARE collected as the source regime's edge
+    parameters, so this rule is regime-level only.)
+
+    Args:
+        regime: The user regime whose references are checked.
+
+    Returns:
+        List of error messages, one per offending projection argument.
+
+    """
+    supplied = (
+        set(regime.functions)
+        | set(regime.states)
+        | set(regime.actions)
+        | set(regime.constraints)
+        | set(regime.derived_categoricals)
+        | {"period", "age"}
+    )
+    return [
+        f"The projection of `same_period_refs['{ref_name}']` for state "
+        f"'{state_name}' takes argument '{arg}', which the declaring regime "
+        "does not supply. A regime-level reference projection resolves through "
+        "this regime's own DAG and its period/age, and may not introduce a free "
+        "parameter: it would never appear in `get_params_template()`. Compute "
+        f"'{arg}' as a function of the regime, or declare it as a state or "
+        "action."
+        for ref_name, ref in regime.same_period_refs.items()
+        for state_name, func in ref.projection.items()
+        for arg in inspect.signature(func).parameters
+        if arg not in supplied
+    ]
 
 
 def _validate_gated_edges(regime: lcm.regime.Regime) -> None:
@@ -716,7 +759,6 @@ def _validate_completeness(
 
     - a `utility` entry in `functions` — a per-stakeholder `utility_<s>` for
       each stakeholder of a collective regime
-    - at least one discrete action in a collective regime
     - no declaration under a name any of the model's collective regimes
       publishes as a `value_<stakeholder>` column
     - state-transition coverage (every non-process state has a law; terminal
@@ -738,12 +780,6 @@ def _validate_completeness(
                 "A collective regime must provide a per-stakeholder utility "
                 f"function for each stakeholder. Missing: "
                 f"{[f'utility_{s}' for s in missing]}.",
-            )
-        if not any(isinstance(grid, DiscreteGrid) for grid in regime.actions.values()):
-            error_messages.append(
-                "A collective regime must have at least one discrete action: "
-                "the household argmax of the scalarization runs over the "
-                "discrete-action product.",
             )
     elif "utility" not in regime.functions:
         error_messages.append(

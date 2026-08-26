@@ -65,7 +65,7 @@ from _lcm.typing import (
 )
 from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
-from lcm.exceptions import ModelInitializationError
+from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.typing import (
     BoolND,
     ContinuousState,
@@ -1155,6 +1155,43 @@ class _CompiledEdgeGate:
     states it reads, and its own free params under their qualified names."""
 
 
+def _as_boolean_gate(*, value: object, target: RegimeName, phase: str) -> BoolND:
+    """Return the gate output as a Boolean array, or reject its dtype.
+
+    A gate selects a branch with a strict `jnp.where`, where every nonzero
+    value counts as true. A numeric gate would therefore open the edge for
+    every cell instead of expressing a probability or failing, changing both
+    the solved continuation and the simulated route with no diagnostic. The
+    return annotation cannot constrain what a user function returns, so the
+    realized dtype is checked here, at each of the two places a gate is
+    evaluated.
+
+    Args:
+        value: Whatever the compiled gate evaluator returned.
+        target: Name of the edge's target regime, for the error message.
+        phase: `"solve"` or `"simulate"`, naming the evaluator that ran.
+
+    Returns:
+        The gate output as a Boolean array.
+
+    Raises:
+        RegimeInitializationError: The output dtype is not boolean.
+
+    """
+    gate = jnp.asarray(value)
+    if gate.dtype != jnp.bool_:
+        msg = (
+            f"The gate of the gated edge into regime '{target}' returned dtype "
+            f"'{gate.dtype}' in the {phase} phase, but a gate must return a "
+            "boolean. A gate selects a branch with a strict `where`, which "
+            "treats every nonzero value as true, so a numeric gate would open "
+            "the edge everywhere rather than express a probability. Return a "
+            "comparison or a boolean combination, e.g. `V_target > V_ref`."
+        )
+        raise RegimeInitializationError(msg)
+    return gate
+
+
 def _compile_edge_gate(
     *,
     edge: ResolvedGatedEdge,
@@ -1520,7 +1557,9 @@ def get_edge_fold(
             state_mesh=state_mesh,
             cell_kwargs=kwargs,
         )
-        gate = jnp.asarray(gate_evaluator(**gate_kwargs))
+        gate = _as_boolean_gate(
+            value=gate_evaluator(**gate_kwargs), target=edge.target, phase="solve"
+        )
 
         component_values: list[FloatND] = []
         for leg, fb_reader, fb_arg_names in zip(
@@ -1910,7 +1949,11 @@ def get_edge_simulate_gate_evaluator(
                 arg: kwargs[exposed] for arg, exposed in gate_extra_exposed.items()
             },
         )
-        return jnp.asarray(gate_evaluator(**gate_kwargs))
+        return _as_boolean_gate(
+            value=gate_evaluator(**gate_kwargs),
+            target=edge.target,
+            phase="simulate",
+        )
 
     # Published for `route_gated_edges`, which has EVERY regime's flat params in
     # hand and no other way to tell which one an arg belongs to.
