@@ -26,6 +26,7 @@ import ctypes
 import sys
 from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
+from typing import Literal, overload
 
 import jax
 import jax.numpy as jnp
@@ -392,6 +393,7 @@ def _exact_affine_read_jvp(
     return (published, status), (published_dot, status_dot)
 
 
+@overload
 def exact_query_winner(
     *,
     left_grid: FloatND,
@@ -400,7 +402,46 @@ def exact_query_winner(
     right_value: FloatND,
     live: BoolND,
     x_query: FloatND,
-) -> tuple[IntND, IntND]:
+    return_strict_primary: Literal[False] = ...,
+) -> tuple[IntND, IntND]: ...
+
+
+@overload
+def exact_query_winner(
+    *,
+    left_grid: FloatND,
+    right_grid: FloatND,
+    left_value: FloatND,
+    right_value: FloatND,
+    live: BoolND,
+    x_query: FloatND,
+    return_strict_primary: Literal[True],
+) -> tuple[IntND, IntND, BoolND]: ...
+
+
+@overload
+def exact_query_winner(
+    *,
+    left_grid: FloatND,
+    right_grid: FloatND,
+    left_value: FloatND,
+    right_value: FloatND,
+    live: BoolND,
+    x_query: FloatND,
+    return_strict_primary: bool,
+) -> tuple[IntND, IntND] | tuple[IntND, IntND, BoolND]: ...
+
+
+def exact_query_winner(
+    *,
+    left_grid: FloatND,
+    right_grid: FloatND,
+    left_value: FloatND,
+    right_value: FloatND,
+    live: BoolND,
+    x_query: FloatND,
+    return_strict_primary: bool = False,
+) -> tuple[IntND, IntND] | tuple[IntND, IntND, BoolND]:
     """Select the exact right-continuous owner of every query.
 
     Each query is compared with every live segment that brackets it. The native
@@ -424,11 +465,16 @@ def exact_query_winner(
         right_value: Stored value at `right_grid`.
         live: Whether each segment participates.
         x_query: Query abscissae, of any shape.
+        return_strict_primary: Whether to append an exact Boolean stating that
+            the selected owner strictly exceeds every other bracketing segment
+            in primary affine value.
 
     Returns:
         Winner indices and one coupled status per query. Status is zero only
         where at least one valid segment brackets the query and the complete
-        total order was resolved; otherwise it is `UNRESOLVED_STATUS`.
+        total order was resolved; otherwise it is `UNRESOLVED_STATUS`. When
+        `return_strict_primary` is true, the exact strict-primary fact is the
+        third result.
 
     Raises:
         ExactAffineKernelUnavailableError: If the kernel is absent or unloadable.
@@ -461,7 +507,52 @@ def exact_query_winner(
     if live_array.shape != shape:
         msg = f"live must have segment shape {shape}, got {live_array.shape}."
         raise ValueError(msg)
-    return _shared_segment_winner(*floating, live_array, query)
+    winner, status = _shared_segment_winner(*floating, live_array, query)
+    if return_strict_primary:
+        strict_primary = _shared_strict_primary(
+            *floating, live_array, query, winner, status
+        )
+        return winner, status, strict_primary
+    return winner, status
+
+
+@overload
+def exact_query_winner_batched(
+    *,
+    left_grid: FloatND,
+    right_grid: FloatND,
+    left_value: FloatND,
+    right_value: FloatND,
+    live: BoolND,
+    x_query: FloatND,
+    return_strict_primary: Literal[False] = ...,
+) -> tuple[IntND, IntND]: ...
+
+
+@overload
+def exact_query_winner_batched(
+    *,
+    left_grid: FloatND,
+    right_grid: FloatND,
+    left_value: FloatND,
+    right_value: FloatND,
+    live: BoolND,
+    x_query: FloatND,
+    return_strict_primary: Literal[True],
+) -> tuple[IntND, IntND, BoolND]: ...
+
+
+@overload
+def exact_query_winner_batched(
+    *,
+    left_grid: FloatND,
+    right_grid: FloatND,
+    left_value: FloatND,
+    right_value: FloatND,
+    live: BoolND,
+    x_query: FloatND,
+    return_strict_primary: bool,
+) -> tuple[IntND, IntND] | tuple[IntND, IntND, BoolND]: ...
 
 
 def exact_query_winner_batched(
@@ -472,7 +563,8 @@ def exact_query_winner_batched(
     right_value: FloatND,
     live: BoolND,
     x_query: FloatND,
-) -> tuple[IntND, IntND]:
+    return_strict_primary: bool = False,
+) -> tuple[IntND, IntND] | tuple[IntND, IntND, BoolND]:
     """Select the exact owner of every query against that query's own segments.
 
     Each batch element carries an independent segment set, so a microtile of
@@ -491,13 +583,17 @@ def exact_query_winner_batched(
         live: Whether each segment participates, with the same shape.
         x_query: Query abscissae, carrying the segment operands' batch shape
             ahead of its own trailing query axis.
+        return_strict_primary: Whether to append an exact Boolean stating that
+            the selected owner strictly exceeds every other bracketing segment
+            in primary affine value.
 
     Returns:
         Winner indices and one coupled status per query, both shaped like
         `x_query`. An index counts from the start of its own batch element's
         segments. Status is zero only where at least one live segment of that
         element brackets the query and the complete total order was resolved;
-        otherwise it is `UNRESOLVED_STATUS`.
+        otherwise it is `UNRESOLVED_STATUS`. When `return_strict_primary` is
+        true, the exact strict-primary fact is the third result.
 
     Raises:
         ExactAffineKernelUnavailableError: If the kernel is absent or unloadable.
@@ -536,7 +632,153 @@ def exact_query_winner_batched(
     if live_array.shape != shape:
         msg = f"live must have segment shape {shape}, got {live_array.shape}."
         raise ValueError(msg)
-    return _batched_segment_winner_impl(*floating, live_array, query)
+    winner, status = _batched_segment_winner_impl(*floating, live_array, query)
+    if return_strict_primary:
+        strict_primary = _batched_strict_primary(
+            *floating, live_array, query, winner, status
+        )
+        return winner, status, strict_primary
+    return winner, status
+
+
+def _canonical_query_segments(
+    left_grid: FloatND,
+    right_grid: FloatND,
+    left_value: FloatND,
+    right_value: FloatND,
+) -> tuple[FloatND, FloatND, FloatND, FloatND, FloatND, FloatND]:
+    """Match the native query-line canonicalization using stored operands."""
+    descending = left_grid > right_grid
+    lower = jnp.where(descending, right_grid, left_grid)
+    upper = jnp.where(descending, left_grid, right_grid)
+    at_lower = jnp.where(descending, right_value, left_value)
+    at_upper = jnp.where(descending, left_value, right_value)
+    zero_width = lower == upper
+    canonical_x0 = jnp.where(zero_width, jnp.zeros_like(lower), lower)
+    canonical_x1 = jnp.where(zero_width, jnp.ones_like(upper), upper)
+    # A native self-bracket is a flat unit-width line at the stored LEFT value,
+    # irrespective of orientation.
+    canonical_v0 = jnp.where(zero_width, left_value, at_lower)
+    canonical_v1 = jnp.where(zero_width, left_value, at_upper)
+    return canonical_x0, canonical_x1, canonical_v0, canonical_v1, lower, upper
+
+
+def _shared_strict_primary_primal(
+    left_grid: FloatND,
+    right_grid: FloatND,
+    left_value: FloatND,
+    right_value: FloatND,
+    live: IntND,
+    x_query: FloatND,
+    winner: IntND,
+    status: IntND,
+) -> BoolND:
+    """Exact strict-primary fact for shared segments, requested off hot path."""
+    x0, x1, v0, v1, lower, upper = _canonical_query_segments(
+        left_grid, right_grid, left_value, right_value
+    )
+    safe_winner = jnp.where(status == 0, winner, 0)
+    held_x0 = x0[safe_winner]
+    held_x1 = x1[safe_winner]
+    held_v0 = v0[safe_winner]
+    held_v1 = v1[safe_winner]
+    query = x_query[..., None]
+    comparison = certified_affine_compare(
+        a_x0=held_x0[..., None],
+        a_x1=held_x1[..., None],
+        a_v0=held_v0[..., None],
+        a_v1=held_v1[..., None],
+        b_x0=x0,
+        b_x1=x1,
+        b_v0=v0,
+        b_v1=v1,
+        x_query=query,
+    )
+    candidate = (
+        (jnp.asarray(live, dtype=bool))
+        & (lower <= query)
+        & (query <= upper)
+        & (jnp.arange(left_grid.shape[0]) != safe_winner[..., None])
+    )
+    return (status == 0) & jnp.all(~candidate | (comparison == 1), axis=-1)
+
+
+_shared_strict_primary = jax.custom_jvp(_shared_strict_primary_primal)
+
+
+@_shared_strict_primary.defjvp
+def _shared_strict_primary_jvp(
+    primals: tuple[FloatND, FloatND, FloatND, FloatND, IntND, FloatND, IntND, IntND],
+    tangents: tuple[FloatND, FloatND, FloatND, FloatND, IntND, FloatND, IntND, IntND],
+) -> tuple[BoolND, BoolND]:
+    """Strict ownership is a discrete exact fact with a float0 tangent."""
+    del tangents
+    stopped = tuple(jax.lax.stop_gradient(value) for value in primals)
+    strict = _shared_strict_primary_primal(*stopped)
+    return strict, jnp.zeros(jnp.shape(strict), dtype=jax.dtypes.float0)
+
+
+def _batched_strict_primary_primal(
+    left_grid: FloatND,
+    right_grid: FloatND,
+    left_value: FloatND,
+    right_value: FloatND,
+    live: IntND,
+    x_query: FloatND,
+    winner: IntND,
+    status: IntND,
+) -> BoolND:
+    """Exact strict-primary fact for per-batch segment sets."""
+    x0, x1, v0, v1, lower, upper = _canonical_query_segments(
+        left_grid, right_grid, left_value, right_value
+    )
+    n_segment = left_grid.shape[-1]
+    candidate_shape = (*x_query.shape, n_segment)
+
+    def expand(values: FloatND | IntND) -> FloatND | IntND:
+        return jnp.broadcast_to(values[..., None, :], candidate_shape)
+
+    x0_all, x1_all, v0_all, v1_all = map(expand, (x0, x1, v0, v1))
+    safe_winner = jnp.where(status == 0, winner, 0)
+
+    def selected(values: FloatND) -> FloatND:
+        return jnp.take_along_axis(values, safe_winner[..., None], axis=-1)[..., 0]
+
+    held_x0, held_x1, held_v0, held_v1 = map(selected, (x0_all, x1_all, v0_all, v1_all))
+    query = x_query[..., None]
+    comparison = certified_affine_compare(
+        a_x0=held_x0[..., None],
+        a_x1=held_x1[..., None],
+        a_v0=held_v0[..., None],
+        a_v1=held_v1[..., None],
+        b_x0=x0_all,
+        b_x1=x1_all,
+        b_v0=v0_all,
+        b_v1=v1_all,
+        x_query=query,
+    )
+    candidate = (
+        jnp.broadcast_to(jnp.asarray(live, dtype=bool)[..., None, :], candidate_shape)
+        & (jnp.broadcast_to(lower[..., None, :], candidate_shape) <= query)
+        & (query <= jnp.broadcast_to(upper[..., None, :], candidate_shape))
+        & (jnp.arange(n_segment) != safe_winner[..., None])
+    )
+    return (status == 0) & jnp.all(~candidate | (comparison == 1), axis=-1)
+
+
+_batched_strict_primary = jax.custom_jvp(_batched_strict_primary_primal)
+
+
+@_batched_strict_primary.defjvp
+def _batched_strict_primary_jvp(
+    primals: tuple[FloatND, FloatND, FloatND, FloatND, IntND, FloatND, IntND, IntND],
+    tangents: tuple[FloatND, FloatND, FloatND, FloatND, IntND, FloatND, IntND, IntND],
+) -> tuple[BoolND, BoolND]:
+    """Batched strict ownership is discrete with a float0 tangent."""
+    del tangents
+    stopped = tuple(jax.lax.stop_gradient(value) for value in primals)
+    strict = _batched_strict_primary_primal(*stopped)
+    return strict, jnp.zeros(jnp.shape(strict), dtype=jax.dtypes.float0)
 
 
 def _batched_segment_winner_ffi(

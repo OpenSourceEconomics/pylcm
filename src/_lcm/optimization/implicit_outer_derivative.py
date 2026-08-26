@@ -29,17 +29,22 @@ REPORTED, not repaired, through `ImplicitOptimumDiagnostics`:
   with the parameter; without this screen the tangent `-Q_ftheta/Q_ff`, valid
   only at a stationary point, would be reported as trustworthy.
 
-The kink screen has TWO tiers. The exact certificate is
-BRANCH IDENTITY: when the caller supplies a `branch_id` oracle labelling which
-analytic piece of the value surface wins at a query point, a winner whose branch
-is not constant across the probe neighborhood is a breakpoint and is marked
-unresolved, independent of the jump amplitude. Without `branch_id` the screen
-falls back to a value-only HEURISTIC — a multi-radius slope-jump contraction
-test — which is NOT a differentiability certificate: a kink whose slope jump is
-below the value oracle's rounding floor at the probe radius (yet still yields an
-O(1) argmax-tangent error) cannot be seen from values alone. `branch_certified`
-reports which tier ran, so a consumer never mistakes a heuristic pass for a
-proof; supply `branch_id` wherever a rigorous certificate is required.
+Exact certification requires complete OWNER PROVENANCE: a formula-defining
+signature that includes the exact affine segment, inner discrete choice,
+floor/budget piece, active constraint side, and every other identity that
+selects the local smooth formula. The signature must remain decided,
+strict-primary, complete, and unchanged across action probes, parameter probes,
+mixed corners, and supplied reoptimized points. A legacy `branch_id` oracle is
+still a useful conservative action-direction kink screen, but cannot certify
+parameter-direction stability or completeness and therefore fails closed when
+certification is requested.
+
+Without owner provenance the generic diagnostic retains a value-only HEURISTIC
+— a multi-radius slope-jump contraction test. This is not a differentiability
+certificate: a kink whose slope jump is below the value oracle rounding floor
+at the probe radius (yet still yields an O(1) argmax-tangent error) cannot be
+seen from values alone. Certified consumers must require owner provenance;
+`branch_certified` is true only when the complete witness passes.
 
 Consumers must treat `unresolved` cells as *no derivative available* and
 fall back to finite differences or refuse inference there; the tangent is
@@ -49,6 +54,7 @@ does not NaN-poison resolved cells.
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -101,6 +107,24 @@ _KINK_CONTRACTION_TOL = 0.5
 _KINK_NOISE_ULPS = 64.0
 
 
+class OwnerProvenance(NamedTuple):
+    """Compact formula-defining identity for one certified derivative cell.
+
+    ``signature`` is a fixed pytree of integer/Boolean arrays on the cell axes:
+    exact affine segment, inner discrete branch, floor/budget piece,
+    constraint/interval side, keeper/adjuster branch, and every other identity
+    whose change selects a different smooth formula. ``decided`` is false for
+    any unresolved native/status component; ``strict_primary`` is false when a
+    deterministic secondary key broke an exact primary-value tie; ``complete``
+    is false when any formula-defining component is unavailable.
+    """
+
+    signature: object
+    decided: BoolND
+    strict_primary: BoolND
+    complete: BoolND
+
+
 @dataclass(frozen=True)
 class ImplicitOptimumDiagnostics:
     """Where the implicit derivative of the outer optimum is trustworthy."""
@@ -118,21 +142,28 @@ class ImplicitOptimumDiagnostics:
     """Best and runner-up mesh basins value-tied at the mesh stage."""
 
     nonstationary: BoolND
-    """`|Q_f(f*)|` too large for an interior stationary point, OR the winning
-    branch identity is not stable across the probe neighborhood — the winner
-    sits at a KINK (or the primal under-polished), so the
-    implicit-function-theorem tangent `-Q_ftheta/Q_ff`, which assumes
-    `Q_f(f*)=0`, does not apply."""
+    """The local first-order/stationarity or formula-identity screen failed."""
 
     branch_certified: BoolND
-    """Whether the smoothness verdict at this cell rests on the EXACT branch-
-    identity certificate (`branch_id` supplied and probed) rather than the
-    value-only slope-jump HEURISTIC. Where `False`, a `resolved` cell is only
-    heuristically screened: a sub-rounding-amplitude kink can slip through, so a
-    consumer needing a guarantee must supply `branch_id`."""
+    """A complete, decided, strict-primary provenance record is unchanged."""
+
+    owner_missing: BoolND
+    """No complete provenance callback was supplied for this cell."""
+
+    owner_incomplete: BoolND
+    """At least one callback result omitted a formula-defining component."""
+
+    owner_unresolved: BoolND
+    """At least one exact owner/status fact was undecided."""
+
+    owner_primary_tie: BoolND
+    """At least one point used a secondary key to break a primary-value tie."""
+
+    owner_changed: BoolND
+    """The composite formula-defining signature changed in the neighborhood."""
 
     unresolved: BoolND
-    """Any of the above: no trustworthy local-normal derivative here."""
+    """No trustworthy local-normal derivative is available for this cell."""
 
 
 def _mesh_and_polish(
@@ -259,6 +290,91 @@ def _continuous_outer_optimum_jvp(
     return (f_star, value, basin_margin), (f_dot, value_dot, margin_dot)
 
 
+def _cell_bool(value: object, *, like: FloatND) -> BoolND:
+    """Broadcast one provenance flag onto the diagnostic cell axes."""
+    return jnp.broadcast_to(jnp.asarray(value, dtype=bool), jnp.shape(like))
+
+
+def _same_owner_signature(
+    baseline: object, candidate: object, *, like: FloatND
+) -> tuple[BoolND, bool]:
+    """Compare fixed-pytree signature fields without inventing missing fields."""
+    baseline_leaves, baseline_tree = jax.tree_util.tree_flatten(baseline)
+    candidate_leaves, candidate_tree = jax.tree_util.tree_flatten(candidate)
+    structurally_complete = (
+        baseline_tree == candidate_tree
+        and bool(baseline_leaves)
+        and len(baseline_leaves) == len(candidate_leaves)
+    )
+    if not structurally_complete:
+        return jnp.zeros_like(like, dtype=bool), False
+    same = jnp.ones_like(like, dtype=bool)
+    for left, right in zip(baseline_leaves, candidate_leaves, strict=True):
+        same &= jnp.broadcast_to(
+            jnp.equal(jnp.asarray(left), jnp.asarray(right)), jnp.shape(like)
+        )
+    return same, True
+
+
+def _owner_certificate_flags(
+    owner_provenance: Callable[[FloatND, FloatND], OwnerProvenance],
+    *,
+    f_star: FloatND,
+    theta: FloatND,
+    action_delta: FloatND,
+    parameter_delta: FloatND,
+    lower: FloatND,
+    upper: FloatND,
+    reoptimized_owner_points: tuple[tuple[FloatND, FloatND], ...],
+) -> tuple[BoolND, BoolND, BoolND, BoolND, BoolND]:
+    """Evaluate the complete action/parameter/mixed/Richardson witness."""
+    f_plus = jnp.clip(f_star + action_delta, min=lower, max=upper)
+    f_minus = jnp.clip(f_star - action_delta, min=lower, max=upper)
+    theta_plus = theta + parameter_delta
+    theta_minus = theta - parameter_delta
+    points = (
+        (f_star, theta),
+        (f_minus, theta),
+        (f_plus, theta),
+        (f_star, theta_minus),
+        (f_star, theta_plus),
+        (f_minus, theta_minus),
+        (f_minus, theta_plus),
+        (f_plus, theta_minus),
+        (f_plus, theta_plus),
+        *reoptimized_owner_points,
+    )
+    records = tuple(owner_provenance(f, t) for f, t in points)
+    baseline = records[0]
+    owner_incomplete = ~_cell_bool(baseline.complete, like=f_star)
+    owner_unresolved = ~_cell_bool(baseline.decided, like=f_star)
+    owner_primary_tie = ~_cell_bool(baseline.strict_primary, like=f_star)
+    owner_changed = jnp.zeros_like(f_star, dtype=bool)
+    baseline_leaves, _ = jax.tree_util.tree_flatten(baseline.signature)
+    if not baseline_leaves:
+        owner_incomplete |= jnp.ones_like(f_star, dtype=bool)
+    for record in records[1:]:
+        owner_incomplete |= ~_cell_bool(record.complete, like=f_star)
+        owner_unresolved |= ~_cell_bool(record.decided, like=f_star)
+        owner_primary_tie |= ~_cell_bool(record.strict_primary, like=f_star)
+        same, structure_complete = _same_owner_signature(
+            baseline.signature, record.signature, like=f_star
+        )
+        owner_changed |= ~same
+        if not structure_complete:
+            owner_incomplete |= jnp.ones_like(f_star, dtype=bool)
+    branch_certified = ~(
+        owner_incomplete | owner_unresolved | owner_primary_tie | owner_changed
+    )
+    return (
+        branch_certified,
+        owner_incomplete,
+        owner_unresolved,
+        owner_primary_tie,
+        owner_changed,
+    )
+
+
 def implicit_optimum_diagnostics(
     objective: Callable[[FloatND, FloatND], FloatND],
     *,
@@ -269,6 +385,11 @@ def implicit_optimum_diagnostics(
     n_mesh: int = 33,
     polish_iterations: int = 32,
     branch_id: Callable[[FloatND, FloatND], FloatND] | None = None,
+    owner_provenance: Callable[[FloatND, FloatND], OwnerProvenance] | None = None,
+    require_owner_certificate: bool = False,
+    reoptimized_owner_points: tuple[tuple[FloatND, FloatND], ...] = (),
+    parameter_probe_atol: float = 1e-5,
+    parameter_probe_rtol: float = 1e-6,
     curvature_floor: float = _CURVATURE_FLOOR,
     tie_margin: float = _TIE_MARGIN,
     stationarity_rtol: float = _STATIONARITY_RTOL,
@@ -277,23 +398,21 @@ def implicit_optimum_diagnostics(
     kink_contraction_ratio: float = _KINK_CONTRACTION_RATIO,
     kink_contraction_tol: float = _KINK_CONTRACTION_TOL,
 ) -> ImplicitOptimumDiagnostics:
-    """Classify where the implicit derivative at `f_star` is trustworthy.
+    """Classify whether a local implicit derivative has a complete witness.
 
-    `branch_id`, if given, maps `(f, theta)` to a per-cell label of the active
-    analytic branch of the value surface (e.g. the winning discrete inner choice
-    or a floor-binding indicator). It is the EXACT kink certificate: a winner
-    whose branch differs anywhere in the probe neighborhood
-    `{f_star - delta, f_star, f_star + delta}` sits on a breakpoint and is marked
-    nonstationary regardless of the slope-jump amplitude — closing the blind spot
-    of the value-only heuristic, which cannot see a kink below the oracle's
-    rounding floor. Without `branch_id` only the heuristic
-    screen runs and `branch_certified` is `False`.
+    ``owner_provenance`` is the only certification path. It is evaluated at the
+    baseline optimum, both action probes, both parameter probes, all four mixed
+    corners, and every supplied reoptimized Richardson point. A legacy
+    ``branch_id`` remains useful as a conservative action-direction kink screen,
+    but it is incomplete evidence and can never set ``branch_certified``.
+
+    Generic callers may retain the historical value-only heuristic by leaving
+    ``require_owner_certificate=False`` and supplying neither callback. Certified
+    consumers must set it true. Supplying either provenance interface also
+    requests certification automatically, so a legacy label fails closed rather
+    than masquerading as a complete certificate.
     """
     lower, upper = bounds
-    # The polish bracket flanking the winning node is [node-step, node+step],
-    # width 2*step; after `polish_iterations` golden-section reductions the
-    # final bracket is 2*step*0.618**iters. `f_star` lies within it of the true
-    # optimum, so this is the residual scale the stationarity screen tolerates.
     width = 2.0 * (upper - lower) / (n_mesh - 1) * (0.618**polish_iterations)
     ones = jnp.ones_like(f_star)
     q_f = jax.jvp(lambda f: objective(f, theta), (f_star,), (ones,))[1]
@@ -306,21 +425,11 @@ def implicit_optimum_diagnostics(
     at_upper = f_star >= upper - width
     flat = jnp.abs(q_ff) < curvature_floor
     tie = basin_margin < tie_margin
-
-    # Certify stationarity from BOTH one-sided slopes, not the single
-    # forward-mode q_f: at an exact kink jax.jvp returns one sub-gradient branch
-    # and can read ~0 (a tent peak differentiates to 0), passing a non-smooth
-    # optimum as stationary. Probe the slope jump at two shrinking radii and
-    # test contraction: a smooth optimum's jump shrinks approximately linearly
-    # with the radius, while a kink's does not. The discriminant is therefore
-    # amplitude-independent.
-    delta = jnp.maximum(width, kink_probe_atol)
+    action_delta = jnp.maximum(width, kink_probe_atol)
 
     def _slope_jump(radius: FloatND) -> FloatND:
         f_plus = jnp.clip(f_star + radius, min=lower, max=upper)
         f_minus = jnp.clip(f_star - radius, min=lower, max=upper)
-        # Guard the denominators where a bound clips a probe to zero width; such
-        # cells are bound cells, already reported by the bound flags.
         step_plus = jnp.where(f_plus > f_star, f_plus - f_star, 1.0)
         step_minus = jnp.where(f_star > f_minus, f_star - f_minus, 1.0)
         slope_plus = (objective(f_plus, theta) - objective(f_star, theta)) / step_plus
@@ -329,50 +438,82 @@ def implicit_optimum_diagnostics(
         ) / step_minus
         return jnp.abs(slope_plus - slope_minus)
 
-    jump_outer = _slope_jump(delta)
-    jump_inner = _slope_jump(delta / kink_contraction_ratio)
-    # Rounding in Q propagates to a one-sided slope as ~eps*|Q|/radius; below
-    # this the "jump" is noise and its contraction ratio is meaningless. Gate on
-    # the INNER (smaller radius, larger noise) scale so a machine-smooth optimum
-    # is never flagged. A smooth optimum's jump contracts to ~jump_outer/ratio;
-    # a kink's stays ~jump_outer, so failing to fall below `kink_contraction_tol`
-    # times the outer jump is a genuine breakpoint at any amplitude.
+    jump_outer = _slope_jump(action_delta)
+    jump_inner = _slope_jump(action_delta / kink_contraction_ratio)
     eps = jnp.finfo(jnp.asarray(f_star).dtype).eps
     value_scale = jnp.abs(objective(f_star, theta))
     jump_noise = stationarity_atol + _KINK_NOISE_ULPS * eps * value_scale * (
-        kink_contraction_ratio / delta
+        kink_contraction_ratio / action_delta
     )
     kinked = (jump_outer > jump_noise) & (
         jump_inner > kink_contraction_tol * jump_outer
     )
 
-    # Exact certificate: a winner whose active branch is not constant across
-    # the probe neighborhood is a breakpoint, whatever the slope-jump amplitude —
-    # this is what the value-only heuristic cannot guarantee. Absent a `branch_id`
-    # oracle the branch is unknown, so the term is inert and only the heuristic
-    # runs (`branch_certified=False`).
-    if branch_id is None:
-        branch_unstable = jnp.zeros_like(kinked)
-        branch_certified = jnp.zeros_like(kinked)
-    else:
-        f_plus = jnp.clip(f_star + delta, min=lower, max=upper)
-        f_minus = jnp.clip(f_star - delta, min=lower, max=upper)
+    legacy_branch_unstable = jnp.zeros_like(kinked)
+    if branch_id is not None:
+        f_plus = jnp.clip(f_star + action_delta, min=lower, max=upper)
+        f_minus = jnp.clip(f_star - action_delta, min=lower, max=upper)
         b_star = branch_id(f_star, theta)
-        b_plus = branch_id(f_plus, theta)
-        b_minus = branch_id(f_minus, theta)
-        branch_unstable = (b_plus != b_star) | (b_minus != b_star)
-        branch_certified = jnp.ones_like(kinked)
+        legacy_branch_unstable = (branch_id(f_plus, theta) != b_star) | (
+            branch_id(f_minus, theta) != b_star
+        )
 
-    # A genuine interior optimum also leaves |Q_f| ~ |Q_ff| * width after the
-    # polish; a far larger residual is an under-polished primal (or a one-sided
-    # winner). Combine with the kink screen and the branch certificate; suppress
-    # all at a bound (Q_f is one-sided there, already reported by the bound flags).
+    owner_missing = jnp.full_like(f_star, owner_provenance is None, dtype=bool)
+    if owner_provenance is None:
+        branch_certified = jnp.zeros_like(f_star, dtype=bool)
+        owner_incomplete = jnp.zeros_like(f_star, dtype=bool)
+        owner_unresolved = jnp.zeros_like(f_star, dtype=bool)
+        owner_primary_tie = jnp.zeros_like(f_star, dtype=bool)
+        owner_changed = jnp.zeros_like(f_star, dtype=bool)
+    else:
+        theta_array = jnp.asarray(theta, dtype=jnp.asarray(f_star).dtype)
+        parameter_delta = jnp.maximum(
+            jnp.asarray(parameter_probe_atol, dtype=theta_array.dtype),
+            jnp.abs(theta_array) * parameter_probe_rtol,
+        )
+        (
+            branch_certified,
+            owner_incomplete,
+            owner_unresolved,
+            owner_primary_tie,
+            owner_changed,
+        ) = _owner_certificate_flags(
+            owner_provenance,
+            f_star=f_star,
+            theta=theta,
+            action_delta=action_delta,
+            parameter_delta=parameter_delta,
+            lower=lower,
+            upper=upper,
+            reoptimized_owner_points=reoptimized_owner_points,
+        )
+
     stationarity_threshold = (
         stationarity_rtol * jnp.abs(q_ff) * width + stationarity_atol
     )
     nonstationary = (
-        (jnp.abs(q_f) > stationarity_threshold) | kinked | branch_unstable
+        (jnp.abs(q_f) > stationarity_threshold)
+        | kinked
+        | legacy_branch_unstable
+        | owner_changed
     ) & ~(at_lower | at_upper)
+    certification_requested = (
+        require_owner_certificate
+        or branch_id is not None
+        or owner_provenance is not None
+    )
+    certification_failure = jnp.zeros_like(f_star, dtype=bool)
+    if certification_requested:
+        certification_failure = (
+            owner_missing
+            | owner_incomplete
+            | owner_unresolved
+            | owner_primary_tie
+            | owner_changed
+        )
+    unresolved = (
+        at_lower | at_upper | flat | tie | nonstationary | certification_failure
+    )
     return ImplicitOptimumDiagnostics(
         at_lower_bound=at_lower,
         at_upper_bound=at_upper,
@@ -380,5 +521,10 @@ def implicit_optimum_diagnostics(
         basin_tie=tie,
         nonstationary=nonstationary,
         branch_certified=branch_certified,
-        unresolved=at_lower | at_upper | flat | tie | nonstationary,
+        owner_missing=owner_missing,
+        owner_incomplete=owner_incomplete,
+        owner_unresolved=owner_unresolved,
+        owner_primary_tie=owner_primary_tie,
+        owner_changed=owner_changed,
+        unresolved=unresolved,
     )

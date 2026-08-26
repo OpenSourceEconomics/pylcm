@@ -1,4 +1,5 @@
 import functools
+import inspect
 import itertools
 import logging
 import time
@@ -2155,6 +2156,101 @@ def _score_nnbegm_candidate_bank(
     )
 
 
+def _invert_nnbegm_outer_targets(
+    *,
+    regime: Regime,
+    sim_policy: NNBEGMSimPolicy,
+    candidate_inner: FloatND,
+    candidate_target: FloatND,
+    states: Mapping[StateOrActionName, FloatND | IntND],
+    flat_params: FlatRegimeParams,
+    period: int,
+    age: ScalarFloat | ScalarInt,
+) -> tuple[FloatND, BoolND]:
+    """Invert retained targets at realized states and verify the round trip."""
+    policy_read = regime.simulation.egm_policy_read
+    if not isinstance(policy_read, NNBEGMPolicyRead):
+        raise TypeError("NNBEGM target inversion requires its replay adapter.")
+    target_function = policy_read.outer_target_function_by_period[period]
+    accepted = inspect.signature(target_function).parameters
+    n_candidates, n_subjects = candidate_inner.shape
+    candidate_shape = (n_candidates, n_subjects)
+    state_inputs = {
+        name: jnp.broadcast_to(jnp.asarray(value)[None, :], candidate_shape)
+        for name, value in states.items()
+    }
+    if sim_policy.discrete_action_names:
+        if sim_policy.candidate_discrete_actions is None:
+            raise ValueError("NNBEGM discrete replay is missing candidate codes.")
+        discrete_inputs = {
+            name: jnp.broadcast_to(
+                sim_policy.candidate_discrete_actions[:, position, None],
+                candidate_shape,
+            )
+            for position, name in enumerate(sim_policy.discrete_action_names)
+        }
+    else:
+        discrete_inputs = {}
+
+    def evaluate(outer_action: FloatND) -> Mapping[str, FloatND]:
+        pool = {
+            **dict(flat_params),
+            **state_inputs,
+            **discrete_inputs,
+            sim_policy.inner_action_name: candidate_inner,
+            sim_policy.outer_action_name: outer_action,
+            "period": jnp.int32(period),
+            "age": age,
+        }
+        return target_function(
+            **{name: value for name, value in pool.items() if name in accepted}
+        )
+
+    zeros = jnp.zeros_like(candidate_inner)
+    at_zero_results = evaluate(zeros)
+    at_zero = jnp.broadcast_to(
+        jnp.asarray(at_zero_results[policy_read.outer_post_decision]), candidate_shape
+    )
+    at_one = jnp.broadcast_to(
+        jnp.asarray(
+            evaluate(jnp.ones_like(candidate_inner))[policy_read.outer_post_decision]
+        ),
+        candidate_shape,
+    )
+    slope = at_one - at_zero
+
+    if policy_read.outer_no_adjustment_target is None:
+        keeper_targets = jnp.broadcast_to(
+            jnp.asarray(states[policy_read.outer_state_name])[None, :],
+            (sim_policy.n_keeper_candidates, n_subjects),
+        )
+    else:
+        keeper_targets = jnp.broadcast_to(
+            jnp.asarray(at_zero_results[policy_read.outer_no_adjustment_target]),
+            candidate_shape,
+        )[: sim_policy.n_keeper_candidates]
+    realized_target = jnp.concatenate(
+        (keeper_targets, candidate_target[sim_policy.n_keeper_candidates :]),
+        axis=0,
+    )
+    candidate_outer = (realized_target - at_zero) / slope
+    reconstructed = jnp.broadcast_to(
+        jnp.asarray(evaluate(candidate_outer)[policy_read.outer_post_decision]),
+        candidate_shape,
+    )
+    eps = jnp.finfo(candidate_inner.dtype).eps
+    tolerance = 128 * eps * jnp.maximum(1.0, jnp.abs(realized_target))
+    represented = (
+        jnp.isfinite(realized_target)
+        & jnp.isfinite(candidate_outer)
+        & jnp.isfinite(slope)
+        & (slope != 0)
+        & jnp.isfinite(reconstructed)
+        & (jnp.abs(reconstructed - realized_target) <= tolerance)
+    )
+    return candidate_outer, represented
+
+
 def _replay_nnbegm_candidates(
     *,
     optimal_actions: MappingProxyType[ActionName, FloatND | IntND],
@@ -2195,13 +2291,23 @@ def _replay_nnbegm_candidates(
         )(bank)
 
     candidate_inner = read_bank(sim_policy.candidate_inner_action)
-    candidate_outer = read_bank(sim_policy.candidate_outer_action)
+    candidate_target = read_bank(sim_policy.candidate_outer_target)
     candidate_value = read_bank(sim_policy.candidate_value)
+    candidate_outer, outer_represented = _invert_nnbegm_outer_targets(
+        regime=regime,
+        sim_policy=sim_policy,
+        candidate_inner=candidate_inner,
+        candidate_target=candidate_target,
+        states=states,
+        flat_params=flat_params,
+        period=period,
+        age=age,
+    )
     represented = (
         in_support[None, :]
         & jnp.isfinite(candidate_inner)
-        & jnp.isfinite(candidate_outer)
         & jnp.isfinite(candidate_value)
+        & outer_represented
     )
 
     n_candidates = candidate_inner.shape[0]

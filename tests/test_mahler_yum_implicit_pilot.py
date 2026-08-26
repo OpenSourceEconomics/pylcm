@@ -34,12 +34,15 @@ within minutes. Shrinking the model is the lever here, not the knobs.
 """
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.optimization.implicit_outer_derivative import ImplicitOptimumDiagnostics
 from lcm_examples.mahler_yum_2024.implicit_pilot import (
     PilotReport,
     capture_pilot_problem,
+    no_valid_derivative_reasons,
     run_pilot,
     select_pilot_cells,
 )
@@ -48,6 +51,29 @@ _N_MESH = 7
 _POLISH = 24
 _RELATIVE_STEP = 1e-2
 _N_CELLS = 1
+
+
+def test_missing_complete_owner_witness_has_explicit_per_cell_reason() -> None:
+    flags = jnp.asarray([False, False])
+    missing = jnp.asarray([True, True])
+    diagnostics = ImplicitOptimumDiagnostics(
+        at_lower_bound=flags,
+        at_upper_bound=flags,
+        flat_curvature=flags,
+        basin_tie=flags,
+        nonstationary=flags,
+        branch_certified=flags,
+        owner_missing=missing,
+        owner_incomplete=flags,
+        owner_unresolved=flags,
+        owner_primary_tie=flags,
+        owner_changed=flags,
+        unresolved=missing,
+    )
+    assert no_valid_derivative_reasons(diagnostics) == (
+        "complete owner provenance is unavailable",
+        "complete owner provenance is unavailable",
+    )
 
 
 @pytest.fixture(scope="module")
@@ -107,18 +133,21 @@ def test_each_cell_is_either_resolved_and_agrees_or_a_diagnosed_kink(
                 "band": band[i],
             }
         else:
-            # The only local-normal failure the real model exposes at this
-            # period is the floor-induced kink; it must be what flagged it.
-            assert nonstationary[i], {
+            assert pilot_report.no_valid_derivative_reason[i], {
                 "cell": pilot_report.cell_indices[i],
-                "q_f": pilot_report.q_f[i],
-                "flags": {
-                    "at_lower": bool(np.asarray(diag.at_lower_bound)[i]),
-                    "at_upper": bool(np.asarray(diag.at_upper_bound)[i]),
-                    "flat": bool(np.asarray(diag.flat_curvature)[i]),
-                    "tie": bool(np.asarray(diag.basin_tie)[i]),
-                },
+                "reason": pilot_report.no_valid_derivative_reason[i],
             }
+            if not np.asarray(diag.owner_missing)[i]:
+                assert nonstationary[i], {
+                    "cell": pilot_report.cell_indices[i],
+                    "q_f": pilot_report.q_f[i],
+                    "flags": {
+                        "at_lower": bool(np.asarray(diag.at_lower_bound)[i]),
+                        "at_upper": bool(np.asarray(diag.at_upper_bound)[i]),
+                        "flat": bool(np.asarray(diag.flat_curvature)[i]),
+                        "tie": bool(np.asarray(diag.basin_tie)[i]),
+                    },
+                }
 
 
 @pytest.mark.slow
