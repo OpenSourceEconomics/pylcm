@@ -221,10 +221,21 @@ class _ContinuousStochasticProcess(ContinuousGrid):
     def get_transition_probs(self) -> FloatND:
         """Get the transition probabilities at the gridpoints.
 
+        Raises `GridInitializationError` for a state-conditioned process because this
+        method has no conditioning-state input.
+
         Returns NaN of the correct shape when required params are missing (i.e., will
         only be passed at runtime).
 
         """
+        if self.state_conditioned is not None:
+            msg = (
+                "`get_transition_probs()` cannot return a transition matrix for a "
+                "state-conditioned process because its transition law depends on "
+                f"'{self.state_conditioned.on}', but the method has no "
+                "conditioning-state input."
+            )
+            raise GridInitializationError(msg)
         if not self.is_fully_specified:
             return jnp.full((self.n_points, self.n_points), jnp.nan)
         return self.compute_transition_probs(**self.params)

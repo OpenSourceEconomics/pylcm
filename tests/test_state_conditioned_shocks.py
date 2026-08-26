@@ -217,6 +217,35 @@ def test_conditioned_sigma_places_nodes_from_the_widest_category():
     )
 
 
+@pytest.mark.parametrize(
+    "process",
+    [
+        NormalIIDProcess(
+            n_points=7,
+            gauss_hermite=False,
+            mu=0.0,
+            n_std=3.0,
+            sigma=StateConditioned(on="uncertainty", by={"low": 0.2, "high": 0.5}),
+        ),
+        TauchenAR1Process(
+            n_points=7,
+            gauss_hermite=False,
+            rho=0.9,
+            mu=0.0,
+            n_std=3.0,
+            sigma=StateConditioned(on="uncertainty", by={"low": 0.2, "high": 0.5}),
+        ),
+    ],
+)
+def test_state_conditioned_process_has_no_parameterless_transition_matrix(process):
+    """A conditioned process needs its conditioning state to select a transition law."""
+    with pytest.raises(
+        GridInitializationError,
+        match=r"get_transition_probs.*depends on.*uncertainty",
+    ):
+        process.get_transition_probs()
+
+
 def test_conditioned_sigma_is_readable_as_the_conditioning_declaration():
     """The declaration stays reachable after the scalar node-placing value is set."""
     process = NormalIIDProcess(
