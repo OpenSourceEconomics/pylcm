@@ -199,7 +199,7 @@ def test_policy_bank_is_the_declared_outer_times_discrete_product() -> None:
         smooth.N_ILLIQUID,
     )
     assert policy.candidate_value.shape == policy.candidate_inner_action.shape
-    assert policy.candidate_outer_action.shape == policy.candidate_inner_action.shape
+    assert policy.candidate_outer_target.shape == policy.candidate_inner_action.shape
     assert policy.discrete_action_names == ("buy_private",)
     np.testing.assert_array_equal(
         np.asarray(policy.candidate_discrete_actions)[:, 0],
