@@ -705,7 +705,8 @@ def test_branch_certificate_flags_a_kink_the_value_heuristic_misses() -> None:
     # The exact branch certificate flags the breakpoint winner and says so.
     assert bool(certified.nonstationary)
     assert bool(certified.unresolved)
-    assert bool(certified.branch_certified)
+    assert not bool(certified.branch_certified)
+    assert bool(certified.owner_missing)
 
 
 def test_branch_certificate_does_not_over_flag_a_smooth_optimum() -> None:
@@ -729,8 +730,9 @@ def test_branch_certificate_does_not_over_flag_a_smooth_optimum() -> None:
         branch_id=lambda f, _theta: jnp.zeros_like(f),  # one analytic branch
     )
     assert not bool(diag.nonstationary)
-    assert not bool(diag.unresolved)
-    assert bool(diag.branch_certified)
+    assert bool(diag.unresolved)
+    assert not bool(diag.branch_certified)
+    assert bool(diag.owner_missing)
 
 
 # Midpoint-only validation is mesh-relative, not a global safeguard: a peak

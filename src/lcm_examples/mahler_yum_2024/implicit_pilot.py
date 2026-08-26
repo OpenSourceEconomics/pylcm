@@ -24,29 +24,28 @@ genuine JAX-transformable function of `(f, theta)` — the forward-mode JVP
 rule differentiates the actual nested inner solve, not a surrogate.
 """
 
+from __future__ import annotations
+
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
-import _lcm.solution.nnbegm as _nnbegm
 from _lcm.optimization.implicit_outer_derivative import (
     ImplicitOptimumDiagnostics,
+    OwnerProvenance,
     continuous_outer_optimum,
     implicit_optimum_diagnostics,
 )
-from lcm import LinSpacedGrid
-from lcm.solvers import AdaptiveOuterMesh
 from lcm.typing import FloatND
-from lcm_examples.mahler_yum_2024 import START_PARAMS, create_inputs
-from lcm_examples.mahler_yum_2024.paper import (
-    adapt_params_to_paper_mode,
-    create_mahler_yum_model,
-)
+
+if TYPE_CHECKING:
+    import _lcm.solution.nnbegm as _nnbegm
+    from lcm.solvers import AdaptiveOuterMesh
 
 PILOT_PERIOD = 36
 _THETA_SUBSTRING = "effort_elasticity"
@@ -65,6 +64,8 @@ class PilotProblem:
     adjuster_cores: Mapping[str, Callable]
     theta_key: str
     theta_baseline: float
+    owner_provenance: Callable[[FloatND, FloatND], OwnerProvenance] | None = None
+    """Optional compact complete witness; absent capture paths fail closed."""
 
 
 def capture_pilot_problem(
@@ -77,6 +78,18 @@ def capture_pilot_problem(
     captured continuation objects are exactly what the production solve
     would hand this period.
     """
+    import _lcm.solution.nnbegm as _nnbegm  # noqa: PLC0415
+    from lcm import LinSpacedGrid  # noqa: PLC0415
+    from lcm.solvers import AdaptiveOuterMesh  # noqa: PLC0415
+    from lcm_examples.mahler_yum_2024 import (  # noqa: PLC0415
+        START_PARAMS,
+        create_inputs,
+    )
+    from lcm_examples.mahler_yum_2024.paper import (  # noqa: PLC0415
+        adapt_params_to_paper_mode,
+        create_mahler_yum_model,
+    )
+
     if mesh is None:
         mesh = AdaptiveOuterMesh(
             initial_grid=LinSpacedGrid(start=0.0, stop=1.0, n_points=9),
@@ -250,6 +263,51 @@ class PilotReport:
     fd_richardson: np.ndarray
     fd_error_estimate: np.ndarray
     diagnostics: ImplicitOptimumDiagnostics
+    no_valid_derivative_reason: tuple[str, ...]
+    """Per-cell empty string when certified, otherwise a compact refusal reason."""
+
+
+def no_valid_derivative_reasons(
+    diagnostics: ImplicitOptimumDiagnostics,
+) -> tuple[str, ...]:
+    """Translate compact Boolean diagnostic fields into per-cell refusal text."""
+    unresolved = np.asarray(diagnostics.unresolved, dtype=bool)
+    shape = unresolved.shape
+    fields = {
+        name: np.broadcast_to(np.asarray(getattr(diagnostics, name), dtype=bool), shape)
+        for name in (
+            "at_lower_bound",
+            "at_upper_bound",
+            "flat_curvature",
+            "basin_tie",
+            "nonstationary",
+            "owner_missing",
+            "owner_incomplete",
+            "owner_unresolved",
+            "owner_primary_tie",
+            "owner_changed",
+        )
+    }
+    labels = (
+        ("at_lower_bound", "outer optimum is at the lower bound"),
+        ("at_upper_bound", "outer optimum is at the upper bound"),
+        ("flat_curvature", "outer curvature is flat"),
+        ("basin_tie", "outer basins are value-tied"),
+        ("nonstationary", "outer optimum is nonstationary or formula-changing"),
+        ("owner_missing", "complete owner provenance is unavailable"),
+        ("owner_incomplete", "owner provenance is incomplete"),
+        ("owner_unresolved", "an exact owner/status fact is unresolved"),
+        ("owner_primary_tie", "the exact primary owner value is tied"),
+        ("owner_changed", "the composite owner signature changes in the neighborhood"),
+    )
+    reasons: list[str] = []
+    for index in np.ndindex(shape or ()):
+        if not bool(unresolved[index]):
+            reasons.append("")
+            continue
+        active = [label for name, label in labels if bool(fields[name][index])]
+        reasons.append("; ".join(active) or "local derivative is unresolved")
+    return tuple(reasons)
 
 
 def run_pilot(
@@ -287,13 +345,13 @@ def run_pilot(
         (ones,),
     )
 
-    def central(h: float) -> np.ndarray:
-        upper = np.asarray(solve_at(theta0 + h)[0])
-        lower = np.asarray(solve_at(theta0 - h)[0])
-        return (upper - lower) / (2.0 * h)
-
-    fd_h = central(step)
-    fd_h2 = central(step / 2.0)
+    f_plus_h = solve_at(theta0 + step)[0]
+    f_minus_h = solve_at(theta0 - step)[0]
+    half_step = step / 2.0
+    f_plus_h2 = solve_at(theta0 + half_step)[0]
+    f_minus_h2 = solve_at(theta0 - half_step)[0]
+    fd_h = (np.asarray(f_plus_h) - np.asarray(f_minus_h)) / (2.0 * step)
+    fd_h2 = (np.asarray(f_plus_h2) - np.asarray(f_minus_h2)) / (2.0 * half_step)
     richardson = (4.0 * fd_h2 - fd_h) / 3.0
     diagnostics = implicit_optimum_diagnostics(
         objective,
@@ -303,6 +361,14 @@ def run_pilot(
         bounds=bounds,
         n_mesh=n_mesh,
         polish_iterations=polish_iterations,
+        owner_provenance=problem.owner_provenance,
+        require_owner_certificate=True,
+        reoptimized_owner_points=(
+            (f_plus_h, theta0 + step),
+            (f_minus_h, theta0 - step),
+            (f_plus_h2, theta0 + half_step),
+            (f_minus_h2, theta0 - half_step),
+        ),
     )
     return PilotReport(
         cell_indices=np.asarray(cell_indices),
@@ -317,4 +383,5 @@ def run_pilot(
         fd_richardson=richardson,
         fd_error_estimate=np.abs(fd_h2 - fd_h) / 3.0,
         diagnostics=diagnostics,
+        no_valid_derivative_reason=no_valid_derivative_reasons(diagnostics),
     )
