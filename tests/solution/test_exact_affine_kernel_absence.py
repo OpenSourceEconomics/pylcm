@@ -16,7 +16,7 @@ import pytest
 from _lcm.egm.upper_envelope._exact_affine import ffi
 from lcm.exceptions import ExactAffineKernelUnavailableError, ModelInitializationError
 from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
-from tests.test_models import negm_kinked_toy
+from tests.test_models import nbegm_medicaid_toy, negm_kinked_toy
 from tests.test_models.dcegm_paper_twin import build_dcegm_model
 
 
@@ -26,6 +26,16 @@ def test_a_selected_exact_backend_fails_during_model_construction(monkeypatch):
 
     with pytest.raises(ExactAffineKernelUnavailableError, match="ExactEnvelope"):
         build_dcegm_model()
+
+
+def test_certified_nbegm_requires_the_exact_kernel_at_construction(monkeypatch):
+    """Certified NBEGM fails before solving while ordinary arithmetic still builds."""
+    monkeypatch.setattr(ffi, "kernel_available_for_current_backend", lambda: False)
+
+    with pytest.raises(ExactAffineKernelUnavailableError, match="certified"):
+        nbegm_medicaid_toy.build_model(variant="nbegm")
+
+    nbegm_medicaid_toy.build_model(variant="nbegm", envelope_arithmetic="ordinary")
 
 
 def test_construction_on_a_kernelless_platform_reports_the_absence_as_such(
@@ -82,7 +92,7 @@ def test_a_missing_kernel_is_reported_when_a_verdict_is_requested(monkeypatch):
     monkeypatch.setattr(ffi, "_CPU_LIBRARY", Path("/nowhere/libcertified.so"))
     monkeypatch.setattr(ffi, "_REGISTERED", False)
 
-    with pytest.raises(ExactAffineKernelUnavailableError, match="build-exact-affine"):
+    with pytest.raises(ExactAffineKernelUnavailableError, match="reinstall pylcm"):
         ffi._ensure_registered()
 
 
@@ -123,7 +133,7 @@ def test_a_present_kernel_missing_a_target_fails_as_a_broken_build(
     monkeypatch.setattr(ffi.jax, "default_backend", lambda: "cpu")
 
     assert ffi.kernel_built_for_current_backend() is True
-    with pytest.raises(ExactAffineKernelUnavailableError, match="build-exact-affine"):
+    with pytest.raises(ExactAffineKernelUnavailableError, match="reinstall pylcm"):
         ffi._ensure_registered()
 
 
@@ -222,7 +232,7 @@ def test_every_entry_point_reports_a_missing_kernel(monkeypatch, request_a_verdi
     monkeypatch.setattr(ffi, "_CPU_LIBRARY", Path("/nowhere/libcertified.so"))
     monkeypatch.setattr(ffi, "_REGISTERED", False)
 
-    with pytest.raises(ExactAffineKernelUnavailableError, match="build-exact-affine"):
+    with pytest.raises(ExactAffineKernelUnavailableError, match="reinstall pylcm"):
         request_a_verdict()
 
 
@@ -250,3 +260,35 @@ def test_a_nested_regime_reports_its_inner_exact_backend_as_unavailable(monkeypa
 
     with pytest.raises(ExactAffineKernelUnavailableError, match="ExactEnvelope"):
         negm_kinked_toy.build_model()
+
+
+def test_a_cuda_backend_without_a_cuda_kernel_is_reported_at_registration(monkeypatch):
+    """Registering on a CUDA backend with no CUDA kernel raises, naming the build.
+
+    The CPU kernel alone satisfies registration, so a CUDA-backed solve reaches
+    the first compile that needs the device target before anything objects — and
+    that compile can be hours into a job. The refusal states what to build while
+    the process is still cheap to restart.
+    """
+    monkeypatch.setattr(ffi, "_REGISTERED", False)
+    monkeypatch.setattr(ffi, "cuda_kernel_built", lambda: False)
+    monkeypatch.setattr(ffi, "_default_backend", lambda: "gpu")
+
+    with pytest.raises(ExactAffineKernelUnavailableError, match="reinstall pylcm"):
+        ffi._ensure_registered()
+
+
+@pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
+def test_a_cpu_backend_without_a_cuda_kernel_registers(monkeypatch):
+    """A CPU-backed solve needs no CUDA kernel, including on a machine with a GPU.
+
+    Registration is asserted to succeed, so the CPU library has to be loadable —
+    the one test here that needs a build rather than characterising its absence.
+    """
+    monkeypatch.setattr(ffi, "_REGISTERED", False)
+    monkeypatch.setattr(ffi, "cuda_kernel_built", lambda: False)
+    monkeypatch.setattr(ffi, "_default_backend", lambda: "cpu")
+
+    ffi._ensure_registered()
+
+    assert ffi._REGISTERED is True

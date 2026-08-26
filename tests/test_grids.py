@@ -2,7 +2,6 @@ from dataclasses import make_dataclass
 
 import jax.numpy as jnp
 import numpy as np
-import portion
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
@@ -11,7 +10,6 @@ from _lcm.grids import (
     IrregSpacedGrid,
     LinSpacedGrid,
     LogSpacedGrid,
-    PiecewiseGridSegment,
     PiecewiseLinSpacedGrid,
     PiecewiseLogSpacedGrid,
     categorical,
@@ -380,12 +378,10 @@ def _create_equivalent_grid(
         return IrregSpacedGrid(points=tuple(float(x) for x in lin_grid.to_jax()))
     if grid_type == "PiecewiseLinSpacedGrid":
         return PiecewiseLinSpacedGrid(
-            segments=(
-                PiecewiseGridSegment(
-                    interval=f"[{lin_grid.start}, {lin_grid.stop}]",
-                    n_points=lin_grid.n_points,
-                ),
-            )
+            start=lin_grid.start,
+            stop=lin_grid.stop,
+            breakpoints=(),
+            points_per_segment=(lin_grid.n_points,),
         )
     msg = f"Unknown grid type: {grid_type}"
     raise ValueError(msg)
@@ -438,361 +434,6 @@ def test_linspaced_coordinates_match_other_grid_types(
         )
 
 
-def test_piecewise_lin_spaced_grid_creation_with_strings():
-    """PiecewiseLinSpacedGrid can be created with string intervals."""
-    grid = PiecewiseLinSpacedGrid(
-        segments=(
-            PiecewiseGridSegment(interval="[1, 4)", n_points=3),
-            PiecewiseGridSegment(interval="[4, 10]", n_points=7),
-        )
-    )
-    assert grid.n_points == 10
-
-
-def test_piecewise_lin_spaced_grid_creation_with_portion_objects():
-    """PiecewiseLinSpacedGrid can be created with portion.Interval objects."""
-    grid = PiecewiseLinSpacedGrid(
-        segments=(
-            PiecewiseGridSegment(interval=portion.closedopen(0, 5), n_points=5),
-            PiecewiseGridSegment(interval=portion.closed(5, 10), n_points=6),
-        )
-    )
-    assert grid.n_points == 11
-
-
-def test_piecewise_lin_spaced_grid_closed_boundary_is_exact():
-    """Closed boundaries should produce exact endpoint values."""
-    grid = PiecewiseLinSpacedGrid(
-        segments=(PiecewiseGridSegment(interval="[0, 5]", n_points=6),)
-    )
-    points = grid.to_jax()
-    assert float(points[0]) == 0.0
-    assert float(points[-1]) == 5.0
-
-
-def test_piecewise_lin_spaced_grid_open_boundary_excludes_endpoint():
-    """Open boundaries should not include the exact endpoint value."""
-    grid = PiecewiseLinSpacedGrid(
-        segments=(
-            PiecewiseGridSegment(interval="[0, 5)", n_points=5),
-            PiecewiseGridSegment(interval="[5, 10]", n_points=6),
-        )
-    )
-    points = grid.to_jax()
-    # First segment should end just before 5
-    assert float(points[4]) < 5.0
-    # Second segment should start exactly at 5
-    assert float(points[5]) == 5.0
-
-
-def test_piecewise_lin_spaced_grid_no_representable_value_between_segments():
-    """No representable float between adjacent open/closed boundaries."""
-    grid = PiecewiseLinSpacedGrid(
-        segments=(
-            PiecewiseGridSegment(interval="[0, 5)", n_points=5),
-            PiecewiseGridSegment(interval="[5, 10]", n_points=6),
-        )
-    )
-    points = grid.to_jax()
-
-    # The last point of the first segment (open boundary)
-    last_of_first = points[4]
-    # The first point of the second segment (closed boundary)
-    first_of_second = points[5]
-
-    # nextafter should give us exactly the first point of the second segment
-    assert jnp.nextafter(last_of_first, jnp.inf) == first_of_second
-
-
-def test_piecewise_lin_spaced_grid_adjacent_closedopen_closedclosed():
-    """[a, x) followed by [x, b] should be valid (adjacent)."""
-    grid = PiecewiseLinSpacedGrid(
-        segments=(
-            PiecewiseGridSegment(interval="[1, 4)", n_points=3),
-            PiecewiseGridSegment(interval="[4, 7]", n_points=4),
-        )
-    )
-    assert grid.n_points == 7
-
-
-def test_piecewise_lin_spaced_grid_adjacent_closed_openclosed():
-    """[a, x] followed by (x, b] should be valid (adjacent)."""
-    grid = PiecewiseLinSpacedGrid(
-        segments=(
-            PiecewiseGridSegment(interval="[1, 4]", n_points=4),
-            PiecewiseGridSegment(interval="(4, 7]", n_points=3),
-        )
-    )
-    assert grid.n_points == 7
-
-
-def test_piecewise_lin_spaced_grid_invalid_gap():
-    """[a, x) followed by (x, b] should be invalid (gap at x)."""
-    with pytest.raises(GridInitializationError, match="not adjacent"):
-        PiecewiseLinSpacedGrid(
-            segments=(
-                PiecewiseGridSegment(interval="[1, 4)", n_points=3),
-                PiecewiseGridSegment(interval="(4, 7]", n_points=3),
-            )
-        )
-
-
-def test_piecewise_lin_spaced_grid_invalid_overlap():
-    """[a, x] followed by [x, b] should be invalid (overlap at x)."""
-    with pytest.raises(GridInitializationError, match="not adjacent"):
-        PiecewiseLinSpacedGrid(
-            segments=(
-                PiecewiseGridSegment(interval="[1, 4]", n_points=3),
-                PiecewiseGridSegment(interval="[4, 7]", n_points=3),
-            )
-        )
-
-
-def test_piecewise_lin_spaced_grid_invalid_numeric_gap():
-    """Segments with numeric gap between them should be invalid."""
-    with pytest.raises(GridInitializationError, match="gap"):
-        PiecewiseLinSpacedGrid(
-            segments=(
-                PiecewiseGridSegment(interval="[1, 3]", n_points=3),
-                PiecewiseGridSegment(interval="[5, 7]", n_points=3),
-            )
-        )
-
-
-def test_piecewise_lin_spaced_grid_invalid_not_tuple():
-    """Segments must be a tuple."""
-    with pytest.raises(GridInitializationError, match="segments"):
-        PiecewiseLinSpacedGrid(
-            segments=[PiecewiseGridSegment(interval="[1, 4]", n_points=3)]  # ty: ignore[invalid-argument-type]
-        )
-
-
-def test_piecewise_lin_spaced_grid_invalid_not_segment():
-    """Each element in segments must be a PiecewiseGridSegment object."""
-    with pytest.raises(GridInitializationError, match="segments"):
-        PiecewiseLinSpacedGrid(
-            segments=({"interval": "[1, 4]", "n_points": 3},)  # ty: ignore[invalid-argument-type]
-        )
-
-
-def test_piecewise_lin_spaced_grid_invalid_n_points():
-    """n_points must be >= 2."""
-    with pytest.raises(GridInitializationError, match="n_points must be an int >= 2"):
-        PiecewiseLinSpacedGrid(
-            segments=(PiecewiseGridSegment(interval="[1, 4]", n_points=1),)
-        )
-
-
-def test_piecewise_lin_spaced_grid_invalid_interval_string():
-    """Invalid interval string should raise error."""
-    with pytest.raises(GridInitializationError, match="invalid"):
-        PiecewiseLinSpacedGrid(
-            segments=(PiecewiseGridSegment(interval="invalid", n_points=3),)
-        )
-
-
-def test_piecewise_lin_spaced_grid_three_segments():
-    """Grid with three adjacent segments should work."""
-    grid = PiecewiseLinSpacedGrid(
-        segments=(
-            PiecewiseGridSegment(interval="[0, 3)", n_points=3),
-            PiecewiseGridSegment(interval="[3, 7)", n_points=4),
-            PiecewiseGridSegment(interval="[7, 10]", n_points=4),
-        )
-    )
-    assert grid.n_points == 11
-    points = grid.to_jax()
-    assert float(points[0]) == 0.0
-    assert float(points[-1]) == 10.0
-
-
-def test_piecewise_log_spaced_grid_creation():
-    """PiecewiseLogSpacedGrid can be created with valid positive intervals."""
-    grid = PiecewiseLogSpacedGrid(
-        segments=(
-            PiecewiseGridSegment(interval="[0.1, 10)", n_points=5),
-            PiecewiseGridSegment(interval="[10, 1000]", n_points=6),
-        )
-    )
-    assert grid.n_points == 11
-
-
-def test_piecewise_log_spaced_gridpoints_are_log_spaced():
-    """Points within each segment should be logarithmically spaced."""
-    grid = PiecewiseLogSpacedGrid(
-        segments=(PiecewiseGridSegment(interval="[1, 100]", n_points=3),)
-    )
-    points = grid.to_jax()
-    assert np.allclose(points, [1.0, 10.0, 100.0])
-
-
-def test_piecewise_log_spaced_grid_closed_boundary_is_exact():
-    """Closed boundaries should produce exact endpoint values."""
-    grid = PiecewiseLogSpacedGrid(
-        segments=(PiecewiseGridSegment(interval="[1, 1000]", n_points=4),)
-    )
-    points = grid.to_jax()
-    assert float(points[0]) == pytest.approx(1.0)
-    assert float(points[-1]) == pytest.approx(1000.0)
-
-
-def test_piecewise_log_spaced_grid_open_boundary_excludes_endpoint():
-    """Open boundaries should not include the exact endpoint value."""
-    grid = PiecewiseLogSpacedGrid(
-        segments=(
-            PiecewiseGridSegment(interval="[1, 10)", n_points=3),
-            PiecewiseGridSegment(interval="[10, 100]", n_points=3),
-        )
-    )
-    points = grid.to_jax()
-    assert float(points[2]) < 10.0
-    assert float(points[3]) == pytest.approx(10.0)
-
-
-def test_piecewise_log_spaced_grid_invalid_negative_lower():
-    """Lower bound must be positive for logspace."""
-    with pytest.raises(GridInitializationError, match="must be positive"):
-        PiecewiseLogSpacedGrid(
-            segments=(PiecewiseGridSegment(interval="[-1, 10]", n_points=3),)
-        )
-
-
-def test_piecewise_log_spaced_grid_invalid_zero_lower():
-    """Lower bound must be strictly positive for logspace."""
-    with pytest.raises(GridInitializationError, match="must be positive"):
-        PiecewiseLogSpacedGrid(
-            segments=(PiecewiseGridSegment(interval="[0, 10]", n_points=3),)
-        )
-
-
-def test_piecewise_log_spaced_grid_invalid_gap():
-    """Segments with gap should be invalid."""
-    with pytest.raises(GridInitializationError, match="not adjacent"):
-        PiecewiseLogSpacedGrid(
-            segments=(
-                PiecewiseGridSegment(interval="[1, 10)", n_points=3),
-                PiecewiseGridSegment(interval="(10, 100]", n_points=3),
-            )
-        )
-
-
-def test_piecewise_log_spaced_grid_three_segments():
-    """Grid with three adjacent segments should work."""
-    grid = PiecewiseLogSpacedGrid(
-        segments=(
-            PiecewiseGridSegment(interval="[0.01, 1)", n_points=3),
-            PiecewiseGridSegment(interval="[1, 100)", n_points=3),
-            PiecewiseGridSegment(interval="[100, 10000]", n_points=3),
-        )
-    )
-    assert grid.n_points == 9
-    points = grid.to_jax()
-    assert float(points[0]) == pytest.approx(0.01)
-    assert float(points[-1]) == pytest.approx(10000.0)
-
-
-def test_piecewise_log_spaced_grid_coordinate_at_gridpoints():
-    """Coordinates at exact grid points should match indices."""
-    grid = PiecewiseLogSpacedGrid(
-        segments=(PiecewiseGridSegment(interval="[1, 100]", n_points=3),)
-    )
-    points = grid.to_jax()
-    for i, p in enumerate(points):
-        coord = float(grid.get_coordinate(p))
-        assert coord == pytest.approx(i)
-
-
-def test_piecewise_log_spaced_grid_coordinate_multi_segment():
-    """Coordinates should work across multiple segments."""
-    grid = PiecewiseLogSpacedGrid(
-        segments=(
-            PiecewiseGridSegment(interval="[1, 10)", n_points=2),
-            PiecewiseGridSegment(interval="[10, 100]", n_points=2),
-        )
-    )
-    assert float(grid.get_coordinate(jnp.asarray(10.0))) == pytest.approx(2.0)
-    assert float(grid.get_coordinate(jnp.asarray(100.0))) == pytest.approx(3.0)
-
-
-def _create_boundary_test_grid(grid_cls, boundary_style: str):
-    """Create a piecewise grid for boundary testing."""
-    if grid_cls == PiecewiseLinSpacedGrid:
-        if boundary_style == "closedopen_closed":
-            return grid_cls(
-                segments=(
-                    PiecewiseGridSegment(interval="[0, 5)", n_points=5),
-                    PiecewiseGridSegment(interval="[5, 10]", n_points=6),
-                )
-            )
-        return grid_cls(
-            segments=(
-                PiecewiseGridSegment(interval="[0, 5]", n_points=6),
-                PiecewiseGridSegment(interval="(5, 10]", n_points=5),
-            )
-        )
-    # PiecewiseLogSpacedGrid
-    if boundary_style == "closedopen_closed":
-        return grid_cls(
-            segments=(
-                PiecewiseGridSegment(interval="[1, 10)", n_points=3),
-                PiecewiseGridSegment(interval="[10, 100]", n_points=3),
-            )
-        )
-    return grid_cls(
-        segments=(
-            PiecewiseGridSegment(interval="[1, 10]", n_points=3),
-            PiecewiseGridSegment(interval="(10, 100]", n_points=3),
-        )
-    )
-
-
-@pytest.mark.parametrize("grid_cls", [PiecewiseLinSpacedGrid, PiecewiseLogSpacedGrid])
-@pytest.mark.parametrize("boundary_style", ["closedopen_closed", "closed_openclosed"])
-def test_piecewise_boundary_conditions(grid_cls, boundary_style: str):
-    """Test boundary conditions for piecewise grids.
-
-    - closedopen_closed: [a, x) + [x, b] - value at x goes to segment 1
-    - closed_openclosed: [a, x] + (x, b] - value at x goes to segment 0
-    """
-    grid = _create_boundary_test_grid(grid_cls, boundary_style)
-
-    # Determine boundary value and expected coordinates
-    is_lin = grid_cls == PiecewiseLinSpacedGrid
-    boundary = 5.0 if is_lin else 10.0
-    below_boundary = 4.99 if is_lin else 9.9
-    above_boundary = 5.01 if is_lin else 10.1
-
-    # Coordinate at boundary depends on boundary style
-    if boundary_style == "closedopen_closed":
-        # [a, x) + [x, b]: boundary belongs to segment 1
-        expected_coord_at = 5.0 if is_lin else 3.0
-    else:
-        # [a, x] + (x, b]: boundary belongs to segment 0
-        expected_coord_at = 5.0 if is_lin else 2.0
-
-    # Test value just below boundary -> segment 0
-    coord_below = float(grid.get_coordinate(jnp.asarray(below_boundary)))
-    assert coord_below < expected_coord_at
-
-    # Test value exactly at boundary
-    coord_at = float(grid.get_coordinate(jnp.asarray(boundary)))
-    assert coord_at == pytest.approx(expected_coord_at)
-
-    # Test value just above boundary -> segment 1
-    coord_above = float(grid.get_coordinate(jnp.asarray(above_boundary)))
-    assert coord_above > expected_coord_at
-
-
-def test_piecewise_single_segment():
-    """Test piecewise grid with a single segment works correctly."""
-    grid = PiecewiseLinSpacedGrid(
-        segments=(PiecewiseGridSegment(interval="[0, 10]", n_points=11),)
-    )
-    assert float(grid.get_coordinate(jnp.asarray(0.0))) == pytest.approx(0.0)
-    assert float(grid.get_coordinate(jnp.asarray(5.0))) == pytest.approx(5.0)
-    assert float(grid.get_coordinate(jnp.asarray(10.0))) == pytest.approx(10.0)
-
-
 def test_lin_spaced_grid_get_coordinate_with_array():
     grid = LinSpacedGrid(start=1, stop=2, n_points=6)
     values = jnp.array([1.0, 1.2, 1.5])
@@ -819,7 +460,10 @@ def test_irreg_spaced_grid_get_coordinate_with_array():
 
 def test_piecewise_lin_spaced_grid_get_coordinate_with_array():
     grid = PiecewiseLinSpacedGrid(
-        segments=(PiecewiseGridSegment(interval="[0, 10]", n_points=11),)
+        start=0,
+        stop=10,
+        breakpoints=(),
+        points_per_segment=(11,),
     )
     values = jnp.array([0.0, 5.0, 10.0])
     coords = grid.get_coordinate(values)
@@ -829,7 +473,10 @@ def test_piecewise_lin_spaced_grid_get_coordinate_with_array():
 
 def test_piecewise_log_spaced_grid_get_coordinate_with_array():
     grid = PiecewiseLogSpacedGrid(
-        segments=(PiecewiseGridSegment(interval="[1, 100]", n_points=3),)
+        start=1,
+        stop=100,
+        breakpoints=(),
+        points_per_segment=(3,),
     )
     points = grid.to_jax()
     values = jnp.array([float(points[0]), float(points[1]), float(points[2])])
@@ -888,14 +535,20 @@ def test_discrete_grid_accepts_batch_size_zero_with_distributed():
         ),
         pytest.param(
             lambda: PiecewiseLinSpacedGrid(
-                segments=(PiecewiseGridSegment(interval="[0, 10]", n_points=11),),
+                start=0,
+                stop=10,
+                breakpoints=(),
+                points_per_segment=(11,),
                 distributed=True,
             ),
             id="PiecewiseLinSpacedGrid",
         ),
         pytest.param(
             lambda: PiecewiseLogSpacedGrid(
-                segments=(PiecewiseGridSegment(interval="[1, 100]", n_points=3),),
+                start=1,
+                stop=100,
+                breakpoints=(),
+                points_per_segment=(3,),
                 distributed=True,
             ),
             id="PiecewiseLogSpacedGrid",

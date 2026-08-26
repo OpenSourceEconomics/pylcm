@@ -92,6 +92,13 @@ from _lcm.variables import (  # noqa: E402
 )
 from _lcm.version import __version__  # noqa: E402
 from lcm.ages import AgeGrid  # noqa: E402
+from lcm.case_piece import (  # noqa: E402
+    affine_breakpoint,
+    case_boundary,
+    piece,
+    piecewise_affine,
+    smooth_helper,
+)
 from lcm.certainty_equivalent import (  # noqa: E402
     CertaintyEquivalent,
     LinearExpectation,
@@ -108,12 +115,17 @@ from lcm.consumption_savings_regime import (  # noqa: E402
     outer_unchanged,
     post_decision_lower_bound,
 )
+from lcm.fixed_forms import (  # noqa: E402
+    cash_on_hand_with_subsidy,
+    liquid_law_from_resources,
+    liquid_law_from_savings,
+)
 from lcm.grids import (  # noqa: E402
     DiscreteGrid,
+    GridBreakpoint,
     IrregSpacedGrid,
     LinSpacedGrid,
     LogSpacedGrid,
-    PiecewiseGridSegment,
     PiecewiseLinSpacedGrid,
     PiecewiseLogSpacedGrid,
     categorical,
@@ -175,6 +187,7 @@ __all__ = [
     "ConsumptionSavingsRegime",
     "DiscreteGrid",
     "ExtremeValueTasteShocks",
+    "GridBreakpoint",
     "IrregSpacedGrid",
     "LinSpacedGrid",
     "LinearAggregator",
@@ -190,7 +203,6 @@ __all__ = [
     "NormalMixtureIIDProcess",
     "OuterContinuousMargin",
     "Phased",
-    "PiecewiseGridSegment",
     "PiecewiseLinSpacedGrid",
     "PiecewiseLogSpacedGrid",
     "PowerMean",
@@ -204,13 +216,21 @@ __all__ = [
     "TauchenNormalMixtureAR1Process",
     "UniformIIDProcess",
     "__version__",
+    "affine_breakpoint",
+    "case_boundary",
+    "cash_on_hand_with_subsidy",
     "categorical",
     "fixed_transition",
     "implies",
+    "liquid_law_from_resources",
+    "liquid_law_from_savings",
     "load_snapshot",
     "load_solution",
     "outer_unchanged",
+    "piece",
+    "piecewise_affine",
     "post_decision_lower_bound",
     "ref",
     "save_solution",
+    "smooth_helper",
 ]

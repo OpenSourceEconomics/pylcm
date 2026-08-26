@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING, Literal, Protocol, TypeAlias, cast, runtime_ch
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.constraints.processed import ProcessedConstraintsMapping
 from _lcm.constraints.routes import (
+    ConstraintPlan,
     ConstraintRoute,
     ConstraintRouteKey,
     ConstraintSite,
@@ -47,8 +48,12 @@ from _lcm.continuation import (
     EGMContinuationLayout,
     EGMContinuationSpec,
 )
-from _lcm.egm.published_policy import EGMSimPolicy
-from _lcm.engine import StateActionSpace, Variables
+from _lcm.egm.published_policy import (
+    EGMSimPolicy,
+    NBEGMGridPolicy,
+    NNBEGMSimPolicy,
+)
+from _lcm.engine import ParamCheck, StateActionSpace, Variables
 from _lcm.grids import Grid
 from _lcm.reachability import PhaseReachability
 from _lcm.transition_laws import TransitionLaws
@@ -69,7 +74,7 @@ from _lcm.typing import (
     TransitionFunctionsMapping,
 )
 from lcm.ages import AgeGrid
-from lcm.typing import Float1D, FloatND
+from lcm.typing import Float1D, FloatND, UserFunction
 
 # The continuation channel is defined once in `_lcm.continuation`. Backward
 # induction treats `ContinuationPayload` opaquely; EGM solvers additionally
@@ -84,7 +89,7 @@ from lcm.typing import Float1D, FloatND
 # a second implementation has to publish both. Any *further* field the engine
 # reaches for is the signal to introduce a protocol rather than to grow this
 # one — the seam is a stated read set, not permission to read whatever is there.
-type SimulationPolicy = EGMSimPolicy
+type SimulationPolicy = EGMSimPolicy | NBEGMGridPolicy | NNBEGMSimPolicy
 
 if TYPE_CHECKING:
     from _lcm.regime_building.finalize import FinalizedUserRegime
@@ -113,6 +118,16 @@ class SolverModelContext:
 
     user_regimes: UserRegimesMapping
     """Mapping of every finalized user regime in the model."""
+
+    solve_functions: MappingProxyType[FunctionName, UserFunction]
+    """Normalized solve-phase declarations for this regime.
+
+    Model construction owns phase normalization. Solver validation receives the
+    resulting pool instead of importing declaration-topology builders.
+    """
+
+    phase_variation_paths: tuple[str, ...]
+    """Public declaration paths whose solve/simulate objects differ."""
 
     solution_reachability: PhaseReachability | None = None
     """Static solution graph when available; `None` during early validation."""
@@ -173,6 +188,12 @@ class SolverBuildContext:
     user_regimes: UserRegimesMapping
     """Mapping of regime names to user-provided `Regime` instances."""
 
+    solve_functions: MappingProxyType[FunctionName, UserFunction]
+    """Normalized, unprocessed solve-phase declarations for this regime."""
+
+    phase_variation_paths: tuple[str, ...]
+    """Public declaration paths whose solve/simulate objects differ."""
+
     state_action_space: StateActionSpace
     """The regime's state-action space."""
 
@@ -214,14 +235,21 @@ class SolverBuildContext:
     """
 
     constraints: ConstraintFunctionsMapping
-    """Immutable mapping of the regime's constraint names to functions."""
+    """Constraint callables the solver evaluates in its numerical kernel."""
+
+    constraint_functions: ConstraintFunctionsMapping
+    """Every declared constraint callable, including compiled and proved ones."""
 
     processed_constraints: ProcessedConstraintsMapping
-    """The same constraints in the form a solver can reason about.
+    """Every declared constraint in the form a solver can reason about.
 
     Read this to ask what a constraint *says* — whether it bounds a state, which
-    names it reads — and `constraints` to evaluate one. The callables are built
-    from these, so the two cannot disagree about what was declared."""
+    names it reads — and `constraint_functions` to obtain its callable. The
+    callables are built from these, so the two cannot disagree about what was
+    declared."""
+
+    constraint_plan: ConstraintPlan | None
+    """Complete route ledger, or `None` when the solver declares no routes."""
 
     transitions: TransitionFunctionsMapping
     """Immutable mapping of target regime names to transition functions."""
@@ -480,6 +508,18 @@ class SolutionKernels:
     continuation_spec: EGMContinuationSpec | None = None
     """Concrete EGM continuation template bundled with its static layout."""
 
+    param_checks: tuple[ParamCheck, ...] = ()
+    """Preconditions the engine runs once, on the first solve, against real params.
+
+    A solver whose scope condition is a property of the *evaluated* model — the
+    budget's affinity in the liquid state, a carried law's constancy between
+    breakpoints — cannot check it in `validate_build`, which runs before any
+    parameter value exists. It publishes the check here instead, and the engine
+    calls each entry in order as `check(flat_params=...)` the first time the
+    model is solved. Empty for a solver whose scope is decided by structure
+    alone.
+    """
+
     @property
     def continuation_template(self) -> ContinuationPayload | None:
         """Return the template payload for generic rolling and lowering code."""
@@ -569,6 +609,18 @@ class Solver(ABC):
         """
         return EGMContinuationLayout()
 
+    @property
+    def publishes_one_sided_jump_reads(self) -> bool:
+        """Whether the published carry duplicates abscissae across a value jump.
+
+        A solver that resolves a declared jump one-sidedly publishes two rows
+        at (essentially) the same abscissa, one per side of the jump. Those
+        abscissae move with any state entering the jump's variable or its
+        threshold, so a parent must not fold its stochastic node axes into a
+        single read across states that move them.
+        """
+        return False
+
     def validate_model(self, *, context: SolverModelContext) -> None:  # noqa: B027
         """Validate finalized user declarations. Default: no-op."""
 
@@ -615,6 +667,22 @@ class Solver(ABC):
         the value array, so it needs none. The engine reads this off every
         regime's solver to decide whether terminal regimes produce their
         closed-form continuations, without forking on the solver type.
+        """
+        return False
+
+    @property
+    def supports_nonlinear_certainty_equivalent(self) -> bool:
+        """Whether this solver's continuation step implements the EZ recursion.
+
+        Reading a continuation and assuming expected utility are separate
+        properties. An Euler inversion written against `E[V']` is only valid
+        under `LinearExpectation`, so by default a solver that reads a
+        continuation refuses a nonlinear certainty equivalent rather than
+        solving a recursion the regime does not declare. A solver whose step
+        inverts the recursive Euler equation instead — carrying the certainty
+        equivalent's transform through the marginal — overrides this to `True`
+        and is admitted. Grid search never consults it: reading only the value
+        array, it aggregates any certainty equivalent in concrete values.
         """
         return False
 

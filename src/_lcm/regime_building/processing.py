@@ -18,6 +18,7 @@ from _lcm.coarse_transition import _CoarseTransitionCell
 from _lcm.continuation import EGMContinuationSpec
 from _lcm.egm.budget import (
     DCEGM_BUDGET_CONSTRAINT_NAME,
+    INTRINSIC_BUDGET_SOLVERS,
     get_intrinsic_budget_constraint,
 )
 from _lcm.egm.carry import EGMCarry, build_template_egm_carry, shard_carry_template
@@ -30,6 +31,7 @@ from _lcm.egm.terminal import (
 from _lcm.egm.validation import savings_stage_reads_euler_state
 from _lcm.engine import (
     EGMPolicyRead,
+    NNBEGMPolicyRead,
     Regime,
     SimulationPhase,
     SolutionPhase,
@@ -77,10 +79,17 @@ from _lcm.regime_building.phases import (
     PhasedRegimeSpec,
     RegimePhaseSpec,
     normalize_all_regime_phases,
+    phase_variation_paths,
 )
 
 if TYPE_CHECKING:
     from _lcm.solution.dcegm import _BoundDCEGM
+    from _lcm.solution.nnbegm import _BoundNNBEGM
+else:
+    # Importing the private bound solver here would close the solution/processing
+    # cycle. Static analysis sees the precise type above; runtime validation only
+    # needs a decoratable broad alias.
+    _BoundNNBEGM = object
 
 from _lcm.constraints.dispositions import ConstraintContext, Evaluate, Reject
 from _lcm.constraints.materialize import as_constraint_function
@@ -151,9 +160,8 @@ from _lcm.variables import (
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
-from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import DCEGM, EGM, NEGM, Solver
+from lcm.solvers import DCEGM, NNBEGM, Solver
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, UserFunction
 
@@ -309,9 +317,10 @@ def process_regimes(
     # DC-EGM regimes must satisfy the EGM model contract before any kernel is built.
     # `Model.__init__` validates earlier (so contract violations beat the generic
     # unused-variable check); this call covers direct `process_regimes` callers.
-    # Both read the representative regimes: the contract is about a state's kind and
-    # shape, both invariant across ages, and a raw `AgeSpecializedGrid` marker is not
-    # a `Grid`, so a type-filtered collection of continuous states would drop it.
+    # Validation reads the representative regimes: the contract is about a state's
+    # kind and shape, both invariant across ages, and a raw `AgeSpecializedGrid`
+    # marker is not a `Grid`, so a type-filtered collection of continuous states
+    # would drop it.
     for regime_name, user_regime in representative_user_regimes.items():
         fail_if_solver_is_not_shipped(
             solver=user_regime.solver, regime_name=regime_name
@@ -320,6 +329,8 @@ def process_regimes(
             context=SolverModelContext(
                 regime_name=regime_name,
                 user_regimes=representative_user_regimes,
+                solve_functions=phased_specs[regime_name].solution.functions,
+                phase_variation_paths=phase_variation_paths(user_regime=user_regime),
                 solution_reachability=reachability.solution,
             )
         )
@@ -901,20 +912,23 @@ def _build_solution_phase(
         granular_param_expansions=granular_param_expansions,
     )
 
+    routing = _route_constraints(
+        constraints=spec.solution.constraints,
+        solver=solver,
+        regime_name=regime_name,
+        phase="solve",
+        functions=spec.solution.functions,
+        variables=variables,
+        flat_param_names=flat_param_names,
+        active_periods=regimes_to_active_periods[regime_name],
+        grids=all_grids[regime_name],
+    )
+
     core = _process_regime_core(
         koopmans_aggregator=spec.solution.koopmans_aggregator,
         functions=spec.solution.functions,
-        constraints=_constraints_the_solver_evaluates(
-            constraints=spec.solution.constraints,
-            solver=solver,
-            regime_name=regime_name,
-            phase="solve",
-            functions=spec.solution.functions,
-            variables=variables,
-            flat_param_names=flat_param_names,
-            active_periods=regimes_to_active_periods[regime_name],
-            grids=all_grids[regime_name],
-        ),
+        constraints=spec.solution.constraints,
+        evaluated_constraint_names=routing.evaluated_names,
         state_transitions=spec.solution.state_transitions,
         nested_transitions=nested_transitions,
         all_grids=all_grids,
@@ -1036,6 +1050,10 @@ def _build_solution_phase(
     context = SolverBuildContext(
         regime_name=regime_name,
         user_regimes=user_regimes,
+        solve_functions=spec.solution.functions,
+        phase_variation_paths=phase_variation_paths(
+            user_regime=user_regimes[regime_name]
+        ),
         state_action_space=state_action_space,
         solution_reachability=phase_reachability,
         Q_and_F_functions=Q_and_F_functions,
@@ -1046,7 +1064,9 @@ def _build_solution_phase(
         functions=core.functions,
         koopmans_aggregator=core.koopmans_aggregator,
         constraints=core.constraints,
+        constraint_functions=core.constraint_functions,
         processed_constraints=core.processed_constraints,
+        constraint_plan=routing.plan,
         transitions=core.transitions,
         transition_laws=core.transition_laws,
         compute_regime_transition_probs=compute_regime_transition_probs,
@@ -1134,6 +1154,7 @@ def _build_solution_phase(
         validation_regime_transition_probs=validation_regime_transition_probs,
         compute_intermediates=compute_intermediates,
         continuation_spec=continuation_spec,
+        param_checks=solver_kernels.param_checks,
         _base_state_action_space=state_action_space,
         period_state_axes=period_state_axes,
     )
@@ -1388,6 +1409,27 @@ def _build_egm_child_carry_producer(
     return producer, template
 
 
+def _validated_bound_nnbegm(
+    *,
+    solver: Solver,
+    regime_name: RegimeName,
+    user_regime: UserRegime,
+) -> _BoundNNBEGM | None:
+    """Return a bound NNBEGM after validating replay-phase invariance."""
+    if not isinstance(solver, NNBEGM):
+        return None
+
+    from _lcm.solution.nnbegm import (  # noqa: PLC0415
+        _fail_if_nnbegm_phase_variation,
+    )
+
+    _fail_if_nnbegm_phase_variation(
+        regime_name=regime_name,
+        variations=phase_variation_paths(user_regime=user_regime),
+    )
+    return cast("_BoundNNBEGM", solver)
+
+
 def _build_simulation_phase(
     *,
     spec: PhasedRegimeSpec,
@@ -1431,12 +1473,12 @@ def _build_simulation_phase(
     Q_and_F always uses the solve (non-vmapped) regime transition probs because
     it evaluates on the Cartesian grid, not per-subject.
 
-    For a DC-EGM or NEGM regime, the budget constraint the EGM solve enforces
+    For an endogenous-grid regime, the budget constraint the solve enforces
     intrinsically is synthesized and injected into the constraint set: the
     simulate-phase grid argmax needs it as a feasibility mask exactly like a
-    user-declared borrowing constraint of a brute-force regime. NEGM nests the
-    same inner 1-D solve, so the mask comes from its inner DC-EGM config. The
-    solve phase is unaffected — the EGM kernels never see it.
+    user-declared borrowing constraint of a brute-force regime. A nested
+    solver's mask comes from its inner 1-D config. The solve phase is
+    unaffected — the EGM kernels never see it.
 
     Args:
         spec: The regime's per-phase specification.
@@ -1489,20 +1531,23 @@ def _build_simulation_phase(
         granular_param_expansions=granular_param_expansions,
     )
 
+    routing = _route_constraints(
+        constraints=spec.simulation.constraints,
+        solver=solver,
+        regime_name=regime_name,
+        phase="simulate",
+        functions=MappingProxyType(decision_functions),
+        variables=variables,
+        flat_param_names=flat_param_names,
+        active_periods=regimes_to_active_periods[regime_name],
+        grids=all_grids[regime_name],
+    )
+
     core = _process_regime_core(
         koopmans_aggregator=spec.simulation.koopmans_aggregator,
         functions=decision_functions,
-        constraints=_constraints_the_solver_evaluates(
-            constraints=spec.simulation.constraints,
-            solver=solver,
-            regime_name=regime_name,
-            phase="simulate",
-            functions=MappingProxyType(decision_functions),
-            variables=variables,
-            flat_param_names=flat_param_names,
-            active_periods=regimes_to_active_periods[regime_name],
-            grids=all_grids[regime_name],
-        ),
+        constraints=spec.simulation.constraints,
+        evaluated_constraint_names=routing.evaluated_names,
         state_transitions=spec.simulation.state_transitions,
         nested_transitions=nested_transitions,
         all_grids=all_grids,
@@ -1515,7 +1560,7 @@ def _build_simulation_phase(
     )
     functions = core.functions
     constraints = core.constraints
-    if isinstance(solver, (EGM, DCEGM, NEGM)):
+    if isinstance(solver, INTRINSIC_BUDGET_SOLVERS):
         if (
             DCEGM_BUDGET_CONSTRAINT_NAME in core.functions
             or DCEGM_BUDGET_CONSTRAINT_NAME in core.constraints
@@ -1679,7 +1724,38 @@ def _build_simulation_phase(
     own_v_info = regime_to_v_interpolation_info[regime_name]
     egm_policy_read = None
     bound_solver = cast("_BoundDCEGM", solver) if isinstance(solver, DCEGM) else None
-    if (
+    bound_nnbegm = _validated_bound_nnbegm(
+        solver=solver,
+        regime_name=regime_name,
+        user_regime=user_regime,
+    )
+    if bound_nnbegm is not None and phase_invariant and not has_taste_shocks:
+        replay_actions = frozenset(
+            (bound_nnbegm.inner.continuous_action, bound_nnbegm.outer_action)
+        )
+        declared_continuous_actions = frozenset(
+            simulation_variables.continuous_action_names
+        )
+        if declared_continuous_actions != replay_actions:
+            raise ModelInitializationError(
+                f"NNBEGM simulation replay for regime {regime_name!r} requires "
+                "exactly the bound inner and outer actions as its continuous "
+                "actions; additional declared actions must be discrete. Got "
+                f"continuous actions "
+                f"{tuple(simulation_variables.continuous_action_names)!r}."
+            )
+        egm_policy_read = NNBEGMPolicyRead(
+            outer_target_function_by_period=_build_nnbegm_outer_target_functions(
+                active_periods=regimes_to_active_periods[regime_name],
+                functions=simulate_functions,
+                outer_post_decision=bound_nnbegm.outer_post_decision,
+                outer_no_adjustment_target=(bound_nnbegm.outer_no_adjustment_candidate),
+            ),
+            outer_post_decision=bound_nnbegm.outer_post_decision,
+            outer_no_adjustment_target=bound_nnbegm.outer_no_adjustment_candidate,
+            outer_state_name=bound_nnbegm.outer_state,
+        )
+    elif (
         bound_solver is not None
         and _envelope_publishes_crossings(bound_solver)
         and phase_invariant
@@ -1827,26 +1903,24 @@ def _regime_has_passive_state(
 
 
 def regime_declares_phased(user_regime: UserRegime) -> bool:
-    """Whether any regime slot carries a `Phased` (phase-variant) declaration.
+    """Whether the regime has genuine solve/simulate declaration variation.
 
-    Scans `functions`, `state_transitions` (including per-target dicts), the
-    regime `transition`, and `states`. `Phased` is outermost-only in every
-    slot except a per-target transition dict, whose cells it may wrap.
+    ``Phased(solve=value, simulate=value)`` is invariant because both sides are
+    the same object. The complete public phase grammar, including the Koopmans
+    aggregator, is classified by the shared phase-normalization helper.
     """
+    return bool(phase_variation_paths(user_regime=user_regime))
 
-    def is_phased(value: object) -> bool:
-        if isinstance(value, Phased):
-            return True
-        if isinstance(value, Mapping):
-            return any(isinstance(cell, Phased) for cell in value.values())
-        return False
 
-    return (
-        any(is_phased(value) for value in user_regime.functions.values())
-        or any(is_phased(value) for value in user_regime.state_transitions.values())
-        or is_phased(user_regime.transition)
-        or any(is_phased(value) for value in user_regime.states.values())
-    )
+@dataclass(frozen=True)
+class _ConstraintRoutingResult:
+    """The retained route ledger and the constraints evaluated numerically."""
+
+    plan: ConstraintPlan | None
+    """Complete route ledger, or `None` when the solver declares no routes."""
+
+    evaluated_names: frozenset[FunctionName]
+    """Constraint names every applicable route evaluates."""
 
 
 @dataclass(frozen=True)
@@ -1857,14 +1931,17 @@ class _CoreResult:
     """User functions (utility, helpers) with params renamed to qnames."""
 
     constraints: ConstraintFunctionsMapping
-    """Constraint functions with params renamed to qnames."""
+    """Constraint callables retained in the numerical feasibility kernel."""
+
+    constraint_functions: ConstraintFunctionsMapping
+    """Every declared constraint callable, including compiled and proved ones."""
 
     processed_constraints: ProcessedConstraintsMapping
-    """The same constraints in normalized form, for a solver to reason about.
+    """Every declared constraint in normalized form, for solver reasoning.
 
-    Not a second source of truth: `constraints` is built from this mapping at
-    one site, so what a solver proves and what the engine evaluates come from
-    the same declaration."""
+    Not a second source of truth: `constraint_functions` is built from this
+    mapping at one site, so compiled structure and executable predicates cannot
+    disagree about what was declared."""
 
     transitions: TransitionFunctionsMapping
     """Nested mapping of transition names to transition functions."""
@@ -1889,6 +1966,7 @@ def _process_regime_core(
     *,
     functions: Mapping[FunctionName, UserFunction],
     constraints: Mapping[FunctionName, ProcessedConstraint],
+    evaluated_constraint_names: frozenset[FunctionName],
     koopmans_aggregator: UserFunction | None,
     state_transitions: Mapping[StateName, object],
     nested_transitions: _TransitionBundles,
@@ -1909,6 +1987,8 @@ def _process_regime_core(
     Args:
         functions: Phase-resolved regime functions for this build.
         constraints: The regime's normalized constraints for this phase.
+        evaluated_constraint_names: Names whose callables remain in the numerical
+            feasibility kernel after routing.
         koopmans_aggregator: The regime's Bellman aggregator, or `None` in a
             terminal regime.
         state_transitions: This phase's `state_transitions` slice, used to
@@ -2162,8 +2242,11 @@ def _process_regime_core(
         for func_name in flat_nested_transitions
     } | {key: processed_functions[key] for key in process_transition_keys}
 
-    processed_constraints: ConstraintFunctionsMapping = MappingProxyType(
+    all_constraint_functions: ConstraintFunctionsMapping = MappingProxyType(
         {func_name: processed_functions[func_name] for func_name in constraints}
+    )
+    evaluated_constraints: ConstraintFunctionsMapping = MappingProxyType(
+        {name: all_constraint_functions[name] for name in evaluated_constraint_names}
     )
     excluded_from_functions = (
         set(flat_nested_transitions) | set(constraints) | process_transition_keys
@@ -2215,7 +2298,8 @@ def _process_regime_core(
 
     return _CoreResult(
         functions=phase_functions,
-        constraints=processed_constraints,
+        constraints=evaluated_constraints,
+        constraint_functions=all_constraint_functions,
         processed_constraints=normalized_constraints,
         transitions=transitions,
         transition_laws=transition_laws,
@@ -3772,6 +3856,39 @@ def _build_pointwise_Q_and_F_per_period(
     return MappingProxyType(result)
 
 
+def _build_nnbegm_outer_target_functions(
+    *,
+    active_periods: tuple[int, ...],
+    functions: EconFunctionsMapping,
+    outer_post_decision: FunctionName,
+    outer_no_adjustment_target: FunctionName | None,
+) -> MappingProxyType[int, Callable[..., Mapping[str, FloatND]]]:
+    """Build the smallest period-resolved DAG needed for replay inversion."""
+    configs = group_periods_by_key(
+        active_periods,
+        lambda period: periodized_tree_signature(functions, period),
+    )
+    targets = [outer_post_decision]
+    if outer_no_adjustment_target is not None:
+        targets.append(outer_no_adjustment_target)
+
+    built: dict[Hashable, Callable[..., Mapping[str, FloatND]]] = {}
+    for key, periods in configs.items():
+        representative_period = periods[0]
+        target_function = concatenate_functions(
+            functions=cast(
+                "EconFunctionsMapping",
+                resolve_periodized_nodes(functions, representative_period),
+            ),
+            targets=targets,
+            return_type="dict",
+            set_annotations=True,
+        )
+        built[key] = cast("Callable[..., Mapping[str, FloatND]]", target_function)
+
+    return expand_groups_to_periods(configs, built)
+
+
 def _build_next_state_vmapped(
     *,
     active_periods: tuple[int, ...],
@@ -3861,7 +3978,7 @@ def _fail_if_action_has_batch_size(
                 raise ValueError(msg)
 
 
-def _constraints_the_solver_evaluates(
+def _route_constraints(
     *,
     constraints: ProcessedConstraintsMapping,
     solver: Solver,
@@ -3872,8 +3989,8 @@ def _constraints_the_solver_evaluates(
     flat_param_names: frozenset[str],
     active_periods: tuple[int, ...],
     grids: MappingProxyType[StateOrActionName, Grid],
-) -> ProcessedConstraintsMapping:
-    """Narrow a phase's constraints to those the solver's routes evaluate.
+) -> _ConstraintRoutingResult:
+    """Retain a route plan and identify constraints every route evaluates.
 
     Every constraint reaches a terminal disposition on every route the solver
     walks in this phase, and only those a route evaluates are handed to the
@@ -3898,7 +4015,7 @@ def _constraints_the_solver_evaluates(
         grids: Immutable mapping of the regime's state and action grids.
 
     Returns:
-        Immutable mapping of the constraints the kernel evaluates.
+        The complete plan and the names retained in the numerical kernel.
 
     Raises:
         ModelInitializationError: If a route can meet a constraint at none of
@@ -3917,7 +4034,9 @@ def _constraints_the_solver_evaluates(
         )
     )
     if routes is None:
-        return constraints
+        return _ConstraintRoutingResult(
+            plan=None, evaluated_names=frozenset(constraints)
+        )
     plan = plan_constraints(
         constraints=constraints,
         routes=routes,
@@ -3931,13 +4050,7 @@ def _constraints_the_solver_evaluates(
     )
     _fail_if_a_constraint_cannot_be_met(plan=plan)
     evaluated = _names_every_route_evaluates(plan=plan, regime_name=regime_name)
-    return MappingProxyType(
-        {
-            name: constraint
-            for name, constraint in constraints.items()
-            if name in evaluated
-        }
-    )
+    return _ConstraintRoutingResult(plan=plan, evaluated_names=evaluated)
 
 
 def _fail_if_a_constraint_cannot_be_met(*, plan: ConstraintPlan) -> None:

@@ -8,6 +8,7 @@ the inverse has exponent `1/[phi(1-rho)-1]`. The basic single-good flow is
 `phi = 1`, where the exponent reduces to `-1/rho`.
 """
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -22,11 +23,32 @@ from _lcm.egm.ez_kernel import (
     ez_transform_partials,
     ez_transform_scalar,
 )
+from _lcm.egm.nbegm_step import _ez_flow_power_structure
+from _lcm.egm.preferences import Preferences
+from lcm import CESAggregator, PowerMean
 
 # These are float64 specs of the kernel algebra (closed-form identities,
 # finite-difference checks, and float32-versus-float64 comparisons), so the
 # module runs with x64 enabled regardless of the suite's `--precision` flag.
 pytestmark = pytest.mark.usefixtures("x64_enabled")
+
+
+def _flow_preferences(utility_of_action) -> Preferences:
+    """The bundle `_ez_flow_power_structure` reads off a period flow.
+
+    It reads the felicity and its marginal at a unit action to recover the flow's
+    scale and elasticity, and never inverts, so the inverse marginal is a
+    placeholder that raises if the contract ever changes.
+    """
+
+    def _never_inverted(_marginal):
+        raise AssertionError("the flow's power structure does not invert the Euler")
+
+    return Preferences(
+        utility=utility_of_action,
+        marginal_utility=jax.grad(utility_of_action),
+        inverse_marginal_utility=_never_inverted,
+    )
 
 
 def test_basic_flow_consumption_matches_the_crra_power_inversion() -> None:
@@ -210,6 +232,45 @@ def test_continuation_nu_is_the_power_mean_of_child_values() -> None:
         1.0 / (1.0 - gamma)
     )
     np.testing.assert_allclose(np.asarray(nu)[0], reference, rtol=1e-10)
+
+
+def test_continuation_matches_public_power_mean_at_a_positive_mass_zero() -> None:
+    """The EGM specialization preserves the public zero-value limiting case."""
+    values = jnp.array([0.0, 1.0])
+    weights = jnp.array([0.5, 0.5])
+    risk_aversion = jnp.asarray(2.0)
+    specialized, _ = ez_continuation(
+        child_values=values,
+        child_marginals=jnp.zeros_like(values),
+        weights=weights,
+        risk_aversion=risk_aversion,
+    )
+    public = PowerMean().aggregate(
+        values=values,
+        weights=weights,
+        params={"risk_aversion": risk_aversion},
+    )
+    np.testing.assert_array_equal(np.asarray(specialized), np.asarray(public))
+
+
+def test_continuation_matches_public_power_mean_for_a_rare_dominating_node() -> None:
+    """A rare worst continuation survives the specialized EGM reduction."""
+    values = jnp.array([1e-50, 1.0])
+    weights = jnp.array([1e-20, 1.0 - 1e-20])
+    risk_aversion = jnp.asarray(8.0)
+    specialized, _ = ez_continuation(
+        child_values=values,
+        child_marginals=jnp.ones_like(values),
+        weights=weights,
+        risk_aversion=risk_aversion,
+    )
+    public = PowerMean().aggregate(
+        values=values,
+        weights=weights,
+        params={"risk_aversion": risk_aversion},
+    )
+    assert bool(jnp.isfinite(specialized))
+    np.testing.assert_array_equal(np.asarray(specialized), np.asarray(public))
 
 
 def test_continuation_marginal_is_the_risk_reweighted_covariation() -> None:
@@ -435,17 +496,13 @@ def test_continuation_stays_finite_at_high_risk_aversion_in_float32() -> None:
     )
 
 
-def test_transform_partials_carry_the_generator_weighted_sums() -> None:
-    """The anchored partials represent `S = sum_j w_j V_j^(1-gamma)` and `T`.
-
-    De-scaling with `S = e^((1-gamma) a) S~` and `T = e^b T~` recovers the
-    plain generator-weighted sums the joint-lottery theorem is stated in.
-    """
+def test_transform_partials_carry_the_public_mean_and_derivative_statistic() -> None:
+    """A partial stores the public power mean, mass, and scaled derivative."""
     gamma = 4.0
     child_values = jnp.array([[1.0, 2.0]])
     child_marginals = jnp.array([[0.5, 0.25]])
     weights = jnp.array([0.5, 0.5])
-    anchor, weight_sum, scaled_value, marginal_log_scale, marginal_mantissa = (
+    certainty_equivalent, weight_sum, marginal_log_scale, marginal_mantissa = (
         ez_transform_partials(
             child_values=child_values,
             child_marginals=child_marginals,
@@ -453,15 +510,14 @@ def test_transform_partials_carry_the_generator_weighted_sums() -> None:
             risk_aversion=jnp.asarray(gamma),
         )
     )
-    exp_value = 0.5 * 1.0 ** (1.0 - gamma) + 0.5 * 2.0 ** (1.0 - gamma)
-    exp_marginal = 0.5 * 1.0 ** (-gamma) * 0.5 + 0.5 * 2.0 ** (-gamma) * 0.25
-    a = np.asarray(anchor)[0]
-    np.testing.assert_allclose(
-        np.exp((1.0 - gamma) * a)
-        * (np.asarray(weight_sum)[0] + np.asarray(scaled_value)[0]),
-        exp_value,
-        rtol=1e-10,
+    public = PowerMean().aggregate(
+        values=child_values,
+        weights=weights,
+        params={"risk_aversion": jnp.asarray(gamma)},
     )
+    exp_marginal = 0.5 * 1.0 ** (-gamma) * 0.5 + 0.5 * 2.0 ** (-gamma) * 0.25
+    np.testing.assert_array_equal(np.asarray(certainty_equivalent), np.asarray(public))
+    np.testing.assert_allclose(np.asarray(weight_sum), 1.0, rtol=1e-10)
     np.testing.assert_allclose(
         np.exp(np.asarray(marginal_log_scale)[0]) * np.asarray(marginal_mantissa)[0],
         exp_marginal,
@@ -469,43 +525,25 @@ def test_transform_partials_carry_the_generator_weighted_sums() -> None:
     )
 
 
-def test_transform_scalar_anchors_the_generator() -> None:
-    """A certain value enters transform space as its own anchor: `(log V, 1, 0)`."""
-    gamma = 4.0
-    value = jnp.asarray(2.0)
-    anchor, weight, scaled = ez_transform_scalar(
-        value=value, risk_aversion=jnp.asarray(gamma)
-    )
-    np.testing.assert_allclose(
-        np.exp((1.0 - gamma) * np.asarray(anchor))
-        * (np.asarray(weight) + np.asarray(scaled)),
-        2.0 ** (1.0 - gamma),
-        rtol=1e-10,
-    )
-
-
-def test_transform_scalar_is_the_log_generator_at_unit_risk_aversion() -> None:
-    """At `gamma = 1` the generator degenerates to `log V` with a zero anchor."""
+def test_transform_scalar_is_a_unit_mass_certain_partial() -> None:
+    """A stateless continuation carries its value and no marginal."""
     value = jnp.asarray(3.0)
-    anchor, weight, scaled = ez_transform_scalar(
-        value=value, risk_aversion=jnp.asarray(1.0)
+    certainty_equivalent, weight, marginal_log_scale, marginal_mantissa = (
+        ez_transform_scalar(value=value, risk_aversion=jnp.asarray(4.0))
     )
-    np.testing.assert_allclose(np.asarray(anchor), 0.0, atol=1e-12)
-    np.testing.assert_allclose(np.asarray(weight), 1.0, atol=1e-12)
-    np.testing.assert_allclose(np.asarray(scaled), np.log(3.0), rtol=1e-10)
+    np.testing.assert_array_equal(np.asarray(certainty_equivalent), np.asarray(value))
+    np.testing.assert_array_equal(np.asarray(weight), np.asarray(1.0))
+    np.testing.assert_array_equal(np.asarray(marginal_log_scale), np.asarray(0.0))
+    np.testing.assert_array_equal(np.asarray(marginal_mantissa), np.asarray(0.0))
 
 
 def test_invert_partials_recovers_the_continuation_certainty_equivalent() -> None:
-    """`ez_invert_partials(ez_transform_partials(.)) == ez_continuation(.)`.
-
-    The single-regime certainty equivalent is the transform partials inverted
-    with no intervening regime blend, so the two must agree exactly.
-    """
+    """Inverting one transformed lottery equals the direct continuation call."""
     gamma = 4.0
     child_values = jnp.array([[1.0, 2.0]])
     child_marginals = jnp.array([[0.5, 0.25]])
     weights = jnp.array([0.5, 0.5])
-    anchor, weight_sum, scaled_value, marginal_log_scale, marginal_mantissa = (
+    certainty_equivalent, weight_sum, marginal_log_scale, marginal_mantissa = (
         ez_transform_partials(
             child_values=child_values,
             child_marginals=child_marginals,
@@ -514,9 +552,8 @@ def test_invert_partials_recovers_the_continuation_certainty_equivalent() -> Non
         )
     )
     nu, dnu_ds = ez_invert_partials(
-        log_anchor=anchor,
+        certainty_equivalent=certainty_equivalent,
         weight_sum=weight_sum,
-        scaled_value=scaled_value,
         marginal_log_scale=marginal_log_scale,
         marginal_mantissa=marginal_mantissa,
         risk_aversion=jnp.asarray(gamma),
@@ -532,14 +569,7 @@ def test_invert_partials_recovers_the_continuation_certainty_equivalent() -> Non
 
 
 def test_blend_partials_matches_the_single_joint_lottery() -> None:
-    """Blending per-regime anchored partials equals one joint-lottery reduction.
-
-    Two target regimes with probabilities `(p, 1-p)` and value scales twelve
-    orders of magnitude apart blend into exactly the certainty equivalent of the
-    concatenated `(regime x shock)` lottery — the re-anchoring in
-    `ez_blend_partials` preserves additivity of the underlying transform sums
-    without leaving the representable range.
-    """
+    """Per-regime partial blending equals one joint-lottery reduction."""
     gamma = 30.0
     prob = jnp.array([0.3, 0.7])
     values_a = jnp.array([1e-9, 3e-9])
@@ -557,24 +587,21 @@ def test_blend_partials_matches_the_single_joint_lottery() -> None:
         for values, marginals in ((values_a, marginals_a), (values_b, marginals_b))
     ]
     (
-        joint_anchor,
+        joint_certainty_equivalent,
         blended_weight,
-        blended_value,
         joint_marginal_scale,
         blended_mantissa,
     ) = ez_blend_partials(
-        log_anchors=jnp.stack([p[0] for p in partials]),
+        certainty_equivalents=jnp.stack([p[0] for p in partials]),
         weight_sums=jnp.stack([p[1] for p in partials]),
-        scaled_values=jnp.stack([p[2] for p in partials]),
-        marginal_log_scales=jnp.stack([p[3] for p in partials]),
-        marginal_mantissas=jnp.stack([p[4] for p in partials]),
+        marginal_log_scales=jnp.stack([p[2] for p in partials]),
+        marginal_mantissas=jnp.stack([p[3] for p in partials]),
         probs=prob[:, None],
         risk_aversion=jnp.asarray(gamma),
     )
     nu, dnu_ds = ez_invert_partials(
-        log_anchor=joint_anchor,
+        certainty_equivalent=joint_certainty_equivalent,
         weight_sum=blended_weight,
-        scaled_value=blended_value,
         marginal_log_scale=joint_marginal_scale,
         marginal_mantissa=blended_mantissa,
         risk_aversion=jnp.asarray(gamma),
@@ -590,18 +617,12 @@ def test_blend_partials_matches_the_single_joint_lottery() -> None:
     np.testing.assert_allclose(np.asarray(dnu_ds), np.asarray(ref_dnu_ds), rtol=1e-9)
 
 
-def test_single_node_transform_partial_matches_the_scalar_anchor() -> None:
-    """A one-node lottery transforms to the stateless target's anchored pair.
-
-    The continuation reader transforms a child with no own shock lottery via
-    `ez_transform_partials` on a single unit-weight node; a stateless target
-    enters through `ez_transform_scalar`. Both paths must carry identical
-    transform-space contributions into the regime blend.
-    """
+def test_single_node_transform_partial_matches_the_scalar_value_channel() -> None:
+    """A one-node lottery matches the stateless partial on value and mass."""
     gamma = 4.0
     value = jnp.asarray(2.0)
     marginal = jnp.asarray(0.25)
-    anchor, weight_sum, scaled_value, marginal_log_scale, marginal_mantissa = (
+    certainty_equivalent, weight_sum, marginal_log_scale, marginal_mantissa = (
         ez_transform_partials(
             child_values=value[None],
             child_marginals=marginal[None],
@@ -609,23 +630,48 @@ def test_single_node_transform_partial_matches_the_scalar_anchor() -> None:
             risk_aversion=jnp.asarray(gamma),
         )
     )
-    scalar_anchor, scalar_weight, scalar_scaled = ez_transform_scalar(
+    scalar_value, scalar_weight, _, _ = ez_transform_scalar(
         value=value, risk_aversion=jnp.asarray(gamma)
     )
     np.testing.assert_allclose(
-        np.asarray(anchor), np.asarray(scalar_anchor), rtol=1e-12
+        np.asarray(certainty_equivalent), np.asarray(scalar_value), rtol=1e-12
     )
     np.testing.assert_allclose(
         np.asarray(weight_sum), np.asarray(scalar_weight), rtol=1e-12
-    )
-    np.testing.assert_allclose(
-        np.asarray(scaled_value), np.asarray(scalar_scaled), atol=1e-12
     )
     np.testing.assert_allclose(
         np.exp(np.asarray(marginal_log_scale)) * np.asarray(marginal_mantissa),
         np.asarray(value ** (-gamma) * marginal),
         rtol=1e-10,
     )
+
+
+def test_flow_power_structure_poisons_a_degenerate_euler_exponent() -> None:
+    """`xi = phi (1-rho) - 1 = 0` yields a NaN exponent, not a spurious policy.
+
+    At `xi = 0` the Euler equation is constant in consumption — the closed-form
+    inversion `c = x^(1/xi)` is undefined. The exponent `phi` and the inverse
+    EIS `rho` are runtime parameters, so the degenerate combination cannot be
+    rejected at model build; the structure reader poisons the exponent with NaN
+    so the solve's NaN fail-fast surfaces the (regime, period) instead of the
+    inversion computing a finite but meaningless consumption.
+    """
+    log_flow_coefficient, flow_exponent = _ez_flow_power_structure(
+        preferences=_flow_preferences(lambda consumption: consumption**2),
+        inverse_eis=jnp.asarray(0.5),
+    )
+    assert bool(jnp.isnan(flow_exponent))
+    assert bool(jnp.isfinite(log_flow_coefficient))
+
+
+def test_flow_power_structure_is_exact_away_from_the_degenerate_exponent() -> None:
+    """For `q = c` and `rho = 2` the structure is `(log 1, -rho) = (0, -2)` exactly."""
+    log_flow_coefficient, flow_exponent = _ez_flow_power_structure(
+        preferences=_flow_preferences(lambda consumption: consumption),
+        inverse_eis=jnp.asarray(2.0),
+    )
+    np.testing.assert_allclose(np.asarray(log_flow_coefficient), 0.0, atol=1e-12)
+    np.testing.assert_allclose(np.asarray(flow_exponent), -2.0, rtol=1e-12)
 
 
 def test_continuation_marginal_is_finite_for_gamma_below_one_extreme_ratio() -> None:
@@ -796,6 +842,39 @@ def test_marginal_of_resource_is_computed_in_the_log_domain() -> None:
     np.testing.assert_allclose(float(got), expected, rtol=1e-4)
 
 
+def test_flow_power_structure_returns_a_finite_log_coefficient() -> None:
+    """A tiny flow scale yields a finite log coefficient where the raw overflows.
+
+    For `q = A c^phi` with `A = 1e-14` and `rho = 25`, the raw coefficient
+    `A^(1-rho) phi` is ~1e336 — past float64 — while its logarithm (~773) is
+    ordinary. The Euler inversion consumes the log form, so the exact solution
+    `c = 1` (at `nu = A`, `dnu/ds = phi A`, `beta = 1/2`) comes out exactly.
+    """
+    scale = 1e-14
+    power = 0.5
+    rho = 25.0
+
+    log_coefficient, flow_exponent = _ez_flow_power_structure(
+        preferences=_flow_preferences(lambda consumption: scale * consumption**power),
+        inverse_eis=jnp.asarray(rho),
+    )
+    consumption = ez_consumption_from_euler(
+        nu=jnp.asarray(scale),
+        dnu_ds=jnp.asarray(power * scale),
+        discount_factor=0.5,
+        inverse_eis=rho,
+        log_flow_coefficient=log_coefficient,
+        flow_exponent=flow_exponent,
+    )
+
+    expected_log_coefficient = (1.0 - rho) * np.log(scale) + np.log(power)
+    assert bool(jnp.isfinite(log_coefficient))
+    np.testing.assert_allclose(
+        float(log_coefficient), expected_log_coefficient, rtol=1e-12
+    )
+    np.testing.assert_allclose(float(consumption), 1.0, rtol=1e-12)
+
+
 def test_marginal_of_resource_consumes_the_log_flow_marginal() -> None:
     """A large Euler-form flow marginal enters as its log, exact in float32.
 
@@ -905,3 +984,26 @@ def test_continuation_is_stable_near_unit_gamma_for_quadrature_roundoff_mass() -
         )
         np.testing.assert_allclose(float(nu[0]), geometric, rtol=1e-8)
         np.testing.assert_allclose(float(dnu_ds[0]), geometric_derivative, rtol=1e-8)
+
+
+def test_the_public_aggregator_and_the_nbegm_period_kernel_agree() -> None:
+    """`GridSearch` and NBEGM evaluate one CES aggregator, bit for bit.
+
+    The brute solver reads `CESAggregator` while NBEGM reads
+    `ez_period_value`; publishing different cardinal values for the same
+    model would break cross-solver validation, so the public aggregator must
+    be the same computation.
+    """
+    got_public = CESAggregator()(
+        utility=jnp.asarray(2.0),
+        CE=jnp.asarray(3.0),
+        discount_factor=jnp.asarray(0.9),
+        intertemporal_elasticity_of_substitution=jnp.asarray(0.5),
+    )
+    got_kernel = ez_period_value(
+        flow=jnp.asarray(2.0),
+        nu=jnp.asarray(3.0),
+        discount_factor=jnp.asarray(0.9),
+        inverse_eis=jnp.asarray(2.0),
+    )
+    np.testing.assert_array_equal(np.asarray(got_public), np.asarray(got_kernel))

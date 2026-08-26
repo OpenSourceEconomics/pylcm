@@ -34,6 +34,7 @@ from _lcm.typing import (
     RegimeName,
     StateName,
 )
+from _lcm.utils.dispatchers import map_over_leading_axis
 from lcm.typing import (
     BoolND,
     Float1D,
@@ -329,10 +330,9 @@ def _compute_nodes_over_savings(
     stacked along the savings axis, which the constrained-region assembly and
     the upper envelope then consume on the full grid.
     """
-    n_savings = savings_nodes.shape[0]
-    if 0 < savings_batch_size < n_savings:
-        return jax.lax.map(compute_node, savings_nodes, batch_size=savings_batch_size)
-    return jax.vmap(compute_node)(savings_nodes)
+    return map_over_leading_axis(
+        func=compute_node, xs=savings_nodes, batch_size=savings_batch_size
+    )
 
 
 def _get_compute_node(

@@ -17,14 +17,22 @@ backward induction:
   discrete kinks. Inverting the Euler equation on the post-decision savings
   grid solves such a period exactly, so this is the specialization whose step
   needs no upper envelope at all.
-A second continuous state is reached by nesting: `NEGM` solves an inner 1-D
-problem conditional on the outer margin, rather than inverting two coupled
-first-order conditions jointly. `ConsumptionSavingsRegime` declares the liquid
-state, consumption action, resources, and post-decision role names the
+- `NBEGM(...)`: the non-convex-budget endogenous grid method for a 1-D
+  consumption-savings regime whose budget carries declared breakpoints — a
+  means-tested cliff split into case pieces, or a piecewise-affine schedule of
+  kinks, jumps, and floors. See `docs/user_guide/nbegm.md`.
+- `NNBEGM(...)`: the same outer keeper/adjuster search as `NEGM` with an inner
+  `NBEGM` solve, so declared liquid kinks, jumps, and hard constraints keep
+  their exact NB-EGM treatment inside every outer candidate.
+
+A second continuous state is reached by nesting: `NEGM` and `NNBEGM` solve an
+inner 1-D problem conditional on the outer margin, rather than inverting two
+coupled first-order conditions jointly. `ConsumptionSavingsRegime` declares the
+liquid state, consumption action, resources, and post-decision role names the
 endogenous-grid solvers read, and `NestedConsumptionSavingsRegime` adds the outer
-continuous margin `NEGM` searches over. The solvers themselves carry numerical
-configuration only, so one of these regimes is required to use them; plain
-`Regime` stays the form for `GridSearch`.
+continuous margin `NEGM` and `NNBEGM` search over. The solvers themselves carry
+numerical configuration only, so one of these regimes is required to use them;
+plain `Regime` stays the form for `GridSearch`.
 
 `DCEGM` defaults to `ExactEnvelope`, whose certified finite-candidate ownership
 requires pylcm's native exact-affine library. Selecting it on an installation
@@ -57,12 +65,16 @@ from _lcm.solution.dcegm import (
 )
 from _lcm.solution.egm import EGM
 from _lcm.solution.grid_search import GridSearch
+from _lcm.solution.nbegm import NBEGM
 from _lcm.solution.negm import NEGM
+from _lcm.solution.nnbegm import NNBEGM
 
 __all__ = [
     "DCEGM",
     "EGM",
+    "NBEGM",
     "NEGM",
+    "NNBEGM",
     "EnvelopeConfig",
     "ExactEnvelope",
     "FUESEnvelope",

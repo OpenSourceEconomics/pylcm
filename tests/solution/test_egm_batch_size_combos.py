@@ -36,9 +36,14 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
-from tests.conftest import EXACT_KERNEL_SKIP_REASON, invariance_tolerances
+from tests.conftest import EXACT_KERNEL_SKIP_REASON, assert_agrees_to_ulp
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
+
+# Splaying a combo axis only reschedules the `lax.map`, leaving every operation and
+# its operand order untouched; the two solves differ only by the vectorized kernel
+# XLA emits for each block width — a gap of a few ULP, not of an economic magnitude.
+_INVARIANCE_ULP = 16
 
 N_PERIODS = 4
 N_WEALTH = 12
@@ -195,19 +200,10 @@ def test_discrete_combo_batch_size_leaves_value_function_unchanged(
             ref_V = np.asarray(reference[period][regime_name])
             got_V = np.asarray(splayed[period][regime_name])
             assert ref_V.shape == got_V.shape
-            # An infeasible cell carries `-inf`; a tolerance cannot adjudicate
-            # it, so the finite/infinite split is compared exactly.
-            np.testing.assert_array_equal(
-                np.isfinite(got_V),
-                np.isfinite(ref_V),
-                err_msg=f"feasibility differs: period={period}, regime={regime_name}",
-            )
-            rtol, atol = invariance_tolerances(ref_V)
-            np.testing.assert_allclose(
+            assert_agrees_to_ulp(
                 got_V,
                 ref_V,
-                rtol=rtol,
-                atol=atol,
+                n_ulp=_INVARIANCE_ULP,
                 err_msg=f"period={period}, regime={regime_name}",
             )
 
@@ -297,16 +293,9 @@ def test_two_discrete_combo_axes_splayed_together_match_unsplayed(batch_size: in
             ref_V = np.asarray(reference[period][regime_name])
             got_V = np.asarray(splayed[period][regime_name])
             assert ref_V.shape == got_V.shape
-            np.testing.assert_array_equal(
-                np.isfinite(got_V),
-                np.isfinite(ref_V),
-                err_msg=f"feasibility differs: period={period}",
-            )
-            rtol, atol = invariance_tolerances(ref_V)
-            np.testing.assert_allclose(
+            assert_agrees_to_ulp(
                 got_V,
                 ref_V,
-                rtol=rtol,
-                atol=atol,
+                n_ulp=_INVARIANCE_ULP,
                 err_msg=f"period={period}",
             )

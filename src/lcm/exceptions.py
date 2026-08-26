@@ -36,11 +36,13 @@ class InvalidInitialConditionsError(PyLCMError):
 
 
 class InvalidSimulationInputError(PyLCMError):
-    """Raised when a caller-supplied `period_to_regime_to_V_arr` is incomplete.
+    """Raised when caller-supplied solve artifacts cannot drive simulation.
 
-    Every solution-graph continuation target for the current
-    `(period, source regime)` decision must have a value-function array
-    present; a missing one is a simulation-input error, not a solver defect.
+    Covers:
+
+    - A missing value-function array for a solution-graph continuation target.
+    - A missing or mismatched replay policy where the solver's decision cannot
+      be reconstructed from value functions alone.
     """
 
 
@@ -86,6 +88,23 @@ class CategoricalDefinitionError(PyLCMError):
 
 class FunctionDispatchError(PyLCMError):
     """Raised when there is an error during the function dispatch."""
+
+
+class NBEGMCaseError(PyLCMError):
+    """Raised when a NBEGM case-boundary or formula-piece declaration is invalid.
+
+    Covers three families of checks:
+
+    - Invalid boundary/piece declarations: a case split that is not one ordered
+      structured comparison, a piece referencing a boundary absent from the
+      function mapping, or a duplicate/missing `when`/`otherwise` side.
+    - The AST/JAXPR smoothness gate: hidden branching (a Python `if`, a bare
+      comparison, a piecewise primitive inside a helper) in a case's economic
+      nodes.
+    - The case-piece scope gate: a non-`'subsidy'` split output, a
+      state-dependent piece, a non-`'jump'` boundary kind, or a boundary that
+      does not compare the liquid state with a state-independent threshold.
+    """
 
 
 class ExactAffineKernelUnavailableError(PyLCMError):

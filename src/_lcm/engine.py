@@ -57,6 +57,18 @@ if TYPE_CHECKING:
 else:
     PeriodKernelsMapping = Mapping
 
+# A precondition a solver can only check once parameter *values* exist. Kernels
+# are built at `Model` construction, before any params are supplied, so a check
+# that must evaluate or differentiate the model's DAG on real schedules, tables,
+# and coefficients cannot run there. A solver publishes such a check with its
+# kernels; the engine calls it as `check(flat_params=...)` on the first solve
+# and never again, so an estimation loop pays for it once. The check reports by
+# raising; its return value is ignored. Defined here rather than in
+# `_lcm.solution.contract` — which re-exports it — for the same reason as
+# `ContinuationPayload`: the engine stays a leaf of the contract, not a peer in
+# a cycle.
+type ParamCheck = Callable[..., None]
+
 
 @dataclasses.dataclass(frozen=True)
 class VariableInfo:
@@ -364,6 +376,13 @@ class SolutionPhase:
     host-visible memory.
     """
 
+    param_checks: tuple[ParamCheck, ...] = ()
+    """The regime solver's preconditions that need real parameter values.
+
+    Run once, on the first solve, by `check_solver_params`; empty for a solver
+    whose scope is decided by structure alone.
+    """
+
     resolved_fixed_params: FlatRegimeParams = MappingProxyType({})
     """Flat resolved fixed params, consulted for runtime grid substitution."""
 
@@ -527,6 +546,25 @@ class EGMPolicyRead:
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
+class NNBEGMPolicyRead:
+    """Realized-state adapter for the NNBEGM joint replay payload."""
+
+    outer_target_function_by_period: MappingProxyType[
+        int, Callable[..., Mapping[str, FloatND]]
+    ]
+    """Resolved simulate-phase target DAG for each active period."""
+
+    outer_post_decision: FunctionName
+    """Target whose retained identity is inverted during replay."""
+
+    outer_no_adjustment_target: FunctionName | None
+    """Custom keeper target, or ``None`` for the outer-state identity."""
+
+    outer_state_name: StateName
+    """State whose realized value is the default keeper target."""
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class SimulationPhase:
     """Simulate-phase view of a canonical regime.
 
@@ -597,7 +635,7 @@ class SimulationPhase:
     from `functions` (e.g. `additional_targets`) must reject targets that depend
     on these names."""
 
-    egm_policy_read: EGMPolicyRead | None = None
+    egm_policy_read: EGMPolicyRead | NNBEGMPolicyRead | None = None
     """Off-grid read of the published EGM simulation policy, or `None`.
 
     Present only where replaying the solve-phase policy is valid:

@@ -8,8 +8,10 @@ import numpy as np
 import pytest
 
 from _lcm.egm.upper_envelope._exact_affine import (
+    UNRESOLVED_STATUS,
     exact_affine_read,
     exact_query_winner,
+    exact_query_winner_batched,
 )
 from _lcm.egm.upper_envelope.query import envelope_at_query
 from lcm.typing import FloatND
@@ -322,4 +324,125 @@ def test_lowering_has_one_winner_and_three_selected_reads() -> None:
     assert vmapped_text.count("stablehlo.custom_call") == 4
     assert vmapped_text.count(f"ExactQueryWinner{suffix}") == 1
     assert vmapped_text.count(f"ExactAffineRead{suffix}") == 3
-    assert vmapped_text.count("stablehlo.while") == 1
+    assert vmapped_text.count("stablehlo.while") == 0
+
+
+def _batched_operands(*, n_batch: int, n_segment: int, n_query: int):
+    """Build one independent segment set and query row per batch element."""
+    dtype = _dtype()
+    rng = np.random.default_rng(20260818 + dtype.itemsize)
+    shape = (n_batch, n_segment)
+    left = rng.uniform(-4.0, 4.0, shape).astype(dtype)
+    width = np.exp2(rng.integers(-10, 3, shape)).astype(dtype)
+    right = (left + width).astype(dtype)
+    v_left = rng.normal(size=shape).astype(dtype)
+    v_right = rng.normal(size=shape).astype(dtype)
+    live = rng.random(shape) > 0.2
+    live[:, 0] = True
+    # Every query brackets its row's first segment, so a winner always exists.
+    span = np.linspace(0.0, 1.0, n_query, dtype=dtype)
+    query = left[:, :1] + span[None, :] * width[:, :1]
+    return left, right, v_left, v_right, live, query.astype(dtype)
+
+
+def _resolve_batched(left, right, v_left, v_right, live, query):
+    jdtype = _jdtype()
+    return exact_query_winner_batched(
+        left_grid=jnp.asarray(left, jdtype),
+        right_grid=jnp.asarray(right, jdtype),
+        left_value=jnp.asarray(v_left, jdtype),
+        right_value=jnp.asarray(v_right, jdtype),
+        live=jnp.asarray(live),
+        x_query=jnp.asarray(query, jdtype),
+    )
+
+
+def test_batched_winner_matches_the_exact_rational_order_in_every_row() -> None:
+    """Each row resolves the same total order the exact rational envelope does."""
+    n_batch, n_segment, n_query = 6, 5, 3
+    left, right, v_left, v_right, live, query = _batched_operands(
+        n_batch=n_batch, n_segment=n_segment, n_query=n_query
+    )
+    winner, _status = jax.jit(_resolve_batched)(
+        left, right, v_left, v_right, live, query
+    )
+    expected = np.asarray(
+        [
+            [
+                _oracle_winner(
+                    left=left[row],
+                    right=right[row],
+                    v_left=v_left[row],
+                    v_right=v_right[row],
+                    live=live[row],
+                    query=query[row, column],
+                )
+                for column in range(n_query)
+            ]
+            for row in range(n_batch)
+        ],
+        dtype=np.int32,
+    )
+    np.testing.assert_array_equal(np.asarray(winner), expected)
+
+
+def test_batched_winner_resolves_each_row_against_its_own_segments() -> None:
+    """A row's winner is decided by that row's segments, not by a neighbour's."""
+    jdtype = _jdtype()
+    # Both rows hold a rising link and a flat one; only the flat level differs, so
+    # the flat link owns the query in the first row and loses it in the second.
+    winner, _status = jax.jit(_resolve_batched)(
+        np.asarray([[0.0, 0.0], [0.0, 0.0]]),
+        np.asarray([[1.0, 1.0], [1.0, 1.0]]),
+        np.asarray([[0.0, 0.5], [0.0, 0.1]]),
+        np.asarray([[1.0, 0.5], [1.0, 0.1]]),
+        np.asarray([[True, True], [True, True]]),
+        np.asarray([[0.25], [0.25]], dtype=np.dtype(jdtype)),
+    )
+    np.testing.assert_array_equal(np.asarray(winner), np.asarray([[1], [0]]))
+
+
+def test_batched_winner_reports_unresolved_where_no_live_segment_brackets() -> None:
+    """A query outside every live segment of its row publishes the unresolved status."""
+    jdtype = _jdtype()
+    _winner, status = jax.jit(_resolve_batched)(
+        np.asarray([[0.0]]),
+        np.asarray([[1.0]]),
+        np.asarray([[0.0]]),
+        np.asarray([[1.0]]),
+        np.asarray([[True]]),
+        np.asarray([[5.0]], dtype=np.dtype(jdtype)),
+    )
+    np.testing.assert_array_equal(np.asarray(status), UNRESOLVED_STATUS)
+
+
+def _lowered_batched_text(*, n_batch: int) -> str:
+    """Lower one batched winner call and return its stablehlo text."""
+    operands = _batched_operands(n_batch=n_batch, n_segment=4, n_query=3)
+    return jax.jit(_resolve_batched).lower(*operands).as_text()
+
+
+@pytest.mark.parametrize("n_batch", [2, 8])
+def test_batched_winner_lowers_to_one_custom_call_per_batch_size(n_batch: int) -> None:
+    """One opaque call resolves the whole batch, whatever the batch size."""
+    suffix = "F64" if X64_ENABLED else "F32"
+    text = _lowered_batched_text(n_batch=n_batch)
+    assert text.count(f"ExactQueryWinnerBatched{suffix}") == 1
+
+
+def test_batched_winner_lowers_without_a_sequential_loop() -> None:
+    """Batch elements run in parallel rather than as a loop around a scalar call."""
+    assert _lowered_batched_text(n_batch=8).count("stablehlo.while") == 0
+
+
+def test_batched_winner_accepts_a_multi_axis_batch() -> None:
+    """A batch carried on several leading axes resolves like its flattened form."""
+    n_batch, n_segment, n_query = 6, 5, 3
+    operands = _batched_operands(n_batch=n_batch, n_segment=n_segment, n_query=n_query)
+    flat_winner, _flat_status = jax.jit(_resolve_batched)(*operands)
+    nested = [array.reshape(2, 3, array.shape[-1]) for array in operands]
+    nested_winner, _nested_status = jax.jit(_resolve_batched)(*nested)
+    np.testing.assert_array_equal(
+        np.asarray(nested_winner).reshape(n_batch, n_query),
+        np.asarray(flat_winner),
+    )

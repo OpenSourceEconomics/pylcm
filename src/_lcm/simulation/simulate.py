@@ -1,10 +1,11 @@
 import functools
+import inspect
 import itertools
 import logging
 import time
 from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
-from typing import Literal
+from typing import Literal, cast
 
 import jax
 import jax.numpy as jnp
@@ -13,13 +14,20 @@ import pandas as pd
 from jax import vmap
 
 from _lcm.egm.interp import interp_on_padded_grid
-from _lcm.egm.published_policy import EGMSimPolicy
+from _lcm.egm.published_policy import (
+    EGMSimPolicy,
+    NBEGMGridPolicy,
+    NNBEGMSimPolicy,
+)
 from _lcm.engine import (
     EGMPolicyRead,
+    NNBEGMPolicyRead,
     PeriodRegimeSimulationData,
     Regime,
     StateActionSpace,
 )
+from _lcm.grids import ContinuousGrid, DiscreteGrid
+from _lcm.regime_building.ndimage import map_coordinates
 from _lcm.simulation.additional_targets import _compute_targets
 from _lcm.simulation.initial_conditions import (
     MISSING_CAT_CODE,
@@ -105,8 +113,9 @@ def simulate(
             value function arrays.
         ages: AgeGrid for the model, used to convert periods to ages.
         period_to_regime_to_sim_policy: Immutable mapping of periods to each
-            EGM regime's published off-grid simulation policy, or `None`
-            (user-supplied V arrays carry no policy). Sparse over regimes.
+            EGM regime's published off-grid simulation policy, or `None` when
+            the caller supplies no compatible policy mapping. Sparse over
+            regimes.
             Where a regime qualifies (`SimulationPhase.egm_policy_read`), the
             continuous action is interpolated from the policy at the
             subject's resources instead of argmaxed over the action grid.
@@ -484,7 +493,7 @@ def _simulate_regime_in_period(
     n_subjects: int,
     subject_slice: slice,
     original_n_subjects: int | None = None,
-    sim_policy: EGMSimPolicy | None = None,
+    sim_policy: EGMSimPolicy | NBEGMGridPolicy | NNBEGMSimPolicy | None = None,
 ) -> tuple[PeriodRegimeSimulationData, StatesPerRegime, Int1D, PRNGKeyND]:
     """Simulate one regime for one period.
 
@@ -552,35 +561,71 @@ def _simulate_regime_in_period(
         source_period=period,
     )
 
-    # The Q-function values contain the information of how much value each
-    # action combination is worth. To find the optimal discrete action, we
-    # therefore only need to maximize the Q-function values over all actions.
-    argmax_and_max_Q_over_a = regime.simulation.argmax_and_max_Q_over_a[period]
-
-    taste_shock_kwargs = {}
-    if regime.has_taste_shocks:
-        # Per-subject Gumbel keys are generated for the full population and
-        # sliced by global subject index, so a subject's draw is invariant to
-        # how the population is chunked.
-        key, gumbel_keys = generate_simulation_keys(
-            key=key,
-            names=["taste_shock"],
-            n_initial_states=n_subjects,
-            subject_slice=subject_slice,
-            original_n_subjects=original_n_subjects,
-        )
-        taste_shock_kwargs = {"taste_shock_key": gumbel_keys["key_taste_shock"]}
-
-    indices_optimal_actions, V_arr = argmax_and_max_Q_over_a(
-        **state_action_space.states,
-        **state_action_space.discrete_actions,
-        **state_action_space.continuous_actions,
-        **taste_shock_kwargs,
-        next_regime_to_V_arr=next_regime_to_V_arr,
-        **flat_params[regime_name],
-        period=jnp.int32(period),
-        age=age,
+    direct_nnbegm_replay = isinstance(sim_policy, NNBEGMSimPolicy) and isinstance(
+        regime.simulation.egm_policy_read, NNBEGMPolicyRead
     )
+    if direct_nnbegm_replay:
+        # The published payload already names the complete finite candidate set.
+        # Do not compile or execute the unrelated Cartesian simulate-action argmax.
+        optimal_actions, V_arr = _replay_nnbegm_candidates(
+            optimal_actions=MappingProxyType({}),
+            regime=regime,
+            sim_policy=sim_policy,
+            states=states[regime_name],
+            flat_params=flat_params[regime_name],
+            period=period,
+            age=age,
+            canonical_states=state_action_space.states,
+            action_names=state_action_space.action_names,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+        )
+    else:
+        # The Q-function values contain the information of how much value each
+        # action combination is worth. To find the optimal discrete action, we
+        # therefore only need to maximize the Q-function values over all actions.
+        argmax_and_max_Q_over_a = regime.simulation.argmax_and_max_Q_over_a[period]
+
+        taste_shock_kwargs = {}
+        if regime.has_taste_shocks:
+            # Per-subject Gumbel keys are generated for the full population and
+            # sliced by global subject index, so a subject's draw is invariant to
+            # how the population is chunked.
+            key, gumbel_keys = generate_simulation_keys(
+                key=key,
+                names=["taste_shock"],
+                n_initial_states=n_subjects,
+                subject_slice=subject_slice,
+                original_n_subjects=original_n_subjects,
+            )
+            taste_shock_kwargs = {"taste_shock_key": gumbel_keys["key_taste_shock"]}
+
+        indices_optimal_actions, V_arr = argmax_and_max_Q_over_a(
+            **state_action_space.states,
+            **state_action_space.discrete_actions,
+            **state_action_space.continuous_actions,
+            **taste_shock_kwargs,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            **flat_params[regime_name],
+            period=jnp.int32(period),
+            age=age,
+        )
+        optimal_actions = _lookup_values_from_indices(
+            flat_indices=indices_optimal_actions,
+            grids=state_action_space.actions,
+        )
+        optimal_actions, V_arr = _replace_continuous_action_with_policy_read(
+            optimal_actions=optimal_actions,
+            regime=regime,
+            sim_policy=sim_policy,
+            states=states[regime_name],
+            flat_params=flat_params[regime_name],
+            period=period,
+            age=age,
+            canonical_states=state_action_space.states,
+            action_names=state_action_space.action_names,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            grid_values=V_arr,
+        )
     if validation_enabled(logger):
         try:
             # Out-of-regime subjects carry placeholder entries (their state is
@@ -594,23 +639,6 @@ def _simulate_regime_in_period(
         except InvalidValueFunctionError as error:
             raise_or_warn(logger=logger, error=error)
 
-    optimal_actions = _lookup_values_from_indices(
-        flat_indices=indices_optimal_actions,
-        grids=state_action_space.actions,
-    )
-    optimal_actions, V_arr = _replace_continuous_action_with_policy_read(
-        optimal_actions=optimal_actions,
-        regime=regime,
-        sim_policy=sim_policy,
-        states=states[regime_name],
-        flat_params=flat_params[regime_name],
-        period=period,
-        age=age,
-        canonical_states=state_action_space.states,
-        action_names=state_action_space.action_names,
-        next_regime_to_V_arr=next_regime_to_V_arr,
-        grid_values=V_arr,
-    )
     # Store results for this regime-period
     # For state-less regimes (e.g., terminal regimes with no states), V_arr may be a
     # scalar. We need to broadcast it to match this chunk's subject count.
@@ -672,7 +700,7 @@ def _replace_continuous_action_with_policy_read(
     *,
     optimal_actions: MappingProxyType[ActionName, FloatND | IntND],
     regime: Regime,
-    sim_policy: EGMSimPolicy | None,
+    sim_policy: EGMSimPolicy | NBEGMGridPolicy | NNBEGMSimPolicy | None,
     states: Mapping[StateOrActionName, FloatND | IntND],
     flat_params: FlatRegimeParams,
     period: int,
@@ -708,6 +736,22 @@ def _replace_continuous_action_with_policy_read(
     read = regime.simulation.egm_policy_read
     if sim_policy is None or read is None:
         return optimal_actions, grid_values
+    if isinstance(sim_policy, NNBEGMSimPolicy):
+        return _replay_nnbegm_candidates(
+            optimal_actions=optimal_actions,
+            regime=regime,
+            sim_policy=sim_policy,
+            states=states,
+            flat_params=flat_params,
+            period=period,
+            age=age,
+            canonical_states=canonical_states,
+            action_names=action_names,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+        )
+    if isinstance(sim_policy, NBEGMGridPolicy):
+        return optimal_actions, grid_values
+    read = cast("EGMPolicyRead", read)
     if sim_policy.row_passive_state_names:
         return optimal_actions, grid_values
 
@@ -995,6 +1039,315 @@ def _interp_rows_with_support(
     last_live = jnp.take_along_axis(rows_x, (valid_length - 1)[:, None], axis=-1)[:, 0]
     in_support = (resources >= rows_x[:, 0]) & (resources <= last_live)
     return values, in_support
+
+
+def _select_nnbegm_discrete_actions(
+    *,
+    sim_policy: NNBEGMSimPolicy,
+    winner: IntND,
+    n_candidates: int,
+) -> tuple[IntND | None, dict[ActionName, IntND]]:
+    """Select exact discrete codes from the winning solve candidates."""
+    if not sim_policy.discrete_action_names:
+        if sim_policy.candidate_discrete_actions is not None:
+            raise ValueError(
+                "NNBEGM smooth replay received an unexpected discrete code bank."
+            )
+        return None, {}
+
+    candidate_codes = sim_policy.candidate_discrete_actions
+    if candidate_codes is None:
+        raise ValueError("NNBEGM discrete replay payload is missing exact codes.")
+    if candidate_codes.shape != (
+        n_candidates,
+        len(sim_policy.discrete_action_names),
+    ):
+        raise ValueError("NNBEGM discrete replay code bank is misaligned.")
+    selected_codes = jnp.take(candidate_codes, winner, axis=0)
+    selected_actions = {
+        name: selected_codes[:, position]
+        for position, name in enumerate(sim_policy.discrete_action_names)
+    }
+    return selected_codes, selected_actions
+
+
+def _score_nnbegm_candidate_bank(
+    *,
+    optimal_actions: MappingProxyType[ActionName, FloatND | IntND],
+    regime: Regime,
+    sim_policy: NNBEGMSimPolicy,
+    candidate_inner: FloatND,
+    candidate_outer: FloatND,
+    flat_params: FlatRegimeParams,
+    period: int,
+    age: ScalarFloat | ScalarInt,
+    canonical_states: Mapping[StateName, FloatND | IntND],
+    action_names: tuple[ActionName, ...],
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+) -> tuple[FloatND, BoolND]:
+    """Construct complete candidate action tuples and score canonical Q."""
+    n_candidates, n_subjects = candidate_inner.shape
+    excluded_action_names = {
+        sim_policy.inner_action_name,
+        sim_policy.outer_action_name,
+        *sim_policy.discrete_action_names,
+    }
+    candidate_actions = {
+        name: jnp.broadcast_to(
+            jnp.asarray(optimal_actions[name])[None, :],
+            (n_candidates, n_subjects),
+        )
+        for name in action_names
+        if name not in excluded_action_names
+    }
+    candidate_actions[sim_policy.inner_action_name] = candidate_inner
+    candidate_actions[sim_policy.outer_action_name] = candidate_outer
+
+    candidate_codes = sim_policy.candidate_discrete_actions
+    if sim_policy.discrete_action_names:
+        if candidate_codes is None:
+            raise ValueError("NNBEGM discrete replay payload is missing exact codes.")
+        if candidate_codes.shape != (
+            n_candidates,
+            len(sim_policy.discrete_action_names),
+        ):
+            raise ValueError("NNBEGM discrete replay code bank is misaligned.")
+        candidate_actions.update(
+            {
+                name: jnp.broadcast_to(
+                    candidate_codes[:, position, None],
+                    (n_candidates, n_subjects),
+                )
+                for position, name in enumerate(sim_policy.discrete_action_names)
+            }
+        )
+    elif candidate_codes is not None:
+        raise ValueError(
+            "NNBEGM smooth replay received an unexpected discrete code bank."
+        )
+
+    score_actions = functools.partial(
+        _canonical_Q_at_actions,
+        regime=regime,
+        canonical_states=canonical_states,
+        action_names=action_names,
+        next_regime_to_V_arr=next_regime_to_V_arr,
+        flat_params=flat_params,
+        period=period,
+        age=age,
+    )
+    return jax.vmap(lambda actions: score_actions(candidate_actions=actions))(
+        candidate_actions
+    )
+
+
+def _invert_nnbegm_outer_targets(
+    *,
+    regime: Regime,
+    sim_policy: NNBEGMSimPolicy,
+    candidate_inner: FloatND,
+    candidate_target: FloatND,
+    states: Mapping[StateOrActionName, FloatND | IntND],
+    flat_params: FlatRegimeParams,
+    period: int,
+    age: ScalarFloat | ScalarInt,
+) -> tuple[FloatND, BoolND]:
+    """Invert retained targets at realized states and verify the round trip."""
+    policy_read = regime.simulation.egm_policy_read
+    if not isinstance(policy_read, NNBEGMPolicyRead):
+        raise TypeError("NNBEGM target inversion requires its replay adapter.")
+    target_function = policy_read.outer_target_function_by_period[period]
+    accepted = inspect.signature(target_function).parameters
+    n_candidates, n_subjects = candidate_inner.shape
+    candidate_shape = (n_candidates, n_subjects)
+    state_inputs = {
+        name: jnp.broadcast_to(jnp.asarray(value)[None, :], candidate_shape)
+        for name, value in states.items()
+    }
+    if sim_policy.discrete_action_names:
+        if sim_policy.candidate_discrete_actions is None:
+            raise ValueError("NNBEGM discrete replay is missing candidate codes.")
+        discrete_inputs = {
+            name: jnp.broadcast_to(
+                sim_policy.candidate_discrete_actions[:, position, None],
+                candidate_shape,
+            )
+            for position, name in enumerate(sim_policy.discrete_action_names)
+        }
+    else:
+        discrete_inputs = {}
+
+    def evaluate(outer_action: FloatND) -> Mapping[str, FloatND]:
+        pool = {
+            **dict(flat_params),
+            **state_inputs,
+            **discrete_inputs,
+            sim_policy.inner_action_name: candidate_inner,
+            sim_policy.outer_action_name: outer_action,
+            "period": jnp.int32(period),
+            "age": age,
+        }
+        return target_function(
+            **{name: value for name, value in pool.items() if name in accepted}
+        )
+
+    zeros = jnp.zeros_like(candidate_inner)
+    at_zero_results = evaluate(zeros)
+    at_zero = jnp.broadcast_to(
+        jnp.asarray(at_zero_results[policy_read.outer_post_decision]), candidate_shape
+    )
+    at_one = jnp.broadcast_to(
+        jnp.asarray(
+            evaluate(jnp.ones_like(candidate_inner))[policy_read.outer_post_decision]
+        ),
+        candidate_shape,
+    )
+    slope = at_one - at_zero
+
+    if policy_read.outer_no_adjustment_target is None:
+        keeper_targets = jnp.broadcast_to(
+            jnp.asarray(states[policy_read.outer_state_name])[None, :],
+            (sim_policy.n_keeper_candidates, n_subjects),
+        )
+    else:
+        keeper_targets = jnp.broadcast_to(
+            jnp.asarray(at_zero_results[policy_read.outer_no_adjustment_target]),
+            candidate_shape,
+        )[: sim_policy.n_keeper_candidates]
+    realized_target = jnp.concatenate(
+        (keeper_targets, candidate_target[sim_policy.n_keeper_candidates :]),
+        axis=0,
+    )
+    candidate_outer = (realized_target - at_zero) / slope
+    reconstructed = jnp.broadcast_to(
+        jnp.asarray(evaluate(candidate_outer)[policy_read.outer_post_decision]),
+        candidate_shape,
+    )
+    eps = jnp.finfo(candidate_inner.dtype).eps
+    tolerance = 128 * eps * jnp.maximum(1.0, jnp.abs(realized_target))
+    represented = (
+        jnp.isfinite(realized_target)
+        & jnp.isfinite(candidate_outer)
+        & jnp.isfinite(slope)
+        & (slope != 0)
+        & jnp.isfinite(reconstructed)
+        & (jnp.abs(reconstructed - realized_target) <= tolerance)
+    )
+    return candidate_outer, represented
+
+
+def _replay_nnbegm_candidates(
+    *,
+    optimal_actions: MappingProxyType[ActionName, FloatND | IntND],
+    regime: Regime,
+    sim_policy: NNBEGMSimPolicy,
+    states: Mapping[StateOrActionName, FloatND | IntND],
+    flat_params: FlatRegimeParams,
+    period: int,
+    age: ScalarFloat | ScalarInt,
+    canonical_states: Mapping[StateName, FloatND | IntND],
+    action_names: tuple[ActionName, ...],
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND]:
+    """Replay and canonical-score the exact solve candidate product."""
+    n_subjects = next(iter(states.values())).shape[0]
+    coordinates = []
+    in_support = jnp.ones((n_subjects,), dtype=bool)
+    for name in sim_policy.state_names:
+        values = jnp.asarray(states[name])
+        grid = regime.simulation.grids[name]
+        points = jnp.asarray(grid.to_jax())
+        if isinstance(grid, DiscreteGrid):
+            coordinate = jnp.clip(
+                jnp.searchsorted(points, values), 0, points.shape[0] - 1
+            )
+            in_support &= points[coordinate] == values
+        else:
+            continuous_grid = cast("ContinuousGrid", grid)
+            coordinate = continuous_grid.get_coordinate(values)
+            in_support &= (
+                jnp.isfinite(values) & (values >= points[0]) & (values <= points[-1])
+            )
+        coordinates.append(coordinate)
+
+    def read_bank(bank: FloatND) -> FloatND:
+        return jax.vmap(
+            lambda surface: map_coordinates(input=surface, coordinates=coordinates)
+        )(bank)
+
+    candidate_inner = read_bank(sim_policy.candidate_inner_action)
+    candidate_target = read_bank(sim_policy.candidate_outer_target)
+    candidate_value = read_bank(sim_policy.candidate_value)
+    candidate_outer, outer_represented = _invert_nnbegm_outer_targets(
+        regime=regime,
+        sim_policy=sim_policy,
+        candidate_inner=candidate_inner,
+        candidate_target=candidate_target,
+        states=states,
+        flat_params=flat_params,
+        period=period,
+        age=age,
+    )
+    represented = (
+        in_support[None, :]
+        & jnp.isfinite(candidate_inner)
+        & jnp.isfinite(candidate_value)
+        & outer_represented
+    )
+
+    n_candidates = candidate_inner.shape[0]
+    canonical_values, canonical_feasible = _score_nnbegm_candidate_bank(
+        optimal_actions=optimal_actions,
+        regime=regime,
+        sim_policy=sim_policy,
+        candidate_inner=candidate_inner,
+        candidate_outer=candidate_outer,
+        flat_params=flat_params,
+        period=period,
+        age=age,
+        canonical_states=canonical_states,
+        action_names=action_names,
+        next_regime_to_V_arr=next_regime_to_V_arr,
+    )
+    valid = represented & canonical_feasible & jnp.isfinite(canonical_values)
+    ranking_values = jnp.where(valid, canonical_values, -jnp.inf)
+    # JAX argmax returns the first maximum, preserving keeper/outer-major then
+    # declared discrete-product order exactly.
+    winner = jnp.asarray(jnp.argmax(ranking_values, axis=0), dtype=jnp.int32)
+
+    def at_winner(stacked: FloatND) -> FloatND:
+        return jnp.take_along_axis(stacked, winner[None, :], axis=0)[0]
+
+    any_valid = jnp.any(valid, axis=0)
+    selected_inner = at_winner(candidate_inner)
+    selected_outer = at_winner(candidate_outer)
+    selected_codes, selected_discrete_actions = _select_nnbegm_discrete_actions(
+        sim_policy=sim_policy,
+        winner=winner,
+        n_candidates=n_candidates,
+    )
+    selected_value = at_winner(canonical_values)
+    chosen_inner = jnp.where(any_valid, selected_inner, jnp.nan)
+    chosen_outer = jnp.where(any_valid, selected_outer, jnp.nan)
+    chosen_value = jnp.where(any_valid, selected_value, -jnp.inf)
+    if selected_codes is None:
+        chosen_discrete_actions = {}
+    else:
+        chosen_discrete_actions = {
+            name: jnp.where(any_valid, selected_discrete_actions[name], -1)
+            for name in sim_policy.discrete_action_names
+        }
+    return (
+        MappingProxyType(
+            {
+                **optimal_actions,
+                sim_policy.inner_action_name: chosen_inner,
+                sim_policy.outer_action_name: chosen_outer,
+                **chosen_discrete_actions,
+            }
+        ),
+        chosen_value,
+    )
 
 
 def _canonical_Q_at_actions(

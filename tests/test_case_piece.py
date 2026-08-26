@@ -1,0 +1,153 @@
+"""Behavior of NBEGM's structured case boundaries and formula pieces."""
+
+import jax.numpy as jnp
+import pytest
+
+import lcm
+from lcm.case_piece import (
+    AffineBreakpoint,
+    PieceMeta,
+    PiecewiseAffineMeta,
+    affine_breakpoint,
+    case_boundary,
+    piece,
+    piecewise_affine,
+)
+from lcm.exceptions import NBEGMCaseError
+
+medicaid_eligible = case_boundary(
+    lcm.ref("assets") < lcm.ref("medicaid_asset_limit"),
+    kind="jump",
+)
+
+
+def test_case_boundary_is_an_executable_structured_condition():
+    """One comparison supplies both executable truth and boundary structure."""
+    predicate = case_boundary(
+        lcm.ref("assets") < lcm.ref("medicaid_asset_limit"),
+        kind="jump",
+    )
+
+    assert isinstance(predicate, lcm.Condition)
+    assert bool(
+        predicate(assets=jnp.asarray(9.0), medicaid_asset_limit=jnp.asarray(10.0))
+    )
+    assert not bool(
+        predicate(assets=jnp.asarray(10.0), medicaid_asset_limit=jnp.asarray(10.0))
+    )
+
+
+@pytest.mark.parametrize(
+    "condition",
+    [
+        lcm.ref("assets") == lcm.ref("limit"),
+        (lcm.ref("assets") < lcm.ref("limit"))
+        & (lcm.ref("income") < lcm.ref("income_limit")),
+        lcm.Condition.from_callable(lambda assets: assets > 0),
+    ],
+)
+def test_case_boundary_rejects_shapes_that_are_not_one_ordering(condition):
+    """A binary case split is exactly one ordered structured comparison."""
+    with pytest.raises(NBEGMCaseError, match="exactly one"):
+        case_boundary(condition, kind="jump")
+
+
+def test_piece_records_output_predicate_and_when_side():
+    """`piece(output, when=pred)` labels the `when` branch of the split."""
+
+    @piece(output="oop", when=medicaid_eligible)
+    def oop_medicaid(medical_expense):
+        return medical_expense
+
+    assert oop_medicaid.__lcm_piece__ == PieceMeta(  # ty: ignore[unresolved-attribute]
+        output="oop", predicate=medicaid_eligible, side="when"
+    )
+
+
+def test_piece_records_otherwise_side():
+    """`piece(output, otherwise=pred)` labels the complementary branch."""
+
+    @piece(output="oop", otherwise=medicaid_eligible)
+    def oop_private(medical_expense):
+        return medical_expense
+
+    assert oop_private.__lcm_piece__ == PieceMeta(  # ty: ignore[unresolved-attribute]
+        output="oop", predicate=medicaid_eligible, side="otherwise"
+    )
+
+
+def test_piece_returns_the_same_function_object():
+    """The piece decorator returns the original function, never a wrapper."""
+
+    def oop_medicaid(medical_expense):
+        return medical_expense
+
+    decorated = piece(output="oop", when=medicaid_eligible)(oop_medicaid)
+    assert decorated is oop_medicaid
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {},
+        {"when": medicaid_eligible, "otherwise": medicaid_eligible},
+    ],
+)
+def test_piece_requires_exactly_one_side(kwargs):
+    """Neither or both of `when=`/`otherwise=` is rejected — exactly one is required."""
+    with pytest.raises(NBEGMCaseError, match="exactly one"):
+        piece(output="oop", **kwargs)
+
+
+def test_affine_breakpoint_captures_threshold_and_kind():
+    """`affine_breakpoint(...)` records one threshold of a schedule and its kind."""
+    bracket = affine_breakpoint(threshold="bracket_top", kind="continuous_kink")
+    assert bracket == AffineBreakpoint(threshold="bracket_top", kind="continuous_kink")
+
+
+def test_piecewise_affine_attaches_schedule_metadata():
+    """`piecewise_affine` records the output, monotone variable, and breakpoints."""
+
+    @piecewise_affine(
+        output="tax",
+        variable="capital_income",
+        breakpoints=(
+            affine_breakpoint(threshold="bracket_low", kind="continuous_kink"),
+            affine_breakpoint(threshold="bracket_high", kind="continuous_kink"),
+        ),
+    )
+    def tax_schedule(capital_income, rate):
+        return rate * capital_income
+
+    assert tax_schedule.__lcm_piecewise_affine__ == PiecewiseAffineMeta(  # ty: ignore[unresolved-attribute]
+        output="tax",
+        variable="capital_income",
+        breakpoints=(
+            AffineBreakpoint(threshold="bracket_low", kind="continuous_kink"),
+            AffineBreakpoint(threshold="bracket_high", kind="continuous_kink"),
+        ),
+    )
+
+
+def test_piecewise_affine_returns_the_same_function_object():
+    """The schedule decorator returns the original function, never a wrapper."""
+
+    def tax_schedule(capital_income, rate):
+        return rate * capital_income
+
+    decorated = piecewise_affine(
+        output="tax",
+        variable="capital_income",
+        breakpoints=(
+            affine_breakpoint(threshold="bracket_low", kind="continuous_kink"),
+        ),
+    )(tax_schedule)
+    assert decorated is tax_schedule
+
+
+def test_case_piece_declarations_are_reexported_from_lcm():
+    """The user-facing entry points live on the top-level `lcm` namespace."""
+    assert lcm.case_boundary is case_boundary
+    assert lcm.piece is piece
+    assert lcm.piecewise_affine is piecewise_affine
+    assert lcm.affine_breakpoint is affine_breakpoint

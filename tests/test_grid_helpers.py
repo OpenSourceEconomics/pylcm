@@ -35,8 +35,7 @@ def test_linspace_mapped_value():
     )
     assert np.allclose(calculated, 1.0)
 
-    # Get position corresponding to a value that is between two grid points
-    # ----------------------------------------------------------------------------------
+    # Get position corresponding to a value that is between two grid points.
     # Here, the value is 1.3, that is in the middle of 1.2 and 1.4, which have the
     # positions 1 and 2, respectively. Therefore, we want the position to be 1.5.
     calculated = get_linspace_coordinate(

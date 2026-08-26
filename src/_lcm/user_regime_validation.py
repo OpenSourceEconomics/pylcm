@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, cast
 
 from dags.tree import QNAME_DELIMITER
 
+from _lcm.certainty_equivalent import PowerMean
 from _lcm.grids import DiscreteGrid, Grid
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.processes.base import _ContinuousStochasticProcess
@@ -22,7 +23,9 @@ from _lcm.typing import ActiveFunction, ProcessName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
 from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from lcm.exceptions import RegimeInitializationError
+from lcm.koopmans_aggregation import CESAggregator
 from lcm.phased import Phased
+from lcm.solvers import NBEGM, NNBEGM
 from lcm.transition import (
     AgeSpecializedFunction,
     AgeSpecializedGrid,
@@ -503,10 +506,11 @@ def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
 
     - terminal regimes have no continuation value to aggregate
     - a solver that reads a continuation payload inverts the Euler equation
-      against it, and that inversion assumes expected utility, so a declared
-      nonlinear certainty equivalent must be rejected rather than silently
-      ignored; a solver that reads only the value array (grid search) supports
-      the Epstein-Zin recursion
+      against it. That inversion assumes expected utility unless the solver
+      declares `supports_nonlinear_certainty_equivalent`, so a nonlinear
+      certainty equivalent is otherwise rejected rather than silently ignored;
+      a solver that reads only the value array (grid search) aggregates any
+      certainty equivalent in concrete values and is never subject to the rule
     - Epstein-Zin and extreme-value taste shocks do not compose: the taste-shock
       logsum is not invariant under the certainty-equivalent transform, so the
       combination is rejected
@@ -517,6 +521,10 @@ def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
     """
     if regime.certainty_equivalent is None:
         return []
+    # Which class owns which reduction is a separate question from linearity, so
+    # it is asked before the linear default is waved through: a subclass of
+    # `LinearExpectation` that restates `aggregate` is an instance of it, and
+    # would otherwise skip the very gate written to catch it.
     error_messages: list[str] = []
     error_messages.extend(_scaled_capability_errors(regime.certainty_equivalent))
     if regime.terminal:
@@ -526,13 +534,43 @@ def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
         )
     if _is_plain_linear_expectation(regime.certainty_equivalent):
         return error_messages
-    if regime.solver.requires_continuation:
+    if (
+        regime.solver.requires_continuation
+        and not regime.solver.supports_nonlinear_certainty_equivalent
+    ):
         error_messages.append(
             f"The {type(regime.solver).__name__} solver does not support a "
             "nonlinear `certainty_equivalent`: its Euler inversion assumes "
-            "expected utility. Use GridSearch() for "
+            "expected utility. Use GridSearch(), NBEGM(), or NNBEGM() for "
             "this regime."
         )
+    if isinstance(regime.solver, (NBEGM, NNBEGM)):
+        # The endogenous-grid kernels implement the Epstein-Zin recursion for
+        # exactly one pairing: they read the power mean's `risk_aversion`
+        # parameter for the transform partials and the aggregator's
+        # intertemporal elasticity for the Euler inversion and period value.
+        # NNBEGM's inner solve runs the same NBEGM kernels, so the contract
+        # binds it identically. GridSearch aggregates any certainty
+        # equivalent in concrete values, so only the endogenous-grid routes
+        # are narrowed.
+        solver_name = type(regime.solver).__name__
+        if not isinstance(regime.certainty_equivalent, PowerMean):
+            error_messages.append(
+                f"{solver_name} implements the recursive certainty "
+                f"equivalent for `PowerMean` only, got "
+                f"{type(regime.certainty_equivalent).__name__}. Use "
+                f"`certainty_equivalent=PowerMean()` or solve the regime with "
+                f"GridSearch()."
+            )
+        if not isinstance(regime.koopmans_aggregator, CESAggregator):
+            error_messages.append(
+                f"{solver_name} with a `certainty_equivalent` requires the "
+                "regime's aggregator to be a `CESAggregator` "
+                "(`koopmans_aggregator=lcm.CESAggregator()`): the Euler "
+                "inversion and period value read its intertemporal "
+                "elasticity. With a different aggregator the kernels would "
+                "solve a recursion the regime does not declare."
+            )
     if regime.taste_shocks is not None:
         error_messages.append(
             "A regime cannot combine `certainty_equivalent` with "

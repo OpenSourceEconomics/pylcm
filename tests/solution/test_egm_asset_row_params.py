@@ -31,6 +31,7 @@ from lcm import (
     categorical,
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
+from lcm.exceptions import InvalidValueFunctionError
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, GridSearch
 from lcm.typing import (
@@ -600,13 +601,12 @@ def test_asset_row_decreasing_resources_nan_poisons_the_marginal():
     The survival probability reads wealth, so the regime solves per exogenous asset
     node; `resources = offset - wealth` is positive over the grid but has `dR/da < 0`.
     The published marginal `dV/dR` divides the direct continuation channel by `dR/da`,
-    so a negative slope must surface as NaN (caught by the solve's NaN diagnostics)
-    rather than a finite marginal with the wrong sign. `log_level="off"` lets the NaN
-    propagate into the earliest-period value instead of raising, so it surfaces in the
-    returned solution.
+    so a negative slope must surface as NaN rather than as a finite marginal carrying
+    the wrong sign. The slope is negative across the whole grid, so every node is
+    poisoned and the value function is entirely NaN — which the solve's diagnostics
+    refuse at `log_level="debug"`.
     """
     params = {**_params(), "offset": 200.0}
     del params["rate_of_return"]
-    solution = _decreasing_resources_model().solve(params=params, log_level="off")
-    earliest = min(solution)
-    assert np.isnan(np.asarray(solution[earliest]["working_life"])).any()
+    with pytest.raises(InvalidValueFunctionError, match="all values are NaN"):
+        _decreasing_resources_model().solve(params=params, log_level="debug")

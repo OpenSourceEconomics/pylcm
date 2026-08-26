@@ -12,12 +12,14 @@ the published policy without failing, so it is refused when the model is built.
 from _lcm.solution.contract import OneMarginSolver, Solver, TwoMarginSolver
 from _lcm.solution.dcegm import DCEGM
 from _lcm.solution.egm import EGM
+from _lcm.solution.nbegm import NBEGM
 from _lcm.solution.negm import NEGM
+from _lcm.solution.nnbegm import NNBEGM
 from _lcm.typing import RegimeName
 from lcm.exceptions import ModelInitializationError
 
 # The margin-consuming solver classes every dispatch site tests for.
-SHIPPED_MARGIN_SOLVERS: tuple[type[Solver], ...] = (EGM, DCEGM, NEGM)
+SHIPPED_MARGIN_SOLVERS: tuple[type[Solver], ...] = (EGM, DCEGM, NEGM, NBEGM, NNBEGM)
 
 
 def fail_if_solver_is_not_shipped(*, solver: Solver, regime_name: RegimeName) -> None:

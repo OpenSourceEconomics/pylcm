@@ -34,12 +34,14 @@ from lcm import (
     IrregSpacedGrid,
     LinearAggregator,
     LinearExpectation,
-    NetOfAdjustmentCost,
     Phased,
     categorical,
-    post_decision_lower_bound,
 )
 from lcm.certainty_equivalent import PowerMean
+from lcm.consumption_savings_regime import (
+    NetOfAdjustmentCost,
+    post_decision_lower_bound,
+)
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.typing import (

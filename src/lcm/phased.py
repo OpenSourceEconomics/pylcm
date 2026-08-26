@@ -20,6 +20,42 @@ class Phased[S, T]:
     Both variants are required keyword arguments. Nesting `Phased` inside
     `Phased` is rejected — phase is a single broadcast dimension.
 
+    **What the two phases mean.** The container is value-agnostic, but regime
+    building gives them a fixed economic meaning: *the agent acts on its beliefs
+    about the future and lives in the truth now*. The agent is naive — it does not
+    anticipate that the world will differ from the model it solved.
+
+    - `solve` is the **perceived** law. It prices the **continuation** and nothing
+      else: the next-period state kernels, the regime-transition probabilities,
+      and every helper those read. The value function the agent optimizes against
+      is the one solved under these beliefs.
+    - `simulate` is the **truth**. It governs what is realized as the simulation
+      moves forward, and it supplies the **current-period** primitives of the
+      decision: period utility, feasibility, the Koopmans aggregator, and any
+      deterministic `next_<state>` those read.
+
+    The split follows the agent's information set at the moment of choice. Today's
+    utility, today's feasible set, and the deterministic consequence of the agent's
+    own action are known when the action is taken; only the future is perceived. So
+    a period utility reading a chosen deterministic `next_<state>` reads its
+    `simulate` variant, and misperception enters only at the continuation boundary.
+    Pricing today's utility under a perceived law would be a separate primitive,
+    not a reading of `Phased`.
+
+    Two consequences are enforced rather than merely documented:
+
+    - Period utility and feasibility may not read a `next_<state>` that is
+      stochastic in that phase — its value is not known when the action is chosen.
+    - Constraints are phase-invariant through their whole dependency chain, so the
+      simulated agent never chooses an action its value function was not computed
+      for.
+
+    One deliberate exception to "the current period is the `simulate` truth": a
+    carried-only state — one the simulation tracks but the solve grid does not
+    carry — enters the decision at its solve imputation rather than its realized
+    value, because the imputation is what the continuation was solved at. The
+    realized value still drives the forward transition.
+
     """
 
     __slots__ = ("simulate", "solve")

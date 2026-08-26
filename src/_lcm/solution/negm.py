@@ -37,6 +37,7 @@ from _lcm.solution.contract import (
     ConstraintRouteContext,
     ContinuationPayload,
     KernelResult,
+    ParamCheck,
     PeriodKernel,
     SolutionKernels,
     SolverBuildContext,
@@ -396,6 +397,7 @@ class NEGM(TwoMarginSolver):
         template_period = (
             all_periods[0] if all_periods else (active[0] if active else 0)
         )
+        keeper_param_checks: tuple[ParamCheck, ...] = ()
         for group_periods in groups:
             representative_period = (
                 group_periods[0] if group_periods else (template_period)
@@ -421,6 +423,7 @@ class NEGM(TwoMarginSolver):
             group_keeper_kernels = bound_self.inner.build_period_kernels(
                 context=keeper_context
             )
+            keeper_param_checks += group_keeper_kernels.param_checks
             keeper_continuation_template = (
                 None
                 if group_keeper_kernels.continuation_spec is None
@@ -483,6 +486,9 @@ class NEGM(TwoMarginSolver):
                 template=stacked_template,
                 layout=self.egm_continuation_layout,
             ),
+            # Both inner margins are solved by the inner solver, so both sets of
+            # parameter-dependent preconditions still apply to this regime.
+            param_checks=(*adjuster_kernels.param_checks, *keeper_param_checks),
         )
 
 
@@ -795,14 +801,12 @@ class _NEGMPeriodKernel:
             coh_shifts=coh_shifts,
             durable_axis=self.durable_axis_in_carry,
         )
-        # The simulate phase re-optimizes the outer durable action by grid argmax
-        # over the next-period value array, so the published `sim_policy` (the
-        # keeper's off-grid inner consumption function) is not the channel that
-        # drives simulated durable choice; it rides through unchanged.
+        # A keeper-only proposal cannot represent the joint durable/liquid
+        # decision. Publish no finite replay policy so simulation retains its
+        # canonical full-grid action pair.
         return KernelResult(
             V_arr=V_arr,
             continuation=carry,
-            simulation_policy=keeper_result.simulation_policy,
         )
 
     def _outer_nodes(self) -> list[ScalarFloat]:
@@ -1080,12 +1084,16 @@ def _with_outer_post_decision(
     )
 
 
-def _fail_if_outer_batch_size_negative(outer_batch_size: int) -> None:
+def _fail_if_outer_batch_size_negative(
+    outer_batch_size: int, *, solver_name: str = "NEGM"
+) -> None:
+    """Reject a negative outer batch size, naming the solver that declared it."""
     if outer_batch_size < 0:
         msg = (
-            f"NEGM.outer_batch_size must be non-negative, got {outer_batch_size}. "
-            "Use 0 to solve every outer-grid node at once, or a positive value to "
-            "fold the outer search in chunks of that many nodes."
+            f"{solver_name}.outer_batch_size must be non-negative, got "
+            f"{outer_batch_size}. Use 0 to solve every outer-grid node at once, "
+            "or a positive value to fold the outer search in chunks of that "
+            "many nodes."
         )
         raise RegimeInitializationError(msg)
 

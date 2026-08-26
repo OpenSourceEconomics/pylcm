@@ -27,19 +27,18 @@ import jax.numpy as jnp
 from lcm import (
     AgeGrid,
     LinSpacedGrid,
-    LiquidMargin,
     Model,
+    Regime,
+    categorical,
+)
+from lcm.consumption_savings_regime import (
+    LiquidMargin,
     NestedConsumptionSavingsRegime,
     NetOfAdjustmentCost,
     OuterContinuousMargin,
-    Regime,
-    categorical,
     outer_unchanged,
 )
-from lcm.solvers import (
-    DCEGM,
-    NEGM,
-)
+from lcm.solvers import DCEGM, NEGM
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,

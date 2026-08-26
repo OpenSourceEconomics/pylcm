@@ -27,7 +27,15 @@ from lcm import (
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime
-from lcm.solvers import DCEGM, EGM, GridSearch, OneMarginSolver, TwoMarginSolver
+from lcm.solvers import (
+    DCEGM,
+    EGM,
+    NBEGM,
+    NNBEGM,
+    GridSearch,
+    OneMarginSolver,
+    TwoMarginSolver,
+)
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 
 _WEALTH_GRID = LinSpacedGrid(start=0.1, stop=4.0, n_points=8)
@@ -165,3 +173,20 @@ def test_model_build_accepts_a_shipped_solver() -> None:
     model = _model(solver=EGM(savings_grid=_SAVINGS_GRID))
 
     assert "saving" in model.user_regimes
+
+
+def test_the_case_piece_solver_is_accepted() -> None:
+    """`NBEGM` is a shipped one-margin solver, so the guard stays silent on it."""
+    fail_if_solver_is_not_shipped(
+        solver=NBEGM(savings_grid=_SAVINGS_GRID), regime_name="saving"
+    )
+
+
+def test_the_nested_case_piece_solver_is_accepted() -> None:
+    """`NNBEGM` is a shipped two-margin solver, so the guard stays silent on it."""
+    fail_if_solver_is_not_shipped(
+        solver=NNBEGM(
+            inner=NBEGM(savings_grid=_SAVINGS_GRID), outer_grid=_SAVINGS_GRID
+        ),
+        regime_name="nested_saving",
+    )
