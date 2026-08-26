@@ -195,7 +195,12 @@ def test_scale_outside_the_supported_range_is_rejected_before_the_solve(
         branch_aggregator=aggregator,
         scale_function=toy.adjustment_scale_from_param,
     )
-    with pytest.raises(RegimeInitializationError, match=reported):
+    expected_error = (
+        OverflowError
+        if np.isposinf(level) and not jax_config.read("jax_enable_x64")
+        else RegimeInitializationError
+    )
+    with pytest.raises(expected_error, match=reported):
         model.solve(
             params={**_PARAMS, "adjustment_scale_level": level},
             log_level="debug",
