@@ -1566,11 +1566,10 @@ def _validate_fold_declarations(regime: lcm.regime.Regime) -> None:
     A persistent (non-IID) process has no `fold` field at all, so `fold=True`
     on one is rejected by the type system before this validator ever runs.
 
-    Whether the folded state structurally PERSISTS (is redeclared, with an
-    intrinsic `next_<name>` continuation, in any regime reachable from this
-    one — including itself) is a cross-regime property, checked once every
-    regime's transitions are built (`_fail_if_folded_state_persists` in
-    `regime_building/processing.py`), not here.
+    A folded state redeclared in a regime reachable from this one — including
+    itself, so a shock redrawn every period — is supported: no solve-phase
+    continuation edge is built for a folded process, so nothing tries to
+    interpolate an axis the stored value no longer has.
     """
     fold_names = _fold_state_names(regime)
     if not fold_names:

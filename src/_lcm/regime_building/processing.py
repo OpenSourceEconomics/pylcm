@@ -523,6 +523,15 @@ def process_regimes(
     # per-asset-node solve, so it must know the target's param leaves (e.g. a
     # pension factor the source itself never reads); the kernel binds them from
     # the union of the source and its reachable carry targets' fixed params.
+    # A gated edge's callables are discovered against the ONE regime they run on,
+    # so the per-regime breakdown is passed alongside the model-wide union the
+    # `next_<state>` classification needs.
+    state_names_by_regime = MappingProxyType(
+        {
+            other_name: frozenset(other.states)
+            for other_name, other in representative_user_regimes.items()
+        }
+    )
     regime_to_params_template = MappingProxyType(
         {
             # The representative regime already carries first-active concrete
@@ -538,6 +547,7 @@ def process_regimes(
                     if other_name != regime_name
                     for state_name in other.states
                 ),
+                state_names_by_regime=state_names_by_regime,
             )
             for regime_name, user_regime in representative_user_regimes.items()
         }
@@ -712,8 +722,6 @@ def process_regimes(
             same_period_ref_regimes=same_period_ref_regimes,
             fold_state_names=fold_state_names,
         )
-
-    _fail_if_folded_state_persists(canonical_regimes=canonical_regimes)
 
     # Build the gated-edge folds in a second pass, now
     # that every regime's grid and processed functions are known. Each edge's
@@ -1715,10 +1723,9 @@ def _fail_if_folded_regime_is_same_period_endpoint(
     ordering left to pick. A folded regime that is none of the above — neither
     a gated-edge target, a leg fallback, nor a same-period reference — stays
     allowed. Like the cross-regime graph walks in
-    `_fail_if_same_period_refs_invalid` / `_fail_if_gated_edges_invalid` above
-    and `_fail_if_folded_state_persists` below, this runs once every regime's
-    declarations are known, not in the regime-local
-    `_validate_fold_declarations`.
+    `_fail_if_same_period_refs_invalid` / `_fail_if_gated_edges_invalid` above,
+    this runs once every regime's declarations are known, not in the
+    regime-local `_validate_fold_declarations`.
 
     Raises:
         ModelInitializationError: Naming every offending regime, its folded
@@ -2188,7 +2195,6 @@ def _build_solution_phase(
 
     core = _process_regime_core(
         source_regime_name=regime_name,
-        active_periods_by_regime=regimes_to_active_periods,
         koopmans_aggregator=spec.solution.koopmans_aggregator,
         functions=spec.solution.functions,
         constraints=spec.solution.constraints,
@@ -2215,10 +2221,8 @@ def _build_solution_phase(
     # of exactly those empty-bundle folded targets so the continuation is read
     # as the scalar V (no coordinate). Only the Q-and-F continuation read is
     # overridden; every other consumer keeps the unstripped info.
-    regime_to_v_interpolation_info_for_Q = _strip_folded_axes_for_scalar_targets(
+    regime_to_v_interpolation_info_for_Q = _strip_folded_axes_from_continuation_targets(
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
-        transitions=core.transitions,
-        fold_only_regimes=fold_only_regimes,
         all_grids=all_grids,
     )
 
@@ -2927,7 +2931,6 @@ def _build_simulation_phase(  # noqa: PLR0915
 
     core = _process_regime_core(
         source_regime_name=regime_name,
-        active_periods_by_regime=regimes_to_active_periods,
         koopmans_aggregator=spec.simulation.koopmans_aggregator,
         functions=decision_functions,
         constraints=spec.simulation.constraints,
@@ -3070,11 +3073,11 @@ def _build_simulation_phase(  # noqa: PLR0915
         # axes for the simulate Q read exactly as the solve phase does (reusing the
         # same helper, keyed on the transitions the Q read actually enumerates); every
         # other simulate consumer keeps the unstripped info.
-        regime_to_v_interpolation_info_for_Q = _strip_folded_axes_for_scalar_targets(
-            regime_to_v_interpolation_info=regime_to_v_interpolation_info,
-            transitions=solve_transitions,
-            fold_only_regimes=fold_only_regimes,
-            all_grids=all_grids,
+        regime_to_v_interpolation_info_for_Q = (
+            _strip_folded_axes_from_continuation_targets(
+                regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+                all_grids=all_grids,
+            )
         )
         # The decision functions evaluate the solve representation, so any
         # weight law the solve phase built and this phase did not — the split
@@ -3543,7 +3546,6 @@ def _partition_phase_functions(
 def _process_regime_core(
     *,
     source_regime_name: RegimeName,
-    active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
     functions: Mapping[FunctionName, UserFunction],
     constraints: ProcessedConstraintsMapping,
     evaluated_constraint_names: frozenset[FunctionName],
@@ -3567,14 +3569,7 @@ def _process_regime_core(
 
     Args:
         source_regime_name: The name of the regime being processed (the
-            transition SOURCE). Used, with `active_periods_by_regime`, to
-            decide coarse-transition candidate reachability and to reject an
-            ambiguous folded-coarse topology (see the reachability
-            construction below).
-        active_periods_by_regime: Active-period tuples for every regime. A
-            coarse candidate `T` is "reachable next" from the source when `T`
-            is active in some period immediately after a period the source is
-            active — the test that gates the folded-coarse scope error.
+            transition SOURCE).
         functions: Phase-resolved regime functions for this build.
         constraints: Phase-resolved normalized constraints.
         evaluated_constraint_names: Names whose callables remain in the numerical
@@ -3671,41 +3666,6 @@ def _process_regime_core(
             grid=flat_grids[func_name.replace("next_", "")].to_jax(),
         )
 
-    # A coarse `transition=func` emits a `next_regime` cell for EVERY regime
-    # (the routing is decided at runtime from the returned id), so its cell keys
-    # are the candidate UNIVERSE, not the transition's actual support — which is
-    # unknowable at build time. A candidate the function never returns simply
-    # carries zero regime-transition probability and contributes nothing to
-    # E[V], so a spurious one is harmless.
-    #
-    # The one thing candidacy cannot stand in for is transition SUPPORT, and
-    # support is load-bearing for a FOLDED process: `_fail_if_folded_state_
-    # persists` is STRUCTURAL (it inspects built `next_<process>` edges, not
-    # transition probability), so building a `next_<process>` continuation for a
-    # folded candidate would either accept a real persisting self-fold that
-    # deletes the fold axis or reject a folded candidate the function never
-    # returns. So (a) no continuation is built for a candidate's FOLDED process
-    # — a folded process is consumed in its own period and its stored `V` has no
-    # such axis, so none is needed; and (b) the ambiguous case is REJECTED at
-    # build time: a coarse candidate that folds a process AND is active in a
-    # period immediately after the source (so the coarse edge could carry that
-    # fold into a period where it persists) must be declared with explicit
-    # PER-TARGET transition cells, whose support IS known, so the persistence
-    # guard can validate it exactly.
-    process_names = variables.process_names
-    coarse_candidate_targets = {
-        target
-        for target, cell in next_regime_cells_by_target.items()
-        if isinstance(cell, _CoarseTransitionCell)
-    }
-    _fail_if_coarse_candidate_folds_ambiguously(
-        source_regime_name=source_regime_name,
-        source_process_names=frozenset(process_names),
-        coarse_candidate_targets=coarse_candidate_targets,
-        all_grids=all_grids,
-        active_periods_by_regime=active_periods_by_regime,
-    )
-
     # Transitions of continuous stochastic processes bypass the stub pipeline
     # entirely. Build weight and next functions for every graph-retained
     # continuation target's state grid. Scope to the phase reachability graph's
@@ -3728,42 +3688,23 @@ def _process_regime_core(
         if user_regime in continuation_targets
         for process, grid in grids.items()
         if isinstance(grid, _ContinuousStochasticProcess)
-        # A folded process gets no SOLVE continuation transition when the SOURCE
-        # does not carry it, or on a coarse candidate. Its stored V has no such
-        # axis, and building the edge trips `_fail_if_folded_state_persists`,
-        # which is STRUCTURAL -- it inspects built `next_<process>` edges, not
-        # transition probability. This has to be decided here, not only at entry:
-        # the process names come off the TARGET's own grids, so a folded process
-        # the source does not carry reaches synthesis at this point and no
-        # earlier stage can filter it out.
-        #
-        # The `process not in process_names` half is what keeps the guard armed.
-        # A folded process the source DOES carry can genuinely persist, and the
-        # guard needs its edge as evidence; a target-only one cannot persist,
-        # because there is no prior-period axis to carry. Excluding folded
-        # processes outright disarms the guard -- measured: it silences
-        # test_fold_on_persisting_shock_is_rejected_at_model_processing and
-        # test_fold_on_persisting_shock_reached_only_via_regime_transition_is_rejected.
-        # The coarse half is the same statement about an unknown support: a
-        # candidate the transition may never return must not get an edge whose
-        # existence the persistence guard would read as evidence.
+        # A folded process gets no SOLVE continuation transition, whether or not
+        # the source carries it. Its stored V has no such axis in any period, so
+        # there is no coordinate for an edge to place and no axis for the
+        # continuation to interpolate over; the source reads the already-averaged
+        # value directly (`_strip_folded_axes_from_continuation_targets`). This
+        # has to be decided here: the process names come off the TARGET's own
+        # grids, so a folded process the source does not carry reaches synthesis
+        # at this point and no earlier stage can filter it out.
         #
         # Simulation is the opposite case and takes the edge. A fold removes an
-        # axis from STORAGE, not a shock from the world: a subject entering the
-        # target still realizes one, and its own utility and policy read that
-        # realization. Without the entry draw the target period simulates with
-        # an unset shock, so its value and every action that depends on it come
-        # out unset too. The guard reads only `solution.transitions`, so the
-        # simulate edge cannot disarm it, and the decision functions evaluate
-        # the solve representation, so the axis stays integrated out where it
-        # was.
-        if phase_name != "solution"
-        or not (
-            getattr(grid, "fold", False)
-            and (
-                process not in process_names or user_regime in coarse_candidate_targets
-            )
-        )
+        # axis from STORAGE, not a shock from the world: a subject in the regime
+        # still realizes one each period, and its own utility and policy read
+        # that realization. Without the law the period simulates with an unset
+        # shock, so its value and every action that depends on it come out unset
+        # too. The decision functions evaluate the solve representation, so the
+        # axis stays integrated out where it was.
+        if phase_name != "solution" or not getattr(grid, "fold", False)
     }
     _validate_all_conditioned_processes(all_grids=all_grids)
     # A process the source carries is transitioned from its current value. One
@@ -5846,53 +5787,43 @@ def _fold_state_names(
     )
 
 
-def _strip_folded_axes_for_scalar_targets(
+def _strip_folded_axes_from_continuation_targets(
     *,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
-    transitions: TransitionFunctionsMapping,
-    fold_only_regimes: frozenset[RegimeName],
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
 ) -> MappingProxyType[RegimeName, VInterpolationInfo]:
-    """Override the continuation interpolation info of empty-bundle folded targets.
+    """Override the continuation interpolation info of every folded target.
 
-    A folded-only target carries an EMPTY
-    transition bundle so the continuation graph keeps it enumerable
-    (`_process_regime_core`). Its stored V has every folded axis integrated out
-    (`_get_regime_V_shapes_and_shardings`), but `create_v_interpolation_info`
-    still lists the folded states, so the ordinary continuation interpolator
-    would demand a `next_<shock>` coordinate — which the source never realises —
-    and index an axis the scalar V no longer has. For exactly those targets,
-    return a `VInterpolationInfo` with the folded states stripped, so the
-    interpolator becomes a plain scalar read. Every other regime's info is
-    passed through unchanged.
+    A folded state's stored V has that axis integrated out
+    (`_get_regime_V_shapes_and_shardings`) in every period the regime is active,
+    and no solve-phase continuation edge places a coordinate on it. But
+    `create_v_interpolation_info` still lists the state, so the ordinary
+    continuation interpolator would demand a `next_<shock>` coordinate no source
+    realises and index an axis the stored V does not have. Strip those states, so
+    the interpolation runs over exactly the axes the array carries and the fold's
+    own quadrature is what integrates the shock — one step earlier than the
+    continuation would have. Every regime that folds nothing is passed through
+    unchanged.
 
     Args:
         regime_to_v_interpolation_info: The model's per-regime interpolation info.
-        transitions: This source regime's processed transition bundles.
-        fold_only_regimes: Regimes whose every state is a folded IID process.
         all_grids: Immutable mapping of regime names to Grid spec objects.
 
     Returns:
-        The interpolation-info mapping with folded-only empty-bundle targets
-        stripped of their folded axes (a copy only when an override is needed).
+        The interpolation-info mapping with each folded regime stripped of its
+        folded axes (a copy only when an override is needed).
 
     """
-    scalar_targets = [
-        target
-        for target, bundle in transitions.items()
-        if not bundle and target in fold_only_regimes
-    ]
-    if not scalar_targets:
-        return regime_to_v_interpolation_info
-    overridden = dict(regime_to_v_interpolation_info)
-    for target in scalar_targets:
-        info = regime_to_v_interpolation_info[target]
-        grids = all_grids[target]
+    overridden: dict[RegimeName, VInterpolationInfo] = {}
+    for target, info in regime_to_v_interpolation_info.items():
+        grids = all_grids.get(target, MappingProxyType({}))
         folded = {
             name
             for name in info.state_names
             if isinstance(grid := grids.get(name), _IIDProcess) and grid.fold
         }
+        if not folded:
+            continue
         overridden[target] = VInterpolationInfo(
             state_names=tuple(n for n in info.state_names if n not in folded),
             discrete_states=MappingProxyType(
@@ -5902,126 +5833,9 @@ def _strip_folded_axes_for_scalar_targets(
                 {k: v for k, v in info.continuous_states.items() if k not in folded}
             ),
         )
-    return MappingProxyType(overridden)
-
-
-def _fail_if_coarse_candidate_folds_ambiguously(
-    *,
-    source_regime_name: RegimeName,
-    source_process_names: frozenset[ProcessName],
-    coarse_candidate_targets: set[RegimeName],
-    all_grids: Mapping[RegimeName, Mapping[StateOrActionName, Grid]],
-    active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]],
-) -> None:
-    """Reject an ambiguous folded-coarse topology; require per-target cells.
-
-    A coarse `transition=func` decides its target at runtime, so its candidate
-    universe is every regime but its actual SUPPORT is unknown at build time.
-    That is fine for a non-folded continuation (a never-returned candidate just
-    carries zero probability), but not for a FOLDED process: whether a fold
-    genuinely persists across the coarse edge -- which `_fail_if_folded_state_
-    persists` must decide STRUCTURALLY, without seeing probabilities -- depends
-    on the unknown support. Admitting such a candidate would either accept a real
-    persisting self-fold or reject a folded candidate the function never
-    returns. So a coarse candidate that folds a
-    process AND is active in a period immediately after the source (so the coarse
-    edge could carry that fold into a period where it persists) is rejected here:
-    the modeller must declare it with explicit per-target transition cells, whose
-    support IS known, so the persistence guard can validate it exactly.
-
-    Persistence across the coarse edge is only POSSIBLE for a
-    folded process the SOURCE itself carries -- the continuation builder auto-wires
-    an intrinsic `next_<process>` edge only for the source's own `process_names`
-    (see the `target_process_grids` comprehension above and the `next_<name>`
-    keys in `_stochastic_transition_names`). A candidate that folds a
-    TARGET-LOCAL process whose name the source does NOT carry can never receive a
-    `next_<process>` edge from this source, so the fold cannot persist across the
-    edge and there is nothing to validate; rejecting it is a false positive. Only
-    the intersection with the source's process names is genuinely ambiguous.
-    """
-    source_active = active_periods_by_regime.get(source_regime_name, ())
-    next_periods = {p + 1 for p in source_active}
-    error_messages: list[str] = []
-    for target in sorted(coarse_candidate_targets):
-        if not next_periods.intersection(active_periods_by_regime.get(target, ())):
-            continue
-        target_grids = all_grids.get(target, {})
-        folded = sorted(
-            name
-            for name, grid in target_grids.items()
-            if isinstance(grid, _ContinuousStochasticProcess)
-            and getattr(grid, "fold", False)
-            and name in source_process_names
-        )
-        error_messages.extend(
-            f"regime '{source_regime_name}' uses a COARSE `transition=func`, "
-            f"and candidate target '{target}' folds process '{process}' and is "
-            f"active in the period immediately after '{source_regime_name}'. A "
-            f"coarse transition's actual support is unknown at build time, so a "
-            f"folded process that could persist across it cannot be validated: "
-            f"declare the transition into '{target}' with an explicit PER-TARGET "
-            f"cell (`transition={{'{target}': ...}}`) so its reachability is "
-            f"known and the fold-persistence check can be applied exactly."
-            for process in folded
-        )
-    if error_messages:
-        raise ModelInitializationError(format_messages(error_messages))
-
-
-def _fail_if_folded_state_persists(
-    *, canonical_regimes: Mapping[RegimeName, Regime]
-) -> None:
-    """Reject a folded state that structurally persists past its own period.
-
-    A fold weighted-averages a state's axis out of the stored value: the
-    stored `V` of the regime that declares `fold=True` on it has no such
-    axis (`_get_regime_V_shapes_and_shardings`). If ANY regime's transitions
-    — including the declaring regime's own, via a self-transition — still
-    carry an intrinsic `next_<name>` continuation for that state (i.e. the
-    state is ALSO declared, hence auto-wired with its own weight/index
-    functions, in some regime reachable from another), the continuation
-    machinery would try to interpolate a `next_<name>` axis that the target's
-    stored `V` no longer has — a shape mismatch, or worse, a silent wrong
-    read. This is a cross-regime property (every regime's `solution.transitions`
-    must be known), so it is checked once here, after every regime is built —
-    not in the regime-local `_validate_fold_declarations`.
-
-    Folding is therefore restricted, for now, to states that do not persist:
-    declared in exactly the one regime that folds them, and not redeclared
-    (directly or via a self-transition) in any regime any transition reaches.
-    A genuinely persistent IID shock (redrawn every period a regime is
-    active) would need the fold to also be recognized by the *continuation*
-    side (`regime_to_v_interpolation_info` / `stochastic_transition_names`) of
-    every regime that reads into it, which is not implemented.
-    """
-    error_messages: list[str] = []
-    for regime_name, regime in canonical_regimes.items():
-        if not regime.fold_state_names:
-            continue
-        for fold_name in regime.fold_state_names:
-            next_key = f"next_{fold_name}"
-            offending = [
-                (source_name, target_name)
-                for source_name, source_regime in canonical_regimes.items()
-                for target_name, bundle in source_regime.solution.transitions.items()
-                if target_name == regime_name and next_key in bundle
-            ]
-            if offending:
-                sources = sorted({source for source, _ in offending})
-                error_messages.append(
-                    f"fold=True on regime '{regime_name}' state '{fold_name}' "
-                    f"is not supported: '{fold_name}' is also declared as a "
-                    f"state reachable via a next-period continuation from "
-                    f"{sources} into '{regime_name}' — i.e. it structurally "
-                    f"persists. A folded state's stored value has no "
-                    f"'{fold_name}' axis, so that continuation could no "
-                    f"longer interpolate over it. Folding is only supported "
-                    f"for a state that does not persist past the period that "
-                    f"folds it (not redeclared, directly or via a "
-                    f"self-transition, in any reachable regime)."
-                )
-    if error_messages:
-        raise ModelInitializationError(format_messages(error_messages))
+    if not overridden:
+        return regime_to_v_interpolation_info
+    return MappingProxyType({**regime_to_v_interpolation_info, **overridden})
 
 
 def _build_period_state_axes(

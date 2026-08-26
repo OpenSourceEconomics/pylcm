@@ -23,6 +23,7 @@ from _lcm.typing import (
 )
 from lcm.exceptions import InvalidNameError
 from lcm.phased import Phased
+from lcm.regime import GatedEdge
 from lcm.regime import Regime as UserRegime
 from lcm.transition import JointTransition, MarkovTransition
 from lcm.typing import UserFunction
@@ -32,6 +33,9 @@ def create_regime_params_template(
     user_regime: UserRegime,
     *,
     other_regime_state_names: frozenset[StateName] = frozenset(),
+    state_names_by_regime: Mapping[RegimeName, frozenset[StateName]] = MappingProxyType(
+        {}
+    ),
 ) -> RegimeParamsTemplate:
     """Create parameter template from a regime specification.
 
@@ -77,6 +81,11 @@ def create_regime_params_template(
             model. Their `next_<state>` forms are withheld from the parameter
             namespace so that a law reading one is adjudicated as a transition
             value rather than silently rebound to a parameter.
+        state_names_by_regime: State names declared by each regime of the model.
+            A gated edge's callables run on ONE target regime's grid, so the
+            names the engine binds for them come from that regime alone. Falls
+            back to `other_regime_state_names` for a caller that supplies no
+            per-regime breakdown.
 
     Returns:
         The regime parameter template with type annotations as values.
@@ -154,9 +163,16 @@ def create_regime_params_template(
         name: template_key
         for name, (template_key, _func) in _gated_edge_entries(user_regime).items()
     }
-    edge_non_params = variables | _gated_edge_wired_names(
-        user_regime=user_regime, other_regime_state_names=other_regime_state_names
-    )
+    edge_non_params_by_target = {
+        target: variables
+        | _gated_edge_wired_names(
+            edge=edge,
+            target_state_names=state_names_by_regime.get(
+                target, other_regime_state_names
+            ),
+        )
+        for target, edge in user_regime.gated_edges.items()
+    }
 
     for name, func in _collect_all_functions_for_template(user_regime).items():
         # State and action names appearing in a function's signature are
@@ -167,7 +183,7 @@ def create_regime_params_template(
         # different one.
         is_edge_entry = name in edge_template_keys
         if is_edge_entry:
-            non_params = edge_non_params
+            non_params = edge_non_params_by_target[tree_path_from_qname(name)[-1]]
         elif tree_path_from_qname(name)[0] in transition_role:
             non_params = variables_in_transition_role
         else:
@@ -1088,18 +1104,24 @@ def _gated_edge_entries(
 
 def _gated_edge_wired_names(
     *,
-    user_regime: UserRegime,
-    other_regime_state_names: frozenset[StateName],
+    edge: GatedEdge,
+    target_state_names: frozenset[StateName],
 ) -> set[str]:
-    """Return the names an edge callable reads that the engine binds itself.
+    """Return the names ONE edge's callables read that the engine binds itself.
 
-    A gate and a projection are evaluated on the TARGET regime's grid, so beyond
-    the source regime's own vocabulary they read names no user ever supplies:
+    A gate and a projection are evaluated on that edge's TARGET regime's grid, so
+    beyond the source regime's own vocabulary they read names no user supplies:
 
     - the target regime's states, which the fold binds from that regime's grids;
     - `D_target`, the target's dissolution flag;
-    - each key of the edge's `gate_refs`, bound to that reference's interpolated
+    - each key of THIS edge's `gate_refs`, bound to that reference's interpolated
       value.
+
+    The set is per edge because that is what makes the answer right. A name that
+    is engine-bound on one edge — the target's own state, another edge's
+    reference key, or any state of a regime this edge never reaches — is an
+    ordinary parameter here, and widening the set to a model-wide union drops it
+    from the template, leaving the gate reading a value nothing can supply.
 
     The target's own value components enter under the reserved `V_target`
     vocabulary and are recognised by `is_target_value_operand` instead, since
@@ -1107,18 +1129,15 @@ def _gated_edge_wired_names(
     anything the source declares.
 
     Args:
-        user_regime: User-form `Regime` instance.
-        other_regime_state_names: State names declared by any other regime of the
-            model, which is where an edge's target states come from.
+        edge: The gated edge whose callables are being discovered.
+        target_state_names: State names declared by that edge's target regime.
 
     Returns:
-        Set of the names an edge callable may read without them being parameters.
+        Set of the names this edge's callables may read without them being
+        parameters.
 
     """
-    wired = {"D_target", *other_regime_state_names}
-    for edge in user_regime.gated_edges.values():
-        wired |= set(edge.gate_refs)
-    return wired
+    return {"D_target", *target_state_names, *edge.gate_refs}
 
 
 def _drop_engine_provided_args(
