@@ -1744,7 +1744,17 @@ def _build_simulation_phase(
                 f"continuous actions "
                 f"{tuple(simulation_variables.continuous_action_names)!r}."
             )
-        egm_policy_read = NNBEGMPolicyRead()
+        egm_policy_read = NNBEGMPolicyRead(
+            outer_target_function_by_period=_build_nnbegm_outer_target_functions(
+                active_periods=regimes_to_active_periods[regime_name],
+                functions=simulate_functions,
+                outer_post_decision=bound_nnbegm.outer_post_decision,
+                outer_no_adjustment_target=(bound_nnbegm.outer_no_adjustment_candidate),
+            ),
+            outer_post_decision=bound_nnbegm.outer_post_decision,
+            outer_no_adjustment_target=bound_nnbegm.outer_no_adjustment_candidate,
+            outer_state_name=bound_nnbegm.outer_state,
+        )
     elif (
         bound_solver is not None
         and _envelope_publishes_crossings(bound_solver)
@@ -3844,6 +3854,39 @@ def _build_pointwise_Q_and_F_per_period(
             )
         result[period] = built[q_id]
     return MappingProxyType(result)
+
+
+def _build_nnbegm_outer_target_functions(
+    *,
+    active_periods: tuple[int, ...],
+    functions: EconFunctionsMapping,
+    outer_post_decision: FunctionName,
+    outer_no_adjustment_target: FunctionName | None,
+) -> MappingProxyType[int, Callable[..., Mapping[str, FloatND]]]:
+    """Build the smallest period-resolved DAG needed for replay inversion."""
+    configs = group_periods_by_key(
+        active_periods,
+        lambda period: periodized_tree_signature(functions, period),
+    )
+    targets = [outer_post_decision]
+    if outer_no_adjustment_target is not None:
+        targets.append(outer_no_adjustment_target)
+
+    built: dict[Hashable, Callable[..., Mapping[str, FloatND]]] = {}
+    for key, periods in configs.items():
+        representative_period = periods[0]
+        target_function = concatenate_functions(
+            functions=cast(
+                "EconFunctionsMapping",
+                resolve_periodized_nodes(functions, representative_period),
+            ),
+            targets=targets,
+            return_type="dict",
+            set_annotations=True,
+        )
+        built[key] = cast("Callable[..., Mapping[str, FloatND]]", target_function)
+
+    return expand_groups_to_periods(configs, built)
 
 
 def _build_next_state_vmapped(

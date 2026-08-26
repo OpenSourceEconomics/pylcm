@@ -766,7 +766,7 @@ class _NNBEGMPeriodKernel:
             )
         else:
             candidate_discrete_actions = None
-        candidate_outer_action = self._candidate_outer_actions(
+        candidate_outer_target = self._candidate_outer_targets(
             candidate_inner_action=candidate_inner_action,
             candidate_discrete_actions=candidate_discrete_actions,
             discrete_action_names=discrete_action_names,
@@ -782,17 +782,18 @@ class _NNBEGMPeriodKernel:
             continuation=carry,
             simulation_policy=NNBEGMSimPolicy(
                 candidate_inner_action=candidate_inner_action,
-                candidate_outer_action=candidate_outer_action,
+                candidate_outer_target=candidate_outer_target,
                 candidate_value=candidate_value,
                 candidate_discrete_actions=candidate_discrete_actions,
                 discrete_action_names=discrete_action_names,
                 state_names=keeper_policy.state_names,
                 inner_action_name=self.inner_action_name,
                 outer_action_name=self.outer_action_name,
+                n_keeper_candidates=n_discrete_branches,
             ),
         )
 
-    def _candidate_outer_actions(
+    def _candidate_outer_targets(
         self,
         *,
         candidate_inner_action: FloatND,
@@ -805,7 +806,11 @@ class _NNBEGMPeriodKernel:
         ages: AgeGrid,
         state_names: tuple[StateName, ...],
     ) -> FloatND:
-        """Recover each complete candidate's outer action on the solve state grid."""
+        """Validate solve-grid inversion and retain candidate target identities.
+
+        Simulation reconstructs the action from the retained target at each
+        realized state; this solve-grid inversion is the early validity guard.
+        """
         state_shape = candidate_inner_action.shape[1:]
         n_state_axes = len(state_names)
         state_inputs = {
@@ -909,7 +914,7 @@ class _NNBEGMPeriodKernel:
                 "`new = old + 2 * action`, or select a solver that supports "
                 "an explicit inverse for the declared mapping."
             )
-        return jnp.where(represented, candidate_outer_action, jnp.nan)
+        return jnp.where(represented, candidate_targets, jnp.nan)
 
 
 def _subcores(

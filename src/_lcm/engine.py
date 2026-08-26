@@ -547,7 +547,21 @@ class EGMPolicyRead:
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class NNBEGMPolicyRead:
-    """Marker requesting collection of the NNBEGM joint replay payload."""
+    """Realized-state adapter for the NNBEGM joint replay payload."""
+
+    outer_target_function_by_period: MappingProxyType[
+        int, Callable[..., Mapping[str, FloatND]]
+    ]
+    """Resolved simulate-phase target DAG for each active period."""
+
+    outer_post_decision: FunctionName
+    """Target whose retained identity is inverted during replay."""
+
+    outer_no_adjustment_target: FunctionName | None
+    """Custom keeper target, or ``None`` for the outer-state identity."""
+
+    outer_state_name: StateName
+    """State whose realized value is the default keeper target."""
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)

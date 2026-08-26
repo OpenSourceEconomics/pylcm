@@ -210,8 +210,8 @@ class NNBEGMSimPolicy:
     candidate_inner_action: FloatND
     """Shape ``(n_candidates, *state_shape)`` in solve candidate order."""
 
-    candidate_outer_action: FloatND
-    """Outer action on exactly the same candidate/state axes."""
+    candidate_outer_target: FloatND
+    """Outer post-decision target identity on the candidate/state axes."""
 
     candidate_value: FloatND
     """Conditional solve value on exactly the same candidate/state axes."""
@@ -221,6 +221,9 @@ class NNBEGMSimPolicy:
 
     inner_action_name: ActionName
     outer_action_name: ActionName
+
+    n_keeper_candidates: int
+    """Number of leading candidates belonging to the state-specific keeper."""
 
     candidate_discrete_actions: IntND | None = None
     """Exact shape ``(n_candidates, n_discrete_actions)`` code metadata."""
@@ -262,11 +265,12 @@ def _flatten_nnbegm_policy(
         policy.state_names,
         policy.inner_action_name,
         policy.outer_action_name,
+        policy.n_keeper_candidates,
         policy.discrete_action_names,
     )
     return (
         policy.candidate_inner_action,
-        policy.candidate_outer_action,
+        policy.candidate_outer_target,
         policy.candidate_value,
         policy.candidate_discrete_actions,
     ), aux
@@ -275,15 +279,22 @@ def _flatten_nnbegm_policy(
 def _unflatten_nnbegm_policy(
     aux: tuple[Any, ...], children: Sequence[Any]
 ) -> NNBEGMSimPolicy:
-    state_names, inner_action_name, outer_action_name, discrete_action_names = aux
+    (
+        state_names,
+        inner_action_name,
+        outer_action_name,
+        n_keeper_candidates,
+        discrete_action_names,
+    ) = aux
     return NNBEGMSimPolicy(
         candidate_inner_action=children[0],
-        candidate_outer_action=children[1],
+        candidate_outer_target=children[1],
         candidate_value=children[2],
         candidate_discrete_actions=children[3],
         state_names=state_names,
         inner_action_name=inner_action_name,
         outer_action_name=outer_action_name,
+        n_keeper_candidates=n_keeper_candidates,
         discrete_action_names=discrete_action_names,
     )
 

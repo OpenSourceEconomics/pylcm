@@ -137,10 +137,10 @@ def test_nnbegm_rejects_a_zero_slope_outer_target(
         model.solve(params=_PARAMS, log_level="off")
 
 
-def test_nnbegm_recovers_actions_from_a_nonunit_affine_outer_target(
+def test_nnbegm_retains_targets_for_a_nonunit_affine_outer_law(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An affine target with slope two replays its exact inverse actions."""
+    """A valid affine outer law retains keeper and adjuster target identities."""
     monkeypatch.setattr(toy, "new_illiquid", _affine_outer_target)
     _values, policies = toy.build_model(variant="n_nbegm", n_periods=2).solve(
         params=_PARAMS,
@@ -149,9 +149,9 @@ def test_nnbegm_recovers_actions_from_a_nonunit_affine_outer_target(
     )
     policy = policies[0]["alive"]
     assert isinstance(policy, NNBEGMSimPolicy)
-    expected = np.concatenate(([0.0], np.asarray(toy.OUTER_GRID.to_jax()) / 2))
+    expected = np.concatenate(([0.0], np.asarray(toy.OUTER_GRID.to_jax())))
     np.testing.assert_allclose(
-        np.asarray(policy.candidate_outer_action)[:, -1, 0],
+        np.asarray(policy.candidate_outer_target)[:, -1, 0],
         expected,
     )
 
