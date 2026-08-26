@@ -14,13 +14,14 @@ user-facing `Regime`.
 import inspect
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import cast
+from typing import Literal, cast
 
 from _lcm.engine import _StochasticStateTransition
 from _lcm.grids import DiscreteGrid
 from _lcm.typing import RegimeName, TransitionFunctionName
 from _lcm.utils.ast_inspection import _get_func_indexing_params
 from lcm.exceptions import InvalidStateTransitionProbabilitiesError
+from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.transition import MarkovTransition
 
@@ -35,8 +36,15 @@ def collect_stochastic_state_transitions(
     Walks `user_regime.state_transitions` and yields one entry per
     `MarkovTransition`. Per-target dict entries are flattened into
     `next_{state}__{target}` keys, mirroring the qname pattern used by
-    `collect_state_transitions`. Returns an empty mapping for regimes with
+    `collect_state_transitions`; each variant of a `Phased` law is further
+    suffixed with `@{phase}`. Returns an empty mapping for regimes with
     no stochastic state transitions (incl. terminal regimes).
+
+    Known limitation, and not specific to `Phased` laws: the runtime numerical
+    checks call a law with arguments drawn from grids and params, so a law that
+    reads a named helper cannot be invoked and is skipped with a warning by
+    `validate_state_transitions_all_periods`. Closing that needs the validator to
+    evaluate the compiled sub-DAG rather than the raw function.
 
     Args:
         user_regime: User-facing regime to inspect.
@@ -57,35 +65,66 @@ def collect_stochastic_state_transitions(
     """
     entries: dict[TransitionFunctionName, _StochasticStateTransition] = {}
 
-    for state_name, raw in user_regime.state_transitions.items():
-        if isinstance(raw, MarkovTransition):
-            _add_stochastic_entry(
-                entries=entries,
-                key=f"next_{state_name}",
-                markov=raw,
-                state_name=state_name,
-                target_regime_name=None,
-                user_regime=user_regime,
-                user_regimes=user_regimes,
-            )
-        elif isinstance(raw, Mapping):
-            for raw_target_regime_name, law in raw.items():
-                if not isinstance(law, MarkovTransition):
-                    continue
-                target_regime_name: RegimeName = cast(
-                    "RegimeName", raw_target_regime_name
-                )
+    for state_name, entry in user_regime.state_transitions.items():
+        # Each variant gets its own key: a malformed perceived law is as fatal as a
+        # malformed realized one, and one shared key would keep only the last.
+        for raw, phase in _phase_variants(entry):
+            if isinstance(raw, MarkovTransition):
                 _add_stochastic_entry(
                     entries=entries,
-                    key=f"next_{state_name}__{target_regime_name}",
-                    markov=law,
+                    key=_phase_key(f"next_{state_name}", phase),
+                    markov=raw,
                     state_name=state_name,
-                    target_regime_name=target_regime_name,
+                    target_regime_name=None,
+                    phase=phase,
                     user_regime=user_regime,
                     user_regimes=user_regimes,
                 )
+            elif isinstance(raw, Mapping):
+                for raw_target_regime_name, law in raw.items():
+                    if not isinstance(law, MarkovTransition):
+                        continue
+                    target_regime_name: RegimeName = cast(
+                        "RegimeName", raw_target_regime_name
+                    )
+                    _add_stochastic_entry(
+                        entries=entries,
+                        key=_phase_key(
+                            f"next_{state_name}__{target_regime_name}", phase
+                        ),
+                        markov=law,
+                        state_name=state_name,
+                        target_regime_name=target_regime_name,
+                        phase=phase,
+                        user_regime=user_regime,
+                        user_regimes=user_regimes,
+                    )
 
     return MappingProxyType(entries)
+
+
+def _phase_key(
+    base: str, phase: Literal["solve", "simulate"] | None
+) -> TransitionFunctionName:
+    """Key for one law's metadata, suffixed by phase for a `Phased` entry.
+
+    A phase-invariant law keeps the plain `next_<state>` key. These keys are
+    internal to validation; no consumer resolves a transition through this mapping.
+    """
+    return base if phase is None else f"{base}@{phase}"
+
+
+def _phase_variants(
+    entry: object,
+) -> tuple[tuple[object, Literal["solve", "simulate"] | None], ...]:
+    """The laws carried by one `state_transitions` entry, tagged by phase.
+
+    A phase-invariant entry yields itself untagged; a `Phased` entry yields both
+    variants, so each is validated on its own.
+    """
+    if isinstance(entry, Phased):
+        return ((entry.solve, "solve"), (entry.simulate, "simulate"))
+    return ((entry, None),)
 
 
 def _add_stochastic_entry(
@@ -95,6 +134,7 @@ def _add_stochastic_entry(
     markov: MarkovTransition,
     state_name: str,
     target_regime_name: RegimeName | None,
+    phase: Literal["solve", "simulate"] | None,
     user_regime: UserRegime,
     user_regimes: Mapping[RegimeName, UserRegime],
 ) -> None:
@@ -130,6 +170,7 @@ def _add_stochastic_entry(
         target_regime_name=target_regime_name,
         n_outcomes=n_outcomes,
         indexing_params=indexing_params,
+        phase=phase,
     )
 
 

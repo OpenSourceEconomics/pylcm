@@ -8,11 +8,17 @@ from typing import Any, Literal
 import jax.numpy as jnp
 import numpy as np
 from dags import concatenate_functions, get_ancestors
+from dags import dag as dags_dag
 
 from _lcm.egm.budget import DCEGM_BUDGET_CONSTRAINT_NAME
 from _lcm.engine import Regime
 from _lcm.transition_laws import is_stochastic
-from _lcm.typing import FlatRegimeParams, RegimeName
+from _lcm.typing import (
+    FlatRegimeParams,
+    RegimeName,
+    TransitionFunctionName,
+    TransitionFunctionsMapping,
+)
 from _lcm.utils.dispatchers import vmap_1d
 from lcm.exceptions import InvalidAdditionalTargetsError
 from lcm.typing import BoolND, FloatND, IntND, UserFunction
@@ -92,9 +98,101 @@ def _get_available_targets_for_regime(regime: Regime) -> set[str]:
     )
     if regime.solution.solves_from_continuation:
         excluded.add("inverse_marginal_utility")
-    return {name for name in sim.functions if name not in excluded} | {
+    candidates = {name for name in sim.functions if name not in excluded} | {
         name for name in sim.constraints if name not in excluded
     }
+    return candidates - _decision_only_target_names(regime, candidates)
+
+
+def _decision_only_target_names(regime: Regime, candidates: set[str]) -> set[str]:
+    """Names whose realized recomputation would not be the decision's quantity.
+
+    Reading a chosen `next_<state>` does not by itself make a function
+    decision-only. A deterministic, phase-invariant transition is a function of
+    the row's own state and action, so recomputing it from a realized row
+    reproduces exactly the value that entered the argmax — the NEGM/DC-EGM
+    durable pattern, where the budget constraint cuts on the next durable stock,
+    is realized and publishable.
+
+    Two ancestries are not:
+
+    - **A transition the pool cannot produce.** `_build_functions_pool` carries
+      the deterministic producers only; a stochastic `next_<state>` is drawn, not
+      computed, so a target reading one has no realized value to report.
+    - **A phase-split transition.** When the law is `Phased`, the perceived
+      (solve) law prices the decision while the true (simulate) law governs the
+      realized draw. Recomputing from the simulate-phase pool yields a
+      well-defined number under the *objective* law — but that is not the
+      quantity the agent decided on, and publishing it as the realized target
+      would be quietly wrong.
+
+    Excluding these means `additional_targets="all"` skips them and an explicit
+    request gets a clean "not available" error rather than a confusing
+    missing-argument failure deep in the target DAG, or a plausible wrong number.
+    """
+    unpublishable = _unresolvable_transition_names(
+        regime
+    ) | _phase_split_transition_names(regime)
+    if not unpublishable or not candidates:
+        return set()
+    pool = _build_functions_pool(regime)
+    dag = dags_dag.create_dag(functions=pool, targets=sorted(candidates))
+
+    # DAG edges point from an input to the functions that consume it. Starting at
+    # every unpublishable transition and walking successors therefore finds all
+    # candidate targets whose ancestry contains one. Build and traverse the graph
+    # once per regime; rebuilding it separately for every candidate dominates
+    # SimulationResult construction in function-rich models.
+    reached = set(unpublishable) & set(dag)
+    pending = list(reached)
+    while pending:
+        node = pending.pop()
+        for dependent in dag.successors(node):
+            if dependent not in reached:
+                reached.add(dependent)
+                pending.append(dependent)
+    return candidates & reached
+
+
+def _unresolvable_transition_names(regime: Regime) -> set[str]:
+    """Transition names the realized-target pool cannot produce."""
+    pool = _build_functions_pool(regime)
+    return {
+        transition_name
+        for bundle in regime.simulation.transitions.values()
+        for transition_name in bundle
+        if transition_name not in pool
+    }
+
+
+def _phase_split_transition_names(regime: Regime) -> set[str]:
+    """Transition names whose perceived (solve) law differs from the true one.
+
+    Compared per target and on the *unwrapped* function: canonicalization renames
+    a law into a distinct per-target wrapper, so wrapper identity would report a
+    split for every coarse-broadcast law. `inspect.unwrap` recovers the raw user
+    source, which is identical across phases exactly when the law is bare.
+    """
+    solve_laws = _laws_by_target(regime.solution.transitions)
+    simulate_laws = _laws_by_target(regime.simulation.transitions)
+    return {
+        transition_name
+        for transition_name in set(solve_laws) & set(simulate_laws)
+        if solve_laws[transition_name] != simulate_laws[transition_name]
+    }
+
+
+def _laws_by_target(
+    transitions: TransitionFunctionsMapping,
+) -> dict[TransitionFunctionName, dict[RegimeName, Callable[..., Any]]]:
+    """Map each transition name to its unwrapped law per target regime."""
+    laws: dict[TransitionFunctionName, dict[RegimeName, Callable[..., Any]]] = {}
+    for target_regime_name, bundle in transitions.items():
+        for transition_name, law in bundle.items():
+            laws.setdefault(transition_name, {})[target_regime_name] = inspect.unwrap(
+                law
+            )
+    return laws
 
 
 def _get_stochastic_weight_function_names(regime: Regime) -> set[str]:

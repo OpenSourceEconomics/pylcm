@@ -143,6 +143,32 @@ def stochastic_next_state_names(
     )
 
 
+def all_stochastic_next_state_names(
+    laws: TransitionLaws,
+) -> frozenset[TransitionFunctionName]:
+    """Return every `next_<state>` name stochastic under any target's law.
+
+    The per-target keying is the right one for pricing a continuation, but the
+    flow sub-DAG asks a name-level question -- may a within-period utility or
+    constraint read this `next_<state>`? -- and must answer it conservatively:
+    a name realized as a draw under any reachable target is unrealised for the
+    flow regardless of which target this period is bound for.
+
+    Args:
+        laws: Immutable mapping of target regime names to their transition laws.
+
+    Returns:
+        Frozenset of unqualified transition names stochastic under some target.
+
+    """
+    return frozenset(
+        name
+        for target_laws in laws.values()
+        for name, info in target_laws.items()
+        if info.stochastic
+    )
+
+
 def is_stochastic(
     laws: TransitionLaws, target: RegimeName, next_state_name: TransitionFunctionName
 ) -> bool:

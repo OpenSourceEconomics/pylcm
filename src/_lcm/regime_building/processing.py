@@ -161,6 +161,7 @@ from _lcm.typing import (
 from _lcm.utils.containers import ensure_containers_are_immutable
 from _lcm.utils.dispatchers import simulation_spacemap, vmap_1d
 from _lcm.utils.error_messages import format_messages
+from _lcm.utils.functools import get_union_of_args
 from _lcm.utils.namespace import flatten_regime_namespace, unflatten_regime_namespace
 from _lcm.variables import (
     from_regime,
@@ -169,6 +170,7 @@ from _lcm.variables import (
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
+from lcm.phased import Phased
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, NNBEGM, Solver
 from lcm.transition import MarkovTransition
@@ -544,7 +546,11 @@ def process_regimes(
             state_action_space=state_action_spaces[regime_name],
             ages=ages,
             enable_jit=enable_jit,
-            solve_functions=solution.functions,
+            # The perceived law a simulated agent prices its continuation with.
+            # Age-specialized functions are still unresolved in this pool, so each
+            # period resolves them at its own age rather than inheriting the one
+            # age frozen into `solution.functions`.
+            solve_functions=solution.continuation_functions,
             solve_transitions=solution.transitions,
             solve_transition_laws=solution.transition_laws,
             solve_compute_regime_transition_probs=solution.compute_regime_transition_probs,
@@ -1163,6 +1169,9 @@ def _build_solution_phase(
         _variables=variables,
         grids=all_grids[regime_name],
         functions=published_solution_functions,
+        # Age-specialized functions are left unresolved here, so the simulation
+        # continuation can resolve each at the age of the period it prices.
+        _continuation_functions=core.functions,
         constraints=core.constraints,
         transitions=core.transitions,
         transition_laws=core.transition_laws,
@@ -1520,9 +1529,11 @@ def _build_simulation_phase(
         state_action_space: The state-action space for this regime.
         ages: The AgeGrid for the model.
         enable_jit: Whether to jit the internal functions.
-        solve_functions: The solve phase's published functions, read for the
-            weight laws the decision functions need but the simulation phase
-            does not build — a declared entry law into a process is split into
+        solve_functions: The solve phase's function pool — the agent's perceived
+            law. Q prices its continuation against this pool: the state laws, the
+            stochastic weights, and every helper those read. It also supplies the
+            weight laws the decision functions need but the simulation phase does
+            not build, since a declared entry law into a process is split into
             node indices plus weights only where a value function is indexed.
         solve_transitions: Transitions from the solve phase (reused).
         solve_transition_laws: Immutable mapping of target regime names to their
@@ -1669,6 +1680,15 @@ def _build_simulation_phase(
         # it evaluates on the Cartesian grid, not per-subject. The solve
         # phase built that function unconditionally for non-terminal regimes.
         assert solve_compute_regime_transition_probs is not None  # noqa: S101
+        # Q is built from two phase-closed halves — the agent acts on its beliefs
+        # about the future and lives in the truth now:
+        #   flow         = simulate transitions + simulate pool (`functions`)
+        #   continuation = solve transitions    + solve pool (`solve_functions`)
+        # Each half takes its own function pool as well as its own transitions,
+        # because `dags` resolves a law's arguments against the pool it is handed,
+        # transitively. The contract, and its one exception for carried states, is
+        # documented on `lcm.phased.Phased`.
+        #
         # The decision functions evaluate the solve representation, so any
         # weight law the solve phase built and this phase did not — the split
         # of a declared entry law into a process — is supplied from there.
@@ -1693,6 +1713,7 @@ def _build_simulation_phase(
             flat_param_names=flat_param_names,
             koopmans_aggregator=cast("EconFunction", core.koopmans_aggregator),
             certainty_equivalent=certainty_equivalent,
+            continuation_functions=solve_functions,
             grid_schedule=grid_schedule,
             period_to_regime_v_interp=period_to_regime_v_interp,
         )
@@ -2108,11 +2129,12 @@ def _process_regime_core(
         )
 
     for func_name, func in deterministic_transition_functions.items():
+        names_key = _extract_template_names_key(func_name, regime_params_template)
         processed_functions[func_name] = _rename_params_to_qnames(
             func=func,
             regime_params_template=regime_params_template,
             param_key=func_name,
-            names_key=_extract_template_names_key(func_name, regime_params_template),
+            names_key=names_key,
         )
 
     for func_name, func in stochastic_transition_functions.items():
@@ -2673,11 +2695,15 @@ def _rename_params_to_qnames(
     branch: Mapping[str, object] = regime_params_template
     for part in tree_path_from_qname(names_key if names_key is not None else param_key):
         branch = cast("Mapping[str, object]", branch[part])
-    param_names = list(branch)
+    # Rename only the parameters this law actually reads. The template branch of a
+    # `Phased` state transition holds the union of both phases' parameters, so a law
+    # that takes none of its own must not be stamped with one the other phase
+    # contributed.
+    own_args = get_union_of_args([func])
+    param_names = [p for p in branch if p in own_args]
     if not param_names:
         return cast("EconFunction", func)
     mapper = {p: qname_from_tree_path((param_key, p)) for p in param_names}
-
     return cast("EconFunction", rename_arguments(func, mapper=mapper))
 
 
@@ -3568,7 +3594,25 @@ def _get_simple_transition_discrete_grid(
     (fixed state), not a DiscreteGrid, or the state is not present in the
     source regime.
 
+    A `Phased` entry is unwrapped before the test. Both variants share one source
+    grid, so the only question is whether either of them is a broadcast law — one
+    written without naming targets, which is the shape that can silently clip
+    categories. The grid is returned if either variant is such a law, and `None`
+    only if both handle their targets explicitly. Left wrapped, a `Phased` is not
+    itself a Mapping, so a pair of per-target dicts would be read as one broadcast
+    law.
+
     """
+    if isinstance(raw, Phased):
+        variants = [
+            variant
+            for variant in (raw.solve, raw.simulate)
+            if _get_simple_transition_discrete_grid(user_regime, state_name, variant)
+            is not None
+        ]
+        if not variants:
+            return None
+        raw = variants[0]
     # Per-target dicts handle category differences explicitly
     if isinstance(raw, Mapping) and not isinstance(raw, MarkovTransition):
         return None
@@ -3917,6 +3961,7 @@ def _build_Q_and_F_per_period(
     koopmans_aggregator: EconFunction,
     certainty_equivalent: CertaintyEquivalent | None,
     co_map_state_names: tuple[StateName, ...] = (),
+    continuation_functions: EconFunctionsMapping | None = None,
     grid_schedule: AgeGridSchedule | None = None,
     period_to_regime_v_interp: (
         MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
@@ -3952,7 +3997,10 @@ def _build_Q_and_F_per_period(
         flat_param_names: Frozenset of flat parameter names for the regime.
         koopmans_aggregator: The regime's Bellman aggregator, with params
             renamed to qnames.
-        certainty_equivalent: Nonlinear certainty equivalent, or `None`.
+        certainty_equivalent: Nonlinear certainty equivalent declared by the
+            regime, or `None`.
+        continuation_functions: Solve-phase pool the continuation sub-DAG resolves
+            against; `None` in the solve phase, where it coincides with `functions`.
         grid_schedule: Concrete age-specialized grid schedule, or `None`.
         period_to_regime_v_interp: Per-period continuation interpolation info
             built from the schedule, or `None`.
@@ -3973,6 +4021,10 @@ def _build_Q_and_F_per_period(
         period_to_regime_v_interp=period_to_regime_v_interp,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
     )
+    # The perceived continuation pool enters the grouping key: it is resolved once
+    # per group below, so two periods may share a compiled kernel only if their
+    # pools resolve alike. `None` contributes a constant and leaves the grouping
+    # unchanged.
     group_key = continuation_group_key(
         phase_reachability=phase_reachability,
         source_regime_name=source_regime_name,
@@ -3980,6 +4032,7 @@ def _build_Q_and_F_per_period(
         constraints=constraints,
         grid_schedule=grid_schedule,
         continuation_info=continuation_info,
+        continuation_functions=continuation_functions,
     )
 
     configs = group_periods_by_key(active_periods, group_key)
@@ -4019,6 +4072,19 @@ def _build_Q_and_F_per_period(
             co_map_state_names=co_map_state_names,
             koopmans_aggregator=koopmans_aggregator,
             certainty_equivalent=certainty_equivalent,
+            # Resolve the perceived continuation pool at this group's own period.
+            # Safe because that pool's per-period signature is part of the group key
+            # above, so every period in the group resolves it identically.
+            continuation_functions=(
+                cast(
+                    "EconFunctionsMapping",
+                    resolve_periodized_nodes(
+                        continuation_functions, representative_period
+                    ),
+                )
+                if continuation_functions is not None
+                else None
+            ),
         )
 
     return expand_groups_to_periods(configs, built)

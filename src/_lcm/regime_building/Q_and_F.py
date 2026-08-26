@@ -69,6 +69,7 @@ def get_Q_and_F(
     koopmans_aggregator: EconFunction,
     certainty_equivalent: CertaintyEquivalent | None,
     co_map_state_names: tuple[StateName, ...] = (),
+    continuation_functions: EconFunctionsMapping | None = None,
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for a non-terminal period.
 
@@ -76,9 +77,27 @@ def get_Q_and_F(
     not closure constants. This allows periods with the same target
     configuration to share a single JIT-compiled function.
 
+    Q mixes two phases when it is built for the simulate phase: the *current* flow
+    (utility, feasibility, `H`) is simulate-phase, while the *continuation* is priced
+    under the agent's perceived law — the solve phase. The flow is *now*, so it is
+    realized under the true law; the belief is about the *future*, so it prices only
+    the continuation.
+
+    The continuation sub-DAG must be **phase-closed**: a transition law is a DAG node
+    like any other, and `dags` resolves its argument names against a function pool
+    transitively, so a law that depends on a `Phased` helper picks up whichever variant
+    that pool holds. The continuation therefore takes a matched pair, `transitions` +
+    `continuation_functions`; resolving a solve-phase law's helpers from the simulate
+    pool yields a sub-DAG that is neither phase and can reverse the argmax.
+
+    The flow needs no such pairing: `next_<state>` is reserved vocabulary a transition
+    produces, so no utility or constraint reads one and the flow contains no transition
+    node to resolve.
+
     Args:
         flat_param_names: Frozenset of flat parameter names for the regime.
         functions: Immutable mapping of function names to internal user functions.
+            Supplies the current-period flow (utility, feasibility, `H`).
         constraints: Immutable mapping of constraint names to internal user functions.
         period_targets: Carry targets — reachable, active next period, and
             carrying at least one state, so their continuation is read at the
@@ -102,15 +121,34 @@ def get_Q_and_F(
             their axes are sliced off each `next_V_arr` leaf by the backward-induction
             co-map, so their coordinates are dropped from the interpolation. Only fixed
             (never-transitioning) distributed states qualify.
+        certainty_equivalent: Nonlinear certainty equivalent declared by the
+            regime, or `None`.
+        continuation_functions: Function pool the continuation sub-DAG (the state
+            transitions and the stochastic weights) is resolved against. Defaults to
+            `functions`, which is correct in the solve phase, where both pools are the
+            solve pool. The simulate phase must pass the SOLVE pool here so the agent
+            compares actions under its perceived law while the world is realized under
+            the true one.
 
     Returns:
         A function that computes the state-action values (Q) and the feasibilities (F)
         for a non-terminal period.
 
     """
+    # In the solve phase the two roles coincide; only simulate passes them apart.
+    continuation_pool = (
+        functions if continuation_functions is None else continuation_functions
+    )
+    # The flow reads no transition node at all: `next_<state>` is reserved vocabulary
+    # a transition produces, never something this period's utility or a constraint may
+    # read. So only the continuation needs a pool of its own, and the phase split
+    # reduces to that one sub-DAG.
     U_and_F = _get_U_and_F(functions=functions, constraints=constraints)
     compute_CE, continuation_deps, continuation_arg_names = _get_compute_CE(
-        functions=functions,
+        # `continuation_pool`, NOT `functions`: the continuation is priced under
+        # the perceived (solve-phase) law, helpers included. In the solve phase the
+        # two are the same object; only simulate passes them apart.
+        functions=continuation_pool,
         period_targets=period_targets,
         scalar_targets=scalar_targets,
         transitions=transitions,
@@ -407,6 +445,10 @@ def _get_compute_CE(
 
     Args:
         functions: Immutable mapping of function names to internal user functions.
+            This is the CONTINUATION pool, not the flow pool: every use of it here
+            builds a next-period object, which is priced under the perceived
+            (solve-phase) law. Callers pass `continuation_pool`. Do not add a use
+            that needs the flow pool without taking it as its own argument.
         period_targets: Carry targets whose continuation is read at the next
             states their laws produce.
         scalar_targets: Targets carrying no state, whose rank-zero value enters
