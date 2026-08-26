@@ -352,6 +352,15 @@ def _exact_affine_read_jvp(
     stopped before entering the opaque call so forward-over-forward AD never
     asks JAX to differentiate the FFI. The tangent is the complete differential
     of the unrounded affine rational in all five floating operands.
+
+    Forward mode only. The published tangent is NaN unless the direction is
+    finite and the differential it produces is too, so the rule reads the
+    tangent rather than applying a fixed linear map to it. Reverse mode
+    transposes that map and there is none to transpose, so `jax.grad` and
+    `jax.vjp` raise here while `jax.jvp` and `jax.jacfwd` carry the exact slope.
+    Dropping the direction guard would buy transposability at the price of
+    publishing a finite slope for an infinite direction, which is the failure
+    the guard exists to refuse.
     """
     x0, x1, v0, v1, x_query = primals
     dx0, dx1, dv0, dv1, dx_query = tangents
