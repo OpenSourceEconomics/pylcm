@@ -8,6 +8,7 @@ from typing import Any, Literal
 import jax.numpy as jnp
 import numpy as np
 from dags import concatenate_functions, get_ancestors
+from dags import dag as dags_dag
 
 from _lcm.egm.budget import DCEGM_BUDGET_CONSTRAINT_NAME
 from _lcm.engine import Regime
@@ -132,17 +133,25 @@ def _decision_only_target_names(regime: Regime, candidates: set[str]) -> set[str
     unpublishable = _unresolvable_transition_names(
         regime
     ) | _phase_split_transition_names(regime)
-    if not unpublishable:
+    if not unpublishable or not candidates:
         return set()
     pool = _build_functions_pool(regime)
-    decision_only: set[str] = set()
-    for name in candidates:
-        if name not in pool:
-            continue
-        ancestors = get_ancestors(pool, targets=[name], include_targets=False)
-        if ancestors & unpublishable:
-            decision_only.add(name)
-    return decision_only
+    dag = dags_dag.create_dag(functions=pool, targets=sorted(candidates))
+
+    # DAG edges point from an input to the functions that consume it. Starting at
+    # every unpublishable transition and walking successors therefore finds all
+    # candidate targets whose ancestry contains one. Build and traverse the graph
+    # once per regime; rebuilding it separately for every candidate dominates
+    # SimulationResult construction in function-rich models.
+    reached = set(unpublishable) & set(dag)
+    pending = list(reached)
+    while pending:
+        node = pending.pop()
+        for dependent in dag.successors(node):
+            if dependent not in reached:
+                reached.add(dependent)
+                pending.append(dependent)
+    return candidates & reached
 
 
 def _unresolvable_transition_names(regime: Regime) -> set[str]:
