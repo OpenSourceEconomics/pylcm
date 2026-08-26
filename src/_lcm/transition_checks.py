@@ -52,6 +52,8 @@ from lcm.exceptions import (
 )
 from lcm.typing import BoolND, FloatND, IntND, ScalarFloat, ScalarInt
 
+_NO_EXTRA_GRIDS: Mapping[StateOrActionName, FloatND | IntND] = MappingProxyType({})
+
 
 def validate_transitions(
     *,
@@ -529,6 +531,15 @@ def validate_joint_transitions_all_periods(  # noqa: C901, PLR0912
             state_action_space = regime.solution.state_action_space(
                 regime_params=flat_params[regime_name]
             )
+            # A carried state has no solve grid axis, so a simulate-phase law
+            # reading one is not resolvable on the solution state-action space.
+            # Sweep its simulate-phase domain alongside the solve grids instead.
+            carried_only_grids = MappingProxyType(
+                {
+                    name: regime.simulation.grids[name].to_jax()
+                    for name in sorted(regime.simulation.carried_only_state_names)
+                }
+            )
             for phase_name, phase in (
                 ("solve", regime.solution),
                 ("simulate", regime.simulation),
@@ -559,6 +570,11 @@ def validate_joint_transitions_all_periods(  # noqa: C901, PLR0912
                     weights = _evaluate_joint_weights(
                         func=compute_weights,
                         state_action_space=state_action_space,
+                        extra_grids=(
+                            carried_only_grids
+                            if phase_name == "simulate"
+                            else _NO_EXTRA_GRIDS
+                        ),
                         regime_params=flat_params[regime_name],
                         period=period_int32,
                         age=age,
@@ -744,6 +760,7 @@ def _evaluate_joint_weights(
     *,
     func: Callable[..., Mapping[str, FloatND | IntND]],
     state_action_space: StateActionSpace,
+    extra_grids: Mapping[StateOrActionName, FloatND | IntND],
     regime_params: FlatRegimeParams,
     period: ScalarInt,
     age: ScalarInt | ScalarFloat,
@@ -751,7 +768,14 @@ def _evaluate_joint_weights(
     phase_name: str,
     logger: logging.Logger,
 ) -> Mapping[str, FloatND | IntND] | None:
-    """Evaluate one compiled probability DAG on its accepted source grid."""
+    """Evaluate one compiled probability DAG on its accepted grids.
+
+    `extra_grids` carries grid axes the solution state-action space does not
+    hold — the simulate-phase domain of each carried-only state. An argument
+    that resolves to none of the grids or the regime's parameters leaves the
+    lottery unvalidated, which `log_level="debug"` refuses rather than sampling
+    from an unexamined law.
+    """
     grid_args: dict[StateOrActionName, FloatND | IntND] = {}
     scalar_kwargs: dict[str, object] = {}
     for name in inspect.signature(func).parameters:
@@ -763,16 +787,20 @@ def _evaluate_joint_weights(
             grid_args[name] = state_action_space.states[name]
         elif name in state_action_space.actions:
             grid_args[name] = state_action_space.actions[name]
+        elif name in extra_grids:
+            grid_args[name] = extra_grids[name]
         elif name in regime_params:
             scalar_kwargs[name] = regime_params[name]
         else:
-            logger.warning(
-                "Joint transitions in regime %s (%s phase) not numerically "
-                "validated: argument %s is not a recognized grid or model "
-                "parameter.",
-                regime_name,
-                phase_name,
-                name,
+            raise_or_warn(
+                logger=logger,
+                error=InvalidStateTransitionProbabilitiesError(
+                    f"Joint transitions in regime {regime_name!r} "
+                    f"({phase_name} phase) cannot be validated numerically: "
+                    f"argument {name!r} is neither a grid variable of that "
+                    "phase nor a parameter of the regime, so the lottery it "
+                    "weights is never examined."
+                ),
             )
             return None
 

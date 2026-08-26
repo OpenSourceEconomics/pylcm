@@ -44,6 +44,7 @@ from _lcm.typing import (
     FlatParams,
     MaxQOverAFunction,
     RegimeName,
+    StateName,
 )
 from lcm.ages import AgeGrid
 from lcm.typing import (
@@ -110,21 +111,33 @@ class GridSearch(Solver):
         and therefore a single compiled program.
         """
         from _lcm.regime_building.max_Q_over_a import get_max_Q_over_a  # noqa: PLC0415
+        from _lcm.regime_building.processing import (  # noqa: PLC0415
+            get_conditioned_fold_weights_by_code,
+        )
 
         built: dict[int, MaxQOverAFunction] = {}
         result: dict[int, PeriodKernel] = {}
-        # COLLECTIVE-REGIMES (fold): fold weights are the folded process's own
-        # marginal distribution (`compute_transition_probs` returns an
-        # (n_points, n_points) matrix whose every row is that marginal — the
-        # "IID" part — so row 0 is it). `_validate_fold_declarations` rejects a
-        # runtime-parameterized process, so this is a plain constant computed
-        # once here, at kernel-build time — never inside the traced core.
-        fold_weights = {
-            name: cast(
-                "_ContinuousStochasticProcess", context.grids[name]
-            ).get_transition_probs()[0]
-            for name in context.fold_state_names
-        }
+        # Fold weights are the folded process's own marginal distribution, a
+        # plain constant computed once here at kernel-build time and never
+        # inside the traced core (`_validate_fold_declarations` rejects a
+        # runtime-parameterized process). Two shapes, by declaration:
+        # - an unconditioned process contributes one row. Its
+        #   `compute_transition_probs` returns an `(n_points, n_points)` matrix
+        #   whose every row is that marginal — the "IID" part — so row 0 is it.
+        # - a `StateConditioned` `sigma` contributes one row per category of
+        #   the conditioning state, ordered by that categorical's integer code,
+        #   which the fold reduction gathers along the conditioning axis.
+        fold_weights: dict[StateName, FloatND] = {}
+        fold_conditioning: dict[StateName, StateName] = {}
+        for name in context.fold_state_names:
+            process = cast("_ContinuousStochasticProcess", context.grids[name])
+            if process.state_conditioned is None:
+                fold_weights[name] = process.get_transition_probs()[0]
+            else:
+                fold_weights[name] = get_conditioned_fold_weights_by_code(
+                    name=name, grid=process, grids=context.grids
+                )
+                fold_conditioning[name] = process.state_conditioned.on
         for period, Q_and_F in context.Q_and_F_functions.items():
             q_id = id(Q_and_F)
             if q_id not in built:
@@ -146,7 +159,8 @@ class GridSearch(Solver):
                     stakeholders=context.stakeholders,
                     weights=context.weights,
                     fold_state_names=context.fold_state_names,
-                    fold_weights=fold_weights,
+                    fold_weights=MappingProxyType(fold_weights),
+                    fold_conditioning=MappingProxyType(fold_conditioning),
                 )
                 built[q_id] = jax.jit(func) if context.enable_jit else func
             result[period] = _GridSearchPeriodKernel(

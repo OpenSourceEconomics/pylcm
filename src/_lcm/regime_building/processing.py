@@ -3728,14 +3728,14 @@ def _process_regime_core(
         if user_regime in continuation_targets
         for process, grid in grids.items()
         if isinstance(grid, _ContinuousStochasticProcess)
-        # A folded process gets no continuation transition when the SOURCE does
-        # not carry it, or on a coarse candidate. Its stored V has no such axis,
-        # and building the edge trips `_fail_if_folded_state_persists`, which is
-        # STRUCTURAL -- it inspects built `next_<process>` edges, not transition
-        # probability. This has to be decided here, not only at entry: the
-        # process names come off the TARGET's own grids, so a folded process the
-        # source does not carry reaches synthesis at this point and no earlier
-        # stage can filter it out.
+        # A folded process gets no SOLVE continuation transition when the SOURCE
+        # does not carry it, or on a coarse candidate. Its stored V has no such
+        # axis, and building the edge trips `_fail_if_folded_state_persists`,
+        # which is STRUCTURAL -- it inspects built `next_<process>` edges, not
+        # transition probability. This has to be decided here, not only at entry:
+        # the process names come off the TARGET's own grids, so a folded process
+        # the source does not carry reaches synthesis at this point and no
+        # earlier stage can filter it out.
         #
         # The `process not in process_names` half is what keeps the guard armed.
         # A folded process the source DOES carry can genuinely persist, and the
@@ -3747,7 +3747,18 @@ def _process_regime_core(
         # The coarse half is the same statement about an unknown support: a
         # candidate the transition may never return must not get an edge whose
         # existence the persistence guard would read as evidence.
-        if not (
+        #
+        # Simulation is the opposite case and takes the edge. A fold removes an
+        # axis from STORAGE, not a shock from the world: a subject entering the
+        # target still realizes one, and its own utility and policy read that
+        # realization. Without the entry draw the target period simulates with
+        # an unset shock, so its value and every action that depends on it come
+        # out unset too. The guard reads only `solution.transitions`, so the
+        # simulate edge cannot disarm it, and the decision functions evaluate
+        # the solve representation, so the axis stays integrated out where it
+        # was.
+        if phase_name != "solution"
+        or not (
             getattr(grid, "fold", False)
             and (
                 process not in process_names or user_regime in coarse_candidate_targets
@@ -4973,6 +4984,61 @@ def _get_conditioned_weights_func(
         )
 
     return weights_func_conditioned
+
+
+def get_conditioned_fold_weights_by_code(
+    *,
+    name: ProcessName,
+    grid: _ContinuousStochasticProcess,
+    grids: Mapping[StateOrActionName, Grid],
+) -> FloatND:
+    """Return one fold quadrature row per category of the conditioning state.
+
+    Row `c` is the folded process's own marginal under the `sigma` that
+    category `c` selects, binned on the fixed common nodes. Rows are ordered by
+    the conditioning categorical's integer **code**, which is also the position
+    of that category along the conditioning state's grid axis, so the fold
+    reduction gathers a row by the axis index it is already reducing against.
+
+    Only an IID process carries `fold`, so the row does not depend on a
+    from-value and the returned array is a plain build-time constant.
+
+    Args:
+        name: Name of the folded process state.
+        grid: The folded process, whose `state_conditioned` is set.
+        grids: Grid mapping of the regime declaring it, used to resolve the
+            conditioning state.
+
+    Returns:
+        Array of shape `(n_categories, n_points)`, each row summing to one.
+
+    """
+    sc = grid.state_conditioned
+    if sc is None:
+        msg = (
+            f"Fold state '{name}' is not state-conditioned, so it has no "
+            "per-category quadrature rows."
+        )
+        raise ModelInitializationError(msg)
+    conditioning_grid, family = _validate_conditioned_process(
+        name=name, grid=grid, sc=sc, grids=grids
+    )
+    nodes = grid.get_gridpoints()
+    fixed = dict(grid.params)
+    return jnp.stack(
+        [
+            conditioned_row(
+                family=family,
+                nodes=nodes,
+                sigma=sigma,
+                # Unused for an IID family, and only an IID process folds.
+                from_value=0.0,
+                mu=fixed["mu"],
+                rho=fixed.get("rho"),
+            )
+            for sigma in sigma_array_by_code(conditioning_grid, sc.by)
+        ]
+    )
 
 
 def _get_weights_func_for_process(
