@@ -10,11 +10,17 @@ adaptive continuous-outer mesh alike.
 Which artifact counts as matching follows the configured outer search, so the
 guards below also pin that the check still refuses a dropped mapping and a
 policy published by the other route.
+
+The parity comparison runs at float64 only: a full-divestment corner leaves the
+toy's durable stock one ULP below its grid floor at float32, which the next
+period reads as infeasible. The refusal guards assert no numbers and so run at
+both precisions.
 """
 
 import jax.numpy as jnp
 import pandas as pd
 import pytest
+from jax import config as jax_config
 from pandas.testing import assert_frame_equal
 
 from _lcm.typing import (
@@ -96,6 +102,8 @@ def test_separate_solve_and_simulate_matches_the_automatic_route(
     solved: tuple[Model, PeriodToRegimeToVArr, PeriodToRegimeToSimulationPolicy],
 ) -> None:
     """The documented split workflow reproduces automatic solve-and-simulate."""
+    if not jax_config.read("jax_enable_x64"):
+        pytest.skip("x64 run only: the toy's durable stock is not simulable at float32")
     model, values, policies = solved
     assert_frame_equal(
         _simulate(model, period_to_regime_to_V_arr=values, policies=policies),
