@@ -9,13 +9,22 @@ import jax.numpy as jnp
 import numpy as np
 
 from _lcm.egm.published_policy import NNBEGMSimPolicy
-from _lcm.engine import Regime
+from _lcm.engine import NNBEGMPolicyRead, Regime
 from _lcm.simulation.simulate import _replay_nnbegm_candidates
 from lcm import LinSpacedGrid
+from lcm.typing import ContinuousAction, ContinuousState
 from tests.test_models import n_nbegm_toy as toy
 from tests.test_models.n_nbegm_toy import RegimeId
 
 _PARAMS = {"discount_factor": 0.95}
+
+
+def _state_dependent_affine_outer_target(
+    illiquid: ContinuousState,
+    illiquid_investment: ContinuousAction,
+) -> ContinuousState:
+    """Map the outer action affinely with a slope that varies by state."""
+    return illiquid + (1.0 + 0.1 * illiquid) * illiquid_investment
 
 
 def _simulate_rows(
@@ -79,6 +88,54 @@ def test_public_replay_ranks_every_reconstructed_candidate_by_canonical_q() -> N
     )
 
 
+def test_public_replay_inverts_outer_targets_at_the_realized_state(
+    monkeypatch,
+) -> None:
+    """An emitted action realizes the exact outer candidate selected by the solve."""
+    monkeypatch.setattr(toy, "new_illiquid", _state_dependent_affine_outer_target)
+    model = toy.build_model(variant="n_nbegm", n_periods=2)
+    values, policies = model.solve(
+        params=_PARAMS,
+        log_level="debug",
+        return_simulation_policy=True,
+    )
+    result = model.simulate(
+        params=_PARAMS,
+        initial_conditions={
+            "wealth": jnp.array([1.0467]),
+            "illiquid": jnp.array([2.04]),
+            "age": jnp.array([20.0]),
+            "regime_id": jnp.array([RegimeId.alive], dtype=jnp.int32),
+        },
+        period_to_regime_to_V_arr=values,
+        policies=policies,
+        log_level="debug",
+        seed=17,
+    )
+    row = result.to_dataframe().query("regime_name == 'alive' and period == 0").iloc[0]
+    emitted_target = float(
+        _state_dependent_affine_outer_target(
+            row["illiquid"], row["illiquid_investment"]
+        )
+    )
+    expected_target = 30.0 / 7.0
+    expected_action = (expected_target - 2.04) / (1.0 + 0.1 * 2.04)
+    is_fp32 = jnp.asarray(0.0).dtype == jnp.float32
+
+    np.testing.assert_allclose(
+        emitted_target,
+        expected_target,
+        rtol=0.0,
+        atol=3e-5 if is_fp32 else 3e-10,
+    )
+    np.testing.assert_allclose(
+        row["illiquid_investment"],
+        expected_action,
+        rtol=0.0,
+        atol=3e-5 if is_fp32 else 3e-10,
+    )
+
+
 def _constant_surfaces(values: list[float]) -> jnp.ndarray:
     working_dtype = jnp.asarray(0.0).dtype
     return jnp.repeat(
@@ -107,7 +164,7 @@ def _synthetic_replay(
     discrete_names = ("choice",) if discrete_codes is not None else ()
     policy = NNBEGMSimPolicy(
         candidate_inner_action=_constant_surfaces(inner),
-        candidate_outer_action=_constant_surfaces(outer),
+        candidate_outer_target=_constant_surfaces(outer),
         candidate_value=_constant_surfaces(marker),
         candidate_discrete_actions=(
             None
@@ -117,8 +174,13 @@ def _synthetic_replay(
         state_names=("state",),
         inner_action_name="inner",
         outer_action_name="outer",
+        n_keeper_candidates=0,
         discrete_action_names=discrete_names,
     )
+
+    def outer_target(*, outer):
+        return {"outer_target": outer}
+
     template = _synthetic_regime_template()
     regime = dataclasses.replace(
         template,
@@ -128,6 +190,12 @@ def _synthetic_replay(
                 {"state": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)}
             ),
             Q_and_F=MappingProxyType({0: q_and_f}),
+            egm_policy_read=NNBEGMPolicyRead(
+                outer_target_function_by_period=MappingProxyType({0: outer_target}),
+                outer_post_decision="outer_target",
+                outer_no_adjustment_target=None,
+                outer_state_name="state",
+            ),
         ),
     )
     states = {"state": jnp.asarray(state)}
@@ -320,7 +388,7 @@ def _public_bank_data():
     assert policy.state_names == ("wealth", "illiquid")
     return (
         np.asarray(policy.candidate_inner_action),
-        np.asarray(policy.candidate_outer_action),
+        np.asarray(policy.candidate_outer_target),
         np.asarray(policy.candidate_value),
         np.asarray(values[1]["dead"]),
         np.asarray(toy.WEALTH_GRID.to_jax()),
@@ -330,7 +398,7 @@ def _public_bank_data():
 
 def _scalar_bank_oracle(*, wealth: float, illiquid: float) -> dict[str, float | int]:
     """Literal candidate reconstruction, toy equations, masks, and strict max."""
-    inner_bank, outer_bank, marker_bank, terminal_v, wealth_grid, illiquid_grid = (
+    inner_bank, target_bank, marker_bank, terminal_v, wealth_grid, illiquid_grid = (
         _public_bank_data()
     )
     best: dict[str, float | int] | None = None
@@ -345,16 +413,17 @@ def _scalar_bank_oracle(*, wealth: float, illiquid: float) -> dict[str, float | 
                 illiquid_grid=illiquid_grid,
             ),
         )
-        investment = cast(
+        target = cast(
             "float",
             _literal_bilinear(
-                outer_bank[index],
+                target_bank[index],
                 wealth=wealth,
                 illiquid=illiquid,
                 wealth_grid=wealth_grid,
                 illiquid_grid=illiquid_grid,
             ),
         )
+        investment = target - illiquid
         marker = cast(
             "float",
             _literal_bilinear(
@@ -365,7 +434,6 @@ def _scalar_bank_oracle(*, wealth: float, illiquid: float) -> dict[str, float | 
                 illiquid_grid=illiquid_grid,
             ),
         )
-        target = illiquid + investment
         resources = wealth + toy.LABOUR_INCOME - investment
         savings = resources - consumption
         if not (

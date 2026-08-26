@@ -17,9 +17,11 @@ from _lcm.egm.upper_envelope._exact_affine import (
 )
 from _lcm.egm.upper_envelope.query import envelope_at_query
 
-jax.config.update("jax_enable_x64", val=True)
-
-_DTYPES = (jnp.float32, jnp.float64)
+_DTYPES = (jnp.float32, jnp.float64) if jax.config.x64_enabled else (jnp.float32,)
+_REQUIRES_X64 = pytest.mark.skipif(
+    not jax.config.x64_enabled,
+    reason="requires the suite's float64 configuration",
+)
 
 
 def _read_pair(x0, x1, v0, v1, q):
@@ -120,6 +122,7 @@ def test_generated_smooth_family_matches_fraction_oracle(dtype) -> None:
 
 
 @pytest.mark.parametrize("batched", [False, True])
+@_REQUIRES_X64
 def test_owner_and_status_have_float0_tangents(*, batched: bool) -> None:
     dtype = jnp.float64
     if batched:
@@ -165,6 +168,7 @@ def test_owner_and_status_have_float0_tangents(*, batched: bool) -> None:
     assert status_dot.dtype == jax.dtypes.float0
 
 
+@_REQUIRES_X64
 def test_jit_preserves_exact_primal_bits_and_tangent() -> None:
     dtype = jnp.float64
     primals = tuple(jnp.asarray(x, dtype=dtype) for x in (0.2, 1.3, -2.0, 4.0, 0.7))

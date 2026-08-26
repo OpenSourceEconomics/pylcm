@@ -1,11 +1,16 @@
 """Reference-output equivalence for finite NNBEGM candidate aggregation.
 
-The finite collapse must reproduce stored reference outputs rather than an
+The finite solve must reproduce stored reference outputs rather than an
 independently reimplemented aggregation. The fixture
 `tests/data/n_nbegm_finite_baseline.npz` holds, per
 `outer_batch_size` in {0, 1, 4} on the smooth two-asset toy (x64, 3 periods):
-every alive period's `V_arr` and `EGMCarry` leaves as returned by
+every alive period's collapsed `V_arr` and complete candidate-bank `EGMCarry`
+leaves as returned by
 `_NNBEGMPeriodKernel.__call__`, plus the public `Model.solve` output.
+
+The reference includes the corrected lower-savings corner from `78dfa1a9` and
+the explicit candidate carry bank required for exact policy replay by
+`37582328`.
 
 `V` and carry value/grid agree within 1e-12; carry marginals agree within 1e-11.
 """
@@ -67,10 +72,10 @@ def _solve_recording_kernel_results(
 
 
 @pytest.mark.parametrize("outer_batch_size", [0, 1, 2, 4, 7])
-def test_finite_streaming_fold_matches_frozen_prerefactor_baseline(
+def test_finite_streaming_fold_matches_frozen_corrected_baseline(
     outer_batch_size: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The streaming solve reproduces the frozen finite-search arrays.
+    """The streaming solve reproduces the frozen corrected finite-search arrays.
 
     Batch sizes 0/1/4 compare against their own frozen capture; 2 and 7 (the
     remaining supported chunk shapes compare against the batch-0 capture,
