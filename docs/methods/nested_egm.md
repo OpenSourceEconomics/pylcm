@@ -53,7 +53,6 @@ constraints inside every outer candidate. Its outer search is itself configurabl
   interpolant, and refines bracket-local candidates. Without an asserted Lipschitz
   bound, its validation is mesh-relative rather than a proof against arbitrarily narrow
   unseen peaks.
-- `LegacyGoldenSection` exists only for labeled historical reproduction.
 
 `NNBEGM` can also change how keeper and adjuster values aggregate. The default
 `DeterministicOuterMaximum` takes the hard maximum. `UniformObservedFixedCost`

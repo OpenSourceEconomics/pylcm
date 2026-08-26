@@ -127,7 +127,6 @@ surfaces remain outside that top-level namespace:
 | [`lcm.solvers.OuterSearch`](outer_search.md#outer-search)                            | Outer-search marker             |
 | [`lcm.solvers.FiniteOuterGrid`](outer_search.md#finiteoutergrid)                     | Finite search                   |
 | [`lcm.solvers.AdaptiveOuterMesh`](outer_search.md#adaptiveoutermesh)                 | Adaptive continuous search      |
-| [`lcm.solvers.LegacyGoldenSection`](outer_search.md#legacygoldensection)             | Historical search               |
 | [`lcm.solvers.OuterBranchAggregator`](outer_search.md#branch-aggregation)            | Branch-aggregation marker       |
 | [`lcm.solvers.DeterministicOuterMaximum`](outer_search.md#deterministicoutermaximum) | Hard maximum                    |
 | [`lcm.solvers.UniformObservedFixedCost`](outer_search.md#uniformobservedfixedcost)   | Analytic fixed-cost integration |

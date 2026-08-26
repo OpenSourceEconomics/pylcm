@@ -38,11 +38,6 @@ Important fields:
 Without a valid Lipschitz bound, midpoint/mesh validation cannot exclude an arbitrarily
 narrow peak between sampled points.
 
-### `LegacyGoldenSection`
-
-Reproduces a historical global golden-section algorithm with explicitly labeled endpoint
-and tie rules. It assumes global unimodality and is not the canonical general search.
-
 `OuterSearch` is the abstract configuration marker.
 
 ## Branch aggregation
