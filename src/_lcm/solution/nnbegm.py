@@ -13,7 +13,7 @@ façade stays a thin re-export that pulls in no numerical engine modules.
 
 import inspect
 from collections.abc import Callable, Hashable, Mapping
-from dataclasses import dataclass, field, fields, replace
+from dataclasses import dataclass, fields, replace
 from types import MappingProxyType
 from typing import cast
 
@@ -126,17 +126,6 @@ class NNBEGM(TwoMarginSolver):
     `AdaptiveOuterMesh` is the canonical continuous-outer approximation. The
     strategy carries its own numerics, including any batch size."""
 
-    branch_aggregator: OuterBranchAggregator = field(
-        default_factory=DeterministicOuterMaximum
-    )
-    """How the keeper and adjuster branch values combine per state cell.
-
-    `DeterministicOuterMaximum()` (default) is the historical hard maximum.
-    `UniformObservedFixedCost(...)` integrates a uniform observed fixed
-    adjustment cost analytically into the fold — continuous-outer
-    (`AdaptiveOuterMesh`) only, and the shock must not appear as a solve
-    state (its integration is exact, no grid needed)."""
-
     def __post_init__(self) -> None:
         _fail_if_inner_is_not_nbegm(self.inner)
         search = self.outer_search
@@ -147,14 +136,25 @@ class NNBEGM(TwoMarginSolver):
                 _fail_if_outer_grid_is_stochastic(search.initial_grid)
             case _:
                 pass
-        _fail_if_aggregator_unsupported(self.branch_aggregator)
-        if isinstance(
-            self.branch_aggregator, UniformObservedFixedCost
-        ) and not isinstance(search, AdaptiveOuterMesh):
+
+    def _fail_if_aggregation_is_unsupported(
+        self, aggregator: OuterBranchAggregator
+    ) -> None:
+        """State which declared aggregations this configuration can execute.
+
+        The declaration itself belongs to the regime's outer margin; the solver
+        answers only whether its kernels can aggregate it here, under the
+        configured outer search.
+        """
+        _fail_if_aggregator_unsupported(aggregator)
+        if isinstance(aggregator, UniformObservedFixedCost) and not isinstance(
+            self.outer_search, AdaptiveOuterMesh
+        ):
             msg = (
                 "UniformObservedFixedCost aggregates the keeper/adjuster "
-                "branches through the continuous collapse; it requires "
-                "`outer_search=AdaptiveOuterMesh(...)`."
+                "branches through the continuous collapse, so a regime "
+                "declaring `adjustment_cost=UniformObservedFixedCost(...)` "
+                "needs `outer_search=AdaptiveOuterMesh(...)` on its NNBEGM."
             )
             raise RegimeInitializationError(msg)
 
@@ -165,6 +165,8 @@ class NNBEGM(TwoMarginSolver):
         outer: _BoundOuterContinuousMargin,
     ) -> _BoundNNBEGM:
         """Bind both regime-owned margins into a private runtime config."""
+        aggregator = outer.adjustment_cost or DeterministicOuterMaximum()
+        self._fail_if_aggregation_is_unsupported(aggregator)
         kwargs = {
             field.name: getattr(self, field.name)
             for field in fields(NNBEGM)
@@ -178,6 +180,7 @@ class NNBEGM(TwoMarginSolver):
             outer_state=outer.state,
             outer_post_decision=outer.post_decision_state,
             outer_no_adjustment_candidate=outer.no_adjustment,
+            branch_aggregator=aggregator,
         )
 
     @property
@@ -528,7 +531,7 @@ class NNBEGM(TwoMarginSolver):
         )
         branch_aggregation_by_period = {
             period: _resolve_branch_fixed_cost(
-                aggregator=self.branch_aggregator,
+                aggregator=bound.branch_aggregator,
                 context=resolved_by_period[period],
             )
             for period in adjuster_by_period
@@ -606,6 +609,9 @@ class _BoundNNBEGM(NNBEGM):
     outer_state: StateName
     outer_post_decision: FunctionName
     outer_no_adjustment_candidate: FunctionName | None
+    branch_aggregator: OuterBranchAggregator
+    """The fold resolved from the regime's declared `adjustment_cost`, with the
+    deterministic maximum standing in where no cost was declared."""
 
 
 def _fail_if_nnbegm_phase_variation(

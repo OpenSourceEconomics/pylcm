@@ -16,6 +16,12 @@ from dags.signature import rename_arguments
 
 import lcm.solvers as _solvers
 from _lcm.beartype_conf import REGIME_CONF
+
+# Bound to a private module alias rather than imported by name: `lcm.solvers`
+# publishes `OuterBranchAggregator`, and a bare import would republish it here as
+# an attribute of this module. Same reason `lcm.solvers` itself is bound as
+# `_solvers` above.
+from _lcm.egm import branch_aggregation as _branch_aggregation
 from _lcm.grids import ContinuousGrid
 from _lcm.post_decision_bound import _PostDecisionLowerBound
 from _lcm.solution.contract import _BoundLiquidMargin, _BoundOuterContinuousMargin
@@ -174,8 +180,25 @@ class OuterContinuousMargin:
     no_adjustment: FunctionName
     """No-adjustment map, or `lcm.outer_unchanged` for identity."""
 
+    adjustment_cost: _branch_aggregation.OuterBranchAggregator | None = None
+    """Adjustment-cost structure entering the keeper-versus-adjuster comparison.
+
+    `None` (the default) means adjusting is free at the margin, so the branches
+    combine by the deterministic maximum `V = max(V_keeper, V_adjuster)`.
+    `UniformObservedFixedCost(...)` declares an i.i.d. uniform fixed cost
+    observed before the branch choice, which the solve integrates analytically.
+
+    This is economic structure — the cost's distribution, its timing, and how
+    it enters the comparison — so it is declared with the margin rather than
+    with the solver. A solver states only whether it supports the aggregation
+    the declaration implies, and refuses at construction where it does not."""
+
     def __post_init__(self) -> None:
         self._fail_if_names_are_not_pairwise_distinct()
+        if self.adjustment_cost is not None:
+            _branch_aggregation.fail_if_aggregator_is_outside_the_closed_set(
+                self.adjustment_cost
+            )
 
     def _fail_if_names_are_not_pairwise_distinct(self) -> None:
         names = [self.state, self.action, self.post_decision_state]
@@ -516,6 +539,7 @@ def _bind_two_margin_solver(
             no_adjustment=(
                 None if outer.no_adjustment == outer_unchanged else outer.no_adjustment
             ),
+            adjustment_cost=outer.adjustment_cost,
         ),
     )
 

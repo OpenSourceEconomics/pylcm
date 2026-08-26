@@ -103,7 +103,7 @@ def test_one_margin_regime_binds_nbegm_from_liquid_margin() -> None:
 
 def test_public_nnbegm_contains_numerical_configuration_only() -> None:
     names = {item.name for item in fields(NNBEGM)}
-    assert names == {"inner", "outer_search", "branch_aggregator"}
+    assert names == {"inner", "outer_search"}
 
 
 def test_nested_regime_binds_both_margins_without_an_inner_spec() -> None:
