@@ -2520,7 +2520,8 @@ def edge_may_fold_at_period(
     if not source_reads_wbar:
         return False
     msg = (
-        f"Regime '{source_name}', gated_edges['{edge.target}']: the target "
+        f"Regime {source_name!r}, value-dependent transition into "
+        f"{edge.target!r}: the target "
         f"regime '{edge.target}' is solved at period {fold_period}, but the "
         f"edge's reference regime(s) {missing} are not — a malformed ACTIVE "
         "edge (a fallback or gate reference regime must be solved at the same "

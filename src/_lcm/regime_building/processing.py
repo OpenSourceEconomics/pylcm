@@ -1481,7 +1481,7 @@ def _fail_if_same_period_refs_invalid(
     for regime_name, user_regime in user_regimes.items():
         for ref_name, ref in user_regime.same_period_refs.items():
             prefix = (
-                f"Regime '{regime_name}', same_period_refs['{ref_name}'] "
+                f"Regime {regime_name!r}, reference {ref_name!r} "
                 f"(reference regime '{ref.regime}'): "
             )
             target_regime = user_regimes.get(ref.regime)
@@ -1564,7 +1564,10 @@ def _fail_if_gated_edges_invalid(
     """
     for regime_name, user_regime in user_regimes.items():
         for target_name, edge in user_regime.gated_edges.items():
-            prefix = f"Regime '{regime_name}', gated_edges['{target_name}']: "
+            prefix = (
+                f"Regime {regime_name!r}, value-dependent transition into "
+                f"{target_name!r}: "
+            )
             target = user_regimes.get(target_name)
             if target is None:
                 msg = (

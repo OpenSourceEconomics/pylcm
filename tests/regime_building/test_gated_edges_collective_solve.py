@@ -899,7 +899,10 @@ def test_gated_edge_reference_inactive_in_consumed_period_is_rejected():
         match=r"single_m_terminal.*active.*\[1\]",
     ):
         _fail_if_gated_edge_references_inactive(
-            prefix="Regime 'single_f', gated_edges['married_terminal']: ",
+            prefix=(
+                "Regime 'single_f', value-dependent transition into "
+                "'married_terminal': "
+            ),
             source_name="single_f",
             target_name="married_terminal",
             edge=edge,
@@ -922,7 +925,9 @@ def test_gated_edge_coactive_references_pass():
     )
     # No raise: every referenced regime covers the consumed period {1}.
     _fail_if_gated_edge_references_inactive(
-        prefix="Regime 'single_f', gated_edges['married_terminal']: ",
+        prefix=(
+            "Regime 'single_f', value-dependent transition into 'married_terminal': "
+        ),
         source_name="single_f",
         target_name="married_terminal",
         edge=edge,
@@ -954,7 +959,7 @@ def test_gated_edge_reference_inactive_at_unconsumed_boundary_passes():
     # Consumed = {t in {0,1} : t-1 in {0,1}} = {1}; fallback active {1,2} covers
     # it. No raise, even though the fallback is absent in target-active period 0.
     _fail_if_gated_edge_references_inactive(
-        prefix="Regime 'src', gated_edges['src']: ",
+        prefix="Regime 'src', value-dependent transition into 'src': ",
         source_name="src",
         target_name="src",
         edge=edge,

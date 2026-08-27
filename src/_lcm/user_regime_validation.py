@@ -327,7 +327,7 @@ def _reference_projection_free_param_errors(regime: lcm.regime.Regime) -> list[s
         | {"period", "age"}
     )
     return [
-        f"The projection of `same_period_refs['{ref_name}']` for state "
+        f"The projection of reference {ref_name!r} for state "
         f"'{state_name}' takes argument '{arg}', which the declaring regime "
         "does not supply. A regime-level reference projection resolves through "
         "this regime's own DAG and its period/age, and may not introduce a free "
@@ -368,7 +368,7 @@ def _validate_gated_edges(regime: lcm.regime.Regime) -> None:
     source_stakeholders = regime.stakeholders
 
     for target_name, edge in regime.gated_edges.items():
-        prefix = f"gated_edges['{target_name}']: "
+        prefix = f"the value-dependent transition into {target_name!r}: "
         if isinstance(edge.gate, MarkovTransition):
             error_messages.append(
                 f"{prefix}the gate must be a plain boolean function. A "
@@ -1729,13 +1729,12 @@ def _fold_same_period_roots(regime: lcm.regime.Regime) -> list[tuple[str, Callab
     roots: list[tuple[str, Callable]] = []
     for name, predicate in regime.value_constraints.items():
         roots.extend(
-            (f"value_constraints['{name}']", variant)
+            (f"constraint {name!r}", variant)
             for variant in _function_variants(predicate)
         )
     for ref_name, ref in regime.same_period_refs.items():
         roots.extend(
-            (f"same_period_refs['{ref_name}']", func)
-            for func in ref.projection.values()
+            (f"reference {ref_name!r}", func) for func in ref.projection.values()
         )
     return roots
 
