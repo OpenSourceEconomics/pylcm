@@ -524,6 +524,9 @@ def _bind_two_margin_solver(
     liquid: LiquidMargin,
     outer: OuterContinuousMargin,
 ) -> _solvers.TwoMarginSolver | _solvers.GridSearch:
+    _fail_if_solver_cannot_execute_the_adjustment_cost(
+        solver=solver, adjustment_cost=outer.adjustment_cost
+    )
     if isinstance(solver, _solvers.GridSearch):
         return solver
     return solver._with_margins(  # noqa: SLF001
@@ -542,6 +545,34 @@ def _bind_two_margin_solver(
             adjustment_cost=outer.adjustment_cost,
         ),
     )
+
+
+def _fail_if_solver_cannot_execute_the_adjustment_cost(
+    *,
+    solver: _solvers.TwoMarginSolver | _solvers.GridSearch,
+    adjustment_cost: _branch_aggregation.OuterBranchAggregator | None,
+) -> None:
+    """Refuse a declared fold the chosen solver would not run.
+
+    The margin owns the economic declaration, so a fixed cost can be written
+    next to any solver. Only the nested solver family implements a fold other
+    than the hard maximum over the two branches, and the maximum is what every
+    other solver already computes — so an explicit `DeterministicOuterMaximum`
+    is accepted everywhere and anything else is refused where it is declared,
+    rather than disappearing between the margin and the kernel.
+    """
+    trivial = adjustment_cost is None or isinstance(
+        adjustment_cost, _branch_aggregation.DeterministicOuterMaximum
+    )
+    if trivial or isinstance(solver, _solvers.NNBEGM):
+        return
+    msg = (
+        f"{type(solver).__name__} does not implement "
+        f"OuterContinuousMargin.adjustment_cost="
+        f"{type(adjustment_cost).__name__}(...); use NNBEGM with "
+        "AdaptiveOuterMesh, or remove the declared adjustment cost."
+    )
+    raise RegimeInitializationError(msg)
 
 
 def _bound_liquid_margin(liquid: LiquidMargin) -> _BoundLiquidMargin:
