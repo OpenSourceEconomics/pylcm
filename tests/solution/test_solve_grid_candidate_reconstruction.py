@@ -77,3 +77,28 @@ def test_a_solve_reconstructing_every_candidate_does_not_stop() -> None:
         regime_name="alive",
         period=1,
     )
+
+
+def test_a_custom_no_adjustment_target_is_excluded_from_the_loud_phase() -> None:
+    """A computed keeper target drops like a realized state, it does not stop the solve.
+
+    The solve raises on a candidate whose target is a DECLARED node, because only
+    such a candidate can show that the declared law and the declared grids
+    disagree. A regime declaring its own no-adjustment target computes that
+    target from the DAG at each solve cell, so it can land off-node for reasons
+    that are economically ordinary — a depreciating durable, say. The caller
+    excludes those candidates from the mask, and this pins that the gate honours
+    the exclusion rather than stopping on them.
+    """
+    live = jnp.ones((2, 2), dtype=bool)
+    dropped = jnp.asarray([[False, True], [False, False]])
+    # The caller's mask: the dropped candidate is not at a declared node.
+    at_declared_node = jnp.asarray([[False, False], [True, True]])
+
+    _gate(
+        logger=get_logger(log_level="debug"),
+        dropped=dropped & at_declared_node,
+        n_live=live & at_declared_node,
+        regime_name="alive",
+        period=1,
+    )
