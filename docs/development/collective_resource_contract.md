@@ -24,7 +24,7 @@ edge keyed by the continuing household.
 | Workload                    | Class                                                         | What it isolates                                                                                                                |
 | --------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | Model construction          | `CollectiveHouseholdConstruct`                                | The phase scan, the lowering of the collective declarations, and per-edge parameter discovery, with nothing traced or compiled. |
-| Cold compilation            | `CollectiveHouseholdSolve.track_compilation_time`             | The first solve: every regime's kernels plus one fold per gated edge.                                                           |
+| First-solve assembly        | `CollectiveHouseholdSolve.track_compilation_time`             | Tracing, lowering, and compiling-or-loading every regime's kernels plus one fold per gated edge. See the note below.            |
 | Warm solve                  | `CollectiveHouseholdSolve.time_execution`                     | What an estimation loop pays per parameter vector.                                                                              |
 | Host memory, solve          | `CollectiveHouseholdSolve.peakmem_execution`                  | Resident peak while backward induction runs.                                                                                    |
 | Device memory, solve        | `CollectiveHouseholdSolveGpuPeakMem`                          | Device peak on the same workload.                                                                                               |
@@ -40,7 +40,7 @@ machines and backends. A level is defended by the ASV history on one machine.
   work. It is allowed to grow with the number of declarations a model makes and with
   nothing else. Construction that grew with a *grid* size would mean a grid was
   materialized during the scan.
-- **Cold compilation** is `O(regimes × periods)` programs plus
+- **First-solve assembly** is `O(regimes × periods)` programs plus
   `O(edges × period groups)` folds and gate evaluators. Gate evaluators are compiled
   ahead of time together with the decision kernels when `Model(n_subjects=N)` is set, so
   a fixed batch size pays for them once, before the first simulated period, rather than
@@ -60,6 +60,28 @@ machines and backends. A level is defended by the ASV history on one machine.
   `(callable, dedup key)`, all of which are properties of the model and its declared
   batch size. Repeated `solve()` / `simulate()` calls at one cohort size may not add
   entries; a cache that grew per call would recompile per call.
+
+## What the first-solve number is, and is not
+
+pylcm enables JAX's persistent compilation cache, and the benchmark suite shares one, so
+`track_compilation_time` is not a compilation time. It covers tracing and lowering, and
+then *either* compiling each program or loading it from the cache — and which of those
+two it did is invisible in the number.
+
+Measured on this workload, on one GPU backend, with the cache directory asserted empty
+before the run and populated after: the first solve costs about twice what the same
+solve costs once its programs are cached, so a cache hit covers a little under half of
+it. The saving grows with the model, because compilation grows with program size while
+tracing and lowering grow with the number of programs.
+
+Two things follow, and both are about how to *read* a change in this line:
+
+- A movement here is a movement in assembly cost, not in compiler work, unless the cache
+  state is known to have been the same on both sides. Pin the cache — point
+  `JAX_COMPILATION_CACHE_DIR` at a fresh directory — for any comparison meant to be
+  about compilation.
+- A number from one machine is not comparable to a number from another whose cache holds
+  a different set of programs. The ASV history is per machine for this reason.
 
 ## Where a pointwise reoptimization mode would sit
 
