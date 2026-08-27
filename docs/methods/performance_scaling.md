@@ -12,19 +12,21 @@ hardware that will run the production model.
 
 A useful first inventory is:
 
-| Axis                 | Why it matters                                |
-| -------------------- | --------------------------------------------- |
-| State-grid product   | Number of value-function cells                |
-| Action-grid product  | Grid-search candidates per state cell         |
-| Discrete branches    | Separate candidate surfaces and envelope work |
-| Stochastic nodes     | Continuation evaluations before expectation   |
-| Outer candidates     | Complete inner solves in a nested method      |
-| Period/regime shapes | Number of distinct programs JAX may compile   |
-| Subjects             | Simulation batch size and compiled shape      |
+| Axis                 | Why it matters                                            |
+| -------------------- | --------------------------------------------------------- |
+| State-grid product   | Number of value-function cells                            |
+| Action-grid product  | Grid-search candidates per state cell                     |
+| Discrete branches    | Separate candidate surfaces and envelope work             |
+| Stochastic nodes     | Continuation evaluations before expectation               |
+| Outer candidates     | Complete inner solves in a nested method                  |
+| Refinement budget    | Adaptive outer search, where node count is data-dependent |
+| Period/regime shapes | Number of distinct programs JAX may compile               |
+| Subjects             | Simulation batch size and compiled shape                  |
 
 For grid search, continuous action grids multiply. For a nested solver, outer candidates
-multiply the inner solve. For EGM, a savings-grid construction replaces one current
-state-by-action search but interpolation and envelope work remain.
+multiply the inner solve — a declared count under a finite outer grid, and a
+budget-bounded one under an adaptive mesh. For EGM, a savings-grid construction replaces
+one current state-by-action search but interpolation and envelope work remain.
 
 These expressions predict direction, not wall time. Kernel fusion, memory traffic,
 compile reuse, and device occupancy can reverse a simple operation-count ranking.

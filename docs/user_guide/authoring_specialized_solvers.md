@@ -334,6 +334,9 @@ example contains both the adjuster and the no-adjustment keeper. State and actio
 values, including `consumption` and `illiquid_investment`, are already ordinary result
 columns; `additional_targets` is only for derived DAG outputs such as `liquid_savings`.
 
+For a worked `NNBEGM` declaration — an `NBEGM` liquid solve nested inside an outer
+search — see `lcm_examples.mahler_yum_2024.paper`, which builds one at production scale.
+
 The liquid resources declaration also makes the adjustment-cost composition explicit.
 The `adjustment_cost` named here is a resources-composition node: a DAG function
 subtracted from resources before the liquid solve. It is unrelated to

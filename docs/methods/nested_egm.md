@@ -89,11 +89,16 @@ strategy contracts are in
 ## Computational implication
 
 If the inner solve costs $C_{\text{inner}}$ and the finite outer search has $N_d$
-candidates, the leading work is proportional to $N_d C_{\text{inner}}$. State cells,
-discrete branches, stochastic nodes, and envelope candidates live inside
-$C_{\text{inner}}$. This multiplication is why streaming and accelerator occupancy
-matter, and why a large GPU should be fed concurrent independent work where memory
-permits.
+candidates, the leading work is proportional to $N_d C_{\text{inner}}$.
+
+Under `AdaptiveOuterMesh` the candidate count is data-dependent rather than declared, so
+no single $N_d$ describes it. The work is the initial mesh, plus up to
+`max_refinement_rounds` rounds of midpoint insertion capped by `max_nodes` exact inner
+solves, plus `golden_iterations` evaluations inside each retained bracket. The budget is
+therefore what bounds the cost, not the declaration. State cells, discrete branches,
+stochastic nodes, and envelope candidates live inside $C_{\text{inner}}$. This
+multiplication is why streaming and accelerator occupancy matter, and why a large GPU
+should be fed concurrent independent work where memory permits.
 
 See [Scaling, memory, and hardware](performance_scaling.md). Empirical break-even points
 remain model- and hardware-dependent; the external benchmark suite is the evolving
