@@ -199,6 +199,41 @@ phase-specific NNBEGM replay is implemented. In the `Phased` spelling, `f` must 
 exact same callable object in both fields; two distinct functions that compute the same
 formula still count as phase variation.
 
+NNBEGM searches the outer margin over post-decision **targets** — the outer stock a
+candidate reaches — so simulation recovers the outer **action** that reached a stored
+target by inverting the declared post-decision map. That inversion is exact or refused,
+never approximate, so the map must be affine in the outer action with a constant
+coefficient that is exactly a power of two, positive or negative:
+
+- **accepted:** `new = old + action`, `new = old + 2 * action`,
+  `new = old + 0.5 * action`, and `new = offset(states, params) + action` for an
+  arbitrarily nonlinear `offset`. Anything the action does not enter is unrestricted, so
+  depreciation, returns, and fixed transfers are all free.
+- **refused:** a non-affine dependence — `action ** 2`, `exp(action)`,
+  `clip(action, ...)`, `jnp.where(action > 0, ...)`, or division by the action.
+- **refused:** a coefficient of zero, i.e. a map the action does not enter. Such a map
+  retains no information about the action that reached the target, so none can be
+  recovered.
+- **refused:** a constant but non-dyadic slope. `3`, `1.5`, and `0.9` all fail.
+- **refused:** a state-dependent slope, such as `old + (1 + 0.1 * old) * action`.
+
+Recovery divides the coefficient out of the retained target, and binary division is
+exact only by a power of two. Any other factor rounds, and a rounded action reassembles
+a stock away from the node the solve ranked — at the edge of the outer state's declared
+grid, or off the declared domain entirely, where there is no value function to read.
+Each refusal is a `RegimeInitializationError` raised where the map is declared, rather
+than a candidate dropped silently during the solve.
+
+The restriction excludes any **state-dependent conversion technology**: a scale economy
+in durable investment, a portfolio-size-dependent transaction cost, increasing-returns
+installation — any adjustment cost that does not separate into a state-only offset plus
+a dyadic multiple of the action. That is a modelling restriction, not a formatting one.
+A constant non-dyadic price is usually recoverable by choosing units so the action is
+the stock increment itself and moving the conversion factor into the budget's cost term,
+which the inversion never reads. A state-dependent slope has no single coefficient to
+divide out, so it is not recoverable that way. Both solve under `GridSearch`, which
+searches the outer action directly and so never inverts it.
+
 ## Capability is validated, not inferred from class names
 
 The selected solver inspects finalized declarations before numerical lowering. A model

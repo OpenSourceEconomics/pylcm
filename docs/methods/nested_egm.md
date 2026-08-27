@@ -81,6 +81,16 @@ Use `outer_unchanged` when the no-adjustment map is literally the identity. Use
 an adjustment-cost node. These declarations eliminate identity wrapper functions whose
 only purpose would be renaming.
 
+`NNBEGM` additionally restricts the outer post-decision map itself. It searches over the
+outer stock a candidate reaches and recovers the action that reached it by exact
+inversion, so the action must enter that map affinely with a constant power-of-two
+coefficient; the offset may be any function of states and parameters. This rules out a
+state-dependent conversion technology — a scale economy in durable investment, a
+portfolio-size-dependent transaction cost, increasing-returns installation — which is a
+modelling loss rather than a notational one. Such models solve under `GridSearch`, which
+searches the outer action directly. The accepted and refused forms are enumerated in
+[NNBEGM](../reference/solvers.md#nnbegm).
+
 The exact fields and composition rules are in
 [Consumption-saving regimes and margins](../reference/consumption_savings.md). Outer
 strategy contracts are in

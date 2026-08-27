@@ -37,6 +37,11 @@ method consumes. Check these gates before selecting a solver:
   preference recursion is supported by the particular solver;
 - kinks, jumps, and hard boundaries are declared with case pieces or a piecewise-affine
   schedule rather than hidden inside an opaque function.
+- for `NNBEGM`, the outer post-decision map is affine in the outer action with a
+  constant power-of-two coefficient — `new = offset(states, params) + action` and
+  `new = old + 2 * action` qualify, a state-dependent or non-dyadic slope does not. A
+  model whose conversion rate depends on the state needs `GridSearch`; see
+  [NNBEGM](../reference/solvers.md#nnbegm).
 
 Plain `EGM` has the narrowest gate: exactly one continuous state and action, no discrete
 or process states/actions, liquid resources equal to the liquid state, savings equal to
