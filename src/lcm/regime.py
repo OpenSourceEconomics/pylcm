@@ -344,6 +344,10 @@ class Regime:
     stakeholders: tuple[str, ...] | None = None
     """Names of the stakeholders whose individual values this regime carries.
 
+    The lowered form of `CollectiveUtility.utilities`, whose keys are the
+    stakeholders in the order they are written. A model declares the household
+    in `functions["utility"]` and reads the set back here.
+
     `None` (the default) is the singleton case: the regime has one implicit
     stakeholder and one value function. A non-`None` tuple declares a
     *collective regime*: a couple (or other multi-party household) that solves
@@ -387,6 +391,8 @@ class Regime:
     pareto_objective: ParetoObjective | None = None
     """How this collective regime's household trades its stakeholders off.
 
+    The lowered form of `CollectiveUtility.objective`.
+
     Used only when `stakeholders is not None`: the collective solve maximizes
     the household scalarization `O = Σ_s λ_s Q^s` over the feasible action set.
     When omitted (the default), equal weights `1/len(stakeholders)` are used —
@@ -400,6 +406,9 @@ class Regime:
         default_factory=lambda: MappingProxyType({})
     )
     """Value-aware feasibility predicates for a collective regime.
+
+    The lowered form of the `ValueDependentConstraint` entries of `constraints`,
+    which is where a model declares them — one constraint slot rather than two.
 
     Each entry maps a constraint name to a predicate returning `True` where the
     (state, action) combination is feasible. Unlike ordinary `constraints`
@@ -445,6 +454,10 @@ class Regime:
     )
     """Gated edges routing this regime's continuation into a target regime.
 
+    The lowered form of the `ValueDependentTransition` entries of `transition`,
+    which is where a model declares them, so that target selection and
+    value-dependent routing are one declaration rather than two.
+
     Maps a TARGET regime name to a `GatedEdge`. A gated edge lets this regime
     reach a target of a DIFFERENT stakeholder layout (a singleton regime into a
     collective one for mutual-consent marriage, or a collective regime into
@@ -462,6 +475,9 @@ class Regime:
         default_factory=lambda: MappingProxyType({})
     )
     """Same-period cross-regime reference values read by `value_constraints`.
+
+    The lowered form of `ValueDependentConstraint.references`, which is where a
+    model declares them — local to the constraint that reads them.
 
     Maps each reference-value name (the argument name under which the
     interpolated value enters the predicates) to a `ProjectedRegimeValue` declaring
