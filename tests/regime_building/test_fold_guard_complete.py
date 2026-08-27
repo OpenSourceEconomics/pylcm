@@ -36,11 +36,11 @@ from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
 from lcm import (
     DiscreteGrid,
-    EdgeLeg,
     GatedEdge,
     NormalIIDProcess,
+    ProjectedRegimeValue,
     Regime,
-    SamePeriodRef,
+    StakeholderRoute,
     categorical,
 )
 from lcm.ages import AgeGrid
@@ -127,8 +127,10 @@ def _make_singleton_gated_target_regimes(*, fold: bool) -> dict[str, Regime]:
             "target": GatedEdge(
                 gate=_true_gate,
                 legs={
-                    "only": EdgeLeg(
-                        fallback=SamePeriodRef(regime="source_terminal", projection={})
+                    "only": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
+                            regime="source_terminal", projection={}
+                        )
                     )
                 },
             )
@@ -188,7 +190,7 @@ def _make_singleton_same_period_ref_regimes(*, fold: bool) -> dict[str, Regime]:
         functions={"utility_f": _u_work, "utility_m": _u_work},
         value_constraints={"dummy": _dummy_constraint},
         same_period_refs={
-            "V_ref": SamePeriodRef(
+            "V_ref": ProjectedRegimeValue(
                 regime="ref_target",
                 projection={"wage_shock": lambda: 0.0},
             )
@@ -243,9 +245,9 @@ def _make_edge_fallback_regimes(*, fold: bool) -> dict[str, Regime]:
             "target": GatedEdge(
                 gate=_no_dissolution_gate,
                 legs={
-                    "only": EdgeLeg(
+                    "only": StakeholderRoute(
                         target_stakeholder="f",
-                        fallback=SamePeriodRef(
+                        fallback=ProjectedRegimeValue(
                             regime="fallback_regime",
                             projection={"wage_shock": lambda: 0.0},
                         ),
@@ -348,8 +350,10 @@ def test_fold_source_state_name_reused_by_target_gate_is_not_rejected():
             "target": GatedEdge(
                 gate=lambda wage_shock: wage_shock > 0.0,
                 legs={
-                    "only": EdgeLeg(
-                        fallback=SamePeriodRef(regime="source_terminal", projection={})
+                    "only": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
+                            regime="source_terminal", projection={}
+                        )
                     )
                 },
             )

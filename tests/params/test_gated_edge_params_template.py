@@ -23,12 +23,12 @@ from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm import (
     DiscreteGrid,
-    EdgeLeg,
     GatedEdge,
     LinSpacedGrid,
     Model,
+    ProjectedRegimeValue,
     Regime,
-    SamePeriodRef,
+    StakeholderRoute,
     categorical,
     fixed_transition,
 )
@@ -208,20 +208,20 @@ def _build_model(
             "married_terminal": GatedEdge(
                 gate=gate,
                 legs={
-                    "f": EdgeLeg(
+                    "f": StakeholderRoute(
                         target_stakeholder="f",
-                        fallback=SamePeriodRef(
+                        fallback=ProjectedRegimeValue(
                             regime="single_f_terminal",
                             projection={"wage": wife_fallback_projection},
                         ),
                     )
                 },
                 gate_refs={
-                    "V_single_f_ref": SamePeriodRef(
+                    "V_single_f_ref": ProjectedRegimeValue(
                         regime="single_f_terminal",
                         projection={"wage": _wage_itself},
                     ),
-                    "V_single_m_ref": SamePeriodRef(
+                    "V_single_m_ref": ProjectedRegimeValue(
                         regime="single_m_terminal",
                         projection={"wage": husband_reference_projection},
                     ),

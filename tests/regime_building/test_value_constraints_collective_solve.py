@@ -53,7 +53,7 @@ from lcm import DiscreteGrid, LinSpacedGrid, Model, categorical, fixed_transitio
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.koopmans_aggregation import LinearAggregator
-from lcm.regime import Regime, SamePeriodRef
+from lcm.regime import ProjectedRegimeValue, Regime
 from lcm.transition import MarkovTransition
 from lcm.typing import (
     BoolND,
@@ -169,10 +169,10 @@ def _make_ir_regimes(
         ),
         same_period_refs=(
             {
-                "V_single_f_ref": SamePeriodRef(
+                "V_single_f_ref": ProjectedRegimeValue(
                     regime="single_f", projection={"wage": _project_wage}
                 ),
-                "V_single_m_ref": SamePeriodRef(
+                "V_single_m_ref": ProjectedRegimeValue(
                     regime="single_m", projection={"wage": _project_wage}
                 ),
             }
@@ -444,7 +444,9 @@ def test_projection_maps_states_and_reference_v_is_interpolated_off_grid():
         functions={"utility_f": _utility_f, "utility_m": _utility_m},
         value_constraints={"ir_f": _ir},
         same_period_refs={
-            "V_f_ref": SamePeriodRef(regime="single_f", projection={"wage": _project})
+            "V_f_ref": ProjectedRegimeValue(
+                regime="single_f", projection={"wage": _project}
+            )
         },
     )
     married_terminal = Regime(
@@ -666,7 +668,7 @@ def test_same_period_refs_on_singleton_regime_are_rejected():
             **_minimal_collective_kwargs(),
             functions={"utility": _utility_single_f},
             same_period_refs={
-                "V_ref": SamePeriodRef(
+                "V_ref": ProjectedRegimeValue(
                     regime="single_f", projection={"wage": _project_wage}
                 )
             },
@@ -683,7 +685,7 @@ def test_same_period_refs_without_value_constraints_are_rejected():
                 "utility_m": _utility_married_m,
             },
             same_period_refs={
-                "V_ref": SamePeriodRef(
+                "V_ref": ProjectedRegimeValue(
                     regime="single_f", projection={"wage": _project_wage}
                 )
             },
@@ -713,7 +715,7 @@ def test_value_constraints_on_a_terminal_collective_regime_are_accepted():
     assert set(regime.value_constraints) == {"ir_f"}
 
 
-def _married_with_refs(refs: dict[str, SamePeriodRef]) -> Regime:
+def _married_with_refs(refs: dict[str, ProjectedRegimeValue]) -> Regime:
     return Regime(
         **_minimal_collective_kwargs(),
         stakeholders=("f", "m"),
@@ -756,10 +758,10 @@ def test_same_period_ref_to_unknown_regime_is_rejected():
     regimes = _make_ir_regimes()
     regimes["married"] = _married_with_refs(
         {
-            "V_single_f_ref": SamePeriodRef(
+            "V_single_f_ref": ProjectedRegimeValue(
                 regime="no_such_regime", projection={"wage": _project_wage}
             ),
-            "V_single_m_ref": SamePeriodRef(
+            "V_single_m_ref": ProjectedRegimeValue(
                 regime="single_m", projection={"wage": _project_wage}
             ),
         }
@@ -802,7 +804,7 @@ def test_same_period_ref_cycle_is_rejected_at_build():
         terminal_name="terminal_a",
         value_constraints={"vc_a": _vc_a},
         same_period_refs={
-            "V_b_ref": SamePeriodRef(
+            "V_b_ref": ProjectedRegimeValue(
                 regime="couple_b",
                 projection={"wage": _project_wage},
                 stakeholder="f",
@@ -813,7 +815,7 @@ def test_same_period_ref_cycle_is_rejected_at_build():
         terminal_name="terminal_b",
         value_constraints={"vc_b": _vc_b},
         same_period_refs={
-            "V_a_ref": SamePeriodRef(
+            "V_a_ref": ProjectedRegimeValue(
                 regime="couple_a",
                 projection={"wage": _project_wage},
                 stakeholder="f",
@@ -866,10 +868,10 @@ def test_same_period_ref_to_collective_regime_requires_stakeholder():
     regimes["married_terminal_b"] = regimes["married_terminal"].replace()
     regimes["married"] = _married_with_refs(
         {
-            "V_single_f_ref": SamePeriodRef(
+            "V_single_f_ref": ProjectedRegimeValue(
                 regime="couple_b", projection={"wage": _project_wage}
             ),
-            "V_single_m_ref": SamePeriodRef(
+            "V_single_m_ref": ProjectedRegimeValue(
                 regime="single_m", projection={"wage": _project_wage}
             ),
         }
@@ -882,12 +884,12 @@ def test_same_period_ref_to_singleton_regime_rejects_stakeholder():
     regimes = _make_ir_regimes()
     regimes["married"] = _married_with_refs(
         {
-            "V_single_f_ref": SamePeriodRef(
+            "V_single_f_ref": ProjectedRegimeValue(
                 regime="single_f",
                 projection={"wage": _project_wage},
                 stakeholder="f",
             ),
-            "V_single_m_ref": SamePeriodRef(
+            "V_single_m_ref": ProjectedRegimeValue(
                 regime="single_m", projection={"wage": _project_wage}
             ),
         }
@@ -900,8 +902,8 @@ def test_same_period_ref_projection_must_cover_reference_states():
     regimes = _make_ir_regimes()
     regimes["married"] = _married_with_refs(
         {
-            "V_single_f_ref": SamePeriodRef(regime="single_f", projection={}),
-            "V_single_m_ref": SamePeriodRef(
+            "V_single_f_ref": ProjectedRegimeValue(regime="single_f", projection={}),
+            "V_single_m_ref": ProjectedRegimeValue(
                 regime="single_m", projection={"wage": _project_wage}
             ),
         }

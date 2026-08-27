@@ -19,11 +19,11 @@ import pytest
 
 from _lcm.regime_building.gated_edges import (
     D_KEY_SUFFIX,
-    ResolvedEdgeLeg,
     ResolvedGatedEdge,
+    ResolvedStakeholderRoute,
     build_same_period_mapping_for_fold,
 )
-from _lcm.regime_building.Q_and_F import ResolvedSamePeriodRef
+from _lcm.regime_building.Q_and_F import ResolvedProjectedRegimeValue
 from lcm.typing import BoolND, ContinuousState, FloatND
 
 # The collective target's value: three wage nodes by two stakeholders. Its
@@ -95,10 +95,10 @@ def _build_mapping(*, gate, supply_flag: bool) -> MappingProxyType:
         gate=gate,
         gate_refs={},
         legs=(
-            ResolvedEdgeLeg(
+            ResolvedStakeholderRoute(
                 source_stakeholder=None,
                 target_component_index=0,
-                fallback=ResolvedSamePeriodRef(
+                fallback=ResolvedProjectedRegimeValue(
                     regime="single_f",
                     projection={"wage": _identity_wage},
                     stakeholder_index=None,

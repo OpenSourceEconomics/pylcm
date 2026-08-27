@@ -56,11 +56,11 @@ from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
     DiscreteGrid,
-    EdgeLeg,
     GatedEdge,
     Model,
+    ProjectedRegimeValue,
     Regime,
-    SamePeriodRef,
+    StakeholderRoute,
     categorical,
     fixed_transition,
 )
@@ -175,20 +175,20 @@ def _make_offer_regimes() -> dict[str, Regime]:
             "married_terminal": GatedEdge(
                 gate=_consent_gate,
                 legs={
-                    "f": EdgeLeg(
+                    "f": StakeholderRoute(
                         target_stakeholder="f",
-                        fallback=SamePeriodRef(
+                        fallback=ProjectedRegimeValue(
                             regime="single_f_terminal",
                             projection={"education": _identity_education},
                         ),
                     )
                 },
                 gate_refs={
-                    "V_single_f_ref": SamePeriodRef(
+                    "V_single_f_ref": ProjectedRegimeValue(
                         regime="single_f_terminal",
                         projection={"education": _identity_education},
                     ),
-                    "V_single_m_ref": SamePeriodRef(
+                    "V_single_m_ref": ProjectedRegimeValue(
                         regime="single_m_terminal",
                         projection={"education": _spouse_type_as_education},
                     ),

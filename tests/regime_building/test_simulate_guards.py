@@ -37,8 +37,8 @@ import pytest
 
 from _lcm.regime_building.collective import NO_ROLE
 from _lcm.regime_building.finalize import finalize_regimes
-from _lcm.regime_building.gated_edges import ResolvedEdgeLeg
-from _lcm.regime_building.Q_and_F import ResolvedSamePeriodRef
+from _lcm.regime_building.gated_edges import ResolvedStakeholderRoute
+from _lcm.regime_building.Q_and_F import ResolvedProjectedRegimeValue
 from _lcm.simulation.gated_routing import (
     _per_row_leg_outcomes,
     substitute_gated_edge_continuations,
@@ -48,13 +48,13 @@ from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
     DiscreteGrid,
-    EdgeLeg,
     GatedEdge,
     LinearAggregator,
     LinearExpectation,
     LinSpacedGrid,
+    ProjectedRegimeValue,
     Regime,
-    SamePeriodRef,
+    StakeholderRoute,
     categorical,
     fixed_transition,
 )
@@ -225,15 +225,15 @@ def _make_shared_fallback_regimes() -> dict[str, Regime]:
             "married_ir": GatedEdge(
                 gate=_no_dissolution_gate,
                 legs={
-                    "f": EdgeLeg(
+                    "f": StakeholderRoute(
                         target_stakeholder="f",
-                        fallback=SamePeriodRef(
+                        fallback=ProjectedRegimeValue(
                             regime="single_shared", projection={"wage": _identity_wage}
                         ),
                     ),
-                    "m": EdgeLeg(
+                    "m": StakeholderRoute(
                         target_stakeholder="m",
-                        fallback=SamePeriodRef(
+                        fallback=ProjectedRegimeValue(
                             regime="single_shared", projection={"wage": _reverse_wage}
                         ),
                     ),
@@ -311,13 +311,13 @@ _REGIME_IDS = MappingProxyType(
 )
 
 
-def _leg(source_stakeholder: str | None) -> ResolvedEdgeLeg:
+def _leg(source_stakeholder: str | None) -> ResolvedStakeholderRoute:
     """One leg sending its stakeholder home to that stakeholder's own regime."""
-    return ResolvedEdgeLeg(
+    return ResolvedStakeholderRoute(
         source_stakeholder=source_stakeholder,
         target_component_index=None,
         target_stakeholder=source_stakeholder,
-        fallback=ResolvedSamePeriodRef(
+        fallback=ResolvedProjectedRegimeValue(
             regime=f"single_{source_stakeholder}",
             projection={},
             stakeholder_index=None,

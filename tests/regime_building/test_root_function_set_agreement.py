@@ -19,13 +19,13 @@ from _lcm.regime_building import broadcast
 from lcm import (
     AgeGrid,
     DiscreteGrid,
-    EdgeLeg,
     GatedEdge,
     LinSpacedGrid,
     Model,
     Phased,
+    ProjectedRegimeValue,
     Regime,
-    SamePeriodRef,
+    StakeholderRoute,
     categorical,
     fixed_transition,
 )
@@ -219,21 +219,21 @@ def _make_regimes() -> dict[str, Regime]:
             "couple_ir": GatedEdge(
                 gate=_no_dissolution_gate,
                 legs={
-                    "f": EdgeLeg(
+                    "f": StakeholderRoute(
                         target_stakeholder="f",
-                        fallback=SamePeriodRef(
+                        fallback=ProjectedRegimeValue(
                             regime="single_f", projection={"wage": _identity_wage}
                         ),
                     ),
-                    "m": EdgeLeg(
+                    "m": StakeholderRoute(
                         target_stakeholder="m",
-                        fallback=SamePeriodRef(
+                        fallback=ProjectedRegimeValue(
                             regime="single_m", projection={"wage": _identity_wage}
                         ),
                     ),
                 },
                 gate_refs={
-                    "V_single_ref": SamePeriodRef(
+                    "V_single_ref": ProjectedRegimeValue(
                         regime="single_f", projection={"wage": _identity_wage}
                     )
                 },
@@ -250,10 +250,10 @@ def _make_regimes() -> dict[str, Regime]:
         functions={"utility_f": _utility_collective, "utility_m": _utility_collective},
         value_constraints={"ir_f": _ir_f, "ir_m": _ir_m},
         same_period_refs={
-            "V_single_f_ref": SamePeriodRef(
+            "V_single_f_ref": ProjectedRegimeValue(
                 regime="single_f", projection={"wage": _identity_wage}
             ),
-            "V_single_m_ref": SamePeriodRef(
+            "V_single_m_ref": ProjectedRegimeValue(
                 regime="single_m", projection={"wage": _identity_wage}
             ),
         },

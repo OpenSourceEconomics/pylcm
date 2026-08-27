@@ -31,13 +31,13 @@ from lcm import (
     AgeGrid,
     AgeSpecializedGrid,
     DiscreteGrid,
-    EdgeLeg,
     GatedEdge,
     LinSpacedGrid,
     MarkovTransition,
     Model,
+    ProjectedRegimeValue,
     Regime,
-    SamePeriodRef,
+    StakeholderRoute,
     categorical,
     fixed_transition,
 )
@@ -250,22 +250,22 @@ def _build_gate_ref_model() -> Model:
             "account": GatedEdge(
                 gate=_index_clears_the_hurdle,
                 gate_refs={
-                    "index_value": SamePeriodRef(
+                    "index_value": ProjectedRegimeValue(
                         regime="index",
                         projection={"level": _level_from_balance},
                     )
                 },
                 legs={
-                    "f": EdgeLeg(
+                    "f": StakeholderRoute(
                         target_stakeholder="f",
-                        fallback=SamePeriodRef(
+                        fallback=ProjectedRegimeValue(
                             regime="annuity_f",
                             projection={"principal": _principal_from_balance},
                         ),
                     ),
-                    "m": EdgeLeg(
+                    "m": StakeholderRoute(
                         target_stakeholder="m",
-                        fallback=SamePeriodRef(
+                        fallback=ProjectedRegimeValue(
                             regime="annuity_m",
                             projection={"principal": _principal_from_balance},
                         ),
@@ -358,15 +358,15 @@ def _build_dissolution_model() -> Model:
             "pair": GatedEdge(
                 gate=_household_consents,
                 legs={
-                    "f": EdgeLeg(
+                    "f": StakeholderRoute(
                         target_stakeholder="f",
-                        fallback=SamePeriodRef(
+                        fallback=ProjectedRegimeValue(
                             regime="single_f", projection={"s": _single_state_from_w}
                         ),
                     ),
-                    "m": EdgeLeg(
+                    "m": StakeholderRoute(
                         target_stakeholder="m",
-                        fallback=SamePeriodRef(
+                        fallback=ProjectedRegimeValue(
                             regime="single_m", projection={"s": _single_state_from_w}
                         ),
                     ),

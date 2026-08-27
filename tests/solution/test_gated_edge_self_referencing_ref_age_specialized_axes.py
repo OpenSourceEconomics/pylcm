@@ -1,6 +1,6 @@
 """A gate reference naming the gated target is read on that period's own grid.
 
-A `SamePeriodRef` may name the very regime its edge gates. The fold then reads
+A `ProjectedRegimeValue` may name the very regime its edge gates. The fold then reads
 that regime's value twice over — once as the target it folds, once as the
 reference its gate consults — and the reference read goes through an
 interpolator that closes over the grid's nodes. So the name the reference
@@ -22,13 +22,13 @@ from numpy.testing import assert_array_almost_equal as aaae
 from lcm import (
     AgeGrid,
     AgeSpecializedGrid,
-    EdgeLeg,
     GatedEdge,
     LinSpacedGrid,
     MarkovTransition,
     Model,
+    ProjectedRegimeValue,
     Regime,
-    SamePeriodRef,
+    StakeholderRoute,
     categorical,
 )
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
@@ -175,13 +175,13 @@ def _build_model(*, reference_regime: str) -> Model:
             "account": GatedEdge(
                 gate=_clears_the_hurdle,
                 gate_refs={
-                    "ref_value": SamePeriodRef(
+                    "ref_value": ProjectedRegimeValue(
                         regime=reference_regime, projection=projection
                     )
                 },
                 legs={
-                    "only": EdgeLeg(
-                        fallback=SamePeriodRef(
+                    "only": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
                             regime="annuity",
                             projection={"principal": _same_balance},
                         )

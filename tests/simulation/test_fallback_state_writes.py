@@ -42,13 +42,13 @@ from _lcm.utils.logging import get_logger
 from lcm import (
     AgeGrid,
     DiscreteGrid,
-    EdgeLeg,
     GatedEdge,
     LinSpacedGrid,
     Model,
     Phased,
+    ProjectedRegimeValue,
     Regime,
-    SamePeriodRef,
+    StakeholderRoute,
     categorical,
     fixed_transition,
 )
@@ -344,15 +344,15 @@ def _make_regimes(*, carrying_fallback: bool) -> dict[str, Regime]:
             "married_terminal": GatedEdge(
                 gate=_consent_gate,
                 legs={
-                    "f": EdgeLeg(
+                    "f": StakeholderRoute(
                         target_stakeholder="f",
-                        fallback=SamePeriodRef(
+                        fallback=ProjectedRegimeValue(
                             regime="single_f", projection=wife_projection
                         ),
                     ),
-                    "m": EdgeLeg(
+                    "m": StakeholderRoute(
                         target_stakeholder="m",
-                        fallback=SamePeriodRef(
+                        fallback=ProjectedRegimeValue(
                             regime="single_m", projection={"wage": _identity_wage}
                         ),
                     ),

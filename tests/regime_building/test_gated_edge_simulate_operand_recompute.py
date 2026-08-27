@@ -101,11 +101,11 @@ from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
     DiscreteGrid,
-    EdgeLeg,
     GatedEdge,
     LinSpacedGrid,
+    ProjectedRegimeValue,
     Regime,
-    SamePeriodRef,
+    StakeholderRoute,
     categorical,
 )
 from lcm.ages import AgeGrid
@@ -178,14 +178,16 @@ def _make_regimes() -> dict[str, Regime]:
             "target": GatedEdge(
                 gate=_value_gate,
                 legs={
-                    "only": EdgeLeg(
-                        fallback=SamePeriodRef(
+                    "only": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
                             regime="fallback", projection={"x": _identity_x}
                         )
                     )
                 },
                 gate_refs={
-                    "V_ref": SamePeriodRef(regime="ref", projection={"x": _identity_x})
+                    "V_ref": ProjectedRegimeValue(
+                        regime="ref", projection={"x": _identity_x}
+                    )
                 },
             )
         },
@@ -389,8 +391,8 @@ def _make_curved_regimes() -> dict[str, Regime]:
             "target": GatedEdge(
                 gate=_threshold_gate,
                 legs={
-                    "only": EdgeLeg(
-                        fallback=SamePeriodRef(
+                    "only": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
                             regime="fallback", projection={"x": _identity_x}
                         )
                     )

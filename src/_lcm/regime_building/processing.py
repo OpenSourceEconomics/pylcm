@@ -92,8 +92,8 @@ from _lcm.regime_building.diagnostics import _build_compute_intermediates_per_pe
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.gated_edges import (
     CompiledEdgeFold,
-    ResolvedEdgeLeg,
     ResolvedGatedEdge,
+    ResolvedStakeholderRoute,
     build_fallback_state_projector,
     get_edge_fold,
     get_edge_simulate_gate_evaluator,
@@ -129,7 +129,7 @@ from _lcm.constraints.processed import (
 from _lcm.constraints.routes import ConstraintPlan, plan_constraints
 from _lcm.regime_building.Q_and_F import (
     GatedContinuationSpec,
-    ResolvedSamePeriodRef,
+    ResolvedProjectedRegimeValue,
     get_Q_and_F,
     get_Q_and_F_collective,
     get_Q_and_F_terminal,
@@ -204,7 +204,7 @@ from _lcm.variables import (
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
 from lcm.phased import Phased
-from lcm.regime import GatedEdge, SamePeriodRef
+from lcm.regime import GatedEdge, ProjectedRegimeValue
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM, NNBEGM, Solver, UniformObservedFixedCost
 from lcm.transition import JointTransition, MarkovTransition
@@ -1184,8 +1184,8 @@ def _resolve_gated_edge(
             return None
         return regime_stakeholders.index(cast("str", stakeholder))
 
-    def _resolve_ref(ref: SamePeriodRef) -> ResolvedSamePeriodRef:
-        return ResolvedSamePeriodRef(
+    def _resolve_ref(ref: ProjectedRegimeValue) -> ResolvedProjectedRegimeValue:
+        return ResolvedProjectedRegimeValue(
             regime=ref.regime,
             projection=ref.projection,
             stakeholder_index=_stakeholder_index(ref.regime, ref.stakeholder),
@@ -1201,11 +1201,11 @@ def _resolve_gated_edge(
     else:
         leg_order = [(s, s) for s in source_stakeholders]
 
-    legs: list[ResolvedEdgeLeg] = []
+    legs: list[ResolvedStakeholderRoute] = []
     for leg_key, source_stakeholder in leg_order:
         leg = edge.legs[leg_key]
         legs.append(
-            ResolvedEdgeLeg(
+            ResolvedStakeholderRoute(
                 source_stakeholder=source_stakeholder,
                 target_component_index=(
                     None
@@ -1374,8 +1374,8 @@ class _ValueAwareFeasibility:
     """Immutable mapping of value-constraint names to predicates whose params
     are renamed to their qualified names."""
 
-    same_period_refs: MappingProxyType[str, ResolvedSamePeriodRef] = MappingProxyType(
-        {}
+    same_period_refs: MappingProxyType[str, ResolvedProjectedRegimeValue] = (
+        MappingProxyType({})
     )
     """Immutable mapping of reference-value names to resolved same-period
     reference declarations."""
@@ -1426,8 +1426,8 @@ def _resolve_same_period_refs(
     *,
     user_regime: UserRegime,
     user_regimes: Mapping[RegimeName, UserRegime],
-) -> MappingProxyType[str, ResolvedSamePeriodRef]:
-    """Resolve a regime's user `SamePeriodRef` declarations to the engine form.
+) -> MappingProxyType[str, ResolvedProjectedRegimeValue]:
+    """Resolve a regime's user `ProjectedRegimeValue` declarations to the engine form.
 
     The declarations were validated by
     `_fail_if_same_period_refs_invalid`, so the reference regime exists and its
@@ -1435,7 +1435,7 @@ def _resolve_same_period_refs(
     index on the reference V's trailing stakeholder axis (`None` for a
     singleton reference).
     """
-    resolved: dict[str, ResolvedSamePeriodRef] = {}
+    resolved: dict[str, ResolvedProjectedRegimeValue] = {}
     for ref_name, ref in user_regime.same_period_refs.items():
         ref_stakeholders = user_regimes[ref.regime].stakeholders
         stakeholder_index = (
@@ -1443,7 +1443,7 @@ def _resolve_same_period_refs(
             if ref_stakeholders is None
             else ref_stakeholders.index(cast("str", ref.stakeholder))
         )
-        resolved[ref_name] = ResolvedSamePeriodRef(
+        resolved[ref_name] = ResolvedProjectedRegimeValue(
             regime=ref.regime,
             projection=ref.projection,
             stakeholder_index=stakeholder_index,
@@ -1793,7 +1793,7 @@ def _fail_if_target_stakeholder_invalid(
 def _fail_if_ref_invalid(
     *,
     prefix: str,
-    ref: SamePeriodRef,
+    ref: ProjectedRegimeValue,
     user_regimes: Mapping[RegimeName, UserRegime],
     representative_user_regimes: Mapping[RegimeName, FinalizedUserRegime],
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
@@ -1803,7 +1803,7 @@ def _fail_if_ref_invalid(
 
     `projection_phase` says which of the reference regime's state sets the
     projection owes a coordinate function for, and the two consumers of a
-    `SamePeriodRef` answer that differently:
+    `ProjectedRegimeValue` answer that differently:
 
     - `"solve"` — a GATE REFERENCE only reads the reference regime's value
       function, whose axes are that regime's solve states. A coordinate on a
@@ -6147,7 +6147,7 @@ def _build_terminal_collective_Q_and_F_per_period(
     constraints: ConstraintFunctionsMapping,
     stakeholders: tuple[str, ...],
     value_constraints: ConstraintFunctionsMapping,
-    same_period_refs: MappingProxyType[str, ResolvedSamePeriodRef],
+    same_period_refs: MappingProxyType[str, ResolvedProjectedRegimeValue],
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     period_to_regime_v_interp: (
         MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
@@ -6233,7 +6233,7 @@ def _build_Q_and_F_per_period(
     co_map_state_names: tuple[StateName, ...] = (),
     stakeholders: tuple[str, ...] | None = None,
     value_constraints: ConstraintFunctionsMapping = MappingProxyType({}),
-    same_period_refs: MappingProxyType[str, ResolvedSamePeriodRef] = (
+    same_period_refs: MappingProxyType[str, ResolvedProjectedRegimeValue] = (
         MappingProxyType({})
     ),
     continuation_functions: EconFunctionsMapping | None = None,

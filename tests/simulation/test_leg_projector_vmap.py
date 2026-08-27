@@ -35,11 +35,11 @@ from _lcm.utils.functools import get_union_of_args
 from _lcm.utils.logging import get_logger
 from lcm import (
     DiscreteGrid,
-    EdgeLeg,
     GatedEdge,
     LinSpacedGrid,
+    ProjectedRegimeValue,
     Regime,
-    SamePeriodRef,
+    StakeholderRoute,
     categorical,
 )
 from lcm.ages import AgeGrid
@@ -152,8 +152,8 @@ def _make_regimes() -> dict[str, Regime]:
             "target": GatedEdge(
                 gate=_gate_dissolves_everywhere,
                 legs={
-                    "own": EdgeLeg(
-                        fallback=SamePeriodRef(
+                    "own": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
                             regime="fallback",
                             projection={"settlement": _settlement_from_health},
                         )

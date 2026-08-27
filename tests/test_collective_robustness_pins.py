@@ -31,7 +31,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.exceptions import PyLCMError
-from lcm.regime import EdgeLeg, GatedEdge, SamePeriodRef
+from lcm.regime import GatedEdge, ProjectedRegimeValue, StakeholderRoute
 from lcm.result import SimulationResult
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
@@ -152,9 +152,9 @@ def test_gated_edge_declaration_types_are_exported_from_the_package():
     this module alone imports the two names from `lcm.regime`: reading both
     sides off `lcm` would compare each name against itself and pin nothing.
     """
-    exported = (getattr(lcm, "GatedEdge", None), getattr(lcm, "EdgeLeg", None))
+    exported = (getattr(lcm, "GatedEdge", None), getattr(lcm, "StakeholderRoute", None))
 
-    assert exported == (GatedEdge, EdgeLeg)
+    assert exported == (GatedEdge, StakeholderRoute)
 
 
 def _drop_stakeholder_metadata(*, directory: Path) -> None:
@@ -195,8 +195,8 @@ def _make_singleton_target_dissolution_gate_regimes() -> MappingProxyType[str, R
             "target": GatedEdge(
                 gate=_no_dissolution,
                 legs={
-                    "only": EdgeLeg(
-                        fallback=SamePeriodRef(
+                    "only": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
                             regime="fallback",
                             projection={"wage": _identity_wage},
                         ),

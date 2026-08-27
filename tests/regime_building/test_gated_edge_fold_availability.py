@@ -23,12 +23,12 @@ import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
 from _lcm.regime_building.gated_edges import (
-    ResolvedEdgeLeg,
     ResolvedGatedEdge,
+    ResolvedStakeholderRoute,
     edge_may_fold_at_period,
     source_reads_folded_wbar,
 )
-from _lcm.regime_building.Q_and_F import ResolvedSamePeriodRef
+from _lcm.regime_building.Q_and_F import ResolvedProjectedRegimeValue
 from _lcm.solution.backward_induction import solve
 from _lcm.typing import ConstraintFunction
 from _lcm.utils.logging import get_logger
@@ -56,7 +56,7 @@ def _edge(
         {}
         if gate_ref is None
         else {
-            "V_ref": ResolvedSamePeriodRef(
+            "V_ref": ResolvedProjectedRegimeValue(
                 regime=gate_ref, projection={}, stakeholder_index=None
             )
         }
@@ -74,10 +74,10 @@ def _edge(
         gate=cast("ConstraintFunction", _gate),
         gate_refs=MappingProxyType(gate_refs),
         legs=(
-            ResolvedEdgeLeg(
+            ResolvedStakeholderRoute(
                 source_stakeholder=None,
                 target_component_index=None,
-                fallback=ResolvedSamePeriodRef(
+                fallback=ResolvedProjectedRegimeValue(
                     regime=fallback, projection={}, stakeholder_index=None
                 ),
             ),

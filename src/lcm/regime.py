@@ -46,10 +46,6 @@ from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.transition import AgeSpecializedGrid, JointTransition, MarkovTransition
 from lcm.typing import UserFunction
 
-# Spellings kept for the declarations these two were renamed from.
-SamePeriodRef = ProjectedRegimeValue
-EdgeLeg = StakeholderRoute
-
 
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
@@ -73,7 +69,7 @@ class GatedEdge:
 
     A leg thus owns four facts about where its rows go, and simulation carries
     all four: the open branch's regime (the key) and role
-    (`EdgeLeg.target_stakeholder`), and the closed branch's regime and role
+    (`StakeholderRoute.target_stakeholder`), and the closed branch's regime and role
     (`fallback.regime` and `fallback.stakeholder`). A row's own role —
     `initial_conditions["own_stakeholder"]`, published in the simulated frame —
     is what picks its leg, and it is updated to the branch's role as the row
@@ -99,7 +95,7 @@ class GatedEdge:
       "no dissolution this period" is `gate = ~D_target`. Stochastic gates —
       a gate returning a probability in `(0, 1)` rather than a boolean — are
       not supported.
-    - `legs` — one `EdgeLeg` per SOURCE stakeholder (keyed by source
+    - `legs` — one `StakeholderRoute` per SOURCE stakeholder (keyed by source
       stakeholder name; a singleton source declares exactly one leg under any
       key).
     - `gate_refs` — extra same-period reference values the `gate` reads,
@@ -115,10 +111,13 @@ class GatedEdge:
     gate: UserFunction
     """Boolean gate on the target grid, evaluated in the target fold's context."""
 
-    legs: Mapping[str, EdgeLeg]
-    """One `EdgeLeg` per source stakeholder (single leg for a singleton source)."""
+    legs: Mapping[str, StakeholderRoute]
+    """One `StakeholderRoute` per source stakeholder.
 
-    gate_refs: Mapping[str, SamePeriodRef] = field(
+    A singleton source declares exactly one, under any key.
+    """
+
+    gate_refs: Mapping[str, ProjectedRegimeValue] = field(
         default_factory=lambda: MappingProxyType({})
     )
     """Same-period reference values the `gate` reads (projected from the target
@@ -459,13 +458,13 @@ class Regime:
     stakeholder rejection.
     """
 
-    same_period_refs: Mapping[str, SamePeriodRef] = field(
+    same_period_refs: Mapping[str, ProjectedRegimeValue] = field(
         default_factory=lambda: MappingProxyType({})
     )
     """Same-period cross-regime reference values read by `value_constraints`.
 
     Maps each reference-value name (the argument name under which the
-    interpolated value enters the predicates) to a `SamePeriodRef` declaring
+    interpolated value enters the predicates) to a `ProjectedRegimeValue` declaring
     the reference regime, the state projection, and — for a collective
     reference — the stakeholder. Reference regimes are solved earlier within
     the same period (topological order; cycles are rejected at model build).

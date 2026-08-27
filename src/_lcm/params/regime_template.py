@@ -25,7 +25,7 @@ from _lcm.typing import (
 from _lcm.utils.functools import get_union_of_args
 from lcm.exceptions import InvalidNameError
 from lcm.phased import Phased
-from lcm.regime import GatedEdge, SamePeriodRef
+from lcm.regime import GatedEdge, ProjectedRegimeValue
 from lcm.regime import Regime as UserRegime
 from lcm.transition import JointTransition, MarkovTransition
 from lcm.typing import UserFunction
@@ -1128,7 +1128,9 @@ def _gated_edge_entries(
             # A `Phased` fallback is two callables with two parameter sets, so
             # each phase gets its own entry; a leg declaring one reference for
             # both contributes the solve spelling once, exactly as before.
-            phases: tuple[tuple[Literal["solve", "simulate"], SamePeriodRef], ...] = (
+            phases: tuple[
+                tuple[Literal["solve", "simulate"], ProjectedRegimeValue], ...
+            ] = (
                 (("solve", leg.solve_fallback), ("simulate", leg.simulate_fallback))
                 if leg.fallback_is_phased
                 else (("solve", leg.solve_fallback),)

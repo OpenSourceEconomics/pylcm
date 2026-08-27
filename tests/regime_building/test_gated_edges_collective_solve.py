@@ -30,12 +30,12 @@ from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
     DiscreteGrid,
-    EdgeLeg,
     GatedEdge,
     LinSpacedGrid,
     Model,
+    ProjectedRegimeValue,
     Regime,
-    SamePeriodRef,
+    StakeholderRoute,
     categorical,
     fixed_transition,
 )
@@ -116,20 +116,20 @@ def _make_consent_regimes() -> dict[str, Regime]:
             "married_terminal": GatedEdge(
                 gate=_consent_gate,
                 legs={
-                    "f": EdgeLeg(
+                    "f": StakeholderRoute(
                         target_stakeholder="f",
-                        fallback=SamePeriodRef(
+                        fallback=ProjectedRegimeValue(
                             regime="single_f_terminal",
                             projection={"wage": _identity_wage},
                         ),
                     )
                 },
                 gate_refs={
-                    "V_single_f_ref": SamePeriodRef(
+                    "V_single_f_ref": ProjectedRegimeValue(
                         regime="single_f_terminal",
                         projection={"wage": _identity_wage},
                     ),
-                    "V_single_m_ref": SamePeriodRef(
+                    "V_single_m_ref": ProjectedRegimeValue(
                         regime="single_m_terminal",
                         projection={"wage": _identity_wage},
                     ),
@@ -302,15 +302,15 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
             "married_ir": GatedEdge(
                 gate=_no_dissolution_gate,
                 legs={
-                    "f": EdgeLeg(
+                    "f": StakeholderRoute(
                         target_stakeholder="f",
-                        fallback=SamePeriodRef(
+                        fallback=ProjectedRegimeValue(
                             regime="single_f", projection={"wage": _identity_wage}
                         ),
                     ),
-                    "m": EdgeLeg(
+                    "m": StakeholderRoute(
                         target_stakeholder="m",
-                        fallback=SamePeriodRef(
+                        fallback=ProjectedRegimeValue(
                             regime="single_m", projection={"wage": _identity_wage}
                         ),
                     ),
@@ -328,10 +328,10 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
         functions={"utility_f": _u_married_ir_f, "utility_m": _u_married_ir_m},
         value_constraints={"ir_f": _ir_f, "ir_m": _ir_m},
         same_period_refs={
-            "V_single_f_ref": SamePeriodRef(
+            "V_single_f_ref": ProjectedRegimeValue(
                 regime="single_f", projection={"wage": _identity_wage}
             ),
-            "V_single_m_ref": SamePeriodRef(
+            "V_single_m_ref": ProjectedRegimeValue(
                 regime="single_m", projection={"wage": _identity_wage}
             ),
         },
@@ -519,9 +519,9 @@ def test_probabilistic_gate_is_rejected():
                 "married_terminal": GatedEdge(
                     gate=MarkovTransition(_prob_one),
                     legs={
-                        "f": EdgeLeg(
+                        "f": StakeholderRoute(
                             target_stakeholder="f",
-                            fallback=SamePeriodRef(
+                            fallback=ProjectedRegimeValue(
                                 regime="single_f_terminal",
                                 projection={"wage": _identity_wage},
                             ),
@@ -538,18 +538,18 @@ def test_edge_fallback_to_unknown_regime_is_rejected():
     bad_edge = GatedEdge(
         gate=_consent_gate,
         legs={
-            "f": EdgeLeg(
+            "f": StakeholderRoute(
                 target_stakeholder="f",
-                fallback=SamePeriodRef(
+                fallback=ProjectedRegimeValue(
                     regime="no_such_regime", projection={"wage": _identity_wage}
                 ),
             )
         },
         gate_refs={
-            "V_single_f_ref": SamePeriodRef(
+            "V_single_f_ref": ProjectedRegimeValue(
                 regime="single_f_terminal", projection={"wage": _identity_wage}
             ),
-            "V_single_m_ref": SamePeriodRef(
+            "V_single_m_ref": ProjectedRegimeValue(
                 regime="single_m_terminal", projection={"wage": _identity_wage}
             ),
         },
@@ -589,18 +589,18 @@ def test_edge_leg_naming_a_missing_target_stakeholder_is_rejected():
     bad_edge = GatedEdge(
         gate=_consent_gate,
         legs={
-            "f": EdgeLeg(
+            "f": StakeholderRoute(
                 target_stakeholder="not_a_stakeholder",
-                fallback=SamePeriodRef(
+                fallback=ProjectedRegimeValue(
                     regime="single_f_terminal", projection={"wage": _identity_wage}
                 ),
             )
         },
         gate_refs={
-            "V_single_f_ref": SamePeriodRef(
+            "V_single_f_ref": ProjectedRegimeValue(
                 regime="single_f_terminal", projection={"wage": _identity_wage}
             ),
-            "V_single_m_ref": SamePeriodRef(
+            "V_single_m_ref": ProjectedRegimeValue(
                 regime="single_m_terminal", projection={"wage": _identity_wage}
             ),
         },
@@ -650,21 +650,23 @@ class EKLRegimeId:
 
 
 def _make_full_topology_regimes() -> dict[str, Regime]:
-    def _consent_leg(fallback_regime: str, stakeholder: str) -> dict[str, EdgeLeg]:
+    def _consent_leg(
+        fallback_regime: str, stakeholder: str
+    ) -> dict[str, StakeholderRoute]:
         return {
-            stakeholder: EdgeLeg(
+            stakeholder: StakeholderRoute(
                 target_stakeholder=stakeholder,
-                fallback=SamePeriodRef(
+                fallback=ProjectedRegimeValue(
                     regime=fallback_regime, projection={"wage": _identity_wage}
                 ),
             )
         }
 
     _consent_gate_refs = {
-        "V_single_f_ref": SamePeriodRef(
+        "V_single_f_ref": ProjectedRegimeValue(
             regime="single_f_p1", projection={"wage": _identity_wage}
         ),
-        "V_single_m_ref": SamePeriodRef(
+        "V_single_m_ref": ProjectedRegimeValue(
             regime="single_m_p1", projection={"wage": _identity_wage}
         ),
     }
@@ -714,10 +716,10 @@ def _make_full_topology_regimes() -> dict[str, Regime]:
         functions={"utility_f": _u_married_ir_f, "utility_m": _u_married_ir_m},
         value_constraints={"ir_f": _ir_f, "ir_m": _ir_m},
         same_period_refs={
-            "V_single_f_ref": SamePeriodRef(
+            "V_single_f_ref": ProjectedRegimeValue(
                 regime="single_f_p1", projection={"wage": _identity_wage}
             ),
-            "V_single_m_ref": SamePeriodRef(
+            "V_single_m_ref": ProjectedRegimeValue(
                 regime="single_m_p1", projection={"wage": _identity_wage}
             ),
         },
@@ -725,16 +727,16 @@ def _make_full_topology_regimes() -> dict[str, Regime]:
             "married_terminal": GatedEdge(
                 gate=_no_dissolution_gate,
                 legs={
-                    "f": EdgeLeg(
+                    "f": StakeholderRoute(
                         target_stakeholder="f",
-                        fallback=SamePeriodRef(
+                        fallback=ProjectedRegimeValue(
                             regime="single_f_terminal",
                             projection={"wage": _identity_wage},
                         ),
                     ),
-                    "m": EdgeLeg(
+                    "m": StakeholderRoute(
                         target_stakeholder="m",
-                        fallback=SamePeriodRef(
+                        fallback=ProjectedRegimeValue(
                             regime="single_m_terminal",
                             projection={"wage": _identity_wage},
                         ),
@@ -824,16 +826,16 @@ def test_singleton_source_with_two_legs_is_rejected():
                 "married_terminal": GatedEdge(
                     gate=_consent_gate,
                     legs={
-                        "f": EdgeLeg(
+                        "f": StakeholderRoute(
                             target_stakeholder="f",
-                            fallback=SamePeriodRef(
+                            fallback=ProjectedRegimeValue(
                                 regime="single_f_terminal",
                                 projection={"wage": _identity_wage},
                             ),
                         ),
-                        "extra": EdgeLeg(
+                        "extra": StakeholderRoute(
                             target_stakeholder="m",
-                            fallback=SamePeriodRef(
+                            fallback=ProjectedRegimeValue(
                                 regime="single_m_terminal",
                                 projection={"wage": _identity_wage},
                             ),
@@ -859,15 +861,15 @@ def _edge_with_refs(*, fallback_regime: str, gate_ref_regime: str) -> GatedEdge:
     return GatedEdge(
         gate=_always_open_gate,
         legs={
-            "f": EdgeLeg(
-                fallback=SamePeriodRef(
+            "f": StakeholderRoute(
+                fallback=ProjectedRegimeValue(
                     regime=fallback_regime,
                     projection={"wage": _identity_wage},
                 )
             )
         },
         gate_refs={
-            "g": SamePeriodRef(
+            "g": ProjectedRegimeValue(
                 regime=gate_ref_regime,
                 projection={"wage": _identity_wage},
             )

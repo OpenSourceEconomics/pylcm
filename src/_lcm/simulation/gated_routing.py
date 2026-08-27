@@ -86,7 +86,7 @@ from _lcm.regime_building.gated_edges import (
     SOURCE_PARAMS,
     TARGET_PARAMS,
     EdgeArgProvenance,
-    ResolvedEdgeLeg,
+    ResolvedStakeholderRoute,
     bind_edge_period_context,
     build_reference_params_mapping_for_fold,
     build_same_period_mapping_for_fold,
@@ -500,7 +500,7 @@ def route_gated_edges(
 
 def _per_row_leg_outcomes(
     *,
-    legs: tuple[ResolvedEdgeLeg, ...],
+    legs: tuple[ResolvedStakeholderRoute, ...],
     own_stakeholder: Int1D,
     regime_names_to_ids: RegimeNamesToIds,
     role_ids: Mapping[str, int],

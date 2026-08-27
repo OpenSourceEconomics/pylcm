@@ -22,8 +22,8 @@ from lcm import (
     AgeGrid,
     IrregSpacedGrid,
     Model,
+    ProjectedRegimeValue,
     Regime,
-    SamePeriodRef,
     categorical,
     fixed_transition,
 )
@@ -90,7 +90,7 @@ def _make_model(*, participation: bool) -> Model:
         ),
         same_period_refs=(
             {
-                "V_single_f": SamePeriodRef(
+                "V_single_f": ProjectedRegimeValue(
                     regime="single_f_terminal", projection={"wage": _identity_wage}
                 )
             }

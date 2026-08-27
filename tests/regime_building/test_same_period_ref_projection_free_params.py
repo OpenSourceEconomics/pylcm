@@ -11,7 +11,7 @@ declared names the reference, the projection, and the argument.
 import jax.numpy as jnp
 import pytest
 
-from lcm import DiscreteGrid, LinSpacedGrid, Regime, SamePeriodRef, categorical
+from lcm import DiscreteGrid, LinSpacedGrid, ProjectedRegimeValue, Regime, categorical
 from lcm.exceptions import RegimeInitializationError
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
 
@@ -64,7 +64,7 @@ def _make_regime(*, projection) -> Regime:
         functions={"utility_f": _utility_f, "utility_m": _utility_m},
         value_constraints={"participation_f": _participation_f},
         same_period_refs={
-            "outside_option_f": SamePeriodRef(
+            "outside_option_f": ProjectedRegimeValue(
                 regime="single_f", projection={"wealth": projection}
             )
         },

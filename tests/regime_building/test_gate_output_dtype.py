@@ -14,12 +14,12 @@ import pytest
 from lcm import (
     AgeGrid,
     DiscreteGrid,
-    EdgeLeg,
     GatedEdge,
     LinSpacedGrid,
     Model,
+    ProjectedRegimeValue,
     Regime,
-    SamePeriodRef,
+    StakeholderRoute,
     categorical,
     fixed_transition,
 )
@@ -87,8 +87,8 @@ def _make_model(*, gate) -> Model:
                     "target": GatedEdge(
                         gate=gate,
                         legs={
-                            "only": EdgeLeg(
-                                fallback=SamePeriodRef(
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
                                     regime="fallback",
                                     projection={"x": _identity_x},
                                 )

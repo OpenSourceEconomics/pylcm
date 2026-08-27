@@ -41,12 +41,12 @@ from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
     DiscreteGrid,
-    EdgeLeg,
     GatedEdge,
     LinSpacedGrid,
     NormalIIDProcess,
+    ProjectedRegimeValue,
     Regime,
-    SamePeriodRef,
+    StakeholderRoute,
     categorical,
 )
 from lcm.ages import AgeGrid
@@ -365,8 +365,8 @@ def test_fold_source_state_name_reused_by_outbound_gate_is_not_rejected():
             "some_target": GatedEdge(
                 gate=lambda wage_shock: wage_shock > 0.0,
                 legs={
-                    "only": EdgeLeg(
-                        fallback=SamePeriodRef(regime="elsewhere", projection={})
+                    "only": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(regime="elsewhere", projection={})
                     )
                 },
             )

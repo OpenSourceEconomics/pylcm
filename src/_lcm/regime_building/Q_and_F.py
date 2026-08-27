@@ -580,9 +580,9 @@ def get_Q_and_F_terminal_collective(
     constraints: ConstraintFunctionsMapping,
     stakeholders: tuple[str, ...],
     value_constraints: ConstraintFunctionsMapping = MappingProxyType({}),
-    same_period_refs: MappingProxyType[str, ResolvedSamePeriodRef] = MappingProxyType(
-        {}
-    ),
+    same_period_refs: MappingProxyType[
+        str, ResolvedProjectedRegimeValue
+    ] = MappingProxyType({}),
     same_period_v_interpolation_info: MappingProxyType[
         RegimeName, VInterpolationInfo
     ] = MappingProxyType({}),
@@ -764,8 +764,8 @@ class GatedContinuationSpec:
 
 
 @dataclass(frozen=True, kw_only=True)
-class ResolvedSamePeriodRef:
-    """Engine-side form of a user `SamePeriodRef`, resolved at model processing.
+class ResolvedProjectedRegimeValue:
+    """Engine-side form of a user `ProjectedRegimeValue`, resolved at model processing.
 
     The user declaration names a stakeholder; the
     engine resolves it to the index on the reference regime's trailing
@@ -792,7 +792,7 @@ class ResolvedSamePeriodRef:
 
 
 def projection_func_or_fail(
-    *, ref: ResolvedSamePeriodRef, state_name: StateName
+    *, ref: ResolvedProjectedRegimeValue, state_name: StateName
 ) -> Callable[..., Any]:
     """Return the coordinate function a reference's projection gives one state.
 
@@ -825,7 +825,7 @@ def projection_func_or_fail(
 
 def _build_same_period_ref_reader(
     *,
-    ref: ResolvedSamePeriodRef,
+    ref: ResolvedProjectedRegimeValue,
     v_interpolation_info: VInterpolationInfo,
     functions: EconFunctionsMapping,
     deterministic_transitions: Mapping[TransitionFunctionName, TransitionFunction] = (
@@ -958,7 +958,7 @@ def _build_same_period_ref_reader(
 def _reference_interpolator_param_qnames(
     *,
     extra_args: set[str],
-    ref: ResolvedSamePeriodRef,
+    ref: ResolvedProjectedRegimeValue,
 ) -> MappingProxyType[str, str]:
     """Map each extra interpolator input to its qname in the REFERENCE namespace.
 
@@ -1054,7 +1054,7 @@ def get_Q_and_F_collective(
     stakeholders: tuple[str, ...],
     co_map_state_names: tuple[StateName, ...] = (),
     value_constraints: ConstraintFunctionsMapping = MappingProxyType({}),
-    same_period_refs: Mapping[str, ResolvedSamePeriodRef] = MappingProxyType({}),
+    same_period_refs: Mapping[str, ResolvedProjectedRegimeValue] = MappingProxyType({}),
     continuation_functions: EconFunctionsMapping | None = None,
     gated_continuations: Mapping[RegimeName, GatedContinuationSpec] = MappingProxyType(
         {}
@@ -1324,7 +1324,7 @@ class _ValueConstraintMachinery:
 def _build_value_constraint_machinery(
     *,
     value_constraints: ConstraintFunctionsMapping,
-    same_period_refs: Mapping[str, ResolvedSamePeriodRef],
+    same_period_refs: Mapping[str, ResolvedProjectedRegimeValue],
     stakeholders: tuple[str, ...],
     same_period_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     functions: EconFunctionsMapping,

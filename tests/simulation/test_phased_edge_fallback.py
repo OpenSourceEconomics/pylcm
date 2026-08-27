@@ -6,10 +6,10 @@ expectation — that is what the decision was taken under — while the row a
 simulation writes has to be the realization, in the regime and at the state the
 settlement really produces.
 
-`EdgeLeg(fallback=Phased(solve=..., simulate=...))` declares them separately:
+`StakeholderRoute(fallback=Phased(solve=..., simulate=...))` declares them separately:
 the solve leg is folded into `Wbar` and prices the decision, and the simulate
 leg supplies the regime, the role and the state coordinates a routed row lands
-on. A bare `SamePeriodRef` is both, as before.
+on. A bare `ProjectedRegimeValue` is both, as before.
 """
 
 import jax.numpy as jnp
@@ -17,13 +17,13 @@ import numpy as np
 
 from lcm import (
     AgeGrid,
-    EdgeLeg,
     GatedEdge,
     LinSpacedGrid,
     Model,
     Phased,
+    ProjectedRegimeValue,
     Regime,
-    SamePeriodRef,
+    StakeholderRoute,
     categorical,
     fixed_transition,
 )
@@ -93,13 +93,13 @@ def _make_model() -> Model:
             "retired": GatedEdge(
                 gate=_well_off,
                 legs={
-                    "only": EdgeLeg(
+                    "only": StakeholderRoute(
                         fallback=Phased(
-                            solve=SamePeriodRef(
+                            solve=ProjectedRegimeValue(
                                 regime="hardship",
                                 projection={"wealth": _whole_wealth},
                             ),
-                            simulate=SamePeriodRef(
+                            simulate=ProjectedRegimeValue(
                                 regime="shelter",
                                 stakeholder="guest",
                                 projection={"wealth": _settled_wealth},

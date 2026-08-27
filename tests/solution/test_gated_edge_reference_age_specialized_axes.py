@@ -22,13 +22,13 @@ from numpy.testing import assert_array_almost_equal as aaae
 from lcm import (
     AgeGrid,
     AgeSpecializedGrid,
-    EdgeLeg,
     GatedEdge,
     LinSpacedGrid,
     MarkovTransition,
     Model,
+    ProjectedRegimeValue,
     Regime,
-    SamePeriodRef,
+    StakeholderRoute,
     categorical,
 )
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
@@ -184,14 +184,14 @@ def _build_model() -> Model:
             "account": GatedEdge(
                 gate=_index_clears_the_hurdle,
                 gate_refs={
-                    "index_value": SamePeriodRef(
+                    "index_value": ProjectedRegimeValue(
                         regime="index",
                         projection={"level": _level_from_balance},
                     )
                 },
                 legs={
-                    "only": EdgeLeg(
-                        fallback=SamePeriodRef(
+                    "only": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
                             regime="annuity",
                             projection={"principal": _principal_from_balance},
                         )

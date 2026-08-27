@@ -17,12 +17,12 @@ import numpy as np
 from _lcm.regime_building.collective import NO_ROLE
 from lcm import (
     AgeGrid,
-    EdgeLeg,
     GatedEdge,
     IrregSpacedGrid,
     Model,
+    ProjectedRegimeValue,
     Regime,
-    SamePeriodRef,
+    StakeholderRoute,
     categorical,
     fixed_transition,
 )
@@ -75,17 +75,17 @@ def _make_model() -> Model:
             "household_next": GatedEdge(
                 gate=_prosperous_enough,
                 legs={
-                    "f": EdgeLeg(
+                    "f": StakeholderRoute(
                         target_stakeholder="f",
-                        fallback=SamePeriodRef(
+                        fallback=ProjectedRegimeValue(
                             regime="care_pair",
                             stakeholder="carer",
                             projection={"wage": _identity_wage},
                         ),
                     ),
-                    "m": EdgeLeg(
+                    "m": StakeholderRoute(
                         target_stakeholder="m",
-                        fallback=SamePeriodRef(
+                        fallback=ProjectedRegimeValue(
                             regime="lodging",
                             projection={"wage": _identity_wage},
                         ),

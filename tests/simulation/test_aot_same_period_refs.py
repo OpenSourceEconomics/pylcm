@@ -29,7 +29,7 @@ import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm import AgeGrid, DiscreteGrid, Model, categorical, fixed_transition
-from lcm.regime import Regime, SamePeriodRef
+from lcm.regime import ProjectedRegimeValue, Regime
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, DiscreteAction, DiscreteState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
@@ -163,7 +163,7 @@ def _make_participation_model(*, n_subjects: int | None) -> Model:
         functions={"utility_f": _couple_utility_f, "utility_m": _couple_utility_m},
         value_constraints={"participation_f": _participation_f},
         same_period_refs={
-            "V_single_f_ref": SamePeriodRef(
+            "V_single_f_ref": ProjectedRegimeValue(
                 regime="single_f", projection={"education": _identity_education}
             )
         },

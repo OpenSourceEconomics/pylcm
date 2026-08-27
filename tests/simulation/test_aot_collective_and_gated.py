@@ -28,11 +28,11 @@ from _lcm.simulation.gated_routing import population_call
 from lcm import (
     AgeGrid,
     DiscreteGrid,
-    EdgeLeg,
     GatedEdge,
     Model,
+    ProjectedRegimeValue,
     Regime,
-    SamePeriodRef,
+    StakeholderRoute,
     categorical,
     fixed_transition,
 )
@@ -254,16 +254,16 @@ def _make_consent_model(*, n_subjects: int | None) -> Model:
             "married_terminal": GatedEdge(
                 gate=_consent_gate,
                 legs={
-                    "f": EdgeLeg(
+                    "f": StakeholderRoute(
                         target_stakeholder="f",
-                        fallback=SamePeriodRef(
+                        fallback=ProjectedRegimeValue(
                             regime="single_terminal",
                             projection={"education": _identity_education},
                         ),
                     )
                 },
                 gate_refs={
-                    "V_single_ref": SamePeriodRef(
+                    "V_single_ref": ProjectedRegimeValue(
                         regime="single_terminal",
                         projection={"education": _identity_education},
                     )

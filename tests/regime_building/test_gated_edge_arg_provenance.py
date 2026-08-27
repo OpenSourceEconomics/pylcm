@@ -57,7 +57,7 @@ from _lcm.regime_building.collective import NO_ROLE
 from _lcm.regime_building.gated_edges import (
     SOURCE_PARAMS,
     TARGET_PARAMS,
-    ResolvedSamePeriodRef,
+    ResolvedProjectedRegimeValue,
     _reached_target_param_leaves,
     _reject_gate_operand_state_name_collision,
 )
@@ -80,12 +80,12 @@ from _lcm.utils.functools import get_union_of_args
 from _lcm.utils.logging import get_logger
 from lcm import (
     DiscreteGrid,
-    EdgeLeg,
     GatedEdge,
     IrregSpacedGrid,
     LinSpacedGrid,
+    ProjectedRegimeValue,
     Regime,
-    SamePeriodRef,
+    StakeholderRoute,
     categorical,
 )
 from lcm.ages import AgeGrid
@@ -216,13 +216,13 @@ def _make_shift_regimes() -> dict[str, Regime]:
             "target": GatedEdge(
                 gate=_ref_gate,
                 gate_refs={
-                    "ref_v": SamePeriodRef(
+                    "ref_v": ProjectedRegimeValue(
                         regime="refregime", projection={"x": _project_to_shift}
                     )
                 },
                 legs={
-                    "only": EdgeLeg(
-                        fallback=SamePeriodRef(
+                    "only": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
                             regime="fallback", projection={"x": _identity_x}
                         )
                     )
@@ -523,8 +523,8 @@ def _make_projector_regimes() -> dict[str, Regime]:
             "target": GatedEdge(
                 gate=_always_closed_gate,
                 legs={
-                    "only": EdgeLeg(
-                        fallback=SamePeriodRef(
+                    "only": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
                             regime="fallback", projection={"z": _project_x_plus_shift}
                         )
                     )
@@ -799,13 +799,13 @@ def _make_ref_grid_regimes() -> dict[str, Regime]:
             "target": GatedEdge(
                 gate=_gate_ref_only,
                 gate_refs={
-                    "ref_v": SamePeriodRef(
+                    "ref_v": ProjectedRegimeValue(
                         regime="refregime", projection={"x": _project_realized}
                     )
                 },
                 legs={
-                    "only": EdgeLeg(
-                        fallback=SamePeriodRef(
+                    "only": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
                             regime="fallback", projection={"x": _identity_x}
                         )
                     )
@@ -956,8 +956,8 @@ def _make_fallback_grid_regimes() -> dict[str, Regime]:
             "target": GatedEdge(
                 gate=_always_closed_gate,
                 legs={
-                    "only": EdgeLeg(
-                        fallback=SamePeriodRef(
+                    "only": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
                             regime="fallback", projection={"z": _identity_x_to_z}
                         )
                     )
@@ -1080,7 +1080,7 @@ def _make_e2_ref_grid_regimes() -> dict[str, Regime]:
         functions={"utility_f": _u_married_f, "utility_m": _u_married_m},
         value_constraints={"ir_f": _ir_f},
         same_period_refs={
-            "V_single_f_ref": SamePeriodRef(
+            "V_single_f_ref": ProjectedRegimeValue(
                 regime="single_f", projection={"wage": _project_wage}
             )
         },
@@ -1173,7 +1173,7 @@ def test_e2_same_period_ref_reads_the_reference_regimes_own_runtime_grid():
     # outcome, so exercise the production reader itself on the SAME solved
     # `V_single_f` and vary ONLY which regime's points resolve its grid.
     reader = _build_same_period_ref_reader(
-        ref=ResolvedSamePeriodRef(
+        ref=ResolvedProjectedRegimeValue(
             regime="single_f",
             projection={"wage": _project_wage},
             stakeholder_index=None,
@@ -1246,8 +1246,8 @@ def _make_target_helper_regimes() -> dict[str, Regime]:
             "target": GatedEdge(
                 gate=_gate_reads_target_helper,
                 legs={
-                    "only": EdgeLeg(
-                        fallback=SamePeriodRef(
+                    "only": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
                             regime="fallback", projection={"x": _identity_x}
                         )
                     )
@@ -1334,14 +1334,14 @@ def _make_gate_ref_target_helper_regimes() -> dict[str, Regime]:
             "target": GatedEdge(
                 gate=_gate_ref_value_only,
                 gate_refs={
-                    "scaled_ref": SamePeriodRef(
+                    "scaled_ref": ProjectedRegimeValue(
                         regime="refregime",
                         projection={"x": _project_through_target_helper},
                     )
                 },
                 legs={
-                    "only": EdgeLeg(
-                        fallback=SamePeriodRef(
+                    "only": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
                             regime="fallback", projection={"x": _identity_x}
                         )
                     )
@@ -1477,13 +1477,13 @@ def _make_gate_ref_name_collision_regimes() -> dict[str, Regime]:
                     # Injected operand named exactly like the target's `outside`
                     # function below: the concatenated DAG resolves the gate's
                     # `outside` arg to the target NODE (0.9), not this ref (~0.6).
-                    "outside": SamePeriodRef(
+                    "outside": ProjectedRegimeValue(
                         regime="refregime", projection={"x": _project_realized}
                     )
                 },
                 legs={
-                    "only": EdgeLeg(
-                        fallback=SamePeriodRef(
+                    "only": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
                             regime="fallback", projection={"x": _identity_x}
                         )
                     )
@@ -1575,8 +1575,8 @@ def _make_threshold_shadow_regimes() -> dict[str, Regime]:
             "target": GatedEdge(
                 gate=_gate_reads_shadowed_threshold,
                 legs={
-                    "only": EdgeLeg(
-                        fallback=SamePeriodRef(
+                    "only": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
                             regime="fallback", projection={"x": _identity_x}
                         )
                     )
@@ -1644,13 +1644,13 @@ def _make_gate_ref_v_target_alias_regimes() -> dict[str, Regime]:
                 gate=_gate_uses_v_target,
                 gate_refs={
                     # Aliases the built-in target-value operand `V_target`.
-                    "V_target": SamePeriodRef(
+                    "V_target": ProjectedRegimeValue(
                         regime="refregime", projection={"x": _identity_x}
                     )
                 },
                 legs={
-                    "only": EdgeLeg(
-                        fallback=SamePeriodRef(
+                    "only": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
                             regime="fallback", projection={"x": _identity_x}
                         )
                     )
@@ -1774,13 +1774,13 @@ def _make_gate_ref_key_aliases_target_state_regimes() -> dict[str, Regime]:
                 gate_refs={
                     # Aliases the TARGET STATE `x` (not a value/D operand, so the
                     # gate-ref alias fence stays silent).
-                    "x": SamePeriodRef(
+                    "x": ProjectedRegimeValue(
                         regime="refregime", projection={"x": _identity_x}
                     )
                 },
                 legs={
-                    "only": EdgeLeg(
-                        fallback=SamePeriodRef(
+                    "only": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
                             regime="fallback", projection={"x": _identity_x}
                         )
                     )
@@ -1904,8 +1904,8 @@ def _make_gate_param_aliases_target_state_regimes(
             "target": GatedEdge(
                 gate=_gate_reads_x,
                 legs={
-                    "only": EdgeLeg(
-                        fallback=SamePeriodRef(
+                    "only": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
                             regime="fallback", projection={"x": _identity_x}
                         )
                     )
@@ -2018,8 +2018,8 @@ def _make_source_param_aliases_engine_params_regimes() -> dict[str, Regime]:
             "target": GatedEdge(
                 gate=_gate_reads_params_engine_arg,
                 legs={
-                    "only": EdgeLeg(
-                        fallback=SamePeriodRef(
+                    "only": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
                             regime="fallback", projection={"x": _identity_x}
                         )
                     )
@@ -2078,8 +2078,8 @@ def _make_source_param_aliases_engine_v_regimes() -> dict[str, Regime]:
             "target": GatedEdge(
                 gate=_gate_v_only,
                 legs={
-                    "only": EdgeLeg(
-                        fallback=SamePeriodRef(
+                    "only": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
                             regime="fallback", projection={"x": _identity_x}
                         )
                     )
@@ -2132,8 +2132,8 @@ def _make_target_state_aliases_engine_v_regimes() -> dict[str, Regime]:
             "target": GatedEdge(
                 gate=_gate_reads_v_arg_state,
                 legs={
-                    "only": EdgeLeg(
-                        fallback=SamePeriodRef(
+                    "only": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
                             regime="fallback",
                             projection={SAME_PERIOD_V_ARG: _identity_v_arg_state},
                         )
@@ -2278,8 +2278,8 @@ def test_source_param_near_engine_name_still_solves():
             "target": GatedEdge(
                 gate=_gate_near,
                 legs={
-                    "only": EdgeLeg(
-                        fallback=SamePeriodRef(
+                    "only": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
                             regime="fallback", projection={"x": _identity_x}
                         )
                     )

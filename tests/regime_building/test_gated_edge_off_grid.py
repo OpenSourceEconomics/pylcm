@@ -22,13 +22,13 @@ import pytest
 from lcm import (
     AgeGrid,
     DiscreteGrid,
-    EdgeLeg,
     GatedEdge,
     IrregSpacedGrid,
     LinSpacedGrid,
     Model,
+    ProjectedRegimeValue,
     Regime,
-    SamePeriodRef,
+    StakeholderRoute,
     categorical,
 )
 from lcm.exceptions import ModelInitializationError
@@ -114,8 +114,8 @@ def _make_model(
                     "target": GatedEdge(
                         gate=_gate,
                         legs={
-                            "only": EdgeLeg(
-                                fallback=SamePeriodRef(
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
                                     regime="fallback",
                                     projection={"x": _identity_x},
                                 )
@@ -284,8 +284,8 @@ def _make_discrete_target_model(*, off_grid: Literal["pointwise", "reject"]) -> 
                     "target": GatedEdge(
                         gate=_healthy_gate,
                         legs={
-                            "only": EdgeLeg(
-                                fallback=SamePeriodRef(
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
                                     regime="fallback",
                                     projection={"health": _keep_health},
                                 )
@@ -387,15 +387,15 @@ def _witness_model() -> Model:
                     "target": GatedEdge(
                         gate=_witness_gate,
                         legs={
-                            "only": EdgeLeg(
-                                fallback=SamePeriodRef(
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
                                     regime="fallback",
                                     projection={"x": _identity_x},
                                 )
                             )
                         },
                         gate_refs={
-                            "V_reference": SamePeriodRef(
+                            "V_reference": ProjectedRegimeValue(
                                 regime="reference", projection={"x": _identity_x}
                             )
                         },

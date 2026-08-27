@@ -55,11 +55,11 @@ from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
     DiscreteGrid,
-    EdgeLeg,
     GatedEdge,
     LinSpacedGrid,
+    ProjectedRegimeValue,
     Regime,
-    SamePeriodRef,
+    StakeholderRoute,
     categorical,
     fixed_transition,
 )
@@ -276,8 +276,8 @@ def _make_dual_edge_regimes(*, edge_order: tuple[str, str]) -> dict[str, Regime]
         "target_a": GatedEdge(
             gate=_gate_always_open,
             legs={
-                "only": EdgeLeg(
-                    fallback=SamePeriodRef(
+                "only": StakeholderRoute(
+                    fallback=ProjectedRegimeValue(
                         regime="fallback_a", projection={"wage": _identity_wage}
                     )
                 )
@@ -286,8 +286,8 @@ def _make_dual_edge_regimes(*, edge_order: tuple[str, str]) -> dict[str, Regime]
         "target_b": GatedEdge(
             gate=_gate_always_open,
             legs={
-                "only": EdgeLeg(
-                    fallback=SamePeriodRef(
+                "only": StakeholderRoute(
+                    fallback=ProjectedRegimeValue(
                         regime="fallback_b", projection={"wage": _identity_wage}
                     )
                 )

@@ -49,7 +49,7 @@ from _lcm.regime_building.Q_and_F import (
     EDGE_CHANNELS_ARG,
     SAME_PERIOD_PARAMS_ARG,
     SAME_PERIOD_V_ARG,
-    ResolvedSamePeriodRef,
+    ResolvedProjectedRegimeValue,
     _build_same_period_ref_reader,
     projection_func_or_fail,
 )
@@ -490,7 +490,7 @@ def _uncompiled_edge_callable(*_args: object, **_kwargs: object) -> NoReturn:
 
 
 @dataclass(frozen=True, kw_only=True)
-class ResolvedEdgeLeg:
+class ResolvedStakeholderRoute:
     """Engine-side form of one source-stakeholder leg of a gated edge."""
 
     source_stakeholder: str | None
@@ -504,13 +504,13 @@ class ResolvedEdgeLeg:
     """The target regime's stakeholder as named, or `None` for a singleton
     target — the role a subject taking the OPEN branch carries onward."""
 
-    fallback: ResolvedSamePeriodRef
+    fallback: ResolvedProjectedRegimeValue
     """The CLOSED-branch reference value the fold PRICES (regime, projection,
     stakeholder index)."""
 
-    simulate_fallback: ResolvedSamePeriodRef | None = None
+    simulate_fallback: ResolvedProjectedRegimeValue | None = None
     """The CLOSED branch a routed row actually LANDS in, when the leg declared
-    the two separately (`EdgeLeg(fallback=Phased(...))`); `None` where one
+    the two separately (`StakeholderRoute(fallback=Phased(...))`); `None` where one
     reference serves both. Read `realized_fallback` rather than this field."""
 
     fallback_state_projector: Callable = _uncompiled_edge_callable
@@ -528,7 +528,7 @@ class ResolvedEdgeLeg:
     """
 
     @property
-    def realized_fallback(self) -> ResolvedSamePeriodRef:
+    def realized_fallback(self) -> ResolvedProjectedRegimeValue:
         """Where the gate-closed branch actually puts a simulated row.
 
         The fold prices the branch at `fallback`; simulation realizes it here.
@@ -551,10 +551,10 @@ class ResolvedGatedEdge:
     below rename its parameters to their flat source-regime names
     (`_with_qualified_params`) after the fences have read it as declared."""
 
-    gate_refs: Mapping[str, ResolvedSamePeriodRef]
+    gate_refs: Mapping[str, ResolvedProjectedRegimeValue]
     """Extra same-period references the gate reads (projected from the target grid)."""
 
-    legs: tuple[ResolvedEdgeLeg, ...]
+    legs: tuple[ResolvedStakeholderRoute, ...]
     """One leg per source component, in SOURCE stakeholder order."""
 
     reference_regimes: tuple[RegimeName, ...]
@@ -787,7 +787,7 @@ def _reached_target_param_leaves(
     return frozenset(ancestors - set(dag_pool) - set(state_names))
 
 
-def _projection_seed_args(ref: ResolvedSamePeriodRef) -> frozenset[str]:
+def _projection_seed_args(ref: ResolvedProjectedRegimeValue) -> frozenset[str]:
     """The OWN declared arguments of every projection function of a same-period ref.
 
     Seeds the ancestry-aware target-parameter fence for a gate-ref or leg-fallback
@@ -843,11 +843,11 @@ def _with_qualified_params(
 
 def _gate_ref_with_qualified_params(
     *,
-    ref: ResolvedSamePeriodRef,
+    ref: ResolvedProjectedRegimeValue,
     ref_name: str,
     target: RegimeName,
     state_names: Container[StateName],
-) -> ResolvedSamePeriodRef:
+) -> ResolvedProjectedRegimeValue:
     """Return a gate reference whose projections declare their flat param names."""
     return _ref_with_qualified_params(
         ref=ref,
@@ -862,11 +862,11 @@ def _gate_ref_with_qualified_params(
 
 def _leg_fallback_with_qualified_params(
     *,
-    ref: ResolvedSamePeriodRef,
+    ref: ResolvedProjectedRegimeValue,
     target: RegimeName,
     state_names: Container[StateName],
     phase: Literal["solve", "simulate"] = "solve",
-) -> ResolvedSamePeriodRef:
+) -> ResolvedProjectedRegimeValue:
     """Return a leg fallback whose projections declare their flat param names."""
     return _ref_with_qualified_params(
         ref=ref,
@@ -883,11 +883,11 @@ def _leg_fallback_with_qualified_params(
 
 def _ref_with_qualified_params(
     *,
-    ref: ResolvedSamePeriodRef,
+    ref: ResolvedProjectedRegimeValue,
     target: RegimeName,
     entry_by_state: Mapping[StateName, FunctionName],
     state_names: Container[StateName],
-) -> ResolvedSamePeriodRef:
+) -> ResolvedProjectedRegimeValue:
     """Return `ref` with each projection's parameters renamed to their flat names.
 
     A projection is evaluated on the TARGET regime's grid, so the target's own
@@ -1316,7 +1316,7 @@ class _CompiledEdgeGate:
     """Every engine-bound gate operand: the value components, `D_target`, the
     gate-ref keys."""
 
-    qualified_gate_refs: Mapping[str, ResolvedSamePeriodRef]
+    qualified_gate_refs: Mapping[str, ResolvedProjectedRegimeValue]
     """The gate references with their projections' free params renamed to the
     flat spelling the source's params template gives them."""
 
@@ -2219,7 +2219,7 @@ _FALLBACK_PROJECTION_TARGET_PREFIX = "__fallback_state__"
 
 def build_fallback_state_projector(
     *,
-    ref: ResolvedSamePeriodRef,
+    ref: ResolvedProjectedRegimeValue,
     fallback_simulate_state_names: tuple[StateName, ...],
     target_regime_name: RegimeName,
     target_state_names: tuple[StateName, ...],
@@ -2289,7 +2289,8 @@ def build_fallback_state_projector(
     what the solve-side fold's reader for this leg declares.
 
     Args:
-        ref: The leg's resolved fallback reference (`ResolvedEdgeLeg.fallback`).
+        ref: The leg's resolved fallback reference
+            (`ResolvedStakeholderRoute.fallback`).
         fallback_simulate_state_names: Simulate-phase state names of the FALLBACK
             regime (`ref.regime`) — its solve states plus its carried-only ones,
             i.e. exactly the slots a routed row occupies there.
