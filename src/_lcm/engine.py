@@ -41,6 +41,7 @@ from lcm.typing import (
     DiscreteAction,
     DiscreteState,
     FloatND,
+    Int1D,
     IntND,
     ScalarFloat,
     ScalarInt,
@@ -847,6 +848,15 @@ class Regime:
     stakeholder-valued output.
     """
 
+    stakeholder_names_to_ids: MappingProxyType[str, int] = MappingProxyType({})
+    """The model's role vocabulary: every regime's stakeholder names, as codes.
+
+    One vocabulary for the whole model, carried on every regime, so a role
+    survives the move between regimes that name their stakeholders differently
+    and a simulated row can carry it as an integer. `NO_ROLE` is what a row in
+    a singleton regime carries — it occupies no household's role.
+    """
+
     same_period_ref_regimes: tuple[RegimeName, ...] = ()
     """Regimes whose SAME-period V this regime's solve kernel reads, or empty.
 
@@ -1035,6 +1045,16 @@ class PeriodRegimeSimulationData:
     in_regime: Bool1D
     """Boolean mask indicating which subjects are in this regime at this period."""
 
+    own_stakeholder: Int1D
+    """The role each subject occupies here, as a code in the model's role
+    vocabulary (`Regime.stakeholder_names_to_ids`).
+
+    A row in a collective regime carries the stakeholder it IS — the wife's row
+    her role, the husband's his — which is what decides the leg it follows when
+    the household ends. A row in a singleton regime occupies no role and carries
+    `NO_ROLE`.
+    """
+
     nested_policy_fallback: Bool1D
     """Per-subject flag that the continuous-outer (nested) off-grid policy read
     was refused and fell back to the grid-argmax action pair at this period.
@@ -1099,6 +1119,13 @@ class PeriodRegimeSimulationData:
 # whose materialisation workspace dwarfs the per-period output.
 jax.tree_util.register_dataclass(
     PeriodRegimeSimulationData,
-    data_fields=("V_arr", "actions", "states", "in_regime", "nested_policy_fallback"),
+    data_fields=(
+        "V_arr",
+        "actions",
+        "states",
+        "in_regime",
+        "own_stakeholder",
+        "nested_policy_fallback",
+    ),
     meta_fields=(),
 )

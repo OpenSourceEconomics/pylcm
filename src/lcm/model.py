@@ -134,6 +134,15 @@ class Model:
     regime_names_to_ids: RegimeNamesToIds
     """Immutable mapping from regime names to integer indices."""
 
+    stakeholder_names_to_ids: MappingProxyType[str, int]
+    """Immutable mapping from stakeholder names to integer role codes.
+
+    One vocabulary for the whole model, covering every collective regime's
+    stakeholders, so a role means the same thing wherever it is read. Empty for
+    a model with no collective regime. This is the vocabulary
+    `initial_conditions["own_stakeholder"]` is written in, and the one the
+    published `own_stakeholder` column is labelled from."""
+
     user_regimes: MappingProxyType[RegimeName, FinalizedUserRegime]
     """The finalized regimes: plain `lcm.regime.Regime` instances, complete
     (Koopmans aggregator injected, completeness validated), with model-level slots
@@ -355,6 +364,10 @@ class Model:
             fixed_params=residual_fixed_params,
             params_already_consumed=params_consumed_by_binder,
             prepared_structure=prepared_structure,
+        )
+        self.stakeholder_names_to_ids = next(
+            (regime.stakeholder_names_to_ids for regime in self._regimes.values()),
+            MappingProxyType({}),
         )
         self.enable_jit = enable_jit
         self.simulation_output_dtypes = _get_output_dtypes(
@@ -785,7 +798,6 @@ class Model:
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
         max_compilation_workers: int | None = None,
-        own_stakeholder: str | None = None,
     ) -> SimulationResult:
         """Simulate the model forward, optionally solving first.
 
@@ -810,6 +822,11 @@ class Model:
                 `model.regime_names_to_ids`). May also be a `pd.DataFrame`
                 with a `"regime_name"` column carrying regime label strings
                 (auto-converted via `initial_conditions_from_dataframe`).
+                Subjects starting in a COLLECTIVE regime also need an
+                `"own_stakeholder"` entry naming the role each one occupies,
+                as an integer code from the model's role vocabulary
+                (`model.stakeholder_names_to_ids`): which partner a row is
+                decides which regime it enters when the household dissolves.
             period_to_regime_to_V_arr: Value function arrays from `solve()`.
                 When `None`, the model is solved automatically before simulating.
             policies: Simulation-policy artifacts returned alongside the value
@@ -852,34 +869,6 @@ class Model:
                 compilation. Only used when `period_to_regime_to_V_arr` is `None`
                 (i.e. when solve runs automatically). Defaults to the number of
                 physical CPU cores.
-            own_stakeholder: For a collective source `own_stakeholder` is
-                required and names the role the simulated population carries;
-                a singleton source's sole leg carries no role and needs none.
-                A collective source declares one dissolution leg per
-                stakeholder, and each leg sends the row into *that*
-                stakeholder's own continuing regime under *that* stakeholder's
-                own state projection — so the role decides which leg governs
-                every row. A dissolution does not split a row into two
-                independently tracked households: each cohort is single-gender
-                and carries synthetic partners, so `"f"` simulates women and
-                `"m"` men, and a two-sided population is two separate calls. On
-                a collective source, both `None` and a value naming no declared
-                leg raise `ValueError`; a singleton source ignores the
-                argument entirely, so `None` (the default) is right there.
-
-                The requirement is **per call, not per row**: the routing step
-                runs for every ACTIVE collective source, and which rows it
-                would touch is a traced array rather than a Python value. So a
-                cohort initialized entirely into some other regime of a model
-                that merely *contains* a collective source must still declare
-                a role — the alternative, a raise conditioned on occupancy,
-                would cost a device sync and would make the error depend on
-                the seed.
-
-                Genuinely mixed populations with differing per-row roles, or
-                two linked rows that unlink on dissolution, remain the
-                deferred "linked mode".
-
         Returns:
             SimulationResult object. Call .to_dataframe() to get a pandas DataFrame,
             optionally with additional_targets.
@@ -1039,7 +1028,6 @@ class Model:
             seed=seed,
             subject_batch_size=compile_batch_size,
             original_n_subjects=original_n_subjects,
-            own_stakeholder=own_stakeholder,
         )
         # AOT-compiled regimes carry `jax.stages.Compiled` callables that
         # wrap an unpicklable `LoadedExecutable`. `to_dataframe` only reads

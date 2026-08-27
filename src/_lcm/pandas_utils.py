@@ -14,6 +14,7 @@ from dags.tree import qname_from_tree_path, tree_path_from_qname
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.grids import DiscreteGrid, Grid, IrregSpacedGrid
 from _lcm.processes import _ContinuousStochasticProcess
+from _lcm.regime_building.collective import NO_ROLE, build_role_vocabulary
 from _lcm.simulation.initial_conditions import MISSING_CAT_CODE, PSEUDO_STATE_NAMES
 from _lcm.typing import (
     FlatParams,
@@ -69,9 +70,11 @@ def initial_conditions_from_dataframe(  # noqa: C901
             indices.
 
     Returns:
-        Immutable mapping of state names (plus `"regime_id"`) to JAX
-        arrays. The `"regime_id"` entry contains integer codes derived
-        from the `"regime_name"` column via `regime_names_to_ids`.
+        Immutable mapping of state names (plus `"regime_id"`, and
+        `"own_stakeholder"` where the frame carries it) to JAX arrays. The
+        `"regime_id"` entry contains integer codes derived from the
+        `"regime_name"` column via `regime_names_to_ids`; `"own_stakeholder"`
+        carries role codes derived from that column's labels.
 
     Raises:
         ValueError: If the DataFrame is empty, the "regime_name" column is
@@ -99,7 +102,9 @@ def initial_conditions_from_dataframe(  # noqa: C901
         )
         raise ValueError(msg)
 
-    state_columns = {col for col in df.columns if col != "regime_name"}
+    state_columns = {
+        col for col in df.columns if col not in {"regime_name", "own_stakeholder"}
+    }
     _validate_state_columns(
         state_columns=state_columns,
         user_regimes=user_regimes,
@@ -107,7 +112,9 @@ def initial_conditions_from_dataframe(  # noqa: C901
     )
 
     n_subjects = len(df)
-    state_cols = [col for col in df.columns if col != "regime_name"]
+    state_cols = [
+        col for col in df.columns if col not in {"regime_name", "own_stakeholder"}
+    ]
 
     # Pre-allocate result arrays (NaN default surfaces bugs for missing states)
     result_arrays: dict[str, np.ndarray] = {
@@ -158,7 +165,9 @@ def initial_conditions_from_dataframe(  # noqa: C901
             nan_mask = np.isnan(result_arrays[col])
             result_arrays[col][nan_mask] = MISSING_CAT_CODE
 
-    initial_conditions: dict[StateName | Literal["regime_id"], Float1D | Int1D] = {
+    initial_conditions: dict[
+        StateName | Literal["regime_id", "own_stakeholder"], Float1D | Int1D
+    ] = {
         col: jnp.array(arr, dtype=jnp.int32)
         if col in discrete_state_names
         else jnp.array(arr, dtype=canonical_float_dtype())
@@ -168,8 +177,51 @@ def initial_conditions_from_dataframe(  # noqa: C901
         df["regime_name"].map(dict(regime_names_to_ids)).to_numpy(),
         dtype=jnp.int32,
     )
+    if "own_stakeholder" in df.columns:
+        initial_conditions["own_stakeholder"] = _role_codes_from_labels(
+            labels=df["own_stakeholder"], user_regimes=user_regimes
+        )
 
     return MappingProxyType(initial_conditions)
+
+
+def _role_codes_from_labels(
+    *,
+    labels: pd.Series,
+    user_regimes: Mapping[RegimeName, UserRegime],
+) -> Int1D:
+    """Convert an `own_stakeholder` label column back to role codes.
+
+    A published frame names roles the way the model declares them and leaves
+    the entry missing for a row occupying none, so the inverse reads a missing
+    entry as the no-role sentinel rather than as a failed lookup.
+
+    Args:
+        labels: The frame's `own_stakeholder` column, as labels.
+        user_regimes: Mapping of regime names to user-provided `Regime`
+            instances, the source of the role vocabulary.
+
+    Returns:
+        One role code per row.
+
+    Raises:
+        ValueError: A label names no stakeholder any regime declares.
+    """
+    role_ids = build_role_vocabulary(
+        {name: regime.stakeholders for name, regime in user_regimes.items()}
+    )
+    text = labels.astype("string")
+    named = text.notna()
+    unknown = sorted(set(text[named]) - set(role_ids))
+    if unknown:
+        msg = (
+            f"Invalid stakeholder names in the 'own_stakeholder' column: "
+            f"{unknown}. Valid stakeholders: {sorted(role_ids)}."
+        )
+        raise ValueError(msg)
+    codes = np.full(len(text), NO_ROLE, dtype=np.int32)
+    codes[named.to_numpy()] = text[named].map(dict(role_ids)).to_numpy(dtype=np.int32)
+    return jnp.asarray(codes)
 
 
 def _map_discrete_labels(

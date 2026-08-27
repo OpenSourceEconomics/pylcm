@@ -690,20 +690,27 @@ def test_same_period_refs_without_value_constraints_are_rejected():
         )
 
 
-def test_value_constraints_on_terminal_collective_regime_are_rejected():
-    with pytest.raises(NotImplementedError, match="TERMINAL"):
-        Regime(
-            transition=None,
-            active=lambda age: age >= 1,
-            stakeholders=("f", "m"),
-            states={"wage": _WAGE_GRID},
-            actions={"work": DiscreteGrid(Work)},
-            functions={
-                "utility_f": _utility_married_f,
-                "utility_m": _utility_married_m,
-            },
-            value_constraints={"ir_f": _ir_f},
-        )
+def test_value_constraints_on_a_terminal_collective_regime_are_accepted():
+    """A household's last period is a participation decision like any other.
+
+    The predicate reads each partner's terminal payoff as `Q_<s>`, and a cell
+    it empties publishes the dissolution flag — see
+    `test_terminal_value_constraints.py` for what the flag and the value are.
+    """
+    regime = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        stakeholders=("f", "m"),
+        states={"wage": _WAGE_GRID},
+        actions={"work": DiscreteGrid(Work)},
+        functions={
+            "utility_f": _utility_married_f,
+            "utility_m": _utility_married_m,
+        },
+        value_constraints={"ir_f": _ir_f},
+    )
+
+    assert set(regime.value_constraints) == {"ir_f"}
 
 
 def _married_with_refs(refs: dict[str, SamePeriodRef]) -> Regime:

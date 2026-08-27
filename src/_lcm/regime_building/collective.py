@@ -26,7 +26,7 @@ from _lcm.regime_building.argmax import (
     _move_axes_to_back,
     argmax_and_max,
 )
-from _lcm.typing import StateName, _ParamsLeaf
+from _lcm.typing import RegimeName, StateName, _ParamsLeaf
 from _lcm.utils.functools import get_union_of_args
 from _lcm.zero_safe import sum_in_value_order, zero_safe_weighted_term
 from lcm.collective import ParetoObjective
@@ -218,6 +218,37 @@ def _gather_along_actions(
 
 # Template key the Pareto weights' free parameters live under.
 PARETO_OBJECTIVE_ENTRY = "pareto_objective"
+
+# The role a subject in a singleton regime carries: it occupies none. Negative
+# so it can never collide with a declared role's code, and so an out-of-range
+# read is a visible mistake rather than someone else's role.
+NO_ROLE = -1
+
+
+def build_role_vocabulary(
+    stakeholders_by_regime: Mapping[RegimeName, tuple[str, ...] | None],
+) -> MappingProxyType[str, int]:
+    """Assign one code to every role any regime of the model declares.
+
+    One vocabulary for the whole model rather than one per regime: a row moves
+    between regimes, and comparing the role it carried in one against the roles
+    another declares only means something if the codes agree. Regimes whose
+    role names are disjoint therefore coexist, each simply using its own part
+    of the vocabulary.
+
+    Args:
+        stakeholders_by_regime: Mapping of regime names to their stakeholder
+            tuples, or `None` for a singleton regime.
+
+    Returns:
+        Immutable mapping of role name to code, in declaration order across
+        regimes taken in their own order.
+    """
+    names: dict[str, None] = {}
+    for stakeholders in stakeholders_by_regime.values():
+        for name in stakeholders or ():
+            names.setdefault(name, None)
+    return MappingProxyType({name: code for code, name in enumerate(names)})
 
 
 @dataclass(frozen=True, kw_only=True)

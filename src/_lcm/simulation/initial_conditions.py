@@ -372,7 +372,14 @@ def validate_initial_conditions(
             )
         )
 
-    initial_states = {k: v for k, v in initial_conditions.items() if k != "regime_id"}
+    # `own_stakeholder` names a role rather than a state, so it is excluded
+    # alongside `regime_id` — the structural check below reports any key that
+    # is not a state of the regime the subject starts in.
+    initial_states = {
+        k: v
+        for k, v in initial_conditions.items()
+        if k not in {"regime_id", "own_stakeholder"}
+    }
 
     # Validate regime names and state names/shapes first; early-exit on errors so that
     # downstream checks (discrete codes, feasibility) can assume correct names.

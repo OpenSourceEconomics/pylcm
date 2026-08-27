@@ -7,9 +7,13 @@ source therefore has to say which role its population carries: a cohort routed
 without one would follow a single partner's dissolution path for every row —
 each divorced husband simulated as his wife, with her regime and her state.
 
-`own_stakeholder` names that role, and for a collective source it is required.
-A singleton source declares a single leg carrying no role at all, so it neither
-needs nor accepts one and simulates unchanged.
+`initial_conditions["own_stakeholder"]` names that role, one entry per subject,
+and a subject starting in a collective regime must carry one wherever a route
+can differ by role — that is, wherever some collective regime declares a gated
+edge with more than one leg. A singleton source declares a single leg carrying
+no role at all, and a collective regime with no role-dependent route has
+nothing for a role to select, so a cohort starting in either needs none and
+simulates unchanged.
 """
 
 import jax.numpy as jnp
@@ -17,7 +21,12 @@ import numpy as np
 import pytest
 
 from lcm import AgeGrid, Model, categorical
+from lcm.exceptions import InvalidInitialConditionsError
 from lcm.typing import ScalarInt
+from tests.collective_fixtures import (
+    make_couple_initial_conditions,
+    make_two_stakeholder_model,
+)
 from tests.regime_building.test_collective_regime_simulate import (
     _BETA,
     _DISSOLUTION_PARAMS,
@@ -33,7 +42,7 @@ DISSOLUTION_WAGES = (1.0, 2.0, 3.0)
 # Which subject of `DISSOLUTION_WAGES` leaves the collective regime.
 DISSOLVING_ROW_MEMBERSHIP = (False, True, False)
 
-# Nobody leaves through the leg `own_stakeholder` did not name.
+# Nobody leaves through the leg the cohort's role did not name.
 UNTAKEN_LEG_MEMBERSHIP = (False, False, False)
 
 # The two wage nodes the singleton-source consent miniature is solved on: the
@@ -92,12 +101,12 @@ def consent_model_and_solution():
 def test_collective_source_without_an_own_role_is_refused(
     dissolution_model_and_solution, expected_in_message
 ):
-    """Simulating a collective source without an own role is a caller error.
+    """Starting a cohort in a collective regime with no role is a caller error.
 
-    The message names the argument that is missing and the collective regime
-    that needs it, so the caller can act on it.
+    The message names the entry that is missing and the collective regime that
+    needs it, so the caller can act on it.
     """
-    with pytest.raises(ValueError, match=expected_in_message):
+    with pytest.raises(InvalidInitialConditionsError, match=expected_in_message):
         _simulate_dissolution_cohort(
             setup=dissolution_model_and_solution, own_stakeholder=None
         )
@@ -129,7 +138,7 @@ def test_named_own_role_routes_the_dissolving_row_to_its_own_leg(
 
 
 def test_singleton_source_needs_no_own_role(consent_model_and_solution):
-    """A singleton source's gated edge routes without any role being declared.
+    """A cohort starting single routes through its gated edge with no role seeded.
 
     The role decides between one stakeholder's leg and another's, and a
     singleton source has only the one leg, so requiring a role there would
@@ -159,6 +168,30 @@ def test_singleton_source_needs_no_own_role(consent_model_and_solution):
     )
 
 
+def test_collective_source_with_no_role_dependent_route_needs_no_own_role():
+    """A collective cohort whose model declares no multi-leg edge simulates unseeded.
+
+    Nothing in such a model reads the role: there is no gated edge whose legs
+    differ by stakeholder, so no route, regime or state projection can turn on
+    it. Demanding a seed there would refuse a well specified model over a
+    column that decides nothing.
+    """
+    model, params = make_two_stakeholder_model()
+
+    result = model.simulate(
+        params=params,
+        initial_conditions=make_couple_initial_conditions(n_subjects=2),
+        period_to_regime_to_V_arr=None,
+        log_level="off",
+        seed=0,
+    )
+
+    np.testing.assert_array_equal(
+        np.asarray(result.raw_results["couple_terminal"][1].in_regime),
+        np.asarray([True, True]),
+    )
+
+
 def _simulate_dissolution_cohort(*, setup, own_stakeholder):
     """Simulate the dissolution miniature's three-subject cohort at one role."""
     model, solution, dissolution_flags = setup
@@ -172,10 +205,20 @@ def _simulate_dissolution_cohort(*, setup, own_stakeholder):
                 model.regime_names_to_ids["married"],
                 dtype=jnp.int32,
             ),
+            **(
+                {}
+                if own_stakeholder is None
+                else {
+                    "own_stakeholder": jnp.full(
+                        len(DISSOLUTION_WAGES),
+                        model.stakeholder_names_to_ids[own_stakeholder],
+                        dtype=jnp.int32,
+                    )
+                }
+            ),
         },
         period_to_regime_to_V_arr=solution,
         period_to_regime_to_dissolution_flags=dissolution_flags,
         log_level="off",
         seed=0,
-        own_stakeholder=own_stakeholder,
     )

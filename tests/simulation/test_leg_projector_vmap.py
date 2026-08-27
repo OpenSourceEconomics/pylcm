@@ -22,6 +22,7 @@ import numpy as np
 from numpy.testing import assert_array_almost_equal as aaae
 
 from _lcm.certainty_equivalent import LinearExpectation
+from _lcm.regime_building.collective import NO_ROLE
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
 from _lcm.regime_building.Q_and_F import EDGE_CHANNELS_ARG
@@ -301,7 +302,7 @@ def test_router_writes_each_subject_its_own_projected_fallback_state():
             ),
         }
     )
-    states, _routed_ids = route_gated_edges(
+    states, _routed_ids, _routed_roles = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
         # the value it would enter at period 1.
         fold_period=1,
@@ -314,6 +315,12 @@ def test_router_writes_each_subject_its_own_projected_fallback_state():
         ),
         subjects_in_regime=jnp.array([True, True]),
         flat_params=flat_params,
+        own_stakeholder=jnp.full_like(
+            jnp.array([True, True]), NO_ROLE, dtype=jnp.int32
+        ),
+        new_own_stakeholder=jnp.full_like(
+            jnp.array([True, True]), NO_ROLE, dtype=jnp.int32
+        ),
     )
     aaae(
         np.asarray(states["fallback"]["settlement"]),
@@ -343,7 +350,7 @@ def test_router_sends_every_dissolving_household_to_the_fallback_regime():
             ),
         }
     )
-    _states, routed_ids = route_gated_edges(
+    _states, routed_ids, _routed_roles = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
         # the value it would enter at period 1.
         fold_period=1,
@@ -356,6 +363,12 @@ def test_router_sends_every_dissolving_household_to_the_fallback_regime():
         ),
         subjects_in_regime=jnp.array([True, True]),
         flat_params=flat_params,
+        own_stakeholder=jnp.full_like(
+            jnp.array([True, True]), NO_ROLE, dtype=jnp.int32
+        ),
+        new_own_stakeholder=jnp.full_like(
+            jnp.array([True, True]), NO_ROLE, dtype=jnp.int32
+        ),
     )
     np.testing.assert_array_equal(
         np.asarray(routed_ids),

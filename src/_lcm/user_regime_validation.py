@@ -157,15 +157,6 @@ def _validate_collective_regime(regime: lcm.regime.Regime) -> None:
             "value readout run over the full action product. Use "
             "`solver=GridSearch()` for this regime."
         )
-    if regime.terminal and (regime.value_constraints or regime.same_period_refs):
-        raise NotImplementedError(
-            "`value_constraints` / `same_period_refs` on a TERMINAL collective "
-            "regime are not implemented: value-aware feasibility masks a "
-            "within-period household decision; the terminal kernel carries no "
-            "such mask. Declare them on the non-terminal regime whose decision "
-            "they constrain."
-        )
-
     error_messages: list[str] = []
     error_messages.extend(_collective_value_constraint_errors(regime))
     error_messages.extend(_stakeholders_tuple_errors(stakeholders))

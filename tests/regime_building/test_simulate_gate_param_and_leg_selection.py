@@ -46,15 +46,19 @@ arguments ("vmap wrapped function must be passed at least one argument
 containing an array or axis_size must be specified"), so `axis_size` is
 threaded explicitly from the population size.
 
-**`_select_own_leg`'s sole-leg exemption keys on the leg's ROLE, not on
-arity.** The validator accepts a ONE-element `stakeholders` tuple, and
-`processing.py`'s `leg_order = [(s, s) for s in source_stakeholders]` gives
-that sole leg `source_stakeholder="f"`, not `None`. An arity-only
-`len(legs) > 1` guard therefore lets a typo'd `own_stakeholder` fall through
-silently on exactly the single-stakeholder COLLECTIVE source the raise
-exists to protect.
+**A row's seeded role is checked against ITS OWN regime's stakeholders, not
+against the model-wide vocabulary.** Roles are model-wide integer codes, so a
+code being defined says nothing about whether the regime a row starts in has
+that role — and the router picks a row's leg by matching the role, with the
+first declared leg answering for a row that matches none. Checking the seed
+per regime is what makes that match total. Arity does not decide it either:
+the validator accepts a ONE-element `stakeholders` tuple, and `processing.py`'s
+`leg_order = [(s, s) for s in source_stakeholders]` gives that sole leg
+`source_stakeholder="f"`, not `None`, so a single-leg collective source is
+exactly as exposed as a two-leg one.
 """
 
+import dataclasses
 from inspect import signature
 from types import MappingProxyType
 
@@ -63,20 +67,19 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.regime_building.collective import NO_ROLE
 from _lcm.regime_building.gated_edges import (
     SOURCE_PARAMS,
     TARGET_PARAMS,
-    ResolvedEdgeLeg,
-    ResolvedSamePeriodRef,
 )
 from _lcm.regime_building.Q_and_F import SAME_PERIOD_PARAMS_ARG, SAME_PERIOD_V_ARG
 from _lcm.simulation.gated_routing import (
     _bind_provenance_params,
     _call_vmapped_with_accepted_kwargs,
-    _select_own_leg,
     route_gated_edges,
     substitute_gated_edge_continuations,
 )
+from _lcm.simulation.simulate import _initial_own_stakeholder
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
@@ -90,9 +93,13 @@ from lcm import (
     categorical,
 )
 from lcm.ages import AgeGrid
+from lcm.exceptions import InvalidInitialConditionsError
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
-from tests.regime_building.test_collective_regime_simulate import _solve_and_process
+from tests.regime_building.test_collective_regime_simulate import (
+    _solve_and_process,
+    _solve_dissolution,
+)
 
 _BETA = 0.95
 _AGES = AgeGrid(start=0, stop=2, step="Y")
@@ -451,7 +458,7 @@ def test_gate_reads_target_grid_points_not_the_source_s_same_named_ones():
             "fallback": MappingProxyType({"x": jnp.array([-999.0])}),
         }
     )
-    _states, routed_ids = route_gated_edges(
+    _states, routed_ids, _routed_roles = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
         # the value it would enter at period 1.
         fold_period=1,
@@ -462,6 +469,8 @@ def test_gate_reads_target_grid_points_not_the_source_s_same_named_ones():
         new_subject_regime_ids=jnp.array([target_id], dtype=jnp.int32),
         subjects_in_regime=jnp.array([True]),
         flat_params=flat_params,
+        own_stakeholder=jnp.full_like(jnp.array([True]), NO_ROLE, dtype=jnp.int32),
+        new_own_stakeholder=jnp.full_like(jnp.array([True]), NO_ROLE, dtype=jnp.int32),
     )
     np.testing.assert_array_equal(np.asarray(routed_ids), [target_id])
     assert int(np.asarray(routed_ids)[0]) != int(fallback_id)
@@ -586,7 +595,7 @@ def test_stateless_gated_target_routes_without_vmap_axis_size_error():
             "stateless_fallback": MappingProxyType({}),
         }
     )
-    _states, routed_ids = route_gated_edges(
+    _states, routed_ids, _routed_roles = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
         # the value it would enter at period 1.
         fold_period=1,
@@ -597,6 +606,12 @@ def test_stateless_gated_target_routes_without_vmap_axis_size_error():
         new_subject_regime_ids=jnp.array([target_id] * n_subjects, dtype=jnp.int32),
         subjects_in_regime=jnp.array([True] * n_subjects),
         flat_params=flat_params,
+        own_stakeholder=jnp.full_like(
+            jnp.array([True] * n_subjects), NO_ROLE, dtype=jnp.int32
+        ),
+        new_own_stakeholder=jnp.full_like(
+            jnp.array([True] * n_subjects), NO_ROLE, dtype=jnp.int32
+        ),
     )
     # V_target = 1.0 > 0.5 -> gate OPEN for every subject; the routing is
     # per-subject (length n_subjects), not a collapsed scalar.
@@ -647,103 +662,85 @@ def test_vmap_without_axis_size_fails_for_a_stateless_target():
     assert np.asarray(result).shape == (4,)
 
 
-# `_select_own_leg`'s sole-leg exemption keys on the ROLE, not on arity.
+# A seeded role is checked against the starting regime's own stakeholders.
 
 
-def _leg(source_stakeholder: str | None, fallback_regime: str) -> ResolvedEdgeLeg:
-    return ResolvedEdgeLeg(
-        source_stakeholder=source_stakeholder,
-        target_component_index=None,
-        fallback=ResolvedSamePeriodRef(
-            regime=fallback_regime, projection={}, stakeholder_index=None
+def _dissolution_setup():
+    """The two-stakeholder dissolution miniature, as canonical regimes."""
+    _ages, regimes, regime_names_to_ids, *_rest = _solve_dissolution()
+    return regimes, regime_names_to_ids
+
+
+def _seed(*, regimes, regime_names_to_ids, regime_name, role):
+    """Read the seeded roles of a one-subject cohort starting in `regime_name`."""
+    return _initial_own_stakeholder(
+        initial_conditions=MappingProxyType(
+            {
+                "regime_id": jnp.asarray(
+                    [regime_names_to_ids[regime_name]], dtype=jnp.int32
+                ),
+                **({} if role is None else {"own_stakeholder": jnp.asarray([role])}),
+            }
         ),
+        regimes=regimes,
+        regime_names_to_ids=regime_names_to_ids,
     )
 
 
-def _arity_only_select_own_leg(legs, own_stakeholder):
-    """A local copy of the arity-only guard (`len(legs) > 1`), for contrast.
+def test_a_one_stakeholder_collective_source_rejects_a_role_it_does_not_have():
+    """A single-leg collective source refuses a role that is not its own.
 
-    Never imported from production — the production `_select_own_leg` keys on
-    the leg's role instead."""
-    if own_stakeholder is not None:
-        for leg in legs:
-            if leg.source_stakeholder == own_stakeholder:
-                return leg
-        if len(legs) > 1:
-            raise ValueError("own_stakeholder does not match any leg")
-    return legs[0]
-
-
-def test_one_leg_collective_source_raises_on_unknown_own_stakeholder():
-    """A one-leg COLLECTIVE source rejects an `own_stakeholder` it cannot match.
-
-    A ONE-element `stakeholders=("f",)` source is legal, and
-    `processing.py`'s `leg_order = [(s, s) for s in source_stakeholders]`
-    gives its sole leg `source_stakeholder="f"` — NOT `None`. A typo'd
-    `own_stakeholder` must therefore raise, even though there is only one
-    leg.
+    Its sole leg carries `source_stakeholder="f"`, so the router would match
+    no leg for a husband's row and fall through to that leg — sending him into
+    his wife's regime at her state. The number of legs is not what protects
+    against that; checking the seed against this regime's own stakeholders is.
     """
-    legs = (_leg("f", "single_f"),)
+    regimes, regime_names_to_ids = _dissolution_setup()
+    wife_only = dataclasses.replace(regimes["married"], stakeholders=("f",))
+    regimes = MappingProxyType({**regimes, "married": wife_only})
 
-    with pytest.raises(ValueError, match="does not match any"):
-        _select_own_leg(legs=legs, own_stakeholder="typo", source_regime_name="married")
+    with pytest.raises(InvalidInitialConditionsError, match="married"):
+        _seed(
+            regimes=regimes,
+            regime_names_to_ids=regime_names_to_ids,
+            regime_name="married",
+            role=regimes["married"].stakeholder_names_to_ids["m"],
+        )
 
-    # The arity-only guard, for contrast: `len(legs) > 1` is False, so the
-    # typo falls through to legs[0] silently.
-    assert _arity_only_select_own_leg(legs, "typo") is legs[0]
 
+def test_a_collective_source_accepts_a_role_it_does_have():
+    """The refusal does not over-fire onto a role the regime declares.
 
-def test_one_leg_singleton_source_needs_no_role_and_accepts_any():
-    """A singleton source's sole leg is the row's own, role or no role.
-
-    That leg carries `source_stakeholder=None`, so it matches no named role
-    and there is no second leg to confuse it with. This is what keeps the
-    role requirement scoped to collective sources: a singleton source routes
-    with `own_stakeholder=None` exactly as it always has.
+    Without this control the check above could be refusing every seed into a
+    collective regime rather than the mismatched ones.
     """
-    legs = (_leg(None, "single"),)
-    assert (
-        _select_own_leg(legs=legs, own_stakeholder="f", source_regime_name="single_f")
-        is legs[0]
+    regimes, regime_names_to_ids = _dissolution_setup()
+    role = regimes["married"].stakeholder_names_to_ids["m"]
+
+    seeded = _seed(
+        regimes=regimes,
+        regime_names_to_ids=regime_names_to_ids,
+        regime_name="married",
+        role=role,
     )
-    assert (
-        _select_own_leg(legs=legs, own_stakeholder=None, source_regime_name="single_f")
-        is legs[0]
-    )
+
+    np.testing.assert_array_equal(np.asarray(seeded), [role])
 
 
-def test_one_leg_collective_source_selects_the_matching_leg():
-    """A matching own-role on a one-leg collective source selects that leg.
+def test_a_cohort_starting_singleton_needs_no_role():
+    """A row starting in a singleton regime occupies none, and says so.
 
-    The refusal of an unknown role does not over-fire onto the role the
-    source does declare.
+    This keeps the requirement scoped to where legs actually differ: a
+    singleton regime has one leg carrying no role, so demanding one there
+    would refuse a well-specified model.
     """
-    legs = (_leg("f", "single_f"),)
-    assert (
-        _select_own_leg(legs=legs, own_stakeholder="f", source_regime_name="married")
-        is legs[0]
+    regimes, regime_names_to_ids = _dissolution_setup()
+
+    seeded = _seed(
+        regimes=regimes,
+        regime_names_to_ids=regime_names_to_ids,
+        regime_name="single_f",
+        role=None,
     )
 
-
-def test_one_leg_collective_source_without_a_role_raises():
-    """A one-leg collective source still needs the row's role named.
-
-    Its sole leg carries a role, so the source is collective and there is
-    nothing for a role-less call to resolve to — arity is not what decides.
-    """
-    legs = (_leg("f", "single_f"),)
-    with pytest.raises(ValueError, match="own_stakeholder"):
-        _select_own_leg(legs=legs, own_stakeholder=None, source_regime_name="married")
-
-
-def test_multi_leg_collective_source_unknown_own_stakeholder_still_raises():
-    """A multi-leg collective source still raises on an unknown own_stakeholder.
-
-    The role-keyed guard widens the arity-only one; it does not replace it."""
-    legs = (_leg("f", "single_f"), _leg("m", "single_m"))
-    with pytest.raises(ValueError, match="does not match any"):
-        _select_own_leg(legs=legs, own_stakeholder="typo", source_regime_name="married")
-    assert (
-        _select_own_leg(legs=legs, own_stakeholder="m", source_regime_name="married")
-        is legs[1]
-    )
+    np.testing.assert_array_equal(np.asarray(seeded), [NO_ROLE])

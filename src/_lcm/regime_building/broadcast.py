@@ -421,10 +421,19 @@ def _incoming_edge_roots(
             for ref_name, ref in edge.gate_refs.items()
             for state_name, projection in ref.projection.items()
         }
+        # Both phases of a `Phased` fallback are rooted: a state read only by
+        # the settlement projection is still read, and pruning it would leave
+        # the simulate leg with a coordinate it cannot form.
         roots |= {
-            f"__incoming_fallback__{source_name}__{leg_name}__{state_name}": projection
+            f"__incoming_fallback__{source_name}__{leg_name}__{phase}__{state_name}": (
+                projection
+            )
             for leg_name, leg in edge.legs.items()
-            for state_name, projection in leg.fallback.projection.items()
+            for phase, ref in (
+                ("solve", leg.solve_fallback),
+                ("simulate", leg.simulate_fallback),
+            )
+            for state_name, projection in ref.projection.items()
         }
     return roots
 

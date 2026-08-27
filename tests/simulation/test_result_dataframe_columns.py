@@ -65,7 +65,9 @@ def test_to_dataframe_orders_stakeholder_columns_by_declared_stakeholders():
     The household declares `stakeholders=("wife", "husband")`, which fixes the
     order of its value function's trailing axis, so the frame carries
     `value_wife` before `value_husband` — the household's own order, not the
-    alphabetical order of the two names.
+    alphabetical order of the two names. `own_stakeholder` precedes them: it
+    says which role the row occupies, so it identifies the row rather than
+    reporting a value of it.
     """
     model = _make_reverse_alphabetical_collective_model()
     result = model.simulate(
@@ -79,6 +81,7 @@ def test_to_dataframe_orders_stakeholder_columns_by_declared_stakeholders():
         "subject_id",
         "period",
         "regime_name",
+        "own_stakeholder",
         "value_wife",
         "value_husband",
         "wage",

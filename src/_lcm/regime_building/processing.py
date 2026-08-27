@@ -83,7 +83,11 @@ from _lcm.regime_building.age_normalization import (
     resolve_periodized_nodes,
 )
 from _lcm.regime_building.canonicalize import canonicalize_phased_regimes
-from _lcm.regime_building.collective import ParetoWeights, build_pareto_weights
+from _lcm.regime_building.collective import (
+    ParetoWeights,
+    build_pareto_weights,
+    build_role_vocabulary,
+)
 from _lcm.regime_building.diagnostics import _build_compute_intermediates_per_period
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.gated_edges import (
@@ -611,6 +615,14 @@ def process_regimes(  # noqa: PLR0915
         Returns:
             Mapping of regime names to their canonical form.
         """
+        # One role vocabulary for the whole model, carried on every regime so
+        # a simulated row's role means the same thing wherever it goes.
+        stakeholder_names_to_ids = build_role_vocabulary(
+            {
+                name: regime.stakeholders
+                for name, regime in representative_user_regimes.items()
+            }
+        )
         canonical_regimes: dict[RegimeName, Regime] = {}
         # Iterate the representative-resolved regimes: identical to the user regimes
         # except that any `AgeSpecializedGrid` state is a concrete representative-age
@@ -755,6 +767,7 @@ def process_regimes(  # noqa: PLR0915
                 has_taste_shocks=user_regime.taste_shocks is not None,
                 certainty_equivalent=user_regime.certainty_equivalent,
                 stakeholders=stakeholders,
+                stakeholder_names_to_ids=stakeholder_names_to_ids,
                 same_period_ref_regimes=same_period_ref_regimes,
                 fold_state_names=fold_state_names,
             )
@@ -1009,13 +1022,16 @@ def _attach_gated_edge_folds(
                 dataclass_replace(
                     leg,
                     fallback_state_projector=build_fallback_state_projector(
-                        ref=leg.fallback,
+                        ref=leg.realized_fallback,
+                        entry_phase=(
+                            "solve" if leg.simulate_fallback is None else "simulate"
+                        ),
                         # A routed row lands in the fallback regime as a
                         # SIMULATED subject, so it owes a coordinate on every
                         # state that regime carries in simulation — the states
                         # it carries only there (no solve axis) included.
                         fallback_simulate_state_names=canonical_regimes[
-                            leg.fallback.regime
+                            leg.realized_fallback.regime
                         ].simulation.state_names,
                         target_regime_name=target_name,
                         target_state_names=regime_to_v_interpolation_info[
@@ -1173,6 +1189,7 @@ def _resolve_gated_edge(
             regime=ref.regime,
             projection=ref.projection,
             stakeholder_index=_stakeholder_index(ref.regime, ref.stakeholder),
+            stakeholder=ref.stakeholder,
         )
 
     # A collective source's legs are iterated in its stakeholder order so
@@ -1195,7 +1212,13 @@ def _resolve_gated_edge(
                     if target_stakeholders is None
                     else target_stakeholders.index(cast("str", leg.target_stakeholder))
                 ),
-                fallback=_resolve_ref(leg.fallback),
+                target_stakeholder=leg.target_stakeholder,
+                fallback=_resolve_ref(leg.solve_fallback),
+                simulate_fallback=(
+                    _resolve_ref(leg.simulate_fallback)
+                    if leg.fallback_is_phased
+                    else None
+                ),
             )
         )
     gate_refs = {name: _resolve_ref(ref) for name, ref in edge.gate_refs.items()}
@@ -1424,6 +1447,7 @@ def _resolve_same_period_refs(
             regime=ref.regime,
             projection=ref.projection,
             stakeholder_index=stakeholder_index,
+            stakeholder=ref.stakeholder,
         )
     return MappingProxyType(resolved)
 
@@ -1550,14 +1574,35 @@ def _fail_if_gated_edges_invalid(
                     target_name=target_name,
                     target_stakeholder=leg.target_stakeholder,
                 )
-                _fail_if_ref_invalid(
-                    prefix=f"{leg_prefix}fallback ",
-                    ref=leg.fallback,
-                    user_regimes=user_regimes,
-                    representative_user_regimes=representative_user_regimes,
-                    regime_to_v_interpolation_info=regime_to_v_interpolation_info,
-                    projection_phase="simulate",
-                )
+                # A single reference serves both phases and so owes the wider
+                # (simulate) projection; a `Phased` one is checked against the
+                # phase that actually reads it.
+                if leg.fallback_is_phased:
+                    _fail_if_ref_invalid(
+                        prefix=f"{leg_prefix}fallback (solve) ",
+                        ref=leg.solve_fallback,
+                        user_regimes=user_regimes,
+                        representative_user_regimes=representative_user_regimes,
+                        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+                        projection_phase="solve",
+                    )
+                    _fail_if_ref_invalid(
+                        prefix=f"{leg_prefix}fallback (simulate) ",
+                        ref=leg.simulate_fallback,
+                        user_regimes=user_regimes,
+                        representative_user_regimes=representative_user_regimes,
+                        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+                        projection_phase="simulate",
+                    )
+                else:
+                    _fail_if_ref_invalid(
+                        prefix=f"{leg_prefix}fallback ",
+                        ref=leg.solve_fallback,
+                        user_regimes=user_regimes,
+                        representative_user_regimes=representative_user_regimes,
+                        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+                        projection_phase="simulate",
+                    )
             _fail_if_duplicate_fallback_regimes(prefix=prefix, edge=edge)
             for ref_name, ref in edge.gate_refs.items():
                 _fail_if_ref_invalid(
@@ -1643,9 +1688,11 @@ def _fail_if_gated_edge_references_inactive(
     active on every consumed period, so the roll is well defined wherever its
     result is used.
     """
-    reference_regime_names = {leg.fallback.regime for leg in edge.legs.values()} | {
-        ref.regime for ref in edge.gate_refs.values()
-    }
+    reference_regime_names = (
+        {leg.solve_fallback.regime for leg in edge.legs.values()}
+        | {leg.simulate_fallback.regime for leg in edge.legs.values()}
+        | {ref.regime for ref in edge.gate_refs.values()}
+    )
     source_active_periods = set(regimes_to_active_periods[source_name])
     consumed_periods = {
         period
@@ -1686,13 +1733,19 @@ def _fail_if_duplicate_fallback_regimes(*, prefix: str, edge: GatedEdge) -> None
     corruption, not merely an unused branch. A singleton source (exactly one
     leg) can never trigger this; only a multi-leg (collective) source can.
     """
-    fallback_regimes = [leg.fallback.regime for leg in edge.legs.values()]
-    seen: set[RegimeName] = set()
+    # The write is per phase: the fold reads the solve references and the
+    # router writes into the simulate ones, so two legs colliding in EITHER
+    # set is the corruption this rejects.
     duplicates: list[RegimeName] = []
-    for regime_name in fallback_regimes:
-        if regime_name in seen and regime_name not in duplicates:
-            duplicates.append(regime_name)
-        seen.add(regime_name)
+    for phase_regimes in (
+        [leg.solve_fallback.regime for leg in edge.legs.values()],
+        [leg.simulate_fallback.regime for leg in edge.legs.values()],
+    ):
+        seen: set[RegimeName] = set()
+        for regime_name in phase_regimes:
+            if regime_name in seen and regime_name not in duplicates:
+                duplicates.append(regime_name)
+            seen.add(regime_name)
     if duplicates:
         msg = (
             f"{prefix}two or more legs share the same fallback regime "
@@ -2431,11 +2484,16 @@ def _build_solution_phase(
             # The collective terminal kernel builds one
             # `U^s`-and-`F` per stakeholder and stacks the utilities on a trailing
             # stakeholder axis. Separate builder so the singleton path is untouched.
-            terminal_func = get_Q_and_F_terminal_collective(
+            Q_and_F_functions = _build_terminal_collective_Q_and_F_per_period(
+                n_periods=ages.n_periods,
                 flat_param_names=flat_param_names,
                 functions=core.functions,
                 constraints=core.constraints,
                 stakeholders=stakeholders,
+                value_constraints=value_aware_feasibility.value_constraints,
+                same_period_refs=value_aware_feasibility.same_period_refs,
+                regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+                period_to_regime_v_interp=period_to_regime_v_interp,
             )
         else:
             terminal_func = get_Q_and_F_terminal(
@@ -2443,9 +2501,9 @@ def _build_solution_phase(
                 functions=core.functions,
                 constraints=core.constraints,
             )
-        Q_and_F_functions = MappingProxyType(
-            dict.fromkeys(range(ages.n_periods), terminal_func)
-        )
+            Q_and_F_functions = MappingProxyType(
+                dict.fromkeys(range(ages.n_periods), terminal_func)
+            )
         compute_intermediates: MappingProxyType[int, Callable] = MappingProxyType({})
     else:
         compute_regime_transition_probs = build_regime_transition_probs_functions(
@@ -3222,11 +3280,16 @@ def _build_simulation_phase(  # noqa: PLR0915
     if spec.terminal:
         compute_regime_transition_probs = None
         if collective:
-            terminal_func = get_Q_and_F_terminal_collective(
+            Q_and_F_functions = _build_terminal_collective_Q_and_F_per_period(
+                n_periods=ages.n_periods,
                 flat_param_names=flat_param_names,
                 functions=functions,
                 constraints=constraints,
                 stakeholders=stakeholders,
+                value_constraints=value_aware_feasibility.value_constraints,
+                same_period_refs=value_aware_feasibility.same_period_refs,
+                regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+                period_to_regime_v_interp=period_to_regime_v_interp,
             )
         else:
             terminal_func = get_Q_and_F_terminal(
@@ -3234,9 +3297,9 @@ def _build_simulation_phase(  # noqa: PLR0915
                 functions=functions,
                 constraints=constraints,
             )
-        Q_and_F_functions = MappingProxyType(
-            dict.fromkeys(range(ages.n_periods), terminal_func)
-        )
+            Q_and_F_functions = MappingProxyType(
+                dict.fromkeys(range(ages.n_periods), terminal_func)
+            )
     else:
         compute_regime_transition_probs = build_regime_transition_probs_functions(
             functions=simulate_functions,
@@ -6072,6 +6135,80 @@ def _build_period_state_axes(
                 }
             )
             for period in active_periods
+        }
+    )
+
+
+def _build_terminal_collective_Q_and_F_per_period(
+    *,
+    n_periods: int,
+    flat_param_names: frozenset[str],
+    functions: EconFunctionsMapping,
+    constraints: ConstraintFunctionsMapping,
+    stakeholders: tuple[str, ...],
+    value_constraints: ConstraintFunctionsMapping,
+    same_period_refs: MappingProxyType[str, ResolvedSamePeriodRef],
+    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+    period_to_regime_v_interp: (
+        MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
+    ),
+) -> MappingProxyType[int, QAndFFunction]:
+    """Build the terminal collective Q-and-F closure(s), one per period if needed.
+
+    A terminal kernel reads no continuation, so without value constraints every
+    period's closure is the same object and one build serves the model. A
+    same-period reference is different: it interpolates the referenced regime's
+    value on the grid that regime is tabulated on AT THIS period, which moves
+    with age wherever the reference carries an `AgeSpecializedGrid`. Those
+    models get one closure per period.
+
+    Args:
+        n_periods: Number of periods in the model.
+        flat_param_names: Frozenset of flat parameter names for the regime.
+        functions: Immutable mapping of function names to internal user
+            functions; carries `utility_<s>` per stakeholder.
+        constraints: Immutable mapping of constraint names to internal user
+            functions.
+        stakeholders: Ordered stakeholder names.
+        value_constraints: Value-aware feasibility predicates, params already
+            renamed to qnames.
+        same_period_refs: Resolved same-period reference declarations.
+        regime_to_v_interpolation_info: Representative per-regime interpolation
+            info (the age-invariant fallback).
+        period_to_regime_v_interp: Per-period interpolation info built from the
+            age-specialized grid schedule, or `None`.
+
+    Returns:
+        Immutable mapping of period index to the terminal Q-and-F closure.
+    """
+    if not value_constraints:
+        shared = get_Q_and_F_terminal_collective(
+            flat_param_names=flat_param_names,
+            functions=functions,
+            constraints=constraints,
+            stakeholders=stakeholders,
+        )
+        return MappingProxyType(dict.fromkeys(range(n_periods), shared))
+
+    # `continuation_info(p)` answers for period `p + 1`, so this period's own
+    # grids are `continuation_info(period - 1)` — the same offset the
+    # non-terminal collective builder uses for its references.
+    continuation_info = continuation_info_lookup(
+        period_to_regime_v_interp=period_to_regime_v_interp,
+        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+    )
+    return MappingProxyType(
+        {
+            period: get_Q_and_F_terminal_collective(
+                flat_param_names=flat_param_names,
+                functions=functions,
+                constraints=constraints,
+                stakeholders=stakeholders,
+                value_constraints=value_constraints,
+                same_period_refs=same_period_refs,
+                same_period_v_interpolation_info=continuation_info(period - 1),
+            )
+            for period in range(n_periods)
         }
     )
 

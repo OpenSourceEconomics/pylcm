@@ -124,8 +124,46 @@ class EdgeLeg:
       dissolution cell, and `0 * -inf = NaN`).
     """
 
-    fallback: SamePeriodRef
-    """The gate-closed branch: a reference regime's same-period V at a projection."""
+    fallback: SamePeriodRef | Phased
+    """The gate-closed branch: a reference regime's same-period V at a projection.
+
+    A bare `SamePeriodRef` is both what the branch is worth and where it puts a
+    row. `Phased(solve=..., simulate=...)` separates them, because what a
+    household expects from leaving and what a settlement hands it are two
+    objects:
+
+    - the SOLVE leg is folded into `Wbar` and prices the source's decision;
+    - the SIMULATE leg supplies the regime, the role and the state coordinates
+      a routed row actually lands on.
+
+    Both sides must be `SamePeriodRef`, and each is validated against the phase
+    that reads it: the solve leg owes a coordinate on every state its regime
+    carries in the solve phase, the simulate leg on every state its regime
+    carries in simulation.
+    """
+
+    @property
+    def solve_fallback(self) -> SamePeriodRef:
+        """The reference whose value the gate-closed branch is priced at."""
+        return (
+            cast("SamePeriodRef", self.fallback.solve)
+            if isinstance(self.fallback, Phased)
+            else self.fallback
+        )
+
+    @property
+    def simulate_fallback(self) -> SamePeriodRef:
+        """The reference a routed row's regime, role and states come from."""
+        return (
+            cast("SamePeriodRef", self.fallback.simulate)
+            if isinstance(self.fallback, Phased)
+            else self.fallback
+        )
+
+    @property
+    def fallback_is_phased(self) -> bool:
+        """Whether the two branches were declared separately."""
+        return isinstance(self.fallback, Phased)
 
     target_stakeholder: str | None = None
     """The gate-open branch's target-value component, or `None` for a singleton
@@ -144,7 +182,23 @@ class GatedEdge:
     raw transitions between different-stakeholder regimes stay rejected.
 
     A source regime declares `gated_edges` as a mapping of TARGET regime name
-    to `GatedEdge`. At the end of each period's solve, the engine folds, for
+    to `GatedEdge`. **The key is always the GATE-OPEN target** — the regime a
+    row enters when the gate is true — and each leg's `fallback` is where the
+    gate-false branch sends it. A dissolution edge is therefore keyed by the
+    CONTINUING collective regime under `gate = ~D_target`, with each partner's
+    single regime as that partner's leg fallback; keying it by one partner's
+    single regime would send both partners there whenever the couple stays
+    together.
+
+    A leg thus owns four facts about where its rows go, and simulation carries
+    all four: the open branch's regime (the key) and role
+    (`EdgeLeg.target_stakeholder`), and the closed branch's regime and role
+    (`fallback.regime` and `fallback.stakeholder`). A row's own role —
+    `initial_conditions["own_stakeholder"]`, published in the simulated frame —
+    is what picks its leg, and it is updated to the branch's role as the row
+    moves; a row landing in a singleton regime carries none.
+
+    At the end of each period's solve, the engine folds, for
     each declared edge and each source stakeholder `s`, a gated continuation
     object on the target regime's grid:
 
@@ -439,8 +493,9 @@ class Regime:
       dissolution does not split a row into two independently tracked
       households; each row records where every stakeholder would land and then
       continues as one of them.
-    - `simulate` requires `own_stakeholder` for a collective source, and it
-      names the role every row in that call carries.
+    - Every row carries its own role. `simulate` reads it from
+      `initial_conditions["own_stakeholder"]` and updates it wherever a gated
+      edge routes the row, so one cohort may hold both partners.
     - The off-grid value gate is approximate: it interpolates the target's
       already-maximized value rather than recomputing the household maximum at
       the realized off-grid point (see `get_edge_simulate_gate_evaluator`).
@@ -461,7 +516,7 @@ class Regime:
     value_constraints: Mapping[FunctionName, UserFunction] = field(
         default_factory=lambda: MappingProxyType({})
     )
-    """Value-aware feasibility predicates for a non-terminal collective regime.
+    """Value-aware feasibility predicates for a collective regime.
 
     Each entry maps a constraint name to a predicate returning `True` where the
     (state, action) combination is feasible. Unlike ordinary `constraints`
@@ -484,7 +539,22 @@ class Regime:
     can occur on-path). A participation constraint takes the form
     `Q_j >= V_single_j(pi_j(x)) - Delta_j` for each stakeholder `j`.
 
-    Only non-terminal collective regimes may declare value constraints.
+    A TERMINAL collective regime may declare them too — a household's last
+    period is a participation decision like any other — with two differences
+    worth stating, because nothing in the arrays reveals them:
+
+    - `Q_<s>` is stakeholder `s`'s terminal payoff. There is no continuation,
+      so the value each partner weighs against the reference is what the cell
+      itself delivers.
+    - What a terminal regime publishes is a **flag**, not a resolved outcome.
+      An empty feasible set sets `D = True` and leaves the `-inf` sentinel as
+      the value; pylcm substitutes no outside option, because there is no
+      continuation to route into. A caller that reads the value without the
+      flag reads the sentinel. Deciding what a dissolved terminal household is
+      worth is the model's business.
+
+    Only collective regimes may declare value constraints at all: the
+    predicates read `Q_<s>`, which a singleton regime does not carry.
     """
 
     gated_edges: Mapping[RegimeName, GatedEdge] = field(

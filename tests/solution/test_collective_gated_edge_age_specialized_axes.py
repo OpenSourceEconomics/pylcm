@@ -425,11 +425,10 @@ def _simulate_gate_ref(model: Model):
     return model.simulate(
         params={"discount_factor": _DISCOUNT_FACTOR},
         initial_conditions=_initial_conditions(
-            n_subjects=2, regime_id=_GateRefRegimeId.couple
+            n_subjects=2, regime_id=_GateRefRegimeId.couple, model=model
         ),
         period_to_regime_to_V_arr=solution,
         log_level="debug",
-        own_stakeholder="f",
     )
 
 
@@ -442,20 +441,28 @@ def _simulate_dissolution(model: Model):
     return model.simulate(
         params=params,
         initial_conditions=_initial_conditions(
-            n_subjects=2, regime_id=_DissolutionRegimeId.couple
+            n_subjects=2, regime_id=_DissolutionRegimeId.couple, model=model
         ),
         period_to_regime_to_V_arr=solution,
         period_to_regime_to_dissolution_flags=flags,
         log_level="debug",
-        own_stakeholder="f",
     )
 
 
-def _initial_conditions(*, n_subjects: int, regime_id: ScalarInt) -> dict[str, FloatND]:
-    """Seed every subject as a couple at age 0; the couple carries no state."""
+def _initial_conditions(
+    *, n_subjects: int, regime_id: ScalarInt, model: Model
+) -> dict[str, FloatND]:
+    """Seed every subject as the wife of a couple at age 0.
+
+    The couple carries no state, so the role is the whole of what a row starts
+    with beyond its regime.
+    """
     return {
         "age": jnp.zeros(n_subjects),
         "regime_id": jnp.full(n_subjects, regime_id, dtype=jnp.int32),
+        "own_stakeholder": jnp.full(
+            n_subjects, model.stakeholder_names_to_ids["f"], dtype=jnp.int32
+        ),
     }
 
 

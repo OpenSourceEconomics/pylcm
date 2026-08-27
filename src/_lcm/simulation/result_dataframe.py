@@ -50,6 +50,7 @@ def _create_flat_dataframe(
             publishes_nested_policy=metadata.regime_to_publishes_nested_policy[name],
             regime_params=flat_params[name],
             stakeholders=metadata.regime_to_stakeholders.get(name),
+            publishes_role=bool(metadata.stakeholder_names_to_ids),
             additional_targets=additional_targets,
             ages=ages,
             subject_batch_size=subject_batch_size,
@@ -111,11 +112,18 @@ def _process_regime(
     publishes_nested_policy: bool,
     regime_params: FlatRegimeParams,
     stakeholders: tuple[str, ...] | None,
+    publishes_role: bool,
     additional_targets: list[str] | None,
     ages: AgeGrid,
     subject_batch_size: int | None = None,
 ) -> pd.DataFrame:
     """Process results for a single regime into a DataFrame.
+
+    `publishes_role` is a property of the MODEL, not of this regime: a model
+    with any collective regime publishes `own_stakeholder` for every regime,
+    since a row that leaves a household still has to say it now occupies no
+    role. A model with none would carry a column that is the sentinel in every
+    row, so it publishes none.
 
     `regime` is required only when `additional_targets` is set. With
     `additional_targets=None`, only `regime_name` is read, so callers
@@ -137,6 +145,7 @@ def _process_regime(
             regime_states=regime_states,
             regime_actions=regime_actions,
             publishes_nested_policy=publishes_nested_policy,
+            publishes_role=publishes_role,
         )
         for period, result in regime_results.items()
     ]
@@ -231,6 +240,7 @@ def _extract_period_data(
     regime_states: tuple[str, ...],
     regime_actions: tuple[str, ...],
     publishes_nested_policy: bool,
+    publishes_role: bool,
 ) -> dict[str, FloatND | IntND | BoolND]:
     """Extract data from a single period's simulation results."""
     data: dict[str, FloatND | IntND | BoolND] = {
@@ -239,6 +249,12 @@ def _extract_period_data(
         "_in_regime": result.in_regime,
         "value": result.V_arr,
     }
+
+    # The role each row occupies. Only a model with a collective regime has
+    # roles to occupy; elsewhere the column would be the no-role sentinel in
+    # every row of every user's frame.
+    if publishes_role:
+        data["own_stakeholder"] = result.own_stakeholder
 
     # Per-subject flag that a continuous-outer off-grid policy read was refused
     # and the grid-argmax pair retained. Only NNBEGM regimes can publish the flag;
@@ -376,13 +392,16 @@ def _reorder_columns(
     action_names: list[ActionName],
     stakeholder_value_names: Sequence[str] = (),
 ) -> pd.DataFrame:
-    """Reorder columns: id, period, regime_name, value, states, actions, rest.
+    """Reorder columns: id, period, regime_name, role, value, states, actions, rest.
 
     `subject_id`, `period` and `regime_name` identify a row and are named
     unconditionally, so a frame that lacks one raises here rather than being
-    published one column narrower. `"value"` is the one conditional entry: an
-    all-collective result has none, because `_process_regime` replaces it with
-    `value_<stakeholder>` columns.
+    published one column narrower. Two entries are conditional. A model with
+    no collective regime publishes no `own_stakeholder`, and where it is
+    published it joins the identifying block: which role a row occupies says
+    who the row *is*, alongside which regime it is in. `"value"` is the other:
+    an all-collective result has none, because `_process_regime` replaces it
+    with `value_<stakeholder>` columns.
 
     Those stakeholder columns are named by `stakeholder_value_names`, which
     carries each collective regime's own `stakeholders` order — the order that
@@ -391,6 +410,8 @@ def _reorder_columns(
     `value_of_leisure` in the trailing `rest` block where it belongs.
     """
     base = ["subject_id", "period", "regime_name"]
+    if "own_stakeholder" in df.columns:
+        base = [*base, "own_stakeholder"]
     if "value" in df.columns:
         base = [*base, "value"]
     stakeholder_value_cols = [c for c in stakeholder_value_names if c in df.columns]
@@ -418,6 +439,12 @@ def _convert_to_categorical(
     df["regime_name"] = pd.Categorical(
         df["regime_name"], categories=metadata.regime_names
     )
+
+    if "own_stakeholder" in df.columns and metadata.stakeholder_names_to_ids:
+        df["own_stakeholder"] = _roles_to_categorical(
+            codes=df["own_stakeholder"],
+            stakeholder_names_to_ids=metadata.stakeholder_names_to_ids,
+        )
 
     for var_name, merged_categories in metadata.discrete_categories.items():
         if var_name not in df.columns:
@@ -482,6 +509,37 @@ def _remap_codes_per_regime(
 
     return pd.Categorical(  # ty: ignore[invalid-return-type]
         labels, categories=list(merged_categories), ordered=ordered
+    )
+
+
+def _roles_to_categorical(
+    *,
+    codes: pd.Series,
+    stakeholder_names_to_ids: Mapping[str, int],
+) -> pd.Categorical:
+    """Label the role codes each row carries.
+
+    A row in a singleton regime occupies no role, and the honest label for that
+    is no label at all: it becomes a missing entry rather than a category
+    competing with the real roles in a `value_counts` or a groupby.
+
+    Args:
+        codes: The raw `own_stakeholder` column.
+        stakeholder_names_to_ids: The model's role vocabulary.
+
+    Returns:
+        The column as an unordered Categorical over the declared roles.
+    """
+    names = list(stakeholder_names_to_ids)
+    positions = {
+        code: names.index(name) for name, code in stakeholder_names_to_ids.items()
+    }
+    raw = codes.to_numpy()
+    labels = np.full(raw.shape, -1, dtype=np.int64)
+    for code, position in positions.items():
+        labels[raw == code] = position
+    return pd.Categorical.from_codes(  # ty: ignore[invalid-return-type]
+        labels, categories=pd.Index(names), ordered=False
     )
 
 

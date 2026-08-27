@@ -46,17 +46,15 @@ writes each into its OWN fallback regime's per-subject state slot (so a
 dissolved household's row-level record of "what regime and state would each
 partner have started at" is complete and correct for every stakeholder),
 and then picks ONE of them as the row's OWN continuing regime membership:
-the leg whose `source_stakeholder` matches `own_stakeholder` — the row's
-own, call-level-fixed role (e.g. "f" for an all-women simulate() population
-tracking synthetic male partners, "m" for an all-men population). A
-collective source must be given that role; a singleton source's sole leg
-carries none and needs none. `own_stakeholder` is a single value for the
-whole `simulate()` call, not a per-subject array, and that is what makes
-the mode synthetic: the population is one single-gender cohort whose
-partners are imputed rather than simulated, so no cross-row linkage is
-needed. A genuinely mixed population whose individual rows have DIFFERING
-own-roles, and two separately tracked rows that must unlink into each
-other's rows on dissolution, are what LINKED mode would add.
+the leg whose `source_stakeholder` is the role THAT ROW carries. The role
+is per subject — seeded in the initial conditions, and set from the branch
+each gated edge actually takes — so one population may hold wives and
+husbands side by side, each following her or his own dissolution path. What
+stays synthetic is the partner: a dissolution writes every leg's fallback
+coordinates but continues only the row's own, so the partner's household is
+imputed rather than tracked as a row of its own. Two separately tracked
+rows that must unlink into each other on dissolution are what LINKED mode
+would add.
 
 **Absent: a generic between-period state-reassignment hook.** A collective
 lifecycle model may want to rewrite designated state components between
@@ -83,6 +81,7 @@ import jax
 import jax.numpy as jnp
 
 from _lcm.engine import Regime, StateActionSpace
+from _lcm.regime_building.collective import NO_ROLE
 from _lcm.regime_building.gated_edges import (
     SOURCE_PARAMS,
     TARGET_PARAMS,
@@ -260,9 +259,10 @@ def route_gated_edges(
     new_subject_regime_ids: Int1D,
     subjects_in_regime: Bool1D,
     flat_params: FlatParams,
-    own_stakeholder: str | None = None,
+    own_stakeholder: Int1D,
+    new_own_stakeholder: Int1D,
     fold_age: float | None = None,
-) -> tuple[StatesPerRegime, Int1D]:
+) -> tuple[StatesPerRegime, Int1D, Int1D]:
     """Route each subject through its regime's declared gated edges.
 
     A no-op (returns the inputs unchanged) when `regime` declares no
@@ -287,9 +287,11 @@ def route_gated_edges(
     selected this edge's target. For each eligible subject the router then:
 
     - sets its own continuing regime membership to the target (gate open) or
-      to its OWN leg's fallback (gate closed, selected via `own_stakeholder`
-      — see `_select_own_leg` and the module docstring's scope fence for a
-      collective (multi-leg) source);
+      to its OWN leg's fallback (gate closed) — the leg is the one whose
+      `source_stakeholder` is the role the row itself carries;
+    - sets the role the row carries onward: the leg's `target_stakeholder` on
+      an open branch, its fallback's `stakeholder` on a closed one, and the
+      no-role sentinel wherever the destination is a singleton regime;
     - writes every leg's own projected fallback state coordinates into that
       leg's fallback regime, for the eligible subjects the gate TURNED AWAY
       only. A gate-open row continues in the target and enters no fallback
@@ -314,20 +316,23 @@ def route_gated_edges(
             every operand one period's nodes off with no shape error.
         fold_age: Age corresponding to `fold_period`, supplied only to edge
             callables that declare `age`.
-        own_stakeholder: This `simulate()` call's fixed own-role (ROW-SPLIT,
-            synthetic mode), e.g. "f"/"m" for an all-women/all-men
-            population tracking synthetic partners. Required whenever the
-            regime is a collective source: its legs carry roles, and picking
-            one for the whole population is the caller's decision, not the
-            engine's. A singleton source's sole leg carries no role and
-            ignores this argument.
+        own_stakeholder: Each subject's role THIS period, as a code in the
+            model's role vocabulary, or the no-role sentinel for a subject
+            occupying none. A collective source's legs carry roles, so this is
+            what decides which leg a row follows — the wife's fallback for her,
+            the husband's for him, in one cohort.
+        new_own_stakeholder: The next period's roles as accumulated by the
+            regimes already routed this period, written into for the subjects
+            this edge moves. Mirrors `new_subject_regime_ids`: one array is
+            filled in regime by regime, so a later regime never resets an
+            earlier one's rows.
 
-    Raises:
-        ValueError: `regime` is a collective source and `own_stakeholder` is
-            `None` or names no declared stakeholder.
+    Returns:
+        Tuple of the routed states, the routed regime ids, and the role each
+        subject carries onward.
     """
     if not regime.gated_edges:
-        return next_states, new_subject_regime_ids
+        return next_states, new_subject_regime_ids, new_own_stakeholder
 
     # An IMMUTABLE snapshot of the ordinary (gate-blind) draw, taken
     # BEFORE the edge loop below ever writes into `routed_ids`. Each edge's
@@ -339,6 +344,8 @@ def route_gated_edges(
 
     states = next_states
     routed_ids = new_subject_regime_ids
+    routed_roles = new_own_stakeholder
+    role_ids = regime.stakeholder_names_to_ids
     for target_name, edge in regime.gated_edges.items():
         # `same_period_mappings` only carries
         # an entry for a target `substitute_gated_edge_continuations`
@@ -414,14 +421,19 @@ def route_gated_edges(
         edge_mask = subjects_in_regime & (ordinary_draw_ids == target_id)
 
         legs = edge.legs
-        own_leg = _select_own_leg(
+        # Which leg a row follows is the row's own business: the wife's
+        # fallback for her, the husband's for his, in one cohort. A singleton
+        # source's sole leg carries no role and answers for every row.
+        own_fallback_id, open_role, closed_role = _per_row_leg_outcomes(
             legs=legs,
             own_stakeholder=own_stakeholder,
-            source_regime_name=regime.name,
+            regime_names_to_ids=regime_names_to_ids,
+            role_ids=role_ids,
         )
-        own_fallback_id = regime_names_to_ids[own_leg.fallback.regime]
         candidate_id = jnp.where(gate_bool, target_id, own_fallback_id)
         routed_ids = jnp.where(edge_mask, candidate_id, routed_ids)
+        candidate_role = jnp.where(gate_bool, open_role, closed_role)
+        routed_roles = jnp.where(edge_mask, candidate_role, routed_roles)
 
         # The rows this edge sends into a leg's fallback regime: eligible for
         # the edge AND turned away by the gate. A row whose gate OPENED
@@ -474,12 +486,67 @@ def route_gated_edges(
             states = _advance_states_for_subjects(
                 states_per_regime=states,
                 next_states_per_regime=MappingProxyType(
-                    {leg.fallback.regime: MappingProxyType(dict(fallback_states))}
+                    {
+                        leg.realized_fallback.regime: MappingProxyType(
+                            dict(fallback_states)
+                        )
+                    }
                 ),
                 subject_indices=dissolving_mask,
             )
 
-    return states, routed_ids
+    return states, routed_ids, routed_roles
+
+
+def _per_row_leg_outcomes(
+    *,
+    legs: tuple[ResolvedEdgeLeg, ...],
+    own_stakeholder: Int1D,
+    regime_names_to_ids: RegimeNamesToIds,
+    role_ids: Mapping[str, int],
+) -> tuple[Int1D, Int1D, Int1D]:
+    """Read each row's own leg and both of that leg's complete destinations.
+
+    A leg owns four facts about where its rows go — the open branch's regime
+    and role, and the closed branch's — and all four have to travel together:
+    routing a row to the right regime while leaving it carrying the role it had
+    in the household it just left makes its next dissolution follow the wrong
+    partner's leg.
+
+    A singleton source declares one role-less leg, which answers for every row.
+
+    Args:
+        legs: The edge's resolved legs, in source stakeholder order.
+        own_stakeholder: Each subject's role code.
+        regime_names_to_ids: Immutable mapping of regime names to codes.
+        role_ids: The model's role vocabulary.
+
+    Returns:
+        Tuple of each subject's closed-branch regime id, its open-branch role,
+        and its closed-branch role.
+    """
+
+    def _role_of(name: str | None) -> int:
+        return NO_ROLE if name is None else role_ids[name]
+
+    first = legs[0]
+    fallback_id = jnp.full_like(
+        own_stakeholder, regime_names_to_ids[first.realized_fallback.regime]
+    )
+    open_role = jnp.full_like(own_stakeholder, _role_of(first.target_stakeholder))
+    closed_role = jnp.full_like(
+        own_stakeholder, _role_of(first.realized_fallback.stakeholder)
+    )
+    for leg in legs[1:]:
+        mine = own_stakeholder == _role_of(leg.source_stakeholder)
+        fallback_id = jnp.where(
+            mine, regime_names_to_ids[leg.realized_fallback.regime], fallback_id
+        )
+        open_role = jnp.where(mine, _role_of(leg.target_stakeholder), open_role)
+        closed_role = jnp.where(
+            mine, _role_of(leg.realized_fallback.stakeholder), closed_role
+        )
+    return fallback_id, open_role, closed_role
 
 
 def _bind_provenance_params(
@@ -629,73 +696,3 @@ def _population_call(func: Callable, *, axis_size: int) -> Callable:
         )
         per_axis_size[axis_size] = call
     return call
-
-
-def _select_own_leg(
-    *,
-    legs: tuple[ResolvedEdgeLeg, ...],
-    own_stakeholder: str | None,
-    source_regime_name: RegimeName,
-) -> ResolvedEdgeLeg:
-    """Pick the leg whose fallback IS this row's own continuing regime.
-
-    ROW-SPLIT (synthetic mode). A collective source declares one leg per
-    stakeholder (`leg.source_stakeholder`); `own_stakeholder` is this
-    `simulate()` call's fixed own-role (e.g. "f" for an all-women
-    population), so the matching leg's fallback is the row's own single
-    regime on dissolution.
-
-    A COLLECTIVE source therefore REQUIRES a role. Each stakeholder's leg
-    carries its own fallback regime and its own state projection, so a
-    population routed without a role would follow one partner's dissolution
-    path for every row — each divorced husband simulated as his wife, in her
-    regime and at her state. That is a caller error, not a default: both a
-    missing `own_stakeholder` and one matching no declared leg raise.
-
-    A SINGLETON source's sole leg carries `source_stakeholder=None`. It
-    offers no choice between roles, so it neither needs nor accepts one and
-    is returned for any `own_stakeholder` — the common, correct case.
-
-    Collective-vs-singleton keys on `legs[0].source_stakeholder is None`, NOT
-    on `len(legs) == 1`. Arity is the wrong test: the validator accepts a
-    ONE-element `stakeholders` tuple, and `processing.py`'s
-    `leg_order = [(s, s) for s in source_stakeholders]` then gives that sole
-    leg `source_stakeholder="f"` — not `None`. Keying on arity lets a typo'd
-    or missing `own_stakeholder` fall through to that leg silently on exactly
-    the single-stakeholder collective source the raise exists to protect.
-
-    Args:
-        legs: The edge's resolved legs, in source stakeholder order.
-        own_stakeholder: This `simulate()` call's fixed own-role, or `None`.
-        source_regime_name: Regime declaring the edge, named in the error.
-
-    Returns:
-        The leg whose fallback this row's own membership follows.
-
-    Raises:
-        ValueError: The source is collective (its legs carry roles) and
-            `own_stakeholder` is either `None` or matches no leg.
-    """
-    if legs[0].source_stakeholder is None:
-        return legs[0]
-    available = tuple(leg.source_stakeholder for leg in legs)
-    for leg in legs:
-        if leg.source_stakeholder == own_stakeholder:
-            return leg
-    if own_stakeholder is None:
-        msg = (
-            f"Simulating regime '{source_regime_name}' needs an explicit "
-            f"own_stakeholder, one of {available}. It is collective and its "
-            "gated edge declares one dissolution leg per stakeholder, each "
-            "with its own fallback regime and its own state projection, so "
-            "without a role every row would follow one partner's path. Pass "
-            "`own_stakeholder=...` to `simulate()`."
-        )
-        raise ValueError(msg)
-    msg = (
-        f"own_stakeholder={own_stakeholder!r} does not match any leg's "
-        f"source_stakeholder (available: {available}) of the collective "
-        f"regime '{source_regime_name}'. A row's own-role must name one of "
-        "the declared stakeholders."
-    )
-    raise ValueError(msg)

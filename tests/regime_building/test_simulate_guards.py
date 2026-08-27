@@ -11,9 +11,9 @@ Five boundary conditions on the collective-regimes forward-simulation path
 - Two legs of one gated edge sharing the same fallback regime: rejected at
   model construction, because in `route_gated_edges` the later leg's
   projected state would overwrite the earlier leg's.
-- `_select_own_leg` on a genuinely multi-leg (collective) source: an
-  `own_stakeholder` the source does not declare, or none at all, raises
-  rather than resolving to `legs[0]`.
+- `_per_row_leg_outcomes` on a genuinely multi-leg (collective) source: each
+  row reads its OWN leg's fallback regime and both of that leg's destination
+  roles, rather than the first declared leg's for the whole population.
 - `to_dataframe()` on a result where every populated regime is collective
   (no scalar `value` column anywhere): builds the frame from the
   per-stakeholder value columns.
@@ -35,11 +35,12 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.regime_building.collective import NO_ROLE
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.gated_edges import ResolvedEdgeLeg
 from _lcm.regime_building.Q_and_F import ResolvedSamePeriodRef
 from _lcm.simulation.gated_routing import (
-    _select_own_leg,
+    _per_row_leg_outcomes,
     substitute_gated_edge_continuations,
 )
 from _lcm.simulation.simulate import simulate
@@ -266,7 +267,7 @@ def test_two_legs_sharing_a_fallback_regime_is_rejected_at_construction():
 
     Accepting the model would let `single_shared`'s stored state come out
     entirely the "m" leg's (reverse-projected) values -- the "f" leg's own write
-    silently clobbered, regardless of which leg `own_stakeholder` selects. So
+    silently clobbered, regardless of which leg a row's role selects. So
     construction raises `ModelInitializationError` naming the shared fallback
     regime.
     """
@@ -286,7 +287,7 @@ def test_dissolution_fixture_has_distinct_fallbacks_and_still_constructs():
     ages = AgeGrid(start=0, stop=3, step="Y")
     regimes_dict = _make_dissolution_regimes()
     married_edge = regimes_dict["married"].gated_edges["married_ir"]
-    fallback_regimes = [leg.fallback.regime for leg in married_edge.legs.values()]
+    fallback_regimes = [leg.solve_fallback.regime for leg in married_edge.legs.values()]
     assert len(fallback_regimes) == len(set(fallback_regimes))
     # Must not raise.
     _solve_and_process(
@@ -294,14 +295,28 @@ def test_dissolution_fixture_has_distinct_fallbacks_and_still_constructs():
     )
 
 
-# An own_stakeholder that a multi-leg source does not declare — a typo, or
-# none at all — must raise, not silently fall back to legs[0].
+# Which leg a row follows, and where both of that leg's branches leave it, is
+# read per row from the role the row carries.
+
+
+_ROLE_IDS = MappingProxyType({"f": 0, "m": 1})
+
+_REGIME_IDS = MappingProxyType(
+    {
+        "single_f": jnp.int32(0),
+        "single_m": jnp.int32(1),
+        "single_None": jnp.int32(2),
+        "married": jnp.int32(3),
+    }
+)
 
 
 def _leg(source_stakeholder: str | None) -> ResolvedEdgeLeg:
+    """One leg sending its stakeholder home to that stakeholder's own regime."""
     return ResolvedEdgeLeg(
         source_stakeholder=source_stakeholder,
         target_component_index=None,
+        target_stakeholder=source_stakeholder,
         fallback=ResolvedSamePeriodRef(
             regime=f"single_{source_stakeholder}",
             projection={},
@@ -310,65 +325,67 @@ def _leg(source_stakeholder: str | None) -> ResolvedEdgeLeg:
     )
 
 
-def test_select_own_leg_unmatched_role_on_multi_leg_source_raises():
-    """A role naming no leg of a collective source is refused.
-
-    Each leg sends the row into one stakeholder's own regime, so a typo'd or
-    stale role has no leg to resolve to and must not resolve to an arbitrary
-    one.
-    """
-    legs = (_leg("f"), _leg("m"))
-    with pytest.raises(ValueError, match="typo"):
-        _select_own_leg(legs=legs, own_stakeholder="typo", source_regime_name="married")
-
-
-def test_select_own_leg_without_a_role_on_a_collective_source_raises():
-    """A collective source cannot be routed without the row's own role.
-
-    Its legs differ in the regime they land in and the state they project, so
-    picking one for the whole population is the caller's decision.
-    """
-    legs = (_leg("f"), _leg("m"))
-    with pytest.raises(ValueError, match="own_stakeholder"):
-        _select_own_leg(legs=legs, own_stakeholder=None, source_regime_name="married")
-
-
-def test_select_own_leg_matching_role_still_returns_matching_leg():
-    """A genuinely matching role resolves to that stakeholder's own leg."""
-    legs = (_leg("f"), _leg("m"))
-    assert (
-        _select_own_leg(legs=legs, own_stakeholder="m", source_regime_name="married")
-        is legs[1]
+def _outcomes(*, legs, roles):
+    """Read the per-row outcomes of `legs` for a cohort carrying `roles`."""
+    return _per_row_leg_outcomes(
+        legs=legs,
+        own_stakeholder=jnp.asarray(roles, dtype=jnp.int32),
+        regime_names_to_ids=_REGIME_IDS,
+        role_ids=_ROLE_IDS,
     )
 
 
-def test_select_own_leg_singleton_source_with_non_none_role_returns_sole_leg():
-    """A singleton source's sole leg is the row's own whatever role is named.
+def test_each_row_falls_back_to_the_regime_of_the_leg_it_owns():
+    """A mixed cohort reads one fallback regime per row, not one per call.
 
-    That leg carries `source_stakeholder=None` and so matches no named role,
-    but it is the only regime the edge can send a row to — the common case of
-    an all-women or all-men cohort routing through a singleton source's gated
-    edge, which must not be refused.
+    The wife's leg lands in `single_f` and the husband's in `single_m`, so a
+    selection made once for the whole population would send half the cohort
+    into the other partner's regime at the other partner's state.
     """
-    legs = (_leg(None),)
-    assert (
-        _select_own_leg(legs=legs, own_stakeholder="f", source_regime_name="single_f")
-        is legs[0]
+    fallback_id, _open_role, _closed_role = _outcomes(
+        legs=(_leg("f"), _leg("m")), roles=[_ROLE_IDS["f"], _ROLE_IDS["m"]]
+    )
+
+    np.testing.assert_array_equal(
+        np.asarray(fallback_id),
+        [int(_REGIME_IDS["single_f"]), int(_REGIME_IDS["single_m"])],
     )
 
 
-def test_select_own_leg_singleton_source_without_a_role_returns_sole_leg():
-    """A singleton source needs no role at all.
+def test_a_row_keeps_its_role_on_the_open_branch_and_drops_it_on_the_closed_one():
+    """The open branch leaves the row a stakeholder; the closed branch does not.
 
-    This is what keeps the requirement scoped to collective sources: a role is
-    demanded exactly where the legs differ, and a singleton source simulates
-    unchanged without one.
+    The legs above stay collective when the gate opens and land in singleton
+    regimes when it closes, so the two branches' roles differ — and a row
+    still carrying a role after moving into a singleton regime would follow a
+    stakeholder's leg the next time an edge routes it.
     """
-    legs = (_leg(None),)
-    assert (
-        _select_own_leg(legs=legs, own_stakeholder=None, source_regime_name="single_f")
-        is legs[0]
+    _fallback_id, open_role, closed_role = _outcomes(
+        legs=(_leg("f"), _leg("m")), roles=[_ROLE_IDS["f"], _ROLE_IDS["m"]]
     )
+
+    np.testing.assert_array_equal(
+        np.asarray(open_role), [_ROLE_IDS["f"], _ROLE_IDS["m"]]
+    )
+    np.testing.assert_array_equal(np.asarray(closed_role), [NO_ROLE, NO_ROLE])
+
+
+def test_a_singleton_sources_sole_leg_answers_for_every_row():
+    """A role-less leg is every row's own, whatever role the rows carry.
+
+    This is what keeps per-row selection scoped to collective sources: a
+    singleton source offers no choice between legs, so its rows route through
+    the one it declares rather than being refused for matching none.
+    """
+    fallback_id, open_role, closed_role = _outcomes(
+        legs=(_leg(None),), roles=[NO_ROLE, _ROLE_IDS["f"]]
+    )
+
+    np.testing.assert_array_equal(
+        np.asarray(fallback_id), [int(_REGIME_IDS["single_None"])] * 2
+    )
+    np.testing.assert_array_equal(np.asarray(open_role), [NO_ROLE, NO_ROLE])
+    np.testing.assert_array_equal(np.asarray(closed_role), [NO_ROLE, NO_ROLE])
 
 
 # to_dataframe() on an all-collective result must not require a scalar
@@ -455,6 +472,9 @@ def test_to_dataframe_all_collective_result_has_no_scalar_value_column():
             "wage": jnp.array([8.0, 40.0]),
             "age": jnp.array([0.0, 0.0]),
             "regime_id": jnp.array([0, 0], dtype=jnp.int32),
+            "own_stakeholder": jnp.full(
+                2, regimes["couple"].stakeholder_names_to_ids["f"], dtype=jnp.int32
+            ),
         }
     )
     result = simulate(
@@ -530,6 +550,11 @@ def test_stateless_collective_regime_simulate_carries_subject_axis():
         {
             "age": jnp.zeros(n_subjects),
             "regime_id": jnp.zeros(n_subjects, dtype=jnp.int32),
+            "own_stakeholder": jnp.full(
+                n_subjects,
+                regimes["stateless_couple"].stakeholder_names_to_ids["f"],
+                dtype=jnp.int32,
+            ),
         }
     )
     result = simulate(
@@ -594,6 +619,9 @@ def test_stateful_collective_regime_simulate_shape_is_byte_identical():
             "wage": jnp.array([8.0, 40.0]),
             "age": jnp.array([0.0, 0.0]),
             "regime_id": jnp.array([0, 0], dtype=jnp.int32),
+            "own_stakeholder": jnp.full(
+                2, regimes["couple"].stakeholder_names_to_ids["f"], dtype=jnp.int32
+            ),
         }
     )
     result = simulate(

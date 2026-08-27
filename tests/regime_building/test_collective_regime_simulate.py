@@ -28,7 +28,7 @@ literally become two independently-tracked future rows. What is tested here is
 that EVERY leg's own fallback (regime, state) is computed correctly and
 written into that fallback regime's per-subject state slot, and that the row's
 own continuing membership follows the leg matching this `simulate()` call's
-`own_stakeholder`; see `_lcm.simulation.gated_routing`'s module docstring.
+each row's own role; see `_lcm.simulation.gated_routing`'s module docstring.
 """
 
 from types import MappingProxyType
@@ -209,6 +209,9 @@ def test_couple_simulates_recomputed_joint_argmax_two_periods():
             "wage": jnp.array([8.0, 40.0]),
             "age": jnp.array([0.0, 0.0]),
             "regime_id": jnp.array([0, 0], dtype=jnp.int32),
+            "own_stakeholder": jnp.full(
+                2, regimes["couple"].stakeholder_names_to_ids["f"], dtype=jnp.int32
+            ),
         }
     )
     result = simulate(
@@ -276,6 +279,9 @@ def test_couple_simulate_with_runtime_validation_enabled():
             "wage": jnp.array([8.0, 40.0]),
             "age": jnp.array([0.0, 0.0]),
             "regime_id": jnp.array([0, 0], dtype=jnp.int32),
+            "own_stakeholder": jnp.full(
+                2, regimes["couple"].stakeholder_names_to_ids["f"], dtype=jnp.int32
+            ),
         }
     )
     result = simulate(
@@ -699,6 +705,9 @@ def test_dissolution_edge_routes_the_row_to_its_own_roles_single_regime():
             "regime_id": jnp.array(
                 [regime_names_to_ids["married"]] * 3, dtype=jnp.int32
             ),
+            "own_stakeholder": jnp.full(
+                3, regimes["married"].stakeholder_names_to_ids["f"], dtype=jnp.int32
+            ),
         }
     )
     result = simulate(
@@ -712,7 +721,6 @@ def test_dissolution_edge_routes_the_row_to_its_own_roles_single_regime():
         ages=ages,
         simulation_output_dtypes={},
         seed=0,
-        own_stakeholder="f",
     )
 
     married_ir = result.raw_results["married_ir"][1]
@@ -784,6 +792,9 @@ def test_value_masked_simulate_reports_the_solved_masked_value():
             "regime_id": jnp.array(
                 [regime_names_to_ids["married_ir"]] * 3, dtype=jnp.int32
             ),
+            "own_stakeholder": jnp.full(
+                3, regimes["married_ir"].stakeholder_names_to_ids["f"], dtype=jnp.int32
+            ),
         }
     )
     result = simulate(
@@ -797,9 +808,6 @@ def test_value_masked_simulate_reports_the_solved_masked_value():
         ages=ages,
         simulation_output_dtypes={},
         seed=0,
-        # The model carries a collective source, so the call declares which
-        # role it simulates even though no subject starts in that regime.
-        own_stakeholder="f",
     )
     married_ir = result.raw_results["married_ir"][1]
     np.testing.assert_array_equal(np.asarray(married_ir.in_regime), [True, True, True])
@@ -822,6 +830,9 @@ def test_gate_reading_d_target_without_dissolution_flags_raises_clearly():
             "wage": jnp.array([2.0]),
             "age": jnp.array([0.0]),
             "regime_id": jnp.array([regime_names_to_ids["married"]], dtype=jnp.int32),
+            "own_stakeholder": jnp.full(
+                1, regimes["married"].stakeholder_names_to_ids["f"], dtype=jnp.int32
+            ),
         }
     )
     with pytest.raises(NotImplementedError, match="D_target"):
@@ -1157,6 +1168,9 @@ def test_public_model_simulate_routes_dissolution_edge_when_flags_supplied():
             "regime_id": jnp.array(
                 [model.regime_names_to_ids["married"]] * 3, dtype=jnp.int32
             ),
+            "own_stakeholder": jnp.full(
+                3, model.stakeholder_names_to_ids["f"], dtype=jnp.int32
+            ),
         }
     )
     result = model.simulate(
@@ -1166,7 +1180,6 @@ def test_public_model_simulate_routes_dissolution_edge_when_flags_supplied():
         period_to_regime_to_dissolution_flags=dissolution_flags,
         log_level="debug",
         seed=0,
-        own_stakeholder="f",
     )
 
     married_ir = result.raw_results["married_ir"][1]
@@ -1218,6 +1231,12 @@ def test_public_model_simulate_runs_edge_fold_collision_guard_on_precomputed_val
             "regime_id": jnp.array(
                 [model.regime_names_to_ids["married"]] * 3, dtype=jnp.int32
             ),
+            # The guard runs before any row is routed and reads no leg, so
+            # which role the cohort carries cannot change whether it fires;
+            # the rows start collective and so must carry one.
+            "own_stakeholder": jnp.full(
+                3, model.stakeholder_names_to_ids["f"], dtype=jnp.int32
+            ),
         }
     )
     model.simulate(
@@ -1227,10 +1246,6 @@ def test_public_model_simulate_runs_edge_fold_collision_guard_on_precomputed_val
         period_to_regime_to_dissolution_flags=dissolution_flags,
         log_level="debug",
         seed=0,
-        # The guard runs before any row is routed and reads no leg, so which
-        # role the cohort declares cannot change whether it fires; the source
-        # is collective and so must declare one, and this is its first.
-        own_stakeholder="f",
     )
     assert calls, (
         "the edge-fold collision guard was not invoked on the precomputed-value "
@@ -1254,6 +1269,9 @@ def test_public_model_simulate_without_dissolution_flags_raises_clearly():
             "age": jnp.array([0.0]),
             "regime_id": jnp.array(
                 [model.regime_names_to_ids["married"]], dtype=jnp.int32
+            ),
+            "own_stakeholder": jnp.full(
+                1, model.stakeholder_names_to_ids["f"], dtype=jnp.int32
             ),
         }
     )

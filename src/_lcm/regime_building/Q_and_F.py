@@ -579,6 +579,13 @@ def get_Q_and_F_terminal_collective(
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
     stakeholders: tuple[str, ...],
+    value_constraints: ConstraintFunctionsMapping = MappingProxyType({}),
+    same_period_refs: MappingProxyType[str, ResolvedSamePeriodRef] = MappingProxyType(
+        {}
+    ),
+    same_period_v_interpolation_info: MappingProxyType[
+        RegimeName, VInterpolationInfo
+    ] = MappingProxyType({}),
 ) -> QAndFFunction:
     """Terminal (Q, F) for a collective regime — stacked per-stakeholder U + shared F.
 
@@ -603,6 +610,20 @@ def get_Q_and_F_terminal_collective(
             carries `utility_<s>` for each stakeholder in place of `utility`.
         constraints: Immutable mapping of constraint names to internal user functions.
         stakeholders: Ordered stakeholder names; fixes the trailing-axis order.
+        value_constraints: Immutable mapping of value-constraint names to
+            predicates (params already renamed to qnames). A terminal cell's
+            action value IS its utility — there is no continuation — so a
+            predicate's `Q_<s>` is stakeholder `s`'s terminal payoff. An
+            all-infeasible cell publishes the dissolution flag `D` and the
+            `-inf` sentinel; the engine resolves no outside option in its place,
+            because a terminal regime has no continuation to route into.
+        same_period_refs: Immutable mapping of reference-value names to resolved
+            same-period reference declarations. When non-empty, the returned
+            `Q_and_F` carries `SAME_PERIOD_V_ARG` and `SAME_PERIOD_PARAMS_ARG`,
+            supplied per period by the solve loop.
+        same_period_v_interpolation_info: Mapping of regime names to
+            V-interpolation info at THIS period, which is what a same-period
+            reference reader interpolates on.
 
     Returns:
         A function computing the stacked per-stakeholder utilities (Q) and the
@@ -615,10 +636,22 @@ def get_Q_and_F_terminal_collective(
         utility_names=tuple(f"utility_{stakeholder}" for stakeholder in stakeholders),
     )
 
+    value_constraint_machinery = _build_value_constraint_machinery(
+        value_constraints=value_constraints,
+        same_period_refs=same_period_refs,
+        stakeholders=stakeholders,
+        same_period_v_interpolation_info=same_period_v_interpolation_info,
+        functions=functions,
+    )
+
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
-        deps=[utilities_and_F],
+        deps=[
+            utilities_and_F,
+            *list(value_constraint_machinery.evaluators.values()),
+            *list(value_constraint_machinery.reference_readers.values()),
+        ],
         include=frozenset({"next_regime_to_V_arr", "period", "age"} | flat_param_names),
-        exclude=frozenset(),
+        exclude=value_constraint_machinery.engine_supplied_names,
     )
 
     @with_signature(
@@ -641,11 +674,24 @@ def get_Q_and_F_terminal_collective(
             stakeholder axis) and the shared feasibility mask.
 
         """
-        *stakeholder_utilities, F_arr = utilities_and_F(**states_actions_params)
+        *stakeholder_utilities, feasibility = utilities_and_F(**states_actions_params)
         U_stack = jnp.stack(
             [jnp.asarray(U_s) for U_s in stakeholder_utilities], axis=-1
         )
-        return U_stack, jnp.asarray(F_arr)
+        F_arr: BoolND = jnp.asarray(feasibility)
+
+        # Value-aware feasibility on the terminal payoff. `Q^s` here IS `U^s`:
+        # a terminal cell has no continuation, so the value each stakeholder
+        # weighs against the reference is the payoff the cell itself delivers.
+        if value_constraint_machinery.evaluators:
+            F_arr = _apply_value_constraints(
+                machinery=value_constraint_machinery,
+                Q_arr=U_stack,
+                F_arr=F_arr,
+                states_actions_params=states_actions_params,
+            )
+
+        return U_stack, F_arr
 
     return Q_and_F
 
@@ -735,6 +781,14 @@ class ResolvedSamePeriodRef:
 
     stakeholder_index: int | None
     """Index into the reference V's trailing stakeholder axis, or `None`."""
+
+    stakeholder: str | None = None
+    """The reference regime's stakeholder as named, or `None` for a singleton.
+
+    The index above locates the value on one regime's axis; the name is what
+    the role means model-wide, and forward simulation needs the name to say
+    which role a subject carries after following this reference.
+    """
 
 
 def projection_func_or_fail(

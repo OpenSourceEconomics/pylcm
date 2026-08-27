@@ -25,7 +25,7 @@ from _lcm.typing import (
 from _lcm.utils.functools import get_union_of_args
 from lcm.exceptions import InvalidNameError
 from lcm.phased import Phased
-from lcm.regime import GatedEdge
+from lcm.regime import GatedEdge, SamePeriodRef
 from lcm.regime import Regime as UserRegime
 from lcm.transition import JointTransition, MarkovTransition
 from lcm.typing import UserFunction
@@ -1121,19 +1121,33 @@ def _gated_edge_entries(
                 )
                 entries[entry] = (entry, projection)
         for leg_name, leg in edge.legs.items():
-            for state_name, projection in leg.fallback.projection.items():
-                entry = qname_from_tree_path(
-                    (
-                        edge_leg_fallback_entry(
-                            fallback_regime=leg.fallback.regime, state_name=state_name
-                        ),
-                        target_regime_name,
+            # A `Phased` fallback is two callables with two parameter sets, so
+            # each phase gets its own entry; a leg declaring one reference for
+            # both contributes the solve spelling once, exactly as before.
+            phases: tuple[tuple[Literal["solve", "simulate"], SamePeriodRef], ...] = (
+                (("solve", leg.solve_fallback), ("simulate", leg.simulate_fallback))
+                if leg.fallback_is_phased
+                else (("solve", leg.solve_fallback),)
+            )
+            for phase, ref in phases:
+                for state_name, projection in ref.projection.items():
+                    entry = qname_from_tree_path(
+                        (
+                            edge_leg_fallback_entry(
+                                fallback_regime=ref.regime,
+                                state_name=state_name,
+                                phase=phase,
+                            ),
+                            target_regime_name,
+                        )
                     )
-                )
-                per_callable = qname_from_tree_path(
-                    (f"leg_fallback_{leg_name}_{state_name}", target_regime_name)
-                )
-                entries[per_callable] = (entry, projection)
+                    per_callable = qname_from_tree_path(
+                        (
+                            f"{phase}_leg_fallback_{leg_name}_{state_name}",
+                            target_regime_name,
+                        )
+                    )
+                    entries[per_callable] = (entry, projection)
     return entries
 
 

@@ -7,12 +7,12 @@ block. On dissolution (`~gate`), the row must revert to
 `source_stakeholder` matches the row's own role. A cohort that names no role
 is refused rather than routed through some declared leg.
 
-This is EKL Appendix F's design: two independent, single-gender cohorts
-(all-women, all-men), each simulated with a synthetic opposite-gender
-partner, each correctly reverting to ITS OWN single regime on dissolution. No
-cross-row linkage, no matcher, no new per-subject array — `own_stakeholder`
-is a single value for the whole `simulate()` call (see
-`_lcm.simulation.gated_routing._select_own_leg`).
+The cohorts below are uniform in role — an all-women run and an all-men run,
+each simulated with a synthetic opposite-gender partner — which is the
+single-gender design EKL Appendix F describes. The role itself is per row
+(`initial_conditions["own_stakeholder"]`), so a uniform cohort is one case of
+it rather than the only expressible one; a mixed cohort is exercised in
+`tests/simulation/test_own_stakeholder_per_row.py`.
 
 Reuses the dissolution miniature from `test_collective_regime_simulate.py`
 (`_make_dissolution_regimes` / `_solve_dissolution`): a collective `married` regime
@@ -29,23 +29,24 @@ import pytest
 
 from _lcm.simulation.simulate import simulate
 from _lcm.utils.logging import get_logger
+from lcm.exceptions import InvalidInitialConditionsError
 from tests.regime_building.test_collective_regime_simulate import _solve_dissolution
 
 
 def _simulate_dissolution_cohort(*, own_stakeholder: str | None):
-    """Simulate the 3-subject dissolution miniature with a fixed own-role."""
+    """Simulate the 3-subject dissolution miniature with one role for every row."""
     ages, regimes, regime_names_to_ids, flat_params, solution, dissolution_flags = (
         _solve_dissolution()
     )
-    initial_conditions = MappingProxyType(
-        {
-            "wage": jnp.array([1.0, 2.0, 3.0]),
-            "age": jnp.array([0.0, 0.0, 0.0]),
-            "regime_id": jnp.array(
-                [regime_names_to_ids["married"]] * 3, dtype=jnp.int32
-            ),
-        }
-    )
+    conditions = {
+        "wage": jnp.array([1.0, 2.0, 3.0]),
+        "age": jnp.array([0.0, 0.0, 0.0]),
+        "regime_id": jnp.array([regime_names_to_ids["married"]] * 3, dtype=jnp.int32),
+    }
+    if own_stakeholder is not None:
+        role = regimes["married"].stakeholder_names_to_ids[own_stakeholder]
+        conditions["own_stakeholder"] = jnp.full(3, role, dtype=jnp.int32)
+    initial_conditions = MappingProxyType(conditions)
     return simulate(
         flat_params=flat_params,
         initial_conditions=initial_conditions,
@@ -57,7 +58,6 @@ def _simulate_dissolution_cohort(*, own_stakeholder: str | None):
         ages=ages,
         simulation_output_dtypes={},
         seed=0,
-        own_stakeholder=own_stakeholder,
     ), solution
 
 
@@ -98,11 +98,11 @@ def test_synthetic_dissolution_without_a_role_is_refused():
     """Simulating this cohort without a role is refused, not defaulted.
 
     `married`'s legs are declared in stakeholder order `("f", "m")`, and
-    picking the first of them for a cohort that never said which partner it
-    tracks would simulate every divorced husband as his wife. The choice
-    belongs to the caller, so omitting it is an error.
+    picking the first of them for rows that never said which partner they are
+    would simulate every divorced husband as his wife. The choice belongs to
+    the caller, so omitting it is an error.
     """
-    with pytest.raises(ValueError, match="own_stakeholder"):
+    with pytest.raises(InvalidInitialConditionsError, match="own_stakeholder"):
         _simulate_dissolution_cohort(own_stakeholder=None)
 
 
@@ -110,7 +110,7 @@ def test_two_independent_synthetic_populations_each_revert_correctly():
     """A women-role run and a men-role run each dissolution-revert to their own single.
 
     Both runs share the identical input population (same wages, same solved
-    value functions) and differ ONLY in `own_stakeholder`; their outputs
+    value functions) and differ ONLY in the seeded role; their outputs
     differ ONLY in which single regime the dissolved row (wage=2) lands in --
     everything else (the gate decision, the still-married rows' values) is
     identical, confirming the two populations are independent (no
@@ -140,7 +140,7 @@ def test_two_independent_synthetic_populations_each_revert_correctly():
     )
 
     # The dissolution decision and the still-married rows' recorded values are
-    # identical across the two cohorts (own_stakeholder never touches them).
+    # identical across the two cohorts (the role never touches them).
     np.testing.assert_array_equal(
         np.asarray(women_result.raw_results["married_ir"][1].in_regime),
         np.asarray(men_result.raw_results["married_ir"][1].in_regime),

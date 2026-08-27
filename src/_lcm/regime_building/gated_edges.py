@@ -33,7 +33,7 @@ product-mapped over the target regime's state grid.
 from collections.abc import Callable, Container, Iterable, Mapping
 from dataclasses import dataclass, replace
 from types import MappingProxyType
-from typing import NoReturn, cast
+from typing import Literal, NoReturn, cast
 
 import jax.numpy as jnp
 from dags import (
@@ -273,7 +273,10 @@ def edge_gate_ref_entry(*, ref_name: str, state_name: StateName) -> FunctionName
 
 
 def edge_leg_fallback_entry(
-    *, fallback_regime: RegimeName, state_name: StateName
+    *,
+    fallback_regime: RegimeName,
+    state_name: StateName,
+    phase: Literal["solve", "simulate"] = "solve",
 ) -> FunctionName:
     """Return the template-entry name of one leg-fallback projection.
 
@@ -288,12 +291,18 @@ def edge_leg_fallback_entry(
     Args:
         fallback_regime: Regime the leg falls back to.
         state_name: State of the fallback regime this projection supplies.
+        phase: Which of a `Phased` fallback's two references this names. The
+            two are separate callables with separate parameters, so they need
+            separate entries even where they fall back to the same regime. A
+            leg declaring one reference for both phases uses the `"solve"`
+            spelling on both sides, so its template is unchanged.
 
     Returns:
         The entry name the projection's parameters are collected under.
 
     """
-    return f"leg_fallback_{fallback_regime}_{state_name}"
+    prefix = "leg_fallback" if phase == "solve" else "simulate_leg_fallback"
+    return f"{prefix}_{fallback_regime}_{state_name}"
 
 
 def edge_param_qname(*, target: RegimeName, entry: FunctionName, param: str) -> str:
@@ -491,8 +500,18 @@ class ResolvedEdgeLeg:
     """Index of the OPEN-branch value on the target V's trailing stakeholder
     axis, or `None` for a singleton target."""
 
+    target_stakeholder: str | None = None
+    """The target regime's stakeholder as named, or `None` for a singleton
+    target — the role a subject taking the OPEN branch carries onward."""
+
     fallback: ResolvedSamePeriodRef
-    """The CLOSED-branch reference value (regime, projection, stakeholder index)."""
+    """The CLOSED-branch reference value the fold PRICES (regime, projection,
+    stakeholder index)."""
+
+    simulate_fallback: ResolvedSamePeriodRef | None = None
+    """The CLOSED branch a routed row actually LANDS in, when the leg declared
+    the two separately (`EdgeLeg(fallback=Phased(...))`); `None` where one
+    reference serves both. Read `realized_fallback` rather than this field."""
 
     fallback_state_projector: Callable = _uncompiled_edge_callable
     """This leg's FALLBACK state projector.
@@ -507,6 +526,17 @@ class ResolvedEdgeLeg:
     it once per leg: a separate per-edge sequence would have to be re-paired
     with `ResolvedGatedEdge.legs` positionally at every call.
     """
+
+    @property
+    def realized_fallback(self) -> ResolvedSamePeriodRef:
+        """Where the gate-closed branch actually puts a simulated row.
+
+        The fold prices the branch at `fallback`; simulation realizes it here.
+        The two coincide unless the leg declared them separately.
+        """
+        return (
+            self.fallback if self.simulate_fallback is None else self.simulate_fallback
+        )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -835,6 +865,7 @@ def _leg_fallback_with_qualified_params(
     ref: ResolvedSamePeriodRef,
     target: RegimeName,
     state_names: Container[StateName],
+    phase: Literal["solve", "simulate"] = "solve",
 ) -> ResolvedSamePeriodRef:
     """Return a leg fallback whose projections declare their flat param names."""
     return _ref_with_qualified_params(
@@ -842,7 +873,7 @@ def _leg_fallback_with_qualified_params(
         target=target,
         entry_by_state={
             state_name: edge_leg_fallback_entry(
-                fallback_regime=ref.regime, state_name=state_name
+                fallback_regime=ref.regime, state_name=state_name, phase=phase
             )
             for state_name in ref.projection
         },
@@ -2196,6 +2227,7 @@ def build_fallback_state_projector(
     target_deterministic_transitions: Mapping[
         TransitionFunctionName, TransitionFunction
     ],
+    entry_phase: Literal["solve", "simulate"] = "solve",
 ) -> Callable[..., Mapping[StateName, FloatND]]:
     """Project a target-grid point onto one edge leg's FALLBACK state coordinates.
 
@@ -2270,6 +2302,10 @@ def build_fallback_state_projector(
             are expressed in terms of the target's own states/helpers).
         target_deterministic_transitions: The target regime's merged
             deterministic `next_<state>` laws.
+        entry_phase: Which template entry this projection's parameters carry.
+            `"solve"` — the shared spelling — for a leg whose one reference
+            serves both phases; `"simulate"` for the simulate half of a
+            `Phased` fallback, whose parameters are its own.
 
     Returns:
         A callable, keyed by (a subset of) the target's state names plus any
@@ -2299,7 +2335,10 @@ def build_fallback_state_projector(
     # fallback reader, from the same helper, so the coordinate simulate projects
     # is read off the parameter the fold projected it with.
     qualified_ref = _leg_fallback_with_qualified_params(
-        ref=ref, target=target_regime_name, state_names=target_state_names
+        ref=ref,
+        target=target_regime_name,
+        state_names=target_state_names,
+        phase=entry_phase,
     )
     projection_funcs: dict[StateName, Callable[..., FloatND]] = {}
     projection_args: dict[StateName, tuple[str, ...]] = {}

@@ -53,6 +53,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.regime_building.collective import NO_ROLE
 from _lcm.regime_building.gated_edges import (
     SOURCE_PARAMS,
     TARGET_PARAMS,
@@ -347,7 +348,7 @@ def test_gate_ref_projection_param_is_bound_from_the_source_not_the_target():
             "fallback": MappingProxyType({"x": jnp.array([-999.0])}),
         }
     )
-    _states, routed_ids = route_gated_edges(
+    _states, routed_ids, _routed_roles = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
         # the value it would enter at period 1.
         fold_period=1,
@@ -360,6 +361,8 @@ def test_gate_ref_projection_param_is_bound_from_the_source_not_the_target():
         ),
         subjects_in_regime=jnp.array([True]),
         flat_params=flat_params,
+        own_stakeholder=jnp.full_like(jnp.array([True]), NO_ROLE, dtype=jnp.int32),
+        new_own_stakeholder=jnp.full_like(jnp.array([True]), NO_ROLE, dtype=jnp.int32),
     )
     np.testing.assert_array_equal(
         np.asarray(routed_ids), [regime_names_to_ids["target"]]
@@ -440,7 +443,7 @@ def test_gate_ref_projection_param_absent_from_the_target_still_routes():
             "fallback": MappingProxyType({"x": jnp.array([-999.0])}),
         }
     )
-    _states, routed_ids = route_gated_edges(
+    _states, routed_ids, _routed_roles = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
         # the value it would enter at period 1.
         fold_period=1,
@@ -453,6 +456,8 @@ def test_gate_ref_projection_param_absent_from_the_target_still_routes():
         ),
         subjects_in_regime=jnp.array([True]),
         flat_params=flat_params,
+        own_stakeholder=jnp.full_like(jnp.array([True]), NO_ROLE, dtype=jnp.int32),
+        new_own_stakeholder=jnp.full_like(jnp.array([True]), NO_ROLE, dtype=jnp.int32),
     )
     np.testing.assert_array_equal(
         np.asarray(routed_ids), [regime_names_to_ids["target"]]
@@ -690,7 +695,7 @@ def test_router_writes_the_fold_consistent_fallback_state():
             "fallback": MappingProxyType({"z": jnp.array([-999.0])}),
         }
     )
-    states, routed_ids = route_gated_edges(
+    states, routed_ids, _routed_roles = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
         # the value it would enter at period 1.
         fold_period=1,
@@ -703,6 +708,8 @@ def test_router_writes_the_fold_consistent_fallback_state():
         ),
         subjects_in_regime=jnp.array([True]),
         flat_params=flat_params,
+        own_stakeholder=jnp.full_like(jnp.array([True]), NO_ROLE, dtype=jnp.int32),
+        new_own_stakeholder=jnp.full_like(jnp.array([True]), NO_ROLE, dtype=jnp.int32),
     )
     # Gate closed by construction -> the row goes to the fallback...
     np.testing.assert_array_equal(
@@ -909,7 +916,7 @@ def test_gate_ref_reads_the_reference_regimes_own_runtime_grid():
             "fallback": MappingProxyType({"x": jnp.array([-999.0])}),
         }
     )
-    _states, routed_ids = route_gated_edges(
+    _states, routed_ids, _routed_roles = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
         # the value it would enter at period 1.
         fold_period=1,
@@ -922,6 +929,8 @@ def test_gate_ref_reads_the_reference_regimes_own_runtime_grid():
         ),
         subjects_in_regime=jnp.array([True]),
         flat_params=flat_params,
+        own_stakeholder=jnp.full_like(jnp.array([True]), NO_ROLE, dtype=jnp.int32),
+        new_own_stakeholder=jnp.full_like(jnp.array([True]), NO_ROLE, dtype=jnp.int32),
     )
     np.testing.assert_array_equal(
         np.asarray(routed_ids), [regime_names_to_ids["target"]]
