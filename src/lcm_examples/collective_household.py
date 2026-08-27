@@ -19,9 +19,9 @@ single regime would send both partners there whenever the couple stays
 together.
 
 Everything is CRRA over consumption with a fixed marriage premium, so the model
-is small, has no free structure, and scales along exactly two knobs —
-`wealth_n_points` and `n_periods` — which is what makes it usable as a
-benchmark workload as well as a worked example.
+is small, has no free structure, and scales along its grid knobs —
+`n_periods`, `wealth_n_points` and `consumption_n_points` — which is what makes
+it usable as a benchmark workload as well as a worked example.
 """
 
 import jax.numpy as jnp
@@ -219,9 +219,10 @@ def get_model(
         wealth=wealth, consumption=consumption, last_age=last_age
     )
     # Spelled out rather than replaced off `single_f`: his transition names his
-    # own regimes and enters the household in his own role, and a regime's
-    # value-dependent declarations are part of what it IS, so a replacement
-    # that contradicted them would be refused.
+    # own regimes and enters the household in his own role. Replacing her
+    # transition would carry her already-lowered gated edge forward and meet
+    # his declaration of the same target, which is refused because the two
+    # disagree on the routes.
     single_m = Regime(
         transition={
             "couple": ValueDependentTransition(
@@ -333,8 +334,10 @@ def get_initial_conditions(*, n_subjects: int, model: Model) -> dict:
             against.
 
     Returns:
-        Dict of the `wealth`, `age`, `regime_id` and `own_stakeholder` columns
-        `simulate()` takes.
+        Dict of the `wealth`, `age` and `regime_id` columns `simulate()` takes.
+        No `own_stakeholder`: the whole cohort starts in a singleton regime, so
+        nobody occupies a household role yet, and each subject is given one by
+        the route it takes on entering the couple.
 
     """
     is_woman = jnp.arange(n_subjects) % 2 == 0

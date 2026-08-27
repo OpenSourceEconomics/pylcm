@@ -33,6 +33,12 @@ _CHAIN_SLACK = 1e9
 _WEALTH_N_POINTS = 40
 _CONSUMPTION_N_POINTS = 40
 
+# `_gpu_mem` drives a wrapped class with NO arguments, so a parameterized
+# workload has to name the single point its device-memory companion measures.
+# Both pick the largest case, which is the one a device peak is interesting for.
+_GPU_N_SUBJECTS = 100_000
+_GPU_DEPTH = 8
+
 
 def _make_model(*, n_subjects=None):
     from lcm_examples import collective_household
@@ -149,7 +155,7 @@ class CollectiveHouseholdSimulate:
         self._simulate()
         self._compile_time = time.perf_counter() - start
 
-    def setup_for_gpu_measurement(self, n_subjects):
+    def setup_for_gpu_measurement(self, n_subjects=_GPU_N_SUBJECTS):
         self._build(n_subjects)
 
     def _simulate(self):
@@ -162,7 +168,7 @@ class CollectiveHouseholdSimulate:
             seed=0,
         )
 
-    def time_execution(self, n_subjects):
+    def time_execution(self, n_subjects=_GPU_N_SUBJECTS):
         self._simulate()
 
     def peakmem_execution(self, n_subjects):
@@ -185,11 +191,19 @@ class CollectiveHouseholdSimulateGpuPeakMem(_gpu_mem.GpuPeakMem):
 class ReferenceChainSolve:
     """Solve a chain of regimes each reading the previous one's value.
 
-    The chain is the transitive reference closure a value constraint opens up:
-    regime `k` reads regime `k-1` in the same period, so the solver has to
-    order each period's regimes by that chain and carry `k` same-period arrays
-    into the last one's decision. Depth is varied and nothing else is, so the
-    measured slope is the depth term alone.
+    Link `k` carries a participation constraint whose reference is link `k-1`
+    in the SAME period, so the solver has to order each period's regimes by
+    that chain before it can solve any of them.
+
+    What depth actually varies is the ordering work and the number of regimes
+    built and compiled — `2 * depth` of them, a link and its terminal. It is
+    NOT the number of value arrays threaded into a decision: processing
+    deduplicates references by regime, and every link names exactly one
+    predecessor, so each link's kernel receives a single same-period array at
+    every depth.
+
+    Construction happens in `setup`, before the timer, so the tracked seconds
+    are a first solve with no model building in them.
     """
 
     version = "1"
@@ -206,10 +220,10 @@ class ReferenceChainSolve:
         self.model.solve(params=self.model_params, log_level="off")
         self._compile_time = time.perf_counter() - start
 
-    def setup_for_gpu_measurement(self, depth):
+    def setup_for_gpu_measurement(self, depth=_GPU_DEPTH):
         self._build(depth)
 
-    def time_execution(self, depth):
+    def time_execution(self, depth=_GPU_DEPTH):
         self.model.solve(params=self.model_params, log_level="off")
 
     def peakmem_execution(self, depth):
@@ -218,10 +232,10 @@ class ReferenceChainSolve:
     def teardown(self, depth):
         _clear_gpu_memory()
 
-    def track_construction_and_compilation_time(self, depth):
+    def track_compilation_time(self, depth):
         return self._compile_time
 
-    track_construction_and_compilation_time.unit = "seconds"
+    track_compilation_time.unit = "seconds"
 
 
 class ReferenceChainSolveGpuPeakMem(_gpu_mem.GpuPeakMem):
@@ -372,8 +386,12 @@ def _chain_kernels():
     """Return the model functions every link of the chain shares.
 
     One dict of module-level closures, so two links built separately hold the
-    SAME callables and the engine's dedup sees one program per kernel rather
-    than one per link.
+    SAME leaf callables and differ only in their references and their terminal
+    target. That keeps the model definition honest about what varies with
+    depth; it does not make the links share a compiled program. The solve-side
+    dedup unit is a per-regime core built inside each regime's own
+    `build_period_kernels` call, so each of the `2 * depth` links lowers and
+    compiles its own regardless.
     """
     return _CHAIN_KERNELS
 

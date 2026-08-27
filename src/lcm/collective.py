@@ -47,12 +47,15 @@ class ParetoObjective:
     weights: Mapping[str, UserFunction | float]
     r"""One weight $\lambda_s$ per stakeholder, keyed by stakeholder name.
 
-    A `float` is a constant. A callable is an ordinary DAG function of the
-    regime's states, its other functions, and free parameters — the parameters
-    surface in `get_params_template()` under the regime's `pareto_objective`
-    key, so a weight is estimated like anything else. A weight may not read an
-    action: a weight that varies with the choice states a different objective
-    per candidate, whose maximizer is a Pareto optimum of no fixed weighting.
+    A `float` is a constant. A callable is a function of the regime's STATES
+    and of `period` / `age`; every other argument it names becomes a free
+    scalar parameter under the regime's `pareto_objective` key in
+    `get_params_template()`, so a weight is estimated like anything else. Note
+    what that means for a name collision: an argument spelled like one of the
+    regime's other functions does NOT receive that function's output — it
+    becomes a parameter you must supply. A weight may not read an action: a
+    weight that varies with the choice states a different objective per
+    candidate, whose maximizer is a Pareto optimum of no fixed weighting.
     """
 
     normalization: str = "pointwise"
@@ -293,15 +296,17 @@ class ValueDependentTransition:
     gate: UserFunction
     """Boolean predicate on the TARGET regime's grid, in the target fold's context.
 
-    May read the target's per-stakeholder value components under the names
-    `V_target_<s>`, the target's dissolution flag `D_target` (a collective
-    target only), each key of `gate_references`, ordinary target states and
-    params, and the target fold's `period` / `age`. Mutual consent is the
-    strict, unanimous gate
+    May read the target's value — `V_target` for a singleton target,
+    `V_target_<s>` per stakeholder for a collective one — the target's
+    dissolution flag `D_target` (a collective target only; reading it on a
+    singleton target is rejected while the model is built), each key of
+    `gate_references`, ordinary target states and params, and the target fold's
+    `period` / `age`. Mutual consent is the strict, unanimous gate
     `(V_target_f > V_single_f) & (V_target_m > V_single_m)`; "no dissolution
     this period" is `~D_target`. A gate returning a probability rather than a
-    Boolean is rejected: the branch is selected with a strict `where`, in which
-    every nonzero value is true.
+    Boolean is rejected when the gate is evaluated, i.e. on the first `solve()`
+    rather than at model build: the branch is selected with a strict `where`,
+    in which every nonzero value is true.
     """
 
     routes: Mapping[str, StakeholderRoute]

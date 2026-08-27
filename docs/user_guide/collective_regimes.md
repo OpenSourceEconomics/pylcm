@@ -56,12 +56,14 @@ CollectiveUtility(
 )
 ```
 
-A weight is a constant or an ordinary DAG function of the regime's states — so a
-state-dependent bargaining position works, and a weight's free parameters surface in
-`get_params_template()` under the regime's `pareto_objective` key and are estimated like
-anything else. A weight may not read an *action*: a weight that varied with the choice
-would state a different objective per candidate, whose maximizer is a Pareto optimum of
-no fixed weighting.
+A weight is a constant or a function of the regime's **states** and of `period` / `age`
+— so a state-dependent bargaining position works. Every other argument a weight names
+becomes a free parameter under the regime's `pareto_objective` key in
+`get_params_template()`, estimated like anything else. That cuts both ways: an argument
+spelled like one of the regime's other functions does not receive that function's
+output, it becomes a parameter you have to supply. A weight may not read an *action*: a
+weight that varied with the choice would state a different objective per candidate,
+whose maximizer is a Pareto optimum of no fixed weighting.
 
 Declaring the weights rather than writing the sum as an ordinary function is what lets
 the engine own what a Pareto weight means — one per stakeholder, finite and
@@ -166,8 +168,15 @@ The gate is a **Boolean** predicate on the *target* regime's grid. It may read t
 target's value — `V_target` for a singleton target, `V_target_<s>` per stakeholder for a
 collective one — the target's dissolution flag `D_target`, each key of
 `gate_references`, ordinary target states and params, and the target fold's `period` /
-`age`. A gate returning a probability rather than a Boolean is rejected at model build:
-the branch is selected with a strict `where`, in which every nonzero value is true.
+`age`.
+
+Two of those carry a timing that is worth keeping straight, because they are checked in
+different places. `D_target` exists only for a collective target, and a gate that names
+it on a singleton target is refused **while the model is built**. The Boolean
+requirement is not a build-time check: the dtype is examined where the gate is actually
+evaluated, so a gate returning a probability is refused on the first `solve()` rather
+than at construction. The branch is selected with a strict `where`, in which every
+nonzero value is true, so a `0.25` would otherwise open the edge for every row.
 
 ### The key is always the gate-open target
 

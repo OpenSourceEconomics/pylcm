@@ -16,20 +16,22 @@ level.
 
 ## The workloads
 
-All of them are in `benchmarks/asv/bench_collective_household.py`, over the marriage
-market of `lcm_examples.collective_household`: two singles who marry under mutual
-consent, a household with a participation constraint on each partner, and a dissolution
-edge keyed by the continuing household.
+All of them are in `benchmarks/asv/bench_collective_household.py`. The first six run
+over the marriage market of `lcm_examples.collective_household`: two singles who marry
+under mutual consent, a household with a participation constraint on each partner, and a
+dissolution edge keyed by the continuing household. `ReferenceChainSolve` is not that
+model — it builds a synthetic chain of collective links with no gated edge, no consent
+and no dissolution, so that reference depth is the only thing varying.
 
-| Workload                    | Class                                                         | What it isolates                                                                                                                |
-| --------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| Model construction          | `CollectiveHouseholdConstruct`                                | The phase scan, the lowering of the collective declarations, and per-edge parameter discovery, with nothing traced or compiled. |
-| First-solve assembly        | `CollectiveHouseholdSolve.track_compilation_time`             | Tracing, lowering, and compiling-or-loading every regime's kernels plus one fold per gated edge. See the note below.            |
-| Warm solve                  | `CollectiveHouseholdSolve.time_execution`                     | What an estimation loop pays per parameter vector.                                                                              |
-| Host memory, solve          | `CollectiveHouseholdSolve.peakmem_execution`                  | Resident peak while backward induction runs.                                                                                    |
-| Device memory, solve        | `CollectiveHouseholdSolveGpuPeakMem`                          | Device peak on the same workload.                                                                                               |
-| Simulation over cohort size | `CollectiveHouseholdSimulate`, `n_subjects ∈ {1e3, 1e4, 1e5}` | Routing: one gate evaluation per edge per period over the whole population.                                                     |
-| Transitive reference depth  | `ReferenceChainSolve`, `depth ∈ {1, 2, 4, 8}`                 | The closure a value constraint opens: link `k` reads link `k-1` in the same period.                                             |
+| Workload                    | Class                                                         | What it isolates                                                                                                                                |
+| --------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Model construction          | `CollectiveHouseholdConstruct`                                | The phase scan, the lowering of the collective declarations, and per-edge parameter discovery, with nothing traced or compiled.                 |
+| First-solve assembly        | `CollectiveHouseholdSolve.track_compilation_time`             | A whole first `solve()`: tracing, lowering, compiling-or-loading every kernel and fold, AND running the backward induction. See the note below. |
+| Warm solve                  | `CollectiveHouseholdSolve.time_execution`                     | What an estimation loop pays per parameter vector.                                                                                              |
+| Host memory, solve          | `CollectiveHouseholdSolve.peakmem_execution`                  | Resident peak while backward induction runs.                                                                                                    |
+| Device memory, solve        | `CollectiveHouseholdSolveGpuPeakMem`                          | Device peak on the same workload.                                                                                                               |
+| Simulation over cohort size | `CollectiveHouseholdSimulate`, `n_subjects ∈ {1e3, 1e4, 1e5}` | Routing: one gate evaluation per edge per period over the whole population.                                                                     |
+| Transitive reference depth  | `ReferenceChainSolve`, `depth ∈ {1, 2, 4, 8}`                 | The closure a value constraint opens: link `k` reads link `k-1` in the same period.                                                             |
 
 ## The budgets
 
@@ -40,11 +42,11 @@ machines and backends. A level is defended by the ASV history on one machine.
   work. It is allowed to grow with the number of declarations a model makes and with
   nothing else. Construction that grew with a *grid* size would mean a grid was
   materialized during the scan.
-- **First-solve assembly** is `O(regimes × periods)` programs plus
-  `O(edges × period groups)` folds and gate evaluators. Gate evaluators are compiled
-  ahead of time together with the decision kernels when `Model(n_subjects=N)` is set, so
-  a fixed batch size pays for them once, before the first simulated period, rather than
-  in it.
+- **First-solve assembly** is `O(regimes × periods)` programs plus `O(edges × periods)`
+  folds. It contains no gate evaluator: those are compiled on the simulate side, when a
+  declared `Model(n_subjects=N)` matches the first `simulate()` call, and this workload
+  only solves. Nothing here sets `n_subjects`, so the ahead-of-time path is deliberately
+  outside the contract's measured surface.
 - **Warm solve** is `O(periods × regimes × cells)`, the same order as a singleton model
   of the same total grid size. A collective regime multiplies the cell count by its
   stakeholder count; a gated edge adds one fold over the target's grid per period. It
@@ -63,25 +65,37 @@ machines and backends. A level is defended by the ASV history on one machine.
 
 ## What the first-solve number is, and is not
 
-pylcm enables JAX's persistent compilation cache, and the benchmark suite shares one, so
-`track_compilation_time` is not a compilation time. It covers tracing and lowering, and
-then *either* compiling each program or loading it from the cache — and which of those
-two it did is invisible in the number.
+`track_compilation_time` is not a compilation time. The timed region is a whole
+`model.solve()` call, so the number is everything that first solve does: tracing,
+lowering, *either* compiling each program or loading it from the persistent cache, and
+then running the backward induction itself. Which of compile-or-load happened is
+invisible in the number, and so is the execution term.
 
 Measured on this workload, on one GPU backend, with the cache directory asserted empty
-before the run and populated after: the first solve costs about twice what the same
-solve costs once its programs are cached, so a cache hit covers a little under half of
-it. The saving grows with the model, because compilation grows with program size while
-tracing and lowering grow with the number of programs.
+before the run and populated after (60 entries):
 
-Two things follow, and both are about how to *read* a change in this line:
+|                                                       | seconds |
+| ----------------------------------------------------- | ------- |
+| first solve, empty cache                              | 1.99    |
+| first solve of a freshly built model, cache populated | 1.11    |
+| repeat solve of the same model object                 | 0.04    |
 
-- A movement here is a movement in assembly cost, not in compiler work, unless the cache
-  state is known to have been the same on both sides. Pin the cache — point
-  `JAX_COMPILATION_CACHE_DIR` at a fresh directory — for any comparison meant to be
-  about compilation.
-- A number from one machine is not comparable to a number from another whose cache holds
-  a different set of programs. The ASV history is per machine for this reason.
+So the cache covers a little under half of a cold first solve, and execution is about 2%
+of it — small here, but it is a term that grows with the grid while the assembly terms
+grow with the number of programs, so the split is not fixed. The saving from a cache hit
+also grows with the model, because compilation grows with program size while tracing and
+lowering grow with program count.
+
+Three things follow, all about how to *read* a change in this line:
+
+- A movement is a movement in first-solve cost, not in compiler work, unless the cache
+  state was the same on both sides. Pin it — point `JAX_COMPILATION_CACHE_DIR` at a
+  fresh directory — for any comparison meant to be about compilation.
+- A number from one machine is not comparable to one from another whose cache holds a
+  different set of programs. The ASV history is per machine for this reason.
+- On a model whose grids are large enough for execution to dominate, this line stops
+  being an assembly measurement at all. Read it next to `time_execution`, which is the
+  same solve with the programs already in memory.
 
 ## Where a pointwise reoptimization mode would sit
 
@@ -102,5 +116,8 @@ pixi run -e benchmarks-cuda12 asv-run       # the tracked run; refuses a dirty w
 pixi run -e benchmarks-cuda12 asv-compare   # against a previous commit
 ```
 
-The GPU peak-memory companions need a CUDA environment; on a CPU-only machine they are
-skipped and the host `peakmem_*` numbers stand alone.
+The GPU peak-memory companions need a CUDA environment and a device that publishes
+memory statistics. There is no skip path: nothing in the suite raises ASV's
+NotImplementedError or detects a device, so on a machine without one they fail rather
+than abstain. Run them only where a GPU is present; the host `peakmem_*` rows are the
+portable ones.
