@@ -127,6 +127,31 @@ repos:
         entry: ^\s*#\s*[-=#_*]{10,}\s*$
         types:
           - python
+      # A custom JVP that reads its tangents is not *automatically*
+      # transposable, and JAX says so: "Transpose rule ... not implemented".
+      # That is a missing rule, not a missing transpose — the differential of a
+      # finite affine segment is linear and its transpose is the coefficient
+      # vector, and bit-level scaling by a power of two is the same linear map
+      # as multiplying by it. Documenting the refusal as a mathematical
+      # impossibility has been written and corrected repeatedly, so the claim
+      # is gated here rather than left to review.
+      #
+      # Say what is true instead: "carries no transpose rule", "no reverse rule
+      # is registered", "not automatically transposable" — all of which pass.
+      # A map that genuinely has no transpose is nonlinear, and saying which
+      # nonlinearity rewrites the sentence anyway. `SKIP=no-impossible-transpose
+      # git commit …` drops the hook without printing a line for it, so put the
+      # reason in the commit message if you use it.
+      #
+      # Line-scoped, like its siblings: a claim split across two lines by the
+      # formatter is not caught and stays a review responsibility.
+      - id: no-impossible-transpose
+        name: no claim that a linear map has no transpose
+        language: pygrep
+        entry: (?i:\b(?:has|have|had)\s+no\s+transpose\b(?!\s+rule))|(?i:\b(?:does|do|did)\s+not\s+have\s+an?\s+transpose\b)|(?i:\bnothing\s+to\s+transpose\b)|(?i:\bnone\s+to\s+transpose\b)|(?i:\bno\s+map\s+to\s+transpose\b)
+        types_or:
+          - python
+          - markdown
       # Catches the labelled forms only — PR/issue numbers, `E<n>`/`F<n>`
       # finding labels, `round-<n>`, `pre-fix`. Prose that rehearses history
       # without a label stays a review responsibility.
