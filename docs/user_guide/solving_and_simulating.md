@@ -232,11 +232,13 @@ df = pd.DataFrame(
 - Codes come from `model.stakeholder_names_to_ids` — one vocabulary for the whole model,
   so a role means the same thing in every regime. It is empty for a model with no
   collective regime.
-- The entry is required for subjects who **start** in a collective regime declaring a
-  value-dependent transition with more than one route. Omitting it there raises
-  `InvalidInitialConditionsError` rather than defaulting to whichever partner was
-  declared first, and a code that is valid model-wide but names no stakeholder of that
-  regime is rejected too.
+- The entry is required for subjects who **start** in a collective regime that can reach
+  one declaring a value-dependent transition with more than one route — its own, or one
+  further along, since a row keeps its role across an ordinary regime transition.
+  Omitting it there raises `InvalidInitialConditionsError` rather than defaulting to
+  whichever partner was declared first, and a code that is valid model-wide but names no
+  stakeholder of that regime is rejected too. A collective start that can never arrive
+  at such a transition needs no entry.
 - A subject starting in a singleton regime occupies no role and needs no entry. It is
   given one on entering a collective regime, from the `target_stakeholder` of the
   `StakeholderRoute` it takes, and loses it again on landing in a singleton regime.

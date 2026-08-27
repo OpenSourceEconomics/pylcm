@@ -408,13 +408,16 @@ initial_conditions = {
 }
 ```
 
-The seed is demanded exactly where the answer turns on it. A cohort starting in a
-collective regime whose model routes by role — that is, some collective regime declares
-a gated transition with more than one route — is refused without it, rather than
-defaulted to whichever stakeholder happens to be declared first. A cohort starting in a
-singleton regime occupies no role and needs none. A declared code outside the model's
-role vocabulary, or one naming a role the starting regime does not have, is rejected as
-an `InvalidInitialConditionsError`.
+The seed is demanded exactly where the answer turns on it, which is a property of the
+starting regime rather than of the model. A cohort starting in a collective regime is
+refused without it — rather than defaulted to whichever stakeholder happens to be
+declared first — when some collective regime in that regime's forward closure declares a
+gated transition with more than one route. Because a row keeps its role across an
+ordinary regime transition, the closure is what decides: a two-leg transition the cohort
+runs into later demands the seed, and one in a regime the cohort can never reach demands
+nothing. A cohort starting in a singleton regime occupies no role and needs none. A
+declared code outside the model's role vocabulary, or one naming a role the starting
+regime does not have, is rejected as an `InvalidInitialConditionsError`.
 
 Simulation carries one fixed-size cohort. Dissolution does not split one row into two
 linked people.

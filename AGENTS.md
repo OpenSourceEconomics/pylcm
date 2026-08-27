@@ -463,8 +463,11 @@ Regime(
   `Regime` is constructed); an edge projection's free arguments become that edge's
   params, nested under the target name.
 - Stakeholder identity is **per row**: seed `initial_conditions["own_stakeholder"]`
-  whenever some collective regime declares a transition with more than one route. It is
-  published as an `own_stakeholder` column, missing for singleton rows.
+  whenever the starting regime's forward closure contains a collective regime declaring
+  a transition with more than one route. A row keeps its role across an ordinary regime
+  transition, so a two-leg route it runs into later demands the seed, while one in a
+  regime the cohort can never reach demands nothing. It is published as an
+  `own_stakeholder` column, missing for singleton rows.
 - `GatedEdge`, `stakeholders`, `value_constraints`, `same_period_refs` and `gated_edges`
   are the **lowered** form these declarations decompose into. Write the declarations.
 
