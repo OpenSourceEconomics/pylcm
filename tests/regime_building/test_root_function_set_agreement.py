@@ -19,13 +19,13 @@ from _lcm.regime_building import broadcast
 from lcm import (
     AgeGrid,
     DiscreteGrid,
-    EdgeLeg,
     GatedEdge,
     LinSpacedGrid,
     Model,
     Phased,
+    ProjectedRegimeValue,
     Regime,
-    SamePeriodRef,
+    StakeholderRoute,
     categorical,
     fixed_transition,
 )
@@ -115,7 +115,11 @@ def test_every_regime_and_phase_is_asked_for_its_roots(
 
 
 def test_the_root_set_names_every_slot_of_the_regime_that_carries_it() -> None:
-    """`couple_ir`'s roots name its value constraints, references and incoming gate."""
+    """`couple_ir`'s roots name its value constraints, references and incoming gate.
+
+    An incoming fallback is rooted once per phase, because the value an agent
+    expects and the state a settlement realizes may be declared separately.
+    """
     roots = broadcast.root_functions(
         regime_name="couple_ir",
         regime=_make_regimes()["couple_ir"],
@@ -133,8 +137,10 @@ def test_the_root_set_names_every_slot_of_the_regime_that_carries_it() -> None:
         "__same_period_ref__V_single_m_ref__wage",
         "__incoming_gate__couple",
         "__incoming_gate_ref__couple__V_single_ref__wage",
-        "__incoming_fallback__couple__f__wage",
-        "__incoming_fallback__couple__m__wage",
+        "__incoming_fallback__couple__f__solve__wage",
+        "__incoming_fallback__couple__f__simulate__wage",
+        "__incoming_fallback__couple__m__solve__wage",
+        "__incoming_fallback__couple__m__simulate__wage",
     }
 
 
@@ -213,21 +219,21 @@ def _make_regimes() -> dict[str, Regime]:
             "couple_ir": GatedEdge(
                 gate=_no_dissolution_gate,
                 legs={
-                    "f": EdgeLeg(
+                    "f": StakeholderRoute(
                         target_stakeholder="f",
-                        fallback=SamePeriodRef(
+                        fallback=ProjectedRegimeValue(
                             regime="single_f", projection={"wage": _identity_wage}
                         ),
                     ),
-                    "m": EdgeLeg(
+                    "m": StakeholderRoute(
                         target_stakeholder="m",
-                        fallback=SamePeriodRef(
+                        fallback=ProjectedRegimeValue(
                             regime="single_m", projection={"wage": _identity_wage}
                         ),
                     ),
                 },
                 gate_refs={
-                    "V_single_ref": SamePeriodRef(
+                    "V_single_ref": ProjectedRegimeValue(
                         regime="single_f", projection={"wage": _identity_wage}
                     )
                 },
@@ -244,10 +250,10 @@ def _make_regimes() -> dict[str, Regime]:
         functions={"utility_f": _utility_collective, "utility_m": _utility_collective},
         value_constraints={"ir_f": _ir_f, "ir_m": _ir_m},
         same_period_refs={
-            "V_single_f_ref": SamePeriodRef(
+            "V_single_f_ref": ProjectedRegimeValue(
                 regime="single_f", projection={"wage": _identity_wage}
             ),
-            "V_single_m_ref": SamePeriodRef(
+            "V_single_m_ref": ProjectedRegimeValue(
                 regime="single_m", projection={"wage": _identity_wage}
             ),
         },

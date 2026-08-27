@@ -46,6 +46,7 @@ from types import MappingProxyType
 import jax.numpy as jnp
 import numpy as np
 
+from _lcm.regime_building.collective import NO_ROLE
 from _lcm.simulation.gated_routing import (
     route_gated_edges,
     substitute_gated_edge_continuations,
@@ -54,11 +55,11 @@ from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
     DiscreteGrid,
-    EdgeLeg,
     GatedEdge,
     LinSpacedGrid,
+    ProjectedRegimeValue,
     Regime,
-    SamePeriodRef,
+    StakeholderRoute,
     categorical,
     fixed_transition,
 )
@@ -153,7 +154,7 @@ def test_unrelated_ordinary_draw_is_not_force_routed_through_an_open_gate():
     new_subject_regime_ids = jnp.array([target_id, unrelated_id], dtype=jnp.int32)
     subjects_in_regime = jnp.array([True, True])
 
-    routed_states, routed_ids = route_gated_edges(
+    routed_states, routed_ids, _routed_roles = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
         # the value it would enter at period 1.
         fold_period=1,
@@ -164,6 +165,8 @@ def test_unrelated_ordinary_draw_is_not_force_routed_through_an_open_gate():
         new_subject_regime_ids=new_subject_regime_ids,
         subjects_in_regime=subjects_in_regime,
         flat_params=flat_params,
+        own_stakeholder=jnp.full_like(subjects_in_regime, NO_ROLE, dtype=jnp.int32),
+        new_own_stakeholder=jnp.full_like(subjects_in_regime, NO_ROLE, dtype=jnp.int32),
     )
 
     # Row 0 (ordinary draw == target, gate open): routed to target, unchanged.
@@ -212,7 +215,7 @@ def test_ordinary_draw_is_target_routes_exactly_as_before_open_and_closed():
     new_subject_regime_ids = jnp.array([target_id, target_id], dtype=jnp.int32)
     subjects_in_regime = jnp.array([True, True])
 
-    _states, routed_ids = route_gated_edges(
+    _states, routed_ids, _routed_roles = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
         # the value it would enter at period 1.
         fold_period=1,
@@ -223,6 +226,8 @@ def test_ordinary_draw_is_target_routes_exactly_as_before_open_and_closed():
         new_subject_regime_ids=new_subject_regime_ids,
         subjects_in_regime=subjects_in_regime,
         flat_params=flat_params,
+        own_stakeholder=jnp.full_like(subjects_in_regime, NO_ROLE, dtype=jnp.int32),
+        new_own_stakeholder=jnp.full_like(subjects_in_regime, NO_ROLE, dtype=jnp.int32),
     )
     np.testing.assert_array_equal(np.asarray(routed_ids), [target_id, fallback_id])
 
@@ -271,8 +276,8 @@ def _make_dual_edge_regimes(*, edge_order: tuple[str, str]) -> dict[str, Regime]
         "target_a": GatedEdge(
             gate=_gate_always_open,
             legs={
-                "only": EdgeLeg(
-                    fallback=SamePeriodRef(
+                "only": StakeholderRoute(
+                    fallback=ProjectedRegimeValue(
                         regime="fallback_a", projection={"wage": _identity_wage}
                     )
                 )
@@ -281,8 +286,8 @@ def _make_dual_edge_regimes(*, edge_order: tuple[str, str]) -> dict[str, Regime]
         "target_b": GatedEdge(
             gate=_gate_always_open,
             legs={
-                "only": EdgeLeg(
-                    fallback=SamePeriodRef(
+                "only": StakeholderRoute(
+                    fallback=ProjectedRegimeValue(
                         regime="fallback_b", projection={"wage": _identity_wage}
                     )
                 )
@@ -396,7 +401,7 @@ def _route_dual_edge(*, edge_order: tuple[str, str]):
     new_subject_regime_ids = jnp.array([target_a_id, target_b_id], dtype=jnp.int32)
     subjects_in_regime = jnp.array([True, True])
 
-    _states, routed_ids = route_gated_edges(
+    _states, routed_ids, _routed_roles = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
         # the value it would enter at period 1.
         fold_period=1,
@@ -407,6 +412,8 @@ def _route_dual_edge(*, edge_order: tuple[str, str]):
         new_subject_regime_ids=new_subject_regime_ids,
         subjects_in_regime=subjects_in_regime,
         flat_params=flat_params,
+        own_stakeholder=jnp.full_like(subjects_in_regime, NO_ROLE, dtype=jnp.int32),
+        new_own_stakeholder=jnp.full_like(subjects_in_regime, NO_ROLE, dtype=jnp.int32),
     )
     return np.asarray(routed_ids), target_a_id, target_b_id
 

@@ -66,7 +66,9 @@ type StatesPerRegime = MappingProxyType[RegimeName, RegimeStates]
 # `MappingProxyType` before passing it in; pylcm producers still wrap on
 # the way out to preserve immutability at runtime. Values are 1-D arrays
 # of length `n_subjects`; the validator checks the rank-1 invariant.
-type InitialConditions = Mapping[StateName | Literal["regime_id"], Float1D | Int1D]
+type InitialConditions = Mapping[
+    StateName | Literal["regime_id", "own_stakeholder"], Float1D | Int1D
+]
 
 # JAX PRNG keys (`jax.random`) carry the dedicated `key<fry>` dtype, which
 # jaxtyping matches via `Key` — distinct from `FloatND`/`IntND`. Covers both a

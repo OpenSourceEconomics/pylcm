@@ -31,13 +31,13 @@ from lcm import (
     AgeGrid,
     AgeSpecializedGrid,
     DiscreteGrid,
-    EdgeLeg,
     GatedEdge,
     LinSpacedGrid,
     MarkovTransition,
     Model,
+    ProjectedRegimeValue,
     Regime,
-    SamePeriodRef,
+    StakeholderRoute,
     categorical,
     fixed_transition,
 )
@@ -250,22 +250,22 @@ def _build_gate_ref_model() -> Model:
             "account": GatedEdge(
                 gate=_index_clears_the_hurdle,
                 gate_refs={
-                    "index_value": SamePeriodRef(
+                    "index_value": ProjectedRegimeValue(
                         regime="index",
                         projection={"level": _level_from_balance},
                     )
                 },
                 legs={
-                    "f": EdgeLeg(
+                    "f": StakeholderRoute(
                         target_stakeholder="f",
-                        fallback=SamePeriodRef(
+                        fallback=ProjectedRegimeValue(
                             regime="annuity_f",
                             projection={"principal": _principal_from_balance},
                         ),
                     ),
-                    "m": EdgeLeg(
+                    "m": StakeholderRoute(
                         target_stakeholder="m",
-                        fallback=SamePeriodRef(
+                        fallback=ProjectedRegimeValue(
                             regime="annuity_m",
                             projection={"principal": _principal_from_balance},
                         ),
@@ -358,15 +358,15 @@ def _build_dissolution_model() -> Model:
             "pair": GatedEdge(
                 gate=_household_consents,
                 legs={
-                    "f": EdgeLeg(
+                    "f": StakeholderRoute(
                         target_stakeholder="f",
-                        fallback=SamePeriodRef(
+                        fallback=ProjectedRegimeValue(
                             regime="single_f", projection={"s": _single_state_from_w}
                         ),
                     ),
-                    "m": EdgeLeg(
+                    "m": StakeholderRoute(
                         target_stakeholder="m",
-                        fallback=SamePeriodRef(
+                        fallback=ProjectedRegimeValue(
                             regime="single_m", projection={"s": _single_state_from_w}
                         ),
                     ),
@@ -425,11 +425,10 @@ def _simulate_gate_ref(model: Model):
     return model.simulate(
         params={"discount_factor": _DISCOUNT_FACTOR},
         initial_conditions=_initial_conditions(
-            n_subjects=2, regime_id=_GateRefRegimeId.couple
+            n_subjects=2, regime_id=_GateRefRegimeId.couple, model=model
         ),
         period_to_regime_to_V_arr=solution,
         log_level="debug",
-        own_stakeholder="f",
     )
 
 
@@ -442,20 +441,28 @@ def _simulate_dissolution(model: Model):
     return model.simulate(
         params=params,
         initial_conditions=_initial_conditions(
-            n_subjects=2, regime_id=_DissolutionRegimeId.couple
+            n_subjects=2, regime_id=_DissolutionRegimeId.couple, model=model
         ),
         period_to_regime_to_V_arr=solution,
         period_to_regime_to_dissolution_flags=flags,
         log_level="debug",
-        own_stakeholder="f",
     )
 
 
-def _initial_conditions(*, n_subjects: int, regime_id: ScalarInt) -> dict[str, FloatND]:
-    """Seed every subject as a couple at age 0; the couple carries no state."""
+def _initial_conditions(
+    *, n_subjects: int, regime_id: ScalarInt, model: Model
+) -> dict[str, FloatND]:
+    """Seed every subject as the wife of a couple at age 0.
+
+    The couple carries no state, so the role is the whole of what a row starts
+    with beyond its regime.
+    """
     return {
         "age": jnp.zeros(n_subjects),
         "regime_id": jnp.full(n_subjects, regime_id, dtype=jnp.int32),
+        "own_stakeholder": jnp.full(
+            n_subjects, model.stakeholder_names_to_ids["f"], dtype=jnp.int32
+        ),
     }
 
 

@@ -45,14 +45,12 @@ class _IIDProcess(_ContinuousStochasticProcess):
     `Regime.__post_init__` / model processing; see
     `_validate_fold_declarations`.
 
-    A fold reduces a shock that is drawn, used, and discarded inside the one
-    period that folds it. `_fail_if_folded_state_persists` rejects a fold
-    whenever ANY reachable regime's continuation still carries a
-    `next_<name>` for this state — a self-transition, or the same IID shock
-    redeclared in a later period of the SAME regime — because fold-aware
-    continuation interpolation is not implemented. So a shock genuinely
-    redrawn every period (a wage or match shock redrawn at each age) is
-    rejected at construction rather than silently mishandled.
+    A fold reduces a shock that is drawn, used, and discarded inside the period
+    that folds it, and the same shock may be redrawn in every period the regime
+    is active. The saving is then per period: no reachable regime's continuation
+    places a coordinate on a folded axis, because the stored value it would read
+    has already integrated that axis out, so the shock's node count leaves the
+    stored value everywhere rather than in one period only.
     """
 
     _NON_PARAM_FIELDS: ClassVar[frozenset[str]] = (

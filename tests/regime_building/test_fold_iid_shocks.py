@@ -14,20 +14,13 @@ quadrature the process already carries — immediately after, before the
 result is written into the stored value. The stored `V` loses that axis.
 Default `fold=False` is byte-identical to today.
 
-Scope of this slice (see `_fail_if_folded_state_persists` in
-`regime_building/processing.py`): only a state that does NOT structurally
-persist past the period that folds it — not redeclared, directly or via a
-self-transition, in any regime a transition reaches. A genuinely persistent
-IID shock (redrawn every period across many periods of the SAME regime)
-would additionally need the continuation side (`regime_to_v_interpolation_info`
-/ `stochastic_transition_names`) of every regime reading into it to also
-recognize the fold; that is out of scope here. Concretely:
-the memory saving this slice delivers is PER-PERIOD only (isolated,
-non-persistent shocks within the one period that folds them) — it does not
-yet deliver a MULTI-period saving for a shock redrawn every period across
-many ages (the central "repeated-IID" use case); do not advertise a
-multi-period node-count reduction until continuation support for a
-persistent fold lands.
+A folded state may be redeclared in any regime a transition reaches, including
+the regime that folds it — a wage or match shock redrawn at every age. No
+solve-phase continuation edge is built for a folded process, so the source reads
+the target's already-averaged value flat and nothing interpolates an axis the
+stored value no longer has. The saving is therefore per period rather than
+confined to the one period that declares the shock; the repeated case has its
+own module, `test_fold_repeated_iid_shock.py`.
 """
 
 import functools
@@ -48,16 +41,16 @@ from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
     DiscreteGrid,
-    EdgeLeg,
     GatedEdge,
     LinSpacedGrid,
     NormalIIDProcess,
+    ProjectedRegimeValue,
     Regime,
-    SamePeriodRef,
+    StakeholderRoute,
     categorical,
 )
 from lcm.ages import AgeGrid
-from lcm.exceptions import ModelInitializationError, RegimeInitializationError
+from lcm.exceptions import RegimeInitializationError
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.processes import RouwenhorstAR1Process
 from lcm.transition import MarkovTransition
@@ -372,8 +365,8 @@ def test_fold_source_state_name_reused_by_outbound_gate_is_not_rejected():
             "some_target": GatedEdge(
                 gate=lambda wage_shock: wage_shock > 0.0,
                 legs={
-                    "only": EdgeLeg(
-                        fallback=SamePeriodRef(regime="elsewhere", projection={})
+                    "only": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(regime="elsewhere", projection={})
                     )
                 },
             )
@@ -400,32 +393,47 @@ def test_fold_on_transition_conditioning_shock_is_rejected():
         )
 
 
-def test_fold_on_persisting_shock_is_rejected_at_model_processing():
-    """A shock redeclared in a regime reachable via a next-period transition
-    structurally persists — its continuation would need a `next_<name>` axis
-    the folded stored value no longer has. Caught once, cross-regime, at
-    model processing (`_fail_if_folded_state_persists`), not at
-    `Regime.__post_init__` (which only sees one regime at a time).
+def _process(
+    regimes: dict[str, Regime],
+    *,
+    ages: AgeGrid = _AGES,
+    regime_names_to_ids: MappingProxyType = _REGIME_NAMES_TO_IDS,
+) -> MappingProxyType:
+    """Run one regime dict through the full build, with the ages and ids it needs."""
+    finalized = finalize_regimes(
+        user_regimes=regimes,
+        derived_categoricals={},
+        koopmans_aggregator=LinearAggregator(),
+        certainty_equivalent=LinearExpectation(),
+    )
+    return process_regimes(
+        prepared_structure=build_prepared_structure(user_regimes=finalized, ages=ages),
+        user_regimes=finalized,
+        ages=ages,
+        regime_names_to_ids=regime_names_to_ids,
+        enable_jit=False,
+    )
 
-    The process-state continuation machinery
-    (`target_process_grids`/`weight_<target>__next_<process>` in
-    `processing.py`) only wires up for a regime target reached through a
-    QUALIFIED (per-target-dict) transition — a bare coarse `transition=func`
-    with no other per-target state law never populates `reachable_targets`,
-    so this scenario needs a per-target regime transition (`MarkovTransition`)
-    plus a per-target `wealth` state law to force `terminal` into
-    `reachable_targets` (mirrors a stochastic multi-target model, where this
-    persistence pattern is the realistic case fold must reject).
 
-    The fold must sit on the TARGET (`terminal`): `period0`, as SOURCE, needs
-    to interpolate `next_V["terminal"]` over a `wage_shock` axis for its own
-    continuation (`period0.solution.transitions["terminal"]` carries
-    `next_wage_shock` — confirmed the mechanism engages before asserting the
-    rejection) — folding wage_shock away from `terminal`'s OWN stored V is
-    what breaks that read. Folding the SOURCE's own (non-persisting) copy
-    would not break anything (that's exactly the supported case the other
-    tests in this module cover) — a deliberately wrong fold placement here
-    would make the pin vacuous.
+def _discounted_params(*regime_names: str) -> MappingProxyType:
+    """Flat params giving every named regime the module's discount factor."""
+    return MappingProxyType(
+        {
+            name: MappingProxyType(
+                {"koopmans_aggregator__discount_factor": jnp.asarray(0.9)}
+            )
+            for name in regime_names
+        }
+    )
+
+
+def test_a_folded_target_shock_the_source_also_carries_needs_no_continuation_axis():
+    """A source carrying the same shock name reads the target's folded value flat.
+
+    The target's stored value has the shock integrated out, so the source's
+    continuation into it must not carry a `next_wage_shock` coordinate — there
+    is no axis left to place one on. The fold's own quadrature is what averages
+    the shock, one step earlier than the continuation would have.
     """
     from lcm import LinSpacedGrid  # noqa: PLC0415
     from lcm.transition import MarkovTransition  # noqa: PLC0415
@@ -444,8 +452,6 @@ def test_fold_on_persisting_shock_is_rejected_at_model_processing():
         actions={"work": DiscreteGrid(Work)},
         functions={"utility": _utility_with_wealth},
     )
-    # The TARGET regime folds wage_shock, but `period0`'s own continuation
-    # into it still needs to interpolate over that axis — it persists.
     terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
@@ -453,27 +459,21 @@ def test_fold_on_persisting_shock_is_rejected_at_model_processing():
         actions={"work": DiscreteGrid(Work)},
         functions={"utility": _utility_with_wealth},
     )
-    with pytest.raises(ModelInitializationError, match="structurally persists"):
-        process_regimes(
-            prepared_structure=build_prepared_structure(
-                user_regimes=finalize_regimes(
-                    user_regimes={"period0": period0, "terminal": terminal},
-                    derived_categoricals={},
-                    koopmans_aggregator=LinearAggregator(),
-                    certainty_equivalent=LinearExpectation(),
-                ),
-                ages=_AGES,
-            ),
-            user_regimes=finalize_regimes(
-                user_regimes={"period0": period0, "terminal": terminal},
-                derived_categoricals={},
-                koopmans_aggregator=LinearAggregator(),
-                certainty_equivalent=LinearExpectation(),
-            ),
-            ages=_AGES,
-            regime_names_to_ids=_REGIME_NAMES_TO_IDS,
-            enable_jit=False,
-        )
+
+    processed = _process({"period0": period0, "terminal": terminal})
+
+    assert "next_wealth" in processed["period0"].solution.transitions["terminal"]
+    assert (
+        "next_wage_shock" not in processed["period0"].solution.transitions["terminal"]
+    )
+    solution = solve(
+        flat_params=_FLAT_PARAMS,
+        ages=_AGES,
+        regimes=processed,
+        logger=get_logger(log_level="off"),
+        enable_jit=False,
+    ).value_functions
+    assert solution[1]["terminal"].shape == (3,)
 
 
 def _solve_jit(regimes: dict[str, Regime], *, enable_jit: bool) -> MappingProxyType:
@@ -712,18 +712,12 @@ def test_zero_weight_fold_axis_still_averages_infinities_safely():
     np.testing.assert_array_equal(np.asarray(out), np.float32(4.0))
 
 
-def test_fold_on_persisting_shock_reached_only_via_regime_transition_is_rejected():
-    """The persistence guard fires for a target reached ONLY by the per-target
-    regime transition — with NO ordinary state law to carry it.
+def test_a_folded_target_reached_only_by_the_regime_transition_is_enumerable():
+    """A target with no ordinary state law still enters `E[V]` when it folds.
 
-    The sibling test above deliberately adds a `wealth` law "SOLELY to force
-    the target into reachable_targets". That admission marks the hazard:
-    deriving reachability from ordinary state laws only means that WITHOUT such
-    a law the target's process transitions are never built, its bundle stays
-    empty, the guard finds no `next_wage_shock` to object to, and
-    `get_period_targets` drops the target from E[V] entirely — silently, since
-    `get_period_targets` assumes an absent target "has no state and therefore
-    zero value", leaving `period0.solution.transitions == {}`.
+    Its bundle carries no law at all, so nothing but the explicit fold-target
+    branch keeps it in the continuation graph; dropping it would price the
+    source's route into it as worthless.
     """
     from lcm.transition import MarkovTransition  # noqa: PLC0415
 
@@ -741,27 +735,18 @@ def test_fold_on_persisting_shock_reached_only_via_regime_transition_is_rejected
         actions={"work": DiscreteGrid(Work)},
         functions={"utility": _utility},
     )
-    with pytest.raises(ModelInitializationError, match="structurally persists"):
-        process_regimes(
-            prepared_structure=build_prepared_structure(
-                user_regimes=finalize_regimes(
-                    user_regimes={"period0": period0, "terminal": terminal},
-                    derived_categoricals={},
-                    koopmans_aggregator=LinearAggregator(),
-                    certainty_equivalent=LinearExpectation(),
-                ),
-                ages=_AGES,
-            ),
-            user_regimes=finalize_regimes(
-                user_regimes={"period0": period0, "terminal": terminal},
-                derived_categoricals={},
-                koopmans_aggregator=LinearAggregator(),
-                certainty_equivalent=LinearExpectation(),
-            ),
-            ages=_AGES,
-            regime_names_to_ids=_REGIME_NAMES_TO_IDS,
-            enable_jit=False,
-        )
+
+    processed = _process({"period0": period0, "terminal": terminal})
+
+    assert processed["period0"].solution.transitions["terminal"] == {}
+    solution = solve(
+        flat_params=_FLAT_PARAMS,
+        ages=_AGES,
+        regimes=processed,
+        logger=get_logger(log_level="off"),
+        enable_jit=False,
+    ).value_functions
+    assert solution[1]["terminal"].shape == ()
 
 
 def test_coarse_regime_transition_does_not_fabricate_a_self_transition():
@@ -774,8 +759,7 @@ def test_coarse_regime_transition_does_not_fabricate_a_self_transition():
     (omitting a genuinely-routed candidate would silently drop its
     continuation), but two things keep that from fabricating a spurious
     continuation here: (1) the SOURCE regime is excluded, so no false
-    `period0 -> period0` self-transition wires `period0`'s own folded
-    `wage_shock` back into itself and trips a bogus "structurally persists";
+    `period0 -> period0` self-transition is fabricated;
     (2) process transitions are still scoped to the source's own processes, and
     `terminal` shares none, so admitting it builds nothing. This is the module's
     primary supported fold topology (shock declared and folded only in
@@ -791,20 +775,12 @@ def test_coarse_regime_transition_does_not_fabricate_a_self_transition():
     np.testing.assert_allclose(np.asarray(solution[0]["period0"]), 10.0, atol=1e-5)
 
 
-def test_coarse_regime_transition_to_persisting_fold_target_is_rejected():
-    """A COARSE `transition=func` that can route to a folded target whose shock
-    persists from the source is rejected at build time, requiring per-target
-    cells.
+def test_a_coarse_transition_into_a_folded_target_needs_no_per_target_cells():
+    """A coarse `transition=func` may route into a regime that folds a shock.
 
-    The target here is reached only via coarse routing and folds a `wage_shock`
-    that also lives in the source. A coarse transition's actual support is
-    unknown at build time, so rather than build a `next_wage_shock` edge whose
-    persistence the structural guard would then judge on an UNKNOWN-support
-    candidate (which would wrongly accept a real self-fold or wrongly reject a
-    never-returned one), the ambiguous folded-coarse topology is rejected here
-    with a clear "use per-target transitions" scope error. Declaring the
-    per-target form then routes it into the exact persistence guard
-    (`test_fold_on_persisting_shock_reached_only_via_regime_transition_is_rejected`).
+    A coarse transition's support is unknown at build time, but that no longer
+    decides anything: no folded process gets a solve continuation edge whatever
+    the support is, so there is nothing about the routing left to disambiguate.
     """
     period0 = Regime(
         transition=_next_regime,
@@ -820,27 +796,17 @@ def test_coarse_regime_transition_to_persisting_fold_target_is_rejected():
         actions={"work": DiscreteGrid(Work)},
         functions={"utility": _utility},
     )
-    with pytest.raises(ModelInitializationError, match="explicit PER-TARGET cell"):
-        process_regimes(
-            prepared_structure=build_prepared_structure(
-                user_regimes=finalize_regimes(
-                    user_regimes={"period0": period0, "terminal": terminal},
-                    derived_categoricals={},
-                    koopmans_aggregator=LinearAggregator(),
-                    certainty_equivalent=LinearExpectation(),
-                ),
-                ages=_AGES,
-            ),
-            user_regimes=finalize_regimes(
-                user_regimes={"period0": period0, "terminal": terminal},
-                derived_categoricals={},
-                koopmans_aggregator=LinearAggregator(),
-                certainty_equivalent=LinearExpectation(),
-            ),
-            ages=_AGES,
-            regime_names_to_ids=_REGIME_NAMES_TO_IDS,
-            enable_jit=False,
-        )
+
+    processed = _process({"period0": period0, "terminal": terminal})
+
+    solution = solve(
+        flat_params=_FLAT_PARAMS,
+        ages=_AGES,
+        regimes=processed,
+        logger=get_logger(log_level="off"),
+        enable_jit=False,
+    ).value_functions
+    assert solution[1]["terminal"].shape == ()
 
 
 def _u_source_shock(source_shock: FloatND, work: DiscreteAction) -> FloatND:
@@ -922,31 +888,24 @@ def test_coarse_candidate_folding_a_target_local_process_is_not_rejected():
     assert solution[1]["terminal"].shape == ()
 
 
-def test_coarse_candidate_folding_a_source_carried_process_is_still_rejected():
-    """Negative control: when the folded name IS carried by the source,
-    persistence across the coarse edge is genuinely possible, so the ambiguous
-    topology must still be rejected."""
-    with pytest.raises(ModelInitializationError, match="explicit PER-TARGET cell"):
-        process_regimes(
-            prepared_structure=build_prepared_structure(
-                user_regimes=finalize_regimes(
-                    user_regimes=_make_target_local_fold_regimes(shared=True),
-                    derived_categoricals={},
-                    koopmans_aggregator=LinearAggregator(),
-                    certainty_equivalent=LinearExpectation(),
-                ),
-                ages=_AGES,
-            ),
-            user_regimes=finalize_regimes(
-                user_regimes=_make_target_local_fold_regimes(shared=True),
-                derived_categoricals={},
-                koopmans_aggregator=LinearAggregator(),
-                certainty_equivalent=LinearExpectation(),
-            ),
-            ages=_AGES,
-            regime_names_to_ids=_REGIME_NAMES_TO_IDS,
-            enable_jit=False,
-        )
+def test_a_coarse_candidate_folding_a_source_carried_process_solves():
+    """The folded name being one the source carries changes nothing.
+
+    This is the case the ambiguity used to turn on, so it is the one worth
+    pinning: the source reads the target's already-averaged value, and its own
+    unfolded copy of the shock keeps its axis in its own period.
+    """
+    processed = _process(_make_target_local_fold_regimes(shared=True))
+
+    solution = solve(
+        flat_params=_FLAT_PARAMS,
+        ages=_AGES,
+        regimes=processed,
+        logger=get_logger(log_level="off"),
+        enable_jit=False,
+    ).value_functions
+    assert solution[1]["terminal"].shape == ()
+    assert solution[0]["period0"].shape == (5,)
 
 
 def test_coarse_self_transition_retains_the_self_continuation():
@@ -1029,14 +988,11 @@ def test_coarse_self_transition_retains_the_self_continuation():
     assert float(jnp.mean(solution[0]["stay"])) > 10.5
 
 
-def test_coarse_self_fold_is_rejected():
-    """A coarse transition that can return its own regime while that regime FOLDS
-    a shock is rejected, so that it cannot silently bypass the persistence
-    guard.
+def test_a_coarse_self_transition_may_fold_its_own_shock():
+    """A regime that folds a shock and coarse-routes to itself is the repeat case.
 
-    `stay` is active two periods, folds `wage_shock`, and coarse-routes to itself,
-    so the folded shock could persist across the self-edge. Support is unknown at
-    build time, so this is rejected with the per-target scope error.
+    `stay` is active for two periods and redraws the shock in each, so its own
+    continuation reads a value whose shock axis is already integrated out.
     """
     ages3 = AgeGrid(start=0, stop=3, step="Y")
     ids = MappingProxyType({"stay": jnp.int32(0), "done": jnp.int32(1)})
@@ -1056,38 +1012,28 @@ def test_coarse_self_fold_is_rejected():
         active=lambda age: age >= 2,
         functions={"utility": lambda: 0.0},
     )
-    with pytest.raises(ModelInitializationError, match="explicit PER-TARGET cell"):
-        process_regimes(
-            prepared_structure=build_prepared_structure(
-                user_regimes=finalize_regimes(
-                    user_regimes={"stay": stay, "done": done},
-                    derived_categoricals={},
-                    koopmans_aggregator=LinearAggregator(),
-                    certainty_equivalent=LinearExpectation(),
-                ),
-                ages=ages3,
-            ),
-            user_regimes=finalize_regimes(
-                user_regimes={"stay": stay, "done": done},
-                derived_categoricals={},
-                koopmans_aggregator=LinearAggregator(),
-                certainty_equivalent=LinearExpectation(),
-            ),
-            ages=ages3,
-            regime_names_to_ids=ids,
-            enable_jit=False,
-        )
+
+    processed = _process(
+        {"stay": stay, "done": done}, ages=ages3, regime_names_to_ids=ids
+    )
+
+    assert "next_wage_shock" not in processed["stay"].solution.transitions["stay"]
+    solution = solve(
+        flat_params=_discounted_params("stay", "done"),
+        ages=ages3,
+        regimes=processed,
+        logger=get_logger(log_level="off"),
+        enable_jit=False,
+    ).value_functions
+    assert solution[0]["stay"].shape == ()
+    assert solution[1]["stay"].shape == ()
 
 
-def test_unreachable_folded_coarse_candidate_is_rejected_with_scope_error():
-    """A coarse function that never returns a folded candidate is still rejected
-    with the per-target scope error, NOT a misleading 'structurally persists'.
+def test_a_coarse_candidate_that_folds_and_is_never_returned_builds():
+    """A folded candidate the coarse function never returns is simply harmless.
 
-    The persistence guard is structural and cannot see that the coarse function
-    always returns `stay` (so folded candidate `alt` has probability zero). Rather
-    than build a spurious `next_wage_shock` edge into `alt` and let the guard
-    manufacture a persistence error, the ambiguous folded-coarse topology is
-    rejected up front with the actionable per-target message.
+    Its probability is zero and it carries no continuation edge either way, so
+    nothing about it has to be decided at build time.
     """
     ages3 = AgeGrid(start=0, stop=3, step="Y")
     ids = MappingProxyType(
@@ -1116,27 +1062,20 @@ def test_unreachable_folded_coarse_candidate_is_rejected_with_scope_error():
         actions={"work": DiscreteGrid(Work)},
         functions={"utility": _utility},
     )
-    with pytest.raises(ModelInitializationError, match="explicit PER-TARGET cell"):
-        process_regimes(
-            prepared_structure=build_prepared_structure(
-                user_regimes=finalize_regimes(
-                    user_regimes={"src": src, "stay": stay, "alt": alt},
-                    derived_categoricals={},
-                    koopmans_aggregator=LinearAggregator(),
-                    certainty_equivalent=LinearExpectation(),
-                ),
-                ages=ages3,
-            ),
-            user_regimes=finalize_regimes(
-                user_regimes={"src": src, "stay": stay, "alt": alt},
-                derived_categoricals={},
-                koopmans_aggregator=LinearAggregator(),
-                certainty_equivalent=LinearExpectation(),
-            ),
-            ages=ages3,
-            regime_names_to_ids=ids,
-            enable_jit=False,
-        )
+
+    processed = _process(
+        {"src": src, "stay": stay, "alt": alt}, ages=ages3, regime_names_to_ids=ids
+    )
+
+    assert "next_wage_shock" not in processed["src"].solution.transitions["alt"]
+    solution = solve(
+        flat_params=_discounted_params("src", "stay", "alt"),
+        ages=ages3,
+        regimes=processed,
+        logger=get_logger(log_level="off"),
+        enable_jit=False,
+    ).value_functions
+    assert solution[1]["alt"].shape == ()
 
 
 def test_coarse_regime_transition_to_shared_process_target_builds_continuation():

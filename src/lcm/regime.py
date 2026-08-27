@@ -32,103 +32,19 @@ from _lcm.user_regime_validation import (
 )
 from _lcm.utils.containers import ensure_containers_are_immutable
 from lcm.certainty_equivalent import CertaintyEquivalent
+from lcm.collective import (
+    CollectiveUtility,
+    ParetoObjective,
+    ProjectedRegimeValue,
+    StakeholderRoute,
+    ValueDependentConstraint,
+    ValueDependentTransition,
+)
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.transition import AgeSpecializedGrid, JointTransition, MarkovTransition
 from lcm.typing import UserFunction
-
-
-@beartype(conf=REGIME_CONF)
-@dataclass(frozen=True, kw_only=True)
-class SamePeriodRef:
-    """Declaration of a same-period cross-regime reference value.
-
-    A collective regime's `same_period_refs` maps a *reference-value name* (the
-    named argument under which the interpolated value enters the regime's
-    `value_constraints` predicates) to one of these declarations: WHICH other
-    regime's same-period value function is read, HOW the reading regime's state
-    cell maps into the reference regime's state coordinates, and — when the
-    reference regime is itself collective — WHOSE stakeholder value is read.
-
-    The reference regime is solved earlier in the same period (the solver
-    orders each period's active regimes topologically by these declarations),
-    and its value function is linearly interpolated at the projected
-    coordinates with the same machinery the continuation uses — but with the
-    CURRENT period's arrays. Reading the current period rather than the
-    continuation is what a within-period participation constraint needs: a
-    couple's period-$t$ decision is checked against the values its members
-    would have as singles in that same period $t$.
-    """
-
-    regime: RegimeName
-    """Name of the reference regime whose same-period V is read.
-
-    Must be another regime of the model, active in every period the declaring
-    regime is active. No transition edge between the two regimes is required —
-    same-period reference reads work across otherwise unconnected regime
-    "islands", which is what lets a value constraint compare this regime's
-    value against a regime it never transitions into.
-    """
-
-    projection: Mapping[StateName, UserFunction]
-    """How the declaring regime's state cell maps to the reference coordinates.
-
-    One entry per state of the *reference* regime: `state name -> function`
-    returning that coordinate. On `Regime.same_period_refs`, each function
-    resolves through the declaring regime's DAG, receives that regime's
-    current `period` / `age`, and may not introduce new free parameters.
-    Inside `GatedEdge.gate_refs` or an `EdgeLeg.fallback`, the declaration
-    instead projects from the gated target's fold grid, receives that target
-    fold's `period` / `age`, and collects other free arguments as the source
-    regime's edge parameters. The reference V is interpolated at the resulting
-    coordinates (linear on continuous axes, lookup on discrete axes).
-    """
-
-    stakeholder: str | None = None
-    """Which stakeholder's value to read from a collective reference regime.
-
-    Required when the reference regime is collective (its V carries a
-    stakeholder axis); must be `None` when the reference regime is a singleton
-    (its V has no stakeholder axis).
-    """
-
-    def __post_init__(self) -> None:
-        object.__setattr__(
-            self,
-            "projection",
-            ensure_containers_are_immutable(self.projection),
-        )
-
-
-@beartype(conf=REGIME_CONF)
-@dataclass(frozen=True, kw_only=True)
-class EdgeLeg:
-    """One source-stakeholder leg of a gated edge.
-
-    A gated edge carries one leg per SOURCE stakeholder (a singleton source
-    declares exactly one leg; a collective source one per stakeholder). Each leg
-    says, for that source stakeholder's continuation object `Wbar^s` on the
-    target regime's grid:
-
-    - `target_stakeholder` — which component of the target regime's value the
-      OPEN (gate-True) branch takes. For a collective target it names one of the
-      target's stakeholders; for a singleton target it is `None`.
-    - `fallback` — a `SamePeriodRef` giving the value the CLOSED (gate-False)
-      branch takes: a same-period reference regime's V at a projection from the
-      TARGET regime's grid coordinates — typically the source stakeholder's own
-      single regime, at the projection back to its single state. The mixture is the
-      strict `jnp.where(gate, V_target, V_fallback)` — NEVER a linear
-      `gate*V_target + (1-gate)*V_fallback` (the target value is `-inf` in a
-      dissolution cell, and `0 * -inf = NaN`).
-    """
-
-    fallback: SamePeriodRef
-    """The gate-closed branch: a reference regime's same-period V at a projection."""
-
-    target_stakeholder: str | None = None
-    """The gate-open branch's target-value component, or `None` for a singleton
-    target."""
 
 
 @beartype(conf=REGIME_CONF)
@@ -143,7 +59,23 @@ class GatedEdge:
     raw transitions between different-stakeholder regimes stay rejected.
 
     A source regime declares `gated_edges` as a mapping of TARGET regime name
-    to `GatedEdge`. At the end of each period's solve, the engine folds, for
+    to `GatedEdge`. **The key is always the GATE-OPEN target** — the regime a
+    row enters when the gate is true — and each leg's `fallback` is where the
+    gate-false branch sends it. A dissolution edge is therefore keyed by the
+    CONTINUING collective regime under `gate = ~D_target`, with each partner's
+    single regime as that partner's leg fallback; keying it by one partner's
+    single regime would send both partners there whenever the couple stays
+    together.
+
+    A leg thus owns four facts about where its rows go, and simulation carries
+    all four: the open branch's regime (the key) and role
+    (`StakeholderRoute.target_stakeholder`), and the closed branch's regime and role
+    (`fallback.regime` and `fallback.stakeholder`). A row's own role —
+    `initial_conditions["own_stakeholder"]`, published in the simulated frame —
+    is what picks its leg, and it is updated to the branch's role as the row
+    moves; a row landing in a singleton regime carries none.
+
+    At the end of each period's solve, the engine folds, for
     each declared edge and each source stakeholder `s`, a gated continuation
     object on the target regime's grid:
 
@@ -163,25 +95,47 @@ class GatedEdge:
       "no dissolution this period" is `gate = ~D_target`. Stochastic gates —
       a gate returning a probability in `(0, 1)` rather than a boolean — are
       not supported.
-    - `legs` — one `EdgeLeg` per SOURCE stakeholder (keyed by source
+    - `legs` — one `StakeholderRoute` per SOURCE stakeholder (keyed by source
       stakeholder name; a singleton source declares exactly one leg under any
       key).
     - `gate_refs` — extra same-period reference values the `gate` reads,
       exactly like a regime's `same_period_refs` but projected from the TARGET
       regime's grid.
+    - `off_grid` — what the edge promises about a landing point between the
+      target's grid nodes. Both phases read the operands there and gate them
+      there, so the value the source maximizes is one a branch really pays;
+      `"reject"` additionally refuses, at model build, a target on whose grid
+      such a point can occur at all.
     """
 
     gate: UserFunction
     """Boolean gate on the target grid, evaluated in the target fold's context."""
 
-    legs: Mapping[str, EdgeLeg]
-    """One `EdgeLeg` per source stakeholder (single leg for a singleton source)."""
+    legs: Mapping[str, StakeholderRoute]
+    """One `StakeholderRoute` per source stakeholder.
 
-    gate_refs: Mapping[str, SamePeriodRef] = field(
+    A singleton source declares exactly one, under any key.
+    """
+
+    gate_refs: Mapping[str, ProjectedRegimeValue] = field(
         default_factory=lambda: MappingProxyType({})
     )
     """Same-period reference values the `gate` reads (projected from the target
     grid)."""
+
+    off_grid: Literal["pointwise", "reject"] = "pointwise"
+    """How a landing point between the target's grid nodes is treated.
+
+    - `"pointwise"` (the default) reads every operand at the landing point and
+      applies the gate there, in both phases. The operands are interpolated, so
+      the value carries the ordinary interpolation error of any continuation —
+      but it is a value one branch really delivers, and the branch the solve
+      priced is the branch simulation routes down.
+    - `"reject"` demands that no such point exists: the model refuses to build
+      unless the target regime's grid is reached exactly, i.e. it carries no
+      continuous state. Declare it where a straddled gate would be an economic
+      error rather than an approximation.
+    """
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "legs", ensure_containers_are_immutable(self.legs))
@@ -218,7 +172,10 @@ class Regime:
         UserFunction
         | MarkovTransition
         | Phased
-        | Mapping[RegimeName, MarkovTransition | UserFunction | Phased]
+        | Mapping[
+            RegimeName,
+            MarkovTransition | UserFunction | Phased | ValueDependentTransition,
+        ]
         | None
     )
     """Regime transition, or `None` for terminal regimes.
@@ -302,9 +259,9 @@ class Regime:
     )
     """Mapping of action variable names to grid objects."""
 
-    functions: Mapping[FunctionName, UserFunction | Phased | None] = field(
-        default_factory=lambda: MappingProxyType({})
-    )
+    functions: Mapping[
+        FunctionName, UserFunction | Phased | CollectiveUtility | None
+    ] = field(default_factory=lambda: MappingProxyType({}))
     """Mapping of function names to callables; must include 'utility'.
 
     `Phased` gives each phase its own implementation.
@@ -312,9 +269,9 @@ class Regime:
 
     # `Phased` passes the type check so the validator can reject it with an
     # explanation (constraints are phase-invariant).
-    constraints: Mapping[FunctionName, ConstraintLike | Phased | None] = field(
-        default_factory=lambda: MappingProxyType({})
-    )
+    constraints: Mapping[
+        FunctionName, ConstraintLike | Phased | ValueDependentConstraint | None
+    ] = field(default_factory=lambda: MappingProxyType({}))
     """Mapping of constraint names to constraints.
 
     A constraint is either a `Condition` built from `lcm.ref`, or an ordinary
@@ -387,6 +344,10 @@ class Regime:
     stakeholders: tuple[str, ...] | None = None
     """Names of the stakeholders whose individual values this regime carries.
 
+    The lowered form of `CollectiveUtility.utilities`, whose keys are the
+    stakeholders in the order they are written. A model declares the household
+    in `functions["utility"]` and reads the set back here.
+
     `None` (the default) is the singleton case: the regime has one implicit
     stakeholder and one value function. A non-`None` tuple declares a
     *collective regime*: a couple (or other multi-party household) that solves
@@ -395,8 +356,8 @@ class Regime:
     (consent / dissolution).
 
     A collective regime carries a per-stakeholder utility
-    `functions["utility_<s>"]` for each stakeholder `<s>` and household Pareto
-    `weights`. Its solve reads off each stakeholder's own value at the shared
+    `functions["utility_<s>"]` for each stakeholder `<s>` and a
+    `pareto_objective`. Its solve reads off each stakeholder's own value at the shared
     household argmax, and a non-terminal one aggregates the per-stakeholder
     continuation `Q^s = H(u^s, E[V'^s])`. A non-terminal collective regime's
     transition targets must all be collective regimes with the identical
@@ -419,28 +380,35 @@ class Regime:
       dissolution does not split a row into two independently tracked
       households; each row records where every stakeholder would land and then
       continues as one of them.
-    - `simulate` requires `own_stakeholder` for a collective source, and it
-      names the role every row in that call carries.
+    - Every row carries its own role. `simulate` reads it from
+      `initial_conditions["own_stakeholder"]` and updates it wherever a gated
+      edge routes the row, so one cohort may hold both partners.
     - The off-grid value gate is approximate: it interpolates the target's
       already-maximized value rather than recomputing the household maximum at
       the realized off-grid point (see `get_edge_simulate_gate_evaluator`).
     """
 
-    weights: Mapping[str, float] | None = None
-    """Household Pareto weights `λ_s` per stakeholder for a collective regime.
+    pareto_objective: ParetoObjective | None = None
+    """How this collective regime's household trades its stakeholders off.
 
-    Used only when `stakeholders is not None`: the collective solve maximizes the
-    household scalarization `O = Σ_s λ_s Q^s` over the feasible action set. When
-    omitted (the default), equal weights `1/len(stakeholders)` are used — the
-    symmetric-couple case, `λ = 0.5` on each partner. Supply an explicit mapping
-    to give one stakeholder more weight in the household decision. Ignored —
-    and must be `None` — for a singleton regime.
+    The lowered form of `CollectiveUtility.objective`.
+
+    Used only when `stakeholders is not None`: the collective solve maximizes
+    the household scalarization `O = Σ_s λ_s Q^s` over the feasible action set.
+    When omitted (the default), equal weights `1/len(stakeholders)` are used —
+    the symmetric-couple case, `λ = 0.5` on each partner. Declare a
+    `ParetoObjective` to weigh one stakeholder more, to let the weights depend
+    on a state, or to estimate them. Ignored — and must be `None` — for a
+    singleton regime.
     """
 
     value_constraints: Mapping[FunctionName, UserFunction] = field(
         default_factory=lambda: MappingProxyType({})
     )
-    """Value-aware feasibility predicates for a non-terminal collective regime.
+    """Value-aware feasibility predicates for a collective regime.
+
+    The lowered form of the `ValueDependentConstraint` entries of `constraints`,
+    which is where a model declares them — one constraint slot rather than two.
 
     Each entry maps a constraint name to a predicate returning `True` where the
     (state, action) combination is feasible. Unlike ordinary `constraints`
@@ -463,13 +431,32 @@ class Regime:
     can occur on-path). A participation constraint takes the form
     `Q_j >= V_single_j(pi_j(x)) - Delta_j` for each stakeholder `j`.
 
-    Only non-terminal collective regimes may declare value constraints.
+    A TERMINAL collective regime may declare them too — a household's last
+    period is a participation decision like any other — with two differences
+    worth stating, because nothing in the arrays reveals them:
+
+    - `Q_<s>` is stakeholder `s`'s terminal payoff. There is no continuation,
+      so the value each partner weighs against the reference is what the cell
+      itself delivers.
+    - What a terminal regime publishes is a **flag**, not a resolved outcome.
+      An empty feasible set sets `D = True` and leaves the `-inf` sentinel as
+      the value; pylcm substitutes no outside option, because there is no
+      continuation to route into. A caller that reads the value without the
+      flag reads the sentinel. Deciding what a dissolved terminal household is
+      worth is the model's business.
+
+    Only collective regimes may declare value constraints at all: the
+    predicates read `Q_<s>`, which a singleton regime does not carry.
     """
 
     gated_edges: Mapping[RegimeName, GatedEdge] = field(
         default_factory=lambda: MappingProxyType({})
     )
     """Gated edges routing this regime's continuation into a target regime.
+
+    The lowered form of the `ValueDependentTransition` entries of `transition`,
+    which is where a model declares them, so that target selection and
+    value-dependent routing are one declaration rather than two.
 
     Maps a TARGET regime name to a `GatedEdge`. A gated edge lets this regime
     reach a target of a DIFFERENT stakeholder layout (a singleton regime into a
@@ -484,13 +471,16 @@ class Regime:
     stakeholder rejection.
     """
 
-    same_period_refs: Mapping[str, SamePeriodRef] = field(
+    same_period_refs: Mapping[str, ProjectedRegimeValue] = field(
         default_factory=lambda: MappingProxyType({})
     )
     """Same-period cross-regime reference values read by `value_constraints`.
 
+    The lowered form of `ValueDependentConstraint.references`, which is where a
+    model declares them — local to the constraint that reads them.
+
     Maps each reference-value name (the argument name under which the
-    interpolated value enters the predicates) to a `SamePeriodRef` declaring
+    interpolated value enters the predicates) to a `ProjectedRegimeValue` declaring
     the reference regime, the state projection, and — for a collective
     reference — the stakeholder. Reference regimes are solved earlier within
     the same period (topological order; cycles are rejected at model build).
@@ -519,24 +509,25 @@ class Regime:
         return isinstance(transition, MarkovTransition | Mapping)
 
     def __post_init__(self) -> None:
+        self._lower_value_dependent_declarations()
         self._fail_if_egm_solver_has_no_margin_declaration()
         # A collective regime's own declaration is validated here (the
         # `stakeholders` tuple, `weights`, the value-constraint grammar;
         # out-of-scope features — taste shocks, nonlinear certainty
         # equivalents, non-GridSearch solvers — are rejected). What a
         # model-level slot may still supply — the per-stakeholder
-        # `utility_<s>` functions and at least one discrete action — is
-        # checked when the model finalizes its regimes. The default `None`
+        # `utility_<s>` functions — is checked when the model finalizes its
+        # regimes. The default `None`
         # (singleton) path never enters this branch.
         if self.gated_edges:
             _validate_gated_edges(self)
         if self.stakeholders is not None:
             _validate_collective_regime(self)
-        elif self.weights is not None:
+        elif self.pareto_objective is not None:
             raise RegimeInitializationError(
-                "`weights` is a household Pareto-weight declaration for a "
-                "collective regime; it is only meaningful together with "
-                "`stakeholders`. Omit it for a singleton regime."
+                "`pareto_objective` declares how a collective regime's "
+                "household weighs its stakeholders; it is only meaningful "
+                "together with `stakeholders`. Omit it for a singleton regime."
             )
         elif self.value_constraints:
             raise RegimeInitializationError(
@@ -574,14 +565,165 @@ class Regime:
         make_immutable("value_constraints")
         make_immutable("gated_edges")
         make_immutable("same_period_refs")
-        # `weights` is optional; a singleton regime declares none at all.
-        if self.weights is not None:
-            make_immutable("weights")
 
         # The phase grammar (states matrix, carried laws, regime-transition
         # variants) is validated by the normalizer; the per-phase spec it
         # builds is consumed during model processing.
         normalize_regime_phases(self)
+
+    def _lower_value_dependent_declarations(self) -> None:
+        """Decompose the collective declarations onto what the engine runs.
+
+        `CollectiveUtility`, `ValueDependentConstraint` and
+        `ValueDependentTransition` are declared inside the slots a regime
+        already has — `functions`, `constraints` and `transition` — and each
+        one carries several engine-side facts at once. Splitting them here, at
+        construction, is what lets every later stage keep reading the fields it
+        has always read.
+
+        Nothing is lowered for a regime that declares none of the three, so a
+        regime spelled out the long way passes through untouched.
+        """
+        self._lower_collective_utility()
+        self._lower_value_dependent_constraints()
+        self._lower_value_dependent_transitions()
+
+    @property
+    def decomposed_functions(
+        self,
+    ) -> Mapping[FunctionName, UserFunction | Phased | None]:
+        """`functions` with any `CollectiveUtility` already taken apart.
+
+        The slot accepts a `CollectiveUtility`, and construction replaces it
+        with one `utility_<s>` entry per stakeholder — so the mapping an engine
+        stage reads never holds one, and this is where that is said in a type.
+        """
+        return cast(
+            "Mapping[FunctionName, UserFunction | Phased | None]", self.functions
+        )
+
+    @property
+    def decomposed_constraints(
+        self,
+    ) -> Mapping[FunctionName, ConstraintLike | Phased | None]:
+        """`constraints` with any `ValueDependentConstraint` already taken apart.
+
+        Construction moves each declaration's predicate into `value_constraints`
+        and its references into `same_period_refs`, so what stays here is the
+        ordinary constraints alone.
+        """
+        return cast(
+            "Mapping[FunctionName, ConstraintLike | Phased | None]", self.constraints
+        )
+
+    def _lower_collective_utility(self) -> None:
+        """Split `functions["utility"]` into stakeholders and their utilities."""
+        declaration = self.functions.get("utility")
+        if not isinstance(declaration, CollectiveUtility):
+            return
+        if self.stakeholders not in (None, tuple(declaration.utilities)):
+            raise RegimeInitializationError(
+                "A regime declaring `functions={'utility': CollectiveUtility(...)}` "
+                "names its stakeholders there — the `utilities` keys are the "
+                "stakeholders — so `stakeholders` may not be declared as well."
+            )
+        functions = {
+            name: func for name, func in self.functions.items() if name != "utility"
+        }
+        for stakeholder, utility in declaration.utilities.items():
+            entry = f"utility_{stakeholder}"
+            if entry in functions and functions[entry] is not utility:
+                raise RegimeInitializationError(
+                    f"The stakeholder {stakeholder!r} of this regime's "
+                    f"`CollectiveUtility` and the function {entry!r} would both "
+                    f"supply {stakeholder}'s utility. Declare it once, in the "
+                    "`CollectiveUtility`."
+                )
+            functions[entry] = utility
+        object.__setattr__(self, "functions", functions)
+        object.__setattr__(self, "stakeholders", tuple(declaration.utilities))
+        if declaration.objective is not None:
+            if self.pareto_objective not in (None, declaration.objective):
+                raise RegimeInitializationError(
+                    "This regime declares a `ParetoObjective` both as its "
+                    "`CollectiveUtility`'s objective and as `pareto_objective`. "
+                    "Declare it once, in the `CollectiveUtility`."
+                )
+            object.__setattr__(self, "pareto_objective", declaration.objective)
+
+    def _lower_value_dependent_constraints(self) -> None:
+        """Split each `ValueDependentConstraint` into predicate and references."""
+        declarations = {
+            name: constraint
+            for name, constraint in self.constraints.items()
+            if isinstance(constraint, ValueDependentConstraint)
+        }
+        if not declarations:
+            return
+        constraints = {
+            name: constraint
+            for name, constraint in self.constraints.items()
+            if name not in declarations
+        }
+        value_constraints = dict(self.value_constraints)
+        same_period_refs = dict(self.same_period_refs)
+        for name, declaration in declarations.items():
+            if value_constraints.get(name) not in (None, declaration.predicate):
+                raise RegimeInitializationError(
+                    f"The constraint {name!r} is declared both as a "
+                    "`ValueDependentConstraint` and in `value_constraints`. "
+                    "Declare it once."
+                )
+            value_constraints[name] = declaration.predicate
+            for ref_name, reference in declaration.references.items():
+                existing = same_period_refs.get(ref_name)
+                if existing is not None and existing != reference:
+                    raise RegimeInitializationError(
+                        f"Two constraints of this regime read a reference value "
+                        f"named {ref_name!r} but declare different references "
+                        f"for it:\n  {existing}\n  {reference}\n"
+                        "One name is one reference; rename one of them."
+                    )
+                same_period_refs[ref_name] = reference
+        object.__setattr__(self, "constraints", constraints)
+        object.__setattr__(self, "value_constraints", value_constraints)
+        object.__setattr__(self, "same_period_refs", same_period_refs)
+
+    def _lower_value_dependent_transitions(self) -> None:
+        """Split each `ValueDependentTransition` into a target and its edge."""
+        transition = self.transition
+        if not isinstance(transition, Mapping):
+            return
+        declarations = {
+            target: entry
+            for target, entry in transition.items()
+            if isinstance(entry, ValueDependentTransition)
+        }
+        if not declarations:
+            return
+        entries = dict(transition)
+        gated_edges = dict(self.gated_edges)
+        for target, declaration in declarations.items():
+            lowered = GatedEdge(
+                gate=declaration.gate,
+                legs=declaration.routes,
+                gate_refs=declaration.gate_references,
+                off_grid=declaration.off_grid,
+            )
+            existing = gated_edges.get(target)
+            if existing is not None and existing != lowered:
+                raise RegimeInitializationError(
+                    f"The transition into {target!r} is declared both as a "
+                    "`ValueDependentTransition` and as a `gated_edges` entry, "
+                    "and the two disagree. An edge is its gate, its routes, "
+                    "its gate references and its off-grid contract together, "
+                    "so agreeing on the gate alone is not agreeing. Declare "
+                    "it once."
+                )
+            entries[target] = declaration.probability
+            gated_edges[target] = lowered
+        object.__setattr__(self, "transition", entries)
+        object.__setattr__(self, "gated_edges", gated_edges)
 
     def _fail_if_egm_solver_has_no_margin_declaration(self) -> None:
         if self._accepts_margin_solver:
@@ -704,6 +846,13 @@ class Regime:
 
     def replace(self, **kwargs: Any) -> Regime:  # noqa: ANN401
         """Replace the attributes of the regime.
+
+        Replacing a slot that carried a `CollectiveUtility`,
+        `ValueDependentConstraint` or `ValueDependentTransition` does NOT undo
+        what that declaration was decomposed into: the stakeholders, value
+        constraints and gated edges stay as declared, and a replacement that
+        contradicts them is refused rather than silently dropping one side.
+        Build the regime outright where the two must differ.
 
         Args:
             **kwargs: Keyword arguments to replace the attributes of the regime.

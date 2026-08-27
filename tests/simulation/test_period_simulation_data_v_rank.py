@@ -29,6 +29,7 @@ def _period_data(*, V_arr: jnp.ndarray) -> PeriodRegimeSimulationData:
         actions=MappingProxyType({"consumption": column}),
         states=MappingProxyType({"wealth": column}),
         in_regime=jnp.arange(_N_SUBJECTS) % 2 == 0,
+        own_stakeholder=jnp.zeros(_N_SUBJECTS, dtype=jnp.int32),
         nested_policy_fallback=jnp.zeros(_N_SUBJECTS, dtype=bool),
     )
 

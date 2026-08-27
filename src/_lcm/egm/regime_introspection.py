@@ -210,7 +210,7 @@ def _concatenate_child_resources(
     dcegm = cast("_BoundDCEGM", _as_dcegm(user_regime))
     regime_params_template = create_regime_params_template(user_regime)
     resolved: dict[str, UserFunction] = {}
-    for name, func in user_regime.functions.items():
+    for name, func in user_regime.decomposed_functions.items():
         if isinstance(func, Phased):
             resolved[name] = cast("UserFunction", func.solve)
         elif func is not None:

@@ -2,7 +2,7 @@
 
 `get_V_interpolator(interpolate_process_axes=True)` builds the reader used
 wherever a projection produces a genuine VALUE for every axis of a reference
-regime's V — a `SamePeriodRef` projection, a gated-edge gate, a gated-edge
+regime's V — a `ProjectedRegimeValue` projection, a gated-edge gate, a gated-edge
 fallback. Such a regime may carry three kinds of axis at once, and each has its
 own reading rule:
 

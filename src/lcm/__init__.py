@@ -105,6 +105,14 @@ from lcm.certainty_equivalent import (  # noqa: E402
     PowerMean,
     QuasiArithmeticMean,
 )
+from lcm.collective import (  # noqa: E402
+    CollectiveUtility,
+    ParetoObjective,
+    ProjectedRegimeValue,
+    StakeholderRoute,
+    ValueDependentConstraint,
+    ValueDependentTransition,
+)
 from lcm.condition import Condition, implies, ref  # noqa: E402
 from lcm.consumption_savings_regime import (  # noqa: E402
     ConsumptionSavingsRegime,
@@ -153,12 +161,7 @@ from lcm.processes import (  # noqa: E402
     TauchenNormalMixtureAR1Process,
     UniformIIDProcess,
 )
-from lcm.regime import (  # noqa: E402
-    EdgeLeg,
-    GatedEdge,
-    Regime,
-    SamePeriodRef,
-)
+from lcm.regime import GatedEdge, Regime  # noqa: E402
 from lcm.result import SimulationResult  # noqa: E402
 from lcm.taste_shocks import ExtremeValueTasteShocks  # noqa: E402
 from lcm.transition import (  # noqa: E402
@@ -190,10 +193,10 @@ __all__ = [
     "AgeSpecializedGrid",
     "CESAggregator",
     "CertaintyEquivalent",
+    "CollectiveUtility",
     "Condition",
     "ConsumptionSavingsRegime",
     "DiscreteGrid",
-    "EdgeLeg",
     "ExtremeValueTasteShocks",
     "GatedEdge",
     "GridBreakpoint",
@@ -212,21 +215,25 @@ __all__ = [
     "NormalIIDProcess",
     "NormalMixtureIIDProcess",
     "OuterContinuousMargin",
+    "ParetoObjective",
     "Phased",
     "PiecewiseLinSpacedGrid",
     "PiecewiseLogSpacedGrid",
     "PowerMean",
+    "ProjectedRegimeValue",
     "QuasiArithmeticMean",
     "Regime",
     "RouwenhorstAR1Process",
-    "SamePeriodRef",
     "SimulateSnapshot",
     "SimulationResult",
     "SolveSnapshot",
+    "StakeholderRoute",
     "StateConditioned",
     "TauchenAR1Process",
     "TauchenNormalMixtureAR1Process",
     "UniformIIDProcess",
+    "ValueDependentConstraint",
+    "ValueDependentTransition",
     "__version__",
     "affine_breakpoint",
     "case_boundary",

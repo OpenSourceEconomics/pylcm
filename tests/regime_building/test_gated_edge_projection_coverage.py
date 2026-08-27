@@ -1,6 +1,6 @@
 """Which states a gated edge's projections must supply a coordinate for.
 
-A `SamePeriodRef` on a gated edge is read by two different consumers, and they
+A `ProjectedRegimeValue` on a gated edge is read by two different consumers, and they
 need different coordinates of the regime it names:
 
 - a LEG FALLBACK sends a subject INTO that regime, so forward simulation writes
@@ -29,7 +29,7 @@ import pytest
 
 from _lcm.regime_building.gated_edges import build_fallback_state_projector
 from _lcm.regime_building.Q_and_F import (
-    ResolvedSamePeriodRef,
+    ResolvedProjectedRegimeValue,
     _build_same_period_ref_reader,
 )
 from _lcm.regime_building.V import VInterpolationInfo
@@ -37,13 +37,13 @@ from lcm import (
     AgeGrid,
     AgeSpecializedGrid,
     DiscreteGrid,
-    EdgeLeg,
     GatedEdge,
     LinSpacedGrid,
     Model,
     Phased,
+    ProjectedRegimeValue,
     Regime,
-    SamePeriodRef,
+    StakeholderRoute,
     categorical,
     fixed_transition,
 )
@@ -194,9 +194,9 @@ def test_fallback_state_projector_names_the_state_a_short_projection_omits():
         )
 
 
-def _short_ref() -> ResolvedSamePeriodRef:
+def _short_ref() -> ResolvedProjectedRegimeValue:
     """A reference onto `annuity` whose projection supplies no coordinate."""
-    return ResolvedSamePeriodRef(
+    return ResolvedProjectedRegimeValue(
         regime="annuity",
         projection=MappingProxyType({}),
         stakeholder_index=None,
@@ -228,8 +228,10 @@ def _build_age_specialized_model(*, fallback_projects_principal: bool) -> Model:
             "src_exit": GatedEdge(
                 gate=_wage_gate,
                 legs={
-                    "only": EdgeLeg(
-                        fallback=SamePeriodRef(regime="annuity", projection=projection)
+                    "only": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
+                            regime="annuity", projection=projection
+                        )
                     )
                 },
             )
@@ -290,14 +292,14 @@ def _build_model(
             "src_exit": GatedEdge(
                 gate=_gate,
                 legs={
-                    "only": EdgeLeg(
-                        fallback=SamePeriodRef(
+                    "only": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
                             regime="fallback", projection=fallback_projection
                         )
                     )
                 },
                 gate_refs={
-                    "V_fallback_ref": SamePeriodRef(
+                    "V_fallback_ref": ProjectedRegimeValue(
                         regime="fallback", projection=gate_ref_projection
                     )
                 },

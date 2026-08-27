@@ -25,13 +25,13 @@ from _lcm.typing import RegimeName
 from lcm import (
     AgeGrid,
     DiscreteGrid,
-    EdgeLeg,
     GatedEdge,
     LinSpacedGrid,
     MarkovTransition,
     Model,
+    ProjectedRegimeValue,
     Regime,
-    SamePeriodRef,
+    StakeholderRoute,
     categorical,
     fixed_transition,
 )
@@ -171,7 +171,7 @@ def _build_model() -> Model:
         functions={"utility_f": _couple_utility_f, "utility_m": _couple_utility_m},
         value_constraints={"participation_f": _wife_participates},
         same_period_refs={
-            "V_single_ref": SamePeriodRef(
+            "V_single_ref": ProjectedRegimeValue(
                 regime="single", projection={"wage": _identity_wage}
             )
         },
@@ -179,13 +179,13 @@ def _build_model() -> Model:
             "single": GatedEdge(
                 gate=_wage_clears_the_floor,
                 legs={
-                    "f": EdgeLeg(
-                        fallback=SamePeriodRef(
+                    "f": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
                             regime="outside_f", projection={"wage": _identity_wage}
                         )
                     ),
-                    "m": EdgeLeg(
-                        fallback=SamePeriodRef(
+                    "m": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
                             regime="outside_m", projection={"wage": _identity_wage}
                         )
                     ),

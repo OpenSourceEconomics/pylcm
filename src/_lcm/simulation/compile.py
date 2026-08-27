@@ -6,6 +6,12 @@ swapped for AOT-compiled programs sized for batch shape `N`. The existing
 simulate call sites then pick them up transparently — no signature changes
 downstream.
 
+A regime declaring `gated_edges` runs one further program per edge per period:
+the gate evaluator the router re-evaluates at the realized candidate target
+state. Those are compiled here too and installed in the router's own
+population-call table, so no gated model pays a trace and a compile in its
+first routed period.
+
 Compilation deduplicates callables by identity (only one program per unique
 callable), lowers them sequentially (JAX tracing is not thread-safe), then
 parallel-compiles them via a `ThreadPoolExecutor` (XLA releases the GIL).
@@ -22,8 +28,23 @@ import jax
 import jax.numpy as jnp
 from dags.tree import qname_from_tree_path
 
+from _lcm.dtypes import canonical_float_dtype
 from _lcm.engine import Regime
+from _lcm.grids import DiscreteGrid
+from _lcm.regime_building.gated_edges import (
+    ResolvedGatedEdge,
+    bind_edge_period_context,
+    build_reference_params_mapping_for_fold,
+    build_same_period_mapping_for_fold,
+    unsupplied_dissolution_flag,
+)
 from _lcm.regime_building.Q_and_F import SAME_PERIOD_PARAMS_ARG, SAME_PERIOD_V_ARG
+from _lcm.simulation.gated_routing import (
+    bind_provenance_params,
+    install_population_call,
+    population_call,
+    split_population_call_args,
+)
 from _lcm.simulation.initial_conditions import subject_array_sharding
 from _lcm.simulation.random import generate_simulation_keys
 from _lcm.solution.backward_induction import (
@@ -39,7 +60,7 @@ from _lcm.solution.v_topology import (
 from _lcm.typing import FlatParams, FlatRegimeParams, RegimeName
 from _lcm.utils.logging import format_duration
 from lcm.ages import AgeGrid
-from lcm.typing import FloatND, IntND
+from lcm.typing import FloatND, IntND, ScalarFloat, ScalarInt
 
 
 def compile_all_simulation_phases(
@@ -81,7 +102,7 @@ def compile_all_simulation_phases(
     # every AOT program must be lowered with the same per-subject sharding.
     subject_sharding = subject_array_sharding(regimes=regimes, n_subjects=n_subjects)
 
-    unique, func_keys = _collect_unique_simulation_callables(
+    unique, func_keys, gate_calls = _collect_unique_simulation_callables(
         regimes=regimes,
         flat_params=flat_params,
         ages=ages,
@@ -107,7 +128,15 @@ def compile_all_simulation_phases(
         start = time.monotonic()
         # `func` is a `jax.jit`-wrapped callable; ty sees only the abstract
         # Callable type, so it can't see `.lower(...)`.
-        lowered[key] = func.lower(**args)  # ty: ignore[unresolved-attribute, invalid-argument-type]
+        # A gate evaluator's population call takes its two kwarg pools
+        # POSITIONALLY (`vmap`'s `in_axes` addresses positional arguments
+        # only), so its lower-args arrive as a tuple; every other program
+        # here is lowered by keyword.
+        lowered[key] = (
+            func.lower(*args)  # ty: ignore[unresolved-attribute]
+            if isinstance(args, tuple)
+            else func.lower(**args)  # ty: ignore[unresolved-attribute, invalid-argument-type]
+        )
         # Drop the concrete lower-args once the `Lowered` object has captured
         # its abstract values. This releases V-shaped templates, per-regime
         # subject-state/action zeros, and the regime-params view before the
@@ -149,6 +178,12 @@ def compile_all_simulation_phases(
             # finishes.
             del lowered[k]
 
+    # The router looks a gate evaluator's population call up on the evaluator
+    # itself, so the compiled program is installed there rather than swapped
+    # into a regime field.
+    for key, (evaluator, axis_size) in gate_calls.items():
+        install_population_call(evaluator, axis_size=axis_size, call=compiled[key])
+
     return _swap_in_compiled(
         regimes=regimes,
         compiled=compiled,
@@ -165,8 +200,9 @@ def _collect_unique_simulation_callables(
     regime_V_topology: dict[RegimeName, _RegimeVTopology],
     subject_sharding: jax.NamedSharding | None,
 ) -> tuple[
-    dict[Hashable, tuple[Callable, dict | None, str]],
+    dict[Hashable, tuple[Callable, dict | tuple | None, str]],
     dict[tuple[RegimeName, str, int | None], Hashable],
+    dict[Hashable, tuple[Callable, int]],
 ]:
     """Walk every regime/period and dedup the simulate functions to compile.
 
@@ -175,9 +211,17 @@ def _collect_unique_simulation_callables(
     `next_regime_to_V_arr` pytree (different graph target set) get
     separate compiled programs whose signature matches what runtime actually
     dispatches.
+
+    Returns:
+        Tuple of the unique programs to lower keyed by dedup key, the
+        regime/slot/period lookup into them, and the gate evaluators to
+        install in the router's population-call table keyed by the same dedup
+        key.
+
     """
-    unique: dict[Hashable, tuple[Callable, dict | None, str]] = {}
+    unique: dict[Hashable, tuple[Callable, dict | tuple | None, str]] = {}
     func_keys: dict[tuple[RegimeName, str, int | None], Hashable] = {}
+    gate_calls: dict[Hashable, tuple[Callable, int]] = {}
 
     # One zero `Wbar` per declared gated edge, shaped like the target's state
     # grid plus the source's stakeholder axis — the same templates the solve
@@ -297,7 +341,192 @@ def _collect_unique_simulation_callables(
                     f"{regime_name}/compute_regime_transition_probs",
                 )
 
-    return unique, func_keys
+        _collect_edge_gate_evaluators(
+            regime=regime,
+            regime_name=regime_name,
+            regimes=regimes,
+            flat_params=flat_params,
+            ages=ages,
+            n_subjects=n_subjects,
+            regime_V_topology=regime_V_topology,
+            subject_sharding=subject_sharding,
+            unique=unique,
+            gate_calls=gate_calls,
+        )
+
+    return unique, func_keys, gate_calls
+
+
+def _collect_edge_gate_evaluators(
+    *,
+    regime: Regime,
+    regime_name: RegimeName,
+    regimes: MappingProxyType[RegimeName, Regime],
+    flat_params: FlatParams,
+    ages: AgeGrid,
+    n_subjects: int,
+    regime_V_topology: dict[RegimeName, _RegimeVTopology],
+    subject_sharding: jax.NamedSharding | None,
+    unique: dict[Hashable, tuple[Callable, dict | tuple | None, str]],
+    gate_calls: dict[Hashable, tuple[Callable, int]],
+) -> None:
+    """Add one program per unique gate evaluator this regime's edges declare.
+
+    The router recomputes each edge's gate at the realized candidate target
+    state, once per edge per period, through a population call it memoizes on
+    the evaluator. Lowering that same population call here — against the same
+    two kwarg pools, split by the same function the router splits them with —
+    is what lets the compiled program be installed under the key the router
+    then looks up.
+
+    An evaluator is shared across the periods that group onto it, and its
+    period and age enter as traced scalars rather than as static arguments,
+    so those periods share one program.
+    """
+    for target_name, edge in regime.gated_edges.items():
+        for fold_period in _edge_fold_periods(regime=regime, ages=ages):
+            evaluator = edge.simulate_gate_evaluator_at(period=fold_period)
+            key = ("gate", regime_name, target_name, _func_dedup_key(func=evaluator))
+            if key in gate_calls:
+                continue
+            args = _build_gate_evaluator_args(
+                edge=edge,
+                evaluator=evaluator,
+                source_name=regime_name,
+                target_regime=regimes[target_name],
+                target_name=target_name,
+                fold_period=fold_period,
+                fold_age=ages.period_to_age(fold_period),
+                flat_params=flat_params,
+                n_subjects=n_subjects,
+                regime_V_topology=regime_V_topology,
+                subject_sharding=subject_sharding,
+            )
+            gate_calls[key] = (evaluator, n_subjects)
+            unique[key] = (
+                population_call(evaluator, axis_size=n_subjects),
+                args,
+                (
+                    f"{regime_name}/gate into {target_name} "
+                    f"(age {ages.values[fold_period].item()})"
+                ),
+            )
+
+
+def _edge_fold_periods(*, regime: Regime, ages: AgeGrid) -> tuple[int, ...]:
+    """Return the fold periods this regime's edges are routed at.
+
+    A gate is decided on the value the subject would enter NEXT period, so the
+    router passes `period + 1`; the source's last active period has no
+    successor and routes nothing.
+    """
+    return tuple(
+        period + 1 for period in regime.active_periods if period + 1 < ages.n_periods
+    )
+
+
+def _build_gate_evaluator_args(
+    *,
+    edge: ResolvedGatedEdge,
+    evaluator: Callable,
+    source_name: RegimeName,
+    target_regime: Regime,
+    target_name: RegimeName,
+    fold_period: int,
+    fold_age: float | ScalarFloat | ScalarInt,
+    flat_params: FlatParams,
+    n_subjects: int,
+    regime_V_topology: dict[RegimeName, _RegimeVTopology],
+    subject_sharding: jax.NamedSharding | None,
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Build the positional pair one gate evaluator's population call takes.
+
+    Every element mirrors what `simulation.gated_routing.route_gated_edges`
+    dispatches:
+
+    - the candidate target states, per-subject arrays carrying the TARGET
+      regime's own simulate state names and grid dtypes, because the router
+      hands the evaluator that regime's slice of the state carrier;
+    - each argument bound from the regime that owns it, as the evaluator's own
+      `arg_provenance` records;
+    - the fold's period and age, for an evaluator that declares them;
+    - the same-period value mapping and the reference regimes' own params,
+      under the two reserved keys.
+
+    The dissolution flag is supplied rather than left out: an edge whose gate
+    reads `D_target` refuses a mapping without one, and where the gate does
+    not read it the stand-in has the same shape and dtype either way, so the
+    lowered signature matches whichever the run supplies.
+    """
+    candidate_target_states = _subject_state_carrier_template(
+        regime=target_regime,
+        n_subjects=n_subjects,
+        sharding=subject_sharding,
+    )
+    target_V = _build_zero_V_arr(topology=regime_V_topology[edge.target])
+    period_solution = {
+        name: _build_zero_V_arr(topology=regime_V_topology[name])
+        for name in dict.fromkeys((edge.target, *edge.reference_regimes))
+    }
+    static_kwargs: dict[str, object] = {
+        **bind_provenance_params(
+            evaluator.arg_provenance,  # ty: ignore[unresolved-attribute]
+            flat_params=flat_params,
+            source_name=source_name,
+            target_name=target_name,
+        ),
+        **bind_edge_period_context(
+            evaluator, fold_period=fold_period, fold_age=fold_age
+        ),
+        SAME_PERIOD_V_ARG: build_same_period_mapping_for_fold(
+            edge=edge,
+            period_solution=period_solution,
+            period_dissolution_flags={
+                # Shaped by the same rule a target that publishes no flag is
+                # stood in for, so the two are one signature.
+                edge.target: jnp.zeros(
+                    unsupplied_dissolution_flag(edge=edge, target_V=target_V).shape,
+                    dtype=bool,
+                )
+            },
+        ),
+        SAME_PERIOD_PARAMS_ARG: build_reference_params_mapping_for_fold(
+            edge=edge, flat_params=flat_params
+        ),
+    }
+    return split_population_call_args(
+        evaluator,
+        batched_kwargs=candidate_target_states,
+        static_kwargs=static_kwargs,
+    )
+
+
+def _subject_state_carrier_template(
+    *,
+    regime: Regime,
+    n_subjects: int,
+    sharding: jax.NamedSharding | None,
+) -> dict[str, FloatND | IntND]:
+    """Return zeros shaped like one regime's slice of the simulate carrier.
+
+    `build_initial_states` gives every simulate state a `(n_subjects,)` array
+    at the grid's own dtype — the discrete grid's index dtype, the canonical
+    float dtype otherwise — and the router hands the target regime's slice of
+    that carrier straight to the gate evaluator.
+    """
+    arrays: dict[str, FloatND | IntND] = {}
+    for state_name in regime.simulation.state_names:
+        grid = regime.simulation.grids[state_name]
+        dtype = (
+            grid.to_jax().dtype
+            if isinstance(grid, DiscreteGrid)
+            else canonical_float_dtype()
+        )
+        zeros = jnp.zeros((n_subjects,), dtype=dtype)
+        arrays[state_name] = (
+            zeros if sharding is None else jax.device_put(zeros, sharding)
+        )
+    return arrays
 
 
 def _swap_in_compiled(
@@ -360,15 +589,15 @@ def _with_edge_substitution(
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     edge_to_V_arr: Mapping[tuple[RegimeName, RegimeName], FloatND],
 ) -> MappingProxyType[RegimeName, FloatND]:
-    """Replace each gated-edge target's raw V template with its `Wbar`.
+    """Replace each gated-edge target's raw V template with its edge continuation.
 
-    A regime declaring `gated_edges` chooses its own action against the gated
-    continuation `Wbar` — one stakeholder's leg of the target's value, on the
-    target's grid and carrying the SOURCE's stakeholder axis — which
-    `simulation.gated_routing.substitute_gated_edge_continuations` swaps into
-    the continuation mapping before the decision. Lowering against the target's
-    own V would size that slot by the target's topology instead, so the
-    compiled program would reject the array it is invoked with.
+    A regime declaring `gated_edges` chooses its own action against the edge's
+    operand channels — the target's value components, the gate's references and
+    each leg's fallback, on the target's grid under one trailing channel axis —
+    which `simulation.gated_routing.substitute_gated_edge_continuations` swaps
+    into the continuation mapping before the decision. Lowering against the
+    target's own V would size that slot by the target's topology instead, so
+    the compiled program would reject the array it is invoked with.
 
     Returns `next_regime_to_V_arr` unchanged for a regime without gated edges.
     """

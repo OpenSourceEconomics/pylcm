@@ -14,15 +14,15 @@ from _lcm.transition_plans import (
 from lcm import (
     AgeGrid,
     DiscreteGrid,
-    EdgeLeg,
     GatedEdge,
     IrregSpacedGrid,
     JointTransition,
     LinSpacedGrid,
     MarkovTransition,
     Model,
+    ProjectedRegimeValue,
     Regime,
-    SamePeriodRef,
+    StakeholderRoute,
     categorical,
 )
 from lcm.exceptions import (
@@ -382,9 +382,9 @@ def _bdy_model(*, enable_jit: bool, support_size: int = 2) -> Model:
                     "couple": GatedEdge(
                         gate=_bdy_gate_always_open,
                         legs={
-                            "f": EdgeLeg(
+                            "f": StakeholderRoute(
                                 target_stakeholder="f",
-                                fallback=SamePeriodRef(
+                                fallback=ProjectedRegimeValue(
                                     regime="single_terminal",
                                     projection={"wealth": _bdy_identity_wealth},
                                 ),

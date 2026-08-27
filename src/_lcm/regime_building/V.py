@@ -126,7 +126,7 @@ def get_V_interpolator(
             and the axes are handled in native `state_names` order, so it
             sidesteps `_fail_if_interpolation_axes_are_not_last`. Use this only
             for a reader that may receive an off-grid VALUE for a process axis (a
-            `SamePeriodRef` projection / gated-edge fallback); the ordinary
+            `ProjectedRegimeValue` projection / gated-edge fallback); the ordinary
             continuation-value path always feeds a process axis its exact
             on-grid Markov-chain index and must keep using the fast integer
             lookup, so leave this `False` there.

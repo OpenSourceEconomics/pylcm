@@ -42,7 +42,7 @@ def test_participation_constraints_dissolve_only_the_middle_wage_cell():
 
 
 def test_dissolution_routes_the_simulated_person_to_their_single_regime():
-    """The female cohort follows its own fallback leg when participation fails."""
+    """The female cohort follows its own fallback route when participation fails."""
     model = get_dissolution_model()
     solution, dissolution_flags = model.solve(
         params=get_params(),
@@ -57,6 +57,14 @@ def test_dissolution_routes_the_simulated_person_to_their_single_regime():
             model.regime_names_to_ids["married"],
             dtype=jnp.int32,
         ),
+        # Every subject starts in the collective regime, so each one occupies a
+        # household role from the first period on, and that role decides which
+        # fallback a dissolving row takes.
+        "own_stakeholder": jnp.full(
+            3,
+            model.stakeholder_names_to_ids["f"],
+            dtype=jnp.int32,
+        ),
     }
 
     result = model.simulate(
@@ -64,7 +72,6 @@ def test_dissolution_routes_the_simulated_person_to_their_single_regime():
         initial_conditions=initial_conditions,
         period_to_regime_to_V_arr=solution,
         period_to_regime_to_dissolution_flags=dissolution_flags,
-        own_stakeholder="f",
         log_level="debug",
         seed=0,
     )

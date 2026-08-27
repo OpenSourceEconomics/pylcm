@@ -89,6 +89,39 @@ may change. Equal signatures must resolve to identical grids.
 Use an age-specialized grid only for a continuous state whose points are known at model
 construction. Runtime-supplied points use `IrregSpacedGrid(n_points=...)` instead.
 
+## Gate references and leg fallbacks on an age-specialized regime
+
+A `ValueDependentTransition` reads other regimes' values within one period — its
+`gate_references` read a reference regime's value function, and a shut gate reads the
+route's `fallback` regime's value at a projected coordinate. Either regime may hold its
+states on an `AgeSpecializedGrid`.
+
+Every such read is measured against the grid of **the period whose value is being
+folded**, not against some other age at which that regime is also active. This is worth
+stating explicitly because nothing in the arrays would reveal a mistake: `n_points` is
+fixed across ages while the bounds move, so every period's value array has the same
+shape, and a read against another age's nodes lands on a different point of an otherwise
+correctly shaped array.
+
+A route's `fallback` projection owes one coordinate function per state the fallback
+regime carries **in simulation**, and an age-specialized state is one of those like any
+other:
+
+```python
+StakeholderRoute(
+    fallback=ProjectedRegimeValue(
+        regime="annuity",
+        # `annuity` holds `principal` on an `AgeSpecializedGrid`. The projection
+        # owes a coordinate on it exactly as it would on a plain grid state.
+        projection={"principal": principal_from_balance},
+    )
+)
+```
+
+A `gate_references` projection instead owes one coordinate per state of the reference
+regime's *value function*, i.e. its solve states. The two sets differ only by the states
+a regime carries in simulation alone.
+
 ## Before using it
 
 Age specialization creates period-specific programs. Use it only when the economic

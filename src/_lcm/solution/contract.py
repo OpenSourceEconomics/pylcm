@@ -48,6 +48,7 @@ from _lcm.continuation import (
     EGMContinuationLayout,
     EGMContinuationSpec,
 )
+from _lcm.egm.branch_aggregation import OuterBranchAggregator
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import (
     EGMSimPolicy,
@@ -57,6 +58,7 @@ from _lcm.egm.published_policy import (
 from _lcm.engine import ParamCheck, StateActionSpace, Variables
 from _lcm.grids import Grid
 from _lcm.reachability import PhaseReachability
+from _lcm.regime_building.collective import ParetoWeights
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from _lcm.transition_plans import TargetTransitionPlans
 from _lcm.typing import (
@@ -364,8 +366,8 @@ class SolverBuildContext:
     stakeholder axis.
     """
 
-    weights: Mapping[str, float] | None = None
-    """Household Pareto weights per stakeholder; set together with `stakeholders`."""
+    pareto_weights: ParetoWeights | None = None
+    """The household's Pareto weight evaluator; set together with `stakeholders`."""
 
     edge_target_regimes: tuple[RegimeName, ...] = ()
     """Target regimes this regime reaches through a gated edge, or empty.
@@ -596,6 +598,11 @@ class _BoundOuterContinuousMargin:
 
     no_adjustment: FunctionName | None
     """Name of the no-adjustment map, or `None` for the identity map."""
+
+    adjustment_cost: OuterBranchAggregator | None = None
+    """Declared adjustment-cost structure, or `None` for the deterministic
+    maximum. A solver reads it to select its keeper/adjuster fold and to refuse
+    a declaration its kernels cannot aggregate."""
 
 
 @dataclass(frozen=True, kw_only=True)

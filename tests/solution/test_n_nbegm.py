@@ -55,7 +55,6 @@ def test_public_nnbegm_contains_only_numerical_configuration() -> None:
     assert set(solver.__dataclass_fields__) == {
         "inner",
         "outer_search",
-        "branch_aggregator",
     }
 
 

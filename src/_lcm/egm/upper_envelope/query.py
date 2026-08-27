@@ -618,6 +618,16 @@ def envelope_at_query(
         Tuple of the envelope value, the winning segment's policy, and the
         winning segment's marginal at each query, each shaped like `x_query`. A
         query no live segment brackets yields NaN in all three.
+
+    Note:
+        Under `arithmetic="certified"` the read is differentiable in forward
+        mode only: `jax.jvp`, `jax.jacfwd`, and forward-over-forward all carry
+        the exact affine slope, while `jax.grad` and `jax.vjp` raise. The
+        certified rule fails closed on a non-finite direction, so its registered
+        custom JVP is not automatically transposable even though the affine
+        differential on finite directions is linear. No explicit reverse rule is
+        registered. Reverse mode over a scalar objective therefore needs
+        `arithmetic="ordinary"`, or `jax.jacfwd` in place of `jax.grad`.
     """
     if (feasibility_partition is None) != (feasible_interval_mask is None):
         raise ValueError(

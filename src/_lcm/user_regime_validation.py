@@ -107,17 +107,18 @@ def _validate_collective_regime(regime: lcm.regime.Regime) -> None:
     Checked here are the properties a bare `Regime` already
     determines on its own: a non-empty, duplicate-free `stakeholders` tuple,
     the regime-local `value_constraints` / `same_period_refs` grammar, and — if
-    `weights` is given — weight keys matching the stakeholder names, with every
-    weight finite, non-negative, and a positive total (the zero-safe
-    scalarization in `collective._weighted_sum` treats an exact-zero weight as
-    a deliberate exclusion, so a non-finite or negative weight, or an all-zero
-    `weights` mapping, would silently produce a meaningless or undefined
+    `pareto_objective` is given — weight keys matching the stakeholder names,
+    with every constant weight finite, non-negative, and a positive total (the
+    zero-safe scalarization in `collective._weighted_sum` treats an exact-zero
+    weight as a deliberate exclusion, so a non-finite or negative weight, or an
+    all-zero declaration, would silently produce a meaningless or undefined
     household objective rather than erroring).
 
     What a collective regime needs but a model-level slot may supply — the
-    per-stakeholder `utility_<s>` functions and at least one discrete action —
-    is completeness, so `_validate_completeness` checks it once the regimes are
-    finalized at model build.
+    per-stakeholder `utility_<s>` functions — is completeness, so
+    `_validate_completeness` checks it once the regimes are finalized at model
+    build. The household argmax runs over whatever action product the regime
+    declares, which may be continuous or empty.
 
     Features the collective solve does not implement raise `NotImplementedError`:
     EV1 taste shocks
@@ -156,15 +157,6 @@ def _validate_collective_regime(regime: lcm.regime.Regime) -> None:
             "value readout run over the full action product. Use "
             "`solver=GridSearch()` for this regime."
         )
-    if regime.terminal and (regime.value_constraints or regime.same_period_refs):
-        raise NotImplementedError(
-            "`value_constraints` / `same_period_refs` on a TERMINAL collective "
-            "regime are not implemented: value-aware feasibility masks a "
-            "within-period household decision; the terminal kernel carries no "
-            "such mask. Declare them on the non-terminal regime whose decision "
-            "they constrain."
-        )
-
     error_messages: list[str] = []
     error_messages.extend(_collective_value_constraint_errors(regime))
     error_messages.extend(_stakeholders_tuple_errors(stakeholders))
@@ -194,41 +186,54 @@ def _stakeholders_tuple_errors(stakeholders: tuple[str, ...]) -> list[str]:
 def _collective_weights_errors(
     regime: lcm.regime.Regime, stakeholders: tuple[str, ...]
 ) -> list[str]:
-    """Collect errors for a collective regime's `weights` mapping.
+    """Collect errors for a collective regime's `pareto_objective`.
 
-    Weight keys must match `stakeholders`, and every weight must be finite,
-    non-negative, with a positive total — the zero-safe scalarization in
-    `collective._weighted_sum` treats an exact-zero weight as a deliberate
-    exclusion, so a non-finite or negative weight, or an all-zero `weights`
-    mapping, would silently produce a meaningless or undefined household
-    objective rather than erroring.
+    Weight keys must match `stakeholders`, and a weight declared as a constant
+    must be finite, non-negative, and — across the constants — leave a positive
+    total. The zero-safe scalarization treats an exact-zero weight as a
+    deliberate exclusion, so a non-finite or negative weight, or an all-zero
+    declaration, would silently produce a meaningless or undefined household
+    objective rather than erroring. A weight declared as a function is checked
+    against the parameters it is solved with, where its values exist.
     """
-    if regime.weights is None:
+    objective = regime.pareto_objective
+    if objective is None:
         return []
 
-    if set(regime.weights) != set(stakeholders):
+    declared = set(objective.weights)
+    if declared != set(stakeholders):
+        missing = sorted(set(stakeholders) - declared)
+        extra = sorted(declared - set(stakeholders))
         return [
             (
-                f"`weights` keys {sorted(regime.weights)} must match the "
-                f"stakeholders {sorted(stakeholders)}."
+                f"`pareto_objective.weights` weighs {sorted(declared)}, but "
+                f"this regime's stakeholders are {sorted(stakeholders)}: "
+                f"missing {missing}, unknown {extra}."
             )
         ]
 
+    constants = {
+        name: float(weight)
+        for name, weight in objective.weights.items()
+        if not callable(weight)
+    }
     non_finite_or_negative = {
-        name: w for name, w in regime.weights.items() if not math.isfinite(w) or w < 0
+        name: weight
+        for name, weight in constants.items()
+        if not math.isfinite(weight) or weight < 0
     }
     if non_finite_or_negative:
         return [
             (
-                "`weights` must be finite and non-negative for every "
-                f"stakeholder; got {non_finite_or_negative}."
+                "`pareto_objective.weights` must be finite and non-negative "
+                f"for every stakeholder; got {non_finite_or_negative}."
             )
         ]
-    if sum(regime.weights.values()) <= 0:
+    if len(constants) == len(objective.weights) and sum(constants.values()) <= 0:
         return [
             (
-                "`weights` must sum to a positive total; an all-zero "
-                "Pareto-weight mapping leaves the household scalarization "
+                "`pareto_objective.weights` must leave a positive total; an "
+                "all-zero declaration leaves the household scalarization "
                 "identically zero for every action, so the argmax is undefined."
             )
         ]
@@ -281,6 +286,8 @@ def _collective_value_constraint_errors(regime: lcm.regime.Regime) -> list[str]:
             "names must be unambiguous."
         )
 
+    error_messages.extend(_reference_projection_free_param_errors(regime))
+
     if regime.value_constraints:
         shadowed_q = sorted({f"Q_{s}" for s in stakeholders} & taken)
         if shadowed_q:
@@ -292,6 +299,46 @@ def _collective_value_constraint_errors(regime: lcm.regime.Regime) -> list[str]:
             )
 
     return error_messages
+
+
+def _reference_projection_free_param_errors(regime: lcm.regime.Regime) -> list[str]:
+    """Reject regime-level reference projections that introduce free parameters.
+
+    A `same_period_refs` projection resolves through the DECLARING regime's DAG
+    and additionally receives that regime's `period` / `age`. Anything else in
+    its signature is supplied by nothing: it never reaches the params template,
+    so the accepted model has no valid parameter assignment. (Inside a
+    `GatedEdge`, extra arguments ARE collected as the source regime's edge
+    parameters, so this rule is regime-level only.)
+
+    Args:
+        regime: The user regime whose references are checked.
+
+    Returns:
+        List of error messages, one per offending projection argument.
+
+    """
+    supplied = (
+        set(regime.functions)
+        | set(regime.states)
+        | set(regime.actions)
+        | set(regime.constraints)
+        | set(regime.derived_categoricals)
+        | {"period", "age"}
+    )
+    return [
+        f"The projection of reference {ref_name!r} for state "
+        f"'{state_name}' takes argument '{arg}', which the declaring regime "
+        "does not supply. A regime-level reference projection resolves through "
+        "this regime's own DAG and its period/age, and may not introduce a free "
+        "parameter: it would never appear in `get_params_template()`. Compute "
+        f"'{arg}' as a function of the regime, or declare it as a state or "
+        "action."
+        for ref_name, ref in regime.same_period_refs.items()
+        for state_name, func in ref.projection.items()
+        for arg in inspect.signature(func).parameters
+        if arg not in supplied
+    ]
 
 
 def _validate_gated_edges(regime: lcm.regime.Regime) -> None:
@@ -321,7 +368,7 @@ def _validate_gated_edges(regime: lcm.regime.Regime) -> None:
     source_stakeholders = regime.stakeholders
 
     for target_name, edge in regime.gated_edges.items():
-        prefix = f"gated_edges['{target_name}']: "
+        prefix = f"the value-dependent transition into {target_name!r}: "
         if isinstance(edge.gate, MarkovTransition):
             error_messages.append(
                 f"{prefix}the gate must be a plain boolean function. A "
@@ -716,7 +763,6 @@ def _validate_completeness(
 
     - a `utility` entry in `functions` — a per-stakeholder `utility_<s>` for
       each stakeholder of a collective regime
-    - at least one discrete action in a collective regime
     - no declaration under a name any of the model's collective regimes
       publishes as a `value_<stakeholder>` column
     - state-transition coverage (every non-process state has a law; terminal
@@ -738,12 +784,6 @@ def _validate_completeness(
                 "A collective regime must provide a per-stakeholder utility "
                 f"function for each stakeholder. Missing: "
                 f"{[f'utility_{s}' for s in missing]}.",
-            )
-        if not any(isinstance(grid, DiscreteGrid) for grid in regime.actions.values()):
-            error_messages.append(
-                "A collective regime must have at least one discrete action: "
-                "the household argmax of the scalarization runs over the "
-                "discrete-action product.",
             )
     elif "utility" not in regime.functions:
         error_messages.append(
@@ -984,7 +1024,11 @@ def _validate_function_output_grid_indexing(
     # whatever it computed (typically an array indexable by `grid`) and
     # the consumer pattern is correct.
     function_inputs = _function_input_names(
-        {name: func for name, func in regime.functions.items() if func is not None}
+        {
+            name: func
+            for name, func in regime.decomposed_functions.items()
+            if func is not None
+        }
     )
     consumers = _collect_indexing_consumers(regime)
 
@@ -1040,11 +1084,11 @@ def _collect_indexing_consumers(
     `Phased`; the regime transition contributes itself.
     """
     consumers: list[tuple[str, Callable]] = []
-    for name, func in regime.functions.items():
+    for name, func in regime.decomposed_functions.items():
         if func is None:
             continue
         consumers.extend((name, variant) for variant in _function_variants(func))
-    for name, constraint in regime.constraints.items():
+    for name, constraint in regime.decomposed_constraints.items():
         if constraint is None:
             continue
         consumers.extend((name, variant) for variant in _function_variants(constraint))
@@ -1530,11 +1574,10 @@ def _validate_fold_declarations(regime: lcm.regime.Regime) -> None:
     A persistent (non-IID) process has no `fold` field at all, so `fold=True`
     on one is rejected by the type system before this validator ever runs.
 
-    Whether the folded state structurally PERSISTS (is redeclared, with an
-    intrinsic `next_<name>` continuation, in any regime reachable from this
-    one — including itself) is a cross-regime property, checked once every
-    regime's transitions are built (`_fail_if_folded_state_persists` in
-    `regime_building/processing.py`), not here.
+    A folded state redeclared in a regime reachable from this one — including
+    itself, so a shock redrawn every period — is supported: no solve-phase
+    continuation edge is built for a folded process, so nothing tries to
+    interpolate an axis the stored value no longer has.
     """
     fold_names = _fold_state_names(regime)
     if not fold_names:
@@ -1655,8 +1698,8 @@ def _fold_scope_errors(
 def _fold_resolution_table(regime: lcm.regime.Regime) -> dict[str, Callable | Phased]:
     """Regime functions/constraints usable as DAG-ancestor resolution targets."""
     return {
-        **{k: v for k, v in regime.constraints.items() if v is not None},
-        **{k: v for k, v in regime.functions.items() if v is not None},
+        **{k: v for k, v in regime.decomposed_constraints.items() if v is not None},
+        **{k: v for k, v in regime.decomposed_functions.items() if v is not None},
     }
 
 
@@ -1686,13 +1729,12 @@ def _fold_same_period_roots(regime: lcm.regime.Regime) -> list[tuple[str, Callab
     roots: list[tuple[str, Callable]] = []
     for name, predicate in regime.value_constraints.items():
         roots.extend(
-            (f"value_constraints['{name}']", variant)
+            (f"constraint {name!r}", variant)
             for variant in _function_variants(predicate)
         )
     for ref_name, ref in regime.same_period_refs.items():
         roots.extend(
-            (f"same_period_refs['{ref_name}']", func)
-            for func in ref.projection.values()
+            (f"reference {ref_name!r}", func) for func in ref.projection.values()
         )
     return roots
 

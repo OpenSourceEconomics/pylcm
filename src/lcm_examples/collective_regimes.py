@@ -1,22 +1,29 @@
 """Small collective-regime models for the documentation.
 
 The first model isolates the household's shared argmax with stakeholder-specific
-values. The second adds same-period outside options, participation constraints, and a
-gated dissolution edge while keeping the state and action spaces hand-checkable.
+values, declared as a single `CollectiveUtility`. The second adds same-period outside
+options through `ValueDependentConstraint`, and a dissolution edge through
+`ValueDependentTransition`, while keeping the state and action spaces hand-checkable.
+
+The dissolution edge is keyed by the CONTINUING collective regime under
+`gate = ~D_target`: the gate-open branch is staying together, and each stakeholder's
+route fallback is that stakeholder's own singleton regime.
 """
 
 import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
+    CollectiveUtility,
     DiscreteGrid,
-    EdgeLeg,
-    GatedEdge,
     LinSpacedGrid,
     MarkovTransition,
     Model,
+    ProjectedRegimeValue,
     Regime,
-    SamePeriodRef,
+    StakeholderRoute,
+    ValueDependentConstraint,
+    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -99,28 +106,23 @@ def get_shared_decision_model() -> Model:
     Equal stakeholder weights select one household action. The value function keeps
     both stakeholders' values at that common argmax.
     """
+    shared_utility = CollectiveUtility(
+        utilities={"f": _shared_utility_f, "m": _shared_utility_m}
+    )
     couple = Regime(
         transition=_to_shared_terminal,
         active=lambda age: age < 1,
-        stakeholders=("f", "m"),
         states={"wage": _SHARED_WAGE_GRID},
         state_transitions={"wage": _next_shared_wage},
         actions={"work": DiscreteGrid(Work)},
-        functions={
-            "utility_f": _shared_utility_f,
-            "utility_m": _shared_utility_m,
-        },
+        functions={"utility": shared_utility},
     )
     couple_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         states={"wage": _SHARED_WAGE_GRID},
         actions={"work": DiscreteGrid(Work)},
-        functions={
-            "utility_f": _shared_utility_f,
-            "utility_m": _shared_utility_m,
-        },
+        functions={"utility": shared_utility},
     )
     return Model(
         regimes={
@@ -196,8 +198,8 @@ def get_dissolution_model() -> Model:
     """Build a three-period collective model with participation and dissolution.
 
     At wage two, neither household action satisfies both participation constraints.
-    The target regime publishes a dissolution flag, and the source's gated edge routes
-    each stakeholder to their own singleton fallback.
+    The target regime publishes a dissolution flag, and the source's value-dependent
+    transition routes each stakeholder to their own singleton fallback.
     """
     single_f = Regime(
         transition=None,
@@ -214,54 +216,55 @@ def get_dissolution_model() -> Model:
     married_with_participation = Regime(
         transition={"married_terminal": MarkovTransition(_probability_one)},
         active=lambda age: (age >= 1) & (age < _DISSOLUTION_AGE),
-        stakeholders=("f", "m"),
         states={"wage": _DISSOLUTION_WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(Work)},
         functions={
-            "utility_f": _participation_utility_f,
-            "utility_m": _participation_utility_m,
+            "utility": CollectiveUtility(
+                utilities={"f": _participation_utility_f, "m": _participation_utility_m}
+            )
         },
-        value_constraints={
-            "participation_f": _participation_f,
-            "participation_m": _participation_m,
-        },
-        same_period_refs={
-            "V_single_f_ref": SamePeriodRef(
-                regime="single_f",
-                projection={"wage": _identity_wage},
+        constraints={
+            "participation_f": ValueDependentConstraint(
+                predicate=_participation_f,
+                references={
+                    "V_single_f_ref": ProjectedRegimeValue(
+                        regime="single_f",
+                        projection={"wage": _identity_wage},
+                    )
+                },
             ),
-            "V_single_m_ref": SamePeriodRef(
-                regime="single_m",
-                projection={"wage": _identity_wage},
+            "participation_m": ValueDependentConstraint(
+                predicate=_participation_m,
+                references={
+                    "V_single_m_ref": ProjectedRegimeValue(
+                        regime="single_m",
+                        projection={"wage": _identity_wage},
+                    )
+                },
             ),
         },
     )
     married = Regime(
-        transition={"married_with_participation": MarkovTransition(_probability_one)},
-        active=lambda age: age < 1,
-        stakeholders=("f", "m"),
-        states={"wage": _DISSOLUTION_WAGE_GRID},
-        state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
-        functions={
-            "utility_f": _zero_collective_utility,
-            "utility_m": _zero_collective_utility,
-        },
-        gated_edges={
-            "married_with_participation": GatedEdge(
+        # Keyed by the gate-open target: the couple that keeps going. The
+        # gate-closed branch is each stakeholder's own single regime, so keying
+        # this edge by one of them would send both partners there whenever the
+        # household stays together.
+        transition={
+            "married_with_participation": ValueDependentTransition(
+                probability=MarkovTransition(_probability_one),
                 gate=_no_dissolution,
-                legs={
-                    "f": EdgeLeg(
+                routes={
+                    "f": StakeholderRoute(
                         target_stakeholder="f",
-                        fallback=SamePeriodRef(
+                        fallback=ProjectedRegimeValue(
                             regime="single_f",
                             projection={"wage": _identity_wage},
                         ),
                     ),
-                    "m": EdgeLeg(
+                    "m": StakeholderRoute(
                         target_stakeholder="m",
-                        fallback=SamePeriodRef(
+                        fallback=ProjectedRegimeValue(
                             regime="single_m",
                             projection={"wage": _identity_wage},
                         ),
@@ -269,16 +272,25 @@ def get_dissolution_model() -> Model:
                 },
             )
         },
+        active=lambda age: age < 1,
+        states={"wage": _DISSOLUTION_WAGE_GRID},
+        state_transitions={"wage": fixed_transition("wage")},
+        actions={"work": DiscreteGrid(Work)},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _zero_collective_utility, "m": _zero_collective_utility}
+            )
+        },
     )
     married_terminal = Regime(
         transition=None,
         active=lambda age: age >= _DISSOLUTION_AGE,
-        stakeholders=("f", "m"),
         states={"wage": _DISSOLUTION_WAGE_GRID},
         actions={"work": DiscreteGrid(Work)},
         functions={
-            "utility_f": _zero_collective_utility,
-            "utility_m": _zero_collective_utility,
+            "utility": CollectiveUtility(
+                utilities={"f": _zero_collective_utility, "m": _zero_collective_utility}
+            )
         },
     )
     return Model(

@@ -16,12 +16,12 @@ from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm import (
     DiscreteGrid,
-    EdgeLeg,
     GatedEdge,
     LinSpacedGrid,
     Model,
+    ProjectedRegimeValue,
     Regime,
-    SamePeriodRef,
+    StakeholderRoute,
     categorical,
     fixed_transition,
 )
@@ -117,16 +117,16 @@ def _make_model_with_a_gate_reading_a_broadcast_state() -> Model:
             "retired": GatedEdge(
                 gate=_gate_reading_bonus,
                 legs={
-                    "self": EdgeLeg(
+                    "self": StakeholderRoute(
                         target_stakeholder=None,
-                        fallback=SamePeriodRef(
+                        fallback=ProjectedRegimeValue(
                             regime="outside",
                             projection={"wage": _project_wage_identically},
                         ),
                     )
                 },
                 gate_refs={
-                    "V_outside_ref": SamePeriodRef(
+                    "V_outside_ref": ProjectedRegimeValue(
                         regime="outside",
                         projection={"wage": _project_wage_identically},
                     )
@@ -165,16 +165,16 @@ def _make_model_with_a_projection_reading_a_target_state() -> Model:
             "retired": GatedEdge(
                 gate=_gate_comparing_values,
                 legs={
-                    "self": EdgeLeg(
+                    "self": StakeholderRoute(
                         target_stakeholder=None,
-                        fallback=SamePeriodRef(
+                        fallback=ProjectedRegimeValue(
                             regime="outside",
                             projection={"wage": _project_wage_identically},
                         ),
                     )
                 },
                 gate_refs={
-                    "V_outside_ref": SamePeriodRef(
+                    "V_outside_ref": ProjectedRegimeValue(
                         regime="outside",
                         projection={"wage": _project_wage_from_bonus},
                     )

@@ -8,12 +8,12 @@ from numpy.testing import assert_array_almost_equal as aaae
 from lcm import (
     AgeGrid,
     DiscreteGrid,
-    EdgeLeg,
     GatedEdge,
     LinSpacedGrid,
     Model,
+    ProjectedRegimeValue,
     Regime,
-    SamePeriodRef,
+    StakeholderRoute,
     categorical,
     fixed_transition,
 )
@@ -158,8 +158,8 @@ def _make_model(
                     "target": GatedEdge(
                         gate=gate,
                         legs={
-                            "only": EdgeLeg(
-                                fallback=SamePeriodRef(
+                            "only": StakeholderRoute(
+                                fallback=ProjectedRegimeValue(
                                     regime="fallback",
                                     projection={
                                         "x": (
@@ -177,7 +177,7 @@ def _make_model(
                             {}
                             if action_sensitive
                             else {
-                                "V_reference": SamePeriodRef(
+                                "V_reference": ProjectedRegimeValue(
                                     regime="reference",
                                     projection={
                                         "x": (

@@ -22,21 +22,24 @@ import numpy as np
 from numpy.testing import assert_array_almost_equal as aaae
 
 from _lcm.certainty_equivalent import LinearExpectation
+from _lcm.regime_building.collective import NO_ROLE
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
+from _lcm.regime_building.Q_and_F import EDGE_CHANNELS_ARG
 from _lcm.simulation.gated_routing import (
     route_gated_edges,
     substitute_gated_edge_continuations,
 )
 from _lcm.solution.backward_induction import solve
+from _lcm.utils.functools import get_union_of_args
 from _lcm.utils.logging import get_logger
 from lcm import (
     DiscreteGrid,
-    EdgeLeg,
     GatedEdge,
     LinSpacedGrid,
+    ProjectedRegimeValue,
     Regime,
-    SamePeriodRef,
+    StakeholderRoute,
     categorical,
 )
 from lcm.ages import AgeGrid
@@ -149,8 +152,8 @@ def _make_regimes() -> dict[str, Regime]:
             "target": GatedEdge(
                 gate=_gate_dissolves_everywhere,
                 legs={
-                    "own": EdgeLeg(
-                        fallback=SamePeriodRef(
+                    "own": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
                             regime="fallback",
                             projection={"settlement": _settlement_from_health},
                         )
@@ -217,7 +220,12 @@ def _solve_fixture():
 
 
 def _fold_output(*, regimes, flat_params, solution):
-    """The edge's folded `Wbar` on the target grid, and the value mappings."""
+    """The edge's `Wbar` at the target's own nodes, and the value mappings.
+
+    The substituted leaf holds the edge's operand channels, which the source
+    reads at the point it lands on and gates there. A target grid node IS such
+    a point, so applying the edge's own combiner at the nodes is that same read.
+    """
     base_state_action_spaces = {
         name: regime.solution.state_action_space(regime_params=flat_params[name])
         for name, regime in regimes.items()
@@ -233,7 +241,23 @@ def _fold_output(*, regimes, flat_params, solution):
         period_to_regime_to_dissolution_flags=MappingProxyType({}),
         flat_params=flat_params,
     )
-    return substituted["target"], mappings
+    edge = regimes["src"].gated_edges["target"]
+    supplied = {
+        **base_state_action_spaces["target"].states,
+        **flat_params["src"],
+        "period": jnp.int32(1),
+        "age": jnp.asarray(_AGES.period_to_age(1)),
+    }
+    combine = edge.combine.combine
+    wbar = combine(
+        **{EDGE_CHANNELS_ARG: substituted["target"]},
+        **{
+            name: supplied[name]
+            for name in get_union_of_args([combine])
+            if name != EDGE_CHANNELS_ARG
+        },
+    )
+    return wbar, mappings
 
 
 def test_solve_side_fold_projects_one_settlement_per_health_state():
@@ -278,7 +302,7 @@ def test_router_writes_each_subject_its_own_projected_fallback_state():
             ),
         }
     )
-    states, _routed_ids = route_gated_edges(
+    states, _routed_ids, _routed_roles = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
         # the value it would enter at period 1.
         fold_period=1,
@@ -291,6 +315,12 @@ def test_router_writes_each_subject_its_own_projected_fallback_state():
         ),
         subjects_in_regime=jnp.array([True, True]),
         flat_params=flat_params,
+        own_stakeholder=jnp.full_like(
+            jnp.array([True, True]), NO_ROLE, dtype=jnp.int32
+        ),
+        new_own_stakeholder=jnp.full_like(
+            jnp.array([True, True]), NO_ROLE, dtype=jnp.int32
+        ),
     )
     aaae(
         np.asarray(states["fallback"]["settlement"]),
@@ -320,7 +350,7 @@ def test_router_sends_every_dissolving_household_to_the_fallback_regime():
             ),
         }
     )
-    _states, routed_ids = route_gated_edges(
+    _states, routed_ids, _routed_roles = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
         # the value it would enter at period 1.
         fold_period=1,
@@ -333,6 +363,12 @@ def test_router_sends_every_dissolving_household_to_the_fallback_regime():
         ),
         subjects_in_regime=jnp.array([True, True]),
         flat_params=flat_params,
+        own_stakeholder=jnp.full_like(
+            jnp.array([True, True]), NO_ROLE, dtype=jnp.int32
+        ),
+        new_own_stakeholder=jnp.full_like(
+            jnp.array([True, True]), NO_ROLE, dtype=jnp.int32
+        ),
     )
     np.testing.assert_array_equal(
         np.asarray(routed_ids),

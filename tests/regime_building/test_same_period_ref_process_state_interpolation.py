@@ -1,4 +1,4 @@
-"""A `SamePeriodRef` reading a NON-FOLDED process-state V interpolates it.
+"""A `ProjectedRegimeValue` reading a NON-FOLDED process-state V interpolates it.
 
 A process state (`NormalIIDProcess`, `fold=False`) is classified
 `topology="discrete"` for the ordinary Markov-chain solve path
@@ -7,8 +7,8 @@ integer fancy-indexing there — correct, since the solve-side continuation
 always feeds it an exact on-grid node index (`Q_and_F.py`'s `next_V_interpolator`
 machinery, unaffected by this fix).
 
-A `SamePeriodRef` projection is different: it computes a genuine VALUE for
-every reference-regime state (`lcm.regime.SamePeriodRef.projection`), which
+A `ProjectedRegimeValue` projection is different: it computes a genuine VALUE for
+every reference-regime state (`lcm.regime.ProjectedRegimeValue.projection`), which
 for a process axis is essentially never an exact node index. Before this fix,
 `_build_same_period_ref_reader` (`_lcm.regime_building.Q_and_F`) fed that
 float straight into the same integer-lookup path used for an ordinary
@@ -27,7 +27,7 @@ the process axis.
 
 This test builds a collective ("married") regime whose value-constraint
 reads a singleton reference regime's ("shock_ref") V through a
-`SamePeriodRef` projected onto an OFF-GRID (strictly between two
+`ProjectedRegimeValue` projected onto an OFF-GRID (strictly between two
 quadrature nodes) shock value, and checks:
 
 (a) the model SOLVES (no `ValueError`), both directly (`solve`) and through
@@ -65,7 +65,7 @@ from lcm import (
 )
 from lcm.ages import AgeGrid
 from lcm.koopmans_aggregation import LinearAggregator
-from lcm.regime import Regime, SamePeriodRef
+from lcm.regime import ProjectedRegimeValue, Regime
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, DiscreteAction, FloatND, ScalarInt
 from tests.conftest import build_prepared_structure
@@ -244,7 +244,7 @@ def _make_regimes() -> dict[str, Regime]:
         functions={"utility_f": _utility_married_f, "utility_m": _utility_married_m},
         value_constraints={"vc_f": _vc_f},
         same_period_refs={
-            "V_shock_ref": SamePeriodRef(
+            "V_shock_ref": ProjectedRegimeValue(
                 regime="shock_ref", projection={"shock": _project_shock}
             ),
         },

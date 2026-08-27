@@ -76,6 +76,16 @@ class ResultMetadata:
     this field, instead of being published under a wrong column layout.
     """
 
+    stakeholder_names_to_ids: MappingProxyType[str, int] = MappingProxyType({})
+    """The model's role vocabulary: every stakeholder name, as a code.
+
+    One mapping for the whole model rather than one per regime, so the
+    `own_stakeholder` column means the same thing in every row and a role can
+    be compared across regimes. Empty for a model with no collective regime,
+    and for a saved artifact whose metadata payload predates the field — the
+    column is then published as raw codes rather than labels.
+    """
+
 
 def _get_output_dtypes(
     user_regimes: Mapping[RegimeName, UserRegime],
@@ -166,6 +176,10 @@ def _compute_metadata(
     regime_to_stakeholders: dict[RegimeName, tuple[str, ...] | None] = {
         regime_name: regime.stakeholders for regime_name, regime in regimes.items()
     }
+    stakeholder_names_to_ids = next(
+        (regime.stakeholder_names_to_ids for regime in regimes.values()),
+        MappingProxyType({}),
+    )
 
     n_periods = ages.n_periods
     n_subjects = _get_n_subjects(raw_results)
@@ -185,6 +199,7 @@ def _compute_metadata(
         discrete_ordered=MappingProxyType(discrete_ordered),
         regime_discrete_categories=MappingProxyType(regime_discrete_categories),
         regime_to_stakeholders=MappingProxyType(regime_to_stakeholders),
+        stakeholder_names_to_ids=stakeholder_names_to_ids,
     )
 
 

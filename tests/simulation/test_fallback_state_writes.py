@@ -42,13 +42,13 @@ from _lcm.utils.logging import get_logger
 from lcm import (
     AgeGrid,
     DiscreteGrid,
-    EdgeLeg,
     GatedEdge,
     LinSpacedGrid,
     Model,
     Phased,
+    ProjectedRegimeValue,
     Regime,
-    SamePeriodRef,
+    StakeholderRoute,
     categorical,
     fixed_transition,
 )
@@ -196,7 +196,10 @@ def _route_three_households() -> MappingProxyType:
             ),
         }
     )
-    routed_states, _routed_ids = route_gated_edges(
+    own_stakeholder = jnp.full(
+        n_households, married.stakeholder_names_to_ids["f"], dtype=jnp.int32
+    )
+    routed_states, _routed_ids, _routed_roles = route_gated_edges(
         # The source is simulated at period 0, so the gate is decided on
         # the value it would enter at period 1.
         fold_period=1,
@@ -209,7 +212,8 @@ def _route_three_households() -> MappingProxyType:
         ),
         subjects_in_regime=jnp.ones(n_households, dtype=bool),
         flat_params=flat_params,
-        own_stakeholder="f",
+        own_stakeholder=own_stakeholder,
+        new_own_stakeholder=own_stakeholder,
     )
     return routed_states
 
@@ -234,6 +238,9 @@ def _simulate_three_households():
             "regime_id": jnp.full(
                 n_households, model.regime_names_to_ids["married"], dtype=jnp.int32
             ),
+            "own_stakeholder": jnp.full(
+                n_households, model.stakeholder_names_to_ids["f"], dtype=jnp.int32
+            ),
         }
     )
     return model.simulate(
@@ -241,7 +248,6 @@ def _simulate_three_households():
         initial_conditions=initial_conditions,
         period_to_regime_to_V_arr=solution,
         period_to_regime_to_dissolution_flags=dissolution_flags,
-        own_stakeholder="f",
         log_level="off",
         seed=0,
     )
@@ -338,15 +344,15 @@ def _make_regimes(*, carrying_fallback: bool) -> dict[str, Regime]:
             "married_terminal": GatedEdge(
                 gate=_consent_gate,
                 legs={
-                    "f": EdgeLeg(
+                    "f": StakeholderRoute(
                         target_stakeholder="f",
-                        fallback=SamePeriodRef(
+                        fallback=ProjectedRegimeValue(
                             regime="single_f", projection=wife_projection
                         ),
                     ),
-                    "m": EdgeLeg(
+                    "m": StakeholderRoute(
                         target_stakeholder="m",
-                        fallback=SamePeriodRef(
+                        fallback=ProjectedRegimeValue(
                             regime="single_m", projection={"wage": _identity_wage}
                         ),
                     ),

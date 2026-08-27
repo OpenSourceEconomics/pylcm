@@ -17,6 +17,7 @@ import jax.numpy as jnp
 import pytest
 
 from _lcm.engine import Regime, StateActionSpace
+from _lcm.regime_building.gated_edges import EdgeChannels
 from _lcm.solution import backward_induction
 from _lcm.solution.backward_induction import _iter_edge_topologies
 
@@ -49,6 +50,25 @@ class _MockRegime(Regime):
         object.__setattr__(self, "stakeholders", stakeholders)
 
 
+@dataclasses.dataclass(frozen=True)
+class _MockEdge:
+    """A gated edge carrying only the channel layout the iterator reads."""
+
+    channels: EdgeChannels
+
+
+def _edge(*, n_components: int = 1, n_legs: int = 1) -> _MockEdge:
+    """An edge whose continuation stacks `n_components + n_legs` channels."""
+    return _MockEdge(
+        channels=EdgeChannels(
+            component_names=tuple(f"V_target_{i}" for i in range(n_components)),
+            has_dissolution=False,
+            gate_ref_names=(),
+            n_legs=n_legs,
+        )
+    )
+
+
 def _two_sources_one_target() -> MappingProxyType[str, Regime]:
     """Two source regimes whose gated edges both land on `shared_target`."""
     target_states = MappingProxyType({"wealth": jnp.arange(4.0)})
@@ -57,11 +77,11 @@ def _two_sources_one_target() -> MappingProxyType[str, Regime]:
         {
             "source_a": _MockRegime(
                 solution=_MockSolutionPhase(states=stateless),
-                gated_edges=MappingProxyType({"shared_target": object()}),
+                gated_edges=MappingProxyType({"shared_target": _edge()}),
             ),
             "source_b": _MockRegime(
                 solution=_MockSolutionPhase(states=stateless),
-                gated_edges=MappingProxyType({"shared_target": object()}),
+                gated_edges=MappingProxyType({"shared_target": _edge()}),
             ),
             "shared_target": _MockRegime(
                 solution=_MockSolutionPhase(states=target_states),
@@ -109,7 +129,11 @@ def test_both_edges_still_get_their_topology(sharding_plan_calls):  # noqa: ARG0
 
 
 def test_a_shared_target_gives_both_edges_the_same_shape(sharding_plan_calls):  # noqa: ARG001
-    """The shared topology is the target's grid, for every source that reaches it."""
+    """The shared topology is the target's grid plus each edge's channel axis.
+
+    Both edges here stack one target component and one leg fallback, so both
+    read `(4, 2)`: the target's four nodes, and two operands per node.
+    """
     regimes = _two_sources_one_target()
     flat_params = MappingProxyType(dict.fromkeys(regimes, MappingProxyType({})))
 
@@ -120,15 +144,24 @@ def test_a_shared_target_gives_both_edges_the_same_shape(sharding_plan_calls):  
         )
     }
 
-    assert shapes == {(4,)}
+    assert shapes == {(4, 2)}
 
 
-def test_a_collective_source_still_appends_its_own_role_axis(sharding_plan_calls):  # noqa: ARG001
-    """A collective source's `Wbar` keeps the trailing stakeholder axis."""
+def test_the_trailing_axis_is_the_edges_own_channel_count(sharding_plan_calls):  # noqa: ARG001
+    """Each edge's trailing axis counts ITS operands, not the source's roles.
+
+    The continuation array holds the operands the gate and the branches are
+    built from, so the source reads them at its landing point and gates them
+    there. A collective source's two roles are produced by that gate, not
+    stored: the edge below stacks two target components and two leg fallbacks
+    and so reads `(4, 4)`, while the singleton edge beside it stays at `(4, 2)`.
+    """
     regimes = dict(_two_sources_one_target())
     regimes["source_a"] = _MockRegime(
         solution=_MockSolutionPhase(states=MappingProxyType({})),
-        gated_edges=MappingProxyType({"shared_target": object()}),
+        gated_edges=MappingProxyType(
+            {"shared_target": _edge(n_components=2, n_legs=2)}
+        ),
         stakeholders=("f", "m"),
     )
     frozen = MappingProxyType(regimes)
@@ -141,4 +174,4 @@ def test_a_collective_source_still_appends_its_own_role_axis(sharding_plan_calls
         )
     }
 
-    assert shapes == {"source_a": (4, 2), "source_b": (4,)}
+    assert shapes == {"source_a": (4, 4), "source_b": (4, 2)}

@@ -335,6 +335,18 @@ def test_regime_declares_phased_sees_nested_joint_transition_variants() -> None:
     assert regime_declares_phased(regime)
 
 
+def test_identity_invariant_nested_joint_transition_is_not_phased() -> None:
+    """One shared kernel object is replay-invariant across both phases."""
+    kernel = _phase_kernel(_one_node_probabilities)
+    regime = Regime(
+        transition={"target": MarkovTransition(_certain_target)},
+        functions={"utility": lambda: jnp.asarray(0.0)},
+        joint_transitions={"target": {"match": Phased(solve=kernel, simulate=kernel)}},
+    )
+
+    assert not regime_declares_phased(regime)
+
+
 def _support_reading_wealth(wealth: FloatND) -> FloatND:
     return jnp.asarray([wealth])
 

@@ -25,12 +25,13 @@ from lcm import (
     DiscreteGrid,
     LinSpacedGrid,
     Model,
+    ParetoObjective,
     Regime,
     categorical,
     fixed_transition,
 )
 from lcm.exceptions import PyLCMError
-from lcm.regime import EdgeLeg, GatedEdge, SamePeriodRef
+from lcm.regime import GatedEdge, ProjectedRegimeValue, StakeholderRoute
 from lcm.result import SimulationResult
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
@@ -64,14 +65,16 @@ def test_regime_weights_keep_the_values_they_were_declared_with():
     regime = Regime(
         transition=None,
         stakeholders=("f", "m"),
-        weights=declared_weights,
+        pareto_objective=ParetoObjective(weights=declared_weights),
         actions={"work": DiscreteGrid(Work)},
         functions={"utility_f": _wife_payoff, "utility_m": _husband_payoff},
     )
 
     declared_weights["f"] = 0.9
 
-    assert regime.weights == {"f": 0.25, "m": 0.75}
+    objective = regime.pareto_objective
+    assert objective is not None
+    assert objective.weights == {"f": 0.25, "m": 0.75}
 
 
 def test_mock_regime_carries_an_empty_gated_edges_mapping():
@@ -149,9 +152,9 @@ def test_gated_edge_declaration_types_are_exported_from_the_package():
     this module alone imports the two names from `lcm.regime`: reading both
     sides off `lcm` would compare each name against itself and pin nothing.
     """
-    exported = (getattr(lcm, "GatedEdge", None), getattr(lcm, "EdgeLeg", None))
+    exported = (getattr(lcm, "GatedEdge", None), getattr(lcm, "StakeholderRoute", None))
 
-    assert exported == (GatedEdge, EdgeLeg)
+    assert exported == (GatedEdge, StakeholderRoute)
 
 
 def _drop_stakeholder_metadata(*, directory: Path) -> None:
@@ -192,8 +195,8 @@ def _make_singleton_target_dissolution_gate_regimes() -> MappingProxyType[str, R
             "target": GatedEdge(
                 gate=_no_dissolution,
                 legs={
-                    "only": EdgeLeg(
-                        fallback=SamePeriodRef(
+                    "only": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
                             regime="fallback",
                             projection={"wage": _identity_wage},
                         ),

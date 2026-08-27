@@ -272,8 +272,8 @@ def phase_variation_paths(
     Bare values broadcast one object to both phases. A ``Phased`` declaration
     is replay-invariant only when ``solve is simulate``; semantic equality is
     deliberately irrelevant. The scan follows the complete public grammar:
-    functions, states, state transitions, the regime transition, and the
-    singleton Koopmans aggregator.
+    functions, states, state transitions, joint transitions, the regime
+    transition, and the singleton Koopmans aggregator.
     """
     varied: list[str] = []
     for slot_name, declarations in (
@@ -288,6 +288,16 @@ def phase_variation_paths(
                 and declaration.solve is not declaration.simulate
             ):
                 varied.append(f"{slot_name}[{name!r}]")
+
+    for target_name in sorted(user_regime.joint_transitions):
+        kernels = user_regime.joint_transitions[target_name]
+        for kernel_name in sorted(kernels):
+            declaration = kernels[kernel_name]
+            if (
+                isinstance(declaration, Phased)
+                and declaration.solve is not declaration.simulate
+            ):
+                varied.append(f"joint_transitions[{target_name!r}][{kernel_name!r}]")
 
     transition = user_regime.transition
     if isinstance(transition, Phased) and transition.solve is not transition.simulate:

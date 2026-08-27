@@ -13,6 +13,7 @@ from jax import Array
 from _lcm.logsum import EULER_GAMMA, logsum_and_softmax
 from _lcm.regime_building.argmax import argmax_and_max
 from _lcm.regime_building.collective import (
+    ParetoWeights,
     collective_argmax_and_readout,
     collective_readout,
 )
@@ -33,6 +34,23 @@ from lcm.typing import BoolND, FloatND, IntND, ScalarFloat
 TASTE_SHOCK_SCALE_PARAM = "taste_shocks__scale"
 
 
+def _evaluate_pareto_weights(
+    *,
+    pareto_weights: ParetoWeights | None,
+    states_actions_params: Mapping[str, _ParamsLeaf],
+) -> dict[str, FloatND]:
+    """Evaluate the household's Pareto weights at one cell.
+
+    The kernel's own signature carries every argument the declaration reads, so
+    the weights are read out of the cell rather than closed over — which is
+    what makes a state-dependent or estimated weight ordinary.
+    """
+    weights = cast("ParetoWeights", pareto_weights)
+    return weights.compute(
+        **{name: states_actions_params[name] for name in weights.arg_names}
+    )
+
+
 def get_max_Q_over_a(
     *,
     Q_and_F: Callable[..., tuple[FloatND, BoolND]],
@@ -44,9 +62,10 @@ def get_max_Q_over_a(
     co_map_state_names: tuple[StateName, ...] = (),
     co_map_v_arr_in_axes: tuple[MappingProxyType[RegimeName, int | None], ...] = (),
     stakeholders: tuple[str, ...] | None = None,
-    weights: Mapping[str, float] | None = None,
+    pareto_weights: ParetoWeights | None = None,
     fold_state_names: tuple[StateName, ...] = (),
     fold_weights: Mapping[StateName, FloatND] = MappingProxyType({}),
+    fold_conditioning: Mapping[StateName, StateName] = MappingProxyType({}),
 ) -> MaxQOverAFunction:
     r"""Get the function returning the maximum of Q over all actions.
 
@@ -101,8 +120,9 @@ def get_max_Q_over_a(
             function then yields the pair `(V, D)` — the stakeholder-axis value
             array plus the boolean dissolution flag `D = 1[mask empty]` on the state
             axes — distinct from a numeric `-inf`, which occurs on-path.
-        weights: Household Pareto weights per stakeholder; required (and only used)
-            when `stakeholders` is set.
+        pareto_weights: The household's Pareto weight evaluator; required (and
+            only used) when `stakeholders` is set. Called at each cell with the
+            states and parameters its declaration reads.
         fold_state_names: IID-process states declared `fold=True`, or empty (the
             default). Each is still an ordinary inner (non-co-mapped) productmap
             axis THROUGH the max-over-actions — every node is evaluated — but its
@@ -111,11 +131,19 @@ def get_max_Q_over_a(
             singleton regime may fold: a collective regime's `-inf` dissolution
             sentinel is not a value quadrature can average, so the combination
             is rejected at model build.
-        fold_weights: Quadrature weights per name in `fold_state_names` (each a
-            1-D array matching that state's node count, summing to 1). Must be
-            CONCRETE (not traced) — `_select_fold_reducer` reads them at
-            kernel-build time to pick each axis's reduction kernel. Ignored
-            when `fold_state_names` is empty.
+        fold_weights: Quadrature weights per name in `fold_state_names`. A name
+            absent from `fold_conditioning` carries a 1-D array matching that
+            state's node count and summing to 1; a name present there carries a
+            `(n_categories, n_points)` array whose row `c` is the quadrature the
+            conditioning state's category `c` selects. Must be CONCRETE (not
+            traced) — `_select_fold_reducer` reads them at kernel-build time to
+            pick each axis's reduction kernel. Ignored when `fold_state_names`
+            is empty.
+        fold_conditioning: Mapping of a folded state to the discrete state its
+            quadrature is conditioned on, for the folded processes that declare
+            a `StateConditioned` parameter. Absent names fold against one shared
+            row. The conditioning state must itself be an inner (non-co-mapped)
+            productmap axis, since the reduction gathers its row along that axis.
 
     Returns:
         V, i.e., the function that calculates the maximum of the Q-function over all
@@ -129,6 +157,12 @@ def get_max_Q_over_a(
     extra_param_names = _get_extra_param_names(
         Q_and_F=Q_and_F, action_names=action_names, state_names=state_names
     )
+    # A Pareto weight is evaluated at the cell, so its free parameters ride in
+    # this kernel's own signature alongside `Q_and_F`'s.
+    if pareto_weights is not None:
+        extra_param_names = list(
+            dict.fromkeys((*extra_param_names, *pareto_weights.param_names))
+        )
 
     # Actions are the inner optimization axis — batching applies only to the
     # outer state loop.
@@ -213,7 +247,10 @@ def get_max_Q_over_a(
                 values, dissolution = collective_readout(
                     stakeholder_Q=stakeholder_Q,
                     feasibility=F_arr,
-                    weights=cast("Mapping[str, float]", weights),
+                    weights=_evaluate_pareto_weights(
+                        pareto_weights=pareto_weights,
+                        states_actions_params=states_actions_params,
+                    ),
                     action_axes=action_axes,
                 )
                 return (
@@ -239,6 +276,7 @@ def get_max_Q_over_a(
             cast("Callable[..., FloatND]", mapped),
             fold_state_names=fold_state_names,
             fold_weights=fold_weights,
+            fold_conditioning=fold_conditioning,
             inner_state_names=inner_state_names,
             action_names=action_names,
             state_names=state_names,
@@ -274,6 +312,7 @@ def _wrap_with_fold_reduction(
     *,
     fold_state_names: tuple[StateName, ...],
     fold_weights: Mapping[StateName, FloatND],
+    fold_conditioning: Mapping[StateName, StateName],
     inner_state_names: tuple[StateName, ...],
     action_names: tuple[ActionName, ...],
     state_names: tuple[StateName, ...],
@@ -290,6 +329,12 @@ def _wrap_with_fold_reduction(
     signature, which `productmap` preserves) so it composes transparently with
     the co-map `vmap_1d` wrapping that may follow.
 
+    A folded state named in `fold_conditioning` averages against a different row
+    per category of its conditioning state, so its weights are broadcast to the
+    value array with the category dimension on that state's own axis. Reducing
+    one fold axis shifts the position of every later axis, so each axis pair is
+    resolved against the axis order as it stands at that step, not the original.
+
     `mapped` is a singleton regime's value kernel: a collective regime may not
     declare a folded state at all, so there is no stakeholder axis here and no
     dissolution flag to reduce (`_fail_if_collective`).
@@ -297,9 +342,13 @@ def _wrap_with_fold_reduction(
     The per-axis reducer is bound HERE, at kernel-build time, from the axis's
     own quadrature weights — see `_select_fold_reducer`.
     """
-    fold_axis_positions = sorted(
-        ((name, inner_state_names.index(name)) for name in fold_state_names),
-        key=lambda item: -item[1],
+    _fail_if_conditioning_state_not_inner(
+        fold_conditioning=fold_conditioning, inner_state_names=inner_state_names
+    )
+    fold_steps = _plan_fold_steps(
+        fold_state_names=fold_state_names,
+        fold_conditioning=fold_conditioning,
+        inner_state_names=inner_state_names,
     )
     fold_reducers = {
         name: _select_fold_reducer(weight=fold_weights[name], name=name)
@@ -318,11 +367,100 @@ def _wrap_with_fold_reduction(
         V_arr = mapped(
             next_regime_to_V_arr=next_regime_to_V_arr, **states_actions_params
         )
-        for name, axis in fold_axis_positions:
-            V_arr = fold_reducers[name](V_arr, axis=axis, weights=fold_weights[name])
+        for name, axis, conditioning_axis in fold_steps:
+            weights = fold_weights[name]
+            if conditioning_axis is not None:
+                weights = _broadcast_conditioned_rows(
+                    rows=weights,
+                    conditioning_axis=conditioning_axis,
+                    fold_axis=axis,
+                    shape=V_arr.shape,
+                )
+            V_arr = fold_reducers[name](V_arr, axis=axis, weights=weights)
         return V_arr
 
     return folded
+
+
+def _plan_fold_steps(
+    *,
+    fold_state_names: tuple[StateName, ...],
+    fold_conditioning: Mapping[StateName, StateName],
+    inner_state_names: tuple[StateName, ...],
+) -> tuple[tuple[StateName, int, int | None], ...]:
+    """Resolve `(folded state, its axis, its conditioning axis)` per reduction step.
+
+    Axes are resolved against the axis order as it stands when that step runs,
+    because each reduction removes one axis and shifts everything after it. The
+    order is highest fold axis first, so a fold axis's own position is stable,
+    but a conditioning axis sitting after an already-reduced fold axis is not.
+    """
+    remaining = list(inner_state_names)
+    ordered = sorted(fold_state_names, key=remaining.index, reverse=True)
+    steps: list[tuple[StateName, int, int | None]] = []
+    for name in ordered:
+        conditioning_state = fold_conditioning.get(name)
+        steps.append(
+            (
+                name,
+                remaining.index(name),
+                None
+                if conditioning_state is None
+                else remaining.index(conditioning_state),
+            )
+        )
+        remaining.remove(name)
+    return tuple(steps)
+
+
+def _broadcast_conditioned_rows(
+    *,
+    rows: FloatND,
+    conditioning_axis: int,
+    fold_axis: int,
+    shape: tuple[int, ...],
+) -> FloatND:
+    """Spread one quadrature row per category over the value array's full shape.
+
+    `rows` is `(n_categories, n_points)`. The reduction kernels take weights
+    either 1-D along the reduced axis or the same shape as the value array, and
+    a conditioned row set is neither, so it is placed on its two axes and
+    broadcast. Under `jit` the broadcast is a view XLA fuses into the reduction;
+    the eager path materializes it, which is the same size the unfolded model
+    would have carried as an axis anyway.
+    """
+    placed = rows if conditioning_axis < fold_axis else rows.T
+    target = [1] * len(shape)
+    target[conditioning_axis] = rows.shape[0]
+    target[fold_axis] = rows.shape[1]
+    return jnp.broadcast_to(placed.reshape(target), shape)
+
+
+def _fail_if_conditioning_state_not_inner(
+    *,
+    fold_conditioning: Mapping[StateName, StateName],
+    inner_state_names: tuple[StateName, ...],
+) -> None:
+    """Refuse a conditioned fold whose conditioning state has no inner axis.
+
+    The reduction gathers a category's row along the conditioning state's own
+    productmap axis, so a conditioning state that was co-mapped away (a fixed
+    distributed state) or pruned leaves the fold nothing to index by.
+    """
+    missing = sorted(
+        f"'{name}' conditioned on '{conditioning_state}'"
+        for name, conditioning_state in fold_conditioning.items()
+        if conditioning_state not in inner_state_names
+    )
+    if missing:
+        msg = (
+            f"Folded state(s) {missing} condition their quadrature on a state "
+            "that is not an inner productmap axis of the value kernel. The fold "
+            "selects a category's quadrature row along that state's own axis, "
+            "so the conditioning state must be an ordinary (non-distributed) "
+            f"state of the same regime. Inner axes are {list(inner_state_names)}."
+        )
+        raise ValueError(msg)
 
 
 def _fail_if_collective(
@@ -433,7 +571,7 @@ def get_argmax_and_max_Q_over_a(
     n_discrete_action_axes: int = 0,
     has_taste_shocks: bool = False,
     stakeholders: tuple[str, ...] | None = None,
-    weights: Mapping[str, float] | None = None,
+    pareto_weights: ParetoWeights | None = None,
 ) -> ArgmaxQOverAFunction:
     r"""Get the function returning the arguments maximizing Q over all actions.
 
@@ -479,8 +617,9 @@ def get_argmax_and_max_Q_over_a(
             branch so simulate recomputes the identical argmax. Mutually
             exclusive with `has_taste_shocks` (rejected at regime
             construction for collective regimes).
-        weights: Household Pareto weights per stakeholder; required (and only
-            used) when `stakeholders` is set.
+        pareto_weights: The household's Pareto weight evaluator; required (and
+            only used) when `stakeholders` is set. Called at each cell with the
+            states and parameters its declaration reads.
 
     Returns:
         Function that calculates the argument maximizing Q over the feasible continuous
@@ -493,6 +632,12 @@ def get_argmax_and_max_Q_over_a(
     extra_param_names = _get_extra_param_names(
         Q_and_F=Q_and_F, action_names=action_names, state_names=state_names
     )
+    # A Pareto weight is evaluated at the cell, so its free parameters ride in
+    # this kernel's own signature alongside `Q_and_F`'s.
+    if pareto_weights is not None:
+        extra_param_names = list(
+            dict.fromkeys((*extra_param_names, *pareto_weights.param_names))
+        )
 
     Q_and_F = productmap(
         func=Q_and_F,
@@ -581,7 +726,10 @@ def get_argmax_and_max_Q_over_a(
                 argmax_flat, values, _dissolution = collective_argmax_and_readout(
                     stakeholder_Q=stakeholder_Q,
                     feasibility=F_arr,
-                    weights=cast("Mapping[str, float]", weights),
+                    weights=_evaluate_pareto_weights(
+                        pareto_weights=pareto_weights,
+                        states_actions_params=states_actions_params,
+                    ),
                     action_axes=action_axes,
                 )
                 V_stacked = jnp.stack([values[name] for name in stakeholders], axis=-1)

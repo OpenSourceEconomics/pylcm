@@ -26,12 +26,12 @@ from _lcm.utils.logging import get_logger
 from lcm import (
     AgeGrid,
     DiscreteGrid,
-    EdgeLeg,
     GatedEdge,
     LinSpacedGrid,
     Model,
+    ProjectedRegimeValue,
     Regime,
-    SamePeriodRef,
+    StakeholderRoute,
     categorical,
     fixed_transition,
 )
@@ -169,20 +169,20 @@ def _make_consent_model() -> tuple[Model, dict]:
             "married_terminal": GatedEdge(
                 gate=_consent_gate,
                 legs={
-                    "f": EdgeLeg(
+                    "f": StakeholderRoute(
                         target_stakeholder="f",
-                        fallback=SamePeriodRef(
+                        fallback=ProjectedRegimeValue(
                             regime="single_f_terminal",
                             projection={"wage": _identity_wage},
                         ),
                     )
                 },
                 gate_refs={
-                    "V_single_f_ref": SamePeriodRef(
+                    "V_single_f_ref": ProjectedRegimeValue(
                         regime="single_f_terminal",
                         projection={"wage": _identity_wage},
                     ),
-                    "V_single_m_ref": SamePeriodRef(
+                    "V_single_m_ref": ProjectedRegimeValue(
                         regime="single_m_terminal",
                         projection={"wage": _identity_wage},
                     ),
@@ -237,15 +237,15 @@ def _make_dissolution_model() -> tuple[Model, dict]:
             "married_ir": GatedEdge(
                 gate=_no_dissolution_gate,
                 legs={
-                    "f": EdgeLeg(
+                    "f": StakeholderRoute(
                         target_stakeholder="f",
-                        fallback=SamePeriodRef(
+                        fallback=ProjectedRegimeValue(
                             regime="single_f", projection={"wage": _identity_wage}
                         ),
                     ),
-                    "m": EdgeLeg(
+                    "m": StakeholderRoute(
                         target_stakeholder="m",
-                        fallback=SamePeriodRef(
+                        fallback=ProjectedRegimeValue(
                             regime="single_m", projection={"wage": _identity_wage}
                         ),
                     ),
@@ -263,10 +263,10 @@ def _make_dissolution_model() -> tuple[Model, dict]:
         functions={"utility_f": _u_married_ir_f, "utility_m": _u_married_ir_m},
         value_constraints={"ir_f": _ir_f, "ir_m": _ir_m},
         same_period_refs={
-            "V_single_f_ref": SamePeriodRef(
+            "V_single_f_ref": ProjectedRegimeValue(
                 regime="single_f", projection={"wage": _identity_wage}
             ),
-            "V_single_m_ref": SamePeriodRef(
+            "V_single_m_ref": ProjectedRegimeValue(
                 regime="single_m", projection={"wage": _identity_wage}
             ),
         },

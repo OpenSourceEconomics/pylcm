@@ -19,9 +19,8 @@ from _lcm.egm.branch_aggregation import (
     UniformObservedFixedCost,
     aggregate_uniform_observed_fixed_cost,
 )
+from lcm.consumption_savings_regime import OuterContinuousMargin, outer_unchanged
 from lcm.exceptions import RegimeInitializationError
-from lcm.solvers import AdaptiveOuterMesh
-from tests.test_models import n_nbegm_toy as toy
 
 _N_QUADRATURE = 1_000_001
 
@@ -166,13 +165,14 @@ def test_config_requires_positive_support_width() -> None:
         )
 
 
-def test_unsupported_aggregator_subclass_is_rejected_at_solver_construction() -> None:
-    """A branch aggregator the solver cannot execute fails loudly, not silently.
+def test_unsupported_aggregator_subclass_is_rejected_where_it_is_declared() -> None:
+    """An adjustment cost with no kernel behind it fails loudly, not silently.
 
-    `OuterBranchAggregator` is a closed set as far as `NNBEGM` is concerned.
-    A third concrete subclass names an aggregation the kernels do not
-    implement, and running it as the deterministic maximum would publish a
-    value function for a model nobody specified.
+    `OuterBranchAggregator` is a closed set. A third concrete subclass names an
+    aggregation the kernels do not implement, and running it as the
+    deterministic maximum would publish a value function for a model nobody
+    specified. The margin is where the cost is declared, so it is where the
+    declaration is refused.
     """
 
     @dataclass(frozen=True, kw_only=True)
@@ -182,8 +182,10 @@ def test_unsupported_aggregator_subclass_is_rejected_at_solver_construction() ->
         temperature: float = 1.0
 
     with pytest.raises(RegimeInitializationError, match="LogitAdjustment"):
-        toy.build_solver(
-            variant="n_nbegm",
-            outer_search=AdaptiveOuterMesh(initial_grid=toy.OUTER_GRID),
-            branch_aggregator=LogitAdjustment(),
+        OuterContinuousMargin(
+            state="illiquid",
+            action="illiquid_investment",
+            post_decision_state="new_illiquid",
+            no_adjustment=outer_unchanged,
+            adjustment_cost=LogitAdjustment(),
         )

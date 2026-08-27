@@ -411,3 +411,25 @@ def test_permuting_unique_segments_preserves_physical_owner_and_float0() -> None
         assert int(np.asarray(status)[0]) == 0
         assert winner_dot.dtype == jax.dtypes.float0
         assert status_dot.dtype == jax.dtypes.float0
+
+
+@pytest.mark.parametrize("dtype", _DTYPES)
+def test_certified_read_carries_the_slope_in_forward_mode(dtype) -> None:
+    """`jax.jacfwd` reports the exact affine slope of the certified read."""
+    q = jnp.asarray(0.25, dtype=dtype)
+    observed = jax.jacfwd(lambda z: _public_value(dtype, z))(q)
+    np.testing.assert_allclose(np.asarray(observed), np.asarray(2.0, dtype=dtype))
+
+
+@pytest.mark.parametrize("dtype", _DTYPES)
+def test_certified_read_refuses_reverse_mode(dtype) -> None:
+    """Reverse mode is unavailable because no reverse rule is registered.
+
+    On finite directions the affine differential is linear and has a
+    mathematical transpose. The custom JVP also inspects tangent finiteness, so
+    JAX cannot automatically transpose the registered rule. Callers needing
+    `jax.grad` use `arithmetic="ordinary"`.
+    """
+    q = jnp.asarray(0.25, dtype=dtype)
+    with pytest.raises((AssertionError, TypeError, ValueError)):
+        jax.grad(lambda z: _public_value(dtype, z))(q)

@@ -1,10 +1,10 @@
 """A collective regime fills its slots from the model level like any other regime.
 
 A collective regime carries a per-stakeholder `utility_<s>` for each of its
-stakeholders and at least one discrete action. Both are ordinary regime slots,
-so a household whose regimes share them may declare them once on the `Model`
-and let the broadcast supply every regime — completeness is a property of the
-regime the model runs, not of a bare `Regime`.
+stakeholders, and may carry actions. Both are ordinary regime slots, so a
+household whose regimes share them may declare them once on the `Model` and let
+the broadcast supply every regime — completeness is a property of the regime the
+model runs, not of a bare `Regime`.
 """
 
 from dataclasses import replace

@@ -268,7 +268,22 @@ def build_paper_solver(
             max_nodes=129,
             max_refinement_rounds=6,
         ),
-        branch_aggregator=UniformObservedFixedCost(
+    )
+
+
+def _paper_outer_margin() -> OuterContinuousMargin:
+    """The effort margin both paper regimes share.
+
+    Effort is adjusted against an i.i.d. uniform fixed cost the household
+    observes before deciding whether to move, so the cost is declared here with
+    the margin and the solve integrates it analytically.
+    """
+    return OuterContinuousMargin(
+        state="lagged_effort",
+        action="effort",
+        post_decision_state="new_lagged_effort",
+        no_adjustment="keep_effort",
+        adjustment_cost=UniformObservedFixedCost(
             shock_name="adjustment_cost",
             scale_function="adjustment_cost_scale",
             lower=0.0,
@@ -342,12 +357,7 @@ def build_working_regime(
             resources="cash_on_hand",
             post_decision_state="saving",
         ),
-        outer_continuous=OuterContinuousMargin(
-            state="lagged_effort",
-            action="effort",
-            post_decision_state="new_lagged_effort",
-            no_adjustment="keep_effort",
-        ),
+        outer_continuous=_paper_outer_margin(),
         solver=build_paper_solver(outer_search=outer_search),
     )
 
@@ -407,12 +417,7 @@ def build_retirement_regime(
             resources="cash_on_hand",
             post_decision_state="saving",
         ),
-        outer_continuous=OuterContinuousMargin(
-            state="lagged_effort",
-            action="effort",
-            post_decision_state="new_lagged_effort",
-            no_adjustment="keep_effort",
-        ),
+        outer_continuous=_paper_outer_margin(),
         solver=build_paper_solver(outer_search=outer_search),
     )
 

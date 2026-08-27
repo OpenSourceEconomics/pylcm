@@ -276,6 +276,7 @@ def root_functions(
     - the regime transition — every cell of a per-target dict, or the coarse
       callable;
     - every value-constraint predicate;
+    - every Pareto weight declared as a function;
     - every `same_period_refs` projection;
     - for each gated edge *whose target is this regime*, the edge's gate, its
       gate-reference projections, and its legs' fallback projections.
@@ -381,11 +382,22 @@ def _transition_roots(
 
 
 def _value_aware_roots(*, regime: UserRegime) -> dict[str, UserFunction]:
-    """Key a collective regime's value constraints and same-period projections."""
+    """Key a collective regime's household declarations.
+
+    Its value constraints, its same-period projections, and its Pareto weights
+    — a weight is evaluated on this regime's grid at every cell, so a state it
+    reads is as much an input of the regime as one the utility reads.
+    """
     roots = {
         f"__value_constraint__{name}": predicate
         for name, predicate in regime.value_constraints.items()
     }
+    if regime.pareto_objective is not None:
+        roots |= {
+            f"__pareto_weight__{name}": cast("UserFunction", weight)
+            for name, weight in regime.pareto_objective.weights.items()
+            if callable(weight)
+        }
     roots |= {
         f"__same_period_ref__{ref_name}__{state_name}": projection
         for ref_name, ref in regime.same_period_refs.items()
@@ -409,10 +421,19 @@ def _incoming_edge_roots(
             for ref_name, ref in edge.gate_refs.items()
             for state_name, projection in ref.projection.items()
         }
+        # Both phases of a `Phased` fallback are rooted: a state read only by
+        # the settlement projection is still read, and pruning it would leave
+        # the simulate leg with a coordinate it cannot form.
         roots |= {
-            f"__incoming_fallback__{source_name}__{leg_name}__{state_name}": projection
+            f"__incoming_fallback__{source_name}__{leg_name}__{phase}__{state_name}": (
+                projection
+            )
             for leg_name, leg in edge.legs.items()
-            for state_name, projection in leg.fallback.projection.items()
+            for phase, ref in (
+                ("solve", leg.solve_fallback),
+                ("simulate", leg.simulate_fallback),
+            )
+            for state_name, projection in ref.projection.items()
         }
     return roots
 

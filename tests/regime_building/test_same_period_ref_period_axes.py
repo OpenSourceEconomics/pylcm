@@ -47,7 +47,7 @@ from lcm import (
     categorical,
     fixed_transition,
 )
-from lcm.regime import Regime, SamePeriodRef
+from lcm.regime import ProjectedRegimeValue, Regime
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
@@ -192,7 +192,7 @@ def _make_model(*, later_ceiling: float) -> Model:
         functions={"utility_f": _couple_utility_f, "utility_m": _couple_utility_m},
         value_constraints={"participation_f": _participation_f},
         same_period_refs={
-            "V_single_f": SamePeriodRef(
+            "V_single_f": ProjectedRegimeValue(
                 regime="single_f", projection={"wealth": _project_wealth}
             )
         },

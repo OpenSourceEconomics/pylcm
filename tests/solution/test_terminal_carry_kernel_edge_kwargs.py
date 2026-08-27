@@ -31,14 +31,14 @@ import numpy as np
 from lcm import (
     AgeGrid,
     ConsumptionSavingsRegime,
-    EdgeLeg,
     GatedEdge,
     LinSpacedGrid,
     LiquidMargin,
     MarkovTransition,
     Model,
+    ProjectedRegimeValue,
     Regime,
-    SamePeriodRef,
+    StakeholderRoute,
     categorical,
 )
 from lcm.solvers import EGM, GridSearch
@@ -144,15 +144,15 @@ def _make_gated_regimes() -> dict[str, Regime]:
             "moved_terminal": GatedEdge(
                 gate=_move_gate,
                 legs={
-                    "own": EdgeLeg(
-                        fallback=SamePeriodRef(
+                    "own": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
                             regime="stay_terminal",
                             projection={"wealth": _identity_wealth},
                         ),
                     )
                 },
                 gate_refs={
-                    "V_stay_ref": SamePeriodRef(
+                    "V_stay_ref": ProjectedRegimeValue(
                         regime="stay_terminal",
                         projection={"wealth": _identity_wealth},
                     )

@@ -105,6 +105,9 @@ def _initial_conditions(model: Model) -> MappingProxyType:
             "regime_id": jnp.array(
                 [model.regime_names_to_ids["married"]] * _N_SUBJECTS, dtype=jnp.int32
             ),
+            "own_stakeholder": jnp.full(
+                _N_SUBJECTS, model.stakeholder_names_to_ids["f"], dtype=jnp.int32
+            ),
         }
     )
 
@@ -175,7 +178,6 @@ def test_the_documented_workflow_produces_a_frame(n_subjects: int | None):
         period_to_regime_to_dissolution_flags=dissolution_flags,
         log_level="debug",
         seed=0,
-        own_stakeholder="f",
     )
 
     df = result.to_dataframe()
@@ -203,7 +205,6 @@ def test_the_ahead_of_time_path_routes_the_same_subjects_as_the_ordinary_one():
             period_to_regime_to_dissolution_flags=dissolution_flags,
             log_level="debug",
             seed=0,
-            own_stakeholder="f",
         )
         frames[n_subjects] = result.to_dataframe()["regime_name"].tolist()
 

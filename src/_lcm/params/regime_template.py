@@ -7,6 +7,7 @@ from dags.tree import qname_from_tree_path, tree_path_from_qname
 
 from _lcm.grids import IrregSpacedGrid
 from _lcm.processes import _ContinuousStochasticProcess
+from _lcm.regime_building.collective import PARETO_OBJECTIVE_ENTRY
 from _lcm.regime_building.gated_edges import (
     EDGE_GATE_ENTRY,
     edge_gate_ref_entry,
@@ -21,8 +22,10 @@ from _lcm.typing import (
     StateName,
     TransitionFunctionName,
 )
+from _lcm.utils.functools import get_union_of_args
 from lcm.exceptions import InvalidNameError
 from lcm.phased import Phased
+from lcm.regime import GatedEdge, ProjectedRegimeValue
 from lcm.regime import Regime as UserRegime
 from lcm.transition import JointTransition, MarkovTransition
 from lcm.typing import UserFunction
@@ -32,6 +35,9 @@ def create_regime_params_template(
     user_regime: UserRegime,
     *,
     other_regime_state_names: frozenset[StateName] = frozenset(),
+    state_names_by_regime: Mapping[RegimeName, frozenset[StateName]] = MappingProxyType(
+        {}
+    ),
 ) -> RegimeParamsTemplate:
     """Create parameter template from a regime specification.
 
@@ -77,6 +83,11 @@ def create_regime_params_template(
             model. Their `next_<state>` forms are withheld from the parameter
             namespace so that a law reading one is adjudicated as a transition
             value rather than silently rebound to a parameter.
+        state_names_by_regime: State names declared by each regime of the model.
+            A gated edge's callables run on ONE target regime's grid, so the
+            names the engine binds for them come from that regime alone. Falls
+            back to `other_regime_state_names` for a caller that supplies no
+            per-regime breakdown.
 
     Returns:
         The regime parameter template with type annotations as values.
@@ -85,7 +96,7 @@ def create_regime_params_template(
     variables = {
         *set(user_regime.states),
         *set(user_regime.actions),
-        *user_regime.functions,
+        *user_regime.decomposed_functions,
         "period",
         "age",
         "CE",
@@ -154,9 +165,16 @@ def create_regime_params_template(
         name: template_key
         for name, (template_key, _func) in _gated_edge_entries(user_regime).items()
     }
-    edge_non_params = variables | _gated_edge_wired_names(
-        user_regime=user_regime, other_regime_state_names=other_regime_state_names
-    )
+    edge_non_params_by_target = {
+        target: variables
+        | _gated_edge_wired_names(
+            edge=edge,
+            target_state_names=state_names_by_regime.get(
+                target, other_regime_state_names
+            ),
+        )
+        for target, edge in user_regime.gated_edges.items()
+    }
 
     for name, func in _collect_all_functions_for_template(user_regime).items():
         # State and action names appearing in a function's signature are
@@ -167,7 +185,7 @@ def create_regime_params_template(
         # different one.
         is_edge_entry = name in edge_template_keys
         if is_edge_entry:
-            non_params = edge_non_params
+            non_params = edge_non_params_by_target[tree_path_from_qname(name)[-1]]
         elif tree_path_from_qname(name)[0] in transition_role:
             non_params = variables_in_transition_role
         else:
@@ -212,6 +230,7 @@ def create_regime_params_template(
 
     _add_koopmans_aggregator_params(function_params, user_regime)
     _add_certainty_equivalent_params(function_params, user_regime)
+    _add_pareto_objective_params(function_params, user_regime)
 
     top_level_collisions = set(function_params) & set(per_target_params)
     if top_level_collisions:
@@ -438,7 +457,7 @@ def _fail_if_a_joint_node_is_read_outside_its_transition(
                 consumer_name=name,
                 reserved=_joint_nodes_reachable_from(
                     func,
-                    user_regime.functions,
+                    user_regime.decomposed_functions,
                     phase=phase,
                     joint_node_names=joint_node_names,
                 ),
@@ -461,7 +480,7 @@ def _fail_if_a_joint_node_is_read_outside_its_transition(
                         consumer_name=consumer_name,
                         reserved=_joint_nodes_reachable_from(
                             func,
-                            user_regime.functions,
+                            user_regime.decomposed_functions,
                             phase=phase,
                             joint_node_names=joint_node_names,
                         ),
@@ -473,7 +492,7 @@ def _fail_if_a_joint_node_is_read_outside_its_transition(
                     _fail_if_joint_role_reads_a_next_output(
                         consumer_name=consumer_name,
                         reserved=_next_names_reachable_from(
-                            func, user_regime.functions, phase=phase
+                            func, user_regime.decomposed_functions, phase=phase
                         ),
                     )
                     if role == "support":
@@ -517,7 +536,7 @@ def _fail_if_joint_support_reads_runtime_names(
     forbidden = {
         *user_regime.states,
         *user_regime.actions,
-        *user_regime.functions,
+        *user_regime.decomposed_functions,
         *user_regime.constraints,
         *user_regime.value_constraints,
         "CE",
@@ -629,7 +648,7 @@ def _fail_if_a_next_name_is_read_outside_a_transition(user_regime: UserRegime) -
             _fail_if_a_next_name_is_read(
                 consumer_name=name,
                 reserved=_next_names_reachable_from(
-                    func, user_regime.functions, phase=phase
+                    func, user_regime.decomposed_functions, phase=phase
                 ),
             )
 
@@ -776,7 +795,7 @@ def _add_koopmans_aggregator_params(
     variables = {
         *set(user_regime.states),
         *set(user_regime.actions),
-        *user_regime.functions,
+        *user_regime.decomposed_functions,
         "period",
         "age",
         "utility",
@@ -784,6 +803,38 @@ def _add_koopmans_aggregator_params(
     }
     params = {k: v for k, v in sorted(tree.items()) if k not in variables}
     function_params["koopmans_aggregator"] = params
+
+
+def _add_pareto_objective_params(
+    function_params: dict[FunctionName, dict[str, str]],
+    user_regime: UserRegime,
+) -> None:
+    """Add the Pareto weights' free params under their pseudo-function name.
+
+    Every stakeholder's weight reads one shared namespace, so a weight named
+    in two of them is one parameter and appears once. A weight argument that
+    names a state, or the engine context, is wired at call time and never
+    surfaces.
+    """
+    objective = user_regime.pareto_objective
+    if objective is None:
+        return
+    if PARETO_OBJECTIVE_ENTRY in function_params:
+        raise InvalidNameError(
+            "The regime declares `pareto_objective`, whose parameters live "
+            f"under the pseudo-function name '{PARETO_OBJECTIVE_ENTRY}' in the "
+            "params — this conflicts with a regime function of the same name."
+        )
+    wired = {*user_regime.states, "period", "age"}
+    params = {
+        arg: "float"
+        for weight in objective.weights.values()
+        if callable(weight)
+        for arg in get_union_of_args([weight])
+        if arg not in wired
+    }
+    if params:
+        function_params[PARETO_OBJECTIVE_ENTRY] = dict(sorted(params.items()))
 
 
 def _add_certainty_equivalent_params(
@@ -986,10 +1037,14 @@ def _collect_all_functions_for_template(
     # The template reads the finalized regime, where `None` masks are
     # already resolved; the filters narrow the type.
     result: dict[FunctionName | TransitionFunctionName, UserFunction | Phased] = {
-        name: func for name, func in user_regime.functions.items() if func is not None
+        name: func
+        for name, func in user_regime.decomposed_functions.items()
+        if func is not None
     }
     result |= {
-        name: func for name, func in user_regime.constraints.items() if func is not None
+        name: func
+        for name, func in user_regime.decomposed_constraints.items()
+        if func is not None
     }
     # Value-constraint predicates carry user params exactly like ordinary
     # constraints; their engine-wired `Q_<s>` / reference-value arguments are
@@ -1070,36 +1125,58 @@ def _gated_edge_entries(
                 )
                 entries[entry] = (entry, projection)
         for leg_name, leg in edge.legs.items():
-            for state_name, projection in leg.fallback.projection.items():
-                entry = qname_from_tree_path(
-                    (
-                        edge_leg_fallback_entry(
-                            fallback_regime=leg.fallback.regime, state_name=state_name
-                        ),
-                        target_regime_name,
+            # A `Phased` fallback is two callables with two parameter sets, so
+            # each phase gets its own entry; a leg declaring one reference for
+            # both contributes the solve spelling once, exactly as before.
+            phases: tuple[
+                tuple[Literal["solve", "simulate"], ProjectedRegimeValue], ...
+            ] = (
+                (("solve", leg.solve_fallback), ("simulate", leg.simulate_fallback))
+                if leg.fallback_is_phased
+                else (("solve", leg.solve_fallback),)
+            )
+            for phase, ref in phases:
+                for state_name, projection in ref.projection.items():
+                    entry = qname_from_tree_path(
+                        (
+                            edge_leg_fallback_entry(
+                                fallback_regime=ref.regime,
+                                state_name=state_name,
+                                phase=phase,
+                            ),
+                            target_regime_name,
+                        )
                     )
-                )
-                per_callable = qname_from_tree_path(
-                    (f"leg_fallback_{leg_name}_{state_name}", target_regime_name)
-                )
-                entries[per_callable] = (entry, projection)
+                    per_callable = qname_from_tree_path(
+                        (
+                            f"{phase}_leg_fallback_{leg_name}_{state_name}",
+                            target_regime_name,
+                        )
+                    )
+                    entries[per_callable] = (entry, projection)
     return entries
 
 
 def _gated_edge_wired_names(
     *,
-    user_regime: UserRegime,
-    other_regime_state_names: frozenset[StateName],
+    edge: GatedEdge,
+    target_state_names: frozenset[StateName],
 ) -> set[str]:
-    """Return the names an edge callable reads that the engine binds itself.
+    """Return the names ONE edge's callables read that the engine binds itself.
 
-    A gate and a projection are evaluated on the TARGET regime's grid, so beyond
-    the source regime's own vocabulary they read names no user ever supplies:
+    A gate and a projection are evaluated on that edge's TARGET regime's grid, so
+    beyond the source regime's own vocabulary they read names no user supplies:
 
     - the target regime's states, which the fold binds from that regime's grids;
     - `D_target`, the target's dissolution flag;
-    - each key of the edge's `gate_refs`, bound to that reference's interpolated
+    - each key of THIS edge's `gate_refs`, bound to that reference's interpolated
       value.
+
+    The set is per edge because that is what makes the answer right. A name that
+    is engine-bound on one edge — the target's own state, another edge's
+    reference key, or any state of a regime this edge never reaches — is an
+    ordinary parameter here, and widening the set to a model-wide union drops it
+    from the template, leaving the gate reading a value nothing can supply.
 
     The target's own value components enter under the reserved `V_target`
     vocabulary and are recognised by `is_target_value_operand` instead, since
@@ -1107,18 +1184,15 @@ def _gated_edge_wired_names(
     anything the source declares.
 
     Args:
-        user_regime: User-form `Regime` instance.
-        other_regime_state_names: State names declared by any other regime of the
-            model, which is where an edge's target states come from.
+        edge: The gated edge whose callables are being discovered.
+        target_state_names: State names declared by that edge's target regime.
 
     Returns:
-        Set of the names an edge callable may read without them being parameters.
+        Set of the names this edge's callables may read without them being
+        parameters.
 
     """
-    wired = {"D_target", *other_regime_state_names}
-    for edge in user_regime.gated_edges.values():
-        wired |= set(edge.gate_refs)
-    return wired
+    return {"D_target", *target_state_names, *edge.gate_refs}
 
 
 def _drop_engine_provided_args(

@@ -857,11 +857,13 @@ def _scaled_bits_jvp(
 ) -> tuple[FloatND, FloatND]:
     """Scale the tangent by the same power of two the value is scaled by.
 
-    The tangent is an ordinary multiplication by the slope rather than the same
-    bit-level scaling, because reverse mode has to transpose it and a bitcast
-    has no transpose. The slope is exact wherever it is representable; past
-    that it is the infinity the true slope has overflowed to, which is the
-    honest answer for a map that has lifted a subnormal across the whole range.
+    Both spellings compute the same linear map, bit for bit. The tangent is an
+    ordinary multiplication by the slope because that spelling is the one JAX
+    can transpose: `bitcast_convert_type` carries no transpose rule, so a
+    tangent written as the bit-level scaling would leave the map forward-mode
+    only. The slope is exact wherever it is representable; past that it is the
+    infinity the true slope has overflowed to, which is the honest answer for a
+    map that has lifted a subnormal across the whole range.
     """
     values, shift = primals
     values_dot, _ = tangents
