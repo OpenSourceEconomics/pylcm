@@ -29,7 +29,8 @@ Important fields:
 - `max_nodes` and `max_refinement_rounds` are hard resource limits;
 - `batch_size` streams mesh nodes;
 - `value_atol` and `value_rtol` govern exact-versus-interpolated validation;
-- `local_refiner` and `golden_iterations` control local refinement;
+- `golden_iterations` controls local refinement, which is golden section inside a
+  bracket taken from the exact candidate mesh;
 - `outer_lipschitz_bound` upgrades mesh-relative validation to a global branch-and-bound
   certificate under the supplied Lipschitz constant;
 - `fail_closed=True` raises when refinement remains unresolved; `False` returns a
@@ -57,6 +58,10 @@ fixed adjustment cost through a non-negative `scale_function`. The shock must be
 observed before branch choice, must not change conditional actions, and must not enter
 state transitions except through that branch choice. It is supported with
 `AdaptiveOuterMesh` and needs no solve-state grid.
+
+A regime declaring it is **solve-only**. The solve integrates the observed cost
+analytically, and simulation cannot yet draw the shock and replay the contingent
+keeper/adjuster policy, so `Model.simulate()` raises `UnsupportedOperationError`.
 
 `BranchAggregateResult` contains expected value, adjustment and no-adjustment
 probabilities, and the cutoff draw. `OuterBranchAggregator` is the abstract

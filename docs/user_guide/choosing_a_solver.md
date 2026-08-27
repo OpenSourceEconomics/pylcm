@@ -69,7 +69,7 @@ flowchart TD
 | `DCEGM + ConsumptionSavingsRegime`        | One liquid Euler margin with a genuine resources node and optional discrete choice                   | Intrinsic budget and declared savings lower bound               | Off-grid Euler inversion plus an upper envelope; envelope work and simulation re-decision matter      |
 | `NBEGM + ConsumptionSavingsRegime`        | One liquid margin with supported declared kinks, jumps, hard boundaries, or smooth discrete branches | Supported structured boundary declarations; no EV1 taste shocks | Preserves topology that ordinary DCEGM cannot; more validation and candidate geometry                 |
 | `NEGM + NestedConsumptionSavingsRegime`   | A DCEGM liquid solve conditional on a finite outer candidate grid                                    | Inner DCEGM contract plus declared outer roles                  | Exact relative to the outer candidate set; work scales with its size                                  |
-| `NNBEGM + NestedConsumptionSavingsRegime` | An NBEGM liquid solve inside a finite or adaptive outer search                                       | Inner NBEGM contract plus supported outer search/aggregation    | Handles both declared inner boundaries and an outer margin; highest structural and computational cost |
+| `NNBEGM + NestedConsumptionSavingsRegime` | An NBEGM liquid solve inside a finite or adaptive outer search                                       | Inner NBEGM contract plus a supported outer search              | Handles both declared inner boundaries and an outer margin; highest structural and computational cost |
 
 Use `GridSearch` for genuinely coupled multi-dimensional choices, unsupported
 constraints, or any problem whose required structure cannot be declared honestly. It is
@@ -117,7 +117,7 @@ There is no universal break-even point. Benchmark the actual model and device. S
 | `DCEGM`      | Genuine resources or supported extra dimensions on one liquid margin | Savings grid, envelope, refinement/batching               |
 | `NEGM`       | `DCEGM` inner solve conditional on a finite outer grid               | Inner solver, outer grid, batch size                      |
 | `NBEGM`      | Declared liquid kinks, jumps, hard boundaries, or discrete branches  | Savings grid, jump read, comparison and batching controls |
-| `NNBEGM`     | Nested outer choice with inner `NBEGM`                               | Inner solver, outer search, branch aggregation            |
+| `NNBEGM`     | Nested outer choice with inner `NBEGM`                               | Inner solver, outer search, batch size                    |
 
 Exact constructors and limitations are in
 [Solvers and capabilities](../reference/solvers.md).

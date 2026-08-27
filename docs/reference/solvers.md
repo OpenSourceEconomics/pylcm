@@ -176,12 +176,15 @@ These fields bound only their named mapped work, not surrounding arrays or total
 ### `NNBEGM`
 
 ```python
-NNBEGM(inner=..., outer_search=..., branch_aggregator=...)
+NNBEGM(inner=..., outer_search=...)
 ```
 
 Nests an `NBEGM` liquid solve inside a configurable outer search. The inner solver must
 use a bridged carry compatible with the outer fold. See
 [Outer search and branch aggregation](outer_search.md).
+
+How the keeper and adjuster branches combine is an economic declaration, not a solver
+setting: it lives on [`OuterContinuousMargin.adjustment_cost`](consumption_savings.md).
 
 NNBEGM replays the keeper-plus-outer-grid candidates ranked during the solve. Every
 declaration that can affect that replay must therefore be phase-invariant by object

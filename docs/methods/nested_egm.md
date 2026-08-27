@@ -54,9 +54,11 @@ constraints inside every outer candidate. Its outer search is itself configurabl
   bound, its validation is mesh-relative rather than a proof against arbitrarily narrow
   unseen peaks.
 
-`NNBEGM` can also change how keeper and adjuster values aggregate. The default
-`DeterministicOuterMaximum` takes the hard maximum. `UniformObservedFixedCost`
-analytically integrates a narrowly specified observed uniform adjustment-cost shock.
+How keeper and adjuster values aggregate is declared on the margin, as
+`OuterContinuousMargin.adjustment_cost`, not on the solver. Leaving it unset takes the
+hard maximum; the solver only states whether its configured outer search can execute the
+implied aggregation. `UniformObservedFixedCost` analytically integrates a narrowly
+specified observed uniform adjustment-cost shock.
 
 Simulation replays that solve-time candidate bank. Current `NNBEGM` therefore requires
 every declaration affecting replay to be phase-invariant by object identity: a bare

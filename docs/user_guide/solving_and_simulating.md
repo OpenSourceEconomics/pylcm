@@ -232,10 +232,11 @@ df = pd.DataFrame(
 - Codes come from `model.stakeholder_names_to_ids` — one vocabulary for the whole model,
   so a role means the same thing in every regime. It is empty for a model with no
   collective regime.
-- The entry is required for subjects who **start** in a collective regime whose gated
-  routes differ by stakeholder. Omitting it there raises `InvalidInitialConditionsError`
-  rather than defaulting to whichever partner was declared first, and a code that is
-  valid model-wide but names no stakeholder of that regime is rejected too.
+- The entry is required for subjects who **start** in a collective regime declaring a
+  value-dependent transition with more than one route. Omitting it there raises
+  `InvalidInitialConditionsError` rather than defaulting to whichever partner was
+  declared first, and a code that is valid model-wide but names no stakeholder of that
+  regime is rejected too.
 - A subject starting in a singleton regime occupies no role and needs no entry. It is
   given one on entering a collective regime, from the `target_stakeholder` of the
   `StakeholderRoute` it takes, and loses it again on landing in a singleton regime.
@@ -289,8 +290,10 @@ df = result.to_dataframe()
 ```
 
 Returns a pandas DataFrame with columns: `subject_id`, `period`, `age`, `regime_name`,
-`value`, plus all states and actions. Discrete variables are pandas Categorical with
-string labels.
+`value`, plus all states and actions. An NNBEGM regime adds `nested_policy_fallback`:
+`True` on a row means the off-grid nested policy read was refused and the grid-argmax
+pair kept instead, so inference must refuse whenever any entry is `True`. Discrete
+variables are pandas Categorical with string labels.
 
 A model with a collective regime publishes two further things. An `own_stakeholder`
 column names the role each row occupies — in every regime, not only the collective ones,

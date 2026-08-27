@@ -55,8 +55,15 @@ outer = lcm.OuterContinuousMargin(
     action="next_durable",
     post_decision_state="durable_after_choice",
     no_adjustment=lcm.outer_unchanged,
+    adjustment_cost=None,
 )
 ```
+
+`adjustment_cost` declares how the keeper and adjuster branches combine at this margin.
+`None` means adjusting is free at the margin and the branches combine by the
+deterministic maximum; `UniformObservedFixedCost(...)` declares an i.i.d. uniform cost
+observed before the branch choice and integrates it analytically. See
+[Outer search and branch aggregation](outer_search.md).
 
 `no_adjustment` is either a named DAG function or the `outer_unchanged` sentinel when
 the outer stock literally remains unchanged. Use the sentinel instead of an identity
