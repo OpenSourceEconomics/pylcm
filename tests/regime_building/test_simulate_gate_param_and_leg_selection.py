@@ -74,8 +74,8 @@ from _lcm.regime_building.gated_edges import (
 )
 from _lcm.regime_building.Q_and_F import SAME_PERIOD_PARAMS_ARG, SAME_PERIOD_V_ARG
 from _lcm.simulation.gated_routing import (
-    _bind_provenance_params,
     _call_vmapped_with_accepted_kwargs,
+    bind_provenance_params,
     route_gated_edges,
     substitute_gated_edge_continuations,
 )
@@ -342,7 +342,7 @@ def test_gate_reads_target_grid_points_not_the_source_s_same_named_ones():
     caller can deliver one where the other belongs. What IS replayed is the
     VALUE such a binding delivers: the target's interpolation helper fed the
     source's points, which is what a merge produces and what
-    `_bind_provenance_params` cannot.
+    `bind_provenance_params` cannot.
     """
     regimes, regime_names_to_ids, flat_params, solution = _solve_f2_fixture()
     src = regimes["src"]
@@ -421,7 +421,7 @@ def test_gate_reads_target_grid_points_not_the_source_s_same_named_ones():
             evaluator,
             batched_kwargs=candidate_target_states,
             static_kwargs={
-                **_bind_provenance_params(
+                **bind_provenance_params(
                     evaluator.arg_provenance,
                     flat_params=flat_params,
                     source_name="src",
@@ -440,7 +440,7 @@ def test_gate_reads_target_grid_points_not_the_source_s_same_named_ones():
     # The provenance binder is what delivers the target's own points to the
     # target's interpolator, with the source's same-named param present in
     # `flat_params` throughout and unable to reach that leaf.
-    bound = _bind_provenance_params(
+    bound = bind_provenance_params(
         evaluator.arg_provenance,
         flat_params=flat_params,
         source_name="src",

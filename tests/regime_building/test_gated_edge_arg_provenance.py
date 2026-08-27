@@ -70,8 +70,8 @@ from _lcm.regime_building.Q_and_F import (
 )
 from _lcm.regime_building.V import create_v_interpolation_info, get_V_interpolator
 from _lcm.simulation.gated_routing import (
-    _bind_provenance_params,
     _call_vmapped_with_accepted_kwargs,
+    bind_provenance_params,
     route_gated_edges,
     substitute_gated_edge_continuations,
 )
@@ -414,7 +414,7 @@ def test_gate_ref_projection_param_absent_from_the_target_still_routes():
         )
 
     # ...and the provenance binder finds it in the namespace that owns it.
-    bound = _bind_provenance_params(
+    bound = bind_provenance_params(
         evaluator.arg_provenance,
         flat_params=flat_params,
         source_name="src",
@@ -595,7 +595,7 @@ def test_simulate_projector_equals_the_solve_folds_projected_coordinate():
     target_states = {"x": jnp.array([0.0, 1.0])}
     simulated = projector(
         **{name: target_states[name] for name in projector.arg_provenance.states},
-        **_bind_provenance_params(
+        **bind_provenance_params(
             projector.arg_provenance,
             flat_params=flat_params,
             source_name="src",

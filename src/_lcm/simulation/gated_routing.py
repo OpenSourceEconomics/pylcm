@@ -388,7 +388,7 @@ def route_gated_edges(
                 simulate_gate_evaluator,
                 batched_kwargs=candidate_target_states,
                 static_kwargs={
-                    **_bind_provenance_params(
+                    **bind_provenance_params(
                         simulate_gate_evaluator.arg_provenance,  # ty: ignore[unresolved-attribute]
                         flat_params=flat_params,
                         source_name=regime.name,
@@ -468,7 +468,7 @@ def route_gated_edges(
                     projector,
                     batched_kwargs=candidate_target_states,
                     static_kwargs={
-                        **_bind_provenance_params(
+                        **bind_provenance_params(
                             projector_provenance,
                             flat_params=flat_params,
                             source_name=regime.name,
@@ -549,7 +549,7 @@ def _per_row_leg_outcomes(
     return fallback_id, open_role, closed_role
 
 
-def _bind_provenance_params(
+def bind_provenance_params(
     provenance: EdgeArgProvenance,
     *,
     flat_params: FlatParams,
@@ -627,6 +627,26 @@ def _call_vmapped_with_accepted_kwargs(
     Passing the population size explicitly makes the stateless case a
     legal broadcast instead of a crash.
     """
+    batched, static = split_population_call_args(
+        func, batched_kwargs=batched_kwargs, static_kwargs=static_kwargs
+    )
+    return population_call(func, axis_size=axis_size)(batched, static)
+
+
+def split_population_call_args(
+    func: Callable,
+    *,
+    batched_kwargs: Mapping[str, object],
+    static_kwargs: Mapping[str, object],
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Filter both kwarg pools down to what `func` accepts, `static` winning.
+
+    The two dicts are the positional pair a population call is invoked with,
+    so ahead-of-time compilation has to lower against exactly the pair the
+    router later dispatches. Both go through this one function, which is what
+    keeps a compiled program's signature and its call site from drifting
+    apart.
+    """
     accepted = _accepted_arg_names(func)
     static = {name: value for name, value in static_kwargs.items() if name in accepted}
     batched = {
@@ -634,7 +654,17 @@ def _call_vmapped_with_accepted_kwargs(
         for name, value in batched_kwargs.items()
         if name in accepted and name not in static
     }
-    return _population_call(func, axis_size=axis_size)(batched, static)
+    return batched, static
+
+
+def install_population_call(func: Callable, *, axis_size: int, call: Callable) -> None:
+    """Install `call` as the population call `func` is invoked through.
+
+    Ahead-of-time compilation lowers and compiles a gate evaluator before
+    `simulate()` runs and installs the compiled program here, so the router's
+    first call dispatches it instead of tracing and compiling on the spot.
+    """
+    _POPULATION_CALLS.setdefault(func, {})[axis_size] = call
 
 
 # What each edge callable was built once and for all with. Weakly keyed, so a
@@ -658,7 +688,7 @@ def _accepted_arg_names(func: Callable) -> frozenset[str]:
     return accepted
 
 
-def _population_call(func: Callable, *, axis_size: int) -> Callable:
+def population_call(func: Callable, *, axis_size: int) -> Callable:
     """Return `func` mapped over a population of `axis_size` subjects, compiled.
 
     Built ONCE per `(func, axis_size)` and reused for every later call.

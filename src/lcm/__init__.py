@@ -105,7 +105,14 @@ from lcm.certainty_equivalent import (  # noqa: E402
     PowerMean,
     QuasiArithmeticMean,
 )
-from lcm.collective import ParetoObjective  # noqa: E402
+from lcm.collective import (  # noqa: E402
+    CollectiveUtility,
+    ParetoObjective,
+    ProjectedRegimeValue,
+    StakeholderRoute,
+    ValueDependentConstraint,
+    ValueDependentTransition,
+)
 from lcm.condition import Condition, implies, ref  # noqa: E402
 from lcm.consumption_savings_regime import (  # noqa: E402
     ConsumptionSavingsRegime,
@@ -191,6 +198,7 @@ __all__ = [
     "AgeSpecializedGrid",
     "CESAggregator",
     "CertaintyEquivalent",
+    "CollectiveUtility",
     "Condition",
     "ConsumptionSavingsRegime",
     "DiscreteGrid",
@@ -218,6 +226,7 @@ __all__ = [
     "PiecewiseLinSpacedGrid",
     "PiecewiseLogSpacedGrid",
     "PowerMean",
+    "ProjectedRegimeValue",
     "QuasiArithmeticMean",
     "Regime",
     "RouwenhorstAR1Process",
@@ -225,10 +234,13 @@ __all__ = [
     "SimulateSnapshot",
     "SimulationResult",
     "SolveSnapshot",
+    "StakeholderRoute",
     "StateConditioned",
     "TauchenAR1Process",
     "TauchenNormalMixtureAR1Process",
     "UniformIIDProcess",
+    "ValueDependentConstraint",
+    "ValueDependentTransition",
     "__version__",
     "affine_breakpoint",
     "case_boundary",

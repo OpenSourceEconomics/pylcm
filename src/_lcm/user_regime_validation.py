@@ -1024,7 +1024,11 @@ def _validate_function_output_grid_indexing(
     # whatever it computed (typically an array indexable by `grid`) and
     # the consumer pattern is correct.
     function_inputs = _function_input_names(
-        {name: func for name, func in regime.functions.items() if func is not None}
+        {
+            name: func
+            for name, func in regime.decomposed_functions.items()
+            if func is not None
+        }
     )
     consumers = _collect_indexing_consumers(regime)
 
@@ -1080,11 +1084,11 @@ def _collect_indexing_consumers(
     `Phased`; the regime transition contributes itself.
     """
     consumers: list[tuple[str, Callable]] = []
-    for name, func in regime.functions.items():
+    for name, func in regime.decomposed_functions.items():
         if func is None:
             continue
         consumers.extend((name, variant) for variant in _function_variants(func))
-    for name, constraint in regime.constraints.items():
+    for name, constraint in regime.decomposed_constraints.items():
         if constraint is None:
             continue
         consumers.extend((name, variant) for variant in _function_variants(constraint))
@@ -1694,8 +1698,8 @@ def _fold_scope_errors(
 def _fold_resolution_table(regime: lcm.regime.Regime) -> dict[str, Callable | Phased]:
     """Regime functions/constraints usable as DAG-ancestor resolution targets."""
     return {
-        **{k: v for k, v in regime.constraints.items() if v is not None},
-        **{k: v for k, v in regime.functions.items() if v is not None},
+        **{k: v for k, v in regime.decomposed_constraints.items() if v is not None},
+        **{k: v for k, v in regime.decomposed_functions.items() if v is not None},
     }
 
 

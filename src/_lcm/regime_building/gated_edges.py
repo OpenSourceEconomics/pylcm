@@ -2596,7 +2596,7 @@ def build_same_period_mapping_for_fold(
         f"{edge.target}{D_KEY_SUFFIX}": (
             jnp.asarray(d_flag, dtype=float)
             if d_flag is not None
-            else _unsupplied_dissolution_flag(edge=edge, target_V=target_V)
+            else unsupplied_dissolution_flag(edge=edge, target_V=target_V)
         ),
     }
     for regime_name in edge.reference_regimes:
@@ -2604,7 +2604,7 @@ def build_same_period_mapping_for_fold(
     return MappingProxyType(mapping)
 
 
-def _unsupplied_dissolution_flag(
+def unsupplied_dissolution_flag(
     *, edge: ResolvedGatedEdge, target_V: FloatND
 ) -> FloatND:
     """Return the stand-in flag array for a target that supplied none.

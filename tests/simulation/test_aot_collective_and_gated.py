@@ -10,7 +10,10 @@ have to be the arrays simulate actually dispatches:
   every continuation template built for a collective target carries it too;
 - a regime declaring `gated_edges` chooses its action against the gated
   continuation `Wbar`, which is one stakeholder's leg of the target's value
-  and therefore carries no stakeholder axis at all.
+  and therefore carries no stakeholder axis at all;
+- routing that regime's rows re-evaluates the gate at the realized candidate
+  target state, and that evaluator is compiled ahead of time too, so the
+  first routed period dispatches a program rather than tracing one.
 
 Both models below are small enough that every simulated value is an exact
 arithmetic expression, stated in the factory's docstring.
@@ -21,6 +24,7 @@ import jax.numpy as jnp
 import numpy as np
 from numpy.testing import assert_array_almost_equal as aaae
 
+from _lcm.simulation.gated_routing import population_call
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -114,6 +118,31 @@ def test_gated_edge_model_simulates_under_the_aot_program():
     assert tuple(routed) == CONSENT_PERIOD_1_REGIMES
 
 
+def test_gate_evaluators_are_compiled_before_the_first_simulated_period():
+    """A gated model's gate evaluators are AOT programs, not traced on first use.
+
+    The router re-evaluates the gate at the realized candidate target state
+    once per edge per period, and that evaluation is a compiled program of its
+    own. Leaving it out of ahead-of-time compilation would move a trace and a
+    compile into the first routed period — the one place a fixed batch size is
+    meant to have paid for already.
+    """
+    model = _make_consent_model(n_subjects=_N_SUBJECTS)
+
+    model.simulate(
+        params={"discount_factor": _DISCOUNT_FACTOR},
+        initial_conditions={
+            "education": jnp.array([Education.low, Education.high], dtype=jnp.int32),
+            "age": jnp.zeros(_N_SUBJECTS),
+            "regime_id": jnp.full(_N_SUBJECTS, ConsentRegimeId.single, dtype=jnp.int32),
+        },
+        period_to_regime_to_V_arr=None,
+        log_level="debug",
+    )
+
+    assert _uncompiled_gate_evaluators(model=model, n_subjects=_N_SUBJECTS) == []
+
+
 def _fail_if_aot_programs_missing(*, model: Model, n_subjects: int) -> None:
     """Raise unless every dispatched decision function is an AOT program.
 
@@ -138,6 +167,28 @@ def _fail_if_aot_programs_missing(*, model: Model, n_subjects: int) -> None:
     if interpreted:
         msg = f"these decision functions were not AOT-compiled: {interpreted}"
         raise AssertionError(msg)
+
+
+def _uncompiled_gate_evaluators(*, model: Model, n_subjects: int) -> list[str]:
+    """Return a label per gate evaluator that is not an AOT program."""
+    cached = model._simulate_compile_cache[n_subjects]
+    return [
+        f"{regime_name} -> {target_name} (fold period {fold_period})"
+        for regime_name, regime in cached.items()
+        for target_name, edge in regime.gated_edges.items()
+        for fold_period in (
+            period + 1
+            for period in regime.active_periods
+            if period + 1 < model.n_periods
+        )
+        if not isinstance(
+            population_call(
+                edge.simulate_gate_evaluator_at(period=fold_period),
+                axis_size=n_subjects,
+            ),
+            jax.stages.Compiled,
+        )
+    ]
 
 
 @categorical(ordered=True)

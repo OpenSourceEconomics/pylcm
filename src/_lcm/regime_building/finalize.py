@@ -103,7 +103,7 @@ def finalize_regimes(
             user_regime=user_regime,
             derived_categoricals=derived_categoricals,
         )
-        functions = dict(user_regime.functions)
+        functions = dict(user_regime.decomposed_functions)
         _compose_case_piece_outputs(functions=functions)
         _compose_margin_resources(
             regime_name=regime_name,

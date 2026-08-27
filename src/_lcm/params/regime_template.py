@@ -96,7 +96,7 @@ def create_regime_params_template(
     variables = {
         *set(user_regime.states),
         *set(user_regime.actions),
-        *user_regime.functions,
+        *user_regime.decomposed_functions,
         "period",
         "age",
         "CE",
@@ -457,7 +457,7 @@ def _fail_if_a_joint_node_is_read_outside_its_transition(
                 consumer_name=name,
                 reserved=_joint_nodes_reachable_from(
                     func,
-                    user_regime.functions,
+                    user_regime.decomposed_functions,
                     phase=phase,
                     joint_node_names=joint_node_names,
                 ),
@@ -480,7 +480,7 @@ def _fail_if_a_joint_node_is_read_outside_its_transition(
                         consumer_name=consumer_name,
                         reserved=_joint_nodes_reachable_from(
                             func,
-                            user_regime.functions,
+                            user_regime.decomposed_functions,
                             phase=phase,
                             joint_node_names=joint_node_names,
                         ),
@@ -492,7 +492,7 @@ def _fail_if_a_joint_node_is_read_outside_its_transition(
                     _fail_if_joint_role_reads_a_next_output(
                         consumer_name=consumer_name,
                         reserved=_next_names_reachable_from(
-                            func, user_regime.functions, phase=phase
+                            func, user_regime.decomposed_functions, phase=phase
                         ),
                     )
                     if role == "support":
@@ -536,7 +536,7 @@ def _fail_if_joint_support_reads_runtime_names(
     forbidden = {
         *user_regime.states,
         *user_regime.actions,
-        *user_regime.functions,
+        *user_regime.decomposed_functions,
         *user_regime.constraints,
         *user_regime.value_constraints,
         "CE",
@@ -648,7 +648,7 @@ def _fail_if_a_next_name_is_read_outside_a_transition(user_regime: UserRegime) -
             _fail_if_a_next_name_is_read(
                 consumer_name=name,
                 reserved=_next_names_reachable_from(
-                    func, user_regime.functions, phase=phase
+                    func, user_regime.decomposed_functions, phase=phase
                 ),
             )
 
@@ -795,7 +795,7 @@ def _add_koopmans_aggregator_params(
     variables = {
         *set(user_regime.states),
         *set(user_regime.actions),
-        *user_regime.functions,
+        *user_regime.decomposed_functions,
         "period",
         "age",
         "utility",
@@ -1037,10 +1037,14 @@ def _collect_all_functions_for_template(
     # The template reads the finalized regime, where `None` masks are
     # already resolved; the filters narrow the type.
     result: dict[FunctionName | TransitionFunctionName, UserFunction | Phased] = {
-        name: func for name, func in user_regime.functions.items() if func is not None
+        name: func
+        for name, func in user_regime.decomposed_functions.items()
+        if func is not None
     }
     result |= {
-        name: func for name, func in user_regime.constraints.items() if func is not None
+        name: func
+        for name, func in user_regime.decomposed_constraints.items()
+        if func is not None
     }
     # Value-constraint predicates carry user params exactly like ordinary
     # constraints; their engine-wired `Q_<s>` / reference-value arguments are

@@ -178,10 +178,10 @@ with its law of motion in `state_transitions` like any other state's.
 
 ### Gate references and leg fallbacks on an age-specialized regime
 
-A `GatedEdge` reads other regimes' values within one period — its `gate_refs` read a
-reference regime's value function, and a shut gate reads the leg's `fallback` regime's
-value at a projected coordinate. Either regime may hold its states on an
-`AgeSpecializedGrid`.
+A `ValueDependentTransition` reads other regimes' values within one period — its
+`gate_references` read a reference regime's value function, and a shut gate reads the
+route's `fallback` regime's value at a projected coordinate. Either regime may hold its
+states on an `AgeSpecializedGrid`.
 
 Every such read is measured against the grid of **the period whose value is being
 folded**, not against some other age at which that regime is also active. This is worth
@@ -190,12 +190,13 @@ fixed across ages while the bounds move, so every period's value array has the s
 shape, and a read against another age's nodes lands on a different point of an otherwise
 correctly shaped array.
 
-A leg's `fallback` projection owes one coordinate function per state the fallback regime
-carries **in simulation**, and an age-specialized state is one of those like any other:
+A route's `fallback` projection owes one coordinate function per state the fallback
+regime carries **in simulation**, and an age-specialized state is one of those like any
+other:
 
 ```python
-EdgeLeg(
-    fallback=SamePeriodRef(
+StakeholderRoute(
+    fallback=ProjectedRegimeValue(
         regime="annuity",
         # `annuity` holds `principal` on an `AgeSpecializedGrid`. The projection
         # owes a coordinate on it exactly as it would on a plain grid state.
@@ -204,6 +205,6 @@ EdgeLeg(
 )
 ```
 
-A `gate_refs` projection instead owes one coordinate per state of the reference regime's
-*value function*, i.e. its solve states. The two sets differ only by the states a regime
-carries in simulation alone.
+A `gate_references` projection instead owes one coordinate per state of the reference
+regime's *value function*, i.e. its solve states. The two sets differ only by the states
+a regime carries in simulation alone.
