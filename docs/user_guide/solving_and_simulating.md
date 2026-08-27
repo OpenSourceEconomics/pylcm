@@ -162,6 +162,63 @@ initial_conditions = {
 - All arrays must have the same length (= number of agents).
 - Shock states are drawn automatically.
 
+### Household roles
+
+In a model with a collective regime, every simulated row carries a *role*: which
+stakeholder of the household that row is. The role belongs to the row, not to the run —
+one cohort holds both partners at once — and it decides which regime the row moves to
+when the household dissolves. Seed it with an `"own_stakeholder"` entry alongside the
+states:
+
+```python
+initial_conditions = {
+    "age": jnp.full(4, model.ages.values[0]),
+    "wealth": jnp.array([1.0, 5.0, 10.0, 20.0]),
+    "regime_id": jnp.full(4, model.regime_names_to_ids["couple"], dtype=jnp.int32),
+    "own_stakeholder": jnp.array(
+        [
+            model.stakeholder_names_to_ids["f"],
+            model.stakeholder_names_to_ids["m"],
+            model.stakeholder_names_to_ids["f"],
+            model.stakeholder_names_to_ids["m"],
+        ],
+        dtype=jnp.int32,
+    ),
+}
+```
+
+As a DataFrame the same column carries stakeholder *labels*, converted to codes like any
+other discrete column:
+
+```python
+df = pd.DataFrame(
+    {
+        "regime_name": ["couple", "couple"],
+        "age": [25.0, 25.0],
+        "wealth": [1.0, 5.0],
+        "own_stakeholder": ["f", "m"],
+    }
+)
+```
+
+- Codes come from `model.stakeholder_names_to_ids` — one vocabulary for the whole model,
+  so a role means the same thing in every regime. It is empty for a model with no
+  collective regime.
+- The entry is required for subjects who **start** in a collective regime that can reach
+  one declaring a value-dependent transition with more than one route — its own, or one
+  further along, since a row keeps its role across an ordinary regime transition.
+  Omitting it there raises `InvalidInitialConditionsError` rather than defaulting to
+  whichever partner was declared first, and a code that is valid model-wide but names no
+  stakeholder of that regime is rejected too. A collective start that can never arrive
+  at such a transition needs no entry.
+- A subject starting in a singleton regime occupies no role and needs no entry. It is
+  given one on entering a collective regime, from the `target_stakeholder` of the
+  `StakeholderRoute` it takes, and loses it again on landing in a singleton regime.
+
+See
+[Collective regimes](collective_regimes.md#simulating-every-row-carries-its-own-role)
+for the full rules.
+
 ### Further arguments
 
 - `log_level`: Required. Console verbosity and runtime-validation policy (same options

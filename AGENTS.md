@@ -406,6 +406,69 @@ regime level, never both (ambiguity errors, also when the grids match). Function
 as derived categoricals must return **integer** types, not booleans — JAX cannot use
 booleans as array indices inside JIT. Use `jnp.int32(...)` to cast.
 
+### Collective regimes and value-dependent choice
+
+A regime whose utility is a `CollectiveUtility` has **stakeholders** — the `utilities`
+keys, in insertion order, which fix the trailing axis of `V` and of every published
+array. Everything is declared in a slot the regime already has:
+
+```python
+Regime(
+    transition={
+        "couple": ValueDependentTransition(  # goes in `transition`, keyed by TARGET
+            probability=MarkovTransition(stays_married),
+            gate=no_dissolution,  # Boolean predicate on the target's grid
+            routes={"f": StakeholderRoute(target_stakeholder="f", fallback=alone_f)},
+            gate_references={
+                "V_alone_f": ProjectedRegimeValue(
+                    regime="single_f", projection={"wealth": half_of_wealth}
+                )
+            },
+            off_grid="pointwise",  # or "reject"
+        )
+    },
+    functions={"utility": CollectiveUtility(utilities={"f": u_f, "m": u_m})},
+    constraints={
+        "participation_f": ValueDependentConstraint(  # goes in `constraints`
+            predicate=participation_f,
+            references={
+                "V_alone_f": ProjectedRegimeValue(
+                    regime="single_f", projection={"wealth": half_of_wealth}
+                )
+            },
+        )
+    },
+)
+```
+
+- **The transition key is always the GATE-OPEN target.** A dissolution edge is keyed by
+  the *continuing* collective regime under `gate = ~D_target`. Keying it by the
+  singleton would send both partners there whenever the couple stays together.
+- `routes` is keyed by **source** stakeholder; a singleton source declares exactly one
+  route. Each route owns four destinations: the open regime (the dict key) and role
+  (`target_stakeholder`), and the closed regime and role (`fallback.regime`,
+  `fallback.stakeholder`).
+- Gate operands: `V_target` (singleton target) / `V_target_<s>` (collective target), and
+  `D_target`, which is **collective-only** — reading it on a singleton target is refused
+  at model build. The Boolean-dtype requirement is checked **at evaluation**, i.e. on
+  the first `solve()`, not at build.
+- `ParetoObjective(weights=...)` scalarizes the household; a weight may read the
+  regime's states and `period`/`age`, never an action. Its other arguments become free
+  parameters under the `pareto_objective` key. Omit it for equal weights.
+- A constraint-local projection may introduce **no** free parameter (refused when the
+  `Regime` is constructed); an edge projection's free arguments become that edge's
+  params, nested under the target name.
+- Stakeholder identity is **per row**: seed `initial_conditions["own_stakeholder"]`
+  whenever the starting regime's forward closure contains a collective regime declaring
+  a transition with more than one route. A row keeps its role across an ordinary regime
+  transition, so a two-leg route it runs into later demands the seed, while one in a
+  regime the cohort can never reach demands nothing. It is published as an
+  `own_stakeholder` column, missing for singleton rows.
+- `GatedEdge`, `stakeholders`, `value_constraints`, `same_period_refs` and `gated_edges`
+  are the **lowered** form these declarations decompose into. Write the declarations.
+
+See `docs/user_guide/collective_regimes.md`.
+
 ### Case-piece solver (NB-EGM)
 
 `NBEGM` (from `lcm.solvers`) is the endogenous-grid solver for a 1-D consumption-saving

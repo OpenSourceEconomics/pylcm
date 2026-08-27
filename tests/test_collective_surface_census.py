@@ -39,6 +39,7 @@ _ENGINE_LEVEL_MODULES = frozenset(
         "tests/regime_building/test_gated_edge_arg_provenance.py",
         "tests/regime_building/test_gated_edge_gate_process_state_interpolation.py",
         "tests/regime_building/test_gated_edge_simulate_operand_recompute.py",
+        "tests/regime_building/test_pareto_normalization_overflow.py",
         "tests/regime_building/test_route_conditions_on_ordinary_draw.py",
         "tests/regime_building/test_same_period_ref_process_state_interpolation.py",
         "tests/regime_building/test_same_period_ref_projection_free_params.py",

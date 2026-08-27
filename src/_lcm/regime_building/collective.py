@@ -356,13 +356,30 @@ def build_pareto_weights(
     def compute(**kwargs: _ParamsLeaf) -> dict[str, FloatND]:
         raw = declared_weights(**kwargs)
         if normalization == "pointwise" and len(raw) > 1:
+            stacked = jnp.stack(jnp.broadcast_arrays(*raw.values()), axis=0)
+            # Bring the weights down to (0, 1] before summing. Nothing in the
+            # admissibility contract bounds how large a finite weight may be,
+            # and a raw total that leaves the working format sends every share
+            # to zero — which ties the stakeholders and lets the household take
+            # an action no declared weighting ranks first.
+            #
+            # The rescale is a power of two applied with `ldexp`, not a divide
+            # by the largest weight. Division would be evaluated as a multiply
+            # by the reciprocal, and the reciprocal of a weight near the format
+            # maximum is subnormal, which XLA:CPU flushes to zero — turning
+            # every share into `0/0`. Scaling by an exponent never forms that
+            # reciprocal and is exact, so an ordinary declaration keeps the
+            # ratio it already had.
+            _, exponent = jnp.frexp(jnp.max(stacked, axis=0))
+            scaled = jnp.ldexp(stacked, -exponent)
             # Stakeholder names are economically inert, so the total is summed
             # in value order: relabelling the household must not select a
-            # different reduction tree and hence a different normalizer.
-            total = sum_in_value_order(
-                jnp.stack(jnp.broadcast_arrays(*raw.values()), axis=0)
-            )
-            return {name: weight / total for name, weight in raw.items()}
+            # different reduction tree and hence a different normalizer. The
+            # scale is itself order-invariant, so it does not reintroduce one.
+            total = sum_in_value_order(scaled)
+            return {
+                name: share / total for name, share in zip(raw, scaled, strict=True)
+            }
         return raw
 
     return ParetoWeights(

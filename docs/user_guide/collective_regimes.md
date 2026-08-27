@@ -257,12 +257,15 @@ edge; the branch it takes then sets the role it carries onward.
 
 - A subject starting in a **singleton** regime has no role.
 - A subject starting in a **collective** regime declares one, through
-  `initial_conditions["own_stakeholder"]`, whenever the model routes by role — that is,
-  whenever some collective regime declares an edge whose legs differ by stakeholder. If
-  no route can turn on the role, none is required.
-- Entering a collective regime through a gated edge sets the role from the route's
-  `target_stakeholder`; leaving through the closed branch sets it from the fallback's
-  `stakeholder`, or clears it for a singleton destination.
+  `initial_conditions["own_stakeholder"]`, whenever a route it can still reach turns on
+  the role — that is, whenever some collective regime in the starting regime's forward
+  closure declares a value-dependent transition with more than one route. A row keeps
+  its role across an ordinary regime transition, so a two-leg transition the cohort runs
+  into later counts; one in a regime the cohort can never arrive at does not, and no
+  seed is required for it.
+- Entering a collective regime through a value-dependent transition sets the role from
+  the route's `target_stakeholder`; leaving through the closed branch sets it from the
+  fallback's `stakeholder`, or clears it for a singleton destination.
 
 ```python
 initial_conditions = {

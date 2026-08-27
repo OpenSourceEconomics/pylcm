@@ -9,18 +9,27 @@ each divorced husband simulated as his wife, with her regime and her state.
 
 `initial_conditions["own_stakeholder"]` names that role, one entry per subject,
 and a subject starting in a collective regime must carry one wherever a route
-can differ by role — that is, wherever some collective regime declares a gated
-edge with more than one leg. A singleton source declares a single leg carrying
-no role at all, and a collective regime with no role-dependent route has
-nothing for a role to select, so a cohort starting in either needs none and
-simulates unchanged.
+it can still reach differs by role. A row keeps its role across an ordinary
+regime transition, so that question is asked over the start's forward closure:
+a two-leg edge the cohort runs into later demands a seed, and one in a regime
+the cohort can never arrive at demands nothing. A singleton source declares a
+single leg carrying no role at all, so a cohort starting there needs none
+either, and both unseeded cases simulate unchanged.
 """
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from lcm import AgeGrid, Model, categorical
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    MarkovTransition,
+    Model,
+    Regime,
+    categorical,
+    fixed_transition,
+)
 from lcm.exceptions import InvalidInitialConditionsError
 from lcm.typing import ScalarInt
 from tests.collective_fixtures import (
@@ -30,9 +39,13 @@ from tests.collective_fixtures import (
 from tests.regime_building.test_collective_regime_simulate import (
     _BETA,
     _DISSOLUTION_PARAMS,
+    _WAGE_3,
     DissolutionRegimeId,
+    Work,
     _make_consent_regimes,
     _make_dissolution_regimes,
+    _prob_one,
+    _u_zero_collective,
 )
 
 # The three wage nodes the dissolution miniature is solved on. Its participation
@@ -222,3 +235,168 @@ def _simulate_dissolution_cohort(*, setup, own_stakeholder):
         log_level="off",
         seed=0,
     )
+
+
+@categorical(ordered=False)
+class UnreachableRoleRoutingRegimeId:
+    """Regime ids of the model whose role-routing regime no start can reach."""
+
+    alone: ScalarInt
+    alone_terminal: ScalarInt
+    married: ScalarInt
+    married_ir: ScalarInt
+    married_terminal: ScalarInt
+    single_f: ScalarInt
+    single_f_terminal: ScalarInt
+    single_m: ScalarInt
+    single_m_terminal: ScalarInt
+
+
+def _make_unreachable_role_routing_regimes():
+    """Add a collective start that cannot reach the two-leg dissolution edge.
+
+    `alone` carries the same stakeholders as `married` and runs out into its own
+    terminal regime. Its per-target transition names `alone_terminal` alone, so
+    no path leads from it to `married` and none of `married`'s legs can ever
+    select on a role a subject started in `alone` with.
+    """
+    alone = Regime(
+        transition={"alone_terminal": MarkovTransition(_prob_one)},
+        active=lambda age: age < 1,
+        stakeholders=("f", "m"),
+        states={"wage": _WAGE_3},
+        state_transitions={"wage": fixed_transition("wage")},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility_f": _u_zero_collective, "utility_m": _u_zero_collective},
+    )
+    alone_terminal = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        stakeholders=("f", "m"),
+        states={"wage": _WAGE_3},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility_f": _u_zero_collective, "utility_m": _u_zero_collective},
+    )
+    return {
+        "alone": alone,
+        "alone_terminal": alone_terminal,
+        **_make_dissolution_regimes(),
+    }
+
+
+def test_a_start_that_cannot_reach_a_role_dependent_route_needs_no_own_role():
+    """A collective cohort is seeded for its own routes, not the model's.
+
+    The role a subject starts with selects among the legs of a gated edge it
+    can actually arrive at. A collective regime elsewhere in the model whose
+    edge does distinguish roles decides nothing for a cohort that can never
+    reach it, so demanding a seed on its account refuses a well specified
+    model over a column that would go unread.
+    """
+    model = Model(
+        regimes=_make_unreachable_role_routing_regimes(),
+        ages=AgeGrid(start=0, stop=3, step="Y"),
+        regime_id_class=UnreachableRoleRoutingRegimeId,
+    )
+    solution, dissolution_flags = model.solve(
+        params=_DISSOLUTION_PARAMS, log_level="off", return_dissolution_flags=True
+    )
+
+    result = model.simulate(
+        params=_DISSOLUTION_PARAMS,
+        initial_conditions={
+            "wage": jnp.asarray(DISSOLUTION_WAGES),
+            "age": jnp.zeros(len(DISSOLUTION_WAGES)),
+            "regime_id": jnp.full(
+                len(DISSOLUTION_WAGES),
+                model.regime_names_to_ids["alone"],
+                dtype=jnp.int32,
+            ),
+        },
+        period_to_regime_to_V_arr=solution,
+        period_to_regime_to_dissolution_flags=dissolution_flags,
+        log_level="off",
+        seed=0,
+    )
+
+    np.testing.assert_array_equal(
+        np.asarray(result.raw_results["alone_terminal"][1].in_regime),
+        np.asarray([True, True, True]),
+    )
+
+
+@categorical(ordered=False)
+class ReachableRoleRoutingRegimeId:
+    """Regime ids of the model whose start runs into the role-routing regime."""
+
+    prelude: ScalarInt
+    married: ScalarInt
+    married_ir: ScalarInt
+    married_terminal: ScalarInt
+    single_f: ScalarInt
+    single_f_terminal: ScalarInt
+    single_m: ScalarInt
+    single_m_terminal: ScalarInt
+
+
+def _shift_dissolution_one_age() -> dict:
+    """Move the dissolution miniature one age later, freeing age 0 for a start."""
+    regimes = _make_dissolution_regimes()
+    windows = {
+        "married": lambda age: (age >= 1) & (age < 2),
+        "married_ir": lambda age: (age >= 2) & (age < 3),
+        "married_terminal": lambda age: age >= 3,
+        "single_f": lambda age: (age >= 2) & (age < 3),
+        "single_f_terminal": lambda age: age >= 3,
+        "single_m": lambda age: (age >= 2) & (age < 3),
+        "single_m_terminal": lambda age: age >= 3,
+    }
+    return {
+        name: regime.replace(active=windows[name]) for name, regime in regimes.items()
+    }
+
+
+def test_a_start_that_runs_into_a_role_dependent_route_still_needs_an_own_role():
+    """A role is demanded wherever a subject can still arrive at a two-leg edge.
+
+    A row keeps the role it started with across an ordinary regime transition,
+    so a collective start that declares no role-dependent route of its own but
+    runs into a regime that does is exactly the case the seed answers. Reading
+    only the start regime's own edges would let such a cohort simulate with
+    every row following one partner's dissolution path.
+    """
+    prelude = Regime(
+        transition={"married": MarkovTransition(_prob_one)},
+        active=lambda age: age < 1,
+        stakeholders=("f", "m"),
+        states={"wage": _WAGE_3},
+        state_transitions={"wage": fixed_transition("wage")},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility_f": _u_zero_collective, "utility_m": _u_zero_collective},
+    )
+    model = Model(
+        regimes={"prelude": prelude, **_shift_dissolution_one_age()},
+        ages=AgeGrid(start=0, stop=4, step="Y"),
+        regime_id_class=ReachableRoleRoutingRegimeId,
+    )
+    solution, dissolution_flags = model.solve(
+        params=_DISSOLUTION_PARAMS, log_level="off", return_dissolution_flags=True
+    )
+
+    with pytest.raises(InvalidInitialConditionsError, match="prelude"):
+        model.simulate(
+            params=_DISSOLUTION_PARAMS,
+            initial_conditions={
+                "wage": jnp.asarray(DISSOLUTION_WAGES),
+                "age": jnp.zeros(len(DISSOLUTION_WAGES)),
+                "regime_id": jnp.full(
+                    len(DISSOLUTION_WAGES),
+                    model.regime_names_to_ids["prelude"],
+                    dtype=jnp.int32,
+                ),
+            },
+            period_to_regime_to_V_arr=solution,
+            period_to_regime_to_dissolution_flags=dissolution_flags,
+            log_level="off",
+            seed=0,
+        )

@@ -30,6 +30,7 @@ from _lcm.engine import (
     StateActionSpace,
 )
 from _lcm.grids import ContinuousGrid, DiscreteGrid
+from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.collective import NO_ROLE
 from _lcm.regime_building.ndimage import map_coordinates
 from _lcm.regime_building.Q_and_F import SAME_PERIOD_PARAMS_ARG
@@ -2590,6 +2591,34 @@ vmapped_unravel_index = jax.jit(
 )
 
 
+def _regimes_reachable_from(
+    *, start: RegimeName, reachability: PhaseReachability
+) -> frozenset[RegimeName]:
+    """Return `start` and every regime a subject starting there can end up in.
+
+    The walk is over the construction-time graph's period-union, so a regime
+    stays in the closure when any period retains the edge that leads to it.
+    That is the conservative direction for a question about what a subject
+    might yet encounter.
+
+    Args:
+        start: The regime a subject begins in.
+        reachability: The simulate phase's static regime graph.
+
+    Returns:
+        Frozen set of reachable regime names, including `start` itself.
+
+    """
+    closure = {start}
+    frontier = [start]
+    while frontier:
+        for target in reachability.union_targets(source=frontier.pop()):
+            if target not in closure:
+                closure.add(target)
+                frontier.append(target)
+    return frozenset(closure)
+
+
 def _initial_own_stakeholder(
     *,
     initial_conditions: InitialConditions,
@@ -2605,12 +2634,20 @@ def _initial_own_stakeholder(
     collective start without it is refused rather than defaulted to whichever
     stakeholder happens to be declared first.
 
-    The seed is demanded exactly where the answer turns on it. A role selects
-    among a gated edge's legs, so a model whose collective regimes declare no
-    edge with more than one leg has no route, regime or state projection that
-    can differ by role, and a cohort starting there needs no seed. A subject
-    starting in a singleton regime occupies no role either. Both default to
-    `NO_ROLE`.
+    The seed is demanded exactly where the answer turns on it, which is a
+    property of the starting regime rather than of the model:
+
+    - A role selects among a gated edge's legs, so it is read only where some
+      regime the cohort can still arrive at declares an edge with more than one
+      leg. A row keeps its role across an ordinary regime transition, so the
+      question is asked over the start's forward closure, not over its own
+      edges alone.
+    - A collective start whose closure contains no such edge has no route,
+      regime or state projection that can differ by role, and needs no seed —
+      a role-routing regime elsewhere in the model decides nothing for it.
+    - A subject starting in a singleton regime occupies no role either.
+
+    Both unseeded cases default to `NO_ROLE`.
 
     Args:
         initial_conditions: The user's flat initial conditions.
@@ -2622,8 +2659,8 @@ def _initial_own_stakeholder(
 
     Raises:
         InvalidInitialConditionsError: A subject starts with no role in a
-            collective regime whose model routes by role, or carries a code the
-            model's vocabulary does not define.
+            collective regime that can reach one routing by role, or carries a
+            code the model's vocabulary does not define.
     """
     regime_ids = initial_conditions["regime_id"]
     role_ids = next(
@@ -2633,31 +2670,43 @@ def _initial_own_stakeholder(
     collective_names = [
         name for name, regime in regimes.items() if regime.stakeholders is not None
     ]
-    collective_ids = [int(regime_names_to_ids[name]) for name in collective_names]
-    starts_collective = (
-        jnp.isin(regime_ids, jnp.asarray(collective_ids, dtype=regime_ids.dtype))
-        if collective_ids
-        else jnp.zeros_like(regime_ids, dtype=bool)
-    )
-
-    role_dependent_routes = [
+    role_routing = frozenset(
         name
+        for name, regime in regimes.items()
+        if any(len(edge.legs) > 1 for edge in regime.gated_edges.values())
+    )
+    reachability = next(iter(regimes.values())).simulation.reachability
+    starts_needing_a_role = {
+        name: sorted(
+            _regimes_reachable_from(start=name, reachability=reachability)
+            & role_routing
+        )
         for name in collective_names
-        if any(len(edge.legs) > 1 for edge in regimes[name].gated_edges.values())
-    ]
+    }
+    starts_needing_a_role = {
+        name: routes for name, routes in starts_needing_a_role.items() if routes
+    }
 
     declared = initial_conditions.get("own_stakeholder")
     if declared is None:
-        if role_dependent_routes and bool(jnp.any(starts_collective)):
+        occupied = sorted(
+            name
+            for name in starts_needing_a_role
+            if bool(jnp.any(regime_ids == regime_names_to_ids[name]))
+        )
+        if occupied:
+            reachable_routes = sorted(
+                {name for start in occupied for name in starts_needing_a_role[start]}
+            )
             msg = (
-                "Subjects starting in one of the collective regimes "
-                f"{collective_names} need an `own_stakeholder` entry in "
-                "`initial_conditions`, naming the role each one occupies (one "
-                f"of {dict(role_ids)}). The collective regimes "
-                f"{role_dependent_routes} declare a gated edge whose legs "
-                "differ by stakeholder, and which partner a row is decides "
-                "which of them it takes — so it is a modelling decision rather "
-                "than something the engine may pick."
+                f"Subjects starting in the collective regime(s) {occupied} need "
+                "an `own_stakeholder` entry in `initial_conditions`, naming the "
+                f"role each one occupies (one of {dict(role_ids)}). They can "
+                f"reach the collective regime(s) {reachable_routes}, which "
+                "declare a gated edge whose legs differ by stakeholder, and "
+                "which partner a row is decides which of them it takes — so it "
+                "is a modelling decision rather than something the engine may "
+                "pick."
             )
             raise InvalidInitialConditionsError(msg)
         return jnp.full_like(regime_ids, NO_ROLE, dtype=jnp.int32)
