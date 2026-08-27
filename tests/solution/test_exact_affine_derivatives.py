@@ -423,12 +423,12 @@ def test_certified_read_carries_the_slope_in_forward_mode(dtype) -> None:
 
 @pytest.mark.parametrize("dtype", _DTYPES)
 def test_certified_read_refuses_reverse_mode(dtype) -> None:
-    """Reverse mode is unavailable: the fail-closed rule has no transpose.
+    """Reverse mode is unavailable because no reverse rule is registered.
 
-    The published tangent is NaN unless the direction is finite, so the rule
-    reads its tangent instead of applying a fixed linear map to it, and reverse
-    mode has nothing to transpose. Callers needing `jax.grad` use
-    `arithmetic="ordinary"`.
+    On finite directions the affine differential is linear and has a
+    mathematical transpose. The custom JVP also inspects tangent finiteness, so
+    JAX cannot automatically transpose the registered rule. Callers needing
+    `jax.grad` use `arithmetic="ordinary"`.
     """
     q = jnp.asarray(0.25, dtype=dtype)
     with pytest.raises((AssertionError, TypeError, ValueError)):
