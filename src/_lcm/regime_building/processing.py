@@ -652,6 +652,13 @@ def process_regimes(  # noqa: PLR0915
                     ref.regime for ref in user_regime.same_period_refs.values()
                 )
             )
+            # A gated edge's gate references and leg fallbacks are read where
+            # the SOURCE lands, inside the source's own kernel — but the value
+            # they name belongs to the period the source lands IN. Backward
+            # induction has already solved that period, so these regimes need
+            # no ordering constraint, only their own grid params threaded to
+            # the kernel beside the rolled V arrays.
+            edge_reference_regimes = _edge_reference_regimes(user_regime)
             # One resolution, both phases: the value-aware feasibility mask the
             # solved value function applied is the mask the simulated argmax
             # chooses under, so the two phases share the object rather than each
@@ -711,6 +718,7 @@ def process_regimes(  # noqa: PLR0915
                 stakeholders=stakeholders,
                 pareto_weights=pareto_weights,
                 same_period_ref_regimes=same_period_ref_regimes,
+                edge_reference_regimes=edge_reference_regimes,
                 edge_target_regimes=tuple(user_regime.gated_edges),
                 fold_state_names=fold_state_names,
                 fold_only_regimes=fold_only_regimes,
@@ -775,6 +783,7 @@ def process_regimes(  # noqa: PLR0915
                 stakeholders=stakeholders,
                 stakeholder_names_to_ids=stakeholder_names_to_ids,
                 same_period_ref_regimes=same_period_ref_regimes,
+                edge_reference_regimes=edge_reference_regimes,
                 fold_state_names=fold_state_names,
             )
         return canonical_regimes
@@ -852,6 +861,7 @@ def _gated_continuation_specs(
                         n_channels=edge.channels.count,
                         combine=edge.combine.combine,
                         gate_state_names=edge.combine.gate_state_names,
+                        projected_readers=edge.combine.projected_readers,
                         target_ages=target_ages,
                     )
                     for target, edge in regime.gated_edges.items()
@@ -1250,6 +1260,37 @@ def _resolve_gated_edge(
         legs=tuple(legs),
         reference_regimes=reference_regimes,
     )
+
+
+def _edge_reference_regimes(user_regime: UserRegime) -> tuple[RegimeName, ...]:
+    """Return the regimes one regime's gated edges read a projected value from.
+
+    Both a gate reference and a leg fallback name another regime's CURRENT
+    period value at projected coordinates. Neither is tabulated on the target's
+    grid, so both are read where the source lands, and the reading happens in
+    the source's own kernel.
+
+    Args:
+        user_regime: The finalized user regime whose edges are inspected.
+
+    Returns:
+        Tuple of referenced regime names, deduplicated, in declaration order.
+
+    """
+    names: list[RegimeName] = []
+    for edge in user_regime.gated_edges.values():
+        names.extend(ref.regime for ref in edge.gate_refs.values())
+        for leg in edge.legs.values():
+            fallback = leg.fallback
+            names.extend(
+                side.regime
+                for side in (
+                    (fallback.solve, fallback.simulate)
+                    if isinstance(fallback, Phased)
+                    else (fallback,)
+                )
+            )
+    return tuple(dict.fromkeys(names))
 
 
 def _resolve_pareto_weights(user_regime: UserRegime) -> ParetoWeights | None:
@@ -2374,6 +2415,7 @@ def _build_solution_phase(
     stakeholders: tuple[str, ...] | None = None,
     pareto_weights: ParetoWeights | None = None,
     same_period_ref_regimes: tuple[RegimeName, ...] = (),
+    edge_reference_regimes: tuple[RegimeName, ...] = (),
     edge_target_regimes: tuple[RegimeName, ...] = (),
     fold_state_names: tuple[StateName, ...] = (),
     fold_only_regimes: frozenset[RegimeName] = frozenset(),
@@ -2662,6 +2704,7 @@ def _build_solution_phase(
         stakeholders=stakeholders,
         pareto_weights=pareto_weights,
         same_period_ref_regimes=same_period_ref_regimes,
+        edge_reference_regimes=edge_reference_regimes,
         edge_target_regimes=edge_target_regimes,
         fold_state_names=fold_state_names,
     )

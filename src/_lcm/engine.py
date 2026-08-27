@@ -864,6 +864,17 @@ class Regime:
     a singleton regime carries — it occupies no household's role.
     """
 
+    edge_reference_regimes: tuple[RegimeName, ...] = ()
+    """Regimes a gated edge reads a projected value from, or empty.
+
+    A gate reference and a leg fallback both name another regime's value at
+    coordinates a projection produces. Neither is tabulated on the target's
+    grid, so both are read where the source lands — inside the source's own
+    kernel — at the value of the period the source lands in. The rolled V
+    mapping already carries that array; these names are what pick it out and
+    thread each reference regime's OWN grid params beside it.
+    """
+
     same_period_ref_regimes: tuple[RegimeName, ...] = ()
     """Regimes whose SAME-period V this regime's solve kernel reads, or empty.
 

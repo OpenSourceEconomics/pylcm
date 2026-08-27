@@ -699,6 +699,20 @@ def get_Q_and_F_terminal_collective(
 # The name under which the mapping of same-period
 # reference regimes to their current-period V arrays enters the kernel
 # signature. Only regimes declaring `same_period_refs` carry it.
+# Kernel argument holding each edge-reference regime's value array. A gated
+# edge's gate references and leg fallbacks are read where the SOURCE lands, but
+# the value they name belongs to the period the source lands IN. Backward
+# induction has already solved that period, so the arrays arrive here rolled
+# forward — and from the RAW rolled mapping, never the edge-substituted one,
+# because a reference regime may also be an edge target whose entry the
+# substitution replaces with that edge's `Wbar`.
+EDGE_REF_V_ARG = "edge_reference_regime_to_V_arr"
+
+# Each edge-reference regime's OWN flat params, keyed by regime. Same split as
+# `SAME_PERIOD_PARAMS_ARG`: the projection's free arguments belong to the
+# reading regime, the interpolation helpers to the reference regime's own grid.
+EDGE_REF_PARAMS_ARG = "edge_reference_regime_to_params"
+
 SAME_PERIOD_V_ARG = "same_period_regime_to_V_arr"
 
 # The name under which the mapping of
@@ -737,6 +751,30 @@ EDGE_CHANNELS_ARG = "__edge_channels__"
 
 
 @dataclass(frozen=True, kw_only=True)
+class ProjectedLandingReader:
+    """One projected reference or leg fallback, read AT the source's landing.
+
+    A projection maps the target's states onto another regime's grid, so the
+    value it names is `V_ref(projection(landing))`. Evaluating it here — rather
+    than tabulating it on the target's grid and interpolating that surface —
+    is what makes the number the source collects the number the branch pays.
+    The two orders coincide only when the projection is affine.
+    """
+
+    name: str
+    """Keyword the branch combiner receives this value under."""
+
+    reader: Callable[..., FloatND]
+    """Reads the referenced regime's V at the projected coordinates."""
+
+    state_args: tuple[StateName, ...]
+    """Target states the projection reads, supplied at the landing point."""
+
+    other_args: tuple[str, ...]
+    """The reader's remaining arguments — params and the same-period mappings."""
+
+
+@dataclass(frozen=True, kw_only=True)
 class GatedContinuationSpec:
     """What a source needs in order to read one gated target's continuation.
 
@@ -752,6 +790,9 @@ class GatedContinuationSpec:
 
     gate_state_names: tuple[StateName, ...]
     """Target states the gate reads, supplied at the landing point."""
+
+    projected_readers: tuple[ProjectedLandingReader, ...] = ()
+    """Gate references and leg fallbacks, read at the landing point."""
 
     target_ages: Float1D
     """Age at each model period, indexed by the period the gate is read in.
@@ -831,6 +872,8 @@ def _build_same_period_ref_reader(
     deterministic_transitions: Mapping[TransitionFunctionName, TransitionFunction] = (
         MappingProxyType({})
     ),
+    v_mapping_arg: str = SAME_PERIOD_V_ARG,
+    params_mapping_arg: str = SAME_PERIOD_PARAMS_ARG,
 ) -> Callable[..., FloatND]:
     """Build the reader of one same-period reference value at a (state, action) cell.
 
@@ -925,13 +968,13 @@ def _build_same_period_ref_reader(
     )
     arg_names = sorted(
         {arg for args in projection_args.values() for arg in args}
-        | {SAME_PERIOD_V_ARG, SAME_PERIOD_PARAMS_ARG}
+        | {v_mapping_arg, params_mapping_arg}
     )
 
     @with_signature(args=arg_names, return_annotation="FloatND")
     def read_reference_value(**kwargs: _ParamsLeaf) -> FloatND:
-        same_period_V = cast("Mapping[RegimeName, FloatND]", kwargs[SAME_PERIOD_V_ARG])
-        V_ref = same_period_V[ref.regime]
+        regime_to_V = cast("Mapping[RegimeName, FloatND]", kwargs[v_mapping_arg])
+        V_ref = regime_to_V[ref.regime]
         if ref.stakeholder_index is not None:
             # A collective reference V carries a trailing stakeholder axis;
             # read the declared stakeholder's slice (state axes only remain).
@@ -946,7 +989,7 @@ def _build_same_period_ref_reader(
             **coordinates,
             **_lookup_reference_params(
                 qnames=interpolator_extra_qnames,
-                regime_to_params=kwargs[SAME_PERIOD_PARAMS_ARG],
+                regime_to_params=kwargs[params_mapping_arg],
                 ref_regime=ref.regime,
             ),
             **{_REF_V_ARR_NAME: V_ref},
@@ -1488,6 +1531,7 @@ def _get_pointwise_gated_interpolator(
     n_channels: int,
     combine: Callable[..., FloatND],
     gate_state_names: tuple[StateName, ...],
+    projected_readers: tuple[ProjectedLandingReader, ...],
     target_ages: Float1D,
     co_map_state_names: tuple[StateName, ...],
 ) -> Callable[..., FloatND]:
@@ -1512,6 +1556,11 @@ def _get_pointwise_gated_interpolator(
         combine: The edge's gate, applied to the interpolated channels.
         gate_state_names: Target states the gate reads, supplied at the landing
             point under their own names.
+        projected_readers: Gate references and leg fallbacks. Each is evaluated
+            here, at the landing, rather than read off a channel: its projection
+            maps onto ANOTHER regime's grid, so tabulating it on the target's
+            grid would leave the source interpolating `V_ref o projection` where
+            the branch pays `V_ref(projection(landing))`.
         target_ages: Age at each model period, indexed by the fold period.
         co_map_state_names: States whose axes the caller sliced off, so no
             coordinate for them reaches this signature.
@@ -1538,7 +1587,14 @@ def _get_pointwise_gated_interpolator(
     interpolator_args = tuple(get_union_of_args([base_interpolator]))
     combine_args = tuple(get_union_of_args([combine]))
     context_args = _EDGE_CONTEXT_ARGS & set(combine_args)
-    landing_names = {name: f"next_{name}" for name in gate_state_names}
+    reader_names = {reader.name for reader in projected_readers}
+    landing_names = {
+        name: f"next_{name}"
+        for name in {
+            *gate_state_names,
+            *(arg for reader in projected_readers for arg in reader.state_args),
+        }
+    }
     last_period = len(target_ages) - 1
     outer_arg_names = sorted(
         (
@@ -1548,9 +1604,16 @@ def _get_pointwise_gated_interpolator(
                 for name in combine_args
                 if name not in context_args
             }
+            | {
+                landing_names[arg]
+                for reader in projected_readers
+                for arg in reader.state_args
+            }
+            | {arg for reader in projected_readers for arg in reader.other_args}
             | ({"period"} if context_args else set())
         )
         - {EDGE_CHANNELS_ARG}
+        - reader_names
     )
 
     @with_signature(args=outer_arg_names, return_annotation="FloatND")
@@ -1568,6 +1631,15 @@ def _get_pointwise_gated_interpolator(
             ],
             axis=-1,
         )
+        # Each projected reference is read HERE, at the landing coordinates,
+        # so the source collects the number its branch actually pays.
+        projected_values = {
+            reader.name: reader.reader(
+                **{arg: kwargs[landing_names[arg]] for arg in reader.state_args},
+                **{arg: kwargs[arg] for arg in reader.other_args},
+            )
+            for reader in projected_readers
+        }
         context: dict[str, FloatND] = {}
         if context_args:
             # The gate speaks about the period the source LANDS in. Clipping
@@ -1579,12 +1651,13 @@ def _get_pointwise_gated_interpolator(
             context = {"period": target_period, "age": target_ages[target_period]}
         return combine(
             **{EDGE_CHANNELS_ARG: channels},
+            **projected_values,
             **{
                 name: context[name]
                 if name in context_args
                 else kwargs[landing_names.get(name, name)]
                 for name in combine_args
-                if name != EDGE_CHANNELS_ARG
+                if name != EDGE_CHANNELS_ARG and name not in reader_names
             },
         )
 
@@ -2390,6 +2463,7 @@ def _build_target_continuation(
             n_channels=gated_continuation.n_channels,
             combine=gated_continuation.combine,
             gate_state_names=gated_continuation.gate_state_names,
+            projected_readers=gated_continuation.projected_readers,
             target_ages=gated_continuation.target_ages,
             co_map_state_names=co_map_state_names,
         )

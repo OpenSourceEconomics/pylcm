@@ -33,7 +33,12 @@ from _lcm.grids import ContinuousGrid, DiscreteGrid
 from _lcm.reachability import PhaseReachability
 from _lcm.regime_building.collective import NO_ROLE
 from _lcm.regime_building.ndimage import map_coordinates
-from _lcm.regime_building.Q_and_F import SAME_PERIOD_PARAMS_ARG
+from _lcm.regime_building.Q_and_F import (
+    EDGE_REF_PARAMS_ARG,
+    EDGE_REF_V_ARG,
+    SAME_PERIOD_PARAMS_ARG,
+    SAME_PERIOD_V_ARG,
+)
 from _lcm.simulation.additional_targets import _compute_targets
 from _lcm.simulation.gated_routing import (
     route_gated_edges,
@@ -588,7 +593,55 @@ def _require_next_period_values(
     )
 
 
-def _simulate_regime_in_period(  # noqa: C901
+def _referenced_value_kwargs(
+    *,
+    regime: Regime,
+    period_to_regime_to_V_arr: Mapping[int, Mapping[RegimeName, FloatND]],
+    flat_params: FlatParams,
+    period: int,
+) -> dict[str, object]:
+    """Build the value mappings one regime's kernel reads beside its own grids.
+
+    Two channels, each empty for a regime that declares nothing on it, and each
+    carrying the referenced value together with the reference regime's OWN
+    params — the split the solve-side grid-search kernel makes, so both phases
+    read one operator:
+
+    - a value constraint's same-period reference, at THIS period's value;
+    - a gated edge's gate references and leg fallbacks, read where the row
+      lands and therefore at the value of the period it lands IN.
+
+    Args:
+        regime: The canonical regime being simulated.
+        period_to_regime_to_V_arr: Solved values, by period and regime.
+        flat_params: Immutable mapping of regime names to flat params.
+        period: The period the row decides in; it lands in the next one.
+
+    Returns:
+        Mapping of engine argument names to their per-regime mappings.
+
+    """
+    kwargs: dict[str, object] = {}
+    if regime.same_period_ref_regimes:
+        this_period_V = period_to_regime_to_V_arr.get(period, MappingProxyType({}))
+        kwargs[SAME_PERIOD_V_ARG] = MappingProxyType(
+            {ref: this_period_V[ref] for ref in regime.same_period_ref_regimes}
+        )
+        kwargs[SAME_PERIOD_PARAMS_ARG] = MappingProxyType(
+            {ref: flat_params[ref] for ref in regime.same_period_ref_regimes}
+        )
+    if regime.edge_reference_regimes:
+        landing_V = period_to_regime_to_V_arr.get(period + 1, MappingProxyType({}))
+        kwargs[EDGE_REF_V_ARG] = MappingProxyType(
+            {ref: landing_V[ref] for ref in regime.edge_reference_regimes}
+        )
+        kwargs[EDGE_REF_PARAMS_ARG] = MappingProxyType(
+            {ref: flat_params[ref] for ref in regime.edge_reference_regimes}
+        )
+    return kwargs
+
+
+def _simulate_regime_in_period(
     *,
     regime_name: RegimeName,
     regime: Regime,
@@ -772,17 +825,12 @@ def _simulate_regime_in_period(  # noqa: C901
     else:
         argmax_and_max_Q_over_a = regime.simulation.argmax_and_max_Q_over_a[period]
 
-        # Same-period references carry both the referenced value and that
-        # regime's own params, matching the solve-side grid-search kernel.
-        same_period_kwargs: dict[str, object] = {}
-        if regime.same_period_ref_regimes:
-            this_period_V = period_to_regime_to_V_arr.get(period, MappingProxyType({}))
-            same_period_kwargs["same_period_regime_to_V_arr"] = MappingProxyType(
-                {ref: this_period_V[ref] for ref in regime.same_period_ref_regimes}
-            )
-            same_period_kwargs[SAME_PERIOD_PARAMS_ARG] = MappingProxyType(
-                {ref: flat_params[ref] for ref in regime.same_period_ref_regimes}
-            )
+        same_period_kwargs = _referenced_value_kwargs(
+            regime=regime,
+            period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+            flat_params=flat_params,
+            period=period,
+        )
 
         taste_shock_kwargs = {}
         if regime.has_taste_shocks:

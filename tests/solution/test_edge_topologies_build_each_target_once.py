@@ -57,14 +57,12 @@ class _MockEdge:
     channels: EdgeChannels
 
 
-def _edge(*, n_components: int = 1, n_legs: int = 1) -> _MockEdge:
-    """An edge whose continuation stacks `n_components + n_legs` channels."""
+def _edge(*, n_components: int = 1) -> _MockEdge:
+    """An edge whose continuation stacks `n_components` channels."""
     return _MockEdge(
         channels=EdgeChannels(
             component_names=tuple(f"V_target_{i}" for i in range(n_components)),
             has_dissolution=False,
-            gate_ref_names=(),
-            n_legs=n_legs,
         )
     )
 
@@ -131,8 +129,10 @@ def test_both_edges_still_get_their_topology(sharding_plan_calls):  # noqa: ARG0
 def test_a_shared_target_gives_both_edges_the_same_shape(sharding_plan_calls):  # noqa: ARG001
     """The shared topology is the target's grid plus each edge's channel axis.
 
-    Both edges here stack one target component and one leg fallback, so both
-    read `(4, 2)`: the target's four nodes, and two operands per node.
+    Both edges here stack one target component, so both read `(4, 1)`: the
+    target's four nodes, and one operand per node. A leg fallback is not an
+    operand here — it projects onto another regime's grid and is read where the
+    source lands, so it never joins the target-grid stack.
     """
     regimes = _two_sources_one_target()
     flat_params = MappingProxyType(dict.fromkeys(regimes, MappingProxyType({})))
@@ -144,7 +144,7 @@ def test_a_shared_target_gives_both_edges_the_same_shape(sharding_plan_calls):  
         )
     }
 
-    assert shapes == {(4, 2)}
+    assert shapes == {(4, 1)}
 
 
 def test_the_trailing_axis_is_the_edges_own_channel_count(sharding_plan_calls):  # noqa: ARG001
@@ -153,15 +153,13 @@ def test_the_trailing_axis_is_the_edges_own_channel_count(sharding_plan_calls): 
     The continuation array holds the operands the gate and the branches are
     built from, so the source reads them at its landing point and gates them
     there. A collective source's two roles are produced by that gate, not
-    stored: the edge below stacks two target components and two leg fallbacks
-    and so reads `(4, 4)`, while the singleton edge beside it stays at `(4, 2)`.
+    stored: the edge below stacks two target components and so reads `(4, 2)`,
+    while the singleton edge beside it stays at `(4, 1)`.
     """
     regimes = dict(_two_sources_one_target())
     regimes["source_a"] = _MockRegime(
         solution=_MockSolutionPhase(states=MappingProxyType({})),
-        gated_edges=MappingProxyType(
-            {"shared_target": _edge(n_components=2, n_legs=2)}
-        ),
+        gated_edges=MappingProxyType({"shared_target": _edge(n_components=2)}),
         stakeholders=("f", "m"),
     )
     frozen = MappingProxyType(regimes)
@@ -174,4 +172,4 @@ def test_the_trailing_axis_is_the_edges_own_channel_count(sharding_plan_calls): 
         )
     }
 
-    assert shapes == {"source_a": (4, 4), "source_b": (4, 2)}
+    assert shapes == {"source_a": (4, 2), "source_b": (4, 1)}
