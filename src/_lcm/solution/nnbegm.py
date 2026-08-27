@@ -1447,10 +1447,24 @@ class _NNBEGMPeriodKernel:
         )
         live = jnp.isfinite(candidate_inner_action)
         represented = live & inversion.admissible
+        # Only a candidate whose target is a DECLARED node can indict the
+        # declaration: the adjuster bank always, and the keeper only when
+        # keeping holds the outer state at its own grid value. A custom
+        # no-adjustment target is an arbitrary DAG value at a solve cell, so it
+        # is the same category of thing simulation meets at a realized state --
+        # it is dropped, not treated as a contradiction between law and grids.
+        keeper_targets_are_nodes = self.outer_no_adjustment_name is None
+        target_is_declared_node = jnp.concatenate(
+            (
+                jnp.full(keeper_targets.shape, keeper_targets_are_nodes, dtype=bool),
+                jnp.ones(adjuster_targets.shape, dtype=bool),
+            ),
+            axis=0,
+        )
         _fail_if_the_solve_grid_cannot_reconstruct_a_candidate(
             logger=logger,
-            dropped=live & ~inversion.admissible,
-            n_live=live,
+            dropped=live & ~inversion.admissible & target_is_declared_node,
+            n_live=live & target_is_declared_node,
             regime_name=self.regime_name,
             period=period,
         )
@@ -1467,10 +1481,13 @@ def _fail_if_the_solve_grid_cannot_reconstruct_a_candidate(
 ) -> None:
     """Stop a debug-level solve that cannot reconstruct a candidate it retained.
 
-    Every candidate here sits at a declared grid node, so the inverse reaching
-    outside the outer state's domain means the declaration and the grids
-    disagree -- not that one realized state happened to land awkwardly, which is
-    what simulation drops pointwise. The solve is therefore the loud phase.
+    Applies only to candidates whose target is a declared node -- the adjuster
+    search grid, and the keeper when keeping holds the outer state at its own
+    grid value. For those, an inverse reaching outside the outer state's domain
+    means the declaration and the grids disagree, which is a defect in the model
+    rather than one realized state landing awkwardly, so the solve is the loud
+    phase. A custom no-adjustment target is a computed DAG value and is excluded
+    by the caller; it drops like a realized state instead.
 
     Reading the count back is a host transfer, so it happens only in raise mode
     (`log_level="debug"`), where it is the difference between stopping and not.
@@ -1485,12 +1502,12 @@ def _fail_if_the_solve_grid_cannot_reconstruct_a_candidate(
     total = int(jnp.sum(n_live))
     msg = (
         f"Regime {regime_name!r} at period {period}: the solve retained "
-        f"{total} outer candidates but could not reconstruct {n_dropped} of "
-        "them. The outer action recovered from those targets reaches a stock "
-        "outside the outer state's declared domain, where there is no value "
-        "function, so they are dropped from the published candidate bank. "
-        "Widen the outer state's grid so every reachable post-decision stock "
-        "lies inside it, or narrow the outer search to nodes it can reach."
+        f"{total} outer candidates at declared nodes but could not reconstruct "
+        f"{n_dropped} of them. The outer action recovered from those targets "
+        "reaches a stock outside the outer state's declared domain, where "
+        "there is no value function, so they are dropped from the published "
+        "candidate bank. Widen the outer state's grid so every declared node "
+        "is reachable, or narrow the outer search to nodes it can reach."
     )
     raise UnrepresentableOuterCandidateError(msg)
 

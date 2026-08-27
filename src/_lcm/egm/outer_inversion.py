@@ -125,7 +125,9 @@ def certify_declared_outer_inverse(
         "Declare the outer post-decision target as an affine function of the "
         f"outer action {outer_action_name!r} whose coefficient is a power of "
         "two -- `new = old + action` and `new = old + 2 * action` both "
-        "qualify -- or choose a solver that does not invert the outer margin."
+        "qualify, and the offset may be any function of states and params. A "
+        "map outside that form is solved by `GridSearch`, which searches the "
+        "outer action directly and so never inverts it."
     )
     if certificate.coefficient is None:
         msg = (

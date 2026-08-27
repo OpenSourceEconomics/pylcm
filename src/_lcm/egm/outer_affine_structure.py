@@ -166,8 +166,8 @@ def _walk(
                 f"JAX primitive `{prim}` in {func_name!r} consumes the outer "
                 "action, so the outer post-decision map is not affine in it. "
                 "N-NB-EGM inverts that map exactly and cannot invert this one; "
-                "reparametrize the law so the action enters affinely, or choose "
-                "a solver that does not invert the outer margin."
+                "reparametrize the law so the action enters affinely, or use "
+                "`GridSearch`, which searches the outer action directly."
             )
         for var in eqn.outvars:
             carried[var] = result
