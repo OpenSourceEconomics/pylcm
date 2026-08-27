@@ -605,6 +605,13 @@ class NNBEGMPolicyRead:
     """Whether solution analytically integrates an observed fixed cost whose
     realized keeper/adjuster branch simulation cannot yet replay."""
 
+    replay_policy_is_nested: bool = False
+    """Whether the configured outer search publishes the nested continuous-outer
+    payload (`NestedEGMSimPolicy`) rather than the finite candidate bank
+    (`NNBEGMSimPolicy`). Set by the adaptive mesh, unset by the finite grid; it
+    is what lets caller-supplied replay policies be checked against the type the
+    solve actually returns."""
+
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class SimulationPhase:

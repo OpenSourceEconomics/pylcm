@@ -41,8 +41,17 @@ _AGGREGATOR = UniformObservedFixedCost(
 
 
 def test_fixed_cost_requires_the_continuous_outer_search() -> None:
+    """A declared fixed cost is refused where the solver cannot aggregate it.
+
+    The regime declares the cost; NNBEGM answers whether its configured outer
+    search can execute the resulting fold, and the finite grid cannot.
+    """
     with pytest.raises(RegimeInitializationError, match="AdaptiveOuterMesh"):
-        toy.build_solver(variant="n_nbegm", branch_aggregator=_AGGREGATOR)
+        toy.build_model(
+            variant="n_nbegm",
+            n_periods=2,
+            adjustment_cost=_AGGREGATOR,
+        )
 
 
 def test_unknown_scale_function_fails_at_build() -> None:
@@ -57,7 +66,7 @@ def test_unknown_scale_function_fails_at_build() -> None:
             variant="n_nbegm",
             n_periods=2,
             outer_search=_MESH,
-            branch_aggregator=aggregator,
+            adjustment_cost=aggregator,
         ).solve(params=_PARAMS, log_level="debug")
 
 
@@ -74,7 +83,7 @@ def test_state_dependent_scale_fails_at_build() -> None:
             variant="n_nbegm",
             n_periods=2,
             outer_search=_MESH,
-            branch_aggregator=aggregator,
+            adjustment_cost=aggregator,
         ).solve(params=_PARAMS, log_level="debug")
 
 
@@ -96,7 +105,7 @@ def _solve_recorded(
         variant="n_nbegm",
         n_periods=2,
         outer_search=_MESH,
-        branch_aggregator=aggregator,
+        adjustment_cost=aggregator,
     ).solve(params=_PARAMS, log_level="debug")
     return recorded
 
@@ -142,7 +151,7 @@ def test_fixed_cost_simulation_fails_before_an_automatic_solve() -> None:
         variant="n_nbegm",
         n_periods=2,
         outer_search=_MESH,
-        branch_aggregator=_AGGREGATOR,
+        adjustment_cost=_AGGREGATOR,
     )
     initial_conditions = {
         "wealth": np.asarray([4.0]),
@@ -192,7 +201,7 @@ def test_scale_outside_the_supported_range_is_rejected_before_the_solve(
         variant="n_nbegm",
         n_periods=2,
         outer_search=_MESH,
-        branch_aggregator=aggregator,
+        adjustment_cost=aggregator,
         scale_function=toy.adjustment_scale_from_param,
     )
     expected_error = (
@@ -219,7 +228,7 @@ def test_nonnegative_finite_scale_from_a_param_solves() -> None:
         variant="n_nbegm",
         n_periods=2,
         outer_search=_MESH,
-        branch_aggregator=aggregator,
+        adjustment_cost=aggregator,
         scale_function=toy.adjustment_scale_from_param,
     )
     solution = model.solve(

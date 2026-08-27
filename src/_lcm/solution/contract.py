@@ -48,6 +48,7 @@ from _lcm.continuation import (
     EGMContinuationLayout,
     EGMContinuationSpec,
 )
+from _lcm.egm.branch_aggregation import OuterBranchAggregator
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import (
     EGMSimPolicy,
@@ -597,6 +598,11 @@ class _BoundOuterContinuousMargin:
 
     no_adjustment: FunctionName | None
     """Name of the no-adjustment map, or `None` for the identity map."""
+
+    adjustment_cost: OuterBranchAggregator | None = None
+    """Declared adjustment-cost structure, or `None` for the deterministic
+    maximum. A solver reads it to select its keeper/adjuster fold and to refuse
+    a declaration its kernels cannot aggregate."""
 
 
 @dataclass(frozen=True, kw_only=True)

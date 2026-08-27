@@ -198,3 +198,25 @@ def aggregate_uniform_observed_fixed_cost(
         no_adjustment_probability=1.0 - probability,
         cutoff=cutoff,
     )
+
+
+def fail_if_aggregator_is_outside_the_closed_set(
+    aggregator: OuterBranchAggregator,
+) -> None:
+    """Reject an adjustment-cost declaration no kernel implements.
+
+    Two folds exist — the deterministic hard maximum and the analytically
+    integrated uniform observed fixed cost. A third concrete
+    `OuterBranchAggregator` names an aggregation with nothing behind it, so it
+    is refused where it is declared rather than silently running as the
+    deterministic branch and publishing a value function for a model nobody
+    specified.
+    """
+    if isinstance(aggregator, DeterministicOuterMaximum | UniformObservedFixedCost):
+        return
+    msg = (
+        f"No branch aggregation is implemented for {type(aggregator).__name__}; "
+        "leave `adjustment_cost` unset for the deterministic maximum, or "
+        "declare `UniformObservedFixedCost(...)`."
+    )
+    raise RegimeInitializationError(msg)

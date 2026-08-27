@@ -16,8 +16,17 @@ two numerically meaningful cases:
 
 On the real paper-mode model the consumption floor makes the value
 non-smooth in effort, so the interior optima found at this period are
-floor-induced kinks; these tests exercise that branch on the real model, while
-`test_outer_implicit_derivative.py` covers smooth stationary points analytically.
+floor-induced kinks, while `test_outer_implicit_derivative.py` covers smooth
+stationary points analytically.
+
+What the pilot demonstrates today is narrower than that split suggests.
+`capture_pilot_problem` builds no owner-provenance witness, and `run_pilot`
+requires one, so every cell comes back `owner_missing` and the resolved
+AD-versus-FD half of the contract has nothing to run on. The per-cell test
+below skips with that reason rather than reporting a pass, so a green run is
+never mistaken for real-model evidence of a certified implicit derivative.
+Only `test_real_model_kink_is_materially_nonstationary`, whose screen does not
+consult the witness, still carries real-model content.
 
 Excluded from CI and run on request:
 
@@ -114,13 +123,23 @@ def test_each_cell_is_either_resolved_and_agrees_or_a_diagnosed_kink(
     stationarity screen must be the flag that fired (the real-model kink),
     not a silent miss.
     """
+    diag = pilot_report.diagnostics
+    if np.all(np.asarray(diag.owner_missing)):
+        pytest.skip(
+            "unsupported provenance: the captured problem carries no "
+            "owner-provenance witness, so every cell fails closed as "
+            "owner_missing. Neither half of this contract is under test — no "
+            "cell can be resolved, and the kink assertion below is reached "
+            "only for a cell that failed on something other than the missing "
+            "witness. Supply `PilotProblem.owner_provenance` to exercise it."
+        )
+
     h = _RELATIVE_STEP * max(1.0, abs(pilot_report.theta_baseline))
     polish_width = (1.0 / (_N_MESH - 1)) * 0.618**_POLISH
     quantization_floor = polish_width / h
     band = 5.0 * (pilot_report.fd_error_estimate + quantization_floor)
     gap = np.abs(pilot_report.ad_tangent - pilot_report.fd_richardson)
 
-    diag = pilot_report.diagnostics
     resolved = ~np.asarray(diag.unresolved)
     nonstationary = np.asarray(diag.nonstationary)
     for i in range(pilot_report.f_star.shape[0]):

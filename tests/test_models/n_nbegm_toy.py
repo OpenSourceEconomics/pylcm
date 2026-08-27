@@ -201,13 +201,13 @@ def build_solver(
     variant: str,
     outer_batch_size: int = 0,
     outer_search: OuterSearch | None = None,
-    branch_aggregator: OuterBranchAggregator | None = None,
 ) -> TwoMarginSolver | GridSearch:
     """Build the requested solver flavour for the alive regime.
 
     `outer_search` (n_nbegm only) replaces the legacy finite `OUTER_GRID`
-    with an explicit strategy — the continuous-outer entry point.
-    `branch_aggregator` (n_nbegm only) selects the keeper/adjuster fold.
+    with an explicit strategy — the continuous-outer entry point. The
+    keeper/adjuster fold follows the regime's declared `adjustment_cost`, so it
+    is not a solver argument.
     """
     if variant == "brute":
         return GridSearch()
@@ -220,11 +220,6 @@ def build_solver(
             outer_batch_size=outer_batch_size,
         )
     if variant == "n_nbegm":
-        aggregator_kwargs = (
-            {}
-            if branch_aggregator is None
-            else {"branch_aggregator": branch_aggregator}
-        )
         return NNBEGM(
             inner=NBEGM(
                 savings_grid=SAVINGS_GRID,
@@ -234,7 +229,6 @@ def build_solver(
                 if outer_search is not None
                 else FiniteOuterGrid(grid=OUTER_GRID, batch_size=outer_batch_size)
             ),
-            **aggregator_kwargs,
         )
     msg = f"unknown variant: {variant}"
     raise ValueError(msg)
@@ -247,7 +241,7 @@ def build_model(
     n_periods: int = N_PERIODS,
     illiquid_grid: Grid = ILLIQUID_GRID,
     outer_search: OuterSearch | None = None,
-    branch_aggregator: OuterBranchAggregator | None = None,
+    adjustment_cost: OuterBranchAggregator | None = None,
     scale_function: Callable[..., object] | None = None,
     illiquid_investment_grid: Grid = ILLIQUID_INVESTMENT_GRID,
     consumption_grid: Grid = CONSUMPTION_GRID,
@@ -304,7 +298,7 @@ def build_model(
         del functions["resources"]
         functions["resources_before_outer_cost"] = resources_before_outer_cost
         functions["inverse_marginal_utility"] = inverse_marginal_utility
-    if branch_aggregator is not None:
+    if adjustment_cost is not None:
         functions["adjustment_scale"] = (
             adjustment_scale if scale_function is None else scale_function
         )
@@ -350,7 +344,6 @@ def build_model(
         variant=variant,
         outer_batch_size=outer_batch_size,
         outer_search=outer_search,
-        branch_aggregator=branch_aggregator,
     )
     # Built per branch rather than from one shared mapping: the two regime
     # classes narrow `solver` differently, and a `**kwargs` mapping erases the
@@ -398,6 +391,7 @@ def build_model(
                 action="illiquid_investment",
                 post_decision_state="new_illiquid",
                 no_adjustment=outer_unchanged,
+                adjustment_cost=adjustment_cost,
             ),
         )
     dead = Regime(

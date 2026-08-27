@@ -38,7 +38,6 @@ from lcm_examples.mahler_yum_2024 import (
 )
 from lcm_examples.mahler_yum_2024.paper import (
     adapt_params_to_paper_mode,
-    build_paper_solver,
     build_retirement_regime,
     build_working_regime,
     cash_on_hand,
@@ -151,11 +150,10 @@ def test_paper_solver_wiring_matches_the_public_interface() -> None:
         assert outer.post_decision_state == "new_lagged_effort"
         assert outer.no_adjustment == "keep_effort"
 
-    solver = build_paper_solver()
-    aggregator = solver.branch_aggregator
-    assert isinstance(aggregator, UniformObservedFixedCost)
-    assert aggregator.scale_function == "adjustment_cost_scale"
-    assert (aggregator.lower, aggregator.upper) == (0.0, 1.0)
+        aggregator = outer.adjustment_cost
+        assert isinstance(aggregator, UniformObservedFixedCost)
+        assert aggregator.scale_function == "adjustment_cost_scale"
+        assert (aggregator.lower, aggregator.upper) == (0.0, 1.0)
 
 
 def test_the_factory_builds_only_the_paper_and_brute_implementations() -> None:

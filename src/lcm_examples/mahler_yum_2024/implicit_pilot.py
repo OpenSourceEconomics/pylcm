@@ -65,7 +65,12 @@ class PilotProblem:
     theta_key: str
     theta_baseline: float
     owner_provenance: Callable[[FloatND, FloatND], OwnerProvenance] | None = None
-    """Optional compact complete witness; absent capture paths fail closed."""
+    """Optional compact complete witness; absent capture paths fail closed.
+
+    `capture_pilot_problem` does not build one, so a pilot run assembled that
+    way leaves this `None` and `run_pilot` marks every cell `owner_missing`.
+    Supply a witness here to obtain certified cells; without one the pilot
+    reports safe refusal rather than a certified implicit derivative."""
 
 
 def capture_pilot_problem(
@@ -77,6 +82,12 @@ def capture_pilot_problem(
     period's kernel is entered, so only the later periods are solved; the
     captured continuation objects are exactly what the production solve
     would hand this period.
+
+    The returned problem carries no `owner_provenance` witness: the captured
+    kernel exposes no compact complete owner record, and inventing one would
+    certify a claim nothing here establishes. `run_pilot` therefore fails
+    closed on every cell with `owner_missing`, which is what this pilot
+    currently demonstrates — the refusal path, not a certified derivative.
     """
     import _lcm.solution.nnbegm as _nnbegm  # noqa: PLC0415
     from lcm import LinSpacedGrid  # noqa: PLC0415
