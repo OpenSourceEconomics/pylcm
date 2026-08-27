@@ -40,8 +40,9 @@ value_functions, dissolution_flags = collective_model.solve(
 ```
 
 Simulation policies are for inspection; a fresh simulation obtains supported policy
-artifacts internally. Dissolution flags are required when a collective `GatedEdge` reads
-`D_target` during simulation.
+artifacts internally. Dissolution flags are required when a collective regime's
+`ValueDependentTransition` has a gate that reads `D_target` — the dissolution flag of a
+collective target — during simulation.
 
 ### Log levels and runtime validation
 
@@ -86,15 +87,15 @@ period_to_regime_to_V_arr = model.solve(
 
 The full behaviour of every `log_level` × `log_path` combination:
 
-| `log_level`           | `log_path` | Runtime validation        | Console output                  | Snapshots to disk                                         |
-| --------------------- | ---------- | ------------------------- | ------------------------------- | --------------------------------------------------------- |
-| `"off"`               | (ignored)  | not run                   | silent                          | none                                                      |
-| `"warning"`           | `None`     | runs → failures **warn**  | warnings                        | none                                                      |
-| `"warning"`           | set        | runs → failures **warn**  | warnings                        | one per warned failure, capped at `log_keep_n_latest`     |
-| `"progress"`          | `None`     | runs → failures **warn**  | warnings + timing               | none                                                      |
-| `"progress"`          | set        | runs → failures **warn**  | warnings + timing               | one per warned failure, capped at `log_keep_n_latest`     |
-| `"debug"` *(default)* | `None`     | runs → failures **raise** | warnings + timing + V_arr stats | none                                                      |
-| `"debug"` *(default)* | set        | runs → failures **raise** | warnings + timing + V_arr stats | one per solve and on raise, capped at `log_keep_n_latest` |
+| `log_level`  | `log_path` | Runtime validation        | Console output                  | Snapshots to disk                                         |
+| ------------ | ---------- | ------------------------- | ------------------------------- | --------------------------------------------------------- |
+| `"off"`      | (ignored)  | not run                   | silent                          | none                                                      |
+| `"warning"`  | `None`     | runs → failures **warn**  | warnings                        | none                                                      |
+| `"warning"`  | set        | runs → failures **warn**  | warnings                        | one per warned failure, capped at `log_keep_n_latest`     |
+| `"progress"` | `None`     | runs → failures **warn**  | warnings + timing               | none                                                      |
+| `"progress"` | set        | runs → failures **warn**  | warnings + timing               | one per warned failure, capped at `log_keep_n_latest`     |
+| `"debug"`    | `None`     | runs → failures **raise** | warnings + timing + V_arr stats | none                                                      |
+| `"debug"`    | set        | runs → failures **raise** | warnings + timing + V_arr stats | one per solve and on raise, capped at `log_keep_n_latest` |
 
 `log_path` is optional at every level — snapshots are written only when it is set. In
 `"warning"` / `"progress"` mode, an invalid model produces warnings and a numerically
@@ -189,12 +190,68 @@ initial_conditions = {
 - All arrays must have the same length (= number of agents).
 - Shock states are drawn automatically.
 
+### Household roles
+
+In a model with a collective regime, every simulated row carries a *role*: which
+stakeholder of the household that row is. The role belongs to the row, not to the run —
+one cohort holds both partners at once — and it decides which regime the row moves to
+when the household dissolves. Seed it with an `"own_stakeholder"` entry alongside the
+states:
+
+```python
+initial_conditions = {
+    "age": jnp.full(4, model.ages.values[0]),
+    "wealth": jnp.array([1.0, 5.0, 10.0, 20.0]),
+    "regime_id": jnp.full(4, model.regime_names_to_ids["couple"], dtype=jnp.int32),
+    "own_stakeholder": jnp.array(
+        [
+            model.stakeholder_names_to_ids["f"],
+            model.stakeholder_names_to_ids["m"],
+            model.stakeholder_names_to_ids["f"],
+            model.stakeholder_names_to_ids["m"],
+        ],
+        dtype=jnp.int32,
+    ),
+}
+```
+
+As a DataFrame the same column carries stakeholder *labels*, converted to codes like any
+other discrete column:
+
+```python
+df = pd.DataFrame(
+    {
+        "regime_name": ["couple", "couple"],
+        "age": [25.0, 25.0],
+        "wealth": [1.0, 5.0],
+        "own_stakeholder": ["f", "m"],
+    }
+)
+```
+
+- Codes come from `model.stakeholder_names_to_ids` — one vocabulary for the whole model,
+  so a role means the same thing in every regime. It is empty for a model with no
+  collective regime.
+- The entry is required for subjects who **start** in a collective regime whose gated
+  routes differ by stakeholder. Omitting it there raises `InvalidInitialConditionsError`
+  rather than defaulting to whichever partner was declared first, and a code that is
+  valid model-wide but names no stakeholder of that regime is rejected too.
+- A subject starting in a singleton regime occupies no role and needs no entry. It is
+  given one on entering a collective regime, from the `target_stakeholder` of the
+  `StakeholderRoute` it takes, and loses it again on landing in a singleton regime.
+
+See [Collective regimes](../reference/collective_regimes.md#roles-are-carried-per-row)
+for the full rules.
+
 ### Further arguments
 
 - `log_level`: Required. Console verbosity and runtime-validation policy (same options
   and table as `solve()`); start at `"debug"`. Initial-condition validation (states
   on-grid, regimes valid) follows this policy too — `"off"` skips it.
 - `seed=None`: Random seed for stochastic simulations (int).
+- `period_to_regime_to_dissolution_flags=None`: The flags returned by
+  `solve(return_dissolution_flags=True)`. Required only for a model whose gate reads
+  `D_target`; a no-op for every other model.
 - `log_path=None`: Directory for diagnostic snapshots; optional at every level.
 - `log_keep_n_latest=3`: Maximum snapshot directories to retain.
 
@@ -234,6 +291,16 @@ df = result.to_dataframe()
 Returns a pandas DataFrame with columns: `subject_id`, `period`, `age`, `regime_name`,
 `value`, plus all states and actions. Discrete variables are pandas Categorical with
 string labels.
+
+A model with a collective regime publishes two further things. An `own_stakeholder`
+column names the role each row occupies — in every regime, not only the collective ones,
+because a row that has left a household still has to say that it now occupies none. It
+is a Categorical over the declared stakeholder names, and a row in a singleton regime
+carries a missing entry. A collective regime also publishes one `value_<stakeholder>`
+column per stakeholder, since the household stores every partner's own value at the
+shared maximizing action. Those columns sit alongside `value`, which is dropped only
+when no regime in the model publishes a scalar value — that is, when every regime is
+collective.
 
 ### Additional targets
 
@@ -282,13 +349,15 @@ result.n_subjects  # 1000
   `SimulationResult`.
 
 ```python
-# Save
-result.save(directory="my_results/")
+from pathlib import Path
 
-# Load (reads arrays + metadata; the arrow file is for downstream consumers)
 from lcm import SimulationResult
 
-loaded = SimulationResult.load(directory="my_results/")
+# Save
+result.save(directory=Path("my_results"))
+
+# Load (reads arrays + metadata; the arrow file is for downstream consumers)
+loaded = SimulationResult.load(directory=Path("my_results"))
 ```
 
 ### Raw data (advanced)

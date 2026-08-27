@@ -100,13 +100,17 @@ surfaces remain outside that top-level namespace:
 | [`lcm.params.as_leaf`](../user_guide/parameters.md)                        | Explicit parameter-leaf wrapper |
 | [`lcm.koopmans_aggregation.KoopmansAggregator`](../methods/preferences.md) | Koopmans-form base contract     |
 
-## Collective regimes
+## Collective regimes and value-dependent choice
 
-| Public name                                                                           | Canonical documentation              |
-| ------------------------------------------------------------------------------------- | ------------------------------------ |
-| [`lcm.SamePeriodRef`](collective_regimes.md#participation-constraints)                | Same-period outside-option value     |
-| [`lcm.EdgeLeg`](collective_regimes.md#gated-transitions-across-stakeholder-layouts)   | One stakeholder's gated continuation |
-| [`lcm.GatedEdge`](collective_regimes.md#gated-transitions-across-stakeholder-layouts) | Consent/dissolution edge             |
+| Public name                                                                      | Canonical documentation                  |
+| -------------------------------------------------------------------------------- | ---------------------------------------- |
+| [`lcm.CollectiveUtility`](collective_regimes.md#collectiveutility)               | One utility per stakeholder, one action  |
+| [`lcm.ParetoObjective`](collective_regimes.md#paretoobjective)                   | Weighted household objective             |
+| [`lcm.ValueDependentConstraint`](collective_regimes.md#valuedependentconstraint) | Constraint that reads stakeholder values |
+| [`lcm.ValueDependentTransition`](collective_regimes.md#valuedependenttransition) | Gated transition to a target regime      |
+| [`lcm.StakeholderRoute`](collective_regimes.md#stakeholderroute)                 | One source stakeholder's route across it |
+| [`lcm.ProjectedRegimeValue`](collective_regimes.md#projectedregimevalue)         | Another regime's value, projected        |
+| [`lcm.GatedEdge`](collective_regimes.md)                                         | Lowered `ValueDependentTransition` form  |
 
 ## Solvers and configurations
 

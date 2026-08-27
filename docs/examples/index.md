@@ -11,16 +11,16 @@ importable and testable.
 
 ## Choose by feature
 
-| Example                                                              | Economic feature                          | pylcm feature                                           | Solver                                  |
-| -------------------------------------------------------------------- | ----------------------------------------- | ------------------------------------------------------- | --------------------------------------- |
-| [Tiny consumption-saving](tiny.md)                                   | Work, consume, retire                     | Basic regimes and deterministic transitions             | Grid search                             |
-| [Mortality](mortality.md)                                            | Death risk and borrowing                  | Stochastic regime transition                            | Grid search / DCEGM variants            |
-| [Epstein–Zin lifecycle](epstein_zin.ipynb)                           | Health and mortality risk                 | Nonlinear certainty equivalent                          | Grid search                             |
-| [Iskhakov et al. (2017)](iskhakov_et_al_2017.md)                     | Retirement and discrete labor             | Discrete-continuous upper envelope                      | DCEGM                                   |
-| [Precautionary savings](precautionary_savings.md)                    | Income risk                               | IID and AR(1) processes                                 | Grid search                             |
-| [Precautionary savings with health](precautionary_savings_health.md) | Joint wealth, health, and exercise        | Multiple states/actions and constraints                 | Grid search                             |
-| [Mahler and Yum (2024)](mahler_yum_2024.md)                          | Quantitative lifecycle health model       | Large state space and empirical inputs                  | Specialized EGM family; GPU recommended |
-| [Collective regimes](collective_regimes.md)                          | Shared choice, participation, dissolution | Stakeholder values, same-period references, gated edges | Grid search                             |
+| Example                                                              | Economic feature                          | pylcm feature                                                                 | Solver                                  |
+| -------------------------------------------------------------------- | ----------------------------------------- | ----------------------------------------------------------------------------- | --------------------------------------- |
+| [Tiny consumption-saving](tiny.md)                                   | Work, consume, retire                     | Basic regimes and deterministic transitions                                   | Grid search                             |
+| [Mortality](mortality.md)                                            | Death risk and borrowing                  | Stochastic regime transition                                                  | Grid search / DCEGM variants            |
+| [Epstein–Zin lifecycle](epstein_zin.ipynb)                           | Health and mortality risk                 | Nonlinear certainty equivalent                                                | Grid search                             |
+| [Iskhakov et al. (2017)](iskhakov_et_al_2017.md)                     | Retirement and discrete labor             | Discrete-continuous upper envelope                                            | DCEGM                                   |
+| [Precautionary savings](precautionary_savings.md)                    | Income risk                               | IID and AR(1) processes                                                       | Grid search                             |
+| [Precautionary savings with health](precautionary_savings_health.md) | Joint wealth, health, and exercise        | Multiple states/actions and constraints                                       | Grid search                             |
+| [Mahler and Yum (2024)](mahler_yum_2024.md)                          | Quantitative lifecycle health model       | Large state space and empirical inputs                                        | Specialized EGM family; GPU recommended |
+| [Collective regimes](collective_regimes.md)                          | Shared choice, participation, dissolution | Stakeholder values, projected same-period values, value-dependent transitions | Grid search                             |
 
 The tiny example is a pedagogical baseline, not the starting declaration for every
 model. If your production model needs an EGM-family solver, use the specialized regime

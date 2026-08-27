@@ -19,7 +19,9 @@ cover that, and each goes in a slot a regime already has.
 in the *same* period.
 
 The complete worked model is `lcm_examples.collective_household`. This page walks
-through the pieces.
+through the pieces; the exact declaration contracts are in
+[Collective regimes](../reference/collective_regimes.md), and a staged build-up of one
+is in the [collective example](../examples/collective_regimes.md).
 
 ## A household with two stakeholders
 
@@ -110,16 +112,18 @@ The predicate may read `Q_<s>` for each stakeholder, each key of its **own**
 `references`, and ordinary states, actions, functions and parameters. `projection` owes
 one entry per state of the *referenced* regime; the value is interpolated at the
 resulting coordinates. A constraint-local projection may not introduce free parameters —
-that is checked at model construction, naming the reference, the projection and the
-offending argument.
+that is checked when the `Regime` is constructed, naming the reference, the projection
+and the offending argument.
 
 The regime's mask is the AND of the ordinary constraints and the value-dependent ones. A
 cell whose mask is empty publishes the regime's **dissolution flag** and the `-inf`
 sentinel: there is no viable household there.
 
 `solve(return_dissolution_flags=True)` hands those flags back, and `simulate` takes them
-as `period_to_regime_to_dissolution_flags=`. A gate that reads `D_target` needs them;
-let `simulate` solve for you and they are threaded automatically.
+as `period_to_regime_to_dissolution_flags=` — see
+[Solving and simulating](solving_and_simulating.md) for the call shape. A gate that
+reads `D_target` needs them; let `simulate` solve for you and they are threaded
+automatically.
 
 ## Marrying and dissolving: a transition with a gate
 
@@ -205,7 +209,11 @@ couple = Regime(
     states={"wealth": couple_wealth},
     state_transitions={"wealth": next_couple_wealth},
     actions={"consumption": consumption},
-    functions={"utility": household_utility},
+    functions={
+        "utility": CollectiveUtility(
+            utilities={"f": her_utility, "m": his_utility},
+        )
+    },
 )
 ```
 
@@ -252,17 +260,17 @@ the target's nodes:
 
 ## Simulating: every row carries its own role
 
-Stakeholder identity is per subject, not per call. A row's role picks its leg on a gated
-edge; the branch it takes then sets the role it carries onward.
+Stakeholder identity is per subject, not per call. A row's role picks its route on a
+value-dependent transition; the branch it takes then sets the role it carries onward.
 
 - A subject starting in a **singleton** regime has no role.
 - A subject starting in a **collective** regime declares one, through
   `initial_conditions["own_stakeholder"]`, whenever the model routes by role — that is,
-  whenever some collective regime declares an edge whose legs differ by stakeholder. If
-  no route can turn on the role, none is required.
-- Entering a collective regime through a gated edge sets the role from the route's
-  `target_stakeholder`; leaving through the closed branch sets it from the fallback's
-  `stakeholder`, or clears it for a singleton destination.
+  whenever some collective regime declares a value-dependent transition with more than
+  one route. If no transition can turn on the role, none is required.
+- Entering a collective regime through a value-dependent transition sets the role from
+  the route's `target_stakeholder`; leaving through the closed branch sets it from the
+  fallback's `stakeholder`, or clears it for a singleton destination.
 
 ```python
 initial_conditions = {

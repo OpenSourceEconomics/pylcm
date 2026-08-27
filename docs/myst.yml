@@ -116,7 +116,7 @@ project:
       title: Credits & Acknowledgments
   error_rules:
     - rule: link-resolves
-      severity: ignore
+      severity: warn
 site:
   template: book-theme
   options:

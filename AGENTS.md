@@ -172,7 +172,7 @@ Delegation is therefore a convention here, not a mechanically enforced one.
 **Simulation (`src/_lcm/simulation/`)**
 
 - `simulate.py`: Forward simulation of solved models
-- `SimulationResult` (`lcm/result.py`): result object with deferred DataFrame
+- `SimulationResult` (`src/lcm/result.py`): result object with deferred DataFrame
   computation
 - Entry point: Model methods (`solve()`, `simulate()`)
 
@@ -256,12 +256,12 @@ Regime(
         "wealth": next_wealth,                   # Deterministic transition
         "education": fixed_transition("education"),  # Fixed state (identity law)
     },
-    actions={"action_name": Grid, ...},          # Action grids (can be empty)
+    actions={"action_name": Grid},                # Action grids (can be empty)
     functions={                                  # Must include "utility"; other functions optional
         "utility": utility_function,
-        "name": helper_func, ...
+        "name": helper_func,
     },
-    constraints={"name": constraint_func, ...},  # Optional: constraint functions
+    constraints={"name": constraint_func},        # Optional: constraint functions
     koopmans_aggregator=CESAggregator(),           # Optional: overrides the model-level one
     certainty_equivalent=PowerMean(),            # Optional: overrides the model-level one
 )
@@ -391,6 +391,10 @@ per-declaration.
 - `model.simulate(params=params, initial_conditions=initial_conditions, period_to_regime_to_V_arr=period_to_regime_to_V_arr, log_level="debug")`
   \- Simulate forward given solution. `period_to_regime_to_V_arr` is optional; when
   `None`, the model is solved automatically before simulating.
+- `model.solve(params=params, log_level="debug", return_dissolution_flags=True)`
+  additionally returns each collective regime's dissolution flags; pass them back as
+  `simulate(period_to_regime_to_dissolution_flags=...)`. A gate that reads `D_target`
+  needs them — letting `simulate` solve for you threads them automatically.
 - `log_level` is **required** on both `solve()` and `simulate()`
   (`off < warning < progress < debug`). It governs all runtime validation: `"off"` skips
   it, `"warning"` / `"progress"` warn and continue, `"debug"` raises. Start projects at
@@ -405,6 +409,66 @@ all regimes under the exactly-one-level rule — a name is declared at model lev
 regime level, never both (ambiguity errors, also when the grids match). Functions used
 as derived categoricals must return **integer** types, not booleans — JAX cannot use
 booleans as array indices inside JIT. Use `jnp.int32(...)` to cast.
+
+### Collective regimes and value-dependent choice
+
+A regime whose utility is a `CollectiveUtility` has **stakeholders** — the `utilities`
+keys, in insertion order, which fix the trailing axis of `V` and of every published
+array. Everything is declared in a slot the regime already has:
+
+```python
+Regime(
+    transition={
+        "couple": ValueDependentTransition(  # goes in `transition`, keyed by TARGET
+            probability=MarkovTransition(stays_married),
+            gate=no_dissolution,  # Boolean predicate on the target's grid
+            routes={"f": StakeholderRoute(target_stakeholder="f", fallback=alone_f)},
+            gate_references={
+                "V_alone_f": ProjectedRegimeValue(
+                    regime="single_f", projection={"wealth": half_of_wealth}
+                )
+            },
+            off_grid="pointwise",  # or "reject"
+        )
+    },
+    functions={"utility": CollectiveUtility(utilities={"f": u_f, "m": u_m})},
+    constraints={
+        "participation_f": ValueDependentConstraint(  # goes in `constraints`
+            predicate=participation_f,
+            references={
+                "V_alone_f": ProjectedRegimeValue(
+                    regime="single_f", projection={"wealth": half_of_wealth}
+                )
+            },
+        )
+    },
+)
+```
+
+- **The transition key is always the GATE-OPEN target.** A dissolution edge is keyed by
+  the *continuing* collective regime under `gate = ~D_target`. Keying it by the
+  singleton would send both partners there whenever the couple stays together.
+- `routes` is keyed by **source** stakeholder; a singleton source declares exactly one
+  route. Each route owns four destinations: the open regime (the dict key) and role
+  (`target_stakeholder`), and the closed regime and role (`fallback.regime`,
+  `fallback.stakeholder`).
+- Gate operands: `V_target` (singleton target) / `V_target_<s>` (collective target), and
+  `D_target`, which is **collective-only** — reading it on a singleton target is refused
+  at model build. The Boolean-dtype requirement is checked **at evaluation**, i.e. on
+  the first `solve()`, not at build.
+- `ParetoObjective(weights=...)` scalarizes the household; a weight may read the
+  regime's states and `period`/`age`, never an action. Its other arguments become free
+  parameters under the `pareto_objective` key. Omit it for equal weights.
+- A constraint-local projection may introduce **no** free parameter (refused when the
+  `Regime` is constructed); an edge projection's free arguments become that edge's
+  params, nested under the target name.
+- Stakeholder identity is **per row**: seed `initial_conditions["own_stakeholder"]`
+  whenever some collective regime declares a transition with more than one route. It is
+  published as an `own_stakeholder` column, missing for singleton rows.
+- `GatedEdge`, `stakeholders`, `value_constraints`, `same_period_refs` and `gated_edges`
+  are the **lowered** form these declarations decompose into. Write the declarations.
+
+See `docs/user_guide/collective_regimes.md` and `docs/reference/collective_regimes.md`.
 
 ### Case-piece solver (NB-EGM)
 
@@ -467,7 +531,8 @@ resources = lcm.cash_on_hand_with_subsidy
   state; each piece reads only flat params, never a state or action; and the regime
   declares no discrete action and no taste shocks. Kinks, floors, and every other
   bracket shape go through `lcm.piecewise_affine` instead — see
-  `docs/user_guide/nbegm.md`.
+  `docs/methods/nonconvex_budgets.md` for the choice between the two declaration forms
+  and `docs/reference/piecewise_affine.md` for the decorator contract.
 - The case-piece kernels form cash-on-hand themselves rather than calling the regime's
   budget node, so the route accepts pylcm's own declaration of that form by identity:
   `lcm.cash_on_hand_with_subsidy`. A budget they cannot form goes through a
@@ -527,8 +592,11 @@ result.period_to_regime_to_V_arr  # dict[int, dict[RegimeName, FloatND]]
 
 # Persistence: writes `arrays/` (orbax), `metadata.pkl` (cloudpickle),
 # and `simulated_data.arrow` (feather of `to_dataframe`).
-result.save(directory="path/to/dir")
-loaded = SimulationResult.load(directory="path/to/dir")
+# `directory` is a pathlib.Path, not a str.
+from pathlib import Path
+
+result.save(directory=Path("path/to/dir"))
+loaded = SimulationResult.load(directory=Path("path/to/dir"))
 ```
 
 ### Initial Conditions Format
