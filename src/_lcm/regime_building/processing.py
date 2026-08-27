@@ -1,5 +1,6 @@
 import functools
 import inspect
+import logging
 from collections import defaultdict
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
@@ -1297,6 +1298,7 @@ class _TerminalCarryPeriodKernel:
         flat_params: FlatParams,
         period: int,
         ages: AgeGrid,
+        logger: logging.Logger,
     ) -> KernelResult:
         """Run the base kernel, then publish the regime's continuation carry."""
         result = self.base(
@@ -1307,6 +1309,7 @@ class _TerminalCarryPeriodKernel:
             flat_params=flat_params,
             period=period,
             ages=ages,
+            logger=logger,
         )
         carry = self.carry_producer(
             V_arr=result.V_arr,

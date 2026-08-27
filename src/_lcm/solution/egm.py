@@ -9,6 +9,7 @@ numerical engine modules.
 
 import functools
 import inspect
+import logging
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, replace
 from types import MappingProxyType
@@ -744,6 +745,7 @@ class _EGMPeriodKernel:
         flat_params: FlatParams,
         period: int,  # noqa: ARG002
         ages: AgeGrid,  # noqa: ARG002
+        logger: logging.Logger,  # noqa: ARG002
     ) -> KernelResult:
         """Run the 1-D EGM step and assemble the `KernelResult`."""
         next_carry = next_regime_to_continuation[self.continuation_target]

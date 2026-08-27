@@ -180,6 +180,7 @@ def solve(  # noqa: C901, PLR0915
                 ages=ages,
                 next_regime_to_V_arr=next_regime_to_V_arr,
                 next_regime_to_continuation=next_regime_to_continuation,
+                logger=logger,
             )
             V_arr = result.V_arr
             # The published V mapping is the calling convention for every
@@ -334,6 +335,7 @@ def _run_period_kernel(
     ages: AgeGrid,
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
+    logger: logging.Logger,
 ) -> KernelResult:
     """Invoke one regime's period adapter for one period.
 
@@ -385,6 +387,7 @@ def _run_period_kernel(
         flat_params=flat_params,
         period=period,
         ages=ages,
+        logger=logger,
     )
 
 

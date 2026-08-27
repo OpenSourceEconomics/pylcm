@@ -140,3 +140,14 @@ class ScaledLotteryDifferentiationError(PyLCMError):
     which could incorrectly suggest to an optimizer that the objective is locally
     flat.
     """
+
+
+class UnrepresentableOuterCandidateError(PyLCMError):
+    """Raised when replay cannot reconstruct an outer candidate the solve kept.
+
+    N-NB-EGM recovers the outer action from the post-decision target the solve
+    retained. At a realized state the recovered action can reach a stock outside
+    the outer state's declared domain, where no value function exists. Such a
+    candidate is dropped from that subject's choice set rather than published,
+    and this reports how many were dropped.
+    """

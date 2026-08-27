@@ -26,8 +26,13 @@ from _lcm.simulation.simulate import (
     _interp_rows_with_support,
     _replace_continuous_action_with_policy_read,
 )
+from _lcm.utils.logging import get_logger
 from lcm.exceptions import InvalidSimulationInputError
 from tests.conftest import DECIMAL_PRECISION
+
+# The value-read behaviour under test is independent of the drop announce, so
+# these calls run with runtime validation off.
+_SILENT = get_logger(log_level="off")
 
 
 class _StubRegime(Regime):
@@ -167,6 +172,7 @@ def test_policy_replacement_reports_the_value_of_the_emitted_action(monkeypatch)
         next_regime_to_V_arr=MappingProxyType({}),
         grid_values=jnp.array([5.0]),
         in_regime=jnp.ones(1, dtype=bool),
+        logger=_SILENT,
     )
 
     assert float(reported_value[0]) == 7.0
@@ -237,6 +243,7 @@ def test_nested_policy_replacement_keeps_only_canonically_better_pairs(
         next_regime_to_V_arr=MappingProxyType({}),
         grid_values=jnp.full(4, 5.0),
         in_regime=jnp.ones(4, dtype=bool),
+        logger=_SILENT,
     )
 
     aaae(
@@ -328,6 +335,7 @@ def test_nested_policy_replay_scores_the_published_pair_without_reoptimizing(
         next_regime_to_V_arr=MappingProxyType({}),
         grid_values=jnp.asarray([1.0]),
         in_regime=jnp.asarray([True]),
+        logger=_SILENT,
     )
 
     np.testing.assert_array_equal(
@@ -407,6 +415,7 @@ def test_nested_policy_rejects_an_inner_action_below_its_surrogate_value(
         next_regime_to_V_arr=MappingProxyType({}),
         grid_values=jnp.asarray([9.0]),
         in_regime=jnp.asarray([True]),
+        logger=_SILENT,
     )
 
     np.testing.assert_array_equal(
@@ -475,6 +484,7 @@ def test_nested_policy_acceptance_truth_table(monkeypatch) -> None:
     )
 
     common = {
+        "logger": _SILENT,
         "optimal_actions": grid_actions,
         "regime": _StubRegime(simulation=SimpleNamespace()),
         "sim_policy": object.__new__(NestedEGMSimPolicy),
@@ -659,6 +669,7 @@ def test_nested_policy_replacement_never_emits_a_degraded_interpolated_pair(
         next_regime_to_V_arr=MappingProxyType({}),
         grid_values=grid_values_arr,
         in_regime=jnp.ones(len(grid_values), dtype=bool),
+        logger=_SILENT,
     )
 
     assert fallback is not None
@@ -734,6 +745,7 @@ def test_nested_policy_accepts_improvement_over_a_canonically_unsafe_grid_pair(
         # The grid pair is canonically unsafe, so it cannot be the baseline.
         grid_values=jnp.asarray([-7.46]),
         in_regime=jnp.ones(1, dtype=bool),
+        logger=_SILENT,
     )
 
     aaae(np.asarray(actions["consumption"]), [1.25], decimal=DECIMAL_PRECISION)
@@ -812,6 +824,7 @@ def test_nested_policy_emits_a_safe_baseline_when_the_policy_read_falls_back(
         next_regime_to_V_arr=MappingProxyType({}),
         grid_values=jnp.asarray([-7.0]),
         in_regime=jnp.ones(1, dtype=bool),
+        logger=_SILENT,
     )
 
     np.testing.assert_array_equal(np.asarray(actions["consumption"]), np.asarray([0.5]))
@@ -901,6 +914,7 @@ def test_nested_policy_rejection_projects_an_out_of_domain_grid_pair(
         next_regime_to_V_arr=MappingProxyType({}),
         grid_values=grid_value,
         in_regime=jnp.ones(1, dtype=bool),
+        logger=_SILENT,
     )
 
     expected_actions = MappingProxyType(
@@ -1014,6 +1028,7 @@ def test_nested_policy_rejection_uses_the_safe_opposite_endpoint(
         next_regime_to_V_arr=MappingProxyType({}),
         grid_values=grid_value,
         in_regime=jnp.ones(1, dtype=bool),
+        logger=_SILENT,
     )
 
     expected_actions = MappingProxyType(
@@ -1241,6 +1256,7 @@ def test_nested_policy_rejection_fails_when_no_candidate_is_safe(
             next_regime_to_V_arr=MappingProxyType({}),
             grid_values=jnp.asarray([-jnp.inf]),
             in_regime=jnp.ones(1, dtype=bool),
+            logger=_SILENT,
         )
 
 
@@ -1310,6 +1326,7 @@ def test_nested_policy_failure_ignores_out_of_regime_placeholders(
         next_regime_to_V_arr=MappingProxyType({}),
         grid_values=jnp.where(in_regime, 1.0, -jnp.inf),
         in_regime=in_regime,
+        logger=_SILENT,
     )
 
     assert fallback is not None
