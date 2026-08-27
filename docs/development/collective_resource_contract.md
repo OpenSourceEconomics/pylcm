@@ -75,9 +75,9 @@ share a budget line.
 ## Running them
 
 ```bash
-pixi run -e benchmarks asv-quick     # one repetition, for a smoke check
-pixi run -e benchmarks asv-run       # the tracked run; refuses a dirty worktree
-pixi run -e benchmarks asv-compare   # against a previous commit
+pixi run -e benchmarks-cuda12 asv-quick     # one repetition, for a smoke check
+pixi run -e benchmarks-cuda12 asv-run       # the tracked run; refuses a dirty worktree
+pixi run -e benchmarks-cuda12 asv-compare   # against a previous commit
 ```
 
 The GPU peak-memory companions need a CUDA environment; on a CPU-only machine they are
