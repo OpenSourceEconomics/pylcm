@@ -2266,11 +2266,19 @@ def _invert_nnbegm_outer_targets(
         (keeper_targets, candidate_target[sim_policy.n_keeper_candidates :]),
         axis=0,
     )
-    candidate_outer = (realized_target - at_zero) / slope
-    reconstructed = jnp.broadcast_to(
-        jnp.asarray(evaluate(candidate_outer)[policy_read.outer_post_decision]),
-        candidate_shape,
+
+    def forward(outer_action: FloatND) -> FloatND:
+        return jnp.broadcast_to(
+            jnp.asarray(evaluate(outer_action)[policy_read.outer_post_decision]),
+            candidate_shape,
+        )
+
+    candidate_outer = _outer_action_reaching_target(
+        quotient=(realized_target - at_zero) / slope,
+        realized_target=realized_target,
+        forward=forward,
     )
+    reconstructed = forward(candidate_outer)
     eps = jnp.finfo(candidate_inner.dtype).eps
     tolerance = 128 * eps * jnp.maximum(1.0, jnp.abs(realized_target))
     represented = (
@@ -2282,6 +2290,43 @@ def _invert_nnbegm_outer_targets(
         & (jnp.abs(reconstructed - realized_target) <= tolerance)
     )
     return candidate_outer, represented
+
+
+def _outer_action_reaching_target(
+    *,
+    quotient: FloatND,
+    realized_target: FloatND,
+    forward: Callable[[FloatND], FloatND],
+) -> FloatND:
+    """Return the representable outer action whose target the solve stored.
+
+    The solve searches post-decision targets and stores them; simulation
+    recovers the action by dividing through the declared affine map. Division
+    and the forward map each round, so the quotient is not always the
+    representable action the stored target came from, and every downstream
+    reader evaluates that map forward again — the durable law of motion, the
+    credited cost, the liquid budget. A quotient one step off therefore
+    reassembles a post-decision state one step off, which at a divestment
+    corner is enough to leave the grid that declares the state's domain.
+
+    So the quotient and its two immediate neighbours are compared by the only
+    quantity that matters, how far their forward images sit from the stored
+    target, and the closest wins. Comparing images rather than actions needs no
+    tolerance: it is an ordering of three exactly-computed distances. Ties keep
+    the quotient, so a run whose inversion was already exact is unchanged.
+
+    One step is what an inversion error reaches here, not a proven bound. The
+    round-trip check downstream still gates anything this cannot repair, and a
+    non-finite quotient propagates through unchanged for it to reject.
+    """
+    lower = jnp.nextafter(quotient, jnp.asarray(-jnp.inf, dtype=quotient.dtype))
+    upper = jnp.nextafter(quotient, jnp.asarray(jnp.inf, dtype=quotient.dtype))
+    error = jnp.abs(forward(quotient) - realized_target)
+    error_lower = jnp.abs(forward(lower) - realized_target)
+    error_upper = jnp.abs(forward(upper) - realized_target)
+    best = jnp.where(error_lower < error, lower, quotient)
+    best_error = jnp.minimum(error_lower, error)
+    return jnp.where(error_upper < best_error, upper, best)
 
 
 def _replay_nnbegm_candidates(
