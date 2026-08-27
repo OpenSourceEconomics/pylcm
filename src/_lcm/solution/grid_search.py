@@ -168,6 +168,7 @@ class GridSearch(Solver):
                 regime_name=context.regime_name,
                 collective=context.stakeholders is not None,
                 same_period_ref_regimes=context.same_period_ref_regimes,
+                edge_reference_regimes=context.edge_reference_regimes,
                 edge_target_regimes=context.edge_target_regimes,
             )
         return SolutionKernels(period_kernels=MappingProxyType(result))
@@ -196,6 +197,17 @@ class _GridSearchPeriodKernel:
     the stakeholder-axis value array plus the boolean dissolution flag — instead
     of the plain V array; the adapter unpacks it into the `KernelResult`.
     `False` keeps the singleton default byte-identical.
+    """
+
+    edge_reference_regimes: tuple[RegimeName, ...] = ()
+    """Regimes a gated edge reads a projected value from, or empty.
+
+    A gate reference and a leg fallback both name another regime's value at
+    coordinates a projection produces. Neither is tabulated on the target's
+    grid, so both are read where the source lands — inside the source's own
+    kernel — at the value of the period the source lands in. The rolled V
+    mapping already carries that array; these names are what pick it out and
+    thread each reference regime's OWN grid params beside it.
     """
 
     same_period_ref_regimes: tuple[RegimeName, ...] = ()
@@ -318,7 +330,47 @@ class _GridSearchPeriodKernel:
             lower_args["same_period_regime_to_params"] = self._same_period_params(
                 flat_params=flat_params
             )
+        lower_args.update(
+            self._edge_reference_args(
+                next_regime_to_V_arr=next_regime_to_V_arr, flat_params=flat_params
+            )
+        )
         return lower_args
+
+    def _edge_reference_args(
+        self,
+        *,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        flat_params: FlatParams,
+    ) -> dict[str, object]:
+        """Build the edge-reference channel, empty for a regime that has none.
+
+        A gate reference and a leg fallback are read where the source lands, at
+        the value of the period it lands in — which backward induction has
+        already solved and rolled into `next_regime_to_V_arr`. Lowering and the
+        call share this builder, so the pytree the core is compiled against is
+        the pytree it is called with.
+
+        Takes the RAW rolled mapping, never the edge-substituted one: a
+        reference regime may also be an edge target, whose entry the
+        substitution replaces with that edge's `Wbar`.
+        """
+        if not self.edge_reference_regimes:
+            return {}
+        return {
+            "edge_reference_regime_to_V_arr": MappingProxyType(
+                {
+                    regime_name: next_regime_to_V_arr[regime_name]
+                    for regime_name in self.edge_reference_regimes
+                }
+            ),
+            "edge_reference_regime_to_params": MappingProxyType(
+                {
+                    regime_name: flat_params[regime_name]
+                    for regime_name in self.edge_reference_regimes
+                }
+            ),
+        }
 
     def _same_period_params(
         self, *, flat_params: FlatParams
@@ -361,11 +413,14 @@ class _GridSearchPeriodKernel:
         `next_regime_to_V_arr` before the core call). Every other kernel keeps
         the uniform `PeriodKernel` call signature.
         """
+        raw_next_regime_to_V_arr = next_regime_to_V_arr
         next_regime_to_V_arr = self._with_edge_substitution(
             next_regime_to_V_arr=next_regime_to_V_arr,
             edge_regime_to_V_arr=edge_regime_to_V_arr,
         )
-        extra_kwargs: dict[str, object] = {}
+        extra_kwargs: dict[str, object] = self._edge_reference_args(
+            next_regime_to_V_arr=raw_next_regime_to_V_arr, flat_params=flat_params
+        )
         if self.same_period_ref_regimes:
             if same_period_regime_to_V_arr is None:
                 msg = (

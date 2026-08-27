@@ -47,8 +47,11 @@ from dags.tree import qname_from_tree_path
 from _lcm.regime_building.age_normalization import PeriodizedEconFunction
 from _lcm.regime_building.Q_and_F import (
     EDGE_CHANNELS_ARG,
+    EDGE_REF_PARAMS_ARG,
+    EDGE_REF_V_ARG,
     SAME_PERIOD_PARAMS_ARG,
     SAME_PERIOD_V_ARG,
+    ProjectedLandingReader,
     ResolvedProjectedRegimeValue,
     _build_same_period_ref_reader,
     projection_func_or_fail,
@@ -64,7 +67,6 @@ from _lcm.typing import (
     TransitionFunctionName,
     _ParamsLeaf,
 )
-from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.typing import (
@@ -81,7 +83,15 @@ from lcm.typing import (
 D_KEY_SUFFIX = "__gated_edge_D__"
 
 # The float dissolution flag is 0.0 / 1.0 at grid points; threshold back to boolean.
-_D_THRESHOLD = 0.5
+# A landing is dissolved as soon as the interpolation puts ANY weight on a
+# dissolved node, not once the blend passes one half. The flag and the value
+# are separate channels, and interpolating them independently is what lets them
+# disagree: a target's value is `-inf` exactly where its flag is set, so a blend
+# carrying positive weight on such a node is `-inf` however small that weight
+# is. Thresholding at one half would call that landing open and then collect
+# `-inf` from it — a branch priced as feasible and paid as impossible. At a node
+# the flag is exactly 0 or 1, so on-grid landings are unaffected.
+_D_THRESHOLD = 0.0
 
 # `V_arr_name`s under which the
 # target's own (per-component) value array and its float dissolution flag are
@@ -132,10 +142,17 @@ class EdgeChannels:
     value some branch really pays; a single pre-gated surface cannot, because a
     predicate does not commute with interpolation.
 
-    The order is fixed here and read back by index, so producer and consumer
-    cannot drift: the target's value components, then its dissolution flag if
-    the gate reads one, then each gate reference the gate reads, then one
-    fallback per leg.
+    Only the target's OWN grid arrays are channels: its value components, then
+    its dissolution flag if the gate reads one. The order is fixed here and read
+    back by index, so producer and consumer cannot drift.
+
+    A projected gate reference or leg fallback is NOT a channel. It reads
+    another regime at coordinates the projection produces, and tabulating that
+    composition on the target's grid would commit the source to
+    `interpolate(V_ref o projection)` where the value it actually collects is
+    `V_ref(projection(landing))`. Those two agree only for an affine
+    projection. Such a reference is read at the landing instead, by a
+    `ProjectedLandingReader`.
     """
 
     component_names: tuple[str, ...]
@@ -146,21 +163,10 @@ class EdgeChannels:
     """Whether the target's dissolution flag is carried (only if the gate reads
     it, which a singleton target's gate may not)."""
 
-    gate_ref_names: tuple[str, ...]
-    """Gate references the gate reads, in declaration order."""
-
-    n_legs: int
-    """One fallback channel per leg, in SOURCE stakeholder order."""
-
     @property
     def count(self) -> int:
         """Total number of channels, i.e. the array's trailing axis length."""
-        return (
-            len(self.component_names)
-            + int(self.has_dissolution)
-            + len(self.gate_ref_names)
-            + self.n_legs
-        )
+        return len(self.component_names) + int(self.has_dissolution)
 
     def component_index(self, name: str) -> int:
         """Channel holding the named target value component."""
@@ -171,31 +177,18 @@ class EdgeChannels:
         """Channel holding the target's dissolution flag."""
         return len(self.component_names)
 
-    def gate_ref_index(self, name: str) -> int:
-        """Channel holding the named gate reference's interpolated value."""
-        return (
-            len(self.component_names)
-            + int(self.has_dissolution)
-            + self.gate_ref_names.index(name)
-        )
-
-    def fallback_index(self, leg_index: int) -> int:
-        """Channel holding the given leg's fallback value."""
-        return (
-            len(self.component_names)
-            + int(self.has_dissolution)
-            + len(self.gate_ref_names)
-            + leg_index
-        )
-
 
 @dataclass(frozen=True, kw_only=True)
 class EdgeBranchCombiner:
     """One edge's gate, applied to operands already read at a realized point."""
 
     combine: Callable[..., FloatND]
-    """Takes the stacked channels under `EDGE_CHANNELS_ARG`, the target states
-    the gate reads under their own names, and the gate's free parameters."""
+    """Takes the stacked channels under `EDGE_CHANNELS_ARG`, each projected
+    reference under its own name, the target states the gate reads under
+    theirs, and the gate's free parameters."""
+
+    projected_readers: tuple[ProjectedLandingReader, ...] = ()
+    """Gate references and leg fallbacks, evaluated at the landing point."""
 
     gate_state_names: tuple[StateName, ...]
     """Target states the gate reads, which the caller supplies at the landing
@@ -225,6 +218,8 @@ class CompiledEdgeFold:
     channels: EdgeChannels
     """Layout of `surfaces`' trailing axis."""
 
+
+EDGE_FALLBACK_ARG_PREFIX = "__edge_fallback_"
 
 _EDGE_PERIOD_ARG = "period"
 _EDGE_AGE_ARG = "age"
@@ -659,9 +654,7 @@ class ResolvedGatedEdge:
         """
         for compiled in self.folds_by_period.values():
             return compiled.channels
-        return EdgeChannels(
-            component_names=(), has_dissolution=False, gate_ref_names=(), n_legs=0
-        )
+        return EdgeChannels(component_names=(), has_dissolution=False)
 
     @property
     def combine(self) -> EdgeBranchCombiner:
@@ -1610,72 +1603,51 @@ def get_edge_fold(
         for leg in edge.legs
     ]
 
-    def _grid_reader(reader: Callable[..., FloatND]) -> Callable[..., FloatND]:
-        """Product-map an off-grid reference reader over the target grid.
+    def _landing_reader(
+        *, name: str, ref: ResolvedProjectedRegimeValue
+    ) -> ProjectedLandingReader:
+        """Build one projected reference, to be read at the source's landing.
 
-        `productmap` derives its OWN
-        outward-facing signature from the wrapped function's own parameters
-        (`_lcm.utils.dispatchers.productmap` -> `allow_only_kwargs`), and
-        silently DROPS any caller-supplied kwarg not in that signature. A
-        same-period-ref projection frequently reads only a STRICT SUBSET of
-        the target's `state_names` (e.g. a gate ref projected from a single
-        newly-drawn state, ignoring a carried-along one) — but `_grid_reader`
-        always maps over the FULL `state_names` (every target-grid axis), and
-        `batched_vmap`'s internal closure unconditionally needs every one of
-        them present in its call kwargs. Left alone, the unused axes get
-        dropped by the signature filter before `batched_vmap` ever sees them,
-        raising a `KeyError` on the first unused axis. Padding the reader's
-        exposed signature to the full `state_names` (ignoring the padding
-        args internally) fixes the mismatch without touching `productmap`
-        itself, which is shared far beyond gated edges.
+        The reader is left un-mapped. Product-mapping it over the target's grid
+        would tabulate `V_ref o projection` and leave the source interpolating
+        THAT surface, which equals `V_ref(projection(landing))` only where the
+        projection is affine — so a curved projection would price a branch at a
+        value it does not pay, and forward simulation, which evaluates the
+        projection at the realized point, would route on the other number.
         """
-        return productmap(
-            func=_pad_reader_to_state_names(reader, state_names=state_names),
-            variables=state_names,
-            batch_sizes=dict.fromkeys(state_names, 0),
+        reader = _build_same_period_ref_reader(
+            ref=ref,
+            v_interpolation_info=reference_v_info[ref.regime],
+            functions=target_functions,
+            deterministic_transitions=target_deterministic_transitions,
+            # The value belongs to the period the source LANDS in, which
+            # backward induction has already solved and rolled forward, so it
+            # arrives on the edge-reference channel rather than the
+            # same-period one the value constraints read.
+            v_mapping_arg=EDGE_REF_V_ARG,
+            params_mapping_arg=EDGE_REF_PARAMS_ARG,
+        )
+        args = tuple(get_union_of_args([reader]))
+        return ProjectedLandingReader(
+            name=name,
+            reader=reader,
+            state_args=tuple(arg for arg in args if arg in state_names),
+            other_args=tuple(arg for arg in args if arg not in state_names),
         )
 
-    gate_ref_readers = {
-        ref_name: _grid_reader(
-            _build_same_period_ref_reader(
-                ref=ref,
-                v_interpolation_info=reference_v_info[ref.regime],
-                functions=target_functions,
-                deterministic_transitions=target_deterministic_transitions,
-            )
-        )
+    gate_ref_landing_readers = {
+        ref_name: _landing_reader(name=ref_name, ref=ref)
         for ref_name, ref in compiled.qualified_gate_refs.items()
     }
-    fallback_readers = [
-        _grid_reader(
-            _build_same_period_ref_reader(
-                ref=ref,
-                v_interpolation_info=reference_v_info[ref.regime],
-                functions=target_functions,
-                deterministic_transitions=target_deterministic_transitions,
-            )
-        )
-        for ref in qualified_fallbacks
-    ]
-    # `get_union_of_args` reflects each reader's EXPOSED signature, which —
-    # thanks to `_pad_reader_to_state_names` inside `_grid_reader` — already
-    # spans the full `state_names` plus any genuine extra params (e.g.
-    # runtime grid points for an irregular-grid projection); no separate
-    # union with `state_names` is needed here.
-    gate_ref_args = {
-        name: tuple(get_union_of_args([reader]))
-        for name, reader in gate_ref_readers.items()
-    }
-    fallback_args = [tuple(get_union_of_args([reader])) for reader in fallback_readers]
+    fallback_landing_readers = tuple(
+        _landing_reader(name=f"{EDGE_FALLBACK_ARG_PREFIX}{leg_index}", ref=ref)
+        for leg_index, ref in enumerate(qualified_fallbacks)
+    )
 
     # Outer signature: the target state grids, the same-period value mapping, and
     # any non-injected params/extras the gate or the reference readers need.
     outer_arg_names = sorted(
-        {SAME_PERIOD_V_ARG}
-        | set(state_names)
-        | {arg for args in gate_ref_args.values() for arg in args}
-        | {arg for args in fallback_args for arg in args}
-        | (set(gate_arg_names) - injected_names)
+        {SAME_PERIOD_V_ARG} | set(state_names) | (set(gate_arg_names) - injected_names)
     )
 
     singleton_source = all(leg.source_stakeholder is None for leg in edge.legs)
@@ -1696,10 +1668,13 @@ def get_edge_fold(
             if name in read_names or name in open_component_names
         ),
         has_dissolution="D_target" in read_names,
-        gate_ref_names=tuple(
-            name for name in compiled.qualified_gate_refs if name in read_names
-        ),
-        n_legs=len(edge.legs),
+    )
+    read_gate_refs = tuple(
+        name for name in compiled.qualified_gate_refs if name in read_names
+    )
+    projected_readers = (
+        *(gate_ref_landing_readers[name] for name in read_gate_refs),
+        *fallback_landing_readers,
     )
 
     @with_signature(args=outer_arg_names, return_annotation="FloatND")
@@ -1715,23 +1690,9 @@ def get_edge_fold(
             )
         d_value = same_period_V.get(f"{edge.target}{D_KEY_SUFFIX}")
 
-        gate_ref_values = {
-            name: reader(
-                **{arg: kwargs[arg] for arg in gate_ref_args[name]},
-            )
-            for name, reader in gate_ref_readers.items()
-            if name in channels.gate_ref_names
-        }
         surfaces = [target_components[name] for name in channels.component_names]
         if channels.has_dissolution:
             surfaces.append(cast("FloatND", d_value))
-        surfaces.extend(gate_ref_values[name] for name in channels.gate_ref_names)
-        surfaces.extend(
-            reader(**{arg: kwargs[arg] for arg in fb_arg_names})
-            for reader, fb_arg_names in zip(
-                fallback_readers, fallback_args, strict=True
-            )
-        )
         return jnp.stack(jnp.broadcast_arrays(*surfaces), axis=-1)
 
     combine = _get_edge_branch_combiner(
@@ -1743,6 +1704,7 @@ def get_edge_fold(
         state_names=state_names,
         target_component_names=target_component_names,
         singleton_source=singleton_source,
+        projected_readers=projected_readers,
     )
     return CompiledEdgeFold(surfaces=fold, combine=combine, channels=channels)
 
@@ -1757,6 +1719,7 @@ def _get_edge_branch_combiner(
     state_names: tuple[StateName, ...],
     target_component_names: tuple[str, ...],
     singleton_source: bool,
+    projected_readers: tuple[ProjectedLandingReader, ...],
 ) -> EdgeBranchCombiner:
     """Build the callable that gates one edge AT a realized target-state point.
 
@@ -1781,15 +1744,23 @@ def _get_edge_branch_combiner(
         )
         for leg in edge.legs
     )
-    fallback_indices = tuple(
-        channels.fallback_index(leg_index) for leg_index in range(len(edge.legs))
+    fallback_names = tuple(
+        f"{EDGE_FALLBACK_ARG_PREFIX}{leg_index}" for leg_index in range(len(edge.legs))
+    )
+    gate_ref_names = tuple(
+        reader.name
+        for reader in projected_readers
+        if not reader.name.startswith(EDGE_FALLBACK_ARG_PREFIX)
     )
     # Exactly what the gate names, and nothing else: a target state the gate
     # does not read has no coordinate to supply here, and a co-mapped one has
     # none at all.
     gate_state_names = tuple(name for name in state_names if name in gate_arg_names)
     outer_arg_names = sorted(
-        {EDGE_CHANNELS_ARG} | (set(gate_arg_names) - injected_names)
+        {EDGE_CHANNELS_ARG}
+        | set(gate_ref_names)
+        | set(fallback_names)
+        | (set(gate_arg_names) - injected_names)
     )
 
     @with_signature(args=outer_arg_names, return_annotation="FloatND")
@@ -1807,8 +1778,7 @@ def _get_edge_branch_combiner(
                 else None
             ),
             gate_ref_values={
-                name: stacked[..., channels.gate_ref_index(name)]
-                for name in channels.gate_ref_names
+                name: cast("FloatND", kwargs[name]) for name in gate_ref_names
             },
             state_mesh={
                 name: cast("FloatND", kwargs[name]) for name in gate_state_names
@@ -1820,9 +1790,11 @@ def _get_edge_branch_combiner(
         )
         # STRICT where — never `gate*V + (1-gate)*fallback` (`0*-inf = NaN`).
         component_values = [
-            jnp.where(gate, stacked[..., open_index], stacked[..., fallback_index])
-            for open_index, fallback_index in zip(
-                open_indices, fallback_indices, strict=True
+            jnp.where(
+                gate, stacked[..., open_index], cast("FloatND", kwargs[fallback_name])
+            )
+            for open_index, fallback_name in zip(
+                open_indices, fallback_names, strict=True
             )
         ]
         return (
@@ -1832,7 +1804,10 @@ def _get_edge_branch_combiner(
         )
 
     return EdgeBranchCombiner(
-        combine=combine, gate_state_names=gate_state_names, n_legs=len(edge.legs)
+        combine=combine,
+        gate_state_names=gate_state_names,
+        n_legs=len(edge.legs),
+        projected_readers=projected_readers,
     )
 
 
