@@ -61,6 +61,8 @@ from _lcm.zero_safe import (
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import (
     BoolND,
+    ContinuousState,
+    DiscreteState,
     Float1D,
     FloatND,
     IntND,
@@ -805,6 +807,24 @@ class GatedContinuationSpec:
 
 
 @dataclass(frozen=True, kw_only=True)
+class GatedContinuationSchedule:
+    """One gated edge's continuation specs, keyed by the period they fold at."""
+
+    by_period: MappingProxyType[int, GatedContinuationSpec]
+    """Specs keyed by FOLD period. A source standing at `t` reads the `t + 1`
+    entry: that is the period whose value arrays the edge folds, and whose
+    grids its projected readers close over. Keyed by period for the reason
+    `ResolvedGatedEdge.folds_by_period` is — a gate reference on an
+    `AgeSpecializedGrid` is read on its own regime's nodes, which move with
+    age while their shape does not."""
+
+    reference_regimes: tuple[RegimeName, ...]
+    """Regimes this edge's gate references and leg fallbacks interpolate.
+    Enters the Q_and_F grouping key, so two periods whose reference grids
+    differ never share one compiled kernel."""
+
+
+@dataclass(frozen=True, kw_only=True)
 class ResolvedProjectedRegimeValue:
     """Engine-side form of a user `ProjectedRegimeValue`, resolved at model processing.
 
@@ -1524,6 +1544,42 @@ def _get_stakeholder_sliced_interpolator(
     return next_V_per_stakeholder
 
 
+def evaluate_projected_readers(
+    readers: tuple[ProjectedLandingReader, ...],
+    *,
+    landing_states: Mapping[StateName, ContinuousState | DiscreteState],
+    other_values: Mapping[str, object],
+) -> dict[str, FloatND]:
+    """Read each projected reference at one landing point.
+
+    A gate reference and a leg fallback name another regime's value at
+    coordinates a projection produces, so both are evaluated AT the landing
+    rather than tabulated on the target's grid: pre-tabulating them would make
+    the source interpolate `V_ref o projection`, which equals the value the
+    branch pays only where the projection is affine.
+
+    Args:
+        readers: The edge's projected readers.
+        landing_states: Target states at the point the source lands on, keyed
+            by the reader's own (unprefixed) state name. A projection may read
+            a discrete target state, so these are not all float.
+        other_values: The reader's remaining arguments — the edge-reference
+            value and params mappings, the target fold's period context, and
+            any source params the projections read.
+
+    Returns:
+        Dict of reader name to the value read at the landing.
+
+    """
+    return {
+        reader.name: reader.reader(
+            **{arg: landing_states[arg] for arg in reader.state_args},
+            **{arg: other_values[arg] for arg in reader.other_args},
+        )
+        for reader in readers
+    }
+
+
 def _get_pointwise_gated_interpolator(
     *,
     base_interpolator: Callable[..., FloatND],
@@ -1586,7 +1642,10 @@ def _get_pointwise_gated_interpolator(
         raise ValueError(msg)
     interpolator_args = tuple(get_union_of_args([base_interpolator]))
     combine_args = tuple(get_union_of_args([combine]))
-    context_args = _EDGE_CONTEXT_ARGS & set(combine_args)
+    reader_context_args = _EDGE_CONTEXT_ARGS & {
+        arg for reader in projected_readers for arg in reader.other_args
+    }
+    context_args = (_EDGE_CONTEXT_ARGS & set(combine_args)) | reader_context_args
     reader_names = {reader.name for reader in projected_readers}
     landing_names = {
         name: f"next_{name}"
@@ -1609,7 +1668,12 @@ def _get_pointwise_gated_interpolator(
                 for reader in projected_readers
                 for arg in reader.state_args
             }
-            | {arg for reader in projected_readers for arg in reader.other_args}
+            | {
+                arg
+                for reader in projected_readers
+                for arg in reader.other_args
+                if arg not in context_args
+            }
             | ({"period"} if context_args else set())
         )
         - {EDGE_CHANNELS_ARG}
@@ -1631,15 +1695,6 @@ def _get_pointwise_gated_interpolator(
             ],
             axis=-1,
         )
-        # Each projected reference is read HERE, at the landing coordinates,
-        # so the source collects the number its branch actually pays.
-        projected_values = {
-            reader.name: reader.reader(
-                **{arg: kwargs[landing_names[arg]] for arg in reader.state_args},
-                **{arg: kwargs[arg] for arg in reader.other_args},
-            )
-            for reader in projected_readers
-        }
         context: dict[str, FloatND] = {}
         if context_args:
             # The gate speaks about the period the source LANDS in. Clipping
@@ -1649,6 +1704,24 @@ def _get_pointwise_gated_interpolator(
                 jnp.asarray(kwargs["period"], dtype=jnp.int32) + 1, 0, last_period
             )
             context = {"period": target_period, "age": target_ages[target_period]}
+        # Each projected reference is read HERE, at the landing coordinates,
+        # so the source collects the number its branch actually pays. A
+        # projection declaring `period` or `age` means the TARGET fold's, the
+        # same context it would have been handed inside the fold — never the
+        # source's own.
+        projected_values = evaluate_projected_readers(
+            projected_readers,
+            landing_states={
+                arg: cast("ContinuousState | DiscreteState", kwargs[landing_names[arg]])
+                for reader in projected_readers
+                for arg in reader.state_args
+            },
+            other_values={
+                arg: context[arg] if arg in context_args else kwargs[arg]
+                for reader in projected_readers
+                for arg in reader.other_args
+            },
+        )
         return combine(
             **{EDGE_CHANNELS_ARG: channels},
             **projected_values,

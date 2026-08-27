@@ -64,9 +64,12 @@ from _lcm.regime_building.gated_edges import (
 from _lcm.regime_building.Q_and_F import (
     _REF_STATE_PREFIX,
     EDGE_CHANNELS_ARG,
+    EDGE_REF_PARAMS_ARG,
+    EDGE_REF_V_ARG,
     SAME_PERIOD_PARAMS_ARG,
     SAME_PERIOD_V_ARG,
     _build_same_period_ref_reader,
+    evaluate_projected_readers,
 )
 from _lcm.regime_building.V import create_v_interpolation_info, get_V_interpolator
 from _lcm.simulation.gated_routing import (
@@ -76,6 +79,7 @@ from _lcm.simulation.gated_routing import (
     substitute_gated_edge_continuations,
 )
 from _lcm.solution.backward_induction import solve
+from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
 from _lcm.utils.logging import get_logger
 from lcm import (
@@ -643,13 +647,50 @@ def _same_period_wbar(regimes, flat_params, solution):
         "period": jnp.int32(1),
         "age": jnp.asarray(_AGES.period_to_age(1)),
     }
-    combine = edge.combine.combine
+    engine_values = {
+        **supplied,
+        EDGE_REF_V_ARG: MappingProxyType(dict(solution[1])),
+        EDGE_REF_PARAMS_ARG: flat_params,
+    }
+    edge_fold = edge.combine_at(period=1)
+    combine = edge_fold.combine
+    # A projected reference is read AT one landing point, and a projection is
+    # written for one household — its state is that household's own scalar.
+    # The source's kernel supplies the point because it already runs per cell;
+    # reproducing the fold at every target node therefore means mapping each
+    # reader over the target's grid, which is what production's own dispatcher
+    # does around it.
+    mapped_readers = tuple(
+        replace(
+            reader,
+            reader=productmap(
+                func=reader.reader,
+                variables=reader.state_args,
+                batch_sizes=dict.fromkeys(reader.state_args, 0),
+            ),
+        )
+        for reader in edge_fold.projected_readers
+    )
+    projected = evaluate_projected_readers(
+        mapped_readers,
+        landing_states={
+            arg: supplied[arg]
+            for reader in edge_fold.projected_readers
+            for arg in reader.state_args
+        },
+        other_values={
+            arg: engine_values[arg]
+            for reader in edge_fold.projected_readers
+            for arg in reader.other_args
+        },
+    )
     return combine(
         **{EDGE_CHANNELS_ARG: channels},
+        **projected,
         **{
             name: supplied[name]
             for name in get_union_of_args([combine])
-            if name != EDGE_CHANNELS_ARG
+            if name != EDGE_CHANNELS_ARG and name not in projected
         },
     )
 
@@ -765,10 +806,21 @@ def test_prefixed_reference_grid_param_is_satisfiable_by_no_regime():
     # read satisfiable.
     assert "x__points" in flat_params["refregime"]
 
-    # And the production reader does not expose the unsatisfiable name.
+    # And the production reader does not expose the unsatisfiable name. The
+    # gate reference is read at the landing rather than tabulated on the
+    # target's grid, so it lives on the combiner's projected readers; the fold
+    # surfaces underneath must not carry the name either.
     fold = regimes["src"].gated_edges["target"].fold_at(period=1)
+    reader_args = {
+        arg
+        for reader in fold.combine.projected_readers
+        for arg in (*reader.state_args, *reader.other_args)
+    }
     assert prefixed not in get_union_of_args([fold.surfaces])
-    assert SAME_PERIOD_PARAMS_ARG in get_union_of_args([fold.surfaces])
+    assert prefixed not in reader_args
+    # It takes a satisfiable engine params mapping instead, keyed by regime, so
+    # the reference regime's own `x__points` is found under its own name.
+    assert EDGE_REF_PARAMS_ARG in reader_args
 
 
 def _gate_ref_only(ref_v: FloatND) -> BoolND:
