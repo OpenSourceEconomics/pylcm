@@ -12,11 +12,13 @@ solves to.
 from collections.abc import Mapping
 
 import numpy as np
+import pytest
 
 from lcm import (
     AgeGrid,
     CollectiveUtility,
     DiscreteGrid,
+    GatedEdge,
     Model,
     ProjectedRegimeValue,
     Regime,
@@ -26,6 +28,7 @@ from lcm import (
     categorical,
     fixed_transition,
 )
+from lcm.exceptions import RegimeInitializationError
 from lcm.transition import MarkovTransition
 from lcm.typing import ScalarInt
 from tests.conftest import DECIMAL_PRECISION
@@ -258,3 +261,52 @@ def _new_vocabulary_regimes() -> dict[str, Regime]:
         "single_m": single_m,
         "single_m_terminal": single_f_terminal.replace(),
     }
+
+
+def test_an_edge_declared_twice_must_agree_in_full():
+    """Two spellings of one edge disagreeing on routes is refused, not merged.
+
+    A `ValueDependentTransition` lowers onto a `gated_edges` entry, so a regime
+    that carries both for one target is naming one edge twice. Agreeing on the
+    gate is not enough: the routes, the gate references and the off-grid
+    contract are the edge too, and a disagreement in any of them is two
+    different edges for one target.
+    """
+    route_f = StakeholderRoute(
+        target_stakeholder="f",
+        fallback=ProjectedRegimeValue(
+            regime="single_f", projection={"wage": _identity_wage}
+        ),
+    )
+    route_m = StakeholderRoute(
+        target_stakeholder="m",
+        fallback=ProjectedRegimeValue(
+            regime="single_m", projection={"wage": _identity_wage}
+        ),
+    )
+
+    with pytest.raises(RegimeInitializationError, match="disagree"):
+        Regime(
+            transition={
+                "married_ir": ValueDependentTransition(
+                    probability=MarkovTransition(_prob_one),
+                    gate=_no_dissolution_gate,
+                    routes={"f": route_f, "m": route_m},
+                )
+            },
+            gated_edges={
+                "married_ir": GatedEdge(
+                    gate=_no_dissolution_gate,
+                    legs={"f": route_f},
+                )
+            },
+            active=lambda age: age < 1,
+            states={"wage": _WAGE_3},
+            state_transitions={"wage": fixed_transition("wage")},
+            actions={"work": DiscreteGrid(Work)},
+            functions={
+                "utility": CollectiveUtility(
+                    utilities={"f": _u_zero_collective, "m": _u_zero_collective}
+                )
+            },
+        )

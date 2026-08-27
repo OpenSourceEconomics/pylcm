@@ -704,22 +704,24 @@ class Regime:
         entries = dict(transition)
         gated_edges = dict(self.gated_edges)
         for target, declaration in declarations.items():
-            if (
-                target in gated_edges
-                and gated_edges[target].gate is not declaration.gate
-            ):
-                raise RegimeInitializationError(
-                    f"The transition into {target!r} is declared both as a "
-                    "`ValueDependentTransition` and as a `gated_edges` entry. "
-                    "Declare it once."
-                )
-            entries[target] = declaration.probability
-            gated_edges[target] = GatedEdge(
+            lowered = GatedEdge(
                 gate=declaration.gate,
                 legs=declaration.routes,
                 gate_refs=declaration.gate_references,
                 off_grid=declaration.off_grid,
             )
+            existing = gated_edges.get(target)
+            if existing is not None and existing != lowered:
+                raise RegimeInitializationError(
+                    f"The transition into {target!r} is declared both as a "
+                    "`ValueDependentTransition` and as a `gated_edges` entry, "
+                    "and the two disagree. An edge is its gate, its routes, "
+                    "its gate references and its off-grid contract together, "
+                    "so agreeing on the gate alone is not agreeing. Declare "
+                    "it once."
+                )
+            entries[target] = declaration.probability
+            gated_edges[target] = lowered
         object.__setattr__(self, "transition", entries)
         object.__setattr__(self, "gated_edges", gated_edges)
 
