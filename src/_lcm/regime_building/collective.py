@@ -14,17 +14,23 @@ kept distinct from a numeric `-inf` that can arise on-path). The terminal and
 non-terminal solve kernels call it after building their `Q^s`.
 """
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from types import MappingProxyType
 
 import jax.numpy as jnp
+from dags import rename_arguments, with_signature
 
 from _lcm.regime_building.argmax import (
     _flatten_last_n_axes,
     _move_axes_to_back,
     argmax_and_max,
 )
+from _lcm.typing import StateName, _ParamsLeaf
+from _lcm.utils.functools import get_union_of_args
 from _lcm.zero_safe import sum_in_value_order, zero_safe_weighted_term
-from lcm.typing import BoolND, FloatND, IntND
+from lcm.collective import ParetoObjective
+from lcm.typing import BoolND, FloatND, IntND, UserFunction
 
 # Up to this many stakeholders, the scalarization's reduction order is not a choice:
 # one term is returned as-is and two admit a single association. From three terms on,
@@ -208,3 +214,140 @@ def _gather_along_actions(
     q_flat = _flatten_last_n_axes(q_moved, n=len(action_axes))
     gathered = jnp.take_along_axis(q_flat, argmax_flat[..., None], axis=-1)
     return gathered[..., 0]
+
+
+# Template key the Pareto weights' free parameters live under.
+PARETO_OBJECTIVE_ENTRY = "pareto_objective"
+
+
+@dataclass(frozen=True, kw_only=True)
+class ParetoWeights:
+    """A collective regime's Pareto weights, as the kernel evaluates them.
+
+    Built once per regime and called at every cell, so the weights are as much
+    a function of the state as any other node — and the household still solves
+    one argmax against one weighting, because a weight may not read the action
+    it helps choose.
+    """
+
+    compute: Callable[..., dict[str, FloatND]]
+    """Return the weights the objective uses at one cell, keyed by stakeholder.
+
+    Normalized under the `"pointwise"` convention; the declared values under
+    `"none"`.
+    """
+
+    declared: Callable[..., dict[str, FloatND]]
+    """Return the DECLARED weights at one cell, before any normalization.
+
+    What the admissibility check reads: normalizing turns a total of zero into
+    NaN and a total of one into the answer regardless of what was declared, so
+    the check that a declaration is a Pareto weighting has to see it as written.
+    """
+
+    arg_names: tuple[str, ...]
+    """States, `period` / `age`, and qualified params `compute` reads."""
+
+    param_names: tuple[str, ...]
+    """The subset of `arg_names` supplied from the regime's flat params."""
+
+    normalization: str
+    """`"pointwise"` divides by the total at each cell; `"none"` does not."""
+
+
+def build_pareto_weights(
+    *,
+    objective: ParetoObjective | None,
+    stakeholders: tuple[str, ...],
+    state_names: frozenset[StateName],
+) -> ParetoWeights:
+    """Build the weight evaluator a collective regime's kernels call per cell.
+
+    An undeclared objective is equal weights, which is the same evaluator with
+    constant entries — one path through the kernel, so the symmetric couple and
+    the estimated one cannot diverge.
+
+    A weight callable's arguments are the regime's own states, the engine
+    context `period` / `age`, and free parameters. The parameters are qualified
+    into the regime's `pareto_objective` template entry, so every stakeholder's
+    weight reads one shared namespace: `weight_f(pareto_weight)` and
+    `weight_m(pareto_weight)` name the same number.
+
+    Args:
+        objective: The regime's declaration, or `None` for equal weights.
+        stakeholders: Ordered stakeholder names.
+        state_names: The regime's own state names.
+
+    Returns:
+        The evaluator, its argument names, and the normalization convention.
+    """
+    declared: Mapping[str, UserFunction | float] = (
+        MappingProxyType(dict.fromkeys(stakeholders, 1.0 / len(stakeholders)))
+        if objective is None
+        else objective.weights
+    )
+    context = frozenset({"period", "age"})
+    per_stakeholder: dict[str, tuple[Callable[..., FloatND], tuple[str, ...]]] = {}
+    param_names: set[str] = set()
+    for name in stakeholders:
+        weight = declared[name]
+        if not callable(weight):
+            per_stakeholder[name] = (_constant_weight(float(weight)), ())
+            continue
+        own_args = tuple(get_union_of_args([weight]))
+        renamed = {
+            arg: arg
+            if arg in state_names or arg in context
+            else f"{PARETO_OBJECTIVE_ENTRY}__{arg}"
+            for arg in own_args
+        }
+        param_names.update(
+            qualified for arg, qualified in renamed.items() if qualified != arg
+        )
+        per_stakeholder[name] = (
+            rename_arguments(func=weight, mapper=renamed),
+            tuple(renamed.values()),
+        )
+
+    arg_names = tuple(
+        sorted({arg for _, args in per_stakeholder.values() for arg in args})
+    )
+    normalization = "pointwise" if objective is None else objective.normalization
+
+    @with_signature(args=list(arg_names), return_annotation="dict")
+    def declared_weights(**kwargs: _ParamsLeaf) -> dict[str, FloatND]:
+        return {
+            name: jnp.asarray(func(**{arg: kwargs[arg] for arg in args}))
+            for name, (func, args) in per_stakeholder.items()
+        }
+
+    @with_signature(args=list(arg_names), return_annotation="dict")
+    def compute(**kwargs: _ParamsLeaf) -> dict[str, FloatND]:
+        raw = declared_weights(**kwargs)
+        if normalization == "pointwise" and len(raw) > 1:
+            # Stakeholder names are economically inert, so the total is summed
+            # in value order: relabelling the household must not select a
+            # different reduction tree and hence a different normalizer.
+            total = sum_in_value_order(
+                jnp.stack(jnp.broadcast_arrays(*raw.values()), axis=0)
+            )
+            return {name: weight / total for name, weight in raw.items()}
+        return raw
+
+    return ParetoWeights(
+        compute=compute,
+        declared=declared_weights,
+        arg_names=arg_names,
+        param_names=tuple(sorted(param_names)),
+        normalization=normalization,
+    )
+
+
+def _constant_weight(value: float) -> Callable[..., FloatND]:
+    """Wrap a declared constant as the zero-argument weight function it is."""
+
+    @with_signature(args=[], return_annotation="FloatND")
+    def weight() -> FloatND:
+        return jnp.asarray(value)
+
+    return weight

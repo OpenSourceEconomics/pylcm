@@ -13,6 +13,7 @@ from jax import Array
 from _lcm.logsum import EULER_GAMMA, logsum_and_softmax
 from _lcm.regime_building.argmax import argmax_and_max
 from _lcm.regime_building.collective import (
+    ParetoWeights,
     collective_argmax_and_readout,
     collective_readout,
 )
@@ -33,6 +34,23 @@ from lcm.typing import BoolND, FloatND, IntND, ScalarFloat
 TASTE_SHOCK_SCALE_PARAM = "taste_shocks__scale"
 
 
+def _evaluate_pareto_weights(
+    *,
+    pareto_weights: ParetoWeights | None,
+    states_actions_params: Mapping[str, _ParamsLeaf],
+) -> dict[str, FloatND]:
+    """Evaluate the household's Pareto weights at one cell.
+
+    The kernel's own signature carries every argument the declaration reads, so
+    the weights are read out of the cell rather than closed over — which is
+    what makes a state-dependent or estimated weight ordinary.
+    """
+    weights = cast("ParetoWeights", pareto_weights)
+    return weights.compute(
+        **{name: states_actions_params[name] for name in weights.arg_names}
+    )
+
+
 def get_max_Q_over_a(
     *,
     Q_and_F: Callable[..., tuple[FloatND, BoolND]],
@@ -44,7 +62,7 @@ def get_max_Q_over_a(
     co_map_state_names: tuple[StateName, ...] = (),
     co_map_v_arr_in_axes: tuple[MappingProxyType[RegimeName, int | None], ...] = (),
     stakeholders: tuple[str, ...] | None = None,
-    weights: Mapping[str, float] | None = None,
+    pareto_weights: ParetoWeights | None = None,
     fold_state_names: tuple[StateName, ...] = (),
     fold_weights: Mapping[StateName, FloatND] = MappingProxyType({}),
     fold_conditioning: Mapping[StateName, StateName] = MappingProxyType({}),
@@ -102,8 +120,9 @@ def get_max_Q_over_a(
             function then yields the pair `(V, D)` — the stakeholder-axis value
             array plus the boolean dissolution flag `D = 1[mask empty]` on the state
             axes — distinct from a numeric `-inf`, which occurs on-path.
-        weights: Household Pareto weights per stakeholder; required (and only used)
-            when `stakeholders` is set.
+        pareto_weights: The household's Pareto weight evaluator; required (and
+            only used) when `stakeholders` is set. Called at each cell with the
+            states and parameters its declaration reads.
         fold_state_names: IID-process states declared `fold=True`, or empty (the
             default). Each is still an ordinary inner (non-co-mapped) productmap
             axis THROUGH the max-over-actions — every node is evaluated — but its
@@ -138,6 +157,12 @@ def get_max_Q_over_a(
     extra_param_names = _get_extra_param_names(
         Q_and_F=Q_and_F, action_names=action_names, state_names=state_names
     )
+    # A Pareto weight is evaluated at the cell, so its free parameters ride in
+    # this kernel's own signature alongside `Q_and_F`'s.
+    if pareto_weights is not None:
+        extra_param_names = list(
+            dict.fromkeys((*extra_param_names, *pareto_weights.param_names))
+        )
 
     # Actions are the inner optimization axis — batching applies only to the
     # outer state loop.
@@ -222,7 +247,10 @@ def get_max_Q_over_a(
                 values, dissolution = collective_readout(
                     stakeholder_Q=stakeholder_Q,
                     feasibility=F_arr,
-                    weights=cast("Mapping[str, float]", weights),
+                    weights=_evaluate_pareto_weights(
+                        pareto_weights=pareto_weights,
+                        states_actions_params=states_actions_params,
+                    ),
                     action_axes=action_axes,
                 )
                 return (
@@ -543,7 +571,7 @@ def get_argmax_and_max_Q_over_a(
     n_discrete_action_axes: int = 0,
     has_taste_shocks: bool = False,
     stakeholders: tuple[str, ...] | None = None,
-    weights: Mapping[str, float] | None = None,
+    pareto_weights: ParetoWeights | None = None,
 ) -> ArgmaxQOverAFunction:
     r"""Get the function returning the arguments maximizing Q over all actions.
 
@@ -589,8 +617,9 @@ def get_argmax_and_max_Q_over_a(
             branch so simulate recomputes the identical argmax. Mutually
             exclusive with `has_taste_shocks` (rejected at regime
             construction for collective regimes).
-        weights: Household Pareto weights per stakeholder; required (and only
-            used) when `stakeholders` is set.
+        pareto_weights: The household's Pareto weight evaluator; required (and
+            only used) when `stakeholders` is set. Called at each cell with the
+            states and parameters its declaration reads.
 
     Returns:
         Function that calculates the argument maximizing Q over the feasible continuous
@@ -603,6 +632,12 @@ def get_argmax_and_max_Q_over_a(
     extra_param_names = _get_extra_param_names(
         Q_and_F=Q_and_F, action_names=action_names, state_names=state_names
     )
+    # A Pareto weight is evaluated at the cell, so its free parameters ride in
+    # this kernel's own signature alongside `Q_and_F`'s.
+    if pareto_weights is not None:
+        extra_param_names = list(
+            dict.fromkeys((*extra_param_names, *pareto_weights.param_names))
+        )
 
     Q_and_F = productmap(
         func=Q_and_F,
@@ -691,7 +726,10 @@ def get_argmax_and_max_Q_over_a(
                 argmax_flat, values, _dissolution = collective_argmax_and_readout(
                     stakeholder_Q=stakeholder_Q,
                     feasibility=F_arr,
-                    weights=cast("Mapping[str, float]", weights),
+                    weights=_evaluate_pareto_weights(
+                        pareto_weights=pareto_weights,
+                        states_actions_params=states_actions_params,
+                    ),
                     action_axes=action_axes,
                 )
                 V_stacked = jnp.stack([values[name] for name in stakeholders], axis=-1)

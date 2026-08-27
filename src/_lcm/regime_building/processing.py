@@ -83,6 +83,7 @@ from _lcm.regime_building.age_normalization import (
     resolve_periodized_nodes,
 )
 from _lcm.regime_building.canonicalize import canonicalize_phased_regimes
+from _lcm.regime_building.collective import ParetoWeights, build_pareto_weights
 from _lcm.regime_building.diagnostics import _build_compute_intermediates_per_period
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.regime_building.gated_edges import (
@@ -619,12 +620,12 @@ def process_regimes(  # noqa: PLR0915
             regime_params_template = regime_to_params_template[regime_name]
             granular_param_expansions = regime_to_granular_param_expansions[regime_name]
 
-            # Resolve the household Pareto weights once (equal
-            # weights when unspecified) and thread the stakeholder names / weights into
-            # both phase builds. Both are `None` for a singleton (non-collective)
+            # Resolve the household Pareto weights once (equal weights when
+            # undeclared) and thread the stakeholder names / weights into both
+            # phase builds. Both are `None` for a singleton (non-collective)
             # regime, which is what the downstream builds branch on.
             stakeholders = user_regime.stakeholders
-            weights = _resolve_stakeholder_weights(user_regime)
+            pareto_weights = _resolve_pareto_weights(user_regime)
             # The (deduplicated, order-preserving) regimes
             # whose same-period V this regime reads; drives the within-period
             # topological solve order and the kernel's same-period V threading.
@@ -690,7 +691,7 @@ def process_regimes(  # noqa: PLR0915
                 has_taste_shocks=user_regime.taste_shocks is not None,
                 value_aware_feasibility=value_aware_feasibility,
                 stakeholders=stakeholders,
-                weights=weights,
+                pareto_weights=pareto_weights,
                 same_period_ref_regimes=same_period_ref_regimes,
                 edge_target_regimes=tuple(user_regime.gated_edges),
                 fold_state_names=fold_state_names,
@@ -732,7 +733,7 @@ def process_regimes(  # noqa: PLR0915
                 certainty_equivalent=user_regime.certainty_equivalent,
                 value_aware_feasibility=value_aware_feasibility,
                 stakeholders=stakeholders,
-                weights=weights,
+                pareto_weights=pareto_weights,
                 fold_only_regimes=fold_only_regimes,
                 gated_continuations=gated_continuations,
             )
@@ -1222,24 +1223,58 @@ def _resolve_gated_edge(
     )
 
 
-def _resolve_stakeholder_weights(
-    user_regime: UserRegime,
-) -> MappingProxyType[str, float] | None:
-    """Resolve a collective regime's household Pareto weights.
+def _resolve_pareto_weights(user_regime: UserRegime) -> ParetoWeights | None:
+    """Resolve a collective regime's household Pareto weight evaluator.
 
     Returns `None` for a singleton regime (the default, and the marker the
-    downstream builds read as non-collective). For a collective regime, uses the
-    user's explicit `weights` when given, else equal weights `1/len(stakeholders)`
-    (validated to match the stakeholder names at regime construction).
+    downstream builds read as non-collective). A collective regime gets the
+    evaluator its kernels call at every cell — built from the declared
+    `pareto_objective`, or from equal weights when it declares none.
+
+    Raises:
+        ModelInitializationError: If a weight reads one of the regime's
+            actions.
     """
     stakeholders = user_regime.stakeholders
     if stakeholders is None:
         return None
-    if user_regime.weights is not None:
-        user_weights = user_regime.weights
-        return MappingProxyType({s: float(user_weights[s]) for s in stakeholders})
-    equal = 1.0 / len(stakeholders)
-    return MappingProxyType(dict.fromkeys(stakeholders, equal))
+    _fail_if_a_pareto_weight_reads_an_action(user_regime)
+    return build_pareto_weights(
+        objective=user_regime.pareto_objective,
+        stakeholders=stakeholders,
+        state_names=frozenset(user_regime.states),
+    )
+
+
+def _fail_if_a_pareto_weight_reads_an_action(user_regime: UserRegime) -> None:
+    """Reject a Pareto weight that depends on the choice it helps make.
+
+    The household solves one argmax against one weighting. A weight that varies
+    with the action states a different objective per candidate, and the
+    maximizer of that is a Pareto optimum of no fixed weighting — so it is
+    refused where it is declared rather than silently maximized.
+
+    Raises:
+        ModelInitializationError: On the first weight reading an action.
+    """
+    objective = user_regime.pareto_objective
+    if objective is None:
+        return
+    actions = set(user_regime.actions)
+    for name, weight in objective.weights.items():
+        if not callable(weight):
+            continue
+        read = sorted(actions & set(get_union_of_args([weight])))
+        if read:
+            msg = (
+                f"The Pareto weight of stakeholder {name!r} reads the "
+                f"action(s) {read}. A weight that varies with the choice it "
+                "helps make states a different household objective per "
+                "candidate, whose maximizer is a Pareto optimum of no fixed "
+                "weighting. Read a state instead, or move the dependence into "
+                "the stakeholders' own utilities."
+            )
+            raise ModelInitializationError(msg)
 
 
 def _fail_if_collective_regime_targets_unsupported(
@@ -2275,7 +2310,7 @@ def _build_solution_phase(
     has_taste_shocks: bool,
     value_aware_feasibility: _ValueAwareFeasibility,
     stakeholders: tuple[str, ...] | None = None,
-    weights: Mapping[str, float] | None = None,
+    pareto_weights: ParetoWeights | None = None,
     same_period_ref_regimes: tuple[RegimeName, ...] = (),
     edge_target_regimes: tuple[RegimeName, ...] = (),
     fold_state_names: tuple[StateName, ...] = (),
@@ -2558,7 +2593,7 @@ def _build_solution_phase(
         co_map_state_names=co_map_state_names,
         co_map_v_arr_in_axes=co_map_v_arr_in_axes,
         stakeholders=stakeholders,
-        weights=weights,
+        pareto_weights=pareto_weights,
         same_period_ref_regimes=same_period_ref_regimes,
         edge_target_regimes=edge_target_regimes,
         fold_state_names=fold_state_names,
@@ -2642,6 +2677,7 @@ def _build_solution_phase(
         compute_intermediates=compute_intermediates,
         continuation_spec=continuation_spec,
         param_checks=solver_kernels.param_checks,
+        pareto_weights=pareto_weights,
         _base_state_action_space=state_action_space,
         period_state_axes=period_state_axes,
     )
@@ -2992,7 +3028,7 @@ def _build_simulation_phase(  # noqa: PLR0915
     certainty_equivalent: CertaintyEquivalent | None,
     value_aware_feasibility: _ValueAwareFeasibility,
     stakeholders: tuple[str, ...] | None = None,
-    weights: Mapping[str, float] | None = None,
+    pareto_weights: ParetoWeights | None = None,
     fold_only_regimes: frozenset[RegimeName] = frozenset(),
     gated_continuations: Mapping[RegimeName, GatedContinuationSpec] = MappingProxyType(
         {}
@@ -3062,8 +3098,8 @@ def _build_simulation_phase(  # noqa: PLR0915
             argmax can never pick one of them. Empty for a singleton regime.
         stakeholders: Ordered stakeholder names for a collective regime, or
             `None` (the singleton default).
-        weights: Household Pareto weights per stakeholder; required (and only
-            used) when `stakeholders` is set — feeds the simulate-side
+        pareto_weights: The household's Pareto weight evaluator; required (and
+            only used) when `stakeholders` is set — feeds the simulate-side
             argmax's household scalarization.
         gated_continuations: Mapping of target regime names to the gated-edge
             continuation spec that target's leaf is read under. Empty for a
@@ -3283,7 +3319,7 @@ def _build_simulation_phase(  # noqa: PLR0915
         enable_jit=enable_jit,
         has_taste_shocks=has_taste_shocks,
         stakeholders=stakeholders,
-        weights=weights,
+        pareto_weights=pareto_weights,
     )
 
     pointwise_Q_and_F = _build_pointwise_Q_and_F_per_period(
@@ -6277,7 +6313,7 @@ def _build_argmax_and_max_Q_over_a_per_period(
     enable_jit: bool,
     has_taste_shocks: bool = False,
     stakeholders: tuple[str, ...] | None = None,
-    weights: Mapping[str, float] | None = None,
+    pareto_weights: ParetoWeights | None = None,
 ) -> MappingProxyType[int, ArgmaxQOverAFunction]:
     """Build argmax-and-max-Q-over-a closures for each period.
 
@@ -6285,7 +6321,7 @@ def _build_argmax_and_max_Q_over_a_per_period(
     With taste shocks, the per-subject Gumbel key is vmapped alongside the
     simulated states.
 
-    `stakeholders`/`weights`, when set, thread into
+    `stakeholders`/`pareto_weights`, when set, thread into
     `get_argmax_and_max_Q_over_a`'s collective branch — the returned V carries
     a trailing stakeholder axis, which `simulation_spacemap` below preserves
     (it only maps over `state_names`, never the trailing axis).
@@ -6306,7 +6342,7 @@ def _build_argmax_and_max_Q_over_a_per_period(
                 n_discrete_action_axes=len(state_action_space.discrete_actions),
                 has_taste_shocks=has_taste_shocks,
                 stakeholders=stakeholders,
-                weights=weights,
+                pareto_weights=pareto_weights,
             )
             if enable_jit:
                 func = jax.jit(func)

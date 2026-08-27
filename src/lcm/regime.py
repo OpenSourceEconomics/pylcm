@@ -32,6 +32,7 @@ from _lcm.user_regime_validation import (
 )
 from _lcm.utils.containers import ensure_containers_are_immutable
 from lcm.certainty_equivalent import CertaintyEquivalent
+from lcm.collective import ParetoObjective
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
 from lcm.taste_shocks import ExtremeValueTasteShocks
@@ -414,8 +415,8 @@ class Regime:
     (consent / dissolution).
 
     A collective regime carries a per-stakeholder utility
-    `functions["utility_<s>"]` for each stakeholder `<s>` and household Pareto
-    `weights`. Its solve reads off each stakeholder's own value at the shared
+    `functions["utility_<s>"]` for each stakeholder `<s>` and a
+    `pareto_objective`. Its solve reads off each stakeholder's own value at the shared
     household argmax, and a non-terminal one aggregates the per-stakeholder
     continuation `Q^s = H(u^s, E[V'^s])`. A non-terminal collective regime's
     transition targets must all be collective regimes with the identical
@@ -445,15 +446,16 @@ class Regime:
       the realized off-grid point (see `get_edge_simulate_gate_evaluator`).
     """
 
-    weights: Mapping[str, float] | None = None
-    """Household Pareto weights `λ_s` per stakeholder for a collective regime.
+    pareto_objective: ParetoObjective | None = None
+    """How this collective regime's household trades its stakeholders off.
 
-    Used only when `stakeholders is not None`: the collective solve maximizes the
-    household scalarization `O = Σ_s λ_s Q^s` over the feasible action set. When
-    omitted (the default), equal weights `1/len(stakeholders)` are used — the
-    symmetric-couple case, `λ = 0.5` on each partner. Supply an explicit mapping
-    to give one stakeholder more weight in the household decision. Ignored —
-    and must be `None` — for a singleton regime.
+    Used only when `stakeholders is not None`: the collective solve maximizes
+    the household scalarization `O = Σ_s λ_s Q^s` over the feasible action set.
+    When omitted (the default), equal weights `1/len(stakeholders)` are used —
+    the symmetric-couple case, `λ = 0.5` on each partner. Declare a
+    `ParetoObjective` to weigh one stakeholder more, to let the weights depend
+    on a state, or to estimate them. Ignored — and must be `None` — for a
+    singleton regime.
     """
 
     value_constraints: Mapping[FunctionName, UserFunction] = field(
@@ -551,11 +553,11 @@ class Regime:
             _validate_gated_edges(self)
         if self.stakeholders is not None:
             _validate_collective_regime(self)
-        elif self.weights is not None:
+        elif self.pareto_objective is not None:
             raise RegimeInitializationError(
-                "`weights` is a household Pareto-weight declaration for a "
-                "collective regime; it is only meaningful together with "
-                "`stakeholders`. Omit it for a singleton regime."
+                "`pareto_objective` declares how a collective regime's "
+                "household weighs its stakeholders; it is only meaningful "
+                "together with `stakeholders`. Omit it for a singleton regime."
             )
         elif self.value_constraints:
             raise RegimeInitializationError(
@@ -593,9 +595,6 @@ class Regime:
         make_immutable("value_constraints")
         make_immutable("gated_edges")
         make_immutable("same_period_refs")
-        # `weights` is optional; a singleton regime declares none at all.
-        if self.weights is not None:
-            make_immutable("weights")
 
         # The phase grammar (states matrix, carried laws, regime-transition
         # variants) is validated by the normalizer; the per-phase spec it

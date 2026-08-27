@@ -107,11 +107,11 @@ def _validate_collective_regime(regime: lcm.regime.Regime) -> None:
     Checked here are the properties a bare `Regime` already
     determines on its own: a non-empty, duplicate-free `stakeholders` tuple,
     the regime-local `value_constraints` / `same_period_refs` grammar, and — if
-    `weights` is given — weight keys matching the stakeholder names, with every
-    weight finite, non-negative, and a positive total (the zero-safe
-    scalarization in `collective._weighted_sum` treats an exact-zero weight as
-    a deliberate exclusion, so a non-finite or negative weight, or an all-zero
-    `weights` mapping, would silently produce a meaningless or undefined
+    `pareto_objective` is given — weight keys matching the stakeholder names,
+    with every constant weight finite, non-negative, and a positive total (the
+    zero-safe scalarization in `collective._weighted_sum` treats an exact-zero
+    weight as a deliberate exclusion, so a non-finite or negative weight, or an
+    all-zero declaration, would silently produce a meaningless or undefined
     household objective rather than erroring).
 
     What a collective regime needs but a model-level slot may supply — the
@@ -195,41 +195,54 @@ def _stakeholders_tuple_errors(stakeholders: tuple[str, ...]) -> list[str]:
 def _collective_weights_errors(
     regime: lcm.regime.Regime, stakeholders: tuple[str, ...]
 ) -> list[str]:
-    """Collect errors for a collective regime's `weights` mapping.
+    """Collect errors for a collective regime's `pareto_objective`.
 
-    Weight keys must match `stakeholders`, and every weight must be finite,
-    non-negative, with a positive total — the zero-safe scalarization in
-    `collective._weighted_sum` treats an exact-zero weight as a deliberate
-    exclusion, so a non-finite or negative weight, or an all-zero `weights`
-    mapping, would silently produce a meaningless or undefined household
-    objective rather than erroring.
+    Weight keys must match `stakeholders`, and a weight declared as a constant
+    must be finite, non-negative, and — across the constants — leave a positive
+    total. The zero-safe scalarization treats an exact-zero weight as a
+    deliberate exclusion, so a non-finite or negative weight, or an all-zero
+    declaration, would silently produce a meaningless or undefined household
+    objective rather than erroring. A weight declared as a function is checked
+    against the parameters it is solved with, where its values exist.
     """
-    if regime.weights is None:
+    objective = regime.pareto_objective
+    if objective is None:
         return []
 
-    if set(regime.weights) != set(stakeholders):
+    declared = set(objective.weights)
+    if declared != set(stakeholders):
+        missing = sorted(set(stakeholders) - declared)
+        extra = sorted(declared - set(stakeholders))
         return [
             (
-                f"`weights` keys {sorted(regime.weights)} must match the "
-                f"stakeholders {sorted(stakeholders)}."
+                f"`pareto_objective.weights` weighs {sorted(declared)}, but "
+                f"this regime's stakeholders are {sorted(stakeholders)}: "
+                f"missing {missing}, unknown {extra}."
             )
         ]
 
+    constants = {
+        name: float(weight)
+        for name, weight in objective.weights.items()
+        if not callable(weight)
+    }
     non_finite_or_negative = {
-        name: w for name, w in regime.weights.items() if not math.isfinite(w) or w < 0
+        name: weight
+        for name, weight in constants.items()
+        if not math.isfinite(weight) or weight < 0
     }
     if non_finite_or_negative:
         return [
             (
-                "`weights` must be finite and non-negative for every "
-                f"stakeholder; got {non_finite_or_negative}."
+                "`pareto_objective.weights` must be finite and non-negative "
+                f"for every stakeholder; got {non_finite_or_negative}."
             )
         ]
-    if sum(regime.weights.values()) <= 0:
+    if len(constants) == len(objective.weights) and sum(constants.values()) <= 0:
         return [
             (
-                "`weights` must sum to a positive total; an all-zero "
-                "Pareto-weight mapping leaves the household scalarization "
+                "`pareto_objective.weights` must leave a positive total; an "
+                "all-zero declaration leaves the household scalarization "
                 "identically zero for every action, so the argmax is undefined."
             )
         ]

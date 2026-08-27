@@ -43,7 +43,7 @@ from _lcm.regime_building.ndimage import (
 from _lcm.regime_building.Q_and_F import _sum_regime_mixture
 from _lcm.regime_building.zero_safe import zero_safe_average
 from _lcm.zero_safe import zero_safe_weighted_term
-from lcm import DiscreteGrid, LinSpacedGrid, categorical
+from lcm import DiscreteGrid, LinSpacedGrid, ParetoObjective, categorical
 from lcm.exceptions import RegimeInitializationError
 from lcm.regime import Regime
 from lcm.typing import DiscreteAction, FloatND, ScalarInt
@@ -859,21 +859,31 @@ def test_duplicate_stakeholders_are_rejected():
 
 def test_non_finite_weight_is_rejected():
     with pytest.raises(RegimeInitializationError, match="finite"):
-        _build_terminal_regime(weights={"f": float("nan"), "m": 0.5})
+        _build_terminal_regime(
+            pareto_objective=ParetoObjective(weights={"f": float("nan"), "m": 0.5})
+        )
 
 
 def test_negative_weight_is_rejected():
     with pytest.raises(RegimeInitializationError, match="non-negative"):
-        _build_terminal_regime(weights={"f": -0.1, "m": 1.1})
+        _build_terminal_regime(
+            pareto_objective=ParetoObjective(weights={"f": -0.1, "m": 1.1})
+        )
 
 
 def test_all_zero_weights_are_rejected():
     with pytest.raises(RegimeInitializationError, match="positive total"):
-        _build_terminal_regime(weights={"f": 0.0, "m": 0.0})
+        _build_terminal_regime(
+            pareto_objective=ParetoObjective(weights={"f": 0.0, "m": 0.0})
+        )
 
 
 def test_a_single_zero_weight_with_a_positive_total_is_allowed():
     # A zero weight is a deliberate exclusion, not an error, as long as the
     # total remains positive.
-    regime = _build_terminal_regime(weights={"f": 0.0, "m": 1.0})
-    assert regime.weights == {"f": 0.0, "m": 1.0}
+    regime = _build_terminal_regime(
+        pareto_objective=ParetoObjective(weights={"f": 0.0, "m": 1.0})
+    )
+    objective = regime.pareto_objective
+    assert objective is not None
+    assert objective.weights == {"f": 0.0, "m": 1.0}

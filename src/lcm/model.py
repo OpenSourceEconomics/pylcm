@@ -65,7 +65,10 @@ from _lcm.solution.backward_induction import (
     solve,
 )
 from _lcm.solution.contract import BackwardInductionResult
-from _lcm.solution.preconditions import check_solver_params
+from _lcm.solution.preconditions import (
+    check_pareto_weights,
+    check_solver_params,
+)
 from _lcm.solution.v_topology import expected_V_rank
 from _lcm.solution.validate_V import contains_nan, validate_supplied_V_shapes
 from _lcm.transition_checks import validate_transitions
@@ -606,6 +609,9 @@ class Model:
         `log_keep_n_latest`.
         """
         check_solver_params(regimes=self._regimes, flat_params=flat_params)
+        check_pareto_weights(
+            regimes=self._regimes, flat_params=flat_params, ages=self.ages
+        )
         try:
             internal_result = solve(
                 flat_params=flat_params,

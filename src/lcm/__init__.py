@@ -105,6 +105,7 @@ from lcm.certainty_equivalent import (  # noqa: E402
     PowerMean,
     QuasiArithmeticMean,
 )
+from lcm.collective import ParetoObjective  # noqa: E402
 from lcm.condition import Condition, implies, ref  # noqa: E402
 from lcm.consumption_savings_regime import (  # noqa: E402
     ConsumptionSavingsRegime,
@@ -212,6 +213,7 @@ __all__ = [
     "NormalIIDProcess",
     "NormalMixtureIIDProcess",
     "OuterContinuousMargin",
+    "ParetoObjective",
     "Phased",
     "PiecewiseLinSpacedGrid",
     "PiecewiseLogSpacedGrid",

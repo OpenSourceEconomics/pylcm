@@ -57,6 +57,7 @@ from _lcm.egm.published_policy import (
 from _lcm.engine import ParamCheck, StateActionSpace, Variables
 from _lcm.grids import Grid
 from _lcm.reachability import PhaseReachability
+from _lcm.regime_building.collective import ParetoWeights
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from _lcm.transition_plans import TargetTransitionPlans
 from _lcm.typing import (
@@ -364,8 +365,8 @@ class SolverBuildContext:
     stakeholder axis.
     """
 
-    weights: Mapping[str, float] | None = None
-    """Household Pareto weights per stakeholder; set together with `stakeholders`."""
+    pareto_weights: ParetoWeights | None = None
+    """The household's Pareto weight evaluator; set together with `stakeholders`."""
 
     edge_target_regimes: tuple[RegimeName, ...] = ()
     """Target regimes this regime reaches through a gated edge, or empty.

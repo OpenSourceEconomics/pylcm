@@ -12,6 +12,7 @@ from _lcm.continuation import ContinuationPayload, EGMContinuationSpec
 from _lcm.grids import DiscreteGrid, Grid, IrregSpacedGrid
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.reachability import PhaseReachability
+from _lcm.regime_building.collective import ParetoWeights
 from _lcm.transition_plans import TargetTransitionPlans
 from _lcm.typing import (
     ActionName,
@@ -400,6 +401,13 @@ class SolutionPhase:
 
     Run once, on the first solve, by `check_solver_params`; empty for a solver
     whose scope is decided by structure alone.
+    """
+
+    pareto_weights: ParetoWeights | None = None
+    """The household's Pareto weight evaluator, or `None` for a singleton regime.
+
+    Kept here so the params-bound preflight can read the weights the solve will
+    actually use, rather than re-deriving them from the user declaration.
     """
 
     resolved_fixed_params: FlatRegimeParams = MappingProxyType({})

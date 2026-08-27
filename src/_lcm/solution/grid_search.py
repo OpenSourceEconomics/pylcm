@@ -157,7 +157,7 @@ class GridSearch(Solver):
                     co_map_state_names=context.co_map_state_names,
                     co_map_v_arr_in_axes=context.co_map_v_arr_in_axes,
                     stakeholders=context.stakeholders,
-                    weights=context.weights,
+                    pareto_weights=context.pareto_weights,
                     fold_state_names=context.fold_state_names,
                     fold_weights=MappingProxyType(fold_weights),
                     fold_conditioning=MappingProxyType(fold_conditioning),

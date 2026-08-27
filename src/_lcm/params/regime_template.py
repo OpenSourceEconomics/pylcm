@@ -7,6 +7,7 @@ from dags.tree import qname_from_tree_path, tree_path_from_qname
 
 from _lcm.grids import IrregSpacedGrid
 from _lcm.processes import _ContinuousStochasticProcess
+from _lcm.regime_building.collective import PARETO_OBJECTIVE_ENTRY
 from _lcm.regime_building.gated_edges import (
     EDGE_GATE_ENTRY,
     edge_gate_ref_entry,
@@ -21,6 +22,7 @@ from _lcm.typing import (
     StateName,
     TransitionFunctionName,
 )
+from _lcm.utils.functools import get_union_of_args
 from lcm.exceptions import InvalidNameError
 from lcm.phased import Phased
 from lcm.regime import GatedEdge
@@ -228,6 +230,7 @@ def create_regime_params_template(
 
     _add_koopmans_aggregator_params(function_params, user_regime)
     _add_certainty_equivalent_params(function_params, user_regime)
+    _add_pareto_objective_params(function_params, user_regime)
 
     top_level_collisions = set(function_params) & set(per_target_params)
     if top_level_collisions:
@@ -800,6 +803,38 @@ def _add_koopmans_aggregator_params(
     }
     params = {k: v for k, v in sorted(tree.items()) if k not in variables}
     function_params["koopmans_aggregator"] = params
+
+
+def _add_pareto_objective_params(
+    function_params: dict[FunctionName, dict[str, str]],
+    user_regime: UserRegime,
+) -> None:
+    """Add the Pareto weights' free params under their pseudo-function name.
+
+    Every stakeholder's weight reads one shared namespace, so a weight named
+    in two of them is one parameter and appears once. A weight argument that
+    names a state, or the engine context, is wired at call time and never
+    surfaces.
+    """
+    objective = user_regime.pareto_objective
+    if objective is None:
+        return
+    if PARETO_OBJECTIVE_ENTRY in function_params:
+        raise InvalidNameError(
+            "The regime declares `pareto_objective`, whose parameters live "
+            f"under the pseudo-function name '{PARETO_OBJECTIVE_ENTRY}' in the "
+            "params — this conflicts with a regime function of the same name."
+        )
+    wired = {*user_regime.states, "period", "age"}
+    params = {
+        arg: "float"
+        for weight in objective.weights.values()
+        if callable(weight)
+        for arg in get_union_of_args([weight])
+        if arg not in wired
+    }
+    if params:
+        function_params[PARETO_OBJECTIVE_ENTRY] = dict(sorted(params.items()))
 
 
 def _add_certainty_equivalent_params(
