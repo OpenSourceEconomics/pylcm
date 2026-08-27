@@ -12,6 +12,7 @@ numerical engine modules.
 """
 
 import functools
+import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from types import MappingProxyType
@@ -402,6 +403,7 @@ class _GridSearchPeriodKernel:
         flat_params: FlatParams,
         period: int,
         ages: AgeGrid,
+        logger: logging.Logger,  # noqa: ARG002
         same_period_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
         edge_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
     ) -> KernelResult:

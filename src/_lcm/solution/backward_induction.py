@@ -251,6 +251,7 @@ def solve(  # noqa: C901, PLR0915
                 ages=ages,
                 next_regime_to_V_arr=next_regime_to_V_arr,
                 next_regime_to_continuation=next_regime_to_continuation,
+                logger=logger,
                 next_edge_to_V_arr=next_edge_to_V_arr,
                 period_solution=period_solution,
             )
@@ -442,6 +443,7 @@ def _run_period_kernel(
     ages: AgeGrid,
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
+    logger: logging.Logger,
     next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
     period_solution: Mapping[RegimeName, FloatND],
 ) -> KernelResult:
@@ -532,6 +534,7 @@ def _run_period_kernel(
         flat_params=flat_params,
         period=period,
         ages=ages,
+        logger=logger,
         **same_period_kwargs,
     )
 

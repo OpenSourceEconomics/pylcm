@@ -80,6 +80,10 @@ type PRNGKeyND = Key[Array, "..."]
 # `cast_params_to_canonical_dtypes`. Only canonical-dtype JAX arrays and
 # canonical-narrow `MappingLeaf` / `SequenceLeaf` instances survive.
 type _ParamsLeaf = FloatND | IntND | BoolND | MappingLeaf | SequenceLeaf
+
+# One argument of a user economic function, exactly as `EconFunction.__call__`
+# accepts it. Named so a call site binding such arguments can say so.
+type EconFunctionArg = FloatND | IntND | BoolND | float | MappingLeaf | SequenceLeaf
 type Params = Mapping[
     str,
     _ParamsLeaf | Mapping[str, _ParamsLeaf | Mapping[str, _ParamsLeaf]],
@@ -160,8 +164,8 @@ class EconFunction(Protocol):
 
     def __call__(
         self,
-        *args: FloatND | IntND | BoolND | float | MappingLeaf | SequenceLeaf,
-        **kwargs: FloatND | IntND | BoolND | float | MappingLeaf | SequenceLeaf,
+        *args: EconFunctionArg,
+        **kwargs: EconFunctionArg,
     ) -> FloatND | IntND: ...
 
 
@@ -179,8 +183,8 @@ class ConstraintFunction(Protocol):
 
     def __call__(
         self,
-        *args: FloatND | IntND | BoolND | float | MappingLeaf | SequenceLeaf,
-        **kwargs: FloatND | IntND | BoolND | float | MappingLeaf | SequenceLeaf,
+        *args: EconFunctionArg,
+        **kwargs: EconFunctionArg,
     ) -> BoolND: ...
 
 
@@ -201,8 +205,8 @@ class TransitionFunction(Protocol):
 
     def __call__(
         self,
-        *args: FloatND | IntND | BoolND | float | MappingLeaf | SequenceLeaf,
-        **kwargs: FloatND | IntND | BoolND | float | MappingLeaf | SequenceLeaf,
+        *args: EconFunctionArg,
+        **kwargs: EconFunctionArg,
     ) -> FloatND | IntND: ...
 
 
@@ -220,8 +224,8 @@ class RegimeTransitionFunction(Protocol):
 
     def __call__(
         self,
-        *args: FloatND | IntND | BoolND | float | MappingLeaf | SequenceLeaf,
-        **kwargs: FloatND | IntND | BoolND | float | MappingLeaf | SequenceLeaf,
+        *args: EconFunctionArg,
+        **kwargs: EconFunctionArg,
     ) -> MappingProxyType[RegimeName, FloatND]: ...
 
 
@@ -239,8 +243,8 @@ class VmappedRegimeTransitionFunction(Protocol):
 
     def __call__(
         self,
-        *args: FloatND | IntND | BoolND | float | MappingLeaf | SequenceLeaf,
-        **kwargs: FloatND | IntND | BoolND | float | MappingLeaf | SequenceLeaf,
+        *args: EconFunctionArg,
+        **kwargs: EconFunctionArg,
     ) -> MappingProxyType[RegimeName, FloatND]: ...
 
 

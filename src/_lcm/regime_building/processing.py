@@ -1,5 +1,6 @@
 import functools
 import inspect
+import logging
 from collections import defaultdict
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
@@ -2932,6 +2933,7 @@ class _TerminalCarryPeriodKernel:
         flat_params: FlatParams,
         period: int,
         ages: AgeGrid,
+        logger: logging.Logger,
         same_period_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
         edge_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
     ) -> KernelResult:
@@ -2944,6 +2946,7 @@ class _TerminalCarryPeriodKernel:
             flat_params=flat_params,
             period=period,
             ages=ages,
+            logger=logger,
             **_edge_and_same_period_kwargs(
                 edge_regime_to_V_arr=edge_regime_to_V_arr,
                 same_period_regime_to_V_arr=same_period_regime_to_V_arr,

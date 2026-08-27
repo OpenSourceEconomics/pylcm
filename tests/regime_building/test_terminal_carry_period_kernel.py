@@ -18,6 +18,7 @@ from _lcm.egm.published_policy import EGMSimPolicy
 from _lcm.engine import StateActionSpace
 from _lcm.regime_building.processing import _TerminalCarryPeriodKernel
 from _lcm.solution.contract import KernelResult
+from _lcm.utils.logging import get_logger
 from lcm.ages import AgeGrid
 
 
@@ -84,6 +85,7 @@ def test_wrapped_simulation_policy_survives_the_terminal_carry_decorator():
         flat_params=MappingProxyType({"dead": MappingProxyType({})}),
         period=0,
         ages=AgeGrid(start=0, stop=2, step="Y"),
+        logger=get_logger(log_level="off"),
     )
     assert result.simulation_policy is published
     assert result.continuation is not None

@@ -41,6 +41,7 @@ from _lcm.optimization.implicit_outer_derivative import (
     continuous_outer_optimum,
     implicit_optimum_diagnostics,
 )
+from _lcm.utils.logging import get_logger
 from lcm.typing import FloatND
 
 if TYPE_CHECKING:
@@ -197,6 +198,7 @@ def node_value(
         flat_params=flat_params,
         period=kw["period"],
         ages=kw["ages"],
+        logger=get_logger(log_level="off"),
     )
     return result.V_arr
 

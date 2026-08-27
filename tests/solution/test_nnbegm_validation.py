@@ -10,7 +10,7 @@ the inner liquid post-decision margin, directly or through a sibling law.
 import pytest
 
 from _lcm.egm.nnbegm_validation import validate_nnbegm_regimes
-from lcm import AgeGrid, Model
+from lcm import AgeGrid, LinSpacedGrid, Model
 from lcm.consumption_savings_regime import (
     LiquidMargin,
     NestedConsumptionSavingsRegime,
@@ -19,6 +19,7 @@ from lcm.consumption_savings_regime import (
 )
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.regime import Regime
+from lcm.solvers import FiniteOuterGrid
 from lcm.typing import ContinuousAction, ContinuousState, FloatND
 from tests.test_models import n_nbegm_toy
 
@@ -246,3 +247,54 @@ def test_model_build_runs_the_dynamic_nnbegm_contract_check() -> None:
             ages=AgeGrid(start=20, stop=25, step="5Y"),
             fixed_params={"final_age_alive": 20},
         )
+
+
+@pytest.mark.parametrize(
+    ("outer_start", "outer_stop", "offending"),
+    [
+        pytest.param(-5.0, 20.0, "below", id="node-below-the-state-floor"),
+        pytest.param(0.0, 30.0, "above", id="node-above-the-state-ceiling"),
+        pytest.param(-5.0, 30.0, "below", id="nodes-outside-both-ends"),
+    ],
+)
+def test_a_finite_outer_grid_reaching_outside_the_outer_state_domain_is_refused(
+    outer_start: float, outer_stop: float, offending: str
+) -> None:
+    """Every finite outer node must name a value the outer state can hold.
+
+    The finite search treats its nodes as post-decision targets for the outer
+    state, so a node outside that state's own grid asks the solve to retain a
+    stock the state cannot represent. The value function is undefined there and
+    the read past the edge extrapolates silently, so the mismatch is refused
+    where both grids are declared rather than discovered as an extrapolated
+    continuation value.
+    """
+    with pytest.raises(
+        (ModelInitializationError, RegimeInitializationError),
+        match=r"outer (grid|search).*(outside|domain)|domain.*outer",
+    ) as refusal:
+        n_nbegm_toy.build_model(
+            variant="n_nbegm",
+            n_periods=3,
+            outer_search=FiniteOuterGrid(
+                grid=LinSpacedGrid(start=outer_start, stop=outer_stop, n_points=15)
+            ),
+        )
+    # The message must name which edge was crossed: a refusal that cannot say
+    # whether the search ran off the floor or the ceiling does not locate it.
+    assert offending in str(refusal.value)
+
+
+def test_a_finite_outer_grid_inside_the_outer_state_domain_is_accepted() -> None:
+    """Narrowing the outer search inside the state's domain stays legal.
+
+    The refusal is about leaving the declared domain, not about the two grids
+    being identical, so a strictly interior search must still build.
+    """
+    n_nbegm_toy.build_model(
+        variant="n_nbegm",
+        n_periods=3,
+        outer_search=FiniteOuterGrid(
+            grid=LinSpacedGrid(start=2.0, stop=18.0, n_points=9)
+        ),
+    )

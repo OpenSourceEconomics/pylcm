@@ -17,7 +17,8 @@ which optional outputs (`continuation`, `simulation_policy`) are present, never
 on solver type.
 
 This module is an engine leaf. Resolving finalized user-regime or
-`VInterpolationInfo` types at runtime would close an import cycle through the
+`VInterpolationInfo` types at runtime would close an import
+cycle through the
 `lcm.solvers` façade, which re-exports `Solver` from here. They are therefore
 referenced through two-form aliases: precise element types for ty under
 `TYPE_CHECKING`, a bare container for the beartype claw at runtime. The
@@ -28,6 +29,7 @@ the claw beartypes each dataclass `__init__`, and under PEP 649 that forces the
 field annotations to resolve to real objects when an instance is constructed.
 """
 
+import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, fields
@@ -558,11 +560,17 @@ class PeriodKernel(Protocol):
         flat_params: FlatParams,
         period: int,
         ages: AgeGrid,
+        logger: logging.Logger,
     ) -> KernelResult:
         """Invoke the compiled core(s) and assemble the period's `KernelResult`.
 
         Single-core kernels read `compiled_cores["main"]`; a multi-core kernel
         reads each of its own core keys.
+
+        `logger` carries the run's validation policy. A kernel that can detect a
+        defect only by reading a device value back reads it in raise mode alone
+        (`validation_raises`), so a healthy solve never pays a host transfer for
+        a check it would not act on.
         """
         ...
 
