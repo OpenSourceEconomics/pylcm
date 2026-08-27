@@ -46,6 +46,7 @@ from dags.tree import qname_from_tree_path
 
 from _lcm.regime_building.age_normalization import PeriodizedEconFunction
 from _lcm.regime_building.Q_and_F import (
+    EDGE_CHANNELS_ARG,
     SAME_PERIOD_PARAMS_ARG,
     SAME_PERIOD_V_ARG,
     ResolvedSamePeriodRef,
@@ -118,6 +119,112 @@ _SOURCE_PARAM_PREFIX = "__source_param__"
 # (`x__points`), and two edges of one source would otherwise collide on any
 # parameter name they happen to share.
 EDGE_GATE_ENTRY: FunctionName = "gate"
+
+
+@dataclass(frozen=True, kw_only=True)
+class EdgeChannels:
+    """Which surface each channel of one edge's continuation array holds.
+
+    The array the source's continuation reads for a gated target is not one
+    value function but a stack of the operands its gate and its branches are
+    built from, all tabulated on the target's grid. Interpolating the stack and
+    gating the result at the landing point is what keeps the published value a
+    value some branch really pays; a single pre-gated surface cannot, because a
+    predicate does not commute with interpolation.
+
+    The order is fixed here and read back by index, so producer and consumer
+    cannot drift: the target's value components, then its dissolution flag if
+    the gate reads one, then each gate reference the gate reads, then one
+    fallback per leg.
+    """
+
+    component_names: tuple[str, ...]
+    """Target value components carried — those the gate reads plus those a
+    leg's open branch selects."""
+
+    has_dissolution: bool
+    """Whether the target's dissolution flag is carried (only if the gate reads
+    it, which a singleton target's gate may not)."""
+
+    gate_ref_names: tuple[str, ...]
+    """Gate references the gate reads, in declaration order."""
+
+    n_legs: int
+    """One fallback channel per leg, in SOURCE stakeholder order."""
+
+    @property
+    def count(self) -> int:
+        """Total number of channels, i.e. the array's trailing axis length."""
+        return (
+            len(self.component_names)
+            + int(self.has_dissolution)
+            + len(self.gate_ref_names)
+            + self.n_legs
+        )
+
+    def component_index(self, name: str) -> int:
+        """Channel holding the named target value component."""
+        return self.component_names.index(name)
+
+    @property
+    def dissolution_index(self) -> int:
+        """Channel holding the target's dissolution flag."""
+        return len(self.component_names)
+
+    def gate_ref_index(self, name: str) -> int:
+        """Channel holding the named gate reference's interpolated value."""
+        return (
+            len(self.component_names)
+            + int(self.has_dissolution)
+            + self.gate_ref_names.index(name)
+        )
+
+    def fallback_index(self, leg_index: int) -> int:
+        """Channel holding the given leg's fallback value."""
+        return (
+            len(self.component_names)
+            + int(self.has_dissolution)
+            + len(self.gate_ref_names)
+            + leg_index
+        )
+
+
+@dataclass(frozen=True, kw_only=True)
+class EdgeBranchCombiner:
+    """One edge's gate, applied to operands already read at a realized point."""
+
+    combine: Callable[..., FloatND]
+    """Takes the stacked channels under `EDGE_CHANNELS_ARG`, the target states
+    the gate reads under their own names, and the gate's free parameters."""
+
+    gate_state_names: tuple[StateName, ...]
+    """Target states the gate reads, which the caller supplies at the landing
+    point. A state the gate ignores needs no coordinate here."""
+
+    n_legs: int
+    """Length of the trailing axis the combined value carries, or 1 for a
+    singleton source, which carries none."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class CompiledEdgeFold:
+    """One edge's continuation, split into what interpolates and what decides.
+
+    `surfaces` tabulates every operand on the target's grid; `combine` applies
+    the gate to those operands once they have been read at the point the source
+    lands on. Splitting them is the whole point: everything in `surfaces` is a
+    value function and interpolates, and nothing in `combine` does.
+    """
+
+    surfaces: Callable[..., FloatND]
+    """Produces `(*target_state_axes, channels.count)` on the target's grid."""
+
+    combine: EdgeBranchCombiner
+    """Gates interpolated channels at a realized target-state point."""
+
+    channels: EdgeChannels
+    """Layout of `surfaces`' trailing axis."""
+
 
 _EDGE_PERIOD_ARG = "period"
 _EDGE_AGE_ARG = "age"
@@ -430,9 +537,13 @@ class ResolvedGatedEdge:
     the fold closes over, because a reference may name the target: use
     `interpolated_regimes`."""
 
-    folds_by_period: MappingProxyType[int, Callable] = MappingProxyType({})
-    """Compiled `Wbar` producers, keyed by the FOLD PERIOD — the period whose
-    value arrays the fold reads. Read through `fold_at`.
+    folds_by_period: MappingProxyType[int, CompiledEdgeFold] = MappingProxyType({})
+    """Compiled continuations, keyed by the FOLD PERIOD — the period whose value
+    arrays they read. Read through `fold_at`.
+
+    Each pairs the operand surfaces tabulated on the target's grid with the
+    combiner that gates them at a realized point, so the value the source
+    maximizes is gated in the same order simulation routes in.
 
     Built at model processing, in a second pass over the regimes once every
     regime's grid and functions are known. Backward induction evaluates the
@@ -499,14 +610,45 @@ class ResolvedGatedEdge:
             )
         )
 
-    def fold_at(self, *, period: int) -> Callable:
-        """Return the `Wbar` producer for the period whose arrays it folds."""
+    def fold_at(self, *, period: int) -> CompiledEdgeFold:
+        """Return the continuation compiled for the period whose arrays it reads."""
         return _select_period_callable(
             by_period=self.folds_by_period,
             period=period,
             what="fold",
             target=self.target,
         )
+
+    @property
+    def channels(self) -> EdgeChannels:
+        """Layout of this edge's continuation array, or an empty one if uncompiled.
+
+        Every period's continuation stacks the same operands — an
+        `AgeSpecializedGrid` moves a read grid's nodes, never which operands the
+        gate names — so any compiled period answers.
+        """
+        for compiled in self.folds_by_period.values():
+            return compiled.channels
+        return EdgeChannels(
+            component_names=(), has_dissolution=False, gate_ref_names=(), n_legs=0
+        )
+
+    @property
+    def combine(self) -> EdgeBranchCombiner:
+        """How to gate this edge's channels at a realized target-state point.
+
+        Every period's combiner slices the same channel layout and applies the
+        same predicate — only the surfaces underneath move with an
+        `AgeSpecializedGrid` — so any compiled period answers.
+        """
+        for compiled in self.folds_by_period.values():
+            return compiled.combine
+        msg = (
+            "This gated edge's continuation was never compiled, so it has no "
+            "combiner. Only edges reached through `Regime.gated_edges` carry "
+            "their folds."
+        )
+        raise RuntimeError(msg)
 
     def simulate_gate_evaluator_at(self, *, period: int) -> Callable:
         """Return the simulate gate evaluator for the period it routes against."""
@@ -518,13 +660,13 @@ class ResolvedGatedEdge:
         )
 
 
-def _select_period_callable(
+def _select_period_callable[T](
     *,
-    by_period: Mapping[int, Callable],
+    by_period: Mapping[int, T],
     period: int,
     what: str,
     target: RegimeName,
-) -> Callable:
+) -> T:
     """Pick one period's compiled edge callable, or say why there is none.
 
     Two distinct absences, and conflating them hides a staging mistake behind
@@ -1348,42 +1490,43 @@ def get_edge_fold(
     ],
     reference_v_info: Mapping[RegimeName, VInterpolationInfo],
     target_stakeholders: tuple[str, ...] | None,
-) -> Callable[..., FloatND]:
-    """Build one edge's fold: a jittable `Wbar` producer on the target grid.
+) -> CompiledEdgeFold:
+    """Build one edge's continuation: operand surfaces plus a pointwise gate.
 
-    Returns a callable whose keyword arguments are the target regime's state
-    grids, the same-period value mapping (under `SAME_PERIOD_V_ARG` — the target
-    V, its float dissolution flag, and every reference regime's V) and the gate's
-    and projections' flat params. Those params carry the qualified spelling
-    `<target>__<entry>__<param>` (`edge_param_qname`), which is the name the
-    source regime's params template gives them, so
-    `backward_induction._evaluate_edge_fold` binds them by a plain name match
-    against `flat_params[source]`. It returns `Wbar` of shape
-    `(*target_state_axes, n_source_components)` for a collective source, or
-    `(*target_state_axes,)` for a singleton source (a single leg with no
-    trailing axis).
+    `surfaces` is a jittable producer on the target's grid whose keyword
+    arguments are the target regime's state grids, the same-period value mapping
+    (under `SAME_PERIOD_V_ARG` — the target V, its float dissolution flag, and
+    every reference regime's V) and the gate's and projections' flat params.
+    Those params carry the qualified spelling `<target>__<entry>__<param>`
+    (`edge_param_qname`), which is the name the source regime's params template
+    gives them, so `backward_induction._evaluate_edge_fold` binds them by a plain
+    name match against `flat_params[source]`. It returns
+    `(*target_state_axes, channels.count)`, one channel per operand.
 
-    The fold does NOT return its raw grid-level boolean `gate` array; it is
-    computed INTERNALLY below, for `Wbar`'s own `jnp.where`, and stays
-    there. Handing it to the simulate-side value router
+    `combine` is what turns those operands into the source's continuation, at
+    the point the source lands on. The gate is applied there rather than on the
+    grid because a predicate does not commute with interpolation: a surface
+    gated at the nodes and interpolated afterwards reports, in every cell whose
+    corners fall on opposite sides of the gate, a mixture of the open and closed
+    branches — a number neither branch pays, which can rank a source action
+    above the one it should have taken. Reading each operand at the landing
+    point and gating there is the same order simulation routes in, so the value
+    the source maximizes and the branch a subject is sent down agree.
+
+    The gate's raw boolean array never leaves this module in either form.
+    Handing a grid-level one to the simulate-side value router
     (`_lcm/simulation/gated_routing.py`) would invite deciding a realized
     subject's REGIME ROUTING by INTERPOLATING that baked boolean array and
-    thresholding at 0.5, which does not commute with a nonlinear gate
-    predicate (e.g. a strict inequality between two interpolated values):
-    interpolate-then-threshold can disagree with threshold-then-interpolate
-    arbitrarily close to a grid cell boundary, silently flipping routing
-    decisions the fold itself never evaluated at that off-grid point. Simulate
-    instead RECOMPUTES the gate from interpolated VALUE OPERANDS via
-    `get_edge_simulate_gate_evaluator` (this module).
+    thresholding at 0.5, which fails in exactly the way described above.
 
-    **Numerics.** The target regime's OWN value components and dissolution flag are
-    read by DIRECT array indexing off the same-period mapping — never by
-    interpolation. Linear interpolation of the target's `-inf`-bearing V would
-    compute `0 * -inf = NaN` at the grid points ADJACENT to a dissolution cell
-    (the zero-weight neighbour), poisoning the OPEN branch before the
-    `jnp.where` could guard it. Only the gate references and leg fallbacks —
-    which read OTHER (finite) regimes at projected coordinates — are
-    interpolated, product-mapped over the target grid.
+    **Numerics.** The target regime's OWN value components and dissolution flag
+    reach `surfaces` by DIRECT array indexing off the same-period mapping, so
+    the grid-level stack is exact. They are interpolated once, at the landing
+    point, by the same reader every other continuation goes through — a target
+    carrying `-inf` dissolution cells is therefore no more exposed here than it
+    is on the ordinary ungated route into the same regime. The gate references
+    and leg fallbacks read OTHER (finite) regimes at projected coordinates and
+    are interpolated onto the target grid first, product-mapped over it.
 
     Args:
         edge: The resolved edge declaration.
@@ -1506,14 +1649,27 @@ def get_edge_fold(
 
     singleton_source = all(leg.source_stakeholder is None for leg in edge.legs)
 
-    # Whether the state mesh below is read at all. `_assemble_gate_kwargs` is its
-    # only consumer -- the gate-ref and fallback readers take the raw 1-D grids
-    # straight from `kwargs` -- and there a gate argument reaches the state branch
-    # exactly by naming a target state: the branches ahead of it (the value
-    # components, `D_target`, the gate refs) cannot carry a state name, since
-    # `_reject_gate_operand_state_name_collision` rejects that aliasing when the
-    # gate is compiled.
-    gate_reads_a_state = bool(set(gate_arg_names) & set(state_names))
+    # Only the operands something actually reads become channels: the gate's own
+    # reads, plus whichever target component each leg opens onto.
+    read_names = set(gate_arg_names)
+    open_component_names = {
+        "V_target"
+        if leg.target_component_index is None
+        else target_component_names[leg.target_component_index]
+        for leg in edge.legs
+    }
+    channels = EdgeChannels(
+        component_names=tuple(
+            name
+            for name in target_component_names
+            if name in read_names or name in open_component_names
+        ),
+        has_dissolution="D_target" in read_names,
+        gate_ref_names=tuple(
+            name for name in compiled.qualified_gate_refs if name in read_names
+        ),
+        n_legs=len(edge.legs),
+    )
 
     @with_signature(args=outer_arg_names, return_annotation="FloatND")
     def fold(**kwargs: _ParamsLeaf) -> FloatND:
@@ -1533,55 +1689,120 @@ def get_edge_fold(
                 **{arg: kwargs[arg] for arg in gate_ref_args[name]},
             )
             for name, reader in gate_ref_readers.items()
+            if name in channels.gate_ref_names
         }
-        # Broadcast the target state grids to the full grid for any gate that
-        # reads a state directly (supported for generality; the usual gate
-        # reads only value operands, and then nothing looks the mesh up, so the
-        # outer product is never formed).
-        state_mesh: dict[StateName, ContinuousState | DiscreteState] = {}
-        if gate_reads_a_state:
-            state_mesh = dict(
-                zip(
-                    state_names,
-                    jnp.meshgrid(
-                        *[jnp.asarray(kwargs[s]) for s in state_names], indexing="ij"
-                    ),
-                    strict=True,
-                )
+        surfaces = [target_components[name] for name in channels.component_names]
+        if channels.has_dissolution:
+            surfaces.append(cast("FloatND", d_value))
+        surfaces.extend(gate_ref_values[name] for name in channels.gate_ref_names)
+        surfaces.extend(
+            reader(**{arg: kwargs[arg] for arg in fb_arg_names})
+            for reader, fb_arg_names in zip(
+                fallback_readers, fallback_args, strict=True
             )
+        )
+        return jnp.stack(jnp.broadcast_arrays(*surfaces), axis=-1)
+
+    combine = _get_edge_branch_combiner(
+        edge=edge,
+        channels=channels,
+        gate_evaluator=gate_evaluator,
+        gate_arg_names=gate_arg_names,
+        injected_names=injected_names,
+        state_names=state_names,
+        target_component_names=target_component_names,
+        singleton_source=singleton_source,
+    )
+    return CompiledEdgeFold(surfaces=fold, combine=combine, channels=channels)
+
+
+def _get_edge_branch_combiner(
+    *,
+    edge: ResolvedGatedEdge,
+    channels: EdgeChannels,
+    gate_evaluator: Callable[..., FloatND],
+    gate_arg_names: tuple[str, ...],
+    injected_names: frozenset[str],
+    state_names: tuple[StateName, ...],
+    target_component_names: tuple[str, ...],
+    singleton_source: bool,
+) -> EdgeBranchCombiner:
+    """Build the callable that gates one edge AT a realized target-state point.
+
+    The surfaces the fold stacks are ordinary value functions on the target's
+    grid; the gate is not, because a predicate does not commute with
+    interpolation. Applying it to interpolated surfaces at the point the source
+    actually lands on is what makes the value the source maximizes a value some
+    branch really delivers. Gating on the grid first and interpolating the
+    result reports a mixture of the two branches at every cell whose corners
+    disagree — a number neither branch pays, and one that can rank a
+    source action above the one it should have taken.
+
+    Its arguments are the stacked channels, the landing coordinates under the
+    target's own state names, and the gate's free parameters, which belong to
+    the SOURCE regime that declares the edge.
+    """
+    open_indices = tuple(
+        channels.component_index(
+            "V_target"
+            if leg.target_component_index is None
+            else target_component_names[leg.target_component_index]
+        )
+        for leg in edge.legs
+    )
+    fallback_indices = tuple(
+        channels.fallback_index(leg_index) for leg_index in range(len(edge.legs))
+    )
+    # Exactly what the gate names, and nothing else: a target state the gate
+    # does not read has no coordinate to supply here, and a co-mapped one has
+    # none at all.
+    gate_state_names = tuple(name for name in state_names if name in gate_arg_names)
+    outer_arg_names = sorted(
+        {EDGE_CHANNELS_ARG} | (set(gate_arg_names) - injected_names)
+    )
+
+    @with_signature(args=outer_arg_names, return_annotation="FloatND")
+    def combine(**kwargs: _ParamsLeaf) -> FloatND:
+        stacked = cast("FloatND", kwargs[EDGE_CHANNELS_ARG])
         gate_kwargs = _assemble_gate_kwargs(
             gate_arg_names=gate_arg_names,
-            target_components=target_components,
-            d_value=d_value,
-            gate_ref_values=gate_ref_values,
-            state_mesh=state_mesh,
+            target_components={
+                name: stacked[..., channels.component_index(name)]
+                for name in channels.component_names
+            },
+            d_value=(
+                stacked[..., channels.dissolution_index]
+                if channels.has_dissolution
+                else None
+            ),
+            gate_ref_values={
+                name: stacked[..., channels.gate_ref_index(name)]
+                for name in channels.gate_ref_names
+            },
+            state_mesh={
+                name: cast("FloatND", kwargs[name]) for name in gate_state_names
+            },
             cell_kwargs=kwargs,
         )
         gate = _as_boolean_gate(
             value=gate_evaluator(**gate_kwargs), target=edge.target, phase="solve"
         )
-
-        component_values: list[FloatND] = []
-        for leg, fb_reader, fb_arg_names in zip(
-            edge.legs, fallback_readers, fallback_args, strict=True
-        ):
-            open_name = (
-                "V_target"
-                if leg.target_component_index is None
-                else target_component_names[leg.target_component_index]
+        # STRICT where — never `gate*V + (1-gate)*fallback` (`0*-inf = NaN`).
+        component_values = [
+            jnp.where(gate, stacked[..., open_index], stacked[..., fallback_index])
+            for open_index, fallback_index in zip(
+                open_indices, fallback_indices, strict=True
             )
-            open_branch = target_components[open_name]
-            fallback = fb_reader(**{arg: kwargs[arg] for arg in fb_arg_names})
-            # STRICT where — never `gate*V + (1-gate)*fallback` (`0*-inf = NaN`).
-            component_values.append(jnp.where(gate, open_branch, fallback))
-
+        ]
         return (
             component_values[0]
             if singleton_source
             else jnp.stack(component_values, axis=-1)
         )
 
-    return fold
+    return EdgeBranchCombiner(
+        combine=combine, gate_state_names=gate_state_names, n_legs=len(edge.legs)
+    )
 
 
 def get_edge_simulate_gate_evaluator(

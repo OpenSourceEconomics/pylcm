@@ -62,6 +62,7 @@ from _lcm.regime_building.gated_edges import (
 )
 from _lcm.regime_building.Q_and_F import (
     _REF_STATE_PREFIX,
+    EDGE_CHANNELS_ARG,
     SAME_PERIOD_PARAMS_ARG,
     SAME_PERIOD_V_ARG,
     _build_same_period_ref_reader,
@@ -618,7 +619,38 @@ def test_simulate_projector_equals_the_solve_folds_projected_coordinate():
 
 
 def _same_period_wbar(regimes, flat_params, solution):
-    """The edge's folded `Wbar` on the target grid, from the production fold."""
+    """The edge's `Wbar` at the target's own nodes, from the production fold.
+
+    The substituted leaf is the edge's stacked operand channels, which the
+    source's continuation reads at the point it lands on and gates there. These
+    fixtures land exactly on the target's nodes, so evaluating the edge's own
+    combiner at those nodes is that same read, and the result is the value the
+    source sees.
+    """
+    channels = _same_period_channels(regimes, flat_params, solution)
+    edge = regimes["src"].gated_edges["target"]
+    target_nodes = regimes["target"].solution.state_action_space(
+        regime_params=flat_params["target"]
+    )
+    supplied = {
+        **{name: jnp.asarray(grid) for name, grid in target_nodes.states.items()},
+        **flat_params["src"],
+        "period": jnp.int32(1),
+        "age": jnp.asarray(_AGES.period_to_age(1)),
+    }
+    combine = edge.combine.combine
+    return combine(
+        **{EDGE_CHANNELS_ARG: channels},
+        **{
+            name: supplied[name]
+            for name in get_union_of_args([combine])
+            if name != EDGE_CHANNELS_ARG
+        },
+    )
+
+
+def _same_period_channels(regimes, flat_params, solution):
+    """The edge's stacked operand channels on the target grid."""
     substituted, _mappings = substitute_gated_edge_continuations(
         regime=regimes["src"],
         regime_name="src",
@@ -728,8 +760,8 @@ def test_prefixed_reference_grid_param_is_satisfiable_by_no_regime():
 
     # And the production reader does not expose the unsatisfiable name.
     fold = regimes["src"].gated_edges["target"].fold_at(period=1)
-    assert prefixed not in get_union_of_args([fold])
-    assert SAME_PERIOD_PARAMS_ARG in get_union_of_args([fold])
+    assert prefixed not in get_union_of_args([fold.surfaces])
+    assert SAME_PERIOD_PARAMS_ARG in get_union_of_args([fold.surfaces])
 
 
 def _gate_ref_only(ref_v: FloatND) -> BoolND:
@@ -975,7 +1007,7 @@ def test_leg_fallback_reader_reads_the_fallback_regimes_own_runtime_grid():
 
     prefixed = f"{_REF_STATE_PREFIX}z__points"
     fold = regimes["src"].gated_edges["target"].fold_at(period=1)
-    assert prefixed not in get_union_of_args([fold])
+    assert prefixed not in get_union_of_args([fold.surfaces])
 
     wbar = np.asarray(_same_period_wbar(regimes, flat_params, solution))
     # Wbar = V_fallback(x) = x on the target's {0, 1} grid — exact only because

@@ -24,11 +24,13 @@ from numpy.testing import assert_array_almost_equal as aaae
 from _lcm.certainty_equivalent import LinearExpectation
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
+from _lcm.regime_building.Q_and_F import EDGE_CHANNELS_ARG
 from _lcm.simulation.gated_routing import (
     route_gated_edges,
     substitute_gated_edge_continuations,
 )
 from _lcm.solution.backward_induction import solve
+from _lcm.utils.functools import get_union_of_args
 from _lcm.utils.logging import get_logger
 from lcm import (
     DiscreteGrid,
@@ -217,7 +219,12 @@ def _solve_fixture():
 
 
 def _fold_output(*, regimes, flat_params, solution):
-    """The edge's folded `Wbar` on the target grid, and the value mappings."""
+    """The edge's `Wbar` at the target's own nodes, and the value mappings.
+
+    The substituted leaf holds the edge's operand channels, which the source
+    reads at the point it lands on and gates there. A target grid node IS such
+    a point, so applying the edge's own combiner at the nodes is that same read.
+    """
     base_state_action_spaces = {
         name: regime.solution.state_action_space(regime_params=flat_params[name])
         for name, regime in regimes.items()
@@ -233,7 +240,23 @@ def _fold_output(*, regimes, flat_params, solution):
         period_to_regime_to_dissolution_flags=MappingProxyType({}),
         flat_params=flat_params,
     )
-    return substituted["target"], mappings
+    edge = regimes["src"].gated_edges["target"]
+    supplied = {
+        **base_state_action_spaces["target"].states,
+        **flat_params["src"],
+        "period": jnp.int32(1),
+        "age": jnp.asarray(_AGES.period_to_age(1)),
+    }
+    combine = edge.combine.combine
+    wbar = combine(
+        **{EDGE_CHANNELS_ARG: substituted["target"]},
+        **{
+            name: supplied[name]
+            for name in get_union_of_args([combine])
+            if name != EDGE_CHANNELS_ARG
+        },
+    )
+    return wbar, mappings
 
 
 def test_solve_side_fold_projects_one_settlement_per_health_state():

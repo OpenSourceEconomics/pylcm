@@ -9,7 +9,7 @@ The fused output is consumed by `_enrich_with_diagnostics` in
 `_lcm.utils.error_handling`.
 """
 
-from collections.abc import Callable, Hashable
+from collections.abc import Callable, Hashable, Mapping
 from types import MappingProxyType
 from typing import Any, cast
 
@@ -29,6 +29,7 @@ from _lcm.regime_building.age_normalization import (
     resolve_periodized_nodes,
 )
 from _lcm.regime_building.Q_and_F import (
+    GatedContinuationSpec,
     get_compute_intermediates,
     partition_continuation_targets,
 )
@@ -70,6 +71,9 @@ def _build_compute_intermediates_per_period(
     period_to_regime_v_interp: (
         MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
     ) = None,
+    gated_continuations: Mapping[RegimeName, GatedContinuationSpec] = MappingProxyType(
+        {}
+    ),
 ) -> MappingProxyType[int, Callable]:
     """Build diagnostic intermediate closures for each period of a non-terminal regime.
 
@@ -101,6 +105,9 @@ def _build_compute_intermediates_per_period(
             renamed to qnames.
         certainty_equivalent: Nonlinear certainty equivalent declared by the
             regime, or `None`.
+        gated_continuations: Mapping of target regime names to the gated-edge
+            continuation spec that target's leaf is read under. Empty for a
+            regime declaring no `gated_edges`.
 
     Returns:
         Immutable mapping of period index to fused closure.
@@ -167,6 +174,7 @@ def _build_compute_intermediates_per_period(
             # every state, so none of the solve kernel's co-mapped axes have
             # been sliced off here.
             co_map_state_names=(),
+            gated_continuations=gated_continuations,
         )
         mapped = _productmap_over_state_action_space(
             func=compute_intermediates,

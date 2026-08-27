@@ -248,6 +248,9 @@ def get_Q_and_F(
     certainty_equivalent: CertaintyEquivalent | None,
     co_map_state_names: tuple[StateName, ...] = (),
     continuation_functions: EconFunctionsMapping | None = None,
+    gated_continuations: Mapping[RegimeName, GatedContinuationSpec] = MappingProxyType(
+        {}
+    ),
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for a non-terminal period.
 
@@ -307,6 +310,9 @@ def get_Q_and_F(
             solve pool. The simulate phase must pass the SOLVE pool here so the agent
             compares actions under its perceived law while the world is realized under
             the true one.
+        gated_continuations: Mapping of target regime names to the gated-edge
+            continuation spec that target's leaf is read under. A target absent
+            from it is read as an ordinary value function.
 
     Returns:
         A function that computes the state-action values (Q) and the feasibilities (F)
@@ -335,6 +341,7 @@ def get_Q_and_F(
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         certainty_equivalent=certainty_equivalent,
         co_map_state_names=co_map_state_names,
+        gated_continuations=gated_continuations,
     )
     _build_W_kwargs = _get_build_W_kwargs(functions, koopmans_aggregator)
 
@@ -405,6 +412,9 @@ def get_compute_intermediates(
     koopmans_aggregator: EconFunction,
     certainty_equivalent: CertaintyEquivalent | None,
     co_map_state_names: tuple[StateName, ...],
+    gated_continuations: Mapping[RegimeName, GatedContinuationSpec] = MappingProxyType(
+        {}
+    ),
 ) -> Callable:
     """Build a closure that computes Q_and_F intermediates for diagnostics.
 
@@ -441,6 +451,9 @@ def get_compute_intermediates(
             continuation V in the solve kernel. The diagnostics pass an empty
             tuple: they are handed the full, un-sliced value arrays and map
             over every state, so no axis has been sliced off to compensate for.
+        gated_continuations: Mapping of target regime names to the gated-edge
+            continuation spec that target's leaf is read under. A target absent
+            from it is read as an ordinary value function.
 
     Returns:
         Closure returning `(U_arr, F_arr, CE, Q_arr, active_regime_probs)`.
@@ -457,6 +470,7 @@ def get_compute_intermediates(
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         certainty_equivalent=certainty_equivalent,
         co_map_state_names=co_map_state_names,
+        gated_continuations=gated_continuations,
     )
     _build_W_kwargs = _get_build_W_kwargs(functions, koopmans_aggregator)
 
@@ -661,10 +675,46 @@ SAME_PERIOD_V_ARG = "same_period_regime_to_V_arr"
 # reference regime's explicit namespace through this mapping.
 SAME_PERIOD_PARAMS_ARG = "same_period_regime_to_params"
 
+
 # Internal argument names of the same-period reference interpolation; never
 # surfaced in the kernel signature.
 _REF_STATE_PREFIX = "__same_period_ref__"
 _REF_V_ARR_NAME = "__same_period_ref_V_arr__"
+
+# Engine context a gated edge's gate may name, bound to the TARGET's period.
+_EDGE_CONTEXT_ARGS = frozenset({"period", "age"})
+
+# The name under which one gated edge's stacked operand surfaces reach its
+# gate. Declared here rather than beside the edge machinery because both sides
+# of the split need it and the continuation reader is the lower layer.
+EDGE_CHANNELS_ARG = "__edge_channels__"
+
+
+@dataclass(frozen=True, kw_only=True)
+class GatedContinuationSpec:
+    """What a source needs in order to read one gated target's continuation.
+
+    Carried as plain values rather than as the resolved edge, so the
+    continuation reader stays below the gated-edge machinery that builds it.
+    """
+
+    n_channels: int
+    """Length of the leaf's trailing channel axis."""
+
+    combine: Callable[..., FloatND]
+    """Apply the edge's gate to the channels interpolated at the landing point."""
+
+    gate_state_names: tuple[StateName, ...]
+    """Target states the gate reads, supplied at the landing point."""
+
+    target_ages: Float1D
+    """Age at each model period, indexed by the period the gate is read in.
+
+    A gate is a statement about the period the source lands in, not the one it
+    decides in, so the source's kernel hands it `period + 1` and the age this
+    table holds there — the same context the surfaces underneath were folded
+    with.
+    """
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -952,6 +1002,9 @@ def get_Q_and_F_collective(
     value_constraints: ConstraintFunctionsMapping = MappingProxyType({}),
     same_period_refs: Mapping[str, ResolvedSamePeriodRef] = MappingProxyType({}),
     continuation_functions: EconFunctionsMapping | None = None,
+    gated_continuations: Mapping[RegimeName, GatedContinuationSpec] = MappingProxyType(
+        {}
+    ),
 ) -> QAndFFunction:
     """Non-terminal (Q, F) for a collective regime — per-stakeholder continuation.
 
@@ -1037,6 +1090,9 @@ def get_Q_and_F_collective(
             the SOLVE pool here so each stakeholder compares actions under the
             perceived law while the world is realized under the true one. Exactly
             as `get_Q_and_F` — the collective builder must not drop the phase split.
+        gated_continuations: Mapping of target regime names to the gated-edge
+            continuation spec that target's leaf is read under. A target absent
+            from it is read as an ordinary value function.
 
     Returns:
         A function computing the stacked per-stakeholder state-action values
@@ -1085,6 +1141,7 @@ def get_Q_and_F_collective(
         certainty_equivalent=None,
         co_map_state_names=co_map_state_names,
         n_stakeholders=n_stakeholders,
+        gated_continuations=gated_continuations,
     )
 
     _build_W_kwargs = _get_build_W_kwargs(functions, koopmans_aggregator)
@@ -1370,6 +1427,116 @@ def _get_stakeholder_sliced_interpolator(
     return next_V_per_stakeholder
 
 
+def _get_pointwise_gated_interpolator(
+    *,
+    base_interpolator: Callable[..., FloatND],
+    V_arr_name: str,
+    n_channels: int,
+    combine: Callable[..., FloatND],
+    gate_state_names: tuple[StateName, ...],
+    target_ages: Float1D,
+    co_map_state_names: tuple[StateName, ...],
+) -> Callable[..., FloatND]:
+    """Read a gated edge's operand surfaces at the landing point, then gate.
+
+    A gated target's continuation leaf is not one value function but a stack of
+    the operands its gate and its branches are built from, all tabulated on the
+    target's grid. Each channel is an ordinary value function and interpolates
+    like one; the gate is not, because a predicate does not commute with
+    interpolation. So every channel is read at the point the source lands on and
+    the gate is applied there, which is the order forward simulation routes in.
+
+    Gating the grid first and interpolating the result instead reports, in every
+    cell whose corners fall on opposite sides of the gate, a blend of the open
+    and the closed branch — a number neither branch pays, and one that can rank
+    a source action above the one it should have taken.
+
+    Args:
+        base_interpolator: The singleton V-interpolator over one channel.
+        V_arr_name: Name of the interpolator's value-array argument.
+        n_channels: Length of the stacked leaf's trailing axis.
+        combine: The edge's gate, applied to the interpolated channels.
+        gate_state_names: Target states the gate reads, supplied at the landing
+            point under their own names.
+        target_ages: Age at each model period, indexed by the fold period.
+        co_map_state_names: States whose axes the caller sliced off, so no
+            coordinate for them reaches this signature.
+
+    Returns:
+        A callable returning the gated continuation, one trailing axis per leg
+        for a collective source and none for a singleton one.
+
+    Raises:
+        ValueError: The gate reads a co-mapped state, which arrives with no
+            landing coordinate.
+
+    """
+    co_mapped_reads = sorted(set(gate_state_names) & set(co_map_state_names))
+    if co_mapped_reads:
+        msg = (
+            f"A gated edge's gate reads {co_mapped_reads}, which the "
+            "continuation co-maps as fixed distributed state(s). A co-mapped "
+            "axis is sliced off before the continuation is read, so there is "
+            "no landing coordinate to evaluate the gate at. Read the state "
+            "through a gate reference, or drop `distributed=True` from it."
+        )
+        raise ValueError(msg)
+    interpolator_args = tuple(get_union_of_args([base_interpolator]))
+    combine_args = tuple(get_union_of_args([combine]))
+    context_args = _EDGE_CONTEXT_ARGS & set(combine_args)
+    landing_names = {name: f"next_{name}" for name in gate_state_names}
+    last_period = len(target_ages) - 1
+    outer_arg_names = sorted(
+        (
+            set(interpolator_args)
+            | {
+                landing_names.get(name, name)
+                for name in combine_args
+                if name not in context_args
+            }
+            | ({"period"} if context_args else set())
+        )
+        - {EDGE_CHANNELS_ARG}
+    )
+
+    @with_signature(args=outer_arg_names, return_annotation="FloatND")
+    def next_V_gated(**kwargs: _ParamsLeaf) -> FloatND:
+        stacked = cast("FloatND", kwargs[V_arr_name])
+        interpolator_kwargs = {
+            name: kwargs[name] for name in interpolator_args if name != V_arr_name
+        }
+        channels = jnp.stack(
+            [
+                base_interpolator(
+                    **interpolator_kwargs, **{V_arr_name: stacked[..., channel]}
+                )
+                for channel in range(n_channels)
+            ],
+            axis=-1,
+        )
+        context: dict[str, FloatND] = {}
+        if context_args:
+            # The gate speaks about the period the source LANDS in. Clipping
+            # only affects a period from which no edge folds, where the value
+            # is not read.
+            target_period = jnp.clip(
+                jnp.asarray(kwargs["period"], dtype=jnp.int32) + 1, 0, last_period
+            )
+            context = {"period": target_period, "age": target_ages[target_period]}
+        return combine(
+            **{EDGE_CHANNELS_ARG: channels},
+            **{
+                name: context[name]
+                if name in context_args
+                else kwargs[landing_names.get(name, name)]
+                for name in combine_args
+                if name != EDGE_CHANNELS_ARG
+            },
+        )
+
+    return next_V_gated
+
+
 def partition_continuation_targets(
     *,
     targets: tuple[RegimeName, ...],
@@ -1414,6 +1581,9 @@ def _get_compute_CE(
     certainty_equivalent: CertaintyEquivalent | None,
     co_map_state_names: tuple[StateName, ...],
     n_stakeholders: int | None = None,
+    gated_continuations: Mapping[RegimeName, GatedContinuationSpec] = MappingProxyType(
+        {}
+    ),
 ) -> tuple[
     Callable[..., tuple[FloatND, MappingProxyType[RegimeName, FloatND]]],
     tuple[Callable[..., Any], ...],
@@ -1465,6 +1635,9 @@ def _get_compute_CE(
             target's V leaf, and hence `CE`, gains one trailing axis, while the
             regime-transition probabilities — which are stakeholder-independent —
             keep the plain cell shape and broadcast across it.
+        gated_continuations: Mapping of target regime names to the gated-edge
+            continuation spec that target's leaf is read under. A target absent
+            from it is read as an ordinary value function.
 
     Returns:
         Tuple of the closure returning `(CE, active_regime_probs)`, the
@@ -1482,6 +1655,7 @@ def _get_compute_CE(
             v_interpolation_info=regime_to_v_interpolation_info[target_regime_name],
             co_map_state_names=co_map_state_names,
             n_stakeholders=n_stakeholders,
+            gated_continuation=gated_continuations.get(target_regime_name),
         )
         for target_regime_name in period_targets
     }
@@ -2024,6 +2198,7 @@ def _build_target_continuation(
     v_interpolation_info: VInterpolationInfo,
     co_map_state_names: tuple[StateName, ...],
     n_stakeholders: int | None,
+    gated_continuation: GatedContinuationSpec | None = None,
 ) -> _TargetContinuation:
     """Build one target's continuation machinery.
 
@@ -2048,6 +2223,9 @@ def _build_target_continuation(
             interpolator is evaluated once per stakeholder slice and the results
             are re-stacked last, so the axis rides through the node product-map
             (which stacks its mapped axes at the front) by construction.
+        gated_continuation: How to turn this target's stacked operand channels
+            into one value per leg at the landing point, or `None` when the
+            target's leaf is an ordinary value function.
 
     Returns:
         The target's continuation machinery.
@@ -2146,15 +2324,29 @@ def _build_target_continuation(
     # The stakeholder axis is put on last, after every coordinate question has
     # been settled, so the slicing wrapper sees the same interpolator a singleton
     # regime gets and the two cannot drift apart.
-    mapped_interpolator = (
-        next_V_interpolator
-        if n_stakeholders is None
-        else _get_stakeholder_sliced_interpolator(
+    #
+    # A gated target's leaf carries a CHANNEL axis instead of a stakeholder one:
+    # its operands are interpolated separately and the gate is applied to them at
+    # the landing point, which already yields one value per leg. So the two
+    # wrappers are alternatives, not layers.
+    if gated_continuation is not None:
+        mapped_interpolator = _get_pointwise_gated_interpolator(
+            base_interpolator=next_V_interpolator,
+            V_arr_name=V_arr_name,
+            n_channels=gated_continuation.n_channels,
+            combine=gated_continuation.combine,
+            gate_state_names=gated_continuation.gate_state_names,
+            target_ages=gated_continuation.target_ages,
+            co_map_state_names=co_map_state_names,
+        )
+    elif n_stakeholders is None:
+        mapped_interpolator = next_V_interpolator
+    else:
+        mapped_interpolator = _get_stakeholder_sliced_interpolator(
             base_interpolator=next_V_interpolator,
             V_arr_name=V_arr_name,
             n_stakeholders=n_stakeholders,
         )
-    )
 
     return _TargetContinuation(
         next_states=get_next_state_function_for_solution(
@@ -2172,8 +2364,11 @@ def _build_target_continuation(
             variables=node_variables,
             batch_sizes=dict.fromkeys(node_variables, 0),
         ),
+        # Read off the MAPPED interpolator: a gated target's gate carries free
+        # parameters of its own, and naming them here is how they reach the
+        # kernel.
         extra_param_names=frozenset(
-            get_union_of_args([next_V_interpolator]) - set(bundle) - {V_arr_name}
+            get_union_of_args([mapped_interpolator]) - set(bundle) - {V_arr_name}
         ),
         has_lottery_axes=bool(lottery_variables),
         draw_dependent_names=frozenset(dependencies_by_law),

@@ -169,6 +169,11 @@ class GatedEdge:
     - `gate_refs` — extra same-period reference values the `gate` reads,
       exactly like a regime's `same_period_refs` but projected from the TARGET
       regime's grid.
+    - `off_grid` — what the edge promises about a landing point between the
+      target's grid nodes. Both phases read the operands there and gate them
+      there, so the value the source maximizes is one a branch really pays;
+      `"reject"` additionally refuses, at model build, a target on whose grid
+      such a point can occur at all.
     """
 
     gate: UserFunction
@@ -182,6 +187,20 @@ class GatedEdge:
     )
     """Same-period reference values the `gate` reads (projected from the target
     grid)."""
+
+    off_grid: Literal["pointwise", "reject"] = "pointwise"
+    """How a landing point between the target's grid nodes is treated.
+
+    - `"pointwise"` (the default) reads every operand at the landing point and
+      applies the gate there, in both phases. The operands are interpolated, so
+      the value carries the ordinary interpolation error of any continuation —
+      but it is a value one branch really delivers, and the branch the solve
+      priced is the branch simulation routes down.
+    - `"reject"` demands that no such point exists: the model refuses to build
+      unless the target regime's grid is reached exactly, i.e. it carries no
+      continuous state. Declare it where a straddled gate would be an economic
+      error rather than an approximation.
+    """
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "legs", ensure_containers_are_immutable(self.legs))

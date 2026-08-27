@@ -360,15 +360,15 @@ def _with_edge_substitution(
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     edge_to_V_arr: Mapping[tuple[RegimeName, RegimeName], FloatND],
 ) -> MappingProxyType[RegimeName, FloatND]:
-    """Replace each gated-edge target's raw V template with its `Wbar`.
+    """Replace each gated-edge target's raw V template with its edge continuation.
 
-    A regime declaring `gated_edges` chooses its own action against the gated
-    continuation `Wbar` — one stakeholder's leg of the target's value, on the
-    target's grid and carrying the SOURCE's stakeholder axis — which
-    `simulation.gated_routing.substitute_gated_edge_continuations` swaps into
-    the continuation mapping before the decision. Lowering against the target's
-    own V would size that slot by the target's topology instead, so the
-    compiled program would reject the array it is invoked with.
+    A regime declaring `gated_edges` chooses its own action against the edge's
+    operand channels — the target's value components, the gate's references and
+    each leg's fallback, on the target's grid under one trailing channel axis —
+    which `simulation.gated_routing.substitute_gated_edge_continuations` swaps
+    into the continuation mapping before the decision. Lowering against the
+    target's own V would size that slot by the target's topology instead, so
+    the compiled program would reject the array it is invoked with.
 
     Returns `next_regime_to_V_arr` unchanged for a regime without gated edges.
     """

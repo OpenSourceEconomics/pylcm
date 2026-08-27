@@ -15,6 +15,7 @@ import jax
 from _lcm.engine import Regime, StateActionSpace, _build_regime_sharding
 from _lcm.regime_building.gated_edges import (
     EDGE_PERIOD_CONTEXT_ARGS,
+    CompiledEdgeFold,
     bind_edge_period_context,
     build_reference_params_mapping_for_fold,
     build_same_period_mapping_for_fold,
@@ -760,7 +761,7 @@ def _reject_edge_fold_state_param_collisions(
             # never a grid's class, shape, or points mode. So every period's
             # fold exposes the same leaves, and the collisions this rejects are
             # a property of the edge rather than of one period.
-            sig_params = set(inspect.signature(compiled_folds[0]).parameters)
+            sig_params = set(inspect.signature(compiled_folds[0].surfaces).parameters)
             target_state_names = set(base_state_action_spaces[target_name].states)
             collisions = sorted(sig_params & target_state_names & source_param_names)
             if collisions:
@@ -817,7 +818,7 @@ def _reject_edge_fold_state_param_collisions(
 
 def _evaluate_edge_fold(
     *,
-    fold: Callable,
+    fold: CompiledEdgeFold,
     fold_period: int,
     fold_age: float | None,
     target_states: Mapping[str, ContinuousState | DiscreteState],
@@ -847,7 +848,8 @@ def _evaluate_edge_fold(
     the `int32`-vs-float check inside `fold`, even though `get_edge_fold`'s
     `jnp.meshgrid` state broadcast tolerates either dtype.
     """
-    sig_params = set(inspect.signature(fold).parameters)
+    surfaces = fold.surfaces
+    sig_params = set(inspect.signature(surfaces).parameters)
     kwargs: dict[str, object] = {
         name: arr for name, arr in target_states.items() if name in sig_params
     }
@@ -860,7 +862,7 @@ def _evaluate_edge_fold(
     )
     kwargs.update(
         bind_edge_period_context(
-            fold,
+            surfaces,
             fold_period=fold_period,
             fold_age=fold_age,
         )
@@ -868,7 +870,7 @@ def _evaluate_edge_fold(
     kwargs[SAME_PERIOD_V_ARG] = same_period_mapping
     if SAME_PERIOD_PARAMS_ARG in sig_params:
         kwargs[SAME_PERIOD_PARAMS_ARG] = reference_flat_params
-    return fold(**kwargs)
+    return surfaces(**kwargs)
 
 
 def _match_continuation_template_sharding(
@@ -1016,12 +1018,12 @@ def _iter_edge_topologies(
 ) -> Iterator[tuple[RegimeName, RegimeName, _RegimeVTopology]]:
     """Yield `(source, target, Wbar topology)` for every declared gated edge.
 
-    `Wbar` lands on the target regime's state grid, so its axes — and the
-    device sharding a `distributed=True` target state asks for — are the
-    target's, built by the same sharding plan the target's own V template goes
-    through. A collective source folds one leg per stakeholder onto a trailing
-    axis, which is replicated: the fold's legs differ in their gate and
-    fallback, not in which slice of the target grid they read.
+    An edge's continuation lands on the target regime's state grid, so its axes
+    — and the device sharding a `distributed=True` target state asks for — are
+    the target's, built by the same sharding plan the target's own V template
+    goes through. On top of them sits one replicated channel axis carrying the
+    operands the gate and the branches are built from: the channels differ in
+    which surface they hold, not in which slice of the target grid they read.
 
     Both the state-action space and the sharding plan are the target's alone,
     so they are built once per target however many sources reach it. The space
@@ -1052,8 +1054,9 @@ def _iter_edge_topologies(
                 )
             shape = target_shapes[target_name]
             sharding = target_shardings[target_name]
-            if source.stakeholders is not None:
-                shape = (*shape, len(source.stakeholders))
+            n_channels = source.gated_edges[target_name].channels.count
+            if n_channels:
+                shape = (*shape, n_channels)
                 if sharding is not None:
                     sharding = jax.NamedSharding(
                         mesh=sharding.mesh, spec=jax.P(*sharding.spec, None)
