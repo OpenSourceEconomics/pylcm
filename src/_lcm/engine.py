@@ -662,6 +662,18 @@ class SimulationPhase:
     argmax_and_max_Q_over_a: MappingProxyType[int, ArgmaxQOverAFunction]
     """Immutable mapping of period to argmax-and-max-Q functions."""
 
+    edge_reference_periods: frozenset[int] = frozenset()
+    """Periods whose decision program reads a gated edge's projected operands.
+
+    A gate reference and a leg fallback are read inside the source's own
+    decision function — but only where that function carries the gated
+    continuation. A regime whose gate is applied by the simulate router
+    instead never names them, and a period whose edge target is inactive has
+    no gated continuation to read. The two sites that hand the channel over,
+    AOT lowering and the runtime call, both consult this set, so the compiled
+    program's pytree and the call's arguments cannot disagree.
+    """
+
     Q_and_F: MappingProxyType[int, QAndFFunction]
     """Immutable mapping of period to pointwise state-action value functions.
 

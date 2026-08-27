@@ -23,7 +23,12 @@ from _lcm.regime_building.gated_edges import (
     gate_reads_dissolution_flag,
     source_reads_folded_wbar,
 )
-from _lcm.regime_building.Q_and_F import SAME_PERIOD_PARAMS_ARG, SAME_PERIOD_V_ARG
+from _lcm.regime_building.Q_and_F import (
+    EDGE_REF_PARAMS_ARG,
+    EDGE_REF_V_ARG,
+    SAME_PERIOD_PARAMS_ARG,
+    SAME_PERIOD_V_ARG,
+)
 from _lcm.solution.contract import (
     BackwardInductionResult,
     ContinuationPayload,
@@ -761,7 +766,23 @@ def _reject_edge_fold_state_param_collisions(
             # never a grid's class, shape, or points mode. So every period's
             # fold exposes the same leaves, and the collisions this rejects are
             # a property of the edge rather than of one period.
-            sig_params = set(inspect.signature(compiled_folds[0].surfaces).parameters)
+            # Every name this edge binds, on BOTH sides of the seam: the fold's
+            # operand surfaces, the combiner that gates them (which carries the
+            # projected readers), and the simulate gate evaluator. The check
+            # below is about a name meaning one thing in solve and another in
+            # simulate, so reading one side's signature alone would miss exactly
+            # the names only the other side declares.
+            evaluators = tuple(edge.simulate_gate_evaluators_by_period.values())
+            sig_params = set().union(
+                *(
+                    set(inspect.signature(func).parameters)
+                    for func in (
+                        compiled_folds[0].surfaces,
+                        compiled_folds[0].combine.combine,
+                        *evaluators[:1],
+                    )
+                )
+            )
             target_state_names = set(base_state_action_spaces[target_name].states)
             collisions = sorted(sig_params & target_state_names & source_param_names)
             if collisions:
@@ -789,16 +810,24 @@ def _reject_edge_fold_state_param_collisions(
             # `same_period_regime_to_params` opens the gate on solve (scalar) but
             # closes it on simulate (mapping), and a source
             # `same_period_regime_to_V_arr` overwrites the value mapping outright.
-            # Reserve the engine names against
-            # both source params and target states, restricted to the names actually
-            # present in this fold's signature.
+            # Reserve the engine names against both source params and target
+            # states, whether or not THIS edge binds them. Which of the two
+            # params mappings an edge names depends on its topology — a gate
+            # reference reads one, a leg fallback the other — so keying the
+            # reservation on the signature would let the same spelling be a
+            # source param under one topology and engine vocabulary under a
+            # neighbouring one. The absence of the name from a fold is what
+            # makes it dangerous, not its presence: it is then qualified into
+            # the target namespace and fails much later, inside solve.
             engine_args = {
                 SAME_PERIOD_V_ARG,
                 SAME_PERIOD_PARAMS_ARG,
+                EDGE_REF_V_ARG,
+                EDGE_REF_PARAMS_ARG,
                 *EDGE_PERIOD_CONTEXT_ARGS,
             }
             engine_collisions = sorted(
-                sig_params & engine_args & (source_param_names | target_state_names)
+                engine_args & (source_param_names | target_state_names)
             )
             if engine_collisions:
                 msg = (

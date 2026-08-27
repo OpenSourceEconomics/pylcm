@@ -128,6 +128,8 @@ from _lcm.constraints.processed import (
 )
 from _lcm.constraints.routes import ConstraintPlan, plan_constraints
 from _lcm.regime_building.Q_and_F import (
+    EDGE_REF_V_ARG,
+    GatedContinuationSchedule,
     GatedContinuationSpec,
     ResolvedProjectedRegimeValue,
     get_Q_and_F,
@@ -602,7 +604,7 @@ def process_regimes(  # noqa: PLR0915
     def build_canonical_regimes(
         *,
         gated_continuations_by_source: Mapping[
-            RegimeName, Mapping[RegimeName, GatedContinuationSpec]
+            RegimeName, Mapping[RegimeName, GatedContinuationSchedule]
         ],
     ) -> dict[RegimeName, Regime]:
         """Build every regime's canonical form, gated continuations included.
@@ -832,7 +834,9 @@ def _gated_continuation_specs(
     canonical_regimes: Mapping[RegimeName, Regime],
     *,
     ages: AgeGrid,
-) -> MappingProxyType[RegimeName, MappingProxyType[RegimeName, GatedContinuationSpec]]:
+) -> MappingProxyType[
+    RegimeName, MappingProxyType[RegimeName, GatedContinuationSchedule]
+]:
     """Read each gated source's per-target continuation spec off its edges.
 
     What the source's kernels need from an edge is not the edge: it is how many
@@ -845,9 +849,16 @@ def _gated_continuation_specs(
             gated edges carry compiled folds.
         ages: The model's age grid, read for the age of each fold period.
 
+    Each target's specs are keyed by the FOLD period, for the reason
+    `folds_by_period` is: the combiner carries this edge's projected readers,
+    and a gate reference on an `AgeSpecializedGrid` is read on its own regime's
+    nodes, which move with age. A source period must therefore take the
+    combiner compiled for the period it LANDS in.
+
     Returns:
-        Immutable mapping of source regime names to their per-target specs,
-        holding only the regimes that declare a gated edge.
+        Immutable mapping of source regime names to their per-target
+        continuation schedules, holding only the regimes that declare a gated
+        edge.
     """
     target_ages = jnp.asarray(
         [ages.period_to_age(period) for period in range(ages.n_periods)],
@@ -857,12 +868,26 @@ def _gated_continuation_specs(
         {
             regime_name: MappingProxyType(
                 {
-                    target: GatedContinuationSpec(
-                        n_channels=edge.channels.count,
-                        combine=edge.combine.combine,
-                        gate_state_names=edge.combine.gate_state_names,
-                        projected_readers=edge.combine.projected_readers,
-                        target_ages=target_ages,
+                    target: GatedContinuationSchedule(
+                        by_period=MappingProxyType(
+                            {
+                                fold_period: GatedContinuationSpec(
+                                    n_channels=edge.channels.count,
+                                    combine=compiled.combine.combine,
+                                    gate_state_names=(
+                                        compiled.combine.gate_state_names
+                                    ),
+                                    projected_readers=(
+                                        compiled.combine.projected_readers
+                                    ),
+                                    target_ages=target_ages,
+                                )
+                                for fold_period, compiled in (
+                                    edge.folds_by_period.items()
+                                )
+                            }
+                        ),
+                        reference_regimes=edge.interpolated_regimes,
                     )
                     for target, edge in regime.gated_edges.items()
                 }
@@ -2419,8 +2444,8 @@ def _build_solution_phase(
     edge_target_regimes: tuple[RegimeName, ...] = (),
     fold_state_names: tuple[StateName, ...] = (),
     fold_only_regimes: frozenset[RegimeName] = frozenset(),
-    gated_continuations: Mapping[RegimeName, GatedContinuationSpec] = MappingProxyType(
-        {}
+    gated_continuations: Mapping[RegimeName, GatedContinuationSchedule] = (
+        MappingProxyType({})
     ),
 ) -> SolutionPhase:
     """Build all compiled functions for the backward-induction (solve) phase.
@@ -2465,7 +2490,8 @@ def _build_solution_phase(
             same-period references, resolved once for both phases so the two
             apply the identical mask. Empty for a singleton regime.
         gated_continuations: Mapping of target regime names to the gated-edge
-            continuation spec that target's leaf is read under. Empty for a
+            continuation schedule that target's leaf is read under, keyed by the
+            period the edge folds at. Empty for a
             regime declaring no `gated_edges`.
 
     Returns:
@@ -3140,8 +3166,8 @@ def _build_simulation_phase(  # noqa: PLR0915
     stakeholders: tuple[str, ...] | None = None,
     pareto_weights: ParetoWeights | None = None,
     fold_only_regimes: frozenset[RegimeName] = frozenset(),
-    gated_continuations: Mapping[RegimeName, GatedContinuationSpec] = MappingProxyType(
-        {}
+    gated_continuations: Mapping[RegimeName, GatedContinuationSchedule] = (
+        MappingProxyType({})
     ),
 ) -> SimulationPhase:
     """Build all compiled functions for the forward-simulation phase.
@@ -3212,7 +3238,8 @@ def _build_simulation_phase(  # noqa: PLR0915
             only used) when `stakeholders` is set — feeds the simulate-side
             argmax's household scalarization.
         gated_continuations: Mapping of target regime names to the gated-edge
-            continuation spec that target's leaf is read under. Empty for a
+            continuation schedule that target's leaf is read under, keyed by the
+            period the edge folds at. Empty for a
             regime declaring no `gated_edges`.
 
     Returns:
@@ -3584,6 +3611,11 @@ def _build_simulation_phase(  # noqa: PLR0915
         transition_plans=core.transition_plans,
         compute_regime_transition_probs=compute_regime_transition_probs,
         argmax_and_max_Q_over_a=argmax_and_max_Q_over_a,
+        edge_reference_periods=frozenset(
+            period
+            for period, func in argmax_and_max_Q_over_a.items()
+            if EDGE_REF_V_ARG in get_union_of_args([func])
+        ),
         Q_and_F=pointwise_Q_and_F,
         next_state=next_state,
         egm_policy_read=egm_policy_read,
@@ -6294,8 +6326,8 @@ def _build_Q_and_F_per_period(
     ),
     continuation_functions: EconFunctionsMapping | None = None,
     grid_schedule: AgeGridSchedule | None = None,
-    gated_continuations: Mapping[RegimeName, GatedContinuationSpec] = MappingProxyType(
-        {}
+    gated_continuations: Mapping[RegimeName, GatedContinuationSchedule] = (
+        MappingProxyType({})
     ),
 ) -> MappingProxyType[int, QAndFFunction]:
     """Build Q-and-F closures for each active period of a non-terminal regime.
@@ -6344,7 +6376,8 @@ def _build_Q_and_F_per_period(
         period_to_regime_v_interp: Per-period continuation interpolation info
             built from the schedule, or `None`.
         gated_continuations: Mapping of target regime names to the gated-edge
-            continuation spec that target's leaf is read under. Empty for a
+            continuation schedule that target's leaf is read under, keyed by the
+            period the edge folds at. Empty for a
             regime declaring no `gated_edges`.
 
     Returns:
@@ -6375,6 +6408,12 @@ def _build_Q_and_F_per_period(
         grid_schedule=grid_schedule,
         continuation_info=continuation_info,
         continuation_functions=continuation_functions,
+        gated_reference_regimes=MappingProxyType(
+            {
+                target: schedule.reference_regimes
+                for target, schedule in gated_continuations.items()
+            }
+        ),
     )
 
     configs = group_periods_by_key(active_periods, group_key)
@@ -6399,6 +6438,20 @@ def _build_Q_and_F_per_period(
             grid_schedule=grid_schedule,
             target_regimes=targets,
             periods=tuple(periods),
+        )
+        # A gated edge folds the period the source LANDS in, so the source's
+        # kernel takes the combiner and projected readers compiled for
+        # `representative_period + 1`. Every period in this group resolves the
+        # same entry: the edge's reference grids at `t + 1` are part of the
+        # group key above. A target absent at that period contributes nothing —
+        # its continuation is not read there at all.
+        landing_period = representative_period + 1
+        period_gated_continuations = MappingProxyType(
+            {
+                target: schedule.by_period[landing_period]
+                for target, schedule in gated_continuations.items()
+                if landing_period in schedule.by_period
+            }
         )
         if stakeholders is not None:
             # A collective regime gets its own builder: the household objective
@@ -6458,7 +6511,7 @@ def _build_Q_and_F_per_period(
                     if continuation_functions is not None
                     else None
                 ),
-                gated_continuations=gated_continuations,
+                gated_continuations=period_gated_continuations,
             )
             continue
         built[key] = get_Q_and_F(
@@ -6493,7 +6546,7 @@ def _build_Q_and_F_per_period(
                 if continuation_functions is not None
                 else None
             ),
-            gated_continuations=gated_continuations,
+            gated_continuations=period_gated_continuations,
         )
 
     return expand_groups_to_periods(configs, built)

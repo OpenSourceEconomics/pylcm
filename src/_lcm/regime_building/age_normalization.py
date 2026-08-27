@@ -357,6 +357,9 @@ def continuation_group_key(
         Callable[[int], MappingProxyType[RegimeName, VInterpolationInfo]] | None
     ) = None,
     continuation_functions: Mapping[str, object] | None = None,
+    gated_reference_regimes: Mapping[RegimeName, tuple[RegimeName, ...]] = (
+        MappingProxyType({})
+    ),
 ) -> Callable[[int], tuple[tuple[RegimeName, ...], Hashable]]:
     """Build the per-period grouping key shared by Q_and_F construction and diagnostics.
 
@@ -382,6 +385,13 @@ def continuation_group_key(
             it differs from `functions`. Its per-period signature enters the key, so
             periods whose pool resolves to different closures never share a compiled
             kernel. `None` contributes a constant and collapses out of the grouping.
+        gated_reference_regimes: Mapping of gated-edge target regime names to the
+            regimes that edge's gate references and leg fallbacks read. Those are
+            interpolated at `period + 1` beside the target itself, so their grids
+            belong in the continuation signature: without them two periods whose
+            reference grids differ would share one compiled kernel, and the
+            reference would be read on one of the two periods' nodes in both.
+            Empty for a regime declaring no gated edge.
 
     Returns:
         A callable mapping a period to its grouping key.
@@ -394,10 +404,25 @@ def continuation_group_key(
             if period == phase_reachability.n_periods - 1
             else phase_reachability.targets(period=period, source=source_regime_name)
         )
+        # Beside each continuation target, the grids a gated edge into that
+        # target reads: its gate references and leg fallbacks are interpolated
+        # at `period + 1` too, and a reference regime need not be a target.
+        read_regimes = tuple(
+            dict.fromkeys(
+                [
+                    *complete,
+                    *(
+                        reference
+                        for target in complete
+                        for reference in gated_reference_regimes.get(target, ())
+                    ),
+                ]
+            )
+        )
         continuation_sig = continuation_grid_signature_from_schedule(
             grid_schedule=grid_schedule,
             target_period=period + 1,
-            target_regimes=complete,
+            target_regimes=read_regimes,
         )
         scalar_targets: tuple[RegimeName, ...] = ()
         if continuation_info is not None:

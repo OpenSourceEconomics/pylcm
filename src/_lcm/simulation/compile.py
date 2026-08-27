@@ -38,7 +38,12 @@ from _lcm.regime_building.gated_edges import (
     build_same_period_mapping_for_fold,
     unsupplied_dissolution_flag,
 )
-from _lcm.regime_building.Q_and_F import SAME_PERIOD_PARAMS_ARG, SAME_PERIOD_V_ARG
+from _lcm.regime_building.Q_and_F import (
+    EDGE_REF_PARAMS_ARG,
+    EDGE_REF_V_ARG,
+    SAME_PERIOD_PARAMS_ARG,
+    SAME_PERIOD_V_ARG,
+)
 from _lcm.simulation.gated_routing import (
     bind_provenance_params,
     install_population_call,
@@ -655,6 +660,19 @@ def _build_argmax_args(
         )
         same_period_args[SAME_PERIOD_PARAMS_ARG] = MappingProxyType(
             {ref: flat_params[ref] for ref in regime.same_period_ref_regimes}
+        )
+    # A gated edge's projected operands, where this period's decision program
+    # declares them. Zero templates suffice: lowering captures the abstract
+    # value, and the runtime call supplies the solved arrays.
+    if period in regime.simulation.edge_reference_periods:
+        same_period_args[EDGE_REF_V_ARG] = MappingProxyType(
+            {
+                ref: _build_zero_V_arr(topology=regime_V_topology[ref])
+                for ref in regime.edge_reference_regimes
+            }
+        )
+        same_period_args[EDGE_REF_PARAMS_ARG] = MappingProxyType(
+            {ref: flat_params[ref] for ref in regime.edge_reference_regimes}
         )
     return {
         **subject_states,

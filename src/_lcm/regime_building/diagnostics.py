@@ -29,7 +29,7 @@ from _lcm.regime_building.age_normalization import (
     resolve_periodized_nodes,
 )
 from _lcm.regime_building.Q_and_F import (
-    GatedContinuationSpec,
+    GatedContinuationSchedule,
     get_compute_intermediates,
     partition_continuation_targets,
 )
@@ -71,8 +71,8 @@ def _build_compute_intermediates_per_period(
     period_to_regime_v_interp: (
         MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
     ) = None,
-    gated_continuations: Mapping[RegimeName, GatedContinuationSpec] = MappingProxyType(
-        {}
+    gated_continuations: Mapping[RegimeName, GatedContinuationSchedule] = (
+        MappingProxyType({})
     ),
 ) -> MappingProxyType[int, Callable]:
     """Build diagnostic intermediate closures for each period of a non-terminal regime.
@@ -136,6 +136,12 @@ def _build_compute_intermediates_per_period(
         constraints=constraints,
         grid_schedule=grid_schedule,
         continuation_info=continuation_info,
+        gated_reference_regimes=MappingProxyType(
+            {
+                target: schedule.reference_regimes
+                for target, schedule in gated_continuations.items()
+            }
+        ),
     )
 
     configs = group_periods_by_key(active_periods, group_key)
@@ -151,6 +157,17 @@ def _build_compute_intermediates_per_period(
         stateful_targets, scalar_targets = partition_continuation_targets(
             targets=targets,
             regime_to_v_interpolation_info=continuation_info(representative_period),
+        )
+        # The combiner compiled for the period the source LANDS in, matching
+        # `_build_Q_and_F_per_period`: a gate reference on an age-specialized
+        # grid is read on that period's nodes.
+        landing_period = representative_period + 1
+        period_gated_continuations = MappingProxyType(
+            {
+                target: schedule.by_period[landing_period]
+                for target, schedule in gated_continuations.items()
+                if landing_period in schedule.by_period
+            }
         )
         compute_intermediates = get_compute_intermediates(
             flat_param_names=flat_param_names,
@@ -174,7 +191,7 @@ def _build_compute_intermediates_per_period(
             # every state, so none of the solve kernel's co-mapped axes have
             # been sliced off here.
             co_map_state_names=(),
-            gated_continuations=gated_continuations,
+            gated_continuations=period_gated_continuations,
         )
         mapped = _productmap_over_state_action_space(
             func=compute_intermediates,

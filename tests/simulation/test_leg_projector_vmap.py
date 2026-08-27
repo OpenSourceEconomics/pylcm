@@ -15,6 +15,7 @@ population's whole state column instead. An elementwise projection cannot tell
 those two evaluations apart, so only a non-elementwise one pins the contract.
 """
 
+from dataclasses import replace
 from types import MappingProxyType
 
 import jax.numpy as jnp
@@ -25,12 +26,18 @@ from _lcm.certainty_equivalent import LinearExpectation
 from _lcm.regime_building.collective import NO_ROLE
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
-from _lcm.regime_building.Q_and_F import EDGE_CHANNELS_ARG
+from _lcm.regime_building.Q_and_F import (
+    EDGE_CHANNELS_ARG,
+    EDGE_REF_PARAMS_ARG,
+    EDGE_REF_V_ARG,
+    evaluate_projected_readers,
+)
 from _lcm.simulation.gated_routing import (
     route_gated_edges,
     substitute_gated_edge_continuations,
 )
 from _lcm.solution.backward_induction import solve
+from _lcm.utils.dispatchers import productmap
 from _lcm.utils.functools import get_union_of_args
 from _lcm.utils.logging import get_logger
 from lcm import (
@@ -248,13 +255,50 @@ def _fold_output(*, regimes, flat_params, solution):
         "period": jnp.int32(1),
         "age": jnp.asarray(_AGES.period_to_age(1)),
     }
-    combine = edge.combine.combine
+    engine_values = {
+        **supplied,
+        EDGE_REF_V_ARG: MappingProxyType(dict(solution[1])),
+        EDGE_REF_PARAMS_ARG: flat_params,
+    }
+    edge_fold = edge.combine_at(period=1)
+    combine = edge_fold.combine
+    # A projected reference is read AT one landing point, and a projection is
+    # written for one household — its state is that household's own scalar.
+    # The source's kernel supplies the point because it already runs per cell;
+    # reproducing the fold at every target node therefore means mapping each
+    # reader over the target's grid, which is what production's own dispatcher
+    # does around it.
+    mapped_readers = tuple(
+        replace(
+            reader,
+            reader=productmap(
+                func=reader.reader,
+                variables=reader.state_args,
+                batch_sizes=dict.fromkeys(reader.state_args, 0),
+            ),
+        )
+        for reader in edge_fold.projected_readers
+    )
+    projected = evaluate_projected_readers(
+        mapped_readers,
+        landing_states={
+            arg: supplied[arg]
+            for reader in edge_fold.projected_readers
+            for arg in reader.state_args
+        },
+        other_values={
+            arg: engine_values[arg]
+            for reader in edge_fold.projected_readers
+            for arg in reader.other_args
+        },
+    )
     wbar = combine(
         **{EDGE_CHANNELS_ARG: substituted["target"]},
+        **projected,
         **{
             name: supplied[name]
             for name in get_union_of_args([combine])
-            if name != EDGE_CHANNELS_ARG
+            if name != EDGE_CHANNELS_ARG and name not in projected
         },
     )
     return wbar, mappings
