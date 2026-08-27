@@ -324,6 +324,12 @@ class NNBEGM(TwoMarginSolver):
             regime_name=context.regime_name,
             solver_name="NNBEGM",
         )
+        _fail_if_the_outer_search_leaves_the_outer_state_domain(
+            regime_name=context.regime_name,
+            outer_state=outer_state,
+            outer_state_grid=cast("Grid", user_regime.states[outer_state]),
+            outer_search=bound.outer_search,
+        )
         fail_if_declared_lower_bound_disagrees_with_the_grid(
             regime_name=context.regime_name,
             user_regime=user_regime,
@@ -1399,6 +1405,55 @@ class _NNBEGMPeriodKernel:
                 "an explicit inverse for the declared mapping."
             )
         return jnp.where(represented, candidate_targets, jnp.nan)
+
+
+def _fail_if_the_outer_search_leaves_the_outer_state_domain(
+    *,
+    regime_name: RegimeName,
+    outer_state: StateName,
+    outer_state_grid: Grid,
+    outer_search: OuterSearch,
+) -> None:
+    """Refuse an outer search that names a stock the outer state cannot hold.
+
+    The outer search's nodes are post-decision targets for the outer state, so
+    a node outside that state's own grid asks the solve to retain a value the
+    state does not represent. Nothing downstream rejects it: the value function
+    read extrapolates linearly past the edge, so the excursion surfaces a period
+    later as an out-of-support state rather than at the declaration that caused
+    it.
+
+    Both grids are declared, so this compares them directly and probes no
+    floating-point value.
+    """
+    match outer_search:
+        case FiniteOuterGrid():
+            nodes = outer_search.grid.to_jax()
+            label = "outer grid"
+        case AdaptiveOuterMesh():
+            nodes = outer_search.initial_grid.to_jax()
+            label = "initial outer mesh"
+        case _:
+            return
+
+    domain = outer_state_grid.to_jax()
+    low, high = domain[0], domain[-1]
+    below = jnp.min(nodes) < low
+    above = jnp.max(nodes) > high
+    if not bool(below | above):
+        return
+
+    side = "below" if bool(below) else "above"
+    offending = float(jnp.min(nodes)) if bool(below) else float(jnp.max(nodes))
+    msg = (
+        f"Regime {regime_name!r}: the NNBEGM {label} reaches outside the "
+        f"declared domain of the outer state {outer_state!r}. Its node "
+        f"{offending} lies {side} that state's grid, which spans "
+        f"[{float(low)}, {float(high)}]. Every outer node is a post-decision "
+        f"target the outer state must be able to hold, so narrow the outer "
+        f"search to that domain or widen the grid of {outer_state!r}."
+    )
+    raise ModelInitializationError(msg)
 
 
 def _subcores(
