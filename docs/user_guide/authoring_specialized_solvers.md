@@ -334,7 +334,11 @@ example contains both the adjuster and the no-adjustment keeper. State and actio
 values, including `consumption` and `illiquid_investment`, are already ordinary result
 columns; `additional_targets` is only for derived DAG outputs such as `liquid_savings`.
 
-The liquid resources declaration also makes the adjustment-cost composition explicit:
+The liquid resources declaration also makes the adjustment-cost composition explicit.
+The `adjustment_cost` named here is a resources-composition node: a DAG function
+subtracted from resources before the liquid solve. It is unrelated to
+`OuterContinuousMargin.adjustment_cost`, which is a branch-aggregation declaration
+saying how keeper and adjuster values combine.
 
 ```python
 NESTED_LIQUID_MARGIN = LiquidMargin(

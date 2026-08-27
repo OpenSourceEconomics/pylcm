@@ -100,7 +100,8 @@ public API. See [Upper envelopes](envelopes.md) for their distinct contracts.
 borrowing-corner segment, and `stochastic_node_batch_size` the stochastic-node
 workspace.
 
-::::\{important} Solved and simulated continuous actions A solve can expose an off-grid
+:::{important} Solved and simulated continuous actions
+A solve can expose an off-grid
 DCEGM policy for inspection when `return_simulation_policy=True`. No envelope shipped
 with pylcm currently passes the conservative off-grid policy-read gate, so ordinary
 simulation recomputes the action argmax on the regime's declared action grid. Simulation
@@ -110,7 +111,7 @@ The simulated continuous action can therefore differ from the off-grid solve pol
 With taste shocks, simulated choice frequencies follow the grid-restricted
 choice-specific values rather than necessarily matching the solve's off-grid choice
 probabilities. The intrinsic budget is still applied as a simulation feasibility mask.
-::::
+:::
 
 ### `NEGM`
 
@@ -186,7 +187,9 @@ use a bridged carry compatible with the outer fold. See
 How the keeper and adjuster branches combine is an economic declaration, not a solver
 setting: it lives on [`OuterContinuousMargin.adjustment_cost`](consumption_savings.md).
 
-NNBEGM replays the keeper-plus-outer-grid candidates ranked during the solve. Every
+With `FiniteOuterGrid`, NNBEGM replays the keeper-plus-outer-grid candidates ranked
+during the solve; with `AdaptiveOuterMesh` it republishes the mesh policies and the
+search settings, and re-refines per subject at that subject's own resources. Every
 declaration that can affect that replay must therefore be phase-invariant by object
 identity: a bare declaration and `Phased(solve=f, simulate=f)` are accepted, while
 distinct solve/simulate functions, state or regime transitions, Koopmans aggregators,

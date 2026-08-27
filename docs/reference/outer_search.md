@@ -21,6 +21,16 @@ nodes before folding them into the running maximum.
 
 ### `AdaptiveOuterMesh`
 
+```python
+AdaptiveOuterMesh(
+    initial_grid=...,
+    max_nodes=129,
+    max_refinement_rounds=6,
+    golden_iterations=32,
+    fail_closed=True,
+)
+```
+
 Starts from `initial_grid`, evaluates exact inner solves on a shared mesh, validates
 interpolation at proposed points, and refines bracket-local optima.
 
@@ -34,7 +44,8 @@ Important fields:
 - `outer_lipschitz_bound` upgrades mesh-relative validation to a global branch-and-bound
   certificate under the supplied Lipschitz constant;
 - `fail_closed=True` raises when refinement remains unresolved; `False` returns a
-  flagged best effort for explicit diagnostic use.
+  flagged best effort. The diagnostics themselves are engine-internal and have no public
+  retrieval path yet, so `False` currently surfaces only the non-raising behaviour.
 
 Without a valid Lipschitz bound, midpoint/mesh validation cannot exclude an arbitrarily
 narrow peak between sampled points.
@@ -52,6 +63,15 @@ DeterministicOuterMaximum()
 Takes `max(V_keeper, V_adjuster)` with the keeper winning exact ties.
 
 ### `UniformObservedFixedCost`
+
+```python
+UniformObservedFixedCost(
+    shock_name=...,
+    scale_function=...,
+    lower=...,
+    upper=...,
+)
+```
 
 Analytically integrates a shock `chi ~ U(lower, upper)` entering only the adjuster's
 fixed adjustment cost through a non-negative `scale_function`. The shock must be

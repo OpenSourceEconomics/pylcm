@@ -8,11 +8,13 @@ Choose a solver before you write the detailed model. Solver selection determines
 economic roles and structural boundaries the model must declare; it is not a performance
 switch to flip after an arbitrary `Regime` has been assembled.
 
-::::\{important} Choose the declaration before the specialized solver. EGM-family
+:::{important} Choose the declaration before the specialized solver
+EGM-family
 solvers are not drop-in replacements for `GridSearch`: a model intended for one should
 use `ConsumptionSavingsRegime` or `NestedConsumptionSavingsRegime` and name its margins
 from the outset. Start from
-[Authoring for EGM-family solvers](authoring_specialized_solvers.md). ::::
+[Authoring for EGM-family solvers](authoring_specialized_solvers.md).
+:::
 
 Make the decision in two passes:
 

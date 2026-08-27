@@ -15,8 +15,10 @@ EGM-family problem; the paper implementation declares working and retirement as
 regime transitions, AR(1) productivity shocks, and discount-factor heterogeneity. It
 ships with calibrated data files for survival probabilities and initial distributions.
 
-::::\{important} This model is computationally intensive. A GPU is recommended; run it
-in a CUDA environment (for example, `pixi run -e cuda13 python your_script.py`). ::::
+:::{important} This model is computationally intensive
+A GPU is recommended; run it
+in a CUDA environment (for example, `pixi run -e cuda13 python your_script.py`).
+:::
 
 [View paper-mode source on GitHub](https://github.com/OpenSourceEconomics/pylcm/blob/main/src/lcm_examples/mahler_yum_2024/paper.py)
 

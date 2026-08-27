@@ -104,8 +104,18 @@ repos:
           - --wrap
           - '88'
         files: (docs/.)
-        # mdformat-myst mangles sphinx-design grid-item-card directives
-        exclude: docs/index\.md
+        # mdformat-myst rewrites any MyST directive into escaped literal text: it
+        # escapes the opening brace and collapses the block onto one line. Every
+        # page carrying a directive is therefore excluded, or its admonitions and
+        # grids would render as `:::\{important}` prose.
+        exclude: |
+          (?x)^docs/(
+            index
+            |reference/solvers
+            |user_guide/choosing_a_solver
+            |examples/precautionary_savings_health
+            |examples/mahler_yum_2024
+          )\.md$
   - repo: local
     hooks:
       # Gates the bare ruler only — a comment line that is nothing but fill
