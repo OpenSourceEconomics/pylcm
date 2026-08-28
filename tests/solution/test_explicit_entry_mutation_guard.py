@@ -128,6 +128,11 @@ def test_relabelling_the_declared_entry_as_a_draw_is_rejected(
     An entry's coefficients express one value in the target's node basis; a
     draw's weights are probabilities over those nodes. Nothing is both, and the
     model says so instead of pricing the coefficients as probabilities.
+
+    What is excluded is a law realizing its OWN draw over those nodes, so the
+    mutation names each law's own next state. A law reading a sibling edge's
+    draw is a different thing and stays legal — that is how a correlated joint
+    output lands on a process's grid.
     """
     original = processing._build_transition_plans
 
@@ -140,7 +145,10 @@ def test_relabelling_the_declared_entry_as_a_draw_is_rejected(
                     outputs=MappingProxyType(
                         {
                             state: dataclasses.replace(
-                                output, lottery_dependencies=frozenset({"mutant"})
+                                output,
+                                lottery_dependencies=frozenset(
+                                    {output.next_state_name}
+                                ),
                             )
                             for state, output in plan.outputs.items()
                         }
