@@ -168,7 +168,7 @@ def test_joint_transition_rejects_probability_vector_with_wrong_length() -> None
 
     with pytest.raises(
         InvalidStateTransitionProbabilitiesError,
-        match=r"match.*length 3.*support_size is 2",
+        match=r"match.*shape \(3,\).*expected \(2,\).*support_size is 2",
     ):
         model.solve(params=_params(), log_level="debug")
 

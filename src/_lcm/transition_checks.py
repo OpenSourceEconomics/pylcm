@@ -567,7 +567,7 @@ def validate_joint_transitions_all_periods(  # noqa: C901, PLR0912
                         transitions=phase.transitions[target],
                         transition_plans=phase.transition_plans,
                     )
-                    weights = _evaluate_joint_weights(
+                    evaluated = _evaluate_joint_weights(
                         func=compute_weights,
                         state_action_space=state_action_space,
                         extra_grids=(
@@ -582,8 +582,9 @@ def validate_joint_transitions_all_periods(  # noqa: C901, PLR0912
                         phase_name=phase_name,
                         logger=logger,
                     )
-                    if weights is None:
+                    if evaluated is None:
                         continue
+                    weights, n_cells = evaluated
                     for kernel_name, law in joint_laws.items():
                         support_provider_name = law.support_provider_name
                         if support_provider_name is None:
@@ -650,19 +651,29 @@ def validate_joint_transitions_all_periods(  # noqa: C901, PLR0912
                                         ),
                                     )
                         probs = weights[f"weight_{target}__{kernel_name}"]
-                        if (
-                            probs.ndim == 0
-                            or probs.shape[-1] != law.support_signature.size
-                        ):
-                            length = 1 if probs.ndim == 0 else probs.shape[-1]
+                        expected_shape = (
+                            (law.support_signature.size,)
+                            if n_cells is None
+                            else (n_cells, law.support_signature.size)
+                        )
+                        if probs.shape != expected_shape:
+                            owes = (
+                                "reads no grid variable, so it owes exactly one "
+                                "probability vector"
+                                if n_cells is None
+                                else f"is evaluated over {n_cells} source cells"
+                            )
                             raise_or_warn(
                                 logger=logger,
                                 error=InvalidStateTransitionProbabilitiesError(
                                     f"Joint transition {kernel_name}.probabilities "
-                                    f"returned length {length}; support_size is "
-                                    f"{law.support_signature.size} "
+                                    f"returned shape {probs.shape}; expected "
+                                    f"{expected_shape}. The function {owes}, and "
+                                    f"support_size is {law.support_signature.size} "
                                     f"({phase_name} phase of regime {regime_name}, "
-                                    f"target {target}, age {age})."
+                                    f"target {target}, age {age}). An axis beyond "
+                                    "those has no declared source variable, so no "
+                                    "row of it can be attributed to a source cell."
                                 ),
                             )
                         invalid_values = (
@@ -767,7 +778,7 @@ def _evaluate_joint_weights(
     regime_name: RegimeName,
     phase_name: str,
     logger: logging.Logger,
-) -> Mapping[str, FloatND | IntND] | None:
+) -> tuple[Mapping[str, FloatND | IntND], int | None] | None:
     """Evaluate one compiled probability DAG on its accepted grids.
 
     `extra_grids` carries grid axes the solution state-action space does not
@@ -775,6 +786,13 @@ def _evaluate_joint_weights(
     that resolves to none of the grids or the regime's parameters leaves the
     lottery unvalidated, which `log_level="debug"` refuses rather than sampling
     from an unexamined law.
+
+    Returns:
+        Tuple of the evaluated weights and the number of source cells they were
+        evaluated over — `None` cells when the DAG reads no grid variable, so
+        that each lottery owes exactly one probability vector rather than one
+        per cell. `None` in place of the tuple when the lottery could not be
+        evaluated at all.
     """
     grid_args: dict[StateOrActionName, FloatND | IntND] = {}
     scalar_kwargs: dict[str, object] = {}
@@ -805,7 +823,7 @@ def _evaluate_joint_weights(
             return None
 
     if not grid_args:
-        return func(**scalar_kwargs)
+        return func(**scalar_kwargs), None
 
     grid_var_names = list(grid_args)
     mesh = jnp.meshgrid(*grid_args.values(), indexing="ij")
@@ -815,7 +833,7 @@ def _evaluate_joint_weights(
         kwargs = dict(zip(grid_var_names, args, strict=True))
         return func(**kwargs, **scalar_kwargs)
 
-    return jax.vmap(_call)(*flat_arrays)
+    return jax.vmap(_call)(*flat_arrays), int(flat_arrays[0].size)
 
 
 def _state_transition_unused_in_period(
