@@ -4082,11 +4082,28 @@ def _process_regime_core(
     # an explicit entry law for it, which is the more specific statement and
     # wins.
     carried_processes = set(variables.process_names)
+    # Compiled before the entry laws are synthesized, because a joint output is
+    # a declared entry law for its target state: it names a physical value the
+    # source hands over, and the process's value function is stored on nodes, so
+    # that value needs the same split into node-basis weights a hand-written
+    # entry law gets. Its DAG node has to exist before the split reads it.
+    joint_transition_keys = _process_joint_transitions(
+        joint_transitions=joint_transitions,
+        processed_functions=processed_functions,
+        regime_params_template=regime_params_template,
+    )
+    # A joint output is a declared law whether or not the source carries the
+    # process: it names the physical value the correlated draw lands on, which
+    # is the more specific statement and displaces the process's own intrinsic
+    # law. A hand-written entry law only applies where there is no handoff.
     explicit_entry_process_grids = {
         (user_regime, process): grid
         for (user_regime, process), grid in target_process_grids.items()
-        if process not in carried_processes
-        and f"{user_regime}__next_{process}" in flat_nested_transitions
+        if f"{user_regime}__next_{process}" in joint_transition_keys
+        or (
+            process not in carried_processes
+            and f"{user_regime}__next_{process}" in flat_nested_transitions
+        )
     }
     # Only the solution phase indexes the target's value function, so only there
     # is the declared physical value split into node indices plus weights.
@@ -4174,12 +4191,6 @@ def _process_regime_core(
             )
             for (user_regime, process), grid in split_entry_process_grids.items()
         }
-    )
-
-    joint_transition_keys = _process_joint_transitions(
-        joint_transitions=joint_transitions,
-        processed_functions=processed_functions,
-        regime_params_template=regime_params_template,
     )
 
     process_transition_keys = {

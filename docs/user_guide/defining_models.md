@@ -302,6 +302,18 @@ using source values and may read already-resolved `next_<state>` outputs on the 
 target edge. Invalid support shapes and probabilities are rejected during the
 params-bound runtime preflight; probabilities are never silently normalized.
 
+An output may target a **stochastic process** as well as an ordinary grid, which is how
+correlated innovations land on a grid pylcm discretized for you rather than one you
+discretized by hand. The output law still names a physical value; because the target's
+value function is stored on the process's nodes, that value reaches the continuation as
+its coefficients in the node basis — the hat weights of linear interpolation. Naming a
+node reads that node alone; naming a point between nodes reads the linear interpolation
+of the target's value function, which is the only reading its nodes support. The output
+law displaces the process's own law on that edge, so the correlation the kernel imposes
+is what the target is entered at. The support is the contract: a value outside the
+process's grid has no representation in that basis and yields `NaN`, which the caller's
+value function reports rather than extrapolating.
+
 Parameters for support and probabilities live below the kernel name, while output
 parameters keep the ordinary target-local `next_<state>` paths:
 
