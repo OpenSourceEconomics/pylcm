@@ -27,6 +27,7 @@ from _lcm.constraints.ir import Condition
 from _lcm.grids import DiscreteGrid
 from _lcm.typing import FunctionName, RegimeName
 from _lcm.user_regime_validation import (
+    _fail_if_a_folded_conditioner_can_move,
     _fail_if_collective_regime_folds,
     _validate_completeness,
 )
@@ -143,6 +144,10 @@ def finalize_regimes(
             )
         finalized._validate_finalized_structure(regime_name=regime_name)  # noqa: SLF001
         result[regime_name] = finalized
+    # Runs on the finalized regimes: a conditioner's law may arrive as a
+    # model-level broadcast, so whether it can move is only settled once the
+    # merge is done.
+    _fail_if_a_folded_conditioner_can_move(user_regimes=MappingProxyType(result))
     return MappingProxyType(result)
 
 

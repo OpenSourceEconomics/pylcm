@@ -1641,6 +1641,103 @@ def _fail_if_collective_regime_folds(
         raise ModelInitializationError(format_messages(error_messages))
 
 
+def _fail_if_a_folded_conditioner_can_move(
+    *, user_regimes: Mapping[RegimeName, lcm.regime.Regime]
+) -> None:
+    """Reject a folded conditioned shock whose conditioner moves on the way in.
+
+    A folded shock that is a state at period `t` was realized between `t - 1`
+    and `t`, so `StateConditioned` dates its quadrature row at the conditioning
+    state's `t - 1` value. The fold gathers that row along the conditioning
+    state's axis of the array it reduces, which is the `t` value. The two are
+    the same number only while the conditioner cannot change across that step.
+
+    The regime declaring the fold cannot settle this alone: a regime that
+    transitions into it may hand over a different category, leaving the folding
+    regime's own law an identity while the value still changed. Every regime
+    that can reach the folding one is therefore checked here.
+
+    Raises:
+        ModelInitializationError: If any regime reaching a folding regime can
+            move that fold's conditioning state.
+    """
+    error_messages: list[str] = []
+    for regime_name, regime in user_regimes.items():
+        for name in _fold_state_names(regime):
+            conditioned = cast("_IIDProcess", regime.states[name]).state_conditioned
+            if conditioned is None:
+                continue
+            movers = sorted(
+                source_name
+                for source_name, source in user_regimes.items()
+                if regime_name in _reachable_regime_targets(source, user_regimes)
+                and _state_law_can_move(
+                    regime=source, state_name=conditioned.on, toward=regime_name
+                )
+            )
+            if not movers:
+                continue
+            error_messages.append(
+                f"fold=True on state {name!r} of regime {regime_name!r} is not "
+                f"supported together with a conditioning state that can move: "
+                f"{name!r} draws its scale from {conditioned.on!r} as of the "
+                f"period BEFORE the shock is realized, while regime(s) "
+                f"{movers} reach {regime_name!r} and give {conditioned.on!r} a "
+                f"law of motion. The fold gathers that state's row along the "
+                f"axis it is reducing, which is one period later, so a subject "
+                f"arriving with a changed category would be priced against a "
+                f"distribution the declared transition never draws from. "
+                f"Declare {conditioned.on!r} with "
+                f"`fixed_transition({conditioned.on!r})` in those regimes, or "
+                f"drop `fold=True`."
+            )
+    if error_messages:
+        raise ModelInitializationError(format_messages(error_messages))
+
+
+def _state_law_can_move(
+    *, regime: lcm.regime.Regime, state_name: StateName, toward: RegimeName
+) -> bool:
+    """Whether this regime moves `state_name` on the edge into `toward`.
+
+    A per-target law is read at its `toward` entry alone: a regime that moves the
+    state toward one target and holds it fixed toward another says nothing about
+    the edge in question, and refusing it would be an over-refusal.
+    """
+    declared = regime.state_transitions.get(state_name)
+    variants = (
+        (declared.solve, declared.simulate)
+        if isinstance(declared, Phased)
+        else (declared,)
+    )
+    laws = [
+        law
+        for variant in variants
+        for law in _flatten_transition_callables(
+            variant.get(toward) if isinstance(variant, Mapping) else variant
+        )
+    ]
+    return bool(laws) and not all(
+        getattr(law, "_is_auto_identity", False) for law in laws
+    )
+
+
+def _reachable_regime_targets(
+    regime: lcm.regime.Regime, user_regimes: Mapping[RegimeName, lcm.regime.Regime]
+) -> frozenset[RegimeName]:
+    """The regimes this one's transition can structurally reach.
+
+    A per-target dict declares its own key set; every other form is coarse and
+    reaches every regime in the model.
+    """
+    transition = regime.transition
+    if transition is None:
+        return frozenset()
+    if isinstance(transition, Mapping):
+        return frozenset(transition)
+    return frozenset(user_regimes)
+
+
 def _fold_scope_errors(
     regime: lcm.regime.Regime, fold_names: tuple[StateName, ...]
 ) -> list[str]:
@@ -1691,6 +1788,54 @@ def _fold_scope_errors(
             "for the `GridSearch` solver: the fold reduction runs inside the "
             "grid-search max-Q-over-a kernel. Use `solver=GridSearch()`, or "
             "drop `fold=True`."
+        )
+    error_messages.extend(_moving_conditioner_errors(regime, fold_names))
+    return error_messages
+
+
+def _moving_conditioner_errors(
+    regime: lcm.regime.Regime, fold_names: tuple[StateName, ...]
+) -> list[str]:
+    """Reject a folded conditioned shock whose conditioning state has a law.
+
+    `StateConditioned` dates the conditioning value at `t`: the scale of the
+    innovation realized between `t` and `t + 1` is set by where the subject is
+    at `t`. The fold gathers one row per category along the conditioning
+    state's own axis of the value array it reduces, which is that state read
+    one period later. While the conditioner cannot change the two coincide; as
+    soon as it has a law of motion they do not, and the folded value prices a
+    distribution the declared transition never draws from.
+
+    This is the regime-local half of the rule. A conditioner moved by a regime
+    that transitions into this one is caught at model build, where the reaching
+    regimes are known.
+    """
+    error_messages: list[str] = []
+    for name in fold_names:
+        conditioned = cast("_IIDProcess", regime.states[name]).state_conditioned
+        if conditioned is None:
+            continue
+        laws = _flatten_transition_callables(
+            regime.state_transitions.get(conditioned.on)
+        )
+        if not laws:
+            # The conditioner's law may be a model-level broadcast that has not
+            # been merged yet, so silence here is not evidence that it cannot
+            # move. The model-level guard settles it once the merged laws are
+            # known.
+            continue
+        if all(getattr(law, "_is_auto_identity", False) for law in laws):
+            continue
+        error_messages.append(
+            f"fold=True on state {name!r} is not supported together with a "
+            f"conditioning state that can move: {name!r} draws its scale from "
+            f"{conditioned.on!r} as of the period BEFORE the shock is "
+            f"realized, while the fold gathers that state's row along the "
+            f"axis of the period it is reducing. Those are the same value "
+            f"only while {conditioned.on!r} cannot change, so a law of motion "
+            f"on it would price a distribution the transition never draws "
+            f"from. Declare {conditioned.on!r} with "
+            f"`fixed_transition({conditioned.on!r})`, or drop `fold=True`."
         )
     return error_messages
 

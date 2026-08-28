@@ -22,12 +22,14 @@ import pytest
 from lcm import (
     AgeGrid,
     DiscreteGrid,
+    MarkovTransition,
     Model,
     NormalIIDProcess,
     Regime,
     categorical,
     fixed_transition,
 )
+from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.processes import StateConditioned
 from lcm.typing import DiscreteAction, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
@@ -94,14 +96,14 @@ def _expected_value(*, nodes: np.ndarray, sigma: float) -> float:
     return float(_cdf_binned_row(nodes=nodes, sigma=sigma) @ payoff)
 
 
-def _shock(*, sigma: float | StateConditioned) -> NormalIIDProcess:
+def _shock(*, sigma: float | StateConditioned, fold: bool = True) -> NormalIIDProcess:
     return NormalIIDProcess(
         n_points=N_POINTS,
         gauss_hermite=False,
         mu=MU,
         n_std=N_STD,
         sigma=sigma,
-        fold=True,
+        fold=fold,
     )
 
 
@@ -232,3 +234,193 @@ def test_high_risk_cell_matches_the_unconditioned_fold() -> None:
         float(unconditioned),
         decimal=DECIMAL_PRECISION,
     )
+
+
+def _next_risk_type(work: DiscreteAction) -> ScalarInt:
+    """Working moves the subject into the high-risk category next period."""
+    return jnp.where(work == 1, RiskType.high, RiskType.low)
+
+
+def test_a_folded_shock_whose_conditioner_can_move_is_rejected() -> None:
+    """A conditioning state with a law of motion is refused, not silently mis-dated.
+
+    `StateConditioned` dates the conditioning value at `t`: the variance of the
+    innovation realized between `t` and `t + 1` is set by where the subject is
+    at `t`. The fold gathers its per-category row along the conditioning
+    state's axis in the regime whose value it is reducing, which reads that
+    state one period later. The two agree only while the conditioner cannot
+    change, so a conditioner with a law of motion is refused.
+    """
+    with pytest.raises(RegimeInitializationError, match="conditioning state"):
+        Regime(
+            transition=_next_regime,
+            active=lambda age: age < 1,
+            states={
+                "risk_type": DiscreteGrid(RiskType),
+                "wage_shock": _shock(
+                    sigma=StateConditioned(on="risk_type", by=SIGMA_BY_RISK)
+                ),
+            },
+            state_transitions={"risk_type": _next_risk_type},
+            actions={"work": DiscreteGrid(Work)},
+            functions={"utility": _utility},
+        )
+
+
+@categorical(ordered=False)
+class ThreeRegimeId:
+    entry: ScalarInt
+    folding: ScalarInt
+    done: ScalarInt
+
+
+_THREE_AGES = AgeGrid(start=0, stop=3, step="Y")
+
+
+def _to_folding() -> ScalarInt:
+    return ThreeRegimeId.folding
+
+
+def _to_done() -> ScalarInt:
+    return ThreeRegimeId.done
+
+
+def test_a_conditioner_moved_by_a_source_regime_is_rejected() -> None:
+    """A conditioner moved on the way in is refused, not only one moved in place.
+
+    The folding regime holds `risk_type` fixed, so nothing local to it can tell
+    that the shock it folds was realized under the category the *entry* regime
+    left behind. The category the fold gathers against is the one the subject
+    arrives with, which is a different number as soon as any regime reaching
+    this one can change it.
+    """
+    entry = Regime(
+        transition=_to_folding,
+        active=lambda age: age < 1,
+        states={
+            "risk_type": DiscreteGrid(RiskType),
+            "wage_shock": _shock(
+                sigma=StateConditioned(on="risk_type", by=SIGMA_BY_RISK),
+                fold=False,
+            ),
+        },
+        state_transitions={"risk_type": _next_risk_type},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _utility},
+    )
+    folding = Regime(
+        transition=_to_done,
+        active=lambda age: 1 <= age < 2,
+        states={
+            "risk_type": DiscreteGrid(RiskType),
+            "wage_shock": _shock(
+                sigma=StateConditioned(on="risk_type", by=SIGMA_BY_RISK)
+            ),
+        },
+        state_transitions={"risk_type": fixed_transition("risk_type")},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _utility},
+    )
+    done = Regime(
+        transition=None,
+        active=lambda age: age >= 2,
+        functions={"utility": lambda: jnp.asarray(0.0)},
+    )
+
+    with pytest.raises(ModelInitializationError, match="conditioning state"):
+        Model(
+            regimes={"entry": entry, "folding": folding, "done": done},
+            ages=_THREE_AGES,
+            regime_id_class=ThreeRegimeId,
+        )
+
+
+@categorical(ordered=False)
+class SplitRegimeId:
+    entry: ScalarInt
+    folding: ScalarInt
+    sideways: ScalarInt
+    done: ScalarInt
+
+
+def _split_probability_of_folding() -> FloatND:
+    return jnp.asarray(0.5)
+
+
+def _split_probability_of_sideways() -> FloatND:
+    return jnp.asarray(0.5)
+
+
+def _to_done_from_split() -> ScalarInt:
+    return SplitRegimeId.done
+
+
+def test_a_conditioner_moved_only_toward_another_target_is_accepted() -> None:
+    """A per-target law is read on the edge in question, not across all of them.
+
+    A source that reshuffles the risk category on its way somewhere else says
+    nothing about the category a subject arrives in the folding regime with. The
+    edge into the folding regime holds it fixed, so the fold gathers its row
+    against exactly the category the shock was realized under.
+    """
+    entry = Regime(
+        transition={
+            "folding": MarkovTransition(_split_probability_of_folding),
+            "sideways": MarkovTransition(_split_probability_of_sideways),
+        },
+        active=lambda age: age < 1,
+        states={
+            "risk_type": DiscreteGrid(RiskType),
+            "wage_shock": _shock(
+                sigma=StateConditioned(on="risk_type", by=SIGMA_BY_RISK),
+                fold=False,
+            ),
+        },
+        state_transitions={
+            "risk_type": {
+                "folding": fixed_transition("risk_type"),
+                "sideways": _next_risk_type,
+            }
+        },
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _utility},
+    )
+    folding = Regime(
+        transition=_to_done_from_split,
+        active=lambda age: 1 <= age < 2,
+        states={
+            "risk_type": DiscreteGrid(RiskType),
+            "wage_shock": _shock(
+                sigma=StateConditioned(on="risk_type", by=SIGMA_BY_RISK)
+            ),
+        },
+        state_transitions={"risk_type": fixed_transition("risk_type")},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _utility},
+    )
+    sideways = Regime(
+        transition=_to_done_from_split,
+        active=lambda age: 1 <= age < 2,
+        states={"risk_type": DiscreteGrid(RiskType)},
+        state_transitions={"risk_type": fixed_transition("risk_type")},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": lambda work: jnp.asarray(work, dtype=jnp.float64) * 0.0},
+    )
+    done = Regime(
+        transition=None,
+        active=lambda age: age >= 2,
+        functions={"utility": lambda: jnp.asarray(0.0)},
+    )
+
+    model = Model(
+        regimes={
+            "entry": entry,
+            "folding": folding,
+            "sideways": sideways,
+            "done": done,
+        },
+        ages=_THREE_AGES,
+        regime_id_class=SplitRegimeId,
+    )
+
+    assert set(model.user_regimes) == {"entry", "folding", "sideways", "done"}
