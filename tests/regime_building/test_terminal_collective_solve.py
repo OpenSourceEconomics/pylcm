@@ -22,7 +22,7 @@ from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
-from lcm import DiscreteGrid, LinSpacedGrid, categorical
+from lcm import CollectiveUtility, DiscreteGrid, LinSpacedGrid, categorical
 from lcm.ages import AgeGrid
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import Regime
@@ -51,10 +51,11 @@ def _utility_m(wage: FloatND, work: DiscreteAction) -> FloatND:
 def test_terminal_collective_regime_solves_with_stakeholder_axis():
     regime = Regime(
         transition=None,  # terminal
-        stakeholders=("f", "m"),
         states={"wage": LinSpacedGrid(start=10.0, stop=40.0, n_points=2)},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _utility_f, "utility_m": _utility_m},
+        functions={
+            "utility": CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
+        },
     )
     ages = AgeGrid(start=0, stop=2, step="Y")
     regimes = process_regimes(

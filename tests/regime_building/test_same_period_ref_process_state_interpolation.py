@@ -57,6 +57,7 @@ from _lcm.simulation.simulate import simulate
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
+    CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
     NormalIIDProcess,
@@ -252,12 +253,15 @@ def _make_regimes() -> dict[str, Regime]:
     married_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         states={"wage": _WAGE},
         actions={"work": DiscreteGrid(Work)},
         functions={
-            "utility_f": _utility_married_terminal,
-            "utility_m": _utility_married_terminal,
+            "utility": CollectiveUtility(
+                utilities={
+                    "f": _utility_married_terminal,
+                    "m": _utility_married_terminal,
+                }
+            )
         },
     )
     regimes["married"] = married

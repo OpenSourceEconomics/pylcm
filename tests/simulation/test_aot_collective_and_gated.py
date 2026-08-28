@@ -27,12 +27,13 @@ from numpy.testing import assert_array_almost_equal as aaae
 from _lcm.simulation.gated_routing import population_call
 from lcm import (
     AgeGrid,
+    CollectiveUtility,
     DiscreteGrid,
-    GatedEdge,
     Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -244,16 +245,11 @@ def _make_consent_model(*, n_subjects: int | None) -> Model:
 
     """
     single = Regime(
-        transition={"married_terminal": MarkovTransition(_certain_transition)},
-        active=lambda age: age < 1,
-        states={"education": DiscreteGrid(Education)},
-        state_transitions={"education": fixed_transition("education")},
-        actions={"work": DiscreteGrid(Work)},
-        functions={"utility": _single_utility},
-        gated_edges={
-            "married_terminal": GatedEdge(
+        transition={
+            "married_terminal": ValueDependentTransition(
+                probability=MarkovTransition(_certain_transition),
                 gate=_consent_gate,
-                legs={
+                routes={
                     "f": StakeholderRoute(
                         target_stakeholder="f",
                         fallback=ProjectedRegimeValue(
@@ -262,7 +258,7 @@ def _make_consent_model(*, n_subjects: int | None) -> Model:
                         ),
                     )
                 },
-                gate_refs={
+                gate_references={
                     "V_single_ref": ProjectedRegimeValue(
                         regime="single_terminal",
                         projection={"education": _identity_education},
@@ -270,6 +266,11 @@ def _make_consent_model(*, n_subjects: int | None) -> Model:
                 },
             )
         },
+        active=lambda age: age < 1,
+        states={"education": DiscreteGrid(Education)},
+        state_transitions={"education": fixed_transition("education")},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _single_utility},
     )
     single_terminal = Regime(
         transition=None,
@@ -280,10 +281,13 @@ def _make_consent_model(*, n_subjects: int | None) -> Model:
     married_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         states={"education": DiscreteGrid(Education)},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _married_utility_f, "utility_m": _married_utility_m},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _married_utility_f, "m": _married_utility_m}
+            )
+        },
     )
     return Model(
         regimes={

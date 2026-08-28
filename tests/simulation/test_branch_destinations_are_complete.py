@@ -17,12 +17,13 @@ import numpy as np
 from _lcm.regime_building.collective import NO_ROLE
 from lcm import (
     AgeGrid,
-    GatedEdge,
+    CollectiveUtility,
     IrregSpacedGrid,
     Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -65,16 +66,11 @@ def _prosperous_enough(wage: ContinuousState) -> BoolND:
 
 def _make_model() -> Model:
     household = Regime(
-        transition={"household_next": MarkovTransition(_certain)},
-        active=lambda age: age < 1,
-        stakeholders=("f", "m"),
-        states={"wage": _WAGE},
-        state_transitions={"wage": fixed_transition("wage")},
-        functions={"utility_f": _zero, "utility_m": _zero},
-        gated_edges={
-            "household_next": GatedEdge(
+        transition={
+            "household_next": ValueDependentTransition(
+                probability=MarkovTransition(_certain),
                 gate=_prosperous_enough,
-                legs={
+                routes={
                     "f": StakeholderRoute(
                         target_stakeholder="f",
                         fallback=ProjectedRegimeValue(
@@ -93,20 +89,30 @@ def _make_model() -> Model:
                 },
             )
         },
+        active=lambda age: age < 1,
+        states={"wage": _WAGE},
+        state_transitions={"wage": fixed_transition("wage")},
+        functions={"utility": CollectiveUtility(utilities={"f": _zero, "m": _zero})},
     )
     household_next = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         states={"wage": _WAGE},
-        functions={"utility_f": _wage_payoff, "utility_m": _wage_payoff},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _wage_payoff, "m": _wage_payoff}
+            )
+        },
     )
     care_pair = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("carer", "ward"),
         states={"wage": _WAGE},
-        functions={"utility_carer": _wage_payoff, "utility_ward": _zero},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"carer": _wage_payoff, "ward": _zero}
+            )
+        },
     )
     lodging = Regime(
         transition=None,

@@ -20,6 +20,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    CollectiveUtility,
     IrregSpacedGrid,
     Model,
     ProjectedRegimeValue,
@@ -74,10 +75,9 @@ def _make_model(*, participation: bool) -> Model:
     couple = Regime(
         transition={"couple_terminal": MarkovTransition(_certain)},
         active=lambda age: age < 1,
-        stakeholders=("f", "m"),
         states={"wage": _WAGE},
         state_transitions={"wage": fixed_transition("wage")},
-        functions={"utility_f": _zero, "utility_m": _zero},
+        functions={"utility": CollectiveUtility(utilities={"f": _zero, "m": _zero})},
     )
     couple_terminal = Regime(
         transition=None,

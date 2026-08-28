@@ -5,6 +5,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -89,11 +90,12 @@ def test_declaring_non_terminal_stakeholders_constructs():
 
     regime = Regime(
         transition=_some_transition,
-        stakeholders=("f", "m"),
         states={"wealth": _WEALTH},
         actions={"labor_supply_f": DiscreteGrid(LaborSupply)},
         state_transitions={"wealth": lambda wealth: wealth},
-        functions={"utility_f": _utility_f, "utility_m": _utility_m},
+        functions={
+            "utility": CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
+        },
     )
     assert regime.stakeholders == ("f", "m")
     assert not regime.terminal
@@ -110,7 +112,6 @@ def test_terminal_stakeholders_without_per_stakeholder_utility_is_rejected():
     married = Regime(
         transition=_next_regime_widowed,
         active=lambda age: age < 1,
-        stakeholders=("f", "m"),
         states={"wealth": _WEALTH},
         state_transitions={"wealth": fixed_transition("wealth")},
         actions={
@@ -118,7 +119,9 @@ def test_terminal_stakeholders_without_per_stakeholder_utility_is_rejected():
             "labor_supply_m": DiscreteGrid(LaborSupply),
             "consumption": _CONSUMPTION,
         },
-        functions={"utility_f": _utility_f, "utility_m": _utility_m},
+        functions={
+            "utility": CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
+        },
     )
     widowed = Regime(
         transition=None,

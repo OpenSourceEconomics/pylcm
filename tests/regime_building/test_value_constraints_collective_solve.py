@@ -49,7 +49,14 @@ from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
-from lcm import DiscreteGrid, LinSpacedGrid, Model, categorical, fixed_transition
+from lcm import (
+    CollectiveUtility,
+    DiscreteGrid,
+    LinSpacedGrid,
+    Model,
+    categorical,
+    fixed_transition,
+)
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.koopmans_aggregation import LinearAggregator
@@ -183,12 +190,12 @@ def _make_ir_regimes(
     married_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         states={"wage": _WAGE_GRID},
         actions={"work": DiscreteGrid(Work)},
         functions={
-            "utility_f": _utility_zero_collective,
-            "utility_m": _utility_zero_collective,
+            "utility": CollectiveUtility(
+                utilities={"f": _utility_zero_collective, "m": _utility_zero_collective}
+            )
         },
     )
     if married_first:
@@ -452,12 +459,12 @@ def test_projection_maps_states_and_reference_v_is_interpolated_off_grid():
     married_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         states={"wage": married_grid},
         actions={"work": DiscreteGrid(Work)},
         functions={
-            "utility_f": _utility_zero_collective,
-            "utility_m": _utility_zero_collective,
+            "utility": CollectiveUtility(
+                utilities={"f": _utility_zero_collective, "m": _utility_zero_collective}
+            )
         },
     )
     ages = AgeGrid(start=0, stop=2, step="Y")
@@ -570,22 +577,23 @@ def test_on_path_minus_inf_value_is_not_dissolution():
     couple = Regime(
         transition={"couple_terminal": MarkovTransition(_prob_one)},
         active=lambda age: age < 1,
-        stakeholders=("f", "m"),
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _utility_f, "utility_m": _utility_m},
+        functions={
+            "utility": CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
+        },
         constraints={"wage_ok": _wage_ok},
     )
     couple_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         states={"wage": _WAGE_GRID},
         actions={"work": DiscreteGrid(Work)},
         functions={
-            "utility_f": _utility_zero_collective,
-            "utility_m": _utility_zero_collective,
+            "utility": CollectiveUtility(
+                utilities={"f": _utility_zero_collective, "m": _utility_zero_collective}
+            )
         },
     )
     ages = AgeGrid(start=0, stop=2, step="Y")
@@ -825,12 +833,12 @@ def test_same_period_ref_cycle_is_rejected_at_build():
     terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         states={"wage": _WAGE_GRID},
         actions={"work": DiscreteGrid(Work)},
         functions={
-            "utility_f": _utility_zero_collective,
-            "utility_m": _utility_zero_collective,
+            "utility": CollectiveUtility(
+                utilities={"f": _utility_zero_collective, "m": _utility_zero_collective}
+            )
         },
     )
     with pytest.raises(ModelInitializationError, match="form a cycle"):
@@ -855,13 +863,13 @@ def test_same_period_ref_to_collective_regime_requires_stakeholder():
     couple_b = Regime(
         transition={"married_terminal_b": MarkovTransition(_prob_one)},
         active=lambda age: age < 1,
-        stakeholders=("f", "m"),
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(Work)},
         functions={
-            "utility_f": _utility_married_f,
-            "utility_m": _utility_married_m,
+            "utility": CollectiveUtility(
+                utilities={"f": _utility_married_f, "m": _utility_married_m}
+            )
         },
     )
     regimes["couple_b"] = couple_b

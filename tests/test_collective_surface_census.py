@@ -1,12 +1,12 @@
 """Which test modules exercise the collective / gated-edge surface, and how far.
 
-A module that builds a `GatedEdge` or declares `stakeholders=` can cover the
-feature at either of two altitudes. Most drive it through `Model`, so the
-public route the documentation describes is what runs. The rest call the engine
-directly — `process_regimes`, a bare `solve`, `route_gated_edges` — which is the
-right altitude for pinning a kernel's arithmetic and the wrong one for
-believing the feature works, because everything between the user's `Model` call
-and that kernel is skipped.
+A module that declares a `CollectiveUtility`, a `ValueDependentConstraint` or a
+`ValueDependentTransition` can cover the feature at either of two altitudes.
+Most drive it through `Model`, so the public route the documentation describes
+is what runs. The rest call the engine directly — `process_regimes`, a bare
+`solve`, `route_gated_edges` — which is the right altitude for pinning a
+kernel's arithmetic and the wrong one for believing the feature works, because
+everything between the user's `Model` call and that kernel is skipped.
 
 Neither altitude is a defect. What would be a defect is the second set growing
 without anyone deciding it should, which is how a feature ends up with a large
@@ -14,7 +14,7 @@ test suite and an untested public surface. So the partition is pinned exactly:
 adding a module to the engine-level set is a deliberate edit here, and moving
 one to the public route is a deletion from the list.
 
-The census reads the syntax tree rather than the file's text, so a `GatedEdge`
+The census reads the syntax tree rather than the file's text, so a declaration
 named in a docstring or commented out does not count as exercising it.
 """
 
@@ -28,11 +28,14 @@ _TESTS_ROOT = Path(__file__).parent
 #: Modules that exercise the surface below `Model`, on purpose. Each drives an
 #: engine entry point directly to pin something a whole-model run would only
 #: cover incidentally: a compiled fold's argument provenance, a treedef, a
-#: projector's vmap, a guard that raises before a model could be built.
+#: projector's vmap, a guard that raises before a model could be built, or the
+#: decomposition a declaration takes apart into, which is a property of the
+#: `Regime` alone and so has no model in it to build.
 _ENGINE_LEVEL_MODULES = frozenset(
     {
         "tests/regime_building/test_carried_state_through_gated_self_loop.py",
         "tests/regime_building/test_collective_extended_real.py",
+        "tests/regime_building/test_decomposed_views.py",
         "tests/regime_building/test_fold_gate_guard.py",
         "tests/regime_building/test_fold_guard_complete.py",
         "tests/regime_building/test_fold_iid_shocks.py",
@@ -46,6 +49,7 @@ _ENGINE_LEVEL_MODULES = frozenset(
         "tests/regime_building/test_simulate_gate_param_and_leg_selection.py",
         "tests/regime_building/test_simulate_guards.py",
         "tests/regime_building/test_terminal_collective_solve.py",
+        "tests/regime_building/test_with_engine_functions.py",
         "tests/simulation/test_leg_projector_vmap.py",
         "tests/solution/test_edge_topologies_build_each_target_once.py",
     }
@@ -72,10 +76,24 @@ def _passes_keyword(source: str, *, keyword: str) -> bool:
     return False
 
 
+#: What a module writes when it exercises the collective / gated-edge surface.
+#: The declaration vocabulary is what a model author uses; the lowered spellings
+#: are still listed because a handful of modules have not been migrated off them
+#: yet, and a module the census stops seeing is a module that silently leaves the
+#: partition.
+_DECLARATIONS = (
+    "CollectiveUtility",
+    "ValueDependentConstraint",
+    "ValueDependentTransition",
+    "GatedEdge",
+)
+_LOWERED_KEYWORDS = ("stakeholders", "value_constraints", "gated_edges")
+
+
 def _exercises_the_surface(source: str) -> bool:
-    """Report whether the source builds a gated edge or declares stakeholders."""
-    return _calls(source, name="GatedEdge") or _passes_keyword(
-        source, keyword="stakeholders"
+    """Report whether the source declares a household, a value constraint or an edge."""
+    return any(_calls(source, name=name) for name in _DECLARATIONS) or any(
+        _passes_keyword(source, keyword=keyword) for keyword in _LOWERED_KEYWORDS
     )
 
 
@@ -158,12 +176,16 @@ def test_most_of_the_surface_is_covered_through_the_public_route():
 @pytest.mark.parametrize(
     ("source", "expected"),
     [
+        ("CollectiveUtility(utilities={})", True),
+        ("lcm.CollectiveUtility(utilities={})", True),
+        ("ValueDependentConstraint(predicate=p)", True),
+        ("ValueDependentTransition(gate=g)", True),
         ("GatedEdge(legs=())", True),
-        ("lcm.GatedEdge(legs=())", True),
         ("Regime(stakeholders=('f', 'm'))", True),
-        ('"""A docstring naming GatedEdge and stakeholders."""', False),
-        ("# GatedEdge(legs=()) commented out\nx = 1", False),
+        ('"""A docstring naming CollectiveUtility and stakeholders."""', False),
+        ("# CollectiveUtility(utilities={}) commented out\nx = 1", False),
         ("stakeholders = ('f', 'm')", False),
+        ("collective_utility = 1", False),
     ],
 )
 def test_the_census_reads_syntax_not_text(*, source: str, expected: bool):

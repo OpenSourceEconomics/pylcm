@@ -41,6 +41,7 @@ from numpy.testing import assert_array_almost_equal as aaae
 from lcm import (
     AgeGrid,
     AgeSpecializedGrid,
+    CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -200,12 +201,12 @@ def _make_model(*, later_ceiling: float) -> Model:
     couple_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         states={"wealth": COUPLE_GRID},
         actions={"work": DiscreteGrid(Work)},
         functions={
-            "utility_f": _zero_collective_utility,
-            "utility_m": _zero_collective_utility,
+            "utility": CollectiveUtility(
+                utilities={"f": _zero_collective_utility, "m": _zero_collective_utility}
+            )
         },
     )
     return Model(

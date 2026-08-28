@@ -46,13 +46,14 @@ from _lcm.simulation.simulate import simulate
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
+    CollectiveUtility,
     DiscreteGrid,
-    GatedEdge,
     LinSpacedGrid,
     Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -153,19 +154,21 @@ def _make_couple_regimes() -> dict[str, Regime]:
     couple = Regime(
         transition=_next_couple_regime,
         active=lambda age: age < 1,
-        stakeholders=("f", "m"),
         states={"wage": _WAGE_GRID_2},
         state_transitions={"wage": _next_wage},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _utility_f, "utility_m": _utility_m},
+        functions={
+            "utility": CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
+        },
     )
     couple_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         states={"wage": _WAGE_GRID_2},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _utility_f, "utility_m": _utility_m},
+        functions={
+            "utility": CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
+        },
     )
     return {"couple": couple, "couple_terminal": couple_terminal}
 
@@ -341,16 +344,11 @@ def _consent_gate(
 
 def _make_consent_regimes() -> dict[str, Regime]:
     single_f = Regime(
-        transition={"married_terminal": MarkovTransition(_prob_one)},
-        active=lambda age: age < 1,
-        states={"wage": _WAGE_2},
-        state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
-        functions={"utility": _u_single_f},
-        gated_edges={
-            "married_terminal": GatedEdge(
+        transition={
+            "married_terminal": ValueDependentTransition(
+                probability=MarkovTransition(_prob_one),
                 gate=_consent_gate,
-                legs={
+                routes={
                     "f": StakeholderRoute(
                         target_stakeholder="f",
                         fallback=ProjectedRegimeValue(
@@ -359,7 +357,7 @@ def _make_consent_regimes() -> dict[str, Regime]:
                         ),
                     )
                 },
-                gate_refs={
+                gate_references={
                     "V_single_f_ref": ProjectedRegimeValue(
                         regime="single_f_terminal",
                         projection={"wage": _identity_wage},
@@ -371,6 +369,11 @@ def _make_consent_regimes() -> dict[str, Regime]:
                 },
             )
         },
+        active=lambda age: age < 1,
+        states={"wage": _WAGE_2},
+        state_transitions={"wage": fixed_transition("wage")},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _u_single_f},
     )
     single_f_terminal = Regime(
         transition=None,
@@ -387,10 +390,13 @@ def _make_consent_regimes() -> dict[str, Regime]:
     married_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         states={"wage": _WAGE_2},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _u_married_f, "utility_m": _u_married_m},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _u_married_f, "m": _u_married_m}
+            )
+        },
     )
     return {
         "single_f": single_f,
@@ -558,17 +564,11 @@ def _no_dissolution_gate(D_target: BoolND) -> BoolND:
 
 def _make_dissolution_regimes() -> dict[str, Regime]:
     married = Regime(
-        transition={"married_ir": MarkovTransition(_prob_one)},
-        active=lambda age: age < 1,
-        stakeholders=("f", "m"),
-        states={"wage": _WAGE_3},
-        state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _u_zero_collective, "utility_m": _u_zero_collective},
-        gated_edges={
-            "married_ir": GatedEdge(
+        transition={
+            "married_ir": ValueDependentTransition(
+                probability=MarkovTransition(_prob_one),
                 gate=_no_dissolution_gate,
-                legs={
+                routes={
                     "f": StakeholderRoute(
                         target_stakeholder="f",
                         fallback=ProjectedRegimeValue(
@@ -582,6 +582,15 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
                         ),
                     ),
                 },
+            )
+        },
+        active=lambda age: age < 1,
+        states={"wage": _WAGE_3},
+        state_transitions={"wage": fixed_transition("wage")},
+        actions={"work": DiscreteGrid(Work)},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _u_zero_collective, "m": _u_zero_collective}
             )
         },
     )
@@ -606,10 +615,13 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
     married_terminal = Regime(
         transition=None,
         active=lambda age: age >= 2,
-        stakeholders=("f", "m"),
         states={"wage": _WAGE_3},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _u_zero_collective, "utility_m": _u_zero_collective},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _u_zero_collective, "m": _u_zero_collective}
+            )
+        },
     )
     single_f = Regime(
         transition={"single_f_terminal": MarkovTransition(_prob_one)},
@@ -903,22 +915,11 @@ def _u_married_m_educ(
 
 def _make_consent_regimes_with_discrete_target_axis() -> dict[str, Regime]:
     single_f = Regime(
-        transition={"married_terminal": MarkovTransition(_prob_one)},
-        active=lambda age: age < 1,
-        # ONLY difference vs. `_make_consent_regimes`: an added discrete
-        # "educ" state, carried as-is (`fixed_transition`), on the source and
-        # every regime the gated edge's fold/gate/fallback touch.
-        states={"wage": _WAGE_2, "educ": DiscreteGrid(Educ)},
-        state_transitions={
-            "wage": fixed_transition("wage"),
-            "educ": fixed_transition("educ"),
-        },
-        actions={"work": DiscreteGrid(Work)},
-        functions={"utility": _u_single_f_educ},
-        gated_edges={
-            "married_terminal": GatedEdge(
+        transition={
+            "married_terminal": ValueDependentTransition(
+                probability=MarkovTransition(_prob_one),
                 gate=_consent_gate,
-                legs={
+                routes={
                     "f": StakeholderRoute(
                         target_stakeholder="f",
                         fallback=ProjectedRegimeValue(
@@ -927,7 +928,7 @@ def _make_consent_regimes_with_discrete_target_axis() -> dict[str, Regime]:
                         ),
                     )
                 },
-                gate_refs={
+                gate_references={
                     "V_single_f_ref": ProjectedRegimeValue(
                         regime="single_f_terminal",
                         projection={"wage": _identity_wage, "educ": _identity_educ},
@@ -939,6 +940,17 @@ def _make_consent_regimes_with_discrete_target_axis() -> dict[str, Regime]:
                 },
             )
         },
+        active=lambda age: age < 1,
+        # ONLY difference vs. `_make_consent_regimes`: an added discrete
+        # "educ" state, carried as-is (`fixed_transition`), on the source and
+        # every regime the gated edge's fold/gate/fallback touch.
+        states={"wage": _WAGE_2, "educ": DiscreteGrid(Educ)},
+        state_transitions={
+            "wage": fixed_transition("wage"),
+            "educ": fixed_transition("educ"),
+        },
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _u_single_f_educ},
     )
     single_f_terminal = Regime(
         transition=None,
@@ -955,10 +967,13 @@ def _make_consent_regimes_with_discrete_target_axis() -> dict[str, Regime]:
     married_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         states={"wage": _WAGE_2, "educ": DiscreteGrid(Educ)},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _u_married_f_educ, "utility_m": _u_married_m_educ},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _u_married_f_educ, "m": _u_married_m_educ}
+            )
+        },
     )
     return {
         "single_f": single_f,
@@ -1509,18 +1524,10 @@ def _make_repeating_self_loop_regimes() -> dict[str, Regime]:
     """
     src = Regime(
         transition={
-            "src": MarkovTransition(_prob_stay),
-            "src_exit": MarkovTransition(_prob_exit_boundary),
-        },
-        active=lambda age: age < 2,
-        states={"wage": _WAGE_2},
-        state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
-        functions={"utility": _u_src_repeat},
-        gated_edges={
-            "src": GatedEdge(
+            "src": ValueDependentTransition(
+                probability=MarkovTransition(_prob_stay),
                 gate=_repeat_gate,
-                legs={
+                routes={
                     "only": StakeholderRoute(
                         fallback=ProjectedRegimeValue(
                             regime="src_fallback",
@@ -1528,8 +1535,14 @@ def _make_repeating_self_loop_regimes() -> dict[str, Regime]:
                         ),
                     )
                 },
-            )
+            ),
+            "src_exit": MarkovTransition(_prob_exit_boundary),
         },
+        active=lambda age: age < 2,
+        states={"wage": _WAGE_2},
+        state_transitions={"wage": fixed_transition("wage")},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _u_src_repeat},
     )
     src_exit = Regime(
         transition=None,

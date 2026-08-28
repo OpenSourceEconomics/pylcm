@@ -37,13 +37,13 @@ from lcm import (
     AgeGrid,
     AgeSpecializedGrid,
     DiscreteGrid,
-    GatedEdge,
     LinSpacedGrid,
     Model,
     Phased,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -218,16 +218,11 @@ def _build_age_specialized_model(*, fallback_projects_principal: bool) -> Model:
         {"principal": _project_principal} if fallback_projects_principal else {}
     )
     src = Regime(
-        transition={"src_exit": MarkovTransition(_prob_one)},
-        active=lambda age: age < 1,
-        states={"wage": _WAGE},
-        state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
-        functions={"utility": _utility_src},
-        gated_edges={
-            "src_exit": GatedEdge(
+        transition={
+            "src_exit": ValueDependentTransition(
+                probability=MarkovTransition(_prob_one),
                 gate=_wage_gate,
-                legs={
+                routes={
                     "only": StakeholderRoute(
                         fallback=ProjectedRegimeValue(
                             regime="annuity", projection=projection
@@ -236,6 +231,11 @@ def _build_age_specialized_model(*, fallback_projects_principal: bool) -> Model:
                 },
             )
         },
+        active=lambda age: age < 1,
+        states={"wage": _WAGE},
+        state_transitions={"wage": fixed_transition("wage")},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _utility_src},
     )
     src_exit = Regime(
         transition=None,
@@ -282,29 +282,29 @@ def _build_model(
         gate_ref_projection["career"] = _project_career
 
     src = Regime(
-        transition={"src_exit": MarkovTransition(_prob_one)},
-        active=lambda age: age < 1,
-        states={"wage": _WAGE},
-        state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
-        functions={"utility": _utility_src},
-        gated_edges={
-            "src_exit": GatedEdge(
+        transition={
+            "src_exit": ValueDependentTransition(
+                probability=MarkovTransition(_prob_one),
                 gate=_gate,
-                legs={
+                routes={
                     "only": StakeholderRoute(
                         fallback=ProjectedRegimeValue(
                             regime="fallback", projection=fallback_projection
                         )
                     )
                 },
-                gate_refs={
+                gate_references={
                     "V_fallback_ref": ProjectedRegimeValue(
                         regime="fallback", projection=gate_ref_projection
                     )
                 },
             )
         },
+        active=lambda age: age < 1,
+        states={"wage": _WAGE},
+        state_transitions={"wage": fixed_transition("wage")},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _utility_src},
     )
     src_exit = Regime(
         transition=None,

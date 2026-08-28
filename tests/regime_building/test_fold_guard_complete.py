@@ -35,12 +35,13 @@ from _lcm.certainty_equivalent import LinearExpectation
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
 from lcm import (
+    CollectiveUtility,
     DiscreteGrid,
-    GatedEdge,
     NormalIIDProcess,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    ValueDependentTransition,
     categorical,
 )
 from lcm.ages import AgeGrid
@@ -119,14 +120,11 @@ _AGES_2P = AgeGrid(start=0, stop=2, step="Y")
 def _make_singleton_gated_target_regimes(*, fold: bool) -> dict[str, Regime]:
     """`source` --gated_edges--> `target` (SINGLETON, folds `wage_shock`)."""
     source = Regime(
-        transition={"target": MarkovTransition(_prob_one)},
-        active=lambda age: age < 1,
-        actions={"work": DiscreteGrid(Work)},
-        functions={"utility": _u_work},
-        gated_edges={
-            "target": GatedEdge(
+        transition={
+            "target": ValueDependentTransition(
+                probability=MarkovTransition(_prob_one),
                 gate=_true_gate,
-                legs={
+                routes={
                     "only": StakeholderRoute(
                         fallback=ProjectedRegimeValue(
                             regime="source_terminal", projection={}
@@ -135,6 +133,9 @@ def _make_singleton_gated_target_regimes(*, fold: bool) -> dict[str, Regime]:
                 },
             )
         },
+        active=lambda age: age < 1,
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _u_work},
     )
     source_terminal = Regime(
         transition=None,
@@ -199,9 +200,10 @@ def _make_singleton_same_period_ref_regimes(*, fold: bool) -> dict[str, Regime]:
     reader_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _u_work, "utility_m": _u_work},
+        functions={
+            "utility": CollectiveUtility(utilities={"f": _u_work, "m": _u_work})
+        },
     )
     return {
         "ref_target": ref_target,
@@ -237,14 +239,11 @@ def _make_edge_fallback_regimes(*, fold: bool) -> dict[str, Regime]:
     either kind of reference name.
     """
     source = Regime(
-        transition={"target": MarkovTransition(_prob_one)},
-        active=lambda age: age < 1,
-        actions={"work": DiscreteGrid(Work)},
-        functions={"utility": _u_work},
-        gated_edges={
-            "target": GatedEdge(
+        transition={
+            "target": ValueDependentTransition(
+                probability=MarkovTransition(_prob_one),
                 gate=_no_dissolution_gate,
-                legs={
+                routes={
                     "only": StakeholderRoute(
                         target_stakeholder="f",
                         fallback=ProjectedRegimeValue(
@@ -255,6 +254,9 @@ def _make_edge_fallback_regimes(*, fold: bool) -> dict[str, Regime]:
                 },
             )
         },
+        active=lambda age: age < 1,
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _u_work},
     )
     fallback_regime = Regime(
         transition=None,
@@ -266,9 +268,10 @@ def _make_edge_fallback_regimes(*, fold: bool) -> dict[str, Regime]:
     target = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _u_work, "utility_m": _u_work},
+        functions={
+            "utility": CollectiveUtility(utilities={"f": _u_work, "m": _u_work})
+        },
     )
     return {"source": source, "fallback_regime": fallback_regime, "target": target}
 
@@ -341,15 +344,11 @@ def test_fold_source_state_name_reused_by_target_gate_is_not_rejected():
     so no rule may fire.
     """
     source = Regime(
-        transition={"target": MarkovTransition(_prob_one)},
-        active=lambda age: age < 1,
-        states={"wage_shock": _shock(fold=True)},
-        actions={"work": DiscreteGrid(Work)},
-        functions={"utility": _u_f},
-        gated_edges={
-            "target": GatedEdge(
+        transition={
+            "target": ValueDependentTransition(
+                probability=MarkovTransition(_prob_one),
                 gate=lambda wage_shock: wage_shock > 0.0,
-                legs={
+                routes={
                     "only": StakeholderRoute(
                         fallback=ProjectedRegimeValue(
                             regime="source_terminal", projection={}
@@ -358,6 +357,10 @@ def test_fold_source_state_name_reused_by_target_gate_is_not_rejected():
                 },
             )
         },
+        active=lambda age: age < 1,
+        states={"wage_shock": _shock(fold=True)},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _u_f},
     )
     source_terminal = Regime(
         transition=None,

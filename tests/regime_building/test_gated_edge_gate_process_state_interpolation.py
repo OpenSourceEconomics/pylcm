@@ -61,13 +61,14 @@ from _lcm.simulation.simulate import simulate
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
+    CollectiveUtility,
     DiscreteGrid,
-    GatedEdge,
     LinSpacedGrid,
     NormalIIDProcess,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -171,16 +172,11 @@ def _hand_computed_gate(shock: np.ndarray) -> np.ndarray:
 
 def _make_regimes() -> dict[str, Regime]:
     single_f = Regime(
-        transition={"married_terminal": MarkovTransition(_prob_one)},
-        active=lambda age: age < 1,
-        states={"wage": _WAGE, "shock": _SHOCK},
-        state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
-        functions={"utility": _u_single_f},
-        gated_edges={
-            "married_terminal": GatedEdge(
+        transition={
+            "married_terminal": ValueDependentTransition(
+                probability=MarkovTransition(_prob_one),
                 gate=_consent_gate,
-                legs={
+                routes={
                     "f": StakeholderRoute(
                         target_stakeholder="f",
                         fallback=ProjectedRegimeValue(
@@ -189,7 +185,7 @@ def _make_regimes() -> dict[str, Regime]:
                         ),
                     )
                 },
-                gate_refs={
+                gate_references={
                     "V_single_f_ref": ProjectedRegimeValue(
                         regime="single_f_terminal",
                         projection={"wage": _identity_wage},
@@ -201,6 +197,11 @@ def _make_regimes() -> dict[str, Regime]:
                 },
             )
         },
+        active=lambda age: age < 1,
+        states={"wage": _WAGE, "shock": _SHOCK},
+        state_transitions={"wage": fixed_transition("wage")},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _u_single_f},
     )
     single_f_terminal = Regime(
         transition=None,
@@ -217,10 +218,13 @@ def _make_regimes() -> dict[str, Regime]:
     married_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         states={"wage": _WAGE, "shock": _SHOCK},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _u_married_f, "utility_m": _u_married_m},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _u_married_f, "m": _u_married_m}
+            )
+        },
     )
     return {
         "single_f": single_f,

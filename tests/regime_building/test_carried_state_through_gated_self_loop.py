@@ -45,12 +45,12 @@ from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
     DiscreteGrid,
-    GatedEdge,
     LinSpacedGrid,
     Phased,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -124,7 +124,18 @@ def _repeat_gate(V_target: FloatND) -> BoolND:
 def _make_regimes() -> dict[str, Regime]:
     src = Regime(
         transition={
-            "src": MarkovTransition(_prob_stay),
+            "src": ValueDependentTransition(
+                probability=MarkovTransition(_prob_stay),
+                gate=_repeat_gate,
+                routes={
+                    "only": StakeholderRoute(
+                        fallback=ProjectedRegimeValue(
+                            regime="src_fallback",
+                            projection={"wage": _identity_wage},
+                        ),
+                    )
+                },
+            ),
             "src_exit": MarkovTransition(_prob_exit_boundary),
         },
         active=lambda age: age < 2,
@@ -145,19 +156,6 @@ def _make_regimes() -> dict[str, Regime]:
         },
         actions={"work": DiscreteGrid(Work)},
         functions={"utility": _u_src_repeat},
-        gated_edges={
-            "src": GatedEdge(
-                gate=_repeat_gate,
-                legs={
-                    "only": StakeholderRoute(
-                        fallback=ProjectedRegimeValue(
-                            regime="src_fallback",
-                            projection={"wage": _identity_wage},
-                        ),
-                    )
-                },
-            )
-        },
     )
     src_exit = Regime(
         transition=None,

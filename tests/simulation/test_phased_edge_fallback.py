@@ -17,13 +17,14 @@ import numpy as np
 
 from lcm import (
     AgeGrid,
-    GatedEdge,
+    CollectiveUtility,
     LinSpacedGrid,
     Model,
     Phased,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -84,15 +85,11 @@ def _settled_wealth(wealth: ContinuousState) -> ContinuousState:
 
 def _make_model() -> Model:
     worker = Regime(
-        transition={"retired": MarkovTransition(_certain)},
-        active=lambda age: age < 1,
-        states={"wealth": _WEALTH},
-        state_transitions={"wealth": fixed_transition("wealth")},
-        functions={"utility": _zero},
-        gated_edges={
-            "retired": GatedEdge(
+        transition={
+            "retired": ValueDependentTransition(
+                probability=MarkovTransition(_certain),
                 gate=_well_off,
-                legs={
+                routes={
                     "only": StakeholderRoute(
                         fallback=Phased(
                             solve=ProjectedRegimeValue(
@@ -109,6 +106,10 @@ def _make_model() -> Model:
                 },
             )
         },
+        active=lambda age: age < 1,
+        states={"wealth": _WEALTH},
+        state_transitions={"wealth": fixed_transition("wealth")},
+        functions={"utility": _zero},
     )
     retired = Regime(
         transition=None,
@@ -125,9 +126,10 @@ def _make_model() -> Model:
     shelter = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("guest", "host"),
         states={"wealth": _WEALTH},
-        functions={"utility_guest": _lavish, "utility_host": _zero},
+        functions={
+            "utility": CollectiveUtility(utilities={"guest": _lavish, "host": _zero})
+        },
     )
     return Model(
         regimes={

@@ -22,13 +22,13 @@ from numpy.testing import assert_array_almost_equal as aaae
 from lcm import (
     AgeGrid,
     AgeSpecializedGrid,
-    GatedEdge,
     LinSpacedGrid,
     MarkovTransition,
     Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    ValueDependentTransition,
     categorical,
 )
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
@@ -175,21 +175,10 @@ def _build_model() -> Model:
     saver = Regime(
         transition={
             "saver": MarkovTransition(_probability_of_staying_put),
-            "account": MarkovTransition(_probability_of_opening_the_account),
-        },
-        active=lambda age: age < 2,
-        state_transitions={"balance": {"account": _entry_balance}},
-        functions={"utility": _saver_utility},
-        gated_edges={
-            "account": GatedEdge(
+            "account": ValueDependentTransition(
+                probability=MarkovTransition(_probability_of_opening_the_account),
                 gate=_index_clears_the_hurdle,
-                gate_refs={
-                    "index_value": ProjectedRegimeValue(
-                        regime="index",
-                        projection={"level": _level_from_balance},
-                    )
-                },
-                legs={
+                routes={
                     "only": StakeholderRoute(
                         fallback=ProjectedRegimeValue(
                             regime="annuity",
@@ -197,8 +186,17 @@ def _build_model() -> Model:
                         )
                     )
                 },
-            )
+                gate_references={
+                    "index_value": ProjectedRegimeValue(
+                        regime="index",
+                        projection={"level": _level_from_balance},
+                    )
+                },
+            ),
         },
+        active=lambda age: age < 2,
+        state_transitions={"balance": {"account": _entry_balance}},
+        functions={"utility": _saver_utility},
     )
     account = Regime(
         transition=None,

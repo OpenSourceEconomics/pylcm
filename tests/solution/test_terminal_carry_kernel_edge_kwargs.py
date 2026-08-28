@@ -31,7 +31,6 @@ import numpy as np
 from lcm import (
     AgeGrid,
     ConsumptionSavingsRegime,
-    GatedEdge,
     LinSpacedGrid,
     LiquidMargin,
     MarkovTransition,
@@ -39,6 +38,7 @@ from lcm import (
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    ValueDependentTransition,
     categorical,
 )
 from lcm.solvers import EGM, GridSearch
@@ -135,15 +135,11 @@ def test_gated_edge_source_solves_on_its_own():
 def _make_gated_regimes() -> dict[str, Regime]:
     """Build the gated-edge branch: `mover`, `moved_terminal`, `stay_terminal`."""
     mover = Regime(
-        transition={"moved_terminal": MarkovTransition(_prob_one)},
-        active=lambda age: age < 1,
-        states={"wealth": WEALTH_GRID},
-        state_transitions={"wealth": _next_wealth},
-        functions={"utility": _mover_utility},
-        gated_edges={
-            "moved_terminal": GatedEdge(
+        transition={
+            "moved_terminal": ValueDependentTransition(
+                probability=MarkovTransition(_prob_one),
                 gate=_move_gate,
-                legs={
+                routes={
                     "own": StakeholderRoute(
                         fallback=ProjectedRegimeValue(
                             regime="stay_terminal",
@@ -151,7 +147,7 @@ def _make_gated_regimes() -> dict[str, Regime]:
                         ),
                     )
                 },
-                gate_refs={
+                gate_references={
                     "V_stay_ref": ProjectedRegimeValue(
                         regime="stay_terminal",
                         projection={"wealth": _identity_wealth},
@@ -159,6 +155,10 @@ def _make_gated_regimes() -> dict[str, Regime]:
                 },
             )
         },
+        active=lambda age: age < 1,
+        states={"wealth": WEALTH_GRID},
+        state_transitions={"wealth": _next_wealth},
+        functions={"utility": _mover_utility},
         solver=GridSearch(),
     )
     moved_terminal = Regime(

@@ -8,12 +8,12 @@ from numpy.testing import assert_array_almost_equal as aaae
 from lcm import (
     AgeGrid,
     DiscreteGrid,
-    GatedEdge,
     LinSpacedGrid,
     Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -144,20 +144,11 @@ def _make_model(
     return Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_prob_one)},
-                active=lambda age: age < 45,
-                states={"x": _X},
-                state_transitions={
-                    "x": (
-                        _next_x_from_work if action_sensitive else fixed_transition("x")
-                    )
-                },
-                actions={"work": DiscreteGrid(Work)},
-                functions={"utility": _utility_source},
-                gated_edges={
-                    "target": GatedEdge(
+                transition={
+                    "target": ValueDependentTransition(
+                        probability=MarkovTransition(_prob_one),
                         gate=gate,
-                        legs={
+                        routes={
                             "only": StakeholderRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback",
@@ -173,24 +164,31 @@ def _make_model(
                                 )
                             )
                         },
-                        gate_refs=(
-                            {}
-                            if action_sensitive
-                            else {
-                                "V_reference": ProjectedRegimeValue(
-                                    regime="reference",
-                                    projection={
-                                        "x": (
-                                            _age_projection
-                                            if split_context
-                                            else _context_projection
-                                        )
-                                    },
-                                )
-                            }
-                        ),
+                        gate_references={}
+                        if action_sensitive
+                        else {
+                            "V_reference": ProjectedRegimeValue(
+                                regime="reference",
+                                projection={
+                                    "x": (
+                                        _age_projection
+                                        if split_context
+                                        else _context_projection
+                                    )
+                                },
+                            )
+                        },
                     )
                 },
+                active=lambda age: age < 45,
+                states={"x": _X},
+                state_transitions={
+                    "x": (
+                        _next_x_from_work if action_sensitive else fixed_transition("x")
+                    )
+                },
+                actions={"work": DiscreteGrid(Work)},
+                functions={"utility": _utility_source},
             ),
             "target": Regime(
                 transition=None,

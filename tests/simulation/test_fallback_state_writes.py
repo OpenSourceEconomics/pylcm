@@ -41,14 +41,15 @@ from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
     AgeGrid,
+    CollectiveUtility,
     DiscreteGrid,
-    GatedEdge,
     LinSpacedGrid,
     Model,
     Phased,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -333,17 +334,11 @@ def _make_regimes(*, carrying_fallback: bool) -> dict[str, Regime]:
         )
 
     married = Regime(
-        transition={"married_terminal": MarkovTransition(_prob_one)},
-        active=lambda age: age < 1,
-        stakeholders=("f", "m"),
-        states={"wage": _WAGE},
-        state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _utility_married_f, "utility_m": _utility_married_m},
-        gated_edges={
-            "married_terminal": GatedEdge(
+        transition={
+            "married_terminal": ValueDependentTransition(
+                probability=MarkovTransition(_prob_one),
                 gate=_consent_gate,
-                legs={
+                routes={
                     "f": StakeholderRoute(
                         target_stakeholder="f",
                         fallback=ProjectedRegimeValue(
@@ -359,14 +354,26 @@ def _make_regimes(*, carrying_fallback: bool) -> dict[str, Regime]:
                 },
             )
         },
+        active=lambda age: age < 1,
+        states={"wage": _WAGE},
+        state_transitions={"wage": fixed_transition("wage")},
+        actions={"work": DiscreteGrid(Work)},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _utility_married_f, "m": _utility_married_m}
+            )
+        },
     )
     married_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         states={"wage": _WAGE},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _utility_married_f, "utility_m": _utility_married_m},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _utility_married_f, "m": _utility_married_m}
+            )
+        },
     )
     single_m = Regime(
         transition={"single_m_terminal": MarkovTransition(_prob_one)},

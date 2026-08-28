@@ -47,14 +47,15 @@ from _lcm.simulation.simulate import simulate
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
+    CollectiveUtility,
     DiscreteGrid,
-    GatedEdge,
     LinearAggregator,
     LinearExpectation,
     LinSpacedGrid,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -214,17 +215,11 @@ def _make_shared_fallback_regimes() -> dict[str, Regime]:
     different projections -- the topology model construction must reject.
     """
     married = Regime(
-        transition={"married_ir": MarkovTransition(_prob_one)},
-        active=lambda age: age < 1,
-        stakeholders=("f", "m"),
-        states={"wage": _WAGE_3},
-        state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _u_zero_collective, "utility_m": _u_zero_collective},
-        gated_edges={
-            "married_ir": GatedEdge(
+        transition={
+            "married_ir": ValueDependentTransition(
+                probability=MarkovTransition(_prob_one),
                 gate=_no_dissolution_gate,
-                legs={
+                routes={
                     "f": StakeholderRoute(
                         target_stakeholder="f",
                         fallback=ProjectedRegimeValue(
@@ -240,14 +235,26 @@ def _make_shared_fallback_regimes() -> dict[str, Regime]:
                 },
             )
         },
+        active=lambda age: age < 1,
+        states={"wage": _WAGE_3},
+        state_transitions={"wage": fixed_transition("wage")},
+        actions={"work": DiscreteGrid(Work)},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _u_zero_collective, "m": _u_zero_collective}
+            )
+        },
     )
     married_ir = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         states={"wage": _WAGE_3},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _u_zero_collective, "utility_m": _u_zero_collective},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _u_zero_collective, "m": _u_zero_collective}
+            )
+        },
     )
     single_shared = Regime(
         transition=None,
@@ -413,19 +420,21 @@ def _make_all_collective_regimes() -> dict[str, Regime]:
     couple = Regime(
         transition=lambda: jnp.int32(1),
         active=lambda age: age < 1,
-        stakeholders=("f", "m"),
         states={"wage": _WAGE_GRID_2},
         state_transitions={"wage": _next_wage},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _u_couple_f, "utility_m": _u_couple_m},
+        functions={
+            "utility": CollectiveUtility(utilities={"f": _u_couple_f, "m": _u_couple_m})
+        },
     )
     couple_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         states={"wage": _WAGE_GRID_2},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _u_couple_f, "utility_m": _u_couple_m},
+        functions={
+            "utility": CollectiveUtility(utilities={"f": _u_couple_f, "m": _u_couple_m})
+        },
     )
     return {"couple": couple, "couple_terminal": couple_terminal}
 
@@ -512,9 +521,12 @@ def _u_stateless_m(work: DiscreteAction) -> FloatND:
 def _make_stateless_collective_regime() -> dict[str, Regime]:
     regime = Regime(
         transition=None,
-        stakeholders=("f", "m"),
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _u_stateless_f, "utility_m": _u_stateless_m},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _u_stateless_f, "m": _u_stateless_m}
+            )
+        },
     )
     return {"stateless_couple": regime}
 
@@ -590,10 +602,13 @@ def test_stateless_collective_without_any_action_finalizes():
         user_regimes={
             "couple": Regime(
                 transition=None,
-                stakeholders=("f", "m"),
                 functions={
-                    "utility_f": lambda: jnp.asarray(3.0),
-                    "utility_m": lambda: jnp.asarray(7.0),
+                    "utility": CollectiveUtility(
+                        utilities={
+                            "f": lambda: jnp.asarray(3.0),
+                            "m": lambda: jnp.asarray(7.0),
+                        }
+                    )
                 },
             )
         },

@@ -42,7 +42,15 @@ Non-terminal regime, constraint $u^f \\ge 25$ alone:
 import numpy as np
 import pytest
 
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import (
+    AgeGrid,
+    CollectiveUtility,
+    DiscreteGrid,
+    LinSpacedGrid,
+    Model,
+    Regime,
+    categorical,
+)
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
 
 
@@ -104,20 +112,22 @@ def _make_model() -> Model:
     couple = Regime(
         transition=_next_regime,
         active=lambda age: age < 1,
-        stakeholders=("f", "m"),
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": _next_wage},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _utility_f, "utility_m": _utility_m},
+        functions={
+            "utility": CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
+        },
         constraints={"participation_f": _participation_f},
     )
     couple_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         states={"wage": _WAGE_GRID},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _utility_f, "utility_m": _utility_m},
+        functions={
+            "utility": CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
+        },
         constraints={"participation_f": _participation_f, "viable_wage": _viable_wage},
     )
     return Model(

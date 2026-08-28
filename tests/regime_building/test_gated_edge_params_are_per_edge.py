@@ -14,12 +14,12 @@ import pytest
 from lcm import (
     AgeGrid,
     DiscreteGrid,
-    GatedEdge,
     LinSpacedGrid,
     Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -85,16 +85,11 @@ def _gate(V_target: FloatND, marriage_bonus: float) -> BoolND:
 def _build_model(*, with_bystander: bool) -> Model:
     regimes = {
         "source": Regime(
-            transition={"target": MarkovTransition(_certain_target)},
-            active=lambda age: age < 45,
-            states={"x": X},
-            state_transitions={"x": fixed_transition("x")},
-            actions={"work": DiscreteGrid(Work)},
-            functions={"utility": _utility_source},
-            gated_edges={
-                "target": GatedEdge(
+            transition={
+                "target": ValueDependentTransition(
+                    probability=MarkovTransition(_certain_target),
                     gate=_gate,
-                    legs={
+                    routes={
                         "only": StakeholderRoute(
                             fallback=ProjectedRegimeValue(
                                 regime="fallback", projection={"x": _identity_x}
@@ -103,6 +98,11 @@ def _build_model(*, with_bystander: bool) -> Model:
                     },
                 )
             },
+            active=lambda age: age < 45,
+            states={"x": X},
+            state_transitions={"x": fixed_transition("x")},
+            actions={"work": DiscreteGrid(Work)},
+            functions={"utility": _utility_source},
         ),
         "target": Regime(
             transition=None,

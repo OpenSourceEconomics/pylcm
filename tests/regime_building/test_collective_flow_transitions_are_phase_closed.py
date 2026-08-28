@@ -26,7 +26,15 @@ flow built from the solve pool would choose `stay`.
 import jax.numpy as jnp
 import pandas as pd
 
-from lcm import AgeGrid, DiscreteGrid, Model, Phased, Regime, categorical
+from lcm import (
+    AgeGrid,
+    CollectiveUtility,
+    DiscreteGrid,
+    Model,
+    Phased,
+    Regime,
+    categorical,
+)
 from lcm.typing import DiscreteAction, FloatND, ScalarInt
 
 
@@ -103,10 +111,13 @@ def _simulate(*, live_functions, state_transitions) -> pd.DataFrame:
     last = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         states={"stock": DiscreteGrid(Stock)},
         actions={"move": DiscreteGrid(Move)},
-        functions={"utility_f": _flat_utility, "utility_m": _flat_utility},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _flat_utility, "m": _flat_utility}
+            )
+        },
     )
     model = Model(
         regimes={"live": live, "last": last},

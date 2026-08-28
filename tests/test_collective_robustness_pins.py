@@ -22,11 +22,13 @@ from _lcm.regime_building.collective import _gather_along_actions
 from _lcm.regime_building.V import _get_identity_coordinate
 from lcm import (
     AgeGrid,
+    CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
     ParetoObjective,
     Regime,
+    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -64,10 +66,13 @@ def test_regime_weights_keep_the_values_they_were_declared_with():
     declared_weights = {"f": 0.25, "m": 0.75}
     regime = Regime(
         transition=None,
-        stakeholders=("f", "m"),
-        pareto_objective=ParetoObjective(weights=declared_weights),
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _wife_payoff, "utility_m": _husband_payoff},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _wife_payoff, "m": _husband_payoff},
+                objective=ParetoObjective(weights=declared_weights),
+            )
+        },
     )
 
     declared_weights["f"] = 0.9
@@ -183,18 +188,10 @@ def _make_singleton_target_dissolution_gate_regimes() -> MappingProxyType[str, R
     """
     source = Regime(
         transition={
-            "target": MarkovTransition(_enters_target),
-            "fallback": MarkovTransition(_never_entered),
-        },
-        active=lambda age: age < 1,
-        states={"wage": GATE_WAGE_GRID},
-        state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
-        functions={"utility": _wage_utility},
-        gated_edges={
-            "target": GatedEdge(
+            "target": ValueDependentTransition(
+                probability=MarkovTransition(_enters_target),
                 gate=_no_dissolution,
-                legs={
+                routes={
                     "only": StakeholderRoute(
                         fallback=ProjectedRegimeValue(
                             regime="fallback",
@@ -202,8 +199,14 @@ def _make_singleton_target_dissolution_gate_regimes() -> MappingProxyType[str, R
                         ),
                     )
                 },
-            )
+            ),
+            "fallback": MarkovTransition(_never_entered),
         },
+        active=lambda age: age < 1,
+        states={"wage": GATE_WAGE_GRID},
+        state_transitions={"wage": fixed_transition("wage")},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _wage_utility},
     )
     target = Regime(
         transition=None,

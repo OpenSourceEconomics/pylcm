@@ -17,6 +17,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    CollectiveUtility,
     DiscreteGrid,
     Model,
     ParetoObjective,
@@ -105,18 +106,23 @@ def _build_model(
     couple = Regime(
         transition=_next_regime,
         active=lambda age: age < 1,
-        stakeholders=("f", "m"),
         states=states or {},
         state_transitions=state_transitions or {},
         actions={"choice": DiscreteGrid(Choice)},
-        functions={"utility_f": utility_f, "utility_m": utility_m},
-        pareto_objective=objective,
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": utility_f, "m": utility_m}, objective=objective
+            )
+        },
     )
     couple_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
-        functions={"utility_f": _terminal_zero, "utility_m": _terminal_zero},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _terminal_zero, "m": _terminal_zero}
+            )
+        },
     )
     return Model(
         regimes={"couple": couple, "couple_terminal": couple_terminal},
@@ -486,22 +492,28 @@ def _build_carried_power_model() -> Model:
     couple = Regime(
         transition=_next_regime,
         active=lambda age: age < 1,
-        stakeholders=("f", "m"),
         states={
             "power": Phased(solve=_impute_power, simulate=DiscreteGrid(Power)),
         },
         state_transitions={"power": _carry_power},
         actions={"choice": DiscreteGrid(Choice)},
-        functions={"utility_f": _utility_f, "utility_m": _utility_m},
-        pareto_objective=ParetoObjective(
-            weights={"f": _weight_f_by_power, "m": _weight_m_by_power}
-        ),
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _utility_f, "m": _utility_m},
+                objective=ParetoObjective(
+                    weights={"f": _weight_f_by_power, "m": _weight_m_by_power}
+                ),
+            )
+        },
     )
     couple_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
-        functions={"utility_f": _terminal_zero, "utility_m": _terminal_zero},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _terminal_zero, "m": _terminal_zero}
+            )
+        },
     )
     return Model(
         regimes={"couple": couple, "couple_terminal": couple_terminal},

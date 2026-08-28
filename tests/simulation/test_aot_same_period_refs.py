@@ -28,7 +28,14 @@ import numpy as np
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
-from lcm import AgeGrid, DiscreteGrid, Model, categorical, fixed_transition
+from lcm import (
+    AgeGrid,
+    CollectiveUtility,
+    DiscreteGrid,
+    Model,
+    categorical,
+    fixed_transition,
+)
 from lcm.regime import ProjectedRegimeValue, Regime
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, DiscreteAction, DiscreteState, FloatND, ScalarInt
@@ -171,10 +178,13 @@ def _make_participation_model(*, n_subjects: int | None) -> Model:
     couple_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         states={"education": DiscreteGrid(Education)},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _zero_utility, "utility_m": _zero_utility},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _zero_utility, "m": _zero_utility}
+            )
+        },
     )
     single_f = Regime(
         transition={"single_f_terminal": MarkovTransition(_certain_transition)},

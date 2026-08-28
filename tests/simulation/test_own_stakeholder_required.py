@@ -23,6 +23,7 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    CollectiveUtility,
     DiscreteGrid,
     MarkovTransition,
     Model,
@@ -263,19 +264,25 @@ def _make_unreachable_role_routing_regimes():
     alone = Regime(
         transition={"alone_terminal": MarkovTransition(_prob_one)},
         active=lambda age: age < 1,
-        stakeholders=("f", "m"),
         states={"wage": _WAGE_3},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _u_zero_collective, "utility_m": _u_zero_collective},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _u_zero_collective, "m": _u_zero_collective}
+            )
+        },
     )
     alone_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         states={"wage": _WAGE_3},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _u_zero_collective, "utility_m": _u_zero_collective},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _u_zero_collective, "m": _u_zero_collective}
+            )
+        },
     )
     return {
         "alone": alone,
@@ -368,11 +375,14 @@ def test_a_start_that_runs_into_a_role_dependent_route_still_needs_an_own_role()
     prelude = Regime(
         transition={"married": MarkovTransition(_prob_one)},
         active=lambda age: age < 1,
-        stakeholders=("f", "m"),
         states={"wage": _WAGE_3},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _u_zero_collective, "utility_m": _u_zero_collective},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _u_zero_collective, "m": _u_zero_collective}
+            )
+        },
     )
     model = Model(
         regimes={"prelude": prelude, **_shift_dissolution_one_age()},
