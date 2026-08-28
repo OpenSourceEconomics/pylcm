@@ -632,6 +632,19 @@ class Regime:
         }
         for stakeholder, utility in declaration.utilities.items():
             entry = f"utility_{stakeholder}"
+            if utility is None:
+                # The body is delegated: whatever already stands under the
+                # stakeholder's own name is her utility, and there has to be
+                # one for the household to be complete.
+                if entry not in functions:
+                    raise RegimeInitializationError(
+                        f"The stakeholder {stakeholder!r} of this regime's "
+                        f"`CollectiveUtility` declares no utility of her own, "
+                        f"so hers is whatever the regime carries under "
+                        f"{entry!r} — and it carries nothing. Write the body "
+                        f"in the `CollectiveUtility`, or supply {entry!r}."
+                    )
+                continue
             if entry in functions and functions[entry] is not utility:
                 raise RegimeInitializationError(
                     f"The stakeholder {stakeholder!r} of this regime's "
