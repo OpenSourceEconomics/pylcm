@@ -22,6 +22,7 @@ import pytest
 
 from _lcm.regime_building import processing
 from lcm import AgeGrid, AgeSpecializedGrid, LinSpacedGrid, Model
+from lcm.solvers import FiniteOuterGrid
 from lcm.transition import AgeSpecializedFunction
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.test_models import (
@@ -332,9 +333,20 @@ def test_nnbegm_reads_its_durable_continuation_on_the_next_period_s_grid():
         build=lambda _age: shifted, signature=lambda _age: 2.0
     )
 
+    # Every outer node is a post-decision target the durable state must be able
+    # to hold, at every age it is searched. The shifted schedule starts at 2.0
+    # and the unshifted one stops at 20.0, so the search runs over the stocks
+    # both of them hold.
+    outer_search = FiniteOuterGrid(
+        grid=dataclasses.replace(n_nbegm_toy.OUTER_GRID, start=2.0)
+    )
+
     def solve(illiquid_grid):
         return n_nbegm_toy.build_model(
-            variant="n_nbegm", n_periods=4, illiquid_grid=illiquid_grid
+            variant="n_nbegm",
+            n_periods=4,
+            illiquid_grid=illiquid_grid,
+            outer_search=outer_search,
         ).solve(params={"discount_factor": 0.95}, log_level="debug")
 
     from_first_age = solve(first_age_only_differs)

@@ -17,6 +17,7 @@ import ast
 import functools
 import inspect
 import itertools
+import logging
 import math
 import textwrap
 import warnings
@@ -1428,6 +1429,7 @@ class _RideAlongNBEGMPeriodKernel:
         flat_params: FlatParams,
         period: int,
         ages: AgeGrid,
+        logger: logging.Logger,  # noqa: ARG002
     ) -> KernelResult:
         """Run the continuation then envelope core and assemble the `KernelResult`."""
         states = dict(state_action_space.states)

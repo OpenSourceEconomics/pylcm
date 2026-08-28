@@ -50,7 +50,7 @@ from lcm.solvers import (
     OuterSearch,
     TwoMarginSolver,
 )
-from lcm.transition import AgeSpecializedFunction
+from lcm.transition import AgeSpecializedFunction, AgeSpecializedGrid
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -239,7 +239,7 @@ def build_model(
     variant: str,
     outer_batch_size: int = 0,
     n_periods: int = N_PERIODS,
-    illiquid_grid: Grid = ILLIQUID_GRID,
+    illiquid_grid: Grid | AgeSpecializedGrid = ILLIQUID_GRID,
     outer_search: OuterSearch | None = None,
     adjustment_cost: OuterBranchAggregator | None = None,
     scale_function: Callable[..., object] | None = None,
@@ -305,7 +305,7 @@ def build_model(
     if constraints is None:
         constraints = {"budget_feasible": budget_feasible} if variant == "brute" else {}
     active = lambda age, n=final_age_alive: age <= n  # noqa: E731
-    states: dict[str, Grid | Phased] = {
+    states: dict[str, Grid | Phased | AgeSpecializedGrid] = {
         "wealth": WEALTH_GRID,
         "illiquid": illiquid_grid,
     }

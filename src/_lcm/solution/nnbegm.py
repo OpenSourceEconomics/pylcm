@@ -12,6 +12,7 @@ façade stays a thin re-export that pulls in no numerical engine modules.
 """
 
 import inspect
+import logging
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, fields, replace
 from types import MappingProxyType
@@ -43,6 +44,11 @@ from _lcm.egm.outer_candidates import (
     build_outer_candidate_bank,
 )
 from _lcm.egm.outer_carry import collapse_continuous_candidate_bank
+from _lcm.egm.outer_inversion import (
+    abstract_like,
+    certify_declared_outer_inverse,
+    invert_declared_outer_target,
+)
 from _lcm.egm.outer_refinement import refine_outer_mesh
 from _lcm.egm.outer_search import AdaptiveOuterMesh, FiniteOuterGrid, OuterSearch
 from _lcm.egm.published_policy import (
@@ -87,8 +93,20 @@ from _lcm.solution.periodization import (
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from _lcm.typing import FlatParams, RegimeName
 from lcm.ages import AgeGrid
-from lcm.exceptions import ModelInitializationError, RegimeInitializationError
-from lcm.typing import ActionName, Float1D, FloatND, FunctionName, IntND, StateName
+from lcm.exceptions import (
+    ModelInitializationError,
+    RegimeInitializationError,
+    UnrepresentableOuterCandidateError,
+)
+from lcm.typing import (
+    ActionName,
+    BoolND,
+    Float1D,
+    FloatND,
+    FunctionName,
+    IntND,
+    StateName,
+)
 
 
 @beartype(conf=REGIME_CONF)
@@ -324,6 +342,12 @@ class NNBEGM(TwoMarginSolver):
             regime_name=context.regime_name,
             solver_name="NNBEGM",
         )
+        _fail_if_the_outer_search_leaves_the_outer_state_domain(
+            regime_name=context.regime_name,
+            outer_state=outer_state,
+            outer_state_grid=cast("Grid", user_regime.states[outer_state]),
+            outer_search=bound.outer_search,
+        )
         fail_if_declared_lower_bound_disagrees_with_the_grid(
             regime_name=context.regime_name,
             user_regime=user_regime,
@@ -529,6 +553,25 @@ class NNBEGM(TwoMarginSolver):
             if isinstance(context.grids[name], ContinuousGrid)
             and name != spec.continuous_state
         )
+        # A domain endpoint is a node value, so it is the solved period's own.
+        # With an age-specialized outer grid the representative age's endpoints
+        # are the wrong ones everywhere else: a stock only the later ages hold
+        # would be judged out of domain and dropped, and a stock past a
+        # narrower age's edge would be admitted with no value function to read
+        # it on.
+        representative_outer_values = context.grids[bound.outer_state].to_jax()
+
+        def _outer_state_domain_at(period: int) -> tuple[float, float]:
+            per_period = context.period_to_state_nodes
+            nodes = (
+                representative_outer_values
+                if per_period is None
+                else per_period.get(period, {}).get(
+                    bound.outer_state, representative_outer_values
+                )
+            )
+            return float(nodes[0]), float(nodes[-1])
+
         branch_aggregation_by_period = {
             period: _resolve_branch_fixed_cost(
                 aggregator=bound.branch_aggregator,
@@ -544,6 +587,7 @@ class NNBEGM(TwoMarginSolver):
                     regime_name=context.regime_name,
                     outer_grid_values=outer_grid_values,
                     outer_state_name=bound.outer_state,
+                    outer_state_domain=_outer_state_domain_at(period),
                     outer_post_decision=bound.outer_post_decision,
                     outer_target_function=outer_target_function_by_period[period],
                     outer_batch_size=outer_batch_size,
@@ -725,6 +769,10 @@ class _NNBEGMPeriodKernel:
     outer_state_name: StateName
     """Name of the state-specific keeper source."""
 
+    outer_state_domain: tuple[float, float]
+    """Endpoints of the outer state's declared grid. A recovered stock outside
+    them has no value function, so the candidate that reaches one is dropped."""
+
     outer_post_decision: FunctionName
     """Name of the outer post-decision function bound per outer-grid node."""
 
@@ -893,6 +941,7 @@ class _NNBEGMPeriodKernel:
         flat_params: FlatParams,
         period: int,
         ages: AgeGrid,
+        logger: logging.Logger,
     ) -> KernelResult:
         """Solve the keeper, then dispatch to the configured outer search.
 
@@ -910,6 +959,7 @@ class _NNBEGMPeriodKernel:
             flat_params=flat_params,
             period=period,
             ages=ages,
+            logger=logger,
         )
         if isinstance(self.outer_search, AdaptiveOuterMesh):
             return self._solve_continuous(
@@ -922,6 +972,7 @@ class _NNBEGMPeriodKernel:
                 flat_params=flat_params,
                 period=period,
                 ages=ages,
+                logger=logger,
             )
         return self._solve_finite(
             keeper_result=keeper_result,
@@ -932,6 +983,7 @@ class _NNBEGMPeriodKernel:
             flat_params=flat_params,
             period=period,
             ages=ages,
+            logger=logger,
         )
 
     def _solve_finite(
@@ -945,6 +997,7 @@ class _NNBEGMPeriodKernel:
         flat_params: FlatParams,
         period: int,
         ages: AgeGrid,
+        logger: logging.Logger,
     ) -> KernelResult:
         """Fold finite candidates and retain their complete replay identities."""
         V_arr = keeper_result.V_arr
@@ -980,6 +1033,7 @@ class _NNBEGMPeriodKernel:
                     ),
                     period=period,
                     ages=ages,
+                    logger=logger,
                 )
                 for node in nodes[chunk_start : chunk_start + chunk_size]
             ]
@@ -1031,6 +1085,7 @@ class _NNBEGMPeriodKernel:
             period=period,
             ages=ages,
             state_names=keeper_policy.state_names,
+            logger=logger,
         )
         return KernelResult(
             V_arr=V_arr,
@@ -1039,6 +1094,7 @@ class _NNBEGMPeriodKernel:
                 candidate_inner_action=candidate_inner_action,
                 candidate_outer_target=candidate_outer_target,
                 candidate_value=candidate_value,
+                outer_grid_values=self.outer_grid_values,
                 candidate_discrete_actions=candidate_discrete_actions,
                 discrete_action_names=discrete_action_names,
                 state_names=keeper_policy.state_names,
@@ -1060,6 +1116,7 @@ class _NNBEGMPeriodKernel:
         flat_params: FlatParams,
         period: int,
         ages: AgeGrid,
+        logger: logging.Logger,
     ) -> KernelResult:
         """Adaptively refine the shared outer mesh, then collapse continuously.
 
@@ -1089,6 +1146,7 @@ class _NNBEGMPeriodKernel:
                         flat_params=flat_params,
                         period=period,
                         ages=ages,
+                        logger=logger,
                     )
                     for node in chunk
                 ]
@@ -1225,6 +1283,7 @@ class _NNBEGMPeriodKernel:
         flat_params: FlatParams,
         period: int,
         ages: AgeGrid,
+        logger: logging.Logger,
     ) -> KernelResult:
         """Run the keeper inner solve — the state-dependent no-adjustment branch."""
         return self.keeper_kernel(
@@ -1235,6 +1294,7 @@ class _NNBEGMPeriodKernel:
             flat_params=flat_params,
             period=period,
             ages=ages,
+            logger=logger,
         )
 
     def _solve_adjuster_node(
@@ -1248,6 +1308,7 @@ class _NNBEGMPeriodKernel:
         flat_params: FlatParams,
         period: int,
         ages: AgeGrid,
+        logger: logging.Logger,
     ) -> OuterCandidateResult:
         """Run one adjuster node's exact conditional inner solve."""
         result = self.adjuster_kernel(
@@ -1263,6 +1324,7 @@ class _NNBEGMPeriodKernel:
             ),
             period=period,
             ages=ages,
+            logger=logger,
         )
         return OuterCandidateResult(
             outer_node=node,
@@ -1289,11 +1351,16 @@ class _NNBEGMPeriodKernel:
         period: int,
         ages: AgeGrid,
         state_names: tuple[StateName, ...],
+        logger: logging.Logger,
     ) -> FloatND:
-        """Validate solve-grid inversion and retain candidate target identities.
+        """Retain the candidate target identities the solve can hand simulation.
 
-        Simulation reconstructs the action from the retained target at each
-        realized state; this solve-grid inversion is the early validity guard.
+        Simulation recovers the outer action from the retained target at each
+        realized state, through the same certified inverse used here. A target
+        this inversion cannot reach -- because the recovered action lands off
+        the outer state's declared domain, or misses a declared endpoint -- is
+        dropped by writing `nan`, so simulation never inherits a candidate the
+        solve could not reconstruct.
         """
         state_shape = candidate_inner_action.shape[1:]
         n_state_axes = len(state_names)
@@ -1319,7 +1386,7 @@ class _NNBEGMPeriodKernel:
         params = dict(flat_params[self.regime_name])
         accepted = inspect.signature(self.outer_target_function).parameters
 
-        def evaluate(outer_action: FloatND) -> Mapping[str, FloatND]:
+        def bind(outer_action: FloatND) -> dict[str, FloatND]:
             pool = {
                 **params,
                 **state_inputs,
@@ -1329,25 +1396,31 @@ class _NNBEGMPeriodKernel:
                 "period": jnp.int32(period),
                 "age": ages.values[period],
             }
-            return self.outer_target_function(
-                **{name: value for name, value in pool.items() if name in accepted}
-            )
+            return {name: value for name, value in pool.items() if name in accepted}
 
-        zeros = jnp.zeros_like(candidate_inner_action)
-        at_zero_results = evaluate(zeros)
+        def evaluate(outer_action: FloatND) -> Mapping[str, FloatND]:
+            return self.outer_target_function(**bind(outer_action))
+
+        # The certificate reads the map's structure, so it is taken against the
+        # same argument set the solve binds -- names and shapes, never values.
+        bound_at_zero = bind(jnp.zeros_like(candidate_inner_action))
+        pool_names = tuple(bound_at_zero)
+        pool_values = tuple(bound_at_zero.values())
+
+        at_zero_results = self.outer_target_function(**bound_at_zero)
         at_zero = jnp.broadcast_to(
             jnp.asarray(at_zero_results[self.outer_post_decision]),
             candidate_inner_action.shape,
         )
-        at_one = jnp.broadcast_to(
-            jnp.asarray(
-                evaluate(jnp.ones_like(candidate_inner_action))[
-                    self.outer_post_decision
-                ]
-            ),
-            candidate_inner_action.shape,
+        inverse = certify_declared_outer_inverse(
+            func=self.outer_target_function,
+            arg_names=pool_names,
+            abstract_args=abstract_like(pool_values),
+            outer_action_name=self.outer_action,
+            outer_post_decision_name=self.outer_post_decision,
+            outer_state_domain=self.outer_state_domain,
+            regime_name=self.regime_name,
         )
-        slope = at_one - at_zero
 
         if self.outer_no_adjustment_name is None:
             keeper_base = jnp.broadcast_to(
@@ -1373,32 +1446,142 @@ class _NNBEGMPeriodKernel:
                 "NNBEGM outer/discrete candidate target bank is misaligned."
             )
 
-        candidate_outer_action = (candidate_targets - at_zero) / slope
-        reconstructed = jnp.broadcast_to(
-            jnp.asarray(evaluate(candidate_outer_action)[self.outer_post_decision]),
-            candidate_inner_action.shape,
-        )
-        eps = jnp.finfo(candidate_inner_action.dtype).eps
-        tolerance = 128 * eps * jnp.maximum(1.0, jnp.abs(candidate_targets))
-        represented = (
-            jnp.isfinite(candidate_inner_action)
-            & jnp.isfinite(candidate_outer_action)
-            & jnp.isfinite(slope)
-            & (slope != 0)
-            & (jnp.abs(reconstructed - candidate_targets) <= tolerance)
-        )
-        inversion_failed = jnp.isfinite(candidate_inner_action) & ~represented
-        if bool(jax.device_get(jnp.any(inversion_failed))):
-            raise RegimeInitializationError(
-                "NNBEGM requires the outer post-decision target to depend "
-                "affinely on the outer action with a finite, nonzero slope "
-                "conditional on its other inputs. The declared target could "
-                "not be inverted and reconstructed for every represented "
-                "candidate. Use an affine mapping such as "
-                "`new = old + 2 * action`, or select a solver that supports "
-                "an explicit inverse for the declared mapping."
+        def forward(outer_action: FloatND) -> FloatND:
+            return jnp.broadcast_to(
+                jnp.asarray(evaluate(outer_action)[self.outer_post_decision]),
+                candidate_inner_action.shape,
             )
+
+        inversion = invert_declared_outer_target(
+            inverse=inverse,
+            target=candidate_targets,
+            at_zero=at_zero,
+            forward=forward,
+        )
+        live = jnp.isfinite(candidate_inner_action)
+        represented = live & inversion.admissible
+        # Only a candidate whose target is a DECLARED node can indict the
+        # declaration: the adjuster bank always, and the keeper only when
+        # keeping holds the outer state at its own grid value. A custom
+        # no-adjustment target is an arbitrary DAG value at a solve cell, so it
+        # is the same category of thing simulation meets at a realized state --
+        # it is dropped, not treated as a contradiction between law and grids.
+        keeper_targets_are_nodes = self.outer_no_adjustment_name is None
+        target_is_declared_node = jnp.concatenate(
+            (
+                jnp.full(keeper_targets.shape, keeper_targets_are_nodes, dtype=bool),
+                jnp.ones(adjuster_targets.shape, dtype=bool),
+            ),
+            axis=0,
+        )
+        _fail_if_the_solve_grid_cannot_reconstruct_a_candidate(
+            logger=logger,
+            dropped=live & ~inversion.admissible & target_is_declared_node,
+            n_live=live & target_is_declared_node,
+            regime_name=self.regime_name,
+            period=period,
+        )
         return jnp.where(represented, candidate_targets, jnp.nan)
+
+
+def _fail_if_the_solve_grid_cannot_reconstruct_a_candidate(
+    *,
+    logger: logging.Logger,
+    dropped: BoolND,
+    n_live: BoolND,
+    regime_name: RegimeName,
+    period: int,
+) -> None:
+    """Stop any solve that cannot reconstruct a candidate it retained.
+
+    Applies only to candidates whose target is a declared node -- the adjuster
+    search grid, and the keeper when keeping holds the outer state at its own
+    grid value. For those, an inverse reaching outside the outer state's domain
+    means the declaration and the grids disagree, which is a defect in the model
+    rather than one realized state landing awkwardly, so the solve is the loud
+    phase. A custom no-adjustment target is a computed DAG value and is excluded
+    by the caller; it drops like a realized state instead.
+
+    This refuses at **every** log level, `"off"` included. The log level governs
+    diagnostics, and this is not one: the failure is known before anything is
+    published, and dropping it quietly leaves a policy bank whose contents depend
+    on the diagnostic setting -- the same model would publish different policies
+    at `"off"` and at `"debug"`. Reading the count back costs a host transfer per
+    period, which is the price of not letting a published policy depend on how
+    loudly the run was asked to talk.
+
+    A failure first met at a realized off-grid subject is a different case and
+    keeps its drop-and-announce behaviour: there the state landed awkwardly,
+    which the model author cannot be expected to have precluded.
+    """
+    n_dropped = int(jnp.sum(dropped))
+    if n_dropped == 0:
+        return
+    total = int(jnp.sum(n_live))
+    msg = (
+        f"Regime {regime_name!r} at period {period}: the solve retained "
+        f"{total} outer candidates at declared nodes but could not reconstruct "
+        f"{n_dropped} of them. The outer action recovered from those targets "
+        "reaches a stock outside the outer state's declared domain, where "
+        "there is no value function. The solve stops rather than publish a "
+        "candidate bank missing them. Widen the outer state's grid so every "
+        "declared node is reachable, or narrow the outer search to nodes it "
+        "can reach."
+    )
+    # Logged as well as raised: the exception may be caught by a caller running
+    # a sweep, and the log is then the only surviving record of which regime and
+    # period failed.
+    logger.error(msg)
+    raise UnrepresentableOuterCandidateError(msg)
+
+
+def _fail_if_the_outer_search_leaves_the_outer_state_domain(
+    *,
+    regime_name: RegimeName,
+    outer_state: StateName,
+    outer_state_grid: Grid,
+    outer_search: OuterSearch,
+) -> None:
+    """Refuse an outer search that names a stock the outer state cannot hold.
+
+    The outer search's nodes are post-decision targets for the outer state, so
+    a node outside that state's own grid asks the solve to retain a value the
+    state does not represent. Nothing downstream rejects it: the value function
+    read extrapolates linearly past the edge, so the excursion surfaces a period
+    later as an out-of-support state rather than at the declaration that caused
+    it.
+
+    Both grids are declared, so this compares them directly and probes no
+    floating-point value.
+    """
+    match outer_search:
+        case FiniteOuterGrid():
+            nodes = outer_search.grid.to_jax()
+            label = "outer grid"
+        case AdaptiveOuterMesh():
+            nodes = outer_search.initial_grid.to_jax()
+            label = "initial outer mesh"
+        case _:
+            return
+
+    domain = outer_state_grid.to_jax()
+    low, high = domain[0], domain[-1]
+    below = jnp.min(nodes) < low
+    above = jnp.max(nodes) > high
+    if not bool(below | above):
+        return
+
+    side = "below" if bool(below) else "above"
+    offending = float(jnp.min(nodes)) if bool(below) else float(jnp.max(nodes))
+    msg = (
+        f"Regime {regime_name!r}: the NNBEGM {label} reaches outside the "
+        f"declared domain of the outer state {outer_state!r}. Its node "
+        f"{offending} lies {side} that state's grid, which spans "
+        f"[{float(low)}, {float(high)}]. Every outer node is a post-decision "
+        f"target the outer state must be able to hold, so narrow the outer "
+        f"search to that domain or widen the grid of {outer_state!r}."
+    )
+    raise ModelInitializationError(msg)
 
 
 def _subcores(

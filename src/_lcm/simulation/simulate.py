@@ -4,6 +4,7 @@ import itertools
 import logging
 import time
 from collections.abc import Callable, Mapping, Sequence
+from fractions import Fraction
 from types import MappingProxyType
 from typing import Literal, cast
 
@@ -15,7 +16,13 @@ from jax import vmap
 
 from _lcm.egm.interp import interp_on_padded_grid
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
+from _lcm.egm.outer_affine_structure import certify_outer_coefficient
 from _lcm.egm.outer_interpolation import LocalCubicOuterInterpolant
+from _lcm.egm.outer_inversion import (
+    abstract_like,
+    certify_declared_outer_inverse,
+    invert_declared_outer_target,
+)
 from _lcm.egm.outer_refinement import safeguarded_continuous_argmax
 from _lcm.egm.published_policy import (
     EGMSimPolicy,
@@ -58,6 +65,7 @@ from _lcm.simulation.transitions import (
 from _lcm.solution.validate_V import validate_V
 from _lcm.typing import (
     ActionName,
+    EconFunctionArg,
     FlatParams,
     FlatRegimeParams,
     InitialConditions,
@@ -85,9 +93,18 @@ from lcm.exceptions import (
     InvalidInitialConditionsError,
     InvalidSimulationInputError,
     InvalidValueFunctionError,
+    UnrepresentableOuterCandidateError,
 )
 from lcm.result import SimulationResult
-from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, ScalarFloat, ScalarInt
+from lcm.typing import (
+    BoolND,
+    Float1D,
+    FloatND,
+    Int1D,
+    IntND,
+    ScalarFloat,
+    ScalarInt,
+)
 
 # What `substitute_gated_edge_continuations` returns for one (regime, period):
 # the substituted continuation values, and the same-period mapping each firing
@@ -822,6 +839,7 @@ def _simulate_regime_in_period(
             canonical_states=state_action_space.states,
             action_names=state_action_space.action_names,
             next_regime_to_V_arr=next_regime_to_V_arr,
+            logger=logger,
         )
         nested_fallback = None
     else:
@@ -881,6 +899,7 @@ def _simulate_regime_in_period(
                 next_regime_to_V_arr=next_regime_to_V_arr,
                 grid_values=V_arr,
                 in_regime=subject_ids_in_regime,
+                logger=logger,
             )
         )
 
@@ -1019,6 +1038,7 @@ def _replace_continuous_action_with_policy_read(  # noqa: PLR0911
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     grid_values: FloatND,
     in_regime: BoolND,
+    logger: logging.Logger,
 ) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND, BoolND | None]:
     """Interpolate the published EGM policy at each subject's resources.
 
@@ -1161,6 +1181,7 @@ def _replace_continuous_action_with_policy_read(  # noqa: PLR0911
             canonical_states=canonical_states,
             action_names=action_names,
             next_regime_to_V_arr=next_regime_to_V_arr,
+            logger=logger,
         )
         return replayed_actions, replayed_value, None
     if isinstance(sim_policy, NBEGMGridPolicy):
@@ -1409,19 +1430,13 @@ def _redecide_branch_and_read_policy(
     return MappingProxyType(new_actions), reported_value
 
 
-# Numerical tolerance certifying the outer transition's unit action slope
-# (the affine inversion contract of the nested policy read). The fixed floor
-# preserves the fp64 contract; the ULP allowance covers the two rounded
-# evaluations and their subtraction in fp32.
-_MIN_UNIT_SLOPE_ATOL = 1e-8
-_UNIT_SLOPE_ULPS = 8
-
 # Per-subject residual tolerance (relative to the post-decision scale) certifying
 # that the recovered outer action actually reproduces the winning post-decision
 # through the transition: `|T(states, a_recovered) - s'| <= rtol * (1 + |s'|)`.
-# A two-point 0/1 slope probe cannot see a non-affine transition that merely
-# happens to satisfy `T(1) - T(0) = 1`; this check evaluates the transition at
-# the ACTUAL recovered action and rejects the subject otherwise.
+# The coefficient is certified from the map's structure, which is a statement
+# about the traced arithmetic rather than about how it evaluates; this check
+# evaluates the transition at the ACTUAL recovered action and rejects the
+# subject when structure and evaluation disagree.
 _TRANSITION_RESIDUAL_RTOL = 1e-6
 
 
@@ -1634,11 +1649,11 @@ def _read_nested_policy(
         n_subjects=n_subjects,
     )
 
-    # Certify the affine inversion per subject AT the recovered action, not
-    # only through the 0/1 slope probe. `outer_action = s' - offset`, so an
-    # affine-unit transition reproduces `T(states, outer_action) == s'` exactly;
-    # a non-affine transition that happened to pass the two-point slope test
-    # leaves a residual here and the subject falls back to the grid argmax.
+    # Certify the affine inversion per subject AT the recovered action, not from
+    # the map's structure alone. `outer_action = s' - offset`, so a transition
+    # whose certified coefficient is one reproduces `T(states, outer_action) == s'`
+    # exactly; one whose evaluation disagrees with its certified structure leaves
+    # a residual here and the subject falls back to the grid argmax.
     residual_ok = jnp.abs(
         transition_at(outer_action) - chosen_post_decision
     ) <= _TRANSITION_RESIDUAL_RTOL * (1.0 + jnp.abs(chosen_post_decision))
@@ -2000,10 +2015,12 @@ def _outer_transition_offset_and_slope(
     The winning outer post-decision `s'` is the value of the regime's
     `outer_post_decision` function; the recorded action must invert
     `s' = P(states, a)`. The nested v1 scope supports the affine-unit-slope
-    contract `P(states, a) = offset(states) + a`, verified numerically per
-    subject by probing `P` at `a = 0` and `a = 1`. Returns `None`
-    (whole-regime fallback) when it is absent or its arguments cannot be
-    resolved.
+    contract `P(states, a) = offset(states) + a`, and the slope is read off the
+    traced structure of `P` in exact rational arithmetic rather than estimated
+    from two rounded evaluations. A secant is one ULP from one for the very map
+    this route supports, so no tolerance around the estimate separates the
+    contract from a map that violates it. Returns `None` (whole-regime
+    fallback) when the function is absent or its arguments cannot be resolved.
 
     `P` is an ordinary regime FUNCTION of this period's states and actions --
     the stock chosen NOW -- not a state transition. The durable's law reads it
@@ -2015,8 +2032,8 @@ def _outer_transition_offset_and_slope(
         return None
     transition = functions[payload.outer_post_decision_name]
 
-    def probe(action_value: FloatND) -> FloatND | None:
-        kwargs = _resolve_function_kwargs(
+    def resolve(action_value: FloatND) -> dict[str, FloatND] | None:
+        return _resolve_function_kwargs(
             transition,
             states=states,
             bindings={payload.outer_action_name: action_value},
@@ -2025,29 +2042,39 @@ def _outer_transition_offset_and_slope(
             age=age,
             n_subjects=n_subjects,
         )
-        if kwargs is None:
-            return None
-        return jnp.reshape(jnp.asarray(transition(**kwargs)), (n_subjects,))
 
     zeros = jnp.zeros(n_subjects)
-    offset = probe(zeros)
-    at_one = probe(zeros + 1.0)
-    if offset is None or at_one is None:
+    bound_at_zero = resolve(zeros)
+    if bound_at_zero is None:
         return None
-    slope_error = jnp.abs((at_one - offset) - 1.0)
-    dtype_epsilon = jnp.finfo(offset.dtype).eps
-    slope_atol = jnp.maximum(
-        jnp.asarray(_MIN_UNIT_SLOPE_ATOL, dtype=offset.dtype),
-        jnp.asarray(_UNIT_SLOPE_ULPS * dtype_epsilon, dtype=offset.dtype),
+    offset = jnp.reshape(jnp.asarray(transition(**bound_at_zero)), (n_subjects,))
+
+    names = tuple(bound_at_zero)
+
+    def outer_post_decision(*values: object) -> FloatND:
+        return jnp.asarray(transition(**dict(zip(names, values, strict=True))))  # ty: ignore[invalid-argument-type]
+
+    outer_post_decision.__name__ = payload.outer_post_decision_name
+    certificate = certify_outer_coefficient(
+        func=outer_post_decision,
+        outer_action_name=payload.outer_action_name,
+        abstract_args=abstract_like(tuple(bound_at_zero.values())),
+        arg_names=names,
     )
-    slope_is_unit = slope_error <= slope_atol
+    # A structural verdict, so it is the same for every subject; it is broadcast
+    # rather than reduced, because each call site already masks per subject.
+    slope_is_unit = jnp.full(
+        n_subjects, certificate.coefficient == Fraction(1), dtype=bool
+    )
 
     def evaluate_at(action: FloatND) -> FloatND:
-        # Argument resolvability is already established by the 0/1 probes above,
-        # so `probe` cannot return None here; the transition is re-evaluated at
-        # the recovered action for the per-subject affine-residual certificate.
-        result = probe(action)
-        return result if result is not None else jnp.full(n_subjects, jnp.nan)
+        # Argument resolvability is established by the zero probe above, so this
+        # cannot return None; the transition is re-evaluated at the recovered
+        # action for the per-subject affine-residual certificate.
+        bound = resolve(action)
+        if bound is None:
+            return jnp.full(n_subjects, jnp.nan)
+        return jnp.reshape(jnp.asarray(transition(**bound)), (n_subjects,))
 
     return offset, slope_is_unit, evaluate_at
 
@@ -2276,7 +2303,7 @@ def _invert_nnbegm_outer_targets(
     else:
         discrete_inputs = {}
 
-    def evaluate(outer_action: FloatND) -> Mapping[str, FloatND]:
+    def bind(outer_action: FloatND) -> dict[str, EconFunctionArg]:
         pool = {
             **dict(flat_params),
             **state_inputs,
@@ -2286,22 +2313,48 @@ def _invert_nnbegm_outer_targets(
             "period": jnp.int32(period),
             "age": age,
         }
-        return target_function(
-            **{name: value for name, value in pool.items() if name in accepted}
-        )
+        return {name: value for name, value in pool.items() if name in accepted}
+
+    def evaluate(outer_action: FloatND) -> Mapping[str, FloatND]:
+        return target_function(**bind(outer_action))
 
     zeros = jnp.zeros_like(candidate_inner)
-    at_zero_results = evaluate(zeros)
+    bound_at_zero = bind(zeros)
+    at_zero_results = target_function(**bound_at_zero)
     at_zero = jnp.broadcast_to(
         jnp.asarray(at_zero_results[policy_read.outer_post_decision]), candidate_shape
     )
-    at_one = jnp.broadcast_to(
-        jnp.asarray(
-            evaluate(jnp.ones_like(candidate_inner))[policy_read.outer_post_decision]
-        ),
-        candidate_shape,
+    # The admission domain is the solve's, at this period. Simulation may only
+    # publish what the solve certified, so it reads the endpoints the solve
+    # admitted against rather than forming its own -- an age-varying outer grid
+    # otherwise leaves the two phases disagreeing about which stocks are
+    # representable, which is exactly the divergence this inversion exists to
+    # prevent. `period_state_axes` is `None` for an age-invariant regime, where
+    # the published grid is already the whole story.
+    per_period_axes = regime.solution.period_state_axes
+    outer_state_points = jnp.asarray(
+        regime.simulation.grids[policy_read.outer_state_name].to_jax()
+        if per_period_axes is None
+        else per_period_axes.get(period, {}).get(
+            policy_read.outer_state_name,
+            regime.simulation.grids[policy_read.outer_state_name].to_jax(),
+        )
     )
-    slope = at_one - at_zero
+    # The same certificate the solve took, against the same declared map. Both
+    # phases must recover the action identically, so neither may measure a slope
+    # the other read off the structure.
+    inverse = certify_declared_outer_inverse(
+        func=target_function,
+        arg_names=tuple(bound_at_zero),
+        abstract_args=abstract_like(tuple(bound_at_zero.values())),
+        outer_action_name=sim_policy.outer_action_name,
+        outer_post_decision_name=policy_read.outer_post_decision,
+        outer_state_domain=(
+            float(outer_state_points[0]),
+            float(outer_state_points[-1]),
+        ),
+        regime_name=regime.name,
+    )
 
     if policy_read.outer_no_adjustment_target is None:
         keeper_targets = jnp.broadcast_to(
@@ -2313,10 +2366,31 @@ def _invert_nnbegm_outer_targets(
             jnp.asarray(at_zero_results[policy_read.outer_no_adjustment_target]),
             candidate_shape,
         )[: sim_policy.n_keeper_candidates]
-    realized_target = jnp.concatenate(
-        (keeper_targets, candidate_target[sim_policy.n_keeper_candidates :]),
-        axis=0,
+    # The adjuster candidates target declared search nodes, so the node values
+    # are taken from the policy rather than read off the interpolated bank: the
+    # bank's adjuster rows are constant along the state axes, but interpolating
+    # a constant surface reproduces the node only to within a rounding, and a
+    # target a rounding away from a domain endpoint is not that endpoint. The
+    # bank is still read for its finiteness, which is how the solve records a
+    # candidate it dropped itself.
+    interpolated_adjuster = candidate_target[sim_policy.n_keeper_candidates :]
+    n_adjuster_candidates = interpolated_adjuster.shape[0]
+    n_outer_nodes = sim_policy.outer_grid_values.shape[0]
+    branches_per_node = n_adjuster_candidates // n_outer_nodes
+    if branches_per_node * n_outer_nodes != n_adjuster_candidates:
+        raise ValueError(
+            "NNBEGM adjuster candidates do not divide evenly over the declared "
+            f"outer nodes: {n_adjuster_candidates} candidates, "
+            f"{n_outer_nodes} nodes."
+        )
+    declared_adjuster = jnp.broadcast_to(
+        jnp.repeat(sim_policy.outer_grid_values, repeats=branches_per_node)[:, None],
+        interpolated_adjuster.shape,
+    ).astype(interpolated_adjuster.dtype)
+    adjuster_targets = jnp.where(
+        jnp.isfinite(interpolated_adjuster), declared_adjuster, jnp.nan
     )
+    realized_target = jnp.concatenate((keeper_targets, adjuster_targets), axis=0)
 
     def forward(outer_action: FloatND) -> FloatND:
         return jnp.broadcast_to(
@@ -2324,60 +2398,20 @@ def _invert_nnbegm_outer_targets(
             candidate_shape,
         )
 
-    candidate_outer = _outer_action_reaching_target(
-        quotient=(realized_target - at_zero) / slope,
-        realized_target=realized_target,
+    inversion = invert_declared_outer_target(
+        inverse=inverse,
+        target=realized_target,
+        at_zero=at_zero,
         forward=forward,
     )
-    reconstructed = forward(candidate_outer)
-    eps = jnp.finfo(candidate_inner.dtype).eps
-    tolerance = 128 * eps * jnp.maximum(1.0, jnp.abs(realized_target))
-    represented = (
-        jnp.isfinite(realized_target)
-        & jnp.isfinite(candidate_outer)
-        & jnp.isfinite(slope)
-        & (slope != 0)
-        & jnp.isfinite(reconstructed)
-        & (jnp.abs(reconstructed - realized_target) <= tolerance)
-    )
+    represented = jnp.isfinite(realized_target) & inversion.admissible
+    # An unrepresented candidate carries an action that reaches a stock outside
+    # the outer state's domain. It is dropped rather than published, and the
+    # action itself is blanked so no downstream reader can score it: a candidate
+    # the solve never ranked must not be able to win by arriving at the canonical
+    # Q with a finite number attached.
+    candidate_outer = jnp.where(represented, inversion.action, jnp.nan)
     return candidate_outer, represented
-
-
-def _outer_action_reaching_target(
-    *,
-    quotient: FloatND,
-    realized_target: FloatND,
-    forward: Callable[[FloatND], FloatND],
-) -> FloatND:
-    """Return the representable outer action whose target the solve stored.
-
-    The solve searches post-decision targets and stores them; simulation
-    recovers the action by dividing through the declared affine map. Division
-    and the forward map each round, so the quotient is not always the
-    representable action the stored target came from, and every downstream
-    reader evaluates that map forward again — the durable law of motion, the
-    credited cost, the liquid budget. A quotient one step off therefore
-    reassembles a post-decision state one step off, which at a divestment
-    corner is enough to leave the grid that declares the state's domain.
-
-    So the quotient and its two immediate neighbours are compared by the only
-    quantity that matters, how far their forward images sit from the stored
-    target, and the closest wins. Comparing images rather than actions needs no
-    tolerance: it is an ordering of three exactly-computed distances. Ties keep
-    the quotient, so a run whose inversion was already exact is unchanged.
-
-    One step is what an inversion error reaches here, not a proven bound. The
-    round-trip check downstream still gates anything this cannot repair, and a
-    non-finite quotient propagates through unchanged for it to reject.
-    """
-    lower = jnp.nextafter(quotient, jnp.asarray(-jnp.inf, dtype=quotient.dtype))
-    upper = jnp.nextafter(quotient, jnp.asarray(jnp.inf, dtype=quotient.dtype))
-    error = jnp.abs(forward(quotient) - realized_target)
-    error_lower = jnp.abs(forward(lower) - realized_target)
-    error_upper = jnp.abs(forward(upper) - realized_target)
-    best = jnp.where(error_lower < error, lower, quotient)
-    best_error = jnp.minimum(error_lower, error)
-    return jnp.where(error_upper < best_error, upper, best)
 
 
 def _replay_nnbegm_candidates(
@@ -2392,6 +2426,7 @@ def _replay_nnbegm_candidates(
     canonical_states: Mapping[StateName, FloatND | IntND],
     action_names: tuple[ActionName, ...],
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+    logger: logging.Logger,
 ) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND]:
     """Replay and canonical-score the exact solve candidate product."""
     n_subjects = next(iter(states.values())).shape[0]
@@ -2432,11 +2467,18 @@ def _replay_nnbegm_candidates(
         period=period,
         age=age,
     )
-    represented = (
+    live = (
         in_support[None, :]
         & jnp.isfinite(candidate_inner)
         & jnp.isfinite(candidate_value)
-        & outer_represented
+    )
+    represented = live & outer_represented
+    _announce_dropped_outer_candidates(
+        logger=logger,
+        dropped=live & ~outer_represented,
+        n_live=live,
+        regime_name=regime.name,
+        period=period,
     )
 
     n_candidates = candidate_inner.shape[0]
@@ -2492,6 +2534,44 @@ def _replay_nnbegm_candidates(
         ),
         chosen_value,
     )
+
+
+def _announce_dropped_outer_candidates(
+    *,
+    logger: logging.Logger,
+    dropped: BoolND,
+    n_live: BoolND,
+    regime_name: RegimeName,
+    period: int,
+) -> None:
+    """Report, once per regime-period, how many outer candidates were dropped.
+
+    The count is aggregated on device and read back as two scalars, so the
+    report costs one transfer per regime-period rather than one per candidate.
+    The gate is the public log level:
+
+    - `"off"` -- silent, and the candidates are still dropped;
+    - `"warning"` / `"progress"` -- one warning carrying the counts;
+    - `"debug"` -- raised, because a candidate the solve ranked and replay
+      cannot reconstruct is a defect worth stopping on while a model is being
+      developed.
+    """
+    if not validation_enabled(logger):
+        return
+    n_dropped = int(jnp.sum(dropped))
+    if n_dropped == 0:
+        return
+    total = int(jnp.sum(n_live))
+    error = UnrepresentableOuterCandidateError(
+        f"Regime {regime_name!r} at period {period}: {n_dropped} of {total} "
+        "live outer candidates could not be reconstructed at their realized "
+        "state -- the recovered outer action reaches a stock outside the outer "
+        "state's declared domain. Those candidates are dropped from the "
+        "affected subjects' choice sets; a subject left with no candidate at "
+        "all publishes no action. Widen the outer state's grid so the reachable "
+        "post-decision stocks lie inside it, or coarsen the outer search."
+    )
+    raise_or_warn(logger=logger, error=error)
 
 
 def _canonical_Q_at_actions(
