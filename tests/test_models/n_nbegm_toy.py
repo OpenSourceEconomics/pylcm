@@ -130,6 +130,11 @@ def durable_transition(new_illiquid: ContinuousState) -> ContinuousState:
     return new_illiquid
 
 
+def reserve_unchanged(reserve: ContinuousState) -> ContinuousState:
+    """Law of motion of the second passive stock: it is never touched."""
+    return reserve
+
+
 def utility(consumption: ContinuousAction) -> FloatND:
     """Pure CRRA over consumption."""
     return consumption ** (1.0 - RISK_AVERSION) / (1.0 - RISK_AVERSION)
@@ -179,6 +184,9 @@ ILLIQUID_INVESTMENT_GRID = LinSpacedGrid(start=-20.0, stop=20.0, n_points=41)
 OUTER_GRID = LinSpacedGrid(start=0.0, stop=20.0, n_points=N_OUTER)
 SAVINGS_FLOOR = 0.0  # borrowing limit on the inner post-decision balance
 SAVINGS_GRID = LinSpacedGrid(start=SAVINGS_FLOOR, stop=35.0, n_points=60)
+# A second passive continuous stock, held fixed and carried only by the alive
+# regime. Two points keep the extra state-space axis as small as an axis can be.
+RESERVE_GRID = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
 
 
 def budget_feasible(liquid_savings: FloatND) -> FloatND:
@@ -251,6 +259,7 @@ def build_model(
     outer_post_decision_function: Callable[..., object] | None = None,
     regime_transition: Callable[..., object] | Phased = next_regime,
     koopmans_aggregator: Callable[..., object] | Phased | None = None,
+    second_passive_state: bool = False,
     carried_state: bool = False,
     terminal_active_from_start: bool = False,
 ) -> Model:
@@ -278,6 +287,9 @@ def build_model(
     to refuse.
     `regime_transition` and `koopmans_aggregator` expose the other public phase
     slots to build-time capability tests without changing the numerical toy.
+    `second_passive_state=True` gives the alive regime a second passive
+    continuous stock, held fixed and carried by that regime alone, so its carry
+    rows span two passive axes instead of one.
     `carried_state=True` adds an otherwise unused solve-imputed/simulate-carried
     state for the NNBEGM replay-capability boundary witness.
     `constraints` overrides the constraint pool, which otherwise carries the
@@ -324,6 +336,9 @@ def build_model(
         "wealth": next_wealth,
         "illiquid": durable_law if durable_law is not None else durable_transition,
     }
+    if second_passive_state:
+        states["reserve"] = RESERVE_GRID
+        state_transitions["reserve"] = reserve_unchanged
     if carried_state:
         states["permanent_income"] = Phased(
             solve=impute_permanent_income,

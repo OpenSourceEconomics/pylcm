@@ -7,14 +7,20 @@ only the dynamic condition that the outer carried-state law must not depend on
 the inner liquid post-decision margin, directly or through a sibling law.
 """
 
+import contextlib
 import logging
+from collections.abc import Iterator
+from typing import cast
 
 import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
+import _lcm.solution.nnbegm as nnbegm_module
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.nnbegm_validation import validate_nnbegm_regimes
+from _lcm.egm.outer_replay_capability import OuterReplayCapability
+from _lcm.egm.published_policy import NNBEGMSimPolicy
 from _lcm.solution.nnbegm import (
     _fail_if_the_solve_grid_cannot_reconstruct_a_candidate,
 )
@@ -513,3 +519,171 @@ def test_the_finite_outer_grid_recovers_the_action_a_doubled_map_needs() -> None
     )
 
     aaae(doubled_investment, unit_investment / 2.0, decimal=DECIMAL_PRECISION)
+
+
+def test_the_continuous_outer_mesh_refuses_a_second_passive_continuous_state() -> None:
+    """Two passive continuous stocks in one regime stop the continuous solve.
+
+    Continuous-outer replay indexes the published branch rows at the subject's
+    own passive stock, and it brackets exactly one such axis. A regime carrying
+    two of them has rows the replay cannot address, so the solve refuses rather
+    than publishing a policy simulation would answer with the action-grid winner.
+    """
+    model = n_nbegm_toy.build_model(
+        variant="n_nbegm",
+        n_periods=2,
+        outer_search=_MESH,
+        second_passive_state=True,
+    )
+
+    with pytest.raises(RegimeInitializationError, match="passive continuous state"):
+        model.solve(
+            params={"discount_factor": 0.95},
+            log_level="off",
+            return_simulation_policy=True,
+        )
+
+
+def _new_illiquid_reading_consumption(
+    illiquid: ContinuousState,
+    illiquid_investment: ContinuousAction,
+    consumption: ContinuousAction,
+) -> ContinuousState:
+    """`s' = Z + Iz + 0.01 c`: affine in the outer action, reads the inner one."""
+    return illiquid + illiquid_investment + 0.01 * consumption
+
+
+def _published_capability(policy: object) -> OuterReplayCapability:
+    """The replay capability the published NNBEGM policy carries."""
+    return cast("NNBEGMSimPolicy | NestedEGMSimPolicy", policy).replay_capability
+
+
+def test_the_continuous_outer_mesh_refuses_an_outer_map_replay_cannot_bind() -> None:
+    """An outer map reading the inner action stops the continuous solve.
+
+    Continuous-outer replay evaluates the declared map at each subject from
+    that subject's states, the regime's parameters, `period` and `age`. It has
+    no inner action to supply — the inner action is what the replay is solving
+    for — so a map that reads one cannot be evaluated where the decision is
+    rebuilt, and publishing for it would hand simulation the action-grid winner.
+    """
+    model = n_nbegm_toy.build_model(
+        variant="n_nbegm",
+        n_periods=2,
+        outer_search=_MESH,
+        outer_post_decision_function=_new_illiquid_reading_consumption,
+    )
+
+    with pytest.raises(RegimeInitializationError, match="consumption"):
+        model.solve(
+            params={"discount_factor": 0.95},
+            log_level="off",
+            return_simulation_policy=True,
+        )
+
+
+def test_both_outer_searches_publish_the_same_certified_outer_inverse() -> None:
+    """Finite and adaptive solves settle one answer to the inversion question.
+
+    The two searches differ in how they explore the outer margin, never in what
+    they conclude about the declared map. Publishing different inverses would
+    let one route replay a stock the other refused.
+    """
+    params = {"discount_factor": 0.95}
+    _, finite = n_nbegm_toy.build_model(variant="n_nbegm", n_periods=2).solve(
+        params=params, log_level="off", return_simulation_policy=True
+    )
+    _, adaptive = n_nbegm_toy.build_model(
+        variant="n_nbegm", n_periods=2, outer_search=_MESH
+    ).solve(params=params, log_level="off", return_simulation_policy=True)
+
+    assert (
+        _published_capability(finite[0]["alive"]).inverse
+        == _published_capability(adaptive[0]["alive"]).inverse
+    )
+
+
+def test_the_published_capability_records_the_outer_state_domain() -> None:
+    """The published verdict carries the stock domain the solve admitted."""
+    _, policies = n_nbegm_toy.build_model(variant="n_nbegm", n_periods=2).solve(
+        params={"discount_factor": 0.95},
+        log_level="off",
+        return_simulation_policy=True,
+    )
+
+    inverse = _published_capability(policies[0]["alive"]).inverse
+    assert (inverse.low, inverse.high) == (0.0, 20.0)
+
+
+@contextlib.contextmanager
+def _recorded_published_policies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[list[object]]:
+    """Record every replay policy object either outer search constructs."""
+    constructed: list[object] = []
+    for name in ("NNBEGMSimPolicy", "NestedEGMSimPolicy"):
+        original = getattr(nnbegm_module, name)
+
+        def record(*, _original=original, **kwargs: object) -> object:
+            policy = _original(**kwargs)
+            constructed.append(policy)
+            return policy
+
+        monkeypatch.setattr(nnbegm_module, name, record)
+    yield constructed
+
+
+_SOLVE_ARGS = {
+    "params": {"discount_factor": 0.95},
+    "log_level": "off",
+}
+
+_UNSUPPORTED_ROUTES = {
+    "adaptive_solve": lambda model: model.solve(
+        **_SOLVE_ARGS, return_simulation_policy=True
+    ),
+    "automatic_simulation": lambda model: model.simulate(
+        params={"discount_factor": 0.95},
+        initial_conditions=dict(_REPLAY_INITIAL),
+        period_to_regime_to_V_arr=None,
+        log_level="off",
+    ),
+    "finite_solve": lambda model: model.solve(
+        **_SOLVE_ARGS, return_simulation_policy=True
+    ),
+    "split_replay": lambda model: model.solve(
+        **_SOLVE_ARGS, return_simulation_policy=True
+    ),
+}
+
+_ADAPTIVE_ROUTES = frozenset({"adaptive_solve", "automatic_simulation"})
+
+
+@pytest.mark.parametrize("route", sorted(_UNSUPPORTED_ROUTES))
+def test_no_route_returns_a_replay_policy_for_an_uninvertible_map(
+    route: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unsupported declaration leaves every route with no policy object at all.
+
+    Refusing is not enough on its own: a route that built a replay policy and
+    then raised would still have to be trusted never to hand it on. Recording
+    every construction shows the refusal lands before any policy exists — on the
+    finite grid and the adaptive mesh, whether simulation solves for itself or
+    the caller solves first and supplies the pair. The split route is covered by
+    the solve it must run first: with no policy to supply, nothing can be
+    replayed.
+    """
+    model = n_nbegm_toy.build_model(
+        variant="n_nbegm",
+        n_periods=3,
+        outer_post_decision_function=_lossy_new_illiquid,
+        outer_search=_MESH if route in _ADAPTIVE_ROUTES else None,
+    )
+
+    with (
+        _recorded_published_policies(monkeypatch) as constructed,
+        pytest.raises(RegimeInitializationError),
+    ):
+        _UNSUPPORTED_ROUTES[route](model)
+
+    assert constructed == []

@@ -4,7 +4,6 @@ import itertools
 import logging
 import time
 from collections.abc import Callable, Mapping, Sequence
-from fractions import Fraction
 from types import MappingProxyType
 from typing import Literal, cast
 
@@ -16,11 +15,8 @@ from jax import vmap
 
 from _lcm.egm.interp import interp_on_padded_grid
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
-from _lcm.egm.outer_affine_structure import certify_outer_coefficient
 from _lcm.egm.outer_interpolation import LocalCubicOuterInterpolant
 from _lcm.egm.outer_inversion import (
-    abstract_like,
-    certify_declared_outer_inverse,
     invert_declared_outer_target,
 )
 from _lcm.egm.outer_refinement import safeguarded_continuous_argmax
@@ -87,6 +83,7 @@ from lcm.typing import (
     BoolND,
     Float1D,
     FloatND,
+    FunctionName,
     Int1D,
     IntND,
     ScalarFloat,
@@ -1201,32 +1198,22 @@ def _read_nested_policy(
     continuous adjustment — blend the two bracketing rows linearly, on both
     sides of the comparison.
 
-    Falls back to the grid-argmax pair (both actions) for the whole regime
-    when the payload shape is outside the v1 scope (discrete-action rows,
-    more than one passive axis, a non-affine or unresolvable outer
-    transition), and per subject when any branch read leaves its live row
-    support, or the winning consumption is non-finite, non-positive, or
-    outside the intrinsic budget (`c <= resources - savings_lower_bound`).
+    Falls back to the grid-argmax pair per subject when any branch read leaves
+    its live row support, or the winning consumption is non-finite,
+    non-positive, or outside the intrinsic budget
+    (`c <= resources - savings_lower_bound`). A payload whose declared outer
+    post-decision or keeper candidate does not resolve against the simulate
+    function pool is refused rather than answered with the action-grid winner.
 
     Returns the recovered actions, a per-subject Boolean fallback flag,
     and the winning value from the solve's policy surrogate. The last value
     lets the caller refuse an emitted pair whose canonical Q is materially
-    below the surrogate value that selected it. Whole-regime fallbacks return
-    all-True and NaN surrogate values.
+    below the surrogate value that selected it.
     """
+    _fail_if_the_published_capability_is_not_replayable(payload=payload)
     keeper_pol = payload.keeper
     bank = payload.adjuster
     n_subjects = next(iter(states.values())).shape[0]
-    if (
-        keeper_pol.row_discrete_action_names
-        or bank.policies.row_discrete_action_names
-        or len(keeper_pol.row_passive_state_names) > 1
-    ):
-        return (
-            optimal_actions,
-            jnp.ones(n_subjects, dtype=bool),
-            jnp.full(n_subjects, jnp.nan),
-        )
     liquid = jnp.asarray(states[payload.liquid_state_name])
 
     def grid_position(name: StateOrActionName) -> IntND:
@@ -1319,7 +1306,7 @@ def _read_nested_policy(
         nodes=outer_nodes, values=candidate_actions, query=search.x
     )
 
-    outer_offset_slope = _outer_transition_offset_and_slope(
+    offset, transition_at = _outer_transition_offset_and_forward(
         payload=payload,
         regime=regime,
         states=states,
@@ -1328,13 +1315,6 @@ def _read_nested_policy(
         age=age,
         n_subjects=n_subjects,
     )
-    if outer_offset_slope is None:
-        return (
-            optimal_actions,
-            jnp.ones(n_subjects, dtype=bool),
-            jnp.full(n_subjects, jnp.nan),
-        )
-    offset, slope_is_unit, transition_at = outer_offset_slope
     keep_value = _keeper_post_decision(
         payload=payload,
         regime=regime,
@@ -1344,12 +1324,6 @@ def _read_nested_policy(
         age=age,
         n_subjects=n_subjects,
     )
-    if keep_value is None:
-        return (
-            optimal_actions,
-            jnp.ones(n_subjects, dtype=bool),
-            jnp.full(n_subjects, jnp.nan),
-        )
 
     chosen_post_decision = jnp.where(adjust, search.x, keep_value)
     outer_action = chosen_post_decision - offset
@@ -1377,8 +1351,7 @@ def _read_nested_policy(
         transition_at(outer_action) - chosen_post_decision
     ) <= _TRANSITION_RESIDUAL_RTOL * (1.0 + jnp.abs(chosen_post_decision))
     accepted = (
-        slope_is_unit
-        & residual_ok
+        residual_ok
         & keeper_support
         & jnp.all(candidate_support, axis=0)
         & jnp.isfinite(winner_value)
@@ -1419,7 +1392,7 @@ def _nested_actions_are_intrinsically_admissible(
     inadmissible grid pair a spuriously high value.
     """
     n_subjects = next(iter(states.values())).shape[0]
-    outer_transition = _outer_transition_offset_and_slope(
+    outer_transition = _outer_transition_offset_and_forward(
         payload=payload,
         regime=regime,
         states=states,
@@ -1428,9 +1401,7 @@ def _nested_actions_are_intrinsically_admissible(
         age=age,
         n_subjects=n_subjects,
     )
-    if outer_transition is None:
-        return jnp.zeros(n_subjects, dtype=bool)
-    _, slope_is_unit, transition_at = outer_transition
+    _, transition_at = outer_transition
     outer_action = jnp.asarray(actions[payload.outer_action_name])
     outer_post_decision = transition_at(outer_action)
     outer_nodes = payload.adjuster.outer_nodes
@@ -1450,8 +1421,7 @@ def _nested_actions_are_intrinsically_admissible(
     )
     inner_action = jnp.asarray(actions[payload.inner_action_name])
     return (
-        slope_is_unit
-        & in_outer_domain
+        in_outer_domain
         & jnp.isfinite(outer_action)
         & jnp.isfinite(inner_action)
         & jnp.isfinite(resources)
@@ -1591,7 +1561,7 @@ def _project_grid_pair_to_nested_endpoint(
 ) -> MappingProxyType[ActionName, FloatND | IntND]:
     """Project a raw grid pair onto one outer endpoint and the savings floor."""
     n_subjects = next(iter(states.values())).shape[0]
-    outer_transition = _outer_transition_offset_and_slope(
+    outer_transition = _outer_transition_offset_and_forward(
         payload=payload,
         regime=regime,
         states=states,
@@ -1600,10 +1570,7 @@ def _project_grid_pair_to_nested_endpoint(
         age=age,
         n_subjects=n_subjects,
     )
-    if outer_transition is None:
-        return grid_actions
-    offset, slope_is_unit, transition_at = outer_transition
-    outer_action = jnp.asarray(grid_actions[payload.outer_action_name])
+    offset, transition_at = outer_transition
     outer_nodes = payload.adjuster.outer_nodes
     endpoint_index = 0 if endpoint == "lower" else -1
     interior_index = -1 if endpoint == "lower" else 0
@@ -1619,13 +1586,9 @@ def _project_grid_pair_to_nested_endpoint(
     )
     interior_outer_action = interior_value - offset
     projected_outer_action = jnp.where(
-        slope_is_unit,
-        jnp.where(
-            lands_inside,
-            exact_outer_action,
-            interior_outer_action,
-        ),
-        outer_action,
+        lands_inside,
+        exact_outer_action,
+        interior_outer_action,
     )
     projected_post_decision = transition_at(projected_outer_action)
     resources = _nested_resources(
@@ -1719,7 +1682,7 @@ def _resolve_function_kwargs(
     return kwargs
 
 
-def _outer_transition_offset_and_slope(
+def _outer_transition_offset_and_forward(
     *,
     payload: NestedEGMSimPolicy,
     regime: Regime,
@@ -1728,31 +1691,31 @@ def _outer_transition_offset_and_slope(
     period: int,
     age: ScalarFloat | ScalarInt,
     n_subjects: int,
-) -> tuple[FloatND, BoolND, Callable[[FloatND], FloatND]] | None:
-    """Per-subject offset of the outer post-decision, with a unit-slope check.
+) -> tuple[FloatND, Callable[[FloatND], FloatND]]:
+    """Per-subject offset of the outer post-decision, and the map itself.
 
     The winning outer post-decision `s'` is the value of the regime's
     `outer_post_decision` function; the recorded action must invert
-    `s' = P(states, a)`. The nested v1 scope supports the affine-unit-slope
-    contract `P(states, a) = offset(states) + a`, and the slope is read off the
-    traced structure of `P` in exact rational arithmetic rather than estimated
-    from two rounded evaluations. A secant is one ULP from one for the very map
-    this route supports, so no tolerance around the estimate separates the
-    contract from a map that violates it. Returns `None` (whole-regime
-    fallback) when the function is absent or its arguments cannot be resolved.
+    `s' = P(states, a)`. The continuous-outer scope supports the
+    affine-unit-slope contract `P(states, a) = offset(states) + a`. Whether the
+    declared map meets it was settled by the solve and rides on the payload, so
+    this reads `payload.replay_capability` instead of certifying `P` again: a
+    reader that re-certified could reach a verdict the solve it is replaying did
+    not, and would then publish a decision the solve never ranked.
+
+    What is evaluated here is only the numbers a certificate cannot carry — the
+    per-subject offset, and the map itself at the recovered action for the
+    per-subject affine residual.
 
     `P` is an ordinary regime FUNCTION of this period's states and actions --
     the stock chosen NOW -- not a state transition. The durable's law reads it
     and carries it forward, so the law itself does not mention the outer action
     and inverting the law could not recover one.
     """
-    functions = regime.simulation.functions
-    if payload.outer_post_decision_name not in functions:
-        return None
-    transition = functions[payload.outer_post_decision_name]
+    transition = _replay_function(regime=regime, name=payload.outer_post_decision_name)
 
-    def resolve(action_value: FloatND) -> dict[str, FloatND] | None:
-        return _resolve_function_kwargs(
+    def resolve(action_value: FloatND) -> dict[str, FloatND | IntND]:
+        bound = _resolve_function_kwargs(
             transition,
             states=states,
             bindings={payload.outer_action_name: action_value},
@@ -1761,41 +1724,97 @@ def _outer_transition_offset_and_slope(
             age=age,
             n_subjects=n_subjects,
         )
+        _fail_if_the_published_capability_does_not_hold(
+            bound=bound, name=payload.outer_post_decision_name
+        )
+        return cast("dict[str, FloatND | IntND]", bound)
 
-    zeros = jnp.zeros(n_subjects)
-    bound_at_zero = resolve(zeros)
-    if bound_at_zero is None:
-        return None
-    offset = jnp.reshape(jnp.asarray(transition(**bound_at_zero)), (n_subjects,))
-
-    names = tuple(bound_at_zero)
-
-    def outer_post_decision(*values: object) -> FloatND:
-        return jnp.asarray(transition(**dict(zip(names, values, strict=True))))  # ty: ignore[invalid-argument-type]
-
-    outer_post_decision.__name__ = payload.outer_post_decision_name
-    certificate = certify_outer_coefficient(
-        func=outer_post_decision,
-        outer_action_name=payload.outer_action_name,
-        abstract_args=abstract_like(tuple(bound_at_zero.values())),
-        arg_names=names,
-    )
-    # A structural verdict, so it is the same for every subject; it is broadcast
-    # rather than reduced, because each call site already masks per subject.
-    slope_is_unit = jnp.full(
-        n_subjects, certificate.coefficient == Fraction(1), dtype=bool
+    offset = jnp.reshape(
+        jnp.asarray(transition(**resolve(jnp.zeros(n_subjects)))), (n_subjects,)
     )
 
     def evaluate_at(action: FloatND) -> FloatND:
-        # Argument resolvability is established by the zero probe above, so this
-        # cannot return None; the transition is re-evaluated at the recovered
-        # action for the per-subject affine-residual certificate.
-        bound = resolve(action)
-        if bound is None:
-            return jnp.full(n_subjects, jnp.nan)
-        return jnp.reshape(jnp.asarray(transition(**bound)), (n_subjects,))
+        return jnp.reshape(jnp.asarray(transition(**resolve(action))), (n_subjects,))
 
-    return offset, slope_is_unit, evaluate_at
+    return offset, evaluate_at
+
+
+def _fail_if_the_published_capability_is_not_replayable(
+    *, payload: NestedEGMSimPolicy
+) -> None:
+    """Refuse a continuous-outer payload whose own verdict says it is unreplayable.
+
+    Structural support is settled before publication, so a payload carrying an
+    unsupported verdict did not come from a publication that honoured that gate.
+    The alternative to refusing is a replay that emits the action-grid winner
+    under the name of the refined method, which is the outcome the verdict
+    exists to prevent. Structural failure raises here; a per-subject shortfall
+    is a different thing and stays with the pointwise mask below.
+
+    Raises:
+        InvalidSimulationInputError: If the payload's capability is unsupported.
+    """
+    if payload.replay_capability.continuous_replay_is_supported:
+        return
+    msg = (
+        "Continuous-outer replay was handed a policy whose published replay "
+        "capability reports the declaration as unreplayable: "
+        f"{payload.replay_capability}. A solve that honoured its publication "
+        "gate never returns such a policy, so this pair did not come from one. "
+        "Simulate with the `(values, policies)` pair this model's own `solve` "
+        "returned."
+    )
+    raise InvalidSimulationInputError(msg)
+
+
+def _replay_function(*, regime: Regime, name: FunctionName) -> Callable[..., FloatND]:
+    """Return a declared replay function, refusing a payload that outlived it.
+
+    The published capability certified that the regime declares this function,
+    so a lookup that misses names a payload replayed against a different regime
+    than the one that published it.
+
+    Raises:
+        InvalidSimulationInputError: If the regime does not declare `name`.
+    """
+    functions = regime.simulation.functions
+    if name in functions:
+        return functions[name]
+    msg = (
+        f"Continuous-outer replay needs the declared function {name!r}, which "
+        "this regime does not publish for simulation. The solve certified it "
+        "before publishing the replay policy, so the policy and the regime it "
+        "is being replayed against do not belong to the same model. Simulate "
+        "with the `(values, policies)` pair this model's own `solve` returned."
+    )
+    raise InvalidSimulationInputError(msg)
+
+
+def _fail_if_the_published_capability_does_not_hold(
+    *, bound: dict[str, FloatND | IntND] | None, name: FunctionName
+) -> None:
+    """Refuse a replay whose certified argument binding does not reproduce.
+
+    The published capability certified that every argument of `name` can be
+    supplied from a simulated state, a parameter, `period`, or `age`. Reaching
+    an unbindable argument here means the policy was published against a
+    different declaration than the one being replayed, and the alternative to
+    refusing is emitting the action-grid winner for a regime that asked for the
+    refined method.
+
+    Raises:
+        InvalidSimulationInputError: If the binding could not be built.
+    """
+    if bound is not None:
+        return
+    msg = (
+        f"Continuous-outer replay could not bind the arguments of {name!r}, "
+        "which the published replay capability certified as bindable. The "
+        "replay policy and the regime it is being replayed against do not "
+        "belong to the same model. Simulate with the `(values, policies)` pair "
+        "this model's own `solve` returned."
+    )
+    raise InvalidSimulationInputError(msg)
 
 
 def _keeper_post_decision(
@@ -1807,23 +1826,24 @@ def _keeper_post_decision(
     period: int,
     age: ScalarFloat | ScalarInt,
     n_subjects: int,
-) -> FloatND | None:
+) -> FloatND:
     """The keeper branch's outer post-decision `s' = keep(Z)` per subject.
 
     Uses the solver's declared no-adjustment candidate; without one, keeping
     means holding the current durable (the state the outer post-decision is
-    the next-period value of) unchanged. Returns `None` (whole-regime
-    fallback) when the candidate's arguments cannot be resolved.
+    the next-period value of) unchanged. The published capability certified
+    that whichever of the two this regime declares can be evaluated here, so
+    this evaluates rather than tests, and a binding that nonetheless fails is
+    refused as a payload/regime mismatch.
     """
     if payload.outer_no_adjustment_name is None:
-        durable_name = payload.outer_state_name
-        durable = states.get(durable_name)
-        if durable is None:
-            return None
+        durable = states.get(payload.outer_state_name)
+        _fail_if_the_published_capability_does_not_hold(
+            bound=None if durable is None else {payload.outer_state_name: durable},
+            name=payload.outer_state_name,
+        )
         return jnp.asarray(durable)
-    keep_func = regime.simulation.functions.get(payload.outer_no_adjustment_name)
-    if keep_func is None:
-        return None
+    keep_func = _replay_function(regime=regime, name=payload.outer_no_adjustment_name)
     kwargs = _resolve_function_kwargs(
         keep_func,
         states=states,
@@ -1833,9 +1853,13 @@ def _keeper_post_decision(
         age=age,
         n_subjects=n_subjects,
     )
-    if kwargs is None:
-        return None
-    return jnp.reshape(jnp.asarray(keep_func(**kwargs)), (n_subjects,))
+    _fail_if_the_published_capability_does_not_hold(
+        bound=kwargs, name=payload.outer_no_adjustment_name
+    )
+    return jnp.reshape(
+        jnp.asarray(keep_func(**cast("dict[str, FloatND | IntND]", kwargs))),
+        (n_subjects,),
+    )
 
 
 def _interp_rows_with_support(
@@ -2043,37 +2067,12 @@ def _invert_nnbegm_outer_targets(
     at_zero = jnp.broadcast_to(
         jnp.asarray(at_zero_results[policy_read.outer_post_decision]), candidate_shape
     )
-    # The admission domain is the solve's, at this period. Simulation may only
-    # publish what the solve certified, so it reads the endpoints the solve
-    # admitted against rather than forming its own -- an age-varying outer grid
-    # otherwise leaves the two phases disagreeing about which stocks are
-    # representable, which is exactly the divergence this inversion exists to
-    # prevent. `period_state_axes` is `None` for an age-invariant regime, where
-    # the published grid is already the whole story.
-    per_period_axes = regime.solution.period_state_axes
-    outer_state_points = jnp.asarray(
-        regime.simulation.grids[policy_read.outer_state_name].to_jax()
-        if per_period_axes is None
-        else per_period_axes.get(period, {}).get(
-            policy_read.outer_state_name,
-            regime.simulation.grids[policy_read.outer_state_name].to_jax(),
-        )
-    )
-    # The same certificate the solve took, against the same declared map. Both
-    # phases must recover the action identically, so neither may measure a slope
-    # the other read off the structure.
-    inverse = certify_declared_outer_inverse(
-        func=target_function,
-        arg_names=tuple(bound_at_zero),
-        abstract_args=abstract_like(tuple(bound_at_zero.values())),
-        outer_action_name=sim_policy.outer_action_name,
-        outer_post_decision_name=policy_read.outer_post_decision,
-        outer_state_domain=(
-            float(outer_state_points[0]),
-            float(outer_state_points[-1]),
-        ),
-        regime_name=regime.name,
-    )
+    # The certificate the solve took, carried on the policy it published rather
+    # than taken again here. Both phases must recover the action identically and
+    # admit the same stocks, so simulation reads the solve's answer -- including
+    # the period's own outer domain, which an age-varying outer grid would
+    # otherwise leave the two phases disagreeing about.
+    inverse = sim_policy.replay_capability.inverse
 
     if policy_read.outer_no_adjustment_target is None:
         keeper_targets = jnp.broadcast_to(

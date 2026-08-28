@@ -987,10 +987,9 @@ class PeriodRegimeSimulationData:
 
     True only for subjects in a regime whose simulation published a nested
     (continuous-outer) policy where the runtime replay could not certify the
-    off-grid read — per subject (branch read off its live row support, a
-    non-affine outer transition surfacing at the recovered action, a
-    non-finite/non-positive/over-budget inner action) or for the whole regime
-    (payload shape outside the v1 scope, an unresolvable outer transition).
+    off-grid read: the branch read left its live row support, a non-affine outer
+    transition surfaced at the recovered action, or the inner action came out
+    non-finite, non-positive, or over budget.
     All-False for every other path: no nested payload, the flat single-EGM
     read, passive rows, or the grid path. Inference on the continuous-outer
     path must refuse whenever any entry is True — the recorded action there is

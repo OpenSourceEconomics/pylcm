@@ -31,6 +31,7 @@ import jax
 import jax.numpy as jnp
 
 from _lcm.egm.carry import EGMCarry
+from _lcm.egm.outer_replay_capability import OuterReplayCapability
 from _lcm.egm.published_policy import EGMSimPolicy
 from lcm.typing import ActionName, Float1D, FunctionName, StateName
 
@@ -200,6 +201,12 @@ class NestedEGMSimPolicy:
     """Static golden-section budget of the subject-level outer refinement —
     the same setting the solve's search used."""
 
+    replay_capability: OuterReplayCapability
+    """The solve's settled verdict on what this replay may assume — the
+    certified inverse of the declared outer map and the domain its recovered
+    stocks must land in. The reader consumes it rather than re-deriving one,
+    so the decision it replays is the decision the solve published."""
+
     value_atol: float = 1e-10
     """Absolute band for agreement between the policy surrogate's winning
     value and canonical Q at the emitted action pair."""
@@ -218,6 +225,7 @@ _NESTED_STATIC_FIELDS = (
     "resources_target_name",
     "savings_lower_bound",
     "golden_iterations",
+    "replay_capability",
     "value_atol",
     "value_rtol",
 )

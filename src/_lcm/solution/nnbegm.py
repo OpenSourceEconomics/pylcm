@@ -15,7 +15,6 @@ import inspect
 import logging
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, fields, replace
-from fractions import Fraction
 from types import MappingProxyType
 from typing import cast
 
@@ -52,6 +51,11 @@ from _lcm.egm.outer_inversion import (
     invert_declared_outer_target,
 )
 from _lcm.egm.outer_refinement import refine_outer_mesh
+from _lcm.egm.outer_replay_capability import (
+    OuterReplayCapability,
+    fail_if_continuous_outer_replay_is_unsupported,
+    resolve_outer_replay_capability,
+)
 from _lcm.egm.outer_search import AdaptiveOuterMesh, FiniteOuterGrid, OuterSearch
 from _lcm.egm.published_policy import (
     EGMSimPolicy,
@@ -93,7 +97,7 @@ from _lcm.solution.periodization import (
     solver_period_group_key,
 )
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
-from _lcm.typing import FlatParams, RegimeName
+from _lcm.typing import EconFunctionsMapping, FlatParams, RegimeName
 from lcm.ages import AgeGrid
 from lcm.exceptions import (
     ModelInitializationError,
@@ -612,6 +616,15 @@ class NNBEGM(TwoMarginSolver):
                     inner_discrete_action_names=tuple(
                         context.state_action_space.discrete_actions
                     ),
+                    replay_functions=resolved_by_period[period].functions,
+                    replay_bindable_names=(
+                        context.flat_param_names
+                        | {"period", "age"}
+                        | set(context.state_action_space.state_names)
+                    ),
+                    replay_state_names=frozenset(
+                        context.state_action_space.state_names
+                    ),
                     branch_fixed_cost=branch_aggregation_by_period[period][0],
                     branch_scale_function=branch_aggregation_by_period[period][1],
                 )
@@ -841,6 +854,19 @@ class _NNBEGMPeriodKernel:
     grid-argmax path. Empty for the v1 continuous-only
     scope, where publication proceeds."""
 
+    replay_functions: EconFunctionsMapping
+    """The regime's processed functions, read for the signatures a simulation
+    replay must be able to bind. NNBEGM refuses any phase variation before the
+    kernels are built, so these are the declarations simulation reads too."""
+
+    replay_bindable_names: frozenset[str]
+    """Everything a replay can supply at a realized state: the regime's states,
+    its flat parameter names (from the params template, so the verdict does not
+    depend on one call's params), and `period`/`age`."""
+
+    replay_state_names: frozenset[StateName]
+    """The states a replay reads at each subject."""
+
     branch_fixed_cost: UniformObservedFixedCost | None
     """The uniform observed fixed-cost aggregator, or `None` for the
     deterministic keeper/adjuster maximum."""
@@ -973,9 +999,15 @@ class _NNBEGMPeriodKernel:
             period=period,
             ages=ages,
         )
+        # One capability per period, settled before either outer search runs and
+        # carried by whichever policy is published. It answers what a replay may
+        # assume — the map's coefficient, the stock domain, the arguments a
+        # replay can bind, the row axes it can address — so neither search
+        # decides that for itself and no reader re-derives it.
+        replay_capability = self._resolve_replay_capability(inverse=outer_inverse)
         if isinstance(self.outer_search, AdaptiveOuterMesh):
             return self._solve_continuous(
-                outer_inverse=outer_inverse,
+                replay_capability=replay_capability,
                 keeper_result=keeper_result,
                 config=self.outer_search,
                 compiled_cores=compiled_cores,
@@ -988,7 +1020,7 @@ class _NNBEGMPeriodKernel:
                 logger=logger,
             )
         return self._solve_finite(
-            outer_inverse=outer_inverse,
+            replay_capability=replay_capability,
             keeper_result=keeper_result,
             compiled_cores=compiled_cores,
             state_action_space=state_action_space,
@@ -1003,7 +1035,7 @@ class _NNBEGMPeriodKernel:
     def _solve_finite(
         self,
         *,
-        outer_inverse: DeclaredOuterInverse,
+        replay_capability: OuterReplayCapability,
         keeper_result: KernelResult,
         compiled_cores: Mapping[str, Callable],
         state_action_space: StateActionSpace,
@@ -1091,7 +1123,7 @@ class _NNBEGMPeriodKernel:
         else:
             candidate_discrete_actions = None
         candidate_outer_target = self._candidate_outer_targets(
-            outer_inverse=outer_inverse,
+            outer_inverse=replay_capability.inverse,
             candidate_inner_action=candidate_inner_action,
             candidate_discrete_actions=candidate_discrete_actions,
             discrete_action_names=discrete_action_names,
@@ -1117,13 +1149,14 @@ class _NNBEGMPeriodKernel:
                 inner_action_name=self.inner_action,
                 outer_action_name=self.outer_action,
                 n_keeper_candidates=n_discrete_branches,
+                replay_capability=replay_capability,
             ),
         )
 
     def _solve_continuous(
         self,
         *,
-        outer_inverse: DeclaredOuterInverse,
+        replay_capability: OuterReplayCapability,
         keeper_result: KernelResult,
         config: AdaptiveOuterMesh,
         compiled_cores: Mapping[str, Callable],
@@ -1145,8 +1178,8 @@ class _NNBEGMPeriodKernel:
         through unchanged until the continuous simulation reader lands.
 
         The search itself never inverts the declared outer map; the payload it
-        publishes is replayed by a reader that does, so `outer_inverse` gates
-        publication rather than the search.
+        publishes is replayed by a reader that does, so the settled replay
+        capability gates publication rather than the search.
         """
         adjuster_cores = _subcores(compiled_cores=compiled_cores, role="adjuster")
         cache: dict[float, OuterCandidateResult] = {}
@@ -1269,7 +1302,15 @@ class _NNBEGMPeriodKernel:
         )
         sim_policy: SimulationPolicy | None = None
         if nested_published:
-            self._fail_if_the_continuous_reader_cannot_invert(inverse=outer_inverse)
+            # Only a regime that actually publishes reaches the refusal. A
+            # regime whose inner solve makes a discrete choice never gets here:
+            # `nested_published` is already false for it, so the capability's
+            # discrete-action verdict has nothing to stop.
+            fail_if_continuous_outer_replay_is_unsupported(
+                capability=replay_capability,
+                regime_name=self.regime_name,
+                outer_action_name=self.outer_action,
+            )
             sim_policy = NestedEGMSimPolicy(
                 keeper=keeper_policy,
                 adjuster=OuterPolicyBank(
@@ -1285,6 +1326,7 @@ class _NNBEGMPeriodKernel:
                 resources_target_name=self.resources_target,
                 savings_lower_bound=self.savings_lower_bound,
                 golden_iterations=config.golden_iterations,
+                replay_capability=replay_capability,
                 value_atol=config.value_atol,
                 value_rtol=config.value_rtol,
             )
@@ -1405,36 +1447,38 @@ class _NNBEGMPeriodKernel:
             regime_name=self.regime_name,
         )
 
-    def _fail_if_the_continuous_reader_cannot_invert(
+    def _resolve_replay_capability(
         self, *, inverse: DeclaredOuterInverse
-    ) -> None:
-        """Refuse to publish a payload the continuous-outer reader cannot invert.
+    ) -> OuterReplayCapability:
+        """Settle what a replay of this period may assume, before either search runs.
 
-        The reader recovers the outer action by subtracting the declared map's
-        offset from the chosen stock, which is that map's inverse only where one
-        unit of action moves one unit of outer stock. Any other coefficient is a
-        model the reader cannot replay, and refusing it here is what keeps the
-        published decision the solved one: a payload the reader declines to
-        invert is replaced by the generic action-grid winner, which ranks a
-        different candidate set and reports no error for doing so.
+        Reads the declared structure only — names, signatures, row axes — so the
+        answer is the same for both outer searches and for every state a
+        simulation later arrives at. NNBEGM refuses phase variation before the
+        kernels are built, so the declarations read here are the ones simulation
+        reads; and the bindable names come from the params template rather than
+        a call's params, so a later `simulate` call cannot widen or narrow them.
 
-        Raises:
-            RegimeInitializationError: If the certified coefficient is not one.
+        Args:
+            inverse: The period's certified inverse of the declared outer map.
+
+        Returns:
+            The `OuterReplayCapability` the published policy carries.
         """
-        if inverse.coefficient == Fraction(1):
-            return
-        msg = (
-            f"Regime {self.regime_name!r} moves {inverse.coefficient} units of "
-            f"outer stock per unit of {self.outer_action!r}. Continuous-outer "
-            "replay recovers the action by subtracting the declared map's "
-            "offset from the chosen stock, which inverts the map only at one "
-            "unit per unit, so no simulation policy is published for this one. "
-            "Declare the outer post-decision target as `new = old + action`, or "
-            "solve the regime with `NNBEGM(outer_search=FiniteOuterGrid(...))`, "
-            "which recovers the action by the map's own coefficient and so "
-            "inverts every power of two."
+        return resolve_outer_replay_capability(
+            inverse=inverse,
+            functions=self.replay_functions,
+            bindable_names=self.replay_bindable_names,
+            outer_post_decision_name=self.outer_post_decision,
+            outer_action_name=self.outer_action,
+            outer_no_adjustment_name=self.outer_no_adjustment_name,
+            outer_state_name=self.outer_state_name,
+            state_names=self.replay_state_names,
+            row_passive_state_names=self.row_passive_state_names,
+            # The published rows carry a discrete-action axis exactly when the
+            # inner solve makes a discrete choice.
+            row_discrete_action_names=self.inner_discrete_action_names,
         )
-        raise RegimeInitializationError(msg)
 
     def _candidate_outer_targets(
         self,
