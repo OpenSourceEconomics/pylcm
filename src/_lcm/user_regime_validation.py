@@ -269,9 +269,12 @@ def _collective_value_constraint_errors(regime: lcm.regime.Regime) -> list[str]:
             f"reserved separator '{QNAME_DELIMITER}': {invalid_names}."
         )
 
+    # The engine-facing names: a value constraint's own name is the key its
+    # declaration sits under, so reading the declared names would report
+    # every value constraint as colliding with itself.
     taken = (
-        set(regime.functions)
-        | set(regime.constraints)
+        set(regime.decomposed_functions)
+        | set(regime.decomposed_constraints)
         | set(regime.states)
         | set(regime.actions)
     )
@@ -319,10 +322,10 @@ def _reference_projection_free_param_errors(regime: lcm.regime.Regime) -> list[s
 
     """
     supplied = (
-        set(regime.functions)
+        set(regime.decomposed_functions)
         | set(regime.states)
         | set(regime.actions)
-        | set(regime.constraints)
+        | set(regime.decomposed_constraints)
         | set(regime.derived_categoricals)
         | {"period", "age"}
     )
@@ -459,11 +462,13 @@ def _validate_mapping_contents(regime: lcm.regime.Regime) -> None:
             attr_name="actions", mapping=regime.actions, allow_phase_variants=False
         ),
         *_callable_mapping_errors(
-            attr_name="functions", mapping=regime.functions, allow_phase_variants=True
+            attr_name="functions",
+            mapping=regime.decomposed_functions,
+            allow_phase_variants=True,
         ),
         *_callable_mapping_errors(
             attr_name="constraints",
-            mapping=regime.constraints,
+            mapping=regime.decomposed_constraints,
             allow_phase_variants=False,
         ),
     ]
@@ -483,7 +488,10 @@ def _validate_logical_consistency(regime: lcm.regime.Regime) -> None:
     """
     error_messages: list[str] = []
 
-    all_function_names = [*regime.constraints.keys(), *regime.functions.keys()]
+    all_function_names = [
+        *regime.decomposed_constraints.keys(),
+        *regime.decomposed_functions.keys(),
+    ]
     invalid_function_names = [
         name for name in all_function_names if QNAME_DELIMITER in name
     ]
@@ -516,13 +524,15 @@ def _validate_logical_consistency(regime: lcm.regime.Regime) -> None:
     error_messages.extend(_validate_active(regime.active))
     error_messages.extend(_state_transition_grammar_errors(regime))
     error_messages.extend(_joint_transition_grammar_errors(regime))
-    error_messages.extend(_regime_transition_grammar_errors(regime.transition))
+    error_messages.extend(
+        _regime_transition_grammar_errors(regime.decomposed_transition)
+    )
     error_messages.extend(
         _age_specialized_scope_errors(
-            transition=regime.transition,
+            transition=regime.decomposed_transition,
             state_transitions=regime.state_transitions,
-            functions=regime.functions,
-            constraints=regime.constraints,
+            functions=regime.decomposed_functions,
+            constraints=regime.decomposed_constraints,
             terminal=regime.terminal,
         )
     )
@@ -777,7 +787,9 @@ def _validate_completeness(
         # A collective regime supplies a per-stakeholder `utility_<s>` in place
         # of a single `utility`.
         missing = [
-            s for s in regime.stakeholders if f"utility_{s}" not in regime.functions
+            s
+            for s in regime.stakeholders
+            if f"utility_{s}" not in regime.decomposed_functions
         ]
         if missing:
             error_messages.append(
@@ -785,7 +797,7 @@ def _validate_completeness(
                 f"function for each stakeholder. Missing: "
                 f"{[f'utility_{s}' for s in missing]}.",
             )
-    elif "utility" not in regime.functions:
+    elif "utility" not in regime.decomposed_functions:
         error_messages.append(
             "A 'utility' function must be provided in the functions dictionary.",
         )
@@ -1004,7 +1016,7 @@ def _validate_function_output_grid_indexing(
     if it ever produces false positives, prefer deleting it over hardening
     it to chase every way the pattern can hide.
     """
-    function_output_names = set(regime.functions)
+    function_output_names = set(regime.decomposed_functions)
     discrete_grid_names = (
         {name for name, grid in regime.states.items() if isinstance(grid, DiscreteGrid)}
         | {
@@ -1170,11 +1182,17 @@ def _joint_transition_grammar_errors(  # noqa: C901, PLR0912
 
     error_messages: list[str] = []
     reachable = _regime_transition_target_names(regime.transition)
+    # A joint node's name may not clash with anything already spoken for,
+    # and that is both what the author wrote and what the engine binds: a
+    # value constraint's own key is a live name, and so is each
+    # stakeholder's `utility_<s>`. Neither set contains the other.
     declared_names = (
         set(regime.states)
         | set(regime.actions)
         | set(regime.functions)
+        | set(regime.decomposed_functions)
         | set(regime.constraints)
+        | set(regime.decomposed_constraints)
         | set(regime.derived_categoricals)
     )
     reserved_prefixes = ("next_", "support_", "weight_", "key_")
@@ -1381,7 +1399,7 @@ def _law_has_free_parameter(law: object, regime: lcm.regime.Regime) -> bool:
     variables = (
         set(regime.states)
         | set(regime.actions)
-        | set(regime.functions)
+        | set(regime.decomposed_functions)
         | {f"next_{state_name}" for state_name in regime.states}
         | {f"next_{state_name}" for state_name in regime.state_transitions}
         | {"period", "age", "E_next_V"}
@@ -1914,7 +1932,7 @@ def _fold_transition_read_errors(
     transition_roots: list[Callable] = []
     for value in regime.state_transitions.values():
         transition_roots.extend(_flatten_transition_callables(value))
-    transition_roots.extend(_flatten_transition_callables(regime.transition))
+    transition_roots.extend(_flatten_transition_callables(regime.decomposed_transition))
 
     resolution_table = _fold_resolution_table(regime)
     transition_hit: set[str] = set()

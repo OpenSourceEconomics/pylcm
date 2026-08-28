@@ -98,8 +98,8 @@ def test_collective_utility_becomes_one_utility_function_per_stakeholder():
     """Each stakeholder's flow utility lands under the name the engine reads."""
     regime = _new_vocabulary_regimes()["married_ir"]
 
-    assert regime.functions["utility_f"] is _u_married_ir_f
-    assert regime.functions["utility_m"] is _u_married_ir_m
+    assert regime.decomposed_functions["utility_f"] is _u_married_ir_f
+    assert regime.decomposed_functions["utility_m"] is _u_married_ir_m
 
 
 def test_value_dependent_constraint_keeps_its_references_local():
@@ -115,7 +115,7 @@ def test_value_dependent_transition_keeps_the_ordinary_transition_entry():
     """The target still carries its selection probability, gate or no gate."""
     regime = _new_vocabulary_regimes()["married"]
 
-    transition = regime.transition
+    transition = regime.decomposed_transition
     assert isinstance(transition, Mapping)
     assert set(transition) == {"married_ir"}
     assert isinstance(transition["married_ir"], MarkovTransition)
@@ -351,11 +351,11 @@ def test_a_bare_probability_callable_is_wrapped_for_the_lowered_grammar():
         },
     )
 
-    transition = regime.transition
+    transition = regime.decomposed_transition
     assert isinstance(transition, Mapping)
-    lowered = transition["married_ir"]
-    assert isinstance(lowered, MarkovTransition)
-    assert lowered.func is _prob_one
+    cell = transition["married_ir"]
+    assert isinstance(cell, MarkovTransition)
+    assert cell.func is _prob_one
 
 
 def _derived_snapshot(regime: Regime) -> dict[str, object]:

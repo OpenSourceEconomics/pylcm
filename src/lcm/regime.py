@@ -592,29 +592,57 @@ class Regime:
     def decomposed_functions(
         self,
     ) -> Mapping[FunctionName, UserFunction | Phased | None]:
-        """`functions` with any `CollectiveUtility` already taken apart.
+        """`functions` with any `CollectiveUtility` taken apart.
 
-        The slot accepts a `CollectiveUtility`, and construction replaces it
-        with one `utility_<s>` entry per stakeholder — so the mapping an engine
-        stage reads never holds one, and this is where that is said in a type.
+        A `CollectiveUtility` under `"utility"` is replaced by one
+        `utility_<s>` entry per stakeholder, in the order the household
+        declares them — so the mapping an engine stage reads never holds a
+        declaration object, whatever order the entries reached the regime in. A
+        stakeholder whose body is delegated keeps the entry the regime already
+        carries; the delegation itself was validated at construction.
+
+        Deterministic and idempotent: a regime that declares no household is
+        returned unchanged, and reading the view never changes the regime.
         """
-        return cast(
-            "Mapping[FunctionName, UserFunction | Phased | None]", self.functions
-        )
+        return decompose_functions(self.functions)
 
     @property
     def decomposed_constraints(
         self,
     ) -> Mapping[FunctionName, ConstraintLike | Phased | None]:
-        """`constraints` with any `ValueDependentConstraint` already taken apart.
+        """`constraints` with every `ValueDependentConstraint` taken apart.
 
-        Construction moves each declaration's predicate into `value_constraints`
-        and its references into `same_period_refs`, so what stays here is the
-        ordinary constraints alone.
+        A value-dependent constraint's predicate belongs to
+        `value_constraints` and its projections to `same_period_refs`, so what
+        this view holds is the ordinary constraints alone — the ones evaluated
+        before and independently of the action values.
+
+        Deterministic and idempotent, like the other two views.
         """
-        return cast(
-            "Mapping[FunctionName, ConstraintLike | Phased | None]", self.constraints
-        )
+        return decompose_constraints(self.constraints)
+
+    @property
+    def decomposed_transition(
+        self,
+    ) -> (
+        UserFunction
+        | MarkovTransition
+        | Phased
+        | Mapping[RegimeName, MarkovTransition | UserFunction | Phased]
+        | None
+    ):
+        """`transition` with every `ValueDependentTransition` taken apart.
+
+        A value-dependent transition carries two facts at once: which target
+        the regime selects, and how the household is routed once there. The
+        second belongs to `gated_edges`; what stays here is the selection
+        probability, in the per-target cell the canonical pipeline reads. A
+        bare probability callable is wrapped, because that cell's grammar takes
+        a `MarkovTransition`.
+
+        Deterministic and idempotent, like the other two views.
+        """
+        return decompose_transition(self.transition)
 
     def _lower_collective_utility(self) -> None:
         """Split `functions["utility"]` into stakeholders and their utilities."""
@@ -816,7 +844,7 @@ class Regime:
             return cast("UserFunction", value)
 
         result: dict[str, UserFunction] = {
-            name: resolve(func) for name, func in self.functions.items()
+            name: resolve(func) for name, func in self.decomposed_functions.items()
         }
         for name, spec in self.states.items():
             if isinstance(spec, Phased):
@@ -824,8 +852,9 @@ class Regime:
                 # imputation; the law of motion is its regular
                 # `state_transitions` entry, collected below.
                 result[name] = cast("UserFunction", spec.solve)
-        result |= cast("Mapping[str, UserFunction]", self.constraints)
-        if self.transition is not None:
+        result |= cast("Mapping[str, UserFunction]", self.decomposed_constraints)
+        decomposed_transition = self.decomposed_transition
+        if decomposed_transition is not None:
             joint_output_names = {
                 state_name
                 for kernels in self.joint_transitions.values()
@@ -843,7 +872,7 @@ class Regime:
                 joint_output_names=joint_output_names,
             )
             result |= {name: resolve(func) for name, func in collected.items()}
-            transition = self.transition
+            transition = decomposed_transition
             if isinstance(transition, Phased):
                 transition = (
                     transition.solve if phase == "solve" else transition.simulate
@@ -864,6 +893,80 @@ class Regime:
     ) -> dict[FunctionName, UserFunction]:
         """Add internal functions required by a specialized regime declaration."""
         return functions
+
+    def with_engine_functions(
+        self,
+        *,
+        engine_functions: Mapping[FunctionName, UserFunction | Phased | None],
+        **other_slots: Any,  # noqa: ANN401
+    ) -> Regime:
+        """Overlay engine-composed functions without disturbing the declarations.
+
+        Regime building reads a regime's functions through
+        `decomposed_functions`, composes more of them, and hands the result
+        back. Writing that result straight into `functions` would put the
+        decomposition where the declaration was, and the household would be
+        gone. This writes back by provenance instead: an entry the declaration
+        produced is the declaration's, and is left to it; everything else is
+        the engine's, and is overlaid on the slot the author wrote.
+
+        Args:
+            engine_functions: The complete mapping the engine intends the
+                regime's `decomposed_functions` to be.
+            **other_slots: Further slots to replace, as `replace` takes them.
+
+        Returns:
+            A new regime carrying the engine's additions, whose declarations
+            are the ones this regime was written with.
+
+        Raises:
+            RegimeInitializationError: If the engine mapping rewrites a
+                stakeholder's declared utility, replaces a declaration object,
+                or does not reproduce what the resulting regime decomposes to.
+        """
+        declaration = self.functions.get("utility")
+        if not isinstance(declaration, CollectiveUtility):
+            return self.replace(functions=engine_functions, **other_slots)
+
+        declared_bodies = {
+            f"utility_{stakeholder}": body
+            for stakeholder, body in declaration.utilities.items()
+            if body is not None
+        }
+        overlay: dict[FunctionName, UserFunction | Phased | None] = {}
+        for name, func in engine_functions.items():
+            if name == "utility":
+                raise RegimeInitializationError(
+                    "The engine mapping supplies a plain 'utility' for a regime "
+                    "whose utility is a `CollectiveUtility`. Writing it back "
+                    "would replace the household by a single utility."
+                )
+            if name in declared_bodies:
+                if func is not declared_bodies[name]:
+                    raise RegimeInitializationError(
+                        f"The engine mapping supplies a different body for "
+                        f"{name!r}, which this regime's `CollectiveUtility` "
+                        f"declares. A stakeholder's utility is hers to declare."
+                    )
+                continue
+            overlay[name] = func
+
+        raw = {
+            name: func
+            for name, func in self.functions.items()
+            if name not in declared_bodies
+        }
+        written = self.replace(
+            functions=MappingProxyType({**raw, **overlay}), **other_slots
+        )
+        missing = sorted(set(engine_functions) - set(written.decomposed_functions))
+        if missing:
+            raise RegimeInitializationError(
+                f"Writing the engine mapping back would lose {missing} from what "
+                "the regime decomposes to. The write-back overlays engine "
+                "additions on the declarations; it cannot express a removal."
+            )
+        return written
 
     def replace(self, **kwargs: Any) -> Regime:  # noqa: ANN401
         """Replace the attributes of the regime.
@@ -888,3 +991,151 @@ class Regime:
             raise RegimeInitializationError(
                 f"Failed to replace attributes of the regime. The error was: {e}"
             ) from e
+
+
+def decompose_functions(
+    functions: Mapping[FunctionName, UserFunction | Phased | CollectiveUtility | None],
+) -> Mapping[FunctionName, UserFunction | Phased | None]:
+    """Replace a `CollectiveUtility` by one utility entry per stakeholder.
+
+    Args:
+        functions: A regime's `functions` as declared.
+
+    Returns:
+        The same mapping with any `CollectiveUtility` under `"utility"`
+        replaced by one `utility_<s>` entry per stakeholder, emitted in the
+        order the household declares them so that the result does not depend on
+        the order the entries reached the regime in. A stakeholder whose body
+        is delegated keeps the entry the mapping already carries. A mapping
+        declaring no household is returned unchanged, which makes the
+        transformation idempotent.
+    """
+    declaration = functions.get("utility")
+    if not isinstance(declaration, CollectiveUtility):
+        return cast("Mapping[FunctionName, UserFunction | Phased | None]", functions)
+    stakeholder_entries = {
+        f"utility_{stakeholder}" for stakeholder in declaration.utilities
+    }
+    decomposed: dict[FunctionName, UserFunction | Phased | None] = {
+        name: cast("UserFunction | Phased | None", func)
+        for name, func in functions.items()
+        if name != "utility" and name not in stakeholder_entries
+    }
+    for stakeholder, utility in declaration.utilities.items():
+        entry = f"utility_{stakeholder}"
+        decomposed[entry] = cast(
+            "UserFunction | Phased | None",
+            functions[entry] if utility is None else utility,
+        )
+    return MappingProxyType(decomposed)
+
+
+def decompose_constraints(
+    constraints: Mapping[
+        FunctionName, ConstraintLike | Phased | ValueDependentConstraint | None
+    ],
+) -> Mapping[FunctionName, ConstraintLike | Phased | None]:
+    """Drop the value-dependent declarations from a regime's constraints.
+
+    Args:
+        constraints: A regime's `constraints` as declared.
+
+    Returns:
+        The ordinary constraints alone — the ones evaluated before and
+        independently of the action values. A value-dependent constraint's
+        predicate belongs to `value_constraints` and its projections to
+        `same_period_refs`, so neither appears here.
+    """
+    return MappingProxyType(
+        {
+            name: cast("ConstraintLike | Phased | None", constraint)
+            for name, constraint in constraints.items()
+            if not isinstance(constraint, ValueDependentConstraint)
+        }
+    )
+
+
+def decompose_transition(
+    transition: object,
+) -> (
+    UserFunction
+    | MarkovTransition
+    | Phased
+    | Mapping[RegimeName, MarkovTransition | UserFunction | Phased]
+    | None
+):
+    """Replace every `ValueDependentTransition` by the probability it declares.
+
+    Args:
+        transition: A regime's `transition` as declared, including the `Phased`
+            form.
+
+    Returns:
+        The same transition with each value-dependent cell replaced by its
+        selection probability. The routing half of the declaration belongs to
+        `gated_edges` and does not appear here.
+    """
+    if isinstance(transition, Phased):
+        solve = _decomposed_transition_side(transition.solve)
+        simulate = _decomposed_transition_side(transition.simulate)
+        if solve is transition.solve and simulate is transition.simulate:
+            return transition
+        return Phased(solve=solve, simulate=simulate)
+    return _decomposed_transition_side(transition)
+
+
+def _decomposed_transition_side(
+    transition: object,
+) -> (
+    UserFunction
+    | MarkovTransition
+    | Phased
+    | Mapping[RegimeName, MarkovTransition | UserFunction | Phased]
+    | None
+):
+    """Replace one phase's `ValueDependentTransition` cells by their probabilities.
+
+    Args:
+        transition: One phase's regime transition — a per-target mapping, a
+            coarse callable or `MarkovTransition`, or `None` for a terminal
+            regime.
+
+    Returns:
+        The same transition with every `ValueDependentTransition` cell replaced
+        by the selection probability it declares, wrapped in a
+        `MarkovTransition` where the declaration gave a bare callable. Anything
+        that is not a per-target mapping is returned unchanged.
+    """
+    if not isinstance(transition, Mapping):
+        return cast(
+            "UserFunction | MarkovTransition | Phased | None",
+            transition,
+        )
+    if not any(
+        isinstance(cell, ValueDependentTransition) for cell in transition.values()
+    ):
+        # Nothing to take apart. Returning the very same mapping keeps the
+        # phase-variation scan able to ask whether the author wrote one object
+        # for both phases, which a freshly built copy would always deny.
+        return cast(
+            "Mapping[RegimeName, MarkovTransition | UserFunction | Phased]", transition
+        )
+    return MappingProxyType(
+        {
+            target: (
+                _as_markov_transition(cell.probability)
+                if isinstance(cell, ValueDependentTransition)
+                else cast("MarkovTransition | UserFunction | Phased", cell)
+            )
+            for target, cell in transition.items()
+        }
+    )
+
+
+def _as_markov_transition(
+    probability: UserFunction | MarkovTransition,
+) -> MarkovTransition:
+    """Wrap a bare probability callable in the cell grammar's `MarkovTransition`."""
+    if isinstance(probability, MarkovTransition):
+        return probability
+    return MarkovTransition(probability)

@@ -989,7 +989,9 @@ def _function_names_in_transition_role(
         functions.
 
     """
-    functions = user_regime.functions
+    # A law binds an argument to a DAG node, so the names to resolve against
+    # are the engine's, not the author's.
+    functions = user_regime.decomposed_functions
     feeders: set[str] = set()
     frontier = [
         variant
@@ -1070,7 +1072,7 @@ def _collect_all_functions_for_template(
             user_regime.state_transitions,
             joint_output_names=joint_output_names,
         )
-        result |= _regime_transition_entries(user_regime.transition)
+        result |= _regime_transition_entries(user_regime.decomposed_transition)
     result |= {
         name: func
         for name, (_template_key, func) in _gated_edge_entries(user_regime).items()

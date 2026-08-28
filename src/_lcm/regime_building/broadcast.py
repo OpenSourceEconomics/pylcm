@@ -326,7 +326,7 @@ def _valuation_roots(
     """Key the payoff side of the regime — utility, categoricals, constraints, W."""
     functions = {
         name: cast("UserFunction", _for_phase(func, phase=phase))
-        for name, func in regime.functions.items()
+        for name, func in regime.decomposed_functions.items()
     }
     utility_names = (
         tuple(f"utility_{stakeholder}" for stakeholder in regime.stakeholders)
@@ -345,7 +345,7 @@ def _valuation_roots(
     }
     roots |= {
         f"__constraint__{name}": cast("UserFunction", _for_phase(value, phase=phase))
-        for name, value in regime.constraints.items()
+        for name, value in regime.decomposed_constraints.items()
     }
     if not regime.terminal:
         aggregator = regime.get_koopmans_aggregator(phase=phase) or koopmans_aggregator
@@ -359,7 +359,7 @@ def _transition_roots(
 ) -> dict[str, UserFunction]:
     """Key regime routing plus every edge-local joint probability and output law."""
     roots: dict[str, UserFunction] = {}
-    transition = _for_phase(regime.transition, phase=phase)
+    transition = _for_phase(regime.decomposed_transition, phase=phase)
     if isinstance(transition, Mapping):
         roots |= {
             f"__next_regime__{target_regime_name}": cast("UserFunction", cell)

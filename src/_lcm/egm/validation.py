@@ -438,7 +438,8 @@ def fail_if_declared_lower_bound_disagrees_with_the_grid(
     # declaration normalization accepts.
     normalized = normalize_constraints(
         constraints=cast(
-            "Mapping[FunctionName, ConstraintLike]", dict(user_regime.constraints)
+            "Mapping[FunctionName, ConstraintLike]",
+            dict(user_regime.decomposed_constraints),
         )
     )
     for constraint_name, constraint in normalized.items():
@@ -850,9 +851,9 @@ def _savings_stage_candidates(
                     transition_func,
                 )
             )
-    if user_regime.transition is not None:
+    if user_regime.decomposed_transition is not None:
         for label, regime_transition in _transition_variants(
-            value=user_regime.transition
+            value=user_regime.decomposed_transition
         ):
             candidates.append(
                 (

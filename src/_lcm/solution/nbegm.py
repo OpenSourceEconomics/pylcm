@@ -2378,7 +2378,9 @@ def _fail_if_discrete_action_feeds_continuation(
 
     regime = context.user_regimes[context.regime_name]
     funcs: dict[str, Callable[..., object]] = {
-        name: func for name, func in regime.functions.items() if callable(func)
+        name: func
+        for name, func in regime.decomposed_functions.items()
+        if callable(func)
     }
     budget_nodes = {budget_target, post_decision_function}
 
