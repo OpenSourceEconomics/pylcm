@@ -97,11 +97,12 @@ done = UserRegime(
 )
 
 
-def get_model() -> Model:
+def get_model(*, n_subjects: int | None = None) -> Model:
     return Model(
         regimes={"alive": alive, "done": done},
         ages=AgeGrid(start=40, stop=41, step="Y"),
         regime_id_class=ToyRegimeId,
+        n_subjects=n_subjects,
     )
 
 

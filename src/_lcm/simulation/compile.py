@@ -345,10 +345,19 @@ def _build_argmax_args(
     subject_states = _subject_shape_arrays(
         base.states, n_subjects=n_subjects, sharding=subject_sharding
     )
+    taste_shock_kwargs = {}
+    if regime.has_taste_shocks:
+        _, taste_shock_keys = generate_simulation_keys(
+            key=jax.random.key(0),
+            names=["taste_shock"],
+            n_initial_states=n_subjects,
+        )
+        taste_shock_kwargs = {"taste_shock_key": taste_shock_keys["key_taste_shock"]}
     return {
         **subject_states,
         **base.discrete_actions,
         **base.continuous_actions,
+        **taste_shock_kwargs,
         "next_regime_to_V_arr": next_regime_to_V_arr,
         **regime_params,
         "period": jnp.int32(period),
