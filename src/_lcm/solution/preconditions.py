@@ -95,7 +95,7 @@ def check_pareto_weights(
     """
     for regime_name, regime in regimes.items():
         weights = regime.solution.pareto_weights
-        if weights is None or not weights.arg_names:
+        if weights is None:
             continue
         regime_params = MappingProxyType(
             {

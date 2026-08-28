@@ -646,7 +646,7 @@ def process_regimes(  # noqa: PLR0915
             # phase builds. Both are `None` for a singleton (non-collective)
             # regime, which is what the downstream builds branch on.
             stakeholders = user_regime.stakeholders
-            pareto_weights = _resolve_pareto_weights(user_regime)
+            pareto_weights = _resolve_pareto_weights(user_regime, spec)
             # The (deduplicated, order-preserving) regimes
             # whose same-period V this regime reads; drives the within-period
             # topological solve order and the kernel's same-period V threading.
@@ -1319,7 +1319,9 @@ def _edge_reference_regimes(user_regime: UserRegime) -> tuple[RegimeName, ...]:
     return tuple(dict.fromkeys(names))
 
 
-def _resolve_pareto_weights(user_regime: UserRegime) -> ParetoWeights | None:
+def _resolve_pareto_weights(
+    user_regime: UserRegime, spec: PhasedRegimeSpec
+) -> ParetoWeights | None:
     """Resolve a collective regime's household Pareto weight evaluator.
 
     Returns `None` for a singleton regime (the default, and the marker the
@@ -1339,6 +1341,12 @@ def _resolve_pareto_weights(user_regime: UserRegime) -> ParetoWeights | None:
         objective=user_regime.pareto_objective,
         stakeholders=stakeholders,
         state_names=frozenset(user_regime.states),
+        carried_imputations=MappingProxyType(
+            {
+                name: spec.solution.functions[name]
+                for name in spec.carried_only_state_names
+            }
+        ),
     )
 
 
