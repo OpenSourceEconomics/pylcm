@@ -248,6 +248,7 @@ def build_model(
     durable_law: Callable[..., object] | Phased | None = None,
     constraints: Mapping[str, Callable[..., object]] | None = None,
     utility_function: Callable[..., object] | AgeSpecializedFunction | Phased = utility,
+    outer_post_decision_function: Callable[..., object] | None = None,
     regime_transition: Callable[..., object] | Phased = next_regime,
     koopmans_aggregator: Callable[..., object] | Phased | None = None,
     carried_state: bool = False,
@@ -271,6 +272,10 @@ def build_model(
     variants keep solving the same model.
     `scale_function` overrides the fixed cost's `adjustment_scale` function,
     so a caller can drive the scale from a flat param.
+    `outer_post_decision_function` overrides `new_illiquid`, the outer
+    post-decision margin every variant reads the chosen stock through. It is the
+    map N-NB-EGM must invert, so a caller can declare one the solver is required
+    to refuse.
     `regime_transition` and `koopmans_aggregator` expose the other public phase
     slots to build-time capability tests without changing the numerical toy.
     `carried_state=True` adds an otherwise unused solve-imputed/simulate-carried
@@ -286,7 +291,13 @@ def build_model(
     final_age_alive = 20 + (n_periods - 2) * 5
     functions = {
         "utility": utility_function,
-        "new_illiquid": new_illiquid,
+        # Resolved at call time, not captured as a default: a default argument
+        # binds at definition, which would make `toy.new_illiquid` unpatchable.
+        "new_illiquid": (
+            new_illiquid
+            if outer_post_decision_function is None
+            else outer_post_decision_function
+        ),
         "resources": resources,
         "liquid_savings": liquid_savings,
         "credited": credited,

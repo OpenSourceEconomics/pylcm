@@ -29,7 +29,7 @@ from lcm.exceptions import (
     UnrepresentableOuterCandidateError,
 )
 from lcm.regime import Regime
-from lcm.solvers import FiniteOuterGrid
+from lcm.solvers import AdaptiveOuterMesh, FiniteOuterGrid
 from lcm.typing import ContinuousAction, ContinuousState, FloatND
 from tests.test_models import n_nbegm_toy
 
@@ -336,4 +336,54 @@ def test_a_declared_node_the_solve_cannot_reconstruct_stops_the_solve(level) -> 
             n_live=jnp.asarray([True]),
             regime_name="working",
             period=0,
+        )
+
+
+_LOSSY_MESH = AdaptiveOuterMesh(
+    initial_grid=n_nbegm_toy.OUTER_GRID,
+    max_nodes=513,
+    max_refinement_rounds=10,
+    value_atol=1e-4,
+    value_rtol=1e-4,
+    golden_iterations=40,
+)
+
+
+def _lossy_new_illiquid(
+    illiquid: ContinuousState, illiquid_investment: ContinuousAction
+) -> ContinuousState:
+    """`s' = Z + Iz`, with the outer action round-tripped through float16.
+
+    Structurally affine with unit slope, so the coefficient certificate reads a
+    clean map -- while the round trip has quantized the action the solve would
+    later have to recover.
+    """
+    hop = jnp.asarray(illiquid_investment).astype(jnp.float16).astype(jnp.float64)
+    return illiquid + hop
+
+
+@pytest.mark.parametrize(
+    "outer_search", [None, _LOSSY_MESH], ids=["finite", "adaptive"]
+)
+def test_a_lossy_outer_map_is_refused_before_any_policy_is_published(
+    outer_search: AdaptiveOuterMesh | None,
+) -> None:
+    """No outer search may publish a replay policy for a map it cannot invert.
+
+    The refusal belongs to the declared map, not to the search that ranks it, so
+    it must reach the finite grid and the adaptive mesh identically. A route that
+    publishes instead hands simulation a policy whose outer action cannot be
+    recovered, and replay then selects a different decision without saying so.
+    """
+    model = n_nbegm_toy.build_model(
+        variant="n_nbegm",
+        n_periods=3,
+        outer_post_decision_function=_lossy_new_illiquid,
+        outer_search=outer_search,
+    )
+    with pytest.raises(RegimeInitializationError, match="cannot invert"):
+        model.solve(
+            params={"discount_factor": 0.95},
+            log_level="off",
+            return_simulation_policy=True,
         )

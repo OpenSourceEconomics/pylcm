@@ -45,6 +45,7 @@ from _lcm.egm.outer_candidates import (
 )
 from _lcm.egm.outer_carry import collapse_continuous_candidate_bank
 from _lcm.egm.outer_inversion import (
+    DeclaredOuterInverse,
     abstract_like,
     certify_declared_outer_inverse,
     invert_declared_outer_target,
@@ -961,6 +962,16 @@ class _NNBEGMPeriodKernel:
             ages=ages,
             logger=logger,
         )
+        # One certificate per period, resolved before either outer search runs.
+        # It reads the declared map's structure, which is what both searches
+        # depend on and neither owns; certifying inside one of them leaves the
+        # other free to publish a replay policy for a map nothing can invert.
+        outer_inverse = self._certify_outer_inverse(
+            state_action_space=state_action_space,
+            flat_params=flat_params,
+            period=period,
+            ages=ages,
+        )
         if isinstance(self.outer_search, AdaptiveOuterMesh):
             return self._solve_continuous(
                 keeper_result=keeper_result,
@@ -975,6 +986,7 @@ class _NNBEGMPeriodKernel:
                 logger=logger,
             )
         return self._solve_finite(
+            outer_inverse=outer_inverse,
             keeper_result=keeper_result,
             compiled_cores=compiled_cores,
             state_action_space=state_action_space,
@@ -989,6 +1001,7 @@ class _NNBEGMPeriodKernel:
     def _solve_finite(
         self,
         *,
+        outer_inverse: DeclaredOuterInverse,
         keeper_result: KernelResult,
         compiled_cores: Mapping[str, Callable],
         state_action_space: StateActionSpace,
@@ -1076,6 +1089,7 @@ class _NNBEGMPeriodKernel:
         else:
             candidate_discrete_actions = None
         candidate_outer_target = self._candidate_outer_targets(
+            outer_inverse=outer_inverse,
             candidate_inner_action=candidate_inner_action,
             candidate_discrete_actions=candidate_discrete_actions,
             discrete_action_names=discrete_action_names,
@@ -1339,9 +1353,54 @@ class _NNBEGMPeriodKernel:
             ),
         )
 
+    def _certify_outer_inverse(
+        self,
+        *,
+        state_action_space: StateActionSpace,
+        flat_params: FlatParams,
+        period: int,
+        ages: AgeGrid,
+    ) -> DeclaredOuterInverse:
+        """Return the declared outer map's certified inverse for this period.
+
+        The certificate is structural: it reads argument names and shapes and
+        never values, so scalar stand-ins for the action arguments certify the
+        same map the search later binds to full candidate arrays.
+
+        Raises:
+            RegimeInitializationError: If the outer action does not enter the
+                declared map affinely with an exactly invertible coefficient.
+        """
+        params = dict(flat_params[self.regime_name])
+        accepted = inspect.signature(self.outer_target_function).parameters
+        scalar = jnp.zeros(())
+        pool: dict[str, object] = {
+            **params,
+            **{
+                name: jnp.asarray(values)
+                for name, values in state_action_space.states.items()
+            },
+            **{name: jnp.int32(0) for name in self.inner_discrete_action_names},
+            self.inner_action: scalar,
+            self.outer_action: scalar,
+            "period": jnp.int32(period),
+            "age": ages.values[period],
+        }
+        bound = {name: value for name, value in pool.items() if name in accepted}
+        return certify_declared_outer_inverse(
+            func=self.outer_target_function,
+            arg_names=tuple(bound),
+            abstract_args=abstract_like(tuple(bound.values())),
+            outer_action_name=self.outer_action,
+            outer_post_decision_name=self.outer_post_decision,
+            outer_state_domain=self.outer_state_domain,
+            regime_name=self.regime_name,
+        )
+
     def _candidate_outer_targets(
         self,
         *,
+        outer_inverse: DeclaredOuterInverse,
         candidate_inner_action: FloatND,
         candidate_discrete_actions: IntND | None,
         discrete_action_names: tuple[ActionName, ...],
@@ -1401,26 +1460,16 @@ class _NNBEGMPeriodKernel:
         def evaluate(outer_action: FloatND) -> Mapping[str, FloatND]:
             return self.outer_target_function(**bind(outer_action))
 
-        # The certificate reads the map's structure, so it is taken against the
-        # same argument set the solve binds -- names and shapes, never values.
+        # The map evaluated at a zero outer action: the offset the certified
+        # inverse subtracts. The certificate itself is resolved once per period
+        # before either outer search runs, and arrives as `outer_inverse`.
         bound_at_zero = bind(jnp.zeros_like(candidate_inner_action))
-        pool_names = tuple(bound_at_zero)
-        pool_values = tuple(bound_at_zero.values())
-
         at_zero_results = self.outer_target_function(**bound_at_zero)
         at_zero = jnp.broadcast_to(
             jnp.asarray(at_zero_results[self.outer_post_decision]),
             candidate_inner_action.shape,
         )
-        inverse = certify_declared_outer_inverse(
-            func=self.outer_target_function,
-            arg_names=pool_names,
-            abstract_args=abstract_like(pool_values),
-            outer_action_name=self.outer_action,
-            outer_post_decision_name=self.outer_post_decision,
-            outer_state_domain=self.outer_state_domain,
-            regime_name=self.regime_name,
-        )
+        inverse = outer_inverse
 
         if self.outer_no_adjustment_name is None:
             keeper_base = jnp.broadcast_to(
