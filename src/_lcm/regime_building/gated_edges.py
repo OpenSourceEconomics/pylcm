@@ -19,15 +19,19 @@ raw target V, threaded through the ordinary transition machinery
 **Numerics (non-negotiable).** The mixture is the strict
 `jnp.where(gate, V_target, V_fallback)`, never a linear
 `gate*V_target + (1-gate)*V_fallback`: the target value carries the `-inf`
-sentinel in dissolution cells, and `0 * -inf = NaN`. Every read that
-lands the target value — including the gate's own `V_target_<s>` reads — is an
-on-grid identity-projection interpolation, so it is exact.
+sentinel in dissolution cells, and `0 * -inf = NaN`. The target's own value
+components and dissolution flag — including the gate's own `V_target_<s>`
+reads — are taken by DIRECT array indexing off the same-period mapping, never
+interpolated, so a `-inf` dissolution cell cannot poison a neighbour.
 
-The whole fold reuses the same-period reference-reader machinery
-(`_build_same_period_ref_reader`): the target's own value components and dissolution
-flag are read as identity-projection references of the target regime, and the
-gate refs / leg fallbacks as ordinary projected references. The per-cell fold is
-product-mapped over the target regime's state grid.
+Each gate reference and leg fallback is read at the SOURCE'S LANDING POINT, by
+the same-period reference-reader machinery (`_build_same_period_ref_reader`),
+and is deliberately left un-mapped over the target grid. Tabulating
+`V_ref o projection` on that grid and interpolating the tabulation equals
+`V_ref(projection(landing))` only where the projection is affine, so a curved
+projection would price a branch at a value it does not pay — and forward
+simulation, which evaluates the projection at the realized point, would route on
+the other number.
 """
 
 from collections.abc import Callable, Container, Iterable, Mapping
@@ -719,30 +723,6 @@ def _select_period_callable[T](
         )
         raise KeyError(msg)
     return by_period[period]
-
-
-def _pad_reader_to_state_names(
-    reader: Callable[..., FloatND],
-    *,
-    state_names: tuple[StateName, ...],
-) -> Callable[..., FloatND]:
-    """Widen a reader's exposed signature to every one of `state_names`.
-
-    `reader`'s own args are kept (states it genuinely reads, plus any extra
-    runtime params, e.g. grid points for an irregular-grid projection); any
-    `state_names` entry missing from that set is added as an ignored
-    keyword-only argument, so `_grid_reader`'s downstream `productmap` (which
-    always maps over the FULL `state_names`) sees every axis in the wrapped
-    function's own signature and does not drop it.
-    """
-    own_args = tuple(get_union_of_args([reader]))
-    padded_args = tuple(dict.fromkeys((*own_args, *state_names)))
-
-    @with_signature(args=padded_args, return_annotation="FloatND")
-    def padded(**kwargs: _ParamsLeaf) -> FloatND:
-        return reader(**{name: kwargs[name] for name in own_args})
-
-    return padded
 
 
 def _reached_target_param_leaves(
@@ -1552,9 +1532,11 @@ def get_edge_fold(
     the grid-level stack is exact. They are interpolated once, at the landing
     point, by the same reader every other continuation goes through — a target
     carrying `-inf` dissolution cells is therefore no more exposed here than it
-    is on the ordinary ungated route into the same regime. The gate references
-    and leg fallbacks read OTHER (finite) regimes at projected coordinates and
-    are interpolated onto the target grid first, product-mapped over it.
+    is on the ordinary ungated route into the same regime. The gate references and
+    leg fallbacks read OTHER (finite) regimes at projected coordinates, each
+    evaluated at the source's landing point rather than tabulated on the target
+    grid — see `_landing_reader` for why tabulating them would be wrong for a
+    curved projection.
 
     Args:
         edge: The resolved edge declaration.
@@ -1895,13 +1877,18 @@ def get_edge_simulate_gate_evaluator(
       this evaluator does: the value gate is approximate by construction, and
       the two failure modes above are what a caller has to plan around.
     - The BOOLEAN `D_target` operand (a no-dissolution gate) is a DOCUMENTED
-      RESIDUAL: the float-cast flag is linearly interpolated and thresholded
-      at 0.5 (`_assemble_gate_kwargs`'s `D_target` branch), rather than
-      recomputed from `D`'s own underlying per-action value comparison at the
-      realized point. Recomputing it would mean re-deriving `D` from
-      internals the fold never exposes here, so a gate reading ONLY
-      `D_target` (a pure dissolution gate) is only nearest-node-equivalent
-      off-grid — linear interpolation plus a threshold — not exact.
+      RESIDUAL: the float-cast flag is linearly interpolated and then marked
+      dissolved on ANY positive mass — `d_value > _D_THRESHOLD` with
+      `_D_THRESHOLD = 0.0` (`_assemble_gate_kwargs`'s `D_target` branch) —
+      rather than recomputed from `D`'s own underlying per-action value
+      comparison at the realized point. The strict zero threshold is what keeps
+      a `~D_target` gate closed in every cell carrying any weight on a dissolved
+      node: an open branch would read that node's `-inf` value. A midpoint
+      threshold would instead open the gate across half of every straddling
+      cell. Recomputing `D` would mean re-deriving it from internals the fold
+      never exposes here, so a gate reading ONLY `D_target` (a pure dissolution
+      gate) remains approximate off-grid — it is exact about which cells are
+      untouched by dissolution, not about the realized `D` itself.
 
     **Numerics.** Unlike `get_edge_fold`'s target-V read (exact grid-point
     indexing, to dodge `0 * -inf = nan` poisoning a dissolution cell's
@@ -2013,13 +2000,14 @@ def get_edge_simulate_gate_evaluator(
     gate_arg_names = compiled.gate_arg_names
     reads_d_target = "D_target" in gate_arg_names
 
-    # Gate-ref readers: the IDENTICAL per-cell construction `get_edge_fold`
-    # uses for its own `gate_ref_readers` (the same qualified refs, off the
-    # same builder), but WITHOUT that function's `_grid_reader` product-map
-    # wrap — `get_edge_fold` maps these over the full target GRID (solve time,
-    # one evaluation per grid cell); here each reader is called directly at ONE
-    # realized point (vmapped by the caller over subjects), exactly the
-    # off-grid idiom `_build_same_period_ref_reader` is built for everywhere else.
+    # Gate-ref readers: the IDENTICAL construction `get_edge_fold` uses for its
+    # own landing readers (the same qualified refs, off the same builder). Both
+    # phases evaluate a reference at a single point rather than tabulating it on
+    # the target grid; they differ only in which point. Solve reads the source's
+    # landing point, simulate the realized one (vmapped by the caller over
+    # subjects) — the off-grid idiom `_build_same_period_ref_reader` is built for
+    # everywhere else. Sharing the point-evaluation order is what makes the two
+    # phases agree on the branch for a curved projection.
     gate_ref_readers = {
         ref_name: _build_same_period_ref_reader(
             ref=ref,
@@ -2403,7 +2391,7 @@ def _assemble_gate_kwargs(
                 # carries a flag entry for the target, and that builder refuses
                 # a gate reading `D_target` with no flag to read, so this
                 # guards a hand-assembled mapping only. Fail clearly instead of
-                # `None > 0.5`.
+                # `None > _D_THRESHOLD`.
                 msg = (
                     "This gate reads 'D_target', but the same-period value "
                     "mapping carries no dissolution-flag array for the target "
