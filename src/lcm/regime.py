@@ -720,7 +720,15 @@ class Regime:
                     "so agreeing on the gate alone is not agreeing. Declare "
                     "it once."
                 )
-            entries[target] = declaration.probability
+            # The lowered per-target cell requires a `MarkovTransition`, so a
+            # bare probability callable is wrapped rather than refused: the
+            # declared type and the resulting grammar say the same thing.
+            probability = declaration.probability
+            entries[target] = (
+                probability
+                if isinstance(probability, MarkovTransition)
+                else MarkovTransition(probability)
+            )
             gated_edges[target] = lowered
         object.__setattr__(self, "transition", entries)
         object.__setattr__(self, "gated_edges", gated_edges)

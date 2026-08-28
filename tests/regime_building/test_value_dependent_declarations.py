@@ -310,3 +310,49 @@ def test_an_edge_declared_twice_must_agree_in_full():
                 )
             },
         )
+
+
+def test_a_bare_probability_callable_is_wrapped_for_the_lowered_grammar():
+    """`probability` accepts what a plain target transition entry accepts.
+
+    Lowering places the probability in a per-target cell, where the grammar
+    requires a `MarkovTransition`. A bare callable is wrapped on the way
+    through, so the declared type and the resulting grammar agree.
+    """
+    route_f = StakeholderRoute(
+        target_stakeholder="f",
+        fallback=ProjectedRegimeValue(
+            regime="single_f", projection={"wage": _identity_wage}
+        ),
+    )
+    route_m = StakeholderRoute(
+        target_stakeholder="m",
+        fallback=ProjectedRegimeValue(
+            regime="single_m", projection={"wage": _identity_wage}
+        ),
+    )
+
+    regime = Regime(
+        transition={
+            "married_ir": ValueDependentTransition(
+                probability=_prob_one,
+                gate=_no_dissolution_gate,
+                routes={"f": route_f, "m": route_m},
+            )
+        },
+        active=lambda age: age < 1,
+        states={"wage": _WAGE_3},
+        state_transitions={"wage": fixed_transition("wage")},
+        actions={"work": DiscreteGrid(Work)},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _u_zero_collective, "m": _u_zero_collective}
+            )
+        },
+    )
+
+    transition = regime.transition
+    assert isinstance(transition, Mapping)
+    lowered = transition["married_ir"]
+    assert isinstance(lowered, MarkovTransition)
+    assert lowered.func is _prob_one
