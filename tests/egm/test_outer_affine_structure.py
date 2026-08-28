@@ -166,3 +166,25 @@ def test_an_untraceable_map_is_refused_rather_than_assumed() -> None:
     certificate = _certify(hostile)
     assert certificate.coefficient is None
     assert certificate.violation is not None
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    [jnp.float16, jnp.bfloat16, jnp.int32],
+    ids=["float16", "bfloat16", "int32"],
+)
+def test_a_lossy_action_conversion_is_refused(dtype) -> None:
+    """A dtype conversion that quantizes the action is not an affine identity.
+
+    `convert_element_type` preserves array shape while discarding action bits, so
+    treating it as coefficient-preserving would certify a quantized transition as
+    slope one. The recovered action's forward image then differs from the target
+    by far more than a rounding: a float16 round trip moves a target near ten by
+    3e-3, and an int32 round trip by 3e-1. Containment alone cannot catch that,
+    because the wrong image is still inside the declared domain.
+    """
+    certificate = _certify(
+        lambda state, action: state + action.astype(dtype).astype(state.dtype)
+    )
+
+    assert certificate.coefficient is None

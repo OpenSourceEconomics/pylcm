@@ -92,7 +92,6 @@ from _lcm.solution.periodization import (
 )
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from _lcm.typing import FlatParams, RegimeName
-from _lcm.utils.logging import validation_raises
 from lcm.ages import AgeGrid
 from lcm.exceptions import (
     ModelInitializationError,
@@ -1493,7 +1492,7 @@ def _fail_if_the_solve_grid_cannot_reconstruct_a_candidate(
     regime_name: RegimeName,
     period: int,
 ) -> None:
-    """Stop a debug-level solve that cannot reconstruct a candidate it retained.
+    """Stop any solve that cannot reconstruct a candidate it retained.
 
     Applies only to candidates whose target is a declared node -- the adjuster
     search grid, and the keeper when keeping holds the outer state at its own
@@ -1503,13 +1502,18 @@ def _fail_if_the_solve_grid_cannot_reconstruct_a_candidate(
     phase. A custom no-adjustment target is a computed DAG value and is excluded
     by the caller; it drops like a realized state instead.
 
-    Reading the count back is a host transfer, so it happens only in raise mode
-    (`log_level="debug"`), where it is the difference between stopping and not.
-    At every other level the candidate is still dropped -- `nan` in the retained
-    bank -- and simulation reports the drop when it meets it.
+    This refuses at **every** log level, `"off"` included. The log level governs
+    diagnostics, and this is not one: the failure is known before anything is
+    published, and dropping it quietly leaves a policy bank whose contents depend
+    on the diagnostic setting -- the same model would publish different policies
+    at `"off"` and at `"debug"`. Reading the count back costs a host transfer per
+    period, which is the price of not letting a published policy depend on how
+    loudly the run was asked to talk.
+
+    A failure first met at a realized off-grid subject is a different case and
+    keeps its drop-and-announce behaviour: there the state landed awkwardly,
+    which the model author cannot be expected to have precluded.
     """
-    if not validation_raises(logger):
-        return
     n_dropped = int(jnp.sum(dropped))
     if n_dropped == 0:
         return
@@ -1519,10 +1523,15 @@ def _fail_if_the_solve_grid_cannot_reconstruct_a_candidate(
         f"{total} outer candidates at declared nodes but could not reconstruct "
         f"{n_dropped} of them. The outer action recovered from those targets "
         "reaches a stock outside the outer state's declared domain, where "
-        "there is no value function, so they are dropped from the published "
-        "candidate bank. Widen the outer state's grid so every declared node "
-        "is reachable, or narrow the outer search to nodes it can reach."
+        "there is no value function. The solve stops rather than publish a "
+        "candidate bank missing them. Widen the outer state's grid so every "
+        "declared node is reachable, or narrow the outer search to nodes it "
+        "can reach."
     )
+    # Logged as well as raised: the exception may be caught by a caller running
+    # a sweep, and the log is then the only surviving record of which regime and
+    # period failed.
+    logger.error(msg)
     raise UnrepresentableOuterCandidateError(msg)
 
 

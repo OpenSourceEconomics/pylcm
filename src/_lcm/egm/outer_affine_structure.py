@@ -34,9 +34,17 @@ _SUB_JAXPR_PARAM_KEYS = ("jaxpr", "call_jaxpr", "fun_jaxpr")
 
 # Primitives with an exact affine rule in a tainted operand.
 _ADD_PRIMS = frozenset({"add", "add_any"})
+# `convert_element_type` is deliberately absent. It preserves an array's shape
+# while discarding value bits, so a round trip through a narrower dtype leaves the
+# structure affine and the arithmetic quantized: a float16 hop moves a target near
+# ten by 3e-3, an int32 hop by 3e-1. Certifying it as slope one would then admit an
+# interior action whose forward image is materially wrong -- and containment cannot
+# reject that, because the wrong image is still inside the declared domain. A
+# widening conversion is value-preserving and would be safe, but it is refused too
+# rather than carrying a per-dtype rule for a form no supported map uses; a map
+# that needs one is solved by `GridSearch`.
 _PASS_THROUGH_PRIMS = frozenset(
     {
-        "convert_element_type",
         "reshape",
         "broadcast_in_dim",
         "squeeze",
