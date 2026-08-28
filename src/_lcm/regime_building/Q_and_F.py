@@ -1580,6 +1580,29 @@ def evaluate_projected_readers(
     }
 
 
+@dataclass(frozen=True, kw_only=True)
+class _NodeDrawResolution:
+    """One target's draw-dependent laws, resolved at a single node.
+
+    Every consumer that needs a landing coordinate for such a law goes through
+    `resolve_at_node`, so the interpolated channels and a gated edge's projected
+    references are read at the same landing rather than at two coordinates that
+    only coincide when the law is affine in the draw.
+    """
+
+    interpolator: Callable[..., FloatND]
+    """The target's V interpolator, resolving the laws below on the node axis."""
+
+    resolve_at_node: Callable[..., Mapping[str, FloatND]]
+    """Resolve the draw-dependent laws at one node, keyed `next_<state>`."""
+
+    resolved_names: frozenset[TransitionFunctionName]
+    """The `next_<state>` names `resolve_at_node` returns."""
+
+    arg_names: tuple[str, ...]
+    """Arguments `resolve_at_node` must be called with."""
+
+
 def _get_pointwise_gated_interpolator(
     *,
     base_interpolator: Callable[..., FloatND],
@@ -1590,6 +1613,7 @@ def _get_pointwise_gated_interpolator(
     projected_readers: tuple[ProjectedLandingReader, ...],
     target_ages: Float1D,
     co_map_state_names: tuple[StateName, ...],
+    draw_resolution: _NodeDrawResolution | None = None,
 ) -> Callable[..., FloatND]:
     """Read a gated edge's operand surfaces at the landing point, then gate.
 
@@ -1620,6 +1644,11 @@ def _get_pointwise_gated_interpolator(
         target_ages: Age at each model period, indexed by the fold period.
         co_map_state_names: States whose axes the caller sliced off, so no
             coordinate for them reaches this signature.
+        draw_resolution: The target's draw-dependent laws, when it has any. A law
+            resolved on the node axis has no coordinate in this signature either,
+            so a reference landing on such a state is resolved here through the
+            same node resolution the channels interpolate under, rather than
+            demanded from a caller that cannot supply it.
 
     Returns:
         A callable returning the gated continuation, one trailing axis per leg
@@ -1655,6 +1684,20 @@ def _get_pointwise_gated_interpolator(
         }
     }
     last_period = len(target_ages) - 1
+    # A landing coordinate the node resolution produces is not an argument: the
+    # law that forms it reads the draw, which only exists inside the node axis.
+    resolved_names = (
+        draw_resolution.resolved_names if draw_resolution is not None else frozenset()
+    )
+    resolver_arg_names = (
+        draw_resolution.arg_names if draw_resolution is not None else ()
+    )
+    resolve_at_node = (
+        draw_resolution.resolve_at_node if draw_resolution is not None else None
+    )
+    resolved_landing = {
+        landing for landing in landing_names.values() if landing in resolved_names
+    }
     outer_arg_names = sorted(
         (
             set(interpolator_args)
@@ -1675,9 +1718,11 @@ def _get_pointwise_gated_interpolator(
                 if arg not in context_args
             }
             | ({"period"} if context_args else set())
+            | (set(resolver_arg_names) if resolved_landing else set())
         )
         - {EDGE_CHANNELS_ARG}
         - reader_names
+        - resolved_landing
     )
 
     @with_signature(args=outer_arg_names, return_annotation="FloatND")
@@ -1695,6 +1740,14 @@ def _get_pointwise_gated_interpolator(
             ],
             axis=-1,
         )
+        # Resolved on the same node the channels were just interpolated on, from
+        # the same pure laws, so a reference and the channel it is gated against
+        # cannot land on two different coordinates.
+        landing: dict[str, FloatND] = {}
+        if resolve_at_node is not None and resolved_landing:
+            landing = dict(
+                resolve_at_node(**{name: kwargs[name] for name in resolver_arg_names})
+            )
         context: dict[str, FloatND] = {}
         if context_args:
             # The gate speaks about the period the source LANDS in. Clipping
@@ -1712,7 +1765,12 @@ def _get_pointwise_gated_interpolator(
         projected_values = evaluate_projected_readers(
             projected_readers,
             landing_states={
-                arg: cast("ContinuousState | DiscreteState", kwargs[landing_names[arg]])
+                arg: cast(
+                    "ContinuousState | DiscreteState",
+                    landing[landing_names[arg]]
+                    if landing_names[arg] in landing
+                    else kwargs[landing_names[arg]],
+                )
                 for reader in projected_readers
                 for arg in reader.state_args
             },
@@ -1728,7 +1786,10 @@ def _get_pointwise_gated_interpolator(
             **{
                 name: context[name]
                 if name in context_args
-                else kwargs[landing_names.get(name, name)]
+                else landing.get(
+                    landing_names.get(name, name),
+                    kwargs.get(landing_names.get(name, name)),
+                )
                 for name in combine_args
                 if name != EDGE_CHANNELS_ARG and name not in reader_names
             },
@@ -2316,7 +2377,7 @@ def _get_interpolator_resolving_draws(
     draw_dependent_names: tuple[TransitionFunctionName, ...],
     node_values: MappingProxyType[TransitionFunctionName, Any],
     support_provider_names: MappingProxyType[TransitionFunctionName, str],
-) -> Callable[..., FloatND]:
+) -> _NodeDrawResolution:
     """Wrap the interpolator so draw-dependent laws resolve on the node axis.
 
     The caller product-maps the result over the target's node axes, so one call
@@ -2324,6 +2385,12 @@ def _get_interpolator_resolving_draws(
     function; the draw's *value* is what a dependent law reads. Both come from the
     same node, which is why resolving them here — inside the axis the process
     already contributes — needs no second axis and no parameter for the draw.
+
+    The resolution is published alongside the interpolator rather than sealed
+    inside it, because a gated edge's projected references are read at the point
+    the source lands and need the same landing coordinates. A law resolved here
+    is absent from the interpolator's signature, so a consumer that only saw the
+    interpolator would have to demand a coordinate no caller can supply.
 
     Args:
         next_V_interpolator: The target's value-function interpolator.
@@ -2335,8 +2402,9 @@ def _get_interpolator_resolving_draws(
             by the value its next-state function yields.
 
     Returns:
-        A callable with the interpolator's signature, minus the laws it resolves
-        itself, plus whatever resolving them reads.
+        The interpolator, which carries the interpolator's signature minus the
+        laws it resolves itself plus whatever resolving them reads, bundled with
+        the node resolution those laws come from.
 
     """
     resolve = concatenate_functions(
@@ -2362,8 +2430,10 @@ def _get_interpolator_resolving_draws(
         (interpolator_args - set(draw_dependent_names)) | resolver_args | support_args
     )
 
-    @with_signature(args=arg_names)
-    def interpolate_at_this_node(**kwargs: Any) -> FloatND:  # noqa: ANN401
+    resolver_arg_names = sorted(resolver_args | support_args)
+
+    @with_signature(args=resolver_arg_names)
+    def resolve_at_this_node(**kwargs: Any) -> Mapping[str, FloatND]:  # noqa: ANN401
         drawn: dict[str, Any] = {}
         for name in read_as_a_draw:
             index = kwargs[name].astype(jnp.int32)
@@ -2375,18 +2445,29 @@ def _get_interpolator_resolving_draws(
                 )
             else:
                 drawn[name] = node_values[name][index]
-        resolved = resolve(
+        return resolve(
             **{
                 k: v for k, v in kwargs.items() if k in resolver_args and k not in drawn
             },
             **drawn,
+        )
+
+    @with_signature(args=arg_names)
+    def interpolate_at_this_node(**kwargs: Any) -> FloatND:  # noqa: ANN401
+        resolved = resolve_at_this_node(
+            **{k: v for k, v in kwargs.items() if k in resolver_arg_names}
         )
         return next_V_interpolator(
             **{k: v for k, v in kwargs.items() if k in interpolator_args},
             **resolved,
         )
 
-    return interpolate_at_this_node
+    return _NodeDrawResolution(
+        interpolator=interpolate_at_this_node,
+        resolve_at_node=resolve_at_this_node,
+        resolved_names=frozenset(draw_dependent_names),
+        arg_names=tuple(resolver_arg_names),
+    )
 
 
 def _build_target_continuation(
@@ -2510,8 +2591,9 @@ def _build_target_continuation(
             dependencies_by_law=dependencies_by_law,
             v_interpolation_info=v_interpolation_info,
         )
+    draw_resolution: _NodeDrawResolution | None = None
     if dependent_coordinate_names:
-        next_V_interpolator = _get_interpolator_resolving_draws(
+        draw_resolution = _get_interpolator_resolving_draws(
             next_V_interpolator=next_V_interpolator,
             bundle=bundle,
             functions=functions,
@@ -2520,6 +2602,7 @@ def _build_target_continuation(
             node_values=node_values,
             support_provider_names=support_provider_names,
         )
+        next_V_interpolator = draw_resolution.interpolator
 
     # The stakeholder axis is put on last, after every coordinate question has
     # been settled, so the slicing wrapper sees the same interpolator a singleton
@@ -2539,6 +2622,7 @@ def _build_target_continuation(
             projected_readers=gated_continuation.projected_readers,
             target_ages=gated_continuation.target_ages,
             co_map_state_names=co_map_state_names,
+            draw_resolution=draw_resolution,
         )
     elif n_stakeholders is None:
         mapped_interpolator = next_V_interpolator
