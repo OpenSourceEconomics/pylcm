@@ -205,7 +205,7 @@ from _lcm.variables import (
     simulate_variables_from_regime,
 )
 from lcm.ages import AgeGrid
-from lcm.exceptions import ModelInitializationError
+from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.phased import Phased
 from lcm.regime import GatedEdge, ProjectedRegimeValue
 from lcm.regime import Regime as UserRegime
@@ -2555,6 +2555,9 @@ def _build_solution_phase(
     co_map_state_names: tuple[StateName, ...] = ()
     co_map_v_arr_in_axes: tuple[MappingProxyType[RegimeName, int | None], ...] = ()
 
+    period_to_state_nodes = _period_to_state_nodes(
+        regime_name=regime_name, grid_schedule=grid_schedule
+    )
     if spec.terminal:
         compute_regime_transition_probs = None
         validation_regime_transition_probs = None
@@ -2703,9 +2706,7 @@ def _build_solution_phase(
         solution_reachability=phase_reachability,
         Q_and_F_functions=Q_and_F_functions,
         grids=all_grids[regime_name],
-        period_to_state_nodes=_period_to_state_nodes(
-            regime_name=regime_name, grid_schedule=grid_schedule
-        ),
+        period_to_state_nodes=period_to_state_nodes,
         functions=core.functions,
         koopmans_aggregator=core.koopmans_aggregator,
         constraints=core.constraints,
@@ -2795,6 +2796,11 @@ def _build_solution_phase(
         regime_name=regime_name,
         grid_schedule=grid_schedule,
         active_periods=regimes_to_active_periods[regime_name],
+    )
+    _fail_if_phase_state_nodes_disagree(
+        regime_name=regime_name,
+        solve_nodes=period_to_state_nodes,
+        simulate_axes=period_state_axes,
     )
 
     return SolutionPhase(
@@ -6744,6 +6750,124 @@ def _build_next_state_vmapped(
         built[key] = jax.jit(next_state_vmapped) if enable_jit else next_state_vmapped
 
     return expand_groups_to_periods(configs, built)
+
+
+def _fail_if_phase_state_nodes_disagree(
+    *,
+    regime_name: RegimeName,
+    solve_nodes: MappingProxyType[int, MappingProxyType[StateName, Float1D]] | None,
+    simulate_axes: (
+        MappingProxyType[int, MappingProxyType[StateOrActionName, Float1D]] | None
+    ),
+) -> None:
+    """Raise if a regime's two phases would resolve different per-period nodes.
+
+    Solve reads a period's age-specialized node arrays from one table and
+    simulation from another. The two are built by different functions from
+    different inputs, and both fall back to the published grid for a period they
+    do not carry -- so a disagreement between them would not surface as an
+    error. It would surface as the solve certifying candidates against one set
+    of domain endpoints while simulation replays against another, which is the
+    divergence the outer-target inversion exists to prevent. Refuse it where the
+    tables are built rather than let a plausible domain be substituted.
+
+    Args:
+        regime_name: Named in the refusal so the modeller knows where to look.
+        solve_nodes: The solve phase's per-period node table, or `None` when the
+            regime declares no age-specialized state.
+        simulate_axes: The simulation phase's per-period axis table, or `None`
+            under the same condition.
+
+    Raises:
+        RegimeInitializationError: If exactly one phase carries a table, if the
+            two carry different periods or states, or if any shared entry
+            resolves to different nodes.
+    """
+    if solve_nodes is None and simulate_axes is None:
+        return
+    if solve_nodes is None or simulate_axes is None:
+        present, absent = (
+            ("solve", "simulation")
+            if simulate_axes is None
+            else ("simulation", "solve")
+        )
+        msg = (
+            f"Regime {regime_name!r} resolves per-period state nodes in its "
+            f"{present} phase but not in its {absent} phase. The two phases "
+            "would then admit candidates against different domain endpoints. "
+            "This is an internal inconsistency in how the regime's age-"
+            "specialized grids were normalized; please report it."
+        )
+        raise RegimeInitializationError(msg)
+
+    if solve_nodes.keys() != simulate_axes.keys():
+        only_solve = sorted(set(solve_nodes) - set(simulate_axes))
+        only_simulate = sorted(set(simulate_axes) - set(solve_nodes))
+        msg = (
+            f"Regime {regime_name!r} resolves per-period state nodes for "
+            f"different periods in its two phases: {only_solve} only in solve, "
+            f"{only_simulate} only in simulation. Both phases must carry every "
+            "period the regime is active in. This is an internal inconsistency "
+            "in how the regime's age-specialized grids were normalized; please "
+            "report it."
+        )
+        raise RegimeInitializationError(msg)
+
+    for period in sorted(solve_nodes):
+        solve_period, simulate_period = solve_nodes[period], simulate_axes[period]
+        if solve_period.keys() != simulate_period.keys():
+            only_solve = sorted(set(solve_period) - set(simulate_period))
+            only_simulate = sorted(set(simulate_period) - set(solve_period))
+            msg = (
+                f"Regime {regime_name!r} resolves different age-specialized "
+                f"states in period {period}: {only_solve} only in solve, "
+                f"{only_simulate} only in simulation. This is an internal "
+                "inconsistency in how the regime's age-specialized grids were "
+                "normalized; please report it."
+            )
+            raise RegimeInitializationError(msg)
+        for state_name in sorted(solve_period):
+            solve_axis = jnp.asarray(solve_period[state_name])
+            simulate_axis = jnp.asarray(simulate_period[state_name])
+            agrees = solve_axis.shape == simulate_axis.shape and bool(
+                jnp.array_equal(solve_axis, simulate_axis)
+            )
+            if not agrees:
+                msg = (
+                    f"Regime {regime_name!r} resolves state {state_name!r} in "
+                    f"period {period} to different nodes in its two phases: "
+                    f"{_describe_node_disagreement(solve_axis, simulate_axis)}. "
+                    "A solve that certifies candidates against one grid and a "
+                    "simulation that replays them against another disagree "
+                    "about which values are representable. This is an internal "
+                    "inconsistency in how the regime's age-specialized grids "
+                    "were normalized; please report it."
+                )
+                raise RegimeInitializationError(msg)
+
+
+def _describe_node_disagreement(solve_axis: Float1D, simulate_axis: Float1D) -> str:
+    """Return the offending values, not merely the shapes they came in.
+
+    Two axes of equal length differ somewhere in their values, and naming the
+    shapes twice says nothing about where. Report the first index at which they
+    part and both node values there.
+    """
+    if solve_axis.shape != simulate_axis.shape:
+        return (
+            f"solve has shape {solve_axis.shape}, simulation has shape "
+            f"{simulate_axis.shape}"
+        )
+    differing = jnp.flatnonzero(solve_axis != simulate_axis)
+    if differing.size == 0:
+        return "the two axes differ in dtype or in a non-finite entry"
+    first = int(differing[0])
+    return (
+        f"they first differ at index {first}, where solve has "
+        f"{float(solve_axis[first])!r} and simulation has "
+        f"{float(simulate_axis[first])!r} ({int(differing.size)} of "
+        f"{int(solve_axis.size)} nodes differ)"
+    )
 
 
 def _fail_if_action_has_batch_size(

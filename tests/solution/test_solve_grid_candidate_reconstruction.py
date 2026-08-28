@@ -53,21 +53,28 @@ def test_debug_stops_the_solve_and_names_the_counts() -> None:
 
 
 @pytest.mark.parametrize("log_level", ["warning", "progress", "off"])
-def test_every_other_level_leaves_the_solve_running(log_level) -> None:
-    """Below raise mode the solve continues; the candidate is dropped silently.
+def test_every_other_level_stops_the_solve_too(log_level) -> None:
+    """An unreconstructable declared node stops the solve at every log level.
 
-    The drop itself happens where the bank is written, independently of this
-    gate. What the level governs is whether the solve stops on it.
+    The log level governs diagnostics, and this is not one. The failure is known
+    before anything is published, so letting it pass below raise mode would make
+    the published policy bank depend on the diagnostic setting -- the same model
+    would publish one policy at `log_level="off"` and a different one at
+    `"debug"`. A candidate whose target is a declared node is refused wherever
+    it is found.
     """
     live, dropped = _masks()
 
-    _gate(
-        logger=get_logger(log_level=log_level),
-        dropped=dropped,
-        n_live=live,
-        regime_name="alive",
-        period=1,
-    )
+    with pytest.raises(
+        UnrepresentableOuterCandidateError, match="reconstruct 1 of them"
+    ):
+        _gate(
+            logger=get_logger(log_level=log_level),
+            dropped=dropped,
+            n_live=live,
+            regime_name="alive",
+            period=1,
+        )
 
 
 def test_a_solve_reconstructing_every_candidate_does_not_stop() -> None:

@@ -22,7 +22,10 @@ import jax
 import jax.numpy as jnp
 import pytest
 
-from _lcm.egm.outer_affine_structure import certify_outer_coefficient
+from _lcm.egm.outer_affine_structure import (
+    _PASS_THROUGH_PRIMS,
+    certify_outer_coefficient,
+)
 
 
 def _certify(func):
@@ -166,3 +169,82 @@ def test_an_untraceable_map_is_refused_rather_than_assumed() -> None:
     certificate = _certify(hostile)
     assert certificate.coefficient is None
     assert certificate.violation is not None
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    [jnp.float16, jnp.bfloat16, jnp.int32],
+    ids=["float16", "bfloat16", "int32"],
+)
+def test_a_lossy_action_conversion_is_refused(dtype) -> None:
+    """A dtype conversion that quantizes the action is not an affine identity.
+
+    `convert_element_type` preserves array shape while discarding action bits, so
+    treating it as coefficient-preserving would certify a quantized transition as
+    slope one. The recovered action's forward image then differs from the target
+    by far more than a rounding: a float16 round trip moves a target near ten by
+    3e-3, and an int32 round trip by 3e-1. Containment alone cannot catch that,
+    because the wrong image is still inside the declared domain.
+    """
+    certificate = _certify(
+        lambda state, action: state + action.astype(dtype).astype(state.dtype)
+    )
+
+    assert certificate.coefficient is None
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    [jnp.float16, jnp.bfloat16],
+    ids=["float16", "bfloat16"],
+)
+def test_a_widening_action_conversion_is_refused_too(dtype) -> None:
+    """A conversion is refused for being a conversion, not for losing bits here.
+
+    Widening the action back out of a narrow dtype preserves every value it
+    still holds, so this direction is arithmetically safe. It is refused anyway:
+    the walk certifies from structure, and a rule admitting conversions it can
+    prove exact would have to carry a per-dtype exactness table and be right
+    about every pair. No supported map converts the action, so the narrow
+    refusal costs nothing a model needs, and a map that genuinely needs one is
+    solved by `GridSearch`.
+    """
+    certificate = _certify(lambda state, action: state + action.astype(dtype))
+
+    assert certificate.coefficient is None
+
+
+def test_a_conversion_hidden_inside_a_jit_wrapper_is_still_refused() -> None:
+    """A nested call cannot launder a conversion past the certificate.
+
+    The walk descends into sub-jaxprs, so a quantizing hop wrapped in `jit` has
+    to be refused exactly as the bare one is. If descent stopped at the call
+    primitive the wrapper would be an opaque box certifying slope one, which is
+    the same false certificate with one more layer around it.
+    """
+
+    @jax.jit
+    def quantize(action):
+        return action.astype(jnp.float16).astype(jnp.float32)
+
+    certificate = _certify(lambda state, action: state + quantize(action))
+
+    assert certificate.coefficient is None
+
+
+def test_a_four_fold_dyadic_coefficient_still_certifies_exactly() -> None:
+    """Refusing conversions leaves the supported dyadic coefficients untouched."""
+    certificate = _certify(lambda state, action: state + 4 * action)
+
+    assert certificate.coefficient == Fraction(4)
+
+
+def test_the_conversion_primitive_is_not_a_pass_through() -> None:
+    """`convert_element_type` must stay out of the pass-through set.
+
+    Named directly so that restoring it fails on the rule itself and not only
+    through the behaviour tests above. A pass-through entry asserts that a
+    primitive preserves the action's value, and this one preserves only its
+    shape.
+    """
+    assert "convert_element_type" not in _PASS_THROUGH_PRIMS
