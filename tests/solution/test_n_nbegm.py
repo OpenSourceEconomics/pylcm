@@ -121,11 +121,17 @@ def test_nnbegm_rejects_a_nonlinear_outer_action_mapping(
 def test_nnbegm_rejects_a_zero_slope_outer_target(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """NNBEGM requires a nonzero conditional outer-action slope."""
+    """An outer post-decision target that ignores the outer action is refused.
+
+    A constant map retains no information about the action that reached it, so
+    no action can be recovered from a retained target.
+    """
     monkeypatch.setattr(toy, "new_illiquid", _zero_slope_outer_target)
     model = toy.build_model(variant="n_nbegm", n_periods=2)
 
-    with pytest.raises(RegimeInitializationError, match="nonzero slope"):
+    with pytest.raises(
+        RegimeInitializationError, match="does not depend on the outer action"
+    ):
         model.solve(params=_PARAMS, log_level="off")
 
 

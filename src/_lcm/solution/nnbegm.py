@@ -539,11 +539,6 @@ class NNBEGM(TwoMarginSolver):
         inner_action = _nnbegm_inner_action(
             context=context, outer_action=bound.outer_action
         )
-        outer_state_points = context.grids[bound.outer_state].to_jax()
-        outer_state_domain = (
-            float(outer_state_points[0]),
-            float(outer_state_points[-1]),
-        )
         # Carry-row axis names, in the carry contract's order: discrete states
         # first (V state order), then passive continuous states (every
         # continuous state except the inner Euler axis). Used to derive the
@@ -559,6 +554,25 @@ class NNBEGM(TwoMarginSolver):
             if isinstance(context.grids[name], ContinuousGrid)
             and name != spec.continuous_state
         )
+        # A domain endpoint is a node value, so it is the solved period's own.
+        # With an age-specialized outer grid the representative age's endpoints
+        # are the wrong ones everywhere else: a stock only the later ages hold
+        # would be judged out of domain and dropped, and a stock past a
+        # narrower age's edge would be admitted with no value function to read
+        # it on.
+        representative_outer_values = context.grids[bound.outer_state].to_jax()
+
+        def _outer_state_domain_at(period: int) -> tuple[float, float]:
+            per_period = context.period_to_state_nodes
+            nodes = (
+                representative_outer_values
+                if per_period is None
+                else per_period.get(period, {}).get(
+                    bound.outer_state, representative_outer_values
+                )
+            )
+            return float(nodes[0]), float(nodes[-1])
+
         branch_aggregation_by_period = {
             period: _resolve_branch_fixed_cost(
                 aggregator=bound.branch_aggregator,
@@ -574,7 +588,7 @@ class NNBEGM(TwoMarginSolver):
                     regime_name=context.regime_name,
                     outer_grid_values=outer_grid_values,
                     outer_state_name=bound.outer_state,
-                    outer_state_domain=outer_state_domain,
+                    outer_state_domain=_outer_state_domain_at(period),
                     outer_post_decision=bound.outer_post_decision,
                     outer_target_function=outer_target_function_by_period[period],
                     outer_batch_size=outer_batch_size,

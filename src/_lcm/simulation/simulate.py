@@ -1151,17 +1151,13 @@ def _redecide_branch_and_read_policy(
     return MappingProxyType(new_actions), reported_value
 
 
-# Numerical tolerance certifying the outer transition's unit action slope
-# (the affine inversion contract of the nested policy read). The fixed floor
-# preserves the fp64 contract; the ULP allowance covers the two rounded
-# evaluations and their subtraction in fp32.
-
 # Per-subject residual tolerance (relative to the post-decision scale) certifying
 # that the recovered outer action actually reproduces the winning post-decision
 # through the transition: `|T(states, a_recovered) - s'| <= rtol * (1 + |s'|)`.
-# A two-point 0/1 slope probe cannot see a non-affine transition that merely
-# happens to satisfy `T(1) - T(0) = 1`; this check evaluates the transition at
-# the ACTUAL recovered action and rejects the subject otherwise.
+# The coefficient is certified from the map's structure, which is a statement
+# about the traced arithmetic rather than about how it evaluates; this check
+# evaluates the transition at the ACTUAL recovered action and rejects the
+# subject when structure and evaluation disagree.
 _TRANSITION_RESIDUAL_RTOL = 1e-6
 
 
@@ -1372,11 +1368,11 @@ def _read_nested_policy(
         n_subjects=n_subjects,
     )
 
-    # F3: certify the affine inversion per subject AT the recovered action, not
-    # only through the 0/1 slope probe. `outer_action = s' - offset`, so an
-    # affine-unit transition reproduces `T(states, outer_action) == s'` exactly;
-    # a non-affine transition that happened to pass the two-point slope test
-    # leaves a residual here and the subject falls back to the grid argmax.
+    # Certify the affine inversion per subject AT the recovered action, not from
+    # the map's structure alone. `outer_action = s' - offset`, so a transition
+    # whose certified coefficient is one reproduces `T(states, outer_action) == s'`
+    # exactly; one whose evaluation disagrees with its certified structure leaves
+    # a residual here and the subject falls back to the grid argmax.
     residual_ok = jnp.abs(
         transition_at(outer_action) - chosen_post_decision
     ) <= _TRANSITION_RESIDUAL_RTOL * (1.0 + jnp.abs(chosen_post_decision))
@@ -2047,8 +2043,22 @@ def _invert_nnbegm_outer_targets(
     at_zero = jnp.broadcast_to(
         jnp.asarray(at_zero_results[policy_read.outer_post_decision]), candidate_shape
     )
-    outer_grid = regime.simulation.grids[policy_read.outer_state_name]
-    outer_state_points = jnp.asarray(outer_grid.to_jax())
+    # The admission domain is the solve's, at this period. Simulation may only
+    # publish what the solve certified, so it reads the endpoints the solve
+    # admitted against rather than forming its own -- an age-varying outer grid
+    # otherwise leaves the two phases disagreeing about which stocks are
+    # representable, which is exactly the divergence this inversion exists to
+    # prevent. `period_state_axes` is `None` for an age-invariant regime, where
+    # the published grid is already the whole story.
+    per_period_axes = regime.solution.period_state_axes
+    outer_state_points = jnp.asarray(
+        regime.simulation.grids[policy_read.outer_state_name].to_jax()
+        if per_period_axes is None
+        else per_period_axes.get(period, {}).get(
+            policy_read.outer_state_name,
+            regime.simulation.grids[policy_read.outer_state_name].to_jax(),
+        )
+    )
     # The same certificate the solve took, against the same declared map. Both
     # phases must recover the action identically, so neither may measure a slope
     # the other read off the structure.
