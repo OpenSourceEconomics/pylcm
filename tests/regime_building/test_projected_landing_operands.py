@@ -25,6 +25,7 @@ from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm import (
     AgeGrid,
+    CollectiveUtility,
     DiscreteGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
@@ -32,6 +33,7 @@ from lcm import (
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    ValueDependentConstraint,
     ValueDependentTransition,
     categorical,
 )
@@ -291,14 +293,21 @@ def _coupled_model(saving_points) -> Model:
             "pair": Regime(
                 transition=None,
                 active=lambda age: age >= 1,
-                stakeholders=("f", "m"),
                 states={"wage": _WAGE},
                 actions={"work": DiscreteGrid(Work)},
-                functions={"utility_f": _pair_payoff, "utility_m": _pair_payoff},
-                value_constraints={"participation_f": _participation_f},
-                same_period_refs={
-                    "V_alone_f": ProjectedRegimeValue(
-                        regime="alone_f", projection={"wage": _identity_wage}
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={"f": _pair_payoff, "m": _pair_payoff}
+                    )
+                },
+                constraints={
+                    "participation_f": ValueDependentConstraint(
+                        predicate=_participation_f,
+                        references={
+                            "V_alone_f": ProjectedRegimeValue(
+                                regime="alone_f", projection={"wage": _identity_wage}
+                            )
+                        },
                     )
                 },
             ),

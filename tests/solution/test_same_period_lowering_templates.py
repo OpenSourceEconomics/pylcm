@@ -24,14 +24,16 @@ from _lcm.solution.grid_search import _GridSearchPeriodKernel
 from _lcm.typing import RegimeName
 from lcm import (
     AgeGrid,
+    CollectiveUtility,
     DiscreteGrid,
-    GatedEdge,
     LinSpacedGrid,
     MarkovTransition,
     Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    ValueDependentConstraint,
+    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -162,23 +164,11 @@ def _build_model() -> Model:
 
     """
     couple = Regime(
-        transition={"single": MarkovTransition(_probability_of_separating)},
-        active=lambda age: age < 1,
-        stakeholders=("f", "m"),
-        states={"wage": _WAGE},
-        state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(_Work)},
-        functions={"utility_f": _couple_utility_f, "utility_m": _couple_utility_m},
-        value_constraints={"participation_f": _wife_participates},
-        same_period_refs={
-            "V_single_ref": ProjectedRegimeValue(
-                regime="single", projection={"wage": _identity_wage}
-            )
-        },
-        gated_edges={
-            "single": GatedEdge(
+        transition={
+            "single": ValueDependentTransition(
+                probability=MarkovTransition(_probability_of_separating),
                 gate=_wage_clears_the_floor,
-                legs={
+                routes={
                     "f": StakeholderRoute(
                         fallback=ProjectedRegimeValue(
                             regime="outside_f", projection={"wage": _identity_wage}
@@ -189,6 +179,25 @@ def _build_model() -> Model:
                             regime="outside_m", projection={"wage": _identity_wage}
                         )
                     ),
+                },
+            )
+        },
+        active=lambda age: age < 1,
+        states={"wage": _WAGE},
+        state_transitions={"wage": fixed_transition("wage")},
+        actions={"work": DiscreteGrid(_Work)},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _couple_utility_f, "m": _couple_utility_m}
+            )
+        },
+        constraints={
+            "participation_f": ValueDependentConstraint(
+                predicate=_wife_participates,
+                references={
+                    "V_single_ref": ProjectedRegimeValue(
+                        regime="single", projection={"wage": _identity_wage}
+                    )
                 },
             )
         },

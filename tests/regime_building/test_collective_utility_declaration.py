@@ -23,7 +23,7 @@ from lcm import (
     categorical,
     fixed_transition,
 )
-from lcm.exceptions import RegimeInitializationError
+from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.typing import (
     ContinuousState,
     DiscreteAction,
@@ -102,11 +102,58 @@ def test_a_none_body_takes_the_utility_already_present_under_its_name():
     assert regime.decomposed_functions["utility_f"] is _u_f
 
 
+def test_a_none_body_may_still_arrive_from_the_model_level():
+    """A delegated body supplied by the model reaches the household that named it.
+
+    Completeness is a property of the merged regime, so a bare `Regime` whose
+    household delegates a body carries no error yet — the model is where the
+    body arrives and where its absence would be reported.
+    """
+    couple = _couple(
+        functions={"utility": CollectiveUtility(utilities={"f": None, "m": _u_m})}
+    )
+    terminal = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        states={"wealth": _WEALTH},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _u_f_terminal, "m": _u_m_terminal}
+            ),
+        },
+    )
+
+    model = Model(
+        regimes={"couple": couple, "couple_terminal": terminal},
+        ages=AgeGrid(start=0, stop=2, step="Y"),
+        regime_id_class=RegimeId,
+        functions={"utility_f": _u_f},
+    )
+
+    assert model.user_regimes["couple"].decomposed_functions["utility_f"] is _u_f
+
+
 def test_a_none_body_with_nothing_to_delegate_to_is_refused_by_name():
     """A stakeholder left undeclared everywhere names the entry that is missing."""
-    with pytest.raises(RegimeInitializationError, match="utility_f"):
-        _couple(
-            functions={"utility": CollectiveUtility(utilities={"f": None, "m": _u_m})}
+    couple = _couple(
+        functions={"utility": CollectiveUtility(utilities={"f": None, "m": _u_m})}
+    )
+    terminal = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        states={"wealth": _WEALTH},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _u_f_terminal, "m": _u_m_terminal}
+            ),
+        },
+    )
+
+    with pytest.raises(ModelInitializationError, match="utility_f"):
+        Model(
+            regimes={"couple": couple, "couple_terminal": terminal},
+            ages=AgeGrid(start=0, stop=2, step="Y"),
+            regime_id_class=RegimeId,
         )
 
 

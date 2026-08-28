@@ -129,9 +129,12 @@ def finalize_regimes(
                 if user_regime.certainty_equivalent is not None
                 else certainty_equivalent
             )
-        finalized = user_regime.replace(
+        # The engine composed these from `decomposed_functions`, so writing
+        # them straight into `functions` would put the decomposition where the
+        # declaration was. The write-back goes by provenance instead.
+        finalized = user_regime.with_engine_functions(
+            engine_functions=MappingProxyType(functions),
             derived_categoricals=merged,
-            functions=MappingProxyType(functions),
             koopmans_aggregator=regime_koopmans_aggregator,
             certainty_equivalent=regime_certainty_equivalent,
         )

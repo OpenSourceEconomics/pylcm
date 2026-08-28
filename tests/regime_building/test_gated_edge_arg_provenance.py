@@ -85,19 +85,26 @@ from _lcm.utils.logging import get_logger
 from lcm import (
     CollectiveUtility,
     DiscreteGrid,
-    GatedEdge,
     IrregSpacedGrid,
     LinSpacedGrid,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    ValueDependentConstraint,
     ValueDependentTransition,
     categorical,
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
 from lcm.transition import MarkovTransition
-from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
+from lcm.typing import (
+    BoolND,
+    ContinuousState,
+    DiscreteAction,
+    FloatND,
+    ScalarInt,
+    UserFunction,
+)
 from tests.regime_building.test_collective_regime_simulate import _solve_and_process
 from tests.regime_building.test_simulate_gate_param_and_leg_selection import (
     exposed_param_name,
@@ -1127,15 +1134,22 @@ def _make_e2_ref_grid_regimes() -> dict[str, Regime]:
     married = Regime(
         transition={"married_terminal": MarkovTransition(_prob_one)},
         active=lambda age: age < 1,
-        stakeholders=("f", "m"),
         states={"wage": IrregSpacedGrid(n_points=2)},
         state_transitions={"wage": _identity_x_wage},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _u_married_f, "utility_m": _u_married_m},
-        value_constraints={"ir_f": _ir_f},
-        same_period_refs={
-            "V_single_f_ref": ProjectedRegimeValue(
-                regime="single_f", projection={"wage": _project_wage}
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _u_married_f, "m": _u_married_m}
+            )
+        },
+        constraints={
+            "ir_f": ValueDependentConstraint(
+                predicate=_ir_f,
+                references={
+                    "V_single_f_ref": ProjectedRegimeValue(
+                        regime="single_f", projection={"wage": _project_wage}
+                    )
+                },
             )
         },
     )
@@ -1521,16 +1535,11 @@ def _gate_reads_outside(V_target: FloatND, outside: FloatND) -> BoolND:
 
 def _make_gate_ref_name_collision_regimes() -> dict[str, Regime]:
     src = Regime(
-        transition={"target": MarkovTransition(_prob_one)},
-        active=lambda age: age < 1,
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        state_transitions={"x": _next_x_offgrid},
-        actions={"work": DiscreteGrid(Work)},
-        functions={"utility": _u_src},
-        gated_edges={
-            "target": GatedEdge(
+        transition={
+            "target": ValueDependentTransition(
+                probability=MarkovTransition(_prob_one),
                 gate=_gate_reads_outside,
-                gate_refs={
+                gate_references={
                     # Injected operand named exactly like the target's `outside`
                     # function below: the concatenated DAG resolves the gate's
                     # `outside` arg to the target NODE (0.9), not this ref (~0.6).
@@ -1538,7 +1547,7 @@ def _make_gate_ref_name_collision_regimes() -> dict[str, Regime]:
                         regime="refregime", projection={"x": _project_realized}
                     )
                 },
-                legs={
+                routes={
                     "only": StakeholderRoute(
                         fallback=ProjectedRegimeValue(
                             regime="fallback", projection={"x": _identity_x}
@@ -1547,6 +1556,11 @@ def _make_gate_ref_name_collision_regimes() -> dict[str, Regime]:
                 },
             )
         },
+        active=lambda age: age < 1,
+        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        state_transitions={"x": _next_x_offgrid},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _u_src},
     )
     target = Regime(
         transition=None,
@@ -1690,22 +1704,17 @@ def _gate_uses_v_target(V_target: FloatND) -> BoolND:
 
 def _make_gate_ref_v_target_alias_regimes() -> dict[str, Regime]:
     src = Regime(
-        transition={"target": MarkovTransition(_prob_one)},
-        active=lambda age: age < 1,
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        state_transitions={"x": _next_x_offgrid},
-        actions={"work": DiscreteGrid(Work)},
-        functions={"utility": _u_src},
-        gated_edges={
-            "target": GatedEdge(
+        transition={
+            "target": ValueDependentTransition(
+                probability=MarkovTransition(_prob_one),
                 gate=_gate_uses_v_target,
-                gate_refs={
+                gate_references={
                     # Aliases the built-in target-value operand `V_target`.
                     "V_target": ProjectedRegimeValue(
                         regime="refregime", projection={"x": _identity_x}
                     )
                 },
-                legs={
+                routes={
                     "only": StakeholderRoute(
                         fallback=ProjectedRegimeValue(
                             regime="fallback", projection={"x": _identity_x}
@@ -1714,6 +1723,11 @@ def _make_gate_ref_v_target_alias_regimes() -> dict[str, Regime]:
                 },
             )
         },
+        active=lambda age: age < 1,
+        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        state_transitions={"x": _next_x_offgrid},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _u_src},
     )
     target = Regime(
         transition=None,
@@ -1819,23 +1833,18 @@ def _gate_reads_x_operand(V_target: FloatND, x: FloatND) -> BoolND:
 
 def _make_gate_ref_key_aliases_target_state_regimes() -> dict[str, Regime]:
     src = Regime(
-        transition={"target": MarkovTransition(_prob_one)},
-        active=lambda age: age < 1,
-        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
-        state_transitions={"x": _next_x_offgrid},
-        actions={"work": DiscreteGrid(Work)},
-        functions={"utility": _u_src},
-        gated_edges={
-            "target": GatedEdge(
+        transition={
+            "target": ValueDependentTransition(
+                probability=MarkovTransition(_prob_one),
                 gate=_gate_reads_x_operand,
-                gate_refs={
+                gate_references={
                     # Aliases the TARGET STATE `x` (not a value/D operand, so the
                     # gate-ref alias fence stays silent).
                     "x": ProjectedRegimeValue(
                         regime="refregime", projection={"x": _identity_x}
                     )
                 },
-                legs={
+                routes={
                     "only": StakeholderRoute(
                         fallback=ProjectedRegimeValue(
                             regime="fallback", projection={"x": _identity_x}
@@ -1844,6 +1853,11 @@ def _make_gate_ref_key_aliases_target_state_regimes() -> dict[str, Regime]:
                 },
             )
         },
+        active=lambda age: age < 1,
+        states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
+        state_transitions={"x": _next_x_offgrid},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _u_src},
     )
     target = Regime(
         transition=None,
@@ -2060,15 +2074,18 @@ def _gate_reads_period_engine_arg(V_target: FloatND, period: ScalarInt) -> BoolN
     return V_target > period
 
 
-def _make_source_param_aliases_engine_params_regimes() -> dict[str, Regime]:
-    """Source gate reads a bare param spelled exactly `SAME_PERIOD_PARAMS_ARG`,
-    supplied in `flat_params['src']` -- so it is both a source param and the fold's
-    engine reference-params leaf."""
+def _make_source_param_aliases_regimes(gate: UserFunction) -> dict[str, Regime]:
+    """A source whose edge into `target` is gated by `gate`.
+
+    The source supplies a bare param in `flat_params['src']` spelled exactly like
+    one of the fold's own arguments, so `gate` decides which collision the fixture
+    exercises.
+    """
     src = Regime(
         transition={
             "target": ValueDependentTransition(
                 probability=MarkovTransition(_prob_one),
-                gate=_gate_reads_params_engine_arg,
+                gate=gate,
                 routes={
                     "only": StakeholderRoute(
                         fallback=ProjectedRegimeValue(
@@ -2099,15 +2116,17 @@ def _make_source_param_aliases_engine_params_regimes() -> dict[str, Regime]:
     return {"src": src, "target": target, "fallback": fallback}
 
 
+def _make_source_param_aliases_engine_params_regimes() -> dict[str, Regime]:
+    """Source gate reads a bare param spelled exactly `SAME_PERIOD_PARAMS_ARG`,
+    supplied in `flat_params['src']` -- so it is both a source param and the fold's
+    engine reference-params leaf."""
+    return _make_source_param_aliases_regimes(_gate_reads_params_engine_arg)
+
+
 def _make_source_param_aliases_period_context_regimes() -> dict[str, Regime]:
-    regimes = _make_source_param_aliases_engine_params_regimes()
-    source = regimes["src"]
-    edge = source.gated_edges["target"]
-    regimes["src"] = replace(
-        source,
-        gated_edges={"target": replace(edge, gate=_gate_reads_period_engine_arg)},
-    )
-    return regimes
+    """Source gate reads `period`, the fold's own context argument, as a bare
+    param supplied in `flat_params['src']`."""
+    return _make_source_param_aliases_regimes(_gate_reads_period_engine_arg)
 
 
 def _u_src_reads_v_arg_param(

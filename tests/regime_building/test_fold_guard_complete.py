@@ -41,6 +41,7 @@ from lcm import (
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    ValueDependentConstraint,
     ValueDependentTransition,
     categorical,
 )
@@ -186,14 +187,19 @@ def _make_singleton_same_period_ref_regimes(*, fold: bool) -> dict[str, Regime]:
     reader = Regime(
         transition={"reader_terminal": MarkovTransition(_prob_one)},
         active=lambda age: age < 1,
-        stakeholders=("f", "m"),
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _u_work, "utility_m": _u_work},
-        value_constraints={"dummy": _dummy_constraint},
-        same_period_refs={
-            "V_ref": ProjectedRegimeValue(
-                regime="ref_target",
-                projection={"wage_shock": lambda: 0.0},
+        functions={
+            "utility": CollectiveUtility(utilities={"f": _u_work, "m": _u_work})
+        },
+        constraints={
+            "dummy": ValueDependentConstraint(
+                predicate=_dummy_constraint,
+                references={
+                    "V_ref": ProjectedRegimeValue(
+                        regime="ref_target",
+                        projection={"wage_shock": lambda: 0.0},
+                    )
+                },
             )
         },
     )

@@ -33,6 +33,7 @@ from lcm import (
     CollectiveUtility,
     DiscreteGrid,
     Model,
+    ValueDependentConstraint,
     categorical,
     fixed_transition,
 )
@@ -163,15 +164,22 @@ def _make_participation_model(*, n_subjects: int | None) -> Model:
     couple = Regime(
         transition={"couple_terminal": MarkovTransition(_certain_transition)},
         active=lambda age: age < 1,
-        stakeholders=("f", "m"),
         states={"education": DiscreteGrid(Education)},
         state_transitions={"education": fixed_transition("education")},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _couple_utility_f, "utility_m": _couple_utility_m},
-        value_constraints={"participation_f": _participation_f},
-        same_period_refs={
-            "V_single_f_ref": ProjectedRegimeValue(
-                regime="single_f", projection={"education": _identity_education}
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _couple_utility_f, "m": _couple_utility_m}
+            )
+        },
+        constraints={
+            "participation_f": ValueDependentConstraint(
+                predicate=_participation_f,
+                references={
+                    "V_single_f_ref": ProjectedRegimeValue(
+                        regime="single_f", projection={"education": _identity_education}
+                    )
+                },
             )
         },
     )

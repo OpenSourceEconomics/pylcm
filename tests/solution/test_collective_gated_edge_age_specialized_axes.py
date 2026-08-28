@@ -38,6 +38,7 @@ from lcm import (
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    ValueDependentConstraint,
     ValueDependentTransition,
     categorical,
     fixed_transition,
@@ -383,12 +384,15 @@ def _build_dissolution_model() -> Model:
     pair = Regime(
         transition={"pair_terminal": MarkovTransition(_certainty)},
         active=lambda age: (age >= 1) & (age < 3),
-        stakeholders=("f", "m"),
         states={"w": AgeSpecializedGrid(build=_moving_grid, signature=_moving_ceiling)},
         state_transitions={"w": fixed_transition("w")},
         actions={"effort": DiscreteGrid(_Effort)},
-        functions={"utility_f": _pair_felicity_f, "utility_m": _pair_felicity_m},
-        value_constraints={"ir_f": _wife_participates},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _pair_felicity_f, "m": _pair_felicity_m}
+            )
+        },
+        constraints={"ir_f": ValueDependentConstraint(predicate=_wife_participates)},
     )
     pair_terminal = Regime(
         transition=None,

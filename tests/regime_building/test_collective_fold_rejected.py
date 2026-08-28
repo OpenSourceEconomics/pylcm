@@ -22,7 +22,7 @@ regime declaring the identical process keeps solving.
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
-from lcm import CollectiveUtility, DiscreteGrid, Model, Regime
+from lcm import CollectiveUtility, DiscreteGrid, Model, Regime, ValueDependentConstraint
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
 from tests.collective_fixtures import (
@@ -120,12 +120,17 @@ def _folding_collective_regimes_with_participation() -> dict[str, Regime]:
     couple = Regime(
         transition=_next_couple_regime,
         active=lambda age: age < 1,
-        stakeholders=("f", "m"),
         states={"wage": WAGE_GRID, "wage_shock": FOLDED_SHOCK},
         state_transitions={"wage": _fixed_wage},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _shocked_wage_utility_f, "utility_m": _consumption_m},
-        value_constraints={"participation_m": _participation_m},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _shocked_wage_utility_f, "m": _consumption_m}
+            )
+        },
+        constraints={
+            "participation_m": ValueDependentConstraint(predicate=_participation_m)
+        },
     )
     couple_terminal = Regime(
         transition=None,

@@ -54,6 +54,7 @@ from lcm import (
     DiscreteGrid,
     LinSpacedGrid,
     Model,
+    ValueDependentConstraint,
     categorical,
     fixed_transition,
 )
@@ -166,21 +167,31 @@ def _make_ir_regimes(
     married = Regime(
         transition={"married_terminal": MarkovTransition(_prob_one)},
         active=lambda age: age < 1,
-        stakeholders=("f", "m"),
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _utility_married_f, "utility_m": _utility_married_m},
-        value_constraints=(
-            {"ir_f": _ir_f, "ir_m": _ir_m} if with_value_constraints else {}
-        ),
-        same_period_refs=(
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _utility_married_f, "m": _utility_married_m}
+            )
+        },
+        constraints=(
             {
-                "V_single_f_ref": ProjectedRegimeValue(
-                    regime="single_f", projection={"wage": _project_wage}
+                "ir_f": ValueDependentConstraint(
+                    predicate=_ir_f,
+                    references={
+                        "V_single_f_ref": ProjectedRegimeValue(
+                            regime="single_f", projection={"wage": _project_wage}
+                        )
+                    },
                 ),
-                "V_single_m_ref": ProjectedRegimeValue(
-                    regime="single_m", projection={"wage": _project_wage}
+                "ir_m": ValueDependentConstraint(
+                    predicate=_ir_m,
+                    references={
+                        "V_single_m_ref": ProjectedRegimeValue(
+                            regime="single_m", projection={"wage": _project_wage}
+                        )
+                    },
                 ),
             }
             if with_value_constraints
@@ -444,15 +455,20 @@ def test_projection_maps_states_and_reference_v_is_interpolated_off_grid():
     married = Regime(
         transition={"married_terminal": MarkovTransition(_prob_one)},
         active=lambda age: age < 1,
-        stakeholders=("f", "m"),
         states={"wage": married_grid},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _utility_f, "utility_m": _utility_m},
-        value_constraints={"ir_f": _ir},
-        same_period_refs={
-            "V_f_ref": ProjectedRegimeValue(
-                regime="single_f", projection={"wage": _project}
+        functions={
+            "utility": CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
+        },
+        constraints={
+            "ir_f": ValueDependentConstraint(
+                predicate=_ir,
+                references={
+                    "V_f_ref": ProjectedRegimeValue(
+                        regime="single_f", projection={"wage": _project}
+                    )
+                },
             )
         },
     )
@@ -666,36 +682,8 @@ def test_value_constraints_on_singleton_regime_are_rejected():
         Regime(
             **_minimal_collective_kwargs(),
             functions={"utility": _utility_single_f},
-            value_constraints={"ir": lambda Q_f: Q_f >= 0.0},
-        )
-
-
-def test_same_period_refs_on_singleton_regime_are_rejected():
-    with pytest.raises(RegimeInitializationError, match="same_period_refs"):
-        Regime(
-            **_minimal_collective_kwargs(),
-            functions={"utility": _utility_single_f},
-            same_period_refs={
-                "V_ref": ProjectedRegimeValue(
-                    regime="single_f", projection={"wage": _project_wage}
-                )
-            },
-        )
-
-
-def test_same_period_refs_without_value_constraints_are_rejected():
-    with pytest.raises(RegimeInitializationError, match="value_constraints"):
-        Regime(
-            **_minimal_collective_kwargs(),
-            stakeholders=("f", "m"),
-            functions={
-                "utility_f": _utility_married_f,
-                "utility_m": _utility_married_m,
-            },
-            same_period_refs={
-                "V_ref": ProjectedRegimeValue(
-                    regime="single_f", projection={"wage": _project_wage}
-                )
+            constraints={
+                "ir": ValueDependentConstraint(predicate=lambda Q_f: Q_f >= 0.0)
             },
         )
 
@@ -710,29 +698,43 @@ def test_value_constraints_on_a_terminal_collective_regime_are_accepted():
     regime = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         states={"wage": _WAGE_GRID},
         actions={"work": DiscreteGrid(Work)},
         functions={
-            "utility_f": _utility_married_f,
-            "utility_m": _utility_married_m,
+            "utility": CollectiveUtility(
+                utilities={"f": _utility_married_f, "m": _utility_married_m}
+            )
         },
-        value_constraints={"ir_f": _ir_f},
+        constraints={"ir_f": ValueDependentConstraint(predicate=_ir_f)},
     )
 
     assert set(regime.value_constraints) == {"ir_f"}
 
 
 def _married_with_refs(refs: dict[str, ProjectedRegimeValue]) -> Regime:
+    """A collective regime whose two participation constraints read `refs`.
+
+    Each predicate names the reference it reads in its own signature, so the
+    mapping is handed out per constraint: `ir_f` reads `V_single_f_ref` and
+    `ir_m` reads `V_single_m_ref`.
+    """
     return Regime(
         **_minimal_collective_kwargs(),
-        stakeholders=("f", "m"),
         functions={
-            "utility_f": _utility_married_f,
-            "utility_m": _utility_married_m,
+            "utility": CollectiveUtility(
+                utilities={"f": _utility_married_f, "m": _utility_married_m}
+            )
         },
-        value_constraints={"ir_f": _ir_f, "ir_m": _ir_m},
-        same_period_refs=refs,
+        constraints={
+            "ir_f": ValueDependentConstraint(
+                predicate=_ir_f,
+                references={"V_single_f_ref": refs["V_single_f_ref"]},
+            ),
+            "ir_m": ValueDependentConstraint(
+                predicate=_ir_m,
+                references={"V_single_m_ref": refs["V_single_m_ref"]},
+            ),
+        },
     )
 
 
@@ -790,8 +792,7 @@ def test_same_period_ref_cycle_is_rejected_at_build():
     def _make_couple(
         *,
         terminal_name: str,
-        value_constraints: dict,
-        same_period_refs: dict,
+        constraints: dict[str, ValueDependentConstraint],
     ) -> Regime:
         return Regime(
             transition={terminal_name: MarkovTransition(_prob_one)},
@@ -799,34 +800,41 @@ def test_same_period_ref_cycle_is_rejected_at_build():
             states={"wage": _WAGE_GRID},
             state_transitions={"wage": fixed_transition("wage")},
             actions={"work": DiscreteGrid(Work)},
-            stakeholders=("f", "m"),
             functions={
-                "utility_f": _utility_married_f,
-                "utility_m": _utility_married_m,
+                "utility": CollectiveUtility(
+                    utilities={"f": _utility_married_f, "m": _utility_married_m}
+                )
             },
-            value_constraints=value_constraints,
-            same_period_refs=same_period_refs,
+            constraints=constraints,
         )
 
     couple_a = _make_couple(
         terminal_name="terminal_a",
-        value_constraints={"vc_a": _vc_a},
-        same_period_refs={
-            "V_b_ref": ProjectedRegimeValue(
-                regime="couple_b",
-                projection={"wage": _project_wage},
-                stakeholder="f",
+        constraints={
+            "vc_a": ValueDependentConstraint(
+                predicate=_vc_a,
+                references={
+                    "V_b_ref": ProjectedRegimeValue(
+                        regime="couple_b",
+                        projection={"wage": _project_wage},
+                        stakeholder="f",
+                    )
+                },
             )
         },
     )
     couple_b = _make_couple(
         terminal_name="terminal_b",
-        value_constraints={"vc_b": _vc_b},
-        same_period_refs={
-            "V_a_ref": ProjectedRegimeValue(
-                regime="couple_a",
-                projection={"wage": _project_wage},
-                stakeholder="f",
+        constraints={
+            "vc_b": ValueDependentConstraint(
+                predicate=_vc_b,
+                references={
+                    "V_a_ref": ProjectedRegimeValue(
+                        regime="couple_a",
+                        projection={"wage": _project_wage},
+                        stakeholder="f",
+                    )
+                },
             )
         },
     )

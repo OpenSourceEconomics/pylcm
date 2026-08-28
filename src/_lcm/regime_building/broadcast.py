@@ -104,6 +104,9 @@ def merge_model_slots(
                     regime_name=regime_name,
                     regime_slot=regime_slot,
                     model_slot=model_slot,
+                    owned_names=_household_owned_names(
+                        slot_name=slot_name, user_regime=user_regime
+                    ),
                 )
             )
             if slot_name == "states":
@@ -725,8 +728,24 @@ def _merge_one_slot(
     regime_name: RegimeName,
     regime_slot: Mapping[str, object],
     model_slot: Mapping[str, object],
+    owned_names: frozenset[str] = frozenset(),
 ) -> list[str]:
-    """Apply the exactly-one-level rule to one slot of one regime."""
+    """Apply the exactly-one-level rule to one slot of one regime.
+
+    Args:
+        slot_name: Which regime slot is being merged.
+        regime_name: Name of the regime the slot belongs to.
+        regime_slot: The regime's own entries.
+        model_slot: The model-level entries broadcast into every regime.
+        owned_names: Names this regime supplies by declaring a household rather
+            than by naming them one at a time. A model-level entry under such a
+            name is meant for the regimes that declare no household, so it is
+            not a second declaration of the same thing.
+
+    Returns:
+        List of error messages, empty when the slot merges cleanly.
+
+    """
     errors: list[str] = []
     for name, value in regime_slot.items():
         if value is None:
@@ -736,13 +755,29 @@ def _merge_one_slot(
                     f"`None`, but no model-level entry provides '{name}' — "
                     f"there is nothing to mask.",
                 )
-        elif name in model_slot:
+        elif name in model_slot and name not in owned_names:
             errors.append(
                 f"Ambiguous specification for {slot_name}['{name}'] in "
                 f"regime '{regime_name}': defined at model level and regime "
                 f"level. Remove one, or mask the model entry with `None`.",
             )
     return errors
+
+
+def _household_owned_names(
+    *, slot_name: str, user_regime: UserRegime
+) -> frozenset[str]:
+    """Return the function names this regime's household supplies for itself.
+
+    A collective regime names its utilities by declaring who its stakeholders
+    are, so `utility` and every `utility_<s>` belong to the household. A
+    model-level entry under one of those names exists for the regimes that
+    declare no household: where the household wrote a body it wins, and where
+    it delegated one the model's fills it.
+    """
+    if slot_name != "functions" or user_regime.stakeholders is None:
+        return frozenset()
+    return frozenset({"utility", *(f"utility_{s}" for s in user_regime.stakeholders)})
 
 
 def _model_slot_value_errors(

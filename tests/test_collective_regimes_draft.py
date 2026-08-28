@@ -12,7 +12,7 @@ from lcm import (
     categorical,
     fixed_transition,
 )
-from lcm.exceptions import RegimeInitializationError
+from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime
 from lcm.typing import (
     ContinuousAction,
@@ -102,12 +102,11 @@ def test_declaring_non_terminal_stakeholders_constructs():
 
 
 def test_terminal_stakeholders_without_per_stakeholder_utility_is_rejected():
-    """A collective regime must carry a `utility_<s>` for every stakeholder.
+    """A collective regime must carry a body for every stakeholder it names.
 
-    Supplying a single `utility` where `utility_f` and `utility_m` are required
-    is a configuration error. Completeness is a property of the merged regime —
-    a bare `Regime` may still receive functions from a model-level slot — so it
-    is reported when the model finalizes its regimes.
+    A household may leave a stakeholder's body to arrive from the model level,
+    so a bare `Regime` cannot tell whether one ever will. Completeness is a
+    property of the merged regime and is reported when the model finalizes it.
     """
     married = Regime(
         transition=_next_regime_widowed,
@@ -126,16 +125,17 @@ def test_terminal_stakeholders_without_per_stakeholder_utility_is_rejected():
     widowed = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         states={"wealth": _WEALTH},
         actions={
             "labor_supply_f": DiscreteGrid(LaborSupply),
             "consumption": _CONSUMPTION,
         },
-        functions={"utility": _utility_f},
+        functions={
+            "utility": CollectiveUtility(utilities={"f": _utility_f, "m": None})
+        },
     )
 
-    with pytest.raises(RegimeInitializationError, match="per-stakeholder utility"):
+    with pytest.raises(ModelInitializationError, match="per-stakeholder utility"):
         Model(
             regimes={"married": married, "widowed": widowed},
             ages=AgeGrid(start=0, stop=2, step="Y"),

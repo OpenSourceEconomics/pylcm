@@ -11,7 +11,15 @@ declared names the reference, the projection, and the argument.
 import jax.numpy as jnp
 import pytest
 
-from lcm import DiscreteGrid, LinSpacedGrid, ProjectedRegimeValue, Regime, categorical
+from lcm import (
+    CollectiveUtility,
+    DiscreteGrid,
+    LinSpacedGrid,
+    ProjectedRegimeValue,
+    Regime,
+    ValueDependentConstraint,
+    categorical,
+)
 from lcm.exceptions import RegimeInitializationError
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
 
@@ -57,15 +65,20 @@ def _halved_wealth(wealth: ContinuousState, divorce_cost: float) -> ContinuousSt
 def _make_regime(*, projection) -> Regime:
     return Regime(
         transition=_next_regime,
-        stakeholders=("f", "m"),
         states={"wealth": _WEALTH},
         state_transitions={"wealth": _next_wealth},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _utility_f, "utility_m": _utility_m},
-        value_constraints={"participation_f": _participation_f},
-        same_period_refs={
-            "outside_option_f": ProjectedRegimeValue(
-                regime="single_f", projection={"wealth": projection}
+        functions={
+            "utility": CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
+        },
+        constraints={
+            "participation_f": ValueDependentConstraint(
+                predicate=_participation_f,
+                references={
+                    "outside_option_f": ProjectedRegimeValue(
+                        regime="single_f", projection={"wealth": projection}
+                    )
+                },
             )
         },
     )

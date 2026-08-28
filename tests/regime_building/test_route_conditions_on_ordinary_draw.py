@@ -55,11 +55,11 @@ from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
     DiscreteGrid,
-    GatedEdge,
     LinSpacedGrid,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -269,13 +269,15 @@ def _u_fallback_b(wage: ContinuousState) -> FloatND:
 
 def _make_dual_edge_regimes(*, edge_order: tuple[str, str]) -> dict[str, Regime]:
     """A singleton source with TWO gated edges (targets `a`/`b`), each with its
-    own fallback. `edge_order` controls the `gated_edges` declaration order
-    -- both orderings must yield the identical, order-independent routing.
+    own fallback. `edge_order` controls the order in which the two edges are
+    declared in `transition` -- both orderings must yield the identical,
+    order-independent routing.
     """
     edges = {
-        "target_a": GatedEdge(
+        "target_a": ValueDependentTransition(
+            probability=MarkovTransition(_prob_half),
             gate=_gate_always_open,
-            legs={
+            routes={
                 "only": StakeholderRoute(
                     fallback=ProjectedRegimeValue(
                         regime="fallback_a", projection={"wage": _identity_wage}
@@ -283,9 +285,10 @@ def _make_dual_edge_regimes(*, edge_order: tuple[str, str]) -> dict[str, Regime]
                 )
             },
         ),
-        "target_b": GatedEdge(
+        "target_b": ValueDependentTransition(
+            probability=MarkovTransition(_prob_half),
             gate=_gate_always_open,
-            legs={
+            routes={
                 "only": StakeholderRoute(
                     fallback=ProjectedRegimeValue(
                         regime="fallback_b", projection={"wage": _identity_wage}
@@ -295,16 +298,12 @@ def _make_dual_edge_regimes(*, edge_order: tuple[str, str]) -> dict[str, Regime]
         ),
     }
     src = Regime(
-        transition={
-            "target_a": MarkovTransition(_prob_half),
-            "target_b": MarkovTransition(_prob_half),
-        },
+        transition={name: edges[name] for name in edge_order},
         active=lambda age: age < 1,
         states={"wage": _WAGE_2},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(Work)},
         functions={"utility": _u_src},
-        gated_edges={name: edges[name] for name in edge_order},
     )
     target_a = Regime(
         transition=None,

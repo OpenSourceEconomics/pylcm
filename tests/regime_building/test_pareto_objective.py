@@ -425,18 +425,22 @@ def _three_stakeholder_solution(order: tuple[str, ...]) -> np.ndarray:
     household = Regime(
         transition=_next_three_regime,
         active=lambda age: age < 1,
-        stakeholders=order,
         actions={"choice": DiscreteGrid(Choice)},
-        functions={f"utility_{name}": utilities[name] for name in order},
-        pareto_objective=ParetoObjective(
-            weights={name: weights[name] for name in order}
-        ),
+        functions={
+            "utility": CollectiveUtility(
+                utilities={name: utilities[name] for name in order},
+                objective=ParetoObjective(
+                    weights={name: weights[name] for name in order}
+                ),
+            )
+        },
     )
     household_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=order,
-        functions=dict.fromkeys((f"utility_{name}" for name in order), _terminal_zero),
+        functions={
+            "utility": CollectiveUtility(utilities=dict.fromkeys(order, _terminal_zero))
+        },
     )
     model = Model(
         regimes={

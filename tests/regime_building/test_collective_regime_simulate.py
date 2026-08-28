@@ -53,6 +53,7 @@ from lcm import (
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    ValueDependentConstraint,
     ValueDependentTransition,
     categorical,
     fixed_transition,
@@ -597,18 +598,30 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
     married_ir = Regime(
         transition={"married_terminal": MarkovTransition(_prob_one)},
         active=lambda age: (age >= 1) & (age < 2),
-        stakeholders=("f", "m"),
         states={"wage": _WAGE_3},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _u_married_ir_f, "utility_m": _u_married_ir_m},
-        value_constraints={"ir_f": _ir_f, "ir_m": _ir_m},
-        same_period_refs={
-            "V_single_f_ref": ProjectedRegimeValue(
-                regime="single_f", projection={"wage": _identity_wage}
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _u_married_ir_f, "m": _u_married_ir_m}
+            )
+        },
+        constraints={
+            "ir_f": ValueDependentConstraint(
+                predicate=_ir_f,
+                references={
+                    "V_single_f_ref": ProjectedRegimeValue(
+                        regime="single_f", projection={"wage": _identity_wage}
+                    )
+                },
             ),
-            "V_single_m_ref": ProjectedRegimeValue(
-                regime="single_m", projection={"wage": _identity_wage}
+            "ir_m": ValueDependentConstraint(
+                predicate=_ir_m,
+                references={
+                    "V_single_m_ref": ProjectedRegimeValue(
+                        regime="single_m", projection={"wage": _identity_wage}
+                    )
+                },
             ),
         },
     )

@@ -176,6 +176,7 @@ class Regime:
             RegimeName,
             MarkovTransition | UserFunction | Phased | ValueDependentTransition,
         ]
+        | ValueDependentTransition
         | None
     )
     """Regime transition, or `None` for terminal regimes.
@@ -587,6 +588,7 @@ class Regime:
         self._lower_collective_utility()
         self._lower_value_dependent_constraints()
         self._lower_value_dependent_transitions()
+        self._fail_if_a_gated_edge_has_no_target()
 
     @property
     def decomposed_functions(
@@ -661,17 +663,10 @@ class Regime:
         for stakeholder, utility in declaration.utilities.items():
             entry = f"utility_{stakeholder}"
             if utility is None:
-                # The body is delegated: whatever already stands under the
-                # stakeholder's own name is her utility, and there has to be
-                # one for the household to be complete.
-                if entry not in functions:
-                    raise RegimeInitializationError(
-                        f"The stakeholder {stakeholder!r} of this regime's "
-                        f"`CollectiveUtility` declares no utility of her own, "
-                        f"so hers is whatever the regime carries under "
-                        f"{entry!r} — and it carries nothing. Write the body "
-                        f"in the `CollectiveUtility`, or supply {entry!r}."
-                    )
+                # The body is delegated: whatever stands under the stakeholder's
+                # own name is her utility, and it may still arrive from the model
+                # level. Whether one ever does is completeness, which the model
+                # reports once its regimes are merged.
                 continue
             if entry in functions and functions[entry] is not utility:
                 raise RegimeInitializationError(
@@ -730,27 +725,156 @@ class Regime:
         object.__setattr__(self, "value_constraints", value_constraints)
         object.__setattr__(self, "same_period_refs", same_period_refs)
 
+    def _fail_if_a_gated_edge_has_no_target(self) -> None:
+        """Refuse a gated edge on a transition that names no target.
+
+        A gate is a route: it says where a household goes when consent fails,
+        and the fallback belongs to the route. A terminal regime has no next
+        period for a route to reach, and a coarse transition — a bare callable
+        or a `MarkovTransition` — names no target for the gate to be keyed by.
+        """
+        if not self.gated_edges:
+            return
+        transition = self.transition
+        sides = (
+            (transition.solve, transition.simulate)
+            if isinstance(transition, Phased)
+            else (transition,)
+        )
+        if all(isinstance(side, Mapping) for side in sides):
+            return
+        where = "a terminal regime" if transition is None else "a coarse transition"
+        raise RegimeInitializationError(
+            f"This regime carries a gated edge into "
+            f"{min(self.gated_edges)!r} on {where}. A gate is a route, so "
+            "it needs a target to route to: declare it in a per-target "
+            "`transition` dict, keyed by the regime the gate opens onto."
+        )
+
     def _lower_value_dependent_transitions(self) -> None:
         """Split each `ValueDependentTransition` into a target and its edge."""
         transition = self.transition
+        if isinstance(transition, ValueDependentTransition):
+            raise RegimeInitializationError(
+                "This regime declares a `ValueDependentTransition` as its whole "
+                "transition. A gate is a route — it says where a household goes "
+                "when consent fails — so it belongs to one target and is written "
+                "in a per-target `transition` dict, keyed by the regime the gate "
+                "opens onto: `transition={'<target>': ValueDependentTransition("
+                "...)}`."
+            )
+        if isinstance(transition, Phased):
+            self._lower_phased_value_dependent_transitions(transition)
+            return
         if not isinstance(transition, Mapping):
             return
+        entries, edges = self._split_value_dependent_targets(transition=transition)
+        if edges is None:
+            return
+        object.__setattr__(self, "transition", entries)
+        object.__setattr__(self, "gated_edges", self._merged_gated_edges(edges))
+
+    def _lower_phased_value_dependent_transitions(self, transition: Phased) -> None:
+        """Derive the one edge a per-phase pair of declarations describes.
+
+        The probability may differ between the phases — a perceived meeting
+        rate and a realized one are a legitimate wedge. Everything else is the
+        same edge written twice, so the two sides must agree: identical gate
+        callables, and routes, references and off-grid contract that compare
+        equal.
+        """
+        sides = {}
+        for phase in ("solve", "simulate"):
+            side = getattr(transition, phase)
+            if not isinstance(side, Mapping):
+                return
+            sides[phase] = self._split_value_dependent_targets(transition=side)
+        if all(edges is None for _entries, edges in sides.values()):
+            return
+
+        gated = {
+            phase: set() if edges is None else set(edges)
+            for phase, (_entries, edges) in sides.items()
+        }
+        one_sided = gated["solve"] ^ gated["simulate"]
+        if one_sided:
+            raise RegimeInitializationError(
+                f"The transition into {min(one_sided)!r} is declared as a "
+                "`ValueDependentTransition` in one phase and as an ordinary "
+                "probability in the other. A target is value-dependent in both "
+                "phases or in neither: the gate is what the household consents "
+                "to, and it cannot consent only while being solved."
+            )
+
+        solve_edges = sides["solve"][1] or {}
+        simulate_edges = sides["simulate"][1] or {}
+        for target, solve_edge in solve_edges.items():
+            simulate_edge = simulate_edges[target]
+            if solve_edge.gate is not simulate_edge.gate:
+                raise RegimeInitializationError(
+                    f"The two phases of the transition into {target!r} declare "
+                    "different gate callables. A gate is one predicate the "
+                    "household is held to, so the two phases must name the "
+                    "very same function. A difference the model needs goes in "
+                    "a route's `fallback`, which is `Phased` in its own right."
+                )
+            if solve_edge != simulate_edge:
+                raise RegimeInitializationError(
+                    f"The two phases of the transition into {target!r} declare "
+                    "the same gate but disagree elsewhere — on the routes, the "
+                    "gate references or the off-grid contract. An edge is all "
+                    "of those together, so the two phases must describe one "
+                    "edge. Only `probability` may differ between them."
+                )
+
+        object.__setattr__(
+            self,
+            "transition",
+            Phased(solve=sides["solve"][0], simulate=sides["simulate"][0]),
+        )
+        object.__setattr__(self, "gated_edges", self._merged_gated_edges(solve_edges))
+
+    def _split_value_dependent_targets(
+        self, *, transition: Mapping[RegimeName, object]
+    ) -> tuple[Mapping[RegimeName, object], dict[RegimeName, GatedEdge] | None]:
+        """Return one phase's probability cells and the edges they declare.
+
+        The edges are `None` when the phase declares none, which is what tells
+        the caller the mapping came back untouched.
+        """
         declarations = {
             target: entry
             for target, entry in transition.items()
             if isinstance(entry, ValueDependentTransition)
         }
         if not declarations:
-            return
+            return transition, None
         entries = dict(transition)
-        gated_edges = dict(self.gated_edges)
+        edges: dict[RegimeName, GatedEdge] = {}
         for target, declaration in declarations.items():
-            lowered = GatedEdge(
+            edges[target] = GatedEdge(
                 gate=declaration.gate,
                 legs=declaration.routes,
                 gate_refs=declaration.gate_references,
                 off_grid=declaration.off_grid,
             )
+            # The lowered per-target cell requires a `MarkovTransition`, so a
+            # bare probability callable is wrapped rather than refused: the
+            # declared type and the resulting grammar say the same thing.
+            probability = declaration.probability
+            entries[target] = (
+                probability
+                if isinstance(probability, MarkovTransition)
+                else MarkovTransition(probability)
+            )
+        return entries, edges
+
+    def _merged_gated_edges(
+        self, derived: Mapping[RegimeName, GatedEdge]
+    ) -> dict[RegimeName, GatedEdge]:
+        """Merge derived edges onto the declared ones, refusing a disagreement."""
+        gated_edges = dict(self.gated_edges)
+        for target, lowered in derived.items():
             existing = gated_edges.get(target)
             if existing is not None and existing != lowered:
                 raise RegimeInitializationError(
@@ -761,18 +885,8 @@ class Regime:
                     "so agreeing on the gate alone is not agreeing. Declare "
                     "it once."
                 )
-            # The lowered per-target cell requires a `MarkovTransition`, so a
-            # bare probability callable is wrapped rather than refused: the
-            # declared type and the resulting grammar say the same thing.
-            probability = declaration.probability
-            entries[target] = (
-                probability
-                if isinstance(probability, MarkovTransition)
-                else MarkovTransition(probability)
-            )
             gated_edges[target] = lowered
-        object.__setattr__(self, "transition", entries)
-        object.__setattr__(self, "gated_edges", gated_edges)
+        return gated_edges
 
     def _fail_if_egm_solver_has_no_margin_declaration(self) -> None:
         if self._accepts_margin_solver:

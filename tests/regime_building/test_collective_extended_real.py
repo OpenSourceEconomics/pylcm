@@ -43,7 +43,13 @@ from _lcm.regime_building.ndimage import (
 from _lcm.regime_building.Q_and_F import _sum_regime_mixture
 from _lcm.regime_building.zero_safe import zero_safe_average
 from _lcm.zero_safe import zero_safe_weighted_term
-from lcm import DiscreteGrid, LinSpacedGrid, ParetoObjective, categorical
+from lcm import (
+    CollectiveUtility,
+    DiscreteGrid,
+    LinSpacedGrid,
+    ParetoObjective,
+    categorical,
+)
 from lcm.exceptions import RegimeInitializationError
 from lcm.regime import Regime
 from lcm.typing import DiscreteAction, FloatND, ScalarInt
@@ -830,59 +836,56 @@ def _utility_m(labor_supply_f: DiscreteAction) -> FloatND:
 
 
 def _build_terminal_regime(**kwargs: object) -> Regime:
+    """Build the two-stakeholder terminal regime, overriding one slot by keyword.
+
+    `utilities` and `objective` reach the `CollectiveUtility` the regime
+    declares; every other keyword is a `Regime` slot.
+    """
+    utilities = kwargs.pop("utilities", {"f": _utility_f, "m": _utility_m})
+    objective = kwargs.pop("objective", None)
     base = {
         "transition": None,
-        "stakeholders": ("f", "m"),
         "states": {"wealth": _WEALTH},
         "actions": {"labor_supply_f": DiscreteGrid(LaborSupply)},
-        "functions": {"utility_f": _utility_f, "utility_m": _utility_m},
+        "functions": {
+            "utility": CollectiveUtility(
+                utilities=utilities,  # ty: ignore[invalid-argument-type]
+                objective=objective,  # ty: ignore[invalid-argument-type]
+            )
+        },
     }
     base.update(kwargs)
     return Regime(**base)  # ty: ignore[invalid-argument-type]
 
 
-def test_empty_stakeholders_tuple_is_rejected():
-    with pytest.raises(RegimeInitializationError, match="non-empty"):
-        _build_terminal_regime(stakeholders=())
-
-
-def test_duplicate_stakeholders_are_rejected():
-    with pytest.raises(RegimeInitializationError, match="duplicate"):
-        Regime(
-            transition=None,
-            stakeholders=("f", "f"),
-            states={"wealth": _WEALTH},
-            actions={"labor_supply_f": DiscreteGrid(LaborSupply)},
-            functions={"utility_f": _utility_f},
-        )
+def test_a_household_with_no_stakeholders_is_rejected():
+    """A `CollectiveUtility` naming nobody is not a household."""
+    with pytest.raises(RegimeInitializationError, match="at least one stakeholder"):
+        _build_terminal_regime(utilities={})
 
 
 def test_non_finite_weight_is_rejected():
     with pytest.raises(RegimeInitializationError, match="finite"):
         _build_terminal_regime(
-            pareto_objective=ParetoObjective(weights={"f": float("nan"), "m": 0.5})
+            objective=ParetoObjective(weights={"f": float("nan"), "m": 0.5})
         )
 
 
 def test_negative_weight_is_rejected():
     with pytest.raises(RegimeInitializationError, match="non-negative"):
-        _build_terminal_regime(
-            pareto_objective=ParetoObjective(weights={"f": -0.1, "m": 1.1})
-        )
+        _build_terminal_regime(objective=ParetoObjective(weights={"f": -0.1, "m": 1.1}))
 
 
 def test_all_zero_weights_are_rejected():
     with pytest.raises(RegimeInitializationError, match="positive total"):
-        _build_terminal_regime(
-            pareto_objective=ParetoObjective(weights={"f": 0.0, "m": 0.0})
-        )
+        _build_terminal_regime(objective=ParetoObjective(weights={"f": 0.0, "m": 0.0}))
 
 
 def test_a_single_zero_weight_with_a_positive_total_is_allowed():
     # A zero weight is a deliberate exclusion, not an error, as long as the
     # total remains positive.
     regime = _build_terminal_regime(
-        pareto_objective=ParetoObjective(weights={"f": 0.0, "m": 1.0})
+        objective=ParetoObjective(weights={"f": 0.0, "m": 1.0})
     )
     objective = regime.pareto_objective
     assert objective is not None

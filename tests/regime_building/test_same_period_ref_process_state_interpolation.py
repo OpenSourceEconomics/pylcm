@@ -61,6 +61,7 @@ from lcm import (
     DiscreteGrid,
     LinSpacedGrid,
     NormalIIDProcess,
+    ValueDependentConstraint,
     categorical,
     fixed_transition,
 )
@@ -238,16 +239,23 @@ def _make_regimes() -> dict[str, Regime]:
     married = Regime(
         transition={"married_terminal": MarkovTransition(_prob_one)},
         active=lambda age: age < 1,
-        stakeholders=("f", "m"),
         states={"wage": _WAGE},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _utility_married_f, "utility_m": _utility_married_m},
-        value_constraints={"vc_f": _vc_f},
-        same_period_refs={
-            "V_shock_ref": ProjectedRegimeValue(
-                regime="shock_ref", projection={"shock": _project_shock}
-            ),
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _utility_married_f, "m": _utility_married_m}
+            )
+        },
+        constraints={
+            "vc_f": ValueDependentConstraint(
+                predicate=_vc_f,
+                references={
+                    "V_shock_ref": ProjectedRegimeValue(
+                        regime="shock_ref", projection={"shock": _project_shock}
+                    )
+                },
+            )
         },
     )
     married_terminal = Regime(

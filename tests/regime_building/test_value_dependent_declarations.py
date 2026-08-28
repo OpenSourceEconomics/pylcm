@@ -11,6 +11,7 @@ solves to.
 
 from collections.abc import Mapping
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
@@ -20,6 +21,7 @@ from lcm import (
     DiscreteGrid,
     GatedEdge,
     Model,
+    Phased,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
@@ -30,7 +32,7 @@ from lcm import (
 )
 from lcm.exceptions import RegimeInitializationError
 from lcm.transition import MarkovTransition
-from lcm.typing import ScalarInt
+from lcm.typing import BoolND, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
 from tests.regime_building.test_collective_regime_simulate import (
     _BETA,
@@ -154,6 +156,33 @@ def test_the_two_vocabularies_solve_to_the_same_values():
             )
 
 
+def test_an_edge_inside_a_phased_transition_solves_to_the_unphased_values():
+    """Declaring one edge per phase, identically, changes no number.
+
+    `Phased` is a wedge between what a household is solved against and what
+    simulation realizes. Writing the same edge on both sides declares no
+    wedge, so the model has to solve to exactly the values the unphased
+    declaration solves to.
+    """
+    regimes = _new_vocabulary_regimes()
+    married = regimes["married"]
+    regimes["married"] = married.replace(
+        transition=Phased(solve=married.transition, simulate=married.transition)
+    )
+
+    phased = _solve(regimes)
+    unphased = _solve(_new_vocabulary_regimes())
+
+    for period, regime_to_V in phased.items():
+        for regime_name, V_arr in regime_to_V.items():
+            np.testing.assert_array_almost_equal(
+                np.asarray(V_arr),
+                np.asarray(unphased[period][regime_name]),
+                decimal=DECIMAL_PRECISION,
+                err_msg=f"period {period}, regime {regime_name}",
+            )
+
+
 def _solve(regimes):
     """Solve the dissolution miniature built from `regimes`."""
     model = Model(regimes=regimes, ages=_AGES, regime_id_class=RegimeId)
@@ -261,6 +290,171 @@ def _new_vocabulary_regimes() -> dict[str, Regime]:
         "single_m": single_m,
         "single_m_terminal": single_f_terminal.replace(),
     }
+
+
+def _a_value_dependent_transition() -> ValueDependentTransition:
+    """A well-formed edge declaration, for tests about where it may be written."""
+    return ValueDependentTransition(
+        probability=MarkovTransition(_prob_one),
+        gate=_no_dissolution_gate,
+        routes={
+            "f": StakeholderRoute(
+                target_stakeholder="f",
+                fallback=ProjectedRegimeValue(
+                    regime="single_f", projection={"wage": _identity_wage}
+                ),
+            )
+        },
+    )
+
+
+def test_a_gate_must_be_keyed_by_the_target_it_opens():
+    """A gate is a route, so it lives in a per-target `transition` dict.
+
+    The gate says where a household goes when consent fails, and the fallback
+    is the route's. A transition naming no target names no route, so the whole
+    transition cannot be one edge.
+    """
+    with pytest.raises(RegimeInitializationError, match="per-target"):
+        Regime(
+            transition=_a_value_dependent_transition(),
+            active=lambda age: age < 1,
+            states={"wage": _WAGE_3},
+            state_transitions={"wage": fixed_transition("wage")},
+            functions={
+                "utility": CollectiveUtility(
+                    utilities={"f": _u_married_ir_f, "m": _u_married_ir_m}
+                )
+            },
+        )
+
+
+def test_a_terminal_regime_cannot_carry_a_gated_edge():
+    """A terminal regime has no next period for a route to reach."""
+    with pytest.raises(RegimeInitializationError, match="per-target"):
+        Regime(
+            transition=None,
+            active=lambda age: age >= 1,
+            states={"wage": _WAGE_3},
+            gated_edges={
+                "married_ir": GatedEdge(
+                    gate=_no_dissolution_gate,
+                    legs={
+                        "f": StakeholderRoute(
+                            target_stakeholder="f",
+                            fallback=ProjectedRegimeValue(
+                                regime="single_f",
+                                projection={"wage": _identity_wage},
+                            ),
+                        ),
+                        "m": StakeholderRoute(
+                            target_stakeholder="m",
+                            fallback=ProjectedRegimeValue(
+                                regime="single_m",
+                                projection={"wage": _identity_wage},
+                            ),
+                        ),
+                    },
+                )
+            },
+            functions={
+                "utility": CollectiveUtility(
+                    utilities={"f": _u_married_ir_f, "m": _u_married_ir_m}
+                )
+            },
+        )
+
+
+def _prob_half(age: FloatND) -> FloatND:
+    """Half the mass onto the target: the realized meeting rate of the wedge."""
+    return 0.5 * jnp.ones_like(age, dtype=float)
+
+
+def _phased_edge_regime(
+    *,
+    solve_gate=_no_dissolution_gate,
+    simulate_gate=_no_dissolution_gate,
+    simulate_is_gated: bool = True,
+) -> Regime:
+    """A married regime whose edge is declared inside a `Phased` transition."""
+    route_f = StakeholderRoute(
+        target_stakeholder="f",
+        fallback=ProjectedRegimeValue(
+            regime="single_f", projection={"wage": _identity_wage}
+        ),
+    )
+    route_m = StakeholderRoute(
+        target_stakeholder="m",
+        fallback=ProjectedRegimeValue(
+            regime="single_m", projection={"wage": _identity_wage}
+        ),
+    )
+    simulate_cell = (
+        ValueDependentTransition(
+            probability=MarkovTransition(_prob_half),
+            gate=simulate_gate,
+            routes={"f": route_f, "m": route_m},
+        )
+        if simulate_is_gated
+        else MarkovTransition(_prob_half)
+    )
+    return Regime(
+        transition=Phased(
+            solve={
+                "married_ir": ValueDependentTransition(
+                    probability=MarkovTransition(_prob_one),
+                    gate=solve_gate,
+                    routes={"f": route_f, "m": route_m},
+                )
+            },
+            simulate={"married_ir": simulate_cell},
+        ),
+        active=lambda age: age < 1,
+        states={"wage": _WAGE_3},
+        state_transitions={"wage": fixed_transition("wage")},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _u_married_ir_f, "m": _u_married_ir_m}
+            )
+        },
+    )
+
+
+def test_an_edge_declared_inside_a_phased_transition_is_derived_once():
+    """A gate may be declared per phase, and the edge it derives is one edge.
+
+    The perceived meeting probability and the realized one are a legitimate
+    wedge, so `probability` may differ by phase. Everything else about the
+    edge — the gate, the routes, the references, the off-grid contract — is
+    the same edge seen twice, so the regime carries one `gated_edges` entry
+    and each phase keeps its own probability.
+    """
+    regime = _phased_edge_regime()
+
+    edge = regime.gated_edges["married_ir"]
+    assert edge.gate is _no_dissolution_gate
+    assert set(edge.legs) == {"f", "m"}
+
+    transition = regime.decomposed_transition
+    assert isinstance(transition, Phased)
+    assert transition.solve["married_ir"].func is _prob_one
+    assert transition.simulate["married_ir"].func is _prob_half
+
+
+def test_an_edge_declared_in_only_one_phase_is_refused():
+    """A target is value-dependent in both phases or in neither."""
+    with pytest.raises(RegimeInitializationError, match="both phases"):
+        _phased_edge_regime(simulate_is_gated=False)
+
+
+def test_two_phases_whose_gates_are_different_objects_are_refused():
+    """The gate is one callable, not two that happen to agree today."""
+
+    def _other_gate(D_target: BoolND) -> BoolND:
+        return ~D_target
+
+    with pytest.raises(RegimeInitializationError, match="gate"):
+        _phased_edge_regime(simulate_gate=_other_gate)
 
 
 def test_an_edge_declared_twice_must_agree_in_full():
