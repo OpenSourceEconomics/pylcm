@@ -356,3 +356,104 @@ def test_a_bare_probability_callable_is_wrapped_for_the_lowered_grammar():
     lowered = transition["married_ir"]
     assert isinstance(lowered, MarkovTransition)
     assert lowered.func is _prob_one
+
+
+def _derived_snapshot(regime: Regime) -> dict[str, object]:
+    """The five engine-facing facts a regime's declarations determine.
+
+    Flattened into plain data so that two regimes built by different code paths
+    — or by the same code path before and after a refactoring — compare by
+    value, with the declared callables compared by identity.
+    """
+    return {
+        "stakeholders": regime.stakeholders,
+        "pareto_objective": regime.pareto_objective,
+        "value_constraints": dict(regime.value_constraints),
+        "same_period_refs": dict(regime.same_period_refs),
+        "gated_edges": {
+            target: (
+                edge.gate,
+                {
+                    source: (leg.target_stakeholder, leg.solve_fallback)
+                    for source, leg in edge.legs.items()
+                },
+                dict(edge.gate_refs),
+                edge.off_grid,
+            )
+            for target, edge in regime.gated_edges.items()
+        },
+    }
+
+
+def _expected_snapshots() -> dict[str, dict[str, object]]:
+    """What each shape of the dissolution miniature must derive, spelled out."""
+    fallback_f = ProjectedRegimeValue(
+        regime="single_f", projection={"wage": _identity_wage}
+    )
+    fallback_m = ProjectedRegimeValue(
+        regime="single_m", projection={"wage": _identity_wage}
+    )
+    return {
+        "married": {
+            "stakeholders": ("f", "m"),
+            "pareto_objective": None,
+            "value_constraints": {},
+            "same_period_refs": {},
+            "gated_edges": {
+                "married_ir": (
+                    _no_dissolution_gate,
+                    {
+                        "f": ("f", fallback_f),
+                        "m": ("m", fallback_m),
+                    },
+                    {},
+                    "pointwise",
+                )
+            },
+        },
+        "married_ir": {
+            "stakeholders": ("f", "m"),
+            "pareto_objective": None,
+            "value_constraints": {"ir_f": _ir_f, "ir_m": _ir_m},
+            "same_period_refs": {
+                "V_single_f_ref": ProjectedRegimeValue(
+                    regime="single_f", projection={"wage": _identity_wage}
+                ),
+                "V_single_m_ref": ProjectedRegimeValue(
+                    regime="single_m", projection={"wage": _identity_wage}
+                ),
+            },
+            "gated_edges": {},
+        },
+        "married_terminal": {
+            "stakeholders": ("f", "m"),
+            "pareto_objective": None,
+            "value_constraints": {},
+            "same_period_refs": {},
+            "gated_edges": {},
+        },
+        "single_f": {
+            "stakeholders": None,
+            "pareto_objective": None,
+            "value_constraints": {},
+            "same_period_refs": {},
+            "gated_edges": {},
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    "regime_name", ["married", "married_ir", "married_terminal", "single_f"]
+)
+def test_the_declarations_determine_every_engine_facing_fact(regime_name):
+    """One regime's declarations fix all five facts the engine reads off it.
+
+    A gated regime, a value-constrained one, a plain collective one and a
+    singleton: between them they cover every shape a declaration can take. The
+    snapshot is the contract that survives any change to how the decomposition
+    is performed, because it names what the decomposition must produce rather
+    than how.
+    """
+    regime = _new_vocabulary_regimes()[regime_name]
+
+    assert _derived_snapshot(regime) == _expected_snapshots()[regime_name]
