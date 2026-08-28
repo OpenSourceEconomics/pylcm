@@ -552,3 +552,33 @@ def test_candidate_ranking_is_invariant_to_subject_batching() -> None:
             chunked[column].to_numpy(),
             err_msg=column,
         )
+
+
+def test_a_bank_with_every_candidate_dropped_emits_no_winner() -> None:
+    """When the solve dropped every candidate, replay publishes no action.
+
+    A dropped candidate carries `nan` in the published value surface. With the
+    whole bank dropped, every objective is masked to `-inf` and `argmax` over
+    them returns index 0 by convention -- so a reduction that trusted the argmax
+    would emit candidate zero as the winner, an action the solve never
+    represented. The fail-closed sentinels must survive instead.
+
+    This is a different input path from an all-invalid objective: there the
+    candidates are represented and score badly, here they were never
+    represented at all.
+    """
+
+    def q_and_f(*, inner, outer, state, next_regime_to_V_arr, period, age):
+        del outer, state, next_regime_to_V_arr, period, age
+        return jnp.ones_like(inner), jnp.ones_like(inner, dtype=bool)
+
+    actions, value = _synthetic_replay(
+        inner=[1.0, 2.0, 3.0],
+        outer=[10.0, 20.0, 30.0],
+        marker=[np.nan, np.nan, np.nan],
+        q_and_f=q_and_f,
+    )
+
+    assert np.all(np.isnan(np.asarray(actions["inner"])))
+    assert np.all(np.isnan(np.asarray(actions["outer"])))
+    np.testing.assert_array_equal(np.asarray(value), [-np.inf])
