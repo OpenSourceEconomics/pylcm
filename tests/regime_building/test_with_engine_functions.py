@@ -82,15 +82,6 @@ def _declaring_regime() -> Regime:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "The seam's collective path is unreachable while lowering still "
-        "rewrites the declaring slots: by the time a test can call it, the "
-        "declaration it protects is already gone. Remove this marker with "
-        "the change that makes lowering non-consuming."
-    ),
-)
 def test_the_declaration_survives_the_write_back():
     """What the author wrote is still there after the engine adds to it."""
     regime = _declaring_regime()
@@ -111,15 +102,6 @@ def test_an_engine_addition_reaches_the_decomposed_view():
     assert written.decomposed_functions["resources"] is _resources
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "The seam's collective path is unreachable while lowering still "
-        "rewrites the declaring slots: by the time a test can call it, the "
-        "declaration it protects is already gone. Remove this marker with "
-        "the change that makes lowering non-consuming."
-    ),
-)
 def test_a_stakeholders_own_body_is_not_written_into_the_raw_slot():
     """A synthesized entry belongs to the declaration, not beside it."""
     regime = _declaring_regime()
@@ -130,15 +112,6 @@ def test_a_stakeholders_own_body_is_not_written_into_the_raw_slot():
     assert "utility_f" not in written.functions
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "The seam's collective path is unreachable while lowering still "
-        "rewrites the declaring slots: by the time a test can call it, the "
-        "declaration it protects is already gone. Remove this marker with "
-        "the change that makes lowering non-consuming."
-    ),
-)
 def test_rewriting_a_stakeholders_body_is_refused():
     """A stakeholder's utility is hers to declare; the engine may not swap it."""
     regime = _declaring_regime()
@@ -148,15 +121,6 @@ def test_rewriting_a_stakeholders_body_is_refused():
         regime.with_engine_functions(engine_functions=engine_functions)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "The seam's collective path is unreachable while lowering still "
-        "rewrites the declaring slots: by the time a test can call it, the "
-        "declaration it protects is already gone. Remove this marker with "
-        "the change that makes lowering non-consuming."
-    ),
-)
 def test_replacing_the_declaration_itself_is_refused():
     """Handing back a plain `utility` would silently dissolve the household."""
     regime = _declaring_regime()
@@ -166,15 +130,6 @@ def test_replacing_the_declaration_itself_is_refused():
         regime.with_engine_functions(engine_functions=engine_functions)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "The seam's collective path is unreachable while lowering still "
-        "rewrites the declaring slots: by the time a test can call it, the "
-        "declaration it protects is already gone. Remove this marker with "
-        "the change that makes lowering non-consuming."
-    ),
-)
 def test_dropping_a_stakeholder_is_refused():
     """The write-back must reproduce what the regime decomposes to, in full."""
     regime = _declaring_regime()

@@ -161,7 +161,7 @@ from lcm.processes import (  # noqa: E402
     TauchenNormalMixtureAR1Process,
     UniformIIDProcess,
 )
-from lcm.regime import GatedEdge, Regime  # noqa: E402
+from lcm.regime import Regime  # noqa: E402
 from lcm.result import SimulationResult  # noqa: E402
 from lcm.taste_shocks import ExtremeValueTasteShocks  # noqa: E402
 from lcm.transition import (  # noqa: E402
@@ -198,7 +198,6 @@ __all__ = [
     "ConsumptionSavingsRegime",
     "DiscreteGrid",
     "ExtremeValueTasteShocks",
-    "GatedEdge",
     "GridBreakpoint",
     "IrregSpacedGrid",
     "JointTransition",

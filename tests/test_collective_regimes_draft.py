@@ -1,5 +1,7 @@
 """Construction-time contracts for collective regimes."""
 
+import inspect
+
 import jax.numpy as jnp
 import pytest
 
@@ -163,7 +165,6 @@ def test_singleton_default_is_untouched():
     assert regime.stakeholders is None
 
 
-def test_stakeholders_field_default_is_none():
-    """`stakeholders` defaults to `None` (the singleton) when omitted."""
-    field = Regime.__dataclass_fields__["stakeholders"]
-    assert field.default is None
+def test_stakeholders_is_not_a_constructor_parameter():
+    """A regime's stakeholders are declared in its utility, and only there."""
+    assert "stakeholders" not in inspect.signature(Regime).parameters

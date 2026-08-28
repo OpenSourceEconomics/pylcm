@@ -19,7 +19,6 @@ from lcm import (
     AgeGrid,
     CollectiveUtility,
     DiscreteGrid,
-    GatedEdge,
     Model,
     Phased,
     ProjectedRegimeValue,
@@ -329,42 +328,6 @@ def test_a_gate_must_be_keyed_by_the_target_it_opens():
         )
 
 
-def test_a_terminal_regime_cannot_carry_a_gated_edge():
-    """A terminal regime has no next period for a route to reach."""
-    with pytest.raises(RegimeInitializationError, match="per-target"):
-        Regime(
-            transition=None,
-            active=lambda age: age >= 1,
-            states={"wage": _WAGE_3},
-            gated_edges={
-                "married_ir": GatedEdge(
-                    gate=_no_dissolution_gate,
-                    legs={
-                        "f": StakeholderRoute(
-                            target_stakeholder="f",
-                            fallback=ProjectedRegimeValue(
-                                regime="single_f",
-                                projection={"wage": _identity_wage},
-                            ),
-                        ),
-                        "m": StakeholderRoute(
-                            target_stakeholder="m",
-                            fallback=ProjectedRegimeValue(
-                                regime="single_m",
-                                projection={"wage": _identity_wage},
-                            ),
-                        ),
-                    },
-                )
-            },
-            functions={
-                "utility": CollectiveUtility(
-                    utilities={"f": _u_married_ir_f, "m": _u_married_ir_m}
-                )
-            },
-        )
-
-
 def _prob_half(age: FloatND) -> FloatND:
     """Half the mass onto the target: the realized meeting rate of the wedge."""
     return 0.5 * jnp.ones_like(age, dtype=float)
@@ -455,55 +418,6 @@ def test_two_phases_whose_gates_are_different_objects_are_refused():
 
     with pytest.raises(RegimeInitializationError, match="gate"):
         _phased_edge_regime(simulate_gate=_other_gate)
-
-
-def test_an_edge_declared_twice_must_agree_in_full():
-    """Two spellings of one edge disagreeing on routes is refused, not merged.
-
-    A `ValueDependentTransition` lowers onto a `gated_edges` entry, so a regime
-    that carries both for one target is naming one edge twice. Agreeing on the
-    gate is not enough: the routes, the gate references and the off-grid
-    contract are the edge too, and a disagreement in any of them is two
-    different edges for one target.
-    """
-    route_f = StakeholderRoute(
-        target_stakeholder="f",
-        fallback=ProjectedRegimeValue(
-            regime="single_f", projection={"wage": _identity_wage}
-        ),
-    )
-    route_m = StakeholderRoute(
-        target_stakeholder="m",
-        fallback=ProjectedRegimeValue(
-            regime="single_m", projection={"wage": _identity_wage}
-        ),
-    )
-
-    with pytest.raises(RegimeInitializationError, match="disagree"):
-        Regime(
-            transition={
-                "married_ir": ValueDependentTransition(
-                    probability=MarkovTransition(_prob_one),
-                    gate=_no_dissolution_gate,
-                    routes={"f": route_f, "m": route_m},
-                )
-            },
-            gated_edges={
-                "married_ir": GatedEdge(
-                    gate=_no_dissolution_gate,
-                    legs={"f": route_f},
-                )
-            },
-            active=lambda age: age < 1,
-            states={"wage": _WAGE_3},
-            state_transitions={"wage": fixed_transition("wage")},
-            actions={"work": DiscreteGrid(Work)},
-            functions={
-                "utility": CollectiveUtility(
-                    utilities={"f": _u_zero_collective, "m": _u_zero_collective}
-                )
-            },
-        )
 
 
 def test_a_bare_probability_callable_is_wrapped_for_the_lowered_grammar():
@@ -651,3 +565,53 @@ def test_the_declarations_determine_every_engine_facing_fact(regime_name):
     regime = _new_vocabulary_regimes()[regime_name]
 
     assert _derived_snapshot(regime) == _expected_snapshots()[regime_name]
+
+
+@pytest.mark.parametrize(
+    "slot",
+    [
+        "stakeholders",
+        "pareto_objective",
+        "value_constraints",
+        "same_period_refs",
+        "gated_edges",
+    ],
+)
+def test_a_derived_slot_cannot_be_declared(slot):
+    """The five engine-facing slots are read off a regime, never written to it.
+
+    Each is what one of the three declarations decomposes into, so naming one
+    at construction would be a second way to say the same thing — and a way
+    that could disagree with the first.
+    """
+    declared = {slot: None}
+
+    with pytest.raises(TypeError, match=slot):
+        Regime(
+            transition=None,
+            states={"wage": _WAGE_3},
+            functions={"utility": _u_zero},
+            **declared,  # ty: ignore[invalid-argument-type]
+        )
+
+
+@pytest.mark.parametrize(
+    "slot",
+    [
+        "stakeholders",
+        "pareto_objective",
+        "value_constraints",
+        "same_period_refs",
+        "gated_edges",
+    ],
+)
+def test_a_derived_slot_cannot_be_replaced(slot):
+    """`replace` reaches the declarations, not what they decompose to."""
+    regime = Regime(
+        transition=None,
+        states={"wage": _WAGE_3},
+        functions={"utility": _u_zero},
+    )
+
+    with pytest.raises(RegimeInitializationError, match=slot):
+        regime.replace(**{slot: None})

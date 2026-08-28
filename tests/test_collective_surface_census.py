@@ -42,7 +42,6 @@ _ENGINE_LEVEL_MODULES = frozenset(
         "tests/regime_building/test_gated_edge_arg_provenance.py",
         "tests/regime_building/test_gated_edge_gate_process_state_interpolation.py",
         "tests/regime_building/test_gated_edge_simulate_operand_recompute.py",
-        "tests/regime_building/test_pareto_normalization_overflow.py",
         "tests/regime_building/test_route_conditions_on_ordinary_draw.py",
         "tests/regime_building/test_same_period_ref_process_state_interpolation.py",
         "tests/regime_building/test_same_period_ref_projection_free_params.py",
@@ -51,7 +50,6 @@ _ENGINE_LEVEL_MODULES = frozenset(
         "tests/regime_building/test_terminal_collective_solve.py",
         "tests/regime_building/test_with_engine_functions.py",
         "tests/simulation/test_leg_projector_vmap.py",
-        "tests/solution/test_edge_topologies_build_each_target_once.py",
     }
 )
 
@@ -77,24 +75,19 @@ def _passes_keyword(source: str, *, keyword: str) -> bool:
 
 
 #: What a module writes when it exercises the collective / gated-edge surface.
-#: The declaration vocabulary is what a model author uses; the lowered spellings
-#: are still listed because a handful of modules have not been migrated off them
-#: yet, and a module the census stops seeing is a module that silently leaves the
-#: partition.
+#: There is one vocabulary now: a regime says who its stakeholders are, what a
+#: value-reading constraint is, and where a value-dependent transition routes,
+#: each in the slot it already has.
 _DECLARATIONS = (
     "CollectiveUtility",
     "ValueDependentConstraint",
     "ValueDependentTransition",
-    "GatedEdge",
 )
-_LOWERED_KEYWORDS = ("stakeholders", "value_constraints", "gated_edges")
 
 
 def _exercises_the_surface(source: str) -> bool:
     """Report whether the source declares a household, a value constraint or an edge."""
-    return any(_calls(source, name=name) for name in _DECLARATIONS) or any(
-        _passes_keyword(source, keyword=keyword) for keyword in _LOWERED_KEYWORDS
-    )
+    return any(_calls(source, name=name) for name in _DECLARATIONS)
 
 
 def _module_name(*, path: PurePath, root: PurePath) -> str:
@@ -180,11 +173,8 @@ def test_most_of_the_surface_is_covered_through_the_public_route():
         ("lcm.CollectiveUtility(utilities={})", True),
         ("ValueDependentConstraint(predicate=p)", True),
         ("ValueDependentTransition(gate=g)", True),
-        ("GatedEdge(legs=())", True),
-        ("Regime(stakeholders=('f', 'm'))", True),
         ('"""A docstring naming CollectiveUtility and stakeholders."""', False),
         ("# CollectiveUtility(utilities={}) commented out\nx = 1", False),
-        ("stakeholders = ('f', 'm')", False),
         ("collective_utility = 1", False),
     ],
 )
@@ -204,3 +194,91 @@ def test_the_census_reads_syntax_not_text(*, source: str, expected: bool):
 def test_reaching_model_is_a_call_not_a_mention(*, source: str, expected: bool):
     """A module is on the public route only if it actually calls `Model`."""
     assert _calls(source, name="Model") is expected
+
+
+#: What a regime's three declarations decompose into. A model author never
+#: writes one: `stakeholders`, `pareto_objective`, `value_constraints`,
+#: `same_period_refs` and `gated_edges` are read off a regime, and `GatedEdge`
+#: is the engine's own form of an edge.
+_DECOMPOSED_NAMES = (
+    "stakeholders",
+    "pareto_objective",
+    "value_constraints",
+    "same_period_refs",
+    "gated_edges",
+)
+
+
+def _writes_a_decomposed_name(source: str) -> list[str]:
+    """Return the decomposed names this source writes as a keyword or parameter.
+
+    Reading one back off a regime stays legal — that is what they are for — so
+    only the writing forms count: a keyword argument, and a helper parameter
+    that would forward one into a `Regime`.
+    """
+    written = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Call):
+            called = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+            if called in _ENGINE_CONSTRUCTORS:
+                continue
+            written += [kw.arg for kw in node.keywords if kw.arg in _DECOMPOSED_NAMES]
+        elif isinstance(node, ast.FunctionDef):
+            written += [
+                arg.arg
+                for arg in node.args.args + node.args.kwonlyargs
+                if arg.arg in _DECOMPOSED_NAMES
+            ]
+    return written
+
+
+#: Callables that take a decomposed name legitimately: the engine helpers a
+#: unit test drives directly.
+_ENGINE_CONSTRUCTORS = frozenset({"MockRegime", "_MockRegime", "build_pareto_weights"})
+
+#: Modules that build the ENGINE's regime rather than the author's, and so
+#: write the engine's own vocabulary on purpose. One replaces `stakeholders` on
+#: a canonical regime the solver already produced; the other mocks a canonical
+#: regime outright. Neither reaches `Regime.__init__`, so neither is a second
+#: way to write a model — but both are pinned here so that becoming one is a
+#: deliberate edit.
+_ENGINE_VOCABULARY_MODULES = frozenset(
+    {
+        "tests/regime_building/test_simulate_gate_param_and_leg_selection.py",
+        "tests/solution/test_edge_topologies_build_each_target_once.py",
+    }
+)
+
+
+def test_no_test_writes_what_a_declaration_decomposes_to():
+    """There is one way to write a collective regime, and it is the economics.
+
+    A test that constructed the decomposed form would be pinning a second
+    spelling into the API — the thing this vocabulary exists to remove. Reading
+    one back is untouched; only writing one is out.
+    """
+    offenders = {}
+    for path in sorted(_TESTS_ROOT.rglob("test_*.py")):
+        module = _module_name(path=path, root=_TESTS_ROOT.parent)
+        if module in _ENGINE_VOCABULARY_MODULES:
+            continue
+        written = sorted(
+            set(_writes_a_decomposed_name(path.read_text(encoding="utf-8")))
+        )
+        if written:
+            offenders[module] = written
+
+    assert offenders == {}
+
+
+def test_the_engine_vocabulary_exemption_is_still_earned():
+    """An exempt module that stops writing the engine's vocabulary leaves the list."""
+    unearned = sorted(
+        module
+        for module in _ENGINE_VOCABULARY_MODULES
+        if not _writes_a_decomposed_name(
+            (_TESTS_ROOT.parent / module).read_text(encoding="utf-8")
+        )
+    )
+
+    assert unearned == []

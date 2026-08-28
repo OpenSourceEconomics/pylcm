@@ -128,6 +128,7 @@ from _lcm.constraints.processed import (
     normalize_constraints,
 )
 from _lcm.constraints.routes import ConstraintPlan, plan_constraints
+from _lcm.gated_edge import GatedEdge
 from _lcm.regime_building.Q_and_F import (
     EDGE_REF_V_ARG,
     GatedContinuationSchedule,
@@ -207,7 +208,7 @@ from _lcm.variables import (
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.phased import Phased
-from lcm.regime import GatedEdge, ProjectedRegimeValue
+from lcm.regime import ProjectedRegimeValue
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import (
     DCEGM,

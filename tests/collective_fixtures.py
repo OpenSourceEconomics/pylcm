@@ -283,12 +283,12 @@ def make_folding_collective_regime_kwargs() -> dict[str, Any]:
     return {
         "transition": _next_couple_regime,
         "active": lambda age: age < 1,
-        "stakeholders": ("f", "m"),
         "states": {"wage_shock": FOLDED_SHOCK},
         "actions": {"work": DiscreteGrid(Work)},
         "functions": {
-            "utility_f": _shock_utility_f,
-            "utility_m": _shock_utility_m,
+            "utility": CollectiveUtility(
+                utilities={"f": _shock_utility_f, "m": _shock_utility_m}
+            )
         },
     }
 

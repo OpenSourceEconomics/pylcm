@@ -32,8 +32,8 @@ from lcm import (
     categorical,
     fixed_transition,
 )
+from lcm.collective import ProjectedRegimeValue, StakeholderRoute
 from lcm.exceptions import PyLCMError
-from lcm.regime import GatedEdge, ProjectedRegimeValue, StakeholderRoute
 from lcm.result import SimulationResult
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
@@ -150,16 +150,15 @@ def test_gate_reading_a_dissolution_flag_on_a_singleton_target_is_rejected_at_bu
         )
 
 
-def test_gated_edge_declaration_types_are_exported_from_the_package():
-    """A gated edge is declared from the top-level package, like every other slot.
+def test_the_route_type_is_exported_and_the_edge_type_is_not():
+    """A route is written; an edge is derived, so only the route is public.
 
-    The comparison needs the defining module's objects on one side, which is why
-    this module alone imports the two names from `lcm.regime`: reading both
-    sides off `lcm` would compare each name against itself and pin nothing.
+    The comparison needs the defining module's object on one side, which is why
+    this module imports `StakeholderRoute` from `lcm.collective`: reading both
+    sides off `lcm` would compare the name against itself and pin nothing.
     """
-    exported = (getattr(lcm, "GatedEdge", None), getattr(lcm, "StakeholderRoute", None))
-
-    assert exported == (GatedEdge, StakeholderRoute)
+    assert getattr(lcm, "StakeholderRoute", None) is StakeholderRoute
+    assert not hasattr(lcm, "GatedEdge")
 
 
 def _drop_stakeholder_metadata(*, directory: Path) -> None:

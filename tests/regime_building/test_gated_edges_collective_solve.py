@@ -22,6 +22,7 @@ import numpy as np
 import pytest
 
 from _lcm.certainty_equivalent import LinearExpectation
+from _lcm.gated_edge import GatedEdge
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import (
     _fail_if_gated_edge_references_inactive,
@@ -32,7 +33,6 @@ from _lcm.utils.logging import get_logger
 from lcm import (
     CollectiveUtility,
     DiscreteGrid,
-    GatedEdge,
     LinSpacedGrid,
     Model,
     ProjectedRegimeValue,

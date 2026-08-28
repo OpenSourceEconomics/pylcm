@@ -5,6 +5,7 @@ from typing import Any, Literal, cast
 import dags.tree as dt
 from dags.tree import qname_from_tree_path, tree_path_from_qname
 
+from _lcm.gated_edge import GatedEdge
 from _lcm.grids import IrregSpacedGrid
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.collective import PARETO_OBJECTIVE_ENTRY
@@ -25,7 +26,7 @@ from _lcm.typing import (
 from _lcm.utils.functools import get_union_of_args
 from lcm.exceptions import InvalidNameError
 from lcm.phased import Phased
-from lcm.regime import GatedEdge, ProjectedRegimeValue
+from lcm.regime import ProjectedRegimeValue
 from lcm.regime import Regime as UserRegime
 from lcm.transition import JointTransition, MarkovTransition
 from lcm.typing import UserFunction
