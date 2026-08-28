@@ -15,6 +15,7 @@ import inspect
 import logging
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, fields, replace
+from fractions import Fraction
 from types import MappingProxyType
 from typing import cast
 
@@ -974,6 +975,7 @@ class _NNBEGMPeriodKernel:
         )
         if isinstance(self.outer_search, AdaptiveOuterMesh):
             return self._solve_continuous(
+                outer_inverse=outer_inverse,
                 keeper_result=keeper_result,
                 config=self.outer_search,
                 compiled_cores=compiled_cores,
@@ -1121,6 +1123,7 @@ class _NNBEGMPeriodKernel:
     def _solve_continuous(
         self,
         *,
+        outer_inverse: DeclaredOuterInverse,
         keeper_result: KernelResult,
         config: AdaptiveOuterMesh,
         compiled_cores: Mapping[str, Callable],
@@ -1140,6 +1143,10 @@ class _NNBEGMPeriodKernel:
         bank reuses the refinement solves instead of re-solving. The keeper
         stays a separate exact branch throughout; its `sim_policy` rides
         through unchanged until the continuous simulation reader lands.
+
+        The search itself never inverts the declared outer map; the payload it
+        publishes is replayed by a reader that does, so `outer_inverse` gates
+        publication rather than the search.
         """
         adjuster_cores = _subcores(compiled_cores=compiled_cores, role="adjuster")
         cache: dict[float, OuterCandidateResult] = {}
@@ -1262,6 +1269,7 @@ class _NNBEGMPeriodKernel:
         )
         sim_policy: SimulationPolicy | None = None
         if nested_published:
+            self._fail_if_the_continuous_reader_cannot_invert(inverse=outer_inverse)
             sim_policy = NestedEGMSimPolicy(
                 keeper=keeper_policy,
                 adjuster=OuterPolicyBank(
@@ -1396,6 +1404,37 @@ class _NNBEGMPeriodKernel:
             outer_state_domain=self.outer_state_domain,
             regime_name=self.regime_name,
         )
+
+    def _fail_if_the_continuous_reader_cannot_invert(
+        self, *, inverse: DeclaredOuterInverse
+    ) -> None:
+        """Refuse to publish a payload the continuous-outer reader cannot invert.
+
+        The reader recovers the outer action by subtracting the declared map's
+        offset from the chosen stock, which is that map's inverse only where one
+        unit of action moves one unit of outer stock. Any other coefficient is a
+        model the reader cannot replay, and refusing it here is what keeps the
+        published decision the solved one: a payload the reader declines to
+        invert is replaced by the generic action-grid winner, which ranks a
+        different candidate set and reports no error for doing so.
+
+        Raises:
+            RegimeInitializationError: If the certified coefficient is not one.
+        """
+        if inverse.coefficient == Fraction(1):
+            return
+        msg = (
+            f"Regime {self.regime_name!r} moves {inverse.coefficient} units of "
+            f"outer stock per unit of {self.outer_action!r}. Continuous-outer "
+            "replay recovers the action by subtracting the declared map's "
+            "offset from the chosen stock, which inverts the map only at one "
+            "unit per unit, so no simulation policy is published for this one. "
+            "Declare the outer post-decision target as `new = old + action`, or "
+            "solve the regime with `NNBEGM(outer_search=FiniteOuterGrid(...))`, "
+            "which recovers the action by the map's own coefficient and so "
+            "inverts every power of two."
+        )
+        raise RegimeInitializationError(msg)
 
     def _candidate_outer_targets(
         self,

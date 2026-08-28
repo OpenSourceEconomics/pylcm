@@ -683,7 +683,7 @@ def _simulate_regime_in_period(
     if V_arr.ndim == 0:
         V_arr = jnp.broadcast_to(V_arr, (n_chunk_subjects,))
 
-    # F4: `None` from the reader means no nested continuous-outer read ran for
+    # `None` from the reader means no nested continuous-outer read ran for
     # this regime-period (no payload, the flat single-EGM path, passive rows,
     # the discrete-branch redecide), so no subject fell back on that path.
     nested_policy_fallback = (
