@@ -21,9 +21,13 @@ from _lcm.typing import (
     PeriodToRegimeToSimulationPolicy,
     PeriodToRegimeToVArr,
 )
-from lcm.exceptions import InvalidSimulationInputError
+from lcm import LinSpacedGrid
+from lcm.exceptions import (
+    InvalidSimulationInputError,
+    UnrepresentableOuterCandidateError,
+)
 from lcm.model import Model
-from lcm.solvers import AdaptiveOuterMesh
+from lcm.solvers import AdaptiveOuterMesh, FiniteOuterGrid
 from tests.test_models import n_nbegm_toy as toy
 
 _PARAMS = {"discount_factor": 0.95}
@@ -44,6 +48,19 @@ _ROUTES = {"finite": None, "adaptive": _MESH}
 _INITIAL = {
     "wealth": jnp.array([4.3, 11.7, 19.9, 8.1]),
     "illiquid": jnp.array([1.37, 6.6, 13.2, 17.5]),
+    "age": jnp.full(4, 20.0),
+    "regime_id": jnp.zeros(4, dtype=jnp.int32),
+}
+
+# A signed outer domain: the inverse recovers the action as `target - at_zero`
+# and adds it back, which crosses zero and so is not exact there. Some declared
+# nodes are then reached only to a stock outside the domain, and the solve
+# refuses to publish a bank missing them.
+_REFUSING_GRID = LinSpacedGrid(start=-1.0, stop=10.0, n_points=13)
+
+_REFUSING_INITIAL = {
+    "wealth": jnp.array([4.3, 11.7, 19.9, 8.1]),
+    "illiquid": jnp.array([-0.4, 2.2, 5.9, 9.3]),
     "age": jnp.full(4, 20.0),
     "regime_id": jnp.zeros(4, dtype=jnp.int32),
 }
@@ -129,3 +146,39 @@ def test_replay_policies_published_by_the_other_outer_search_are_refused() -> No
             period_to_regime_to_V_arr=adaptive_values,
             policies=finite_policies,
         )
+
+
+def test_a_solve_time_refusal_reaches_both_routes_identically() -> None:
+    """A solve that refuses to publish refuses the same way through either route.
+
+    Both workflows funnel through the same solve: the split one calls it
+    directly, the automatic one calls it from `simulate()` when no value arrays
+    are supplied. A refusal must therefore surface identically, rather than one
+    route reporting it and the other proceeding on a bank the solve declined to
+    publish.
+    """
+    model = _build_refusing_model()
+
+    with pytest.raises(UnrepresentableOuterCandidateError) as split:
+        model.solve(params=_PARAMS, log_level="off", return_simulation_policy=True)
+
+    with pytest.raises(UnrepresentableOuterCandidateError) as automatic:
+        model.simulate(
+            params=_PARAMS,
+            initial_conditions=dict(_REFUSING_INITIAL),
+            period_to_regime_to_V_arr=None,
+            log_level="off",
+            seed=_SEED,
+        )
+
+    assert str(split.value) == str(automatic.value)
+
+
+def _build_refusing_model() -> Model:
+    """Return a model whose solve cannot reconstruct every declared node."""
+    return toy.build_model(
+        variant="n_nbegm",
+        n_periods=_N_PERIODS,
+        illiquid_grid=_REFUSING_GRID,
+        outer_search=FiniteOuterGrid(grid=_REFUSING_GRID),
+    )
