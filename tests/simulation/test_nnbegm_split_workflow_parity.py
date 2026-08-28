@@ -17,6 +17,7 @@ import pandas as pd
 import pytest
 from pandas.testing import assert_frame_equal
 
+from _lcm.egm import outer_affine_structure, outer_inversion
 from _lcm.typing import (
     PeriodToRegimeToSimulationPolicy,
     PeriodToRegimeToVArr,
@@ -182,3 +183,29 @@ def _build_refusing_model() -> Model:
         illiquid_grid=_REFUSING_GRID,
         outer_search=FiniteOuterGrid(grid=_REFUSING_GRID),
     )
+
+
+def test_split_replay_does_not_certify_the_declared_outer_map_itself() -> None:
+    """Split replay consumes the published inversion verdict instead of re-deriving it.
+
+    The solve settles the declared map's coefficient and the stock domain once,
+    before publishing, and the replay policy carries that answer. A replay that
+    certified the map again could admit a stock the solve refused, so making
+    every certifier fatal for the duration of the replay establishes that none
+    is reached — and the replay it produces is unchanged.
+    """
+    model = _build("finite")
+    values, policies = model.solve(
+        params=_PARAMS, log_level="debug", return_simulation_policy=True
+    )
+    expected = _simulate(model, period_to_regime_to_V_arr=values, policies=policies)
+
+    def refuse(**_kwargs):
+        raise AssertionError("split replay re-certified the declared outer map")
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(outer_affine_structure, "certify_outer_coefficient", refuse)
+        patch.setattr(outer_inversion, "certify_declared_outer_inverse", refuse)
+        got = _simulate(model, period_to_regime_to_V_arr=values, policies=policies)
+
+    assert_frame_equal(got, expected)

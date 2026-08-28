@@ -2,6 +2,7 @@
 
 import dataclasses
 import functools
+from fractions import Fraction
 from types import MappingProxyType
 from typing import cast
 
@@ -9,6 +10,8 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.egm.outer_inversion import DeclaredOuterInverse
+from _lcm.egm.outer_replay_capability import OuterReplayCapability
 from _lcm.egm.published_policy import NNBEGMSimPolicy
 from _lcm.engine import NNBEGMPolicyRead, Regime
 from _lcm.simulation.simulate import _replay_nnbegm_candidates
@@ -154,6 +157,16 @@ def _synthetic_replay(
         inner_action_name="inner",
         outer_action_name="outer",
         n_keeper_candidates=0,
+        # The domain the fixture declares below: replay now reads it off the
+        # published capability rather than re-deriving it from the regime.
+        replay_capability=OuterReplayCapability(
+            inverse=DeclaredOuterInverse(coefficient=Fraction(1), low=0.0, high=200.0),
+            undeclared_functions=(),
+            unbindable_functions=(),
+            unavailable_keeper_states=(),
+            unaddressable_passive_states=(),
+            unaddressable_discrete_actions=(),
+        ),
         discrete_action_names=discrete_names,
     )
 
