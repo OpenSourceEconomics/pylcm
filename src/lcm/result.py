@@ -323,7 +323,7 @@ class SimulationResult:
     ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
         """Read only the solution from a directory produced by `save`.
 
-        Restores `V_arr/` and nothing else. A consumer that compares or re-uses
+        Restores `V_arr/` and nothing else. A consumer that compares or reuses
         value functions — a solver head-to-head, a warm start — therefore pays
         neither the per-subject checkpoint nor the metadata pickle, and does not
         need the device placement their leaves carry: the per-subject leaves are

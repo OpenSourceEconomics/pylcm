@@ -133,7 +133,9 @@ def test_costate_law_the_probe_cannot_evaluate_is_refused() -> None:
         costate_unprobeable=True,
     )
 
-    with pytest.raises(RegimeInitializationError, match=r"probe|verify|constan"):
+    # Prefix match, so it covers both "constant" and "constants".
+    message = r"probe|verify|constan"  # codespell:ignore
+    with pytest.raises(RegimeInitializationError, match=message):
         _check_probes(model)
 
 

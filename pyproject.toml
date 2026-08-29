@@ -361,6 +361,18 @@ extend-immutable-calls = [
 [tool.ruff.lint.isort]
 known-first-party = [ "_lcm", "lcm", "lcm_examples", "tests" ]
 
+# codespell passes most econ/numerics jargon, but not all of it: `statics`
+# (comparative statics), `disjointness` and `arithmetics` are flagged and are
+# correct as written. The MSVC object-output flag is spelled at its two call
+# sites with an inline ignore rather than a global entry. Two further
+# hits are deliberate and carry an inline `codespell:ignore` at their site
+# rather than a global entry, so the word stays caught everywhere else: a
+# misspelled key in a test that asserts unknown keys are rejected, and a regex
+# prefix. Extend per project rather than dropping the hook.
+[tool.codespell]
+ignore-words-list = "arithmetics,disjointness,fpr,ist,mape,nd,nin,statics"
+skip = "*.lock,*.svg,*.bib,*.ipynb"
+
 [tool.pyproject-fmt]
 column_width = 88
 max_supported_python = "3.14"
