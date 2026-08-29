@@ -82,7 +82,8 @@ def _scan_slot_reads() -> dict[tuple[str, ...], int]:
     """
     counts: dict[tuple[str, ...], int] = {}
     for path in sorted(_SRC.rglob("*.py")):
-        tree = ast.parse(path.read_text(), filename=str(path))
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(path))
         relative = path.relative_to(_SRC.parent).as_posix()
         for node, enclosing in _attributes_with_enclosing_function(tree):
             if node.attr not in _SLOT_OF_ACCESSOR:
@@ -177,3 +178,25 @@ def test_each_row_gives_a_reason(row):
 def test_each_row_says_whether_a_miss_would_be_silent(row):
     """Which sites need a positive test is the ledger's most useful column."""
     assert row["fails_silently"] in {"yes", "no"}
+
+
+def test_sources_are_read_as_utf_8_whatever_the_platform_default_is():
+    """The scan decodes every source as UTF-8, not as the locale's codec.
+
+    House style puts literal `—`, `→` and `μ` in source files, and a platform
+    whose default codec is not UTF-8 cannot decode them: the read raises before
+    the scan can parse anything, and the ledger's two partition tests then fail
+    for a reason that has nothing to do with the ledger.
+    """
+    recorded: list[str | None] = []
+    original = pathlib.Path.read_text
+
+    def recording_read_text(self: pathlib.Path, *args: object, **kwargs: object) -> str:
+        recorded.append(kwargs.get("encoding"))  # ty: ignore[invalid-argument-type]
+        return original(self, *args, **kwargs)  # ty: ignore[invalid-argument-type]
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(pathlib.Path, "read_text", recording_read_text)
+        _scan_slot_reads()
+
+    assert set(recorded) == {"utf-8"}
