@@ -1,0 +1,48 @@
+{
+  "certificate": "tests/test_grid_search_candidate_certificate.py",
+  "derived_policy": {
+    "profiles": {
+      "certified": {
+        "candidate_sources": [
+          {
+            "path": "src/_lcm/regime_building/max_Q_over_a.py",
+            "sha256": "8c9aac24d8495605418acf7757dd92b201b305a845e20cd18a1fa9fe1873746f"
+          },
+          {
+            "path": "src/_lcm/solution/grid_search.py",
+            "sha256": "a035b1f5bd50e5ab831d9731341c0b48f1fb8112be8bb6411bec09a7159df58d"
+          }
+        ],
+        "source_count": 2,
+        "source_inventory_sha256": "9011a4f0c6283ed310128359560db9beabcb8b659e0b696fe32b62dfb2988f33"
+      },
+      "fast": {
+        "candidate_sources": [
+          {
+            "path": "src/_lcm/regime_building/max_Q_over_a.py",
+            "sha256": "8c9aac24d8495605418acf7757dd92b201b305a845e20cd18a1fa9fe1873746f"
+          },
+          {
+            "path": "src/_lcm/solution/grid_search.py",
+            "sha256": "a035b1f5bd50e5ab831d9731341c0b48f1fb8112be8bb6411bec09a7159df58d"
+          }
+        ],
+        "source_count": 2,
+        "source_inventory_sha256": "9011a4f0c6283ed310128359560db9beabcb8b659e0b696fe32b62dfb2988f33"
+      }
+    }
+  },
+  "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
+  "schema_version": "1",
+  "source_inventory_sha256": "9011a4f0c6283ed310128359560db9beabcb8b659e0b696fe32b62dfb2988f33",
+  "sources": [
+    {
+      "path": "src/_lcm/regime_building/max_Q_over_a.py",
+      "sha256": "8c9aac24d8495605418acf7757dd92b201b305a845e20cd18a1fa9fe1873746f"
+    },
+    {
+      "path": "src/_lcm/solution/grid_search.py",
+      "sha256": "a035b1f5bd50e5ab831d9731341c0b48f1fb8112be8bb6411bec09a7159df58d"
+    }
+  ]
+}

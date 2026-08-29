@@ -36,6 +36,7 @@ it does.
 
 import ast
 import functools
+import json
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, cast
@@ -63,15 +64,28 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.candidate_certificate.generate_sources import derive_source_paths
+from tests.candidate_certificate.verify import (
+    nonempty_feasibility_masks,
+    reference_masked_argmax,
+)
 from tests.conftest import DECIMAL_PRECISION
 
 _SRC_ROOT = Path(__file__).parent.parent / "src"
 
-#: The sources whose bytes the contract's structural candidate bound rests on.
-CERTIFIED_SOURCES: tuple[str, ...] = (
-    "src/_lcm/solution/grid_search.py",
-    "src/_lcm/regime_building/max_Q_over_a.py",
+_SOURCE_INVENTORY_PATH = (
+    Path(__file__).parent / "candidate_certificate" / "sources.json"
 )
+
+
+def _load_certified_sources() -> tuple[str, ...]:
+    """Load the generated source inventory consumed by every certificate layer."""
+    payload = json.loads(_SOURCE_INVENTORY_PATH.read_text(encoding="utf-8"))
+    return tuple(item["path"] for item in payload["sources"])
+
+
+#: Generated from the certificate's literal ``_parse`` obligations.
+CERTIFIED_SOURCES: tuple[str, ...] = _load_certified_sources()
 
 _WORK_VALUES: tuple[float, ...] = (0.0, 1.0)
 _CONSUMPTION_VALUES: tuple[float, ...] = (1.0, 2.0, 3.0)
@@ -79,6 +93,11 @@ _WEALTH_VALUES = jnp.array([1.0, 2.0])
 _CANDIDATES: tuple[tuple[float, float], ...] = tuple(
     (work, consumption) for work in _WORK_VALUES for consumption in _CONSUMPTION_VALUES
 )
+_REFERENCE_Q_VALUES: tuple[float, ...] = tuple(
+    3.0 * work + consumption for work, consumption in _CANDIDATES
+)
+_NONEMPTY_FEASIBILITY_MASKS = nonempty_feasibility_masks(len(_CANDIDATES))
+_MASK_PARAMETER_NAMES = tuple(f"feasible_{index}" for index in range(len(_CANDIDATES)))
 
 
 @categorical(ordered=True)
@@ -359,20 +378,9 @@ def test_the_taste_shock_reduction_covers_every_action_axis():
     ) == ("tuple(range(n_discrete_action_axes, Q_arr.ndim))", "tuple(range(Qc.ndim))")
 
 
-def test_the_obligations_read_exactly_the_declared_certified_sources():
-    """No obligation rests on a source `CERTIFIED_SOURCES` does not name.
-
-    The contract anchors its bound to a named set of files. An obligation that
-    quietly started reading a third source would rest the bound on bytes nothing
-    declares, so the set is derived from the obligations rather than asserted
-    beside them: every literal handed to `_parse` must already be in the list.
-    """
-    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
-    parsed = {
-        node.args[0].value
-        for node in _calls_named(node=tree, name="_parse")
-        if node.args and isinstance(node.args[0], ast.Constant)
-    }
+def test_no_obligation_rests_on_an_undeclared_source():
+    """The AST-derived obligations equal the generated inventory exactly."""
+    parsed = set(derive_source_paths(Path(__file__)))
 
     assert parsed == set(CERTIFIED_SOURCES)
 
@@ -407,6 +415,33 @@ def _only_target(
 ) -> BoolND:
     """Admit exactly the one candidate the params name."""
     return jnp.isclose(work, target_work) & jnp.isclose(consumption, target_consumption)
+
+
+def _candidate_mask(
+    work: DiscreteAction,
+    consumption: ContinuousAction,
+    feasible_0: float,
+    feasible_1: float,
+    feasible_2: float,
+    feasible_3: float,
+    feasible_4: float,
+    feasible_5: float,
+) -> BoolND:
+    """Admit the candidates named by a six-bit parameterized mask."""
+    flat_index = jnp.asarray(work, dtype=jnp.int32) * len(
+        _CONSUMPTION_VALUES
+    ) + jnp.asarray(consumption - _CONSUMPTION_VALUES[0], dtype=jnp.int32)
+    flags = jnp.asarray(
+        [feasible_0, feasible_1, feasible_2, feasible_3, feasible_4, feasible_5]
+    )
+    return flags[flat_index] > 0.5
+
+
+def _ordinal_utility(
+    wealth: ContinuousState, work: DiscreteAction, consumption: ContinuousAction
+) -> FloatND:
+    """Publish the strict flattened ordering Q = wealth + [1,2,3,4,5,6]."""
+    return wealth + 3.0 * work + consumption
 
 
 def _labelled_utility(
@@ -562,6 +597,29 @@ def collective_model() -> Model:
     )
 
 
+@pytest.fixture(scope="module")
+def masked_singleton_model() -> Model:
+    """Singleton model whose feasibility neighborhood is supplied by parameters."""
+    return _build_model(
+        utility=_ordinal_utility,
+        constraints={"candidate_mask": _candidate_mask},
+        terminal_utility=lambda: jnp.array(0.0),
+    )
+
+
+@pytest.fixture(scope="module")
+def masked_collective_model() -> Model:
+    """Collective model with the same strict ordering for both stakeholders."""
+    utility = CollectiveUtility(
+        utilities={"f": _ordinal_utility, "m": _ordinal_utility}
+    )
+    return _build_model(
+        utility=utility,
+        constraints={"candidate_mask": _candidate_mask},
+        terminal_utility=CollectiveUtility(utilities={"f": _zero_f, "m": _zero_m}),
+    )
+
+
 @pytest.mark.parametrize(("work", "consumption"), _CANDIDATES)
 def test_every_declared_candidate_can_be_the_only_feasible_one(
     unique_feasible_model: Model, work: float, consumption: float
@@ -704,6 +762,95 @@ def test_simulation_routes_a_household_to_every_declared_candidate(
         "work": [work] * len(_WEALTH_VALUES),
         "consumption": [consumption] * len(_WEALTH_VALUES),
     }
+
+
+def _params_for_mask(*, model: Model, mask: tuple[bool, ...]) -> dict[str, Any]:
+    """Populate the model parameter template with one exact feasibility mask."""
+    params = cast("dict[str, Any]", model.get_params_template())
+    for name, feasible in zip(_MASK_PARAMETER_NAMES, mask, strict=True):
+        params["acting"]["candidate_mask"][name] = float(feasible)
+    params["acting"]["koopmans_aggregator"]["discount_factor"] = 0.5
+    return params
+
+
+def _solve_mask_case(*, model: Model, mask: tuple[bool, ...]) -> FloatND:
+    """Solve one mask neighborhood and return the acting regime's value."""
+    params = _params_for_mask(model=model, mask=mask)
+    return model.solve(params=params, log_level="debug")[0]["acting"]
+
+
+def _simulate_mask_case(
+    *, model: Model, mask: tuple[bool, ...]
+) -> dict[str, list[float]]:
+    """Simulate one mask neighborhood and return actions plus published values."""
+    params = _params_for_mask(model=model, mask=mask)
+    result = model.simulate(
+        params=params,
+        initial_conditions={
+            "age": jnp.zeros(len(_WEALTH_VALUES)),
+            "wealth": _WEALTH_VALUES,
+            "regime_id": jnp.full(len(_WEALTH_VALUES), RegimeId.acting),
+        },
+        period_to_regime_to_V_arr=None,
+        log_level="debug",
+    )
+    frame = result.to_dataframe(use_labels=False)
+    period_0 = frame[frame["period"] == 0]
+    return {name: period_0[name].to_numpy().tolist() for name in period_0.columns}
+
+
+def _reference_for_mask(mask: tuple[bool, ...]) -> tuple[int, float, float, float]:
+    """Return flat index, Q value, work, and consumption from the scalar oracle."""
+    index, value = reference_masked_argmax(_REFERENCE_Q_VALUES, mask)
+    work, consumption = _CANDIDATES[index]
+    return index, value, work, consumption
+
+
+def test_singleton_solve_matches_reference_over_every_nonempty_feasibility_mask(
+    masked_singleton_model: Model,
+):
+    """Singleton solve agrees with the scalar oracle on all 63 nonempty masks."""
+    for mask in _NONEMPTY_FEASIBILITY_MASKS:
+        _index, value, _work, _consumption = _reference_for_mask(mask)
+        observed = _solve_mask_case(model=masked_singleton_model, mask=mask)
+        aaae(observed, _WEALTH_VALUES + value, decimal=DECIMAL_PRECISION)
+
+
+def test_singleton_simulate_matches_reference_over_every_nonempty_feasibility_mask(
+    masked_singleton_model: Model,
+):
+    """Singleton simulation agrees with the scalar oracle on all mask neighborhoods."""
+    for mask in _NONEMPTY_FEASIBILITY_MASKS:
+        _index, value, work, consumption = _reference_for_mask(mask)
+        observed = _simulate_mask_case(model=masked_singleton_model, mask=mask)
+        assert observed["work"] == [work] * len(_WEALTH_VALUES), mask
+        assert observed["consumption"] == [consumption] * len(_WEALTH_VALUES), mask
+        aaae(observed["value"], _WEALTH_VALUES + value, decimal=DECIMAL_PRECISION)
+
+
+def test_collective_solve_matches_reference_over_every_nonempty_feasibility_mask(
+    masked_collective_model: Model,
+):
+    """Collective solve selects the same strict winner for both stakeholders."""
+    for mask in _NONEMPTY_FEASIBILITY_MASKS:
+        _index, value, _work, _consumption = _reference_for_mask(mask)
+        observed = _solve_mask_case(model=masked_collective_model, mask=mask)
+        expected = jnp.stack([_WEALTH_VALUES + value, _WEALTH_VALUES + value], axis=-1)
+        aaae(observed, expected, decimal=DECIMAL_PRECISION)
+
+
+def test_collective_simulate_matches_reference_over_every_nonempty_feasibility_mask(
+    masked_collective_model: Model,
+):
+    """Collective simulation agrees on action and each stakeholder's value."""
+    for mask in _NONEMPTY_FEASIBILITY_MASKS:
+        _index, value, work, consumption = _reference_for_mask(mask)
+        observed = _simulate_mask_case(model=masked_collective_model, mask=mask)
+        assert observed["work"] == [work] * len(_WEALTH_VALUES), mask
+        assert observed["consumption"] == [consumption] * len(_WEALTH_VALUES), mask
+        expected = _WEALTH_VALUES + value
+        aaae(observed["value_f"], expected, decimal=DECIMAL_PRECISION)
+        aaae(observed["value_m"], expected, decimal=DECIMAL_PRECISION)
 
 
 def _argmax_masking_the_last_action_cell() -> Callable[..., Any]:
