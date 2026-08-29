@@ -130,6 +130,11 @@ def durable_transition(new_illiquid: ContinuousState) -> ContinuousState:
     return new_illiquid
 
 
+def reserve_unchanged(reserve: ContinuousState) -> ContinuousState:
+    """Law of motion of the second passive stock: it is never touched."""
+    return reserve
+
+
 def utility(consumption: ContinuousAction) -> FloatND:
     """Pure CRRA over consumption."""
     return consumption ** (1.0 - RISK_AVERSION) / (1.0 - RISK_AVERSION)
@@ -179,6 +184,9 @@ ILLIQUID_INVESTMENT_GRID = LinSpacedGrid(start=-20.0, stop=20.0, n_points=41)
 OUTER_GRID = LinSpacedGrid(start=0.0, stop=20.0, n_points=N_OUTER)
 SAVINGS_FLOOR = 0.0  # borrowing limit on the inner post-decision balance
 SAVINGS_GRID = LinSpacedGrid(start=SAVINGS_FLOOR, stop=35.0, n_points=60)
+# A second passive continuous stock, held fixed and carried only by the alive
+# regime. Two points keep the extra state-space axis as small as an axis can be.
+RESERVE_GRID = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
 
 
 def budget_feasible(liquid_savings: FloatND) -> FloatND:
@@ -248,8 +256,10 @@ def build_model(
     durable_law: Callable[..., object] | Phased | None = None,
     constraints: Mapping[str, Callable[..., object]] | None = None,
     utility_function: Callable[..., object] | AgeSpecializedFunction | Phased = utility,
+    outer_post_decision_function: Callable[..., object] | None = None,
     regime_transition: Callable[..., object] | Phased = next_regime,
     koopmans_aggregator: Callable[..., object] | Phased | None = None,
+    second_passive_state: bool = False,
     carried_state: bool = False,
     terminal_active_from_start: bool = False,
 ) -> Model:
@@ -271,8 +281,15 @@ def build_model(
     variants keep solving the same model.
     `scale_function` overrides the fixed cost's `adjustment_scale` function,
     so a caller can drive the scale from a flat param.
+    `outer_post_decision_function` overrides `new_illiquid`, the outer
+    post-decision margin every variant reads the chosen stock through. It is the
+    map N-NB-EGM must invert, so a caller can declare one the solver is required
+    to refuse.
     `regime_transition` and `koopmans_aggregator` expose the other public phase
     slots to build-time capability tests without changing the numerical toy.
+    `second_passive_state=True` gives the alive regime a second passive
+    continuous stock, held fixed and carried by that regime alone, so its carry
+    rows span two passive axes instead of one.
     `carried_state=True` adds an otherwise unused solve-imputed/simulate-carried
     state for the NNBEGM replay-capability boundary witness.
     `constraints` overrides the constraint pool, which otherwise carries the
@@ -286,7 +303,13 @@ def build_model(
     final_age_alive = 20 + (n_periods - 2) * 5
     functions = {
         "utility": utility_function,
-        "new_illiquid": new_illiquid,
+        # Resolved at call time, not captured as a default: a default argument
+        # binds at definition, which would make `toy.new_illiquid` unpatchable.
+        "new_illiquid": (
+            new_illiquid
+            if outer_post_decision_function is None
+            else outer_post_decision_function
+        ),
         "resources": resources,
         "liquid_savings": liquid_savings,
         "credited": credited,
@@ -313,6 +336,9 @@ def build_model(
         "wealth": next_wealth,
         "illiquid": durable_law if durable_law is not None else durable_transition,
     }
+    if second_passive_state:
+        states["reserve"] = RESERVE_GRID
+        state_transitions["reserve"] = reserve_unchanged
     if carried_state:
         states["permanent_income"] = Phased(
             solve=impute_permanent_income,

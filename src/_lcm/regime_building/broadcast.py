@@ -37,6 +37,7 @@ from _lcm.regime_building.phases import (
 from _lcm.typing import RegimeName, StateName, StateOrActionName
 from _lcm.utils.error_messages import format_messages
 from lcm.ages import AgeGrid
+from lcm.collective import CollectiveUtility
 from lcm.consumption_savings_regime import NetOfAdjustmentCost
 from lcm.exceptions import ModelInitializationError
 from lcm.phased import Phased
@@ -98,6 +99,15 @@ def merge_model_slots(
                 # are inert there and must not violate the empty-transitions
                 # rule.
                 model_slot = {}
+            if slot_name == "functions":
+                # A household names its own utilities. A model-level entry
+                # under one of those names is there for the regimes that
+                # declare no household, so it does not reach this one.
+                model_slot = {
+                    name: value
+                    for name, value in model_slot.items()
+                    if name not in _names_the_household_writes(user_regime=user_regime)
+                }
             errors.extend(
                 _merge_one_slot(
                     slot_name=slot_name,
@@ -326,7 +336,7 @@ def _valuation_roots(
     """Key the payoff side of the regime — utility, categoricals, constraints, W."""
     functions = {
         name: cast("UserFunction", _for_phase(func, phase=phase))
-        for name, func in regime.functions.items()
+        for name, func in regime.decomposed_functions.items()
     }
     utility_names = (
         tuple(f"utility_{stakeholder}" for stakeholder in regime.stakeholders)
@@ -345,7 +355,7 @@ def _valuation_roots(
     }
     roots |= {
         f"__constraint__{name}": cast("UserFunction", _for_phase(value, phase=phase))
-        for name, value in regime.constraints.items()
+        for name, value in regime.decomposed_constraints.items()
     }
     if not regime.terminal:
         aggregator = regime.get_koopmans_aggregator(phase=phase) or koopmans_aggregator
@@ -359,7 +369,7 @@ def _transition_roots(
 ) -> dict[str, UserFunction]:
     """Key regime routing plus every edge-local joint probability and output law."""
     roots: dict[str, UserFunction] = {}
-    transition = _for_phase(regime.transition, phase=phase)
+    transition = _for_phase(regime.decomposed_transition, phase=phase)
     if isinstance(transition, Mapping):
         roots |= {
             f"__next_regime__{target_regime_name}": cast("UserFunction", cell)
@@ -726,7 +736,18 @@ def _merge_one_slot(
     regime_slot: Mapping[str, object],
     model_slot: Mapping[str, object],
 ) -> list[str]:
-    """Apply the exactly-one-level rule to one slot of one regime."""
+    """Apply the exactly-one-level rule to one slot of one regime.
+
+    Args:
+        slot_name: Which regime slot is being merged.
+        regime_name: Name of the regime the slot belongs to.
+        regime_slot: The regime's own entries.
+        model_slot: The model-level entries that reach this regime.
+
+    Returns:
+        List of error messages, empty when the slot merges cleanly.
+
+    """
     errors: list[str] = []
     for name, value in regime_slot.items():
         if value is None:
@@ -743,6 +764,30 @@ def _merge_one_slot(
                 f"level. Remove one, or mask the model entry with `None`.",
             )
     return errors
+
+
+def _names_the_household_writes(*, user_regime: UserRegime) -> frozenset[str]:
+    """Return the function names this regime's household supplies for itself.
+
+    A collective regime declares `utility` as a household, and with it a body
+    for every stakeholder it does not delegate. Those names are the household's
+    and a model-level entry under one of them belongs to the other regimes. A
+    stakeholder the household *does* delegate is left out, which is exactly how
+    a model-level body reaches her.
+    """
+    declaration = user_regime.functions.get("utility")
+    if not isinstance(declaration, CollectiveUtility):
+        return frozenset()
+    return frozenset(
+        {
+            "utility",
+            *(
+                f"utility_{stakeholder}"
+                for stakeholder, body in declaration.utilities.items()
+                if body is not None
+            ),
+        }
+    )
 
 
 def _model_slot_value_errors(

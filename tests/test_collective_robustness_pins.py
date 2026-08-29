@@ -22,16 +22,18 @@ from _lcm.regime_building.collective import _gather_along_actions
 from _lcm.regime_building.V import _get_identity_coordinate
 from lcm import (
     AgeGrid,
+    CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
     ParetoObjective,
     Regime,
+    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
+from lcm.collective import ProjectedRegimeValue, StakeholderRoute
 from lcm.exceptions import PyLCMError
-from lcm.regime import GatedEdge, ProjectedRegimeValue, StakeholderRoute
 from lcm.result import SimulationResult
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
@@ -64,10 +66,13 @@ def test_regime_weights_keep_the_values_they_were_declared_with():
     declared_weights = {"f": 0.25, "m": 0.75}
     regime = Regime(
         transition=None,
-        stakeholders=("f", "m"),
-        pareto_objective=ParetoObjective(weights=declared_weights),
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _wife_payoff, "utility_m": _husband_payoff},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _wife_payoff, "m": _husband_payoff},
+                objective=ParetoObjective(weights=declared_weights),
+            )
+        },
     )
 
     declared_weights["f"] = 0.9
@@ -145,16 +150,15 @@ def test_gate_reading_a_dissolution_flag_on_a_singleton_target_is_rejected_at_bu
         )
 
 
-def test_gated_edge_declaration_types_are_exported_from_the_package():
-    """A gated edge is declared from the top-level package, like every other slot.
+def test_the_route_type_is_exported_and_the_edge_type_is_not():
+    """A route is written; an edge is derived, so only the route is public.
 
-    The comparison needs the defining module's objects on one side, which is why
-    this module alone imports the two names from `lcm.regime`: reading both
-    sides off `lcm` would compare each name against itself and pin nothing.
+    The comparison needs the defining module's object on one side, which is why
+    this module imports `StakeholderRoute` from `lcm.collective`: reading both
+    sides off `lcm` would compare the name against itself and pin nothing.
     """
-    exported = (getattr(lcm, "GatedEdge", None), getattr(lcm, "StakeholderRoute", None))
-
-    assert exported == (GatedEdge, StakeholderRoute)
+    assert getattr(lcm, "StakeholderRoute", None) is StakeholderRoute
+    assert not hasattr(lcm, "GatedEdge")
 
 
 def _drop_stakeholder_metadata(*, directory: Path) -> None:
@@ -183,18 +187,10 @@ def _make_singleton_target_dissolution_gate_regimes() -> MappingProxyType[str, R
     """
     source = Regime(
         transition={
-            "target": MarkovTransition(_enters_target),
-            "fallback": MarkovTransition(_never_entered),
-        },
-        active=lambda age: age < 1,
-        states={"wage": GATE_WAGE_GRID},
-        state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
-        functions={"utility": _wage_utility},
-        gated_edges={
-            "target": GatedEdge(
+            "target": ValueDependentTransition(
+                probability=MarkovTransition(_enters_target),
                 gate=_no_dissolution,
-                legs={
+                routes={
                     "only": StakeholderRoute(
                         fallback=ProjectedRegimeValue(
                             regime="fallback",
@@ -202,8 +198,14 @@ def _make_singleton_target_dissolution_gate_regimes() -> MappingProxyType[str, R
                         ),
                     )
                 },
-            )
+            ),
+            "fallback": MarkovTransition(_never_entered),
         },
+        active=lambda age: age < 1,
+        states={"wage": GATE_WAGE_GRID},
+        state_transitions={"wage": fixed_transition("wage")},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _wage_utility},
     )
     target = Regime(
         transition=None,

@@ -5,6 +5,7 @@ from typing import Any, Literal, cast
 import dags.tree as dt
 from dags.tree import qname_from_tree_path, tree_path_from_qname
 
+from _lcm.gated_edge import GatedEdge
 from _lcm.grids import IrregSpacedGrid
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.collective import PARETO_OBJECTIVE_ENTRY
@@ -25,7 +26,7 @@ from _lcm.typing import (
 from _lcm.utils.functools import get_union_of_args
 from lcm.exceptions import InvalidNameError
 from lcm.phased import Phased
-from lcm.regime import GatedEdge, ProjectedRegimeValue
+from lcm.regime import ProjectedRegimeValue
 from lcm.regime import Regime as UserRegime
 from lcm.transition import JointTransition, MarkovTransition
 from lcm.typing import UserFunction
@@ -989,7 +990,9 @@ def _function_names_in_transition_role(
         functions.
 
     """
-    functions = user_regime.functions
+    # A law binds an argument to a DAG node, so the names to resolve against
+    # are the engine's, not the author's.
+    functions = user_regime.decomposed_functions
     feeders: set[str] = set()
     frontier = [
         variant
@@ -1070,7 +1073,7 @@ def _collect_all_functions_for_template(
             user_regime.state_transitions,
             joint_output_names=joint_output_names,
         )
-        result |= _regime_transition_entries(user_regime.transition)
+        result |= _regime_transition_entries(user_regime.decomposed_transition)
     result |= {
         name: func
         for name, (_template_key, func) in _gated_edge_entries(user_regime).items()

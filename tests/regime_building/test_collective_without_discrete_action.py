@@ -13,7 +13,7 @@ small-integer expression rather than a tolerance-bounded approximation.
 import jax.numpy as jnp
 import numpy as np
 
-from lcm import AgeGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import AgeGrid, CollectiveUtility, LinSpacedGrid, Model, Regime, categorical
 from lcm.typing import ContinuousAction, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
 
@@ -76,20 +76,23 @@ def test_collective_regime_with_no_action_solves_to_its_own_utilities() -> None:
     couple = Regime(
         transition=_next_couple_regime,
         active=lambda age: age < 1,
-        stakeholders=("f", "m"),
         states={},
         actions={},
-        functions={"utility_f": _flow_utility_f, "utility_m": _flow_utility_m},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _flow_utility_f, "m": _flow_utility_m}
+            )
+        },
     )
     couple_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         states={},
         actions={},
         functions={
-            "utility_f": _terminal_utility_f,
-            "utility_m": _terminal_utility_m,
+            "utility": CollectiveUtility(
+                utilities={"f": _terminal_utility_f, "m": _terminal_utility_m}
+            )
         },
     )
     model = Model(
@@ -123,23 +126,23 @@ def test_collective_regime_with_only_a_continuous_action_solves() -> None:
     couple = Regime(
         transition=_next_couple_regime,
         active=lambda age: age < 1,
-        stakeholders=("f", "m"),
         states={},
         actions={"consumption": CONSUMPTION_GRID},
         functions={
-            "utility_f": _consumption_utility_f,
-            "utility_m": _consumption_utility_m,
+            "utility": CollectiveUtility(
+                utilities={"f": _consumption_utility_f, "m": _consumption_utility_m}
+            )
         },
     )
     couple_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         states={},
         actions={"consumption": CONSUMPTION_GRID},
         functions={
-            "utility_f": _consumption_utility_f,
-            "utility_m": _consumption_utility_m,
+            "utility": CollectiveUtility(
+                utilities={"f": _consumption_utility_f, "m": _consumption_utility_m}
+            )
         },
     )
     model = Model(

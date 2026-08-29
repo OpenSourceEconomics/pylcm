@@ -17,6 +17,7 @@ from beartype import beartype
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.typing import RegimeName, StateName
 from _lcm.utils.containers import ensure_containers_are_immutable
+from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
 from lcm.transition import MarkovTransition
 from lcm.typing import UserFunction
@@ -152,8 +153,20 @@ class CollectiveUtility:
     at that common choice.
     """
 
-    utilities: Mapping[str, UserFunction]
-    """One flow-utility function per stakeholder, keyed by stakeholder name."""
+    utilities: Mapping[str, UserFunction | Phased | None]
+    """One flow-utility per stakeholder, keyed by stakeholder name.
+
+    Three ways to name a stakeholder's utility, and the keys are the household
+    either way:
+
+    - a function — the ordinary case;
+    - a `Phased` — the utility the household is solved against differs from the
+      one simulation realizes;
+    - `None` — the body arrives from elsewhere, under the regime's own
+      `utility_<s>` entry. That is what lets a model declare a common utility
+      at the model level and still name its households here; a stakeholder left
+      undeclared in both places is an error naming the entry that is missing.
+    """
 
     objective: ParetoObjective | None = None
     """How the stakeholders' action values are scalarized into the household's.
@@ -166,6 +179,11 @@ class CollectiveUtility:
     """
 
     def __post_init__(self) -> None:
+        if not self.utilities:
+            raise RegimeInitializationError(
+                "A `CollectiveUtility` declares a household, so it needs at "
+                "least one stakeholder: `utilities` may not be empty."
+            )
         object.__setattr__(
             self, "utilities", ensure_containers_are_immutable(self.utilities)
         )

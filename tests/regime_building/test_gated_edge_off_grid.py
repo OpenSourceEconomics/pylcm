@@ -22,13 +22,13 @@ import pytest
 from lcm import (
     AgeGrid,
     DiscreteGrid,
-    GatedEdge,
     IrregSpacedGrid,
     LinSpacedGrid,
     Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    ValueDependentTransition,
     categorical,
 )
 from lcm.exceptions import ModelInitializationError
@@ -104,16 +104,11 @@ def _make_model(
     return Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_certain_target)},
-                active=lambda age: age < 1,
-                states={"x": _X},
-                state_transitions={"x": _next_x},
-                actions={"saving": saving_grid},
-                functions={"utility": _utility_source},
-                gated_edges={
-                    "target": GatedEdge(
+                transition={
+                    "target": ValueDependentTransition(
+                        probability=MarkovTransition(_certain_target),
                         gate=_gate,
-                        legs={
+                        routes={
                             "only": StakeholderRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback",
@@ -124,6 +119,11 @@ def _make_model(
                         off_grid=off_grid,
                     )
                 },
+                active=lambda age: age < 1,
+                states={"x": _X},
+                state_transitions={"x": _next_x},
+                actions={"saving": saving_grid},
+                functions={"utility": _utility_source},
             ),
             "target": Regime(
                 transition=None,
@@ -275,15 +275,11 @@ def _make_discrete_target_model(*, off_grid: Literal["pointwise", "reject"]) -> 
     return Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_certain_target)},
-                active=lambda age: age < 1,
-                states={"health": health},
-                state_transitions={"health": _keep_health},
-                functions={"utility": _utility_zero},
-                gated_edges={
-                    "target": GatedEdge(
+                transition={
+                    "target": ValueDependentTransition(
+                        probability=MarkovTransition(_certain_target),
                         gate=_healthy_gate,
-                        legs={
+                        routes={
                             "only": StakeholderRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback",
@@ -294,6 +290,10 @@ def _make_discrete_target_model(*, off_grid: Literal["pointwise", "reject"]) -> 
                         off_grid=off_grid,
                     )
                 },
+                active=lambda age: age < 1,
+                states={"health": health},
+                state_transitions={"health": _keep_health},
+                functions={"utility": _utility_zero},
             ),
             "target": Regime(
                 transition=None,
@@ -377,16 +377,11 @@ def _witness_model() -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_certain_target)},
-                active=lambda age: age < 1,
-                states={"x": _WITNESS_X},
-                state_transitions={"x": _witness_next_x},
-                actions={"risk": DiscreteGrid(Risk)},
-                functions={"utility": _witness_utility},
-                gated_edges={
-                    "target": GatedEdge(
+                transition={
+                    "target": ValueDependentTransition(
+                        probability=MarkovTransition(_certain_target),
                         gate=_witness_gate,
-                        legs={
+                        routes={
                             "only": StakeholderRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback",
@@ -394,13 +389,18 @@ def _witness_model() -> Model:
                                 )
                             )
                         },
-                        gate_refs={
+                        gate_references={
                             "V_reference": ProjectedRegimeValue(
                                 regime="reference", projection={"x": _identity_x}
                             )
                         },
                     )
                 },
+                active=lambda age: age < 1,
+                states={"x": _WITNESS_X},
+                state_transitions={"x": _witness_next_x},
+                actions={"risk": DiscreteGrid(Risk)},
+                functions={"utility": _witness_utility},
             ),
             "target": Regime(
                 transition=None,

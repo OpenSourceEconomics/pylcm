@@ -41,7 +41,7 @@ from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
-from lcm import DiscreteGrid, LinSpacedGrid, Model, categorical
+from lcm import CollectiveUtility, DiscreteGrid, LinSpacedGrid, Model, categorical
 from lcm.ages import AgeGrid
 from lcm.certainty_equivalent import PowerMean
 from lcm.koopmans_aggregation import LinearAggregator
@@ -101,19 +101,21 @@ def _make_couple_regimes() -> dict[str, Regime]:
     couple = Regime(
         transition=_next_regime,
         active=lambda age: age < 1,
-        stakeholders=("f", "m"),
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": _next_wage},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _utility_f, "utility_m": _utility_m},
+        functions={
+            "utility": CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
+        },
     )
     couple_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         states={"wage": _WAGE_GRID},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _utility_f, "utility_m": _utility_m},
+        functions={
+            "utility": CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
+        },
     )
     return {"couple": couple, "couple_terminal": couple_terminal}
 
@@ -240,22 +242,28 @@ def test_nonterminal_collective_stochastic_state_expectation_is_per_stakeholder(
     couple = Regime(
         transition=_next_regime,
         active=lambda age: age < 1,
-        stakeholders=("f", "m"),
         states={"mood": DiscreteGrid(Mood), "wage": _WAGE_GRID},
         state_transitions={
             "mood": MarkovTransition(_next_mood),
             "wage": _next_wage,
         },
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _utility_f_mood, "utility_m": _utility_m},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _utility_f_mood, "m": _utility_m}
+            )
+        },
     )
     couple_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         states={"mood": DiscreteGrid(Mood), "wage": _WAGE_GRID},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _utility_f_mood, "utility_m": _utility_m},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _utility_f_mood, "m": _utility_m}
+            )
+        },
     )
     ages = AgeGrid(start=0, stop=2, step="Y")
     regimes = process_regimes(
@@ -365,11 +373,12 @@ def test_nonterminal_collective_regime_with_singleton_target_is_rejected():
     couple = Regime(
         transition=_next_regime,
         active=lambda age: age < 1,
-        stakeholders=("f", "m"),
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": _next_wage},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _utility_f, "utility_m": _utility_m},
+        functions={
+            "utility": CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
+        },
     )
     single_terminal = Regime(
         transition=None,
@@ -409,12 +418,15 @@ def test_collective_regime_with_taste_shocks_is_rejected():
     with pytest.raises(NotImplementedError, match="taste shocks"):
         Regime(
             transition=_next_regime,
-            stakeholders=("f", "m"),
             taste_shocks=ExtremeValueTasteShocks(),
             states={"wage": _WAGE_GRID},
             state_transitions={"wage": _next_wage},
             actions={"work": DiscreteGrid(Work)},
-            functions={"utility_f": _utility_f, "utility_m": _utility_m},
+            functions={
+                "utility": CollectiveUtility(
+                    utilities={"f": _utility_f, "m": _utility_m}
+                )
+            },
         )
 
 
@@ -423,10 +435,13 @@ def test_collective_regime_with_certainty_equivalent_is_rejected():
     with pytest.raises(NotImplementedError, match="certainty equivalent"):
         Regime(
             transition=_next_regime,
-            stakeholders=("f", "m"),
             certainty_equivalent=PowerMean(),
             states={"wage": _WAGE_GRID},
             state_transitions={"wage": _next_wage},
             actions={"work": DiscreteGrid(Work)},
-            functions={"utility_f": _utility_f, "utility_m": _utility_m},
+            functions={
+                "utility": CollectiveUtility(
+                    utilities={"f": _utility_f, "m": _utility_m}
+                )
+            },
         )

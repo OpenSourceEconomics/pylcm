@@ -1,19 +1,17 @@
 """A collective regime fills its slots from the model level like any other regime.
 
-A collective regime carries a per-stakeholder `utility_<s>` for each of its
-stakeholders, and may carry actions. Both are ordinary regime slots, so a
-household whose regimes share them may declare them once on the `Model` and let
-the broadcast supply every regime — completeness is a property of the regime the
-model runs, not of a bare `Regime`.
+A collective regime carries a body for each stakeholder its household names, and
+may carry actions. Both are ordinary regime slots, so a household whose regimes
+share them may declare them once on the `Model` and let the broadcast supply
+every regime — completeness is a property of the regime the model runs, not of a
+bare `Regime`.
 """
 
 from dataclasses import replace
 
-import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm import DiscreteGrid, Model
-from lcm.exceptions import RegimeInitializationError
 from tests.collective_fixtures import (
     AGES,
     TWO_STAKEHOLDER_V_PERIOD_0,
@@ -74,17 +72,3 @@ def test_collective_discrete_action_may_come_from_the_model_level_slot():
     solution = broadcast_model.solve(params=params, log_level="debug")
 
     aaae(solution[0]["couple"], TWO_STAKEHOLDER_V_PERIOD_0, decimal=DECIMAL_PRECISION)
-
-
-def test_duplicate_stakeholders_are_reported_as_duplicates():
-    """A stakeholder name repeated in `stakeholders` is reported as a duplicate.
-
-    `stakeholders=("f", "f")` names one stakeholder twice. A regime taking its
-    per-stakeholder utilities from the model level has nothing else wrong with
-    it, so the error names the repeated stakeholder rather than describing the
-    tuple in terms of a utility it would need.
-    """
-    couple = make_two_stakeholder_model()[0].user_regimes["couple"]
-
-    with pytest.raises(RegimeInitializationError, match="duplicate"):
-        replace(couple, stakeholders=("f", "f"), functions={})

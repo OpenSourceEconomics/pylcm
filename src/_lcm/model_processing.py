@@ -586,7 +586,7 @@ def _is_solve_proved_post_decision_lower_bound(
     against the simulation function pool.
     """
     post_decision = _post_decision_function_of_solver(user_regime.solver)
-    declaration = user_regime.constraints[constraint_name]
+    declaration = user_regime.decomposed_constraints[constraint_name]
     if post_decision is None or declaration is None:
         return False
     processed = normalize_constraints(
@@ -689,7 +689,7 @@ def _validate_constraint_phase_invariance(
                         for name, func in solve_funcs.items()
                     },
                 )
-        for constraint_name in user_regime.constraints:
+        for constraint_name in user_regime.decomposed_constraints:
             ancestors = get_ancestors(
                 ancestry_funcs, targets=[constraint_name], include_targets=False
             )

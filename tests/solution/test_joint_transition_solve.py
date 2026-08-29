@@ -13,8 +13,8 @@ from _lcm.transition_plans import (
 )
 from lcm import (
     AgeGrid,
+    CollectiveUtility,
     DiscreteGrid,
-    GatedEdge,
     IrregSpacedGrid,
     JointTransition,
     LinSpacedGrid,
@@ -23,6 +23,7 @@ from lcm import (
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    ValueDependentTransition,
     categorical,
 )
 from lcm.exceptions import (
@@ -168,7 +169,7 @@ def test_joint_transition_rejects_probability_vector_with_wrong_length() -> None
 
     with pytest.raises(
         InvalidStateTransitionProbabilitiesError,
-        match=r"match.*length 3.*support_size is 2",
+        match=r"match.*shape \(3,\).*expected \(2,\).*support_size is 2",
     ):
         model.solve(params=_params(), log_level="debug")
 
@@ -360,7 +361,21 @@ def _bdy_model(*, enable_jit: bool, support_size: int = 2) -> Model:
     return Model(
         regimes={
             "single": Regime(
-                transition={"couple": MarkovTransition(_bdy_certain_couple)},
+                transition={
+                    "couple": ValueDependentTransition(
+                        probability=MarkovTransition(_bdy_certain_couple),
+                        gate=_bdy_gate_always_open,
+                        routes={
+                            "f": StakeholderRoute(
+                                target_stakeholder="f",
+                                fallback=ProjectedRegimeValue(
+                                    regime="single_terminal",
+                                    projection={"wealth": _bdy_identity_wealth},
+                                ),
+                            )
+                        },
+                    )
+                },
                 active=lambda age: age < 1,
                 states={"wealth": IrregSpacedGrid(points=_BDY_WEALTH_POINTS[:-1])},
                 functions={"utility": _bdy_single_utility},
@@ -378,20 +393,6 @@ def _bdy_model(*, enable_jit: bool, support_size: int = 2) -> Model:
                         )
                     }
                 },
-                gated_edges={
-                    "couple": GatedEdge(
-                        gate=_bdy_gate_always_open,
-                        legs={
-                            "f": StakeholderRoute(
-                                target_stakeholder="f",
-                                fallback=ProjectedRegimeValue(
-                                    regime="single_terminal",
-                                    projection={"wealth": _bdy_identity_wealth},
-                                ),
-                            )
-                        },
-                    )
-                },
             ),
             "single_terminal": Regime(
                 transition=None,
@@ -402,7 +403,6 @@ def _bdy_model(*, enable_jit: bool, support_size: int = 2) -> Model:
             "couple": Regime(
                 transition=None,
                 active=lambda age: age >= 1,
-                stakeholders=("f", "m"),
                 actions={"household_choice": DiscreteGrid(BDYChoice)},
                 states={
                     "wealth": IrregSpacedGrid(points=_BDY_WEALTH_POINTS),
@@ -410,8 +410,12 @@ def _bdy_model(*, enable_jit: bool, support_size: int = 2) -> Model:
                     "eps_p": DiscreteGrid(BDYEps),
                 },
                 functions={
-                    "utility_f": _bdy_couple_utility_f,
-                    "utility_m": _bdy_couple_utility_m,
+                    "utility": CollectiveUtility(
+                        utilities={
+                            "f": _bdy_couple_utility_f,
+                            "m": _bdy_couple_utility_m,
+                        }
+                    )
                 },
             ),
         },

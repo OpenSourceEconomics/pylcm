@@ -42,11 +42,11 @@ from _lcm.utils.functools import get_union_of_args
 from _lcm.utils.logging import get_logger
 from lcm import (
     DiscreteGrid,
-    GatedEdge,
     LinSpacedGrid,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    ValueDependentTransition,
     categorical,
 )
 from lcm.ages import AgeGrid
@@ -149,16 +149,11 @@ def _settlement_from_health(health: DiscreteState) -> FloatND:
 def _make_regimes() -> dict[str, Regime]:
     """Source with a dissolution edge, its target, and the leg's fallback."""
     source = Regime(
-        transition={"target": MarkovTransition(_prob_one)},
-        active=lambda age: age < 1,
-        states={"health": DiscreteGrid(Health)},
-        state_transitions={"health": _next_health},
-        actions={"work": DiscreteGrid(Work)},
-        functions={"utility": _utility_source},
-        gated_edges={
-            "target": GatedEdge(
+        transition={
+            "target": ValueDependentTransition(
+                probability=MarkovTransition(_prob_one),
                 gate=_gate_dissolves_everywhere,
-                legs={
+                routes={
                     "own": StakeholderRoute(
                         fallback=ProjectedRegimeValue(
                             regime="fallback",
@@ -168,6 +163,11 @@ def _make_regimes() -> dict[str, Regime]:
                 },
             )
         },
+        active=lambda age: age < 1,
+        states={"health": DiscreteGrid(Health)},
+        state_transitions={"health": _next_health},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _utility_source},
     )
     target = Regime(
         transition=None,

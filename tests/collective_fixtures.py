@@ -27,6 +27,7 @@ import jax.numpy as jnp
 
 from lcm import (
     AgeGrid,
+    CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -130,19 +131,21 @@ def make_two_stakeholder_model(
     couple = Regime(
         transition=_next_couple_regime,
         active=lambda age: age < 1,
-        stakeholders=("f", "m"),
         states={"wage": WAGE_GRID},
         state_transitions={"wage": _next_wage},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _utility_f, "utility_m": _utility_m},
+        functions={
+            "utility": CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
+        },
     )
     couple_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         states={"wage": WAGE_GRID},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _utility_f, "utility_m": _utility_m},
+        functions={
+            "utility": CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
+        },
     )
     model = Model(
         regimes={"couple": couple, "couple_terminal": couple_terminal},
@@ -186,21 +189,22 @@ def make_stateless_collective_target_model(
     couple = Regime(
         transition=_next_couple_regime,
         active=lambda age: age < 1,
-        stakeholders=("f", "m"),
         states={"wage": WAGE_GRID},
         state_transitions={"wage": _next_wage},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _utility_f, "utility_m": _utility_m},
+        functions={
+            "utility": CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
+        },
     )
     couple_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         states={},
         actions={"work": DiscreteGrid(Work)},
         functions={
-            "utility_f": _stateless_utility_f,
-            "utility_m": _stateless_utility_m,
+            "utility": CollectiveUtility(
+                utilities={"f": _stateless_utility_f, "m": _stateless_utility_m}
+            )
         },
     )
     model = Model(
@@ -279,12 +283,12 @@ def make_folding_collective_regime_kwargs() -> dict[str, Any]:
     return {
         "transition": _next_couple_regime,
         "active": lambda age: age < 1,
-        "stakeholders": ("f", "m"),
         "states": {"wage_shock": FOLDED_SHOCK},
         "actions": {"work": DiscreteGrid(Work)},
         "functions": {
-            "utility_f": _shock_utility_f,
-            "utility_m": _shock_utility_m,
+            "utility": CollectiveUtility(
+                utilities={"f": _shock_utility_f, "m": _shock_utility_m}
+            )
         },
     }
 
@@ -305,12 +309,12 @@ def make_folding_collective_regimes() -> dict[str, Regime]:
     couple_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         states={},
         actions={"work": DiscreteGrid(Work)},
         functions={
-            "utility_f": _stateless_utility_f,
-            "utility_m": _stateless_utility_m,
+            "utility": CollectiveUtility(
+                utilities={"f": _stateless_utility_f, "m": _stateless_utility_m}
+            )
         },
     )
     return {

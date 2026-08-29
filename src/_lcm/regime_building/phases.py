@@ -93,7 +93,10 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
         f"with the regime function of the same name. Rename one of "
         f"the two."
         for name in carried_imputations
-        if name in user_regime.functions
+        # The engine-facing names, not the declared ones: a carried state
+        # spelled like a stakeholder's utility collides with the entry that
+        # utility is decomposed into, and the overlay below would win.
+        if name in user_regime.decomposed_functions
     ]
     solve_functions = {**solve_functions, **carried_imputations}
 
@@ -166,7 +169,7 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
 
     constraints = {
         name: cast("ConstraintLike", declaration)
-        for name, declaration in user_regime.constraints.items()
+        for name, declaration in user_regime.decomposed_constraints.items()
         if declaration is not None
     }
 
@@ -277,7 +280,7 @@ def phase_variation_paths(
     """
     varied: list[str] = []
     for slot_name, declarations in (
-        ("functions", user_regime.functions),
+        ("functions", user_regime.decomposed_functions),
         ("states", user_regime.states),
         ("state_transitions", user_regime.state_transitions),
     ):
@@ -393,7 +396,7 @@ def _split_functions(
     solve_functions: dict[FunctionName, UserFunction] = {}
     simulate_functions: dict[FunctionName, UserFunction] = {}
     errors: list[str] = []
-    for name, value in user_regime.functions.items():
+    for name, value in user_regime.decomposed_functions.items():
         if isinstance(value, Phased):
             variants = (
                 ("solve", value.solve, solve_functions),
@@ -698,7 +701,7 @@ def _split_regime_transition(
     Returns the solve-phase variant, the simulate-phase variant, and the
     grammar violations found along the way.
     """
-    raw = user_regime.transition
+    raw = user_regime.decomposed_transition
     if not isinstance(raw, Phased):
         return (
             cast("_PhaseRegimeTransition", raw),

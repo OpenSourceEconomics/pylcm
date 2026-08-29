@@ -22,13 +22,14 @@ import numpy as np
 from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm import (
+    CollectiveUtility,
     DiscreteGrid,
-    GatedEdge,
     LinSpacedGrid,
     Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -198,16 +199,11 @@ def _build_model(
 
     """
     single_f = Regime(
-        transition={"married_terminal": MarkovTransition(_marry_for_sure)},
-        active=lambda age: age < 1,
-        states={"wage": _WAGE},
-        state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
-        functions={"utility": _utility_single_f},
-        gated_edges={
-            "married_terminal": GatedEdge(
+        transition={
+            "married_terminal": ValueDependentTransition(
+                probability=MarkovTransition(_marry_for_sure),
                 gate=gate,
-                legs={
+                routes={
                     "f": StakeholderRoute(
                         target_stakeholder="f",
                         fallback=ProjectedRegimeValue(
@@ -216,7 +212,7 @@ def _build_model(
                         ),
                     )
                 },
-                gate_refs={
+                gate_references={
                     "V_single_f_ref": ProjectedRegimeValue(
                         regime="single_f_terminal",
                         projection={"wage": _wage_itself},
@@ -228,14 +224,22 @@ def _build_model(
                 },
             )
         },
+        active=lambda age: age < 1,
+        states={"wage": _WAGE},
+        state_transitions={"wage": fixed_transition("wage")},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _utility_single_f},
     )
     married_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         states={"wage": _WAGE},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _utility_married_f, "utility_m": _utility_married_m},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _utility_married_f, "m": _utility_married_m}
+            )
+        },
     )
     single_f_terminal = Regime(
         transition=None,

@@ -25,14 +25,16 @@ from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm import (
     AgeGrid,
+    CollectiveUtility,
     DiscreteGrid,
-    GatedEdge,
     IrregSpacedGrid,
     LinSpacedGrid,
     Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    ValueDependentConstraint,
+    ValueDependentTransition,
     categorical,
 )
 from lcm.transition import MarkovTransition
@@ -102,16 +104,11 @@ def _projection_model(projection) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={"target": MarkovTransition(_certain_target)},
-                active=lambda age: age < 1,
-                states={"x": _X},
-                state_transitions={"x": _next_x},
-                actions={"saving": _SAVING},
-                functions={"utility": _utility_source},
-                gated_edges={
-                    "target": GatedEdge(
+                transition={
+                    "target": ValueDependentTransition(
+                        probability=MarkovTransition(_certain_target),
                         gate=_closed_above_one,
-                        legs={
+                        routes={
                             "only": StakeholderRoute(
                                 fallback=ProjectedRegimeValue(
                                     regime="fallback", projection={"x": projection}
@@ -121,6 +118,11 @@ def _projection_model(projection) -> Model:
                         off_grid="pointwise",
                     )
                 },
+                active=lambda age: age < 1,
+                states={"x": _X},
+                state_transitions={"x": _next_x},
+                actions={"saving": _SAVING},
+                functions={"utility": _utility_source},
             ),
             "target": Regime(
                 transition=None,
@@ -266,16 +268,11 @@ def _coupled_model(saving_points) -> Model:
     return Model(
         regimes={
             "source": Regime(
-                transition={"pair": MarkovTransition(_to_pair)},
-                active=lambda age: age < 1,
-                states={"wage": _WAGE},
-                state_transitions={"wage": _next_wage},
-                actions={"saving": IrregSpacedGrid(points=saving_points)},
-                functions={"utility": _u_source},
-                gated_edges={
-                    "pair": GatedEdge(
+                transition={
+                    "pair": ValueDependentTransition(
+                        probability=MarkovTransition(_to_pair),
                         gate=_no_dissolution,
-                        legs={
+                        routes={
                             "only": StakeholderRoute(
                                 target_stakeholder="f",
                                 fallback=ProjectedRegimeValue(
@@ -287,18 +284,30 @@ def _coupled_model(saving_points) -> Model:
                         off_grid="pointwise",
                     )
                 },
+                active=lambda age: age < 1,
+                states={"wage": _WAGE},
+                state_transitions={"wage": _next_wage},
+                actions={"saving": IrregSpacedGrid(points=saving_points)},
+                functions={"utility": _u_source},
             ),
             "pair": Regime(
                 transition=None,
                 active=lambda age: age >= 1,
-                stakeholders=("f", "m"),
                 states={"wage": _WAGE},
                 actions={"work": DiscreteGrid(Work)},
-                functions={"utility_f": _pair_payoff, "utility_m": _pair_payoff},
-                value_constraints={"participation_f": _participation_f},
-                same_period_refs={
-                    "V_alone_f": ProjectedRegimeValue(
-                        regime="alone_f", projection={"wage": _identity_wage}
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={"f": _pair_payoff, "m": _pair_payoff}
+                    )
+                },
+                constraints={
+                    "participation_f": ValueDependentConstraint(
+                        predicate=_participation_f,
+                        references={
+                            "V_alone_f": ProjectedRegimeValue(
+                                regime="alone_f", projection={"wage": _identity_wage}
+                            )
+                        },
                     )
                 },
             ),

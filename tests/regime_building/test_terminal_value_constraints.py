@@ -20,10 +20,12 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    CollectiveUtility,
     IrregSpacedGrid,
     Model,
     ProjectedRegimeValue,
     Regime,
+    ValueDependentConstraint,
     categorical,
     fixed_transition,
 )
@@ -74,24 +76,29 @@ def _make_model(*, participation: bool) -> Model:
     couple = Regime(
         transition={"couple_terminal": MarkovTransition(_certain)},
         active=lambda age: age < 1,
-        stakeholders=("f", "m"),
         states={"wage": _WAGE},
         state_transitions={"wage": fixed_transition("wage")},
-        functions={"utility_f": _zero, "utility_m": _zero},
+        functions={"utility": CollectiveUtility(utilities={"f": _zero, "m": _zero})},
     )
     couple_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         states={"wage": _WAGE},
-        functions={"utility_f": _wage_for_her, "utility_m": _twice_wage_for_him},
-        value_constraints=(
-            {"participation_f": _participation_f} if participation else {}
-        ),
-        same_period_refs=(
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _wage_for_her, "m": _twice_wage_for_him}
+            )
+        },
+        constraints=(
             {
-                "V_single_f": ProjectedRegimeValue(
-                    regime="single_f_terminal", projection={"wage": _identity_wage}
+                "participation_f": ValueDependentConstraint(
+                    predicate=_participation_f,
+                    references={
+                        "V_single_f": ProjectedRegimeValue(
+                            regime="single_f_terminal",
+                            projection={"wage": _identity_wage},
+                        )
+                    },
                 )
             }
             if participation
@@ -214,5 +221,7 @@ def test_a_terminal_singleton_regime_still_refuses_value_constraints() -> None:
             transition=None,
             states={"wage": _WAGE},
             functions={"utility": _wage_for_her},
-            value_constraints={"participation_f": _participation_f},
+            constraints={
+                "participation_f": ValueDependentConstraint(predicate=_participation_f)
+            },
         )

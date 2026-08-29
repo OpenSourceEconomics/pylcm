@@ -69,6 +69,7 @@ from typing import Any
 
 import jax
 
+from _lcm.egm.outer_replay_capability import OuterReplayCapability
 from lcm.typing import ActionName, FloatND, IntND, StateName
 
 
@@ -237,6 +238,14 @@ class NNBEGMSimPolicy:
     n_keeper_candidates: int
     """Number of leading candidates belonging to the state-specific keeper."""
 
+    replay_capability: OuterReplayCapability
+    """The solve's settled verdict on what this replay may assume.
+
+    Carries the certified inverse of the declared outer map and the stock
+    domain a recovered action must land in. Replay reads them here rather than
+    certifying the map again, so an admission the solve made cannot be
+    re-decided at a realized state."""
+
     candidate_discrete_actions: IntND | None = None
     """Exact shape ``(n_candidates, n_discrete_actions)`` code metadata."""
 
@@ -278,6 +287,7 @@ def _flatten_nnbegm_policy(
         policy.inner_action_name,
         policy.outer_action_name,
         policy.n_keeper_candidates,
+        policy.replay_capability,
         policy.discrete_action_names,
     )
     return (
@@ -297,6 +307,7 @@ def _unflatten_nnbegm_policy(
         inner_action_name,
         outer_action_name,
         n_keeper_candidates,
+        replay_capability,
         discrete_action_names,
     ) = aux
     return NNBEGMSimPolicy(
@@ -309,6 +320,7 @@ def _unflatten_nnbegm_policy(
         inner_action_name=inner_action_name,
         outer_action_name=outer_action_name,
         n_keeper_candidates=n_keeper_candidates,
+        replay_capability=replay_capability,
         discrete_action_names=discrete_action_names,
     )
 

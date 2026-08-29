@@ -27,6 +27,7 @@ from _lcm.constraints.ir import Condition
 from _lcm.grids import DiscreteGrid
 from _lcm.typing import FunctionName, RegimeName
 from _lcm.user_regime_validation import (
+    _fail_if_a_folded_conditioner_can_move,
     _fail_if_collective_regime_folds,
     _validate_completeness,
 )
@@ -128,9 +129,12 @@ def finalize_regimes(
                 if user_regime.certainty_equivalent is not None
                 else certainty_equivalent
             )
-        finalized = user_regime.replace(
+        # The engine composed these from `decomposed_functions`, so writing
+        # them straight into `functions` would put the decomposition where the
+        # declaration was. The write-back goes by provenance instead.
+        finalized = user_regime.with_engine_functions(
+            engine_functions=MappingProxyType(functions),
             derived_categoricals=merged,
-            functions=MappingProxyType(functions),
             koopmans_aggregator=regime_koopmans_aggregator,
             certainty_equivalent=regime_certainty_equivalent,
         )
@@ -143,6 +147,10 @@ def finalize_regimes(
             )
         finalized._validate_finalized_structure(regime_name=regime_name)  # noqa: SLF001
         result[regime_name] = finalized
+    # Runs on the finalized regimes: a conditioner's law may arrive as a
+    # model-level broadcast, so whether it can move is only settled once the
+    # merge is done.
+    _fail_if_a_folded_conditioner_can_move(user_regimes=MappingProxyType(result))
     return MappingProxyType(result)
 
 

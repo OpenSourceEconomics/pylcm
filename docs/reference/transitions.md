@@ -73,6 +73,43 @@ must not also have an independent entry in `state_transitions`.
 Use `Phased` around the entire `JointTransition` for perceived and realized variants;
 both variants keep the same output names, support size, and literal support schema.
 
+### What each part may read
+
+- a callable `support` reads only `period`, `age`, and parameters;
+- `probabilities` may also read source states, actions, and helpers;
+- an output law may transform the shared node using source values, and may read
+  `next_<state>` outputs already resolved on the same target edge.
+
+Support shapes and probability vectors are checked in the params-bound runtime preflight
+and rejected when invalid. Probabilities are never silently normalized: a vector that
+does not sum to one is an error, not something the engine repairs.
+
+### Parameter paths
+
+Support and probability parameters live below the kernel name; output parameters keep
+the ordinary target-local `next_<state>` paths:
+
+```text
+params[source][target][kernel]["support"]
+params[source][target][kernel]["probabilities"]
+params[source][target]["next_wealth"]
+```
+
+### Outputs onto a stochastic process
+
+An output may target a stochastic process as well as an ordinary grid, which is how
+correlated innovations land on a grid pylcm discretized rather than one discretized by
+hand. The output law still names a physical value. Because the target's value function
+is stored on the process's nodes, that value reaches the continuation as its
+coefficients in the node basis — the hat weights of linear interpolation. Naming a node
+reads that node alone; naming a point between nodes reads the linear interpolation of
+the target's value function, which is the only reading its nodes support.
+
+The output law displaces the process's own law on that edge, so the correlation the
+kernel imposes is what the target is entered at. The support is the contract: a value
+outside the process's grid has no representation in that basis and yields `NaN`, which
+the caller's value function reports rather than extrapolating.
+
 ## Age specialization
 
 `AgeSpecializedFunction(build, signature)` and `AgeSpecializedGrid(build, signature)`

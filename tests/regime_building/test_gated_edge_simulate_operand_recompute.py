@@ -101,11 +101,11 @@ from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
     DiscreteGrid,
-    GatedEdge,
     LinSpacedGrid,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    ValueDependentTransition,
     categorical,
 )
 from lcm.ages import AgeGrid
@@ -168,29 +168,29 @@ def _value_gate(V_target: FloatND, V_ref: FloatND) -> BoolND:
 
 def _make_regimes() -> dict[str, Regime]:
     src = Regime(
-        transition={"target": MarkovTransition(_prob_one)},
-        active=lambda age: age < 1,
-        states={"x": _X2},
-        state_transitions={"x": _next_x_offgrid},
-        actions={"work": DiscreteGrid(Work)},
-        functions={"utility": _u_src},
-        gated_edges={
-            "target": GatedEdge(
+        transition={
+            "target": ValueDependentTransition(
+                probability=MarkovTransition(_prob_one),
                 gate=_value_gate,
-                legs={
+                routes={
                     "only": StakeholderRoute(
                         fallback=ProjectedRegimeValue(
                             regime="fallback", projection={"x": _identity_x}
                         )
                     )
                 },
-                gate_refs={
+                gate_references={
                     "V_ref": ProjectedRegimeValue(
                         regime="ref", projection={"x": _identity_x}
                     )
                 },
             )
         },
+        active=lambda age: age < 1,
+        states={"x": _X2},
+        state_transitions={"x": _next_x_offgrid},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _u_src},
     )
     target = Regime(
         transition=None,
@@ -381,16 +381,11 @@ def _threshold_gate(V_target: FloatND, gate_threshold: FloatND) -> BoolND:
 
 def _make_curved_regimes() -> dict[str, Regime]:
     src = Regime(
-        transition={"target": MarkovTransition(_prob_one)},
-        active=lambda age: age < 1,
-        states={"x": _X2},
-        state_transitions={"x": _next_x_offgrid},
-        actions={"work": DiscreteGrid(Work)},
-        functions={"utility": _u_src},
-        gated_edges={
-            "target": GatedEdge(
+        transition={
+            "target": ValueDependentTransition(
+                probability=MarkovTransition(_prob_one),
                 gate=_threshold_gate,
-                legs={
+                routes={
                     "only": StakeholderRoute(
                         fallback=ProjectedRegimeValue(
                             regime="fallback", projection={"x": _identity_x}
@@ -399,6 +394,11 @@ def _make_curved_regimes() -> dict[str, Regime]:
                 },
             )
         },
+        active=lambda age: age < 1,
+        states={"x": _X2},
+        state_transitions={"x": _next_x_offgrid},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _u_src},
     )
     target = Regime(
         transition=None,

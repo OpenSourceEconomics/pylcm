@@ -12,7 +12,7 @@ import pandas as pd
 import pytest
 
 from _lcm.simulation.result_dataframe import _reorder_columns
-from lcm import DiscreteGrid, Model, Regime, categorical
+from lcm import CollectiveUtility, DiscreteGrid, Model, Regime, categorical
 from lcm.exceptions import PyLCMError
 from lcm.transition import MarkovTransition
 from lcm.typing import ContinuousState, DiscreteAction, FloatND, ScalarInt
@@ -185,19 +185,25 @@ def _make_reverse_alphabetical_collective_model() -> Model:
     couple = Regime(
         transition=_next_couple_regime,
         active=lambda age: age < 1,
-        stakeholders=("wife", "husband"),
         states={"wage": WAGE_GRID},
         state_transitions={"wage": _next_wage},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_wife": _utility_wife, "utility_husband": _utility_husband},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"wife": _utility_wife, "husband": _utility_husband}
+            )
+        },
     )
     couple_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("wife", "husband"),
         states={"wage": WAGE_GRID},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_wife": _utility_wife, "utility_husband": _utility_husband},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"wife": _utility_wife, "husband": _utility_husband}
+            )
+        },
     )
     return Model(
         regimes={"couple": couple, "couple_terminal": couple_terminal},
@@ -246,24 +252,24 @@ def _make_collective_model_with_colliding_state() -> Model:
     couple = Regime(
         transition=_next_couple_regime,
         active=lambda age: age < 1,
-        stakeholders=("f", "m"),
         states={"value_f": WAGE_GRID},
         state_transitions={"value_f": _next_colliding_state},
         actions={"work": DiscreteGrid(Work)},
         functions={
-            "utility_f": _colliding_utility_f,
-            "utility_m": _colliding_utility_m,
+            "utility": CollectiveUtility(
+                utilities={"f": _colliding_utility_f, "m": _colliding_utility_m}
+            )
         },
     )
     couple_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         states={"value_f": WAGE_GRID},
         actions={"work": DiscreteGrid(Work)},
         functions={
-            "utility_f": _colliding_utility_f,
-            "utility_m": _colliding_utility_m,
+            "utility": CollectiveUtility(
+                utilities={"f": _colliding_utility_f, "m": _colliding_utility_m}
+            )
         },
     )
     return Model(
@@ -284,19 +290,25 @@ def _make_mixed_model_with_a_singleton_state_shadowing_a_value_column() -> Model
     couple = Regime(
         transition={"couple_terminal": MarkovTransition(_probability_one)},
         active=lambda age: age < 1,
-        stakeholders=("f", "m"),
         states={"wage": WAGE_GRID},
         state_transitions={"wage": _next_wage},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _utility_wife, "utility_m": _utility_husband},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _utility_wife, "m": _utility_husband}
+            )
+        },
     )
     couple_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         states={"wage": WAGE_GRID},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _utility_wife, "utility_m": _utility_husband},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _utility_wife, "m": _utility_husband}
+            )
+        },
     )
     solo = Regime(
         transition={"solo_terminal": MarkovTransition(_probability_one)},

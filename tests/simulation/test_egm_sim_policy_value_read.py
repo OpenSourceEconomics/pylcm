@@ -9,6 +9,8 @@ differently.
 """
 
 import itertools
+from dataclasses import replace
+from fractions import Fraction
 from types import MappingProxyType, SimpleNamespace
 
 import jax.numpy as jnp
@@ -17,9 +19,12 @@ import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
 import _lcm.simulation.simulate as simulation_module
-from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
+from _lcm.egm import outer_affine_structure, outer_inversion
+from _lcm.egm.nested_published_policy import NestedEGMSimPolicy, OuterPolicyBank
 from _lcm.egm.outer_interpolation import LocalCubicOuterInterpolant
+from _lcm.egm.outer_inversion import DeclaredOuterInverse
 from _lcm.egm.outer_refinement import safeguarded_continuous_argmax
+from _lcm.egm.outer_replay_capability import OuterReplayCapability
 from _lcm.egm.published_policy import EGMSimPolicy
 from _lcm.engine import Regime
 from _lcm.simulation.simulate import (
@@ -44,42 +49,6 @@ class _StubRegime(Regime):
 
     def __init__(self, *, simulation: object) -> None:
         object.__setattr__(self, "simulation", simulation)
-
-
-@pytest.mark.parametrize("coefficient", [1.0, 1.001])
-def test_outer_transition_unit_slope_check_respects_configured_precision(
-    coefficient: float,
-) -> None:
-    """A unit affine law passes while a materially different slope is refused."""
-
-    def outer_post_decision(outer_state, investment):
-        return outer_state + coefficient * investment
-
-    payload = object.__new__(NestedEGMSimPolicy)
-    object.__setattr__(payload, "outer_action_name", "investment")
-    object.__setattr__(
-        payload,
-        "outer_post_decision_name",
-        "outer_post_decision",
-    )
-    regime = _StubRegime(
-        simulation=SimpleNamespace(
-            functions={"outer_post_decision": outer_post_decision},
-        )
-    )
-    result = simulation_module._outer_transition_offset_and_slope(
-        payload=payload,
-        regime=regime,
-        states=MappingProxyType({"outer_state": jnp.asarray([1.37])}),
-        flat_params=MappingProxyType({}),
-        period=0,
-        age=jnp.asarray(40.0),
-        n_subjects=1,
-    )
-
-    assert result is not None
-    _, slope_is_unit, _ = result
-    assert bool(slope_is_unit[0]) is (coefficient == 1.0)
 
 
 def test_value_read_is_cubic_hermite_with_the_marginal_slopes():
@@ -867,12 +836,8 @@ def test_nested_policy_rejection_projects_an_out_of_domain_grid_pair(
 
     monkeypatch.setattr(
         simulation_module,
-        "_outer_transition_offset_and_slope",
-        lambda **_kwargs: (
-            jnp.zeros(1),
-            jnp.ones(1, dtype=bool),
-            jnp.asarray,
-        ),
+        "_outer_transition_offset_and_forward",
+        lambda **_kwargs: (jnp.zeros(1), jnp.asarray),
     )
     monkeypatch.setattr(
         simulation_module,
@@ -981,12 +946,8 @@ def test_nested_policy_rejection_uses_the_safe_opposite_endpoint(
 
     monkeypatch.setattr(
         simulation_module,
-        "_outer_transition_offset_and_slope",
-        lambda **_kwargs: (
-            jnp.zeros(1),
-            jnp.ones(1, dtype=bool),
-            jnp.asarray,
-        ),
+        "_outer_transition_offset_and_forward",
+        lambda **_kwargs: (jnp.zeros(1), jnp.asarray),
     )
     monkeypatch.setattr(
         simulation_module,
@@ -1079,12 +1040,8 @@ def test_nested_grid_baseline_chooses_the_best_safe_endpoint(monkeypatch) -> Non
 
     monkeypatch.setattr(
         simulation_module,
-        "_outer_transition_offset_and_slope",
-        lambda **_kwargs: (
-            jnp.zeros(1),
-            jnp.ones(1, dtype=bool),
-            jnp.asarray,
-        ),
+        "_outer_transition_offset_and_forward",
+        lambda **_kwargs: (jnp.zeros(1), jnp.asarray),
     )
     monkeypatch.setattr(
         simulation_module,
@@ -1152,12 +1109,8 @@ def test_nested_grid_baseline_enforces_the_solver_owned_budget(monkeypatch) -> N
 
     monkeypatch.setattr(
         simulation_module,
-        "_outer_transition_offset_and_slope",
-        lambda **_kwargs: (
-            jnp.zeros(1),
-            jnp.ones(1, dtype=bool),
-            jnp.asarray,
-        ),
+        "_outer_transition_offset_and_forward",
+        lambda **_kwargs: (jnp.zeros(1), jnp.asarray),
     )
     monkeypatch.setattr(
         simulation_module,
@@ -1390,3 +1343,149 @@ def test_nested_action_pair_is_scored_without_changing_actions(monkeypatch) -> N
         decimal=DECIMAL_PRECISION,
     )
     assert bool(jnp.all(feasible))
+
+
+_LIQUID_GRID = jnp.array([1.0, 2.0, 3.0])
+
+
+def _keeper_rows() -> EGMSimPolicy:
+    """One keeper branch on the shared liquid grid, with no row axes."""
+    return EGMSimPolicy(
+        endog_grid=_LIQUID_GRID,
+        policy=jnp.array([0.5, 1.0, 1.5]),
+        value=jnp.array([0.0, 0.7, 1.1]),
+        marginal_utility=jnp.array([1.0, 0.5, 0.3]),
+    )
+
+
+def _adjuster_bank() -> OuterPolicyBank:
+    """Two conditional adjuster branches on a two-node outer mesh."""
+    stacked = jnp.stack([_LIQUID_GRID, _LIQUID_GRID])
+    return OuterPolicyBank(
+        outer_nodes=jnp.array([0.0, 1.0]),
+        policies=EGMSimPolicy(
+            endog_grid=stacked,
+            policy=jnp.stack([jnp.array([0.4, 0.9, 1.4])] * 2),
+            value=jnp.stack([jnp.array([0.0, 0.6, 1.0]), jnp.array([0.1, 0.8, 1.2])]),
+            marginal_utility=jnp.stack([jnp.array([1.0, 0.5, 0.3])] * 2),
+        ),
+    )
+
+
+def _replay_capability() -> OuterReplayCapability:
+    """The settled verdict a published continuous-outer payload carries."""
+    return OuterReplayCapability(
+        inverse=DeclaredOuterInverse(coefficient=Fraction(1), low=0.0, high=20.0),
+        undeclared_functions=(),
+        unbindable_functions=(),
+        unavailable_keeper_states=(),
+        unaddressable_passive_states=(),
+        unaddressable_discrete_actions=(),
+    )
+
+
+def _nested_payload(*, no_adjustment_name: str | None = None) -> NestedEGMSimPolicy:
+    """A replayable continuous-outer payload over `_keeper_rows`/`_adjuster_bank`."""
+    return NestedEGMSimPolicy(
+        keeper=_keeper_rows(),
+        adjuster=_adjuster_bank(),
+        outer_action_name="investment",
+        outer_state_name="illiquid",
+        outer_post_decision_name="new_illiquid",
+        inner_action_name="consumption",
+        liquid_state_name="wealth",
+        outer_no_adjustment_name=no_adjustment_name,
+        resources_target_name="resources",
+        savings_lower_bound=0.0,
+        golden_iterations=4,
+        replay_capability=_replay_capability(),
+    )
+
+
+def _new_illiquid(illiquid, investment):
+    """`s' = Z + Iz`: the outer post-decision the replay inverts."""
+    return illiquid + investment
+
+
+def _resources(wealth):
+    """Liquid resources the recovered pair is checked against."""
+    return wealth + 5.0
+
+
+def _read_with(*, payload, functions):
+    """Replay `payload` for one subject against the given simulate function pool."""
+    return simulation_module._read_nested_policy(
+        payload=payload,
+        optimal_actions=MappingProxyType(
+            {"consumption": jnp.array([1.0]), "investment": jnp.array([0.0])}
+        ),
+        regime=_StubRegime(
+            simulation=SimpleNamespace(
+                grids={},
+                functions=functions,
+                constraints={},
+                compute_regime_transition_probs=None,
+                age_specialized_function_names=frozenset(),
+            )
+        ),
+        states=MappingProxyType(
+            {"wealth": jnp.array([2.0]), "illiquid": jnp.array([1.0])}
+        ),
+        flat_params=MappingProxyType({}),
+        period=0,
+        age=jnp.asarray(40.0),
+    )
+
+
+def test_nested_read_replays_the_decision_when_every_function_resolves():
+    """A payload whose declared functions all resolve replays without falling back."""
+    _, fallback, _ = _read_with(
+        payload=_nested_payload(),
+        functions={"new_illiquid": _new_illiquid, "resources": _resources},
+    )
+
+    assert not bool(fallback[0])
+
+
+def test_nested_read_does_not_certify_the_declared_outer_map_itself():
+    """The read consumes the published inversion verdict instead of re-deriving it.
+
+    The solve settles the declared map's coefficient once, before publishing,
+    and the payload carries that answer. A read that certified the map again
+    could reach a verdict the solve it is replaying did not, and would then
+    publish a decision the solve never ranked. Making every certifier fatal for
+    the duration of the read is what establishes that none is reached.
+    """
+
+    def refuse(**_kwargs):
+        raise AssertionError("the read re-certified the declared outer map")
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(outer_affine_structure, "certify_outer_coefficient", refuse)
+        patch.setattr(outer_inversion, "certify_declared_outer_inverse", refuse)
+        _, fallback, _ = _read_with(
+            payload=_nested_payload(),
+            functions={"new_illiquid": _new_illiquid, "resources": _resources},
+        )
+
+    assert not bool(fallback[0])
+
+
+def test_nested_read_refuses_a_payload_whose_capability_is_unsupported():
+    """A payload the solve would not have published stops the read, loudly.
+
+    Structural support is settled before publication, so the read never has to
+    decide it. A payload arriving with an unsupported verdict did not come from
+    a publication that honoured that gate, and replaying it would emit the
+    action-grid winner under the name of the refined method.
+    """
+    doubled = replace(
+        _replay_capability(),
+        inverse=DeclaredOuterInverse(coefficient=Fraction(2), low=0.0, high=20.0),
+    )
+
+    with pytest.raises(InvalidSimulationInputError, match="replay capability"):
+        _read_with(
+            payload=replace(_nested_payload(), replay_capability=doubled),
+            functions={"new_illiquid": _new_illiquid, "resources": _resources},
+        )

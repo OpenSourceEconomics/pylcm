@@ -55,12 +55,13 @@ from _lcm.regime_building.processing import process_regimes
 from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
+    CollectiveUtility,
     DiscreteGrid,
-    GatedEdge,
     Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -158,7 +159,31 @@ def _offer_probs(education: DiscreteState) -> FloatND:
 
 def _make_offer_regimes() -> dict[str, Regime]:
     single_f = Regime(
-        transition={"married_terminal": MarkovTransition(_prob_one)},
+        transition={
+            "married_terminal": ValueDependentTransition(
+                probability=MarkovTransition(_prob_one),
+                gate=_consent_gate,
+                routes={
+                    "f": StakeholderRoute(
+                        target_stakeholder="f",
+                        fallback=ProjectedRegimeValue(
+                            regime="single_f_terminal",
+                            projection={"education": _identity_education},
+                        ),
+                    )
+                },
+                gate_references={
+                    "V_single_f_ref": ProjectedRegimeValue(
+                        regime="single_f_terminal",
+                        projection={"education": _identity_education},
+                    ),
+                    "V_single_m_ref": ProjectedRegimeValue(
+                        regime="single_m_terminal",
+                        projection={"education": _spouse_type_as_education},
+                    ),
+                },
+            )
+        },
         active=lambda age: age < 1,
         states={"education": DiscreteGrid(Education)},
         state_transitions={
@@ -171,30 +196,6 @@ def _make_offer_regimes() -> dict[str, Regime]:
         },
         actions={"work": DiscreteGrid(Work)},
         functions={"utility": _u_single_f},
-        gated_edges={
-            "married_terminal": GatedEdge(
-                gate=_consent_gate,
-                legs={
-                    "f": StakeholderRoute(
-                        target_stakeholder="f",
-                        fallback=ProjectedRegimeValue(
-                            regime="single_f_terminal",
-                            projection={"education": _identity_education},
-                        ),
-                    )
-                },
-                gate_refs={
-                    "V_single_f_ref": ProjectedRegimeValue(
-                        regime="single_f_terminal",
-                        projection={"education": _identity_education},
-                    ),
-                    "V_single_m_ref": ProjectedRegimeValue(
-                        regime="single_m_terminal",
-                        projection={"education": _spouse_type_as_education},
-                    ),
-                },
-            )
-        },
     )
     single_f_terminal = Regime(
         transition=None,
@@ -211,13 +212,14 @@ def _make_offer_regimes() -> dict[str, Regime]:
     married_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         states={
             "education": DiscreteGrid(Education),
             "spouse_type": DiscreteGrid(Education),
         },
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _u_married, "utility_m": _u_married},
+        functions={
+            "utility": CollectiveUtility(utilities={"f": _u_married, "m": _u_married})
+        },
     )
     return {
         "single_f": single_f,

@@ -19,6 +19,7 @@ from beartype import beartype
 import lcm.solvers as _solvers
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.constraints.processed import ConstraintLike
+from _lcm.gated_edge import GatedEdge
 from _lcm.grids import DiscreteGrid, Grid
 from _lcm.regime_building.phases import normalize_regime_phases
 from _lcm.regime_building.transitions import collect_state_transitions
@@ -36,7 +37,6 @@ from lcm.collective import (
     CollectiveUtility,
     ParetoObjective,
     ProjectedRegimeValue,
-    StakeholderRoute,
     ValueDependentConstraint,
     ValueDependentTransition,
 )
@@ -45,103 +45,6 @@ from lcm.phased import Phased
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.transition import AgeSpecializedGrid, JointTransition, MarkovTransition
 from lcm.typing import UserFunction
-
-
-@beartype(conf=REGIME_CONF)
-@dataclass(frozen=True, kw_only=True)
-class GatedEdge:
-    """A gated edge routing a source regime's continuation into a target.
-
-    The construct that unlocks MIXED singleton/collective
-    regime topologies: a singleton regime may reach a collective regime (mutual
-    consent marriage) and a collective regime may route per-stakeholder to
-    singleton regimes (dissolution) — but only THROUGH a declared gated edge. Direct
-    raw transitions between different-stakeholder regimes stay rejected.
-
-    A source regime declares `gated_edges` as a mapping of TARGET regime name
-    to `GatedEdge`. **The key is always the GATE-OPEN target** — the regime a
-    row enters when the gate is true — and each leg's `fallback` is where the
-    gate-false branch sends it. A dissolution edge is therefore keyed by the
-    CONTINUING collective regime under `gate = ~D_target`, with each partner's
-    single regime as that partner's leg fallback; keying it by one partner's
-    single regime would send both partners there whenever the couple stays
-    together.
-
-    A leg thus owns four facts about where its rows go, and simulation carries
-    all four: the open branch's regime (the key) and role
-    (`StakeholderRoute.target_stakeholder`), and the closed branch's regime and role
-    (`fallback.regime` and `fallback.stakeholder`). A row's own role —
-    `initial_conditions["own_stakeholder"]`, published in the simulated frame —
-    is what picks its leg, and it is updated to the branch's role as the row
-    moves; a row landing in a singleton regime carries none.
-
-    At the end of each period's solve, the engine folds, for
-    each declared edge and each source stakeholder `s`, a gated continuation
-    object on the target regime's grid:
-
-        Wbar^s(x) = jnp.where(gate(x), V_target^{leg_s}(x), V_fallback^s(pi_s(x)))
-
-    The source's continuation then reads `Wbar` in place of the raw target V,
-    threaded through the ordinary transition machinery.
-
-    - `gate` — a BOOLEAN user function evaluated pointwise on the target
-      regime's grid. It may read the target regime's per-stakeholder value
-      components under the names `V_target_<s>` (one per target stakeholder),
-      the target's dissolution flag `D_target` (a collective target only), each
-      key of `gate_refs` (a same-period reference value at its projection), and
-      ordinary target states / params, plus the target fold's engine context
-      (`period` / `age`). Mutual consent to marriage is the strict, unanimous gate
-      `gate = (V_target_f > V_single_f_ref) & (V_target_m > V_single_m_ref)`;
-      "no dissolution this period" is `gate = ~D_target`. Stochastic gates —
-      a gate returning a probability in `(0, 1)` rather than a boolean — are
-      not supported.
-    - `legs` — one `StakeholderRoute` per SOURCE stakeholder (keyed by source
-      stakeholder name; a singleton source declares exactly one leg under any
-      key).
-    - `gate_refs` — extra same-period reference values the `gate` reads,
-      exactly like a regime's `same_period_refs` but projected from the TARGET
-      regime's grid.
-    - `off_grid` — what the edge promises about a landing point between the
-      target's grid nodes. Both phases read the operands there and gate them
-      there, so the value the source maximizes is one a branch really pays;
-      `"reject"` additionally refuses, at model build, a target on whose grid
-      such a point can occur at all.
-    """
-
-    gate: UserFunction
-    """Boolean gate on the target grid, evaluated in the target fold's context."""
-
-    legs: Mapping[str, StakeholderRoute]
-    """One `StakeholderRoute` per source stakeholder.
-
-    A singleton source declares exactly one, under any key.
-    """
-
-    gate_refs: Mapping[str, ProjectedRegimeValue] = field(
-        default_factory=lambda: MappingProxyType({})
-    )
-    """Same-period reference values the `gate` reads (projected from the target
-    grid)."""
-
-    off_grid: Literal["pointwise", "reject"] = "pointwise"
-    """How a landing point between the target's grid nodes is treated.
-
-    - `"pointwise"` (the default) reads every operand at the landing point and
-      applies the gate there, in both phases. The operands are interpolated, so
-      the value carries the ordinary interpolation error of any continuation —
-      but it is a value one branch really delivers, and the branch the solve
-      priced is the branch simulation routes down.
-    - `"reject"` demands that no such point exists: the model refuses to build
-      unless the target regime's grid is reached exactly, i.e. it carries no
-      continuous state. Declare it where a straddled gate would be an economic
-      error rather than an approximation.
-    """
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "legs", ensure_containers_are_immutable(self.legs))
-        object.__setattr__(
-            self, "gate_refs", ensure_containers_are_immutable(self.gate_refs)
-        )
 
 
 @beartype(conf=REGIME_CONF)
@@ -176,6 +79,7 @@ class Regime:
             RegimeName,
             MarkovTransition | UserFunction | Phased | ValueDependentTransition,
         ]
+        | ValueDependentTransition
         | None
     )
     """Regime transition, or `None` for terminal regimes.
@@ -341,7 +245,7 @@ class Regime:
     description: str = ""
     """Description of the regime."""
 
-    stakeholders: tuple[str, ...] | None = None
+    stakeholders: tuple[str, ...] | None = field(init=False, default=None)
     """Names of the stakeholders whose individual values this regime carries.
 
     The lowered form of `CollectiveUtility.utilities`, whose keys are the
@@ -388,7 +292,7 @@ class Regime:
       the realized off-grid point (see `get_edge_simulate_gate_evaluator`).
     """
 
-    pareto_objective: ParetoObjective | None = None
+    pareto_objective: ParetoObjective | None = field(init=False, default=None)
     """How this collective regime's household trades its stakeholders off.
 
     The lowered form of `CollectiveUtility.objective`.
@@ -403,7 +307,7 @@ class Regime:
     """
 
     value_constraints: Mapping[FunctionName, UserFunction] = field(
-        default_factory=lambda: MappingProxyType({})
+        init=False, default_factory=lambda: MappingProxyType({})
     )
     """Value-aware feasibility predicates for a collective regime.
 
@@ -450,7 +354,7 @@ class Regime:
     """
 
     gated_edges: Mapping[RegimeName, GatedEdge] = field(
-        default_factory=lambda: MappingProxyType({})
+        init=False, default_factory=lambda: MappingProxyType({})
     )
     """Gated edges routing this regime's continuation into a target regime.
 
@@ -472,7 +376,7 @@ class Regime:
     """
 
     same_period_refs: Mapping[str, ProjectedRegimeValue] = field(
-        default_factory=lambda: MappingProxyType({})
+        init=False, default_factory=lambda: MappingProxyType({})
     )
     """Same-period cross-regime reference values read by `value_constraints`.
 
@@ -587,68 +491,85 @@ class Regime:
         self._lower_collective_utility()
         self._lower_value_dependent_constraints()
         self._lower_value_dependent_transitions()
+        self._fail_if_a_gated_edge_has_no_target()
 
     @property
     def decomposed_functions(
         self,
     ) -> Mapping[FunctionName, UserFunction | Phased | None]:
-        """`functions` with any `CollectiveUtility` already taken apart.
+        """`functions` with any `CollectiveUtility` taken apart.
 
-        The slot accepts a `CollectiveUtility`, and construction replaces it
-        with one `utility_<s>` entry per stakeholder — so the mapping an engine
-        stage reads never holds one, and this is where that is said in a type.
+        A `CollectiveUtility` under `"utility"` is replaced by one
+        `utility_<s>` entry per stakeholder, in the order the household
+        declares them — so the mapping an engine stage reads never holds a
+        declaration object, whatever order the entries reached the regime in. A
+        stakeholder whose body is delegated keeps the entry the regime already
+        carries; the delegation itself was validated at construction.
+
+        Deterministic and idempotent: a regime that declares no household is
+        returned unchanged, and reading the view never changes the regime.
         """
-        return cast(
-            "Mapping[FunctionName, UserFunction | Phased | None]", self.functions
-        )
+        return decompose_functions(self.functions)
 
     @property
     def decomposed_constraints(
         self,
     ) -> Mapping[FunctionName, ConstraintLike | Phased | None]:
-        """`constraints` with any `ValueDependentConstraint` already taken apart.
+        """`constraints` with every `ValueDependentConstraint` taken apart.
 
-        Construction moves each declaration's predicate into `value_constraints`
-        and its references into `same_period_refs`, so what stays here is the
-        ordinary constraints alone.
+        A value-dependent constraint's predicate belongs to
+        `value_constraints` and its projections to `same_period_refs`, so what
+        this view holds is the ordinary constraints alone — the ones evaluated
+        before and independently of the action values.
+
+        Deterministic and idempotent, like the other two views.
         """
-        return cast(
-            "Mapping[FunctionName, ConstraintLike | Phased | None]", self.constraints
-        )
+        return decompose_constraints(self.constraints)
+
+    @property
+    def decomposed_transition(
+        self,
+    ) -> (
+        UserFunction
+        | MarkovTransition
+        | Phased
+        | Mapping[RegimeName, MarkovTransition | UserFunction | Phased]
+        | None
+    ):
+        """`transition` with every `ValueDependentTransition` taken apart.
+
+        A value-dependent transition carries two facts at once: which target
+        the regime selects, and how the household is routed once there. The
+        second belongs to `gated_edges`; what stays here is the selection
+        probability, in the per-target cell the canonical pipeline reads. A
+        bare probability callable is wrapped, because that cell's grammar takes
+        a `MarkovTransition`.
+
+        Deterministic and idempotent, like the other two views.
+        """
+        return decompose_transition(self.transition)
 
     def _lower_collective_utility(self) -> None:
         """Split `functions["utility"]` into stakeholders and their utilities."""
         declaration = self.functions.get("utility")
         if not isinstance(declaration, CollectiveUtility):
             return
-        if self.stakeholders not in (None, tuple(declaration.utilities)):
-            raise RegimeInitializationError(
-                "A regime declaring `functions={'utility': CollectiveUtility(...)}` "
-                "names its stakeholders there — the `utilities` keys are the "
-                "stakeholders — so `stakeholders` may not be declared as well."
-            )
-        functions = {
-            name: func for name, func in self.functions.items() if name != "utility"
-        }
         for stakeholder, utility in declaration.utilities.items():
             entry = f"utility_{stakeholder}"
-            if entry in functions and functions[entry] is not utility:
+            # A delegated body may still arrive from the model level. Whether
+            # one ever does is completeness, which the model reports once its
+            # regimes are merged.
+            if utility is None:
+                continue
+            if entry in self.functions and self.functions[entry] is not utility:
                 raise RegimeInitializationError(
                     f"The stakeholder {stakeholder!r} of this regime's "
                     f"`CollectiveUtility` and the function {entry!r} would both "
                     f"supply {stakeholder}'s utility. Declare it once, in the "
                     "`CollectiveUtility`."
                 )
-            functions[entry] = utility
-        object.__setattr__(self, "functions", functions)
         object.__setattr__(self, "stakeholders", tuple(declaration.utilities))
         if declaration.objective is not None:
-            if self.pareto_objective not in (None, declaration.objective):
-                raise RegimeInitializationError(
-                    "This regime declares a `ParetoObjective` both as its "
-                    "`CollectiveUtility`'s objective and as `pareto_objective`. "
-                    "Declare it once, in the `CollectiveUtility`."
-                )
             object.__setattr__(self, "pareto_objective", declaration.objective)
 
     def _lower_value_dependent_constraints(self) -> None:
@@ -660,20 +581,9 @@ class Regime:
         }
         if not declarations:
             return
-        constraints = {
-            name: constraint
-            for name, constraint in self.constraints.items()
-            if name not in declarations
-        }
-        value_constraints = dict(self.value_constraints)
-        same_period_refs = dict(self.same_period_refs)
+        value_constraints: dict[FunctionName, UserFunction] = {}
+        same_period_refs: dict[str, ProjectedRegimeValue] = {}
         for name, declaration in declarations.items():
-            if value_constraints.get(name) not in (None, declaration.predicate):
-                raise RegimeInitializationError(
-                    f"The constraint {name!r} is declared both as a "
-                    "`ValueDependentConstraint` and in `value_constraints`. "
-                    "Declare it once."
-                )
             value_constraints[name] = declaration.predicate
             for ref_name, reference in declaration.references.items():
                 existing = same_period_refs.get(ref_name)
@@ -685,45 +595,106 @@ class Regime:
                         "One name is one reference; rename one of them."
                     )
                 same_period_refs[ref_name] = reference
-        object.__setattr__(self, "constraints", constraints)
         object.__setattr__(self, "value_constraints", value_constraints)
         object.__setattr__(self, "same_period_refs", same_period_refs)
+
+    def _fail_if_a_gated_edge_has_no_target(self) -> None:
+        """Refuse a gated edge on a transition that names no target.
+
+        A gate is a route: it says where a household goes when consent fails,
+        and the fallback belongs to the route. A terminal regime has no next
+        period for a route to reach, and a coarse transition — a bare callable
+        or a `MarkovTransition` — names no target for the gate to be keyed by.
+        """
+        if not self.gated_edges:
+            return
+        transition = self.transition
+        sides = (
+            (transition.solve, transition.simulate)
+            if isinstance(transition, Phased)
+            else (transition,)
+        )
+        if all(isinstance(side, Mapping) for side in sides):
+            return
+        where = "a terminal regime" if transition is None else "a coarse transition"
+        raise RegimeInitializationError(
+            f"This regime carries a gated edge into "
+            f"{min(self.gated_edges)!r} on {where}. A gate is a route, so "
+            "it needs a target to route to: declare it in a per-target "
+            "`transition` dict, keyed by the regime the gate opens onto."
+        )
 
     def _lower_value_dependent_transitions(self) -> None:
         """Split each `ValueDependentTransition` into a target and its edge."""
         transition = self.transition
+        if isinstance(transition, ValueDependentTransition):
+            raise RegimeInitializationError(
+                "This regime declares a `ValueDependentTransition` as its whole "
+                "transition. A gate is a route — it says where a household goes "
+                "when consent fails — so it belongs to one target and is written "
+                "in a per-target `transition` dict, keyed by the regime the gate "
+                "opens onto: `transition={'<target>': ValueDependentTransition("
+                "...)}`."
+            )
+        if isinstance(transition, Phased):
+            self._lower_phased_value_dependent_transitions(transition)
+            return
         if not isinstance(transition, Mapping):
             return
-        declarations = {
-            target: entry
-            for target, entry in transition.items()
-            if isinstance(entry, ValueDependentTransition)
-        }
-        if not declarations:
+        edges = _declared_gated_edges(transition=transition)
+        if edges:
+            object.__setattr__(self, "gated_edges", edges)
+
+    def _lower_phased_value_dependent_transitions(self, transition: Phased) -> None:
+        """Derive the one edge a per-phase pair of declarations describes.
+
+        The probability may differ between the phases — a perceived meeting
+        rate and a realized one are a legitimate wedge. Everything else is the
+        same edge written twice, so the two sides must agree: identical gate
+        callables, and routes, references and off-grid contract that compare
+        equal.
+        """
+        sides = {}
+        for phase in ("solve", "simulate"):
+            side = getattr(transition, phase)
+            if not isinstance(side, Mapping):
+                return
+            sides[phase] = _declared_gated_edges(transition=side)
+        if not any(sides.values()):
             return
-        entries = dict(transition)
-        gated_edges = dict(self.gated_edges)
-        for target, declaration in declarations.items():
-            lowered = GatedEdge(
-                gate=declaration.gate,
-                legs=declaration.routes,
-                gate_refs=declaration.gate_references,
-                off_grid=declaration.off_grid,
+
+        one_sided = set(sides["solve"]) ^ set(sides["simulate"])
+        if one_sided:
+            raise RegimeInitializationError(
+                f"The transition into {min(one_sided)!r} is declared as a "
+                "`ValueDependentTransition` in one phase and as an ordinary "
+                "probability in the other. A target is value-dependent in both "
+                "phases or in neither: the gate is what the household consents "
+                "to, and it cannot consent only while being solved."
             )
-            existing = gated_edges.get(target)
-            if existing is not None and existing != lowered:
+
+        solve_edges = sides["solve"]
+        simulate_edges = sides["simulate"]
+        for target, solve_edge in solve_edges.items():
+            simulate_edge = simulate_edges[target]
+            if solve_edge.gate is not simulate_edge.gate:
                 raise RegimeInitializationError(
-                    f"The transition into {target!r} is declared both as a "
-                    "`ValueDependentTransition` and as a `gated_edges` entry, "
-                    "and the two disagree. An edge is its gate, its routes, "
-                    "its gate references and its off-grid contract together, "
-                    "so agreeing on the gate alone is not agreeing. Declare "
-                    "it once."
+                    f"The two phases of the transition into {target!r} declare "
+                    "different gate callables. A gate is one predicate the "
+                    "household is held to, so the two phases must name the "
+                    "very same function. A difference the model needs goes in "
+                    "a route's `fallback`, which is `Phased` in its own right."
                 )
-            entries[target] = declaration.probability
-            gated_edges[target] = lowered
-        object.__setattr__(self, "transition", entries)
-        object.__setattr__(self, "gated_edges", gated_edges)
+            if solve_edge != simulate_edge:
+                raise RegimeInitializationError(
+                    f"The two phases of the transition into {target!r} declare "
+                    "the same gate but disagree elsewhere — on the routes, the "
+                    "gate references or the off-grid contract. An edge is all "
+                    "of those together, so the two phases must describe one "
+                    "edge. Only `probability` may differ between them."
+                )
+
+        object.__setattr__(self, "gated_edges", solve_edges)
 
     def _fail_if_egm_solver_has_no_margin_declaration(self) -> None:
         if self._accepts_margin_solver:
@@ -795,7 +766,7 @@ class Regime:
             return cast("UserFunction", value)
 
         result: dict[str, UserFunction] = {
-            name: resolve(func) for name, func in self.functions.items()
+            name: resolve(func) for name, func in self.decomposed_functions.items()
         }
         for name, spec in self.states.items():
             if isinstance(spec, Phased):
@@ -803,8 +774,9 @@ class Regime:
                 # imputation; the law of motion is its regular
                 # `state_transitions` entry, collected below.
                 result[name] = cast("UserFunction", spec.solve)
-        result |= cast("Mapping[str, UserFunction]", self.constraints)
-        if self.transition is not None:
+        result |= cast("Mapping[str, UserFunction]", self.decomposed_constraints)
+        decomposed_transition = self.decomposed_transition
+        if decomposed_transition is not None:
             joint_output_names = {
                 state_name
                 for kernels in self.joint_transitions.values()
@@ -822,7 +794,7 @@ class Regime:
                 joint_output_names=joint_output_names,
             )
             result |= {name: resolve(func) for name, func in collected.items()}
-            transition = self.transition
+            transition = decomposed_transition
             if isinstance(transition, Phased):
                 transition = (
                     transition.solve if phase == "solve" else transition.simulate
@@ -844,15 +816,91 @@ class Regime:
         """Add internal functions required by a specialized regime declaration."""
         return functions
 
+    def with_engine_functions(
+        self,
+        *,
+        engine_functions: Mapping[FunctionName, UserFunction | Phased | None],
+        **other_slots: Any,  # noqa: ANN401
+    ) -> Regime:
+        """Overlay engine-composed functions without disturbing the declarations.
+
+        Regime building reads a regime's functions through
+        `decomposed_functions`, composes more of them, and hands the result
+        back. Writing that result straight into `functions` would put the
+        decomposition where the declaration was, and the household would be
+        gone. This writes back by provenance instead: an entry the declaration
+        produced is the declaration's, and is left to it; everything else is
+        the engine's, and is overlaid on the slot the author wrote.
+
+        Args:
+            engine_functions: The complete mapping the engine intends the
+                regime's `decomposed_functions` to be.
+            **other_slots: Further slots to replace, as `replace` takes them.
+
+        Returns:
+            A new regime carrying the engine's additions, whose declarations
+            are the ones this regime was written with.
+
+        Raises:
+            RegimeInitializationError: If the engine mapping rewrites a
+                stakeholder's declared utility, replaces a declaration object,
+                or does not reproduce what the resulting regime decomposes to.
+        """
+        declaration = self.functions.get("utility")
+        if not isinstance(declaration, CollectiveUtility):
+            return self.replace(functions=engine_functions, **other_slots)
+
+        declared_bodies = {
+            f"utility_{stakeholder}": body
+            for stakeholder, body in declaration.utilities.items()
+            if body is not None
+        }
+        overlay: dict[FunctionName, UserFunction | Phased | None] = {}
+        for name, func in engine_functions.items():
+            if name == "utility":
+                raise RegimeInitializationError(
+                    "The engine mapping supplies a plain 'utility' for a regime "
+                    "whose utility is a `CollectiveUtility`. Writing it back "
+                    "would replace the household by a single utility."
+                )
+            if name in declared_bodies:
+                if func is not declared_bodies[name]:
+                    raise RegimeInitializationError(
+                        f"The engine mapping supplies a different body for "
+                        f"{name!r}, which this regime's `CollectiveUtility` "
+                        f"declares. A stakeholder's utility is hers to declare."
+                    )
+                continue
+            overlay[name] = func
+
+        raw = {
+            name: func
+            for name, func in self.functions.items()
+            if name not in declared_bodies
+        }
+        written = self.replace(
+            functions=MappingProxyType({**raw, **overlay}), **other_slots
+        )
+        disagreement = sorted(set(engine_functions) ^ set(written.decomposed_functions))
+        if disagreement:
+            raise RegimeInitializationError(
+                f"Writing the engine mapping back would not reproduce it: "
+                f"{disagreement} appears on one side only. The write-back "
+                "overlays engine additions on the declarations, so it can add "
+                "a function but never drop what a declaration produces."
+            )
+        return written
+
     def replace(self, **kwargs: Any) -> Regime:  # noqa: ANN401
         """Replace the attributes of the regime.
 
-        Replacing a slot that carried a `CollectiveUtility`,
-        `ValueDependentConstraint` or `ValueDependentTransition` does NOT undo
-        what that declaration was decomposed into: the stakeholders, value
-        constraints and gated edges stay as declared, and a replacement that
-        contradicts them is refused rather than silently dropping one side.
-        Build the regime outright where the two must differ.
+        Replacing a slot that carries a `CollectiveUtility`,
+        `ValueDependentConstraint` or `ValueDependentTransition` replaces the
+        declaration itself, and the stakeholders, value constraints and gated
+        edges are derived again from what the new slot says. `stakeholders`,
+        `pareto_objective`, `value_constraints`, `same_period_refs` and
+        `gated_edges` are those derived values, so naming one here is an error:
+        they are read off a regime, never written to it.
 
         Args:
             **kwargs: Keyword arguments to replace the attributes of the regime.
@@ -863,7 +911,176 @@ class Regime:
         """
         try:
             return dataclasses.replace(self, **kwargs)
-        except TypeError as e:
+        except (TypeError, ValueError) as e:
             raise RegimeInitializationError(
                 f"Failed to replace attributes of the regime. The error was: {e}"
             ) from e
+
+
+def decompose_functions(
+    functions: Mapping[FunctionName, UserFunction | Phased | CollectiveUtility | None],
+) -> Mapping[FunctionName, UserFunction | Phased | None]:
+    """Replace a `CollectiveUtility` by one utility entry per stakeholder.
+
+    Args:
+        functions: A regime's `functions` as declared.
+
+    Returns:
+        The same mapping with any `CollectiveUtility` under `"utility"`
+        replaced by one `utility_<s>` entry per stakeholder, emitted in the
+        order the household declares them so that the result does not depend on
+        the order the entries reached the regime in. A stakeholder whose body
+        is delegated keeps the entry the mapping already carries. A mapping
+        declaring no household is returned unchanged, which makes the
+        transformation idempotent.
+    """
+    declaration = functions.get("utility")
+    if not isinstance(declaration, CollectiveUtility):
+        return cast("Mapping[FunctionName, UserFunction | Phased | None]", functions)
+    stakeholder_entries = {
+        f"utility_{stakeholder}" for stakeholder in declaration.utilities
+    }
+    decomposed: dict[FunctionName, UserFunction | Phased | None] = {
+        name: cast("UserFunction | Phased | None", func)
+        for name, func in functions.items()
+        if name != "utility" and name not in stakeholder_entries
+    }
+    for stakeholder, utility in declaration.utilities.items():
+        entry = f"utility_{stakeholder}"
+        if utility is None:
+            # A delegated body that never arrived leaves no entry at all, so
+            # completeness reports it by name when the model finalizes.
+            if entry in functions:
+                decomposed[entry] = cast(
+                    "UserFunction | Phased | None", functions[entry]
+                )
+            continue
+        decomposed[entry] = cast("UserFunction | Phased | None", utility)
+    return MappingProxyType(decomposed)
+
+
+def decompose_constraints(
+    constraints: Mapping[
+        FunctionName, ConstraintLike | Phased | ValueDependentConstraint | None
+    ],
+) -> Mapping[FunctionName, ConstraintLike | Phased | None]:
+    """Drop the value-dependent declarations from a regime's constraints.
+
+    Args:
+        constraints: A regime's `constraints` as declared.
+
+    Returns:
+        The ordinary constraints alone — the ones evaluated before and
+        independently of the action values. A value-dependent constraint's
+        predicate belongs to `value_constraints` and its projections to
+        `same_period_refs`, so neither appears here.
+    """
+    return MappingProxyType(
+        {
+            name: cast("ConstraintLike | Phased | None", constraint)
+            for name, constraint in constraints.items()
+            if not isinstance(constraint, ValueDependentConstraint)
+        }
+    )
+
+
+def _declared_gated_edges(
+    *, transition: Mapping[RegimeName, object]
+) -> dict[RegimeName, GatedEdge]:
+    """Return the edge each value-dependent cell of one phase declares."""
+    return {
+        target: GatedEdge(
+            gate=cell.gate,
+            legs=cell.routes,
+            gate_refs=cell.gate_references,
+            off_grid=cell.off_grid,
+        )
+        for target, cell in transition.items()
+        if isinstance(cell, ValueDependentTransition)
+    }
+
+
+def decompose_transition(
+    transition: object,
+) -> (
+    UserFunction
+    | MarkovTransition
+    | Phased
+    | Mapping[RegimeName, MarkovTransition | UserFunction | Phased]
+    | None
+):
+    """Replace every `ValueDependentTransition` by the probability it declares.
+
+    Args:
+        transition: A regime's `transition` as declared, including the `Phased`
+            form.
+
+    Returns:
+        The same transition with each value-dependent cell replaced by its
+        selection probability. The routing half of the declaration belongs to
+        `gated_edges` and does not appear here.
+    """
+    if isinstance(transition, Phased):
+        solve = _decomposed_transition_side(transition.solve)
+        simulate = _decomposed_transition_side(transition.simulate)
+        if solve is transition.solve and simulate is transition.simulate:
+            return transition
+        return Phased(solve=solve, simulate=simulate)
+    return _decomposed_transition_side(transition)
+
+
+def _decomposed_transition_side(
+    transition: object,
+) -> (
+    UserFunction
+    | MarkovTransition
+    | Phased
+    | Mapping[RegimeName, MarkovTransition | UserFunction | Phased]
+    | None
+):
+    """Replace one phase's `ValueDependentTransition` cells by their probabilities.
+
+    Args:
+        transition: One phase's regime transition — a per-target mapping, a
+            coarse callable or `MarkovTransition`, or `None` for a terminal
+            regime.
+
+    Returns:
+        The same transition with every `ValueDependentTransition` cell replaced
+        by the selection probability it declares, wrapped in a
+        `MarkovTransition` where the declaration gave a bare callable. Anything
+        that is not a per-target mapping is returned unchanged.
+    """
+    if not isinstance(transition, Mapping):
+        return cast(
+            "UserFunction | MarkovTransition | Phased | None",
+            transition,
+        )
+    if not any(
+        isinstance(cell, ValueDependentTransition) for cell in transition.values()
+    ):
+        # Nothing to take apart. Returning the very same mapping keeps the
+        # phase-variation scan able to ask whether the author wrote one object
+        # for both phases, which a freshly built copy would always deny.
+        return cast(
+            "Mapping[RegimeName, MarkovTransition | UserFunction | Phased]", transition
+        )
+    return MappingProxyType(
+        {
+            target: (
+                _as_markov_transition(cell.probability)
+                if isinstance(cell, ValueDependentTransition)
+                else cast("MarkovTransition | UserFunction | Phased", cell)
+            )
+            for target, cell in transition.items()
+        }
+    )
+
+
+def _as_markov_transition(
+    probability: UserFunction | MarkovTransition,
+) -> MarkovTransition:
+    """Wrap a bare probability callable in the cell grammar's `MarkovTransition`."""
+    if isinstance(probability, MarkovTransition):
+        return probability
+    return MarkovTransition(probability)

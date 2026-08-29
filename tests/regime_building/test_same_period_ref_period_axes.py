@@ -41,9 +41,11 @@ from numpy.testing import assert_array_almost_equal as aaae
 from lcm import (
     AgeGrid,
     AgeSpecializedGrid,
+    CollectiveUtility,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
+    ValueDependentConstraint,
     categorical,
     fixed_transition,
 )
@@ -185,27 +187,34 @@ def _make_model(*, later_ceiling: float) -> Model:
     couple = Regime(
         transition={"couple_terminal": MarkovTransition(_prob_one)},
         active=lambda age: age < 1,
-        stakeholders=("f", "m"),
         states={"wealth": COUPLE_GRID},
         state_transitions={"wealth": fixed_transition("wealth")},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _couple_utility_f, "utility_m": _couple_utility_m},
-        value_constraints={"participation_f": _participation_f},
-        same_period_refs={
-            "V_single_f": ProjectedRegimeValue(
-                regime="single_f", projection={"wealth": _project_wealth}
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _couple_utility_f, "m": _couple_utility_m}
+            )
+        },
+        constraints={
+            "participation_f": ValueDependentConstraint(
+                predicate=_participation_f,
+                references={
+                    "V_single_f": ProjectedRegimeValue(
+                        regime="single_f", projection={"wealth": _project_wealth}
+                    )
+                },
             )
         },
     )
     couple_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         states={"wealth": COUPLE_GRID},
         actions={"work": DiscreteGrid(Work)},
         functions={
-            "utility_f": _zero_collective_utility,
-            "utility_m": _zero_collective_utility,
+            "utility": CollectiveUtility(
+                utilities={"f": _zero_collective_utility, "m": _zero_collective_utility}
+            )
         },
     )
     return Model(

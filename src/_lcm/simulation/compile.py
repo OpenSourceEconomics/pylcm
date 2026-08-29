@@ -674,10 +674,19 @@ def _build_argmax_args(
         same_period_args[EDGE_REF_PARAMS_ARG] = MappingProxyType(
             {ref: flat_params[ref] for ref in regime.edge_reference_regimes}
         )
+    taste_shock_kwargs = {}
+    if regime.has_taste_shocks:
+        _, taste_shock_keys = generate_simulation_keys(
+            key=jax.random.key(0),
+            names=["taste_shock"],
+            n_initial_states=n_subjects,
+        )
+        taste_shock_kwargs = {"taste_shock_key": taste_shock_keys["key_taste_shock"]}
     return {
         **subject_states,
         **base.discrete_actions,
         **base.continuous_actions,
+        **taste_shock_kwargs,
         "next_regime_to_V_arr": next_regime_to_V_arr,
         **same_period_args,
         **regime_params,

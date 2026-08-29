@@ -33,12 +33,14 @@ from _lcm.certainty_equivalent import LinearExpectation
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
 from lcm import (
+    CollectiveUtility,
     DiscreteGrid,
-    GatedEdge,
     NormalIIDProcess,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    ValueDependentConstraint,
+    ValueDependentTransition,
     categorical,
 )
 from lcm.ages import AgeGrid
@@ -112,14 +114,11 @@ _AGES_2P = AgeGrid(start=0, stop=2, step="Y")
 def _make_gated_target_regimes(*, fold: bool) -> dict[str, Regime]:
     """`source` --gated_edges--> `target` (collective, folds `wage_shock`)."""
     source = Regime(
-        transition={"target": MarkovTransition(_prob_one)},
-        active=lambda age: age < 1,
-        actions={"work": DiscreteGrid(Work)},
-        functions={"utility": _u_work},
-        gated_edges={
-            "target": GatedEdge(
+        transition={
+            "target": ValueDependentTransition(
+                probability=MarkovTransition(_prob_one),
                 gate=_no_dissolution_gate,
-                legs={
+                routes={
                     "only": StakeholderRoute(
                         target_stakeholder="f",
                         fallback=ProjectedRegimeValue(
@@ -129,6 +128,9 @@ def _make_gated_target_regimes(*, fold: bool) -> dict[str, Regime]:
                 },
             )
         },
+        active=lambda age: age < 1,
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _u_work},
     )
     source_terminal = Regime(
         transition=None,
@@ -138,10 +140,9 @@ def _make_gated_target_regimes(*, fold: bool) -> dict[str, Regime]:
     target = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         states={"wage_shock": _shock(fold=fold)},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _u_f, "utility_m": _u_m},
+        functions={"utility": CollectiveUtility(utilities={"f": _u_f, "m": _u_m})},
     )
     return {"source": source, "source_terminal": source_terminal, "target": target}
 
@@ -166,32 +167,37 @@ def _make_same_period_ref_regimes(*, fold: bool) -> dict[str, Regime]:
     ref_target = Regime(
         transition=None,
         active=lambda age: age < 1,
-        stakeholders=("f", "m"),
         states={"wage_shock": _shock(fold=fold)},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _u_f, "utility_m": _u_m},
+        functions={"utility": CollectiveUtility(utilities={"f": _u_f, "m": _u_m})},
     )
     reader = Regime(
         transition={"reader_terminal": MarkovTransition(_prob_one)},
         active=lambda age: age < 1,
-        stakeholders=("f", "m"),
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _u_work, "utility_m": _u_work},
-        value_constraints={"dummy": _dummy_constraint},
-        same_period_refs={
-            "V_ref": ProjectedRegimeValue(
-                regime="ref_target",
-                stakeholder="f",
-                projection={"wage_shock": lambda: 0.0},
+        functions={
+            "utility": CollectiveUtility(utilities={"f": _u_work, "m": _u_work})
+        },
+        constraints={
+            "dummy": ValueDependentConstraint(
+                predicate=_dummy_constraint,
+                references={
+                    "V_ref": ProjectedRegimeValue(
+                        regime="ref_target",
+                        stakeholder="f",
+                        projection={"wage_shock": lambda: 0.0},
+                    )
+                },
             )
         },
     )
     reader_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _u_work, "utility_m": _u_work},
+        functions={
+            "utility": CollectiveUtility(utilities={"f": _u_work, "m": _u_work})
+        },
     )
     return {
         "ref_target": ref_target,
@@ -219,14 +225,11 @@ def _make_gate_refs_regimes(*, fold: bool) -> dict[str, Regime]:
     plays no part in the ordering this fixture exercises.
     """
     source = Regime(
-        transition={"target": MarkovTransition(_prob_one)},
-        active=lambda age: age < 1,
-        actions={"work": DiscreteGrid(Work)},
-        functions={"utility": _u_work},
-        gated_edges={
-            "target": GatedEdge(
+        transition={
+            "target": ValueDependentTransition(
+                probability=MarkovTransition(_prob_one),
                 gate=lambda V_ref: V_ref > 0.0,
-                legs={
+                routes={
                     "only": StakeholderRoute(
                         target_stakeholder="f",
                         fallback=ProjectedRegimeValue(
@@ -234,7 +237,7 @@ def _make_gate_refs_regimes(*, fold: bool) -> dict[str, Regime]:
                         ),
                     )
                 },
-                gate_refs={
+                gate_references={
                     "V_ref": ProjectedRegimeValue(
                         regime="ref_target",
                         projection={"wage_shock": lambda: 0.0},
@@ -242,6 +245,9 @@ def _make_gate_refs_regimes(*, fold: bool) -> dict[str, Regime]:
                 },
             )
         },
+        active=lambda age: age < 1,
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _u_work},
     )
     source_terminal = Regime(
         transition=None,
@@ -251,9 +257,10 @@ def _make_gate_refs_regimes(*, fold: bool) -> dict[str, Regime]:
     target = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _u_work, "utility_m": _u_work},
+        functions={
+            "utility": CollectiveUtility(utilities={"f": _u_work, "m": _u_work})
+        },
     )
     ref_target = Regime(
         transition=None,

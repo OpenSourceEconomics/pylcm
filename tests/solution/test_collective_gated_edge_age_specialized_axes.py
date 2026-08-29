@@ -30,14 +30,16 @@ from numpy.testing import assert_array_almost_equal as aaae
 from lcm import (
     AgeGrid,
     AgeSpecializedGrid,
+    CollectiveUtility,
     DiscreteGrid,
-    GatedEdge,
     LinSpacedGrid,
     MarkovTransition,
     Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    ValueDependentConstraint,
+    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -239,23 +241,10 @@ def _build_gate_ref_model() -> Model:
     couple = Regime(
         transition={
             "couple": MarkovTransition(_probability_of_staying_put),
-            "account": MarkovTransition(_probability_of_leaving),
-        },
-        active=lambda age: age < 2,
-        stakeholders=("f", "m"),
-        state_transitions={"balance": {"account": _entry_amount}},
-        actions={"effort": DiscreteGrid(_Effort)},
-        functions={"utility_f": _no_felicity, "utility_m": _no_felicity},
-        gated_edges={
-            "account": GatedEdge(
+            "account": ValueDependentTransition(
+                probability=MarkovTransition(_probability_of_leaving),
                 gate=_index_clears_the_hurdle,
-                gate_refs={
-                    "index_value": ProjectedRegimeValue(
-                        regime="index",
-                        projection={"level": _level_from_balance},
-                    )
-                },
-                legs={
+                routes={
                     "f": StakeholderRoute(
                         target_stakeholder="f",
                         fallback=ProjectedRegimeValue(
@@ -271,16 +260,33 @@ def _build_gate_ref_model() -> Model:
                         ),
                     ),
                 },
+                gate_references={
+                    "index_value": ProjectedRegimeValue(
+                        regime="index",
+                        projection={"level": _level_from_balance},
+                    )
+                },
+            ),
+        },
+        active=lambda age: age < 2,
+        state_transitions={"balance": {"account": _entry_amount}},
+        actions={"effort": DiscreteGrid(_Effort)},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _no_felicity, "m": _no_felicity}
             )
         },
     )
     account = Regime(
         transition=None,
         active=lambda age: (age >= 1) & (age < 3),
-        stakeholders=("f", "m"),
         states={"balance": LinSpacedGrid(start=0.0, stop=4.0, n_points=2)},
         actions={"effort": DiscreteGrid(_Effort)},
-        functions={"utility_f": _account_felicity_f, "utility_m": _account_felicity_m},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _account_felicity_f, "m": _account_felicity_m}
+            )
+        },
     )
     index = Regime(
         transition=None,
@@ -347,17 +353,10 @@ def _build_dissolution_model() -> Model:
     couple = Regime(
         transition={
             "couple": MarkovTransition(_probability_of_staying_put),
-            "pair": MarkovTransition(_probability_of_leaving),
-        },
-        active=lambda age: age < 2,
-        stakeholders=("f", "m"),
-        state_transitions={"w": {"pair": _entry_amount}},
-        actions={"effort": DiscreteGrid(_Effort)},
-        functions={"utility_f": _no_felicity, "utility_m": _no_felicity},
-        gated_edges={
-            "pair": GatedEdge(
+            "pair": ValueDependentTransition(
+                probability=MarkovTransition(_probability_of_leaving),
                 gate=_household_consents,
-                legs={
+                routes={
                     "f": StakeholderRoute(
                         target_stakeholder="f",
                         fallback=ProjectedRegimeValue(
@@ -371,26 +370,40 @@ def _build_dissolution_model() -> Model:
                         ),
                     ),
                 },
+            ),
+        },
+        active=lambda age: age < 2,
+        state_transitions={"w": {"pair": _entry_amount}},
+        actions={"effort": DiscreteGrid(_Effort)},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _no_felicity, "m": _no_felicity}
             )
         },
     )
     pair = Regime(
         transition={"pair_terminal": MarkovTransition(_certainty)},
         active=lambda age: (age >= 1) & (age < 3),
-        stakeholders=("f", "m"),
         states={"w": AgeSpecializedGrid(build=_moving_grid, signature=_moving_ceiling)},
         state_transitions={"w": fixed_transition("w")},
         actions={"effort": DiscreteGrid(_Effort)},
-        functions={"utility_f": _pair_felicity_f, "utility_m": _pair_felicity_m},
-        value_constraints={"ir_f": _wife_participates},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _pair_felicity_f, "m": _pair_felicity_m}
+            )
+        },
+        constraints={"ir_f": ValueDependentConstraint(predicate=_wife_participates)},
     )
     pair_terminal = Regime(
         transition=None,
         active=lambda age: age >= 2,
-        stakeholders=("f", "m"),
         states={"w": _ANNUITY_GRID},
         actions={"effort": DiscreteGrid(_Effort)},
-        functions={"utility_f": _no_felicity_on_w, "utility_m": _no_felicity_on_w},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _no_felicity_on_w, "m": _no_felicity_on_w}
+            )
+        },
     )
     single_f = Regime(
         transition=None,

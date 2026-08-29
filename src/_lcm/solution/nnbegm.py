@@ -45,11 +45,17 @@ from _lcm.egm.outer_candidates import (
 )
 from _lcm.egm.outer_carry import collapse_continuous_candidate_bank
 from _lcm.egm.outer_inversion import (
+    DeclaredOuterInverse,
     abstract_like,
     certify_declared_outer_inverse,
     invert_declared_outer_target,
 )
 from _lcm.egm.outer_refinement import refine_outer_mesh
+from _lcm.egm.outer_replay_capability import (
+    OuterReplayCapability,
+    fail_if_continuous_outer_replay_is_unsupported,
+    resolve_outer_replay_capability,
+)
 from _lcm.egm.outer_search import AdaptiveOuterMesh, FiniteOuterGrid, OuterSearch
 from _lcm.egm.published_policy import (
     EGMSimPolicy,
@@ -91,7 +97,12 @@ from _lcm.solution.periodization import (
     solver_period_group_key,
 )
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
-from _lcm.typing import FlatParams, RegimeName
+from _lcm.typing import (
+    EconFunctionArg,
+    EconFunctionsMapping,
+    FlatParams,
+    RegimeName,
+)
 from lcm.ages import AgeGrid
 from lcm.exceptions import (
     ModelInitializationError,
@@ -610,6 +621,15 @@ class NNBEGM(TwoMarginSolver):
                     inner_discrete_action_names=tuple(
                         context.state_action_space.discrete_actions
                     ),
+                    replay_functions=resolved_by_period[period].functions,
+                    replay_bindable_names=(
+                        context.flat_param_names
+                        | {"period", "age"}
+                        | set(context.state_action_space.state_names)
+                    ),
+                    replay_state_names=frozenset(
+                        context.state_action_space.state_names
+                    ),
                     branch_fixed_cost=branch_aggregation_by_period[period][0],
                     branch_scale_function=branch_aggregation_by_period[period][1],
                 )
@@ -839,6 +859,19 @@ class _NNBEGMPeriodKernel:
     grid-argmax path. Empty for a continuous-only regime, where publication
     proceeds."""
 
+    replay_functions: EconFunctionsMapping
+    """The regime's processed functions, read for the signatures a simulation
+    replay must be able to bind. NNBEGM refuses any phase variation before the
+    kernels are built, so these are the declarations simulation reads too."""
+
+    replay_bindable_names: frozenset[str]
+    """Everything a replay can supply at a realized state: the regime's states,
+    its flat parameter names (from the params template, so the verdict does not
+    depend on one call's params), and `period`/`age`."""
+
+    replay_state_names: frozenset[StateName]
+    """The states a replay reads at each subject."""
+
     branch_fixed_cost: UniformObservedFixedCost | None
     """The uniform observed fixed-cost aggregator, or `None` for the
     deterministic keeper/adjuster maximum."""
@@ -961,8 +994,25 @@ class _NNBEGMPeriodKernel:
             ages=ages,
             logger=logger,
         )
+        # One certificate per period, resolved before either outer search runs.
+        # It reads the declared map's structure, which is what both searches
+        # depend on and neither owns; certifying inside one of them leaves the
+        # other free to publish a replay policy for a map nothing can invert.
+        outer_inverse = self._certify_outer_inverse(
+            state_action_space=state_action_space,
+            flat_params=flat_params,
+            period=period,
+            ages=ages,
+        )
+        # One capability per period, settled before either outer search runs and
+        # carried by whichever policy is published. It answers what a replay may
+        # assume — the map's coefficient, the stock domain, the arguments a
+        # replay can bind, the row axes it can address — so neither search
+        # decides that for itself and no reader re-derives it.
+        replay_capability = self._resolve_replay_capability(inverse=outer_inverse)
         if isinstance(self.outer_search, AdaptiveOuterMesh):
             return self._solve_continuous(
+                replay_capability=replay_capability,
                 keeper_result=keeper_result,
                 config=self.outer_search,
                 compiled_cores=compiled_cores,
@@ -975,6 +1025,7 @@ class _NNBEGMPeriodKernel:
                 logger=logger,
             )
         return self._solve_finite(
+            replay_capability=replay_capability,
             keeper_result=keeper_result,
             compiled_cores=compiled_cores,
             state_action_space=state_action_space,
@@ -989,6 +1040,7 @@ class _NNBEGMPeriodKernel:
     def _solve_finite(
         self,
         *,
+        replay_capability: OuterReplayCapability,
         keeper_result: KernelResult,
         compiled_cores: Mapping[str, Callable],
         state_action_space: StateActionSpace,
@@ -1076,6 +1128,7 @@ class _NNBEGMPeriodKernel:
         else:
             candidate_discrete_actions = None
         candidate_outer_target = self._candidate_outer_targets(
+            outer_inverse=replay_capability.inverse,
             candidate_inner_action=candidate_inner_action,
             candidate_discrete_actions=candidate_discrete_actions,
             discrete_action_names=discrete_action_names,
@@ -1101,12 +1154,14 @@ class _NNBEGMPeriodKernel:
                 inner_action_name=self.inner_action,
                 outer_action_name=self.outer_action,
                 n_keeper_candidates=n_discrete_branches,
+                replay_capability=replay_capability,
             ),
         )
 
     def _solve_continuous(
         self,
         *,
+        replay_capability: OuterReplayCapability,
         keeper_result: KernelResult,
         config: AdaptiveOuterMesh,
         compiled_cores: Mapping[str, Callable],
@@ -1126,6 +1181,10 @@ class _NNBEGMPeriodKernel:
         bank reuses the refinement solves instead of re-solving. The keeper
         stays a separate exact branch throughout; its `sim_policy` rides
         through unchanged until the continuous simulation reader lands.
+
+        The search itself never inverts the declared outer map; the payload it
+        publishes is replayed by a reader that does, so the settled replay
+        capability gates publication rather than the search.
         """
         adjuster_cores = _subcores(compiled_cores=compiled_cores, role="adjuster")
         cache: dict[float, OuterCandidateResult] = {}
@@ -1248,6 +1307,15 @@ class _NNBEGMPeriodKernel:
         )
         sim_policy: SimulationPolicy | None = None
         if nested_published:
+            # Only a regime that actually publishes reaches the refusal. A
+            # regime whose inner solve makes a discrete choice never gets here:
+            # `nested_published` is already false for it, so the capability's
+            # discrete-action verdict has nothing to stop.
+            fail_if_continuous_outer_replay_is_unsupported(
+                capability=replay_capability,
+                regime_name=self.regime_name,
+                outer_action_name=self.outer_action,
+            )
             sim_policy = NestedEGMSimPolicy(
                 keeper=keeper_policy,
                 adjuster=OuterPolicyBank(
@@ -1263,6 +1331,7 @@ class _NNBEGMPeriodKernel:
                 resources_target_name=self.resources_target,
                 savings_lower_bound=self.savings_lower_bound,
                 golden_iterations=config.golden_iterations,
+                replay_capability=replay_capability,
                 value_atol=config.value_atol,
                 value_rtol=config.value_rtol,
             )
@@ -1339,9 +1408,87 @@ class _NNBEGMPeriodKernel:
             ),
         )
 
+    def _certify_outer_inverse(
+        self,
+        *,
+        state_action_space: StateActionSpace,
+        flat_params: FlatParams,
+        period: int,
+        ages: AgeGrid,
+    ) -> DeclaredOuterInverse:
+        """Return the declared outer map's certified inverse for this period.
+
+        The certificate is structural: it reads argument names and shapes and
+        never values, so scalar stand-ins for the action arguments certify the
+        same map the search later binds to full candidate arrays.
+
+        Raises:
+            RegimeInitializationError: If the outer action does not enter the
+                declared map affinely with an exactly invertible coefficient.
+        """
+        params = dict(flat_params[self.regime_name])
+        accepted = inspect.signature(self.outer_target_function).parameters
+        scalar = jnp.zeros(())
+        pool: dict[str, object] = {
+            **params,
+            **{
+                name: jnp.asarray(values)
+                for name, values in state_action_space.states.items()
+            },
+            **{name: jnp.int32(0) for name in self.inner_discrete_action_names},
+            self.inner_action: scalar,
+            self.outer_action: scalar,
+            "period": jnp.int32(period),
+            "age": ages.values[period],
+        }
+        bound = {name: value for name, value in pool.items() if name in accepted}
+        return certify_declared_outer_inverse(
+            func=self.outer_target_function,
+            arg_names=tuple(bound),
+            abstract_args=abstract_like(tuple(bound.values())),
+            outer_action_name=self.outer_action,
+            outer_post_decision_name=self.outer_post_decision,
+            outer_state_domain=self.outer_state_domain,
+            regime_name=self.regime_name,
+        )
+
+    def _resolve_replay_capability(
+        self, *, inverse: DeclaredOuterInverse
+    ) -> OuterReplayCapability:
+        """Settle what a replay of this period may assume, before either search runs.
+
+        Reads the declared structure only — names, signatures, row axes — so the
+        answer is the same for both outer searches and for every state a
+        simulation later arrives at. NNBEGM refuses phase variation before the
+        kernels are built, so the declarations read here are the ones simulation
+        reads; and the bindable names come from the params template rather than
+        a call's params, so a later `simulate` call cannot widen or narrow them.
+
+        Args:
+            inverse: The period's certified inverse of the declared outer map.
+
+        Returns:
+            The `OuterReplayCapability` the published policy carries.
+        """
+        return resolve_outer_replay_capability(
+            inverse=inverse,
+            functions=self.replay_functions,
+            bindable_names=self.replay_bindable_names,
+            outer_post_decision_name=self.outer_post_decision,
+            outer_action_name=self.outer_action,
+            outer_no_adjustment_name=self.outer_no_adjustment_name,
+            outer_state_name=self.outer_state_name,
+            state_names=self.replay_state_names,
+            row_passive_state_names=self.row_passive_state_names,
+            # The published rows carry a discrete-action axis exactly when the
+            # inner solve makes a discrete choice.
+            row_discrete_action_names=self.inner_discrete_action_names,
+        )
+
     def _candidate_outer_targets(
         self,
         *,
+        outer_inverse: DeclaredOuterInverse,
         candidate_inner_action: FloatND,
         candidate_discrete_actions: IntND | None,
         discrete_action_names: tuple[ActionName, ...],
@@ -1386,7 +1533,7 @@ class _NNBEGMPeriodKernel:
         params = dict(flat_params[self.regime_name])
         accepted = inspect.signature(self.outer_target_function).parameters
 
-        def bind(outer_action: FloatND) -> dict[str, FloatND]:
+        def bind(outer_action: FloatND) -> dict[str, EconFunctionArg]:
             pool = {
                 **params,
                 **state_inputs,
@@ -1401,26 +1548,16 @@ class _NNBEGMPeriodKernel:
         def evaluate(outer_action: FloatND) -> Mapping[str, FloatND]:
             return self.outer_target_function(**bind(outer_action))
 
-        # The certificate reads the map's structure, so it is taken against the
-        # same argument set the solve binds -- names and shapes, never values.
+        # The map evaluated at a zero outer action: the offset the certified
+        # inverse subtracts. The certificate itself is resolved once per period
+        # before either outer search runs, and arrives as `outer_inverse`.
         bound_at_zero = bind(jnp.zeros_like(candidate_inner_action))
-        pool_names = tuple(bound_at_zero)
-        pool_values = tuple(bound_at_zero.values())
-
         at_zero_results = self.outer_target_function(**bound_at_zero)
         at_zero = jnp.broadcast_to(
             jnp.asarray(at_zero_results[self.outer_post_decision]),
             candidate_inner_action.shape,
         )
-        inverse = certify_declared_outer_inverse(
-            func=self.outer_target_function,
-            arg_names=pool_names,
-            abstract_args=abstract_like(pool_values),
-            outer_action_name=self.outer_action,
-            outer_post_decision_name=self.outer_post_decision,
-            outer_state_domain=self.outer_state_domain,
-            regime_name=self.regime_name,
-        )
+        inverse = outer_inverse
 
         if self.outer_no_adjustment_name is None:
             keeper_base = jnp.broadcast_to(

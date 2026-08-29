@@ -194,12 +194,18 @@ def _fail_if_a_stochastic_law_carries_a_basis(
     and its weights are probabilities. Reading one as the other prices a different
     object and would otherwise do so silently — the coefficients of an entry, run
     through a certainty equivalent, give a mean over nodes the entry never took.
+
+    What is excluded is a law realizing its *own* draw over the target's nodes,
+    which is the self-dependency. Reading a sibling edge's draw is a different
+    thing and stays allowed: that draw is enumerated on an axis of its own, and
+    at each of its nodes the law still names exactly one value for the basis to
+    express — which is how a correlated joint output lands on a process's grid.
     """
     for law in plan.outputs.values():
         next_state_name = law.next_state_name
         if not isinstance(law.continuation_coordinate, InterpolationBasisInfo):
             continue
-        if not law.lottery_dependencies:
+        if next_state_name not in law.lottery_dependencies:
             continue
         msg = (
             f"The law '{next_state_name}' of regime '{source_regime_name}' into "

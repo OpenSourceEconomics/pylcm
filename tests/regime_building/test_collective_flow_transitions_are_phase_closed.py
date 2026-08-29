@@ -26,7 +26,15 @@ flow built from the solve pool would choose `stay`.
 import jax.numpy as jnp
 import pandas as pd
 
-from lcm import AgeGrid, DiscreteGrid, Model, Phased, Regime, categorical
+from lcm import (
+    AgeGrid,
+    CollectiveUtility,
+    DiscreteGrid,
+    Model,
+    Phased,
+    Regime,
+    categorical,
+)
 from lcm.typing import DiscreteAction, FloatND, ScalarInt
 
 
@@ -94,7 +102,6 @@ def _simulate(*, live_functions, state_transitions) -> pd.DataFrame:
     live = Regime(
         transition=_next_regime,
         active=lambda age: age < 1,
-        stakeholders=("f", "m"),
         state_transitions=state_transitions,
         states={"stock": DiscreteGrid(Stock)},
         actions={"move": DiscreteGrid(Move)},
@@ -103,10 +110,13 @@ def _simulate(*, live_functions, state_transitions) -> pd.DataFrame:
     last = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         states={"stock": DiscreteGrid(Stock)},
         actions={"move": DiscreteGrid(Move)},
-        functions={"utility_f": _flat_utility, "utility_m": _flat_utility},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _flat_utility, "m": _flat_utility}
+            )
+        },
     )
     model = Model(
         regimes={"live": live, "last": last},
@@ -138,8 +148,9 @@ def test_collective_flow_reads_the_simulate_variant_of_a_phased_chosen_stock():
     """
     df = _simulate(
         live_functions={
-            "utility_f": _service_flow,
-            "utility_m": _service_flow,
+            "utility": CollectiveUtility(
+                utilities={"f": _service_flow, "m": _service_flow}
+            ),
             "new_stock": Phased(solve=_new_stock_belief, simulate=_new_stock_actual),
         },
         state_transitions={"stock": _carry_new_stock},
@@ -173,8 +184,9 @@ def test_collective_flow_reads_the_simulate_variant_of_a_phased_helper():
 
     df = _simulate(
         live_functions={
-            "utility_f": _service_flow,
-            "utility_m": _service_flow,
+            "utility": CollectiveUtility(
+                utilities={"f": _service_flow, "m": _service_flow}
+            ),
             "new_stock": new_stock,
             "stay_target": Phased(
                 solve=stay_target_belief, simulate=stay_target_actual

@@ -41,12 +41,12 @@ from _lcm.solution.backward_induction import solve
 from _lcm.utils.logging import get_logger
 from lcm import (
     DiscreteGrid,
-    GatedEdge,
     LinSpacedGrid,
     NormalIIDProcess,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    ValueDependentTransition,
     categorical,
 )
 from lcm.ages import AgeGrid
@@ -342,35 +342,34 @@ def test_fold_on_non_gridsearch_solver_is_rejected():
 
 def test_fold_source_state_name_reused_by_outbound_gate_is_not_rejected():
     """A source folding a state does NOT reject merely because its OWN
-    outbound `gated_edges[...].gate` declares an argument of the same name.
+    outbound gate declares an argument of the same name.
 
-    `GatedEdge.gate` is compiled and evaluated on the TARGET regime's own
-    grid/DAG (`_attach_gated_edge_folds`/`_resolve_gated_edge`), never on
-    this (source) regime's — so `gate=lambda wage_shock: ...` here reads
-    `some_target`'s `wage_shock` (if it declares one), not this regime's.
-    Treating the SOURCE-local `_validate_fold_declarations` walk as if the
-    gate were source-local would produce a false positive purely from a name
-    collision. The genuine cross-regime
-    hazard — THIS regime being read nodewise as a gated-edge target, leg
-    fallback, or same-period reference — is covered by the model-processing
-    guard `_fail_if_folded_regime_is_same_period_endpoint`
+    A gate is compiled and evaluated on the TARGET regime's own grid/DAG
+    (`_attach_gated_edge_folds`/`_resolve_gated_edge`), never on this (source)
+    regime's — so `gate=lambda wage_shock: ...` here reads `some_target`'s
+    `wage_shock` (if it declares one), not this regime's. Treating the
+    SOURCE-local `_validate_fold_declarations` walk as if the gate were
+    source-local would produce a false positive purely from a name collision.
+    The genuine cross-regime hazard — THIS regime being read nodewise as a
+    gated-edge target, route fallback, or same-period reference — is covered by
+    the model-processing guard `_fail_if_folded_regime_is_same_period_endpoint`
     (`regime_building/processing.py`; see
     `test_fold_gate_guard.py`/`test_fold_guard_complete.py`), which correctly
     checks the TARGET side of the same declarations instead.
     """
     Regime(
-        transition=None,
-        states={"wage_shock": _shock(fold=True)},
-        gated_edges={
-            "some_target": GatedEdge(
+        transition={
+            "some_target": ValueDependentTransition(
+                probability=MarkovTransition(lambda: jnp.asarray(1.0)),
                 gate=lambda wage_shock: wage_shock > 0.0,
-                legs={
+                routes={
                     "only": StakeholderRoute(
                         fallback=ProjectedRegimeValue(regime="elsewhere", projection={})
                     )
                 },
             )
         },
+        states={"wage_shock": _shock(fold=True)},
     )
 
 

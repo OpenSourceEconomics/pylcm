@@ -128,6 +128,7 @@ from _lcm.constraints.processed import (
     normalize_constraints,
 )
 from _lcm.constraints.routes import ConstraintPlan, plan_constraints
+from _lcm.gated_edge import GatedEdge
 from _lcm.regime_building.Q_and_F import (
     EDGE_REF_V_ARG,
     GatedContinuationSchedule,
@@ -207,7 +208,7 @@ from _lcm.variables import (
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.phased import Phased
-from lcm.regime import GatedEdge, ProjectedRegimeValue
+from lcm.regime import ProjectedRegimeValue
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import (
     DCEGM,
@@ -646,7 +647,7 @@ def process_regimes(  # noqa: PLR0915
             # phase builds. Both are `None` for a singleton (non-collective)
             # regime, which is what the downstream builds branch on.
             stakeholders = user_regime.stakeholders
-            pareto_weights = _resolve_pareto_weights(user_regime)
+            pareto_weights = _resolve_pareto_weights(user_regime, spec)
             # The (deduplicated, order-preserving) regimes
             # whose same-period V this regime reads; drives the within-period
             # topological solve order and the kernel's same-period V threading.
@@ -1319,7 +1320,9 @@ def _edge_reference_regimes(user_regime: UserRegime) -> tuple[RegimeName, ...]:
     return tuple(dict.fromkeys(names))
 
 
-def _resolve_pareto_weights(user_regime: UserRegime) -> ParetoWeights | None:
+def _resolve_pareto_weights(
+    user_regime: UserRegime, spec: PhasedRegimeSpec
+) -> ParetoWeights | None:
     """Resolve a collective regime's household Pareto weight evaluator.
 
     Returns `None` for a singleton regime (the default, and the marker the
@@ -1339,6 +1342,12 @@ def _resolve_pareto_weights(user_regime: UserRegime) -> ParetoWeights | None:
         objective=user_regime.pareto_objective,
         stakeholders=stakeholders,
         state_names=frozenset(user_regime.states),
+        carried_imputations=MappingProxyType(
+            {
+                name: spec.solution.functions[name]
+                for name in spec.carried_only_state_names
+            }
+        ),
     )
 
 
@@ -4074,11 +4083,28 @@ def _process_regime_core(
     # an explicit entry law for it, which is the more specific statement and
     # wins.
     carried_processes = set(variables.process_names)
+    # Compiled before the entry laws are synthesized, because a joint output is
+    # a declared entry law for its target state: it names a physical value the
+    # source hands over, and the process's value function is stored on nodes, so
+    # that value needs the same split into node-basis weights a hand-written
+    # entry law gets. Its DAG node has to exist before the split reads it.
+    joint_transition_keys = _process_joint_transitions(
+        joint_transitions=joint_transitions,
+        processed_functions=processed_functions,
+        regime_params_template=regime_params_template,
+    )
+    # A joint output is a declared law whether or not the source carries the
+    # process: it names the physical value the correlated draw lands on, which
+    # is the more specific statement and displaces the process's own intrinsic
+    # law. A hand-written entry law only applies where there is no handoff.
     explicit_entry_process_grids = {
         (user_regime, process): grid
         for (user_regime, process), grid in target_process_grids.items()
-        if process not in carried_processes
-        and f"{user_regime}__next_{process}" in flat_nested_transitions
+        if f"{user_regime}__next_{process}" in joint_transition_keys
+        or (
+            process not in carried_processes
+            and f"{user_regime}__next_{process}" in flat_nested_transitions
+        )
     }
     # Only the solution phase indexes the target's value function, so only there
     # is the declared physical value split into node indices plus weights.
@@ -4166,12 +4192,6 @@ def _process_regime_core(
             )
             for (user_regime, process), grid in split_entry_process_grids.items()
         }
-    )
-
-    joint_transition_keys = _process_joint_transitions(
-        joint_transitions=joint_transitions,
-        processed_functions=processed_functions,
-        regime_params_template=regime_params_template,
     )
 
     process_transition_keys = {

@@ -22,7 +22,7 @@ from collections.abc import Mapping
 import jax.numpy as jnp
 from numpy.testing import assert_allclose
 
-from lcm import DiscreteGrid, MarkovTransition, Model, Regime
+from lcm import CollectiveUtility, DiscreteGrid, MarkovTransition, Model, Regime
 from lcm.typing import (
     ContinuousState,
     DiscreteAction,
@@ -71,7 +71,7 @@ def test_collective_continuation_divides_by_represented_mass():
     """
     rtol = 10.0**-DECIMAL_PRECISION
 
-    collective = _build_single_target_model(stakeholders=STAKEHOLDERS)
+    collective = _build_single_target_model(household=STAKEHOLDERS)
     # Runtime validation rejects a probability above one. The assertion below is
     # about the continuation arithmetic, which carries its own, wider guard on
     # the mass it sums.
@@ -82,7 +82,7 @@ def test_collective_continuation_divides_by_represented_mass():
 
     twin_values = []
     for stakeholder in STAKEHOLDERS:
-        twin = _build_single_target_model(stakeholders=None, stakeholder=stakeholder)
+        twin = _build_single_target_model(household=None, stakeholder=stakeholder)
         twin_values.append(
             twin.solve(
                 params=_single_target_params(mass=INFLATED_MASS),
@@ -113,7 +113,7 @@ def test_collective_continuation_poisons_a_negative_probability():
     carry those probabilities publishes `NaN` at every state and for every
     stakeholder, the same answer a singleton regime publishes there.
     """
-    collective = _build_two_target_model(stakeholders=STAKEHOLDERS)
+    collective = _build_two_target_model(household=STAKEHOLDERS)
     # Runtime validation rejects a probability outside `[0, 1]`. The assertion
     # below is about the continuation arithmetic, which reads each probability's
     # sign off its own bits.
@@ -122,7 +122,7 @@ def test_collective_continuation_poisons_a_negative_probability():
         log_level="off",
     )
 
-    twin = _build_two_target_model(stakeholders=None, stakeholder="f")
+    twin = _build_two_target_model(household=None, stakeholder="f")
     twin_solution = twin.solve(params=_two_target_params(), log_level="off")
     # The singleton contract the collective regime states as well.
     assert bool(jnp.isnan(twin_solution[0]["couple"]).all())
@@ -135,7 +135,7 @@ def test_collective_continuation_poisons_a_negative_probability():
 
 
 def _build_single_target_model(
-    *, stakeholders: tuple[str, ...] | None, stakeholder: str = "f"
+    *, household: tuple[str, ...] | None, stakeholder: str = "f"
 ) -> Model:
     """Build a source regime whose only target carries the whole declared mass.
 
@@ -144,10 +144,10 @@ def _build_single_target_model(
     regime's entire transition mass.
 
     Args:
-        stakeholders: Stakeholder names of both regimes, or `None` for the
+        household: Stakeholder names of both regimes, or `None` for the
             singleton twin.
         stakeholder: Whose utility the singleton twin carries. Ignored when
-            `stakeholders` is not `None`.
+            `household` is not `None`.
 
     Returns:
         The model, which `_single_target_params` supplies the numbers for.
@@ -155,14 +155,14 @@ def _build_single_target_model(
     """
     return _build_model(
         transition={"couple_terminal": MarkovTransition(_target_probability)},
-        stakeholders=stakeholders,
+        household=household,
         stakeholder=stakeholder,
         source_ends_at_age=1,
     )
 
 
 def _build_two_target_model(
-    *, stakeholders: tuple[str, ...] | None, stakeholder: str = "f"
+    *, household: tuple[str, ...] | None, stakeholder: str = "f"
 ) -> Model:
     """Build a source regime reaching two targets, one of them itself.
 
@@ -171,10 +171,10 @@ def _build_two_target_model(
     while at age 1 only the terminal regime is left and takes all of it.
 
     Args:
-        stakeholders: Stakeholder names of both regimes, or `None` for the
+        household: Stakeholder names of both regimes, or `None` for the
             singleton twin.
         stakeholder: Whose utility the singleton twin carries. Ignored when
-            `stakeholders` is not `None`.
+            `household` is not `None`.
 
     Returns:
         The model, which `_two_target_params` supplies the numbers for.
@@ -185,7 +185,7 @@ def _build_two_target_model(
             "couple": MarkovTransition(_stay_probability),
             "couple_terminal": MarkovTransition(_leave_probability),
         },
-        stakeholders=stakeholders,
+        household=household,
         stakeholder=stakeholder,
         source_ends_at_age=2,
     )
@@ -194,7 +194,7 @@ def _build_two_target_model(
 def _build_model(
     *,
     transition: Mapping[RegimeName, MarkovTransition],
-    stakeholders: tuple[str, ...] | None,
+    household: tuple[str, ...] | None,
     stakeholder: str,
     source_ends_at_age: int,
 ) -> Model:
@@ -206,7 +206,7 @@ def _build_model(
 
     Args:
         transition: Regime transition of the source regime, as a per-target dict.
-        stakeholders: Stakeholder names of both regimes, or `None` for a
+        household: Stakeholder names of both regimes, or `None` for a
             singleton twin.
         stakeholder: Whose utility a singleton twin carries.
         source_ends_at_age: First age at which the source regime is inactive.
@@ -218,21 +218,17 @@ def _build_model(
     couple = Regime(
         transition=transition,
         active=lambda age: age < source_ends_at_age,
-        stakeholders=stakeholders,
         states={"wage": WAGE_GRID},
         state_transitions={"wage": _next_wage},
         actions={"work": DiscreteGrid(Work)},
-        functions=_source_functions(stakeholders=stakeholders, stakeholder=stakeholder),
+        functions=_source_functions(household=household, stakeholder=stakeholder),
     )
     couple_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=stakeholders,
         states={"wage": WAGE_GRID},
         actions={"work": DiscreteGrid(Work)},
-        functions=_terminal_functions(
-            stakeholders=stakeholders, stakeholder=stakeholder
-        ),
+        functions=_terminal_functions(household=household, stakeholder=stakeholder),
     )
     return Model(
         regimes={"couple": couple, "couple_terminal": couple_terminal},
@@ -242,23 +238,31 @@ def _build_model(
 
 
 def _source_functions(
-    *, stakeholders: tuple[str, ...] | None, stakeholder: str
-) -> Mapping[FunctionName, UserFunction]:
-    """Return the source regime's flow payoffs, per stakeholder or as one."""
+    *, household: tuple[str, ...] | None, stakeholder: str
+) -> Mapping[FunctionName, UserFunction | CollectiveUtility]:
+    """Return the source regime's flow payoffs, as a household or as one agent."""
     per_stakeholder = {"f": _source_utility_f, "m": _source_utility_m}
-    if stakeholders is None:
+    if household is None:
         return {"utility": per_stakeholder[stakeholder]}
-    return {f"utility_{name}": per_stakeholder[name] for name in stakeholders}
+    return {
+        "utility": CollectiveUtility(
+            utilities={name: per_stakeholder[name] for name in household}
+        )
+    }
 
 
 def _terminal_functions(
-    *, stakeholders: tuple[str, ...] | None, stakeholder: str
-) -> Mapping[FunctionName, UserFunction]:
-    """Return the terminal regime's payoffs, per stakeholder or as one."""
+    *, household: tuple[str, ...] | None, stakeholder: str
+) -> Mapping[FunctionName, UserFunction | CollectiveUtility]:
+    """Return the terminal regime's payoffs, as a household or as one agent."""
     per_stakeholder = {"f": _terminal_utility_f, "m": _terminal_utility_m}
-    if stakeholders is None:
+    if household is None:
         return {"utility": per_stakeholder[stakeholder]}
-    return {f"utility_{name}": per_stakeholder[name] for name in stakeholders}
+    return {
+        "utility": CollectiveUtility(
+            utilities={name: per_stakeholder[name] for name in household}
+        )
+    }
 
 
 def _single_target_params(*, mass: float) -> UserParams:

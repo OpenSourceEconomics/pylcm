@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 import jax.numpy as jnp
-from dags import rename_arguments, with_signature
+from dags import concatenate_functions, rename_arguments, with_signature
 
 from _lcm.regime_building.argmax import (
     _flatten_last_n_axes,
@@ -291,6 +291,7 @@ def build_pareto_weights(
     objective: ParetoObjective | None,
     stakeholders: tuple[str, ...],
     state_names: frozenset[StateName],
+    carried_imputations: Mapping[StateName, UserFunction] = MappingProxyType({}),
 ) -> ParetoWeights:
     """Build the weight evaluator a collective regime's kernels call per cell.
 
@@ -308,6 +309,10 @@ def build_pareto_weights(
         objective: The regime's declaration, or `None` for equal weights.
         stakeholders: Ordered stakeholder names.
         state_names: The regime's own state names.
+        carried_imputations: Mapping of each carried state's name to its
+            solve-phase imputation. A weight reading such a state is composed
+            with the imputation here, so the evaluator the kernels call asks
+            only for grid states and parameters.
 
     Returns:
         The evaluator, its argument names, and the normalization convention.
@@ -325,13 +330,24 @@ def build_pareto_weights(
         if not callable(weight):
             per_stakeholder[name] = (_constant_weight(float(weight)), ())
             continue
+        imputation_params: frozenset[str] = frozenset()
+        if carried_imputations and _reads_a_carried_state(
+            weight=weight, carried_imputations=carried_imputations
+        ):
+            weight, imputation_params = _compose_carried_imputations(
+                weight=weight,
+                carried_imputations=carried_imputations,
+                state_names=state_names,
+                context=context,
+            )
         own_args = tuple(get_union_of_args([weight]))
         renamed = {
             arg: arg
-            if arg in state_names or arg in context
+            if arg in state_names or arg in context or arg in imputation_params
             else f"{PARETO_OBJECTIVE_ENTRY}__{arg}"
             for arg in own_args
         }
+        param_names.update(imputation_params)
         param_names.update(
             qualified for arg, qualified in renamed.items() if qualified != arg
         )
@@ -399,3 +415,58 @@ def _constant_weight(value: float) -> Callable[..., FloatND]:
         return jnp.asarray(value)
 
     return weight
+
+
+def _reads_a_carried_state(
+    *,
+    weight: UserFunction,
+    carried_imputations: Mapping[StateName, UserFunction],
+) -> bool:
+    """Whether this weight names a carried state among its arguments."""
+    return any(arg in carried_imputations for arg in get_union_of_args([weight]))
+
+
+def _compose_carried_imputations(
+    *,
+    weight: UserFunction,
+    carried_imputations: Mapping[StateName, UserFunction],
+    state_names: frozenset[StateName],
+    context: frozenset[str],
+) -> tuple[Callable[..., FloatND], frozenset[str]]:
+    """Resolve a weight's carried-state reads through their solve imputations.
+
+    A carried state has no solve grid axis: during backward induction its value
+    is the imputation declared alongside it. Composing the imputation into the
+    weight here leaves an evaluator whose arguments are grid states, engine
+    context and parameters — which is what both the precondition sweep and the
+    compiled kernel are able to supply.
+
+    Every carried imputation is offered to the composition, and the unreachable
+    ones are pruned, so an imputation that itself reads another carried state
+    resolves without special handling.
+
+    Each imputation's free arguments are qualified under the carried state's own
+    name, matching where they surface in the params template.
+
+    Returns:
+        Tuple of the composed weight and the qualified imputation parameter
+        names it actually reads.
+    """
+    functions: dict[str, UserFunction] = {}
+    qualified_params: set[str] = set()
+    for name, imputation in carried_imputations.items():
+        mapper: dict[str, str] = {}
+        for arg in get_union_of_args([imputation]):
+            if arg in state_names or arg in context:
+                mapper[arg] = arg
+            else:
+                qualified = f"{name}__{arg}"
+                mapper[arg] = qualified
+                qualified_params.add(qualified)
+        functions[name] = rename_arguments(func=imputation, mapper=mapper)
+
+    target = "__pareto_weight__"
+    functions[target] = weight
+    composed = concatenate_functions(functions=functions, targets=target)
+    reached = frozenset(get_union_of_args([composed]))
+    return composed, frozenset(qualified_params) & reached

@@ -25,13 +25,15 @@ import pytest
 from _lcm.utils.logging import get_logger
 from lcm import (
     AgeGrid,
+    CollectiveUtility,
     DiscreteGrid,
-    GatedEdge,
     LinSpacedGrid,
     Model,
     ProjectedRegimeValue,
     Regime,
     StakeholderRoute,
+    ValueDependentConstraint,
+    ValueDependentTransition,
     categorical,
     fixed_transition,
 )
@@ -159,16 +161,11 @@ def _make_consent_model() -> tuple[Model, dict]:
     publishes `D`. No gate in the model declares `D_target`.
     """
     single_f = Regime(
-        transition={"married_terminal": MarkovTransition(_prob_one)},
-        active=lambda age: age < 1,
-        states={"wage": _WAGE},
-        state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
-        functions={"utility": _u_single_f},
-        gated_edges={
-            "married_terminal": GatedEdge(
+        transition={
+            "married_terminal": ValueDependentTransition(
+                probability=MarkovTransition(_prob_one),
                 gate=_consent_gate,
-                legs={
+                routes={
                     "f": StakeholderRoute(
                         target_stakeholder="f",
                         fallback=ProjectedRegimeValue(
@@ -177,7 +174,7 @@ def _make_consent_model() -> tuple[Model, dict]:
                         ),
                     )
                 },
-                gate_refs={
+                gate_references={
                     "V_single_f_ref": ProjectedRegimeValue(
                         regime="single_f_terminal",
                         projection={"wage": _identity_wage},
@@ -189,6 +186,11 @@ def _make_consent_model() -> tuple[Model, dict]:
                 },
             )
         },
+        active=lambda age: age < 1,
+        states={"wage": _WAGE},
+        state_transitions={"wage": fixed_transition("wage")},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _u_single_f},
     )
     single_f_terminal = Regime(
         transition=None,
@@ -205,10 +207,13 @@ def _make_consent_model() -> tuple[Model, dict]:
     married_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
         states={"wage": _WAGE},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _u_married_f, "utility_m": _u_married_m},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _u_married_f, "m": _u_married_m}
+            )
+        },
     )
     model = Model(
         regimes={
@@ -226,17 +231,11 @@ def _make_consent_model() -> tuple[Model, dict]:
 def _make_dissolution_model() -> tuple[Model, dict]:
     """A collective SOURCE whose gate reads the target's dissolution flag."""
     married = Regime(
-        transition={"married_ir": MarkovTransition(_prob_one)},
-        active=lambda age: age < 1,
-        stakeholders=("f", "m"),
-        states={"wage": _WAGE},
-        state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _u_zero_collective, "utility_m": _u_zero_collective},
-        gated_edges={
-            "married_ir": GatedEdge(
+        transition={
+            "married_ir": ValueDependentTransition(
+                probability=MarkovTransition(_prob_one),
                 gate=_no_dissolution_gate,
-                legs={
+                routes={
                     "f": StakeholderRoute(
                         target_stakeholder="f",
                         fallback=ProjectedRegimeValue(
@@ -252,32 +251,56 @@ def _make_dissolution_model() -> tuple[Model, dict]:
                 },
             )
         },
+        active=lambda age: age < 1,
+        states={"wage": _WAGE},
+        state_transitions={"wage": fixed_transition("wage")},
+        actions={"work": DiscreteGrid(Work)},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _u_zero_collective, "m": _u_zero_collective}
+            )
+        },
     )
     married_ir = Regime(
         transition={"married_terminal": MarkovTransition(_prob_one)},
         active=lambda age: (age >= 1) & (age < 2),
-        stakeholders=("f", "m"),
         states={"wage": _WAGE},
         state_transitions={"wage": fixed_transition("wage")},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _u_married_ir_f, "utility_m": _u_married_ir_m},
-        value_constraints={"ir_f": _ir_f, "ir_m": _ir_m},
-        same_period_refs={
-            "V_single_f_ref": ProjectedRegimeValue(
-                regime="single_f", projection={"wage": _identity_wage}
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _u_married_ir_f, "m": _u_married_ir_m}
+            )
+        },
+        constraints={
+            "ir_f": ValueDependentConstraint(
+                predicate=_ir_f,
+                references={
+                    "V_single_f_ref": ProjectedRegimeValue(
+                        regime="single_f", projection={"wage": _identity_wage}
+                    )
+                },
             ),
-            "V_single_m_ref": ProjectedRegimeValue(
-                regime="single_m", projection={"wage": _identity_wage}
+            "ir_m": ValueDependentConstraint(
+                predicate=_ir_m,
+                references={
+                    "V_single_m_ref": ProjectedRegimeValue(
+                        regime="single_m", projection={"wage": _identity_wage}
+                    )
+                },
             ),
         },
     )
     married_terminal = Regime(
         transition=None,
         active=lambda age: age >= 2,
-        stakeholders=("f", "m"),
         states={"wage": _WAGE},
         actions={"work": DiscreteGrid(Work)},
-        functions={"utility_f": _u_zero_collective, "utility_m": _u_zero_collective},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _u_zero_collective, "m": _u_zero_collective}
+            )
+        },
     )
     single_f = Regime(
         transition={"single_f_terminal": MarkovTransition(_prob_one)},

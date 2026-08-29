@@ -17,9 +17,11 @@ import pytest
 
 from lcm import (
     AgeGrid,
+    CollectiveUtility,
     DiscreteGrid,
     Model,
     ParetoObjective,
+    Phased,
     Regime,
     categorical,
     fixed_transition,
@@ -104,18 +106,23 @@ def _build_model(
     couple = Regime(
         transition=_next_regime,
         active=lambda age: age < 1,
-        stakeholders=("f", "m"),
         states=states or {},
         state_transitions=state_transitions or {},
         actions={"choice": DiscreteGrid(Choice)},
-        functions={"utility_f": utility_f, "utility_m": utility_m},
-        pareto_objective=objective,
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": utility_f, "m": utility_m}, objective=objective
+            )
+        },
     )
     couple_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=("f", "m"),
-        functions={"utility_f": _terminal_zero, "utility_m": _terminal_zero},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _terminal_zero, "m": _terminal_zero}
+            )
+        },
     )
     return Model(
         regimes={"couple": couple, "couple_terminal": couple_terminal},
@@ -418,18 +425,22 @@ def _three_stakeholder_solution(order: tuple[str, ...]) -> np.ndarray:
     household = Regime(
         transition=_next_three_regime,
         active=lambda age: age < 1,
-        stakeholders=order,
         actions={"choice": DiscreteGrid(Choice)},
-        functions={f"utility_{name}": utilities[name] for name in order},
-        pareto_objective=ParetoObjective(
-            weights={name: weights[name] for name in order}
-        ),
+        functions={
+            "utility": CollectiveUtility(
+                utilities={name: utilities[name] for name in order},
+                objective=ParetoObjective(
+                    weights={name: weights[name] for name in order}
+                ),
+            )
+        },
     )
     household_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        stakeholders=order,
-        functions=dict.fromkeys((f"utility_{name}" for name in order), _terminal_zero),
+        functions={
+            "utility": CollectiveUtility(utilities=dict.fromkeys(order, _terminal_zero))
+        },
     )
     model = Model(
         regimes={
@@ -468,3 +479,142 @@ def test_declaration_order_does_not_decide_a_three_party_household(
         np.array([3.0, 0.0, 1.0]),
         decimal=DECIMAL_PRECISION,
     )
+
+
+def _impute_power() -> ScalarInt:
+    """Backward induction assumes she holds the bargaining power."""
+    return Power.high
+
+
+def _carry_power(power: DiscreteState) -> ScalarInt:
+    """The seeded bargaining power persists through the panel."""
+    return power
+
+
+def _build_carried_power_model() -> Model:
+    """A household whose Pareto weights read a carried bargaining-power state."""
+    couple = Regime(
+        transition=_next_regime,
+        active=lambda age: age < 1,
+        states={
+            "power": Phased(solve=_impute_power, simulate=DiscreteGrid(Power)),
+        },
+        state_transitions={"power": _carry_power},
+        actions={"choice": DiscreteGrid(Choice)},
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _utility_f, "m": _utility_m},
+                objective=ParetoObjective(
+                    weights={"f": _weight_f_by_power, "m": _weight_m_by_power}
+                ),
+            )
+        },
+    )
+    couple_terminal = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _terminal_zero, "m": _terminal_zero}
+            )
+        },
+    )
+    return Model(
+        regimes={"couple": couple, "couple_terminal": couple_terminal},
+        ages=_AGES,
+        regime_id_class=RegimeId,
+    )
+
+
+def test_a_weight_reading_a_carried_state_solves_on_its_imputation() -> None:
+    """A weight may read a carried state; the solve uses that state's imputation.
+
+    The imputation puts the bargaining power with her, so her weight is `0.8`
+    and the household takes `a`, worth `3` to her and `0` to him. A carried
+    state contributes no solve axis, so the value array carries the stakeholder
+    axis alone.
+    """
+    model = _build_carried_power_model()
+
+    solution = model.solve(params=_params(), log_level="debug")
+
+    np.testing.assert_array_almost_equal(
+        np.asarray(solution[0]["couple"]),
+        np.array([3.0, 0.0]),
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+def test_a_carried_weight_decides_on_the_imputation_not_the_seeded_value() -> None:
+    """The household follows the imputed power even when the seed disagrees.
+
+    Both subjects are seeded with `power = low`, under which his weight would
+    be `0.8` and the household would take `b`. The decision is made on the
+    solve-phase imputation, which puts the power with her, so both rows choose
+    `a`.
+    """
+    model = _build_carried_power_model()
+
+    result = model.simulate(
+        params=_params(),
+        initial_conditions={
+            "age": jnp.full(2, model.ages.values[0]),
+            "power": jnp.array([Power.low, Power.low]),
+            "regime_id": jnp.array([RegimeId.couple, RegimeId.couple], dtype=jnp.int32),
+        },
+        period_to_regime_to_V_arr=None,
+        log_level="debug",
+    )
+
+    chosen = result.to_dataframe().query("regime_name == 'couple'")["choice"]
+    assert list(chosen) == ["a", "a"]
+
+
+def _zero_argument_weight_negative() -> FloatND:
+    return jnp.asarray(-1.0)
+
+
+def _zero_argument_weight_two() -> FloatND:
+    return jnp.asarray(2.0)
+
+
+def _zero_argument_weight_zero() -> FloatND:
+    return jnp.asarray(0.0)
+
+
+def test_a_negative_zero_argument_callable_weight_is_rejected() -> None:
+    """A weight declared as a constant-valued callable is judged like a constant.
+
+    `-1` is refused whether it is written as a float or returned by a callable
+    that reads nothing.
+    """
+    model = _build_model(
+        objective=ParetoObjective(
+            weights={
+                "f": _zero_argument_weight_negative,
+                "m": _zero_argument_weight_two,
+            }
+        )
+    )
+
+    with pytest.raises(PyLCMError, match="negative"):
+        model.solve(params=_params(), log_level="debug")
+
+
+def test_all_zero_zero_argument_callable_weights_are_rejected() -> None:
+    """Weights that are identically zero leave the household argmax undefined.
+
+    Without this the objective is zero everywhere and the household silently
+    takes whichever action the tie-break happens to reach first.
+    """
+    model = _build_model(
+        objective=ParetoObjective(
+            weights={
+                "f": _zero_argument_weight_zero,
+                "m": _zero_argument_weight_zero,
+            }
+        )
+    )
+
+    with pytest.raises(PyLCMError, match="positive total"):
+        model.solve(params=_params(), log_level="debug")
