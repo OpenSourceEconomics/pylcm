@@ -788,8 +788,8 @@ def _replace_continuous_action_with_policy_read(  # noqa: PLR0911
     - the value to report for the emitted pair. Every path that keeps the grid
       pair returns `grid_values` unchanged; every accepted off-grid pair is
       scored by the canonical Q and returns that attained value. A rejected
-      nested read keeps the feasible grid pair or reports the projected
-      baseline's canonical score;
+      nested read keeps the feasible grid pair or reports the canonical
+      score of the published branch the replay fell back to;
     - a nested-fallback flag: the per-subject Boolean array from
       `_read_nested_policy`, extended to include canonical infeasibility,
       non-finite scores, and pairs that score below the grid pair; or `None`
@@ -1207,10 +1207,17 @@ def _read_nested_policy(
     post-decision or keeper candidate does not resolve against the simulate
     function pool is refused rather than answered with the action-grid winner.
 
-    Returns the recovered actions, a per-subject Boolean fallback flag,
-    and the winning value from the solve's policy surrogate. The last value
-    lets the caller refuse an emitted pair whose canonical Q is materially
-    below the surrogate value that selected it.
+    Returns four things:
+
+    - the recovered actions;
+    - a per-subject Boolean fallback flag;
+    - the winning value from the solve's policy surrogate, which lets the
+      caller refuse an emitted pair whose canonical Q is materially below the
+      surrogate value that selected it;
+    - the replay candidate: the highest-valued published branch the subject
+      can actually be given, as `(outer action, inner action, any branch
+      survived)`. The caller uses it only where the raw simulation-grid pair
+      is itself inadmissible.
     """
     _fail_if_the_published_capability_is_not_replayable(payload=payload)
     keeper_pol = payload.keeper
