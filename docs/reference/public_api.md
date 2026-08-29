@@ -110,7 +110,6 @@ surfaces remain outside that top-level namespace:
 | [`lcm.ValueDependentTransition`](collective_regimes.md#valuedependenttransition) | Gated transition to a target regime      |
 | [`lcm.StakeholderRoute`](collective_regimes.md#stakeholderroute)                 | One source stakeholder's route across it |
 | [`lcm.ProjectedRegimeValue`](collective_regimes.md#projectedregimevalue)         | Another regime's value, projected        |
-| [`lcm.GatedEdge`](collective_regimes.md)                                         | Lowered `ValueDependentTransition` form  |
 
 ## Solvers and configurations
 

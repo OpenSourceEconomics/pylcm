@@ -465,19 +465,25 @@ mixing values across it.
 ## The lowered form
 
 Each of the declarations above is decomposed at `Regime` construction into the fields
-the engine threads, and those fields stay on `Regime`:
+the engine threads. Those fields stay on `Regime` as **derived, read-only values**: they
+are recomputed from the declarations on every construction, and they cannot be passed to
+`Regime(...)` or to `Regime.replace`.
 
-| Declaration                | Lowers to                                                          |
-| -------------------------- | ------------------------------------------------------------------ |
-| `CollectiveUtility`        | `functions["utility_<s>"]`, `stakeholders`, `pareto_objective`     |
-| `ValueDependentConstraint` | `value_constraints[name]`, `same_period_refs[reference key]`       |
-| `ValueDependentTransition` | `transition[target]` (the `probability`) and `gated_edges[target]` |
+| Declaration                | Derives                                                                                                   |
+| -------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `CollectiveUtility`        | `stakeholders`, `pareto_objective`, and one `utility_<s>` entry per stakeholder in `decomposed_functions` |
+| `ValueDependentConstraint` | `value_constraints[name]`, `same_period_refs[reference key]`                                              |
+| `ValueDependentTransition` | `decomposed_transition[target]` (the `probability`) and `gated_edges[target]`                             |
 
-`lcm.GatedEdge` carries `gate`, `legs`, `gate_refs` and `off_grid` — it is the lowered
-edge — the same four facts a `ValueDependentTransition` carries, minus the probability,
-with `routes` spelled `legs` and `gate_references` spelled `gate_refs`. Declaring the
-same edge both ways is rejected unless the two agree exactly, because an edge is its
-gate, its routes, its references and its off-grid contract together.
+The declaration objects themselves stay where the author wrote them, in `functions`,
+`constraints` and `transition`. The engine reads the decomposed views
+(`decomposed_functions`, `decomposed_constraints`, `decomposed_transition`) rather than
+the raw slots, so reading a derived field tells you what a declaration produced without
+that field ever being a way to declare it.
+
+The lowered edge type is `_lcm.gated_edge.GatedEdge`. It is engine-internal and not part
+of the public API: there is exactly one way to declare a gated edge, and it is
+`ValueDependentTransition`.
 
 Model code reads these fields; model *authors* do not need them. Declare a household
 with the six objects above.
