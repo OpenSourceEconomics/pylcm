@@ -359,6 +359,24 @@ def test_the_taste_shock_reduction_covers_every_action_axis():
     ) == ("tuple(range(n_discrete_action_axes, Q_arr.ndim))", "tuple(range(Qc.ndim))")
 
 
+def test_the_obligations_read_exactly_the_declared_certified_sources():
+    """No obligation rests on a source `CERTIFIED_SOURCES` does not name.
+
+    The contract anchors its bound to a named set of files. An obligation that
+    quietly started reading a third source would rest the bound on bytes nothing
+    declares, so the set is derived from the obligations rather than asserted
+    beside them: every literal handed to `_parse` must already be in the list.
+    """
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    parsed = {
+        node.args[0].value
+        for node in _calls_named(node=tree, name="_parse")
+        if node.args and isinstance(node.args[0], ast.Constant)
+    }
+
+    assert parsed == set(CERTIFIED_SOURCES)
+
+
 def test_certified_sources_are_read_as_utf_8_whatever_the_platform_default_is():
     """The structural reads name their encoding rather than taking the locale's.
 
@@ -605,6 +623,165 @@ def test_every_declared_candidate_can_be_the_household_choice(
         + jnp.array([consumption + 10.0 * work, 2.0 * consumption + 5.0 * work]),
         decimal=DECIMAL_PRECISION,
     )
+
+
+def _simulate_acting(
+    *, model: Model, work: float, consumption: float, function_name: str
+) -> dict[str, list[float]]:
+    """Simulate one target candidate and return the actions it published at period 0.
+
+    Args:
+        model: The model to solve and simulate.
+        work: Target value of the discrete action.
+        consumption: Target value of the continuous action.
+        function_name: Params key of the function reading the two targets.
+
+    Returns:
+        Mapping of each action name to its published value, one entry per subject.
+    """
+    params = cast("dict[str, Any]", model.get_params_template())
+    params["acting"][function_name]["target_work"] = work
+    params["acting"][function_name]["target_consumption"] = consumption
+    params["acting"]["koopmans_aggregator"]["discount_factor"] = 0.5
+    result = model.simulate(
+        params=params,
+        initial_conditions={
+            "age": jnp.zeros(len(_WEALTH_VALUES)),
+            "wealth": _WEALTH_VALUES,
+            "regime_id": jnp.full(len(_WEALTH_VALUES), RegimeId.acting),
+        },
+        period_to_regime_to_V_arr=None,
+        log_level="debug",
+    )
+    frame = result.to_dataframe(use_labels=False)
+    period_0 = frame[frame["period"] == 0]
+    return {
+        name: period_0[name].to_numpy().tolist() for name in ("work", "consumption")
+    }
+
+
+@pytest.mark.parametrize(("work", "consumption"), _CANDIDATES)
+def test_simulation_routes_to_every_declared_candidate(
+    unique_feasible_model: Model, work: float, consumption: float
+):
+    """Simulation publishes the one candidate the constraint admits.
+
+    Simulation maximizes with `get_argmax_and_max_Q_over_a`, a different callable from
+    the one backward induction reduces with, so a candidate the solve reaches is not
+    thereby a candidate simulation reaches. The bound covers every workload, and
+    simulation is one.
+    """
+    rows = _simulate_acting(
+        model=unique_feasible_model,
+        work=work,
+        consumption=consumption,
+        function_name="only_target",
+    )
+
+    assert rows == {
+        "work": [work] * len(_WEALTH_VALUES),
+        "consumption": [consumption] * len(_WEALTH_VALUES),
+    }
+
+
+@pytest.mark.parametrize(("work", "consumption"), _CANDIDATES)
+def test_simulation_routes_a_household_to_every_declared_candidate(
+    collective_model: Model, work: float, consumption: float
+):
+    """The collective simulate reduction reaches every candidate too.
+
+    `collective_argmax_and_readout` is a third reduction, distinct from both the
+    singleton simulate path and the collective solve path.
+    """
+    rows = _simulate_acting(
+        model=collective_model,
+        work=work,
+        consumption=consumption,
+        function_name="only_target",
+    )
+
+    assert rows == {
+        "work": [work] * len(_WEALTH_VALUES),
+        "consumption": [consumption] * len(_WEALTH_VALUES),
+    }
+
+
+def _argmax_masking_the_last_action_cell() -> Callable[..., Any]:
+    """Return an `argmax_and_max` that hides the last cell of the action product.
+
+    Patching the simulate-side reducer alone is what makes the control specific: the
+    solve reduction is a different callable and keeps the full candidate set, so a
+    green solve sweep beside a red simulate sweep is exactly the divergence a
+    solve-only certificate cannot see.
+
+    Returns:
+        A drop-in replacement for `argmax_and_max`.
+    """
+    real = max_Q_over_a_module.argmax_and_max
+
+    def patched(a: Any, *args: Any, where: Any = None, **kwargs: Any) -> Any:
+        # `argmax_and_max` also reduces rank-0 masks elsewhere in the engine; those
+        # carry no action axis to hide a cell along, so they pass through untouched.
+        if where is not None and where.ndim >= 1:
+            where = where.at[..., -1].set(False)
+        return real(a, *args, where=where, **kwargs)
+
+    return patched
+
+
+def test_masking_one_simulate_candidate_changes_the_published_action():
+    """Hiding one cell from the simulate reducer alone moves the published action.
+
+    Without this the simulate sweep's green would only say that nothing raised. The
+    masked candidate is the one the constraint admits, so an exhaustive simulate
+    search would publish it and this run publishes a different action.
+    """
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(
+            max_Q_over_a_module,
+            "argmax_and_max",
+            _argmax_masking_the_last_action_cell(),
+        )
+        model = _build_model(
+            utility=_labelled_utility,
+            constraints={"only_target": _only_target},
+            terminal_utility=lambda: jnp.array(0.0),
+        )
+        rows = _simulate_acting(
+            model=model,
+            work=_WORK_VALUES[-1],
+            consumption=_CONSUMPTION_VALUES[-1],
+            function_name="only_target",
+        )
+
+    assert rows["consumption"] != [_CONSUMPTION_VALUES[-1]] * len(_WEALTH_VALUES)
+
+
+def test_masking_one_simulate_candidate_leaves_the_others_alone():
+    """The simulate mask removes one cell, not the simulation.
+
+    A patch that broke the simulate reduction outright would move every published
+    action and make the control above pass for the wrong reason.
+    """
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(
+            max_Q_over_a_module,
+            "argmax_and_max",
+            _argmax_masking_the_last_action_cell(),
+        )
+        model = _build_model(
+            utility=_labelled_utility,
+            constraints={"only_target": _only_target},
+            terminal_utility=lambda: jnp.array(0.0),
+        )
+        rows = _simulate_acting(
+            model=model,
+            work=_WORK_VALUES[0],
+            consumption=_CONSUMPTION_VALUES[0],
+            function_name="only_target",
+        )
+
+    assert rows["consumption"] == [_CONSUMPTION_VALUES[0]] * len(_WEALTH_VALUES)
 
 
 def _productmap_dropping_the_last_action_cell(
