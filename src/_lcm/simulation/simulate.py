@@ -807,7 +807,12 @@ def _replace_continuous_action_with_policy_read(  # noqa: PLR0911
         # The nested (continuous-outer) payload is self-describing (it names
         # both actions, the liquid state, and the search settings), so it
         # needs no build-time `egm_policy_read` qualification of its own.
-        nested_actions, nested_fallback, nested_policy_value = _read_nested_policy(
+        (
+            nested_actions,
+            nested_fallback,
+            nested_policy_value,
+            replay_candidate,
+        ) = _read_nested_policy(
             payload=sim_policy,
             optimal_actions=optimal_actions,
             regime=regime,
@@ -846,6 +851,7 @@ def _replace_continuous_action_with_policy_read(  # noqa: PLR0911
             flat_params=flat_params,
             period=period,
             age=age,
+            replay_candidate=replay_candidate,
         )
         value_atol = getattr(sim_policy, "value_atol", 1e-10)
         value_rtol = getattr(sim_policy, "value_rtol", 1e-8)
@@ -1169,7 +1175,12 @@ def _read_nested_policy(
     flat_params: FlatRegimeParams,
     period: int,
     age: ScalarFloat | ScalarInt,
-) -> tuple[MappingProxyType[ActionName, FloatND | IntND], BoolND, FloatND]:
+) -> tuple[
+    MappingProxyType[ActionName, FloatND | IntND],
+    BoolND,
+    FloatND,
+    tuple[FloatND, FloatND, BoolND],
+]:
     """Replay the continuous-outer keeper/adjuster decision off-grid.
 
     Reconstructs, per subject, exactly the solve's decision problem in the
@@ -1365,7 +1376,131 @@ def _read_nested_policy(
     new_actions[payload.outer_action_name] = jnp.where(
         accepted, outer_action, jnp.asarray(optimal_actions[payload.outer_action_name])
     )
-    return MappingProxyType(new_actions), ~accepted, winner_value
+    replay_candidate = _best_admissible_replay_candidate(
+        payload=payload,
+        candidate_values=candidate_values,
+        candidate_support=candidate_support,
+        candidate_actions=candidate_actions,
+        keeper_value=keeper_value,
+        keeper_support=keeper_support,
+        keeper_action=keeper_action,
+        keeper_post_decision=keep_value,
+        offset=offset,
+        transition_at=transition_at,
+        regime=regime,
+        states=states,
+        flat_params=flat_params,
+        period=period,
+        age=age,
+        n_subjects=n_subjects,
+    )
+    return MappingProxyType(new_actions), ~accepted, winner_value, replay_candidate
+
+
+def _best_admissible_replay_candidate(
+    *,
+    payload: NestedEGMSimPolicy,
+    candidate_values: FloatND,
+    candidate_support: BoolND,
+    candidate_actions: FloatND,
+    keeper_value: FloatND,
+    keeper_support: BoolND,
+    keeper_action: FloatND,
+    keeper_post_decision: FloatND,
+    offset: FloatND,
+    transition_at: Callable[[FloatND], FloatND],
+    regime: Regime,
+    states: Mapping[StateOrActionName, FloatND | IntND],
+    flat_params: FlatRegimeParams,
+    period: int,
+    age: ScalarFloat | ScalarInt,
+    n_subjects: int,
+) -> tuple[FloatND, FloatND, BoolND]:
+    """Rank every branch the solve published that the subject can be given.
+
+    The published policy is a keeper branch plus one conditional inner policy
+    per outer mesh node, so a branch whose outer action the subject cannot
+    reach removes that branch and nothing else. Each branch is admitted by the
+    same tolerance-free predicate the on-mesh proposal uses, against the same
+    declared inverse domain -- a target at a declared endpoint must be
+    reproduced exactly, an interior target only has to land inside -- and each
+    surviving branch keeps *its own* inner action, never another branch's.
+
+    Ranking is by the values the solve published, which is the comparison the
+    solve itself made across these branches. The keeper occupies the leading
+    row, so `argmax`'s first-maximum rule lets the exact keeper win ties, the
+    convention the on-mesh decision uses; ties among mesh nodes break toward
+    the lower node index. The caller scores the winner through canonical Q
+    once, which is what makes it comparable with the simulation-grid pair.
+
+    Returns:
+        Tuple of the winning branch's outer action, its inner action, and
+        whether any branch survived.
+    """
+    outer_nodes = payload.adjuster.outer_nodes
+    n_nodes = outer_nodes.shape[0]
+    leading = {
+        "candidate_values": candidate_values.shape[0],
+        "candidate_support": candidate_support.shape[0],
+        "candidate_actions": candidate_actions.shape[0],
+    }
+    wrong = {name: size for name, size in leading.items() if size != n_nodes}
+    if wrong:
+        raise ValueError(
+            "The conditional bank reads must be node-major: their leading axis "
+            f"pairs each of the {n_nodes} outer nodes with its own inner "
+            f"policy, but {wrong} disagree with that length. Ranking a "
+            "transposed read would pair a node with another node's policy."
+        )
+
+    node_targets = jnp.broadcast_to(outer_nodes[:, None], candidate_values.shape)
+    targets = jnp.concatenate((keeper_post_decision[None, :], node_targets), axis=0)
+    values = jnp.concatenate((keeper_value[None, :], candidate_values), axis=0)
+    support = jnp.concatenate((keeper_support[None, :], candidate_support), axis=0)
+    inner_actions = jnp.concatenate((keeper_action[None, :], candidate_actions), axis=0)
+
+    outer_actions = targets - offset[None, :]
+    images = vmap(transition_at)(outer_actions)
+    reaches_target = outer_candidate_is_admissible(
+        image=images,
+        target=targets,
+        low=jnp.asarray(payload.replay_capability.inverse.low, dtype=images.dtype),
+        high=jnp.asarray(payload.replay_capability.inverse.high, dtype=images.dtype),
+    )
+
+    def resources_at(outer_action: FloatND, image: FloatND) -> FloatND:
+        return _nested_resources(
+            payload=payload,
+            regime=regime,
+            states=states,
+            outer_action=outer_action,
+            outer_post_decision=image,
+            flat_params=flat_params,
+            period=period,
+            age=age,
+            n_subjects=n_subjects,
+        )
+
+    resources = vmap(resources_at)(outer_actions, images)
+    admissible = (
+        reaches_target
+        & support
+        & jnp.isfinite(outer_actions)
+        & jnp.isfinite(inner_actions)
+        & jnp.isfinite(resources)
+        & jnp.isfinite(values)
+        & (inner_actions > 0.0)
+        & (inner_actions <= resources - payload.savings_lower_bound)
+    )
+
+    ranked = jnp.where(admissible, values, -jnp.inf)
+    best = jnp.argmax(ranked, axis=0)
+    subject = jnp.arange(outer_actions.shape[1])
+    return (
+        outer_actions[best, subject],
+        inner_actions[best, subject],
+        jnp.any(admissible, axis=0),
+    )
 
 
 def _nested_actions_are_intrinsically_admissible(
@@ -1439,18 +1574,21 @@ def _nested_grid_baseline(
     flat_params: FlatRegimeParams,
     period: int,
     age: ScalarFloat | ScalarInt,
+    replay_candidate: tuple[FloatND, FloatND, BoolND],
 ) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND, BoolND]:
     """Return an admissible baseline for the nested no-degradation check.
 
     Score the raw grid pair through canonical Q and retain it only when it also
     respects the nested solver's outer domain and consumption budget. Canonical
-    Q does not own those restrictions for an NNBEGM regime without explicit user
-    constraints. When the raw pair is unsafe, project it to both published
-    outer endpoints, trim the inner action to each endpoint's resources, and
-    choose the higher-valued pair among those that reach the endpoint they
-    were projected onto and are intrinsically and canonically admissible.
-    When no candidate is safe, the caller fails rather than publishing an
-    infeasible decision.
+    Q does not own those restrictions for an NNBEGM regime without explicit
+    user constraints.
+
+    When the raw pair is unsafe, fall back to `replay_candidate`: the
+    highest-valued branch the subject can actually be given, already selected
+    across the keeper and the whole published bank under the shared endpoint
+    predicate and carrying that branch's own inner action. Score it once
+    through canonical Q so it is comparable with the grid pair. When neither is
+    safe, the caller fails rather than publishing an infeasible decision.
     """
     grid_value, grid_q_feasible = _canonical_Q_at_actions(
         candidate_actions=grid_actions,
@@ -1475,149 +1613,53 @@ def _nested_grid_baseline(
         grid_q_feasible & grid_intrinsically_admissible & jnp.isfinite(grid_value)
     )
 
-    def endpoint_baseline(
-        endpoint: Literal["lower", "upper"],
-    ) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND, BoolND]:
-        actions, endpoint_reproduced = _project_grid_pair_to_nested_endpoint(
+    replay_outer_action, replay_inner_action, replay_reachable = replay_candidate
+    fallback_actions = MappingProxyType(
+        {
+            **grid_actions,
+            payload.outer_action_name: replay_outer_action,
+            payload.inner_action_name: replay_inner_action,
+        }
+    )
+    fallback_value, fallback_q_feasible = _canonical_Q_at_actions(
+        candidate_actions=fallback_actions,
+        regime=regime,
+        canonical_states=canonical_states,
+        action_names=action_names,
+        next_regime_to_V_arr=next_regime_to_V_arr,
+        flat_params=flat_params,
+        period=period,
+        age=age,
+    )
+    fallback_admissible = (
+        replay_reachable
+        & fallback_q_feasible
+        & jnp.isfinite(fallback_value)
+        & _nested_actions_are_intrinsically_admissible(
             payload=payload,
-            grid_actions=grid_actions,
-            endpoint=endpoint,
+            actions=fallback_actions,
             regime=regime,
             states=states,
             flat_params=flat_params,
             period=period,
             age=age,
         )
-        value, q_feasible = _canonical_Q_at_actions(
-            candidate_actions=actions,
-            regime=regime,
-            canonical_states=canonical_states,
-            action_names=action_names,
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            flat_params=flat_params,
-            period=period,
-            age=age,
-        )
-        admissible = (
-            endpoint_reproduced
-            & _nested_actions_are_intrinsically_admissible(
-                payload=payload,
-                actions=actions,
-                regime=regime,
-                states=states,
-                flat_params=flat_params,
-                period=period,
-                age=age,
-            )
-            & q_feasible
-            & jnp.isfinite(value)
-        )
-        return actions, value, admissible
-
-    lower_actions, lower_value, lower_admissible = endpoint_baseline("lower")
-    upper_actions, upper_value, upper_admissible = endpoint_baseline("upper")
-    use_upper = upper_admissible & (~lower_admissible | (upper_value > lower_value))
-    projected_actions = MappingProxyType(
-        {
-            name: jnp.where(
-                use_upper,
-                jnp.asarray(upper_actions[name]),
-                jnp.asarray(lower_action),
-            )
-            for name, lower_action in lower_actions.items()
-        }
     )
-    projected_value = jnp.where(use_upper, upper_value, lower_value)
-    projected_admissible = lower_admissible | upper_admissible
 
     baseline_actions = MappingProxyType(
         {
             name: jnp.where(
                 grid_admissible,
                 jnp.asarray(grid_action),
-                jnp.asarray(projected_actions[name]),
+                jnp.asarray(fallback_actions[name]),
             )
             for name, grid_action in grid_actions.items()
         }
     )
     return (
         baseline_actions,
-        jnp.where(grid_admissible, grid_value, projected_value),
-        grid_admissible | projected_admissible,
-    )
-
-
-def _project_grid_pair_to_nested_endpoint(
-    *,
-    payload: NestedEGMSimPolicy,
-    grid_actions: MappingProxyType[ActionName, FloatND | IntND],
-    endpoint: Literal["lower", "upper"],
-    regime: Regime,
-    states: Mapping[StateOrActionName, FloatND | IntND],
-    flat_params: FlatRegimeParams,
-    period: int,
-    age: ScalarFloat | ScalarInt,
-) -> tuple[MappingProxyType[ActionName, FloatND | IntND], BoolND]:
-    """Project a raw grid pair onto one outer endpoint and the savings floor.
-
-    Returns the projected pair together with whether the recovered action
-    reaches the endpoint it was projected onto. The verdict is the same
-    tolerance-free predicate the policy replay applies, so a projection and a
-    replay decide an identical stock identically.
-
-    The predicate's domain here is the published mesh, not the outer state's
-    declared bounds: a projection exists to place the subject on the boundary
-    of the region the policy bank covers, and the node one representable step
-    inside that boundary is a different stock from the one aimed at. Passing
-    the declared bounds instead would leave a mesh that stops short of them
-    with no endpoint to recognise, and the check would decay into containment.
-    """
-    n_subjects = next(iter(states.values())).shape[0]
-    outer_transition = _outer_transition_offset_and_forward(
-        payload=payload,
-        regime=regime,
-        states=states,
-        flat_params=flat_params,
-        period=period,
-        age=age,
-        n_subjects=n_subjects,
-    )
-    offset, transition_at = outer_transition
-    outer_nodes = payload.adjuster.outer_nodes
-    endpoint_index = 0 if endpoint == "lower" else -1
-    endpoint_value = outer_nodes[endpoint_index]
-    projected_outer_action = endpoint_value - offset
-    projected_post_decision = transition_at(projected_outer_action)
-    endpoint_reproduced = outer_candidate_is_admissible(
-        image=projected_post_decision,
-        target=endpoint_value,
-        low=outer_nodes[0],
-        high=outer_nodes[-1],
-    )
-    resources = _nested_resources(
-        payload=payload,
-        regime=regime,
-        states=states,
-        outer_action=projected_outer_action,
-        outer_post_decision=projected_post_decision,
-        flat_params=flat_params,
-        period=period,
-        age=age,
-        n_subjects=n_subjects,
-    )
-    inner_action = jnp.minimum(
-        jnp.asarray(grid_actions[payload.inner_action_name]),
-        resources - payload.savings_lower_bound,
-    )
-    return (
-        MappingProxyType(
-            {
-                **grid_actions,
-                payload.outer_action_name: projected_outer_action,
-                payload.inner_action_name: inner_action,
-            }
-        ),
-        endpoint_reproduced,
+        jnp.where(grid_admissible, grid_value, fallback_value),
+        grid_admissible | fallback_admissible,
     )
 
 
