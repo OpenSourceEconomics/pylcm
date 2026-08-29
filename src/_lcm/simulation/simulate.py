@@ -1447,9 +1447,10 @@ def _nested_grid_baseline(
     Q does not own those restrictions for an NNBEGM regime without explicit user
     constraints. When the raw pair is unsafe, project it to both published
     outer endpoints, trim the inner action to each endpoint's resources, and
-    choose the higher-valued intrinsically
-    and canonically admissible pair. When no candidate is safe, the caller
-    fails rather than publishing an infeasible decision.
+    choose the higher-valued pair among those that reach the endpoint they
+    were projected onto and are intrinsically and canonically admissible.
+    When no candidate is safe, the caller fails rather than publishing an
+    infeasible decision.
     """
     grid_value, grid_q_feasible = _canonical_Q_at_actions(
         candidate_actions=grid_actions,
@@ -1477,7 +1478,7 @@ def _nested_grid_baseline(
     def endpoint_baseline(
         endpoint: Literal["lower", "upper"],
     ) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND, BoolND]:
-        actions = _project_grid_pair_to_nested_endpoint(
+        actions, endpoint_reproduced = _project_grid_pair_to_nested_endpoint(
             payload=payload,
             grid_actions=grid_actions,
             endpoint=endpoint,
@@ -1498,7 +1499,8 @@ def _nested_grid_baseline(
             age=age,
         )
         admissible = (
-            _nested_actions_are_intrinsically_admissible(
+            endpoint_reproduced
+            & _nested_actions_are_intrinsically_admissible(
                 payload=payload,
                 actions=actions,
                 regime=regime,
@@ -1555,8 +1557,21 @@ def _project_grid_pair_to_nested_endpoint(
     flat_params: FlatRegimeParams,
     period: int,
     age: ScalarFloat | ScalarInt,
-) -> MappingProxyType[ActionName, FloatND | IntND]:
-    """Project a raw grid pair onto one outer endpoint and the savings floor."""
+) -> tuple[MappingProxyType[ActionName, FloatND | IntND], BoolND]:
+    """Project a raw grid pair onto one outer endpoint and the savings floor.
+
+    Returns the projected pair together with whether the recovered action
+    reaches the endpoint it was projected onto. The verdict is the same
+    tolerance-free predicate the policy replay applies, so a projection and a
+    replay decide an identical stock identically.
+
+    The predicate's domain here is the published mesh, not the outer state's
+    declared bounds: a projection exists to place the subject on the boundary
+    of the region the policy bank covers, and the node one representable step
+    inside that boundary is a different stock from the one aimed at. Passing
+    the declared bounds instead would leave a mesh that stops short of them
+    with no endpoint to recognise, and the check would decay into containment.
+    """
     n_subjects = next(iter(states.values())).shape[0]
     outer_transition = _outer_transition_offset_and_forward(
         payload=payload,
@@ -1570,24 +1585,15 @@ def _project_grid_pair_to_nested_endpoint(
     offset, transition_at = outer_transition
     outer_nodes = payload.adjuster.outer_nodes
     endpoint_index = 0 if endpoint == "lower" else -1
-    interior_index = -1 if endpoint == "lower" else 0
     endpoint_value = outer_nodes[endpoint_index]
-    exact_outer_action = endpoint_value - offset
-    exact_post_decision = transition_at(exact_outer_action)
-    lands_inside = (exact_post_decision >= outer_nodes[0]) & (
-        exact_post_decision <= outer_nodes[-1]
-    )
-    interior_value = jnp.nextafter(
-        endpoint_value,
-        outer_nodes[interior_index],
-    )
-    interior_outer_action = interior_value - offset
-    projected_outer_action = jnp.where(
-        lands_inside,
-        exact_outer_action,
-        interior_outer_action,
-    )
+    projected_outer_action = endpoint_value - offset
     projected_post_decision = transition_at(projected_outer_action)
+    endpoint_reproduced = outer_candidate_is_admissible(
+        image=projected_post_decision,
+        target=endpoint_value,
+        low=outer_nodes[0],
+        high=outer_nodes[-1],
+    )
     resources = _nested_resources(
         payload=payload,
         regime=regime,
@@ -1603,12 +1609,15 @@ def _project_grid_pair_to_nested_endpoint(
         jnp.asarray(grid_actions[payload.inner_action_name]),
         resources - payload.savings_lower_bound,
     )
-    return MappingProxyType(
-        {
-            **grid_actions,
-            payload.outer_action_name: projected_outer_action,
-            payload.inner_action_name: inner_action,
-        }
+    return (
+        MappingProxyType(
+            {
+                **grid_actions,
+                payload.outer_action_name: projected_outer_action,
+                payload.inner_action_name: inner_action,
+            }
+        ),
+        endpoint_reproduced,
     )
 
 

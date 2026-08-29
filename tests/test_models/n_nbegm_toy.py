@@ -256,6 +256,7 @@ def build_model(
     durable_law: Callable[..., object] | Phased | None = None,
     constraints: Mapping[str, Callable[..., object]] | None = None,
     utility_function: Callable[..., object] | AgeSpecializedFunction | Phased = utility,
+    terminal_utility_function: Callable[..., object] = terminal_utility,
     outer_post_decision_function: Callable[..., object] | None = None,
     regime_transition: Callable[..., object] | Phased = next_regime,
     koopmans_aggregator: Callable[..., object] | Phased | None = None,
@@ -281,6 +282,10 @@ def build_model(
     variants keep solving the same model.
     `scale_function` overrides the fixed cost's `adjustment_scale` function,
     so a caller can drive the scale from a flat param.
+    `terminal_utility_function` overrides the bequest the terminal regime
+    pays. The default is singular one unit below zero durable, so a caller
+    giving `illiquid_grid` a domain that reaches into durable debt supplies
+    a bequest finite there as well.
     `outer_post_decision_function` overrides `new_illiquid`, the outer
     post-decision margin every variant reads the chosen stock through. It is the
     map N-NB-EGM must invert, so a caller can declare one the solver is required
@@ -424,7 +429,7 @@ def build_model(
         transition=None,
         active=lambda age, n=final_age_alive: terminal_active_from_start or age > n,
         states={"wealth": WEALTH_GRID, "illiquid": illiquid_grid},
-        functions={"utility": terminal_utility},
+        functions={"utility": terminal_utility_function},
     )
     return Model(
         regimes={"alive": alive, "dead": dead},
