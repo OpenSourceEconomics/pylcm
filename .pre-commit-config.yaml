@@ -205,6 +205,15 @@ ci:
   # pre-commit.ci has no pixi environments and blocks network at hook runtime;
   # the GitHub Actions run-ty job covers type checking, and pixi-lock-check
   # needs a pixi binary that pre-commit.ci does not provide.
+  #
+  # The two script hooks live in the `.ai-instructions` submodule, which
+  # pre-commit.ci does not check out, so there they fail as a missing
+  # executable rather than running. `pre-push-hooks-installed` asks about the
+  # local clone and is meaningless on a runner anyway; the notebook check does
+  # lose CI coverage and holds only where the submodule is present, which is
+  # every developer clone and no CI job here.
   skip:
     - ty
     - pixi-lock-check
+    - pre-push-hooks-installed
+    - notebook-cell-source-format
