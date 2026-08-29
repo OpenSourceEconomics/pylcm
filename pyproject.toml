@@ -262,6 +262,20 @@ per-file-ignores."benchmarks/*" = [
   "S607",    # Partial executable path
   "T201",    # print found
 ]
+per-file-ignores."tests/candidate_certificate/**" = [
+  # Standard-library command-line verification tools, not library code: they emit
+  # JSON on stdout, shell out to run seeded mutations, and keep each check flat and
+  # exhaustive rather than factored, so the whole obligation reads in one place.
+  "BLE001",  # Blind exception
+  "C901",    # Complex structure
+  "PLR0912", # Too many branches
+  "PLR0915", # Too many statements
+  "S603",    # subprocess call without shell=True check
+  "T201",    # print found
+  "TRY004",  # Prefer TypeError for wrong type
+  "TRY300",  # Consider else block
+  "TRY301",  # Abstract raise to an inner function
+]
 per-file-ignores."tests/solution/_fused_continuation_envelope_oracle.py" = [
   "PLR0915", # Too many statements — kept structurally verbatim as an independent reference
 ]
@@ -360,6 +374,18 @@ extend-immutable-calls = [
 ]
 [tool.ruff.lint.isort]
 known-first-party = [ "_lcm", "lcm", "lcm_examples", "tests" ]
+
+# codespell passes most econ/numerics jargon, but not all of it: `statics`
+# (comparative statics), `disjointness` and `arithmetics` are flagged and are
+# correct as written. The MSVC object-output flag is spelled at its two call
+# sites with an inline ignore rather than a global entry. Two further
+# hits are deliberate and carry an inline `codespell:ignore` at their site
+# rather than a global entry, so the word stays caught everywhere else: a
+# misspelled key in a test that asserts unknown keys are rejected, and a regex
+# prefix. Extend per project rather than dropping the hook.
+[tool.codespell]
+ignore-words-list = "arithmetics,disjointness,fpr,ist,mape,nd,nin,statics"
+skip = "*.lock,*.svg,*.bib,*.ipynb"
 
 [tool.pyproject-fmt]
 column_width = 88

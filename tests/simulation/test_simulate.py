@@ -558,7 +558,7 @@ def test_load_solution_reads_value_arrays_without_the_per_subject_artifacts(
 ):
     """`SimulationResult.load_solution` returns the saved value arrays alone.
 
-    A consumer that only compares or re-uses value functions reads `V_arr/` and
+    A consumer that only compares or reuses value functions reads `V_arr/` and
     nothing else, so the per-subject checkpoint and the metadata pickle are not
     needed — and neither is the device placement their leaves were saved under.
     """
