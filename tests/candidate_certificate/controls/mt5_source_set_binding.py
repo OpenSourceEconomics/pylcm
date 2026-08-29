@@ -85,8 +85,18 @@ def _load_inventory(path: Path) -> list[dict[str, str]]:
     return [dict(item) for item in payload["sources"]]
 
 
-def _contract(entries: list[dict[str, str]], *, duplicate: bool = False) -> str:
-    primary, *additional = entries
+def _contract(
+    entries: list[dict[str, str]],
+    *,
+    anchor: dict[str, str],
+    duplicate: bool = False,
+) -> str:
+    """Render the contract grammar: an inventory anchor plus the certified set.
+
+    The primary `source`/`source_digest` pair names the generated inventory, not one
+    of the certified sources, so every certified source is declared under
+    `additional_sources` and the mutations below perturb that set alone.
+    """
     lines = ["profiles:"]
     for profile in PROFILES:
         lines.extend(
@@ -94,17 +104,17 @@ def _contract(entries: list[dict[str, str]], *, duplicate: bool = False) -> str:
                 f"  {profile}:",
                 "    numerical:",
                 "      candidate_set_error:",
-                f'        source: "{primary["path"]}"',
-                f'        source_digest: "sha256:{primary["sha256"]}"',
+                f'        source: "{anchor["path"]}"',
+                f'        source_digest: "sha256:{anchor["sha256"]}"',
                 "        additional_sources:",
             ]
         )
         lines.extend(
-            f'          "{item["path"]}": "sha256:{item["sha256"]}"'
-            for item in additional
+            f'          "{item["path"]}": "sha256:{item["sha256"]}"' for item in entries
         )
         if duplicate:
-            lines.append(f'          "{primary["path"]}": "sha256:{primary["sha256"]}"')
+            first = entries[0]
+            lines.append(f'          "{first["path"]}": "sha256:{first["sha256"]}"')
     return "\n".join(lines) + "\n"
 
 
@@ -200,7 +210,13 @@ def main() -> int:
         with tempfile.TemporaryDirectory() as temporary:
             tmp = Path(temporary)
             clean_contract = tmp / "clean-contract.yaml"
-            clean_contract.write_text(_contract(entries), encoding="utf-8")
+            anchor = {
+                "path": INVENTORY.as_posix(),
+                "sha256": hashlib.sha256((repo / INVENTORY).read_bytes()).hexdigest(),
+            }
+            clean_contract.write_text(
+                _contract(entries, anchor=anchor), encoding="utf-8"
+            )
             clean_exit, _clean_payload = _run_verifier(
                 verifier=verifier,
                 repo_root=repo,
@@ -211,7 +227,7 @@ def main() -> int:
 
             deleted = entries[:-1]
             path = tmp / "delete.yaml"
-            path.write_text(_contract(deleted), encoding="utf-8")
+            path.write_text(_contract(deleted, anchor=anchor), encoding="utf-8")
             code, payload = _run_verifier(
                 verifier=verifier, repo_root=repo, contract=path
             )
@@ -228,14 +244,16 @@ def main() -> int:
             }
             added = [*entries, extra]
             path = tmp / "add.yaml"
-            path.write_text(_contract(added), encoding="utf-8")
+            path.write_text(_contract(added, anchor=anchor), encoding="utf-8")
             code, payload = _run_verifier(
                 verifier=verifier, repo_root=repo, contract=path
             )
             cases["add"] = {"exit": code, "payload": payload, "path": extra_path}
 
             path = tmp / "duplicate.yaml"
-            path.write_text(_contract(entries, duplicate=True), encoding="utf-8")
+            path.write_text(
+                _contract(entries, anchor=anchor, duplicate=True), encoding="utf-8"
+            )
             code, payload = _run_verifier(
                 verifier=verifier, repo_root=repo, contract=path
             )
@@ -248,7 +266,7 @@ def main() -> int:
             renamed_path = entries[-1]["path"] + ".renamed"
             renamed = [*entries[:-1], {**entries[-1], "path": renamed_path}]
             path = tmp / "rename.yaml"
-            path.write_text(_contract(renamed), encoding="utf-8")
+            path.write_text(_contract(renamed, anchor=anchor), encoding="utf-8")
             code, payload = _run_verifier(
                 verifier=verifier, repo_root=repo, contract=path
             )

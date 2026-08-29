@@ -67,6 +67,7 @@ from lcm.typing import (
 from tests.candidate_certificate.generate_sources import derive_source_paths
 from tests.candidate_certificate.verify import (
     nonempty_feasibility_masks,
+    rank_vectors,
     reference_masked_argmax,
 )
 from tests.conftest import DECIMAL_PRECISION
@@ -93,11 +94,10 @@ _WEALTH_VALUES = jnp.array([1.0, 2.0])
 _CANDIDATES: tuple[tuple[float, float], ...] = tuple(
     (work, consumption) for work in _WORK_VALUES for consumption in _CONSUMPTION_VALUES
 )
-_REFERENCE_Q_VALUES: tuple[float, ...] = tuple(
-    3.0 * work + consumption for work, consumption in _CANDIDATES
-)
 _NONEMPTY_FEASIBILITY_MASKS = nonempty_feasibility_masks(len(_CANDIDATES))
+_RANK_VECTORS = rank_vectors(len(_CANDIDATES))
 _MASK_PARAMETER_NAMES = tuple(f"feasible_{index}" for index in range(len(_CANDIDATES)))
+_RANK_PARAMETER_NAMES = tuple(f"rank_{index}" for index in range(len(_CANDIDATES)))
 
 
 @categorical(ordered=True)
@@ -437,11 +437,28 @@ def _candidate_mask(
     return flags[flat_index] > 0.5
 
 
-def _ordinal_utility(
-    wealth: ContinuousState, work: DiscreteAction, consumption: ContinuousAction
+def _ranked_utility(
+    wealth: ContinuousState,
+    work: DiscreteAction,
+    consumption: ContinuousAction,
+    rank_0: float,
+    rank_1: float,
+    rank_2: float,
+    rank_3: float,
+    rank_4: float,
+    rank_5: float,
 ) -> FloatND:
-    """Publish the strict flattened ordering Q = wealth + [1,2,3,4,5,6]."""
-    return wealth + 3.0 * work + consumption
+    """Publish the strict flattened ordering named by the six rank parameters.
+
+    Taking the ordering from parameters lets every candidate be placed in the
+    winning position. Under any single fixed ordering only one candidate is ever
+    the maximizer of a fully feasible neighborhood.
+    """
+    flat_index = jnp.asarray(work, dtype=jnp.int32) * len(
+        _CONSUMPTION_VALUES
+    ) + jnp.asarray(consumption - _CONSUMPTION_VALUES[0], dtype=jnp.int32)
+    ranks = jnp.asarray([rank_0, rank_1, rank_2, rank_3, rank_4, rank_5])
+    return wealth + ranks[flat_index]
 
 
 def _labelled_utility(
@@ -601,7 +618,7 @@ def collective_model() -> Model:
 def masked_singleton_model() -> Model:
     """Singleton model whose feasibility neighborhood is supplied by parameters."""
     return _build_model(
-        utility=_ordinal_utility,
+        utility=_ranked_utility,
         constraints={"candidate_mask": _candidate_mask},
         terminal_utility=lambda: jnp.array(0.0),
     )
@@ -610,9 +627,7 @@ def masked_singleton_model() -> Model:
 @pytest.fixture(scope="module")
 def masked_collective_model() -> Model:
     """Collective model with the same strict ordering for both stakeholders."""
-    utility = CollectiveUtility(
-        utilities={"f": _ordinal_utility, "m": _ordinal_utility}
-    )
+    utility = CollectiveUtility(utilities={"f": _ranked_utility, "m": _ranked_utility})
     return _build_model(
         utility=utility,
         constraints={"candidate_mask": _candidate_mask},
@@ -764,26 +779,43 @@ def test_simulation_routes_a_household_to_every_declared_candidate(
     }
 
 
-def _params_for_mask(*, model: Model, mask: tuple[bool, ...]) -> dict[str, Any]:
-    """Populate the model parameter template with one exact feasibility mask."""
+def _params_for_mask(
+    *, model: Model, mask: tuple[bool, ...], ranks: tuple[float, ...]
+) -> dict[str, Any]:
+    """Populate the parameter template with one mask and one candidate ordering."""
     params = cast("dict[str, Any]", model.get_params_template())
     for name, feasible in zip(_MASK_PARAMETER_NAMES, mask, strict=True):
         params["acting"]["candidate_mask"][name] = float(feasible)
+    for stakeholder in _utility_keys(model):
+        for name, rank in zip(_RANK_PARAMETER_NAMES, ranks, strict=True):
+            params["acting"][stakeholder][name] = float(rank)
     params["acting"]["koopmans_aggregator"]["discount_factor"] = 0.5
     return params
 
 
-def _solve_mask_case(*, model: Model, mask: tuple[bool, ...]) -> FloatND:
+def _utility_keys(model: Model) -> tuple[str, ...]:
+    """Name the params keys carrying the ranked utility, one per stakeholder."""
+    params = cast("dict[str, Any]", model.get_params_template())
+    return tuple(
+        key
+        for key, entry in params["acting"].items()
+        if isinstance(entry, dict) and _RANK_PARAMETER_NAMES[0] in entry
+    )
+
+
+def _solve_mask_case(
+    *, model: Model, mask: tuple[bool, ...], ranks: tuple[float, ...]
+) -> FloatND:
     """Solve one mask neighborhood and return the acting regime's value."""
-    params = _params_for_mask(model=model, mask=mask)
+    params = _params_for_mask(model=model, mask=mask, ranks=ranks)
     return model.solve(params=params, log_level="debug")[0]["acting"]
 
 
 def _simulate_mask_case(
-    *, model: Model, mask: tuple[bool, ...]
+    *, model: Model, mask: tuple[bool, ...], ranks: tuple[float, ...]
 ) -> dict[str, list[float]]:
     """Simulate one mask neighborhood and return actions plus published values."""
-    params = _params_for_mask(model=model, mask=mask)
+    params = _params_for_mask(model=model, mask=mask, ranks=ranks)
     result = model.simulate(
         params=params,
         initial_conditions={
@@ -799,9 +831,11 @@ def _simulate_mask_case(
     return {name: period_0[name].to_numpy().tolist() for name in period_0.columns}
 
 
-def _reference_for_mask(mask: tuple[bool, ...]) -> tuple[int, float, float, float]:
-    """Return flat index, Q value, work, and consumption from the scalar oracle."""
-    index, value = reference_masked_argmax(_REFERENCE_Q_VALUES, mask)
+def _reference_for_mask(
+    mask: tuple[bool, ...], ranks: tuple[float, ...]
+) -> tuple[int, float, float, float]:
+    """Return flat index, value, work, and consumption from the scalar oracle."""
+    index, value = reference_masked_argmax(ranks, mask)
     work, consumption = _CANDIDATES[index]
     return index, value, work, consumption
 
@@ -809,48 +843,72 @@ def _reference_for_mask(mask: tuple[bool, ...]) -> tuple[int, float, float, floa
 def test_singleton_solve_matches_reference_over_every_nonempty_feasibility_mask(
     masked_singleton_model: Model,
 ):
-    """Singleton solve agrees with the scalar oracle on all 63 nonempty masks."""
-    for mask in _NONEMPTY_FEASIBILITY_MASKS:
-        _index, value, _work, _consumption = _reference_for_mask(mask)
-        observed = _solve_mask_case(model=masked_singleton_model, mask=mask)
-        aaae(observed, _WEALTH_VALUES + value, decimal=DECIMAL_PRECISION)
+    """Singleton solve agrees with the scalar oracle on every mask and ordering.
+
+    Sweeping the ordering as well as the mask puts each candidate in the winning
+    position, so omitting any one of them changes a published winner.
+    """
+    for ranks in _RANK_VECTORS:
+        for mask in _NONEMPTY_FEASIBILITY_MASKS:
+            _index, value, _work, _consumption = _reference_for_mask(mask, ranks)
+            observed = _solve_mask_case(
+                model=masked_singleton_model, mask=mask, ranks=ranks
+            )
+            aaae(observed, _WEALTH_VALUES + value, decimal=DECIMAL_PRECISION)
 
 
 def test_singleton_simulate_matches_reference_over_every_nonempty_feasibility_mask(
     masked_singleton_model: Model,
 ):
-    """Singleton simulation agrees with the scalar oracle on all mask neighborhoods."""
-    for mask in _NONEMPTY_FEASIBILITY_MASKS:
-        _index, value, work, consumption = _reference_for_mask(mask)
-        observed = _simulate_mask_case(model=masked_singleton_model, mask=mask)
-        assert observed["work"] == [work] * len(_WEALTH_VALUES), mask
-        assert observed["consumption"] == [consumption] * len(_WEALTH_VALUES), mask
-        aaae(observed["value"], _WEALTH_VALUES + value, decimal=DECIMAL_PRECISION)
+    """Singleton simulation agrees with the scalar oracle on every mask and ordering."""
+    for ranks in _RANK_VECTORS:
+        for mask in _NONEMPTY_FEASIBILITY_MASKS:
+            _index, value, work, consumption = _reference_for_mask(mask, ranks)
+            observed = _simulate_mask_case(
+                model=masked_singleton_model, mask=mask, ranks=ranks
+            )
+            assert observed["work"] == [work] * len(_WEALTH_VALUES), (mask, ranks)
+            assert observed["consumption"] == [consumption] * len(_WEALTH_VALUES), (
+                mask,
+                ranks,
+            )
+            aaae(observed["value"], _WEALTH_VALUES + value, decimal=DECIMAL_PRECISION)
 
 
 def test_collective_solve_matches_reference_over_every_nonempty_feasibility_mask(
     masked_collective_model: Model,
 ):
     """Collective solve selects the same strict winner for both stakeholders."""
-    for mask in _NONEMPTY_FEASIBILITY_MASKS:
-        _index, value, _work, _consumption = _reference_for_mask(mask)
-        observed = _solve_mask_case(model=masked_collective_model, mask=mask)
-        expected = jnp.stack([_WEALTH_VALUES + value, _WEALTH_VALUES + value], axis=-1)
-        aaae(observed, expected, decimal=DECIMAL_PRECISION)
+    for ranks in _RANK_VECTORS:
+        for mask in _NONEMPTY_FEASIBILITY_MASKS:
+            _index, value, _work, _consumption = _reference_for_mask(mask, ranks)
+            observed = _solve_mask_case(
+                model=masked_collective_model, mask=mask, ranks=ranks
+            )
+            expected = jnp.stack(
+                [_WEALTH_VALUES + value, _WEALTH_VALUES + value], axis=-1
+            )
+            aaae(observed, expected, decimal=DECIMAL_PRECISION)
 
 
 def test_collective_simulate_matches_reference_over_every_nonempty_feasibility_mask(
     masked_collective_model: Model,
 ):
     """Collective simulation agrees on action and each stakeholder's value."""
-    for mask in _NONEMPTY_FEASIBILITY_MASKS:
-        _index, value, work, consumption = _reference_for_mask(mask)
-        observed = _simulate_mask_case(model=masked_collective_model, mask=mask)
-        assert observed["work"] == [work] * len(_WEALTH_VALUES), mask
-        assert observed["consumption"] == [consumption] * len(_WEALTH_VALUES), mask
-        expected = _WEALTH_VALUES + value
-        aaae(observed["value_f"], expected, decimal=DECIMAL_PRECISION)
-        aaae(observed["value_m"], expected, decimal=DECIMAL_PRECISION)
+    for ranks in _RANK_VECTORS:
+        for mask in _NONEMPTY_FEASIBILITY_MASKS:
+            _index, value, work, consumption = _reference_for_mask(mask, ranks)
+            observed = _simulate_mask_case(
+                model=masked_collective_model, mask=mask, ranks=ranks
+            )
+            assert observed["work"] == [work] * len(_WEALTH_VALUES), (mask, ranks)
+            assert observed["consumption"] == [consumption] * len(_WEALTH_VALUES), (
+                mask,
+                ranks,
+            )
+            expected = _WEALTH_VALUES + value
+            aaae(observed["value_f"], expected, decimal=DECIMAL_PRECISION)
+            aaae(observed["value_m"], expected, decimal=DECIMAL_PRECISION)
 
 
 def _argmax_masking_the_last_action_cell() -> Callable[..., Any]:

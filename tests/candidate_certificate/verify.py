@@ -39,6 +39,8 @@ except ModuleNotFoundError:  # Imported as tests.candidate_certificate.verify.
     )
 
 SourceRecord = dict[str, str]
+# Anchor plus source set as declared by one contract or policy profile.
+ProfileDeclaration = dict[str, Any]
 Mask = tuple[bool, ...]
 _Q_VALUES = (1.0, 2.0, 3.0, 4.0, 5.0, 6.0)
 
@@ -87,6 +89,72 @@ def reference_masked_argmax(
     if tied:
         raise ValueError("reference maximizer is not unique")
     return best_index, best_value
+
+
+def rank_vectors(n_candidates: int) -> tuple[tuple[float, ...], ...]:
+    """Enumerate strict orderings, one per candidate, each won by that candidate.
+
+    Ordering `j` gives candidate `j` the largest value and assigns the remaining
+    values by increasing distance from it, so every ordering is a strict total order
+    with no ties and every candidate is the strict maximum of exactly one ordering.
+    A single fixed ordering can only ever place one candidate in the winning role,
+    which leaves an omission of any other candidate invisible under full support.
+    """
+    if n_candidates <= 0:
+        raise ValueError("n_candidates must be positive")
+    return tuple(
+        tuple(
+            float(n_candidates - ((index - winner) % n_candidates))
+            for index in range(n_candidates)
+        )
+        for winner in range(n_candidates)
+    )
+
+
+def run_rank_neighborhood_controls() -> dict[str, dict[str, Any]]:
+    """Show that a fixed ordering cannot see an omission of a non-winning candidate.
+
+    The control omits flat cell 0 whenever every candidate is feasible. Under the
+    ascending ordering candidate 0 never wins a multi-feasible mask, so the omission
+    is invisible; under the ordering that candidate 0 wins, it changes the published
+    winner and value.
+    """
+    n = len(_Q_VALUES)
+    orderings = rank_vectors(n)
+    all_feasible: Mask = (True,) * n
+
+    def omit_first(mask: Mask) -> Mask:
+        return (False, *mask[1:]) if all(mask) else mask
+
+    def outcome(values: Sequence[float]) -> dict[str, Any]:
+        reference_index, reference_value = reference_masked_argmax(values, all_feasible)
+        mutated_index, mutated_value = _winner_after(values, all_feasible, omit_first)
+        return {
+            "values": list(values),
+            "reference_index": reference_index,
+            "reference_value": reference_value,
+            "mutated_index": mutated_index,
+            "mutated_value": mutated_value,
+            "value_gap": reference_value - mutated_value,
+            "detected": (reference_index, reference_value)
+            != (mutated_index, mutated_value),
+        }
+
+    ascending = outcome(_Q_VALUES)
+    candidate_zero_wins = outcome(orderings[0])
+    return {
+        "fixed_ascending_ordering": ascending,
+        "ordering_won_by_candidate_zero": candidate_zero_wins,
+        "every_candidate_wins_exactly_one_ordering": {
+            "winners": [
+                reference_masked_argmax(values, all_feasible)[0] for values in orderings
+            ],
+            "covers_every_candidate": sorted(
+                reference_masked_argmax(values, all_feasible)[0] for values in orderings
+            )
+            == list(range(n)),
+        },
+    }
 
 
 def _winner_after(
@@ -235,10 +303,18 @@ def _compare_records(
     return errors, offending
 
 
-def _contract_profiles(path: Path) -> dict[str, list[SourceRecord]]:
-    """Parse source declarations from the narrow profile-contract YAML grammar."""
+def _contract_profiles(path: Path) -> dict[str, ProfileDeclaration]:
+    """Parse anchor and source declarations from the narrow profile-contract grammar.
+
+    The primary `source` / `source_digest` pair is the inventory **anchor**: the
+    generated inventory file and the digest of its bytes. `additional_sources` carries
+    the certified source set itself. Anchoring on the inventory file is what lets the
+    compiled policy — which can express one path and one digest — bind the whole set,
+    because the inventory's bytes change whenever any certified source's digest does.
+    """
     lines = path.read_text(encoding="utf-8").splitlines()
-    profiles: dict[str, list[SourceRecord]] = {}
+    sources: dict[str, list[SourceRecord]] = {}
+    anchors: dict[str, SourceRecord | None] = {}
     current_profile: str | None = None
     candidate_indent: int | None = None
     primary_path: str | None = None
@@ -252,14 +328,12 @@ def _contract_profiles(path: Path) -> dict[str, list[SourceRecord]]:
             primary_digest = None
             return
         if primary_path is not None or primary_digest is not None:
-            profiles.setdefault(current_profile, []).append(
-                {
-                    "path": primary_path or "<missing-primary-path>",
-                    "sha256": (
-                        primary_digest or "<missing-primary-digest>"
-                    ).removeprefix("sha256:"),
-                }
-            )
+            anchors[current_profile] = {
+                "path": Path(primary_path or "<missing-anchor-path>").as_posix(),
+                "sha256": (primary_digest or "<missing-anchor-digest>").removeprefix(
+                    "sha256:"
+                ),
+            }
         primary_path = None
         primary_digest = None
 
@@ -269,7 +343,8 @@ def _contract_profiles(path: Path) -> dict[str, list[SourceRecord]]:
         if indent == 2 and stripped.endswith(":"):
             finish_primary()
             current_profile = stripped[:-1]
-            profiles.setdefault(current_profile, [])
+            sources.setdefault(current_profile, [])
+            anchors.setdefault(current_profile, None)
             candidate_indent = None
             additional_indent = None
             continue
@@ -303,7 +378,7 @@ def _contract_profiles(path: Path) -> dict[str, list[SourceRecord]]:
             and ":" in stripped
         ):
             raw_path, raw_digest = stripped.split(":", 1)
-            profiles.setdefault(current_profile, []).append(
+            sources.setdefault(current_profile, []).append(
                 {
                     "path": raw_path.strip().strip('"'),
                     "sha256": raw_digest.strip().strip('"').removeprefix("sha256:"),
@@ -311,26 +386,69 @@ def _contract_profiles(path: Path) -> dict[str, list[SourceRecord]]:
             )
     finish_primary()
     return {
-        profile: records
-        for profile, records in profiles.items()
-        if profile in REQUIRED_PROFILES or records
+        profile: {"anchor": anchors.get(profile), "sources": records}
+        for profile, records in sources.items()
+        if profile in REQUIRED_PROFILES or records or anchors.get(profile)
     }
 
 
-def _policy_profiles(path: Path) -> dict[str, list[SourceRecord]]:
+def _policy_profiles(path: Path) -> dict[str, ProfileDeclaration]:
+    """Read a derived policy in either the rich or the compiled projection.
+
+    A bundler compiles the contract down to one `candidate_source` path and one
+    `candidate_source_digest` per profile, which is why the contract anchors on the
+    inventory file: the compiled projection then still names the whole set by proxy.
+    The richer `candidate_sources` list is read too, so the same reader serves the
+    inventory's own derived policy.
+    """
     payload = _load_json(path)
     profiles = payload.get("profiles") if isinstance(payload, dict) else None
     if not isinstance(profiles, dict):
         raise ValueError("derived policy must contain a profiles object")
-    result: dict[str, list[SourceRecord]] = {}
+    result: dict[str, ProfileDeclaration] = {}
     for profile, entry in profiles.items():
         if not isinstance(entry, dict):
             raise ValueError(f"derived policy profile {profile!r} is not an object")
-        result[profile] = _records(
-            entry.get("candidate_sources"),
-            label=f"derived policy {profile} candidate_sources",
-        )
+        records: list[SourceRecord] = []
+        if entry.get("candidate_sources") is not None:
+            records = _records(
+                entry.get("candidate_sources"),
+                label=f"derived policy {profile} candidate_sources",
+            )
+        anchor: SourceRecord | None = None
+        anchor_path = entry.get("candidate_source")
+        anchor_digest = entry.get("candidate_source_digest")
+        if anchor_path is not None or anchor_digest is not None:
+            if not isinstance(anchor_path, str) or not isinstance(anchor_digest, str):
+                raise ValueError(
+                    f"derived policy {profile} candidate_source and "
+                    "candidate_source_digest must both be strings"
+                )
+            anchor = {
+                "path": Path(anchor_path).as_posix(),
+                "sha256": anchor_digest.removeprefix("sha256:"),
+            }
+        result[profile] = {"anchor": anchor, "sources": records}
     return result
+
+
+def _anchor_errors(
+    label: str, expected: SourceRecord, observed: SourceRecord | None
+) -> tuple[list[str], set[str]]:
+    """Require an inventory anchor to be present and exactly equal."""
+    if observed is None:
+        return ([f"{label}: no inventory anchor declared"], {INVENTORY_PATH})
+    if observed != expected:
+        message = (
+            f"{label}: inventory anchor mismatch: expected "
+            f"{expected['path']} sha256:{expected['sha256']}, observed "
+            f"{observed['path']} sha256:{observed['sha256']}"
+        )
+        return (
+            [message],
+            {INVENTORY_PATH, observed["path"]},
+        )
+    return ([], set())
 
 
 def _certificate_matrix_errors(certificate: Path) -> tuple[list[str], set[str]]:
@@ -372,50 +490,51 @@ def _certificate_matrix_errors(certificate: Path) -> tuple[list[str], set[str]]:
     errors: list[str] = []
     offending: set[str] = set()
 
-    mask_assignment: ast.expr | None = None
-    for top_level in tree.body:
-        if (
-            isinstance(top_level, ast.Assign)
-            and any(
-                isinstance(target, ast.Name)
-                and target.id == "_NONEMPTY_FEASIBILITY_MASKS"
-                for target in top_level.targets
+    generated_matrices = {
+        "_NONEMPTY_FEASIBILITY_MASKS": "nonempty_feasibility_masks(len(_CANDIDATES))",
+        "_RANK_VECTORS": "rank_vectors(len(_CANDIDATES))",
+    }
+    for constant, expected_assignment in sorted(generated_matrices.items()):
+        assignment: ast.expr | None = None
+        for top_level in tree.body:
+            if (
+                isinstance(top_level, ast.Assign)
+                and any(
+                    isinstance(target, ast.Name) and target.id == constant
+                    for target in top_level.targets
+                )
+            ) or (
+                isinstance(top_level, ast.AnnAssign)
+                and isinstance(top_level.target, ast.Name)
+                and top_level.target.id == constant
+            ):
+                assignment = top_level.value
+        if assignment is None or ast.unparse(assignment) != expected_assignment:
+            errors.append(
+                f"certificate matrix: {constant} must be assigned "
+                f"directly from {expected_assignment}"
             )
-        ) or (
-            isinstance(top_level, ast.AnnAssign)
-            and isinstance(top_level.target, ast.Name)
-            and top_level.target.id == "_NONEMPTY_FEASIBILITY_MASKS"
-        ):
-            mask_assignment = top_level.value
-    expected_mask_assignment = "nonempty_feasibility_masks(len(_CANDIDATES))"
-    if (
-        mask_assignment is None
-        or ast.unparse(mask_assignment) != expected_mask_assignment
-    ):
-        errors.append(
-            "certificate matrix: _NONEMPTY_FEASIBILITY_MASKS must be assigned "
-            f"directly from {expected_mask_assignment}"
-        )
-        offending.add(CERTIFICATE_PATH)
+            offending.add(CERTIFICATE_PATH)
     for name, route_marker in sorted(required.items()):
         node = functions.get(name)
         if node is None:
             errors.append(f"certificate matrix: missing {name}")
             offending.add(CERTIFICATE_PATH)
             continue
-        direct_full_mask_loops = [
-            loop
-            for loop in ast.walk(node)
-            if isinstance(loop, ast.For)
-            and isinstance(loop.iter, ast.Name)
-            and loop.iter.id == "_NONEMPTY_FEASIBILITY_MASKS"
-        ]
-        if len(direct_full_mask_loops) != 1:
-            errors.append(
-                f"certificate matrix: {name} must iterate directly and exactly once "
-                "over _NONEMPTY_FEASIBILITY_MASKS"
-            )
-            offending.add(CERTIFICATE_PATH)
+        for constant in sorted(generated_matrices):
+            direct_loops = [
+                loop
+                for loop in ast.walk(node)
+                if isinstance(loop, ast.For)
+                and isinstance(loop.iter, ast.Name)
+                and loop.iter.id == constant
+            ]
+            if len(direct_loops) != 1:
+                errors.append(
+                    f"certificate matrix: {name} must iterate directly and exactly "
+                    f"once over {constant}"
+                )
+                offending.add(CERTIFICATE_PATH)
         calls = transitive_calls(name)
         for marker in ("reference_masked_argmax", route_marker):
             if marker not in calls:
@@ -424,6 +543,7 @@ def _certificate_matrix_errors(certificate: Path) -> tuple[list[str], set[str]]:
     source = ast.unparse(tree)
     for marker in (
         "nonempty_feasibility_masks(len(_CANDIDATES))",
+        "rank_vectors(len(_CANDIDATES))",
         "sources.json",
         "derive_source_paths(Path(__file__))",
     ):
@@ -562,7 +682,12 @@ def verify_repository(
     errors += new_errors
     offending |= new_paths
 
-    contract_profiles: dict[str, list[SourceRecord]] = {}
+    expected_anchor: SourceRecord = {
+        "path": INVENTORY_PATH,
+        "sha256": sha256_file(inventory),
+    }
+
+    contract_profiles: dict[str, ProfileDeclaration] = {}
     if contract is not None:
         try:
             contract_profiles = _contract_profiles(contract.resolve())
@@ -570,14 +695,21 @@ def verify_repository(
             errors.append(f"profile contract: {error}")
             offending.add(str(contract))
         for profile in REQUIRED_PROFILES:
-            observed = contract_profiles.get(profile, [])
+            declaration = contract_profiles.get(profile, {})
             new_errors, new_paths = _compare_records(
-                f"profile contract {profile}", committed, observed
+                f"profile contract {profile}", committed, declaration.get("sources", [])
+            )
+            errors += new_errors
+            offending |= new_paths
+            new_errors, new_paths = _anchor_errors(
+                f"profile contract {profile}",
+                expected_anchor,
+                declaration.get("anchor"),
             )
             errors += new_errors
             offending |= new_paths
 
-    policy_profiles: dict[str, list[SourceRecord]] = {}
+    policy_profiles: dict[str, ProfileDeclaration] = {}
     if policy is not None:
         try:
             policy_profiles = _policy_profiles(policy.resolve())
@@ -585,12 +717,25 @@ def verify_repository(
             errors.append(f"derived policy: {error}")
             offending.add(str(policy))
         for profile in REQUIRED_PROFILES:
-            observed = policy_profiles.get(profile, [])
-            new_errors, new_paths = _compare_records(
-                f"explicit derived policy {profile}", committed, observed
+            declaration = policy_profiles.get(profile)
+            if declaration is None:
+                errors.append(f"explicit derived policy: missing profile {profile}")
+                offending.add(str(policy))
+                continue
+            new_errors, new_paths = _anchor_errors(
+                f"explicit derived policy {profile}",
+                expected_anchor,
+                declaration.get("anchor"),
             )
             errors += new_errors
             offending |= new_paths
+            declared_sources = declaration.get("sources", [])
+            if declared_sources:
+                new_errors, new_paths = _compare_records(
+                    f"explicit derived policy {profile}", committed, declared_sources
+                )
+                errors += new_errors
+                offending |= new_paths
 
     matrix_errors, matrix_paths = _certificate_matrix_errors(root / CERTIFICATE_PATH)
     errors += matrix_errors
@@ -600,6 +745,7 @@ def verify_repository(
             "ast_source_paths": list(derive_source_paths(root / CERTIFICATE_PATH)),
             "committed_sources": committed,
             "source_inventory_sha256": actual_inventory_digest,
+            "inventory_anchor": expected_anchor,
             "source_bytes": disk_records,
             "internal_derived_policy_profiles": internal_policy_records,
             "contract_profiles": contract_profiles,
