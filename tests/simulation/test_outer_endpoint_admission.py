@@ -72,14 +72,21 @@ _ENDPOINT_CASES = [_LOWER_CASE, _UPPER_CASE]
 # The direct-law control domain: recovering the action never crosses zero.
 _NONNEGATIVE_DOMAIN = (0.0, 20.0)
 
-# A domain lying wholly on the far side of zero from the subject, close
-# enough to it that the action recovered for either endpoint lands in a
-# coarser binade than the endpoint itself. Both endpoints are then missed,
-# so no projection is publishable and the read has nothing left to emit.
-_DOUBLE_MISS_DOMAIN: tuple[float, float] = (-1.5, -1.0)
-_DOUBLE_MISS_NODES: tuple[float, ...] = (-1.5, -1.25, -1.0)
-_DOUBLE_MISS_APPROACH_FROM = 1.0
-_DOUBLE_MISS_INVESTMENT = -20.0
+# A published policy no subject at `_ALL_MISSED_APPROACH_FROM` can be given.
+# Every node of the mesh is a declared endpoint, and the domain lies wholly on
+# the far side of zero from the subject, close enough that the action recovered
+# for either node lands in a coarser binade than the node itself. The keeper's
+# target is the subject's own stock, which is outside the domain. No branch of
+# the published policy survives, so the fallback has nothing left to emit.
+_ALL_MISSED_DOMAIN: tuple[float, float] = (-1.5, -1.0)
+_ALL_MISSED_NODES: tuple[float, ...] = (-1.5, -1.0)
+_ALL_MISSED_APPROACH_FROM = 1.0
+_ALL_MISSED_INVESTMENT = -20.0
+
+# Consumption published by the keeper branch and by every bank node, so a
+# published inner action says which branch the fallback settled on.
+_KEEPER_CONSUMPTION = 0.5
+_NODE_CONSUMPTION = 0.4
 
 _PARAMS = {"discount_factor": 0.95}
 _SEED = 42
@@ -139,54 +146,62 @@ def _walk_away_from_zero(*, base: float, target: float, want_miss: bool) -> floa
     )
 
 
-def _double_miss_stock() -> float:
-    """A stock whose recovered action misses both double-miss endpoints.
+def _all_missed_stock() -> float:
+    """A stock whose recovered action reproduces no published node.
 
-    Walks representable neighbours away from zero until one stock fails to
-    reproduce either endpoint, so the witness is genuine in whichever format
-    the suite is running rather than a constant that only holds at one.
+    Walks representable neighbours away from zero until one stock misses every
+    node of the mesh, so the witness is genuine in whichever format the suite
+    is running rather than a constant that only holds at one.
     """
     dtype = _working_dtype()
     scalar = dtype.type
-    endpoints = (_DOUBLE_MISS_NODES[0], _DOUBLE_MISS_NODES[-1])
-    stock = np.asarray(_DOUBLE_MISS_APPROACH_FROM, dtype=dtype)
+    stock = np.asarray(_ALL_MISSED_APPROACH_FROM, dtype=dtype)
     away = np.asarray(np.inf, dtype=dtype)
     for _ in range(4096):
-        if all(stock + (scalar(e) - stock) != scalar(e) for e in endpoints):
+        if all(stock + (scalar(n) - stock) != scalar(n) for n in _ALL_MISSED_NODES):
             return float(stock)
         stock = np.nextafter(stock, away)
     raise AssertionError(
-        f"no representable stock near {_DOUBLE_MISS_APPROACH_FROM} misses both "
-        f"{endpoints} at {dtype.name}"
+        f"no representable stock near {_ALL_MISSED_APPROACH_FROM} misses every "
+        f"node of {_ALL_MISSED_NODES} at {dtype.name}"
     )
 
 
-def _payload(*, domain: tuple[float, float], nodes: tuple[float, ...], winner: int):
+def _payload(
+    *,
+    domain: tuple[float, float],
+    nodes: tuple[float, ...],
+    winner: int,
+    node_values: tuple[float, ...] | None = None,
+    keeper_value: float = -1.0,
+):
     """A replayable continuous-outer payload whose `winner` node ranks highest.
 
     Every branch publishes the same liquid row, so the outer ranking is set by
     the branch values alone and the refined optimum settles on the winning node.
+    The keeper publishes its own consumption and its own value, so a fallback
+    that settles on it is distinguishable from one that settles on a node.
     """
     liquid = jnp.array([1.0, 2.0, 3.0])
-    values = jnp.asarray(
-        [
-            [10.0, 10.0, 10.0] if i == winner else [0.0, 0.0, 0.0]
-            for i in range(len(nodes))
-        ]
+    ranked = (
+        node_values
+        if node_values is not None
+        else tuple(10.0 if i == winner else 0.0 for i in range(len(nodes)))
     )
+    values = jnp.asarray([[v, v, v] for v in ranked])
     stacked = jnp.stack([liquid] * len(nodes))
     return NestedEGMSimPolicy(
         keeper=EGMSimPolicy(
             endog_grid=liquid,
-            policy=jnp.array([0.5, 0.5, 0.5]),
-            value=jnp.array([-1.0, -1.0, -1.0]),
+            policy=jnp.full(3, _KEEPER_CONSUMPTION),
+            value=jnp.full(3, keeper_value),
             marginal_utility=jnp.array([1.0, 1.0, 1.0]),
         ),
         adjuster=OuterPolicyBank(
             outer_nodes=jnp.asarray(nodes),
             policies=EGMSimPolicy(
                 endog_grid=stacked,
-                policy=jnp.stack([jnp.array([0.4, 0.4, 0.4])] * len(nodes)),
+                policy=jnp.stack([jnp.full(3, _NODE_CONSUMPTION)] * len(nodes)),
                 value=values,
                 marginal_utility=jnp.stack([jnp.array([1.0, 1.0, 1.0])] * len(nodes)),
             ),
@@ -225,7 +240,7 @@ def _resources(wealth):
 
 def _falls_back(*, domain, nodes, winner: int, stock: float) -> bool:
     """Replay one subject at `stock` and report whether it fell back."""
-    _, fallback, _ = simulation_module._read_nested_policy(
+    _, fallback, _, _ = simulation_module._read_nested_policy(
         payload=_payload(domain=domain, nodes=nodes, winner=winner),
         optimal_actions=MappingProxyType(
             {"consumption": jnp.array([1.0]), "investment": jnp.array([0.0])}
@@ -474,7 +489,16 @@ def _image_of(*, stock: float, investment: float) -> float:
     return float(scalar(scalar(stock) + scalar(investment)))
 
 
-def _baseline(*, domain, nodes, winner: int, stock: float, investment: float):
+def _baseline(
+    *,
+    domain,
+    nodes,
+    winner: int,
+    stock: float,
+    investment: float,
+    node_values: tuple[float, ...] | None = None,
+    keeper_value: float = -1.0,
+):
     """The fallback baseline for one subject holding `stock`.
 
     `investment` is the raw simulation-grid winner. Passing one that leaves the
@@ -484,12 +508,31 @@ def _baseline(*, domain, nodes, winner: int, stock: float, investment: float):
     states = MappingProxyType(
         {"wealth": jnp.array([2.0]), "illiquid": jnp.array([stock])}
     )
+    payload = _payload(
+        domain=domain,
+        nodes=nodes,
+        winner=winner,
+        node_values=node_values,
+        keeper_value=keeper_value,
+    )
+    regime = _regime()
+    _, _, _, replay_candidate = simulation_module._read_nested_policy(
+        payload=payload,
+        optimal_actions=MappingProxyType(
+            {"consumption": jnp.array([1.0]), "investment": jnp.array([0.0])}
+        ),
+        regime=regime,
+        states=states,
+        flat_params=MappingProxyType({}),
+        period=0,
+        age=jnp.asarray(40.0),
+    )
     return simulation_module._nested_grid_baseline(
-        payload=_payload(domain=domain, nodes=nodes, winner=winner),
+        payload=payload,
         grid_actions=MappingProxyType(
             {"consumption": jnp.array([1.0]), "investment": jnp.array([investment])}
         ),
-        regime=_regime(),
+        regime=regime,
         states=states,
         canonical_states=states,
         action_names=("consumption", "investment"),
@@ -497,18 +540,18 @@ def _baseline(*, domain, nodes, winner: int, stock: float, investment: float):
         flat_params=MappingProxyType({}),
         period=0,
         age=jnp.asarray(40.0),
+        replay_candidate=replay_candidate,
     )
 
 
 @pytest.mark.parametrize("case", _ENDPOINT_CASES, ids=["lower", "upper"])
-def test_projected_fallback_reaches_the_endpoint_it_was_projected_onto(
-    case: dict,
-) -> None:
-    """A fallback projection is published only where it lands on its endpoint.
+def test_a_fallback_lands_exactly_on_the_branch_it_published(case: dict) -> None:
+    """A published fallback reaches the target of the branch it settled on.
 
-    The endpoint nearest the subject is missed by a sign-crossing action, and
-    ranks above the far endpoint, so publishing the near projection is what an
-    admission rule that asks only for domain containment would do.
+    The endpoint nearest the subject is missed by a sign-crossing action and
+    ranks above every other branch, so publishing it is what an admission rule
+    asking only for domain containment would do. Whichever branch survives
+    instead, the action published for it reproduces that branch's own target.
     """
     stock = _walk_away_from_zero(
         base=case["approach_from"], target=case["target"], want_miss=True
@@ -522,9 +565,8 @@ def test_projected_fallback_reaches_the_endpoint_it_was_projected_onto(
     )
 
     assert bool(admissible[0])
-    assert _image_of(
-        stock=stock, investment=float(actions["investment"][0])
-    ) == pytest.approx(case["reproduced_endpoint"], abs=0.0)
+    reached = _image_of(stock=stock, investment=float(actions["investment"][0]))
+    assert reached in set(case["nodes"]) - {case["target"]}
 
 
 @pytest.mark.parametrize("case", _ENDPOINT_CASES, ids=["lower", "upper"])
@@ -582,14 +624,14 @@ def test_a_grid_pair_inside_the_published_mesh_is_kept_unprojected() -> None:
     assert float(actions["investment"][0]) == 4.0
 
 
-def test_a_fallback_missing_every_endpoint_is_refused() -> None:
-    """No endpoint projection is publishable when the action misses them all."""
+def test_a_fallback_missing_every_published_branch_is_refused() -> None:
+    """Nothing is publishable when no branch of the policy is reachable."""
     _, _, admissible = _baseline(
-        domain=_DOUBLE_MISS_DOMAIN,
-        nodes=_DOUBLE_MISS_NODES,
+        domain=_ALL_MISSED_DOMAIN,
+        nodes=_ALL_MISSED_NODES,
         winner=0,
-        stock=_double_miss_stock(),
-        investment=_DOUBLE_MISS_INVESTMENT,
+        stock=_all_missed_stock(),
+        investment=_ALL_MISSED_INVESTMENT,
     )
 
     assert not bool(admissible[0])
@@ -597,7 +639,7 @@ def test_a_fallback_missing_every_endpoint_is_refused() -> None:
 
 def test_a_subject_with_no_publishable_pair_fails_loud() -> None:
     """Simulation raises rather than emit a pair no admission rule allows."""
-    stock = _double_miss_stock()
+    stock = _all_missed_stock()
     states = MappingProxyType(
         {"wealth": jnp.array([2.0]), "illiquid": jnp.array([stock])}
     )
@@ -606,12 +648,12 @@ def test_a_subject_with_no_publishable_pair_fails_loud() -> None:
             optimal_actions=MappingProxyType(
                 {
                     "consumption": jnp.array([1.0]),
-                    "investment": jnp.array([_DOUBLE_MISS_INVESTMENT]),
+                    "investment": jnp.array([_ALL_MISSED_INVESTMENT]),
                 }
             ),
             regime=_regime(),
             sim_policy=_payload(
-                domain=_DOUBLE_MISS_DOMAIN, nodes=_DOUBLE_MISS_NODES, winner=0
+                domain=_ALL_MISSED_DOMAIN, nodes=_ALL_MISSED_NODES, winner=0
             ),
             states=states,
             flat_params=MappingProxyType({}),
@@ -659,3 +701,113 @@ def test_containment_alone_would_publish_a_missed_endpoint(
     reached = _image_of(stock=stock, investment=float(actions["investment"][0]))
     assert reached != case["reproduced_endpoint"]
     assert reached != case["target"]
+
+
+@pytest.mark.parametrize("case", _ENDPOINT_CASES, ids=["lower", "upper"])
+def test_fallback_reselects_the_best_admissible_mesh_node(case: dict) -> None:
+    """A rejected endpoint hands the fallback to the whole published bank.
+
+    The bank carries one conditional policy per outer node, so an endpoint the
+    action cannot reach does not reduce the choice to the opposite endpoint.
+    Here the solve ranks the unreachable endpoint first and the interior node
+    second, and the interior node is what a subject can actually be given.
+    """
+    stock = _walk_away_from_zero(
+        base=case["approach_from"], target=case["target"], want_miss=True
+    )
+    actions, _, admissible = _baseline(
+        domain=case["domain"],
+        nodes=case["nodes"],
+        winner=case["winner"],
+        stock=stock,
+        investment=case["unsafe_investment"],
+        node_values=(10.0, 5.0, 1.0) if case["winner"] == 0 else (1.0, 5.0, 10.0),
+    )
+
+    assert bool(admissible[0])
+    assert _image_of(
+        stock=stock, investment=float(actions["investment"][0])
+    ) == pytest.approx(case["nodes"][1], abs=0.0)
+
+
+def _outranked_by_the_keeper(case: dict) -> tuple[float, ...]:
+    """Bank values under which every reachable node ranks below the keeper."""
+    return tuple(
+        10.0 if index == case["winner"] else 1.0 for index in range(len(case["nodes"]))
+    )
+
+
+@pytest.mark.parametrize("case", _ENDPOINT_CASES, ids=["lower", "upper"])
+def test_a_fallback_publishes_the_keeper_when_it_outranks_every_node(
+    case: dict,
+) -> None:
+    """The no-adjustment branch competes in the fallback and can win it.
+
+    The keeper is a published branch like any mesh node. When the solve valued
+    it above every node the subject can be given, keeping is what the subject
+    gets: an outer action of exactly zero, leaving the durable where it is.
+    """
+    actions, _, admissible = _baseline(
+        domain=case["domain"],
+        nodes=case["nodes"],
+        winner=case["winner"],
+        stock=_walk_away_from_zero(
+            base=case["approach_from"], target=case["target"], want_miss=True
+        ),
+        investment=case["unsafe_investment"],
+        node_values=_outranked_by_the_keeper(case),
+        keeper_value=5.0,
+    )
+
+    assert bool(admissible[0])
+    assert float(actions["investment"][0]) == 0.0
+
+
+@pytest.mark.parametrize("case", _ENDPOINT_CASES, ids=["lower", "upper"])
+def test_a_winning_keeper_carries_the_keeper_inner_action(case: dict) -> None:
+    """A published branch brings its own inner action, never another branch's."""
+    actions, _, _ = _baseline(
+        domain=case["domain"],
+        nodes=case["nodes"],
+        winner=case["winner"],
+        stock=_walk_away_from_zero(
+            base=case["approach_from"], target=case["target"], want_miss=True
+        ),
+        investment=case["unsafe_investment"],
+        node_values=_outranked_by_the_keeper(case),
+        keeper_value=5.0,
+    )
+
+    assert float(actions["consumption"][0]) == _KEEPER_CONSUMPTION
+
+
+def test_a_transposed_conditional_bank_is_refused() -> None:
+    """Ranking refuses reads whose leading axis is not the outer-node axis.
+
+    Each node must be paired with its own conditional inner policy, which the
+    node-major leading axis is what establishes. A read arriving transposed
+    would silently pair every node with another node's policy.
+    """
+    nodes = (0.0, 10.0, 20.0)
+    subjects = jnp.zeros(len(nodes) + 1)
+    transposed = jnp.zeros((len(nodes) + 1, len(nodes)))
+
+    with pytest.raises(ValueError, match="node-major"):
+        simulation_module._best_admissible_replay_candidate(
+            payload=_payload(domain=_NONNEGATIVE_DOMAIN, nodes=nodes, winner=0),
+            candidate_values=transposed,
+            candidate_support=jnp.ones_like(transposed, dtype=bool),
+            candidate_actions=transposed,
+            keeper_value=subjects,
+            keeper_support=jnp.ones_like(subjects, dtype=bool),
+            keeper_action=subjects,
+            keeper_post_decision=subjects,
+            offset=subjects,
+            transition_at=lambda action: action,
+            regime=_regime(),
+            states=MappingProxyType({"wealth": subjects, "illiquid": subjects}),
+            flat_params=MappingProxyType({}),
+            period=0,
+            age=jnp.asarray(40.0),
+            n_subjects=len(nodes) + 1,
+        )

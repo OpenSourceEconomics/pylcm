@@ -324,7 +324,7 @@ def _wrap_with_fold_reduction(
     `productmap`'s `variables` order) — this runs BEFORE any co-map wrapping,
     so no co-map axis is present yet. Fold axes are reduced from the highest
     inner-position down, so removing one axis never shifts the position of a
-    not-yet-reduced one. The wrapper re-declares EXACTLY `mapped`'s own call
+    not-yet-reduced one. The wrapper redeclares EXACTLY `mapped`'s own call
     signature (`with_signature`, matching `max_Q_over_a`'s pre-productmap
     signature, which `productmap` preserves) so it composes transparently with
     the co-map `vmap_1d` wrapping that may follow.

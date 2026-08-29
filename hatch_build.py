@@ -378,7 +378,7 @@ def build_exact_affine(
                     "/LD",
                     f"/I{include_dir}",
                     str(source_dir / "certified_affine_ffi_cpu.cc"),
-                    f"/Fo{output_dir}\\",
+                    f"/Fo{output_dir}\\",  # codespell:ignore
                     f"/Fe:{target}",
                     "/link",
                     f"/DEF:{definition}",

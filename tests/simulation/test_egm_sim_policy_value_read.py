@@ -39,6 +39,26 @@ from tests.conftest import DECIMAL_PRECISION
 # these calls run with runtime validation off.
 _SILENT = get_logger(log_level="off")
 
+# Consumption the published node the replacement tests fall back to carries.
+# It sits inside that node's resources, so the replacement is admissible on
+# the solver's own budget rather than by canonical feasibility alone.
+_OPPOSITE_NODE_CONSUMPTION = 0.5
+
+
+def _unreachable_replay_candidate(*, n_subjects: int):
+    """A replay candidate no subject can be given.
+
+    A stub read hands the baseline the branch the subject would fall back to.
+    Tests that replace the baseline outright never consult it, and passing one
+    that is unreachable keeps that visible: were the real baseline to run, it
+    would refuse rather than quietly publish a candidate nobody chose.
+    """
+    return (
+        jnp.full(n_subjects, jnp.nan),
+        jnp.full(n_subjects, jnp.nan),
+        jnp.zeros(n_subjects, dtype=bool),
+    )
+
 
 class _StubRegime(Regime):
     """Engine regime carrying only the fields the policy read reaches.
@@ -173,6 +193,7 @@ def test_nested_policy_replacement_keeps_only_canonically_better_pairs(
             nested_actions,
             intrinsic_fallback,
             jnp.array([7.0, 4.0, 9.0, 8.0]),
+            _unreachable_replay_candidate(n_subjects=4),
         ),
     )
     monkeypatch.setattr(
@@ -270,6 +291,7 @@ def test_nested_policy_replay_scores_the_published_pair_without_reoptimizing(
             proposed_actions,
             jnp.asarray([False]),
             jnp.asarray([2.0]),
+            _unreachable_replay_candidate(n_subjects=1),
         ),
     )
     monkeypatch.setattr(
@@ -345,6 +367,7 @@ def test_nested_policy_rejects_an_inner_action_below_its_surrogate_value(
             nested_actions,
             jnp.asarray([False]),
             jnp.asarray([10.0]),
+            _unreachable_replay_candidate(n_subjects=1),
         ),
     )
     monkeypatch.setattr(
@@ -426,6 +449,7 @@ def test_nested_policy_acceptance_truth_table(monkeypatch) -> None:
             nested_actions,
             jnp.asarray([cell["nested_fallback"]]),
             jnp.asarray([cell["nested_value"]]),
+            _unreachable_replay_candidate(n_subjects=1),
         ),
     )
     monkeypatch.setattr(
@@ -599,6 +623,7 @@ def test_nested_policy_replacement_never_emits_a_degraded_interpolated_pair(
             nested_actions,
             jnp.zeros(len(grid_values), dtype=bool),
             proposed_values_arr,
+            _unreachable_replay_candidate(n_subjects=len(grid_values)),
         ),
     )
     monkeypatch.setattr(
@@ -674,6 +699,7 @@ def test_nested_policy_accepts_improvement_over_a_canonically_unsafe_grid_pair(
             nested_actions,
             jnp.asarray([False]),
             jnp.asarray([-10.75]),
+            _unreachable_replay_candidate(n_subjects=1),
         ),
     )
     monkeypatch.setattr(
@@ -754,6 +780,7 @@ def test_nested_policy_emits_a_safe_baseline_when_the_policy_read_falls_back(
             proposed_actions,
             jnp.asarray([True]),
             jnp.asarray([-8.0]),
+            _unreachable_replay_candidate(n_subjects=1),
         ),
     )
     monkeypatch.setattr(
@@ -806,10 +833,16 @@ def test_nested_policy_emits_a_safe_baseline_when_the_policy_read_falls_back(
     "raw_outer",
     np.concatenate((np.linspace(-5.0, -0.1, 25), np.linspace(1.1, 6.0, 25))),
 )
-def test_nested_policy_rejection_projects_an_out_of_domain_grid_pair(
+def test_nested_policy_rejection_replaces_a_grid_pair_outside_the_solver_domain(
     monkeypatch, raw_outer
 ) -> None:
-    """Canonical Q alone cannot admit a pair outside the solver's domain."""
+    """Canonical Q alone cannot admit a pair outside the solver's domain.
+
+    The grid pair is canonically feasible, so nothing in the canonical problem
+    objects to it. What rules it out is the solver's own published outer
+    domain, and the pair the subject gets instead is the branch the policy read
+    selected -- here the published node nearest the grid winner.
+    """
     payload = object.__new__(NestedEGMSimPolicy)
     object.__setattr__(payload, "outer_action_name", "investment")
     object.__setattr__(payload, "inner_action_name", "consumption")
@@ -825,6 +858,7 @@ def test_nested_policy_rejection_projects_an_out_of_domain_grid_pair(
             "investment": jnp.asarray([raw_outer]),
         }
     )
+    nearest_node = jnp.clip(jnp.asarray([raw_outer]), 0.0, 1.0)
 
     def canonical_q(*, candidate_actions, **_kwargs):
         investment = jnp.asarray(candidate_actions["investment"])
@@ -852,6 +886,7 @@ def test_nested_policy_rejection_projects_an_out_of_domain_grid_pair(
             grid_actions,
             jnp.asarray([True]),
             jnp.asarray([-jnp.inf]),
+            (nearest_node, jnp.asarray([0.25]), jnp.asarray([True])),
         ),
     )
     monkeypatch.setattr(
@@ -885,7 +920,7 @@ def test_nested_policy_rejection_projects_an_out_of_domain_grid_pair(
     expected_actions = MappingProxyType(
         {
             "consumption": grid_actions["consumption"],
-            "investment": jnp.clip(jnp.asarray([raw_outer]), 0.0, 1.0),
+            "investment": nearest_node,
         }
     )
     expected_value, expected_feasible = canonical_q(candidate_actions=expected_actions)
@@ -909,11 +944,17 @@ def test_nested_policy_rejection_projects_an_out_of_domain_grid_pair(
 
 
 @pytest.mark.parametrize("raw_outer", np.linspace(-0.75, -5.0, 25))
-def test_nested_policy_rejection_uses_the_safe_opposite_endpoint(
+def test_nested_policy_rejection_replaces_a_canonically_infeasible_grid_pair(
     monkeypatch,
     raw_outer,
 ) -> None:
-    """A rejected replay uses the safe endpoint when the nearest one is infeasible."""
+    """A grid pair its own resources cannot fund is replaced by the read's branch.
+
+    Consumption here exceeds the resources the grid outer action leaves, over a
+    sweep of outer actions of increasing infeasibility. None of them may be
+    published, and what the subject gets instead is the branch the policy read
+    selected, carrying that branch's own consumption.
+    """
     payload = object.__new__(NestedEGMSimPolicy)
     object.__setattr__(payload, "outer_action_name", "investment")
     object.__setattr__(payload, "inner_action_name", "consumption")
@@ -962,6 +1003,11 @@ def test_nested_policy_rejection_uses_the_safe_opposite_endpoint(
             grid_actions,
             jnp.asarray([True]),
             jnp.asarray([-jnp.inf]),
+            (
+                jnp.asarray([1.0]),
+                jnp.asarray([_OPPOSITE_NODE_CONSUMPTION]),
+                jnp.asarray([True]),
+            ),
         ),
     )
     monkeypatch.setattr(
@@ -994,7 +1040,7 @@ def test_nested_policy_rejection_uses_the_safe_opposite_endpoint(
 
     expected_actions = MappingProxyType(
         {
-            "consumption": jnp.asarray([min(raw_inner, 0.75)]),
+            "consumption": jnp.asarray([_OPPOSITE_NODE_CONSUMPTION]),
             "investment": jnp.asarray([1.0]),
         }
     )
@@ -1020,8 +1066,10 @@ def test_nested_policy_rejection_uses_the_safe_opposite_endpoint(
     assert bool(emitted_feasible[0])
 
 
-def test_nested_grid_baseline_chooses_the_best_safe_endpoint(monkeypatch) -> None:
-    """An out-of-domain grid pair uses the higher-valued feasible endpoint."""
+def test_nested_grid_baseline_publishes_the_replay_candidate_it_was_given(
+    monkeypatch,
+) -> None:
+    """An out-of-domain grid pair is replaced by the supplied replay candidate."""
     payload = object.__new__(NestedEGMSimPolicy)
     object.__setattr__(payload, "outer_action_name", "investment")
     object.__setattr__(payload, "inner_action_name", "consumption")
@@ -1069,6 +1117,11 @@ def test_nested_grid_baseline_chooses_the_best_safe_endpoint(monkeypatch) -> Non
         flat_params=MappingProxyType({}),
         period=0,
         age=jnp.asarray(40.0),
+        replay_candidate=(
+            jnp.asarray([1.0]),
+            jnp.asarray([1.5]),
+            jnp.asarray([True]),
+        ),
     )
 
     np.testing.assert_array_equal(
@@ -1135,6 +1188,11 @@ def test_nested_grid_baseline_enforces_the_solver_owned_budget(monkeypatch) -> N
         flat_params=MappingProxyType({}),
         period=0,
         age=jnp.asarray(40.0),
+        replay_candidate=(
+            jnp.asarray([1.0]),
+            jnp.asarray([3.0]),
+            jnp.asarray([True]),
+        ),
     )
 
     np.testing.assert_array_equal(np.asarray(actions["consumption"]), [3.0])
@@ -1166,6 +1224,7 @@ def test_nested_policy_rejection_fails_when_no_candidate_is_safe(
             nested_actions,
             jnp.asarray([True]),
             jnp.asarray([-jnp.inf]),
+            _unreachable_replay_candidate(n_subjects=1),
         ),
     )
     monkeypatch.setattr(
@@ -1240,6 +1299,7 @@ def test_nested_policy_failure_ignores_out_of_regime_placeholders(
             nested_actions,
             ~in_regime,
             jnp.where(in_regime, 2.0, -jnp.inf),
+            _unreachable_replay_candidate(n_subjects=in_regime.shape[0]),
         ),
     )
     monkeypatch.setattr(
@@ -1439,7 +1499,7 @@ def _read_with(*, payload, functions):
 
 def test_nested_read_replays_the_decision_when_every_function_resolves():
     """A payload whose declared functions all resolve replays without falling back."""
-    _, fallback, _ = _read_with(
+    _, fallback, _, _ = _read_with(
         payload=_nested_payload(),
         functions={"new_illiquid": _new_illiquid, "resources": _resources},
     )
@@ -1463,7 +1523,7 @@ def test_nested_read_does_not_certify_the_declared_outer_map_itself():
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(outer_affine_structure, "certify_outer_coefficient", refuse)
         patch.setattr(outer_inversion, "certify_declared_outer_inverse", refuse)
-        _, fallback, _ = _read_with(
+        _, fallback, _, _ = _read_with(
             payload=_nested_payload(),
             functions={"new_illiquid": _new_illiquid, "resources": _resources},
         )

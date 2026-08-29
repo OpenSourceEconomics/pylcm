@@ -103,7 +103,7 @@ def test_unenforced_policy_fields_are_rejected(markers):
 def test_unknown_marker_arguments_are_rejected():
     """A misspelled policy dimension cannot silently change test coverage."""
     with pytest.raises(ValueError, match=r"requires.*unknown"):
-        contract_from_marker_kwargs({"requires": {"devcie": "gpu"}})
+        contract_from_marker_kwargs({"requires": {"devcie": "gpu"}})  # codespell:ignore
 
 
 @pytest.mark.parametrize(

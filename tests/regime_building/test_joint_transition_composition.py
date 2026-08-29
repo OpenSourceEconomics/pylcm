@@ -234,7 +234,8 @@ def test_joint_probabilities_cannot_read_a_joint_node() -> None:
     )
 
     with pytest.raises(
-        InvalidNameError, match=r"probabilit.*match.*lotter|probabilit.*joint.*match"
+        InvalidNameError,
+        match=r"probabilit.*match.*lotter|probabilit.*joint.*match",  # codespell:ignore
     ):
         Model(
             regimes={"source": source, "target": target},
@@ -433,7 +434,8 @@ def test_joint_probabilities_cannot_read_a_next_output() -> None:
 
     with pytest.raises(
         (InvalidNameError, ModelInitializationError),
-        match=r"probabilit.*(next_value|match).*(draw|transition)|next_value.*probabilit",
+        match=r"probabilit.*(next_value|match).*(draw|transition)"  # codespell:ignore
+        r"|next_value.*probabilit",  # codespell:ignore
     ):
         Model(
             regimes={"source": source, "target": target},
