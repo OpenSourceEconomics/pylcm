@@ -18,6 +18,7 @@ from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.outer_interpolation import LocalCubicOuterInterpolant
 from _lcm.egm.outer_inversion import (
     invert_declared_outer_target,
+    outer_candidate_is_admissible,
 )
 from _lcm.egm.outer_refinement import safeguarded_continuous_argmax
 from _lcm.egm.published_policy import (
@@ -1148,16 +1149,6 @@ def _redecide_branch_and_read_policy(
     return MappingProxyType(new_actions), reported_value
 
 
-# Per-subject residual tolerance (relative to the post-decision scale) certifying
-# that the recovered outer action actually reproduces the winning post-decision
-# through the transition: `|T(states, a_recovered) - s'| <= rtol * (1 + |s'|)`.
-# The coefficient is certified from the map's structure, which is a statement
-# about the traced arithmetic rather than about how it evaluates; this check
-# evaluates the transition at the ACTUAL recovered action and rejects the
-# subject when structure and evaluation disagree.
-_TRANSITION_RESIDUAL_RTOL = 1e-6
-
-
 def _interp_across_outer_axis(
     *, nodes: Float1D, values: FloatND, query: FloatND
 ) -> FloatND:
@@ -1342,16 +1333,22 @@ def _read_nested_policy(
         n_subjects=n_subjects,
     )
 
-    # Certify the affine inversion per subject AT the recovered action, not from
-    # the map's structure alone. `outer_action = s' - offset`, so a transition
-    # whose certified coefficient is one reproduces `T(states, outer_action) == s'`
-    # exactly; one whose evaluation disagrees with its certified structure leaves
-    # a residual here and the subject falls back to the grid argmax.
-    residual_ok = jnp.abs(
-        transition_at(outer_action) - chosen_post_decision
-    ) <= _TRANSITION_RESIDUAL_RTOL * (1.0 + jnp.abs(chosen_post_decision))
+    # Use the same tolerance-free pointwise predicate as finite replay. A
+    # declared endpoint is represented only when the recovered action reproduces
+    # it bit-for-bit; interior targets require exact domain containment.
+    transition_image = transition_at(outer_action)
+    pointwise_replay_ok = outer_candidate_is_admissible(
+        image=transition_image,
+        target=chosen_post_decision,
+        low=jnp.asarray(
+            payload.replay_capability.inverse.low, dtype=transition_image.dtype
+        ),
+        high=jnp.asarray(
+            payload.replay_capability.inverse.high, dtype=transition_image.dtype
+        ),
+    )
     accepted = (
-        residual_ok
+        pointwise_replay_ok
         & keeper_support
         & jnp.all(candidate_support, axis=0)
         & jnp.isfinite(winner_value)
