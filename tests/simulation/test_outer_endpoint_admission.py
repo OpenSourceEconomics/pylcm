@@ -22,6 +22,7 @@ the accept-side controls carry as much weight as the refusals: a replay that
 dropped every candidate would satisfy the refusals on its own.
 """
 
+import logging
 from fractions import Fraction
 from types import MappingProxyType, SimpleNamespace
 
@@ -39,7 +40,9 @@ from _lcm.egm.outer_inversion import (
 from _lcm.egm.outer_replay_capability import OuterReplayCapability
 from _lcm.egm.published_policy import EGMSimPolicy
 from _lcm.engine import Regime
+from lcm.exceptions import InvalidSimulationInputError
 from lcm.solvers import AdaptiveOuterMesh
+from lcm.typing import BoolND, FloatND
 from tests.test_models import n_nbegm_toy as toy
 
 # The declared lower endpoint, approached from a positive realized stock.
@@ -49,6 +52,8 @@ _LOWER_CASE = {
     "nodes": (-1.0, 4.5, 10.0),
     "winner": 0,
     "approach_from": 1.0,
+    "unsafe_investment": -20.0,
+    "reproduced_endpoint": 10.0,
 }
 
 # The declared upper endpoint, approached from a negative realized stock.
@@ -58,12 +63,23 @@ _UPPER_CASE = {
     "nodes": (-10.0, -4.5, 1.0),
     "winner": 2,
     "approach_from": -1.0,
+    "unsafe_investment": 20.0,
+    "reproduced_endpoint": -10.0,
 }
 
 _ENDPOINT_CASES = [_LOWER_CASE, _UPPER_CASE]
 
 # The direct-law control domain: recovering the action never crosses zero.
 _NONNEGATIVE_DOMAIN = (0.0, 20.0)
+
+# A domain lying wholly on the far side of zero from the subject, close
+# enough to it that the action recovered for either endpoint lands in a
+# coarser binade than the endpoint itself. Both endpoints are then missed,
+# so no projection is publishable and the read has nothing left to emit.
+_DOUBLE_MISS_DOMAIN: tuple[float, float] = (-1.5, -1.0)
+_DOUBLE_MISS_NODES: tuple[float, ...] = (-1.5, -1.25, -1.0)
+_DOUBLE_MISS_APPROACH_FROM = 1.0
+_DOUBLE_MISS_INVESTMENT = -20.0
 
 _PARAMS = {"discount_factor": 0.95}
 _SEED = 42
@@ -120,6 +136,28 @@ def _walk_away_from_zero(*, base: float, target: float, want_miss: bool) -> floa
     wanted = "misses" if want_miss else "reaches"
     raise AssertionError(
         f"no representable stock near {base} {wanted} {target} at {dtype.name}"
+    )
+
+
+def _double_miss_stock() -> float:
+    """A stock whose recovered action misses both double-miss endpoints.
+
+    Walks representable neighbours away from zero until one stock fails to
+    reproduce either endpoint, so the witness is genuine in whichever format
+    the suite is running rather than a constant that only holds at one.
+    """
+    dtype = _working_dtype()
+    scalar = dtype.type
+    endpoints = (_DOUBLE_MISS_NODES[0], _DOUBLE_MISS_NODES[-1])
+    stock = np.asarray(_DOUBLE_MISS_APPROACH_FROM, dtype=dtype)
+    away = np.asarray(np.inf, dtype=dtype)
+    for _ in range(4096):
+        if all(stock + (scalar(e) - stock) != scalar(e) for e in endpoints):
+            return float(stock)
+        stock = np.nextafter(stock, away)
+    raise AssertionError(
+        f"no representable stock near {_DOUBLE_MISS_APPROACH_FROM} misses both "
+        f"{endpoints} at {dtype.name}"
     )
 
 
@@ -402,3 +440,222 @@ def test_a_simulated_nonnegative_model_admits_every_realized_subject(
     verdicts = [bool(jnp.all(verdict)) for verdict in admissions]
     # An empty recording fails this too: `set()` is not `{True}`.
     assert set(verdicts) == {True}
+
+
+def _q_and_f(**kwargs: object) -> tuple[FloatND, BoolND]:
+    """Score a pair by how little it moves the outer stock, and call it feasible.
+
+    Ranking on `-|investment|` puts the endpoint nearest the subject's stock
+    above the far one. The near endpoint is the one a sign-crossing action
+    misses, so a fallback that admits an endpoint on containment alone will
+    prefer exactly the projection it should have refused.
+    """
+    investment = jnp.asarray(kwargs["investment"])
+    return -jnp.abs(investment), jnp.ones(investment.shape, dtype=bool)
+
+
+def _regime() -> _StubRegime:
+    """Engine stub carrying the simulate-phase pieces a nested read reaches."""
+    return _StubRegime(
+        simulation=SimpleNamespace(
+            grids={},
+            functions={"new_illiquid": _new_illiquid, "resources": _resources},
+            constraints={},
+            compute_regime_transition_probs=None,
+            age_specialized_function_names=frozenset(),
+            Q_and_F=MappingProxyType({0: _q_and_f}),
+        )
+    )
+
+
+def _image_of(*, stock: float, investment: float) -> float:
+    """The stock `investment` actually reaches, in the format the suite runs at."""
+    scalar = _working_dtype().type
+    return float(scalar(scalar(stock) + scalar(investment)))
+
+
+def _baseline(*, domain, nodes, winner: int, stock: float, investment: float):
+    """The fallback baseline for one subject holding `stock`.
+
+    `investment` is the raw simulation-grid winner. Passing one that leaves the
+    published mesh is what sends the baseline down the endpoint-projection
+    branch, which is the branch under test.
+    """
+    states = MappingProxyType(
+        {"wealth": jnp.array([2.0]), "illiquid": jnp.array([stock])}
+    )
+    return simulation_module._nested_grid_baseline(
+        payload=_payload(domain=domain, nodes=nodes, winner=winner),
+        grid_actions=MappingProxyType(
+            {"consumption": jnp.array([1.0]), "investment": jnp.array([investment])}
+        ),
+        regime=_regime(),
+        states=states,
+        canonical_states=states,
+        action_names=("consumption", "investment"),
+        next_regime_to_V_arr=MappingProxyType({}),
+        flat_params=MappingProxyType({}),
+        period=0,
+        age=jnp.asarray(40.0),
+    )
+
+
+@pytest.mark.parametrize("case", _ENDPOINT_CASES, ids=["lower", "upper"])
+def test_projected_fallback_reaches_the_endpoint_it_was_projected_onto(
+    case: dict,
+) -> None:
+    """A fallback projection is published only where it lands on its endpoint.
+
+    The endpoint nearest the subject is missed by a sign-crossing action, and
+    ranks above the far endpoint, so publishing the near projection is what an
+    admission rule that asks only for domain containment would do.
+    """
+    stock = _walk_away_from_zero(
+        base=case["approach_from"], target=case["target"], want_miss=True
+    )
+    actions, _, admissible = _baseline(
+        domain=case["domain"],
+        nodes=case["nodes"],
+        winner=case["winner"],
+        stock=stock,
+        investment=case["unsafe_investment"],
+    )
+
+    assert bool(admissible[0])
+    assert _image_of(
+        stock=stock, investment=float(actions["investment"][0])
+    ) == pytest.approx(case["reproduced_endpoint"], abs=0.0)
+
+
+@pytest.mark.parametrize("case", _ENDPOINT_CASES, ids=["lower", "upper"])
+def test_projected_fallback_publishes_the_endpoint_it_reaches_exactly(
+    case: dict,
+) -> None:
+    """A projection whose action reproduces its endpoint stays publishable."""
+    stock = _walk_away_from_zero(
+        base=case["approach_from"], target=case["target"], want_miss=False
+    )
+    actions, _, admissible = _baseline(
+        domain=case["domain"],
+        nodes=case["nodes"],
+        winner=case["winner"],
+        stock=stock,
+        investment=case["unsafe_investment"],
+    )
+
+    assert bool(admissible[0])
+    assert _image_of(
+        stock=stock, investment=float(actions["investment"][0])
+    ) == pytest.approx(case["target"], abs=0.0)
+
+
+@pytest.mark.parametrize("endpoint", [0, 1], ids=["lower", "upper"])
+def test_projected_fallback_publishes_a_nonnegative_direct_law_endpoint(
+    endpoint: int,
+) -> None:
+    """A nonnegative domain projects onto either endpoint without refusal."""
+    nodes = (0.0, 10.0, 20.0)
+    actions, _, admissible = _baseline(
+        domain=_NONNEGATIVE_DOMAIN,
+        nodes=nodes,
+        winner=0 if endpoint == 0 else 2,
+        stock=1.0,
+        investment=-40.0,
+    )
+
+    assert bool(admissible[0])
+    reached = _image_of(stock=1.0, investment=float(actions["investment"][0]))
+    assert reached in {nodes[0], nodes[-1]}
+
+
+def test_a_grid_pair_inside_the_published_mesh_is_kept_unprojected() -> None:
+    """A raw grid pair the solver can serve is the baseline, unchanged."""
+    actions, _, admissible = _baseline(
+        domain=_NONNEGATIVE_DOMAIN,
+        nodes=(0.0, 10.0, 20.0),
+        winner=1,
+        stock=1.0,
+        investment=4.0,
+    )
+
+    assert bool(admissible[0])
+    assert float(actions["investment"][0]) == 4.0
+
+
+def test_a_fallback_missing_every_endpoint_is_refused() -> None:
+    """No endpoint projection is publishable when the action misses them all."""
+    _, _, admissible = _baseline(
+        domain=_DOUBLE_MISS_DOMAIN,
+        nodes=_DOUBLE_MISS_NODES,
+        winner=0,
+        stock=_double_miss_stock(),
+        investment=_DOUBLE_MISS_INVESTMENT,
+    )
+
+    assert not bool(admissible[0])
+
+
+def test_a_subject_with_no_publishable_pair_fails_loud() -> None:
+    """Simulation raises rather than emit a pair no admission rule allows."""
+    stock = _double_miss_stock()
+    states = MappingProxyType(
+        {"wealth": jnp.array([2.0]), "illiquid": jnp.array([stock])}
+    )
+    with pytest.raises(InvalidSimulationInputError, match="neither the nested policy"):
+        simulation_module._replace_continuous_action_with_policy_read(
+            optimal_actions=MappingProxyType(
+                {
+                    "consumption": jnp.array([1.0]),
+                    "investment": jnp.array([_DOUBLE_MISS_INVESTMENT]),
+                }
+            ),
+            regime=_regime(),
+            sim_policy=_payload(
+                domain=_DOUBLE_MISS_DOMAIN, nodes=_DOUBLE_MISS_NODES, winner=0
+            ),
+            states=states,
+            flat_params=MappingProxyType({}),
+            period=0,
+            age=jnp.asarray(40.0),
+            canonical_states=states,
+            action_names=("consumption", "investment"),
+            next_regime_to_V_arr=MappingProxyType({}),
+            grid_values=jnp.array([-20.0]),
+            in_regime=jnp.array([True]),
+            logger=logging.getLogger(__name__),
+        )
+
+
+@pytest.mark.parametrize("case", _ENDPOINT_CASES, ids=["lower", "upper"])
+def test_containment_alone_would_publish_a_missed_endpoint(
+    case: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Weakening the endpoint verdict to containment re-admits the missed stock.
+
+    The refusals above only mean something if the rule that replaces them can
+    be shown to decide differently. Substituting plain domain containment for
+    the shared predicate publishes the near projection again, which is the
+    behaviour the endpoint verdict exists to prevent.
+    """
+
+    def containment_only(*, image, target, low, high):  # noqa: ARG001
+        return (image >= low) & (image <= high)
+
+    monkeypatch.setattr(
+        simulation_module, "outer_candidate_is_admissible", containment_only
+    )
+    stock = _walk_away_from_zero(
+        base=case["approach_from"], target=case["target"], want_miss=True
+    )
+    actions, _, admissible = _baseline(
+        domain=case["domain"],
+        nodes=case["nodes"],
+        winner=case["winner"],
+        stock=stock,
+        investment=case["unsafe_investment"],
+    )
+
+    assert bool(admissible[0])
+    reached = _image_of(stock=stock, investment=float(actions["investment"][0]))
+    assert reached != case["reproduced_endpoint"]
+    assert reached != case["target"]
