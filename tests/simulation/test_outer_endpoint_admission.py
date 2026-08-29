@@ -20,9 +20,19 @@ two cases are mirror images of one another.
 A nonnegative domain reached through a direct law never crosses, which is why
 the accept-side controls carry as much weight as the refusals: a replay that
 dropped every candidate would satisfy the refusals on its own.
+
+Admission decides which branches may be published; it does not decide which one
+is. A fallback ranks the keeper and every admissible published node by the
+model's own canonical Q — flow payoff plus discounted continuation at the
+subject's state, each branch carrying its own conditional inner action — and
+emits the best, with the raw grid pair competing on the same objective and
+winning an exact tie. The values the solve published are not consulted, so a
+test steers selection by naming the action its objective favours rather than by
+setting branch values.
 """
 
 import logging
+from collections.abc import Callable
 from fractions import Fraction
 from types import MappingProxyType, SimpleNamespace
 
@@ -172,29 +182,26 @@ def _payload(
     domain: tuple[float, float],
     nodes: tuple[float, ...],
     winner: int,
-    node_values: tuple[float, ...] | None = None,
-    keeper_value: float = -1.0,
 ):
     """A replayable continuous-outer payload whose `winner` node ranks highest.
 
-    Every branch publishes the same liquid row, so the outer ranking is set by
-    the branch values alone and the refined optimum settles on the winning node.
-    The keeper publishes its own consumption and its own value, so a fallback
-    that settles on it is distinguishable from one that settles on a node.
+    Every branch publishes the same liquid row, so the published values settle
+    which node the refined optimum lands on. They do not settle which branch a
+    *fallback* emits: that is ranked by canonical Q, so a test steers it with
+    the objective `_prefer_investment` builds rather than with these values.
+
+    The keeper publishes its own consumption, so a fallback that settles on it
+    is distinguishable from one that settles on a node.
     """
     liquid = jnp.array([1.0, 2.0, 3.0])
-    ranked = (
-        node_values
-        if node_values is not None
-        else tuple(10.0 if i == winner else 0.0 for i in range(len(nodes)))
-    )
+    ranked = tuple(10.0 if i == winner else 0.0 for i in range(len(nodes)))
     values = jnp.asarray([[v, v, v] for v in ranked])
     stacked = jnp.stack([liquid] * len(nodes))
     return NestedEGMSimPolicy(
         keeper=EGMSimPolicy(
             endog_grid=liquid,
             policy=jnp.full(3, _KEEPER_CONSUMPTION),
-            value=jnp.full(3, keeper_value),
+            value=jnp.full(3, -1.0),
             marginal_utility=jnp.array([1.0, 1.0, 1.0]),
         ),
         adjuster=OuterPolicyBank(
@@ -440,6 +447,12 @@ def test_a_simulated_nonnegative_model_admits_every_realized_subject(
     Recording what the shared predicate returns during an ordinary simulation
     of the toy — whose durable domain is nonnegative and whose law is direct —
     pins the other half, that admission is the normal outcome.
+
+    The predicate is asked about every branch of the published bank rather than
+    about one projection, so most individual verdicts are false by
+    construction and "every verdict is true" is not the claim. What admission
+    being normal means here is that some branch is admissible for every subject
+    and the run publishes: a subject with no admissible branch raises instead.
     """
     admissions = []
     admissible = simulation_module.outer_candidate_is_admissible
@@ -450,26 +463,48 @@ def test_a_simulated_nonnegative_model_admits_every_realized_subject(
         return verdict
 
     monkeypatch.setattr(simulation_module, "outer_candidate_is_admissible", record)
-    _simulate(_build("adaptive"), period_to_regime_to_V_arr=None)
+    frame = _simulate(_build("adaptive"), period_to_regime_to_V_arr=None)
 
-    verdicts = [bool(jnp.all(verdict)) for verdict in admissions]
-    # An empty recording fails this too: `set()` is not `{True}`.
-    assert set(verdicts) == {True}
+    # An empty recording would mean the predicate under test was never the rule
+    # consulted, which the assertions below must not read as agreement.
+    assert admissions
+    assert any(bool(jnp.any(verdict)) for verdict in admissions)
+    assert len(frame) == len(_INITIAL["wealth"]) * _N_PERIODS
 
 
-def _q_and_f(**kwargs: object) -> tuple[FloatND, BoolND]:
-    """Score a pair by how little it moves the outer stock, and call it feasible.
+def _prefer_investment(favoured: float) -> Callable[..., tuple[FloatND, BoolND]]:
+    """A canonical objective peaked at one outer action, feasible everywhere.
 
-    Ranking on `-|investment|` puts the endpoint nearest the subject's stock
-    above the far one. The near endpoint is the one a sign-crossing action
-    misses, so a fallback that admits an endpoint on containment alone will
-    prefer exactly the projection it should have refused.
+    The fallback ranks the keeper and every published node by canonical Q, so
+    which branch wins is a property of the objective rather than of the values
+    the solve published. Each test therefore names the action its objective
+    favours and asserts what comes out.
+
+    Peaking at an action the admission rule must refuse is what makes a refusal
+    observable: with the favoured branch excluded, something else is emitted,
+    while an objective that already ranked the branch low would report the same
+    outcome whether the rule excluded it or not.
     """
-    investment = jnp.asarray(kwargs["investment"])
-    return -jnp.abs(investment), jnp.ones(investment.shape, dtype=bool)
+
+    def q_and_f(**kwargs: object) -> tuple[FloatND, BoolND]:
+        investment = jnp.asarray(kwargs["investment"])
+        return (
+            -jnp.abs(investment - favoured),
+            jnp.ones(investment.shape, dtype=bool),
+        )
+
+    return q_and_f
 
 
-def _regime() -> _StubRegime:
+def _investment_reaching(*, stock: float, target: float) -> float:
+    """The outer action whose image is `target`, in the suite's own format."""
+    scalar = _working_dtype().type
+    return float(scalar(target) - scalar(stock))
+
+
+def _regime(
+    *, q_and_f: Callable[..., tuple[FloatND, BoolND]] | None = None
+) -> _StubRegime:
     """Engine stub carrying the simulate-phase pieces a nested read reaches."""
     return _StubRegime(
         simulation=SimpleNamespace(
@@ -478,7 +513,9 @@ def _regime() -> _StubRegime:
             constraints={},
             compute_regime_transition_probs=None,
             age_specialized_function_names=frozenset(),
-            Q_and_F=MappingProxyType({0: _q_and_f}),
+            Q_and_F=MappingProxyType(
+                {0: q_and_f if q_and_f is not None else _prefer_investment(0.0)}
+            ),
         )
     )
 
@@ -496,26 +533,23 @@ def _baseline(
     winner: int,
     stock: float,
     investment: float,
-    node_values: tuple[float, ...] | None = None,
-    keeper_value: float = -1.0,
+    q_and_f: Callable[..., tuple[FloatND, BoolND]] | None = None,
 ):
     """The fallback baseline for one subject holding `stock`.
 
     `investment` is the raw simulation-grid winner. Passing one that leaves the
     published mesh is what sends the baseline down the endpoint-projection
     branch, which is the branch under test.
+
+    `q_and_f` is the canonical objective the branches are ranked by. It
+    defaults to one peaked at an outer action of zero, which favours the
+    keeper.
     """
     states = MappingProxyType(
         {"wealth": jnp.array([2.0]), "illiquid": jnp.array([stock])}
     )
-    payload = _payload(
-        domain=domain,
-        nodes=nodes,
-        winner=winner,
-        node_values=node_values,
-        keeper_value=keeper_value,
-    )
-    regime = _regime()
+    payload = _payload(domain=domain, nodes=nodes, winner=winner)
+    regime = _regime(q_and_f=q_and_f)
     _, _, _, replay_candidate = simulation_module._read_nested_policy(
         payload=payload,
         optimal_actions=MappingProxyType(
@@ -548,10 +582,12 @@ def _baseline(
 def test_a_fallback_lands_exactly_on_the_branch_it_published(case: dict) -> None:
     """A published fallback reaches the target of the branch it settled on.
 
-    The endpoint nearest the subject is missed by a sign-crossing action and
-    ranks above every other branch, so publishing it is what an admission rule
-    asking only for domain containment would do. Whichever branch survives
-    instead, the action published for it reproduces that branch's own target.
+    The objective is peaked at the action recovered for the endpoint the
+    subject misses, so that endpoint outranks every other branch and publishing
+    it is what an admission rule asking only for domain containment would do.
+    Whichever branch survives instead, the action published for it reproduces
+    that branch's own target exactly — a mesh node's target for a node, and the
+    subject's own stock for the keeper, which leaves the durable where it is.
     """
     stock = _walk_away_from_zero(
         base=case["approach_from"], target=case["target"], want_miss=True
@@ -562,18 +598,30 @@ def test_a_fallback_lands_exactly_on_the_branch_it_published(case: dict) -> None
         winner=case["winner"],
         stock=stock,
         investment=case["unsafe_investment"],
+        q_and_f=_prefer_investment(
+            _investment_reaching(stock=stock, target=case["target"])
+        ),
     )
 
     assert bool(admissible[0])
     reached = _image_of(stock=stock, investment=float(actions["investment"][0]))
-    assert reached in set(case["nodes"]) - {case["target"]}
+    assert reached != case["target"]
+    if float(actions["consumption"][0]) == _KEEPER_CONSUMPTION:
+        assert reached == stock
+    else:
+        assert reached in set(case["nodes"]) - {case["target"]}
 
 
 @pytest.mark.parametrize("case", _ENDPOINT_CASES, ids=["lower", "upper"])
 def test_projected_fallback_publishes_the_endpoint_it_reaches_exactly(
     case: dict,
 ) -> None:
-    """A projection whose action reproduces its endpoint stays publishable."""
+    """A projection whose action reproduces its endpoint stays publishable.
+
+    The objective favours that endpoint, so it is emitted unless the admission
+    rule refuses it. Reaching the endpoint exactly is what it has to do to be
+    admitted, and here it does.
+    """
     stock = _walk_away_from_zero(
         base=case["approach_from"], target=case["target"], want_miss=False
     )
@@ -583,6 +631,9 @@ def test_projected_fallback_publishes_the_endpoint_it_reaches_exactly(
         winner=case["winner"],
         stock=stock,
         investment=case["unsafe_investment"],
+        q_and_f=_prefer_investment(
+            _investment_reaching(stock=stock, target=case["target"])
+        ),
     )
 
     assert bool(admissible[0])
@@ -595,29 +646,43 @@ def test_projected_fallback_publishes_the_endpoint_it_reaches_exactly(
 def test_projected_fallback_publishes_a_nonnegative_direct_law_endpoint(
     endpoint: int,
 ) -> None:
-    """A nonnegative domain projects onto either endpoint without refusal."""
+    """A nonnegative domain projects onto either endpoint without refusal.
+
+    A direct law never crosses zero, so the action recovered for an endpoint
+    reproduces it exactly and the endpoint is admissible. With the objective
+    favouring it, it is what gets published.
+    """
     nodes = (0.0, 10.0, 20.0)
+    target = nodes[0] if endpoint == 0 else nodes[-1]
     actions, _, admissible = _baseline(
         domain=_NONNEGATIVE_DOMAIN,
         nodes=nodes,
         winner=0 if endpoint == 0 else 2,
         stock=1.0,
         investment=-40.0,
+        q_and_f=_prefer_investment(_investment_reaching(stock=1.0, target=target)),
     )
 
     assert bool(admissible[0])
     reached = _image_of(stock=1.0, investment=float(actions["investment"][0]))
-    assert reached in {nodes[0], nodes[-1]}
+    assert reached == target
 
 
-def test_a_grid_pair_inside_the_published_mesh_is_kept_unprojected() -> None:
-    """A raw grid pair the solver can serve is the baseline, unchanged."""
+def test_a_grid_pair_the_objective_ranks_first_is_published_unchanged() -> None:
+    """A servable raw grid pair is emitted as it stands when it ranks first.
+
+    The grid pair is one candidate among the keeper and the published nodes,
+    ranked by the same canonical Q, and it also wins an exact tie. With the
+    objective peaked at its own action it ranks first outright, and nothing
+    projects or replaces it.
+    """
     actions, _, admissible = _baseline(
         domain=_NONNEGATIVE_DOMAIN,
         nodes=(0.0, 10.0, 20.0),
         winner=1,
         stock=1.0,
         investment=4.0,
+        q_and_f=_prefer_investment(4.0),
     )
 
     assert bool(admissible[0])
@@ -689,15 +754,21 @@ def test_containment_alone_would_publish_a_missed_endpoint(
     stock = _walk_away_from_zero(
         base=case["approach_from"], target=case["target"], want_miss=True
     )
+    recovered = _investment_reaching(stock=stock, target=case["target"])
     actions, _, admissible = _baseline(
         domain=case["domain"],
         nodes=case["nodes"],
         winner=case["winner"],
         stock=stock,
         investment=case["unsafe_investment"],
+        q_and_f=_prefer_investment(recovered),
     )
 
     assert bool(admissible[0])
+    # The action recovered for the missed endpoint is emitted as it stands, and
+    # its image is not the endpoint. That is the publication the shared
+    # predicate refuses and containment alone allows.
+    assert float(actions["investment"][0]) == recovered
     reached = _image_of(stock=stock, investment=float(actions["investment"][0]))
     assert reached != case["reproduced_endpoint"]
     assert reached != case["target"]
@@ -708,44 +779,42 @@ def test_fallback_reselects_the_best_admissible_mesh_node(case: dict) -> None:
     """A rejected endpoint hands the fallback to the whole published bank.
 
     The bank carries one conditional policy per outer node, so an endpoint the
-    action cannot reach does not reduce the choice to the opposite endpoint.
-    Here the solve ranks the unreachable endpoint first and the interior node
-    second, and the interior node is what a subject can actually be given.
+    action cannot reach does not reduce the choice to the opposite endpoint nor
+    to the keeper. With the objective peaked at the interior node, that node is
+    the one a subject can actually be given, and it is emitted exactly.
     """
     stock = _walk_away_from_zero(
         base=case["approach_from"], target=case["target"], want_miss=True
     )
+    interior = case["nodes"][1]
     actions, _, admissible = _baseline(
         domain=case["domain"],
         nodes=case["nodes"],
         winner=case["winner"],
         stock=stock,
         investment=case["unsafe_investment"],
-        node_values=(10.0, 5.0, 1.0) if case["winner"] == 0 else (1.0, 5.0, 10.0),
+        q_and_f=_prefer_investment(_investment_reaching(stock=stock, target=interior)),
     )
 
     assert bool(admissible[0])
     assert _image_of(
         stock=stock, investment=float(actions["investment"][0])
-    ) == pytest.approx(case["nodes"][1], abs=0.0)
-
-
-def _outranked_by_the_keeper(case: dict) -> tuple[float, ...]:
-    """Bank values under which every reachable node ranks below the keeper."""
-    return tuple(
-        10.0 if index == case["winner"] else 1.0 for index in range(len(case["nodes"]))
-    )
+    ) == pytest.approx(interior, abs=0.0)
 
 
 @pytest.mark.parametrize("case", _ENDPOINT_CASES, ids=["lower", "upper"])
-def test_a_fallback_publishes_the_keeper_when_it_outranks_every_node(
+def test_a_fallback_publishes_the_keeper_when_the_objective_ranks_it_first(
     case: dict,
 ) -> None:
     """The no-adjustment branch competes in the fallback and can win it.
 
-    The keeper is a published branch like any mesh node. When the solve valued
-    it above every node the subject can be given, keeping is what the subject
+    The keeper is a candidate like any mesh node. When canonical Q ranks it
+    above every node the subject can be given, keeping is what the subject
     gets: an outer action of exactly zero, leaving the durable where it is.
+
+    That this is the objective's doing rather than the fixture's is what
+    `test_fallback_reselects_the_best_admissible_mesh_node` establishes, by
+    peaking the objective elsewhere and getting a node.
     """
     actions, _, admissible = _baseline(
         domain=case["domain"],
@@ -755,8 +824,7 @@ def test_a_fallback_publishes_the_keeper_when_it_outranks_every_node(
             base=case["approach_from"], target=case["target"], want_miss=True
         ),
         investment=case["unsafe_investment"],
-        node_values=_outranked_by_the_keeper(case),
-        keeper_value=5.0,
+        q_and_f=_prefer_investment(0.0),
     )
 
     assert bool(admissible[0])
@@ -774,8 +842,7 @@ def test_a_winning_keeper_carries_the_keeper_inner_action(case: dict) -> None:
             base=case["approach_from"], target=case["target"], want_miss=True
         ),
         investment=case["unsafe_investment"],
-        node_values=_outranked_by_the_keeper(case),
-        keeper_value=5.0,
+        q_and_f=_prefer_investment(0.0),
     )
 
     assert float(actions["consumption"][0]) == _KEEPER_CONSUMPTION
