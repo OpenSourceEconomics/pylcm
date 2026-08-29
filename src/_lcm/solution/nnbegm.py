@@ -97,7 +97,12 @@ from _lcm.solution.periodization import (
     solver_period_group_key,
 )
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
-from _lcm.typing import EconFunctionsMapping, FlatParams, RegimeName
+from _lcm.typing import (
+    EconFunctionArg,
+    EconFunctionsMapping,
+    FlatParams,
+    RegimeName,
+)
 from lcm.ages import AgeGrid
 from lcm.exceptions import (
     ModelInitializationError,
@@ -1528,7 +1533,7 @@ class _NNBEGMPeriodKernel:
         params = dict(flat_params[self.regime_name])
         accepted = inspect.signature(self.outer_target_function).parameters
 
-        def bind(outer_action: FloatND) -> dict[str, FloatND]:
+        def bind(outer_action: FloatND) -> dict[str, EconFunctionArg]:
             pool = {
                 **params,
                 **state_inputs,
