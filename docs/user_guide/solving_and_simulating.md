@@ -293,9 +293,12 @@ df = result.to_dataframe()
 
 Returns a pandas DataFrame with columns: `subject_id`, `period`, `age`, `regime_name`,
 `value`, plus all states and actions. An NNBEGM regime adds `nested_policy_fallback`:
-`True` on a row means the off-grid nested policy read was refused and the grid-argmax
-pair kept instead, so inference must refuse whenever any entry is `True`. Discrete
-variables are pandas Categorical with string labels.
+`True` on a row means the off-grid nested policy read was refused, so the row carries
+the best admissible baseline instead. That baseline is chosen by the canonical Q, not by
+the action grid alone — the grid-argmax pair and every published replay branch are
+scored, the higher score is emitted, and the grid pair takes an exact tie. Inference
+must refuse whenever any entry is `True`. Discrete variables are pandas Categorical with
+string labels.
 
 A model with a collective regime publishes two further things. An `own_stakeholder`
 column names the role each row occupies — in every regime, not only the collective ones,
