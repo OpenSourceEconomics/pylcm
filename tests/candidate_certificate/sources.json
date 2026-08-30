@@ -5,6 +5,14 @@
       "certified": {
         "candidate_sources": [
           {
+            "path": "src/_lcm/regime_building/argmax.py",
+            "sha256": "c0b411682d277907c65e67765e18e8b2c4d8c35d5c0509b8857f9225844bd9f9"
+          },
+          {
+            "path": "src/_lcm/regime_building/collective.py",
+            "sha256": "5ca9663523a257eeef45305c571c18689157a0997d64be0d3f90861f11e830e9"
+          },
+          {
             "path": "src/_lcm/regime_building/max_Q_over_a.py",
             "sha256": "40689cb24c7646b2caf7e6b2f4f50319a6249615957c2618c3995b4680d194cf"
           },
@@ -13,12 +21,20 @@
             "sha256": "a035b1f5bd50e5ab831d9731341c0b48f1fb8112be8bb6411bec09a7159df58d"
           }
         ],
-        "source_count": 2,
-        "source_inventory_sha256": "6a3dca7147654ee63d4eb8dd1f58f3fc1fe7c261af6037ccc43b70e0ade9569d"
+        "source_count": 4,
+        "source_inventory_sha256": "e2647fcfeab4ed113b8891c4fa16095f5174a7907ce143646a4e2792cc46dc02"
       },
       "fast": {
         "candidate_sources": [
           {
+            "path": "src/_lcm/regime_building/argmax.py",
+            "sha256": "c0b411682d277907c65e67765e18e8b2c4d8c35d5c0509b8857f9225844bd9f9"
+          },
+          {
+            "path": "src/_lcm/regime_building/collective.py",
+            "sha256": "5ca9663523a257eeef45305c571c18689157a0997d64be0d3f90861f11e830e9"
+          },
+          {
             "path": "src/_lcm/regime_building/max_Q_over_a.py",
             "sha256": "40689cb24c7646b2caf7e6b2f4f50319a6249615957c2618c3995b4680d194cf"
           },
@@ -27,15 +43,23 @@
             "sha256": "a035b1f5bd50e5ab831d9731341c0b48f1fb8112be8bb6411bec09a7159df58d"
           }
         ],
-        "source_count": 2,
-        "source_inventory_sha256": "6a3dca7147654ee63d4eb8dd1f58f3fc1fe7c261af6037ccc43b70e0ade9569d"
+        "source_count": 4,
+        "source_inventory_sha256": "e2647fcfeab4ed113b8891c4fa16095f5174a7907ce143646a4e2792cc46dc02"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "6a3dca7147654ee63d4eb8dd1f58f3fc1fe7c261af6037ccc43b70e0ade9569d",
+  "source_inventory_sha256": "e2647fcfeab4ed113b8891c4fa16095f5174a7907ce143646a4e2792cc46dc02",
   "sources": [
+    {
+      "path": "src/_lcm/regime_building/argmax.py",
+      "sha256": "c0b411682d277907c65e67765e18e8b2c4d8c35d5c0509b8857f9225844bd9f9"
+    },
+    {
+      "path": "src/_lcm/regime_building/collective.py",
+      "sha256": "5ca9663523a257eeef45305c571c18689157a0997d64be0d3f90861f11e830e9"
+    },
     {
       "path": "src/_lcm/regime_building/max_Q_over_a.py",
       "sha256": "40689cb24c7646b2caf7e6b2f4f50319a6249615957c2618c3995b4680d194cf"
