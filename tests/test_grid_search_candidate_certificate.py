@@ -26,12 +26,18 @@ swept. `test_dropping_one_candidate_is_visible_to_the_sweep` masks one cell
 inside the action product map and shows the sweep going red on it, so a green
 sweep is evidence rather than an assertion nothing ran.
 
-What this does not establish: the sweep is finite, over two action grids of six
-combinations, so it cannot certify arbitrary grid shapes on its own — that is
-what the structural half is for, and neither half is sufficient alone. It says
-nothing about *discretization* error either. Which candidates a grid represents
-is the modeller's choice; all that is bounded here is the search over the ones
-it does.
+**Universal direct flow.** The candidate arrays returned by `Q_and_F` are also
+followed route by route into the exact full reducers. The standard-library AST
+proof rejects any extra assignment, branch, slice, index, mask, `where`, rank,
+gap, support-size, shape, or axis transformation. The collective path permits
+only the independently checked split of the trailing stakeholder axis and pins
+the shared scalarization, argmax, and gather implementations exactly.
+
+The executable sweep remains deliberately finite: two action grids, six
+candidates, six strict winner orderings, and all 63 nonempty feasibility masks.
+It is an executable sanity check, not the universal proof. It says nothing about
+*discretization* error either. Which candidates a grid represents is the
+modeller's choice; all that is bounded here is the search over the ones it does.
 """
 
 import ast
@@ -64,6 +70,7 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+from tests.candidate_certificate.direct_flow import verify_direct_candidate_flow
 from tests.candidate_certificate.generate_sources import derive_source_paths
 from tests.candidate_certificate.verify import (
     nonempty_feasibility_masks,
@@ -383,6 +390,22 @@ def test_no_obligation_rests_on_an_undeclared_source():
     parsed = set(derive_source_paths(Path(__file__)))
 
     assert parsed == set(CERTIFIED_SOURCES)
+
+
+def test_q_and_f_arrays_reach_full_reducers_without_candidate_transformation():
+    """The universal bound is a route-local data-flow proof, not a value sample.
+
+    Literal parses add the shared singleton and collective reducer definitions to
+    the same generated source inventory as the route builders. The verifier then
+    requires exact source arrays at each reducer and rejects any non-allowlisted
+    statement in the certified corridor.
+    """
+    assert isinstance(_parse("src/_lcm/regime_building/argmax.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/regime_building/collective.py"), ast.Module)
+
+    result = verify_direct_candidate_flow(repo_root=_SRC_ROOT.parent)
+
+    assert result["ok"], "\n".join(result["errors"])
 
 
 def test_certified_sources_are_read_as_utf_8_whatever_the_platform_default_is():

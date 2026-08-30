@@ -38,6 +38,17 @@ except ModuleNotFoundError:  # Imported as tests.candidate_certificate.verify.
         sha256_file,
     )
 
+try:
+    from direct_flow import (
+        run_direct_flow_mutation_controls,
+        verify_direct_candidate_flow,
+    )
+except ModuleNotFoundError:  # Imported as tests.candidate_certificate.verify.
+    from tests.candidate_certificate.direct_flow import (
+        run_direct_flow_mutation_controls,
+        verify_direct_candidate_flow,
+    )
+
 SourceRecord = dict[str, str]
 # Anchor plus source set as declared by one contract or policy profile.
 ProfileDeclaration = dict[str, Any]
@@ -566,6 +577,19 @@ def _certificate_matrix_errors(certificate: Path) -> tuple[list[str], set[str]]:
                 "certificate architecture: CERTIFIED_SOURCES is still a literal tuple"
             )
             offending.add(CERTIFICATE_PATH)
+
+    direct_flow_test = functions.get(
+        "test_q_and_f_arrays_reach_full_reducers_without_candidate_transformation"
+    )
+    if direct_flow_test is None:
+        errors.append("certificate architecture: missing direct-flow proof test")
+        offending.add(CERTIFICATE_PATH)
+    elif "verify_direct_candidate_flow" not in transitive_calls(direct_flow_test.name):
+        errors.append(
+            "certificate architecture: direct-flow proof test does not reach "
+            "verify_direct_candidate_flow"
+        )
+        offending.add(CERTIFICATE_PATH)
     return errors, offending
 
 
@@ -740,6 +764,10 @@ def verify_repository(
     matrix_errors, matrix_paths = _certificate_matrix_errors(root / CERTIFICATE_PATH)
     errors += matrix_errors
     offending |= matrix_paths
+
+    direct_flow = verify_direct_candidate_flow(repo_root=root)
+    errors += [f"direct flow: {message}" for message in direct_flow["errors"]]
+    offending |= set(direct_flow["offending_paths"])
     details.update(
         {
             "ast_source_paths": list(derive_source_paths(root / CERTIFICATE_PATH)),
@@ -750,6 +778,7 @@ def verify_repository(
             "internal_derived_policy_profiles": internal_policy_records,
             "contract_profiles": contract_profiles,
             "explicit_policy_profiles": policy_profiles,
+            "direct_candidate_flow": direct_flow,
         }
     )
     return {
@@ -764,15 +793,15 @@ def verify_repository(
 def run_source_set_mutation_controls(*, repo_root: Path) -> dict[str, dict[str, Any]]:
     """Check the exact set-comparator against the required perturbation family."""
     clean = _records_from_inventory(build_inventory(repo_root.resolve()))
-    if len(clean) != 2:
+    if len(clean) < 2:
         raise ValueError(
-            "source-set controls require exactly two baseline sources, "
+            "source-set controls require at least two baseline sources, "
             f"found {len(clean)}"
         )
-    primary, secondary = clean
+    primary, secondary = clean[0], clean[-1]
     fake_path = "src/_lcm/candidate_certificate/undeclared.py"
     mutants: dict[str, tuple[list[SourceRecord], str]] = {
-        "delete": ([primary], secondary["path"]),
+        "delete": ([item for item in clean if item != secondary], secondary["path"]),
         "add": (
             [*clean, {"path": fake_path, "sha256": "0" * 64}],
             fake_path,
@@ -780,7 +809,7 @@ def run_source_set_mutation_controls(*, repo_root: Path) -> dict[str, dict[str, 
         "duplicate": ([*clean, primary.copy()], primary["path"]),
         "rename": (
             [
-                primary,
+                *[item for item in clean if item != secondary],
                 {
                     "path": secondary["path"] + ".renamed",
                     "sha256": secondary["sha256"],
@@ -789,7 +818,10 @@ def run_source_set_mutation_controls(*, repo_root: Path) -> dict[str, dict[str, 
             secondary["path"] + ".renamed",
         ),
         "byte_change": (
-            [primary, {"path": secondary["path"], "sha256": "0" * 64}],
+            [
+                *[item for item in clean if item != secondary],
+                {"path": secondary["path"], "sha256": "0" * 64},
+            ],
             secondary["path"],
         ),
     }
@@ -817,6 +849,7 @@ def certificate_neighborhood_coverage(*, repo_root: Path) -> dict[str, Any]:
 def _self_tests(repo_root: Path) -> tuple[dict[str, Any], bool]:
     source_controls = run_source_set_mutation_controls(repo_root=repo_root)
     mask_controls = run_mask_mutation_controls()
+    direct_flow_controls = run_direct_flow_mutation_controls(repo_root=repo_root)
     coverage = certificate_neighborhood_coverage(repo_root=repo_root)
     source_green = all(item["rejected"] for item in source_controls.values())
     mask_green = all(item["detected"] for item in mask_controls.values())
@@ -849,8 +882,10 @@ def _self_tests(repo_root: Path) -> tuple[dict[str, Any], bool]:
         "generated_intermediate_masks_detected": intermediate["detected_mask_count"],
         "nonempty_mask_count": len(nonempty_feasibility_masks(len(_Q_VALUES))),
     }
+    direct_flow_green = bool(direct_flow_controls["all_rejected"])
     payload = {
         "source_set_perturbations": source_controls,
+        "direct_flow_perturbations": direct_flow_controls,
         "mask_neighborhood_perturbations": legacy_masks,
         "mt6_all_feasible": {
             "detected": mask_controls["all_feasible_last_cell"]["detected"],
@@ -858,7 +893,9 @@ def _self_tests(repo_root: Path) -> tuple[dict[str, Any], bool]:
         },
         "generated_intermediate": intermediate,
         "certificate_neighborhood_coverage": coverage,
-        "all_controls_sensitive": source_green and mask_green and coverage["ok"],
+        "all_controls_sensitive": (
+            source_green and mask_green and direct_flow_green and coverage["ok"]
+        ),
     }
     return payload, bool(payload["all_controls_sensitive"])
 
