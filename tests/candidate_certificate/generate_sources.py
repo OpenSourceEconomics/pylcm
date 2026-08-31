@@ -16,12 +16,9 @@ REQUIRED_PROFILES = ("fast", "certified")
 
 
 def sha256_file(path: Path) -> str:
-    """Return the lowercase SHA-256 digest of one regular file."""
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    """Hash UTF-8 text with checkout-independent LF newlines."""
+    canonical = path.read_text(encoding="utf-8").encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
 
 
 def _call_name(node: ast.expr) -> str | None:

@@ -46,6 +46,11 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+try:
+    from generate_sources import sha256_file
+except ModuleNotFoundError:  # Imported as tests.candidate_certificate.direct_flow.
+    from tests.candidate_certificate.generate_sources import sha256_file
+
 MAX_Q_SOURCE = "src/_lcm/regime_building/max_Q_over_a.py"
 ARGMAX_SOURCE = "src/_lcm/regime_building/argmax.py"
 COLLECTIVE_SOURCE = "src/_lcm/regime_building/collective.py"
@@ -2067,7 +2072,7 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> dict[str, Any]:
     for relative in _CERTIFIED_CORRIDOR_SOURCES:
         path = root / relative
         try:
-            actual_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+            actual_sha256 = sha256_file(path)
             expected_sha256 = _SOURCE_SEALS[relative]
             if actual_sha256 != expected_sha256:
                 errors.append(
