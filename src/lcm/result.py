@@ -46,6 +46,7 @@ class SimulationResult:
         ages: AgeGrid,
         simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
         subject_batch_size: int | None = None,
+        nested_policy_regimes: frozenset[RegimeName] = frozenset(),
     ) -> None:
         self._raw_results = raw_results
         self._regimes = regimes
@@ -58,6 +59,7 @@ class SimulationResult:
             raw_results=raw_results,
             simulation_output_dtypes=simulation_output_dtypes,
             ages=ages,
+            nested_policy_regimes=nested_policy_regimes,
         )
         self._available_targets = sorted(_collect_all_available_targets(regimes))
 
@@ -321,7 +323,7 @@ class SimulationResult:
     ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
         """Read only the solution from a directory produced by `save`.
 
-        Restores `V_arr/` and nothing else. A consumer that compares or re-uses
+        Restores `V_arr/` and nothing else. A consumer that compares or reuses
         value functions — a solver head-to-head, a warm start — therefore pays
         neither the per-subject checkpoint nor the metadata pickle, and does not
         need the device placement their leaves carry: the per-subject leaves are
@@ -576,6 +578,7 @@ def _raw_results_to_array_tree(
                 "actions": dict(data.actions),
                 "states": dict(data.states),
                 "in_regime": data.in_regime,
+                "nested_policy_fallback": data.nested_policy_fallback,
             }
             for period, data in regime_dict.items()
         }
@@ -596,6 +599,10 @@ def _array_tree_to_raw_results(
                         actions=MappingProxyType(period_dict["actions"]),
                         states=MappingProxyType(period_dict["states"]),
                         in_regime=period_dict["in_regime"],
+                        nested_policy_fallback=period_dict.get(
+                            "nested_policy_fallback",
+                            jnp.zeros_like(period_dict["in_regime"], dtype=bool),
+                        ),
                     )
                     for period, period_dict in regime_dict.items()
                 }

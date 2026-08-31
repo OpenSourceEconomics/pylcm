@@ -300,7 +300,7 @@ def test_the_windows_build_writes_its_object_file_beside_the_library(
     hatch_build.build_exact_affine(root=tmp_path, jax_include_dir="C:/jax/include")
 
     payload_dir = tmp_path / ".pylcm-native-build"
-    assert f"/Fo{payload_dir}\\" in commands[0]
+    assert f"/Fo{payload_dir}\\" in commands[0]  # codespell:ignore
 
 
 def test_a_non_msvc_cxx_is_refused_on_windows(monkeypatch, tmp_path):

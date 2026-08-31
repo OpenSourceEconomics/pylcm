@@ -68,6 +68,17 @@ from _lcm.solution.grid_search import GridSearch
 from _lcm.solution.nbegm import NBEGM
 from _lcm.solution.negm import NEGM
 from _lcm.solution.nnbegm import NNBEGM
+from lcm.branch_aggregation import (
+    BranchAggregateResult,
+    DeterministicOuterMaximum,
+    OuterBranchAggregator,
+    UniformObservedFixedCost,
+)
+from lcm.outer_search import (
+    AdaptiveOuterMesh,
+    FiniteOuterGrid,
+    OuterSearch,
+)
 
 __all__ = [
     "DCEGM",
@@ -75,16 +86,23 @@ __all__ = [
     "NBEGM",
     "NEGM",
     "NNBEGM",
+    "AdaptiveOuterMesh",
+    "BranchAggregateResult",
+    "DeterministicOuterMaximum",
     "EnvelopeConfig",
     "ExactEnvelope",
     "FUESEnvelope",
+    "FiniteOuterGrid",
     "GridSearch",
     "LTMEnvelope",
     "MSSEnvelope",
     "OneMarginSolver",
+    "OuterBranchAggregator",
+    "OuterSearch",
     "RFCEnvelope",
     "SolutionKernels",
     "Solver",
     "SolverBuildContext",
     "TwoMarginSolver",
+    "UniformObservedFixedCost",
 ]

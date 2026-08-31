@@ -26,7 +26,14 @@ from lcm.consumption_savings_regime import (
     outer_unchanged,
 )
 from lcm.exceptions import RegimeInitializationError
-from lcm.solvers import GridSearch
+from lcm.solvers import (
+    DCEGM,
+    NEGM,
+    DeterministicOuterMaximum,
+    FiniteOuterGrid,
+    GridSearch,
+    UniformObservedFixedCost,
+)
 from lcm.typing import UserFunction
 
 _GRID = LinSpacedGrid(start=0.0, stop=10.0, n_points=8)
@@ -41,6 +48,23 @@ _OUTER = OuterContinuousMargin(
     action="illiquid_investment",
     post_decision_state="new_illiquid",
     no_adjustment=outer_unchanged,
+)
+_DETERMINISTIC_MAXIMUM_OUTER = OuterContinuousMargin(
+    state="illiquid",
+    action="illiquid_investment",
+    post_decision_state="new_illiquid",
+    no_adjustment=outer_unchanged,
+    adjustment_cost=DeterministicOuterMaximum(),
+)
+_FIXED_COST_OUTER = OuterContinuousMargin(
+    state="illiquid",
+    action="illiquid_investment",
+    post_decision_state="new_illiquid",
+    no_adjustment=outer_unchanged,
+    adjustment_cost=UniformObservedFixedCost(
+        shock_name="adjustment_cost",
+        scale_function="adjustment_cost_scale",
+    ),
 )
 
 
@@ -103,7 +127,7 @@ def test_one_margin_regime_binds_nbegm_from_liquid_margin() -> None:
 
 def test_public_nnbegm_contains_numerical_configuration_only() -> None:
     names = {item.name for item in fields(NNBEGM)}
-    assert names == {"inner", "outer_grid", "outer_batch_size"}
+    assert names == {"inner", "outer_search"}
 
 
 def test_nested_regime_binds_both_margins_without_an_inner_spec() -> None:
@@ -111,7 +135,7 @@ def test_nested_regime_binds_both_margins_without_an_inner_spec() -> None:
     regime = _two_margin(
         solver=NNBEGM(
             inner=NBEGM(savings_grid=_GRID),
-            outer_grid=_GRID,
+            outer_search=FiniteOuterGrid(grid=_GRID),
         )
     )
     solver = cast("_BoundNNBEGM", regime.solver)
@@ -149,3 +173,58 @@ def test_non_nbegm_inner_is_rejected_by_explicit_structural_guard() -> None:
         match=r"NNBEGM\.inner must be an NBEGM",
     ):
         _fail_if_inner_is_not_nbegm(GridSearch())
+
+
+@pytest.mark.parametrize(
+    "solver",
+    [
+        pytest.param(GridSearch(), id="grid-search"),
+        pytest.param(
+            NEGM(inner=DCEGM(savings_grid=_GRID), outer_grid=_GRID),
+            id="negm",
+        ),
+    ],
+)
+def test_solver_that_cannot_execute_a_nontrivial_fold_refuses_it(
+    solver: GridSearch | NEGM,
+) -> None:
+    """A margin-owned economic declaration may not disappear at binding."""
+    with pytest.raises(
+        RegimeInitializationError,
+        match=r"does not implement .*UniformObservedFixedCost",
+    ):
+        NestedConsumptionSavingsRegime(
+            transition=lambda: 0,
+            states={"liquid": _GRID, "illiquid": _GRID},
+            actions={"consumption": _GRID, "illiquid_investment": _GRID},
+            functions=_functions(),
+            solver=solver,
+            liquid=_LIQUID,
+            outer_continuous=_FIXED_COST_OUTER,
+        )
+
+
+@pytest.mark.parametrize(
+    "solver",
+    [
+        pytest.param(GridSearch(), id="grid-search"),
+        pytest.param(
+            NEGM(inner=DCEGM(savings_grid=_GRID), outer_grid=_GRID),
+            id="negm",
+        ),
+    ],
+)
+def test_solver_accepts_an_explicitly_declared_deterministic_maximum(
+    solver: GridSearch | NEGM,
+) -> None:
+    """Naming the default fold changes nothing, so no solver may refuse it."""
+    regime = NestedConsumptionSavingsRegime(
+        transition=lambda: 0,
+        states={"liquid": _GRID, "illiquid": _GRID},
+        actions={"consumption": _GRID, "illiquid_investment": _GRID},
+        functions=_functions(),
+        solver=solver,
+        liquid=_LIQUID,
+        outer_continuous=_DETERMINISTIC_MAXIMUM_OUTER,
+    )
+    assert regime.outer_continuous.adjustment_cost == DeterministicOuterMaximum()

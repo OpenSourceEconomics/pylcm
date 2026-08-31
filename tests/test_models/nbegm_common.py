@@ -27,15 +27,14 @@ from _lcm.grids.base import Grid
 from _lcm.grids.continuous import ContinuousGrid
 from lcm import (
     AgeGrid,
-    ConsumptionSavingsRegime,
     LinSpacedGrid,
-    LiquidMargin,
     MarkovTransition,
     Model,
     categorical,
     liquid_law_from_resources,
     liquid_law_from_savings,
 )
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime
 from lcm.solvers import NBEGM, GridSearch, OneMarginSolver
 from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
@@ -154,6 +153,7 @@ def make_alive_dead_model(
     survival_transition: Mapping[str, Any] | None = None,
     model_states: Mapping[str, Grid] | None = None,
     liquid_grid: Grid | None = None,
+    dead_functions: Mapping[str, Callable[..., object]] | None = None,
     fixed_params: Mapping[str, Any] | None = None,
     liquid_state: str = "liquid",
     liquid_action: str = "consumption",
@@ -186,6 +186,9 @@ def make_alive_dead_model(
         model_states: States broadcast at model level.
         liquid_grid: Grid for the `liquid` state in both regimes. Defaults to a
             `LinSpacedGrid` spanning `[0.1, liquid_max]` with `n_liquid` points.
+        dead_functions: Override for the dead regime's function pool (defaults
+            to the CRRA bequest); e.g. a constant utility for a zero-marginal
+            (flat) continuation.
         fixed_params: Parameters fixed at model construction rather than supplied
             to `solve`.
 
@@ -261,7 +264,12 @@ def make_alive_dead_model(
     dead = Regime(
         transition=None,
         states={"liquid": liquid_grid},
-        functions={"utility": bequest},
+        functions=dict(dead_functions)
+        if dead_functions is not None
+        else {"utility": bequest},
+        # `first_dead_age`, not `final_age`: with a survival transition the dead
+        # regime must be active from the first age it can be entered, or the
+        # mass sent to it is dropped and the survivors renormalized.
         active=lambda age, fa=first_dead_age: age >= fa,
         solver=GridSearch(),
     )

@@ -39,8 +39,18 @@ from lcm.consumption_savings_regime import (
     OuterContinuousMargin,
     outer_unchanged,
 )
-from lcm.solvers import DCEGM, NBEGM, NEGM, NNBEGM, GridSearch, TwoMarginSolver
-from lcm.transition import AgeSpecializedFunction
+from lcm.solvers import (
+    DCEGM,
+    NBEGM,
+    NEGM,
+    NNBEGM,
+    FiniteOuterGrid,
+    GridSearch,
+    OuterBranchAggregator,
+    OuterSearch,
+    TwoMarginSolver,
+)
+from lcm.transition import AgeSpecializedFunction, AgeSpecializedGrid
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -120,6 +130,11 @@ def durable_transition(new_illiquid: ContinuousState) -> ContinuousState:
     return new_illiquid
 
 
+def reserve_unchanged(reserve: ContinuousState) -> ContinuousState:
+    """Law of motion of the second passive stock: it is never touched."""
+    return reserve
+
+
 def utility(consumption: ContinuousAction) -> FloatND:
     """Pure CRRA over consumption."""
     return consumption ** (1.0 - RISK_AVERSION) / (1.0 - RISK_AVERSION)
@@ -169,6 +184,9 @@ ILLIQUID_INVESTMENT_GRID = LinSpacedGrid(start=-20.0, stop=20.0, n_points=41)
 OUTER_GRID = LinSpacedGrid(start=0.0, stop=20.0, n_points=N_OUTER)
 SAVINGS_FLOOR = 0.0  # borrowing limit on the inner post-decision balance
 SAVINGS_GRID = LinSpacedGrid(start=SAVINGS_FLOOR, stop=35.0, n_points=60)
+# A second passive continuous stock, held fixed and carried only by the alive
+# regime. Two points keep the extra state-space axis as small as an axis can be.
+RESERVE_GRID = LinSpacedGrid(start=0.0, stop=1.0, n_points=2)
 
 
 def budget_feasible(liquid_savings: FloatND) -> FloatND:
@@ -176,10 +194,29 @@ def budget_feasible(liquid_savings: FloatND) -> FloatND:
     return liquid_savings >= 0.0
 
 
+def adjustment_scale(period: int) -> FloatND:
+    """Per-period scale of the uniform observed fixed adjustment cost."""
+    return jnp.asarray(0.3 + 0.05 * period)
+
+
+def adjustment_scale_from_param(adjustment_scale_level: float) -> FloatND:
+    """Fixed-cost scale read straight from a flat param."""
+    return jnp.asarray(adjustment_scale_level)
+
+
 def build_solver(
-    *, variant: str, outer_batch_size: int = 0
+    *,
+    variant: str,
+    outer_batch_size: int = 0,
+    outer_search: OuterSearch | None = None,
 ) -> TwoMarginSolver | GridSearch:
-    """Build the requested solver flavour for the alive regime."""
+    """Build the requested solver flavour for the alive regime.
+
+    `outer_search` (n_nbegm only) replaces the legacy finite `OUTER_GRID`
+    with an explicit strategy — the continuous-outer entry point. The
+    keeper/adjuster fold follows the regime's declared `adjustment_cost`, so it
+    is not a solver argument.
+    """
     if variant == "brute":
         return GridSearch()
     if variant == "negm":
@@ -195,8 +232,11 @@ def build_solver(
             inner=NBEGM(
                 savings_grid=SAVINGS_GRID,
             ),
-            outer_grid=OUTER_GRID,
-            outer_batch_size=outer_batch_size,
+            outer_search=(
+                outer_search
+                if outer_search is not None
+                else FiniteOuterGrid(grid=OUTER_GRID, batch_size=outer_batch_size)
+            ),
         )
     msg = f"unknown variant: {variant}"
     raise ValueError(msg)
@@ -207,15 +247,22 @@ def build_model(
     variant: str,
     outer_batch_size: int = 0,
     n_periods: int = N_PERIODS,
-    illiquid_grid: Grid = ILLIQUID_GRID,
+    illiquid_grid: Grid | AgeSpecializedGrid = ILLIQUID_GRID,
+    outer_search: OuterSearch | None = None,
+    adjustment_cost: OuterBranchAggregator | None = None,
+    scale_function: Callable[..., object] | None = None,
     illiquid_investment_grid: Grid = ILLIQUID_INVESTMENT_GRID,
     consumption_grid: Grid = CONSUMPTION_GRID,
     durable_law: Callable[..., object] | Phased | None = None,
     constraints: Mapping[str, Callable[..., object]] | None = None,
     utility_function: Callable[..., object] | AgeSpecializedFunction | Phased = utility,
+    terminal_utility_function: Callable[..., object] = terminal_utility,
+    outer_post_decision_function: Callable[..., object] | None = None,
     regime_transition: Callable[..., object] | Phased = next_regime,
     koopmans_aggregator: Callable[..., object] | Phased | None = None,
+    second_passive_state: bool = False,
     carried_state: bool = False,
+    terminal_active_from_start: bool = False,
 ) -> Model:
     """Build the smooth two-asset toy under the requested solver flavour.
 
@@ -233,18 +280,41 @@ def build_model(
     `durable_law` overrides the durable's law of motion; every variant reads the
     chosen stock through `new_illiquid`, so one law serves them all and the
     variants keep solving the same model.
+    `scale_function` overrides the fixed cost's `adjustment_scale` function,
+    so a caller can drive the scale from a flat param.
+    `terminal_utility_function` overrides the bequest the terminal regime
+    pays. The default is singular one unit below zero durable, so a caller
+    giving `illiquid_grid` a domain that reaches into durable debt supplies
+    a bequest finite there as well.
+    `outer_post_decision_function` overrides `new_illiquid`, the outer
+    post-decision margin every variant reads the chosen stock through. It is the
+    map N-NB-EGM must invert, so a caller can declare one the solver is required
+    to refuse.
     `regime_transition` and `koopmans_aggregator` expose the other public phase
     slots to build-time capability tests without changing the numerical toy.
+    `second_passive_state=True` gives the alive regime a second passive
+    continuous stock, held fixed and carried by that regime alone, so its carry
+    rows span two passive axes instead of one.
     `carried_state=True` adds an otherwise unused solve-imputed/simulate-carried
     state for the NNBEGM replay-capability boundary witness.
     `constraints` overrides the constraint pool, which otherwise carries the
     budget predicate on the grid-search arm and is empty on the endogenous-grid
     arms, whose kernels enforce the budget identity intrinsically.
+    `terminal_active_from_start=True` also activates the terminal regime before
+    the lifecycle transition. This supports simulations seeded with subjects in
+    both regimes at the same age; the default keeps the terminal regime active
+    only after the final alive age.
     """
     final_age_alive = 20 + (n_periods - 2) * 5
     functions = {
         "utility": utility_function,
-        "new_illiquid": new_illiquid,
+        # Resolved at call time, not captured as a default: a default argument
+        # binds at definition, which would make `toy.new_illiquid` unpatchable.
+        "new_illiquid": (
+            new_illiquid
+            if outer_post_decision_function is None
+            else outer_post_decision_function
+        ),
         "resources": resources,
         "liquid_savings": liquid_savings,
         "credited": credited,
@@ -256,10 +326,14 @@ def build_model(
         del functions["resources"]
         functions["resources_before_outer_cost"] = resources_before_outer_cost
         functions["inverse_marginal_utility"] = inverse_marginal_utility
+    if adjustment_cost is not None:
+        functions["adjustment_scale"] = (
+            adjustment_scale if scale_function is None else scale_function
+        )
     if constraints is None:
         constraints = {"budget_feasible": budget_feasible} if variant == "brute" else {}
     active = lambda age, n=final_age_alive: age <= n  # noqa: E731
-    states: dict[str, Grid | Phased] = {
+    states: dict[str, Grid | Phased | AgeSpecializedGrid] = {
         "wealth": WEALTH_GRID,
         "illiquid": illiquid_grid,
     }
@@ -267,6 +341,9 @@ def build_model(
         "wealth": next_wealth,
         "illiquid": durable_law if durable_law is not None else durable_transition,
     }
+    if second_passive_state:
+        states["reserve"] = RESERVE_GRID
+        state_transitions["reserve"] = reserve_unchanged
     if carried_state:
         states["permanent_income"] = Phased(
             solve=impute_permanent_income,
@@ -290,11 +367,15 @@ def build_model(
         # same before and after, which is what makes the two runs comparable.
         #
         # Dropping `new_illiquid` from the DAG turns its output into an external
-        # input, which the action supplies directly. Every reader — `credited`,
-        # `resources`, the durable law — is unchanged.
+        # input the action supplies; every reader — `credited`, `resources`, the
+        # durable law — is unchanged.
         del functions["new_illiquid"]
         actions = {"consumption": consumption_grid, "new_illiquid": OUTER_GRID}
-    solver = build_solver(variant=variant, outer_batch_size=outer_batch_size)
+    solver = build_solver(
+        variant=variant,
+        outer_batch_size=outer_batch_size,
+        outer_search=outer_search,
+    )
     # Built per branch rather than from one shared mapping: the two regime
     # classes narrow `solver` differently, and a `**kwargs` mapping erases the
     # argument types the narrowing is expressed in.
@@ -341,13 +422,14 @@ def build_model(
                 action="illiquid_investment",
                 post_decision_state="new_illiquid",
                 no_adjustment=outer_unchanged,
+                adjustment_cost=adjustment_cost,
             ),
         )
     dead = Regime(
         transition=None,
-        active=lambda age, n=final_age_alive: age > n,
+        active=lambda age, n=final_age_alive: terminal_active_from_start or age > n,
         states={"wealth": WEALTH_GRID, "illiquid": illiquid_grid},
-        functions={"utility": terminal_utility},
+        functions={"utility": terminal_utility_function},
     )
     return Model(
         regimes={"alive": alive, "dead": dead},

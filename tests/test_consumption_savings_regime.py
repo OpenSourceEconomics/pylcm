@@ -30,6 +30,7 @@ from lcm.solvers import (
     NBEGM,
     NEGM,
     NNBEGM,
+    FiniteOuterGrid,
     FUESEnvelope,
     GridSearch,
 )
@@ -221,7 +222,7 @@ def test_nested_regime_binds_both_margins_into_nnbegm():
     regime = _nested_regime(
         solver=NNBEGM(
             inner=NBEGM(savings_grid=_GRID),
-            outer_grid=_GRID,
+            outer_search=FiniteOuterGrid(grid=_GRID),
         )
     )
 
@@ -233,6 +234,11 @@ def test_nested_regime_binds_both_margins_into_nnbegm():
     assert solver.outer_state == "durable"
     assert solver.outer_action == "new_durable"
     assert solver.outer_post_decision == "durable_after_choice"
+    # `_OUTER` declares `no_adjustment=outer_unchanged`, the public spelling of
+    # "the keeper is the state held still". The public->bound seam resolves that
+    # sentinel to `None`, which is what a solver reading the bound margin sees:
+    # no *named* no-adjustment function to call. Asserting the sentinel here
+    # would pin a value that can no longer reach the solver.
     assert solver.outer_no_adjustment_candidate is None
 
 

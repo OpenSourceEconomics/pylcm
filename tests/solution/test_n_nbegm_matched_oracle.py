@@ -1,5 +1,11 @@
 """Independent candidate-set checks for N-NB-EGM.
 
+Reaching that stock through an investment action would let the grid search hit
+durable levels the nested solver never considers and miss most of the ones it
+does, so a nested-vs-brute gap measured that way is dominated by the
+candidate-set mismatch. The `brute` variant chooses the post-decision durable
+stock itself, on the solver's outer grid, so both arms rank the same candidates.
+
 The direct oracle below never reads the published simulation policy, calls the
 generic simulation argmax, or reuses NNBEGM's chunked candidate fold. It loops
 in scalar arithmetic over keeper plus ``OUTER_GRID`` and, conditional on each

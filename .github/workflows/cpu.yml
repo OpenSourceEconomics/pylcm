@@ -44,9 +44,9 @@ jobs:
         # remaining set.
         include:
           - os: macos-latest
-            pytest_extra: -m "not slow"
+            pytest_extra: -m "not slow and not manual"
           - os: windows-latest
-            pytest_extra: -m "not slow"
+            pytest_extra: -m "not slow and not manual"
     steps:
       - uses: actions/checkout@v7
       - name: Activate the MSVC developer environment
@@ -57,9 +57,9 @@ jobs:
         # step that needs it, so the environment never finishes building.
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
-      - uses: prefix-dev/setup-pixi@v0.10.1
+      - uses: prefix-dev/setup-pixi@v0.10.2
         with:
-          pixi-version: v0.76.1
+          pixi-version: v0.78.0
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cpu
@@ -144,7 +144,7 @@ jobs:
         # Coverage from this base leg and the fp64 shards is merged by Codecov.
         run: |
           mkdir -p reports
-          pixi run -e tests-cpu pytest tests -m "not slow" \
+          pixi run -e tests-cpu pytest tests -m "not slow and not manual" \
             --policy-child --ci-policy=full --hardware-profile=cpu \
             --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
             --durations=25 --junitxml=reports/junit-cpu-fp64-notslow.xml \
@@ -152,12 +152,13 @@ jobs:
           && XLA_FLAGS=--xla_backend_optimization_level=0 \
             pixi run -e tests-cpu pytest \
             tests/solution/test_nbegm_multi_discrete_agreement.py \
+            -m "slow and not manual" -k certified \
             --policy-child --ci-policy=full --hardware-profile=cpu \
-            -m slow -k certified \
             --timeout=2400 --timeout-method=thread \
             --durations=25 --junitxml=reports/junit-cpu-fp64-certified.xml \
             --cov=./ --cov-append --cov-report= -n 0 \
-          && pixi run -e tests-cpu pytest tests --ignore=tests/solution -m slow \
+          && pixi run -e tests-cpu pytest tests --ignore=tests/solution \
+            -m "slow and not manual" \
             --policy-child --ci-policy=full --hardware-profile=cpu \
             --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
             --durations=25 --junitxml=reports/junit-cpu-fp64-rest-slow.xml \
@@ -168,7 +169,7 @@ jobs:
         # a run's counts are read back, and a run that failed is exactly when
         # that matters.
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: junit-cpu-fp64-${{ runner.os }}-${{ matrix.python-version }}
           path: reports/junit-cpu-*.xml
@@ -180,7 +181,7 @@ jobs:
         # with the suite's would put a failure and three extra arms per
         # precision into the counts a healthy run reports.
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: exact-kernel-matrix-fp64-${{ runner.os }}-${{ matrix.python-version }}
           path: |
@@ -247,9 +248,9 @@ jobs:
         # step that needs it, so the environment never finishes building.
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
-      - uses: prefix-dev/setup-pixi@v0.10.1
+      - uses: prefix-dev/setup-pixi@v0.10.2
         with:
-          pixi-version: v0.76.1
+          pixi-version: v0.78.0
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cpu
@@ -298,13 +299,14 @@ jobs:
           XLA_PYTHON_CLIENT_PREALLOCATE: 'false'
         run: |
           mkdir -p reports
-          pixi run -e tests-cpu pytest tests --precision=32 -m "not slow" \
+          pixi run -e tests-cpu pytest tests --precision=32 \
+            -m "not slow and not manual" \
             --policy-child --ci-policy=full --hardware-profile=cpu \
             --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
             --durations=25 --junitxml=reports/junit-cpu-fp32-notslow.xml \
             -n 4 \
           && pixi run -e tests-cpu pytest tests --ignore=tests/solution \
-            --precision=32 -m slow \
+            --precision=32 -m "slow and not manual" \
             --policy-child --ci-policy=full --hardware-profile=cpu \
             --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
             --durations=25 --junitxml=reports/junit-cpu-fp32-rest-slow.xml -n 2
@@ -313,7 +315,7 @@ jobs:
         # a run's counts are read back, and a run that failed is exactly when
         # that matters.
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: junit-cpu-fp32
           path: reports/junit-cpu-*.xml
@@ -323,7 +325,7 @@ jobs:
         # the `broken` arm's required failure must not land in the counts a
         # healthy run reports.
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: exact-kernel-matrix-fp32
           path: |
@@ -375,9 +377,9 @@ jobs:
       PYLCM_CI_SHARD: ${{ matrix.shard }}
     steps:
       - uses: actions/checkout@v7
-      - uses: prefix-dev/setup-pixi@v0.10.1
+      - uses: prefix-dev/setup-pixi@v0.10.2
         with:
-          pixi-version: v0.76.1
+          pixi-version: v0.78.0
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cpu
@@ -439,7 +441,7 @@ jobs:
             -n 2 "${coverage_args[@]}"
       - name: Upload JUnit report and shard manifest
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: >-
             junit-cpu-fp${{ matrix.precision }}-solution-${{ matrix.shard }}

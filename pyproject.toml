@@ -361,6 +361,18 @@ extend-immutable-calls = [
 [tool.ruff.lint.isort]
 known-first-party = [ "_lcm", "lcm", "lcm_examples", "tests" ]
 
+# codespell passes most econ/numerics jargon, but not all of it: `statics`
+# (comparative statics), `disjointness` and `arithmetics` are flagged and are
+# correct as written. The MSVC object-output flag is spelled at its two call
+# sites with an inline ignore rather than a global entry. Two further
+# hits are deliberate and carry an inline `codespell:ignore` at their site
+# rather than a global entry, so the word stays caught everywhere else: a
+# misspelled key in a test that asserts unknown keys are rejected, and a regex
+# prefix. Extend per project rather than dropping the hook.
+[tool.codespell]
+ignore-words-list = "arithmetics,disjointness,fpr,ist,mape,nd,nin,statics"
+skip = "*.lock,*.svg,*.bib,*.ipynb"
+
 [tool.pyproject-fmt]
 column_width = 88
 max_supported_python = "3.14"
@@ -401,15 +413,50 @@ ini_options.addopts = [
   "--pdbcls=pdbp:Pdb",
   "--dist",
   "loadfile",
+  # Deselect the `manual` gates by default. A command-line `-m` overrides this
+  # one (pytest keeps the last `-m` it sees), so `pytest ... -m manual` still
+  # runs them.
+  #
+  # That override is why this line cannot be the whole mechanism: `-m` on the
+  # command line REPLACES this expression wholesale rather than intersecting
+  # with it, so any caller passing its own `-m` silently drops `not manual`.
+  #
+  # The two markers answer different questions and stack rather than compete:
+  #
+  #   slow   — too heavy for the small CI runners. Dropped on macOS/Windows and
+  #            split into its own phases on Linux, where it still runs.
+  #   manual — solves the real paper-scale model. Runs nowhere in CI, on any
+  #            runner, at any budget.
+  #
+  # The Mahler-Yum gates are both, and carry both marks. Neither mark implies
+  # the other in general — a `manual` gate need not be `slow`, and most `slow`
+  # tests are not `manual` — so CI cannot lean on one to exclude the other.
+  # Every `cpu.yml` invocation therefore states `not manual` itself, whichever
+  # side of `slow` it wants: `-m "not slow and not manual"` for the fast phases,
+  # `-m "slow and not manual"` for the heavy ones. That is an invariant of the
+  # workflow, not an artifact of how today's gates happen to be marked.
+  "-m",
+  "not manual",
 ]
 ini_options.markers = [
-  "ci(tier): bounded CI policy tier",
+  "ci(tier, paths): bounded CI policy tier and relevant source paths",
   "coverage(backends, precisions): backend and precision coverage obligations",
   "gpu: Tests that require a GPU (skipped on CPU-only machines)",
   "illustrative: Tests are designed for illustrative purposes",
-  "isolation(process): fresh or shared pytest-process contract",
-  "requires(device, min_devices): hard execution capabilities",
+  "manual: gates that solve the real paper-scale model; run on request, never in CI",
+  """\
+  isolation(process, gpu, cache, env_group, serial_group): process/device/cache \
+  isolation contract\
+  """,
+  """\
+  requires(device, native, min_devices, min_compute_capability, min_gpu_mem_gb, os, \
+  arch): hard execution capabilities\
+  """,
   "requires_exact_affine_kernel: requires the selected backend's exact-affine kernel",
+  """\
+  resources(wall, wall_seconds, host_mem_gb, gpu_mem_gb, cpu_cores, compile): measured \
+  resource contract\
+  """,
   "skipif_cpu: skip test when the JAX backend is CPU",
   "slow: heavy DC-EGM solve/oracle tests (deselected on small runners)",
 ]

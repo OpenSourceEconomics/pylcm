@@ -5,7 +5,7 @@ repos:
       - id: check-hooks-apply
       - id: check-useless-excludes
   - repo: https://github.com/tox-dev/pyproject-fmt
-    rev: v2.28.0
+    rev: v2.28.2
     hooks:
       - id: pyproject-fmt
   - repo: https://github.com/lyz-code/yamlfix
@@ -54,7 +54,7 @@ repos:
     hooks:
       - id: check-github-workflows
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.3
+    rev: v0.16.5
     hooks:
       - id: ruff-check
         args:
@@ -69,7 +69,7 @@ repos:
           - pyi
           - python
   - repo: https://github.com/astral-sh/ty-pre-commit
-    rev: v0.0.72
+    rev: v0.0.75
     hooks:
       - id: ty
         # `--no-project` keeps uv from creating a `.venv`/`uv.lock` in this
@@ -84,6 +84,12 @@ repos:
         args:
           - --extra-keys
           - metadata.language_info.version metadata.vscode
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.4.3
+    hooks:
+      - id: codespell
+        additional_dependencies:
+          - tomli
   - repo: https://github.com/executablebooks/mdformat
     rev: 1.0.0
     hooks:
@@ -108,6 +114,39 @@ repos:
         exclude: docs/index\.md
   - repo: local
     hooks:
+      # Runs at pre-commit stage and fails if the config declares pre-push hooks
+      # that this clone never installed — otherwise they look active and silently
+      # never fire.
+      - id: pre-push-hooks-installed
+        name: pre-push hooks are installed in this clone
+        entry: .ai-instructions/hooks/check_pre_push_installed.py
+        language: script
+        pass_filenames: false
+        always_run: true
+      # `--check` re-solves and compares without writing, so it cannot dirty the
+      # worktree. pre-push, not pre-commit: a mid-branch commit may legitimately
+      # lag the lock, but a push with a stale lock burns a CI cycle.
+      - id: pixi-lock-check
+        name: pixi.lock is in sync with the manifest
+        entry: pixi lock --check
+        language: system
+        pass_filenames: false
+        files: ^(pyproject\.toml|pixi\.toml|pixi\.lock)$
+        stages:
+          - pre-push
+      - id: notebook-cell-source-format
+        name: notebook cell source is a JSON array of lines
+        entry: .ai-instructions/hooks/fix_notebook_cell_source.py
+        language: script
+        types:
+          - jupyter
+      - id: no-hardcoded-user-paths
+        name: no hardcoded user-specific absolute paths
+        language: pygrep
+        entry: (/home/[A-Za-z0-9_.-]+/|/Users/[A-Za-z0-9_.-]+/|[A-Za-z]:\\Users\\)
+        types_or:
+          - python
+          - toml
       # Gates the bare ruler only — a comment line that is nothing but fill
       # characters. A titled `# --- Section ---`, a ruler under ten fill
       # characters, and a ruler in a notebook or a Markdown file all stay a
@@ -127,6 +166,31 @@ repos:
         entry: ^\s*#\s*[-=#_*]{10,}\s*$
         types:
           - python
+      # A custom JVP that reads its tangents is not *automatically*
+      # transposable, and JAX says so: "Transpose rule ... not implemented".
+      # That is a missing rule, not a missing transpose — the differential of a
+      # finite affine segment is linear and its transpose is the coefficient
+      # vector, and bit-level scaling by a power of two is the same linear map
+      # as multiplying by it. Documenting the refusal as a mathematical
+      # impossibility has been written and corrected repeatedly, so the claim
+      # is gated here rather than left to review.
+      #
+      # Say what is true instead: "carries no transpose rule", "no reverse rule
+      # is registered", "not automatically transposable" — all of which pass.
+      # A map that genuinely has no transpose is nonlinear, and saying which
+      # nonlinearity rewrites the sentence anyway. `SKIP=no-impossible-transpose
+      # git commit …` drops the hook without printing a line for it, so put the
+      # reason in the commit message if you use it.
+      #
+      # Line-scoped, like its siblings: a claim split across two lines by the
+      # formatter is not caught and stays a review responsibility.
+      - id: no-impossible-transpose
+        name: no claim that a linear map has no transpose
+        language: pygrep
+        entry: (?i:\b(?:has|have|had)\s+no\s+transpose\b(?!\s+rule))|(?i:\b(?:does|do|did)\s+not\s+have\s+an?\s+transpose\b)|(?i:\bnothing\s+to\s+transpose\b)|(?i:\bnone\s+to\s+transpose\b)|(?i:\bno\s+map\s+to\s+transpose\b)
+        types_or:
+          - python
+          - markdown
       # Catches the labelled forms only — PR/issue numbers, `E<n>`/`F<n>`
       # finding labels, `round-<n>`, `pre-fix`. Prose that rehearses history
       # without a label stays a review responsibility.
@@ -139,6 +203,17 @@ repos:
 ci:
   autoupdate_schedule: monthly
   # pre-commit.ci has no pixi environments and blocks network at hook runtime;
-  # the GitHub Actions run-ty job covers type checking.
+  # the GitHub Actions run-ty job covers type checking, and pixi-lock-check
+  # needs a pixi binary that pre-commit.ci does not provide.
+  #
+  # The two script hooks live in the `.ai-instructions` submodule, which
+  # pre-commit.ci does not check out, so there they fail as a missing
+  # executable rather than running. `pre-push-hooks-installed` asks about the
+  # local clone and is meaningless on a runner anyway; the notebook check does
+  # lose CI coverage and holds only where the submodule is present, which is
+  # every developer clone and no CI job here.
   skip:
     - ty
+    - pixi-lock-check
+    - pre-push-hooks-installed
+    - notebook-cell-source-format

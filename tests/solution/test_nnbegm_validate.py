@@ -10,19 +10,21 @@ import pytest
 
 from lcm import (
     AgeGrid,
-    ConsumptionSavingsRegime,
     LinSpacedGrid,
-    LiquidMargin,
     Model,
-    NestedConsumptionSavingsRegime,
-    OuterContinuousMargin,
     categorical,
     ref,
 )
 from lcm.case_piece import case_boundary, piece
+from lcm.consumption_savings_regime import (
+    ConsumptionSavingsRegime,
+    LiquidMargin,
+    NestedConsumptionSavingsRegime,
+    OuterContinuousMargin,
+)
 from lcm.exceptions import NBEGMCaseError
 from lcm.regime import Regime
-from lcm.solvers import NBEGM, NNBEGM
+from lcm.solvers import NBEGM, NNBEGM, FiniteOuterGrid
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 
 WEALTH_GRID = LinSpacedGrid(start=1.0, stop=20.0, n_points=8)
@@ -179,7 +181,7 @@ def test_nnbegm_rejects_a_piece_that_hides_a_branch():
     """The nested solver applies its inner NBEGM's smoothness gate too."""
     solver = NNBEGM(
         inner=_inner_nbegm(),
-        outer_grid=ILLIQUID_GRID,
+        outer_search=FiniteOuterGrid(grid=ILLIQUID_GRID),
     )
     with pytest.raises(NBEGMCaseError, match="smoothness gate"):
         _build_model(solver=solver)

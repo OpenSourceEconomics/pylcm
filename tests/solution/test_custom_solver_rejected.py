@@ -32,6 +32,7 @@ from lcm.solvers import (
     EGM,
     NBEGM,
     NNBEGM,
+    FiniteOuterGrid,
     GridSearch,
     OneMarginSolver,
     TwoMarginSolver,
@@ -186,7 +187,8 @@ def test_the_nested_case_piece_solver_is_accepted() -> None:
     """`NNBEGM` is a shipped two-margin solver, so the guard stays silent on it."""
     fail_if_solver_is_not_shipped(
         solver=NNBEGM(
-            inner=NBEGM(savings_grid=_SAVINGS_GRID), outer_grid=_SAVINGS_GRID
+            inner=NBEGM(savings_grid=_SAVINGS_GRID),
+            outer_search=FiniteOuterGrid(grid=_SAVINGS_GRID),
         ),
         regime_name="nested_saving",
     )

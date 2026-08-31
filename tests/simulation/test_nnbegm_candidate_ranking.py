@@ -2,16 +2,22 @@
 
 import dataclasses
 import functools
+from fractions import Fraction
 from types import MappingProxyType
 from typing import cast
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
+from _lcm.egm.outer_inversion import DeclaredOuterInverse
+from _lcm.egm.outer_replay_capability import OuterReplayCapability
 from _lcm.egm.published_policy import NNBEGMSimPolicy
 from _lcm.engine import NNBEGMPolicyRead, Regime
 from _lcm.simulation.simulate import _replay_nnbegm_candidates
+from _lcm.utils.logging import get_logger
 from lcm import LinSpacedGrid
+from lcm.exceptions import RegimeInitializationError
 from lcm.typing import ContinuousAction, ContinuousState
 from tests.test_models import n_nbegm_toy as toy
 from tests.test_models.n_nbegm_toy import RegimeId
@@ -88,52 +94,27 @@ def test_public_replay_ranks_every_reconstructed_candidate_by_canonical_q() -> N
     )
 
 
-def test_public_replay_inverts_outer_targets_at_the_realized_state(
+def test_a_state_dependent_outer_slope_is_refused_where_it_is_declared(
     monkeypatch,
 ) -> None:
-    """An emitted action realizes the exact outer candidate selected by the solve."""
+    """A slope that varies by state has no single coefficient, so it is refused.
+
+    N-NB-EGM recovers the outer action by dividing the declared map's
+    coefficient out of the retained target. That division is exact only for a
+    constant power-of-two coefficient; a coefficient that varies by state
+    rounds, and a rounded action reaches a stock away from the node the solve
+    ranked. The refusal names the map and how to declare one that inverts,
+    rather than publishing a policy whose replay silently disagrees.
+    """
     monkeypatch.setattr(toy, "new_illiquid", _state_dependent_affine_outer_target)
     model = toy.build_model(variant="n_nbegm", n_periods=2)
-    values, policies = model.solve(
-        params=_PARAMS,
-        log_level="debug",
-        return_simulation_policy=True,
-    )
-    result = model.simulate(
-        params=_PARAMS,
-        initial_conditions={
-            "wealth": jnp.array([1.0467]),
-            "illiquid": jnp.array([2.04]),
-            "age": jnp.array([20.0]),
-            "regime_id": jnp.array([RegimeId.alive], dtype=jnp.int32),
-        },
-        period_to_regime_to_V_arr=values,
-        policies=policies,
-        log_level="debug",
-        seed=17,
-    )
-    row = result.to_dataframe().query("regime_name == 'alive' and period == 0").iloc[0]
-    emitted_target = float(
-        _state_dependent_affine_outer_target(
-            row["illiquid"], row["illiquid_investment"]
-        )
-    )
-    expected_target = 30.0 / 7.0
-    expected_action = (expected_target - 2.04) / (1.0 + 0.1 * 2.04)
-    is_fp32 = jnp.asarray(0.0).dtype == jnp.float32
 
-    np.testing.assert_allclose(
-        emitted_target,
-        expected_target,
-        rtol=0.0,
-        atol=3e-5 if is_fp32 else 3e-10,
-    )
-    np.testing.assert_allclose(
-        row["illiquid_investment"],
-        expected_action,
-        rtol=0.0,
-        atol=3e-5 if is_fp32 else 3e-10,
-    )
+    with pytest.raises(RegimeInitializationError) as refusal:
+        model.solve(params=_PARAMS, log_level="debug", return_simulation_policy=True)
+
+    message = str(refusal.value)
+    assert "illiquid_investment" in message
+    assert "affine" in message
 
 
 def _constant_surfaces(values: list[float]) -> jnp.ndarray:
@@ -166,6 +147,7 @@ def _synthetic_replay(
         candidate_inner_action=_constant_surfaces(inner),
         candidate_outer_target=_constant_surfaces(outer),
         candidate_value=_constant_surfaces(marker),
+        outer_grid_values=jnp.asarray(outer, dtype=jnp.asarray(0.0).dtype),
         candidate_discrete_actions=(
             None
             if discrete_codes is None
@@ -175,6 +157,16 @@ def _synthetic_replay(
         inner_action_name="inner",
         outer_action_name="outer",
         n_keeper_candidates=0,
+        # The domain the fixture declares below: replay now reads it off the
+        # published capability rather than re-deriving it from the regime.
+        replay_capability=OuterReplayCapability(
+            inverse=DeclaredOuterInverse(coefficient=Fraction(1), low=0.0, high=200.0),
+            undeclared_functions=(),
+            unbindable_functions=(),
+            unavailable_keeper_states=(),
+            unaddressable_passive_states=(),
+            unaddressable_discrete_actions=(),
+        ),
         discrete_action_names=discrete_names,
     )
 
@@ -187,14 +179,21 @@ def _synthetic_replay(
         simulation=dataclasses.replace(
             template.simulation,
             grids=MappingProxyType(
-                {"state": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)}
+                {
+                    "state": LinSpacedGrid(start=0.0, stop=1.0, n_points=2),
+                    # Declared wide enough to contain every outer target these
+                    # stubs use as a candidate marker: replay drops a candidate
+                    # whose recovered stock leaves the outer state's domain, so
+                    # a fixture must declare a domain its own targets fit in.
+                    "outer_state": LinSpacedGrid(start=0.0, stop=200.0, n_points=2),
+                }
             ),
             Q_and_F=MappingProxyType({0: q_and_f}),
             egm_policy_read=NNBEGMPolicyRead(
                 outer_target_function_by_period=MappingProxyType({0: outer_target}),
                 outer_post_decision="outer_target",
                 outer_no_adjustment_target=None,
-                outer_state_name="state",
+                outer_state_name="outer_state",
             ),
         ),
     )
@@ -203,13 +202,14 @@ def _synthetic_replay(
         optimal_actions=MappingProxyType({}),
         regime=regime,
         sim_policy=policy,
-        states=states,
+        states={**states, "outer_state": jnp.zeros_like(jnp.asarray(state))},
         flat_params=MappingProxyType({}),
         period=0,
         age=jnp.int32(20),
         canonical_states=states,
         action_names=("inner", "outer", *discrete_names),
         next_regime_to_V_arr=MappingProxyType({}),
+        logger=get_logger(log_level="off"),
     )
 
 
@@ -565,3 +565,33 @@ def test_candidate_ranking_is_invariant_to_subject_batching() -> None:
             chunked[column].to_numpy(),
             err_msg=column,
         )
+
+
+def test_a_bank_with_every_candidate_dropped_emits_no_winner() -> None:
+    """When the solve dropped every candidate, replay publishes no action.
+
+    A dropped candidate carries `nan` in the published value surface. With the
+    whole bank dropped, every objective is masked to `-inf` and `argmax` over
+    them returns index 0 by convention -- so a reduction that trusted the argmax
+    would emit candidate zero as the winner, an action the solve never
+    represented. The fail-closed sentinels must survive instead.
+
+    This is a different input path from an all-invalid objective: there the
+    candidates are represented and score badly, here they were never
+    represented at all.
+    """
+
+    def q_and_f(*, inner, outer, state, next_regime_to_V_arr, period, age):
+        del outer, state, next_regime_to_V_arr, period, age
+        return jnp.ones_like(inner), jnp.ones_like(inner, dtype=bool)
+
+    actions, value = _synthetic_replay(
+        inner=[1.0, 2.0, 3.0],
+        outer=[10.0, 20.0, 30.0],
+        marker=[np.nan, np.nan, np.nan],
+        q_and_f=q_and_f,
+    )
+
+    assert np.all(np.isnan(np.asarray(actions["inner"])))
+    assert np.all(np.isnan(np.asarray(actions["outer"])))
+    np.testing.assert_array_equal(np.asarray(value), [-np.inf])

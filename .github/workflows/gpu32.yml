@@ -31,9 +31,9 @@ jobs:
             | head -n 1 | tr -d '.')
           test -n "$capability"
           echo "NVCCFLAGS=-arch=sm_${capability}" >> "$GITHUB_ENV"
-      - uses: prefix-dev/setup-pixi@v0.10.1
+      - uses: prefix-dev/setup-pixi@v0.10.2
         with:
-          pixi-version: v0.76.1
+          pixi-version: v0.78.0
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: tests-cuda12
@@ -70,7 +70,7 @@ jobs:
           --environment=tests-cuda12 --report-dir=reports/policy tests
       - name: Upload policy and native reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: gpu-reports
           path: reports/

@@ -9,6 +9,9 @@ Two contracts, promoted from the Pro-review counterexample RT1:
   specialized-transition compositions v1 does not support.
 """
 
+from types import MappingProxyType
+
+import jax.numpy as jnp
 import pytest
 
 from _lcm.grids import DiscreteGrid
@@ -19,9 +22,11 @@ from _lcm.regime_building.age_specialization import (
     node_signature,
     tree_signature,
 )
+from _lcm.regime_building.processing import _fail_if_phase_state_nodes_disagree
 from _lcm.user_regime_validation import _validate_logical_consistency
 from lcm.exceptions import RegimeInitializationError
 from lcm.transition import AgeSpecializedFunction, MarkovTransition
+from lcm.typing import Float1D
 from tests.mock_regime import MockRegime
 
 
@@ -324,3 +329,87 @@ def test_regime_transition_markov_wrapping_age_specialized_is_rejected(
 
     with pytest.raises(RegimeInitializationError):
         _validate_logical_consistency(regime)
+
+
+def _nodes(*values: float) -> Float1D:
+    """Return a node array shaped like a resolved age-specialized grid axis.
+
+    The dtype is the suite's active precision, not a pinned one: the guard
+    compares node arrays exactly, and that has to hold in whichever float
+    format the model is actually built in.
+    """
+    return jnp.asarray(values)
+
+
+def _table(
+    mapping: dict[int, dict[str, Float1D]],
+) -> MappingProxyType[int, MappingProxyType[str, Float1D]]:
+    """Return a per-period node table in the immutable form the phases carry."""
+    return MappingProxyType(
+        {period: MappingProxyType(states) for period, states in mapping.items()}
+    )
+
+
+def test_agreeing_phase_state_nodes_are_accepted():
+    """A regime whose two phases resolve the same nodes per period builds."""
+    table = _table({0: {"illiquid": _nodes(0.0, 1.0, 2.0)}})
+
+    _fail_if_phase_state_nodes_disagree(
+        regime_name="working",
+        solve_nodes=table,
+        simulate_axes=_table({0: {"illiquid": _nodes(0.0, 1.0, 2.0)}}),
+    )
+
+
+def test_an_age_invariant_regime_carries_no_node_tables_and_is_accepted():
+    """A regime with no age-specialized state resolves `None` in both phases."""
+    _fail_if_phase_state_nodes_disagree(
+        regime_name="working", solve_nodes=None, simulate_axes=None
+    )
+
+
+def test_phase_state_nodes_differing_in_value_are_rejected():
+    """Two phases resolving different nodes for one period's state is refused."""
+    with pytest.raises(RegimeInitializationError, match="illiquid"):
+        _fail_if_phase_state_nodes_disagree(
+            regime_name="working",
+            solve_nodes=_table({0: {"illiquid": _nodes(0.0, 1.0, 2.0)}}),
+            simulate_axes=_table({0: {"illiquid": _nodes(0.0, 1.0, 9.0)}}),
+        )
+
+
+def test_a_node_table_present_in_only_one_phase_is_rejected():
+    """A regime whose solve resolves per-period nodes and whose simulation does
+    not is refused, rather than letting simulation fall back to the published
+    grid and admit against different endpoints than the solve certified."""
+    with pytest.raises(RegimeInitializationError, match="working"):
+        _fail_if_phase_state_nodes_disagree(
+            regime_name="working",
+            solve_nodes=_table({0: {"illiquid": _nodes(0.0, 1.0, 2.0)}}),
+            simulate_axes=None,
+        )
+
+
+def test_phase_state_nodes_differing_in_length_are_rejected():
+    """Two phases resolving a different number of nodes for one state is refused."""
+    with pytest.raises(RegimeInitializationError, match="illiquid"):
+        _fail_if_phase_state_nodes_disagree(
+            regime_name="working",
+            solve_nodes=_table({0: {"illiquid": _nodes(0.0, 1.0, 2.0)}}),
+            simulate_axes=_table({0: {"illiquid": _nodes(0.0, 2.0)}}),
+        )
+
+
+def test_a_node_disagreement_names_the_offending_values():
+    """The refusal reports where two equal-length axes part and what they hold.
+
+    Two axes of the same length differ somewhere in their values, so a message
+    quoting only their shapes names the same shape twice and says nothing about
+    the disagreement it is diagnosing.
+    """
+    with pytest.raises(RegimeInitializationError, match="index 2"):
+        _fail_if_phase_state_nodes_disagree(
+            regime_name="working",
+            solve_nodes=_table({0: {"illiquid": _nodes(0.0, 1.0, 2.0)}}),
+            simulate_axes=_table({0: {"illiquid": _nodes(0.0, 1.0, 9.0)}}),
+        )

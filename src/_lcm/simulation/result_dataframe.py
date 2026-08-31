@@ -46,6 +46,7 @@ def _create_flat_dataframe(
             regime_results=raw_results[name],
             regime_states=metadata.regime_to_states[name],
             regime_actions=metadata.regime_to_actions[name],
+            publishes_nested_policy=metadata.regime_to_publishes_nested_policy[name],
             regime_params=flat_params[name],
             additional_targets=additional_targets,
             ages=ages,
@@ -69,6 +70,7 @@ def _process_regime(
     regime_results: MappingProxyType[int, PeriodRegimeSimulationData],
     regime_states: tuple[str, ...],
     regime_actions: tuple[str, ...],
+    publishes_nested_policy: bool,
     regime_params: FlatRegimeParams,
     additional_targets: list[str] | None,
     ages: AgeGrid,
@@ -87,6 +89,7 @@ def _process_regime(
             period=period,
             regime_states=regime_states,
             regime_actions=regime_actions,
+            publishes_nested_policy=publishes_nested_policy,
         )
         for period, result in regime_results.items()
     ]
@@ -140,6 +143,7 @@ def _extract_period_data(
     period: int,
     regime_states: tuple[str, ...],
     regime_actions: tuple[str, ...],
+    publishes_nested_policy: bool,
 ) -> dict[str, FloatND | IntND | BoolND]:
     """Extract data from a single period's simulation results."""
     data: dict[str, FloatND | IntND | BoolND] = {
@@ -148,6 +152,12 @@ def _extract_period_data(
         "_in_regime": result.in_regime,
         "value": result.V_arr,
     }
+
+    # Per-subject flag that a continuous-outer off-grid policy read was refused
+    # and the grid-argmax pair retained. Only NNBEGM regimes can publish the flag;
+    # omitting it elsewhere avoids a constant-False column in unrelated results.
+    if publishes_nested_policy:
+        data["nested_policy_fallback"] = result.nested_policy_fallback
 
     for name in regime_states:
         if name in result.states:

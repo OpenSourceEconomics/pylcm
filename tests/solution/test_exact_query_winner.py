@@ -19,6 +19,8 @@ from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
 
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
+_DTYPES = (jnp.float32, jnp.float64) if X64_ENABLED else (jnp.float32,)
+
 
 def _dtype() -> np.dtype:
     return np.dtype(np.float64 if X64_ENABLED else np.float32)
@@ -296,6 +298,90 @@ def test_dense_and_every_block_partition_are_bit_identical() -> None:
             np.testing.assert_array_equal(
                 got_arr[finite].view(uint), expected_arr[finite].view(uint)
             )
+
+
+@pytest.mark.parametrize("dtype", _DTYPES)
+def test_strict_primary_diagnostic_preserves_shared_primal(dtype) -> None:
+    """A deterministic secondary-key winner remains an exact primary tie."""
+    left = jnp.asarray([0.0, 0.0, 0.0], dtype=dtype)
+    right = jnp.asarray([1.0, 2.0, 1.0], dtype=dtype)
+    left_value = jnp.asarray([0.0, 0.0, -1.0], dtype=dtype)
+    right_value = jnp.asarray([1.0, 2.0, 0.0], dtype=dtype)
+    live = jnp.asarray([True, True, True])
+    query = jnp.asarray([0.5, 0.75], dtype=dtype)
+
+    def resolve_historical(q):
+        return exact_query_winner(
+            left_grid=left,
+            right_grid=right,
+            left_value=left_value,
+            right_value=right_value,
+            live=live,
+            x_query=q,
+        )
+
+    def resolve_strict(q):
+        return exact_query_winner(
+            left_grid=left,
+            right_grid=right,
+            left_value=left_value,
+            right_value=right_value,
+            live=live,
+            x_query=q,
+            return_strict_primary=True,
+        )
+
+    historical = jax.jit(resolve_historical)(query)
+    winner, status, strict = jax.jit(resolve_strict)(query)
+    np.testing.assert_array_equal(np.asarray(winner), np.asarray(historical[0]))
+    np.testing.assert_array_equal(np.asarray(status), np.asarray(historical[1]))
+    np.testing.assert_array_equal(np.asarray(status), 0)
+    np.testing.assert_array_equal(
+        np.asarray(strict), np.zeros_like(np.asarray(strict), dtype=bool)
+    )
+
+
+@pytest.mark.parametrize("dtype", _DTYPES)
+def test_strict_primary_diagnostic_handles_batched_strict_and_tied_rows(dtype) -> None:
+    left = jnp.asarray([[0.0, 0.0], [0.0, 0.0]], dtype=dtype)
+    right = jnp.asarray([[1.0, 1.0], [1.0, 2.0]], dtype=dtype)
+    v_left = jnp.asarray([[0.0, -1.0], [0.0, 0.0]], dtype=dtype)
+    v_right = jnp.asarray([[1.0, 0.0], [1.0, 2.0]], dtype=dtype)
+    winner, status, strict = exact_query_winner_batched(
+        left_grid=left,
+        right_grid=right,
+        left_value=v_left,
+        right_value=v_right,
+        live=jnp.ones_like(left, dtype=bool),
+        x_query=jnp.asarray([[0.5], [0.5]], dtype=dtype),
+        return_strict_primary=True,
+    )
+    np.testing.assert_array_equal(np.asarray(status), 0)
+    np.testing.assert_array_equal(np.asarray(strict), [[True], [False]])
+    np.testing.assert_array_equal(np.asarray(winner), [[0], [0]])
+
+
+def test_strict_primary_output_has_float0_tangent() -> None:
+    dtype = _jdtype()
+    left = jnp.asarray([0.0, 0.0], dtype=dtype)
+    right = jnp.asarray([1.0, 2.0], dtype=dtype)
+    values = jnp.asarray([0.0, 0.0], dtype=dtype)
+    right_values = jnp.asarray([1.0, 2.0], dtype=dtype)
+    query = jnp.asarray([0.5], dtype=dtype)
+
+    def resolve(q):
+        return exact_query_winner(
+            left_grid=left,
+            right_grid=right,
+            left_value=values,
+            right_value=right_values,
+            live=jnp.asarray([True, True]),
+            x_query=q,
+            return_strict_primary=True,
+        )
+
+    _primal, tangent = jax.jvp(resolve, (query,), (jnp.ones_like(query),))
+    assert all(value.dtype == jax.dtypes.float0 for value in tangent)
 
 
 def test_lowering_has_one_winner_and_three_selected_reads() -> None:

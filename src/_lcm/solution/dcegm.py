@@ -13,6 +13,7 @@ pulls in no numerical engine modules.
 """
 
 import functools
+import logging
 import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
@@ -526,6 +527,7 @@ class _DCEGMPeriodKernel:
         flat_params: FlatParams,
         period: int,
         ages: AgeGrid,
+        logger: logging.Logger,  # noqa: ARG002
     ) -> KernelResult:
         """Run the DC-EGM step and assemble the `KernelResult`."""
         V_arr, egm_carry, sim_policy = compiled_cores["main"](

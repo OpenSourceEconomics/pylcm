@@ -28,6 +28,15 @@ def _rebuilt(*, model, regime_id_class, regime_name, kind, name):
         grids = dict(getattr(regime, kind))
         grids[name] = IrregSpacedGrid(n_points=int(grids[name].n_points))
         regime = dataclasses.replace(regime, **{kind: grids})
+    elif kind == "outer_search":
+        solver = regime.solver
+        search = solver.outer_search
+        runtime = IrregSpacedGrid(n_points=int(getattr(search, name).n_points))
+        solver = dataclasses.replace(
+            solver,
+            outer_search=dataclasses.replace(search, **{name: runtime}),
+        )
+        regime = dataclasses.replace(regime, solver=solver)
     else:
         solver = regime.solver
         holder = solver if kind == "solver" else solver.inner
@@ -87,7 +96,7 @@ def test_nbegm_accepts_a_runtime_supplied_continuous_action_grid():
 @pytest.mark.parametrize(
     ("kind", "name", "role"),
     [
-        ("solver", "outer_grid", "outer grid"),
+        ("outer_search", "grid", "outer grid"),
         ("inner", "savings_grid", "inner savings grid"),
         ("states", "illiquid", "grid of the outer state 'illiquid'"),
         ("states", "wealth", "grid of the liquid state 'wealth'"),

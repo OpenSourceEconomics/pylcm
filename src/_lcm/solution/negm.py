@@ -10,6 +10,7 @@ each by key.
 """
 
 import functools
+import logging
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, replace
 from types import MappingProxyType
@@ -718,6 +719,7 @@ class _NEGMPeriodKernel:
         flat_params: FlatParams,
         period: int,
         ages: AgeGrid,
+        logger: logging.Logger,
     ) -> KernelResult:
         r"""Run keeper and adjuster sweep, collapse by `max`, assemble the result.
 
@@ -741,6 +743,7 @@ class _NEGMPeriodKernel:
             flat_params=flat_params,
             period=period,
             ages=ages,
+            logger=logger,
         )
         # The published continuation retains every outer candidate: the keeper
         # and each adjuster carry, lifted into a common cash-on-hand axis and
@@ -781,6 +784,7 @@ class _NEGMPeriodKernel:
                     ),
                     period=period,
                     ages=ages,
+                    logger=logger,
                 )
                 for node in nodes[chunk_start : chunk_start + chunk_size]
             ]

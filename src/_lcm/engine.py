@@ -592,6 +592,17 @@ class NNBEGMPolicyRead:
     outer_state_name: StateName
     """State whose realized value is the default keeper target."""
 
+    fixed_cost_simulation_unsupported: bool = False
+    """Whether solution analytically integrates an observed fixed cost whose
+    realized keeper/adjuster branch simulation cannot yet replay."""
+
+    replay_policy_is_nested: bool = False
+    """Whether the configured outer search publishes the nested continuous-outer
+    payload (`NestedEGMSimPolicy`) rather than the finite candidate bank
+    (`NNBEGMSimPolicy`). Set by the adaptive mesh, unset by the finite grid; it
+    is what lets caller-supplied replay policies be checked against the type the
+    solve actually returns."""
+
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class SimulationPhase:
@@ -970,6 +981,21 @@ class PeriodRegimeSimulationData:
     in_regime: Bool1D
     """Boolean mask indicating which subjects are in this regime at this period."""
 
+    nested_policy_fallback: Bool1D
+    """Per-subject flag that the continuous-outer (nested) off-grid policy read
+    was refused and fell back to the grid-argmax action pair at this period.
+
+    True only for subjects in a regime whose simulation published a nested
+    (continuous-outer) policy where the runtime replay could not certify the
+    off-grid read: the branch read left its live row support, a non-affine outer
+    transition surfaced at the recovered action, or the inner action came out
+    non-finite, non-positive, or over budget.
+    All-False for every other path: no nested payload, the flat single-EGM
+    read, passive rows, or the grid path. Inference on the continuous-outer
+    path must refuse whenever any entry is True — the recorded action there is
+    the gridded fallback, not the model's off-grid optimum.
+    """
+
 
 # Register as a JAX pytree so traversals like `jax.block_until_ready` and
 # `jax.tree.map` recurse into the fields instead of treating the dataclass
@@ -980,6 +1006,6 @@ class PeriodRegimeSimulationData:
 # whose materialisation workspace dwarfs the per-period output.
 jax.tree_util.register_dataclass(
     PeriodRegimeSimulationData,
-    data_fields=("V_arr", "actions", "states", "in_regime"),
+    data_fields=("V_arr", "actions", "states", "in_regime", "nested_policy_fallback"),
     meta_fields=(),
 )

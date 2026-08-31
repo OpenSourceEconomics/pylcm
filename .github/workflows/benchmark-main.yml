@@ -48,7 +48,7 @@ jobs:
           test -n "$capability"
           echo "NVCCFLAGS=-arch=sm_${capability}" >> "$GITHUB_ENV"
       - name: Restore or install the benchmark environment
-        uses: prefix-dev/setup-pixi@v0.10.1
+        uses: prefix-dev/setup-pixi@v0.10.2
         with:
           cache: true
           cache-write: true

@@ -12,6 +12,7 @@ import pandas as pd
 from beartype import beartype
 
 from _lcm.beartype_conf import MODEL_CONF, PARAMS_CONF
+from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import NNBEGMSimPolicy
 from _lcm.engine import NNBEGMPolicyRead
 from _lcm.grids import DiscreteGrid
@@ -72,6 +73,7 @@ from _lcm.typing import (
     PeriodToRegimeToVArr,
     RegimeName,
     RegimeNamesToIds,
+    SimulationPolicy,
 )
 from _lcm.utils.containers import (
     ensure_containers_are_immutable,
@@ -91,6 +93,7 @@ from lcm.exceptions import (
     InvalidInitialConditionsError,
     InvalidSimulationInputError,
     InvalidValueFunctionError,
+    UnsupportedOperationError,
 )
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import Regime as UserRegime
@@ -656,21 +659,59 @@ class Model:
         period_to_regime_to_V_arr: PeriodToRegimeToVArr | None,
         policies: PeriodToRegimeToSimulationPolicy | None,
     ) -> None:
-        """Require replay artifacts where values do not determine the decision."""
+        """Require replay artifacts where values do not determine the decision.
+
+        Which artifact counts as matching follows the regime's configured outer
+        search, because that is what decides the type `solve()` publishes:
+
+        - finite outer grid ⇒ `NNBEGMSimPolicy`, one per solved period and
+          regime. The finite solve always publishes one, so a missing entry is
+          a caller error.
+        - adaptive outer mesh ⇒ `NestedEGMSimPolicy`. The adaptive solve
+          publishes one only where the nested payload is resolved and omits the
+          entry otherwise, so a present entry is type-checked while an absent
+          one is accepted: automatic simulation falls back there too, and
+          rejecting it would make the split workflow stricter than the route it
+          has to reproduce.
+
+        A wholly absent `policies` mapping is refused on both routes — that is
+        the caller who dropped the replay artifacts altogether.
+        """
         if period_to_regime_to_V_arr is None:
             return
 
-        missing_or_mismatched = tuple(
+        nnbegm_reads = {
+            regime_name: policy_read
+            for regime_name, regime in self._regimes.items()
+            if isinstance(
+                (policy_read := regime.simulation.egm_policy_read), NNBEGMPolicyRead
+            )
+        }
+        if not nnbegm_reads:
+            return
+
+        solved_nnbegm_cells = tuple(
             (period, regime_name)
             for period, regime_to_V_arr in period_to_regime_to_V_arr.items()
             for regime_name in regime_to_V_arr
-            if isinstance(
-                self._regimes[regime_name].simulation.egm_policy_read,
-                NNBEGMPolicyRead,
-            )
-            and not isinstance(
-                (policies or {}).get(period, {}).get(regime_name),
-                NNBEGMSimPolicy,
+            if regime_name in nnbegm_reads
+        )
+        if not solved_nnbegm_cells:
+            return
+
+        # No mapping at all is the caller who dropped the replay artifacts, and
+        # is refused on both routes before the per-cell rule (which accepts an
+        # absent adaptive entry) can excuse it.
+        missing_or_mismatched = (
+            solved_nnbegm_cells
+            if policies is None
+            else tuple(
+                (period, regime_name)
+                for period, regime_name in solved_nnbegm_cells
+                if not _replay_policy_matches(
+                    supplied=policies.get(period, {}).get(regime_name),
+                    is_nested=nnbegm_reads[regime_name].replay_policy_is_nested,
+                )
             )
         )
         if missing_or_mismatched:
@@ -683,6 +724,24 @@ class Model:
                 "`period_to_regime_to_V_arr=None` to solve automatically."
             )
             raise InvalidSimulationInputError(msg)
+
+    def _fail_if_simulation_is_unsupported(self) -> None:
+        """Refuse model configurations whose solved decision cannot be replayed."""
+        fixed_cost_regimes = tuple(
+            regime_name
+            for regime_name, regime in self._regimes.items()
+            if isinstance(regime.simulation.egm_policy_read, NNBEGMPolicyRead)
+            and regime.simulation.egm_policy_read.fixed_cost_simulation_unsupported
+        )
+        if not fixed_cost_regimes:
+            return
+        msg = (
+            "Simulation for NNBEGM with UniformObservedFixedCost is not implemented: "
+            "solution integrates the observed cost analytically, but simulation "
+            "cannot yet draw it and replay the contingent keeper/adjuster policy. "
+            f"Affected regimes: {fixed_cost_regimes}. Solve-only use remains supported."
+        )
+        raise UnsupportedOperationError(msg)
 
     @beartype(conf=PARAMS_CONF)
     def simulate(
@@ -765,6 +824,7 @@ class Model:
 
         """
         log = get_logger(log_level=log_level)
+        self._fail_if_simulation_is_unsupported()
         if isinstance(initial_conditions, pd.DataFrame):
             initial_conditions = initial_conditions_from_dataframe(
                 df=initial_conditions,
@@ -838,14 +898,16 @@ class Model:
         )
         period_to_regime_to_sim_policy = policies
         if period_to_regime_to_V_arr is None:
-            # A fresh solve also publishes the off-grid DC-EGM policy, which
-            # simulation consumes at each subject's resources where the regime
-            # qualifies (`SimulationPhase.egm_policy_read`). Policies paired
-            # with caller-supplied values enter through the public argument
-            # above and do not reach this branch.
+            # A fresh solve also publishes the off-grid EGM policy consumed by
+            # simulation. Policies paired with caller-supplied values enter
+            # through the public argument above and do not reach this branch.
+            # Two signals are required because the flat endogenous-grid read is
+            # announced regime-side by `egm_policy_read`, while a self-describing
+            # nested payload is announced solver-side and leaves that field unset.
             collect_simulation_policies = any(
                 regime.simulation.egm_policy_read is not None
-                for regime in self._regimes.values()
+                or self.user_regimes[regime_name].solver.publishes_simulation_policy
+                for regime_name, regime in self._regimes.items()
             )
             internal_result = self._solve_compiled(
                 flat_params=flat_params,
@@ -1002,3 +1064,19 @@ class Model:
         _validate_param_types(flat_params)
         fail_if_nonpositive_taste_shock_scale(flat_params)
         return flat_params
+
+
+def _replay_policy_matches(
+    *,
+    supplied: SimulationPolicy | None,
+    is_nested: bool,
+) -> bool:
+    """Whether a supplied replay policy matches the configured outer search.
+
+    The adaptive mesh omits the entry for a period whose nested payload is
+    unresolved, and simulation falls back there on both routes, so `None` is
+    accepted for it and refused for the finite grid.
+    """
+    if is_nested:
+        return supplied is None or isinstance(supplied, NestedEGMSimPolicy)
+    return isinstance(supplied, NNBEGMSimPolicy)

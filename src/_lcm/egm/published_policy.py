@@ -69,6 +69,7 @@ from typing import Any
 
 import jax
 
+from _lcm.egm.outer_replay_capability import OuterReplayCapability
 from lcm.typing import ActionName, FloatND, IntND, StateName
 
 
@@ -211,10 +212,22 @@ class NNBEGMSimPolicy:
     """Shape ``(n_candidates, *state_shape)`` in solve candidate order."""
 
     candidate_outer_target: FloatND
-    """Outer post-decision target identity on the candidate/state axes."""
+    """Outer post-decision target identity on the candidate/state axes.
+
+    Read for its finiteness, which carries the solve's own drop of a candidate
+    it could not reconstruct. An adjuster candidate's *value* comes from
+    `outer_grid_values` instead: this surface is constant along the state axes,
+    yet interpolating it returns the declared node only to within a rounding,
+    and a target that is a node to within a rounding is not the node."""
 
     candidate_value: FloatND
     """Conditional solve value on exactly the same candidate/state axes."""
+
+    outer_grid_values: FloatND
+    """The declared outer search nodes, in solve candidate order.
+
+    The adjuster candidates target these nodes exactly, so replay takes them
+    from here rather than from an interpolated surface."""
 
     state_names: tuple[StateName, ...]
     """State-grid axis names following the leading candidate axis."""
@@ -224,6 +237,14 @@ class NNBEGMSimPolicy:
 
     n_keeper_candidates: int
     """Number of leading candidates belonging to the state-specific keeper."""
+
+    replay_capability: OuterReplayCapability
+    """The solve's settled verdict on what this replay may assume.
+
+    Carries the certified inverse of the declared outer map and the stock
+    domain a recovered action must land in. Replay reads them here rather than
+    certifying the map again, so an admission the solve made cannot be
+    re-decided at a realized state."""
 
     candidate_discrete_actions: IntND | None = None
     """Exact shape ``(n_candidates, n_discrete_actions)`` code metadata."""
@@ -266,12 +287,14 @@ def _flatten_nnbegm_policy(
         policy.inner_action_name,
         policy.outer_action_name,
         policy.n_keeper_candidates,
+        policy.replay_capability,
         policy.discrete_action_names,
     )
     return (
         policy.candidate_inner_action,
         policy.candidate_outer_target,
         policy.candidate_value,
+        policy.outer_grid_values,
         policy.candidate_discrete_actions,
     ), aux
 
@@ -284,17 +307,20 @@ def _unflatten_nnbegm_policy(
         inner_action_name,
         outer_action_name,
         n_keeper_candidates,
+        replay_capability,
         discrete_action_names,
     ) = aux
     return NNBEGMSimPolicy(
         candidate_inner_action=children[0],
         candidate_outer_target=children[1],
         candidate_value=children[2],
-        candidate_discrete_actions=children[3],
+        outer_grid_values=children[3],
+        candidate_discrete_actions=children[4],
         state_names=state_names,
         inner_action_name=inner_action_name,
         outer_action_name=outer_action_name,
         n_keeper_candidates=n_keeper_candidates,
+        replay_capability=replay_capability,
         discrete_action_names=discrete_action_names,
     )
 

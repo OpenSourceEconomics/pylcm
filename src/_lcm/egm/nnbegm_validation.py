@@ -13,6 +13,23 @@ reads the inner consumption action or liquid post-decision, the next outer stock
 varies along the inner savings solve and the candidates are no longer
 independent one-dimensional problems.  Chained sibling laws are followed so an
 indirect coupling is rejected too.
+
+**Which couplings are in scope.** NEGM rejects a model whose outer margin enters
+the inner Euler-state transition or multiplies consumption in utility, because
+its outer max runs over a *frozen* inner inversion lifted onto a common
+cash-on-hand axis by a credited-cost translation. NNBEGM does not lift, which is
+why the re-solve above absorbs the inner-reads-outer direction in full: every
+inner function — the budget, the Euler-state law, utility — sees the bound node
+as a constant, so a Cobb-Douglas composite flow `q = c^phi * s'^(1-phi)` and an
+Euler law that reads the durable stock are both in scope. For the same reason
+NEGM's outer-cost contract and its durable-last carry layout do not carry over:
+there is no credited-cost lift, and the outer envelope is a pointwise fold of
+carry rows that already share the liquid grid.
+
+The other approximation NNBEGM makes is in the outer candidate set, which is a
+property of the declared `outer_search` rather than of the model's function
+structure — `FiniteOuterGrid` fixes it to the grid plus the keeper, while
+`AdaptiveOuterMesh` refines it per node — so nothing here validates it.
 """
 
 from collections.abc import Mapping

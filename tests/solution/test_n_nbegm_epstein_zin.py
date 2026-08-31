@@ -36,7 +36,7 @@ from lcm.consumption_savings_regime import (
     OuterContinuousMargin,
     outer_unchanged,
 )
-from lcm.solvers import NBEGM, NNBEGM, GridSearch, TwoMarginSolver
+from lcm.solvers import NBEGM, NNBEGM, FiniteOuterGrid, GridSearch, TwoMarginSolver
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 
 _N_PERIODS = 3
@@ -135,7 +135,7 @@ def _build_solver(*, variant: str) -> TwoMarginSolver | GridSearch:
             savings_grid=_SAVINGS_GRID,
             envelope_arithmetic="ordinary",
         ),
-        outer_grid=_OUTER_GRID,
+        outer_search=FiniteOuterGrid(grid=_OUTER_GRID),
     )
 
 

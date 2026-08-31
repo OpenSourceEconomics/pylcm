@@ -46,6 +46,10 @@ class InvalidSimulationInputError(PyLCMError):
     """
 
 
+class UnsupportedOperationError(PyLCMError):
+    """Raised when a valid model requests an unsupported runtime operation."""
+
+
 class InvalidParamsError(PyLCMError):
     """Raised when the params structure does not match the params template."""
 
@@ -90,6 +94,15 @@ class FunctionDispatchError(PyLCMError):
     """Raised when there is an error during the function dispatch."""
 
 
+class OuterSearchConvergenceError(PyLCMError):
+    """Raised when an adaptive outer mesh cannot resolve within its budget.
+
+    Inference-grade continuous-outer solves must fail closed: reaching the
+    node or round budget while validation-marked intervals remain raises
+    instead of silently degrading the solution.
+    """
+
+
 class NBEGMCaseError(PyLCMError):
     """Raised when a NBEGM case-boundary or formula-piece declaration is invalid.
 
@@ -126,4 +139,15 @@ class ScaledLotteryDifferentiationError(PyLCMError):
     are not supported. pylcm therefore raises this error instead of returning zero,
     which could incorrectly suggest to an optimizer that the objective is locally
     flat.
+    """
+
+
+class UnrepresentableOuterCandidateError(PyLCMError):
+    """Raised when replay cannot reconstruct an outer candidate the solve kept.
+
+    N-NB-EGM recovers the outer action from the post-decision target the solve
+    retained. At a realized state the recovered action can reach a stock outside
+    the outer state's declared domain, where no value function exists. Such a
+    candidate is dropped from that subject's choice set rather than published,
+    and this reports how many were dropped.
     """
