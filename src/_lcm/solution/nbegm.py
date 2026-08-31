@@ -2842,6 +2842,55 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901, PLR0915
         arg_names=arg_names, int_arg_values=probe_arguments.int_arg_values
     )
 
+    def _probe_points(
+        *, interval_samples: tuple[FloatND, ...], with_grid_samples: bool
+    ) -> FloatND:
+        """Stack one rung's probe points onto a single batched axis."""
+        parts = []
+        if with_grid_samples:
+            parts.append(jnp.asarray(liquid_samples, dtype=dtype).reshape(-1))
+        if interval_samples:
+            parts.append(
+                jnp.stack(
+                    [jnp.asarray(s, dtype=dtype).reshape(()) for s in interval_samples]
+                )
+            )
+        if not parts:
+            return jnp.zeros((0,), dtype=dtype)
+        return jnp.concatenate(parts)
+
+    def _liquid_derivative(
+        *,
+        order: int,
+        points: FloatND,
+        fill: float,
+        overrides: Mapping[str, int],
+        array_floats: bool,
+        array_rank: int,
+        leaf_rank: int,
+    ) -> FloatND:
+        """Evaluate the order-th liquid derivative at every probe point at once.
+
+        Everything the budget reads other than the liquid state is constant for a
+        given rung, so the whole rung is one compiled, vectorized call rather than
+        one traced call per point.
+        """
+
+        def _at(liquid_value: FloatND) -> FloatND:
+            return _budget_of_liquid(
+                liquid_value=liquid_value,
+                fill=fill,
+                array_floats=array_floats,
+                array_rank=array_rank,
+                leaf_rank=leaf_rank,
+                int_overrides=overrides,
+            )
+
+        derivative = _at
+        for _ in range(order):
+            derivative = jax.grad(derivative)
+        return jax.jit(jax.vmap(derivative))(points)
+
     def _max_abs_second() -> float | None:
         def _values(
             *, array_floats: bool, array_rank: int, leaf_rank: int
@@ -2856,21 +2905,21 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901, PLR0915
                         leaf_rank=leaf_rank,
                         int_overrides=overrides,
                     )
-                    for sample in (*tuple(liquid_samples), *interval_samples):
-                        value = float(
-                            jax.grad(
-                                jax.grad(
-                                    lambda a, f=fill, o=overrides: _budget_of_liquid(
-                                        liquid_value=a,
-                                        fill=f,
-                                        array_floats=array_floats,
-                                        array_rank=array_rank,
-                                        leaf_rank=leaf_rank,
-                                        int_overrides=o,
-                                    )
-                                )
-                            )(jnp.asarray(sample, dtype=dtype))
-                        )
+                    points = _probe_points(
+                        interval_samples=interval_samples, with_grid_samples=True
+                    )
+                    if points.size == 0:
+                        continue
+                    second = _liquid_derivative(
+                        order=2,
+                        points=points,
+                        fill=fill,
+                        overrides=overrides,
+                        array_floats=array_floats,
+                        array_rank=array_rank,
+                        leaf_rank=leaf_rank,
+                    )
+                    for value in jax.device_get(second).tolist():
                         if not math.isfinite(value):
                             raise ValueError("non-finite second derivative")
                         values.append(abs(value))
@@ -2897,19 +2946,21 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901, PLR0915
                         leaf_rank=leaf_rank,
                         int_overrides=overrides,
                     )
-                    for sample in interval_samples:
-                        slope = float(
-                            jax.grad(
-                                lambda a, f=fill, o=overrides: _budget_of_liquid(
-                                    liquid_value=a,
-                                    fill=f,
-                                    array_floats=array_floats,
-                                    array_rank=array_rank,
-                                    leaf_rank=leaf_rank,
-                                    int_overrides=o,
-                                )
-                            )(jnp.asarray(sample, dtype=dtype))
-                        )
+                    points = _probe_points(
+                        interval_samples=interval_samples, with_grid_samples=False
+                    )
+                    if points.size == 0:
+                        continue
+                    first = _liquid_derivative(
+                        order=1,
+                        points=points,
+                        fill=fill,
+                        overrides=overrides,
+                        array_floats=array_floats,
+                        array_rank=array_rank,
+                        leaf_rank=leaf_rank,
+                    )
+                    for slope in jax.device_get(first).tolist():
                         if not math.isfinite(slope):
                             raise ValueError("non-finite first derivative")
                         slopes.append(slope)
@@ -3394,6 +3445,30 @@ def _probe_fill(
     return jnp.asarray(fill)
 
 
+def _bind_all_but_liquid(
+    *, positional: Callable[..., object], liquid_pos: int, bound: list[object]
+) -> Callable[[FloatND], object]:
+    """Return the law as a function of the liquid argument alone.
+
+    Every other argument is a probe fill that is constant for the rung, so binding
+    them here leaves one differentiable scalar argument and lets a whole rung's
+    probe points go through a single vectorized call.
+    """
+
+    def _call(liquid_value: FloatND) -> object:
+        called = list(bound)
+        called[liquid_pos] = liquid_value
+        return positional(*called)
+
+    return _call
+
+
+# Interior liquid values the constancy probe differentiates at. Chosen away from
+# grid nodes and from one another so a dependence that vanishes at a node, or is
+# constant across a coincidence of two points, still registers.
+_LIQUID_PROBE_POINTS: tuple[float, ...] = (0.37, 1.63, 2.71)
+
+
 # `(array_floats, array_rank, leaf_rank)` triples the probes try, in order.
 _PROBE_FILL_RUNGS: tuple[tuple[bool, int, int], ...] = (
     (False, 1, 1),
@@ -3773,32 +3848,47 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(  # noqa: C901
 
         def _worst(*, array_floats: bool, array_rank: int, leaf_rank: int) -> float:
             worst = 0.0
+            samples = jnp.asarray(_LIQUID_PROBE_POINTS)
+            sweeps = tuple(
+                _int_code_sweeps(
+                    arg_names=arg_names,
+                    int_arg_values=probe_arguments.int_arg_values,
+                )
+            )
             for fills in _fill_assignments(len(arg_names)):
-                for overrides in _int_code_sweeps(
-                    arg_names=arg_names, int_arg_values=probe_arguments.int_arg_values
-                ):
-                    for sample in (0.37, 1.63, 2.71):
-                        args = [
-                            probe_arguments.fill(
-                                name=name,
-                                fill=fill,
-                                array_floats=array_floats,
-                                array_rank=array_rank,
-                                leaf_rank=leaf_rank,
-                            )
-                            if name not in overrides
-                            else jnp.asarray(overrides[name], dtype=jnp.int32)
-                            for name, fill in zip(arg_names, fills, strict=True)
-                        ]
-                        args[liquid_pos] = jnp.asarray(sample)
-                        jac = jax.jacfwd(_positional, argnums=liquid_pos)(*args)
-                        leaves = jax.tree_util.tree_leaves(jac)
-                        worst = max(
-                            [
-                                worst,
-                                *(float(jnp.max(jnp.abs(leaf))) for leaf in leaves),
-                            ]
+                for overrides in sweeps:
+                    args: list[object] = [
+                        probe_arguments.fill(
+                            name=name,
+                            fill=fill,
+                            array_floats=array_floats,
+                            array_rank=array_rank,
+                            leaf_rank=leaf_rank,
                         )
+                        if name not in overrides
+                        else jnp.asarray(overrides[name], dtype=jnp.int32)
+                        for name, fill in zip(arg_names, fills, strict=True)
+                    ]
+                    # Every argument but the liquid one is constant for this rung,
+                    # so all probe points go through one compiled, vectorized call.
+                    jac = jax.jit(
+                        jax.vmap(
+                            jax.jacfwd(
+                                _bind_all_but_liquid(
+                                    positional=_positional,
+                                    liquid_pos=liquid_pos,
+                                    bound=args,
+                                )
+                            )
+                        )
+                    )(samples)
+                    leaves = jax.tree_util.tree_leaves(jac)
+                    worst = max(
+                        [
+                            worst,
+                            *(float(jnp.max(jnp.abs(leaf))) for leaf in leaves),
+                        ]
+                    )
             return worst
 
         try:
