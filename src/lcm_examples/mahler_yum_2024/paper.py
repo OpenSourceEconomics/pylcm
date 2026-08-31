@@ -113,28 +113,6 @@ from lcm_examples.mahler_yum_2024 import (
     working_to_working_probability,
 )
 
-# Streaming knobs for the paper-mode configuration.
-#
-# `NBEGM`'s three streaming knobs all default to `0`, meaning every ride cell,
-# discrete branch and liquid interval has its buffers in flight simultaneously.
-# This model's product of non-liquid state axes and outer-mesh nodes makes that
-# allocation impractical, so cells and discrete branches are streamed.
-#
-# Blocking is result-preserving: `test_value_is_invariant_to_envelope_cell_blocking`,
-# `test_nbegm_branch_batch_size.py` and `test_nbegm_interval_batch.py` pin the
-# solved value against the unstreamed reference to `atol=rtol=1e-10` -- agreement
-# at that tolerance, not bit-for-bit, because blocking changes the XLA reduction
-# order.
-_PAPER_CELL_BLOCK_SIZE = 256
-
-# `labor_supply` is a branch axis of the large candidate array. Streaming it
-# reduces peak memory while the branch body remains compiled once.
-_PAPER_BRANCH_BATCH_SIZE = 1
-
-# `interval_batch_size` is left at `0`: the per-interval continuation buffers are
-# not the binding term here, and streaming a dimension that is not the problem
-# only costs time.
-
 N_HABIT_GRID = 17
 N_EFFORT_GRID = 17
 N_CONSUMPTION_GRID = 50
@@ -263,15 +241,18 @@ def build_dead_regime() -> Regime:
 def build_paper_solver(
     *,
     outer_search: AdaptiveOuterMesh | None = None,
-    cell_block_size: int = _PAPER_CELL_BLOCK_SIZE,
-    branch_batch_size: int = _PAPER_BRANCH_BATCH_SIZE,
+    cell_block_size: int = 0,
+    branch_batch_size: int = 0,
     interval_batch_size: int = 0,
 ) -> NNBEGM:
     """Construct the paper-mode NNBEGM solver.
 
-    The three streaming knobs are set rather than left at their `0` default;
-    see `_PAPER_CELL_BLOCK_SIZE` for why. Pass `0` explicitly to restore the
-    unstreamed behaviour (every cell and branch buffer in flight at once).
+    The fixed-window requests retain their ordinary defaults because this model has
+    no distinct paper-specific scheduling profile. The ride geometry admits stride
+    256 for every `cell_block_size` and `interval_batch_size` request. `LaborSupply`
+    has only three branches, so every `branch_batch_size` request admits the same
+    four-row stride. The arguments remain exposed to make that accepted-request
+    contract explicit, not as memory or runtime controls for this model.
     """
     return NNBEGM(
         inner=NBEGM(

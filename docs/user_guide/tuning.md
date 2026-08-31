@@ -1,280 +1,151 @@
 ---
-title: Performance and Memory Tuning
+title: Performance and memory tuning
 ---
 
-# Performance and Memory Tuning
+# Performance and memory tuning
 
-Two questions decide how a model runs on accelerators: *does it fit in memory*, and *are
-the devices used well*. pylcm keeps them separate as two independent knobs on every grid
-— `batch_size` (splay) and `distributed` (shard) — plus a forward-simulation chunk size
-and a handful of XLA environment flags. This page explains what each does, when it
-helps, and the trade-offs that are easy to get backwards.
+Tune a measured model, not an abstract solver. Correctness comes first: choose a solver
+whose assumptions represent the economics, run the model at `log_level="debug"`, and
+compare a reduced problem with grid search before optimizing it.
 
-The one-line model:
+The performance workflow has four measurements:
 
-- **`batch_size` (splay) is a memory knob. It is time-neutral.**
-- **`distributed` (shard) is a speed knob for discrete axes — communication-free on the
-  axes the agent never transitions along, and still effective (a modest per-period
-  exchange) on transitioning ones.**
+1. cold environment and cold compilation cache;
+1. cold model compilation in an installed environment;
+1. warm execution in the same process;
+1. peak host and device memory.
 
-Keeping these straight is the whole game: splaying never speeds anything up, and
-sharding is the only knob that does.
+Record model size, precision, device, solver configuration, and whether the compilation
+cache was warm. Without those fields, two timings are not comparable.
 
-## The two grid knobs
+## First locate the limiting axis
 
-Every grid — `DiscreteGrid` and every continuous grid (`LinSpacedGrid`, `LogSpacedGrid`,
-`IrregSpacedGrid`, the piecewise variants) — takes both:
+List the sizes of:
 
-```python
-from lcm.grids import DiscreteGrid, LinSpacedGrid
+- the state-grid product;
+- the action-grid product;
+- discrete branches;
+- stochastic nodes;
+- outer candidates in a nested solve;
+- periods and active regime shapes;
+- simulated subjects.
 
-# A permanent (never-transitioning) discrete state, sharded one block per device (speed):
-pref_type = DiscreteGrid(PrefType, distributed=True)
+The [scaling discussion](../methods/performance_scaling.md) explains how those axes
+enter each solver family. The largest declared grid is not necessarily the largest
+intermediate: a product or envelope matrix can dominate.
 
-# A continuous state, scan-chunked into pieces to save memory (time-neutral):
-assets = LinSpacedGrid(start=0.0, stop=1_000.0, n_points=200, batch_size=50)
-```
+## Reduce discretization only when accuracy permits
 
-| knob                       | what it does                                                             | what it buys      | applies to         |
-| -------------------------- | ------------------------------------------------------------------------ | ----------------- | ------------------ |
-| `batch_size=k` (splay)     | `lax.scan` the per-period work over chunks of `k` points along that axis | lower peak memory | any axis           |
-| `distributed=True` (shard) | place that axis's blocks on separate devices                             | parallel speedup  | discrete axes only |
+Fewer nodes reduce work and memory, but the right grid is an economic approximation
+choice. Inspect value and policy changes as grids are refined. Put resolution near
+curvature, boundaries, or regions visited frequently in simulation.
 
-`batch_size=0` (the default) means "no splay" — one kernel per period over the full
-axis. `distributed=False` (the default) means "not sharded".
+`PiecewiseLinSpacedGrid` and `PiecewiseLogSpacedGrid` control density around known
+locations. They do not declare a budget kink or cliff to NBEGM; use the structured
+[budget declarations](../methods/nonconvex_budgets.md) for that.
 
-## `batch_size`: splay for memory, time-neutral
+## Stream work with explicit batch widths
 
-At each period, backward induction builds the value array over every (state, action)
-combination and maximises over actions. `batch_size=k` only changes how that work is
-*tiled*: instead of one big `vmap`, it runs a `lax.scan` over chunks of `k` points along
-the chosen axis. **The total FLOPs are identical** — every combination is still
-evaluated exactly once — so the wall-clock barely moves. What drops is peak memory,
-because only one chunk's intermediate is live at a time.
+Some controls reduce live intermediates. Grid `batch_size`,
+`stochastic_node_batch_size`, `envelope_segment_block_size`, `subject_batch_size`, and
+any solver field whose Reference contract explicitly says it streams an evaluation axis
+can lower temporary workspace. The exact effect still depends on retained banks and
+downstream folds; for example, `NEGM.outer_batch_size` can lower temporary evaluation
+memory without capping the retained candidate bank.
 
-Splay stays time-neutral as long as each chunk still has enough parallel work to
-saturate the device — and in a real model it does, because the other grid dimensions
-(assets × savings × shocks × …) provide ample parallelism inside every chunk.
+NBEGM's `interval_batch_size`, `cell_block_size`, and `branch_batch_size` are compiled
+batch widths for the corresponding `lax.map` axes. A positive value smaller than the
+axis bounds how many entries are evaluated together; `0`, or a value covering the axis,
+uses one vectorized pass. Lower values can reduce live intermediates inside that mapped
+core at the cost of more sequential execution. They do not cap surrounding arrays,
+retained candidate banks, compilation memory, or total device memory.
 
-It stops being free only at the extremes:
+Choose the largest batch that meets the measured memory target, then verify values and
+runtime against the whole-axis setting on the model and backend you will use.
 
-- **Over-chunking** (very small `batch_size` → many tiny chunks): per-launch overhead
-  piles up, and a chunk can get too small to saturate the device. This bites hardest
-  when CUDA graphs are off (see [Environment flags](#environment-flags)), because every
-  chunk is then launched individually.
-- **Under-chunking** (`batch_size=0`, batch the whole axis): the full intermediate must
-  fit at once. If that forces the allocator to spill or to shrink fusion tiles, batching
-  can be *slower* than splaying — which is the whole reason the knob exists.
+Exact solver fields are in [Solvers and capabilities](../reference/solvers.md),
+[Upper envelopes](../reference/envelopes.md), and
+[Outer search](../reference/outer_search.md).
 
-**Which axis to splay.** Prefer a large, *uniform* axis:
+## Distribute independent discrete state work
 
-- Continuous axes (savings, assets, accumulated earnings) are ideal: they have many
-  points (fine control over the chunk count) and are full-size in every regime, so the
-  relief is uniform.
-- A discrete axis that *collapses* in some regimes — for example a lagged choice that is
-  fixed when the agent is forced out of the labour market — gives lumpy relief: splaying
-  it does nothing in the regimes where it is already a singleton.
+`distributed=True` shards a supported discrete grid over visible devices. Continuous
+grids reject distribution because their interpolation needs the full coordinate axis. A
+grid cannot be both batched and distributed; if a shard remains too large, batch a
+different axis.
 
-**Rule: use the fewest chunks that fit.** Halving memory needs only two chunks
-(`batch_size = n_points / 2`), not `batch_size = 1`.
-
-## `distributed`: shard for speed (discrete axes)
-
-`distributed=True` places the blocks of an axis on separate devices and solves them in
-parallel. It is the only knob that reduces wall-clock — but it is legal only for a
-narrow class of axes, and pylcm enforces the boundaries at construction time.
-
-**A never-transitioning axis shards communication-free; a transitioning discrete axis
-shards with only a modest per-period exchange.** If an agent's position on the axis is
-fixed for life (a permanent type, a fixed group), each block's value function is
-independent of the others, so the blocks sit on different devices with *zero*
-cross-device traffic — the ideal case. When the agent *does* transition along a sharded
-discrete axis, the cross-shard probability mass is contracted by an `all-reduce` that is
-*output-sized* (the reduced continuation value), not V-array-sized — so the per-period
-exchange stays well under the compute. (In one measured sweep, sharding a transitioning
-three-category state across three devices matched the never-transitioning case to within
-the timing noise.) A *continuous* axis is the one that truly defeats sharding: every
-next-period interpolation reads across the full grid, forcing an `all-gather` of the
-entire V-array per device each period — which is why pylcm rejects continuous-axis
-sharding outright (below).
-
-Two guards make this concrete — both raise `GridInitializationError` at construction:
-
-- **Continuous axes cannot be sharded.** `distributed=True` on any continuous grid is
-  rejected. (Continuous-axis sharding would require the solved value array to carry an
-  explicit output sharding; that path is not enabled.)
-- **You cannot splay and shard the same axis.** `batch_size > 0` together with
-  `distributed=True` is rejected: each batch is its own dispatch, and on a sharded axis
-  every dispatch carries a per-period cross-device collective, so batching multiplies
-  the synchronisation count (`×ceil(n_per_device / batch_size)`) and inverts the
-  compute/communication ratio. Keep `batch_size=0` on the sharded axis. When a device's
-  chunk is too big, shed memory by splaying a *different*, non-sharded axis — usually
-  the practical fix, since it needs no extra devices. If you do have spare devices,
-  shard the same axis across more of them: that helps precisely when a device holds more
-  than one block (`n_points / n_devices > 1`), the only case where splaying the sharded
-  axis would have helped anyway, and it shrinks the per-device chunk *and* adds
-  parallelism with no extra collectives.
-
-```{note}
-Sharding divides the state space across devices, so it also *reduces* per-device memory — a
-sharded model often needs no splay at all. Reach for splay only if a single device still
-cannot hold its share.
-```
-
-## Forward simulation: `subject_batch_size`
-
-Solving is one memory profile; simulating a large panel forward is another.
-`Model.simulate(..., subject_batch_size=k)` chunks the simulated subjects so only one
-chunk is resident at a time:
-
-- `subject_batch_size=0` (the default) simulates all subjects in a single pass.
-- `subject_batch_size=k` walks the panel in chunks of `k`.
-
-Like grid `batch_size`, this is a time-neutral memory knob — raise the chunk count if
-the simulated panel does not fit, and otherwise leave it at a single pass.
-
-## Worked example
-
-Measured on 80 GB A100s, one six-regime lifecycle model:
-
-- **One GPU, every axis batched** — full solve + simulate ≈ **1 h 37 m**.
-- **Three GPUs, the permanent-type axis sharded one block per device** — a *heavier*
-  policy-overlay variant of the same model ≈ **59 m**. The shard more than offsets the
-  extra per-regime work: three devices beat one even on a bigger problem.
-- **Three GPUs, a *transitioning* three-category state sharded one block per device** —
-  matched the never-transitioning permanent-type shard at the same model size, within
-  the timing noise. A transitioning discrete axis shards about as well; its per-period
-  exchange stays modest.
-- **Two single-GPU runs that differ only in which axis is chunked for memory** finished
-  within about a minute of each other (≈ 1 h 37 m vs ≈ 1 h 38 m) — direct confirmation
-  that the choice of splay axis is time-neutral; only the device count moved the wall.
-
-The takeaway is the one-line model: the multiplicative speedup comes from *sharding*
-across devices, not from any choice of `batch_size`.
-
-## Environment flags
-
-pylcm sets three JAX defaults at import and leaves the rest to the environment.
-
-**Set by pylcm (override before importing `lcm`):**
-
-- `XLA_PYTHON_CLIENT_PREALLOCATE=false` — allocate GPU memory on demand instead of
-  grabbing a fixed fraction up front. This plays nicely with other processes and makes
-  `nvidia-smi` and memory benchmarks reflect real usage.
-- `JAX_COMPILATION_CACHE_DIR=~/.cache/jax/<project>` — persist the JIT cache so repeated
-  runs of a large (many-regime) model skip the multi-minute compile. Set by default to a
-  per-project directory, named after the nearest enclosing directory holding a `.git` or
-  `pyproject.toml`. Cache entries are keyed by a hash of the computation, so splitting
-  costs no reuse; what it separates is concurrent *writers*, which are what leave
-  unreadable entries behind — surfacing much later as a decompression warning at read
-  time, after which the cache's work is silently lost.
-- `LCM_COMPILATION_CACHE_NAME=<name>` — name only the leaf under the shared cache root,
-  leaving the root alone. For a repository holding several independent models that run
-  concurrently (one package per paper, say), where the enclosing project is a single
-  directory and so too coarse a split. Set `JAX_COMPILATION_CACHE_DIR` instead to place
-  the cache somewhere else entirely; it takes precedence.
-- `JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS=0` — write every compiled program to the
-  persistent cache. JAX's default skips programs that compile in under a second, and a
-  pylcm model consists of many small per-regime/per-period programs — with the default
-  threshold the cache stays empty and every fresh process recompiles the whole model.
-  Cache hits skip XLA compilation only; tracing and lowering still run on each fresh
-  process, so re-runs get faster, not free.
-
-Both cache settings are applied through `jax.config` as well as the environment, so they
-hold whether `lcm` is imported before or after `jax`. Worth checking when a run is
-inexplicably slow, because a disabled cache reports nothing — it just recompiles:
+Before solving, verify the resources actually visible to JAX:
 
 ```python
 import jax
 
-print(jax.config.jax_compilation_cache_dir)  # `None` means no caching at all
+assert jax.device_count() == expected_devices
 ```
 
-**Knobs you set yourself**, with the trade-off each carries:
+A larger GPU can run larger chunks and may benefit from more concurrent independent
+work. It does not automatically shorten a workload made of small sequential kernels.
+Measure occupancy and memory rather than extrapolating from device memory alone.
 
-- `XLA_PYTHON_CLIENT_PREALLOCATE=true` — preallocate a single pool. At production scale
-  a stable pool avoids fragmentation and reduces allocator churn across the solve; pair
-  it with `XLA_PYTHON_CLIENT_MEM_FRACTION`.
-- `XLA_PYTHON_CLIENT_MEM_FRACTION=0.90` — the fraction of device memory the preallocated
-  pool claims. The remainder stays as non-pool headroom that the driver, collectives,
-  and CUDA graphs draw on; leave enough for them on a multi-GPU run.
-- `XLA_PYTHON_CLIENT_ALLOCATOR=default` — keep JAX's pooled BFC allocator. The
-  `platform` setting (per-op `cudaMalloc`/`cudaFree`) is dramatically slower; avoid it.
-- `XLA_FLAGS=--xla_gpu_autotune_level=0` — disable kernel autotuning. Off gives a
-  deterministic, lower-memory compile; on searches for faster GEMM/conv kernels but
-  reserves the largest candidate's scratch at compile time, which can re-trigger an OOM
-  on a model that barely fits. **Default to off.** Backward induction is dominated by
-  gather/scatter and interpolation over the state-action grid, not dense GEMMs, so
-  autotuning has little to optimize: head-to-head, the per-period execution time is
-  unchanged on/off (matched to logging precision), while compile time and peak memory
-  both rise. Turn it on only if a measurement on your model shows an actual per-period
-  speedup.
-- `XLA_FLAGS=--xla_gpu_enable_command_buffer=` (empty, i.e. disabled) — turn off CUDA
-  graphs. Command buffers batch kernel launches but consume non-pool driver memory;
-  disabling them frees that headroom at the cost of per-launch overhead. That overhead
-  lands hardest on splay-heavy configs (many small kernels), so a heavily-splayed model
-  pays more for disabling them.
+## Batch forward simulation
 
-```{warning}
-Sharding only helps if the devices are actually visible *and* exclusively yours. If your
-launcher grants N GPUs but `CUDA_VISIBLE_DEVICES` exposes only one, a model declared
-`distributed=True` silently runs on a single device — the classic "allocated 3, saw 1";
-assert `jax.device_count()` matches what you sharded for at startup, before the solve.
-And with `PREALLOCATE=true`, a GPU that another job or a leaked process is already using
-fails the pool preallocation outright — an `OUT_OF_MEMORY` on device 0 within seconds of
-startup (not mid-solve) — so request GPUs exclusively.
-```
+`model.simulate(subject_batch_size=k, ...)` bounds the subject workspace and offloads
+completed chunks to host. Random keys are assigned by global subject index, so changing
+the batch size does not change simulated draws.
 
-```{warning}
-**Never materialize a JAX array at module import.** A module-level `jnp.array(...)`
-constant — a lookup table, a grid of breakpoints, a coefficient vector — runs the moment
-the module is imported, and the first JAX device array in a process triggers the entire
-`PREALLOCATE=true` pool reservation on device 0. So the constant reserves the device the
-instant your model code is imported, *before any solve runs* — including in processes
-that import the code only to enumerate or schedule work and never call `solve()`. A
-second such process then fails the reservation outright: the same `OUT_OF_MEMORY` on
-device 0 within seconds of startup as above, with no solve in sight.
-```
+The same fixed `seed` also gives the same EV1 taste-shock choices in lazy and
+ahead-of-time simulation. Subject chunking and `Model(n_subjects=...)` change
+compilation and workspace shape, not which per-subject Gumbel key is used. Keep the
+seed, parameters, initial conditions, and model fixed when using that invariance as a
+regression check.
 
-Keep module-level numeric constants as NumPy host arrays and convert them to JAX inside
-the function that uses them, where the conversion runs under the solve's traced (and
-sharded) context:
+If `Model(n_subjects=n)` was constructed, a matching first simulation can compile for
+that population/chunk shape ahead of execution and cache it. Reuse requires stable
+parameter shapes and dtypes.
+
+## Reuse compilation
+
+pylcm enables a persistent JAX compilation cache by default. Check:
 
 ```python
-import jax.numpy as jnp
-import numpy as np
+import jax
 
-HOURS = np.array([0.0, 1000.0, 2000.0])  # host array at module scope — no device use
-
-
-def working_hours(labor_supply):
-    return jnp.asarray(HOURS)[labor_supply]  # device array only inside the solve
+print(jax.config.jax_compilation_cache_dir)
 ```
 
-**A stable multi-GPU configuration.** One environment that holds up at production scale,
-trading compile-time kernel search and launch batching for memory headroom:
+A `None` value means no persistent cache. `JAX_COMPILATION_CACHE_DIR` chooses the full
+path; `LCM_COMPILATION_CACHE_NAME` chooses a project leaf under the default root.
+Compilation keys still change when program shapes or the software environment change.
 
-```bash
-export XLA_PYTHON_CLIENT_PREALLOCATE=true
-export XLA_PYTHON_CLIENT_ALLOCATOR=default          # pooled BFC
-export XLA_PYTHON_CLIENT_MEM_FRACTION=0.90
-export XLA_FLAGS='--xla_gpu_autotune_level=0 --xla_gpu_enable_command_buffer='
-```
+Do not create JAX device arrays at module import solely for constants. Keep tables as
+NumPy arrays and convert inside traced functions; this avoids initializing a device in
+processes that only import the model.
 
-Command buffers are the one knob to revisit once a model fits comfortably: re-enabling
-them amortizes launch overhead, at the cost of the non-pool driver memory they consume.
-Autotuning, by contrast, has not been observed to speed these gather-bound solves, so
-leaving it off costs nothing and keeps the memory headroom.
+Runtime environment controls are listed in
+[Runtime, results, and persistence](../reference/runtime_and_results.md).
+
+## Benchmark the decision you face
+
+For a solver comparison, hold the economic model and accuracy target fixed. Report:
+
+- cold compile and warm execution separately;
+- peak host and device memory;
+- value and policy discrepancies;
+- precision and hardware;
+- grid, envelope, batching, and outer-search settings.
+
+Use the external
+[LCM solver benchmarks](https://github.com/OpenSourceEconomics/lcm-solver-benchmarks)
+for evolving shared evidence. The pylcm package's own regression benchmarks belong to
+the [Development](../development/benchmarking.md) chapter.
 
 ## Checklist
 
-- Shard a discrete axis across devices for speed (`distributed=True`) —
-  never-transitioning axes are communication-free, transitioning ones cost only a modest
-  per-period exchange.
-- Keep `batch_size=0` on a sharded axis — never batch and shard the same axis.
-- If a single device still can't hold its share, splay a large continuous axis, using
-  the fewest chunks that fit.
-- Never splay a sharded axis, and never expect splay to speed anything up — it only buys
-  memory.
-- Chunk the forward pass with `subject_batch_size` if the simulated panel doesn't fit.
-- Verify `jax.device_count()` matches your sharding before the solve.
+- Validate at `log_level="debug"` before tuning.
+- Make solver choice an economic-representation decision.
+- Refine grids against an accuracy target.
+- Distinguish true streaming controls, retained banks, inert requests, and active
+  admitted branch strides before tuning.
+- Shard only supported discrete axes and verify device visibility.
+- Measure compilation separately from execution.
+- Treat large-GPU speedups and solver break-even points as empirical.
+- Record the complete configuration with every timing.

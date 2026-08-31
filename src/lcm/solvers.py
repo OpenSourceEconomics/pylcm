@@ -20,7 +20,7 @@ backward induction:
 - `NBEGM(...)`: the non-convex-budget endogenous grid method for a 1-D
   consumption-savings regime whose budget carries declared breakpoints — a
   means-tested cliff split into case pieces, or a piecewise-affine schedule of
-  kinks, jumps, and floors. See `docs/user_guide/nbegm.md`.
+  kinks, jumps, and floors. See `docs/methods/nonconvex_budgets.md`.
 - `NNBEGM(...)`: the same outer keeper/adjuster search as `NEGM` with an inner
   `NBEGM` solve, so declared liquid kinks, jumps, and hard constraints keep
   their exact NB-EGM treatment inside every outer candidate.
@@ -35,10 +35,13 @@ numerical configuration only, so one of these regimes is required to use them;
 plain `Regime` stays the form for `GridSearch`.
 
 `DCEGM` defaults to `ExactEnvelope`, whose certified finite-candidate ownership
-requires pylcm's native exact-affine library. Selecting it on an installation
-without a loadable library fails during `Model(...)`; choose another typed envelope
-configuration only under its documented approximation contract. Solvers specialized
-to one paper's accounting remain published alongside that paper rather than here.
+requires pylcm's installed exact-affine payload. Selecting it without a compatible
+payload for the active JAX backend fails during `Model(...)`. Certified `NBEGM`
+requires the same installed capability and fails before returning a certified result
+when it is unavailable. `envelope_arithmetic="ordinary"` is the explicit no-kernel
+route under its documented approximation contract. Neither solver silently falls
+back. Solvers specialized to one paper's accounting remain published alongside that
+paper rather than here.
 
 The solvers are defined engine-side in per-solver modules under
 `_lcm.solution`; this module is a thin re-export so user code (and

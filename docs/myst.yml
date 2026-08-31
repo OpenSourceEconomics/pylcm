@@ -32,11 +32,16 @@ project:
   jupyter: true
   toc:
     - file: index.md
+    - file: getting_started/index.md
+      title: Getting Started
+      children:
+        - file: getting_started/installation.md
+        - file: getting_started/tiny_example.ipynb
+        - file: getting_started/model_vocabulary.md
+        - file: getting_started/next_steps.md
     - file: user_guide/index.md
       title: User Guide
       children:
-        - file: user_guide/tiny_example.ipynb
-        - file: user_guide/installation.md
         - file: user_guide/write_economics.ipynb
         - file: user_guide/defining_models.md
         - file: user_guide/regimes.ipynb
@@ -49,23 +54,26 @@ project:
         - file: user_guide/pandas_interop.md
         - file: user_guide/solving_and_simulating.md
         - file: user_guide/choosing_a_solver.md
-        - file: user_guide/nbegm.md
+        - file: user_guide/authoring_specialized_solvers.md
         - file: user_guide/tuning.md
-        - file: user_guide/benchmarking.md
         - file: user_guide/debugging.md
-    - file: explanations/index.md
-      title: Explanations
+    - file: methods/index.md
+      title: Concepts & Methods
       children:
+        - file: methods/dynamic_programming.md
         - file: explanations/function_representation.ipynb
+        - file: methods/solver_families.md
+        - file: methods/egm_foundations.md
+        - file: explanations/iskhakov_et_al_2017.ipynb
+        - file: methods/nested_egm.md
+        - file: methods/nonconvex_budgets.md
+        - file: methods/performance_scaling.md
         - file: explanations/interpolation.ipynb
         - file: explanations/approximating_continuous_shocks.ipynb
         - file: explanations/stochastic_transitions.ipynb
-        - file: explanations/dispatchers.ipynb
         - file: explanations/phase_grammar.ipynb
+        - file: methods/preferences.md
         - file: explanations/beta_delta.ipynb
-        - file: explanations/iskhakov_et_al_2017.ipynb
-        - file: explanations/architecture.md
-        - file: explanations/adding_a_solver.md
     - file: examples/index.md
       title: Examples
       children:
@@ -76,11 +84,31 @@ project:
         - file: examples/precautionary_savings.md
         - file: examples/precautionary_savings_health.md
         - file: examples/mahler_yum_2024.md
+        - file: examples/collective_regimes.md
+    - file: reference/index.md
+      title: Reference
+      children:
+        - file: reference/model_and_regime.md
+        - file: reference/grids_and_processes.md
+        - file: reference/transitions.md
+        - file: reference/consumption_savings.md
+        - file: reference/conditions.md
+        - file: reference/case_pieces.md
+        - file: reference/piecewise_affine.md
+        - file: reference/solvers.md
+        - file: reference/envelopes.md
+        - file: reference/outer_search.md
+        - file: reference/collective_regimes.md
+        - file: reference/runtime_and_results.md
+        - file: reference/public_api.md
+        - file: reference/custom_solvers.md
     - file: development/index.md
       title: Development
       children:
         - file: development/setup.md
         - file: development/conventions.md
+        - file: explanations/architecture.md
+        - file: explanations/dispatchers.ipynb
         - file: development/continuous_integration.md
         - file: development/benchmarking.md
         - file: development/collective_resource_contract.md
@@ -88,7 +116,7 @@ project:
       title: Credits & Acknowledgments
   error_rules:
     - rule: link-resolves
-      severity: ignore
+      severity: warn
 site:
   template: book-theme
   options:

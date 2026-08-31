@@ -32,6 +32,8 @@ and no dissolution, so that reference depth is the only thing varying.
 | Device memory, solve        | `CollectiveHouseholdSolveGpuPeakMem`                          | Device peak on the same workload.                                                                                                               |
 | Simulation over cohort size | `CollectiveHouseholdSimulate`, `n_subjects ∈ {1e3, 1e4, 1e5}` | Routing: one gate evaluation per edge per period over the whole population.                                                                     |
 | Transitive reference depth  | `ReferenceChainSolve`, `depth ∈ {1, 2, 4, 8}`                 | The closure a value constraint opens: link `k` reads link `k-1` in the same period.                                                             |
+| Device memory, simulation   | `CollectiveHouseholdSimulateGpuPeakMem`                       | Device peak while routing the cohort.                                                                                                           |
+| Device memory, chain solve  | `ReferenceChainSolveGpuPeakMem`                               | Device peak as reference depth grows.                                                                                                           |
 
 ## The budgets
 
@@ -71,8 +73,10 @@ lowering, *either* compiling each program or loading it from the persistent cach
 then running the backward induction itself. Which of compile-or-load happened is
 invisible in the number, and so is the execution term.
 
-Measured on this workload, on one GPU backend, with the cache directory asserted empty
-before the run and populated after (60 entries):
+Measured on this workload — `benchmarks/asv/bench_collective_household.py` at commit
+`1feb6b0a`, on an NVIDIA GeForce RTX 3070 (8 GiB) under the CUDA backend at float32
+(`jax_enable_x64` left at its default), with `JAX_COMPILATION_CACHE_DIR` pointed at a
+fresh directory asserted empty before the run and holding 60 entries after:
 
 |                                                       | seconds |
 | ----------------------------------------------------- | ------- |
@@ -110,14 +114,11 @@ share a budget line.
 
 ## Running them
 
-```bash
-pixi run -e benchmarks-cuda12 asv-quick     # one repetition, for a smoke check
-pixi run -e benchmarks-cuda12 asv-run       # the tracked run; refuses a dirty worktree
-pixi run -e benchmarks-cuda12 asv-compare   # against a previous commit
-```
+These workloads run under the ordinary ASV tasks; [Benchmarking](benchmarking.md) has
+the machine registration, the run and compare invocations, and the publish workflows.
 
-The GPU peak-memory companions need a CUDA environment and a device that publishes
-memory statistics. There is no skip path: nothing in the suite raises ASV's
-NotImplementedError or detects a device, so on a machine without one they fail rather
-than abstain. Run them only where a GPU is present; the host `peakmem_*` rows are the
-portable ones.
+One caveat is specific to this suite. The GPU peak-memory companions need a CUDA
+environment and a device that publishes memory statistics, and there is no skip path:
+nothing here raises ASV's `NotImplementedError` or detects a device, so on a machine
+without one they fail rather than abstain. Run them only where a GPU is present; the
+host `peakmem_*` rows are the portable ones.

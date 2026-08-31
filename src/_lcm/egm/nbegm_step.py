@@ -193,8 +193,10 @@ def nbegm_multi_interval_step(
         flat_interval_mask: Static per-interval flag, length N+1, marking the
             hard-constraint (slope-0) floor intervals. `None` means no floor.
         arithmetic: Which arithmetic decides envelope ownership; see
-            `envelope_at_query`. `"certified"` compares candidates in
-            double-double precision and abstains where none is separated;
+            `envelope_at_query`. `"certified"` delegates to the installed
+            exact-affine kernel and orders stored operands by exact affine value,
+            right extension, exact slope, and stable stored index; invalid or
+            non-finite geometry refuses the query and publishes NaN in all channels.
             `"ordinary"` takes the largest read in the working format, at a
             fraction of the cost, and is adequate where candidate values are
             separated by much more than the format's resolution.
@@ -771,8 +773,10 @@ def nbegm_multi_interval_step_savings(
         coh_intercepts: Per-interval cash-on-hand intercept, length N+1.
         breakpoints: Sorted ascending liquid breakpoints, length N.
         arithmetic: Which arithmetic decides envelope ownership; see
-            `envelope_at_query`. `"certified"` compares candidates in
-            double-double precision and abstains where none is separated;
+            `envelope_at_query`. `"certified"` delegates to the installed
+            exact-affine kernel and orders stored operands by exact affine value,
+            right extension, exact slope, and stable stored index; invalid or
+            non-finite geometry refuses the query and publishes NaN in all channels.
             `"ordinary"` takes the largest read in the working format, at a
             fraction of the cost, and is adequate where candidate values are
             separated by much more than the format's resolution.
@@ -1064,8 +1068,10 @@ def nbegm_per_interval_continuation_step_savings(
             envelope. The result is identical either way — the knob trades peak
             memory against a sequential scan.
         arithmetic: Which arithmetic decides envelope ownership; see
-            `envelope_at_query`. `"certified"` compares candidates in
-            double-double precision and abstains where none is separated;
+            `envelope_at_query`. `"certified"` delegates to the installed
+            exact-affine kernel and orders stored operands by exact affine value,
+            right extension, exact slope, and stable stored index; invalid or
+            non-finite geometry refuses the query and publishes NaN in all channels.
             `"ordinary"` takes the largest read in the working format, at a
             fraction of the cost, and is adequate where candidate values are
             separated by much more than the format's resolution.
@@ -1443,8 +1449,10 @@ def nbegm_unified_step_savings(
             breakpoints, length J. Static for a single variable; a per-cell traced
             array when breakpoints declared on several variables reorder per cell.
         arithmetic: Which arithmetic decides envelope ownership; see
-            `envelope_at_query`. `"certified"` compares candidates in
-            double-double precision and abstains where none is separated;
+            `envelope_at_query`. `"certified"` delegates to the installed
+            exact-affine kernel and orders stored operands by exact affine value,
+            right extension, exact slope, and stable stored index; invalid or
+            non-finite geometry refuses the query and publishes NaN in all channels.
             `"ordinary"` takes the largest read in the working format, at a
             fraction of the cost, and is adequate where candidate values are
             separated by much more than the format's resolution.
@@ -1674,8 +1682,10 @@ def nbegm_discrete_envelope_step(
             `coh_intercepts`, and `breakpoints` for `nbegm_multi_interval_step`.
         taste_shock_scale: EV1 taste-shock scale; `0` is the hard maximum.
         arithmetic: Which arithmetic decides envelope ownership; see
-            `envelope_at_query`. `"certified"` compares candidates in
-            double-double precision and abstains where none is separated;
+            `envelope_at_query`. `"certified"` delegates to the installed
+            exact-affine kernel and orders stored operands by exact affine value,
+            right extension, exact slope, and stable stored index; invalid or
+            non-finite geometry refuses the query and publishes NaN in all channels.
             `"ordinary"` takes the largest read in the working format, at a
             fraction of the cost, and is adequate where candidate values are
             separated by much more than the format's resolution.
@@ -1792,8 +1802,10 @@ def nbegm_unified_step(
         jump_mask: Static per-breakpoint flag, length N, `True` for a jump.
         equality_owner: Side owning each exact jump point (`when` or `otherwise`).
         arithmetic: Which arithmetic decides envelope ownership; see
-            `envelope_at_query`. `"certified"` compares candidates in
-            double-double precision and abstains where none is separated;
+            `envelope_at_query`. `"certified"` delegates to the installed
+            exact-affine kernel and orders stored operands by exact affine value,
+            right extension, exact slope, and stable stored index; invalid or
+            non-finite geometry refuses the query and publishes NaN in all channels.
             `"ordinary"` takes the largest read in the working format, at a
             fraction of the cost, and is adequate where candidate values are
             separated by much more than the format's resolution.
@@ -2086,8 +2098,10 @@ def nbegm_recurring_jump_step(
         jump_breakpoints: Sorted ascending liquid cliffs, length N.
         equality_owner: Side owning each exact cliff point (`when` or `otherwise`).
         arithmetic: Which arithmetic decides envelope ownership; see
-            `envelope_at_query`. `"certified"` compares candidates in
-            double-double precision and abstains where none is separated;
+            `envelope_at_query`. `"certified"` delegates to the installed
+            exact-affine kernel and orders stored operands by exact affine value,
+            right extension, exact slope, and stable stored index; invalid or
+            non-finite geometry refuses the query and publishes NaN in all channels.
             `"ordinary"` takes the largest read in the working format, at a
             fraction of the cost, and is adequate where candidate values are
             separated by much more than the format's resolution.
@@ -2360,8 +2374,10 @@ def nbegm_one_asset_step(
         asset_limit: Medicaid asset limit; the predicate is `liquid < asset_limit`.
         equality_owner: Predicate side owning the exact boundary point.
         arithmetic: Which arithmetic decides envelope ownership; see
-            `envelope_at_query`. `"certified"` compares candidates in
-            double-double precision and abstains where none is separated;
+            `envelope_at_query`. `"certified"` delegates to the installed
+            exact-affine kernel and orders stored operands by exact affine value,
+            right extension, exact slope, and stable stored index; invalid or
+            non-finite geometry refuses the query and publishes NaN in all channels.
             `"ordinary"` takes the largest read in the working format, at a
             fraction of the cost, and is adequate where candidate values are
             separated by much more than the format's resolution.
@@ -2804,12 +2820,6 @@ def _degenerate_inversion(*, marginal: Float1D, consumption: Float1D) -> BoolND:
     Args:
         marginal: Expected marginal continuation at each savings node.
         consumption: The consumption the Euler inversion recovered there.
-        arithmetic: Which arithmetic decides envelope ownership; see
-            `envelope_at_query`. `"certified"` compares candidates in
-            double-double precision and abstains where none is separated;
-            `"ordinary"` takes the largest read in the working format, at a
-            fraction of the cost, and is adequate where candidate values are
-            separated by much more than the format's resolution.
 
     Returns:
         Per-node flag, `True` where the node contributes no usable candidate.

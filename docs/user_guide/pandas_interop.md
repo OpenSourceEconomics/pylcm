@@ -113,6 +113,10 @@ messages.
 
 ## `derived_categoricals`
 
+A derived categorical changes parameter indexing but is not a state grid or transition.
+Declare it before selecting solver-specific row structure, and return integer category
+codes rather than Booleans.
+
 When a function indexes its array parameter by a variable that is *not* a state or
 action in the model — typically a DAG function output — the model has no grid to
 validate labels against. You will see an error like:

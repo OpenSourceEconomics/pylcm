@@ -19,7 +19,9 @@ cover that, and each goes in a slot a regime already has.
 in the *same* period.
 
 The complete worked model is `lcm_examples.collective_household`. This page walks
-through the pieces.
+through the pieces; the exact declaration contracts are in
+[Collective regimes](../reference/collective_regimes.md), and a staged build-up of one
+is in the [collective example](../examples/collective_regimes.md).
 
 ## A household with two stakeholders
 
@@ -42,6 +44,14 @@ couple = Regime(
     },
 )
 ```
+
+The `CollectiveUtility` remains the raw `functions["utility"]` declaration. Pylcm
+derives the stakeholder metadata from it and gives the numerical engine a
+`decomposed_functions` view with `utility_f` and `utility_m`; it does not replace what
+the model author wrote. Each value in `utilities` can be a callable, a
+`Phased(solve=..., simulate=...)` pair, or `None`. `None` delegates that stakeholder's
+body to a `utility_<stakeholder>` function supplied at regime or model level; successful
+model finalization guarantees that every delegated body arrived.
 
 The household maximizes one objective over the feasible actions and reads off each
 stakeholder's own action value `Q_s` at that common choice. Omitting `objective` weights
@@ -110,16 +120,18 @@ The predicate may read `Q_<s>` for each stakeholder, each key of its **own**
 `references`, and ordinary states, actions, functions and parameters. `projection` owes
 one entry per state of the *referenced* regime; the value is interpolated at the
 resulting coordinates. A constraint-local projection may not introduce free parameters —
-that is checked at model construction, naming the reference, the projection and the
-offending argument.
+that is checked when the `Regime` is constructed, naming the reference, the projection
+and the offending argument.
 
 The regime's mask is the AND of the ordinary constraints and the value-dependent ones. A
 cell whose mask is empty publishes the regime's **dissolution flag** and the `-inf`
 sentinel: there is no viable household there.
 
 `solve(return_dissolution_flags=True)` hands those flags back, and `simulate` takes them
-as `period_to_regime_to_dissolution_flags=`. A gate that reads `D_target` needs them;
-let `simulate` solve for you and they are threaded automatically.
+as `period_to_regime_to_dissolution_flags=` — see
+[Solving and simulating](solving_and_simulating.md) for the call shape. A gate that
+reads `D_target` needs them; let `simulate` solve for you and they are threaded
+automatically.
 
 ## Marrying and dissolving: a transition with a gate
 
@@ -160,9 +172,18 @@ single_f = Regime(
 ```
 
 `probability` and `gate` are two distinct operations. The first decides whether this
-target edge is attempted at all — it is exactly what a plain `transition` entry accepts.
-The second decides, having arrived at the target's coordinates, whether the row keeps
-that target or takes its route's fallback.
+target edge is attempted at all. It accepts a `MarkovTransition` or, as a convenience
+inside `ValueDependentTransition`, a bare probability callable; pylcm wraps the latter
+before the canonical transition pipeline reads it. An ordinary per-target cell such as
+`"single_f"` above still requires an explicit `MarkovTransition`. The gate decides,
+having arrived at the target's coordinates, whether the row keeps that target or takes
+its route's fallback.
+
+When the whole regime transition is `Phased`, repeat the value-dependent cell on both
+sides. The target is value-dependent in both phases or in neither, and both declarations
+must use the identical gate plus equal routes, references, and `off_grid` contract. Only
+the transition probability may differ, which permits a perceived probability in solve
+and a realized probability in simulation without changing what consent means.
 
 The gate is a **Boolean** predicate on the *target* regime's grid. It may read the
 target's value — `V_target` for a singleton target, `V_target_<s>` per stakeholder for a
@@ -205,7 +226,11 @@ couple = Regime(
     states={"wealth": couple_wealth},
     state_transitions={"wealth": next_couple_wealth},
     actions={"consumption": consumption},
-    functions={"utility": household_utility},
+    functions={
+        "utility": CollectiveUtility(
+            utilities={"f": her_utility, "m": his_utility},
+        )
+    },
 )
 ```
 
@@ -252,8 +277,8 @@ the target's nodes:
 
 ## Simulating: every row carries its own role
 
-Stakeholder identity is per subject, not per call. A row's role picks its leg on a gated
-edge; the branch it takes then sets the role it carries onward.
+Stakeholder identity is per subject, not per call. A row's role picks its route on a
+value-dependent transition; the branch it takes then sets the role it carries onward.
 
 - A subject starting in a **singleton** regime has no role.
 - A subject starting in a **collective** regime declares one, through

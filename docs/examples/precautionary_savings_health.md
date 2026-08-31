@@ -12,8 +12,10 @@ where utility depends only on remaining wealth and health.
 This model demonstrates multiple continuous states, multiple continuous actions,
 auxiliary functions (wage, labor income), constraints, and regime transitions.
 
-:::\{note} The parameterization is chosen to showcase pylcm's features, not to match any
-empirical calibration. :::
+:::{note}
+The parameterization is chosen to showcase pylcm's features, not to match any
+empirical calibration.
+:::
 
 [View source on GitHub](https://github.com/OpenSourceEconomics/pylcm/blob/main/src/lcm_examples/precautionary_savings_health.py)
 
@@ -43,7 +45,7 @@ df = result.to_dataframe(additional_targets="all")
 
 ## See Also
 
-- [A Tiny Example](../user_guide/tiny_example.ipynb) — simpler three-period model
+- [A Tiny Example](../getting_started/tiny_example.ipynb) — simpler three-period model
 - [Writing Economics](../user_guide/write_economics.ipynb) — function DAGs and regime
   design
 - [Grids](../user_guide/grids.md) — grid types and transitions

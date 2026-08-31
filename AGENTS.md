@@ -171,7 +171,7 @@ Delegation is therefore a convention here, not a mechanically enforced one.
 **Simulation (`src/_lcm/simulation/`)**
 
 - `simulate.py`: Forward simulation of solved models
-- `SimulationResult` (`lcm/result.py`): result object with deferred DataFrame
+- `SimulationResult` (`src/lcm/result.py`): result object with deferred DataFrame
   computation
 - Entry point: Model methods (`solve()`, `simulate()`)
 
@@ -255,12 +255,12 @@ Regime(
         "wealth": next_wealth,                   # Deterministic transition
         "education": fixed_transition("education"),  # Fixed state (identity law)
     },
-    actions={"action_name": Grid, ...},          # Action grids (can be empty)
+    actions={"action_name": Grid},                # Action grids (can be empty)
     functions={                                  # Must include "utility"; other functions optional
         "utility": utility_function,
-        "name": helper_func, ...
+        "name": helper_func,
     },
-    constraints={"name": constraint_func, ...},  # Optional: constraint functions
+    constraints={"name": constraint_func},        # Optional: constraint functions
     koopmans_aggregator=CESAggregator(),           # Optional: overrides the model-level one
     certainty_equivalent=PowerMean(),            # Optional: overrides the model-level one
 )
@@ -390,6 +390,10 @@ per-declaration.
 - `model.simulate(params=params, initial_conditions=initial_conditions, period_to_regime_to_V_arr=period_to_regime_to_V_arr, log_level="debug")`
   \- Simulate forward given solution. `period_to_regime_to_V_arr` is optional; when
   `None`, the model is solved automatically before simulating.
+- `model.solve(params=params, log_level="debug", return_dissolution_flags=True)`
+  additionally returns each collective regime's dissolution flags; pass them back as
+  `simulate(period_to_regime_to_dissolution_flags=...)`. A gate that reads `D_target`
+  needs them — letting `simulate` solve for you threads them automatically.
 - `log_level` is **required** on both `solve()` and `simulate()`
   (`off < warning < progress < debug`). It governs all runtime validation: `"off"` skips
   it, `"warning"` / `"progress"` warn and continue, `"debug"` raises. Start projects at
@@ -466,7 +470,7 @@ Regime(
 - `GatedEdge`, `stakeholders`, `value_constraints`, `same_period_refs` and `gated_edges`
   are the **lowered** form these declarations decompose into. Write the declarations.
 
-See `docs/user_guide/collective_regimes.md`.
+See `docs/user_guide/collective_regimes.md` and `docs/reference/collective_regimes.md`.
 
 ### Case-piece solver (NB-EGM)
 
@@ -529,7 +533,8 @@ resources = lcm.cash_on_hand_with_subsidy
   state; each piece reads only flat params, never a state or action; and the regime
   declares no discrete action and no taste shocks. Kinks, floors, and every other
   bracket shape go through `lcm.piecewise_affine` instead — see
-  `docs/user_guide/nbegm.md`.
+  `docs/methods/nonconvex_budgets.md` for the choice between the two declaration forms
+  and `docs/reference/piecewise_affine.md` for the decorator contract.
 - The case-piece kernels form cash-on-hand themselves rather than calling the regime's
   budget node, so the route accepts pylcm's own declaration of that form by identity:
   `lcm.cash_on_hand_with_subsidy`. A budget they cannot form goes through a
@@ -589,8 +594,11 @@ result.period_to_regime_to_V_arr  # dict[int, dict[RegimeName, FloatND]]
 
 # Persistence: writes `arrays/` (orbax), `metadata.pkl` (cloudpickle),
 # and `simulated_data.arrow` (feather of `to_dataframe`).
-result.save(directory="path/to/dir")
-loaded = SimulationResult.load(directory="path/to/dir")
+# `directory` is a pathlib.Path, not a str.
+from pathlib import Path
+
+result.save(directory=Path("path/to/dir"))
+loaded = SimulationResult.load(directory=Path("path/to/dir"))
 ```
 
 ### Initial Conditions Format

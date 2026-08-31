@@ -162,8 +162,8 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   `model.pruned_variables` records the result.
 
 - `model.user_regimes` holds plain `lcm.regime.Regime` instances, finalized at
-  model build (model-level slots merged, default `H` injected, completeness
-  validated).
+  model build (model-level slots merged, the model-level Koopmans aggregator and
+  certainty equivalent injected into non-terminal regimes, completeness validated).
 
 ### Per-target parameters
 

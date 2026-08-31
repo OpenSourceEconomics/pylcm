@@ -89,10 +89,14 @@ class Regime:
     - bare callable ⇒ deterministic, returns the target regime id
     - `MarkovTransition` ⇒ stochastic, returns a probability vector over all
       regimes
-    - per-target dict ⇒ stochastic, maps target regime names to
-      `MarkovTransition`-wrapped functions returning that target's
-      probability. The key set declares the regime's reachable targets;
-      omitted regimes are structurally unreachable.
+    - per-target dict ⇒ stochastic, maps target regime names to either
+      `MarkovTransition`-wrapped functions returning that target's probability,
+      or `ValueDependentTransition` declarations that additionally gate and
+      route the selected target. The key set declares the regime's reachable
+      targets; omitted regimes are structurally unreachable. An ordinary cell
+      requires an explicit `MarkovTransition`. A bare probability callable is
+      accepted only inside `ValueDependentTransition` and wrapped in the
+      derived `decomposed_transition` view.
 
     A bare callable or bare `MarkovTransition` declares conservative support
     over every regime active in the next period — every temporally
@@ -103,7 +107,10 @@ class Regime:
     this topology; only the declared form does.
 
     `Phased` gives each phase its own variant (matching form required; for
-    per-target dicts, identical key sets).
+    per-target dicts, identical key sets). A value-dependent target must be
+    value-dependent in both phases or neither. Its two declarations share the
+    identical gate and equal routes, references, and off-grid contract; only
+    their probabilities may differ.
     """
 
     active: ActiveFunction = lambda _age: True
@@ -151,11 +158,20 @@ class Regime:
     )
     """Correlated finite-support transitions owned by explicit target edges.
 
-    The outer key names the target regime and the inner key names the sampled
-    transition node supplied to every output law of that kernel. A
-    ``JointTransition`` shares one probability draw across all of its output
-    states. ``Phased`` may wrap the whole joint transition to provide matching
-    solve and simulation declarations.
+    The outer key names a reachable target regime and the inner key names the
+    sampled transition node supplied to every output law of that kernel. A
+    `JointTransition` shares one probability draw across all of its output
+    states. Terminal regimes declare none, and the current implementation is
+    limited to `GridSearch` source regimes.
+
+    `Phased` may wrap the whole joint transition. Its solve and simulation
+    declarations must have identical output-state keys and `support_size`; two
+    literal supports must also have identical pytree structure, leaf event
+    shapes, and dtypes. Callable-support schemas must remain identical across
+    active periods and both phases after params bind. Output laws are compiled
+    against the applicable phase grids. Probability rows are numerically
+    validated there, including carried-only simulation states, and must be
+    finite, in `[0, 1]`, and unit mass.
     """
 
     actions: Mapping[ActionName, Grid | None] = field(
@@ -168,7 +184,10 @@ class Regime:
     ] = field(default_factory=lambda: MappingProxyType({}))
     """Mapping of function names to callables; must include 'utility'.
 
-    `Phased` gives each phase its own implementation.
+    `Phased` gives each phase its own implementation. A collective regime
+    declares a `CollectiveUtility` under `"utility"`; that object remains in
+    this raw mapping, while `decomposed_functions` exposes its per-stakeholder
+    bodies under `utility_<s>` for the engine.
     """
 
     # `Phased` passes the type check so the validator can reject it with an
@@ -214,10 +233,24 @@ class Regime:
     taste_shocks: ExtremeValueTasteShocks | None = None
     """EV1 taste shocks on the regime's discrete-action combinations.
 
-    When set, the shock scale becomes the runtime param
-    `{"taste_shocks": {"scale": ...}}` and the solve aggregates discrete
-    actions via the smoothed expected maximum instead of the hard maximum.
-    Requires at least one discrete action.
+    The solve first maximizes the continuous actions conditional on each
+    discrete-action combination, then replaces the hard maximum across those
+    combinations by `scale * logsumexp(Q / scale)`. Simulation adds one
+    mean-zero `scale * (Gumbel(0, 1) - EULER_GAMMA)` draw per discrete
+    combination and subject before choosing the realized argmax. For a fixed
+    candidate-value array, centering makes the expected latent perturbed
+    maximum equal its log-sum. The shock affects the choice; simulation
+    publishes the selected unshocked value. DCEGM simulation is
+    grid-restricted, so its candidates need not equal the off-grid solve
+    candidates.
+
+    The shock scale is the runtime param
+    `{"taste_shocks": {"scale": ...}}` and must be strictly positive; omit
+    `taste_shocks` for a hard maximum. At least one discrete action is required.
+    Taste shocks are currently supported by `GridSearch` and `DCEGM`. They are
+    rejected on a collective regime, on the source of a
+    `ValueDependentTransition`, with a folded IID state or nonlinear certainty
+    equivalent, and with `NEGM`, `NBEGM`, or `NNBEGM`.
     """
 
     koopmans_aggregator: UserFunction | Phased | None = None
@@ -238,8 +271,14 @@ class Regime:
     When set, the solve aggregates the continuation as
     `g⁻¹(Σ_r p_r · E_w[g(V')])` instead of the linear expectation, and the
     transform parameters become runtime params under the pseudo-function
-    name `certainty_equivalent`. Only non-terminal regimes solved by
-    `GridSearch` support it.
+    name `certainty_equivalent`. `LinearExpectation()` is supported by every
+    solver. `GridSearch` supports any otherwise-supported
+    certainty-equivalent declaration. `NBEGM` and `NNBEGM` support the
+    nonlinear `PowerMean()` paired with `CESAggregator()` only on ride-along
+    routes that pass their remaining structural gates; the single-liquid
+    route, current-period jumps, and liquid-dependent continuation reads are
+    rejected. Other EGM-family solvers reject a nonlinear certainty
+    equivalent. Terminal regimes have no continuation and cannot declare one.
     """
 
     description: str = ""
@@ -248,9 +287,10 @@ class Regime:
     stakeholders: tuple[str, ...] | None = field(init=False, default=None)
     """Names of the stakeholders whose individual values this regime carries.
 
-    The lowered form of `CollectiveUtility.utilities`, whose keys are the
+    Derived from `CollectiveUtility.utilities`, whose keys are the
     stakeholders in the order they are written. A model declares the household
-    in `functions["utility"]` and reads the set back here.
+    in the raw `functions["utility"]` slot and reads the set back here; the
+    declaration itself is not replaced.
 
     `None` (the default) is the singleton case: the regime has one implicit
     stakeholder and one value function. A non-`None` tuple declares a
@@ -259,15 +299,15 @@ class Regime:
     argmax, with value-aware feasibility and value-gated regime routing
     (consent / dissolution).
 
-    A collective regime carries a per-stakeholder utility
-    `functions["utility_<s>"]` for each stakeholder `<s>` and a
-    `pareto_objective`. Its solve reads off each stakeholder's own value at the shared
-    household argmax, and a non-terminal one aggregates the per-stakeholder
-    continuation `Q^s = H(u^s, E[V'^s])`. A non-terminal collective regime's
-    transition targets must all be collective regimes with the identical
-    `stakeholders` tuple — per-stakeholder routing to different regimes goes
-    through `gated_edges`. EV1 taste shocks, nonlinear certainty equivalents,
-    and non-GridSearch solvers on a collective regime raise
+    A collective regime's `decomposed_functions` view carries a
+    per-stakeholder `utility_<s>` for each stakeholder `<s>`, together with a
+    `pareto_objective`. Its solve reads off each stakeholder's own value at the
+    shared household argmax, and a non-terminal one aggregates the
+    per-stakeholder continuation `Q^s = W(u^s, E[V'^s])`. A non-terminal
+    collective regime's transition targets must all be collective regimes with
+    the identical `stakeholders` tuple — per-stakeholder routing to different
+    regimes goes through `gated_edges`. EV1 taste shocks, nonlinear certainty
+    equivalents, and non-GridSearch solvers on a collective regime raise
     `NotImplementedError`.
 
     A shock declared `fold=True` is refused when the model is built, naming the
@@ -295,7 +335,7 @@ class Regime:
     pareto_objective: ParetoObjective | None = field(init=False, default=None)
     """How this collective regime's household trades its stakeholders off.
 
-    The lowered form of `CollectiveUtility.objective`.
+    Derived from `CollectiveUtility.objective`.
 
     Used only when `stakeholders is not None`: the collective solve maximizes
     the household scalarization `O = Σ_s λ_s Q^s` over the feasible action set.
@@ -311,7 +351,7 @@ class Regime:
     )
     """Value-aware feasibility predicates for a collective regime.
 
-    The lowered form of the `ValueDependentConstraint` entries of `constraints`,
+    Derived from the `ValueDependentConstraint` entries of `constraints`,
     which is where a model declares them — one constraint slot rather than two.
 
     Each entry maps a constraint name to a predicate returning `True` where the
@@ -358,7 +398,7 @@ class Regime:
     )
     """Gated edges routing this regime's continuation into a target regime.
 
-    The lowered form of the `ValueDependentTransition` entries of `transition`,
+    Derived from the `ValueDependentTransition` entries of `transition`,
     which is where a model declares them, so that target selection and
     value-dependent routing are one declaration rather than two.
 
@@ -380,7 +420,7 @@ class Regime:
     )
     """Same-period cross-regime reference values read by `value_constraints`.
 
-    The lowered form of `ValueDependentConstraint.references`, which is where a
+    Derived from `ValueDependentConstraint.references`, which is where a
     model declares them — local to the constraint that reads them.
 
     Maps each reference-value name (the argument name under which the
@@ -476,16 +516,16 @@ class Regime:
         normalize_regime_phases(self)
 
     def _lower_value_dependent_declarations(self) -> None:
-        """Decompose the collective declarations onto what the engine runs.
+        """Derive the engine-facing views of the collective declarations.
 
         `CollectiveUtility`, `ValueDependentConstraint` and
         `ValueDependentTransition` are declared inside the slots a regime
         already has — `functions`, `constraints` and `transition` — and each
-        one carries several engine-side facts at once. Splitting them here, at
-        construction, is what lets every later stage keep reading the fields it
-        has always read.
+        one carries several engine-side facts at once. Deriving those facts
+        here, without replacing the raw declarations, lets every later stage
+        read the fields and decomposed views it needs.
 
-        Nothing is lowered for a regime that declares none of the three, so a
+        Nothing is derived for a regime that declares none of the three, so a
         regime spelled out the long way passes through untouched.
         """
         self._lower_collective_utility()
@@ -503,8 +543,9 @@ class Regime:
         `utility_<s>` entry per stakeholder, in the order the household
         declares them — so the mapping an engine stage reads never holds a
         declaration object, whatever order the entries reached the regime in. A
-        stakeholder whose body is delegated keeps the entry the regime already
-        carries; the delegation itself was validated at construction.
+        stakeholder whose body is delegated keeps an entry the regime already
+        carries and is otherwise omitted. Model finalization merges any
+        model-level body and then validates that every stakeholder is complete.
 
         Deterministic and idempotent: a regime that declares no household is
         returned unchanged, and reading the view never changes the regime.
@@ -550,7 +591,7 @@ class Regime:
         return decompose_transition(self.transition)
 
     def _lower_collective_utility(self) -> None:
-        """Split `functions["utility"]` into stakeholders and their utilities."""
+        """Derive stakeholder metadata from `functions["utility"]`."""
         declaration = self.functions.get("utility")
         if not isinstance(declaration, CollectiveUtility):
             return
@@ -573,7 +614,7 @@ class Regime:
             object.__setattr__(self, "pareto_objective", declaration.objective)
 
     def _lower_value_dependent_constraints(self) -> None:
-        """Split each `ValueDependentConstraint` into predicate and references."""
+        """Derive predicates and references from value-dependent constraints."""
         declarations = {
             name: constraint
             for name, constraint in self.constraints.items()
@@ -625,7 +666,7 @@ class Regime:
         )
 
     def _lower_value_dependent_transitions(self) -> None:
-        """Split each `ValueDependentTransition` into a target and its edge."""
+        """Derive target-local edges from value-dependent transitions."""
         transition = self.transition
         if isinstance(transition, ValueDependentTransition):
             raise RegimeInitializationError(
