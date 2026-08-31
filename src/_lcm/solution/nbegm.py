@@ -257,15 +257,32 @@ class NBEGM(OneMarginSolver):
     """What to do when a derivative probe cannot evaluate the model.
 
     The affine-budget and interval-constancy probes differentiate the model's DAG
-    functions on the first solve, reading the declared parameters' own values and
-    synthesizing the states and actions they sweep. A DAG that cannot be
-    differentiated that way leaves the precondition unverified:
+    functions on each draw selected by `probe_schedule`, reading that draw's
+    parameter values and synthesizing the states and actions they sweep. A DAG
+    that cannot be differentiated that way leaves the precondition unverified:
 
     - `"reject"` — refuse to solve; the per-interval EGM preconditions must be
       machine-verified.
     - `"assume_declared"` — warn and solve; the model author asserts the budget's
       within-interval affinity and every liquid-reading law's interval-constancy,
       to be validated empirically (e.g. full-model brute-agreement gates).
+    """
+    probe_schedule: Literal["first_solve", "every_solve", "never"] = "every_solve"
+    """How often the parameter-dependent preconditions run.
+
+    The affine-budget and interval-constancy probes differentiate the model's DAG
+    against real parameter values, so they run at solve rather than at build. What
+    they cost is therefore charged per solve, which an estimation loop pays on
+    every criterion evaluation:
+
+    - `"every_solve"` — re-check every draw. This is the safe default because a
+      parameter can move a budget from affine to curved within an interval, or
+      switch a law from piecewise-constant to smoothly varying.
+    - `"first_solve"` — check once per model and reuse the verdict. Use only when
+      the model author asserts that parameter movement cannot change either
+      precondition over the supported parameter domain.
+    - `"never"` — skip them; the model author asserts both preconditions and
+      validates the solve against an independent reference.
     """
 
     def __post_init__(self) -> None:
@@ -445,6 +462,7 @@ class NBEGM(OneMarginSolver):
                 continuous_state=bound.continuous_state,
                 post_decision_function=bound.post_decision_function,
                 probe_failure=self.probe_failure,
+                probe_schedule=self.probe_schedule,
             )
             if is_schedule_discrete
             else None
@@ -456,6 +474,7 @@ class NBEGM(OneMarginSolver):
                 continuous_state=bound.continuous_state,
                 consumption_action_name=bound.continuous_action,
                 probe_failure=self.probe_failure,
+                probe_schedule=self.probe_schedule,
             )
             if is_schedule
             else None
@@ -513,6 +532,7 @@ class NBEGM(OneMarginSolver):
                 post_decision_function=bound.post_decision_function,
                 continuous_state=bound.continuous_state,
                 probe_failure=self.probe_failure,
+                probe_schedule=self.probe_schedule,
             )
             if is_discrete
             else None
@@ -753,6 +773,7 @@ class NBEGM(OneMarginSolver):
                 continuous_state=bound.continuous_state,
                 consumption_action_name=bound.continuous_action,
                 probe_failure=self.probe_failure,
+                probe_schedule=self.probe_schedule,
             )
             group_constraints = tuple(
                 replace(
@@ -803,6 +824,7 @@ class NBEGM(OneMarginSolver):
                             utility_dag=group_spec.utility_dag,
                             consumption_action_name=bound.continuous_action,
                             probe_failure=self.probe_failure,
+                            probe_schedule=self.probe_schedule,
                         )
                     )
                 param_checks.append(
@@ -813,6 +835,7 @@ class NBEGM(OneMarginSolver):
                         continuation_plan=plan,
                         liquid_name=group_spec.liquid_state_name,
                         probe_failure=self.probe_failure,
+                        probe_schedule=self.probe_schedule,
                     )
                 )
                 statics = _nbegm_ride_along_statics(
@@ -2548,6 +2571,7 @@ def _budget_affinity_check(
     liquid_state_name: StateName,
     require_unit_slope: bool,
     probe_failure: Literal["reject", "assume_declared"],
+    probe_schedule: Literal["first_solve", "every_solve", "never"] = "every_solve",
     breakpoint_sources: tuple[_NBEGMSource, ...] = (),
 ) -> ParamCheck:
     """Configure the shared all-branch, resolved-interval affinity preflight."""
@@ -2556,6 +2580,7 @@ def _budget_affinity_check(
         probe=_fail_if_budget_nonaffine_in_liquid,
         regime_name=context.regime_name,
         probe_arguments=_probe_arguments(context=context),
+        probe_schedule=probe_schedule,
         coh_dag=coh_dag,
         liquid_name=liquid_state_name,
         liquid_grid=liquid_grid,
@@ -3250,18 +3275,28 @@ def _deferred_probe(
     probe: Callable[..., None],
     regime_name: RegimeName,
     probe_arguments: _ProbeArguments,
+    probe_schedule: Literal["first_solve", "every_solve", "never"] = "every_solve",
     **bound: object,
 ) -> ParamCheck:
-    """Configure a probe at model build and run it on the first solve.
+    """Configure a probe at model build and run it as its schedule asks.
 
     The probe's target — the composed budget, the utility DAG, the continuation
     plan — is fixed by the model's structure and bound here. Its arguments are
     not: a budget reading tax schedules cannot be differentiated until those
     schedules have values, so the fills are completed from the params the engine
     supplies at solve.
+
+    The engine hands every published check every draw. Which of those draws this
+    probe actually evaluates is `probe_schedule`'s decision, kept here rather than
+    in the engine so a solver that needs each draw re-checked and one that does
+    not can sit in the same model.
     """
+    checked = False
 
     def _check(*, flat_params: FlatParams) -> None:
+        nonlocal checked
+        if probe_schedule == "never" or (probe_schedule == "first_solve" and checked):
+            return
         probe(
             regime_name=regime_name,
             probe_arguments=probe_arguments.with_params(
@@ -3269,6 +3304,7 @@ def _deferred_probe(
             ),
             **bound,
         )
+        checked = True
 
     return _check
 
@@ -3304,11 +3340,11 @@ def _probe_fill(
 ) -> object:
     """Build a probe argument, preferring the model's own parameter value.
 
-    A parameter the model declares answers with its own value: the probes run on
-    the first solve, so the tax schedules, interpolation tables, and coefficients
-    the budget reads are in hand. That is both simpler and stricter than any
-    synthetic stand-in — the probe differentiates the real bracket structure
-    rather than a fabricated one-bracket schedule.
+    A parameter the model declares answers with its own value: the probes run only
+    once the tax schedules, interpolation tables, and coefficients the budget reads
+    are in hand. That is both simpler and stricter than any synthetic stand-in — the
+    probe differentiates the real bracket structure rather than a fabricated
+    one-bracket schedule.
 
     Everything else is synthesized from what its consumers declare. The
     remaining arguments are the states and actions the probe is sweeping, plus
@@ -3835,6 +3871,7 @@ def _collect_nbegm_schedule_spec(
     continuous_state: StateName,
     consumption_action_name: ActionName,
     probe_failure: Literal["reject", "assume_declared"] = "reject",
+    probe_schedule: Literal["first_solve", "every_solve", "never"] = "every_solve",
 ) -> _NBEGMScheduleSpec:
     """Collect a regime's piecewise-affine schedules into one breakpoint partition.
 
@@ -3983,6 +4020,7 @@ def _collect_nbegm_schedule_spec(
             and all(kind == "jump" for kind in all_kinds)
         ),
         probe_failure=probe_failure,
+        probe_schedule=probe_schedule,
     )
     return _NBEGMScheduleSpec(
         param_checks=(affinity_check,),
@@ -5839,6 +5877,7 @@ def _collect_nbegm_discrete_spec(
     post_decision_function: FunctionName,
     continuous_state: StateName,
     probe_failure: Literal["reject", "assume_declared"],
+    probe_schedule: Literal["first_solve", "every_solve", "never"] = "every_solve",
 ) -> _NBEGMDiscreteSpec:
     """Collect the discrete actions of a smooth regime and their grid codes.
 
@@ -5876,6 +5915,7 @@ def _collect_nbegm_discrete_spec(
         liquid_state_name=liquid_state_name,
         require_unit_slope=False,
         probe_failure=probe_failure,
+        probe_schedule=probe_schedule,
     )
     return _NBEGMDiscreteSpec(
         coh_of_liquid_dag=coh_dag,
@@ -5927,6 +5967,7 @@ def _collect_nbegm_schedule_discrete_spec(
     continuous_state: StateName,
     post_decision_function: FunctionName,
     probe_failure: Literal["reject", "assume_declared"],
+    probe_schedule: Literal["first_solve", "every_solve", "never"] = "every_solve",
 ) -> _NBEGMScheduleDiscreteSpec:
     """Collect the discrete actions layered over a single-liquid cliff schedule."""
     import inspect  # noqa: PLC0415
@@ -6001,6 +6042,7 @@ def _collect_nbegm_schedule_discrete_spec(
             bool(breakpoint_kinds) and all(kind == "jump" for kind in breakpoint_kinds)
         ),
         probe_failure=probe_failure,
+        probe_schedule=probe_schedule,
     )
     return _NBEGMScheduleDiscreteSpec(
         coh_of_liquid_action_dag=coh_dag,
@@ -6297,6 +6339,7 @@ def _build_nbegm_single_axis_group(
             continuous_state=solver.continuous_state,
             post_decision_function=solver.post_decision_function,
             probe_failure=solver.probe_failure,
+            probe_schedule=solver.probe_schedule,
         )
         core = _build_nbegm_schedule_discrete_core(
             savings_grid=savings_grid,
@@ -6314,6 +6357,7 @@ def _build_nbegm_single_axis_group(
             continuous_state=solver.continuous_state,
             consumption_action_name=solver.continuous_action,
             probe_failure=solver.probe_failure,
+            probe_schedule=solver.probe_schedule,
         )
         core = _build_nbegm_continuous_core(
             savings_grid=savings_grid,
@@ -6331,6 +6375,7 @@ def _build_nbegm_single_axis_group(
             post_decision_function=solver.post_decision_function,
             continuous_state=solver.continuous_state,
             probe_failure=solver.probe_failure,
+            probe_schedule=solver.probe_schedule,
         )
         core = _build_nbegm_discrete_core(
             savings_grid=savings_grid,
