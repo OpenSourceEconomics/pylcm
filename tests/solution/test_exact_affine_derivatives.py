@@ -134,7 +134,8 @@ def test_owner_and_status_have_float0_tangents(*, batched: bool) -> None:
         query = jnp.asarray([[0.5], [0.5]], dtype=dtype)
         live = jnp.ones_like(left, dtype=bool)
 
-        def owner(*, a, b, c, d, q):
+        # keyword-only-exempt: library-callback=jax.jvp
+        def owner(a, b, c, d, q):
             return exact_query_winner_batched(
                 left_grid=a,
                 right_grid=b,

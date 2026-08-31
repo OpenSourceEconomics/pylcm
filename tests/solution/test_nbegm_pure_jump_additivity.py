@@ -165,7 +165,7 @@ def _scalar_interval_oracle_accepts(
         return False
     for code in integer_codes:
         for liquid in representatives:
-            slope, second_derivative = coefficient_at(liquid, code)
+            slope, second_derivative = coefficient_at(liquid=liquid, code=code)
             if second_derivative != 0.0:
                 return False
             if require_unit_slope and slope != 1.0:
@@ -269,7 +269,8 @@ def test_generated_breakpoint_positions_and_permutations_match_scalar_oracle(
             jnp.where(liquid < hi, 2.0 * liquid - 4.0, liquid + 1.0),
         )
 
-    def coefficient_at(*, liquid: float, _code: int) -> tuple[float, float]:
+    def coefficient_at(*, liquid: float, code: int) -> tuple[float, float]:
+        del code
         slope = 1.0 if liquid < lower or liquid >= upper else 2.0
         return slope, 0.0
 
@@ -312,7 +313,8 @@ def test_generated_narrow_curved_interval_matches_scalar_oracle(
         curved = liquid + 0.25 * (liquid - lower_threshold) ** 2
         return jnp.where(inside, curved, liquid)
 
-    def coefficient_at(*, liquid: float, _code: int) -> tuple[float, float]:
+    def coefficient_at(*, liquid: float, code: int) -> tuple[float, float]:
+        del code
         return (1.0, 0.5) if lower < liquid < upper else (1.0, 0.0)
 
     oracle = _scalar_interval_oracle_accepts(
@@ -395,7 +397,7 @@ def test_endpoint_adjacent_interval_matches_scalar_oracle(
     oracle = _scalar_interval_oracle_accepts(
         liquid_bounds=(1.0, 21.0),
         thresholds=((threshold, "above"),),
-        coefficient_at=lambda _liquid, _code: (1.0, 0.0),
+        coefficient_at=lambda *, liquid, code: (1.0, 0.0),  # noqa: ARG005
         require_unit_slope=True,
         enable_x64=enable_x64,
     )
@@ -446,7 +448,8 @@ def test_legal_piecewise_affine_routes_match_scalar_oracle(
             ),
         )
 
-    def coefficient_at(*, liquid: float, _code: int) -> tuple[float, float]:
+    def coefficient_at(*, liquid: float, code: int) -> tuple[float, float]:
+        del code
         position = 0 if liquid < lower else 1 if liquid < upper else 2
         return slopes[position], 0.0
 
@@ -501,7 +504,7 @@ def test_legal_non_unit_derived_ride_route_matches_scalar_oracle(
         _scalar_interval_oracle_accepts(
             liquid_bounds=(0.0, 20.0),
             thresholds=(((threshold - code) / scale, "above"),),
-            coefficient_at=lambda _liquid, _ignored: (1.4, 0.0),
+            coefficient_at=lambda *, liquid, code: (1.4, 0.0),  # noqa: ARG005
             require_unit_slope=False,
             enable_x64=enable_x64,
         )

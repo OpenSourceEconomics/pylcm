@@ -451,7 +451,12 @@ def test_batched_winner_matches_the_exact_rational_order_in_every_row() -> None:
         n_batch=n_batch, n_segment=n_segment, n_query=n_query
     )
     winner, _status = jax.jit(_resolve_batched)(
-        left, right, v_left, v_right, live, query
+        left=left,
+        right=right,
+        v_left=v_left,
+        v_right=v_right,
+        live=live,
+        query=query,
     )
     expected = np.asarray(
         [
@@ -479,12 +484,12 @@ def test_batched_winner_resolves_each_row_against_its_own_segments() -> None:
     # Both rows hold a rising link and a flat one; only the flat level differs, so
     # the flat link owns the query in the first row and loses it in the second.
     winner, _status = jax.jit(_resolve_batched)(
-        np.asarray([[0.0, 0.0], [0.0, 0.0]]),
-        np.asarray([[1.0, 1.0], [1.0, 1.0]]),
-        np.asarray([[0.0, 0.5], [0.0, 0.1]]),
-        np.asarray([[1.0, 0.5], [1.0, 0.1]]),
-        np.asarray([[True, True], [True, True]]),
-        np.asarray([[0.25], [0.25]], dtype=np.dtype(jdtype)),
+        left=np.asarray([[0.0, 0.0], [0.0, 0.0]]),
+        right=np.asarray([[1.0, 1.0], [1.0, 1.0]]),
+        v_left=np.asarray([[0.0, 0.5], [0.0, 0.1]]),
+        v_right=np.asarray([[1.0, 0.5], [1.0, 0.1]]),
+        live=np.asarray([[True, True], [True, True]]),
+        query=np.asarray([[0.25], [0.25]], dtype=np.dtype(jdtype)),
     )
     np.testing.assert_array_equal(np.asarray(winner), np.asarray([[1], [0]]))
 
@@ -493,20 +498,33 @@ def test_batched_winner_reports_unresolved_where_no_live_segment_brackets() -> N
     """A query outside every live segment of its row publishes the unresolved status."""
     jdtype = _jdtype()
     _winner, status = jax.jit(_resolve_batched)(
-        np.asarray([[0.0]]),
-        np.asarray([[1.0]]),
-        np.asarray([[0.0]]),
-        np.asarray([[1.0]]),
-        np.asarray([[True]]),
-        np.asarray([[5.0]], dtype=np.dtype(jdtype)),
+        left=np.asarray([[0.0]]),
+        right=np.asarray([[1.0]]),
+        v_left=np.asarray([[0.0]]),
+        v_right=np.asarray([[1.0]]),
+        live=np.asarray([[True]]),
+        query=np.asarray([[5.0]], dtype=np.dtype(jdtype)),
     )
     np.testing.assert_array_equal(np.asarray(status), UNRESOLVED_STATUS)
 
 
 def _lowered_batched_text(*, n_batch: int) -> str:
     """Lower one batched winner call and return its stablehlo text."""
-    operands = _batched_operands(n_batch=n_batch, n_segment=4, n_query=3)
-    return jax.jit(_resolve_batched).lower(*operands).as_text()
+    left, right, v_left, v_right, live, query = _batched_operands(
+        n_batch=n_batch, n_segment=4, n_query=3
+    )
+    return (
+        jax.jit(_resolve_batched)
+        .lower(
+            left=left,
+            right=right,
+            v_left=v_left,
+            v_right=v_right,
+            live=live,
+            query=query,
+        )
+        .as_text()
+    )
 
 
 @pytest.mark.parametrize("n_batch", [2, 8])
@@ -525,10 +543,27 @@ def test_batched_winner_lowers_without_a_sequential_loop() -> None:
 def test_batched_winner_accepts_a_multi_axis_batch() -> None:
     """A batch carried on several leading axes resolves like its flattened form."""
     n_batch, n_segment, n_query = 6, 5, 3
-    operands = _batched_operands(n_batch=n_batch, n_segment=n_segment, n_query=n_query)
-    flat_winner, _flat_status = jax.jit(_resolve_batched)(*operands)
+    left, right, v_left, v_right, live, query = _batched_operands(
+        n_batch=n_batch, n_segment=n_segment, n_query=n_query
+    )
+    flat_winner, _flat_status = jax.jit(_resolve_batched)(
+        left=left,
+        right=right,
+        v_left=v_left,
+        v_right=v_right,
+        live=live,
+        query=query,
+    )
+    operands = (left, right, v_left, v_right, live, query)
     nested = [array.reshape(2, 3, array.shape[-1]) for array in operands]
-    nested_winner, _nested_status = jax.jit(_resolve_batched)(*nested)
+    nested_winner, _nested_status = jax.jit(_resolve_batched)(
+        left=nested[0],
+        right=nested[1],
+        v_left=nested[2],
+        v_right=nested[3],
+        live=nested[4],
+        query=nested[5],
+    )
     np.testing.assert_array_equal(
         np.asarray(nested_winner).reshape(n_batch, n_query),
         np.asarray(flat_winner),

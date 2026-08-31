@@ -284,7 +284,7 @@ def _endpoint_failures(*, states, endpoint, route):
     inversions can be compared on exactly the same states and the same map.
     """
     target = jnp.full_like(states, endpoint)
-    image = states + route(states, target)
+    image = states + route(at_zero=states, target=target)
     return int(jnp.sum(image != target))
 
 

@@ -60,7 +60,8 @@ _CRRA = 2.0
 _SEPARABLE_ATOL = 1e-10
 
 
-def _linear(*, utility, continuation):
+# keyword-only-exempt: library-callback=jax.grad
+def _linear(utility, continuation):
     return LinearAggregator()(
         utility=jnp.asarray(utility),
         CE=jnp.asarray(continuation),
@@ -68,7 +69,8 @@ def _linear(*, utility, continuation):
     )
 
 
-def _epstein_zin(*, utility, continuation):
+# keyword-only-exempt: library-callback=jax.grad
+def _epstein_zin(utility, continuation):
     return CESAggregator()(
         utility=jnp.asarray(utility),
         CE=jnp.asarray(continuation),
@@ -77,7 +79,8 @@ def _epstein_zin(*, utility, continuation):
     )
 
 
-def _factoring_interaction(*, utility, continuation):
+# keyword-only-exempt: library-callback=jax.grad
+def _factoring_interaction(utility, continuation):
     """A coupled aggregator that nonetheless admits an endogenous-grid step.
 
     Its marginal rate of substitution is `(1 + 0.1 CE) / (beta + 0.1 U)`, which
@@ -88,7 +91,8 @@ def _factoring_interaction(*, utility, continuation):
     return utility + _DISCOUNT_FACTOR * continuation + 0.1 * utility * continuation
 
 
-def _non_factoring(*, utility, continuation):
+# keyword-only-exempt: library-callback=jax.grad
+def _non_factoring(utility, continuation):
     """An aggregator whose marginal rate of substitution does not factor.
 
     Its MRS is `(1 + 0.2 U CE) / (beta + 0.1 U^2)`, whose numerator mixes the
@@ -260,7 +264,8 @@ def test_the_derived_condition_reproduces_the_epstein_zin_closed_form(*, nu, dnu
     np.testing.assert_allclose(got, float(expected), rtol=1e-6)
 
 
-def _convex_flow_side(*, utility, continuation):
+# keyword-only-exempt: library-callback=jax.grad
+def _convex_flow_side(utility, continuation):
     """A factoring aggregator whose flow-side factor `A` increases.
 
     Additively separable, so it factors and admits an endogenous-grid step. But

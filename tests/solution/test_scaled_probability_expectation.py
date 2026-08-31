@@ -19,7 +19,7 @@ def _maybe_jit(
 
 
 def _mean(*, values: FloatND, weights: FloatND, shifts: IntND) -> FloatND:
-    """The scaled weighted mean, as a positional-argument function to transform."""
+    """The scaled weighted mean passed through JAX transformations."""
     return zero_safe_average(a=values, weights=weights, shifts=shifts)
 
 
@@ -36,9 +36,9 @@ def test_the_reduction_scales_by_bit_arithmetic_not_by_a_general_primitive(
     """
     dtype = jnp.zeros(()).dtype
     traced = jax.make_jaxpr(_mean)(
-        jnp.ones(5, dtype=dtype),
-        jnp.full(5, 0.2, dtype=dtype),
-        jnp.zeros(5, dtype=jnp.int32),
+        values=jnp.ones(5, dtype=dtype),
+        weights=jnp.full(5, 0.2, dtype=dtype),
+        shifts=jnp.zeros(5, dtype=jnp.int32),
     )
 
     assert f"name={primitive}" not in str(traced)
@@ -85,7 +85,7 @@ def test_downward_scaling_matches_ieee_ldexp_at_boundaries(*, compiled: bool) ->
     )
     scale = _maybe_jit(func=scaled_down_by_power_of_two, compiled=compiled)
 
-    got = np.asarray(scale(jnp.asarray(values), jnp.asarray(shifts)))
+    got = np.asarray(scale(values=jnp.asarray(values), shift=jnp.asarray(shifts)))
     with np.errstate(over="ignore", under="ignore", invalid="ignore"):
         expected = np.ldexp(values, shifts).astype(values.dtype)
 
@@ -111,7 +111,7 @@ def test_downward_scaling_rounds_subnormal_ties_to_even(*, compiled: bool) -> No
     shifts = np.asarray([-1, -1], dtype=np.int32)
     scale = _maybe_jit(func=scaled_down_by_power_of_two, compiled=compiled)
 
-    got = np.asarray(scale(jnp.asarray(values), jnp.asarray(shifts)))
+    got = np.asarray(scale(values=jnp.asarray(values), shift=jnp.asarray(shifts)))
     expected = np.ldexp(values, shifts).astype(np_dtype)
 
     np.testing.assert_array_equal(got.view(integer_dtype), expected.view(integer_dtype))
@@ -133,7 +133,7 @@ def test_downward_scaling_matches_ieee_ldexp_on_random_finite_values(
     shifts = rng.integers(minimum_shift, 1, size=values.size, dtype=np.int32)
     scale = _maybe_jit(func=scaled_down_by_power_of_two, compiled=compiled)
 
-    got = np.asarray(scale(jnp.asarray(values), jnp.asarray(shifts)))
+    got = np.asarray(scale(values=jnp.asarray(values), shift=jnp.asarray(shifts)))
     with np.errstate(over="ignore", under="ignore", invalid="ignore"):
         expected = np.ldexp(values, shifts).astype(np_dtype)
 
@@ -173,9 +173,9 @@ def test_a_large_rare_contribution_is_formed_before_its_scale_is_applied(
     reduce = _maybe_jit(func=_mean, compiled=compiled)
 
     got = reduce(
-        jnp.asarray([0.0, large], dtype=dtype),
-        jnp.asarray([1.0, tiny], dtype=dtype),
-        jnp.asarray([0, 2], dtype=jnp.int32),
+        values=jnp.asarray([0.0, large], dtype=dtype),
+        weights=jnp.asarray([1.0, tiny], dtype=dtype),
+        shifts=jnp.asarray([0, 2], dtype=jnp.int32),
     )
 
     np.testing.assert_allclose(np.asarray(got), np.asarray(0.25, dtype=dtype))
@@ -196,9 +196,9 @@ def test_a_live_nonfinite_node_is_not_reclassified_as_null_by_its_scale(
     }[kind]
 
     got = reduce(
-        jnp.asarray([1.0, nonfinite]),
-        jnp.ones(2),
-        jnp.asarray([0, spread], dtype=jnp.int32),
+        values=jnp.asarray([1.0, nonfinite]),
+        weights=jnp.ones(2),
+        shifts=jnp.asarray([0, spread], dtype=jnp.int32),
     )
 
     if kind == "nan":
@@ -217,9 +217,9 @@ def test_a_represented_zero_remains_the_null_event_at_any_scale(
     reduce = _maybe_jit(func=_mean, compiled=compiled)
 
     got = reduce(
-        jnp.asarray([1.0, jnp.nan]),
-        jnp.asarray([1.0, 0.0]),
-        jnp.asarray([0, 300], dtype=jnp.int32),
+        values=jnp.asarray([1.0, jnp.nan]),
+        weights=jnp.asarray([1.0, 0.0]),
+        shifts=jnp.asarray([0, 300], dtype=jnp.int32),
     )
 
     np.testing.assert_allclose(np.asarray(got), np.asarray(1.0))
@@ -231,9 +231,9 @@ def test_the_mass_is_read_on_the_same_common_scale(*, compiled: bool) -> None:
     reduce = _maybe_jit(func=_mean, compiled=compiled)
 
     got = reduce(
-        jnp.asarray([0.0, 1.0]),
-        jnp.ones(2),
-        jnp.asarray([0, 2], dtype=jnp.int32),
+        values=jnp.asarray([0.0, 1.0]),
+        weights=jnp.ones(2),
+        shifts=jnp.asarray([0, 2], dtype=jnp.int32),
     )
 
     np.testing.assert_allclose(np.asarray(got), np.asarray(0.2))

@@ -30,7 +30,7 @@
           },
           {
             "path": "src/_lcm/grids/discrete.py",
-            "sha256": "1122bf546286bede4f6309b567e617e3a053995431fcd4abbf37212a33123eda"
+            "sha256": "7356e8ef8fffaadcdbb01db2862065dd146d1c538cb71bf5292a89e0b98d0409"
           },
           {
             "path": "src/_lcm/grids/piecewise.py",
@@ -178,7 +178,7 @@
           }
         ],
         "source_count": 43,
-        "source_inventory_sha256": "3d38564513ad50c005ae932f2a947cffe6c55d94222e62caac9d198aeb8ca5c2"
+        "source_inventory_sha256": "156eaa498fb0492b6b57fbf7ef9540cc4cc30a173775eb0389d170cff465eacc"
       },
       "fast": {
         "candidate_sources": [
@@ -208,7 +208,7 @@
           },
           {
             "path": "src/_lcm/grids/discrete.py",
-            "sha256": "1122bf546286bede4f6309b567e617e3a053995431fcd4abbf37212a33123eda"
+            "sha256": "7356e8ef8fffaadcdbb01db2862065dd146d1c538cb71bf5292a89e0b98d0409"
           },
           {
             "path": "src/_lcm/grids/piecewise.py",
@@ -356,13 +356,13 @@
           }
         ],
         "source_count": 43,
-        "source_inventory_sha256": "3d38564513ad50c005ae932f2a947cffe6c55d94222e62caac9d198aeb8ca5c2"
+        "source_inventory_sha256": "156eaa498fb0492b6b57fbf7ef9540cc4cc30a173775eb0389d170cff465eacc"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "3d38564513ad50c005ae932f2a947cffe6c55d94222e62caac9d198aeb8ca5c2",
+  "source_inventory_sha256": "156eaa498fb0492b6b57fbf7ef9540cc4cc30a173775eb0389d170cff465eacc",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -390,7 +390,7 @@
     },
     {
       "path": "src/_lcm/grids/discrete.py",
-      "sha256": "1122bf546286bede4f6309b567e617e3a053995431fcd4abbf37212a33123eda"
+      "sha256": "7356e8ef8fffaadcdbb01db2862065dd146d1c538cb71bf5292a89e0b98d0409"
     },
     {
       "path": "src/_lcm/grids/piecewise.py",

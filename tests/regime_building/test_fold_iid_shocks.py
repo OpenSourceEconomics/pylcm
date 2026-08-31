@@ -704,7 +704,7 @@ def test_zero_weight_fold_axis_still_averages_infinities_safely():
     """
     reducer = _select_fold_reducer(weight=jnp.array([0.0, 1.0, 0.0]), name="s")
     out = reducer(
-        jnp.array([-jnp.inf, 4.0, jnp.inf]),
+        a=jnp.array([-jnp.inf, 4.0, jnp.inf]),
         axis=0,
         weights=jnp.array([0.0, 1.0, 0.0]),
     )

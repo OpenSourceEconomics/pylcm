@@ -334,7 +334,8 @@ def test_singleton_query_gradient_has_finite_mixed_derivatives():
     exactly zero as well — the padded bracket must not leak NaN into them.
     """
 
-    def query_gradient(*, fp0, slope0, x0):
+    # keyword-only-exempt: library-callback=jax.grad
+    def query_gradient(fp0, slope0, x0):
         row_xp = jnp.array([1.0, jnp.nan, jnp.nan]).at[0].set(x0)
         row_fp = jnp.array([5.0, jnp.nan, jnp.nan]).at[0].set(fp0)
         row_slopes = jnp.array([2.0, jnp.nan, jnp.nan]).at[0].set(slope0)

@@ -323,7 +323,7 @@ def test_mixture_draw_shock_moments():
     trajectory = []
     for _ in range(n_steps):
         key, subkey = jax.random.split(key)
-        y = grid.draw_shock(params, subkey, y)
+        y = grid.draw_shock(params=params, key=subkey, current_value=y)
         trajectory.append(y)
     samples = jnp.array(trajectory[burn_in:])
 

@@ -51,7 +51,7 @@ def test_constant_lottery_keeps_boundary_payoff_bits(exponent: float) -> None:
         ):
             expected_bits = _bits(payoff)
             assert _bits(aggregate(values=values, shifts=shifts)) == expected_bits
-            assert _bits(compiled(values, shifts)) == expected_bits
+            assert _bits(compiled(values=values, shifts=shifts)) == expected_bits
 
 
 @pytest.mark.parametrize("exponent", _EXPONENTS)

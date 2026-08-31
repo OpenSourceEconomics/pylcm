@@ -69,8 +69,8 @@ def test_map_coordinates_against_scipy(
     x_jax = jnp.asarray(x)
     c_jax = [jnp.asarray(c_i) for c_i in c]
 
-    expected = scipy_map_coordinates(x, c)
-    got = map_coordinates(x_jax, c_jax)
+    expected = scipy_map_coordinates(input=x, coordinates=c)
+    got = map_coordinates(input=x_jax, coordinates=c_jax)
 
     assert_array_almost_equal(got, expected, decimal=DECIMAL_PRECISION)
 
@@ -85,8 +85,8 @@ def test_map_coordinates_round_half_against_scipy(*, map_coordinates, dtype):
     x_jax = jnp.asarray(x)
     c_jax = [jnp.asarray(c_i) for c_i in c]
 
-    expected = scipy_map_coordinates(x, c)
-    got = map_coordinates(x_jax, c_jax)
+    expected = scipy_map_coordinates(input=x, coordinates=c)
+    got = map_coordinates(input=x_jax, coordinates=c_jax)
 
     assert_array_almost_equal(got, expected, decimal=DECIMAL_PRECISION)
 
@@ -99,7 +99,7 @@ def test_gradients(map_coordinates):
 
     def f(step):
         coordinates = x + step
-        shifted = map_coordinates(x, [coordinates])
+        shifted = map_coordinates(input=x, coordinates=[coordinates])
         return ((x - shifted) ** 2)[border:-border].mean()
 
     # Gradient of f(step) is 2 * step

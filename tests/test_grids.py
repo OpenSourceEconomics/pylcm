@@ -154,6 +154,19 @@ def test_discrete_grid_creation():
     assert np.allclose(grid.to_jax(), np.arange(3))
 
 
+def test_discrete_grid_accepts_category_class_as_legacy_positional_argument():
+    """The long-standing public constructor form remains supported."""
+    category_class = _make_dc(
+        "Category",
+        ("a", jnp.int32(0)),
+        ("b", jnp.int32(1)),
+    )
+
+    grid = DiscreteGrid(category_class)
+
+    assert grid.categories == ("a", "b")
+
+
 def test_discrete_grid_invalid_category_class():
     category_class = _make_dc("Category", ("a", jnp.int32(0)), ("b", "wrong_type"))
     with pytest.raises(

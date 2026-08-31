@@ -488,7 +488,17 @@ def test_prepared_interpolation_holds_no_grid_by_query_intermediate():
         )
 
     search_grid, valid_length = interp.prepare_padded_grid(xp)
-    hlo = jax.jit(read_many).lower(search_grid, valid_length, xp, fp, queries).compile()
+    hlo = (
+        jax.jit(read_many)
+        .lower(
+            search_grid=search_grid,
+            valid_length=valid_length,
+            xp=xp,
+            fp=fp,
+            queries=queries,
+        )
+        .compile()
+    )
     forbidden = {(n_query, n_grid), (n_grid, n_query)}
     offenders = [
         line.strip()

@@ -147,8 +147,8 @@ def test_no_stack_reduction_is_permutation_invariant_and_within_roundoff(k: int)
             return jnp.sum(contributions, axis=0)
         return jnp.sum(jnp.sort(contributions, axis=0), axis=0)
 
-    got = jax.jit(production)(p, v)
-    expected = jax.jit(oracle)(p, v)
+    got = jax.jit(production)(probability=p, value=v)
+    expected = jax.jit(oracle)(probability=p, value=v)
 
     # The no-stack reduction has a source-level order; the old target-axis
     # `reduce` delegates its association and product fusion to backend codegen.
@@ -173,7 +173,10 @@ def test_no_stack_reduction_is_permutation_invariant_and_within_roundoff(k: int)
         np.arange(k - 1, -1, -1),
         np.roll(np.arange(k), 1),
     ):
-        permuted = jax.jit(production)(p[order], v[order])
+        permuted = jax.jit(production)(
+            probability=p[order],
+            value=v[order],
+        )
         np.testing.assert_array_equal(_bits(permuted), _bits(got))
 
 
@@ -257,9 +260,9 @@ def test_two_target_value_order_is_invariant_across_separate_compilations(
             )
             return jnp.sum(jnp.sort(contributions), axis=0)
 
-        got_forward = forward(probabilities, values)
-        got_reverse = reverse(probabilities, values)
-        expected = oracle(probabilities, values)
+        got_forward = forward(probability=probabilities, value=values)
+        got_reverse = reverse(probability=probabilities, value=values)
+        expected = oracle(probability=probabilities, value=values)
         np.testing.assert_array_equal(_bits(got_forward), _bits(got_reverse))
         np.testing.assert_array_equal(_bits(got_forward), _bits(expected))
 
@@ -272,7 +275,8 @@ def test_two_target_compare_swap_preserves_duplicate_contribution_gradients():
     weights = jnp.asarray([0.5, 0.25])
     values = jnp.asarray([2.0, 4.0])
 
-    def mixture(*, w: FloatND, v: FloatND) -> FloatND:
+    # keyword-only-exempt: library-callback=jax.grad
+    def mixture(w: FloatND, v: FloatND) -> FloatND:
         return _sum_regime_mixture(
             mixture_terms=[("r0", w[0], v[0]), ("r1", w[1], v[1])], like=v[0]
         )
