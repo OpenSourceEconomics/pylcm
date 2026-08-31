@@ -954,12 +954,19 @@ There are exactly two exemptions:
    `(carry, x)`, `custom_jvp` rules `(primals, tangents)`, pytree
    `unflatten(aux, children)`. Not a judgement call: Python raises otherwise. `dags` is
    *not* in this class — it binds by parameter name and accepts keyword-only functions,
-   so a model function complies like anything else.
+   so a model function complies like anything else. Put a marker immediately above the
+   callback (above its decorators, if any), naming the positional library caller:
+
+   ```python
+   # keyword-only-exempt: library-callback=jax.lax.scan
+   def scan_body(carry: Carry, item: Item) -> tuple[Carry, Output]: ...
+   ```
+
 1. **A module that implements an arithmetic and nothing else** — operator surrogates
    keep the spelling their operation is known by (`two_sum(a, b)`,
    `dd_mul(left, right)`). State it once in the module docstring; such a module may
    contain *only* operators, so the exemption stays auditable rather than sprinkled per
-   function.
+   function. The declaration is `Keyword-only exemption: arithmetic-only module.`
 
 Functions predating this rule are being converted separately; see issue #421.
 

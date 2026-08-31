@@ -1,0 +1,311 @@
+"""Check the repository's keyword-only function convention."""
+
+import ast
+import re
+import sys
+from collections.abc import Iterable
+from dataclasses import dataclass
+from pathlib import Path
+
+_EXEMPTION_PREFIX = "# keyword-only-exempt:"
+_LIBRARY_CALLBACK_EXEMPTION = re.compile(
+    rf"{_EXEMPTION_PREFIX} library-callback=[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*"
+)
+
+
+_ARITHMETIC_MODULE_SUFFIX = (
+    "src",
+    "_lcm",
+    "egm",
+    "upper_envelope",
+    "double_double.py",
+)
+_ARITHMETIC_DECLARATION = "Keyword-only exemption: arithmetic-only module."
+_ARITHMETIC_OPERATORS = frozenset(
+    {
+        "_shift_clear_of_the_split_floor",
+        "_split",
+        "dd_add",
+        "dd_add_float",
+        "dd_from_difference",
+        "dd_mul",
+        "dd_mul_float",
+        "dd_negate",
+        "dd_quotient",
+        "dd_quotient_bounded",
+        "is_stored_zero",
+        "normalizing_exponent",
+        "scale_by_power_of_two",
+        "scale_tail_bound",
+        "two_prod",
+        "two_sum",
+    }
+)
+
+
+@dataclass(frozen=True, kw_only=True)
+class KeywordOnlyViolation:
+    """A function definition that violates the keyword-only convention."""
+
+    path: Path
+    line: int
+    qualified_name: str
+    code: str
+    positional_parameters: tuple[str, ...]
+
+
+@dataclass(frozen=True, kw_only=True)
+class _Definition:
+    node: ast.FunctionDef | ast.AsyncFunctionDef
+    qualified_name: str
+    is_method: bool
+
+
+class _DefinitionVisitor(ast.NodeVisitor):
+    def __init__(self) -> None:
+        self.definitions: list[_Definition] = []
+        self._scope: list[tuple[str, str]] = []
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self._scope.append((node.name, "class"))
+        self.generic_visit(node)
+        self._scope.pop()
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._visit_function(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self._visit_function(node)
+
+    def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        self.definitions.append(
+            _Definition(
+                node=node,
+                qualified_name=".".join(
+                    (*[name for name, _kind in self._scope], node.name)
+                ),
+                is_method=bool(self._scope and self._scope[-1][1] == "class"),
+            )
+        )
+        self._scope.append((node.name, "function"))
+        self.generic_visit(node)
+        self._scope.pop()
+
+
+def _parameter_info(
+    *, node: ast.FunctionDef | ast.AsyncFunctionDef, is_method: bool
+) -> tuple[tuple[str, ...], int]:
+    positional_parameters = [
+        argument.arg for argument in (*node.args.posonlyargs, *node.args.args)
+    ]
+    parameter_count = len(positional_parameters) + len(node.args.kwonlyargs)
+
+    if (
+        is_method
+        and positional_parameters
+        and positional_parameters[0] in {"self", "cls"}
+    ):
+        positional_parameters = positional_parameters[1:]
+        parameter_count -= 1
+
+    return tuple(positional_parameters), parameter_count
+
+
+def _exemption_for(
+    *,
+    definition: _Definition,
+    source_lines: list[str],
+) -> tuple[str | None, int | None]:
+    decorator_lines = [decorator.lineno for decorator in definition.node.decorator_list]
+    definition_start = min([definition.node.lineno, *decorator_lines])
+    marker_line = definition_start - 1
+    if marker_line < 1:
+        return None, None
+
+    marker = source_lines[marker_line - 1].strip()
+    if not marker.startswith(_EXEMPTION_PREFIX):
+        return None, None
+    if _LIBRARY_CALLBACK_EXEMPTION.fullmatch(marker):
+        return "library-callback", marker_line
+    return "malformed", marker_line
+
+
+def _is_declared_arithmetic_module(*, path: Path, tree: ast.Module) -> bool:
+    suffix_length = len(_ARITHMETIC_MODULE_SUFFIX)
+    has_expected_path = path.parts[-suffix_length:] == _ARITHMETIC_MODULE_SUFFIX
+    docstring = ast.get_docstring(tree, clean=False) or ""
+    return has_expected_path and _ARITHMETIC_DECLARATION in docstring
+
+
+def _regular_violation(
+    *,
+    definition: _Definition,
+    is_noncompliant: bool,
+    path: Path,
+    positional_parameters: tuple[str, ...],
+    source_lines: list[str],
+) -> KeywordOnlyViolation | None:
+    exemption, marker_line = _exemption_for(
+        definition=definition, source_lines=source_lines
+    )
+    violation_line = marker_line if marker_line is not None else definition.node.lineno
+    if exemption == "malformed":
+        code = "KWO002"
+    elif exemption == "library-callback" and not is_noncompliant:
+        code = "KWO003"
+    elif exemption == "library-callback" or not is_noncompliant:
+        return None
+    else:
+        code = "KWO001"
+
+    return KeywordOnlyViolation(
+        path=path,
+        line=violation_line,
+        qualified_name=definition.qualified_name,
+        code=code,
+        positional_parameters=positional_parameters,
+    )
+
+
+def _arithmetic_violation(
+    *,
+    definition: _Definition,
+    path: Path,
+    positional_parameters: tuple[str, ...],
+) -> KeywordOnlyViolation | None:
+    if definition.node.name in _ARITHMETIC_OPERATORS:
+        return None
+    return KeywordOnlyViolation(
+        path=path,
+        line=definition.node.lineno,
+        qualified_name=definition.qualified_name,
+        code="KWO004",
+        positional_parameters=positional_parameters,
+    )
+
+
+def _orphaned_exemption_violations(
+    *,
+    definitions: list[_Definition],
+    path: Path,
+    source_lines: list[str],
+) -> list[KeywordOnlyViolation]:
+    attached_marker_lines = {
+        marker_line
+        for definition in definitions
+        for _exemption, marker_line in [
+            _exemption_for(definition=definition, source_lines=source_lines)
+        ]
+        if marker_line is not None
+    }
+    violations = []
+    for line_number, line in enumerate(source_lines, start=1):
+        marker = line.strip()
+        if (
+            not marker.startswith(_EXEMPTION_PREFIX)
+            or line_number in attached_marker_lines
+        ):
+            continue
+        code = "KWO003" if _LIBRARY_CALLBACK_EXEMPTION.fullmatch(marker) else "KWO002"
+        violations.append(
+            KeywordOnlyViolation(
+                path=path,
+                line=line_number,
+                qualified_name="<module>",
+                code=code,
+                positional_parameters=(),
+            )
+        )
+    return violations
+
+
+def _violations_for_path(path: Path) -> list[KeywordOnlyViolation]:
+    source_lines = path.read_text().splitlines()
+    tree = ast.parse("\n".join(source_lines), filename=str(path))
+    arithmetic_module = _is_declared_arithmetic_module(path=path, tree=tree)
+    used_arithmetic_exemption = False
+    violations: list[KeywordOnlyViolation] = []
+    visitor = _DefinitionVisitor()
+    visitor.visit(tree)
+    violations.extend(
+        _orphaned_exemption_violations(
+            definitions=visitor.definitions,
+            path=path,
+            source_lines=source_lines,
+        )
+    )
+    for definition in visitor.definitions:
+        positional_parameters, parameter_count = _parameter_info(
+            node=definition.node, is_method=definition.is_method
+        )
+        is_noncompliant = parameter_count >= 2 and bool(positional_parameters)
+        if arithmetic_module:
+            violation = _arithmetic_violation(
+                definition=definition,
+                path=path,
+                positional_parameters=positional_parameters,
+            )
+            used_arithmetic_exemption |= (
+                is_noncompliant and definition.node.name in _ARITHMETIC_OPERATORS
+            )
+        else:
+            violation = _regular_violation(
+                definition=definition,
+                is_noncompliant=is_noncompliant,
+                path=path,
+                positional_parameters=positional_parameters,
+                source_lines=source_lines,
+            )
+        if violation is not None:
+            violations.append(violation)
+
+    if arithmetic_module and not used_arithmetic_exemption:
+        violations.append(
+            KeywordOnlyViolation(
+                path=path,
+                line=1,
+                qualified_name="<module>",
+                code="KWO003",
+                positional_parameters=(),
+            )
+        )
+    violations.sort(key=lambda violation: violation.line)
+    return violations
+
+
+def find_keyword_only_violations(
+    *, paths: Iterable[Path]
+) -> tuple[KeywordOnlyViolation, ...]:
+    """Return convention violations in ``paths`` in stable source order."""
+    return tuple(
+        violation for path in paths for violation in _violations_for_path(path)
+    )
+
+
+def _render_violation(violation: KeywordOnlyViolation) -> str:
+    if violation.code == "KWO001":
+        detail = "make positional parameters keyword-only: " + ", ".join(
+            violation.positional_parameters
+        )
+    elif violation.code == "KWO002":
+        detail = "malformed or unexplained library-callback exemption"
+    elif violation.code == "KWO003":
+        detail = "stale keyword-only exemption"
+    else:
+        detail = "non-operator definition in arithmetic-only module"
+    return (
+        f"{violation.path}:{violation.line}: {violation.code} "
+        f"{violation.qualified_name}: {detail}"
+    )
+
+
+def main(*, paths: Iterable[Path]) -> int:
+    """Print violations for pre-commit and return its process exit status."""
+    violations = find_keyword_only_violations(paths=paths)
+    for violation in violations:
+        sys.stdout.write(f"{_render_violation(violation)}\n")
+    return int(bool(violations))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(paths=(Path(argument) for argument in sys.argv[1:])))
