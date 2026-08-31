@@ -98,7 +98,7 @@ against it:
 from lcm import ProjectedRegimeValue, ValueDependentConstraint
 
 
-def participation_f(Q_f, V_alone_f, slack):
+def participation_f(*, Q_f, V_alone_f, slack):
     return Q_f >= V_alone_f - slack
 
 

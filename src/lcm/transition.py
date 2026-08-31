@@ -39,7 +39,7 @@ def fixed_transition(state_name: StateName) -> UserFunction:
         The identity law of motion for `state_name`.
 
     """
-    return _IdentityTransition(state_name)
+    return _IdentityTransition(state_name=state_name)
 
 
 @beartype(conf=REGIME_CONF)

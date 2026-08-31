@@ -92,7 +92,7 @@ _SMOOTH_FORBIDDEN_PRIMS = frozenset(
 )
 
 
-def find_ast_violations(func: Callable[..., object], *, mode: CheckMode) -> list[str]:
+def find_ast_violations(*, func: Callable[..., object], mode: CheckMode) -> list[str]:
     """Find AST-level smoothness violations in a user function's source.
 
     Args:
@@ -119,8 +119,8 @@ def find_ast_violations(func: Callable[..., object], *, mode: CheckMode) -> list
 
 
 def find_jaxpr_violations(
-    func: Callable[..., object],
     *,
+    func: Callable[..., object],
     abstract_args: Iterable[object],
     mode: CheckMode,
     probe_failure: Literal["reject", "assume_declared"] = "reject",
@@ -229,7 +229,7 @@ class _PiecewiseASTChecker(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call) -> None:
         name = _call_name(node.func)
-        leaf = name.split(".")[-1] if name else None
+        leaf = name.split(sep=".")[-1] if name else None
         if self.mode == "smooth_user" and leaf in _PIECEWISE_CALL_NAMES:
             self.violations.append(
                 f"Call to piecewise function `{name}` is not allowed in a smooth "

@@ -894,7 +894,7 @@ def _evaluate_edge_fold(
     )
     kwargs.update(
         bind_edge_period_context(
-            surfaces,
+            func=surfaces,
             fold_period=fold_period,
             fold_age=fold_age,
         )

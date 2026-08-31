@@ -73,18 +73,22 @@ def _save_solve_snapshot(
 
     """
     log_path.mkdir(parents=True, exist_ok=True)
-    counter = _next_counter(log_path, prefix="solve_snapshot")
+    counter = _next_counter(parent_path=log_path, prefix="solve_snapshot")
     snap_dir = log_path / f"solve_snapshot_{counter:03d}"
     snap_dir.mkdir()
 
-    _save_pkl(snap_dir / "model.pkl", model)
-    _save_pkl(snap_dir / "params.pkl", params)
-    _save_h5(snap_dir / "arrays.h5", period_to_regime_to_V_arr)
-    _write_metadata(snap_dir, snapshot_type="solve", fields=["model", "params"])
+    _save_pkl(path=snap_dir / "model.pkl", obj=model)
+    _save_pkl(path=snap_dir / "params.pkl", obj=params)
+    _save_h5(
+        path=snap_dir / "arrays.h5", period_to_regime_to_V_arr=period_to_regime_to_V_arr
+    )
+    _write_metadata(
+        snap_dir=snap_dir, snapshot_type="solve", fields=["model", "params"]
+    )
     _write_environment_files(snap_dir)
 
     _enforce_retention(
-        log_path, prefix="solve_snapshot", keep_n_latest=log_keep_n_latest
+        parent_path=log_path, prefix="solve_snapshot", keep_n_latest=log_keep_n_latest
     )
     return snap_dir
 
@@ -116,26 +120,30 @@ def _save_simulate_snapshot(
     """
     prefix = "simulate_snapshot"
     log_path.mkdir(parents=True, exist_ok=True)
-    counter = _next_counter(log_path, prefix=prefix)
+    counter = _next_counter(parent_path=log_path, prefix=prefix)
     snap_dir = log_path / f"{prefix}_{counter:03d}"
     snap_dir.mkdir()
 
-    _save_pkl(snap_dir / "model.pkl", model)
-    _save_pkl(snap_dir / "params.pkl", params)
-    _save_pkl(snap_dir / "initial_conditions.pkl", initial_conditions)
+    _save_pkl(path=snap_dir / "model.pkl", obj=model)
+    _save_pkl(path=snap_dir / "params.pkl", obj=params)
+    _save_pkl(path=snap_dir / "initial_conditions.pkl", obj=initial_conditions)
     _save_pkl(
-        snap_dir / "result.pkl",
-        _strip_V_arr_from_result(result=result, model=model),
+        path=snap_dir / "result.pkl",
+        obj=_strip_V_arr_from_result(result=result, model=model),
     )
-    _save_h5(snap_dir / "arrays.h5", period_to_regime_to_V_arr)
+    _save_h5(
+        path=snap_dir / "arrays.h5", period_to_regime_to_V_arr=period_to_regime_to_V_arr
+    )
     _write_metadata(
-        snap_dir,
+        snap_dir=snap_dir,
         snapshot_type="simulate",
         fields=["model", "params", "initial_conditions", "result"],
     )
     _write_environment_files(snap_dir)
 
-    _enforce_retention(log_path, prefix=prefix, keep_n_latest=log_keep_n_latest)
+    _enforce_retention(
+        parent_path=log_path, prefix=prefix, keep_n_latest=log_keep_n_latest
+    )
     return snap_dir
 
 

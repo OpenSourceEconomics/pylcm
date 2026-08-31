@@ -481,4 +481,4 @@ def _desugar_identity(
     if not isinstance(law, _IdentityTransition):
         return law
     annotation = DiscreteState if isinstance(grid, DiscreteGrid) else ContinuousState
-    return _IdentityTransition(state_name, annotation=annotation)
+    return _IdentityTransition(state_name=state_name, annotation=annotation)

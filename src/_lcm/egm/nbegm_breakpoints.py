@@ -42,9 +42,7 @@ def affine_coefficients(
 
 
 def linear_asset_preimage(
-    z_of_liquid: Callable[[ScalarFloat], ScalarFloat],
-    *,
-    threshold: ScalarFloat,
+    *, z_of_liquid: Callable[[ScalarFloat], ScalarFloat], threshold: ScalarFloat
 ) -> ScalarFloat:
     """Map a threshold in a monotone-affine boundary variable to its asset value.
 
@@ -64,13 +62,13 @@ def linear_asset_preimage(
         threshold.
 
     """
-    slope, intercept = affine_coefficients(z_of_liquid)
+    slope, intercept = affine_coefficients(z_of_liquid=z_of_liquid)
     return (threshold - intercept) / slope
 
 
 def linear_asset_selection_preimage(
-    z_of_liquid: Callable[[ScalarFloat], ScalarFloat],
     *,
+    z_of_liquid: Callable[[ScalarFloat], ScalarFloat],
     threshold: ScalarFloat,
     equality_owner: Literal["below", "above"],
 ) -> ScalarFloat:
@@ -81,7 +79,7 @@ def linear_asset_selection_preimage(
     selection threshold states the open side exactly on the representable domain:
     a left-owned boundary advances to its next representable liquid value.
     """
-    slope, intercept = affine_coefficients(z_of_liquid)
+    slope, intercept = affine_coefficients(z_of_liquid=z_of_liquid)
     preimage = (threshold - intercept) / slope
     coordinate_above_is_liquid_right = slope > 0.0
     liquid_right_owns = coordinate_above_is_liquid_right == (equality_owner == "above")
@@ -137,7 +135,7 @@ def interval_midpoints(*, liquid_grid: Float1D, breakpoints: Float1D) -> Float1D
         `len(breakpoints) + 1`.
 
     """
-    sorted_breakpoints = jnp.sort(breakpoints)
+    sorted_breakpoints = jnp.sort(a=breakpoints)
     grid_min = liquid_grid[0]
     grid_max = liquid_grid[-1]
     lower_edges = jnp.concatenate([grid_min[None], sorted_breakpoints])

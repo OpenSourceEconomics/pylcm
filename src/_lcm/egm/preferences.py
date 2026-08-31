@@ -235,7 +235,9 @@ def get_discount_factor_reader(
         Callable mapping the regime's flat parameters to the discount factor.
 
     """
-    build_W_kwargs = _get_build_W_kwargs(functions, koopmans_aggregator)
+    build_W_kwargs = _get_build_W_kwargs(
+        functions=functions, koopmans_aggregator=koopmans_aggregator
+    )
 
     def read(params: Mapping[str, Any]) -> ScalarFloat:
         (discount_factor,) = tuple(build_W_kwargs(params).values())

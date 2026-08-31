@@ -23,7 +23,7 @@ class DiscreteGrid(Grid):
 
     @beartype(conf=GRID_CONF)
     def __init__(
-        self, category_class: type, batch_size: int = 0, *, distributed: bool = False
+        self, *, category_class: type, batch_size: int = 0, distributed: bool = False
     ) -> None:
         _fail_if_batch_size_combined_with_distributed(
             batch_size=batch_size, distributed=distributed

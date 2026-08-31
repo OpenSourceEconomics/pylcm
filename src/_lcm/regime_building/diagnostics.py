@@ -144,7 +144,7 @@ def _build_compute_intermediates_per_period(
         ),
     )
 
-    configs = group_periods_by_key(active_periods, group_key)
+    configs = group_periods_by_key(active_periods=active_periods, key=group_key)
 
     variable_names = (
         *state_action_space.state_names,
@@ -173,11 +173,15 @@ def _build_compute_intermediates_per_period(
             flat_param_names=flat_param_names,
             functions=cast(
                 "EconFunctionsMapping",
-                resolve_periodized_nodes(functions, representative_period),
+                resolve_periodized_nodes(
+                    mapping=functions, period=representative_period
+                ),
             ),
             constraints=cast(
                 "ConstraintFunctionsMapping",
-                resolve_periodized_nodes(constraints, representative_period),
+                resolve_periodized_nodes(
+                    mapping=constraints, period=representative_period
+                ),
             ),
             period_targets=stateful_targets,
             scalar_targets=scalar_targets,
@@ -202,7 +206,7 @@ def _build_compute_intermediates_per_period(
         fused = _wrap_with_reduction(func=mapped, variable_names=variable_names)
         built[key] = jax.jit(fused) if enable_jit else fused
 
-    return expand_groups_to_periods(configs, built)
+    return expand_groups_to_periods(grouped_periods=configs, built_by_group=built)
 
 
 def _wrap_with_reduction(

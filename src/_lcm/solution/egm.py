@@ -658,7 +658,7 @@ class _EGMPeriodKernel:
             self.savings_grid[0],
         )
         effective_savings_grid = jnp.sort(
-            jnp.concatenate((self.savings_grid, safe_boundary_targets))
+            a=jnp.concatenate((self.savings_grid, safe_boundary_targets))
         )
         next_liquid, marginal_return = self.declared_law(
             savings_grid=effective_savings_grid,

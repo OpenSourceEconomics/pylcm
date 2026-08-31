@@ -59,9 +59,7 @@ class _IIDProcess(_ContinuousStochasticProcess):
 
     @abstractmethod
     def draw_shock(
-        self,
-        params: MappingProxyType[str, ScalarFloat | ScalarInt],
-        key: PRNGKeyND,
+        self, *, params: MappingProxyType[str, ScalarFloat | ScalarInt], key: PRNGKeyND
     ) -> ScalarFloat: ...
 
 
@@ -91,9 +89,7 @@ class UniformIIDProcess(_IIDProcess):
         return jnp.full((n_points, n_points), fill_value=1 / n_points)
 
     def draw_shock(
-        self,
-        params: MappingProxyType[str, ScalarFloat | ScalarInt],
-        key: PRNGKeyND,
+        self, *, params: MappingProxyType[str, ScalarFloat | ScalarInt], key: PRNGKeyND
     ) -> ScalarFloat:
         return jax.random.uniform(
             key=key, minval=params["start"], maxval=params["stop"]
@@ -174,9 +170,7 @@ class NormalIIDProcess(_IIDProcess):
         return jnp.full((n_points, n_points), fill_value=P)
 
     def draw_shock(
-        self,
-        params: MappingProxyType[str, ScalarFloat | ScalarInt],
-        key: PRNGKeyND,
+        self, *, params: MappingProxyType[str, ScalarFloat | ScalarInt], key: PRNGKeyND
     ) -> ScalarFloat:
         return params["mu"] + params["sigma"] * jax.random.normal(key=key)
 
@@ -245,9 +239,7 @@ class LogNormalIIDProcess(_IIDProcess):
         return jnp.full((n_points, n_points), fill_value=P)
 
     def draw_shock(
-        self,
-        params: MappingProxyType[str, ScalarFloat | ScalarInt],
-        key: PRNGKeyND,
+        self, *, params: MappingProxyType[str, ScalarFloat | ScalarInt], key: PRNGKeyND
     ) -> ScalarFloat:
         return jnp.exp(params["mu"] + params["sigma"] * jax.random.normal(key=key))
 
@@ -330,11 +322,9 @@ class NormalMixtureIIDProcess(_IIDProcess):
         return jnp.full((n_points, n_points), fill_value=w)
 
     def draw_shock(
-        self,
-        params: MappingProxyType[str, ScalarFloat | ScalarInt],
-        key: PRNGKeyND,
+        self, *, params: MappingProxyType[str, ScalarFloat | ScalarInt], key: PRNGKeyND
     ) -> ScalarFloat:
-        key1, key2 = jax.random.split(key)
+        key1, key2 = jax.random.split(key=key)
         component = jax.random.bernoulli(key1, params["p1"])
         normal = jax.random.normal(key2)
         return jnp.where(

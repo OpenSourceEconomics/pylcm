@@ -7,7 +7,7 @@ they are re-exported here so engine-internal code can import everything from
 `_lcm.typing`.
 """
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import Any, Literal, Protocol, runtime_checkable
 
@@ -302,6 +302,7 @@ class EGMStepFunction(Protocol):
 
     def __call__(
         self,
+        *,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
         next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
         **kwargs: Any,  # noqa: ANN401
@@ -373,12 +374,5 @@ class NextStateSimulationFunction(Protocol):
     ]: ...
 
 
-@runtime_checkable
-class ActiveFunction(Protocol):
-    """Function that determines if a regime is active at a given age.
-
-    Used for both type checking and beartype runtime checks.
-
-    """
-
-    def __call__(self, age: Any, /) -> bool: ...  # noqa: ANN401
+# Function that determines if a regime is active at a given age.
+ActiveFunction = Callable[..., bool]

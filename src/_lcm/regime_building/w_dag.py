@@ -27,6 +27,7 @@ from lcm.typing import UserFunction
 
 
 def get_dag_targets_consumed_by_W(
+    *,
     functions: Mapping[FunctionName, Callable[..., Any]],
     koopmans_aggregator: UserFunction | None,
 ) -> frozenset[FunctionName]:
@@ -54,6 +55,7 @@ def get_dag_targets_consumed_by_W(
 
 
 def _get_build_W_kwargs(
+    *,
     functions: Mapping[FunctionName, Callable[..., Any]],
     koopmans_aggregator: UserFunction,
 ) -> Callable[[Mapping[str, Any]], dict[str, Any]]:
@@ -79,7 +81,9 @@ def _get_build_W_kwargs(
 
     """
     W_accepted_params = _accepted_params(koopmans_aggregator)
-    dag_targets = get_dag_targets_consumed_by_W(functions, koopmans_aggregator)
+    dag_targets = get_dag_targets_consumed_by_W(
+        functions=functions, koopmans_aggregator=koopmans_aggregator
+    )
     passthrough = W_accepted_params - dag_targets
 
     if not dag_targets:

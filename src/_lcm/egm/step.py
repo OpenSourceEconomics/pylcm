@@ -411,8 +411,8 @@ def build_egm_step_functions(
                     # An `AgeSpecializedFunction` is a different function at each
                     # age, so periods may share a program only where the user's
                     # declared signature says the closures agree.
-                    periodized_tree_signature(functions, period),
-                    periodized_tree_signature(constraints, period),
+                    periodized_tree_signature(tree=functions, period=period),
+                    periodized_tree_signature(tree=constraints, period=period),
                 ),
             ),
             [],
@@ -432,11 +432,11 @@ def build_egm_step_functions(
         )
         group_functions = cast(
             "EconFunctionsMapping",
-            resolve_periodized_nodes(functions, representative_period),
+            resolve_periodized_nodes(mapping=functions, period=representative_period),
         )
         group_constraints = cast(
             "ConstraintFunctionsMapping",
-            resolve_periodized_nodes(constraints, representative_period),
+            resolve_periodized_nodes(mapping=constraints, period=representative_period),
         )
         unsupported = _find_unsupported_feature(
             solver=solver,
@@ -586,6 +586,7 @@ def _get_egm_step(
     )
 
     def egm_step(
+        *,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],  # noqa: ARG001
         next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
         **kwargs: Any,  # noqa: ANN401
@@ -891,7 +892,9 @@ def _build_kernel_pieces(
         feasibility_func=_build_feasibility_function(
             functions=functions, constraints=constraints
         ),
-        build_W_kwargs=_get_build_W_kwargs(functions, koopmans_aggregator),
+        build_W_kwargs=_get_build_W_kwargs(
+            functions=functions, koopmans_aggregator=koopmans_aggregator
+        ),
         refine=get_upper_envelope(solver=solver, n_refined=n_pad),
         refine_to_bracket=get_bracket_finder(solver=solver, n_refined=n_pad),
         continuation_plan=continuation_plan,

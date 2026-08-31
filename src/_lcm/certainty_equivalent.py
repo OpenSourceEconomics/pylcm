@@ -193,7 +193,7 @@ class LinearExpectation(CertaintyEquivalent):
         # reaches a weight of exactly zero, so the node that cannot occur is
         # still annihilated by the term itself — the scale is accounted for by
         # that point, so this is its cheap branch.
-        weights = rescaled_lottery_weights(weights)
+        weights = rescaled_lottery_weights(weights=weights)
         return jnp.sum(
             zero_safe_weighted_term(
                 weight=weights, value=values, subnormal_is_accounted_for=True
@@ -337,7 +337,7 @@ class QuasiArithmeticMean(CertaintyEquivalent):
         # "dead" by the liveness test below and silently dropped — which would
         # return the surviving nodes' mean as though the caller had asked for
         # it. `weighted_power_mean` opens the same way, for the same reason.
-        weights = rescaled_lottery_weights(weights)
+        weights = rescaled_lottery_weights(weights=weights)
         weights = jnp.where(is_negative(weights), jnp.nan, weights)
         live = is_live(weights)
         stand_in = jnp.take_along_axis(
@@ -345,13 +345,13 @@ class QuasiArithmeticMean(CertaintyEquivalent):
         )
         safe_values = jnp.where(live, values, stand_in)
         transformed = self.transform(
-            value=safe_values, **_args_for(self.transform, params)
+            value=safe_values, **_args_for(func=self.transform, params=params)
         )
         weight_sum = jnp.sum(weights, axis=-1)
         return self.inverse(
             value=jnp.sum(jnp.where(live, weights * transformed, 0.0), axis=-1)
             / weight_sum,
-            **_args_for(self.inverse, params),
+            **_args_for(func=self.inverse, params=params),
         )
 
     @beartype(conf=PARAMS_CONF)
@@ -407,7 +407,7 @@ class QuasiArithmeticMean(CertaintyEquivalent):
         )
         safe_values = jnp.where(is_represented_zero(coefficients), stand_in, values)
         transformed = self.transform(
-            value=safe_values, **_args_for(self.transform, params)
+            value=safe_values, **_args_for(func=self.transform, params=params)
         )
         value_terms, weight_terms = _scaled_lottery_terms(
             values=transformed, coefficients=coefficients, shifts=shifts
@@ -415,19 +415,19 @@ class QuasiArithmeticMean(CertaintyEquivalent):
         return _states_no_derivative(
             self.inverse(
                 value=jnp.sum(value_terms, axis=-1) / jnp.sum(weight_terms, axis=-1),
-                **_args_for(self.inverse, params),
+                **_args_for(func=self.inverse, params=params),
             )
         )
 
 
-def power_transform(value: FloatND, risk_aversion: FloatND) -> FloatND:
+def power_transform(*, value: FloatND, risk_aversion: FloatND) -> FloatND:
     """Apply `g(v) = v^(1 - risk_aversion)`, or `log(v)` at `risk_aversion = 1`."""
     return jnp.where(
         risk_aversion == 1.0, jnp.log(value), value ** (1.0 - risk_aversion)
     )
 
 
-def power_inverse(value: FloatND, risk_aversion: FloatND) -> FloatND:
+def power_inverse(*, value: FloatND, risk_aversion: FloatND) -> FloatND:
     """Apply `g^(-1)(v) = v^(1 / (1 - risk_aversion))`; `exp(v)` in the log case."""
     # The unselected power branch must not divide by zero at `risk_aversion = 1`.
     safe_risk_aversion = jnp.where(risk_aversion == 1.0, 0.0, risk_aversion)
@@ -581,6 +581,7 @@ def _identity(value: FloatND) -> FloatND:
     return value
 
 
+# keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
 def _scaled_reduction_jvp(
     primals: tuple[FloatND, ...],
     tangents: tuple[FloatND, ...],
@@ -605,7 +606,7 @@ _states_no_derivative.defjvp(_scaled_reduction_jvp)
 
 
 def _args_for(
-    func: Callable[..., FloatND], params: Mapping[str, FloatND]
+    *, func: Callable[..., FloatND], params: Mapping[str, FloatND]
 ) -> dict[str, FloatND]:
     """Pick the entries of `params` that `func`'s signature declares."""
     return {name: params[name] for name in get_union_of_args([func]) - {CE_VALUE_ARG}}
@@ -696,7 +697,7 @@ def _scaled_lottery_terms(
 
     on_common_scale = jnp.where(
         live,
-        scaled_down_by_power_of_two(coefficients, scale),
+        scaled_down_by_power_of_two(values=coefficients, shift=scale),
         jnp.zeros_like(coefficients),
     )
     total = jnp.sum(on_common_scale, axis=-1, keepdims=True)
@@ -709,14 +710,16 @@ def _scaled_lottery_terms(
 
     room = binades_above_smallest_normal(coefficients)
     on_weight = jnp.maximum(full, -room)
-    scaled_coefficients = scaled_down_by_power_of_two(coefficients, on_weight)
+    scaled_coefficients = scaled_down_by_power_of_two(
+        values=coefficients, shift=on_weight
+    )
     products = zero_safe_weighted_term(
         weight=scaled_coefficients,
         value=values,
         subnormal_is_accounted_for=False,
     )
-    value_terms = scaled_down_by_power_of_two(products, full - on_weight)
-    weight_terms = scaled_down_by_power_of_two(coefficients, full)
+    value_terms = scaled_down_by_power_of_two(values=products, shift=full - on_weight)
+    weight_terms = scaled_down_by_power_of_two(values=coefficients, shift=full)
 
     value_terms = jnp.where(live, value_terms, jnp.zeros_like(value_terms))
     weight_terms = jnp.where(live, weight_terms, jnp.zeros_like(weight_terms))

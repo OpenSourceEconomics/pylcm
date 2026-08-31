@@ -231,8 +231,8 @@ EDGE_PERIOD_CONTEXT_ARGS = frozenset({_EDGE_PERIOD_ARG, _EDGE_AGE_ARG})
 
 
 def bind_edge_period_context(
-    func: Callable,
     *,
+    func: Callable,
     fold_period: int,
     fold_age: float | ScalarFloat | ScalarInt | None,
 ) -> dict[str, object]:
@@ -726,6 +726,7 @@ def _select_period_callable[T](
 
 
 def _reached_target_param_leaves(
+    *,
     dag_pool: Mapping[FunctionName | TransitionFunctionName, Callable[..., FloatND]],
     seed_args: Iterable[str],
     state_names: frozenset[StateName],
@@ -932,7 +933,11 @@ def _reject_target_function_params(
     rather than silently misbind it. Source-declared projection parameters are
     NOT affected: they are not leaves of the target DAG reached from the consumer.
     """
-    contested = sorted(_reached_target_param_leaves(dag_pool, seed_args, state_names))
+    contested = sorted(
+        _reached_target_param_leaves(
+            dag_pool=dag_pool, seed_args=seed_args, state_names=state_names
+        )
+    )
     if contested:
         msg = (
             f"{context}: the edge to regime '{edge_target}' reaches parameter(s) "
@@ -2067,23 +2072,23 @@ def get_edge_simulate_gate_evaluator(
         engine_args.add(SAME_PERIOD_PARAMS_ARG)
     provenance_builder = _ProvenanceBuilder(states=frozenset(state_names))
 
-    def _expose(arg: str, namespace: str) -> str:
+    def _expose(*, arg: str, namespace: str) -> str:
         if arg in state_names or arg in engine_args:
             return arg
         return provenance_builder.expose(qname=arg, namespace=namespace)
 
     target_component_exposed = {
-        arg: _expose(arg, TARGET_PARAMS) for arg in target_component_args
+        arg: _expose(arg=arg, namespace=TARGET_PARAMS) for arg in target_component_args
     }
     d_interpolator_exposed = {
-        arg: _expose(arg, TARGET_PARAMS) for arg in d_interpolator_args
+        arg: _expose(arg=arg, namespace=TARGET_PARAMS) for arg in d_interpolator_args
     }
     gate_ref_exposed = {
-        name: {arg: _expose(arg, SOURCE_PARAMS) for arg in args}
+        name: {arg: _expose(arg=arg, namespace=SOURCE_PARAMS) for arg in args}
         for name, args in gate_ref_args.items()
     }
     gate_extra_exposed = {
-        arg: _expose(arg, SOURCE_PARAMS)
+        arg: _expose(arg=arg, namespace=SOURCE_PARAMS)
         for arg in sorted(set(gate_arg_names) - injected_names)
     }
 

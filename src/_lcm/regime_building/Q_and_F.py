@@ -70,7 +70,7 @@ from lcm.typing import (
 
 
 def _compare_swap_values(
-    left: FloatND, right: FloatND, *, ascending: bool
+    *, left: FloatND, right: FloatND, ascending: bool
 ) -> tuple[FloatND, FloatND]:
     """Order two arrays while preserving both original operands.
 
@@ -111,28 +111,28 @@ def _bitonic_value_order_network(
             out *= 2
         return out // 2
 
-    def merge(lo: int, n: int, *, ascending: bool) -> None:
+    def merge(*, lo: int, n: int, ascending: bool) -> None:
         if n <= 1:
             return
         split = greatest_power_of_two_less_than(n)
         comparisons.extend((i, i + split, ascending) for i in range(lo, lo + n - split))
-        merge(lo, split, ascending=ascending)
-        merge(lo + split, n - split, ascending=ascending)
+        merge(lo=lo, n=split, ascending=ascending)
+        merge(lo=lo + split, n=n - split, ascending=ascending)
 
-    def sort(lo: int, n: int, *, ascending: bool) -> None:
+    def sort(*, lo: int, n: int, ascending: bool) -> None:
         if n <= 1:
             return
         split = n // 2
-        sort(lo, split, ascending=not ascending)
-        sort(lo + split, n - split, ascending=ascending)
-        merge(lo, n, ascending=ascending)
+        sort(lo=lo, n=split, ascending=not ascending)
+        sort(lo=lo + split, n=n - split, ascending=ascending)
+        merge(lo=lo, n=n, ascending=ascending)
 
-    sort(0, n_items, ascending=True)
+    sort(lo=0, n=n_items, ascending=True)
     return tuple(comparisons)
 
 
 def _sum_regime_mixture(
-    mixture_terms: list[tuple[RegimeName, FloatND, FloatND]], *, like: FloatND
+    *, mixture_terms: list[tuple[RegimeName, FloatND, FloatND]], like: FloatND
 ) -> FloatND:
     """Reduce ``E[V'] = Σ p_r V_r`` without a materialized target axis.
 
@@ -188,8 +188,8 @@ def _sum_regime_mixture(
     if len(contributions) > 1:
         for left, right, ascending in _bitonic_value_order_network(len(contributions)):
             contributions[left], contributions[right] = _compare_swap_values(
-                contributions[left],
-                contributions[right],
+                left=contributions[left],
+                right=contributions[right],
                 ascending=ascending,
             )
 
@@ -345,7 +345,9 @@ def get_Q_and_F(
         co_map_state_names=co_map_state_names,
         gated_continuations=gated_continuations,
     )
-    _build_W_kwargs = _get_build_W_kwargs(functions, koopmans_aggregator)
+    _build_W_kwargs = _get_build_W_kwargs(
+        functions=functions, koopmans_aggregator=koopmans_aggregator
+    )
 
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
         deps=[U_and_F, *continuation_deps],
@@ -474,7 +476,9 @@ def get_compute_intermediates(
         co_map_state_names=co_map_state_names,
         gated_continuations=gated_continuations,
     )
-    _build_W_kwargs = _get_build_W_kwargs(functions, koopmans_aggregator)
+    _build_W_kwargs = _get_build_W_kwargs(
+        functions=functions, koopmans_aggregator=koopmans_aggregator
+    )
 
     arg_names_of_compute_intermediates = _get_arg_names_of_Q_and_F(
         deps=[U_and_F, *continuation_deps],
@@ -1261,7 +1265,9 @@ def get_Q_and_F_collective(
         gated_continuations=gated_continuations,
     )
 
-    _build_W_kwargs = _get_build_W_kwargs(functions, koopmans_aggregator)
+    _build_W_kwargs = _get_build_W_kwargs(
+        functions=functions, koopmans_aggregator=koopmans_aggregator
+    )
 
     # Build the same-period reference readers and the
     # value-constraint evaluators once; their engine-supplied arguments —
@@ -1545,8 +1551,8 @@ def _get_stakeholder_sliced_interpolator(
 
 
 def evaluate_projected_readers(
-    readers: tuple[ProjectedLandingReader, ...],
     *,
+    readers: tuple[ProjectedLandingReader, ...],
     landing_states: Mapping[StateName, ContinuousState | DiscreteState],
     other_values: Mapping[str, object],
 ) -> dict[str, FloatND]:
@@ -1763,7 +1769,7 @@ def _get_pointwise_gated_interpolator(
         # same context it would have been handed inside the fold — never the
         # source's own.
         projected_values = evaluate_projected_readers(
-            projected_readers,
+            readers=projected_readers,
             landing_states={
                 arg: cast(
                     "ContinuousState | DiscreteState",
@@ -2135,7 +2141,7 @@ def _get_compute_CE(
         # `like` is the shape of a VALUE, so collectively it carries the trailing
         # stakeholder axis the mass-shaped `zero` does not.
         CE = _sum_regime_mixture(
-            mixture_terms,
+            mixture_terms=mixture_terms,
             like=_value_shaped_zero(zero=zero, n_stakeholders=n_stakeholders),
         )
 
@@ -2157,7 +2163,8 @@ def _get_compute_CE(
             # a mass of zero is not unit mass.
             CE = jnp.where(
                 _regime_mass_is_a_distribution(
-                    probability_mass, has_negative_probability
+                    probability_mass=probability_mass,
+                    has_negative_probability=has_negative_probability,
                 ),
                 _aggregate_joint_lottery(
                     certainty_equivalent=certainty_equivalent,
@@ -2822,13 +2829,13 @@ def _expected_continuation_over_nodes(
     """
     if n_stakeholders is not None:
         return zero_safe_average(
-            jnp.asarray(values).reshape(-1, n_stakeholders),
+            a=jnp.asarray(values).reshape(-1, n_stakeholders),
             axis=0,
             weights=jnp.asarray(weights).reshape(-1),
             shifts=jnp.asarray(shifts).reshape(-1),
         )
     if has_lottery_axes:
-        return zero_safe_average(values, weights=weights, shifts=shifts)
+        return zero_safe_average(a=values, weights=weights, shifts=shifts)
     return jnp.average(values)
 
 
@@ -3036,7 +3043,7 @@ _MAX_REGIME_MASS_DEVIATION = 1.0e-3
 
 
 def _regime_mass_is_a_distribution(
-    probability_mass: FloatND, has_negative_probability: BoolND
+    *, probability_mass: FloatND, has_negative_probability: BoolND
 ) -> BoolND:
     """Whether the retained targets carry a distribution rather than merely unit mass.
 
@@ -3165,14 +3172,17 @@ def _values_without_impossible_nodes(*, values: FloatND, weights: FloatND) -> Fl
 
 
 def _unit_regime_mass_or_nan(
-    probability_mass: FloatND, has_negative_probability: BoolND
+    *, probability_mass: FloatND, has_negative_probability: BoolND
 ) -> FloatND:
     """Return the mass itself, or NaN where the weights are not a distribution.
 
     For the per-target route, which divides by the mass it accumulated.
     """
     return jnp.where(
-        _regime_mass_is_a_distribution(probability_mass, has_negative_probability),
+        _regime_mass_is_a_distribution(
+            probability_mass=probability_mass,
+            has_negative_probability=has_negative_probability,
+        ),
         probability_mass,
         jnp.nan,
     )

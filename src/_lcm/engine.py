@@ -273,6 +273,7 @@ class StateActionSpace:
 
     def replace(
         self,
+        *,
         states: MappingProxyType[StateName, ContinuousState | DiscreteState]
         | None = None,
         discrete_actions: MappingProxyType[ActionName, DiscreteAction] | None = None,

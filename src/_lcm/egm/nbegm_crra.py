@@ -12,7 +12,7 @@ import jax.numpy as jnp
 from lcm.typing import FloatND, ScalarFloat
 
 
-def crra_utility(consumption: FloatND, crra: ScalarFloat | float) -> FloatND:
+def crra_utility(*, consumption: FloatND, crra: ScalarFloat | float) -> FloatND:
     """Return CRRA felicity, with the log limit at `crra == 1`.
 
     Args:

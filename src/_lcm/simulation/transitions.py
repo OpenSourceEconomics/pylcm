@@ -26,6 +26,7 @@ from _lcm.typing import (
     StateName,
     StatesPerRegime,
 )
+from _lcm.utils.functools import allow_args
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.typing import Bool1D, Float1D, FloatND, Int1D, IntND, ScalarFloat, ScalarInt
 
@@ -315,15 +316,15 @@ def draw_key_from_dict(
         dtype=jnp.int32,
     )
     return _draw_random_regime_ids(
-        keys, tuple(d[name] for name in regime_names), regime_ids
+        keys=keys,
+        prob_rows=tuple(d[name] for name in regime_names),
+        regime_ids=regime_ids,
     )
 
 
 @jax.jit
 def _draw_random_regime_ids(
-    keys: PRNGKeyND,
-    prob_rows: tuple[FloatND, ...],
-    regime_ids: Int1D,
+    *, keys: PRNGKeyND, prob_rows: tuple[FloatND, ...], regime_ids: Int1D
 ) -> Int1D:
     """Draw one regime id per subject from per-target probability rows.
 
@@ -343,10 +344,10 @@ def _draw_random_regime_ids(
             (keys.shape[0], regime_transition_probs.shape[0]),
         )
 
-    def random_id(key: PRNGKeyND, p: Float1D) -> ScalarInt:
+    def random_id(*, key: PRNGKeyND, p: Float1D) -> ScalarInt:
         return jax.random.choice(key, regime_ids, p=p)
 
-    return vmap(random_id, in_axes=(0, 0))(keys, regime_transition_probs)
+    return vmap(allow_args(random_id), in_axes=(0, 0))(keys, regime_transition_probs)
 
 
 def _advance_states_for_subjects(

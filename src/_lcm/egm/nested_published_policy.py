@@ -136,6 +136,7 @@ def _flatten_outer_policy_bank(
     return (bank.outer_nodes, bank.policies), None
 
 
+# keyword-only-exempt: library-callback=jax.tree_util.register_pytree_node
 def _unflatten_outer_policy_bank(
     _aux: None, children: tuple[Float1D, EGMSimPolicy]
 ) -> OuterPolicyBank:
@@ -238,6 +239,7 @@ def _flatten_nested_egm_sim_policy(
     return (policy.keeper, policy.adjuster), aux
 
 
+# keyword-only-exempt: library-callback=jax.tree_util.register_pytree_node
 def _unflatten_nested_egm_sim_policy(
     aux: tuple[object, ...], children: tuple[EGMSimPolicy, OuterPolicyBank]
 ) -> NestedEGMSimPolicy:

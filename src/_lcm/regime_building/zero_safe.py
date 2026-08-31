@@ -170,11 +170,7 @@ from lcm.typing import FloatND, IntND
 
 
 def zero_safe_average(
-    a: FloatND,
-    *,
-    weights: FloatND,
-    shifts: IntND | None,
-    axis: int | None = None,
+    *, a: FloatND, weights: FloatND, shifts: IntND | None, axis: int | None = None
 ) -> FloatND:
     """Zero-weight-safe replacement for `jnp.average(a, weights=weights, axis=axis)`.
 
@@ -278,11 +274,11 @@ def zero_safe_average(
         # skips the general `frexp` graph, which here would run twice over the
         # whole value surface.
         lowered_weights = scaled_down_by_power_of_two(
-            weights_arr, relative_scales(shifts=shifts_arr, axis=axis)
+            values=weights_arr, shift=relative_scales(shifts=shifts_arr, axis=axis)
         )
 
     total_weight = jnp.sum(lowered_weights, axis=axis)
-    _raise_if_concretely_zero(total_weight, context="zero_safe_average")
+    _raise_if_concretely_zero(total_weight=total_weight, context="zero_safe_average")
     # The masked numerator is used unconditionally -- see the module docstring's
     # PORTABILITY section. A whole-expression branch that keeps a RAW `sum(w*a)`
     # reduction for all-positive slices was BUILT and MEASURED on a divergence-
@@ -316,7 +312,7 @@ def zero_safe_average(
     return numerator / total_weight
 
 
-def _raise_if_concretely_zero(total_weight: FloatND, *, context: str) -> None:
+def _raise_if_concretely_zero(*, total_weight: FloatND, context: str) -> None:
     """Best-effort eager guard: raise if `total_weight` is a CONCRETE zero.
 
     Under `jax.jit`, every intermediate touched inside the trace is an

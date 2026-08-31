@@ -18,7 +18,7 @@ def _dyadic_parts(x: FloatND) -> tuple[FloatND, jax.Array]:
     return mantissa, jnp.where(usable, exponent, jnp.zeros_like(exponent))
 
 
-def _two_diff(a: FloatND, b: FloatND) -> tuple[FloatND, FloatND]:
+def _two_diff(*, a: FloatND, b: FloatND) -> tuple[FloatND, FloatND]:
     """Return ``a - b`` and its exact rounding residual."""
     difference = a - b
     transfer = difference - a
@@ -32,13 +32,13 @@ def binade_exponent(magnitude: FloatND) -> jax.Array:
     return jnp.where(usable, exponent, jnp.zeros_like(exponent))
 
 
-def framed_difference(a: FloatND, b: FloatND) -> tuple[FloatND, FloatND, jax.Array]:
+def framed_difference(*, a: FloatND, b: FloatND) -> tuple[FloatND, FloatND, jax.Array]:
     """Return ``a - b`` as head and tail in a shared integer exponent frame."""
     mantissa_a, exponent_a = _dyadic_parts(a)
     mantissa_b, exponent_b = _dyadic_parts(b)
     exponent = jnp.maximum(exponent_a, exponent_b)
     head, tail = _two_diff(
-        jnp.ldexp(mantissa_a, exponent_a - exponent),
-        jnp.ldexp(mantissa_b, exponent_b - exponent),
+        a=jnp.ldexp(mantissa_a, exponent_a - exponent),
+        b=jnp.ldexp(mantissa_b, exponent_b - exponent),
     )
     return head, tail, exponent

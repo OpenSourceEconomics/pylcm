@@ -110,7 +110,7 @@ def weighted_power_mean(
     # below the normal range is flushed as an operand, and its term — which
     # after the `v^p` transform can be of order one however small the weight —
     # would drop out of the moment entirely.
-    weights = rescaled_lottery_weights(weights)
+    weights = rescaled_lottery_weights(weights=weights)
     # A negative weight is not a lottery. Mapping it to NaN makes it propagate
     # like any other malformed weight instead of being read as "dead" by the
     # liveness test below and silently dropped — which would return the
@@ -389,7 +389,9 @@ def weighted_power_mean_of_pair(
     """
     # One common power of two puts both weights on a scale the dtype can
     # multiply, leaving their ratio — all the mean depends on — untouched.
-    first_weight, second_weight = rescaled_weight_pair(first_weight, second_weight)
+    first_weight, second_weight = rescaled_weight_pair(
+        first_weight=first_weight, second_weight=second_weight
+    )
     # A negative weight is malformed and propagates as NaN rather than reading
     # as a dead node — see `weighted_power_mean`. For `CESAggregator` this is
     # what a `discount_factor` outside `[0, 1]` produces, and dropping the node

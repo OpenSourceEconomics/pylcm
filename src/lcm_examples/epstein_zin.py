@@ -84,11 +84,12 @@ def utility_alive(consumption: ContinuousAction) -> FloatND:
     return consumption
 
 
-def utility_dead(wealth: ContinuousState, bequest_scale: FloatND) -> FloatND:
+def utility_dead(*, wealth: ContinuousState, bequest_scale: FloatND) -> FloatND:
     return bequest_scale * jnp.sqrt(wealth)
 
 
 def next_wealth(
+    *,
     wealth: ContinuousState,
     consumption: ContinuousAction,
     income: FloatND,
@@ -112,7 +113,7 @@ def health_probs(health: DiscreteState) -> FloatND:
 
 
 def next_regime(
-    health: DiscreteState, period: Period, survival_probs: Float1D
+    *, health: DiscreteState, period: Period, survival_probs: Float1D
 ) -> FloatND:
     sp = survival_probs[period] * jnp.where(
         health == HealthStatus.good, 1.0, BAD_HEALTH_SURVIVAL_FACTOR
@@ -120,7 +121,9 @@ def next_regime(
     return jnp.array([sp, 1.0 - sp])
 
 
-def budget_constraint(consumption: ContinuousAction, wealth: ContinuousState) -> BoolND:
+def budget_constraint(
+    *, consumption: ContinuousAction, wealth: ContinuousState
+) -> BoolND:
     return consumption <= wealth
 
 
@@ -165,7 +168,7 @@ def get_model(
         transition=MarkovTransition(next_regime),
         states={
             "wealth": wealth_grid,
-            "health": DiscreteGrid(HealthStatus),
+            "health": DiscreteGrid(category_class=HealthStatus),
         },
         state_transitions={
             "wealth": next_wealth,

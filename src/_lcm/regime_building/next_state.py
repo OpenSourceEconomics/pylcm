@@ -463,7 +463,7 @@ def _resolve_conditioned_sigma(
             f"same regime as the process."
         )
         raise ModelInitializationError(msg)
-    return sc, sigma_array_by_code(conditioning_grid, sc.by)
+    return sc, sigma_array_by_code(cond_grid=conditioning_grid, by=sc.by)
 
 
 def _create_ar1_next_func(
@@ -492,7 +492,7 @@ def _create_ar1_next_func(
             {
                 **fixed_params,
                 **{raw: kwargs[qn] for qn, raw in runtime_param_names.items()},
-                **_conditioned_sigma(conditioned, kwargs),
+                **_conditioned_sigma(conditioned=conditioned, kwargs=kwargs),
             }
         )
         return _draw_shock(
@@ -529,7 +529,7 @@ def _create_iid_next_func(
             {
                 **fixed_params,
                 **{raw: kwargs[qn] for qn, raw in runtime_param_names.items()},
-                **_conditioned_sigma(conditioned, kwargs),
+                **_conditioned_sigma(conditioned=conditioned, kwargs=kwargs),
             }
         )
         return _draw_shock(
@@ -541,8 +541,7 @@ def _create_iid_next_func(
 
 
 def _conditioned_sigma(
-    conditioned: tuple[StateConditioned, Float1D] | None,
-    kwargs: Mapping[str, Any],
+    *, conditioned: tuple[StateConditioned, Float1D] | None, kwargs: Mapping[str, Any]
 ) -> Mapping[str, Any]:
     """Return `{"sigma": <the value the conditioning state selects>}`, else `{}`.
 
@@ -552,4 +551,4 @@ def _conditioned_sigma(
     if conditioned is None:
         return {}
     sc, sigma_by_code = conditioned
-    return {"sigma": gather_sigma(sigma_by_code, kwargs[sc.on])}
+    return {"sigma": gather_sigma(sigma_by_code=sigma_by_code, code=kwargs[sc.on])}

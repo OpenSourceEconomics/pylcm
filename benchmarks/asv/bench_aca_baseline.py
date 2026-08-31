@@ -120,7 +120,7 @@ def _build() -> tuple[object, object, object]:
 
     model = create_benchmark_model(
         n_subjects=_N_SUBJECTS,
-        pref_type_grid=DiscreteGrid(BenchmarkPrefType),
+        pref_type_grid=DiscreteGrid(category_class=BenchmarkPrefType),
     )
     edge_periods = model.reachability.solution.periods_for_edge(
         source="retiree_oamc_forced_forcedout",

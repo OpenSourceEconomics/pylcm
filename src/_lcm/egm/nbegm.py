@@ -70,7 +70,7 @@ def collect_nbegm_metadata(
     """
     resolved = resolve_declaration_pool(functions=functions)
     boundaries = _collect_boundaries(resolved)
-    piece_sets = _collect_piece_sets(resolved, boundaries=boundaries)
+    piece_sets = _collect_piece_sets(functions=resolved, boundaries=boundaries)
     schedules = _collect_piecewise_affine_schedules(resolved)
     return NBEGMRegistry(
         boundaries=MappingProxyType(boundaries),
@@ -170,8 +170,8 @@ def _collect_boundaries(
 
 
 def _collect_piece_sets(
-    functions: Mapping[FunctionName, Callable[..., object]],
     *,
+    functions: Mapping[FunctionName, Callable[..., object]],
     boundaries: Mapping[FunctionName, CaseBoundary],
 ) -> tuple[PieceSet, ...]:
     """Group pieces by (output, predicate) and require both sides exactly once."""

@@ -27,6 +27,7 @@ from lcm.typing import FloatND, IntND
 
 @functools.partial(jit, static_argnames=("pinned_axes",))
 def map_coordinates(
+    *,
     input: FloatND | IntND,  # noqa: A002
     coordinates: Sequence[FloatND | IntND] | FloatND | IntND,
     pinned_axes: tuple[int, ...] = (),
@@ -77,9 +78,9 @@ def map_coordinates(
         )
 
     interpolation_data = [
-        _compute_pinned_index_and_weight(coordinate, size)
+        _compute_pinned_index_and_weight(coordinate=coordinate, input_size=size)
         if axis in pinned_axes
-        else _compute_indices_and_weights(coordinate, size)
+        else _compute_indices_and_weights(coordinate=coordinate, input_size=size)
         for axis, (coordinate, size) in enumerate(
             zip(coordinates, input.shape, strict=True)
         )
@@ -115,7 +116,7 @@ def map_coordinates(
 
 
 def _compute_indices_and_weights(
-    coordinate: FloatND | IntND, input_size: int
+    *, coordinate: FloatND | IntND, input_size: int
 ) -> list[tuple[IntND, FloatND | IntND]]:
     """Compute indices and weights for linear interpolation."""
     lower_index = jnp.clip(jnp.floor(coordinate), 0, input_size - 2).astype(jnp.int32)
@@ -125,7 +126,7 @@ def _compute_indices_and_weights(
 
 
 def _compute_pinned_index_and_weight(
-    coordinate: FloatND | IntND, input_size: int
+    *, coordinate: FloatND | IntND, input_size: int
 ) -> list[tuple[IntND, FloatND]]:
     """Return the single full-weight corner of an axis read at one node.
 

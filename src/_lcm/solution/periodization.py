@@ -48,13 +48,15 @@ def solver_period_group_key(
     )
     return (
         continuation_targets,
-        periodized_tree_signature(context.functions, period),
-        periodized_tree_signature(context.constraints, period),
-        periodized_tree_signature(context.constraint_functions, period),
-        periodized_tree_signature(context.transitions, period),
-        periodized_tree_signature(context.transition_plans, period),
-        periodized_node_signature(context.koopmans_aggregator, period),
-        periodized_node_signature(context.compute_regime_transition_probs, period),
+        periodized_tree_signature(tree=context.functions, period=period),
+        periodized_tree_signature(tree=context.constraints, period=period),
+        periodized_tree_signature(tree=context.constraint_functions, period=period),
+        periodized_tree_signature(tree=context.transitions, period=period),
+        periodized_tree_signature(tree=context.transition_plans, period=period),
+        periodized_node_signature(node=context.koopmans_aggregator, period=period),
+        periodized_node_signature(
+            node=context.compute_regime_transition_probs, period=period
+        ),
         current_grid_signature,
         continuation_grid_signature,
         solver_path,
@@ -73,23 +75,24 @@ def resolve_solver_build_context(
     )
 
     functions = cast(
-        "EconFunctionsMapping", resolve_periodized_nodes(context.functions, period)
+        "EconFunctionsMapping",
+        resolve_periodized_nodes(mapping=context.functions, period=period),
     )
     constraints = cast(
         "ConstraintFunctionsMapping",
-        resolve_periodized_nodes(context.constraints, period),
+        resolve_periodized_nodes(mapping=context.constraints, period=period),
     )
     constraint_functions = cast(
         "ConstraintFunctionsMapping",
-        resolve_periodized_nodes(context.constraint_functions, period),
+        resolve_periodized_nodes(mapping=context.constraint_functions, period=period),
     )
     transitions = cast(
         "TransitionFunctionsMapping",
-        resolve_periodized_tree(context.transitions, period),
+        resolve_periodized_tree(tree=context.transitions, period=period),
     )
     transition_plans = cast(
         "TargetTransitionPlans",
-        resolve_periodized_tree(context.transition_plans, period),
+        resolve_periodized_tree(tree=context.transition_plans, period=period),
     )
     return replace(
         context,
@@ -100,10 +103,10 @@ def resolve_solver_build_context(
         transition_plans=transition_plans,
         koopmans_aggregator=cast(
             "EconFunction | None",
-            resolve_periodized_node(context.koopmans_aggregator, period),
+            resolve_periodized_node(node=context.koopmans_aggregator, period=period),
         ),
         compute_regime_transition_probs=resolve_periodized_node(
-            context.compute_regime_transition_probs, period
+            node=context.compute_regime_transition_probs, period=period
         ),
     )
 

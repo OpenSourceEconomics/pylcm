@@ -72,7 +72,7 @@ def collect_stochastic_state_transitions(
             if isinstance(raw, MarkovTransition):
                 _add_stochastic_entry(
                     entries=entries,
-                    key=_phase_key(f"next_{state_name}", phase),
+                    key=_phase_key(base=f"next_{state_name}", phase=phase),
                     markov=raw,
                     state_name=state_name,
                     target_regime_name=None,
@@ -90,7 +90,7 @@ def collect_stochastic_state_transitions(
                     _add_stochastic_entry(
                         entries=entries,
                         key=_phase_key(
-                            f"next_{state_name}__{target_regime_name}", phase
+                            base=f"next_{state_name}__{target_regime_name}", phase=phase
                         ),
                         markov=law,
                         state_name=state_name,
@@ -104,7 +104,7 @@ def collect_stochastic_state_transitions(
 
 
 def _phase_key(
-    base: str, phase: Literal["solve", "simulate"] | None
+    *, base: str, phase: Literal["solve", "simulate"] | None
 ) -> TransitionFunctionName:
     """Key for one law's metadata, suffixed by phase for a `Phased` entry.
 

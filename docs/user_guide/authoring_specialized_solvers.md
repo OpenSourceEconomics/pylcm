@@ -139,6 +139,7 @@ from lcm_examples.specialized_consumption_savings import (
     ),
 )
 def tax(
+    *,
     liquid: ContinuousState,
     tax_rate: float,
     tax_exemption: float,
@@ -146,11 +147,11 @@ def tax(
     return tax_rate * jnp.maximum(liquid - tax_exemption, 0.0)
 
 
-def resources(liquid: ContinuousState, tax: FloatND, income: float) -> FloatND:
+def resources(*, liquid: ContinuousState, tax: FloatND, income: float) -> FloatND:
     return liquid + income - tax
 
 
-def savings(resources: FloatND, consumption: ContinuousAction) -> ContinuousState:
+def savings(*, resources: FloatND, consumption: ContinuousAction) -> ContinuousState:
     return resources - consumption
 
 

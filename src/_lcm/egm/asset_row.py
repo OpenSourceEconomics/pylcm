@@ -116,6 +116,7 @@ def _get_solve_one_combo_asset_rows(
                 **{pieces.euler_state_name: state_value}, **combo_pool
             )
 
+        # keyword-only-exempt: library-callback=jax.grad
         def continuation_of_euler_state(
             state_value: ScalarFloat, savings_value: ScalarFloat
         ) -> ScalarFloat:

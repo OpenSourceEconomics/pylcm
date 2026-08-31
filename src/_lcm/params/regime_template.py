@@ -33,8 +33,8 @@ from lcm.typing import UserFunction
 
 
 def create_regime_params_template(
-    user_regime: UserRegime,
     *,
+    user_regime: UserRegime,
     other_regime_state_names: frozenset[StateName] = frozenset(),
     state_names_by_regime: Mapping[RegimeName, frozenset[StateName]] = MappingProxyType(
         {}
@@ -141,8 +141,8 @@ def create_regime_params_template(
     # has to be permissive enough for the legitimate ones: a name in transition
     # role in either phase keeps its `next_` arguments out of the template.
     transition_role = _function_names_in_transition_role(
-        user_regime, phase="solve"
-    ) | _function_names_in_transition_role(user_regime, phase="simulate")
+        user_regime=user_regime, phase="solve"
+    ) | _function_names_in_transition_role(user_regime=user_regime, phase="simulate")
     variables_in_transition_role = (
         variables
         | _joint_transition_node_names(user_regime)
@@ -215,10 +215,11 @@ def create_regime_params_template(
     )
 
     _validate_no_shadowing(
-        {**function_params, **{k: {} for k in per_target_params}}, user_regime
+        function_params={**function_params, **{k: {} for k in per_target_params}},
+        user_regime=user_regime,
     )
 
-    _add_runtime_grid_params(function_params, user_regime)
+    _add_runtime_grid_params(function_params=function_params, user_regime=user_regime)
 
     if user_regime.taste_shocks is not None:
         if "taste_shocks" in function_params:
@@ -229,9 +230,15 @@ def create_regime_params_template(
             )
         function_params["taste_shocks"] = {"scale": "float"}
 
-    _add_koopmans_aggregator_params(function_params, user_regime)
-    _add_certainty_equivalent_params(function_params, user_regime)
-    _add_pareto_objective_params(function_params, user_regime)
+    _add_koopmans_aggregator_params(
+        function_params=function_params, user_regime=user_regime
+    )
+    _add_certainty_equivalent_params(
+        function_params=function_params, user_regime=user_regime
+    )
+    _add_pareto_objective_params(
+        function_params=function_params, user_regime=user_regime
+    )
 
     top_level_collisions = set(function_params) & set(per_target_params)
     if top_level_collisions:
@@ -333,15 +340,15 @@ def _add_joint_transition_params(
             probability_functions = [kernel.probabilities for kernel in variants]
             kernel_branch = target_branch.setdefault(kernel_name, {})
             kernel_branch["support"] = _union_callable_params(
-                support_functions, non_params=support_non_params
+                functions=support_functions, non_params=support_non_params
             )
             kernel_branch["probabilities"] = _union_callable_params(
-                probability_functions, non_params=probability_non_params
+                functions=probability_functions, non_params=probability_non_params
             )
 
             for output_name in variants[0].outputs:
                 params = _union_callable_params(
-                    [kernel.outputs[output_name] for kernel in variants],
+                    functions=[kernel.outputs[output_name] for kernel in variants],
                     non_params=output_non_params,
                 )
                 transition_name = f"next_{output_name}"
@@ -360,9 +367,7 @@ def _joint_variants(raw: JointTransition | Phased) -> tuple[JointTransition, ...
 
 
 def _joint_variant_for_phase(
-    raw: JointTransition | Phased,
-    *,
-    phase: Literal["solve", "simulate"],
+    *, raw: JointTransition | Phased, phase: Literal["solve", "simulate"]
 ) -> JointTransition:
     """Return the concrete joint declaration used in one phase."""
     if isinstance(raw, Phased):
@@ -380,7 +385,7 @@ def _joint_transition_node_names(user_regime: UserRegime) -> frozenset[str]:
 
 
 def _union_callable_params(
-    functions: list[UserFunction], *, non_params: set[str]
+    *, functions: list[UserFunction], non_params: set[str]
 ) -> dict[str, str]:
     """Union signature-derived parameters over one role's phase variants."""
     tree: dict[str, str] = {}
@@ -445,7 +450,9 @@ def _fail_if_a_joint_node_is_read_outside_its_transition(
         return
 
     for phase in ("solve", "simulate"):
-        transition_role = _function_names_in_transition_role(user_regime, phase=phase)
+        transition_role = _function_names_in_transition_role(
+            user_regime=user_regime, phase=phase
+        )
         consumers: dict[str, object] = {
             name: func
             for name, func in _collect_all_functions_for_template(user_regime).items()
@@ -457,8 +464,8 @@ def _fail_if_a_joint_node_is_read_outside_its_transition(
             _fail_if_a_joint_node_is_read(
                 consumer_name=name,
                 reserved=_joint_nodes_reachable_from(
-                    func,
-                    user_regime.decomposed_functions,
+                    func=func,
+                    functions=user_regime.decomposed_functions,
                     phase=phase,
                     joint_node_names=joint_node_names,
                 ),
@@ -467,7 +474,7 @@ def _fail_if_a_joint_node_is_read_outside_its_transition(
 
         for target, kernels in user_regime.joint_transitions.items():
             for kernel_name, raw in kernels.items():
-                kernel = _joint_variant_for_phase(raw, phase=phase)
+                kernel = _joint_variant_for_phase(raw=raw, phase=phase)
                 roles: dict[str, object] = {
                     "probabilities": kernel.probabilities,
                 }
@@ -480,8 +487,8 @@ def _fail_if_a_joint_node_is_read_outside_its_transition(
                     _fail_if_a_joint_node_is_read(
                         consumer_name=consumer_name,
                         reserved=_joint_nodes_reachable_from(
-                            func,
-                            user_regime.decomposed_functions,
+                            func=func,
+                            functions=user_regime.decomposed_functions,
                             phase=phase,
                             joint_node_names=joint_node_names,
                         ),
@@ -493,7 +500,9 @@ def _fail_if_a_joint_node_is_read_outside_its_transition(
                     _fail_if_joint_role_reads_a_next_output(
                         consumer_name=consumer_name,
                         reserved=_next_names_reachable_from(
-                            func, user_regime.decomposed_functions, phase=phase
+                            func=func,
+                            functions=user_regime.decomposed_functions,
+                            phase=phase,
                         ),
                     )
                     if role == "support":
@@ -544,7 +553,7 @@ def _fail_if_joint_support_reads_runtime_names(
     }
     inputs = {
         tree_path_from_qname(arg)[-1]
-        for variant in _callables_in(func, phase=phase)
+        for variant in _callables_in(value=func, phase=phase)
         for arg in dt.create_tree_with_input_types({"_": variant})
     }
     invalid = sorted(inputs & forbidden)
@@ -560,9 +569,9 @@ def _fail_if_joint_support_reads_runtime_names(
 
 
 def _joint_nodes_reachable_from(
+    *,
     func: object,
     functions: Mapping[FunctionName, UserFunction | Phased | None],
-    *,
     phase: Literal["solve", "simulate"],
     joint_node_names: frozenset[str],
 ) -> dict[str, tuple[FunctionName, ...]]:
@@ -570,7 +579,7 @@ def _joint_nodes_reachable_from(
     reached: dict[str, tuple[FunctionName, ...]] = {}
     walked: set[FunctionName] = set()
     frontier: list[tuple[UserFunction, tuple[FunctionName, ...]]] = [
-        (variant, ()) for variant in _callables_in(func, phase=phase)
+        (variant, ()) for variant in _callables_in(value=func, phase=phase)
     ]
     while frontier:
         current, chain = frontier.pop()
@@ -582,7 +591,7 @@ def _joint_nodes_reachable_from(
                 walked.add(arg_name)
                 frontier.extend(
                     (variant, (*chain, arg_name))
-                    for variant in _callables_in(functions[arg_name], phase=phase)
+                    for variant in _callables_in(value=functions[arg_name], phase=phase)
                 )
     return reached
 
@@ -637,7 +646,9 @@ def _fail_if_a_next_name_is_read_outside_a_transition(user_regime: UserRegime) -
 
     """
     for phase in ("solve", "simulate"):
-        transition_role = _function_names_in_transition_role(user_regime, phase=phase)
+        transition_role = _function_names_in_transition_role(
+            user_regime=user_regime, phase=phase
+        )
         consumers: dict[str, object] = {
             name: func
             for name, func in _collect_all_functions_for_template(user_regime).items()
@@ -649,7 +660,7 @@ def _fail_if_a_next_name_is_read_outside_a_transition(user_regime: UserRegime) -
             _fail_if_a_next_name_is_read(
                 consumer_name=name,
                 reserved=_next_names_reachable_from(
-                    func, user_regime.decomposed_functions, phase=phase
+                    func=func, functions=user_regime.decomposed_functions, phase=phase
                 ),
             )
 
@@ -667,9 +678,9 @@ def _fail_if_a_next_name_is_read_outside_a_transition(user_regime: UserRegime) -
 
 
 def _next_names_reachable_from(
+    *,
     func: object,
     functions: Mapping[FunctionName, UserFunction | Phased | None],
-    *,
     phase: Literal["solve", "simulate"],
 ) -> dict[str, tuple[FunctionName, ...]]:
     """Return every `next_`-prefixed argument reachable from `func`, with its route.
@@ -688,7 +699,7 @@ def _next_names_reachable_from(
     reached: dict[str, tuple[FunctionName, ...]] = {}
     walked: set[FunctionName] = set()
     frontier: list[tuple[UserFunction, tuple[FunctionName, ...]]] = [
-        (variant, ()) for variant in _callables_in(func, phase=phase)
+        (variant, ()) for variant in _callables_in(value=func, phase=phase)
     ]
     while frontier:
         current, chain = frontier.pop()
@@ -700,7 +711,7 @@ def _next_names_reachable_from(
                 walked.add(arg_name)
                 frontier.extend(
                     (variant, (*chain, arg_name))
-                    for variant in _callables_in(functions[arg_name], phase=phase)
+                    for variant in _callables_in(value=functions[arg_name], phase=phase)
                 )
     return reached
 
@@ -764,8 +775,7 @@ def _fail_if_a_next_name_is_read(
 
 
 def _add_koopmans_aggregator_params(
-    function_params: dict[FunctionName, dict[str, str]],
-    user_regime: UserRegime,
+    *, function_params: dict[FunctionName, dict[str, str]], user_regime: UserRegime
 ) -> None:
     """Add the Koopmans aggregator's params under its pseudo-function name in place.
 
@@ -807,8 +817,7 @@ def _add_koopmans_aggregator_params(
 
 
 def _add_pareto_objective_params(
-    function_params: dict[FunctionName, dict[str, str]],
-    user_regime: UserRegime,
+    *, function_params: dict[FunctionName, dict[str, str]], user_regime: UserRegime
 ) -> None:
     """Add the Pareto weights' free params under their pseudo-function name.
 
@@ -839,8 +848,7 @@ def _add_pareto_objective_params(
 
 
 def _add_certainty_equivalent_params(
-    function_params: dict[FunctionName, dict[str, str]],
-    user_regime: UserRegime,
+    *, function_params: dict[FunctionName, dict[str, str]], user_regime: UserRegime
 ) -> None:
     """Add the certainty equivalent's params under its pseudo-function name in place.
 
@@ -863,8 +871,7 @@ def _add_certainty_equivalent_params(
 
 
 def _add_runtime_grid_params(
-    function_params: dict[FunctionName, dict[str, str]],
-    user_regime: UserRegime,
+    *, function_params: dict[FunctionName, dict[str, str]], user_regime: UserRegime
 ) -> None:
     """Add runtime-supplied state/action grid params to the template in place."""
     for state_name, grid in user_regime.states.items():
@@ -925,7 +932,7 @@ def _fail_if_runtime_grid_shadows_function(
 
 
 def _callables_in(
-    value: object, *, phase: Literal["solve", "simulate"] | None = None
+    *, value: object, phase: Literal["solve", "simulate"] | None = None
 ) -> list[UserFunction]:
     """Return the callables a regime slot value stands for.
 
@@ -955,21 +962,21 @@ def _callables_in(
         return []
     if isinstance(value, Phased):
         if phase == "solve":
-            return _callables_in(value.solve, phase=phase)
+            return _callables_in(value=value.solve, phase=phase)
         if phase == "simulate":
-            return _callables_in(value.simulate, phase=phase)
-        return [*_callables_in(value.solve), *_callables_in(value.simulate)]
+            return _callables_in(value=value.simulate, phase=phase)
+        return [*_callables_in(value=value.solve), *_callables_in(value=value.simulate)]
     if isinstance(value, Mapping) and not isinstance(value, MarkovTransition):
         return [
             callable_
             for member in value.values()
-            for callable_ in _callables_in(member, phase=phase)
+            for callable_ in _callables_in(value=member, phase=phase)
         ]
     return [cast("UserFunction", value)]
 
 
 def _function_names_in_transition_role(
-    user_regime: UserRegime, *, phase: Literal["solve", "simulate"]
+    *, user_regime: UserRegime, phase: Literal["solve", "simulate"]
 ) -> frozenset[str]:
     """Return the names of functions that compute, or feed, a state transition.
 
@@ -997,13 +1004,13 @@ def _function_names_in_transition_role(
     frontier = [
         variant
         for law in user_regime.state_transitions.values()
-        for variant in _callables_in(law, phase=phase)
+        for variant in _callables_in(value=law, phase=phase)
     ]
     frontier.extend(
         output
         for kernels in user_regime.joint_transitions.values()
         for raw in kernels.values()
-        for output in _joint_variant_for_phase(raw, phase=phase).outputs.values()
+        for output in _joint_variant_for_phase(raw=raw, phase=phase).outputs.values()
     )
     while frontier:
         func = frontier.pop()
@@ -1012,13 +1019,13 @@ def _function_names_in_transition_role(
             if arg_name in feeders or arg_name not in functions:
                 continue
             feeders.add(arg_name)
-            frontier.extend(_callables_in(functions[arg_name], phase=phase))
+            frontier.extend(_callables_in(value=functions[arg_name], phase=phase))
 
     joint_output_names = {
         f"next_{state_name}"
         for kernels in user_regime.joint_transitions.values()
         for raw in kernels.values()
-        for state_name in _joint_variant_for_phase(raw, phase=phase).outputs
+        for state_name in _joint_variant_for_phase(raw=raw, phase=phase).outputs
     }
     return frozenset(
         {f"next_{name}" for name in user_regime.state_transitions}
@@ -1069,8 +1076,8 @@ def _collect_all_functions_for_template(
             for output_name in joint.outputs
         }
         result |= collect_state_transitions(
-            user_regime.states,
-            user_regime.state_transitions,
+            states=user_regime.states,
+            state_transitions=user_regime.state_transitions,
             joint_output_names=joint_output_names,
         )
         result |= _regime_transition_entries(user_regime.decomposed_transition)
@@ -1246,8 +1253,7 @@ def _regime_transition_entries(
 
 
 def _validate_no_shadowing(
-    function_params: dict[FunctionName, dict[str, str]],
-    user_regime: UserRegime,
+    *, function_params: dict[FunctionName, dict[str, str]], user_regime: UserRegime
 ) -> None:
     """Raise if any discovered parameter shadows a state or action name."""
     state_action_names = set(user_regime.states) | set(user_regime.actions)

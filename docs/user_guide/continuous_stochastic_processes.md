@@ -309,7 +309,7 @@ working = Regime(
     transition=next_regime,
     states={
         "wealth": LinSpacedGrid(start=0, stop=100, n_points=50),
-        "employment_status": DiscreteGrid(EmploymentStatus),
+        "employment_status": DiscreteGrid(category_class=EmploymentStatus),
         "income_shock": income_shock,
     },
     state_transitions={

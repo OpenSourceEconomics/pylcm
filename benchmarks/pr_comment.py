@@ -104,21 +104,29 @@ def post_pr_comment() -> None:
         print("No machine directory found in .asv/results — nothing to post.")
         sys.exit(1)
 
-    head_result_file = _ensure_head_result(machine_dir, head_sha, head_sha_full)
+    head_result_file = _ensure_head_result(
+        machine_dir=machine_dir, head_sha=head_sha, head_sha_full=head_sha_full
+    )
     base_file = _find_baseline_file(machine_dir)
 
     if base_file is not None:
-        rows = _build_comparison_rows(base_file, head_result_file)
+        rows = _build_comparison_rows(base_file=base_file, head_file=head_result_file)
         if rows:
             base_sha = _get_commit_hash(base_file)[:8]
-            body = _format_comparison_comment(head_sha, base_sha, rows)
+            body = _format_comparison_comment(
+                head_sha=head_sha, base_sha=base_sha, rows=rows
+            )
         else:
             body = _format_raw_comment(
-                head_sha, _format_raw_results(head_result_file, head_sha)
+                head_sha=head_sha,
+                raw_md=_format_raw_results(
+                    result_file=head_result_file, head_sha=head_sha
+                ),
             )
     else:
         body = _format_raw_comment(
-            head_sha, _format_raw_results(head_result_file, head_sha)
+            head_sha=head_sha,
+            raw_md=_format_raw_results(result_file=head_result_file, head_sha=head_sha),
         )
 
     _upsert_pr_comment(body)
@@ -138,15 +146,18 @@ def _find_baseline_file(machine_dir: Path) -> Path | None:
         return None
 
     base_sha = base_sha_full[:8]
-    base_file = _find_result_file(machine_dir, base_sha)
+    base_file = _find_result_file(machine_dir=machine_dir, short_hash=base_sha)
     if base_file is None:
-        base_file = _fetch_baseline_from_site(machine_dir, base_sha)
+        base_file = _fetch_baseline_from_site(
+            machine_dir=machine_dir, base_sha=base_sha
+        )
     if base_file is None:
         print(f"No results for merge-base {base_sha} — posting raw numbers instead.")
     return base_file
 
 
 def _build_comparison_rows(
+    *,
     base_file: Path,
     head_file: Path,
 ) -> list[_BenchmarkRow]:
@@ -164,10 +175,10 @@ def _build_comparison_rows(
     for (class_name, method_name, params), head_value in head_raw.items():
         if class_name not in _CLASS_DISPLAY and method_name not in _METHOD_DISPLAY:
             continue
-        after_formatted = _format_value(method_name, head_value)
+        after_formatted = _format_value(bench_name=method_name, value=head_value)
         base_value = base_raw.get((class_name, method_name, params))
         if base_value is not None and base_value != 0:
-            before_formatted = _format_value(method_name, base_value)
+            before_formatted = _format_value(bench_name=method_name, value=base_value)
             ratio: float | None = head_value / base_value
         else:
             before_formatted = ""
@@ -186,6 +197,7 @@ def _build_comparison_rows(
 
 
 def _format_comparison_comment(
+    *,
     head_sha: str,
     base_sha: str,
     rows: list[_BenchmarkRow],
@@ -253,7 +265,7 @@ def _build_grouped_table(rows: list[_BenchmarkRow]) -> str:
     return "\n".join(lines)
 
 
-def _format_raw_results(result_file: Path, head_sha: str) -> str:
+def _format_raw_results(*, result_file: Path, head_sha: str) -> str:
     """Extract a grouped summary from an ASV results JSON file."""
     entries = _parse_raw_entries(result_file)
 
@@ -297,7 +309,12 @@ def _parse_raw_entries(
 ) -> list[tuple[str, str, str, str]]:
     """Parse an ASV result JSON into (class, method, params, formatted_value) tuples."""
     return [
-        (class_name, method_name, params, _format_value(method_name, value))
+        (
+            class_name,
+            method_name,
+            params,
+            _format_value(bench_name=method_name, value=value),
+        )
         for (class_name, method_name, params), value in _parse_raw_values(
             result_file
         ).items()
@@ -359,7 +376,7 @@ def _expand_params(params: list[list[str]]) -> list[str]:
     return combos
 
 
-def _format_value(bench_name: str, value: float) -> str:
+def _format_value(*, bench_name: str, value: float) -> str:
     """Format a benchmark value with appropriate units."""
     if "peakmem" in bench_name or "gpu_peak_mem" in bench_name:
         if value >= 1e9:
@@ -374,7 +391,7 @@ def _format_value(bench_name: str, value: float) -> str:
     return f"{value * 1e6:.1f} \u00b5s"
 
 
-def _format_raw_comment(head_sha: str, raw_md: str) -> str:
+def _format_raw_comment(*, head_sha: str, raw_md: str) -> str:
     """Format the full PR comment body for raw results (no baseline)."""
     return "\n".join(
         [
@@ -521,6 +538,7 @@ def _find_machine_dir(results_dir: Path) -> Path | None:
 
 
 def _find_result_file(
+    *,
     machine_dir: Path,
     short_hash: str,
 ) -> Path | None:
@@ -549,6 +567,7 @@ def _find_latest_result_file(machine_dir: Path) -> Path | None:
 
 
 def _ensure_head_result(
+    *,
     machine_dir: Path,
     head_sha: str,
     head_sha_full: str,
@@ -560,7 +579,7 @@ def _ensure_head_result(
     When no file matches HEAD, copy the most recent result file and
     retag it so downstream tools can find two distinct commits.
     """
-    existing = _find_result_file(machine_dir, head_sha)
+    existing = _find_result_file(machine_dir=machine_dir, short_hash=head_sha)
     if existing is not None:
         return existing
 
@@ -580,6 +599,7 @@ def _ensure_head_result(
 
 
 def _fetch_baseline_from_site(
+    *,
     machine_dir: Path,
     base_sha: str,
 ) -> Path | None:

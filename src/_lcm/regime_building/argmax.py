@@ -4,6 +4,7 @@ from lcm.typing import BoolND, FloatND, IntND
 
 
 def argmax_and_max(
+    *,
     a: FloatND | IntND,
     axis: int | tuple[int, ...] | None = None,
     initial: float | None = None,
@@ -42,12 +43,12 @@ def argmax_and_max(
         return jnp.array(0, dtype=jnp.int32), a
 
     if a.ndim != 0:
-        a = _move_axes_to_back(a, axes=axis)
-        a = _flatten_last_n_axes(a, n=len(axis))
+        a = _move_axes_to_back(a=a, axes=axis)
+        a = _flatten_last_n_axes(a=a, n=len(axis))
 
     if where is not None and where.ndim != 0:
-        where = _move_axes_to_back(where, axes=axis)
-        where = _flatten_last_n_axes(where, n=len(axis))
+        where = _move_axes_to_back(a=where, axes=axis)
+        where = _flatten_last_n_axes(a=where, n=len(axis))
 
     # Note: If multiple maxima exist, this approach will select the first index.
     _max = jnp.max(a, axis=-1, keepdims=True, initial=initial, where=where)
@@ -60,7 +61,7 @@ def argmax_and_max(
 
 
 def _move_axes_to_back(
-    a: FloatND | IntND | BoolND, axes: tuple[int, ...]
+    *, a: FloatND | IntND | BoolND, axes: tuple[int, ...]
 ) -> FloatND | IntND | BoolND:
     """Move specified axes to the back of the array.
 
@@ -77,7 +78,7 @@ def _move_axes_to_back(
 
 
 def _flatten_last_n_axes(
-    a: FloatND | IntND | BoolND, n: int
+    *, a: FloatND | IntND | BoolND, n: int
 ) -> FloatND | IntND | BoolND:
     """Flatten the last n axes of a to 1 dimension.
 

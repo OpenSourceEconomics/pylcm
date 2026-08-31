@@ -62,7 +62,7 @@ class LaborSupply:
     work: ScalarInt
 
 
-actions = {"labor_supply": DiscreteGrid(LaborSupply)}
+actions = {"labor_supply": DiscreteGrid(category_class=LaborSupply)}
 ```
 
 Values are integer codes (0, 1, 2, ...) auto-assigned by `@categorical`. In simulation

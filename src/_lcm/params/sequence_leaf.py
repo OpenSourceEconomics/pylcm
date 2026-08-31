@@ -75,10 +75,12 @@ def _user_flatten(leaf: UserSequenceLeaf) -> tuple[list[Any], None]:
     return list(leaf.data), None
 
 
+# keyword-only-exempt: library-callback=jax.tree_util.register_pytree_node
 def _user_unflatten(_aux: None, values: Sequence[Any]) -> UserSequenceLeaf:
     return UserSequenceLeaf(values)
 
 
+# keyword-only-exempt: library-callback=jax.tree_util.register_pytree_node
 def _canonical_unflatten(_aux: None, values: Sequence[Any]) -> SequenceLeaf:
     return SequenceLeaf(values)
 

@@ -208,7 +208,7 @@ def _concatenate_child_resources(
     from _lcm.regime_building import processing as _proc  # noqa: PLC0415
 
     dcegm = cast("_BoundDCEGM", _as_dcegm(user_regime))
-    regime_params_template = create_regime_params_template(user_regime)
+    regime_params_template = create_regime_params_template(user_regime=user_regime)
     resolved: dict[str, UserFunction] = {}
     for name, func in user_regime.decomposed_functions.items():
         if isinstance(func, Phased):

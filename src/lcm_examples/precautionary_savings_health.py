@@ -34,6 +34,7 @@ class RegimeId:
 
 
 def utility(
+    *,
     consumption: ContinuousAction,
     labor_supply: DiscreteAction,
     health: ContinuousState,
@@ -46,13 +47,14 @@ def utility(
 
 
 def utility_retirement(
+    *,
     wealth: ContinuousState,
     health: ContinuousState,
 ) -> FloatND:
     return jnp.log(wealth) * health
 
 
-def labor_income(wage: float | FloatND, labor_supply: DiscreteAction) -> FloatND:
+def labor_income(*, wage: float | FloatND, labor_supply: DiscreteAction) -> FloatND:
     return wage * labor_supply
 
 
@@ -61,6 +63,7 @@ def wage(age: int) -> float | FloatND:
 
 
 def next_wealth(
+    *,
     wealth: ContinuousState,
     consumption: ContinuousAction,
     labor_income: FloatND,
@@ -70,6 +73,7 @@ def next_wealth(
 
 
 def next_health(
+    *,
     health: ContinuousState,
     exercise: ContinuousAction,
     labor_supply: DiscreteAction,
@@ -77,12 +81,13 @@ def next_health(
     return health * (1 + exercise - labor_supply / 2)
 
 
-def next_regime(period: int, n_periods: int) -> ScalarInt:
+def next_regime(*, period: int, n_periods: int) -> ScalarInt:
     certain_retirement = period >= n_periods - 2
     return jnp.where(certain_retirement, RegimeId.retirement, RegimeId.working_life)
 
 
 def borrowing_constraint(
+    *,
     consumption: ContinuousAction,
     wealth: ContinuousState,
     labor_income: FloatND,
@@ -104,7 +109,7 @@ working_life = Regime(
         "health": next_health,
     },
     actions={
-        "labor_supply": DiscreteGrid(LaborSupply),
+        "labor_supply": DiscreteGrid(category_class=LaborSupply),
         "consumption": LinSpacedGrid(
             start=1,
             stop=100,

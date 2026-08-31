@@ -73,7 +73,7 @@ class _PiecewiseGrid(ContinuousGrid):
         distributed: bool = False,
     ) -> None:
         _init_piecewise_grid(
-            self,
+            grid=self,
             start=start,
             stop=stop,
             breakpoints=breakpoints,
@@ -163,8 +163,8 @@ class PiecewiseLogSpacedGrid(_PiecewiseGrid):
 
 
 def _init_piecewise_grid(
-    grid: _PiecewiseGrid,
     *,
+    grid: _PiecewiseGrid,
     start: float | ScalarFloat,
     stop: float | ScalarFloat,
     breakpoints: tuple[GridBreakpoint, ...],

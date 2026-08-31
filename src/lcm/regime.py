@@ -830,8 +830,8 @@ class Regime:
                 for state_name in cast("JointTransition", joint).outputs
             }
             collected = collect_state_transitions(
-                self.states,
-                self.state_transitions,
+                states=self.states,
+                state_transitions=self.state_transitions,
                 joint_output_names=joint_output_names,
             )
             result |= {name: resolve(func) for name, func in collected.items()}

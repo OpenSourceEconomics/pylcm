@@ -385,17 +385,17 @@ def route_gated_edges(
         simulate_gate_evaluator = edge.simulate_gate_evaluator_at(period=fold_period)
         gate_bool = jnp.asarray(
             _call_vmapped_with_accepted_kwargs(
-                simulate_gate_evaluator,
+                func=simulate_gate_evaluator,
                 batched_kwargs=candidate_target_states,
                 static_kwargs={
                     **bind_provenance_params(
-                        simulate_gate_evaluator.arg_provenance,  # ty: ignore[unresolved-attribute]
+                        provenance=simulate_gate_evaluator.arg_provenance,  # ty: ignore[unresolved-attribute]
                         flat_params=flat_params,
                         source_name=regime.name,
                         target_name=target_name,
                     ),
                     **bind_edge_period_context(
-                        simulate_gate_evaluator,
+                        func=simulate_gate_evaluator,
                         fold_period=fold_period,
                         fold_age=fold_age,
                     ),
@@ -465,17 +465,17 @@ def route_gated_edges(
             fallback_states = cast(
                 "Mapping[str, FloatND]",
                 _call_vmapped_with_accepted_kwargs(
-                    projector,
+                    func=projector,
                     batched_kwargs=candidate_target_states,
                     static_kwargs={
                         **bind_provenance_params(
-                            projector_provenance,
+                            provenance=projector_provenance,
                             flat_params=flat_params,
                             source_name=regime.name,
                             target_name=target_name,
                         ),
                         **bind_edge_period_context(
-                            projector,
+                            func=projector,
                             fold_period=fold_period,
                             fold_age=fold_age,
                         ),
@@ -550,8 +550,8 @@ def _per_row_leg_outcomes(
 
 
 def bind_provenance_params(
-    provenance: EdgeArgProvenance,
     *,
+    provenance: EdgeArgProvenance,
     flat_params: FlatParams,
     source_name: RegimeName,
     target_name: RegimeName,
@@ -588,8 +588,8 @@ def bind_provenance_params(
 
 
 def _call_vmapped_with_accepted_kwargs(
-    func: Callable,
     *,
+    func: Callable,
     batched_kwargs: Mapping[str, object],
     static_kwargs: Mapping[str, object],
     axis_size: int,
@@ -628,14 +628,14 @@ def _call_vmapped_with_accepted_kwargs(
     legal broadcast instead of a crash.
     """
     batched, static = split_population_call_args(
-        func, batched_kwargs=batched_kwargs, static_kwargs=static_kwargs
+        func=func, batched_kwargs=batched_kwargs, static_kwargs=static_kwargs
     )
-    return population_call(func, axis_size=axis_size)(batched, static)
+    return population_call(func=func, axis_size=axis_size)(batched, static)
 
 
 def split_population_call_args(
-    func: Callable,
     *,
+    func: Callable,
     batched_kwargs: Mapping[str, object],
     static_kwargs: Mapping[str, object],
 ) -> tuple[dict[str, object], dict[str, object]]:
@@ -657,7 +657,7 @@ def split_population_call_args(
     return batched, static
 
 
-def install_population_call(func: Callable, *, axis_size: int, call: Callable) -> None:
+def install_population_call(*, func: Callable, axis_size: int, call: Callable) -> None:
     """Install `call` as the population call `func` is invoked through.
 
     Ahead-of-time compilation lowers and compiles a gate evaluator before
@@ -688,7 +688,7 @@ def _accepted_arg_names(func: Callable) -> frozenset[str]:
     return accepted
 
 
-def population_call(func: Callable, *, axis_size: int) -> Callable:
+def population_call(*, func: Callable, axis_size: int) -> Callable:
     """Return `func` mapped over a population of `axis_size` subjects, compiled.
 
     Built ONCE per `(func, axis_size)` and reused for every later call.
@@ -714,7 +714,7 @@ def population_call(func: Callable, *, axis_size: int) -> Callable:
     per_axis_size = _POPULATION_CALLS.setdefault(func, {})
     call = per_axis_size.get(axis_size)
     if call is None:
-
+        # keyword-only-exempt: library-callback=jax.vmap
         def _call_one_subject(
             one_subject_kwargs: Mapping[str, object],
             shared_kwargs: Mapping[str, object],

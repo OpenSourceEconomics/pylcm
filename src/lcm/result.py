@@ -127,8 +127,8 @@ class SimulationResult:
 
     def to_dataframe(
         self,
-        additional_targets: list[str] | Literal["all"] | None = None,
         *,
+        additional_targets: list[str] | Literal["all"] | None = None,
         use_labels: bool = True,
         terminal_rows: Literal["first", "all"] = "first",
     ) -> pd.DataFrame:

@@ -260,10 +260,17 @@ def interp_left_record_on_prepared_grid(
 
     """
     return _read_prepared_row(
-        x_query, search_grid, valid_length, xp, fp, None, side="left"
+        x_query=x_query,
+        search_grid=search_grid,
+        valid_length=valid_length,
+        xp=xp,
+        fp=fp,
+        fp_slopes=None,
+        side="left",
     )
 
 
+# keyword-only-exempt: library-callback=jax.custom_jvp
 def _hermite_prepared_read_primal(
     x_query: FloatND,
     search_grid: Float1D,
@@ -285,18 +292,32 @@ def _hermite_prepared_read_primal(
     the exact last valid node); all other channels keep the primal program's
     tangents.
     """
-    return _read_prepared_row(x_query, search_grid, valid_length, xp, fp, fp_slopes)
+    return _read_prepared_row(
+        x_query=x_query,
+        search_grid=search_grid,
+        valid_length=valid_length,
+        xp=xp,
+        fp=fp,
+        fp_slopes=fp_slopes,
+    )
 
 
+# keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
 def _hermite_prepared_read_jvp(primals, tangents):  # noqa: ANN001, ANN202
     x_query, search_grid, valid_length, xp, fp, fp_slopes = primals
     x_query_dot, _, _, xp_dot, fp_dot, fp_slopes_dot = tangents
 
+    # keyword-only-exempt: library-callback=jax.jvp
     def read_at_fixed_query(
         xp_in: Float1D, fp_in: Float1D, fp_slopes_in: Float1D
     ) -> FloatND:
         return _read_prepared_row(
-            x_query, search_grid, valid_length, xp_in, fp_in, fp_slopes_in
+            x_query=x_query,
+            search_grid=search_grid,
+            valid_length=valid_length,
+            xp=xp_in,
+            fp=fp_in,
+            fp_slopes=fp_slopes_in,
         )
 
     primal_out, passive_tangent = jax.jvp(
@@ -384,6 +405,7 @@ def _hermite_query_derivative(
     return jnp.where(jnp.isnan(x_query), jnp.nan, derivative)
 
 
+# keyword-only-exempt: library-callback=jax.custom_jvp
 def _linear_prepared_read_primal(
     x_query: FloatND,
     search_grid: Float1D,
@@ -399,16 +421,30 @@ def _linear_prepared_read_primal(
     node (the read extends the first bracket's secant there), zero strictly
     above the last valid node and on degenerate rows.
     """
-    return _read_prepared_row(x_query, search_grid, valid_length, xp, fp, None)
+    return _read_prepared_row(
+        x_query=x_query,
+        search_grid=search_grid,
+        valid_length=valid_length,
+        xp=xp,
+        fp=fp,
+        fp_slopes=None,
+    )
 
 
+# keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
 def _linear_prepared_read_jvp(primals, tangents):  # noqa: ANN001, ANN202
     x_query, search_grid, valid_length, xp, fp = primals
     x_query_dot, _, _, xp_dot, fp_dot = tangents
 
+    # keyword-only-exempt: library-callback=jax.jvp
     def read_at_fixed_query(xp_in: Float1D, fp_in: Float1D) -> FloatND:
         return _read_prepared_row(
-            x_query, search_grid, valid_length, xp_in, fp_in, None
+            x_query=x_query,
+            search_grid=search_grid,
+            valid_length=valid_length,
+            xp=xp_in,
+            fp=fp_in,
+            fp_slopes=None,
         )
 
     primal_out, passive_tangent = jax.jvp(
@@ -495,6 +531,7 @@ def _linear_query_derivative(
 
 
 def _read_prepared_row(
+    *,
     x_query: FloatND,
     search_grid: Float1D,
     valid_length: ScalarInt,
@@ -531,17 +568,21 @@ def _read_prepared_row(
     # below still publish the contract values.
     degenerate = valid_length < 2  # noqa: PLR2004
 
-    def _sanitized(gathered: FloatND, dummy: float) -> FloatND:
+    def _sanitized(*, gathered: FloatND, dummy: float) -> FloatND:
         return jnp.where(degenerate, dummy, gathered)
 
     result = _interp_between_nodes(
         x_query=x_query,
-        xp_lower=_sanitized(xp[lower], 0.0),
-        xp_upper=_sanitized(xp[upper], 1.0),
-        fp_lower=_sanitized(fp[lower], 0.0),
-        fp_upper=_sanitized(fp[upper], 0.0),
-        slope_lower=None if fp_slopes is None else _sanitized(fp_slopes[lower], 0.0),
-        slope_upper=None if fp_slopes is None else _sanitized(fp_slopes[upper], 0.0),
+        xp_lower=_sanitized(gathered=xp[lower], dummy=0.0),
+        xp_upper=_sanitized(gathered=xp[upper], dummy=1.0),
+        fp_lower=_sanitized(gathered=fp[lower], dummy=0.0),
+        fp_upper=_sanitized(gathered=fp[upper], dummy=0.0),
+        slope_lower=None
+        if fp_slopes is None
+        else _sanitized(gathered=fp_slopes[lower], dummy=0.0),
+        slope_upper=None
+        if fp_slopes is None
+        else _sanitized(gathered=fp_slopes[upper], dummy=0.0),
     )
     # Degenerate-row contract:
     # - one valid node ⇒ the edge clamp on both sides is that node's value
@@ -833,15 +874,15 @@ def _hermite_bracket_derivatives(
     # arithmetic a finite dummy bracket, exactly as the primal row read does.
     degenerate = valid_length < 2  # noqa: PLR2004
 
-    def _sanitized(gathered: FloatND, dummy: float) -> FloatND:
+    def _sanitized(*, gathered: FloatND, dummy: float) -> FloatND:
         return jnp.where(degenerate, dummy, gathered)
 
-    xp_lower = _sanitized(xp[lower], 0.0)
-    xp_upper = _sanitized(xp[upper], 1.0)
-    fp_lower = _sanitized(fp[lower], 0.0)
-    fp_upper = _sanitized(fp[upper], 0.0)
-    slope_lower = _sanitized(fp_slopes[lower], 0.0)
-    slope_upper = _sanitized(fp_slopes[upper], 0.0)
+    xp_lower = _sanitized(gathered=xp[lower], dummy=0.0)
+    xp_upper = _sanitized(gathered=xp[upper], dummy=1.0)
+    fp_lower = _sanitized(gathered=fp[lower], dummy=0.0)
+    fp_upper = _sanitized(gathered=fp[upper], dummy=0.0)
+    slope_lower = _sanitized(gathered=fp_slopes[lower], dummy=0.0)
+    slope_upper = _sanitized(gathered=fp_slopes[upper], dummy=0.0)
 
     bracket_width = xp_upper - xp_lower
     safe_width = jnp.where(bracket_width == 0.0, 1.0, bracket_width)
@@ -1085,26 +1126,34 @@ def interp_and_derivative_on_prepared_grid(
     # publish the contract values through the overrides below.
     degenerate = valid_length < 2  # noqa: PLR2004
 
-    def _sanitized(gathered: FloatND, dummy: float) -> FloatND:
+    def _sanitized(*, gathered: FloatND, dummy: float) -> FloatND:
         return jnp.where(degenerate, dummy, gathered)
 
     value = _interp_between_nodes(
         x_query=x_query,
-        xp_lower=_sanitized(xp[lower], 0.0),
-        xp_upper=_sanitized(xp[upper], 1.0),
-        fp_lower=_sanitized(fp[lower], 0.0),
-        fp_upper=_sanitized(fp[upper], 0.0),
-        slope_lower=None if fp_slopes is None else _sanitized(fp_slopes[lower], 0.0),
-        slope_upper=None if fp_slopes is None else _sanitized(fp_slopes[upper], 0.0),
+        xp_lower=_sanitized(gathered=xp[lower], dummy=0.0),
+        xp_upper=_sanitized(gathered=xp[upper], dummy=1.0),
+        fp_lower=_sanitized(gathered=fp[lower], dummy=0.0),
+        fp_upper=_sanitized(gathered=fp[upper], dummy=0.0),
+        slope_lower=None
+        if fp_slopes is None
+        else _sanitized(gathered=fp_slopes[lower], dummy=0.0),
+        slope_upper=None
+        if fp_slopes is None
+        else _sanitized(gathered=fp_slopes[upper], dummy=0.0),
     )
     derivative = _derivative_between_nodes(
         x_query=x_query,
-        xp_lower=_sanitized(xp[lower], 0.0),
-        xp_upper=_sanitized(xp[upper], 1.0),
-        fp_lower=_sanitized(fp[lower], 0.0),
-        fp_upper=_sanitized(fp[upper], 0.0),
-        slope_lower=None if fp_slopes is None else _sanitized(fp_slopes[lower], 0.0),
-        slope_upper=None if fp_slopes is None else _sanitized(fp_slopes[upper], 0.0),
+        xp_lower=_sanitized(gathered=xp[lower], dummy=0.0),
+        xp_upper=_sanitized(gathered=xp[upper], dummy=1.0),
+        fp_lower=_sanitized(gathered=fp[lower], dummy=0.0),
+        fp_upper=_sanitized(gathered=fp[upper], dummy=0.0),
+        slope_lower=None
+        if fp_slopes is None
+        else _sanitized(gathered=fp_slopes[lower], dummy=0.0),
+        slope_upper=None
+        if fp_slopes is None
+        else _sanitized(gathered=fp_slopes[upper], dummy=0.0),
     )
     # Degenerate valid prefixes share the value channel's contract (see
     # `interp_on_prepared_grid`): a singleton row is the constant pair

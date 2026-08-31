@@ -198,7 +198,7 @@ def outer_envelope_at_query(
     """
 
     def read_one(
-        endog: Float1D, value: Float1D, marginal: Float1D
+        *, endog: Float1D, value: Float1D, marginal: Float1D
     ) -> tuple[
         Float1D,
         Float1D,
@@ -251,7 +251,7 @@ def outer_envelope_at_query(
         )
 
     values, marginals, left_marginals, right_germ, left_germ = jax.vmap(read_one)(
-        candidate_endog, candidate_value, candidate_marginal
+        endog=candidate_endog, value=candidate_value, marginal=candidate_marginal
     )
     winner, left_owned = right_germ_winner(
         value=values.T,

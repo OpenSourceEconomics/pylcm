@@ -310,6 +310,7 @@ def exact_affine_read(
     return _exact_affine_read_impl(*operands)
 
 
+# keyword-only-exempt: library-callback=jax.custom_jvp
 def _exact_affine_read_ffi(
     x0: FloatND,
     x1: FloatND,
@@ -338,6 +339,7 @@ def _exact_affine_read_ffi(
 _exact_affine_read_impl = jax.custom_jvp(_exact_affine_read_ffi)
 
 
+# keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
 @_exact_affine_read_impl.defjvp
 def _exact_affine_read_jvp(
     primals: tuple[FloatND, FloatND, FloatND, FloatND, FloatND],
@@ -366,7 +368,13 @@ def _exact_affine_read_jvp(
     x0, x1, v0, v1, x_query = primals
     dx0, dx1, dv0, dv1, dx_query = tangents
     stopped = tuple(jax.lax.stop_gradient(value) for value in primals)
-    published, status = _exact_affine_read_ffi(*stopped)
+    published, status = _exact_affine_read_ffi(
+        x0=stopped[0],
+        x1=stopped[1],
+        v0=stopped[2],
+        v1=stopped[3],
+        x_query=stopped[4],
+    )
 
     width = x1 - x0
     alpha = (x_query - x0) / width
@@ -652,6 +660,7 @@ def exact_query_winner_batched(
 
 
 def _canonical_query_segments(
+    *,
     left_grid: FloatND,
     right_grid: FloatND,
     left_value: FloatND,
@@ -673,6 +682,7 @@ def _canonical_query_segments(
     return canonical_x0, canonical_x1, canonical_v0, canonical_v1, lower, upper
 
 
+# keyword-only-exempt: library-callback=jax.custom_jvp
 def _shared_strict_primary_primal(
     left_grid: FloatND,
     right_grid: FloatND,
@@ -685,7 +695,10 @@ def _shared_strict_primary_primal(
 ) -> BoolND:
     """Exact strict-primary fact for shared segments, requested off hot path."""
     x0, x1, v0, v1, lower, upper = _canonical_query_segments(
-        left_grid, right_grid, left_value, right_value
+        left_grid=left_grid,
+        right_grid=right_grid,
+        left_value=left_value,
+        right_value=right_value,
     )
     safe_winner = jnp.where(status == 0, winner, 0)
     held_x0 = x0[safe_winner]
@@ -716,6 +729,7 @@ def _shared_strict_primary_primal(
 _shared_strict_primary = jax.custom_jvp(_shared_strict_primary_primal)
 
 
+# keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
 @_shared_strict_primary.defjvp
 def _shared_strict_primary_jvp(
     primals: tuple[FloatND, FloatND, FloatND, FloatND, IntND, FloatND, IntND, IntND],
@@ -724,10 +738,20 @@ def _shared_strict_primary_jvp(
     """Strict ownership is a discrete exact fact with a float0 tangent."""
     del tangents
     stopped = tuple(jax.lax.stop_gradient(value) for value in primals)
-    strict = _shared_strict_primary_primal(*stopped)
+    strict = _shared_strict_primary_primal(
+        left_grid=stopped[0],
+        right_grid=stopped[1],
+        left_value=stopped[2],
+        right_value=stopped[3],
+        live=stopped[4],
+        x_query=stopped[5],
+        winner=stopped[6],
+        status=stopped[7],
+    )
     return strict, jnp.zeros(jnp.shape(strict), dtype=jax.dtypes.float0)
 
 
+# keyword-only-exempt: library-callback=jax.custom_jvp
 def _batched_strict_primary_primal(
     left_grid: FloatND,
     right_grid: FloatND,
@@ -740,7 +764,10 @@ def _batched_strict_primary_primal(
 ) -> BoolND:
     """Exact strict-primary fact for per-batch segment sets."""
     x0, x1, v0, v1, lower, upper = _canonical_query_segments(
-        left_grid, right_grid, left_value, right_value
+        left_grid=left_grid,
+        right_grid=right_grid,
+        left_value=left_value,
+        right_value=right_value,
     )
     n_segment = left_grid.shape[-1]
     candidate_shape = (*x_query.shape, n_segment)
@@ -779,6 +806,7 @@ def _batched_strict_primary_primal(
 _batched_strict_primary = jax.custom_jvp(_batched_strict_primary_primal)
 
 
+# keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
 @_batched_strict_primary.defjvp
 def _batched_strict_primary_jvp(
     primals: tuple[FloatND, FloatND, FloatND, FloatND, IntND, FloatND, IntND, IntND],
@@ -787,10 +815,20 @@ def _batched_strict_primary_jvp(
     """Batched strict ownership is discrete with a float0 tangent."""
     del tangents
     stopped = tuple(jax.lax.stop_gradient(value) for value in primals)
-    strict = _batched_strict_primary_primal(*stopped)
+    strict = _batched_strict_primary_primal(
+        left_grid=stopped[0],
+        right_grid=stopped[1],
+        left_value=stopped[2],
+        right_value=stopped[3],
+        live=stopped[4],
+        x_query=stopped[5],
+        winner=stopped[6],
+        status=stopped[7],
+    )
     return strict, jnp.zeros(jnp.shape(strict), dtype=jax.dtypes.float0)
 
 
+# keyword-only-exempt: library-callback=jax.custom_jvp
 def _batched_segment_winner_ffi(
     left_grid: FloatND,
     right_grid: FloatND,
@@ -818,6 +856,7 @@ def _batched_segment_winner_ffi(
 _batched_segment_winner_impl = jax.custom_jvp(_batched_segment_winner_ffi)
 
 
+# keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
 @_batched_segment_winner_impl.defjvp
 def _batched_segment_winner_jvp(
     primals: tuple[FloatND, FloatND, FloatND, FloatND, IntND, FloatND],
@@ -826,12 +865,20 @@ def _batched_segment_winner_jvp(
     """Keep exact batched ownership discrete under differentiation."""
     del tangents
     stopped = tuple(jax.lax.stop_gradient(value) for value in primals)
-    winner, status = _batched_segment_winner_ffi(*stopped)
+    winner, status = _batched_segment_winner_ffi(
+        left_grid=stopped[0],
+        right_grid=stopped[1],
+        left_value=stopped[2],
+        right_value=stopped[3],
+        live=stopped[4],
+        x_query=stopped[5],
+    )
     winner_dot = jnp.zeros(jnp.shape(winner), dtype=jax.dtypes.float0)
     status_dot = jnp.zeros(jnp.shape(status), dtype=jax.dtypes.float0)
     return (winner, status), (winner_dot, status_dot)
 
 
+# keyword-only-exempt: library-callback=jax.custom_batching.custom_vmap
 def _shared_segment_winner_ffi(
     left_grid: FloatND,
     right_grid: FloatND,
@@ -865,6 +912,7 @@ def _with_batch_axis(
     return jnp.broadcast_to(operand, (axis_size, *operand.shape))
 
 
+# keyword-only-exempt: library-callback=jax.custom_batching.custom_vmap.def_vmap
 def _shared_segment_winner_vmap(
     axis_size: int,
     in_batched: list[bool],
@@ -911,7 +959,12 @@ def _shared_segment_winner_vmap(
         )
     else:
         winner, status = _shared_segment_winner_ffi(
-            left_grid, right_grid, left_value, right_value, live, query.reshape(-1)
+            left_grid=left_grid,
+            right_grid=right_grid,
+            left_value=left_value,
+            right_value=right_value,
+            live=live,
+            x_query=query.reshape(-1),
         )
     published = (winner.reshape(query.shape), status.reshape(query.shape))
     return published, (True, True)
@@ -929,6 +982,7 @@ _shared_segment_winner_primal.def_vmap(_shared_segment_winner_vmap)
 _shared_segment_winner_impl = jax.custom_jvp(_shared_segment_winner_primal)
 
 
+# keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
 @_shared_segment_winner_impl.defjvp
 def _shared_segment_winner_jvp(
     primals: tuple[FloatND, FloatND, FloatND, FloatND, IntND, FloatND],
@@ -937,7 +991,14 @@ def _shared_segment_winner_jvp(
     """Keep exact shared ownership discrete under differentiation."""
     del tangents
     stopped = tuple(jax.lax.stop_gradient(value) for value in primals)
-    winner, status = _shared_segment_winner_primal(*stopped)
+    winner, status = _shared_segment_winner_primal(
+        left_grid=stopped[0],
+        right_grid=stopped[1],
+        left_value=stopped[2],
+        right_value=stopped[3],
+        live=stopped[4],
+        x_query=stopped[5],
+    )
     winner_dot = jnp.zeros(jnp.shape(winner), dtype=jax.dtypes.float0)
     status_dot = jnp.zeros(jnp.shape(status), dtype=jax.dtypes.float0)
     return (winner, status), (winner_dot, status_dot)

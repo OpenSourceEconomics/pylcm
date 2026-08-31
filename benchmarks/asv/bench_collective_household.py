@@ -402,10 +402,10 @@ def _build_chain_kernels():
     def utility(consumption):
         return jnp.log(0.5 * consumption)
 
-    def affordable(wealth, consumption):
+    def affordable(*, wealth, consumption):
         return consumption <= wealth
 
-    def next_wealth(wealth, consumption):
+    def next_wealth(*, wealth, consumption):
         return wealth - consumption
 
     def identity(wealth):
@@ -415,10 +415,10 @@ def _build_chain_kernels():
         """A link is active for one period only, so it always hands over."""
         return jnp.ones_like(age, dtype=float)
 
-    def participation_f(Q_f, reference_f, slack):
+    def participation_f(*, Q_f, reference_f, slack):
         return Q_f >= reference_f - slack
 
-    def participation_m(Q_m, reference_m, slack):
+    def participation_m(*, Q_m, reference_m, slack):
         return Q_m >= reference_m - slack
 
     return {

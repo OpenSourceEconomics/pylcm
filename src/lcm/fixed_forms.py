@@ -39,7 +39,7 @@ def _declared(func: FunctionType) -> FunctionType:
 
 @_declared
 def liquid_law_from_savings(
-    savings: FloatND, return_liquid: FloatND, income: FloatND
+    *, savings: FloatND, return_liquid: FloatND, income: FloatND
 ) -> ContinuousState:
     """Return `(1 + return_liquid) * savings + income`.
 
@@ -60,6 +60,7 @@ def liquid_law_from_savings(
 
 @_declared
 def liquid_law_from_resources(
+    *,
     resources: FloatND,
     consumption: ContinuousAction,
     return_liquid: FloatND,
@@ -84,7 +85,7 @@ def liquid_law_from_resources(
 
 
 @_declared
-def cash_on_hand_with_subsidy(liquid: ContinuousState, subsidy: FloatND) -> FloatND:
+def cash_on_hand_with_subsidy(*, liquid: ContinuousState, subsidy: FloatND) -> FloatND:
     """Return `liquid + subsidy`.
 
     The budget node the case-piece kernels apply: the liquid state plus whichever

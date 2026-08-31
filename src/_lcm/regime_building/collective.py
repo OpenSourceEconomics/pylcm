@@ -73,7 +73,7 @@ def collective_argmax_and_readout(
 
     objective = _weighted_sum(stakeholder_Q=stakeholder_Q, weights=weights)
     argmax_flat, _ = argmax_and_max(
-        objective, axis=action_axes, initial=-jnp.inf, where=feasibility
+        a=objective, axis=action_axes, initial=-jnp.inf, where=feasibility
     )
     # With no action axis to reduce, a cell dissolves exactly where its own single
     # (state, action) cell is infeasible.
@@ -192,7 +192,7 @@ def _weighted_sum(
     # ordering of summands.  For three or more terms a declaration-order left fold
     # can cross a strict action boundary under cancellation.  Canonicalise by the
     # contribution VALUES, the same invariant used for the regime mixture.
-    return sum_in_value_order(jnp.stack(terms, axis=0), axis=0)
+    return sum_in_value_order(values=jnp.stack(terms, axis=0), axis=0)
 
 
 def _gather_along_actions(
@@ -210,8 +210,8 @@ def _gather_along_actions(
     if not action_axes:
         return q
 
-    q_moved = _move_axes_to_back(q, axes=action_axes)
-    q_flat = _flatten_last_n_axes(q_moved, n=len(action_axes))
+    q_moved = _move_axes_to_back(a=q, axes=action_axes)
+    q_flat = _flatten_last_n_axes(a=q_moved, n=len(action_axes))
     gathered = jnp.take_along_axis(q_flat, argmax_flat[..., None], axis=-1)
     return gathered[..., 0]
 
@@ -401,7 +401,7 @@ def build_pareto_weights(
             # in value order: relabelling the household must not select a
             # different reduction tree and hence a different normalizer. The
             # scale is itself order-invariant, so it does not reintroduce one.
-            total = sum_in_value_order(scaled)
+            total = sum_in_value_order(values=scaled)
             return {
                 name: share / total for name, share in zip(raw, scaled, strict=True)
             }

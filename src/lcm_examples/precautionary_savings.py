@@ -51,6 +51,7 @@ _SHOCK_GRID_KWARGS: dict[str, dict[str, bool | float]] = {
 
 
 def next_wealth(
+    *,
     wealth: ContinuousState,
     consumption: ContinuousAction,
     income: ContinuousState,
@@ -59,11 +60,12 @@ def next_wealth(
     return (1 + interest_rate) * (wealth - consumption) + jnp.exp(income)
 
 
-def next_regime(age: int, final_age_alive: float) -> ScalarInt:
+def next_regime(*, age: int, final_age_alive: float) -> ScalarInt:
     return jnp.where(age >= final_age_alive, RegimeId.dead, RegimeId.alive)
 
 
 def wealth_constraint(
+    *,
     consumption: ContinuousAction,
     wealth: ContinuousState,
 ) -> BoolND:
@@ -82,9 +84,9 @@ class RegimeId:
 
 @functools.cache
 def get_model(
+    *,
     n_periods: int,
     shock_type: ShockType,
-    *,
     wealth_grid_type: WealthGridType = "lin",
     wealth_start: float = 1.0,
     wealth_stop: float = 20.0,
@@ -165,8 +167,8 @@ def get_model(
 
 
 def get_params(
-    shock_type: ShockType,
     *,
+    shock_type: ShockType,
     sigma: float,
     mu: float = 0.0,
     rho: float = 0.0,

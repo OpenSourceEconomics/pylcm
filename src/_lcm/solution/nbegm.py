@@ -98,6 +98,7 @@ from _lcm.typing import (
     TransitionFunctionsMapping,
 )
 from _lcm.utils.dispatchers import map_over_leading_axis
+from _lcm.utils.functools import allow_args
 from lcm.ages import AgeGrid
 from lcm.case_piece import CaseBoundary, EqualityOwner
 from lcm.exceptions import RegimeInitializationError
@@ -796,7 +797,7 @@ class NBEGM(OneMarginSolver):
                 if _aggregates_nonlinearly(resolved.certainty_equivalent):
                     param_checks.append(
                         _deferred_probe(
-                            _fail_if_flow_not_single_power,
+                            probe=_fail_if_flow_not_single_power,
                             regime_name=context.regime_name,
                             probe_arguments=probe_arguments,
                             utility_dag=group_spec.utility_dag,
@@ -806,7 +807,7 @@ class NBEGM(OneMarginSolver):
                     )
                 param_checks.append(
                     _deferred_probe(
-                        _fail_if_liquid_reading_next_state_varies_within_interval,
+                        probe=_fail_if_liquid_reading_next_state_varies_within_interval,
                         regime_name=context.regime_name,
                         probe_arguments=probe_arguments,
                         continuation_plan=plan,
@@ -1688,11 +1689,11 @@ def _validate_nbegm_case_piece_declarations(
             if is_smooth_helper(declared_piece):
                 continue
             piece = inspect.unwrap(declared_piece)
-            violations += find_ast_violations(piece, mode="smooth_user")
+            violations += find_ast_violations(func=piece, mode="smooth_user")
             n_params = len(inspect.signature(piece).parameters)
             abstract_args = tuple(jnp.asarray(1.0) for _ in range(n_params))
             violations += find_jaxpr_violations(
-                piece,
+                func=piece,
                 abstract_args=abstract_args,
                 mode="smooth_user",
                 probe_failure=solver.probe_failure,
@@ -2387,7 +2388,7 @@ def _fail_if_discrete_action_feeds_continuation(
     }
     budget_nodes = {budget_target, post_decision_function}
 
-    def _law_reads_action(law: Callable[..., object], *, cut_budget: bool) -> bool:
+    def _law_reads_action(*, law: Callable[..., object], cut_budget: bool) -> bool:
         # For the liquid law, drop the budget nodes so the action reaches the law
         # only through an off-budget path (an out-of-pocket cost on next assets).
         pool = {
@@ -2411,7 +2412,7 @@ def _fail_if_discrete_action_feeds_continuation(
 
     for state_name, func in _state_laws(transitions=context.transitions):
         is_liquid = state_name == liquid_state_name
-        if _law_reads_action(func, cut_budget=is_liquid):
+        if _law_reads_action(law=func, cut_budget=is_liquid):
             where = (
                 f"the law of motion for {state_name!r} off the budget channel"
                 if is_liquid
@@ -2537,7 +2538,7 @@ def _liquid_affinity_samples(
     """Return broad liquid-grid nodes and cell interiors for affinity checks."""
     grid = context.grids[liquid_state_name].to_jax()
     midpoints = 0.5 * (grid[:-1] + grid[1:])
-    return jnp.sort(jnp.concatenate([grid, midpoints]))
+    return jnp.sort(a=jnp.concatenate([grid, midpoints]))
 
 
 def _budget_affinity_check(
@@ -2552,7 +2553,7 @@ def _budget_affinity_check(
     """Configure the shared all-branch, resolved-interval affinity preflight."""
     liquid_grid = context.grids[liquid_state_name].to_jax()
     return _deferred_probe(
-        _fail_if_budget_nonaffine_in_liquid,
+        probe=_fail_if_budget_nonaffine_in_liquid,
         regime_name=context.regime_name,
         probe_arguments=_probe_arguments(context=context),
         coh_dag=coh_dag,
@@ -2610,9 +2611,9 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901, PLR0915
     tol = max(1e-6, 64.0 * float(jnp.finfo(dtype).eps))
 
     def _argument_value(
+        *,
         name: str,
         fill: float,
-        *,
         array_floats: bool,
         array_rank: int,
         leaf_rank: int,
@@ -2621,17 +2622,17 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901, PLR0915
         if name in int_overrides:
             return jnp.asarray(int_overrides[name], dtype=jnp.int32)
         return probe_arguments.fill(
-            name,
-            fill,
+            name=name,
+            fill=fill,
             array_floats=array_floats,
             array_rank=array_rank,
             leaf_rank=leaf_rank,
         )
 
     def _budget_of_liquid(
+        *,
         liquid_value: FloatND,
         fill: float,
-        *,
         array_floats: bool = False,
         array_rank: int = 1,
         leaf_rank: int = 1,
@@ -2642,8 +2643,8 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901, PLR0915
                 liquid_value
                 if name == liquid_name
                 else _argument_value(
-                    name,
-                    fill,
+                    name=name,
+                    fill=fill,
                     array_floats=array_floats,
                     array_rank=array_rank,
                     leaf_rank=leaf_rank,
@@ -2655,9 +2656,9 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901, PLR0915
         return jnp.asarray(coh_dag(**kwargs)).reshape(())
 
     def _resolved_breakpoint(
+        *,
         source: _NBEGMSource,
         fill: float,
-        *,
         array_floats: bool,
         array_rank: int,
         leaf_rank: int,
@@ -2673,8 +2674,8 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901, PLR0915
         )
         cell = {
             name: _argument_value(
-                name,
-                fill,
+                name=name,
+                fill=fill,
                 array_floats=array_floats,
                 array_rank=array_rank,
                 leaf_rank=leaf_rank,
@@ -2684,8 +2685,8 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901, PLR0915
         }
         threshold_value = _indexed_threshold_value(
             table=_argument_value(
-                source.threshold_param_name,
-                fill,
+                name=source.threshold_param_name,
+                fill=fill,
                 array_floats=array_floats,
                 array_rank=array_rank,
                 leaf_rank=leaf_rank,
@@ -2713,8 +2714,8 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901, PLR0915
                     scalar_liquid
                     if name == liquid_name
                     else _argument_value(
-                        name,
-                        fill,
+                        name=name,
+                        fill=fill,
                         array_floats=array_floats,
                         array_rank=array_rank,
                         leaf_rank=leaf_rank,
@@ -2726,14 +2727,14 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901, PLR0915
             return jnp.asarray(dag(**kwargs)).reshape(())
 
         return linear_asset_selection_preimage(
-            derived_of_liquid,
+            z_of_liquid=derived_of_liquid,
             threshold=threshold,
             equality_owner=source.equality_owner,
         )
 
     def _strict_interval_samples(
-        fill: float,
         *,
+        fill: float,
         array_floats: bool,
         array_rank: int,
         leaf_rank: int,
@@ -2743,8 +2744,8 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901, PLR0915
             jnp.stack(
                 [
                     _resolved_breakpoint(
-                        source,
-                        fill,
+                        source=source,
+                        fill=fill,
                         array_floats=array_floats,
                         array_rank=array_rank,
                         leaf_rank=leaf_rank,
@@ -2764,7 +2765,7 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901, PLR0915
         domain_stop = jnp.asarray(liquid_grid[-1], dtype=dtype).reshape(())
 
         internal: list[FloatND] = []
-        for raw_boundary in jnp.sort(clamped):
+        for raw_boundary in jnp.sort(a=clamped):
             boundary = jnp.asarray(raw_boundary, dtype=dtype).reshape(())
             if bool((boundary > domain_start) & (boundary < domain_stop)) and (
                 not internal or bool(boundary != internal[-1])
@@ -2824,7 +2825,7 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901, PLR0915
             for fill in (1.0, 3.0):
                 for overrides in int_sweeps:
                     interval_samples = _strict_interval_samples(
-                        fill,
+                        fill=fill,
                         array_floats=array_floats,
                         array_rank=array_rank,
                         leaf_rank=leaf_rank,
@@ -2835,8 +2836,8 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901, PLR0915
                             jax.grad(
                                 jax.grad(
                                     lambda a, f=fill, o=overrides: _budget_of_liquid(
-                                        a,
-                                        f,
+                                        liquid_value=a,
+                                        fill=f,
                                         array_floats=array_floats,
                                         array_rank=array_rank,
                                         leaf_rank=leaf_rank,
@@ -2865,7 +2866,7 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901, PLR0915
             for fill in (1.0, 3.0):
                 for overrides in int_sweeps:
                     interval_samples = _strict_interval_samples(
-                        fill,
+                        fill=fill,
                         array_floats=array_floats,
                         array_rank=array_rank,
                         leaf_rank=leaf_rank,
@@ -2875,8 +2876,8 @@ def _fail_if_budget_nonaffine_in_liquid(  # noqa: C901, PLR0915
                         slope = float(
                             jax.grad(
                                 lambda a, f=fill, o=overrides: _budget_of_liquid(
-                                    a,
-                                    f,
+                                    liquid_value=a,
+                                    fill=f,
                                     array_floats=array_floats,
                                     array_rank=array_rank,
                                     leaf_rank=leaf_rank,
@@ -2976,6 +2977,7 @@ def _fail_if_flow_not_single_power(
     probe_consumptions = (0.5, 1.0, 2.0, 5.0)
     fill = 1.7
 
+    # keyword-only-exempt: library-callback=jax.grad
     def flow_of_consumption(
         consumption: ScalarFloat,
         int_overrides: Mapping[str, int],
@@ -2991,8 +2993,8 @@ def _fail_if_flow_not_single_power(
                 else jnp.asarray(int_overrides[name], dtype=jnp.int32)
                 if name in int_overrides
                 else probe_arguments.fill(
-                    name,
-                    fill,
+                    name=name,
+                    fill=fill,
                     array_floats=array_floats,
                     array_rank=array_rank,
                     leaf_rank=leaf_rank,
@@ -3220,20 +3222,20 @@ class _ProbeArguments:
 
     def fill(
         self,
+        *,
         name: str,
         fill: float,
-        *,
         array_floats: bool = False,
         array_rank: int = 1,
         leaf_rank: int = 1,
     ) -> object:
         """Build one argument at the given fill level and rung."""
         return _probe_fill(
-            name,
-            fill,
-            self.int_arg_names,
-            self.array_float_arg_names,
-            self.array_arg_ranks,
+            name=name,
+            fill=fill,
+            int_arg_names=self.int_arg_names,
+            array_float_arg_names=self.array_float_arg_names,
+            array_arg_ranks=self.array_arg_ranks,
             bool_arg_names=self.bool_arg_names,
             mapping_leaf_arg_names=self.mapping_leaf_arg_names,
             param_values=self.param_values,
@@ -3244,8 +3246,8 @@ class _ProbeArguments:
 
 
 def _deferred_probe(
-    probe: Callable[..., None],
     *,
+    probe: Callable[..., None],
     regime_name: RegimeName,
     probe_arguments: _ProbeArguments,
     **bound: object,
@@ -3287,12 +3289,12 @@ def _probe_arguments(*, context: SolverBuildContext) -> _ProbeArguments:
 
 
 def _probe_fill(
+    *,
     name: str,
     fill: float,
     int_arg_names: frozenset[str],
     array_float_arg_names: frozenset[str] = frozenset(),
     array_arg_ranks: Mapping[str, int] = MappingProxyType({}),
-    *,
     bool_arg_names: frozenset[str] = frozenset(),
     mapping_leaf_arg_names: frozenset[str] = frozenset(),
     param_values: Mapping[str, object] = MappingProxyType({}),
@@ -3742,8 +3744,8 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(  # noqa: C901
                     for sample in (0.37, 1.63, 2.71):
                         args = [
                             probe_arguments.fill(
-                                name,
-                                fill,
+                                name=name,
+                                fill=fill,
                                 array_floats=array_floats,
                                 array_rank=array_rank,
                                 leaf_rank=leaf_rank,
@@ -3999,7 +4001,7 @@ def _collect_nbegm_schedule_spec(
     )
 
 
-def _sorted_thresholds(raw: Float1D, *, order_sensitive: bool) -> Float1D:
+def _sorted_thresholds(*, raw: Float1D, order_sensitive: bool) -> Float1D:
     """Sort declared thresholds, poisoning a set that arrives out of order.
 
     The interval partition is built from the sorted thresholds while the step's
@@ -4023,9 +4025,9 @@ def _sorted_thresholds(raw: Float1D, *, order_sensitive: bool) -> Float1D:
 
     """
     if not order_sensitive:
-        return jnp.sort(raw)
+        return jnp.sort(a=raw)
     ascending = jnp.all(jnp.diff(raw) > 0.0)
-    return jnp.where(ascending, jnp.sort(raw), jnp.nan)
+    return jnp.where(ascending, jnp.sort(a=raw), jnp.nan)
 
 
 def _fail_if_single_liquid_schedules_unsupported(
@@ -4302,7 +4304,7 @@ def _build_nbegm_continuous_core(
         # the whole liquid axis, solved as plain EGM.
         breakpoints = (
             _sorted_thresholds(
-                jnp.stack(
+                raw=jnp.stack(
                     [params[name] for name in schedule_spec.threshold_param_names]
                 ),
                 order_sensitive=order_sensitive,
@@ -4323,7 +4325,8 @@ def _build_nbegm_continuous_core(
             feasibility=feasibility,
         )
         coh_slopes, coh_intercepts = interval_segment_coefficients(
-            schedule=coh_of_liquid, interval_midpoints=midpoints
+            schedule=lambda scalar_liquid: coh_of_liquid(scalar_liquid=scalar_liquid),
+            interval_midpoints=midpoints,
         )
         value, marginal, _policy = _solve_cliffed_budget(
             next_value=next_value,
@@ -4538,8 +4541,8 @@ def _ride_along_jump_config(
 
 
 def _partition_jumps(
-    preimages: Float1D,
     *,
+    preimages: Float1D,
     dynamic_jumps: bool,
     jump_flags: BoolND,
     n_jumps: int,
@@ -4555,7 +4558,7 @@ def _partition_jumps(
         order = jnp.argsort(preimages)
         sorted_jumps = jnp.nonzero(jump_flags[order], size=n_jumps)[0]
         return preimages[order], tuple(sorted_jumps[k] for k in range(n_jumps))
-    return jnp.sort(preimages), static_jump_positions
+    return jnp.sort(a=preimages), static_jump_positions
 
 
 def _indexed_threshold_value(
@@ -4903,7 +4906,7 @@ def _nbegm_cell_breakpoints(
             )
 
         return linear_asset_selection_preimage(
-            derived_of_liquid,
+            z_of_liquid=derived_of_liquid,
             threshold=threshold,
             equality_owner=source.equality_owner,
         )
@@ -4920,7 +4923,7 @@ def _nbegm_cell_breakpoints(
         else jnp.zeros((0,), dtype=dtype)
     )
     return _partition_jumps(
-        preimages,
+        preimages=preimages,
         dynamic_jumps=statics.dynamic_jumps,
         jump_flags=statics.jump_flags_arr,
         n_jumps=statics.n_jumps,
@@ -5207,6 +5210,7 @@ def _build_nbegm_continuation_core(  # noqa: C901, PLR0915
                     )
 
                     def interval_rows(
+                        *,
                         interval_inputs: tuple[FloatND, ...],
                         combo_pool: dict[str, Any] = combo_pool,
                     ) -> tuple[Float1D, Float1D]:
@@ -5232,7 +5236,9 @@ def _build_nbegm_continuation_core(  # noqa: C901, PLR0915
                         else (midpoints, cliff_targets)
                     )
                     rows = _map_ride_partitioned(
-                        func=interval_rows,
+                        func=lambda interval_inputs: interval_rows(
+                            interval_inputs=interval_inputs
+                        ),
                         xs=interval_inputs,
                         requested_block_size=statics.interval_batch_size,
                     )
@@ -5291,6 +5297,7 @@ def _build_nbegm_continuation_core(  # noqa: C901, PLR0915
             in_axes = _carry_comap_in_axes(carry=carry, slice_targets=slice_targets)
 
             def slice_solve(
+                *,
                 head_value: Any,  # noqa: ANN401
                 sliced_carry: MappingProxyType[RegimeName, EGMCarry],
             ) -> tuple[FloatND, ...]:
@@ -5300,7 +5307,9 @@ def _build_nbegm_continuation_core(  # noqa: C901, PLR0915
                     comap_bindings={**comap_bindings, head: head_value},
                 )
 
-            stacked = jax.vmap(slice_solve, in_axes=(0, in_axes))(head_grid, carry)
+            stacked = jax.vmap(allow_args(slice_solve), in_axes=(0, in_axes))(
+                head_grid, carry
+            )
             # Merge the new leading co-map axis into the flat inner-cell axis, keeping
             # co-map states outermost — the meshgrid-`ij` order the envelope expects.
             return tuple(leaf.reshape(-1, *leaf.shape[2:]) for leaf in stacked)
@@ -5352,12 +5361,19 @@ def _cell_solver(
     the caller decides at which width rows are evaluated.
     """
     if cliff_savings_stack is None:
-        return lambda row: solve_one_cell(row[:-2], row[-2], row[-1]), (
+        return lambda row: solve_one_cell(
+            ride_values=row[:-2], cont_value=row[-2], cont_marginal=row[-1]
+        ), (
             *flat_cells,
             cont_value_stack,
             cont_marginal_stack,
         )
-    return lambda row: solve_one_cell(row[:-3], row[-3], row[-2], row[-1]), (
+    return lambda row: solve_one_cell(
+        ride_values=row[:-3],
+        cont_value=row[-3],
+        cont_marginal=row[-2],
+        cliff_savings=row[-1],
+    ), (
         *flat_cells,
         cont_value_stack,
         cont_marginal_stack,
@@ -5449,6 +5465,7 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
         )
 
         def solve_one_cell(
+            *,
             ride_values: tuple[Any, ...],
             cont_value: FloatND,
             cont_marginal: FloatND,
@@ -5522,6 +5539,7 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
                 feasible_interval_mask = feasibility.feasible_interval_mask
 
             def solve_branch(
+                *,
                 action_binding: Mapping[str, IntND],
                 branch_cont_value: FloatND,
                 branch_cont_marginal: FloatND,
@@ -5584,7 +5602,10 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
                     liquid_grid=liquid, breakpoints=branch_breakpoints
                 )
                 coh_slopes, coh_intercepts = interval_segment_coefficients(
-                    schedule=coh_of_liquid, interval_midpoints=branch_midpoints
+                    schedule=lambda scalar_liquid: coh_of_liquid(
+                        scalar_liquid=scalar_liquid
+                    ),
+                    interval_midpoints=branch_midpoints,
                 )
                 if statics.continuation_reads_liquid:
                     # True cash-on-hand per liquid grid point keeps the step's corners
@@ -5674,11 +5695,11 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
                         for position, name in enumerate(branch_action_names)
                     }
                     step = solve_branch(
-                        binding,
-                        inputs["cont_value"],
-                        inputs["cont_marginal"],
-                        inputs.get("extra_cont_value"),
-                        inputs.get("cliff_savings"),
+                        action_binding=binding,
+                        branch_cont_value=inputs["cont_value"],
+                        branch_cont_marginal=inputs["cont_marginal"],
+                        branch_extra_cont_value=inputs.get("extra_cont_value"),
+                        branch_cliff_savings=inputs.get("cliff_savings"),
                     )
                     return step[0], step[1], step[2]
 
@@ -5695,7 +5716,11 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
                 branch_stacks = (value_stack, policy_stack)
             else:
                 value_row, marginal_row, policy_row = solve_branch(
-                    {}, cont_value, cont_marginal, extra_cont_value, cliff_savings
+                    action_binding={},
+                    branch_cont_value=cont_value,
+                    branch_cont_marginal=cont_marginal,
+                    branch_extra_cont_value=extra_cont_value,
+                    branch_cliff_savings=cliff_savings,
                 )
                 branch_stacks = None
 
@@ -6072,7 +6097,7 @@ def _build_nbegm_schedule_discrete_core(
     ) -> tuple[Float1D, EGMCarry]:
         coh_params = {name: params[name] for name in spec.coh_param_names}
         breakpoints = _sorted_thresholds(
-            jnp.stack([params[name] for name in spec.threshold_param_names]),
+            raw=jnp.stack([params[name] for name in spec.threshold_param_names]),
             order_sensitive=order_sensitive,
         )
         midpoints = interval_midpoints(liquid_grid=liquid, breakpoints=breakpoints)
@@ -6082,6 +6107,7 @@ def _build_nbegm_schedule_discrete_core(
             preferences = build_preferences({**params, **binding})
 
             def coh_of_liquid(
+                *,
                 scalar_liquid: FloatND,
                 binding: MappingProxyType[ActionName, int] = binding,
             ) -> FloatND:
@@ -6092,7 +6118,10 @@ def _build_nbegm_schedule_discrete_core(
                 )
 
             coh_slopes, coh_intercepts = interval_segment_coefficients(
-                schedule=coh_of_liquid, interval_midpoints=midpoints
+                schedule=lambda scalar_liquid: coh_of_liquid(
+                    scalar_liquid=scalar_liquid
+                ),
+                interval_midpoints=midpoints,
             )
             branch_value, branch_marginal, _policy = _solve_cliffed_budget(
                 next_value=next_value,
@@ -6185,6 +6214,7 @@ def _build_nbegm_discrete_core(
         for binding in discrete_spec.branch_bindings:
 
             def coh_of_liquid(
+                *,
                 scalar_liquid: FloatND,
                 binding: MappingProxyType[ActionName, int] = binding,
             ) -> FloatND:
@@ -6194,7 +6224,9 @@ def _build_nbegm_discrete_core(
                     **coh_params,
                 )
 
-            slope, intercept = affine_coefficients(coh_of_liquid)
+            slope, intercept = affine_coefficients(
+                lambda scalar_liquid: coh_of_liquid(scalar_liquid=scalar_liquid)
+            )
             choices.append(
                 {
                     "coh_slopes": jnp.reshape(slope, (1,)),

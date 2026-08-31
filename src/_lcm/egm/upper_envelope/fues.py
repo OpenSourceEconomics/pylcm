@@ -111,7 +111,7 @@ class QueryBracket(NamedTuple):
     """Number of envelope points kept; `> n_pad` signals overflow."""
 
 
-def _resolve_n_points_to_scan(n_points_to_scan: int | None, *, n_input: int) -> int:
+def _resolve_n_points_to_scan(*, n_points_to_scan: int | None, n_input: int) -> int:
     """Resolve the exhaustive-scan sentinel to a concrete window width.
 
     `None` requests an exhaustive scan — every other candidate. That is the only
@@ -246,7 +246,9 @@ def refine_envelope(
     policy_sorted = policy[order]
     value_sorted = value[order]
     n_input = grid_sorted.shape[0]
-    n_points_to_scan = _resolve_n_points_to_scan(n_points_to_scan, n_input=n_input)
+    n_points_to_scan = _resolve_n_points_to_scan(
+        n_points_to_scan=n_points_to_scan, n_input=n_input
+    )
 
     # All-zero labels reduce the segment test to a no-op (`seg != seg` is always
     # false, `seg == seg` always true), so the `segment_id is None` path is
@@ -281,6 +283,7 @@ def refine_envelope(
         first_savings=savings_sorted[0],
     )
 
+    # keyword-only-exempt: library-callback=jax.lax.scan
     def step(
         carry: Float1D, idx: ScalarInt
     ) -> tuple[Float1D, tuple[Float1D, Float1D, Float1D, ScalarInt]]:

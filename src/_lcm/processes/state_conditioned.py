@@ -46,7 +46,7 @@ _Scalar = float | int | ScalarFloat
 Family = Literal["iid_normal", "tauchen"]
 
 
-def sigma_array_by_code(cond_grid: DiscreteGrid, by: Mapping[str, float]) -> Float1D:
+def sigma_array_by_code(*, cond_grid: DiscreteGrid, by: Mapping[str, float]) -> Float1D:
     """Order the per-category `sigma` values by the categorical's integer **code**.
 
     Stacking by `Mapping` insertion order silently permutes categories whenever the code
@@ -91,17 +91,19 @@ def conditioned_row(
     dropping it misplaces the entire row. `rho` is required for Tauchen.
     """
     if family == "iid_normal":
-        return iid_normal_row(nodes, mu=mu, sigma=sigma)
+        return iid_normal_row(nodes=nodes, mu=mu, sigma=sigma)
     if family == "tauchen":
         if rho is None:
             msg = "conditioned_row(family='tauchen') requires rho"
             raise ValueError(msg)
-        return tauchen_row(nodes, rho=rho, sigma=sigma, from_value=from_value, mu=mu)
+        return tauchen_row(
+            nodes=nodes, rho=rho, sigma=sigma, from_value=from_value, mu=mu
+        )
     msg = f"unsupported family {family!r} (v1: 'iid_normal' | 'tauchen')"
     raise ValueError(msg)
 
 
-def gather_sigma(sigma_by_code: Float1D, code: int | ScalarInt) -> ScalarFloat:
+def gather_sigma(*, sigma_by_code: Float1D, code: int | ScalarInt) -> ScalarFloat:
     """Select the `sigma` the time-$t$ conditioning state selects, by its code."""
     return sigma_by_code[code]
 
@@ -118,7 +120,7 @@ def _row_from_edge_cdf(cdf_at_edges: Float1D) -> Float1D:
     return jnp.concatenate([first, interior, last])
 
 
-def iid_normal_row(nodes: Float1D, mu: _Scalar, sigma: _Scalar) -> Float1D:
+def iid_normal_row(*, nodes: Float1D, mu: _Scalar, sigma: _Scalar) -> Float1D:
     r"""CDF-binned $N(\mu, \sigma_{s_t}^2)$ on the fixed `nodes`.
 
     IID: the row does not depend on the time-$t$ value. Binned on the midpoints of the
@@ -129,6 +131,7 @@ def iid_normal_row(nodes: Float1D, mu: _Scalar, sigma: _Scalar) -> Float1D:
 
 
 def tauchen_row(
+    *,
     nodes: Float1D,
     rho: _Scalar,
     sigma: _Scalar,

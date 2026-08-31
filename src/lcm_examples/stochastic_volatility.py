@@ -53,6 +53,7 @@ def utility(consumption: ContinuousAction) -> FloatND:
 
 
 def next_wealth(
+    *,
     wealth: ContinuousState,
     consumption: ContinuousAction,
     income: ContinuousState,
@@ -61,7 +62,7 @@ def next_wealth(
     return (1 + interest_rate) * (wealth - consumption) + jnp.exp(income)
 
 
-def next_uncertainty(uncertainty: DiscreteState, persistence: float) -> FloatND:
+def next_uncertainty(*, uncertainty: DiscreteState, persistence: float) -> FloatND:
     """Symmetric two-state regime: stay with probability `persistence`."""
     stay = persistence
     return jnp.where(
@@ -71,20 +72,20 @@ def next_uncertainty(uncertainty: DiscreteState, persistence: float) -> FloatND:
     )
 
 
-def next_regime(age: int, final_age_alive: float) -> ScalarInt:
+def next_regime(*, age: int, final_age_alive: float) -> ScalarInt:
     return jnp.where(age >= final_age_alive, RegimeId.dead, RegimeId.alive)
 
 
 def wealth_constraint(
-    consumption: ContinuousAction, wealth: ContinuousState
+    *, consumption: ContinuousAction, wealth: ContinuousState
 ) -> FloatND:
     return consumption <= wealth
 
 
 @functools.cache
 def get_model(
-    n_periods: int = 6,
     *,
+    n_periods: int = 6,
     sigma_low: float = 0.05,
     sigma_high: float = 0.30,
     wealth_n_points: int = 20,
@@ -107,7 +108,7 @@ def get_model(
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=40.0, n_points=wealth_n_points),
             "income": income,
-            "uncertainty": DiscreteGrid(Uncertainty),
+            "uncertainty": DiscreteGrid(category_class=Uncertainty),
         },
         state_transitions={
             "wealth": next_wealth,

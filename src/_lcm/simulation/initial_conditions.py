@@ -37,7 +37,7 @@ from _lcm.typing import (
 )
 from _lcm.utils.containers import invert_regime_ids
 from _lcm.utils.error_messages import format_messages
-from _lcm.utils.functools import get_union_of_args
+from _lcm.utils.functools import allow_args, get_union_of_args
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidInitialConditionsError, PyLCMError
 from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, UserInitialConditions
@@ -90,13 +90,13 @@ def canonicalize_initial_conditions(
     canonical: dict[str, FloatND | IntND] = {}
     for name, value in initial_conditions.items():
         if name == "regime_id" or name in discrete_state_names:
-            canonical[name] = safe_to_int_dtype(value, name=name)
+            canonical[name] = safe_to_int_dtype(value=value, name=name)
         elif name == "age" or name in known_state_names:
-            canonical[name] = safe_to_float_dtype(value, name=name)
+            canonical[name] = safe_to_float_dtype(value=value, name=name)
         elif np.asarray(value).dtype.kind in "iu":
-            canonical[name] = safe_to_int_dtype(value, name=name)
+            canonical[name] = safe_to_int_dtype(value=value, name=name)
         else:
-            canonical[name] = safe_to_float_dtype(value, name=name)
+            canonical[name] = safe_to_float_dtype(value=value, name=name)
     return MappingProxyType(canonical)
 
 
@@ -149,7 +149,8 @@ def build_initial_states(
                 # dtype so the simulate state pool has one signature across
                 # periods regardless of the user-supplied dtype.
                 regime_states[state_name] = safe_to_float_dtype(
-                    initial_states[state_name], name=f"initial_states.{state_name}"
+                    value=initial_states[state_name],
+                    name=f"initial_states.{state_name}",
                 )
             else:
                 regime_states[state_name] = jnp.full(
@@ -415,7 +416,7 @@ def validate_initial_conditions(
         raise InvalidInitialConditionsError(format_messages(feasibility_errors))
 
 
-def _format_missing_states_message(missing: set[str], required: set[str]) -> str:
+def _format_missing_states_message(*, missing: set[str], required: set[str]) -> str:
     """Format an error message for missing initial states.
 
     Provides a specific hint when 'age' is missing, since users often omit it.
@@ -488,7 +489,9 @@ def _collect_state_name_errors(
 
     missing = required_states - provided_states
     if missing:
-        errors.append(_format_missing_states_message(missing, required_states))
+        errors.append(
+            _format_missing_states_message(missing=missing, required=required_states)
+        )
 
     extra = provided_states - all_known_states
     if extra:
@@ -750,6 +753,7 @@ def _batched_feasibility_check(
     if action_kwargs:
 
         def _is_combo_feasible(
+            *,
             action_kw: Mapping[str, FloatND | IntND],
             subject_kw: Mapping[str, FloatND | IntND],
         ) -> BoolND:
@@ -758,7 +762,7 @@ def _batched_feasibility_check(
         def _is_any_action_feasible(
             per_subject_kwargs: Mapping[str, FloatND | IntND],
         ) -> BoolND:
-            per_combo = jax.vmap(_is_combo_feasible, in_axes=(0, None))(
+            per_combo = jax.vmap(allow_args(_is_combo_feasible), in_axes=(0, None))(
                 action_kwargs,
                 per_subject_kwargs,
             )

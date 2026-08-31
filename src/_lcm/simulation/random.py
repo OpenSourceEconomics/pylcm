@@ -62,7 +62,7 @@ def generate_simulation_keys(
     simulation_keys = {}
     next_key = key
     for name in names:
-        keys = jax.random.split(next_key, num=original_n_subjects + 1)
+        keys = jax.random.split(key=next_key, num=original_n_subjects + 1)
         next_key = keys[0]
         per_subject_keys = keys[1:]
         if pad > 0:

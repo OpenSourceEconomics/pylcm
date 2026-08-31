@@ -13,7 +13,7 @@ in order to express the restriction along the selected solver's candidate route.
 import jax.numpy as jnp
 
 
-def feasible_consumption(consumption, resources):
+def feasible_consumption(*, consumption, resources):
     return (consumption > 0) & (consumption <= resources) & jnp.isfinite(consumption)
 ```
 

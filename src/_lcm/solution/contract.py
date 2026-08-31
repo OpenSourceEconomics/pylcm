@@ -692,7 +692,9 @@ def simulation_route(
     functions = cast(
         "EconFunctionsMapping",
         (
-            resolve_periodized_nodes(context.functions, context.active_periods[0])
+            resolve_periodized_nodes(
+                mapping=context.functions, period=context.active_periods[0]
+            )
             if context.active_periods
             else context.functions
         ),

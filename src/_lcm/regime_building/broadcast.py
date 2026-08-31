@@ -335,7 +335,7 @@ def _valuation_roots(
 ) -> dict[str, UserFunction]:
     """Key the payoff side of the regime — utility, categoricals, constraints, W."""
     functions = {
-        name: cast("UserFunction", _for_phase(func, phase=phase))
+        name: cast("UserFunction", _for_phase(value=func, phase=phase))
         for name, func in regime.decomposed_functions.items()
     }
     utility_names = (
@@ -354,7 +354,9 @@ def _valuation_roots(
         if name in functions
     }
     roots |= {
-        f"__constraint__{name}": cast("UserFunction", _for_phase(value, phase=phase))
+        f"__constraint__{name}": cast(
+            "UserFunction", _for_phase(value=value, phase=phase)
+        )
         for name, value in regime.decomposed_constraints.items()
     }
     if not regime.terminal:
@@ -369,7 +371,7 @@ def _transition_roots(
 ) -> dict[str, UserFunction]:
     """Key regime routing plus every edge-local joint probability and output law."""
     roots: dict[str, UserFunction] = {}
-    transition = _for_phase(regime.decomposed_transition, phase=phase)
+    transition = _for_phase(value=regime.decomposed_transition, phase=phase)
     if isinstance(transition, Mapping):
         roots |= {
             f"__next_regime__{target_regime_name}": cast("UserFunction", cell)
@@ -380,7 +382,7 @@ def _transition_roots(
 
     for target_name, kernels in regime.joint_transitions.items():
         for kernel_name, raw in kernels.items():
-            kernel = cast("JointTransition", _for_phase(raw, phase=phase))
+            kernel = cast("JointTransition", _for_phase(value=raw, phase=phase))
             roots[f"__joint_probability__{target_name}__{kernel_name}"] = cast(
                 "UserFunction", kernel.probabilities
             )
@@ -448,7 +450,7 @@ def _incoming_edge_roots(
     return roots
 
 
-def _for_phase(value: object, *, phase: Literal["solve", "simulate"]) -> object:
+def _for_phase(*, value: object, phase: Literal["solve", "simulate"]) -> object:
     """Take the side of a `Phased` slot value this phase runs, else the value."""
     if isinstance(value, Phased):
         return value.solve if phase == "solve" else value.simulate
@@ -576,8 +578,8 @@ def _state_conditioned_names(
 
 
 def _resolved_at_representative_age(
-    mapping: Mapping[str, UserFunction],
     *,
+    mapping: Mapping[str, UserFunction],
     ages: AgeGrid | None,
     active_periods: tuple[int, ...] | None,
 ) -> Mapping[str, UserFunction]:
@@ -598,7 +600,7 @@ def _resolved_at_representative_age(
         return mapping
     representative_age = float(ages.period_to_age(active_periods[0]))
     return {
-        name: cast("UserFunction", resolve_node(value, representative_age))
+        name: cast("UserFunction", resolve_node(node=value, age=representative_age))
         for name, value in mapping.items()
     }
 
@@ -652,7 +654,7 @@ def _needed_names(
     if not targets:
         return set()
     resolved_pool = _resolved_at_representative_age(
-        pool, ages=ages, active_periods=active_periods
+        mapping=pool, ages=ages, active_periods=active_periods
     )
     return set(get_ancestors(resolved_pool, targets=targets, include_targets=True))
 

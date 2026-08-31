@@ -82,7 +82,7 @@ class LinearAggregator(KoopmansAggregator):
     """
 
     def __call__(
-        self, utility: FloatND, CE: FloatND, discount_factor: FloatND
+        self, *, utility: FloatND, CE: FloatND, discount_factor: FloatND
     ) -> FloatND:
         """Return `utility + discount_factor * CE`.
 
@@ -117,6 +117,7 @@ class CESAggregator(KoopmansAggregator):
 
     def __call__(
         self,
+        *,
         utility: FloatND,
         CE: FloatND,
         discount_factor: FloatND,

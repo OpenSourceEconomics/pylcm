@@ -65,8 +65,8 @@ class GoldenSectionResult:
 
 
 def maximize_golden_section(
-    objective: Callable[[FloatND], FloatND],
     *,
+    objective: Callable[[FloatND], FloatND],
     lower: FloatND,
     upper: FloatND,
     iterations: int,
@@ -129,6 +129,7 @@ def maximize_golden_section(
     x2 = safe_lower + _INV_PHI * width
     carry0 = (safe_lower, safe_upper, x1, probe(x1), x2, probe(x2))
 
+    # keyword-only-exempt: library-callback=jax.lax.fori_loop
     def body(
         _i: LoopIndex,
         carry: tuple[FloatND, FloatND, FloatND, FloatND, FloatND, FloatND],

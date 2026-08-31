@@ -19,7 +19,7 @@ _WRAPPER_ASSIGNMENTS_NO_ANNOTATIONS: tuple[str, ...] = tuple(
 
 
 def allow_only_kwargs(
-    func: Callable[..., ReturnType], *, enforce: bool = True
+    *, func: Callable[..., ReturnType], enforce: bool = True
 ) -> Callable[..., ReturnType]:
     """Restrict a function to be called with only keyword arguments.
 
@@ -115,11 +115,6 @@ def allow_args(func: Callable[..., ReturnType]) -> Callable[..., ReturnType]:
     signature = inspect.signature(func)
     parameters = signature.parameters
 
-    # Count the number of positional-only arguments
-    n_positional_only_parameters = len(
-        [p for p in parameters.values() if p.kind == inspect.Parameter.POSITIONAL_ONLY],
-    )
-
     # Create new signature without keyword-only arguments
     new_parameters = [
         (
@@ -133,35 +128,42 @@ def allow_args(func: Callable[..., ReturnType]) -> Callable[..., ReturnType]:
 
     @functools.wraps(func, assigned=_WRAPPER_ASSIGNMENTS_NO_ANNOTATIONS)
     def allow_args_wrapper(*args: Any, **kwargs: Any) -> ReturnType:
-        # Check if the total number of arguments matches the function signature
-        if len(args) + len(kwargs) != len(parameters):
-            too_many = len(args) + len(kwargs) > len(parameters)
-            msg = (
-                "Too many arguments provided."
-                if too_many
-                else "Not all arguments provided."
-            )
-            raise ValueError(msg)
+        if len(args) + len(kwargs) > len(parameters) and not any(
+            parameter.kind
+            in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}
+            for parameter in parameters.values()
+        ):
+            raise ValueError("Too many arguments provided.")
 
-        # Convert all arguments to positional arguments in correct order
-        positional = list(args) + convert_kwargs_to_args(
-            kwargs=kwargs, arg_names=list(parameters)
-        )
+        try:
+            bound = new_signature.bind(*args, **kwargs)
+        except TypeError as error:
+            if any(
+                phrase in str(error)
+                for phrase in (
+                    "too many positional arguments",
+                    "multiple values for argument",
+                    "unexpected keyword argument",
+                )
+            ):
+                raise ValueError("Too many arguments provided.") from error
+            raise ValueError("Not all arguments provided.") from error
+        bound.apply_defaults()
 
-        # Extract positional-only arguments
-        positional_only = positional[:n_positional_only_parameters]
+        positional_only: list[Any] = []
+        forwarded_kwargs: dict[str, Any] = {}
+        for name, value in bound.arguments.items():
+            kind = parameters[name].kind
+            if kind == inspect.Parameter.POSITIONAL_ONLY:
+                positional_only.append(value)
+            elif kind == inspect.Parameter.VAR_POSITIONAL:
+                positional_only.extend(value)
+            elif kind == inspect.Parameter.VAR_KEYWORD:
+                forwarded_kwargs.update(value)
+            else:
+                forwarded_kwargs[name] = value
 
-        # Create kwargs dictionary with remaining arguments
-        kwargs_names = list(parameters)[n_positional_only_parameters:]
-        kwargs = dict(
-            zip(
-                kwargs_names,
-                positional[n_positional_only_parameters:],
-                strict=True,
-            ),
-        )
-
-        return func(*positional_only, **kwargs)
+        return func(*positional_only, **forwarded_kwargs)
 
     # Callables do not necessarily have a __signature__ attribute.
     allow_args_wrapper.__signature__ = new_signature  # ty: ignore[unresolved-attribute]

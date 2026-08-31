@@ -107,6 +107,7 @@ def numeric_inverse_marginal_utility(
     # arbitrary generated endpoint with a zero derivative.
     # `fori_loop` passes the index and carry positionally, so this body cannot
     # take keyword-only arguments.
+    # keyword-only-exempt: library-callback=jax.lax.fori_loop
     def expand_upper(
         _index: Any,  # noqa: ANN401  -- the loop index follows the x64 policy
         state: tuple[ScalarFloat, ScalarFloat],
