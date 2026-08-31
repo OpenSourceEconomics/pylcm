@@ -7,23 +7,19 @@ that replays a different action for it disagree about which stock was chosen.
 
 The recovery reads the map's coefficient from its structure rather than measuring
 it (see `outer_affine_structure`), then divides only when the coefficient is not
-one. Admission is tolerance-free and two-tier:
+one. Admission is tolerance-free and target-local:
 
-- every candidate's image must lie inside the outer state's declared domain,
-  because a stock outside it has no value function; and
-- a candidate whose target *is* a declared endpoint must reproduce that endpoint
-  bit for bit, because the endpoint is where an ULP of error leaves the domain.
+- the target and its forward image must both lie inside the relevant branch
+  domain — the outer state's declared domain for a keeper, and the published
+  outer mesh for an adjuster;
+- a target at either domain endpoint must be reproduced bit for bit; and
+- an interior target may be reproduced exactly or at either immediately adjacent
+  representable value in the target's dtype.
 
-Interior candidates are admitted on containment alone. An interior image can sit
-an ULP from its node without leaving the domain, and requiring exactness there
-would drop most interior candidates for an error the value function never sees.
-
-That choice fixes what a represented candidate *means*, and the weaker meaning is
-the one in force here. A represented interior candidate is an inverse-produced
-`(action, image)` pair, not a claim that the action reproduces its nominal target
-bit for bit; an interior round-trip difference is an approximation diagnostic
-rather than a broken exact-replay promise. Only endpoints carry the exact
-identity, because only there does the difference leave the declared domain.
+The one-neighbour allowance covers the smallest ordinary inverse round-off while
+preventing a merely in-domain stock from standing in for a conditional problem
+solved at a materially different target. No scale-relative or absolute residual
+tolerance appears on the acceptance path.
 """
 
 from collections.abc import Callable, Iterable, Mapping
@@ -218,8 +214,8 @@ def coefficient_is_exactly_invertible(coefficient: Fraction) -> bool:
     certification. Exact division by a power of two does not make
     `target - offset` followed by the forward addition exact for every
     representable offset -- on a signed domain it is not -- so the runtime
-    endpoint and containment predicate stays active for a dyadic coefficient
-    exactly as it does for any other.
+    target-local runtime predicate stays active for a dyadic coefficient exactly
+    as it does for any other.
     """
     if coefficient == 0:
         return False
@@ -254,24 +250,38 @@ def outer_candidate_is_admissible(
     low: ScalarFloat,
     high: ScalarFloat,
 ) -> BoolND:
-    """Return which candidates may be published, deciding without a tolerance.
+    """Return which recovered candidates remain associated with their targets.
+
+    Endpoints are exact identities: a candidate targeting either domain endpoint
+    is publishable only when its forward image reproduces that endpoint bit for
+    bit. Interior targets allow the smallest format-level relaxation that still
+    binds replay to the conditional problem the solve evaluated: the image may be
+    the target itself or either immediately adjacent representable value in the
+    target's dtype. A merely in-domain image is not enough.
 
     Args:
         image: The declared map re-evaluated at the recovered action.
         target: The post-decision target the solve retained.
-        low: The outer state's declared lower bound.
-        high: The outer state's declared upper bound.
+        low: The relevant lower bound. For an adjuster this is the published
+            outer-mesh floor; for a keeper it is the outer state's declared floor.
+        high: The corresponding upper bound.
 
     Returns:
-        A boolean array over candidates. Every comparison is exact, so no scale
-        constant appears anywhere on the acceptance path and there is nothing an
-        out-of-domain image can pass by being small enough.
+        A boolean array over candidates. Every comparison is exact: no absolute
+        or scale-relative residual tolerance appears on the publication path.
     """
     finite = jnp.isfinite(image) & jnp.isfinite(target)
-    inside = (image >= low) & (image <= high)
+    image_inside = (image >= low) & (image <= high)
+    target_inside = (target >= low) & (target <= high)
+
     at_endpoint = (target == low) | (target == high)
-    reproduces_endpoint = image == target
-    return finite & inside & (~at_endpoint | reproduces_endpoint)
+    exact = image == target
+    lower_neighbor = jnp.nextafter(target, jnp.full_like(target, -jnp.inf))
+    upper_neighbor = jnp.nextafter(target, jnp.full_like(target, jnp.inf))
+    locally_reproduced = exact | (image == lower_neighbor) | (image == upper_neighbor)
+    reproduces_target = jnp.where(at_endpoint, exact, locally_reproduced)
+
+    return finite & image_inside & target_inside & reproduces_target
 
 
 def _is_power_of_two(value: int) -> bool:
