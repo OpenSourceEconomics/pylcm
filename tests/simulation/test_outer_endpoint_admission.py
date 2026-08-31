@@ -8,7 +8,8 @@ published, and the rule is the same for either search:
 - a target at a declared endpoint is represented only when the recovered
   action reproduces it exactly — an inward image is a different stock, and the
   declared domain has no room the other side of it to absorb the difference;
-- an interior target only has to land inside the declared domain.
+- an interior target must be reproduced exactly or at an immediately adjacent
+  representable value in the target's dtype.
 
 Recovering the action is exact whenever the stock and the target share a sign,
 because the subtraction then stays inside the operands' own binades. It is the
@@ -316,10 +317,10 @@ def test_adaptive_replay_publishes_when_the_action_reaches_a_declared_endpoint(
 
 
 @pytest.mark.parametrize("case", _ENDPOINT_CASES, ids=["lower", "upper"])
-def test_adaptive_replay_publishes_an_interior_target_inside_the_domain(
+def test_adaptive_replay_publishes_a_locally_reproduced_interior_target(
     case: dict,
 ) -> None:
-    """An interior target only has to land inside the declared domain."""
+    """An exact interior round trip remains publishable."""
     assert not _falls_back(
         domain=case["domain"],
         nodes=case["nodes"],
@@ -372,8 +373,10 @@ def test_finite_replay_admits_a_candidate_that_reaches_a_declared_endpoint(
 
 
 @pytest.mark.parametrize("case", _ENDPOINT_CASES, ids=["lower", "upper"])
-def test_finite_replay_admits_an_interior_target_inside_the_domain(case: dict) -> None:
-    """An interior candidate is admitted on containment alone."""
+def test_finite_replay_admits_a_locally_reproduced_interior_target(
+    case: dict,
+) -> None:
+    """The finite path shares the exact-or-adjacent interior rule."""
     assert _admissible(
         domain=case["domain"],
         target=case["nodes"][1],
@@ -391,6 +394,31 @@ def test_finite_replay_admits_a_nonnegative_direct_law_endpoint(endpoint: int) -
         target=_NONNEGATIVE_DOMAIN[endpoint],
         stock=1.0,
     )
+
+
+def test_wide_float32_interior_round_trip_is_refused_on_both_routes() -> None:
+    """The review's `0.5 -> 0.0` drift cannot pass through containment alone.
+
+    With state and mesh nodes `(0.0, 0.5, 1e10)`, float32 subtraction recovers
+    `-1e10` for the nominal target `0.5`; adding that action back reaches zero.
+    Float64 reaches `0.5` exactly, so the test also pins that the new rule does
+    not manufacture a refusal where the arithmetic preserves the target.
+    """
+    domain = (0.0, 1e10)
+    nodes = (0.0, 0.5, 1e10)
+    stock = 1e10
+    is_float32 = jnp.asarray(0.0).dtype == jnp.float32
+
+    assert (
+        _falls_back(
+            domain=domain,
+            nodes=nodes,
+            winner=1,
+            stock=stock,
+        )
+        is is_float32
+    )
+    assert _admissible(domain=domain, target=0.5, stock=stock) is (not is_float32)
 
 
 def _build(route: str):
