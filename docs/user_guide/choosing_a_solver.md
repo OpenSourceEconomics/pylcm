@@ -73,10 +73,10 @@ flowchart TD
 | ----------------------------------------- | ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `GridSearch + Regime`                     | General discrete-continuous action product                                                           | Ordinary callable constraints                                   | Broadest representation; cost grows with the full action product                                      |
 | `EGM + ConsumptionSavingsRegime`          | Smooth, concave, one-state/one-action cash-on-hand problem                                           | Declared savings lower bound only                               | Fastest and simplest EGM route; very narrow contract                                                  |
-| `DCEGM + ConsumptionSavingsRegime`        | One liquid Euler margin with a genuine resources node and optional discrete choice                   | Intrinsic budget and declared savings lower bound               | Off-grid Euler inversion plus an upper envelope; envelope work and simulation re-decision matter      |
+| `DCEGM + ConsumptionSavingsRegime`        | One liquid Euler margin with a genuine resources node and optional discrete choice                   | Intrinsic budget and declared savings lower bound; EV1 supported | Off-grid Euler inversion plus an upper envelope; envelope work and simulation re-decision matter      |
 | `NBEGM + ConsumptionSavingsRegime`        | One liquid margin with supported declared kinks, jumps, hard boundaries, or smooth discrete branches | Supported structured boundary declarations; no EV1 taste shocks | Preserves topology that ordinary DCEGM cannot; more validation and candidate geometry                 |
-| `NEGM + NestedConsumptionSavingsRegime`   | A DCEGM liquid solve conditional on a finite outer candidate grid                                    | Inner DCEGM contract plus declared outer roles                  | Exact relative to the outer candidate set; work scales with its size                                  |
-| `NNBEGM + NestedConsumptionSavingsRegime` | An NBEGM liquid solve inside a finite or adaptive outer search                                       | Inner NBEGM contract plus a supported outer search              | Handles both declared inner boundaries and an outer margin; highest structural and computational cost |
+| `NEGM + NestedConsumptionSavingsRegime`   | A DCEGM liquid solve conditional on a finite outer candidate grid                                    | Inner DCEGM contract plus declared outer roles; no EV1 shocks   | Exact relative to the outer candidate set; work scales with its size                                  |
+| `NNBEGM + NestedConsumptionSavingsRegime` | An NBEGM liquid solve inside a finite or adaptive outer search                                       | Inner NBEGM contract plus a supported outer search; no EV1      | Handles both declared inner boundaries and an outer margin; highest structural and computational cost |
 
 Use `GridSearch` for genuinely coupled multi-dimensional choices, unsupported
 constraints, or any problem whose required structure cannot be declared honestly. It is
@@ -91,6 +91,11 @@ ranked during the solve, so a bare declaration or `Phased(solve=f, simulate=f)` 
 accepted only when `f` is the exact same callable object in both fields. Genuine phase
 variation and carried-only states are rejected during `Model(...)` construction. See
 [NNBEGM replay capability](../reference/solvers.md#nnbegm).
+
+If the discrete choice has EV1 taste shocks, choose `GridSearch` or `DCEGM`. `NEGM`
+cannot move its outer durable search inside every taste-shocked discrete branch, while
+`NBEGM` and `NNBEGM` publish hard-maximum carries. All three reject the declaration
+rather than silently changing the model.
 
 Read [Consumption-saving regimes and margins](../reference/consumption_savings.md) and
 [Declared non-convex budgets](../methods/nonconvex_budgets.md) before authoring those

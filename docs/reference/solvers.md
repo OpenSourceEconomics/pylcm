@@ -21,19 +21,21 @@ declared on the regime.
 | `ConsumptionSavingsRegime`       | `GridSearch` or `OneMarginSolver`: `EGM`, `DCEGM`, `NBEGM` |
 | `NestedConsumptionSavingsRegime` | `GridSearch` or `TwoMarginSolver`: `NEGM`, `NNBEGM`        |
 
-Collective regimes currently require `GridSearch`. `NBEGM` and `NNBEGM` reject EV1 taste
-shocks. Model construction validates the concrete solver's remaining prerequisites.
+Collective regimes and transition-local `JointTransition` lotteries currently require
+`GridSearch`. EV1 taste shocks are supported by `GridSearch` and `DCEGM`; `NEGM`,
+`NBEGM`, and `NNBEGM` reject them. Model construction validates the concrete solver's
+remaining prerequisites.
 
 ## Capability table
 
 | Solver       | Required declaration                                           | Problem shape                                                                      | Hard prerequisites and supported constraints                                                                                                                                                                                                                                                          | Main tradeoff                                                                                    |
 | ------------ | -------------------------------------------------------------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `GridSearch` | `Regime` or a specialized regime                               | General discrete-continuous action product                                         | Ordinary callable constraints; no EGM structure required                                                                                                                                                                                                                                              | Broadest representation; work and memory grow with the action product                            |
+| `GridSearch` | `Regime` or a specialized regime                               | General discrete-continuous action product                                         | Ordinary callable constraints; no EGM structure required; supports EV1 taste shocks and transition-local joint lotteries                                                                                                                                                                                                                                              | Broadest representation; work and memory grow with the action product                            |
 | `EGM`        | `ConsumptionSavingsRegime` with one `LiquidMargin`             | Smooth, concave one-state/one-action cash-on-hand problem                          | Exactly one continuous state and action; no discrete/process states or actions; resources equal the liquid state; post-decision state equals state minus action; utility does not read the liquid state; default Koopmans aggregator; only a provable post-decision lower bound as a solve constraint | Narrowest contract and no upper envelope                                                         |
-| `DCEGM`      | `ConsumptionSavingsRegime` with one `LiquidMargin`             | One liquid Euler margin with a genuine resources node and optional discrete choice | Valid liquid resources and post-decision roles; declared lower bound; solver-supported discrete/passive dimensions and continuation layout                                                                                                                                                            | Adds constrained candidates and an upper envelope; simulation may re-optimize on the action grid |
+| `DCEGM`      | `ConsumptionSavingsRegime` with one `LiquidMargin`             | One liquid Euler margin with a genuine resources node and optional discrete choice | Valid liquid resources and post-decision roles; declared lower bound; solver-supported discrete/passive dimensions and continuation layout; supports EV1 taste shocks                                                                                                                                                            | Adds constrained candidates and an upper envelope; simulation may re-optimize on the action grid |
 | `NBEGM`      | `ConsumptionSavingsRegime` with one `LiquidMargin`             | Supported declared kinks, jumps, hard boundaries, or smooth discrete branches      | Supported case-piece or piecewise-affine declaration; solver-proven constraint routes; no EV1 taste shocks                                                                                                                                                                                            | Preserves declared topology; structural probes and candidate geometry add cost                   |
-| `NEGM`       | `NestedConsumptionSavingsRegime` with liquid and outer margins | A `DCEGM` inner solve conditional on a finite outer grid                           | Full inner `DCEGM` contract plus outer state, action, post-decision, no-adjustment, and cost roles                                                                                                                                                                                                    | Exact relative to the outer candidate set; candidate retention can dominate memory               |
-| `NNBEGM`     | `NestedConsumptionSavingsRegime` with liquid and outer margins | An `NBEGM` inner solve inside a finite or adaptive outer search                    | Full inner `NBEGM` contract plus a compatible outer search and branch aggregator                                                                                                                                                                                                                      | Most expressive EGM route and the highest structural/computational burden                        |
+| `NEGM`       | `NestedConsumptionSavingsRegime` with liquid and outer margins | A `DCEGM` inner solve conditional on a finite outer grid                           | Full inner `DCEGM` contract plus outer state, action, post-decision, no-adjustment, and cost roles; no EV1 taste shocks                                                                                                                                                                                                    | Exact relative to the outer candidate set; candidate retention can dominate memory               |
+| `NNBEGM`     | `NestedConsumptionSavingsRegime` with liquid and outer margins | An `NBEGM` inner solve inside a finite or adaptive outer search                    | Full inner `NBEGM` contract plus a compatible outer search and branch aggregator; no EV1 taste shocks                                                                                                                                                                                                                      | Most expressive EGM route and the highest structural/computational burden                        |
 
 ## Nonlinear certainty equivalents
 
@@ -64,6 +66,12 @@ GridSearch()
 
 Evaluates the complete state-action product and applies constraints directly. It is the
 broadest route and the default solver on `Regime`.
+
+With EV1 taste shocks, GridSearch first maximizes over the continuous-action axes within
+each discrete-action combination and then applies the discrete log-sum. Simulation uses
+the corresponding Gumbel-max choice rule. See
+[`ExtremeValueTasteShocks`](model_and_regime.md#extremevaluetasteshocks) for the complete
+feature boundary.
 
 ### `EGM`
 
@@ -125,6 +133,11 @@ can reduce temporary evaluation memory, but it does not in general cap the size 
 candidate bank retained for later envelope or ordered-fold operations. Peak memory can
 therefore continue to grow with the full candidate set. Measure both temporary and
 retained arrays for the exact model and solver profile.
+
+`NEGM` rejects EV1 taste shocks. Its outer durable-margin maximum currently wraps the
+inner DCEGM solve, but a taste-shocked discrete choice must be the outermost aggregation:
+`max_outer logsumexp_discrete` is not `logsumexp_discrete max_outer`. Use `GridSearch`,
+or remove the taste shocks when the NEGM structure is required.
 
 ### `NBEGM`
 

@@ -31,7 +31,7 @@ them, what the dissolution flag means economically — see
 ## `CollectiveUtility`
 
 ```python
-utilities: Mapping[str, UserFunction]
+utilities: Mapping[str, UserFunction | Phased | None]
 objective: ParetoObjective | None = None
 ```
 
@@ -42,25 +42,36 @@ value function and of every published array.
 
 `objective=None` (the default) weights the stakeholders equally.
 
-Construction rewrites the regime: each `utilities` entry becomes a `functions` entry
-named `utility_<stakeholder>`, the key tuple becomes the regime's stakeholders, and
-`objective` becomes the regime's Pareto objective. The household maximizes the objective
-over the feasible action product and reads off each stakeholder's own action value at
-that common choice.
+The declaration itself stays in the raw `functions["utility"]` slot. Construction
+derives the regime's stakeholder tuple and Pareto objective from it, while the
+engine-facing `decomposed_functions` view exposes every nondelegated body and any
+delegated body already supplied. After model-level declarations are merged, successful
+finalization guarantees one `utility_<stakeholder>` entry per stakeholder. A utility
+entry may be:
+
+- a callable, used in both phases;
+- `Phased(solve=..., simulate=...)`, for different solve and simulation bodies; or
+- `None`, which delegates that body to a `utility_<stakeholder>` entry supplied on the
+  regime or by a model-level `functions` declaration.
+
+The household maximizes the objective over the feasible action product and reads off
+each stakeholder's own action value at that common choice.
 
 ```{math}
 a^*(x) = \arg\max_{a\,:\,F(x,a)} \sum_s \lambda_s(x)\, Q^s(x, a),
 \qquad V^s(x) = Q^s(x, a^*(x)).
 ```
 
-Rejected at `Regime` construction:
+The following are rejected:
 
-- a regime that declares both a `CollectiveUtility` and a conflicting `stakeholders`
-  tuple;
+- an empty `utilities` mapping, when the `CollectiveUtility` is constructed;
 - a stakeholder whose `utility_<s>` is also declared directly in `functions` as a
-  different function;
-- a `ParetoObjective` given both as `CollectiveUtility.objective` and as the regime's
-  own `pareto_objective`, unless the two are equal.
+  different function, when the `Regime` is constructed; and
+- a delegated (`None`) stakeholder for which no `utility_<s>` body arrives after
+  model-level declarations are merged, when the model finalizes the regime.
+
+`stakeholders` and `pareto_objective` are derived, read-only fields. They are not
+parallel declaration routes and cannot be passed to `Regime(...)` or `Regime.replace`.
 
 ## `ParetoObjective`
 
@@ -219,13 +230,26 @@ true. A dissolution edge is therefore keyed by the *continuing* collective regim
 Keying it by one partner's regime would send both partners there whenever the couple
 stays together.
 
-`probability` accepts exactly what a plain per-target `transition` entry accepts. It and
-`gate` are two distinct operations: `probability` selects whether this target edge is
-attempted at all, `gate` keeps that target or takes the route's stakeholder-specific
-fallback.
+`probability` accepts either a `MarkovTransition` or, as a convenience specific to
+`ValueDependentTransition`, a bare probability callable. The latter is wrapped in
+`MarkovTransition` in `decomposed_transition`, because that is the grammar the canonical
+per-target cell consumes. An ordinary per-target `transition` cell still requires an
+explicit `MarkovTransition`; a bare callable there is rejected as an unsupported
+deterministic per-target transition.
+
+`probability` and `gate` are two distinct operations: `probability` selects whether this
+target edge is attempted at all, while `gate` keeps that target or takes the route's
+stakeholder-specific fallback.
 
 `routes` holds one route per **source** stakeholder, keyed by stakeholder name. A
 singleton source declares exactly one route, under any key.
+
+A `ValueDependentTransition` may be repeated inside the two mappings of an outer
+`Phased(solve=..., simulate=...)` transition. A target is value-dependent in both phases
+or in neither. The two declarations must name the identical gate callable and equal
+routes, gate references, and `off_grid` contract; only `probability` may differ,
+allowing perceived and realized transition probabilities to diverge without changing the
+edge.
 
 ### Gate operands
 
@@ -288,6 +312,7 @@ checked at evaluation only fires once the model runs.
 | a regime-level reference projection introduces no free parameter                                    | `Regime` construction                                             | `RegimeInitializationError` |
 | a gate is a plain callable, not a `MarkovTransition`                                                | `Regime` construction                                             | `RegimeInitializationError` |
 | `routes` covers the source's stakeholder structure                                                  | `Regime` construction                                             | `RegimeInitializationError` |
+| phased declarations make a target value-dependent in both phases and agree on the edge              | `Regime` construction                                             | `RegimeInitializationError` |
 | taste shocks, a nonlinear certainty equivalent, or a non-`GridSearch` solver on a collective regime | `Regime` construction                                             | `NotImplementedError`       |
 | the same three on the SOURCE regime of a `ValueDependentTransition`                                 | `Regime` construction                                             | `NotImplementedError`       |
 | a reference or fallback regime exists, and `stakeholder` matches its structure                      | model build                                                       | `ModelInitializationError`  |
@@ -462,26 +487,27 @@ rejected at model build. Mixed singleton/collective topologies go through
 `ValueDependentTransition`, which is what lets a row change household structure without
 mixing values across it.
 
-## The lowered form
+## Derived engine views
 
-Each of the declarations above is decomposed at `Regime` construction into the fields
-the engine threads. Those fields stay on `Regime` as **derived, read-only values**: they
-are recomputed from the declarations on every construction, and they cannot be passed to
-`Regime(...)` or to `Regime.replace`.
+Each declaration above stays in the raw slot where the author wrote it. `Regime`
+construction derives stored, read-only fields from those declarations. The
+`decomposed_*` properties separately compute engine-facing views from the current raw
+slots whenever they are read. Neither kind of output is a declaration route: none can be
+passed to `Regime(...)` or to `Regime.replace`.
 
-| Declaration                | Derives                                                                                                   |
-| -------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `CollectiveUtility`        | `stakeholders`, `pareto_objective`, and one `utility_<s>` entry per stakeholder in `decomposed_functions` |
-| `ValueDependentConstraint` | `value_constraints[name]`, `same_period_refs[reference key]`                                              |
-| `ValueDependentTransition` | `decomposed_transition[target]` (the `probability`) and `gated_edges[target]`                             |
+| Declaration                | Construction-derived fields                              | On-access engine view                                                                                          |
+| -------------------------- | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `CollectiveUtility`        | `stakeholders`, `pareto_objective`                       | `decomposed_functions`: nondelegated and already-supplied bodies; complete after successful model finalization |
+| `ValueDependentConstraint` | `value_constraints[name]`, `same_period_refs[reference]` | `decomposed_constraints`: ordinary constraints only                                                            |
+| `ValueDependentTransition` | `gated_edges[target]`                                    | `decomposed_transition[target]`: the selection `probability`                                                   |
 
 The declaration objects themselves stay where the author wrote them, in `functions`,
 `constraints` and `transition`. The engine reads the decomposed views
 (`decomposed_functions`, `decomposed_constraints`, `decomposed_transition`) rather than
-the raw slots, so reading a derived field tells you what a declaration produced without
-that field ever being a way to declare it.
+the raw slots. Reading either a stored derived field or a decomposed view therefore
+reveals what a declaration produced without creating a second way to declare it.
 
-The lowered edge type is `_lcm.gated_edge.GatedEdge`. It is engine-internal and not part
+The derived edge type is `_lcm.gated_edge.GatedEdge`. It is engine-internal and not part
 of the public API: there is exactly one way to declare a gated edge, and it is
 `ValueDependentTransition`.
 

@@ -116,7 +116,7 @@ def _literal_joint_support_schema(
 @beartype(conf=REGIME_CONF)
 @dataclass(frozen=True, kw_only=True)
 class JointTransition:
-    """One finite-support lottery shared by several target-state laws.
+    """One finite-support lottery shared by one or more target-state laws.
 
     A source regime owns joint transitions on an explicitly named target edge.
     ``support`` is either a literal JAX pytree whose leaves have leading axis
@@ -124,6 +124,12 @@ class JointTransition:
     returns the matching probability vector. Each entry of ``outputs`` is a
     target-state law; its function can read the sampled support node through the
     joint-transition mapping key declared on :class:`lcm.Regime`.
+
+    Transition-local joint lotteries are currently supported only by
+    `GridSearch`. A terminal regime may not declare one. Each output owns one
+    target-state producer cell. A bare ordinary state law may coexist and
+    broadcasts only to other unclaimed targets; an explicit law or another
+    joint kernel on the same target-state cell is rejected.
 
     The declaration only specifies the joint lottery. The enclosing mapping
     supplies both its target regime and the local node name::
@@ -138,6 +144,16 @@ class JointTransition:
                 )
             }
         }
+
+    `Phased` may wrap the whole `JointTransition`. Its solve and simulation
+    variants must keep identical output names and `support_size`; literal
+    supports must also keep one pytree structure, leaf event shapes, and
+    dtypes. Support values, probability functions, and output-law bodies may
+    differ. Callable supports may change values, but their schema is checked
+    across every active period and both phases after parameters are bound.
+    Probability rows are validated on the applicable phase grids, including
+    carried-only simulation states, and must be finite, in `[0, 1]`, and sum to
+    one within the transition tolerance.
     """
 
     support_size: int

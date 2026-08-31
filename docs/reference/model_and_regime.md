@@ -54,7 +54,8 @@ A general regime declares:
 | `states` / `actions`   | Name-to-grid mappings                                                                          |
 | `functions`            | Named DAG functions; a finalized regime needs utility                                          |
 | `constraints`          | Ordinary predicates or structured `Condition` objects                                          |
-| `state_transitions`    | One law per non-process state in a non-terminal regime                                         |
+| `state_transitions`    | Ordinary target-state producers for cells not supplied by `joint_transitions`                  |
+| `joint_transitions`    | Target-local shared-draw laws that jointly produce one or more next states                     |
 | `derived_categoricals` | Discrete grids for categorical DAG outputs                                                     |
 | `solver`               | `lcm.solvers.GridSearch()` by default                                                          |
 | `taste_shocks`         | Optional EV1 taste-shock configuration                                                         |
@@ -65,13 +66,46 @@ A general regime declares:
 Use `Regime.replace(...)` to derive a modified immutable declaration.
 
 Terminality is defined by `transition is None`. Terminal regimes declare no
-`state_transitions`, Koopmans aggregator, or certainty equivalent because they have no
-continuation.
+`state_transitions`, `joint_transitions`, Koopmans aggregator, or certainty equivalent
+because they have no continuation.
 
 `ConsumptionSavingsRegime` and `NestedConsumptionSavingsRegime` add the economic roles
 required by EGM-family solvers. See
 [Consumption-saving regimes and margins](consumption_savings.md). Collective fields on
 `Regime` are documented separately in [Collective regimes](collective_regimes.md).
+
+## `ExtremeValueTasteShocks`
+
+Declare IID extreme-value shocks on the Cartesian product of a regime's discrete actions
+with:
+
+```python
+regime = Regime(
+    ...,
+    taste_shocks=lcm.ExtremeValueTasteShocks(),
+)
+```
+
+The scale is a strictly positive runtime parameter at
+`params[regime_name]["taste_shocks"]["scale"]`. Use no declaration for a hard maximum;
+zero is not a valid scale.
+
+For each discrete-action combination, the solve first maximizes the feasible `Q` values
+over all continuous-action axes. It then applies the EV1 expected-maximum formula to
+those choice-specific values. Simulation forms the feasible choice-specific values on
+its policy's action candidates, adds one independent mean-zero Gumbel shock per
+discrete-action combination, and takes the argmax. For any fixed candidate values, the
+expected latent perturbed maximum equals their smoothed log-sum. The shock affects the
+choice, while simulation publishes the selected unshocked value. DCEGM simulation uses
+grid-restricted candidates and therefore need not reproduce its off-grid solve value or
+choice probabilities; see [Solvers and capabilities](solvers.md#dcegm).
+
+This feature requires at least one discrete action and is implemented by `GridSearch`
+and `DCEGM`. It is rejected for `NEGM`, `NBEGM`, and `NNBEGM`; on a collective regime;
+on a source regime with a `ValueDependentTransition`; together with a folded IID state
+(`fold=True`); and together with a nonlinear certainty equivalent. These are semantic
+boundaries, not ignored options: the declaration is rejected during `Regime` declaration
+or `Model` construction, before solve.
 
 ## Derived categoricals
 

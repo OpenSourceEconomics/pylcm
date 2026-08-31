@@ -55,9 +55,16 @@ one named process changes distribution across observable states without changing
 model's state vocabulary. The conditioning categories and parameter leaves must align
 with the declared categorical grid.
 
-Some processes support `fold=True` to integrate the shock out of the stored value
-function. Folding changes value-array topology and is not supported for collective
-regimes.
+Every IID process supports `fold=True` when used as a state. The solve still evaluates
+utility and the action choice at every shock node, then averages the process axis with
+its own weights before storing the period value. Simulation still draws and publishes
+the realized shock. Folding is a storage-topology optimization with a deliberately
+narrow contract: GridSearch, a singleton regime, fixed distribution parameters, linear
+expectation, and no taste shocks or node-dependent downstream transition/value gate. A
+state-conditioned folded shock additionally requires its conditioning state to remain
+fixed on the regime's own and every incoming edge. See
+[Folding an IID shock out of stored values](../user_guide/continuous_stochastic_processes.md#folding-an-iid-shock-out-of-stored-values)
+for the complete boundary.
 
 See [Grids](../user_guide/grids.md) and
 [Continuous stochastic processes](../user_guide/continuous_stochastic_processes.md) for

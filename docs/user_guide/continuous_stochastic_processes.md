@@ -212,6 +212,64 @@ params = {
 `n_points` and `gauss_hermite` are structural, not distribution parameters — they must
 always be given at construction.
 
+## Folding an IID shock out of stored values
+
+An IID process used as a state may declare `fold=True`:
+
+```python
+income_shock = NormalIIDProcess(
+    n_points=7,
+    gauss_hermite=True,
+    mu=0.0,
+    sigma=1.0,
+    fold=True,
+)
+```
+
+Folding removes the process axis from each stored value function; it does **not** remove
+the shock from the economic model. The solve evaluates every shock node, evaluates the
+feasible action choice at that node, and only then averages the resulting values with
+the process's own quadrature weights. Consequently a folded period stores one fewer
+axis, but utility and the chosen action may still depend on the realized shock.
+
+Forward simulation is unchanged economically. A subject entering from another regime
+draws the shock on that transition; a subject whose initial regime is the folding regime
+must seed the process state in `initial_conditions`. Subsequent IID transitions redraw
+it, and the realized value remains available to utility, policy, and the output table.
+With the same seed, a folded model and its otherwise identical unfolded model produce
+the same simulated panel; only value-function storage differs.
+
+This is a narrow exact reduction. Model construction enforces all of the following:
+
+- the declaration is an IID process state; persistent processes have no `fold` field;
+- the regime is singleton and uses `GridSearch`;
+- every distribution parameter is fixed when the process is constructed, because fold
+  weights are built with the kernels rather than read from runtime params;
+- continuation uses the linear expectation, with no nonlinear certainty equivalent;
+- the regime has no EV1 taste shocks;
+- no next-state or next-regime transition, including a transitive helper dependency,
+  reads the folded shock's realized node;
+- no same-period value-dependent predicate or projection owned by the folding regime
+  reads the folded realization;
+- the folding regime itself is not named as a gated-edge target, route fallback,
+  same-period reference, or gate reference. This endpoint ban is unconditional: those
+  readers need its per-node value even when their projections do not name the folded
+  shock.
+
+Those rules characterize a shock that is drawn, used for the within-period decision, and
+discarded before the value is stored. If its realization changes a later state, selects
+a regime, or is needed by a value-dependent endpoint, retain the ordinary unfolded axis.
+
+A folded `StateConditioned` IID shock has one further timing restriction. Within a
+non-terminal folding regime, every declared law for the conditioner must be
+`fixed_transition(conditioner_name)`; a terminal folding regime has no local law.
+Additionally, every structurally reachable incoming source's target-local cell **toward
+the folding regime** must be fixed. Such an incoming source may move the conditioner
+toward a different target. The shock entering period $t$ was drawn using the category at
+$t-1$, whereas the fold gathers a quadrature row along the category visible at $t$;
+those rows are the same only when the conditioner cannot move into the fold. A model
+that needs a moving conditioner there must use `fold=False`.
+
 (state-conditioned-shock-size)=
 
 ## State-Conditioned Shock Size

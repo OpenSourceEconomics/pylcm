@@ -1,9 +1,10 @@
 """Declarations a regime makes about collective and value-dependent choice.
 
-Five objects, each declared inside a slot the regime already has: the
-stakeholders and their trade-off in `functions["utility"]`, a value-reading
-feasibility constraint in `constraints`, and a value-dependent route in
-`transition`. `ProjectedRegimeValue` is the one thing the last two share — a
+Six objects, each declared inside a slot the regime already has:
+`CollectiveUtility` and its `ParetoObjective` in `functions["utility"]`, a
+`ValueDependentConstraint` in `constraints`, and a
+`ValueDependentTransition` with stakeholder routes in `transition`.
+`ProjectedRegimeValue` is the common reference used by the last two — a
 reading of another regime's value in the same period.
 """
 
@@ -151,6 +152,13 @@ class CollectiveUtility:
     The household takes one action for everybody. It maximizes `objective`
     over the feasible actions and reads off each stakeholder's own action value
     at that common choice.
+
+    The declaration stays in the regime's raw `functions["utility"]` slot.
+    Construction derives `stakeholders` and `pareto_objective`, while the
+    engine reads `Regime.decomposed_functions`. That view emits every
+    nondelegated body and any delegated body already supplied; model
+    finalization requires one `utility_<s>` entry per stakeholder after
+    model-level declarations are merged.
     """
 
     utilities: Mapping[str, UserFunction | Phased | None]
@@ -301,6 +309,11 @@ class ValueDependentTransition:
     whether this target edge is attempted at all, the second keeps that target
     or takes the route's stakeholder-specific fallback.
 
+    In an outer `Phased` transition, a target must carry this declaration in
+    both phases or neither. The gate must be the same callable and the routes,
+    references, and off-grid contract must be equal; only `probability` may
+    differ between solve and simulation.
+
     This is what unlocks mixed singleton/collective topologies — a singleton
     regime reaching a collective one under mutual consent, a collective regime
     routing per stakeholder into singleton ones on dissolution. A raw
@@ -309,7 +322,13 @@ class ValueDependentTransition:
     """
 
     probability: UserFunction | MarkovTransition
-    """Exactly what a plain `transition` entry for this target accepts."""
+    """Probability of attempting this target edge.
+
+    A `MarkovTransition` passes through unchanged. A bare callable is a
+    convenience of `ValueDependentTransition` and is wrapped in
+    `MarkovTransition` in the regime's `decomposed_transition` view. Ordinary
+    per-target transition cells still require the wrapper explicitly.
+    """
 
     gate: UserFunction
     """Boolean predicate on the TARGET regime's grid, in the target fold's context.

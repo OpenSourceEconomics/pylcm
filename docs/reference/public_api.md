@@ -25,7 +25,7 @@ and the correctness of destinations require page-specific documentation and test
 | [`lcm.cash_on_hand_with_subsidy`](case_pieces.md)                                             | Supported case-piece fixed form         |
 | [`lcm.liquid_law_from_resources`](consumption_savings.md)                                     | Conventional liquid law                 |
 | [`lcm.liquid_law_from_savings`](consumption_savings.md)                                       | Conventional savings-written liquid law |
-| [`lcm.ExtremeValueTasteShocks`](model_and_regime.md#regime)                                   | EV1 discrete-choice shocks              |
+| [`lcm.ExtremeValueTasteShocks`](model_and_regime.md#extremevaluetasteshocks)                  | EV1 discrete-choice shocks              |
 
 ## Grids, categories, and processes
 

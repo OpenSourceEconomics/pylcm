@@ -92,6 +92,12 @@ Measure occupancy and memory rather than extrapolating from device memory alone.
 completed chunks to host. Random keys are assigned by global subject index, so changing
 the batch size does not change simulated draws.
 
+The same fixed `seed` also gives the same EV1 taste-shock choices in lazy and
+ahead-of-time simulation. Subject chunking and `Model(n_subjects=...)` change
+compilation and workspace shape, not which per-subject Gumbel key is used. Keep the
+seed, parameters, initial conditions, and model fixed when using that invariance as a
+regression check.
+
 If `Model(n_subjects=n)` was constructed, a matching first simulation can compile for
 that population/chunk shape ahead of execution and cache it. Reuse requires stable
 parameter shapes and dtypes.

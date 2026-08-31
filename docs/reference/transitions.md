@@ -6,7 +6,9 @@ title: Transitions and phase specialization
 
 ## State transitions
 
-A non-terminal regime declares one transition for every ordinary state it carries:
+For every reachable target that carries an ordinary non-process state, a non-terminal
+regime needs exactly one producer for that `(target, state)` cell: an ordinary
+`state_transitions` law or a `JointTransition` output. In `state_transitions`:
 
 - an ordinary callable is deterministic;
 - `MarkovTransition(func)` wraps a probability-vector function;
@@ -27,18 +29,22 @@ missing targets are errors.
 - `None` for a terminal regime;
 - a deterministic callable returning a regime code;
 - `MarkovTransition(func)` returning probabilities over all regimes;
-- a mapping `{target_name: MarkovTransition(probability_function)}`.
+- a mapping from target name to `MarkovTransition(probability_function)` or
+  `ValueDependentTransition(...)`.
 
-The key set of the mapping declares structural reachability. Use it when some regimes
-cannot follow the source; do not encode structural impossibility only as a zero
-probability in an all-regime vector.
+The key set of the mapping declares structural reachability. An ordinary mapping cell
+requires an explicit `MarkovTransition`; only `ValueDependentTransition.probability`
+accepts a bare probability callable, which its decomposed engine view wraps. See
+[Collective regimes](collective_regimes.md#valuedependenttransition). Use a mapping when
+some regimes cannot follow the source; do not encode structural impossibility only as a
+zero probability in an all-regime vector.
 
 ## Joint transitions
 
-`JointTransition(support_size, support, probabilities, outputs)` declares several next
-states driven by one shared draw. `support` describes the literal joint nodes,
-`probabilities` returns a vector of length `support_size`, and each `outputs` entry
-projects a sampled joint node into one target state.
+`JointTransition(support_size, support, probabilities, outputs)` declares one or more
+next states driven by one shared draw. `support` is a literal pytree of joint nodes or a
+callable returning one, `probabilities` returns a vector of length `support_size`, and
+each `outputs` entry projects a sampled joint node into one target state.
 
 Joint laws occupy the separate `Regime.joint_transitions` slot. Its public shape is a
 mapping from target regime, to local joint-node name, to the `JointTransition`:
@@ -67,11 +73,20 @@ source = Regime(
 ```
 
 The outer key names the reachable target regime. The inner key names the sampled joint
-node that output functions may read. Every output state is owned by that joint law and
-must not also have an independent entry in `state_transitions`.
+node that output functions may read. Each output owns one `(target, state)` producer
+cell. A bare `state_transitions[state]` law may coexist and broadcasts only to other,
+unclaimed reachable targets. An explicit ordinary law on the same target-state cell, or
+a second joint kernel claiming that cell, is rejected.
+
+Transition-local joint lotteries are currently implemented only by `GridSearch`.
+Selecting an EGM-family solver for a regime that declares one is rejected when the model
+is built.
 
 Use `Phased` around the entire `JointTransition` for perceived and realized variants;
-both variants keep the same output names, support size, and literal support schema.
+both variants keep the same output names and support size. When both supports are
+literal, they must also have the same pytree structure, leaf event shapes, and dtypes.
+Support values, probability functions, and output-law implementations may differ between
+phases.
 
 ### What each part may read
 
@@ -81,8 +96,16 @@ both variants keep the same output names, support size, and literal support sche
   `next_<state>` outputs already resolved on the same target edge.
 
 Support shapes and probability vectors are checked in the params-bound runtime preflight
-and rejected when invalid. Probabilities are never silently normalized: a vector that
-does not sum to one is an error, not something the engine repairs.
+for every active period and both phases. Callable supports may change values, but their
+pytree structure, leaf event shapes, and dtypes must stay fixed across periods and
+phases. Each support leaf has leading axis `support_size` and contains finite numeric or
+Boolean values. Probability rows have exactly `support_size` entries, are finite and in
+`[0, 1]`, and sum to one; they are never silently normalized.
+
+The solve variant is validated on solve grids. The simulation variant is validated on
+simulation grids, including the domain of a carried-only state that its probability
+function reads. At `log_level="debug"`, a phase law that cannot be evaluated and checked
+is refused rather than treated as valid.
 
 ### Parameter paths
 
@@ -143,11 +166,19 @@ differ by phase:
 
 - `functions` and `state_transitions` accept phase-specific variants;
 - `transition` accepts variants with the same transition form and target keys;
+- `koopmans_aggregator` accepts one callable per phase;
 - `states` accepts the special carried-state form
   `Phased(solve=callable, simulate=Grid)`.
+- `joint_transitions[target][kernel]` accepts `Phased` around the whole
+  `JointTransition`.
 
 Constraints, actions, `active`, and derived categoricals are phase-invariant and reject
-`Phased`. Nested phase wrappers and wrappers inside per-target mappings are invalid.
+`Phased`. Ordinary nested phase wrappers and wrappers inside per-target transition
+mappings are invalid. Structured declarations own two additional, explicit seams:
+`CollectiveUtility.utilities[stakeholder]` may hold a phase-specific utility, and a
+`StakeholderRoute` may use a phase-specific `fallback`. These field-specific seams and
+the whole-joint-kernel seam above are not permission to place `Phased` arbitrarily
+inside mappings.
 
 A carried state is derived during backward induction, so it adds no solve-grid axis, but
 is seeded and evolved as a genuine simulation state. Its law of motion still belongs in
