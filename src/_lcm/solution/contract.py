@@ -81,6 +81,7 @@ from _lcm.typing import (
     TransitionFunctionsMapping,
 )
 from lcm.ages import AgeGrid
+from lcm.solver_api import KernelOutput
 from lcm.typing import BoolND, Float1D, FloatND, UserFunction
 
 # The continuation channel is defined once in `_lcm.continuation`. Backward
@@ -485,6 +486,25 @@ class BackwardInductionResult:
     whole induction.
     """
 
+    diagnostics: MappingProxyType[
+        int, MappingProxyType[RegimeName, SolverDiagnostics]
+    ] = MappingProxyType({})
+    """Solver-published diagnostics retained under the existing ``log_level``.
+
+    Sparse over periods and regimes and empty at ``log_level="off"``. This is
+    distinct from the engine's value-validation logging: it transports the
+    numerical self-report a period kernel already published instead of dropping
+    it at the period boundary.
+    """
+
+    published_simulation_policy_cells: frozenset[tuple[int, RegimeName]] = frozenset()
+    """Cells whose kernels produced a replay policy, whether retained or dropped.
+
+    This tiny identity ledger lets a values-only ``SolutionResult`` distinguish
+    a genuinely unrequested artifact from one that was not applicable without
+    retaining the policy's arrays.
+    """
+
 
 @runtime_checkable
 class PeriodKernel(Protocol):
@@ -561,11 +581,13 @@ class PeriodKernel(Protocol):
         period: int,
         ages: AgeGrid,
         logger: logging.Logger,
-    ) -> KernelResult:
-        """Invoke the compiled core(s) and assemble the period's `KernelResult`.
+    ) -> KernelOutput | KernelResult:
+        """Invoke the compiled core(s) and assemble a period output.
 
         Single-core kernels read `compiled_cores["main"]`; a multi-core kernel
-        reads each of its own core keys.
+        reads each of its own core keys. Migrated kernels return the public
+        :class:`~lcm.solver_api.KernelOutput`; legacy in-tree kernels may still
+        return ``KernelResult`` while the engine bridge remains in place.
 
         `logger` carries the run's validation policy. A kernel that can detect a
         defect only by reading a device value back reads it in raise mode alone

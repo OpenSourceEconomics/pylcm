@@ -44,6 +44,51 @@ artifacts internally. Dissolution flags are required when a collective regime's
 `ValueDependentTransition` has a gate that reads `D_target` — the dissolution flag of a
 collective target — during simulation.
 
+### Experimental labelled result workflow
+
+`solve_result()` keeps values and the artifacts needed to replay a solve in one labelled
+object. The types are deliberately available from `lcm.solver_api`, not from the
+top-level `lcm` namespace:
+
+```python
+from lcm.solver_api import ResultRetention
+
+solution = model.solve_result(
+    params=params,
+    log_level="debug",
+    retention=ResultRetention.VALUES_AND_REPLAY,
+)
+
+result = model.simulate(
+    params=params,
+    initial_conditions=initial_conditions,
+    solution=solution,
+    log_level="debug",
+)
+```
+
+The default `VALUES_AND_REPLAY` retention is the safe choice for later simulation.
+`VALUES` drops replay artifacts and works only when every simulated decision can be
+recovered from values and no applicable collective gate needs a dissolution flag.
+`ALL_PERSISTABLE_ARTIFACTS` currently retains the same replay set; continuation
+artifacts are not yet retainable. Diagnostics follow `log_level`, not the retention
+mode.
+
+Simulation validates the originating in-memory model instance, exact canonical
+parameters, result versions, value coverage, each value's shape/dtype/named axes, and
+the structure of required replay artifacts before forward execution. These structural
+checks still run at `log_level="off"`; missing or malformed required artifacts fail
+closed with an explanation. Pass either `solution=...` or the legacy
+value/policy/dissolution mappings, never both.
+
+This labelled boundary is experimental. It does not yet provide `SolutionResult`
+persistence or a durable model fingerprint, and its model-instance token is intended
+only for an in-memory model (including a pickle round trip of that same model). It is
+not yet a stable out-of-tree solver extension contract. The existing `solve()` return
+values and `save_solution()` value-only persistence remain unchanged. See
+[Runtime, results, and persistence](../reference/runtime_and_results.md#api-solution-result)
+for the artifact stores, omission reasons, and current limits.
+
 ### Log levels and runtime validation
 
 `log_level` is a required argument: it controls both console verbosity *and* the
@@ -117,7 +162,8 @@ result = model.simulate(
 
 Forward simulation using solved value functions. Each agent starts from the given
 initial conditions and makes optimal decisions at each period. Returns a
-`SimulationResult` object.
+`SimulationResult` object. A `SolutionResult` from the experimental workflow above can
+instead be supplied through `solution=...`.
 
 ## Simulate without pre-solving
 

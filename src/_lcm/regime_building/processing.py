@@ -41,6 +41,7 @@ from _lcm.engine import (
     StateActionSpace,
     Variables,
 )
+from _lcm.execution.output_layout import OutputLayoutAware
 from _lcm.grids import (
     ContinuousGrid,
     DiscreteGrid,
@@ -155,6 +156,7 @@ from _lcm.solution.contract import (
     SolverBuildContext,
     SolverModelContext,
 )
+from _lcm.solution.kernel_output import require_legacy_kernel_result
 from _lcm.solution.shipped_solvers import fail_if_solver_is_not_shipped
 from _lcm.state_action_space import create_state_action_space
 from _lcm.transition_plans import (
@@ -2887,6 +2889,19 @@ class _TerminalCarryPeriodKernel:
         """Delegate to the base adapter's cores (a terminal regime is single-core)."""
         return self.base.cores()
 
+    def output_roles(self, *, core_key: str) -> object:
+        """Delegate the wrapped GridSearch core's logical output roles."""
+        if not isinstance(self.base, OutputLayoutAware):
+            return None
+        return self.base.output_roles(core_key=core_key)
+
+    def core_for_output_layout(self, *, core_key: str) -> Callable:
+        """Delegate the wrapped GridSearch core's planned-lowering callable."""
+        if not isinstance(self.base, OutputLayoutAware):
+            msg = "The wrapped kernel did not opt in to output-layout planning."
+            raise TypeError(msg)
+        return self.base.core_for_output_layout(core_key=core_key)
+
     def with_fixed_params(
         self, *, fixed_flat_params: FlatParams
     ) -> _TerminalCarryPeriodKernel:
@@ -2958,19 +2973,22 @@ class _TerminalCarryPeriodKernel:
         edge_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
     ) -> KernelResult:
         """Run the base kernel, then publish the regime's continuation carry."""
-        result = self.base(
-            compiled_cores=compiled_cores,
-            state_action_space=state_action_space,
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            next_regime_to_continuation=next_regime_to_continuation,
-            flat_params=flat_params,
-            period=period,
-            ages=ages,
-            logger=logger,
-            **_edge_and_same_period_kwargs(
-                edge_regime_to_V_arr=edge_regime_to_V_arr,
-                same_period_regime_to_V_arr=same_period_regime_to_V_arr,
+        result = require_legacy_kernel_result(
+            output=self.base(
+                compiled_cores=compiled_cores,
+                state_action_space=state_action_space,
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                next_regime_to_continuation=next_regime_to_continuation,
+                flat_params=flat_params,
+                period=period,
+                ages=ages,
+                logger=logger,
+                **_edge_and_same_period_kwargs(
+                    edge_regime_to_V_arr=edge_regime_to_V_arr,
+                    same_period_regime_to_V_arr=same_period_regime_to_V_arr,
+                ),
             ),
+            consumer="terminal carry wrapper",
         )
         carry = self.carry_producer(
             V_arr=result.V_arr,

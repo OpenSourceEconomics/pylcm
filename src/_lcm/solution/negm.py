@@ -50,6 +50,7 @@ from _lcm.solution.contract import (
     simulation_route,
 )
 from _lcm.solution.dcegm import DCEGM, _BoundDCEGM, _combination_inputs
+from _lcm.solution.kernel_output import require_legacy_kernel_result
 from _lcm.typing import (
     EconFunction,
     EconFunctionsMapping,
@@ -739,15 +740,18 @@ class _NEGMPeriodKernel:
         keeper's off-grid inner consumption function; the outer durable choice is
         re-optimized by grid argmax at simulate time, not carried on this axis.
         """
-        keeper_result = self.keeper_kernel(
-            compiled_cores={"main": compiled_cores["keeper"]},
-            state_action_space=state_action_space,
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            next_regime_to_continuation=next_regime_to_continuation,
-            flat_params=flat_params,
-            period=period,
-            ages=ages,
-            logger=logger,
+        keeper_result = require_legacy_kernel_result(
+            output=self.keeper_kernel(
+                compiled_cores={"main": compiled_cores["keeper"]},
+                state_action_space=state_action_space,
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                next_regime_to_continuation=next_regime_to_continuation,
+                flat_params=flat_params,
+                period=period,
+                ages=ages,
+                logger=logger,
+            ),
+            consumer="NEGM keeper wrapper",
         )
         # The published continuation retains every outer candidate: the keeper
         # and each adjuster carry, lifted into a common cash-on-hand axis and
@@ -775,20 +779,23 @@ class _NEGMPeriodKernel:
         chunk_size = self.outer_batch_size or len(nodes)
         for chunk_start in range(0, len(nodes), chunk_size):
             chunk_results = [
-                self.adjuster_kernel(
-                    compiled_cores={"main": compiled_cores["adjuster"]},
-                    state_action_space=state_action_space,
-                    next_regime_to_V_arr=next_regime_to_V_arr,
-                    next_regime_to_continuation=next_regime_to_continuation,
-                    flat_params=_with_outer_post_decision(
-                        flat_params=flat_params,
-                        regime_name=self.regime_name,
-                        outer_post_decision=self.outer_post_decision,
-                        value=node,
+                require_legacy_kernel_result(
+                    output=self.adjuster_kernel(
+                        compiled_cores={"main": compiled_cores["adjuster"]},
+                        state_action_space=state_action_space,
+                        next_regime_to_V_arr=next_regime_to_V_arr,
+                        next_regime_to_continuation=next_regime_to_continuation,
+                        flat_params=_with_outer_post_decision(
+                            flat_params=flat_params,
+                            regime_name=self.regime_name,
+                            outer_post_decision=self.outer_post_decision,
+                            value=node,
+                        ),
+                        period=period,
+                        ages=ages,
+                        logger=logger,
                     ),
-                    period=period,
-                    ages=ages,
-                    logger=logger,
+                    consumer="NEGM adjuster wrapper",
                 )
                 for node in nodes[chunk_start : chunk_start + chunk_size]
             ]

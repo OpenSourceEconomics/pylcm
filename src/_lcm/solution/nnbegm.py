@@ -78,6 +78,7 @@ from _lcm.solution.contract import (
     _BoundLiquidMargin,
     _BoundOuterContinuousMargin,
 )
+from _lcm.solution.kernel_output import require_legacy_kernel_result
 from _lcm.solution.nbegm import (
     NBEGM,
     _BoundNBEGM,
@@ -1072,20 +1073,23 @@ class _NNBEGMPeriodKernel:
         chunk_size = self.outer_batch_size or len(nodes)
         for chunk_start in range(0, len(nodes), chunk_size):
             chunk_results = [
-                self.adjuster_kernel(
-                    compiled_cores=adjuster_cores,
-                    state_action_space=state_action_space,
-                    next_regime_to_V_arr=next_regime_to_V_arr,
-                    next_regime_to_continuation=next_regime_to_continuation,
-                    flat_params=_with_outer_post_decision(
-                        flat_params=flat_params,
-                        regime_name=self.regime_name,
-                        outer_post_decision=self.outer_post_decision,
-                        value=node,
+                require_legacy_kernel_result(
+                    output=self.adjuster_kernel(
+                        compiled_cores=adjuster_cores,
+                        state_action_space=state_action_space,
+                        next_regime_to_V_arr=next_regime_to_V_arr,
+                        next_regime_to_continuation=next_regime_to_continuation,
+                        flat_params=_with_outer_post_decision(
+                            flat_params=flat_params,
+                            regime_name=self.regime_name,
+                            outer_post_decision=self.outer_post_decision,
+                            value=node,
+                        ),
+                        period=period,
+                        ages=ages,
+                        logger=logger,
                     ),
-                    period=period,
-                    ages=ages,
-                    logger=logger,
+                    consumer="NNBEGM adjuster wrapper",
                 )
                 for node in nodes[chunk_start : chunk_start + chunk_size]
             ]
@@ -1355,15 +1359,18 @@ class _NNBEGMPeriodKernel:
         logger: logging.Logger,
     ) -> KernelResult:
         """Run the keeper inner solve — the state-dependent no-adjustment branch."""
-        return self.keeper_kernel(
-            compiled_cores=_subcores(compiled_cores=compiled_cores, role="keeper"),
-            state_action_space=state_action_space,
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            next_regime_to_continuation=next_regime_to_continuation,
-            flat_params=flat_params,
-            period=period,
-            ages=ages,
-            logger=logger,
+        return require_legacy_kernel_result(
+            output=self.keeper_kernel(
+                compiled_cores=_subcores(compiled_cores=compiled_cores, role="keeper"),
+                state_action_space=state_action_space,
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                next_regime_to_continuation=next_regime_to_continuation,
+                flat_params=flat_params,
+                period=period,
+                ages=ages,
+                logger=logger,
+            ),
+            consumer="NNBEGM keeper wrapper",
         )
 
     def _solve_adjuster_node(
@@ -1380,20 +1387,23 @@ class _NNBEGMPeriodKernel:
         logger: logging.Logger,
     ) -> OuterCandidateResult:
         """Run one adjuster node's exact conditional inner solve."""
-        result = self.adjuster_kernel(
-            compiled_cores=adjuster_cores,
-            state_action_space=state_action_space,
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            next_regime_to_continuation=next_regime_to_continuation,
-            flat_params=_with_outer_post_decision(
-                flat_params=flat_params,
-                regime_name=self.regime_name,
-                outer_post_decision=self.outer_post_decision,
-                value=node,
+        result = require_legacy_kernel_result(
+            output=self.adjuster_kernel(
+                compiled_cores=adjuster_cores,
+                state_action_space=state_action_space,
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                next_regime_to_continuation=next_regime_to_continuation,
+                flat_params=_with_outer_post_decision(
+                    flat_params=flat_params,
+                    regime_name=self.regime_name,
+                    outer_post_decision=self.outer_post_decision,
+                    value=node,
+                ),
+                period=period,
+                ages=ages,
+                logger=logger,
             ),
-            period=period,
-            ages=ages,
-            logger=logger,
+            consumer="NNBEGM adjuster node wrapper",
         )
         return OuterCandidateResult(
             outer_node=node,

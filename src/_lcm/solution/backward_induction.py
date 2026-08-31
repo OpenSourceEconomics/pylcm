@@ -13,6 +13,15 @@ from typing import cast
 import jax
 
 from _lcm.engine import Regime, StateActionSpace, _build_regime_sharding
+from _lcm.execution.output_layout import (
+    UNPLANNED,
+    OutputLayoutAware,
+    PlannedCore,
+    ResolvedOutputLayout,
+    assert_output_layout,
+    planned_output_layout,
+    resolve_output_layout,
+)
 from _lcm.regime_building.gated_edges import (
     EDGE_PERIOD_CONTEXT_ARGS,
     CompiledEdgeFold,
@@ -45,11 +54,13 @@ from _lcm.solution.kernel_attribution import (
     log_executed_kernel,
     log_module_fanout,
 )
+from _lcm.solution.kernel_output import normalize_kernel_output
 from _lcm.solution.period_capture import (
     PeriodCaptureTarget,
     capture_kernel_inputs,
     resolve_capture_target,
 )
+from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from _lcm.solution.v_topology import (
     _build_zero_V_arr,
     _get_regime_V_shapes_and_shardings,
@@ -74,7 +85,7 @@ from lcm.typing import BoolND, ContinuousState, DiscreteState, FloatND
 _NO_DISSOLUTION_FLAGS: MappingProxyType[RegimeName, BoolND] = MappingProxyType({})
 
 
-def solve(  # noqa: C901, PLR0915
+def solve(  # noqa: C901, PLR0912, PLR0915
     *,
     flat_params: FlatParams,
     ages: AgeGrid,
@@ -82,6 +93,8 @@ def solve(  # noqa: C901, PLR0915
     logger: logging.Logger,
     enable_jit: bool,
     collect_simulation_policies: bool = False,
+    collect_solver_diagnostics: bool = False,
+    track_artifact_publication: bool = False,
     max_compilation_workers: int | None = None,
     retain_dissolution_flags: bool = True,
 ) -> BackwardInductionResult:
@@ -102,6 +115,13 @@ def solve(  # noqa: C901, PLR0915
             policies to the host. The solve kernels may publish an internal policy
             alongside their other outputs, but a value-only solve drops it at the
             period boundary instead of retaining one device-sized artifact per period.
+        collect_solver_diagnostics: Whether to retain a kernel's numerical
+            self-report. Existing ``solve`` and automatic-simulation paths leave
+            this false; ``solve_result`` opts in, with ``log_level`` still deciding
+            whether diagnostics are calculated and retained.
+        track_artifact_publication: Whether to retain the tiny set of cells whose
+            kernels produced a simulation policy. Used to write truthful omission
+            records without retaining values-only replay arrays.
         max_compilation_workers: Maximum number of threads for parallel XLA compilation.
             Defaults to `os.cpu_count()`.
         retain_dissolution_flags: Whether a caller wants the per-period
@@ -157,6 +177,8 @@ def solve(  # noqa: C901, PLR0915
     solution: dict[int, MappingProxyType[RegimeName, FloatND]] = {}
     simulation_policies: dict[int, MappingProxyType[RegimeName, SimulationPolicy]] = {}
     dissolution_flags: dict[int, MappingProxyType[RegimeName, BoolND]] = {}
+    solver_diagnostics: dict[int, MappingProxyType[RegimeName, SolverDiagnostics]] = {}
+    published_simulation_policy_cells: set[tuple[int, RegimeName]] = set()
 
     # Every collective kernel publishes `D`, but only two things read the
     # ACCUMULATED per-period mapping: forward simulation, for a gate that
@@ -222,7 +244,12 @@ def solve(  # noqa: C901, PLR0915
     # whole induction. Value-only solves therefore discard it at the period
     # boundary; a requesting consumer receives host copies, which simulation
     # re-materializes on device.
-    host_device = jax.devices("cpu")[0] if collect_simulation_policies else None
+    host_device = (
+        jax.devices("cpu")[0]
+        if collect_simulation_policies
+        or (collect_solver_diagnostics and diagnostics_enabled)
+        else None
+    )
 
     for period in reversed(range(ages.n_periods)):
         period_start = time.monotonic()
@@ -230,6 +257,7 @@ def solve(  # noqa: C901, PLR0915
         period_continuations: dict[RegimeName, ContinuationPayload] = {}
         period_simulation_policies: dict[RegimeName, SimulationPolicy] = {}
         period_dissolution_flags: dict[RegimeName, BoolND] = {}
+        period_solver_diagnostics: dict[RegimeName, SolverDiagnostics] = {}
 
         active_regimes = {
             regime_name: regime
@@ -274,9 +302,11 @@ def solve(  # noqa: C901, PLR0915
             # topology — so a kernel output arriving with a different
             # sharding (the compiled program's output sharding is the
             # backend's choice) is placed back on the template's mesh here.
-            V_arr = _match_leaf_template_sharding(
-                leaf=V_arr,
-                template_leaf=next_regime_to_V_arr[regime_name],
+            V_arr = _publish_kernel_value(
+                value=V_arr,
+                dissolution=result.dissolution,
+                template=next_regime_to_V_arr[regime_name],
+                compiled_cores=compiled_functions[(regime_name, period)],
             )
             _fail_if_continuation_publisher_returned_none(
                 result=result,
@@ -286,13 +316,22 @@ def solve(  # noqa: C901, PLR0915
             )
             if result.continuation is not None:
                 period_continuations[regime_name] = result.continuation
-            if collect_simulation_policies and result.simulation_policy is not None:
-                period_simulation_policies[regime_name] = result.simulation_policy
+            if result.simulation_policy is not None:
+                if collect_simulation_policies:
+                    period_simulation_policies[regime_name] = result.simulation_policy
+                if track_artifact_publication:
+                    published_simulation_policy_cells.add((period, regime_name))
             # A collective regime publishes its
             # empty-mask dissolution flag D alongside V; singleton regimes
             # leave it None and never touch this mapping.
             if result.dissolution is not None:
                 period_dissolution_flags[regime_name] = result.dissolution
+            if (
+                collect_solver_diagnostics
+                and diagnostics_enabled
+                and result.diagnostics is not None
+            ):
+                period_solver_diagnostics[regime_name] = result.diagnostics
             running_any_nan, running_any_inf = _fold_period_diagnostics(
                 V_arr=V_arr,
                 regime_name=regime_name,
@@ -373,6 +412,17 @@ def solve(  # noqa: C901, PLR0915
                     )
                 }
             )
+        if period_solver_diagnostics:
+            assert host_device is not None  # noqa: S101
+            solver_diagnostics[period] = MappingProxyType(
+                {
+                    regime_name: _copy_solver_diagnostics_to_host(
+                        diagnostics=diagnostics,
+                        host_device=host_device,
+                    )
+                    for regime_name, diagnostics in period_solver_diagnostics.items()
+                }
+            )
 
         elapsed = time.monotonic() - period_start
         log_period_timing(logger=logger, elapsed=elapsed)
@@ -419,6 +469,25 @@ def solve(  # noqa: C901, PLR0915
         value_functions=MappingProxyType(solution),
         simulation_policies=MappingProxyType(simulation_policies),
         dissolution_flags=MappingProxyType(dissolution_flags),
+        diagnostics=MappingProxyType(solver_diagnostics),
+        published_simulation_policy_cells=frozenset(published_simulation_policy_cells),
+    )
+
+
+def _copy_solver_diagnostics_to_host(
+    *, diagnostics: SolverDiagnostics, host_device: jax.Device
+) -> SolverDiagnostics:
+    """Copy one retained diagnostic payload off the accelerator."""
+    return dataclasses.replace(
+        diagnostics,
+        **{
+            field.name: (
+                None
+                if (value := getattr(diagnostics, field.name)) is None
+                else jax.block_until_ready(jax.device_put(value, host_device))
+            )
+            for field in dataclasses.fields(diagnostics)
+        },
     )
 
 
@@ -465,10 +534,11 @@ def _run_period_kernel(
     Every regime exposes the same kind of adapter; the loop never branches on
     solver type. The adapter wraps the regime's shared jitted core(s) (passed in
     AOT-compiled as `compiled_cores`), calls them with the solver's own argument
-    layout, and returns a `KernelResult` — the value-function array plus the
-    optional generic outputs (`continuation`, `simulation_policy`, and the
-    collective `dissolution` flag D), which the backward-induction loop
-    accumulates.
+    layout, and returns either the public `KernelOutput` envelope or a legacy
+    `KernelResult`. The fail-closed bridge below normalizes both to the latter —
+    the value-function array plus the optional generic outputs (`continuation`,
+    `simulation_policy`, and the collective `dissolution` flag D), which the
+    backward-induction loop accumulates.
 
     A regime declaring `same_period_refs` additionally
     receives the referenced regimes' V arrays of THIS period, read off
@@ -569,7 +639,7 @@ def _run_period_kernel(
             next_edge_to_V_arr=next_edge_to_V_arr,
         )
     )
-    return period_kernel(
+    output = period_kernel(
         compiled_cores=compiled_cores,
         state_action_space=state_action_space,
         next_regime_to_V_arr=next_regime_to_V_arr,
@@ -579,6 +649,15 @@ def _run_period_kernel(
         ages=ages,
         logger=logger,
         **same_period_kwargs,
+    )
+    continuation_spec = regime.solution.continuation_spec
+    return normalize_kernel_output(
+        output=output,
+        continuation_key=(
+            None if continuation_spec is None else continuation_spec.artifact_key
+        ),
+        regime_name=regime_name,
+        period=period,
     )
 
 
@@ -971,6 +1050,37 @@ def _match_continuation_template_sharding(
     )
 
 
+def _publish_kernel_value(
+    *,
+    value: FloatND,
+    dissolution: BoolND | None,
+    template: FloatND,
+    compiled_cores: Mapping[str, Callable],
+) -> FloatND:
+    """Publish a period value in the engine-owned layout.
+
+    An output-layout-aware core has already asserted the complete runtime
+    output tree against the layout used to lower it, so its value leaf is born
+    in the template layout.  Legacy kernels retain the existing repair at this
+    boundary.  Continuation rolling deliberately keeps its independent repair:
+    it is a different producer/consumer boundary.
+    """
+    main = compiled_cores.get("main")
+    layout = None if main is None else planned_output_layout(main)
+    if layout is not None and layout is not UNPLANNED:
+        assert_output_layout(
+            output=(value, dissolution) if dissolution is not None else value,
+            layout=layout,
+        )
+        return value
+    return _repair_unplanned_kernel_value(value=value, template=template)
+
+
+def _repair_unplanned_kernel_value(*, value: FloatND, template: FloatND) -> FloatND:
+    """Place a legacy kernel output onto the published value template."""
+    return _match_leaf_template_sharding(leaf=value, template_leaf=template)
+
+
 def _match_leaf_template_sharding(*, leaf: FloatND, template_leaf: FloatND) -> FloatND:
     """Place one solved array on its template's device sharding (no-op on match).
 
@@ -1242,16 +1352,30 @@ def _compile_all_functions(
     if not enable_jit:
         return _group_cores_by_regime_period(all_functions)
 
-    # Deduplicate by identity (or by underlying function for partials), keeping
-    # one representative (regime, period, core_key) per unique core so its
-    # adapter can build the lowering arguments for that key.
-    unique: dict[Hashable, tuple[Callable, RegimeName, int, str]] = {}
-    for (regime_name, period, core_key), func in all_functions.items():
-        func_id = _func_dedup_key(func=func)
-        if func_id not in unique:
-            unique[func_id] = (func, regime_name, period, core_key)
+    # Resolve output placement before choosing representatives.  The same
+    # callable lowered for two different output layouts is two different XLA
+    # programs; equal callable+layout pairs still share one compilation.
+    all_layouts, lowering_keys, lowering_functions = (
+        _resolve_output_layouts_and_lowering_keys(
+            all_functions=all_functions,
+            regimes=regimes,
+            flat_params=flat_params,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+        )
+    )
 
-    n_triples_per_func = _count_triples_per_func(all_functions=all_functions)
+    # Keep one representative per lowering key so its adapter can build the
+    # matching arguments.  Selection happens only after layout resolution.
+    unique: dict[Hashable, tuple[Callable, RegimeName, int, str]] = {}
+    for triple, func in lowering_functions.items():
+        lowering_key = lowering_keys[triple]
+        if lowering_key not in unique:
+            regime_name, period, core_key = triple
+            unique[lowering_key] = (func, regime_name, period, core_key)
+
+    n_triples_per_lowering = _count_triples_per_lowering_key(
+        lowering_keys=lowering_keys
+    )
 
     n_workers = _resolve_compilation_workers(
         max_compilation_workers=max_compilation_workers
@@ -1271,7 +1395,7 @@ def _compile_all_functions(
     # lowering arguments off a fresh, params-completed state-action space.
     lowered: dict[Hashable, jax.stages.Lowered] = {}
     labels: dict[Hashable, str] = {}
-    for i, (func_id, (func, regime_name, period, core_key)) in enumerate(
+    for i, (lowering_key, (func, regime_name, period, core_key)) in enumerate(
         unique.items(), 1
     ):
         regime = regimes[regime_name]
@@ -1293,16 +1417,26 @@ def _compile_all_functions(
             **edge_kwargs,
         )
         label = f"{regime_name} {core_key} (age {ages.values[period].item()})"
-        labels[func_id] = label
+        labels[lowering_key] = label
         log_module_fanout(
             label=label,
-            n_triples=n_triples_per_func[func_id],
+            n_triples=n_triples_per_lowering[lowering_key],
             logger=logger,
         )
         logger.info("%d/%d  %s", i, n_unique, label)
         logger.info("  lowering ...")
         start = time.monotonic()
-        lowered[func_id] = jax.jit(func).lower(**lower_args)
+        triple = (regime_name, period, core_key)
+        layout = all_layouts[triple]
+        jitted = (
+            jax.jit(func)
+            if layout is UNPLANNED
+            else jax.jit(
+                func,
+                out_shardings=cast("ResolvedOutputLayout", layout).out_shardings,
+            )
+        )
+        lowered[lowering_key] = jitted.lower(**lower_args)
         elapsed = time.monotonic() - start
         logger.info("  lowered in %s", format_duration(seconds=elapsed))
 
@@ -1311,7 +1445,7 @@ def _compile_all_functions(
 
     def _compile_and_log(
         *,
-        func_id: Hashable,
+        lowering_key: Hashable,
         low: jax.stages.Lowered,
         label: str,
     ) -> tuple[Hashable, jax.stages.Compiled]:
@@ -1321,42 +1455,112 @@ def _compile_all_functions(
         elapsed = time.monotonic() - start
         logger.info("  compiled  %s  %s", label, format_duration(seconds=elapsed))
         _log_kernel_memory(compiled=result, label=label, logger=logger)
-        return func_id, result
+        return lowering_key, result
 
     with ThreadPoolExecutor(max_workers=n_workers) as pool:
         futures = [
             pool.submit(
-                _compile_and_log, func_id=func_id, low=low, label=labels[func_id]
+                _compile_and_log,
+                lowering_key=lowering_key,
+                low=low,
+                label=labels[lowering_key],
             )
-            for func_id, low in lowered.items()
+            for lowering_key, low in lowered.items()
         ]
         for future in as_completed(futures):
-            func_id, comp = future.result()
-            compiled[func_id] = comp
+            lowering_key, comp = future.result()
+            compiled[lowering_key] = comp
 
     # Map back to (regime, period) keys, grouping the compiled cores by core key.
     return _group_cores_by_regime_period(
         {
-            key: compiled[_func_dedup_key(func=func)]
-            for key, func in all_functions.items()
+            triple: _attach_resolved_output_layout(
+                compiled=compiled[lowering_keys[triple]],
+                layout=all_layouts[triple],
+            )
+            for triple in all_functions
         }
     )
 
 
-def _count_triples_per_func(
+def _count_triples_per_lowering_key(
     *,
-    all_functions: dict[tuple[RegimeName, int, str], Callable],
+    lowering_keys: Mapping[tuple[RegimeName, int, str], Hashable],
 ) -> dict[Hashable, int]:
-    """Count the (regime, period, core) triples each lowered module will serve.
+    """Count the triples each callable-and-output-layout module will serve.
 
-    Cores are deduplicated by identity before lowering, so a module name in an
-    XLA dump identifies a regime-period only where this count is 1.
+    A shared callable with distinct output layouts is deliberately counted as
+    distinct lowered modules.
     """
     counts: dict[Hashable, int] = {}
-    for func in all_functions.values():
-        key = _func_dedup_key(func=func)
+    for key in lowering_keys.values():
         counts[key] = counts.get(key, 0) + 1
     return counts
+
+
+def _resolve_output_layouts_and_lowering_keys(
+    *,
+    all_functions: Mapping[tuple[RegimeName, int, str], Callable],
+    regimes: MappingProxyType[RegimeName, Regime],
+    flat_params: FlatParams,
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+) -> tuple[
+    dict[tuple[RegimeName, int, str], ResolvedOutputLayout | object],
+    dict[tuple[RegimeName, int, str], Hashable],
+    dict[tuple[RegimeName, int, str], Callable],
+]:
+    """Resolve every triple before representative selection and form AOT keys."""
+    layouts: dict[tuple[RegimeName, int, str], ResolvedOutputLayout | object] = {}
+    lowering_keys: dict[tuple[RegimeName, int, str], Hashable] = {}
+    lowering_functions: dict[tuple[RegimeName, int, str], Callable] = {}
+    for (regime_name, period, core_key), func in all_functions.items():
+        regime = regimes[regime_name]
+        state_action_space = regime.solution.state_action_space(
+            regime_params=flat_params[regime_name]
+        )
+        state_order = tuple(
+            name
+            for name in state_action_space.states
+            if name not in regime.fold_state_names
+        )
+        layout = resolve_output_layout(
+            kernel=regime.solution.period_kernels[period],
+            core_key=core_key,
+            value_template=next_regime_to_V_arr[regime_name],
+            state_order=state_order,
+        )
+        triple = (regime_name, period, core_key)
+        layouts[triple] = layout
+        lowering_func = (
+            func
+            if layout is UNPLANNED
+            else cast(
+                "OutputLayoutAware", regime.solution.period_kernels[period]
+            ).core_for_output_layout(core_key=core_key)
+        )
+        lowering_functions[triple] = lowering_func
+        layout_key = UNPLANNED if layout is UNPLANNED else layout.compilation_key
+        lowering_keys[triple] = _lowering_key(func=lowering_func, layout_key=layout_key)
+    return layouts, lowering_keys, lowering_functions
+
+
+def _lowering_key(*, func: Callable, layout_key: Hashable) -> Hashable:
+    """Pair callable identity with output layout for AOT deduplication."""
+    return (_func_dedup_key(func=func), layout_key)
+
+
+def _attach_resolved_output_layout(
+    *,
+    compiled: jax.stages.Compiled,
+    layout: ResolvedOutputLayout | object,
+) -> Callable:
+    """Carry a planned layout to dispatch; leave legacy cores byte-for-byte raw."""
+    if layout is UNPLANNED:
+        return compiled
+    return PlannedCore(
+        compiled=compiled,
+        layout=cast("ResolvedOutputLayout", layout),
+    )
 
 
 def _group_cores_by_regime_period(

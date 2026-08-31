@@ -39,7 +39,6 @@ from _lcm.solution.continuation_target import (
 from _lcm.solution.contract import (
     ConstraintRouteContext,
     ContinuationPayload,
-    KernelResult,
     OneMarginSolver,
     PeriodKernel,
     SolutionKernels,
@@ -61,6 +60,7 @@ from _lcm.typing import (
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
+from lcm.solver_api import EGM_CONTINUATION, KernelOutput
 from lcm.typing import (
     ActionName,
     Float1D,
@@ -561,8 +561,8 @@ class _EGMPeriodKernel:
     Closes over the regime name, the period's single deterministic
     continuation target (whose value array and marginal carry feed the Euler
     inversion), and the transition target names (to union their params).
-    Returns a `KernelResult` carrying the value array and the marginal-value
-    carry a parent EGM regime interpolates.
+    Returns a public `KernelOutput` carrying the value array and the
+    marginal-value continuation a parent EGM regime interpolates.
     """
 
     core: Callable
@@ -746,8 +746,8 @@ class _EGMPeriodKernel:
         period: int,  # noqa: ARG002
         ages: AgeGrid,  # noqa: ARG002
         logger: logging.Logger,  # noqa: ARG002
-    ) -> KernelResult:
-        """Run the 1-D EGM step and assemble the `KernelResult`."""
+    ) -> KernelOutput:
+        """Run the 1-D EGM step and publish its typed continuation."""
         next_carry = next_regime_to_continuation[self.continuation_target]
         (
             effective_savings_grid,
@@ -775,7 +775,10 @@ class _EGMPeriodKernel:
                 transition_target_names=self.transition_target_names,
             ),
         )
-        return KernelResult(V_arr=V_arr, continuation=carry)
+        return KernelOutput(
+            value=V_arr,
+            continuations={EGM_CONTINUATION: carry},
+        )
 
 
 def _one_sided_boundary_savings_targets(

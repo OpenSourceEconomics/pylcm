@@ -30,6 +30,10 @@ from _lcm.constraints.routes import (
 )
 from _lcm.continuation import EGMContinuationLayout
 from _lcm.engine import StateActionSpace
+from _lcm.execution.output_layout import (
+    DISSOLUTION_FLAG,
+    VALUE,
+)
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.solution.contract import (
     ConstraintRouteContext,
@@ -117,6 +121,7 @@ class GridSearch(Solver):
         )
 
         built: dict[int, MaxQOverAFunction] = {}
+        unwrapped: dict[int, MaxQOverAFunction] = {}
         result: dict[int, PeriodKernel] = {}
         # Fold weights are the folded process's own marginal distribution, a
         # plain constant computed once here at kernel-build time and never
@@ -164,8 +169,10 @@ class GridSearch(Solver):
                     fold_conditioning=MappingProxyType(fold_conditioning),
                 )
                 built[q_id] = jax.jit(func) if context.enable_jit else func
+                unwrapped[q_id] = func
             result[period] = _GridSearchPeriodKernel(
                 core=built[q_id],
+                unwrapped_core=unwrapped[q_id],
                 regime_name=context.regime_name,
                 collective=context.stakeholders is not None,
                 same_period_ref_regimes=context.same_period_ref_regimes,
@@ -187,6 +194,9 @@ class _GridSearchPeriodKernel:
 
     core: Callable
     """The shared jitted max-Q-over-a core (`id`-deduped across periods)."""
+
+    unwrapped_core: Callable | None = None
+    """The same core before GridSearch's legacy JIT wrapper, for planned lowering."""
 
     regime_name: RegimeName
     """Name of the regime whose flat params this adapter projects."""
@@ -265,6 +275,26 @@ class _GridSearchPeriodKernel:
         """Return the single max-Q-over-a core under the `"main"` key."""
         return MappingProxyType({"main": self.core})
 
+    def output_roles(self, *, core_key: str) -> object:
+        """Name the core output leaves whose concrete layout the engine owns."""
+        if core_key != "main":
+            msg = f"GridSearch has no core named {core_key!r}."
+            raise KeyError(msg)
+        return (VALUE, DISSOLUTION_FLAG) if self.collective else VALUE
+
+    def core_for_output_layout(self, *, core_key: str) -> Callable:
+        """Return the GridSearch-owned raw core for output-sharded lowering."""
+        if core_key != "main":
+            msg = f"GridSearch has no core named {core_key!r}."
+            raise KeyError(msg)
+        if self.unwrapped_core is None:
+            msg = (
+                "This GridSearch adapter has no raw core for output-layout "
+                "lowering. Build it through GridSearch.build_period_kernels()."
+            )
+            raise RuntimeError(msg)
+        return self.unwrapped_core
+
     def with_fixed_params(
         self, *, fixed_flat_params: FlatParams
     ) -> _GridSearchPeriodKernel:
@@ -279,7 +309,15 @@ class _GridSearchPeriodKernel:
         )
         if not regime_fixed:
             return self
-        return replace(self, core=functools.partial(self.core, **regime_fixed))
+        return replace(
+            self,
+            core=functools.partial(self.core, **regime_fixed),
+            unwrapped_core=(
+                None
+                if self.unwrapped_core is None
+                else functools.partial(self.unwrapped_core, **regime_fixed)
+            ),
+        )
 
     def build_lower_args(
         self,

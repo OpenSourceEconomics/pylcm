@@ -452,6 +452,7 @@ def test_q_and_f_arrays_reach_full_reducers_without_candidate_transformation():
     assert isinstance(_parse("src/_lcm/regime_building/collective.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/logsum.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/regime_building/processing.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/execution/output_layout.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/utils/dispatchers.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/utils/functools.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/utils/containers.py"), ast.Module)
@@ -620,10 +621,10 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
     assert required <= names
     # Independent literals make both cardinality and family identity part of this
     # certificate, rather than trusting constants supplied by the mutation generator.
-    assert len(names) == 176
+    assert len(names) == 193
     assert (
         hashlib.sha256(("\n".join(sorted(names)) + "\n").encode()).hexdigest()
-        == "fea9bb27d93337e16d2505c643660b3816cb37d5e87d3cb41a0a2e4baad4739f"
+        == "1eb1dedd339ec35f8a7e722903d45ec74209e529b54df6e2c1e07d71cc5e9fb3"
     )
 
 

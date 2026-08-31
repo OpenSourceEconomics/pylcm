@@ -21,7 +21,7 @@ from _lcm.solution.v_topology import (
     _get_regime_V_shapes_and_shardings,
 )
 from _lcm.utils.logging import v_array_has_inf, v_array_has_nan
-from lcm import LinearAggregator, LinearExpectation, fixed_transition
+from lcm import CollectiveUtility, LinearAggregator, LinearExpectation, fixed_transition
 from lcm.ages import AgeGrid
 from lcm.exceptions import PyLCMError, RegimeInitializationError
 from lcm.model import Model
@@ -77,17 +77,31 @@ def test_importing_this_module_after_jax_init_leaves_the_platform_unpinned():
 
 
 def _make_correct_distributed_model(
-    *, n_subjects: int | None = None, distributed: bool = True
+    *,
+    n_subjects: int | None = None,
+    distributed: bool = True,
+    distribute_type2: bool | None = None,
 ) -> Model:
     @categorical(ordered=False)
     class RegimeId:
         working_life: ScalarInt
         retirement: ScalarInt
 
-    @categorical(ordered=True)
-    class Type:
-        low: ScalarInt
-        high: ScalarInt
+    if distribute_type2 is False:
+
+        @categorical(ordered=True)
+        class Type:
+            lowest: ScalarInt
+            low: ScalarInt
+            high: ScalarInt
+            highest: ScalarInt
+
+    else:
+
+        @categorical(ordered=True)
+        class Type:
+            low: ScalarInt
+            high: ScalarInt
 
     working_life = UserRegime(
         functions={
@@ -129,13 +143,83 @@ def _make_correct_distributed_model(
         regime_id_class=RegimeId,
         states={
             "type1": DiscreteGrid(category_class=Type, distributed=distributed),
-            "type2": DiscreteGrid(category_class=Type, distributed=distributed),
+            "type2": DiscreteGrid(
+                category_class=Type,
+                distributed=(
+                    distributed if distribute_type2 is None else distribute_type2
+                ),
+            ),
         },
         state_transitions={
             "type1": fixed_transition("type1"),
             "type2": fixed_transition("type2"),
         },
         n_subjects=n_subjects,
+    )
+
+
+def _make_one_axis_collective_model(*, distributed: bool) -> Model:
+    """Tiny collective GridSearch model with one four-device fixed-state axis."""
+
+    @categorical(ordered=False)
+    class RegimeId:
+        working: ScalarInt
+        retired: ScalarInt
+
+    @categorical(ordered=True)
+    class Type:
+        lowest: ScalarInt
+        low: ScalarInt
+        high: ScalarInt
+        highest: ScalarInt
+
+    def utility_f(*, wealth, consumption, type1):
+        return jnp.log(consumption) + 0.01 * wealth + 0.1 * type1
+
+    def utility_m(*, wealth, consumption, type1):
+        return 1.1 * jnp.log(consumption) + 0.02 * wealth + 0.2 * type1
+
+    def terminal_f(*, wealth, type1):
+        return 0.5 * wealth + 0.1 * type1
+
+    def terminal_m(*, wealth, type1):
+        return 0.4 * wealth + 0.2 * type1
+
+    def next_regime(age):
+        del age
+        return RegimeId.retired
+
+    return Model(
+        regimes={
+            "working": UserRegime(
+                transition=next_regime,
+                active=lambda age: age < 1,
+                states={"wealth": LinSpacedGrid(start=1, stop=4, n_points=4)},
+                state_transitions={
+                    "wealth": lambda wealth, consumption: wealth - consumption
+                },
+                actions={"consumption": LinSpacedGrid(start=0.5, stop=1, n_points=2)},
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={"f": utility_f, "m": utility_m}
+                    )
+                },
+            ),
+            "retired": UserRegime(
+                transition=None,
+                active=lambda age: age >= 1,
+                states={"wealth": LinSpacedGrid(start=1, stop=4, n_points=4)},
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={"f": terminal_f, "m": terminal_m}
+                    )
+                },
+            ),
+        },
+        ages=AgeGrid(start=0, stop=1, step="Y"),
+        regime_id_class=RegimeId,
+        states={"type1": DiscreteGrid(category_class=Type, distributed=distributed)},
+        state_transitions={"type1": fixed_transition("type1")},
     )
 
 
@@ -300,17 +384,16 @@ def test_distributed_solve_kernel_does_not_all_gather_continuation_v():
 
 
 @_skip_pytest_parallel
-def test_solve_returns_template_sharded_V_even_when_kernel_output_is_replicated(
-    *, correct_distributed_model, monkeypatch
+def test_planned_solve_rejects_a_replicated_output_injected_after_kernel_call(
+    *, monkeypatch
 ):
-    """`solve()` publishes V arrays carrying the distributed template sharding.
+    """A planned V cannot be repaired after the GridSearch adapter returns.
 
-    The simulate programs are AOT-lowered against the per-regime V topology, so
-    the V mapping `solve()` returns must carry that sharding regardless of the
-    output sharding the period kernel's compiled program happens to emit — a
-    replicated kernel output must be placed back on the template's mesh before
-    it is published.
+    The injection happens after the adapter's full-output assertion.  The
+    generic publication seam therefore checks the actual ``KernelResult`` too
+    and fails closed instead of silently device-putting it into place.
     """
+    model = _make_correct_distributed_model(distribute_type2=False)
     original_run_period_kernel = backward_induction._run_period_kernel
     replicated_outputs: list[str] = []
 
@@ -329,18 +412,101 @@ def test_solve_returns_template_sharded_V_even_when_kernel_output_is_replicated(
 
     monkeypatch.setattr(backward_induction, "_run_period_kernel", emit_replicated_V)
 
-    period_to_regime_to_V_arr = correct_distributed_model.solve(
-        log_level="off",
-        params={"discount_factor": 0.95},
-    )
+    with pytest.raises(AssertionError, match="post-run repair is not permitted"):
+        model.solve(
+            log_level="off",
+            params={"discount_factor": 0.95},
+        )
 
     assert replicated_outputs, "no kernel output was replicated; test is inert"
-    for regime_to_V_arr in period_to_regime_to_V_arr.values():
-        for regime_name, V_arr in regime_to_V_arr.items():
-            if regime_name in replicated_outputs:
-                assert not V_arr.sharding.is_fully_replicated, (
-                    f"{regime_name}: published V is replicated, not template-sharded"
-                )
+
+
+@_skip_pytest_parallel
+def test_grid_search_aot_output_layout_is_native_local_and_deduplicated(monkeypatch):
+    """Real AOT GridSearch outputs are born sharded without repair or collectives."""
+    model = _make_correct_distributed_model(distribute_type2=False)
+    single = _make_correct_distributed_model(
+        distributed=False, distribute_type2=False
+    ).solve(log_level="off", params={"discount_factor": 0.95})
+    captured = []
+    original_attach = backward_induction._attach_resolved_output_layout
+
+    def capture_planned_core(**kwargs):
+        core = original_attach(**kwargs)
+        if hasattr(core, "layout"):
+            captured.append(core)
+        return core
+
+    def fail_repair(**kwargs):
+        raise AssertionError(f"planned output reached repair: {kwargs}")
+
+    monkeypatch.setattr(
+        backward_induction, "_attach_resolved_output_layout", capture_planned_core
+    )
+    monkeypatch.setattr(
+        backward_induction, "_repair_unplanned_kernel_value", fail_repair
+    )
+
+    distributed = model.solve(log_level="off", params={"discount_factor": 0.95})
+
+    assert captured
+    assert len({id(core.compiled) for core in captured}) < len(captured)
+    for core in captured:
+        assert core.compiled.output_shardings == core.layout.out_shardings
+    hlo = "\n".join(core.compiled.as_text().lower() for core in captured)
+    for collective in (
+        "all-gather",
+        "all-reduce",
+        "all-to-all",
+        "collective-permute",
+        "reduce-scatter",
+    ):
+        assert collective not in hlo
+
+    assert model._regimes["working_life"].solution.state_names == (
+        "type1",
+        "type2",
+        "wealth",
+    )
+    for period, regime_to_value in distributed.items():
+        for regime_name, value in regime_to_value.items():
+            assert isinstance(value.sharding, NamedSharding)
+            assert value.sharding.spec == PartitionSpec("type1", None, None)
+            np.testing.assert_array_equal(value, single[period][regime_name])
+
+
+@_skip_pytest_parallel
+def test_collective_grid_search_value_and_dissolution_have_planned_state_layout():
+    """Collective V keeps its stakeholder axis replicated; D has state rank."""
+    distributed_model = _make_one_axis_collective_model(distributed=True)
+    single_model = _make_one_axis_collective_model(distributed=False)
+
+    distributed_values, distributed_flags = distributed_model.solve(
+        log_level="off",
+        params={"discount_factor": 0.95},
+        return_dissolution_flags=True,
+    )
+    single_values, single_flags = single_model.solve(
+        log_level="off",
+        params={"discount_factor": 0.95},
+        return_dissolution_flags=True,
+    )
+
+    for period, regime_to_value in distributed_values.items():
+        for regime_name, value in regime_to_value.items():
+            assert value.shape == (4, 4, 2)
+            # `_RegimeSharding.V_arr_sharding` names only state axes: the
+            # replicated stakeholder entry is intentionally omitted.
+            assert isinstance(value.sharding, NamedSharding)
+            assert value.sharding.spec == PartitionSpec("type1", None)
+            np.testing.assert_array_equal(value, single_values[period][regime_name])
+            dissolution = distributed_flags[period][regime_name]
+            assert dissolution.shape == (4, 4)
+            assert isinstance(dissolution.sharding, NamedSharding)
+            assert dissolution.sharding.spec == PartitionSpec("type1", None)
+            np.testing.assert_array_equal(
+                dissolution, single_flags[period][regime_name]
+            )
 
 
 @_skip_pytest_parallel

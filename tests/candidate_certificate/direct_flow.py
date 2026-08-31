@@ -56,6 +56,7 @@ ARGMAX_SOURCE = "src/_lcm/regime_building/argmax.py"
 COLLECTIVE_SOURCE = "src/_lcm/regime_building/collective.py"
 LOGSUM_SOURCE = "src/_lcm/logsum.py"
 GRID_SEARCH_SOURCE = "src/_lcm/solution/grid_search.py"
+OUTPUT_LAYOUT_SOURCE = "src/_lcm/execution/output_layout.py"
 PROCESSING_SOURCE = "src/_lcm/regime_building/processing.py"
 DISPATCHERS_SOURCE = "src/_lcm/utils/dispatchers.py"
 FUNCTOOLS_SOURCE = "src/_lcm/utils/functools.py"
@@ -101,6 +102,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
     COLLECTIVE_SOURCE,
     LOGSUM_SOURCE,
     GRID_SEARCH_SOURCE,
+    OUTPUT_LAYOUT_SOURCE,
     PROCESSING_SOURCE,
     DISPATCHERS_SOURCE,
     FUNCTOOLS_SOURCE,
@@ -150,8 +152,9 @@ _SOURCE_SEALS = {
     ARGMAX_SOURCE: "0d179a5aa65a6f310f598bdad8f75a9318a24832e31bd529184c2ea90356a72d",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
     MAX_Q_SOURCE: "5420e559c718b4c14e07f69fefd6eb445a2b1316821893f90b48c19f53622c10",
-    PROCESSING_SOURCE: "e5be17aabbd14ad77bba9c2b503ef8563b8d2ba6ca3b5a7e6969e58a81e6150e",
-    GRID_SEARCH_SOURCE: "a035b1f5bd50e5ab831d9731341c0b48f1fb8112be8bb6411bec09a7159df58d",
+    PROCESSING_SOURCE: "19f5de0a9b6597589afd1ff45ca92c6521a6d5bdc807cba4cfcc3ddcac4c6836",
+    GRID_SEARCH_SOURCE: "7cc71dc5c92ea1872f3a433d38ef7cd6579fe61365e4a816840b93b77d120205",
+    OUTPUT_LAYOUT_SOURCE: "0f6d13d3304354e4656d0c06c47f6514c7e8b1f4cd4d67eca927f78094b7ce22",
     DISPATCHERS_SOURCE: "ef1d85c4fa7dbfbedc2c4afc36f307b915975c8a4a379aa40380fe8c89ecb663",
     FUNCTOOLS_SOURCE: "e6707e1f76493a28023a1f1f536414ba6792df063e6cfc161fca2690b8f5bc1c",
     CONTAINERS_SOURCE: "0838079e35ba498009d8af7e6ed717f870a96a2fdc628d25e80310cd630174a9",
@@ -162,8 +165,8 @@ _SOURCE_SEALS = {
     SIMULATION_SOURCE: "0a2135531eeae6fab79e774d7a8ad276ceba92232fc7dd12bb1e2324d0714380",
     SIMULATION_TRANSITIONS_SOURCE: "1c503777887af52d1d5de36cf86acb4d8431fbe3d71203d7da881b4d0742c928",
     SIMULATION_COMPILE_SOURCE: "926feb249828f03cf722f8e517706e6651b0359f93fd29c6f87650773bfcaf04",
-    MODEL_SOURCE: "37d5f0c0c5390d4246537e8f5413073fcdbfac7eb375c3fa3313f06d01e09048",
-    BACKWARD_INDUCTION_SOURCE: "c2516960628c94ccc384af8789eeeeccd8d6f090368745f51fe06e3fa8f6d96e",
+    MODEL_SOURCE: "e9bdfaa4b9cfabb4a99f2487ce46bc9dceb6ff45ec0c9e18216f3a44238fb39d",
+    BACKWARD_INDUCTION_SOURCE: "280b6a7f0335c70dd422a23297ea4d34501c40b254d0a63c92d3eeaec4e43674",
     INITIAL_CONDITIONS_SOURCE: "cb3663f59d10fa288d3da322b5f154545bb1ac4b9262073a87c405b5e950507f",
     RESULT_SOURCE: "992f8e14d2f47f505f6883e340e89d68dfc41311d4c36f7849a2f79331e4ba01",
     RESULT_DATAFRAME_SOURCE: "025e273c4d3bb9d8f9787189a551b113708c86b1e868d16178aa39555abf49a4",
@@ -171,7 +174,7 @@ _SOURCE_SEALS = {
     ADDITIONAL_TARGETS_SOURCE: "d1c8787e7968b868b4b09a90544050c5da65d2ca6203f2bc52fe6b7b7dd351e4",
     SIMULATION_RANDOM_SOURCE: "0f7d81ab5c36343ab24363dca159451c0a44a399ab150abd2e52fea6715ff20e",
     FOLD_ZERO_SAFE_SOURCE: "0f6c6c3ad1a69ea2ef241f8f0ce924e18c00e6515c7509577c761a8151d57feb",
-    SOLUTION_CONTRACT_SOURCE: "73a1148482739dad5d49939991c7ba06b693cf60f8594340f42a5633332346f7",
+    SOLUTION_CONTRACT_SOURCE: "245742904285eb11afe76e7b1bbf9e34d988755dd3e60eaf764c4958804c5810",
     GRIDS_INIT_SOURCE: "c66aed5ef6cdb56cfa38eebb7f870f12475f7a5f62ca1962c17230f66fd3268a",
     GRID_BASE_SOURCE: "fd1064986abdbe1755383fb08758f74d40cad419c0da312f38b521c7d78ce59c",
     GRID_COORDINATES_SOURCE: "e0f3cffc38e2a854426309b3eacab5783a0a5725cc4e763a06969e03914619e8",
@@ -191,9 +194,9 @@ _SOURCE_SEALS = {
     MODEL_PROCESSING_SOURCE: "8a159831e37a9582852908c7e213106aa1070500f4e64fa12f1a7ed628854740",
 }
 
-EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 176
+EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 193
 EXPECTED_DIRECT_FLOW_MUTATION_NAMES_SHA256 = (
-    "fea9bb27d93337e16d2505c643660b3816cb37d5e87d3cb41a0a2e4baad4739f"
+    "1eb1dedd339ec35f8a7e722903d45ec74209e529b54df6e2c1e07d71cc5e9fb3"
 )
 
 
@@ -381,6 +384,96 @@ def _body_without_docstring(node: ast.FunctionDef) -> list[ast.stmt]:
 def _ast_key(node: ast.AST) -> str:
     """Return a location-independent structural representation."""
     return ast.dump(node, annotate_fields=True, include_attributes=False)
+
+
+def _callable_ast_sha256(node: ast.FunctionDef) -> str:
+    """Hash one callable's exact AST, ignoring only its docstring and locations.
+
+    This is the compact form of the fail-closed allowlist for long transport
+    adapters. It includes the signature, annotations, decorators, type
+    parameters, and every executable statement; comments, formatting, and a
+    documentation-only edit do not force a semantic re-anchor.
+    """
+    parts: list[str | None] = [
+        _ast_key(node.args),
+        *(_ast_key(item) for item in node.decorator_list),
+        _ast_key(node.returns) if node.returns is not None else None,
+        node.type_comment,
+        *(_ast_key(item) for item in getattr(node, "type_params", ())),
+        *(_ast_key(item) for item in _body_without_docstring(node)),
+    ]
+    payload = json.dumps(parts, ensure_ascii=True, separators=(",", ":")).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _statements_ast_sha256(statements: Sequence[ast.stmt]) -> str:
+    """Hash an exact ordered statement corridor, independent of locations."""
+    payload = json.dumps(
+        [_ast_key(item) for item in statements],
+        ensure_ascii=True,
+        separators=(",", ":"),
+    ).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _exact_callable_errors(
+    *,
+    tree: ast.Module,
+    label: str,
+    contracts: dict[str, str],
+) -> list[str]:
+    """Check exact callable ASTs selected by top-level or ``Class.method`` name."""
+    errors: list[str] = []
+    for qualname, expected in contracts.items():
+        try:
+            if "." in qualname:
+                class_name, method_name = qualname.split(".", maxsplit=1)
+                _, node = _method_definition(
+                    tree=tree, class_name=class_name, method_name=method_name
+                )
+            else:
+                node = _definition(tree=tree, name=qualname)
+        except ValueError as error:
+            errors.append(f"{label}: {error}")
+            continue
+        actual = _callable_ast_sha256(node)
+        if actual != expected:
+            errors.append(f"{label}: exact callable corridor {qualname!r} changed")
+    return errors
+
+
+def _class_surface_errors(
+    *,
+    tree: ast.Module,
+    label: str,
+    class_name: str,
+    fields: tuple[str, ...],
+    methods: tuple[str, ...],
+) -> list[str]:
+    """Forbid descriptors or magic methods from bypassing an exact corridor."""
+    try:
+        cls = _class_definition(tree=tree, name=class_name)
+    except ValueError as error:
+        return [f"{label}: {error}"]
+    observed_fields = tuple(
+        ast.unparse(item)
+        for item in cls.body
+        if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name)
+    )
+    observed_methods = tuple(
+        item.name for item in cls.body if isinstance(item, ast.FunctionDef)
+    )
+    errors: list[str] = []
+    if (
+        [ast.unparse(item) for item in cls.decorator_list]
+        != ["dataclass(frozen=True, kw_only=True)"]
+        or cls.bases
+        or cls.keywords
+        or observed_fields != fields
+        or observed_methods != methods
+    ):
+        errors.append(f"{label}: {class_name} class surface changed")
+    return errors
 
 
 def _expected_statements(source: str) -> list[ast.stmt]:
@@ -1417,6 +1510,7 @@ def _grid_search_caller_errors(tree: ast.Module) -> list[str]:
     expected_body = r"""from _lcm.regime_building.max_Q_over_a import get_max_Q_over_a
 from _lcm.regime_building.processing import get_conditioned_fold_weights_by_code
 built: dict[int, MaxQOverAFunction] = {}
+unwrapped: dict[int, MaxQOverAFunction] = {}
 result: dict[int, PeriodKernel] = {}
 fold_weights: dict[StateName, FloatND] = {}
 fold_conditioning: dict[StateName, StateName] = {}
@@ -1454,8 +1548,10 @@ for period, Q_and_F in context.Q_and_F_functions.items():
             fold_conditioning=MappingProxyType(fold_conditioning),
         )
         built[q_id] = jax.jit(func) if context.enable_jit else func
+        unwrapped[q_id] = func
     result[period] = _GridSearchPeriodKernel(
         core=built[q_id],
+        unwrapped_core=unwrapped[q_id],
         regime_name=context.regime_name,
         collective=context.stakeholders is not None,
         same_period_ref_regimes=context.same_period_ref_regimes,
@@ -1468,6 +1564,46 @@ return SolutionKernels(period_kernels=MappingProxyType(result))
         errors.append(
             "solve caller: action metadata, core wiring, or published result changed"
         )
+    errors.extend(
+        _class_surface_errors(
+            tree=tree,
+            label="solve caller output-layout adapter",
+            class_name="_GridSearchPeriodKernel",
+            fields=(
+                "core: Callable",
+                "unwrapped_core: Callable | None = None",
+                "regime_name: RegimeName",
+                "collective: bool = False",
+                "edge_reference_regimes: tuple[RegimeName, ...] = ()",
+                "same_period_ref_regimes: tuple[RegimeName, ...] = ()",
+                "edge_target_regimes: tuple[RegimeName, ...] = ()",
+            ),
+            methods=(
+                "_with_edge_substitution",
+                "cores",
+                "output_roles",
+                "core_for_output_layout",
+                "with_fixed_params",
+                "build_lower_args",
+                "_edge_reference_args",
+                "_same_period_params",
+                "__call__",
+            ),
+        )
+    )
+    errors.extend(
+        _exact_callable_errors(
+            tree=tree,
+            label="solve caller output-layout adapter",
+            contracts={
+                "_GridSearchPeriodKernel.cores": "9ee3a0a03870ede4b4361004c34a9b7a50d2074a9e96d7c0c7aa44111efe5c13",
+                "_GridSearchPeriodKernel.output_roles": "e48524eea7cd3dce438a9826ca0efd7cc45ddf681da8d7d9b14ad7a03c3a55de",
+                "_GridSearchPeriodKernel.core_for_output_layout": "c06f276c3430fe788227503d0c24602558259a1a076fd76061e613db191b87aa",
+                "_GridSearchPeriodKernel.with_fixed_params": "03db77288b32d99f69deb3c4f50fbf059ccfcb128b419d405c21e293be48164a",
+                "_GridSearchPeriodKernel.__call__": "2b5e10a6f2282f493d49e912175cf782c7e8ddd42b1bdcca0142f896329df225",
+            },
+        )
+    )
     errors.extend(
         _module_contract_errors(
             tree=tree,
@@ -1501,6 +1637,109 @@ return SolutionKernels(period_kernels=MappingProxyType(result))
                 "id": 0,
                 "jax": 1,
                 "len": 0,
+            },
+        )
+    )
+    return errors
+
+
+def _output_layout_errors(tree: ast.Module) -> list[str]:
+    """Pin planned lowering, validation, and identity-return publication."""
+    errors: list[str] = []
+    errors.extend(
+        _class_surface_errors(
+            tree=tree,
+            label="output layout",
+            class_name="ResolvedOutputLayout",
+            fields=(
+                "out_shardings: object",
+                "compilation_key: Hashable",
+                "expected_value_shape: tuple[int, ...]",
+                "expected_value_dtype: object",
+                "expected_dissolution_shape: tuple[int, ...] | None",
+                "expected_dissolution_dtype: object | None",
+            ),
+            methods=(),
+        )
+    )
+    errors.extend(
+        _class_surface_errors(
+            tree=tree,
+            label="output layout",
+            class_name="PlannedCore",
+            fields=("compiled: Callable", "layout: ResolvedOutputLayout"),
+            methods=("__call__",),
+        )
+    )
+    errors.extend(
+        _exact_callable_errors(
+            tree=tree,
+            label="output layout",
+            contracts={
+                "resolve_output_layout": "ef308811973c1391e1d1001b55051153612250a17578aa0e8852ed9b002c32b4",
+                "_validate_output_roles": "2f580d7eeb144f485ac54e59f9150980cd54dc2b164252836ef13e5db39e5e90",
+                "assert_output_layout": "78b4040ad158cd8201ce739cfc08ee3e0ddc1d91b0019bbff5689e5b2bebd0f3",
+                "_assert_output_metadata": "8612094c85183f9c7cfa568bb0aad875ce729c79c60b31126efd8d04785644ca",
+                "PlannedCore.__call__": "05bb94fd00a52947741192747b970a1ef45b8a01c8dcb814c4099ab50b9c4707",
+                "planned_output_layout": "0518c706a7de02411a990d4cfa9c40f426cc83f825791c735aeb19c4603e5e1e",
+            },
+        )
+    )
+    assignments = [
+        statement
+        for statement in tree.body
+        if isinstance(statement, ast.Assign)
+        and any(
+            _target_names(target) in {("VALUE",), ("DISSOLUTION_FLAG",), ("UNPLANNED",)}
+            for target in statement.targets
+        )
+    ]
+    if not _statements_match(
+        observed=assignments,
+        expected_source="""VALUE = OutputRole.VALUE
+DISSOLUTION_FLAG = OutputRole.DISSOLUTION_FLAG
+UNPLANNED = _Unplanned.TOKEN
+""",
+    ):
+        errors.append("output layout: logical output-role bindings changed")
+    errors.extend(
+        _module_contract_errors(
+            tree=tree,
+            label="output layout",
+            relevant_import_names={
+                "Callable",
+                "Hashable",
+                "Protocol",
+                "cast",
+                "dataclass",
+                "jax",
+                "runtime_checkable",
+            },
+            expected_imports=[
+                "from collections.abc import Callable, Hashable",
+                "from dataclasses import dataclass",
+                "from typing import Protocol, cast, runtime_checkable",
+                "import jax",
+            ],
+            expected_binding_counts={
+                "Callable": 1,
+                "DISSOLUTION_FLAG": 1,
+                "Hashable": 1,
+                "OutputRole": 1,
+                "PlannedCore": 1,
+                "Protocol": 1,
+                "ResolvedOutputLayout": 1,
+                "UNPLANNED": 1,
+                "VALUE": 1,
+                "_assert_output_metadata": 1,
+                "_validate_output_roles": 1,
+                "assert_output_layout": 1,
+                "cast": 1,
+                "dataclass": 1,
+                "jax": 1,
+                "planned_output_layout": 1,
+                "resolve_output_layout": 1,
+                "runtime_checkable": 1,
             },
         )
     )
@@ -1646,6 +1885,175 @@ return MappingProxyType(result)
                 "len": 0,
                 "simulation_spacemap": 1,
                 "tuple": 0,
+            },
+        )
+    )
+    return errors
+
+
+def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
+    """Pin planned lowering and V/D publication through backward induction."""
+    errors = _exact_callable_errors(
+        tree=tree,
+        label="backward output-layout transport",
+        contracts={
+            "_compile_all_functions": "c532af3db7c442abe9642be9c062980daba0491fb06221153c244dc10c126290",
+            "_resolve_output_layouts_and_lowering_keys": "51ad3abc994482cec212882d27050b7f44ae1cc17f514ac82140412c1f78da2c",
+            "_lowering_key": "75bb004ef92aa645bb9c3777f6ac04b82a89030dfcc71a563f475ac94488e916",
+            "_attach_resolved_output_layout": "c85a1d4825deca8b1af859536fad9b68f25ffb434072346b3bce826de74c9342",
+            "_publish_kernel_value": "5547b40f26e1fc86303ada9503f65c4210cbb4bb0b4fe6e715b9d99a58f78901",
+        },
+    )
+    try:
+        solve = _definition(tree=tree, name="solve")
+    except ValueError as error:
+        errors.append(f"backward output-layout transport: {error}")
+    else:
+
+        def _is_kernel_result(statement: ast.stmt) -> bool:
+            return (
+                isinstance(statement, ast.Assign)
+                and any(
+                    _target_names(target) == ("result",) for target in statement.targets
+                )
+                and isinstance(statement.value, ast.Call)
+                and _call_name(statement.value) == "_run_period_kernel"
+            )
+
+        loops = [
+            node
+            for node in ast.walk(solve)
+            if isinstance(node, ast.For)
+            and any(_is_kernel_result(statement) for statement in node.body)
+        ]
+        corridors: list[list[ast.stmt]] = []
+        for loop in loops:
+            starts = [
+                index
+                for index, statement in enumerate(loop.body)
+                if _is_kernel_result(statement)
+            ]
+            ends = [
+                index
+                for index, statement in enumerate(loop.body)
+                if isinstance(statement, ast.Assign)
+                and any(
+                    ast.unparse(target) == "period_solution[regime_name]"
+                    for target in statement.targets
+                )
+            ]
+            if len(starts) == len(ends) == 1 and starts[0] <= ends[0]:
+                corridors.append(loop.body[starts[0] : ends[0] + 1])
+        expected = "730bc4517647905fa333773fe76fa746ef52c4c63ea44cb1de8e327776b749e5"
+        if len(corridors) != 1 or _statements_ast_sha256(corridors[0]) != expected:
+            errors.append(
+                "backward output-layout transport: solve publication corridor changed"
+            )
+    errors.extend(
+        _module_contract_errors(
+            tree=tree,
+            label="backward output-layout transport",
+            relevant_import_names={
+                "OutputLayoutAware",
+                "PlannedCore",
+                "ResolvedOutputLayout",
+                "UNPLANNED",
+                "assert_output_layout",
+                "cast",
+                "jax",
+                "planned_output_layout",
+                "resolve_output_layout",
+            },
+            expected_imports=[
+                "from typing import cast",
+                "import jax",
+                "from _lcm.execution.output_layout import UNPLANNED, OutputLayoutAware, PlannedCore, ResolvedOutputLayout, assert_output_layout, planned_output_layout, resolve_output_layout",
+            ],
+            expected_binding_counts={
+                "OutputLayoutAware": 1,
+                "PlannedCore": 1,
+                "ResolvedOutputLayout": 1,
+                "UNPLANNED": 1,
+                "_attach_resolved_output_layout": 1,
+                "_compile_all_functions": 1,
+                "_lowering_key": 1,
+                "_publish_kernel_value": 1,
+                "_resolve_output_layouts_and_lowering_keys": 1,
+                "assert_output_layout": 1,
+                "cast": 1,
+                "jax": 1,
+                "planned_output_layout": 1,
+                "resolve_output_layout": 1,
+            },
+        )
+    )
+    return errors
+
+
+def _terminal_output_wrapper_errors(tree: ast.Module) -> list[str]:
+    """Pin terminal decoration as identity on the certified V/D channels."""
+    errors = _class_surface_errors(
+        tree=tree,
+        label="terminal output-layout wrapper",
+        class_name="_TerminalCarryPeriodKernel",
+        fields=(
+            "base: PeriodKernel",
+            "carry_producer: EGMCarryProducer",
+            "regime_name: RegimeName",
+        ),
+        methods=(
+            "core",
+            "cores",
+            "output_roles",
+            "core_for_output_layout",
+            "with_fixed_params",
+            "build_lower_args",
+            "__call__",
+        ),
+    )
+    errors.extend(
+        _exact_callable_errors(
+            tree=tree,
+            label="terminal output-layout wrapper",
+            contracts={
+                "_TerminalCarryPeriodKernel.cores": "690929f62b4052a0aaeab9620cf05e98bfbf7ada392d666324cadaf74e1e3d6c",
+                "_TerminalCarryPeriodKernel.output_roles": "45247a9d3be2b2696dc75097a8c3bfd97c9b40db39b87c505300903dcd4cdc55",
+                "_TerminalCarryPeriodKernel.core_for_output_layout": "83978827554d2070cf6934f43151bc9af8e2b0da7ec542838d7038c49b9bce5a",
+                "_TerminalCarryPeriodKernel.with_fixed_params": "c9069b5fcc41d4b7b42a2ec21be12004fa57379216fbd7e4fc624473b4d89cc6",
+                "_TerminalCarryPeriodKernel.__call__": "77f27cca4b3d5da43fc3911cb736cf124829edeb7644ccabd14f0fa5607c2edc",
+            },
+        )
+    )
+    errors.extend(
+        _module_contract_errors(
+            tree=tree,
+            label="terminal output-layout wrapper",
+            relevant_import_names={
+                "KernelResult",
+                "OutputLayoutAware",
+                "PeriodKernel",
+                "dataclass",
+                "dataclass_replace",
+                "functools",
+                "require_legacy_kernel_result",
+            },
+            expected_imports=[
+                "import functools",
+                "from dataclasses import dataclass",
+                "from dataclasses import replace as dataclass_replace",
+                "from _lcm.execution.output_layout import OutputLayoutAware",
+                "from _lcm.solution.contract import ConstraintRouteContext, ContinuationPayload, KernelResult, PeriodKernel, SolverBuildContext, SolverModelContext",
+                "from _lcm.solution.kernel_output import require_legacy_kernel_result",
+            ],
+            expected_binding_counts={
+                "KernelResult": 1,
+                "OutputLayoutAware": 1,
+                "PeriodKernel": 1,
+                "_TerminalCarryPeriodKernel": 1,
+                "dataclass": 1,
+                "dataclass_replace": 1,
+                "functools": 1,
+                "require_legacy_kernel_result": 1,
             },
         )
     )
@@ -2215,12 +2623,25 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> dict[str, Any]:
         errors.extend(new_errors)
         if new_errors:
             offending.add(GRID_SEARCH_SOURCE)
+    output_layout_tree = parsed.get(OUTPUT_LAYOUT_SOURCE)
+    if output_layout_tree is not None:
+        new_errors = _output_layout_errors(output_layout_tree)
+        errors.extend(new_errors)
+        if new_errors:
+            offending.add(OUTPUT_LAYOUT_SOURCE)
     processing_tree = parsed.get(PROCESSING_SOURCE)
     if processing_tree is not None:
         new_errors = _processing_caller_errors(processing_tree)
+        new_errors += _terminal_output_wrapper_errors(processing_tree)
         errors.extend(new_errors)
         if new_errors:
             offending.add(PROCESSING_SOURCE)
+    backward_tree = parsed.get(BACKWARD_INDUCTION_SOURCE)
+    if backward_tree is not None:
+        new_errors = _backward_output_layout_errors(backward_tree)
+        errors.extend(new_errors)
+        if new_errors:
+            offending.add(BACKWARD_INDUCTION_SOURCE)
     grid_base_tree = parsed.get(GRID_BASE_SOURCE)
     if grid_base_tree is not None:
         new_errors = _grid_base_errors(grid_base_tree)
@@ -2799,6 +3220,7 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
     collective_source = (root / COLLECTIVE_SOURCE).read_text(encoding="utf-8")
     logsum_source = (root / LOGSUM_SOURCE).read_text(encoding="utf-8")
     grid_source = (root / GRID_SEARCH_SOURCE).read_text(encoding="utf-8")
+    output_layout_source = (root / OUTPUT_LAYOUT_SOURCE).read_text(encoding="utf-8")
     processing_source = (root / PROCESSING_SOURCE).read_text(encoding="utf-8")
     dispatchers_source = (root / DISPATCHERS_SOURCE).read_text(encoding="utf-8")
     functools_source = (root / FUNCTOOLS_SOURCE).read_text(encoding="utf-8")
@@ -2904,11 +3326,78 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             new="        return SolutionKernels(period_kernels=MappingProxyType({}))",
             label="solve caller publication",
         ),
+        "caller_solve:raw_core_uses_wrapped_core": replace_once(
+            source=grid_source,
+            old="                unwrapped[q_id] = func",
+            new="                unwrapped[q_id] = built[q_id]",
+            label="solve caller raw core identity",
+        ),
+        "caller_solve:layout_delegates_wrapped_core": replace_once(
+            source=grid_source,
+            old="        return self.unwrapped_core",
+            new="        return self.core",
+            label="solve caller layout core delegation",
+        ),
+        "caller_solve:collective_output_role_dropped": replace_once(
+            source=grid_source,
+            old="        return (VALUE, DISSOLUTION_FLAG) if self.collective else VALUE",
+            new="        return VALUE",
+            label="solve caller output roles",
+        ),
+        "caller_solve:fixed_raw_core_filtered": replace_once(
+            source=grid_source,
+            old="                else functools.partial(self.unwrapped_core, **regime_fixed)",
+            new="                else candidate_filter(\n"
+            "                    functools.partial(self.unwrapped_core, **regime_fixed)\n"
+            "                )",
+            label="solve caller fixed raw core",
+        ),
+        "caller_solve:published_value_filtered": replace_once(
+            source=grid_source,
+            old="        return KernelResult(V_arr=out)",
+            new="        return KernelResult(V_arr=candidate_filter(out))",
+            label="solve caller value publication",
+        ),
     }
     specs.update(
         {
             name: {"path": GRID_SEARCH_SOURCE, "source": mutated}
             for name, mutated in grid_cases.items()
+        }
+    )
+
+    output_layout_cases = {
+        "output_layout:assert_then_filter": replace_once(
+            source=output_layout_source,
+            old="        assert_output_layout(output=output, layout=self.layout)\n"
+            "        return output",
+            new="        assert_output_layout(output=output, layout=self.layout)\n"
+            "        return candidate_filter(output)",
+            label="planned core post-assert identity",
+        ),
+        "output_layout:filter_before_assert": replace_once(
+            source=output_layout_source,
+            old="        output = self.compiled(*args, **kwargs)",
+            new="        output = candidate_filter(self.compiled(*args, **kwargs))",
+            label="planned core pre-assert identity",
+        ),
+        "output_layout:sharding_check_disabled": replace_once(
+            source=output_layout_source,
+            old="        if actual != expected:",
+            new="        if False and actual != expected:",
+            label="planned output sharding assertion",
+        ),
+        "output_layout:expected_value_shape_sliced": replace_once(
+            source=output_layout_source,
+            old="    expected_value_shape = tuple(int(size) for size in value_shape)",
+            new="    expected_value_shape = tuple(int(size) for size in value_shape)[1:]",
+            label="planned absolute value shape",
+        ),
+    }
+    specs.update(
+        {
+            name: {"path": OUTPUT_LAYOUT_SOURCE, "source": mutated}
+            for name, mutated in output_layout_cases.items()
         }
     )
 
@@ -2953,6 +3442,24 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             old="    return SimulationPhase(",
             new="    return candidate_filter.SimulationPhase(",
             label="simulate caller publication callee",
+        ),
+        "terminal_wrapper:output_roles_dropped": replace_once(
+            source=processing_source,
+            old="        return self.base.output_roles(core_key=core_key)",
+            new="        return None",
+            label="terminal wrapper output roles",
+        ),
+        "terminal_wrapper:layout_uses_wrapped_core": replace_once(
+            source=processing_source,
+            old="        return self.base.core_for_output_layout(core_key=core_key)",
+            new='        return self.base.cores()["main"]',
+            label="terminal wrapper layout delegation",
+        ),
+        "terminal_wrapper:published_value_filtered": replace_once(
+            source=processing_source,
+            old="            V_arr=result.V_arr,\n            continuation=carry,",
+            new="            V_arr=candidate_filter(result.V_arr),\n            continuation=carry,",
+            label="terminal wrapper value publication",
         ),
     }
     specs.update(
@@ -3298,6 +3805,68 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
                 label="public Model AOT regime selection",
             ),
         },
+        "backward_layout:planned_uses_wrapped_core": {
+            "path": BACKWARD_INDUCTION_SOURCE,
+            "source": replace_once(
+                source=backward_induction_source,
+                old="        lowering_func = (\n"
+                "            func\n"
+                "            if layout is UNPLANNED\n"
+                "            else cast(\n"
+                '                "OutputLayoutAware", regime.solution.period_kernels[period]\n'
+                "            ).core_for_output_layout(core_key=core_key)\n"
+                "        )",
+                new="        lowering_func = func",
+                label="planned raw lowering callable",
+            ),
+        },
+        "backward_layout:out_shardings_disabled": {
+            "path": BACKWARD_INDUCTION_SOURCE,
+            "source": replace_once(
+                source=backward_induction_source,
+                old='                out_shardings=cast("ResolvedOutputLayout", layout).out_shardings,',
+                new="                out_shardings=None,",
+                label="planned JIT output sharding",
+            ),
+        },
+        "backward_layout:planned_tag_dropped": {
+            "path": BACKWARD_INDUCTION_SOURCE,
+            "source": replace_once(
+                source=backward_induction_source,
+                old="    return PlannedCore(\n"
+                "        compiled=compiled,\n"
+                '        layout=cast("ResolvedOutputLayout", layout),\n'
+                "    )",
+                new="    return compiled",
+                label="planned core attachment",
+            ),
+        },
+        "backward_layout:publish_after_assert_filtered": {
+            "path": BACKWARD_INDUCTION_SOURCE,
+            "source": replace_once(
+                source=backward_induction_source,
+                old="        assert_output_layout(\n"
+                "            output=(value, dissolution) if dissolution is not None else value,\n"
+                "            layout=layout,\n"
+                "        )\n"
+                "        return value",
+                new="        assert_output_layout(\n"
+                "            output=(value, dissolution) if dissolution is not None else value,\n"
+                "            layout=layout,\n"
+                "        )\n"
+                "        return candidate_filter(value)",
+                label="planned publication identity",
+            ),
+        },
+        "backward_layout:solve_publication_filtered": {
+            "path": BACKWARD_INDUCTION_SOURCE,
+            "source": replace_once(
+                source=backward_induction_source,
+                old="            period_solution[regime_name] = V_arr",
+                new="            period_solution[regime_name] = candidate_filter(V_arr)",
+                label="solve-loop value publication",
+            ),
+        },
         "shared_dedup_key:collapse_plain_callables": {
             "path": BACKWARD_INDUCTION_SOURCE,
             "source": replace_once(
@@ -3541,6 +4110,7 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         COLLECTIVE_SOURCE: collective_source,
         LOGSUM_SOURCE: logsum_source,
         GRID_SEARCH_SOURCE: grid_source,
+        OUTPUT_LAYOUT_SOURCE: output_layout_source,
         PROCESSING_SOURCE: processing_source,
         DISPATCHERS_SOURCE: dispatchers_source,
         FUNCTOOLS_SOURCE: functools_source,

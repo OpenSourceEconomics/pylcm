@@ -605,6 +605,16 @@ result.save(directory=Path("path/to/dir"))
 loaded = SimulationResult.load(directory=Path("path/to/dir"))
 ```
 
+### Experimental SolutionResult
+
+`model.solve_result()` returns an experimental `lcm.solver_api.SolutionResult` that
+keeps values, artifacts, metadata, and explicit omission reasons separate; its default
+retention keeps replay artifacts. `model.simulate(solution=...)` unconditionally checks
+that the result came from the same model instance (whose token survives a pickle round
+trip), used the exact canonical parameters, has matching value schemas, and supplies
+valid required built-in artifacts. `SolutionResult` persistence and a stable out-of-tree
+solver plugin API are not implemented yet.
+
 ### Initial Conditions Format
 
 Initial conditions use a flat dictionary with state names plus `"regime_id"`:

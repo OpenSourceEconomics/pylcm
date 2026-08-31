@@ -69,6 +69,22 @@ Measure at least:
 A speed claim that reports only the fourth quantity does not answer whether the model is
 practical in estimation or CI.
 
+### Maintainer-only fused NB-EGM replay
+
+The private fused NB-EGM period replay is a compile-only architecture experiment. It
+compares the current split cores with their existing full continuation-to-envelope
+calculation placed inside one JIT boundary. Its question is narrowly whether that
+boundary changes the full stacks' compiler-visible lifetime. It is not a tile-local
+solver implementation or an architecture-completion claim.
+
+A period capture preserves logical pytrees, values, and production array shapes, but its
+pickle round trip does not preserve device sharding. The analyzer therefore lowers both
+forms using default backend placement after the capture round trip. Its report records
+this as machine-readable shape provenance and layout fidelity, and explicitly states
+that production sharding was not preserved. The resulting compiler byte counts are not
+production-layout memory measurements. Runtime and peak-memory claims require a
+representative execution with the intended production placement.
+
 ## What is known and what remains empirical
 
 The candidate-growth relationships above are structural. Exact break-even grid sizes,
