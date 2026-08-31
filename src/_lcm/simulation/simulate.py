@@ -1118,6 +1118,7 @@ def _replace_continuous_action_with_policy_read(  # noqa: PLR0911
             flat_params=flat_params,
             period=period,
             age=age,
+            outer_domain_already_validated=True,
         )
         baseline_actions, baseline_value, baseline_admissible = _nested_grid_baseline(
             payload=sim_policy,
@@ -1633,18 +1634,28 @@ def _read_nested_policy(
         n_subjects=n_subjects,
     )
 
-    # Use the same tolerance-free pointwise predicate as finite replay. A
-    # declared endpoint is represented only when the recovered action reproduces
-    # it bit-for-bit; interior targets require exact domain containment.
+    # The keeper is a separately solved exact branch and may lie outside a legal,
+    # narrower adjuster mesh. Validate it against the state domain carried by the
+    # inverse; validate an adjusting proposal against the mesh it was solved on.
+    # Both branches use the same endpoint-and-containment predicate.
     transition_image = transition_at(outer_action)
-    pointwise_replay_ok = outer_candidate_is_admissible(
-        image=transition_image,
-        target=chosen_post_decision,
-        low=jnp.asarray(
-            payload.replay_capability.inverse.low, dtype=transition_image.dtype
+    pointwise_replay_ok = jnp.where(
+        adjust,
+        outer_candidate_is_admissible(
+            image=transition_image,
+            target=chosen_post_decision,
+            low=jnp.asarray(outer_nodes[0], dtype=transition_image.dtype),
+            high=jnp.asarray(outer_nodes[-1], dtype=transition_image.dtype),
         ),
-        high=jnp.asarray(
-            payload.replay_capability.inverse.high, dtype=transition_image.dtype
+        outer_candidate_is_admissible(
+            image=transition_image,
+            target=chosen_post_decision,
+            low=jnp.asarray(
+                payload.replay_capability.inverse.low, dtype=transition_image.dtype
+            ),
+            high=jnp.asarray(
+                payload.replay_capability.inverse.high, dtype=transition_image.dtype
+            ),
         ),
     )
     accepted = (
@@ -1708,11 +1719,12 @@ def _best_admissible_replay_candidate(
     """Return the complete pointwise-replayable keeper-plus-mesh bank.
 
     The published policy is ordered as the keeper followed by one conditional
-    inner policy per outer mesh node.  Each branch is admitted independently by
-    one tolerance-free endpoint/domain predicate over the adaptive policy's
-    published outer-search support, and keeps its own inner
-    action.  The returned mask covers only replay structure, interpolation
-    support, finiteness, and the solver-owned consumption budget.
+    inner policy per outer mesh node. Each branch keeps its own inner action and
+    is admitted independently by the shared target-association predicate. The
+    separately solved keeper uses the outer state's declared domain; adjuster
+    rows use the adaptive policy's published mesh. The returned mask covers only
+    replay structure, interpolation support, finiteness, and the solver-owned
+    consumption budget.
 
     Canonical user feasibility and canonical Q deliberately remain unresolved
     here.  `_nested_grid_baseline` has the canonical state and continuation
@@ -1753,11 +1765,27 @@ def _best_admissible_replay_candidate(
 
     outer_actions = targets - offset[None, :]
     images = vmap(transition_at)(outer_actions)
-    reaches_target = outer_candidate_is_admissible(
-        image=images,
-        target=targets,
+
+    # The keeper is a separately solved exact branch, not an adjuster-mesh node.
+    # Its target may legally lie between the outer state's declared boundary and
+    # a deliberately narrower adaptive mesh, so it is checked against the state
+    # domain carried by the settled inverse. Adjuster rows remain conditional on
+    # the published mesh and are checked against that support.
+    inverse = payload.replay_capability.inverse
+    keeper_reaches_target = outer_candidate_is_admissible(
+        image=images[:1],
+        target=targets[:1],
+        low=jnp.asarray(inverse.low, dtype=images.dtype),
+        high=jnp.asarray(inverse.high, dtype=images.dtype),
+    )
+    adjusters_reach_target = outer_candidate_is_admissible(
+        image=images[1:],
+        target=targets[1:],
         low=jnp.asarray(outer_nodes[0], dtype=images.dtype),
         high=jnp.asarray(outer_nodes[-1], dtype=images.dtype),
+    )
+    reaches_target = jnp.concatenate(
+        (keeper_reaches_target, adjusters_reach_target), axis=0
     )
 
     def resources_at(outer_action: FloatND, image: FloatND) -> FloatND:
@@ -1796,16 +1824,17 @@ def _nested_actions_are_intrinsically_admissible(
     flat_params: FlatRegimeParams,
     period: int,
     age: ScalarFloat | ScalarInt,
+    outer_domain_already_validated: bool = False,
 ) -> BoolND:
     """Check the published outer-search domain and solver-owned budget.
 
     Canonical Q feasibility covers user constraints, while the nested solver
-    owns two additional restrictions: the recovered outer post-decision must
-    lie on the adaptive policy's published outer support, and inner consumption
-    must leave at least the savings lower bound.  The grid pair and every
-    keeper/mesh fallback branch use these same support endpoints, so a keeper
-    outside a deliberately narrower mesh cannot win and then be rejected after
-    suppressing a reachable mesh node.
+    owns the inner consumption budget and, for a raw grid pair, membership in
+    the adaptive policy's published outer support. A nested proposal has already
+    been checked against its branch-specific domain in `_read_nested_policy`:
+    state domain for the keeper, mesh support for an adjuster. Passing
+    `outer_domain_already_validated=True` avoids erasing that provenance by
+    applying the adjuster mesh to the keeper a second time.
     """
     n_subjects = next(iter(states.values())).shape[0]
     _, transition_at = _outer_transition_offset_and_forward(
@@ -1819,17 +1848,19 @@ def _nested_actions_are_intrinsically_admissible(
     )
     outer_action = jnp.asarray(actions[payload.outer_action_name])
     outer_post_decision = transition_at(outer_action)
-    outer_nodes = payload.adjuster.outer_nodes
-    in_outer_domain = outer_candidate_is_admissible(
-        image=outer_post_decision,
-        # A generic grid pair has no nominal published target.  Using its own
-        # image as target reduces the shared predicate to finite containment in
-        # the same published mesh domain; replay-bank rows pass their actual
-        # node target in `_best_admissible_replay_candidate`.
-        target=outer_post_decision,
-        low=jnp.asarray(outer_nodes[0], dtype=outer_post_decision.dtype),
-        high=jnp.asarray(outer_nodes[-1], dtype=outer_post_decision.dtype),
-    )
+    if outer_domain_already_validated:
+        in_outer_domain = jnp.ones_like(outer_post_decision, dtype=bool)
+    else:
+        outer_nodes = payload.adjuster.outer_nodes
+        in_outer_domain = outer_candidate_is_admissible(
+            image=outer_post_decision,
+            # A generic grid pair has no nominal published target. Using its own
+            # image as target reduces the shared predicate to finite containment
+            # in the published mesh domain.
+            target=outer_post_decision,
+            low=jnp.asarray(outer_nodes[0], dtype=outer_post_decision.dtype),
+            high=jnp.asarray(outer_nodes[-1], dtype=outer_post_decision.dtype),
+        )
     resources = _nested_resources(
         payload=payload,
         regime=regime,

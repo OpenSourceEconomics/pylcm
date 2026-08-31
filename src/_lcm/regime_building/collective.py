@@ -26,7 +26,7 @@ from _lcm.regime_building.argmax import (
     _move_axes_to_back,
     argmax_and_max,
 )
-from _lcm.typing import RegimeName, StateName, _ParamsLeaf
+from _lcm.typing import FunctionName, RegimeName, StateName, _ParamsLeaf
 from _lcm.utils.functools import get_union_of_args
 from _lcm.zero_safe import sum_in_value_order, zero_safe_weighted_term
 from lcm.collective import ParetoObjective
@@ -292,6 +292,7 @@ def build_pareto_weights(
     stakeholders: tuple[str, ...],
     state_names: frozenset[StateName],
     carried_imputations: Mapping[StateName, UserFunction] = MappingProxyType({}),
+    solve_functions: Mapping[FunctionName, UserFunction] = MappingProxyType({}),
 ) -> ParetoWeights:
     """Build the weight evaluator a collective regime's kernels call per cell.
 
@@ -313,6 +314,13 @@ def build_pareto_weights(
             solve-phase imputation. A weight reading such a state is composed
             with the imputation here, so the evaluator the kernels call asks
             only for grid states and parameters.
+        solve_functions: Complete solve-phase regime-function pool. It is used
+            only while resolving a carried state's imputation, so an ordinary
+            helper reached by that imputation remains a DAG dependency rather
+            than being reclassified as a parameter of the carried state. Direct
+            arguments of a Pareto-weight callable keep their public semantics:
+            unless they are states or engine context, they are parameters even
+            when their names collide with an ordinary regime function.
 
     Returns:
         The evaluator, its argument names, and the normalization convention.
@@ -337,6 +345,7 @@ def build_pareto_weights(
             weight, imputation_params = _compose_carried_imputations(
                 weight=weight,
                 carried_imputations=carried_imputations,
+                solve_functions=solve_functions,
                 state_names=state_names,
                 context=context,
             )
@@ -430,43 +439,68 @@ def _compose_carried_imputations(
     *,
     weight: UserFunction,
     carried_imputations: Mapping[StateName, UserFunction],
+    solve_functions: Mapping[FunctionName, UserFunction],
     state_names: frozenset[StateName],
     context: frozenset[str],
 ) -> tuple[Callable[..., FloatND], frozenset[str]]:
-    """Resolve a weight's carried-state reads through their solve imputations.
+    """Resolve a weight's carried-state reads through the solve-function DAG.
 
     A carried state has no solve grid axis: during backward induction its value
-    is the imputation declared alongside it. Composing the imputation into the
-    weight here leaves an evaluator whose arguments are grid states, engine
-    context and parameters — which is what both the precondition sweep and the
-    compiled kernel are able to supply.
+    is the imputation declared alongside it. The imputation is a first-class
+    solve-phase regime function, so its ancestry may include ordinary helpers or
+    other carried imputations. Those names must stay DAG edges. Treating an
+    ordinary helper read as a free argument would qualify it as
+    ``<carried-state>__<helper>`` and later fail with a missing parameter even
+    though the model declared a producer for it.
 
-    Every carried imputation is offered to the composition, and the unreachable
-    ones are pruned, so an imputation that itself reads another carried state
-    resolves without special handling.
+    Resolution is deliberately two-stage. First, each carried imputation is
+    composed against the complete solve-function pool. Second, the Pareto weight
+    is composed only against those already-resolved carried imputations. This
+    preserves the public weight contract: a direct weight argument whose name
+    happens to collide with an ordinary regime function remains a
+    ``pareto_objective`` parameter; only an argument naming a carried state is
+    substituted by a regime-function value.
 
-    Each imputation's free arguments are qualified under the carried state's own
-    name, matching where they surface in the params template.
+    Every solve function's free parameters are qualified under that function's
+    own name, matching the regime parameter template. Unreachable helpers and
+    their parameters are pruned by ``concatenate_functions``.
 
     Returns:
-        Tuple of the composed weight and the qualified imputation parameter
+        Tuple of the composed weight and the qualified solve-function parameter
         names it actually reads.
     """
-    functions: dict[str, UserFunction] = {}
+    function_pool = {**solve_functions, **carried_imputations}
+    function_names = frozenset(function_pool)
     qualified_params: set[str] = set()
-    for name, imputation in carried_imputations.items():
+    qualified_pool: dict[str, UserFunction] = {}
+
+    for name, func in function_pool.items():
         mapper: dict[str, str] = {}
-        for arg in get_union_of_args([imputation]):
-            if arg in state_names or arg in context:
+        for arg in get_union_of_args([func]):
+            if arg in function_names or arg in state_names or arg in context:
                 mapper[arg] = arg
             else:
                 qualified = f"{name}__{arg}"
                 mapper[arg] = qualified
                 qualified_params.add(qualified)
-        functions[name] = rename_arguments(func=imputation, mapper=mapper)
+        qualified_pool[name] = rename_arguments(func=func, mapper=mapper)
+
+    directly_read = frozenset(get_union_of_args([weight])) & frozenset(
+        carried_imputations
+    )
+    resolved_imputations = {
+        name: concatenate_functions(
+            functions=dict(qualified_pool),
+            targets=name,
+        )
+        for name in directly_read
+    }
 
     target = "__pareto_weight__"
-    functions[target] = weight
+    functions: dict[str, UserFunction] = {
+        **resolved_imputations,
+        target: weight,
+    }
     composed = concatenate_functions(functions=functions, targets=target)
     reached = frozenset(get_union_of_args([composed]))
     return composed, frozenset(qualified_params) & reached

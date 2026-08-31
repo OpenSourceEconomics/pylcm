@@ -5,12 +5,10 @@ one. Both phases must recover it the same way and admit it on the same predicate
 or a candidate the solve certified can be replayed as a different action.
 
 Admissibility is two-tier, and deliberately not uniform. Every candidate's image
-must lie inside the outer state's declared domain, because a stock outside it has
-no value function. A candidate whose target *is* a declared endpoint must in
-addition reproduce that endpoint bit for bit: the endpoint is where an ULP of
-error leaves the domain, and it is the only place where exactness is both
-necessary and achievable. Requiring bit-exactness at interior nodes would reject
-most of them for an error that never leaves the domain.
+must lie inside its relevant domain. A candidate whose target *is* a domain
+endpoint must in addition reproduce that endpoint bit for bit: the endpoint is
+where an ULP of error leaves the domain. Requiring target-local reproduction at
+interior nodes would reject ordinary candidate banks that remain inside it.
 """
 
 from fractions import Fraction
@@ -142,17 +140,16 @@ def test_a_subnormal_image_at_a_zero_endpoint_is_indistinguishable_from_it() -> 
 
 
 def test_an_interior_target_is_admitted_on_containment_not_bit_exactness() -> None:
-    """A represented interior candidate is an inverse-produced pair, not an identity.
+    """An interior represented candidate is an inverse-produced pair.
 
-    An interior node's image can be an ULP off without leaving the domain. It is
-    admitted, and the difference is an approximation diagnostic -- deliberately
-    *not* a claim that the replayed action reproduces its nominal target exactly.
-    Only endpoints carry that identity, because only there does the difference
-    leave the declared domain.
+    A round trip may differ from the nominal target by more than its local ULP
+    while remaining inside the represented domain. Interior admission therefore
+    preserves containment; exact identity remains an endpoint requirement.
     """
     low, high = jnp.float32(0.0), jnp.float32(20.0)
     target = jnp.asarray([7.5], dtype=jnp.float32)
-    image = jnp.nextafter(target, jnp.asarray([jnp.inf], dtype=jnp.float32))
+    one_step = jnp.nextafter(target, jnp.asarray([jnp.inf], dtype=jnp.float32))
+    image = jnp.nextafter(one_step, jnp.asarray([jnp.inf], dtype=jnp.float32))
 
     assert image[0] != target[0]
     assert bool(

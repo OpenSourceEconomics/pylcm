@@ -9,21 +9,16 @@ The recovery reads the map's coefficient from its structure rather than measurin
 it (see `outer_affine_structure`), then divides only when the coefficient is not
 one. Admission is tolerance-free and two-tier:
 
-- every candidate's image must lie inside the outer state's declared domain,
-  because a stock outside it has no value function; and
-- a candidate whose target *is* a declared endpoint must reproduce that endpoint
+- every candidate's image must lie inside the relevant branch domain — the outer
+  state's declared domain for a keeper, and the published outer mesh for an
+  adjuster; and
+- a candidate whose target *is* a domain endpoint must reproduce that endpoint
   bit for bit, because the endpoint is where an ULP of error leaves the domain.
 
-Interior candidates are admitted on containment alone. An interior image can sit
-an ULP from its node without leaving the domain, and requiring exactness there
-would drop most interior candidates for an error the value function never sees.
-
-That choice fixes what a represented candidate *means*, and the weaker meaning is
-the one in force here. A represented interior candidate is an inverse-produced
-`(action, image)` pair, not a claim that the action reproduces its nominal target
-bit for bit; an interior round-trip difference is an approximation diagnostic
-rather than a broken exact-replay promise. Only endpoints carry the exact
-identity, because only there does the difference leave the declared domain.
+Interior candidates are admitted on containment alone. Requiring target-local
+reproduction there rejects ordinary candidate banks whose inverse round trip
+accumulates more than one target ULP while remaining inside the represented
+domain. The optional stricter rule therefore remains outside this merge repair.
 """
 
 from collections.abc import Callable, Iterable, Mapping
@@ -259,8 +254,8 @@ def outer_candidate_is_admissible(
     Args:
         image: The declared map re-evaluated at the recovered action.
         target: The post-decision target the solve retained.
-        low: The outer state's declared lower bound.
-        high: The outer state's declared upper bound.
+        low: The relevant domain's lower bound.
+        high: The relevant domain's upper bound.
 
     Returns:
         A boolean array over candidates. Every comparison is exact, so no scale

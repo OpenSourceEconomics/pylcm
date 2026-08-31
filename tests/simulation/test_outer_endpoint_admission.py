@@ -8,7 +8,7 @@ published, and the rule is the same for either search:
 - a target at a declared endpoint is represented only when the recovered
   action reproduces it exactly — an inward image is a different stock, and the
   declared domain has no room the other side of it to absorb the difference;
-- an interior target only has to land inside the declared domain.
+- an interior target only has to land inside the relevant domain.
 
 Recovering the action is exact whenever the stock and the target share a sign,
 because the subtraction then stays inside the operands' own binades. It is the
@@ -319,7 +319,7 @@ def test_adaptive_replay_publishes_when_the_action_reaches_a_declared_endpoint(
 def test_adaptive_replay_publishes_an_interior_target_inside_the_domain(
     case: dict,
 ) -> None:
-    """An interior target only has to land inside the declared domain."""
+    """An interior target only has to land inside the relevant domain."""
     assert not _falls_back(
         domain=case["domain"],
         nodes=case["nodes"],
@@ -372,8 +372,10 @@ def test_finite_replay_admits_a_candidate_that_reaches_a_declared_endpoint(
 
 
 @pytest.mark.parametrize("case", _ENDPOINT_CASES, ids=["lower", "upper"])
-def test_finite_replay_admits_an_interior_target_inside_the_domain(case: dict) -> None:
-    """An interior candidate is admitted on containment alone."""
+def test_finite_replay_admits_an_interior_target_inside_the_domain(
+    case: dict,
+) -> None:
+    """The finite path shares the interior-containment rule."""
     assert _admissible(
         domain=case["domain"],
         target=case["nodes"][1],

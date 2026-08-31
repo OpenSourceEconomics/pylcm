@@ -554,9 +554,9 @@ class Model:
                 cells whose action mask is empty; empty inner mappings for
                 models without collective regimes). Pass the result back into
                 `simulate(period_to_regime_to_dissolution_flags=...)` so a
-                dissolution `GatedEdge` whose gate reads `D_target` can be
-                evaluated during forward simulation. Defaults to `False`
-                (value functions only).
+                `ValueDependentTransition` with a dissolution gate that reads
+                `D_target` can be evaluated during forward simulation. Defaults
+                to `False` (value functions only).
 
         Returns:
             Immutable mapping of period to a value function array for each
@@ -875,10 +875,10 @@ class Model:
                 from value functions alone.
             period_to_regime_to_dissolution_flags: Per-period, per-COLLECTIVE-regime
                 dissolution-flag arrays from `solve(return_dissolution_flags=True)`.
-                Required only for a model with a dissolution `GatedEdge` (a gate
-                that reads `D_target`); such a gate raises a clear
-                `NotImplementedError` at simulate time if this is left `None`.
-                `None` (the default) is a no-op for every other model.
+                Required only for a model with a `ValueDependentTransition`
+                whose dissolution gate reads `D_target`; such a gate raises a
+                clear `NotImplementedError` at simulate time if this is left
+                `None`. `None` (the default) is a no-op for every other model.
             seed: Random seed.
             subject_batch_size: How to partition the subject axis of the forward
                 simulation. Results are invariant to this knob — per-subject RNG

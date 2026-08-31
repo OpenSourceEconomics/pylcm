@@ -11,7 +11,9 @@ import pandas as pd
 import pytest
 from jax import config as jax_config
 
+from lcm import LinSpacedGrid
 from lcm.solvers import AdaptiveOuterMesh
+from lcm.typing import ContinuousState, FloatND
 from tests.test_models import n_nbegm_toy as toy
 
 _PARAMS = {"discount_factor": 0.95}
@@ -162,3 +164,53 @@ def test_simulation_is_deterministic(simulated: pd.DataFrame) -> None:
             np.asarray(simulated[column], dtype=float),
             np.asarray(again[column], dtype=float),
         )
+
+
+def _terminal_strictly_prefers_the_lower_durable(
+    wealth: ContinuousState, illiquid: ContinuousState
+) -> FloatND:
+    """Keep a positive liquid marginal while making stock zero the strict optimum."""
+    return jnp.log1p(wealth) - 100.0 * jnp.square(illiquid)
+
+
+def test_a_legal_narrow_adjuster_mesh_preserves_the_exact_keeper() -> None:
+    """End-to-end replay keeps stock zero outside the adjuster mesh `[2, 18]`.
+
+    The adaptive mesh governs adjustment targets only. The keeper is solved as a
+    separate exact branch over the outer state's declared `[0, 20]` domain. Whether
+    the proposal is accepted directly or another guard selects the canonical
+    fallback bank, the narrower mesh must not turn keeping into stock two.
+    """
+    mesh = AdaptiveOuterMesh(
+        initial_grid=LinSpacedGrid(start=2.0, stop=18.0, n_points=3),
+        max_nodes=9,
+        max_refinement_rounds=2,
+        value_atol=1e-4,
+        value_rtol=1e-4,
+        golden_iterations=12,
+        fail_closed=False,
+    )
+    model = toy.build_model(
+        variant="n_nbegm",
+        n_periods=2,
+        outer_search=mesh,
+        terminal_utility_function=_terminal_strictly_prefers_the_lower_durable,
+    )
+    result = model.simulate(
+        params=_PARAMS,
+        initial_conditions={
+            "wealth": jnp.asarray([10.0]),
+            "illiquid": jnp.asarray([0.0]),
+            "age": jnp.asarray([20.0]),
+            "regime_id": jnp.asarray([toy.RegimeId.alive], dtype=jnp.int32),
+        },
+        period_to_regime_to_V_arr=None,
+        log_level="debug",
+        seed=42,
+    ).to_dataframe()
+    row = result.query("period == 0 and regime_name == 'alive'").iloc[0]
+
+    assert float(row["illiquid_investment"]) == pytest.approx(0.0, abs=0.0)
+    assert float(row["illiquid"] + row["illiquid_investment"]) == pytest.approx(
+        0.0, abs=0.0
+    )

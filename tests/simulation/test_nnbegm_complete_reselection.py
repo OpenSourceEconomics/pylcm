@@ -1,5 +1,6 @@
 """Canonical complete reselection for adaptive N-NB-EGM fallback."""
 
+import logging
 from types import MappingProxyType, SimpleNamespace
 
 import jax
@@ -272,8 +273,16 @@ def test_branch_keeps_its_conditional_inner_action(monkeypatch, enable_x64) -> N
     assert float(actions["inner"][0]) == 2.5
 
 
-def test_narrow_mesh_uses_one_domain_before_ranking(monkeypatch, enable_x64) -> None:
-    """A keeper outside the mesh cannot suppress its reachable first node."""
+def test_narrow_mesh_preserves_a_keeper_inside_the_state_domain(
+    monkeypatch, enable_x64
+) -> None:
+    """The separately solved keeper is not an adjuster-mesh candidate.
+
+    The state domain is `[0, 20]`, the legal adaptive adjuster mesh is `[2, 18]`,
+    and the subject keeps stock one. The keeper is outside the adjuster mesh but
+    inside the state domain, so it remains in the canonical fallback bank and
+    wins the exact tie by the documented keeper-first order.
+    """
     del enable_x64
     monkeypatch.setattr(
         simulation_module,
@@ -290,6 +299,10 @@ def test_narrow_mesh_uses_one_domain_before_ranking(monkeypatch, enable_x64) -> 
         offset=1.0,
     )
 
+    # The keeper is row zero. It must survive even though its image, one, is
+    # below the adjuster mesh floor, two.
+    assert bool(replay[2][0, 0])
+
     def canonical_q(*, candidate_actions, **_):
         outer = jnp.asarray(candidate_actions["outer"])
         return jnp.zeros_like(outer), jnp.ones_like(outer, dtype=bool)
@@ -302,4 +315,90 @@ def test_narrow_mesh_uses_one_domain_before_ranking(monkeypatch, enable_x64) -> 
         state=1.0,
     )
     assert bool(admissible[0])
-    assert float(actions["outer"][0]) == 1.0
+    assert float(actions["outer"][0]) == 0.0
+
+
+def test_nested_keeper_proposal_is_not_rechecked_against_the_adjuster_mesh(
+    monkeypatch, enable_x64
+) -> None:
+    """The public replacement boundary preserves keeper-domain provenance.
+
+    The nested read has already established that the no-adjustment branch reaches
+    stock one inside the state domain `[0, 20]`. The adjuster mesh is `[2, 18]`.
+    Reapplying mesh containment after that read would reject the exact keeper and
+    emit the grid pair instead.
+    """
+    del enable_x64
+    payload = _payload(nodes=(2.0, 18.0), low=0.0, high=20.0)
+    nested_actions = MappingProxyType(
+        {"outer": jnp.asarray([0.0]), "inner": jnp.asarray([1.0])}
+    )
+    grid_actions = MappingProxyType(
+        {"outer": jnp.asarray([2.0]), "inner": jnp.asarray([1.0])}
+    )
+    replay_candidate = (
+        jnp.asarray([[0.0], [1.0], [17.0]]),
+        jnp.ones((3, 1)),
+        jnp.ones((3, 1), dtype=bool),
+    )
+
+    monkeypatch.setattr(
+        simulation_module,
+        "_read_nested_policy",
+        lambda **_: (
+            nested_actions,
+            jnp.asarray([False]),
+            jnp.asarray([5.0]),
+            replay_candidate,
+        ),
+    )
+    monkeypatch.setattr(
+        simulation_module,
+        "_score_nested_action_pair",
+        lambda *, proposed_actions, **_: (
+            proposed_actions,
+            jnp.asarray([5.0]),
+            jnp.asarray([True]),
+        ),
+    )
+    monkeypatch.setattr(
+        simulation_module,
+        "_nested_grid_baseline",
+        lambda **_: (grid_actions, jnp.asarray([0.0]), jnp.asarray([True])),
+    )
+    monkeypatch.setattr(
+        simulation_module,
+        "_outer_transition_offset_and_forward",
+        lambda **_: (
+            jnp.asarray([1.0]),
+            lambda outer_action: jnp.asarray([1.0]) + outer_action,
+        ),
+    )
+    monkeypatch.setattr(
+        simulation_module,
+        "_nested_resources",
+        lambda *, outer_action, **_: jnp.full_like(outer_action, 10.0),
+    )
+
+    emitted, value, fallback = (
+        simulation_module._replace_continuous_action_with_policy_read(
+            optimal_actions=grid_actions,
+            regime=_StubRegime(simulation=SimpleNamespace()),
+            sim_policy=payload,
+            states=MappingProxyType({"state": jnp.asarray([1.0])}),
+            flat_params=MappingProxyType({}),
+            period=0,
+            age=jnp.asarray(0.0),
+            canonical_states=MappingProxyType({"state": jnp.asarray([1.0])}),
+            action_names=("outer", "inner"),
+            next_regime_to_V_arr=MappingProxyType({}),
+            grid_values=jnp.asarray([0.0]),
+            in_regime=jnp.asarray([True]),
+            logger=logging.getLogger(__name__),
+        )
+    )
+
+    assert float(emitted["outer"][0]) == 0.0
+    assert float(value[0]) == 5.0
+    assert fallback is not None
+    assert not bool(fallback[0])
