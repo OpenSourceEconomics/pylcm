@@ -28,6 +28,8 @@ For the modelling narrative — why a household declares its weights instead of 
 them, what the dissolution flag means economically — see
 [Households and value-dependent choice](../user_guide/collective_regimes.md).
 
+(api-collective-utility)=
+
 ## `CollectiveUtility`
 
 ```python
@@ -73,6 +75,8 @@ The following are rejected:
 `stakeholders` and `pareto_objective` are derived, read-only fields. They are not
 parallel declaration routes and cannot be passed to `Regime(...)` or `Regime.replace`.
 
+(api-pareto-objective)=
+
 ## `ParetoObjective`
 
 ```python
@@ -104,6 +108,8 @@ strictly positive total — is checked in two places, because a constant is know
 construction while a function of a parameter is not. See
 [Where each rule is enforced](#collective-where-enforced).
 
+(api-value-dependent-constraint)=
+
 ## `ValueDependentConstraint`
 
 ```python
@@ -132,6 +138,8 @@ name only if they declare the identical reference.
 A `ValueDependentConstraint` is only meaningful on a collective regime: `Q_<s>` exists
 only where stakeholders do. Declaring one on a singleton regime is rejected at `Regime`
 construction.
+
+(api-projected-regime-value)=
 
 ## `ProjectedRegimeValue`
 
@@ -177,6 +185,8 @@ A `ProjectedRegimeValue` on an age-specialized reference regime is measured agai
 grid of the period whose value is being folded; see
 [Gate references and leg fallbacks on an age-specialized regime](../user_guide/age_specialized.md#gate-references-and-leg-fallbacks-on-an-age-specialized-regime).
 
+(api-stakeholder-route)=
+
 ## `StakeholderRoute`
 
 ```python
@@ -208,6 +218,8 @@ Three read-only properties resolve the declaration:
 | `solve_fallback`     | the `ProjectedRegimeValue` the closed branch is priced at                   |
 | `simulate_fallback`  | the `ProjectedRegimeValue` a routed row's regime, role and states come from |
 | `fallback_is_phased` | whether the two branches were declared separately                           |
+
+(api-value-dependent-transition)=
 
 ## `ValueDependentTransition`
 

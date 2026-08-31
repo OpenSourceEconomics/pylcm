@@ -48,6 +48,8 @@ to choose the project-specific leaf. Set `XLA_PYTHON_CLIENT_PREALLOCATE=true` be
 importing pylcm to restore JAX's device preallocation; pylcm otherwise requests
 on-demand allocation.
 
+(api-simulation-result)=
+
 ## `SimulationResult`
 
 `to_dataframe(additional_targets=None, use_labels=True, terminal_rows="first")`
@@ -62,9 +64,12 @@ Inspection properties include `regime_names`, `state_names`, `action_names`,
 `SimulationResult.save(directory=...)` writes array checkpoints, value functions,
 metadata, and a Feather table. `SimulationResult.load(directory=...)` restores it.
 
+(api-standalone-persistence)=
+
 ## Standalone persistence
 
-- `save_solution(solution, path)` and `load_solution(path)` persist value functions.
+- `save_solution(period_to_regime_to_V_arr=..., path=...)` and `load_solution(path=...)`
+  persist value functions.
 - `SolveSnapshot` and `SimulateSnapshot` describe diagnostic snapshots.
 - `load_snapshot(path, exclude=...)` loads a snapshot, with optional components omitted.
 

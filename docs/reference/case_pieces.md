@@ -8,6 +8,8 @@ Case pieces declare a supported binary split of one economic output into two smo
 formulas. The decorators attach metadata and return the original functions unchanged, so
 the same regime remains executable under `GridSearch`.
 
+(api-boundary-predicate)=
+
 ## Boundary predicate
 
 ```python
@@ -29,6 +31,8 @@ The declaration records:
 The condition must be one `<`, `<=`, `>`, or `>=` comparison. Compound conditions and
 bare callable predicates cannot declare a case-piece boundary because they do not
 identify one ordered split with unambiguous ownership.
+
+(api-piece-formulas)=
 
 ## Piece formulas
 

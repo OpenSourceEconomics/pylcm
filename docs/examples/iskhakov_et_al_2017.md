@@ -50,8 +50,8 @@ df = result.to_dataframe(additional_targets="all")
 The non-terminal regimes are `ConsumptionSavingsRegime` declarations using `DCEGM`. The
 solve constructs an off-grid policy, while the standard simulator currently re-decides
 consumption on the declared action grid. Read
-[the DCEGM simulation contract](../reference/solvers.md#dcegm) before comparing solved
-and simulated actions or taste-shock frequencies.
+[the DCEGM simulation contract](../reference/solvers.md#api-dcegm) before comparing
+solved and simulated actions or taste-shock frequencies.
 
 ## Grid-search comparison
 

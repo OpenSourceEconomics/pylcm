@@ -10,6 +10,8 @@ regimes own those names; solver objects own only numerical configuration.
 Import these declarations from `lcm` or `lcm.consumption_savings_regime`. Import every
 solver from `lcm.solvers`.
 
+(api-liquid-margin)=
+
 ## `LiquidMargin`
 
 ```python
@@ -38,6 +40,8 @@ identity function merely to rename it.
 `output = before_cost - cost`. This keeps the accounting relation explicit without an
 extra wrapper whose only job is subtraction.
 
+(api-consumption-savings-regime)=
+
 ## `ConsumptionSavingsRegime`
 
 `ConsumptionSavingsRegime(liquid=..., solver=...)` accepts `GridSearch` or a one-margin
@@ -46,6 +50,8 @@ solver: `EGM`, `DCEGM`, or `NBEGM`. It otherwise carries the same economic slots
 
 The declaration is useful even while validating against grid search: the economic role
 names remain attached to the model while the numerical method changes.
+
+(api-outer-continuous-margin)=
 
 ## `OuterContinuousMargin`
 
@@ -69,6 +75,8 @@ observed before the branch choice and integrates it analytically. See
 the outer stock literally remains unchanged. Use the sentinel instead of an identity
 helper.
 
+(api-nested-consumption-savings-regime)=
+
 ## `NestedConsumptionSavingsRegime`
 
 `NestedConsumptionSavingsRegime(liquid=..., outer_continuous=..., solver=...)` accepts
@@ -77,6 +85,8 @@ helper.
 The inner liquid and outer roles must be distinct and resolve in the assembled regime.
 Nested EGM represents a conditional one-dimensional liquid problem around an outer
 search; it does not infer or solve a general coupled two-dimensional Euler system.
+
+(api-post-decision-lower-bounds)=
 
 ## Post-decision lower bounds
 

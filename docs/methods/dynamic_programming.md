@@ -4,8 +4,15 @@ title: Dynamic programming and pylcm
 
 # Dynamic programming and pylcm
 
-pylcm solves finite-horizon dynamic programs. In a single-regime notation, the
-period-$t$ problem is
+pylcm solves finite-horizon dynamic programs. In a single-regime notation, its general
+period-$t$ recursion is
+
+$$
+V_t(x) = \max_{a \in A_t(x)}
+H_t\left(u_t(x, a), \operatorname{CE}_t[V_{t+1}(x')]\right).
+$$
+
+With the default `LinearAggregator()` and `LinearExpectation()`, this reduces to
 
 $$
 V_t(x) = \max_{a \in A_t(x)}

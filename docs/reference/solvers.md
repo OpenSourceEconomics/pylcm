@@ -58,6 +58,7 @@ A valid declaration is part of the model, not a hint. Start with
 
 ## Constructors
 
+(api-grid-search)=
 ### `GridSearch`
 
 ```python
@@ -70,9 +71,10 @@ broadest route and the default solver on `Regime`.
 With EV1 taste shocks, GridSearch first maximizes over the continuous-action axes within
 each discrete-action combination and then applies the discrete log-sum. Simulation uses
 the corresponding Gumbel-max choice rule. See
-[`ExtremeValueTasteShocks`](model_and_regime.md#extremevaluetasteshocks) for the complete
+[`ExtremeValueTasteShocks`](model_and_regime.md#api-extreme-value-taste-shocks) for the complete
 feature boundary.
 
+(api-egm)=
 ### `EGM`
 
 ```python
@@ -82,6 +84,7 @@ EGM(savings_grid=...)
 Plain one-margin EGM. It validates the exact cash-on-hand identity summarized in the
 capability table and takes no upper envelope.
 
+(api-dcegm)=
 ### `DCEGM`
 
 ```python
@@ -104,9 +107,11 @@ The supported typed envelope configurations are `ExactEnvelope`, `FUESEnvelope`,
 `RFCEnvelope`, `LTMEnvelope`, and `MSSEnvelope`. String selectors are not part of the
 public API. See [Upper envelopes](envelopes.md) for their distinct contracts.
 
-`refined_grid_factor` controls policy read-out density, `n_constrained_points` the
-borrowing-corner segment, and `stochastic_node_batch_size` the stochastic-node
-workspace.
+`refined_grid_factor` provides NaN-padded storage headroom for ownership changes in each
+envelope row. A row that needs more slots is reported as overflow and NaN-poisoned; this
+field does not change the density of the policy read-out grid. `n_constrained_points`
+controls the borrowing-corner segment, and `stochastic_node_batch_size` the
+stochastic-node workspace.
 
 :::{important} Solved and simulated continuous actions
 A solve can expose an off-grid
@@ -121,6 +126,7 @@ choice-specific values rather than necessarily matching the solve's off-grid cho
 probabilities. The intrinsic budget is still applied as a simulation feasibility mask.
 :::
 
+(api-negm)=
 ### `NEGM`
 
 ```python
@@ -139,6 +145,7 @@ inner DCEGM solve, but a taste-shocked discrete choice must be the outermost agg
 `max_outer logsumexp_discrete` is not `logsumexp_discrete max_outer`. Use `GridSearch`,
 or remove the taste shocks when the NEGM structure is required.
 
+(api-nbegm)=
 ### `NBEGM`
 
 ```python
@@ -187,6 +194,7 @@ The memory controls do not all mean “compiled batch width”:
 
 These fields bound only their named mapped work, not surrounding arrays or total memory.
 
+(api-nnbegm)=
 ### `NNBEGM`
 
 ```python

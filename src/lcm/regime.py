@@ -170,7 +170,7 @@ class Regime:
     shapes, and dtypes. Callable-support schemas must remain identical across
     active periods and both phases after params bind. Output laws are compiled
     against the applicable phase grids. Probability rows are numerically
-    validated thereincluding carried-only simulation statesand must be
+    validated there, including carried-only simulation states, and must be
     finite, in `[0, 1]`, and unit mass.
     """
 

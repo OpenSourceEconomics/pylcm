@@ -347,14 +347,18 @@ result.n_subjects  # 1000
 
 ### Persistence
 
-`SimulationResult.save(directory=...)` writes three sibling artifacts:
+`SimulationResult.save(directory=...)` writes four sibling artifacts:
 
-- `arrays/` — orbax checkpoint of every JAX array (per-shard, no gathering of sharded
-  V-arrays to a single device).
+- `arrays/` — orbax checkpoint of the per-subject `raw_results` tree and `flat_params`.
+- `V_arr/` — orbax checkpoint of the solution value-function arrays; orbax streams
+  sharded leaves shard by shard rather than gathering them onto one device.
 - `metadata.pkl` — `cloudpickle` of regimes, ages, and the parameter scaffold.
 - `simulated_data.arrow` — a `feather` dump of `to_dataframe`, ready for downstream
   consumers that want the flat per-subject view without re-instantiating a
   `SimulationResult`.
+
+`save()` consumes the in-memory result by clearing its value-function arrays and
+compiled regimes. Reload the saved directory before further access that needs either.
 
 ```python
 from pathlib import Path
@@ -364,7 +368,7 @@ from lcm import SimulationResult
 # Save
 result.save(directory=Path("my_results"))
 
-# Load (reads arrays + metadata; the arrow file is for downstream consumers)
+# Load (reads arrays + V_arr + metadata; the arrow file is for downstream consumers)
 loaded = SimulationResult.load(directory=Path("my_results"))
 ```
 

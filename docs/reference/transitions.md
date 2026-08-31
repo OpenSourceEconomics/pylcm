@@ -4,6 +4,8 @@ title: Transitions and phase specialization
 
 # Transitions and phase specialization
 
+(api-state-transitions)=
+
 ## State transitions
 
 For every reachable target that carries an ordinary non-process state, a non-terminal
@@ -35,9 +37,11 @@ missing targets are errors.
 The key set of the mapping declares structural reachability. An ordinary mapping cell
 requires an explicit `MarkovTransition`; only `ValueDependentTransition.probability`
 accepts a bare probability callable, which its decomposed engine view wraps. See
-[Collective regimes](collective_regimes.md#valuedependenttransition). Use a mapping when
-some regimes cannot follow the source; do not encode structural impossibility only as a
-zero probability in an all-regime vector.
+[Collective regimes](collective_regimes.md#api-value-dependent-transition). Use a
+mapping when some regimes cannot follow the source; do not encode structural
+impossibility only as a zero probability in an all-regime vector.
+
+(api-joint-transitions)=
 
 ## Joint transitions
 
@@ -100,7 +104,10 @@ for every active period and both phases. Callable supports may change values, bu
 pytree structure, leaf event shapes, and dtypes must stay fixed across periods and
 phases. Each support leaf has leading axis `support_size` and contains finite numeric or
 Boolean values. Probability rows have exactly `support_size` entries, are finite and in
-`[0, 1]`, and sum to one; they are never silently normalized.
+`[0, 1]`, and sum to one. `log_level="debug"` rejects invalid mass;
+`log_level="warning"` and `"progress"` warn and continue; `log_level="off"` skips the
+check. Any path that continues into aggregation normalizes the probability mass it
+receives.
 
 The solve variant is validated on solve grids. The simulation variant is validated on
 simulation grids, including the domain of a carried-only state that its probability
@@ -133,13 +140,16 @@ kernel imposes is what the target is entered at. The support is the contract: a 
 outside the process's grid has no representation in that basis and yields `NaN`, which
 the caller's value function reports rather than extrapolating.
 
+(api-age-specialization)=
+
 ## Age specialization
 
 `AgeSpecializedFunction(build, signature)` and `AgeSpecializedGrid(build, signature)`
 produce age-specific declarations during model construction. `build(age)` returns the
 function or continuous grid for that age. `signature(age)` returns a stable hashable
 key; equal keys must mean identical resolved behavior because those periods may share
-one compiled program.
+one compiled program. Because model construction may resolve the same age multiple
+times, `build(age)` must also be deterministic and side-effect-free.
 
 Exact function placement:
 
@@ -158,6 +168,8 @@ remain constant across ages.
 
 Factories run while the model is built. Solve, simulation, compilation, and diagnostics
 select the already-resolved period objects and never call `build(age)`.
+
+(api-solve-and-simulation-phases)=
 
 ## Solve and simulation phases
 

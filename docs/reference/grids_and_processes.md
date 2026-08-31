@@ -7,6 +7,8 @@ title: Grids and stochastic processes
 A grid defines a variable's numerical outcome space. A stochastic process defines both
 an outcome grid and its transition mechanism.
 
+(api-lifecycle-and-categorical-grids)=
+
 ## Lifecycle and categorical grids
 
 - `AgeGrid(start, stop, step=...)` defines the lifecycle. `exact_values=...` can declare
@@ -17,6 +19,8 @@ an outcome grid and its transition mechanism.
 
 The explicit `ordered` flag matters: interpolation and comparison may use ordering only
 when the economics declares it.
+
+(api-continuous-grids)=
 
 ## Continuous grids
 
@@ -32,6 +36,8 @@ when the economics declares it.
 Piecewise grids control **grid density** at known locations. They do not declare an
 economic budget kink to a specialized solver. Use [case pieces](case_pieces.md) or a
 [piecewise-affine schedule](piecewise_affine.md) for that structure.
+
+(api-stochastic-processes)=
 
 ## Stochastic processes
 

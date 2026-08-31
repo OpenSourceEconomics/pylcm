@@ -11,80 +11,80 @@ and the correctness of destinations require page-specific documentation and test
 
 ## Model and economic declarations
 
-| Public name                                                                                   | Canonical documentation                 |
-| --------------------------------------------------------------------------------------------- | --------------------------------------- |
-| [`lcm.Model`](model_and_regime.md#model)                                                      | Model assembly and execution            |
-| [`lcm.Regime`](model_and_regime.md#regime)                                                    | General regime                          |
-| [`lcm.ConsumptionSavingsRegime`](consumption_savings.md#consumptionsavingsregime)             | One liquid margin                       |
-| [`lcm.NestedConsumptionSavingsRegime`](consumption_savings.md#nestedconsumptionsavingsregime) | Liquid plus outer margin                |
-| [`lcm.LiquidMargin`](consumption_savings.md#liquidmargin)                                     | Liquid roles                            |
-| [`lcm.OuterContinuousMargin`](consumption_savings.md#outercontinuousmargin)                   | Outer roles                             |
-| [`lcm.NetOfAdjustmentCost`](consumption_savings.md#liquidmargin)                              | Resources composition                   |
-| [`lcm.post_decision_lower_bound`](consumption_savings.md#post-decision-lower-bounds)          | Checkable borrowing bound               |
-| [`lcm.outer_unchanged`](consumption_savings.md#outercontinuousmargin)                         | Identity no-adjustment sentinel         |
-| [`lcm.cash_on_hand_with_subsidy`](case_pieces.md)                                             | Supported case-piece fixed form         |
-| [`lcm.liquid_law_from_resources`](consumption_savings.md)                                     | Conventional liquid law                 |
-| [`lcm.liquid_law_from_savings`](consumption_savings.md)                                       | Conventional savings-written liquid law |
-| [`lcm.ExtremeValueTasteShocks`](model_and_regime.md#extremevaluetasteshocks)                  | EV1 discrete-choice shocks              |
+| Public name                                                                                          | Canonical documentation                 |
+| ---------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| [`lcm.Model`](model_and_regime.md#api-model)                                                         | Model assembly and execution            |
+| [`lcm.Regime`](model_and_regime.md#api-regime)                                                       | General regime                          |
+| [`lcm.ConsumptionSavingsRegime`](consumption_savings.md#api-consumption-savings-regime)              | One liquid margin                       |
+| [`lcm.NestedConsumptionSavingsRegime`](consumption_savings.md#api-nested-consumption-savings-regime) | Liquid plus outer margin                |
+| [`lcm.LiquidMargin`](consumption_savings.md#api-liquid-margin)                                       | Liquid roles                            |
+| [`lcm.OuterContinuousMargin`](consumption_savings.md#api-outer-continuous-margin)                    | Outer roles                             |
+| [`lcm.NetOfAdjustmentCost`](consumption_savings.md#api-liquid-margin)                                | Resources composition                   |
+| [`lcm.post_decision_lower_bound`](consumption_savings.md#api-post-decision-lower-bounds)             | Checkable borrowing bound               |
+| [`lcm.outer_unchanged`](consumption_savings.md#api-outer-continuous-margin)                          | Identity no-adjustment sentinel         |
+| [`lcm.cash_on_hand_with_subsidy`](case_pieces.md)                                                    | Supported case-piece fixed form         |
+| [`lcm.liquid_law_from_resources`](consumption_savings.md)                                            | Conventional liquid law                 |
+| [`lcm.liquid_law_from_savings`](consumption_savings.md)                                              | Conventional savings-written liquid law |
+| [`lcm.ExtremeValueTasteShocks`](model_and_regime.md#api-extreme-value-taste-shocks)                  | EV1 discrete-choice shocks              |
 
 ## Grids, categories, and processes
 
-| Public name                                                                         | Canonical documentation              |
-| ----------------------------------------------------------------------------------- | ------------------------------------ |
-| [`lcm.AgeGrid`](grids_and_processes.md#lifecycle-and-categorical-grids)             | Lifecycle grid                       |
-| [`lcm.categorical`](grids_and_processes.md#lifecycle-and-categorical-grids)         | Category declaration                 |
-| [`lcm.DiscreteGrid`](grids_and_processes.md#lifecycle-and-categorical-grids)        | Discrete outcome grid                |
-| [`lcm.LinSpacedGrid`](grids_and_processes.md#continuous-grids)                      | Linear grid                          |
-| [`lcm.LogSpacedGrid`](grids_and_processes.md#continuous-grids)                      | Log grid                             |
-| [`lcm.IrregSpacedGrid`](grids_and_processes.md#continuous-grids)                    | Explicit irregular grid              |
-| [`lcm.GridBreakpoint`](grids_and_processes.md#continuous-grids)                     | Piecewise-grid boundary              |
-| [`lcm.PiecewiseLinSpacedGrid`](grids_and_processes.md#continuous-grids)             | Piecewise linear grid                |
-| [`lcm.PiecewiseLogSpacedGrid`](grids_and_processes.md#continuous-grids)             | Piecewise log grid                   |
-| [`lcm.UniformIIDProcess`](grids_and_processes.md#stochastic-processes)              | IID uniform process                  |
-| [`lcm.NormalIIDProcess`](grids_and_processes.md#stochastic-processes)               | IID normal process                   |
-| [`lcm.LogNormalIIDProcess`](grids_and_processes.md#stochastic-processes)            | IID log-normal process               |
-| [`lcm.NormalMixtureIIDProcess`](grids_and_processes.md#stochastic-processes)        | IID normal mixture                   |
-| [`lcm.TauchenAR1Process`](grids_and_processes.md#stochastic-processes)              | Tauchen AR(1)                        |
-| [`lcm.RouwenhorstAR1Process`](grids_and_processes.md#stochastic-processes)          | Rouwenhorst AR(1)                    |
-| [`lcm.TauchenNormalMixtureAR1Process`](grids_and_processes.md#stochastic-processes) | Mixture AR(1)                        |
-| [`lcm.StateConditioned`](grids_and_processes.md#stochastic-processes)               | State-conditioned process parameters |
+| Public name                                                                             | Canonical documentation              |
+| --------------------------------------------------------------------------------------- | ------------------------------------ |
+| [`lcm.AgeGrid`](grids_and_processes.md#api-lifecycle-and-categorical-grids)             | Lifecycle grid                       |
+| [`lcm.categorical`](grids_and_processes.md#api-lifecycle-and-categorical-grids)         | Category declaration                 |
+| [`lcm.DiscreteGrid`](grids_and_processes.md#api-lifecycle-and-categorical-grids)        | Discrete outcome grid                |
+| [`lcm.LinSpacedGrid`](grids_and_processes.md#api-continuous-grids)                      | Linear grid                          |
+| [`lcm.LogSpacedGrid`](grids_and_processes.md#api-continuous-grids)                      | Log grid                             |
+| [`lcm.IrregSpacedGrid`](grids_and_processes.md#api-continuous-grids)                    | Explicit irregular grid              |
+| [`lcm.GridBreakpoint`](grids_and_processes.md#api-continuous-grids)                     | Piecewise-grid boundary              |
+| [`lcm.PiecewiseLinSpacedGrid`](grids_and_processes.md#api-continuous-grids)             | Piecewise linear grid                |
+| [`lcm.PiecewiseLogSpacedGrid`](grids_and_processes.md#api-continuous-grids)             | Piecewise log grid                   |
+| [`lcm.UniformIIDProcess`](grids_and_processes.md#api-stochastic-processes)              | IID uniform process                  |
+| [`lcm.NormalIIDProcess`](grids_and_processes.md#api-stochastic-processes)               | IID normal process                   |
+| [`lcm.LogNormalIIDProcess`](grids_and_processes.md#api-stochastic-processes)            | IID log-normal process               |
+| [`lcm.NormalMixtureIIDProcess`](grids_and_processes.md#api-stochastic-processes)        | IID normal mixture                   |
+| [`lcm.TauchenAR1Process`](grids_and_processes.md#api-stochastic-processes)              | Tauchen AR(1)                        |
+| [`lcm.RouwenhorstAR1Process`](grids_and_processes.md#api-stochastic-processes)          | Rouwenhorst AR(1)                    |
+| [`lcm.TauchenNormalMixtureAR1Process`](grids_and_processes.md#api-stochastic-processes) | Mixture AR(1)                        |
+| [`lcm.StateConditioned`](grids_and_processes.md#api-stochastic-processes)               | State-conditioned process parameters |
 
 ## Transitions, phases, and structured declarations
 
-| Public name                                                       | Canonical documentation            |
-| ----------------------------------------------------------------- | ---------------------------------- |
-| [`lcm.MarkovTransition`](transitions.md#state-transitions)        | Stochastic transition wrapper      |
-| [`lcm.JointTransition`](transitions.md#joint-transitions)         | Shared-draw joint law              |
-| [`lcm.fixed_transition`](transitions.md#state-transitions)        | Identity law                       |
-| [`lcm.AgeSpecializedFunction`](transitions.md#age-specialization) | Age-varying function               |
-| [`lcm.AgeSpecializedGrid`](transitions.md#age-specialization)     | Age-varying grid                   |
-| [`lcm.Phased`](transitions.md#solve-and-simulation-phases)        | Solve/simulate variants            |
-| [`lcm.Condition`](conditions.md)                                  | Structured Boolean expression      |
-| [`lcm.ref`](conditions.md#syntax)                                 | Named reference                    |
-| [`lcm.implies`](conditions.md#syntax)                             | Conditional requirement            |
-| [`lcm.case_boundary`](case_pieces.md#boundary-predicate)          | Structured case boundary           |
-| [`lcm.piece`](case_pieces.md#piece-formulas)                      | Piece decorator                    |
-| [`lcm.smooth_helper`](case_pieces.md#piece-formulas)              | Reviewed smooth-helper attestation |
-| [`lcm.affine_breakpoint`](piecewise_affine.md#affine-breakpoint)  | Schedule breakpoint                |
-| [`lcm.piecewise_affine`](piecewise_affine.md)                     | Piecewise-affine schedule          |
+| Public name                                                           | Canonical documentation            |
+| --------------------------------------------------------------------- | ---------------------------------- |
+| [`lcm.MarkovTransition`](transitions.md#api-state-transitions)        | Stochastic transition wrapper      |
+| [`lcm.JointTransition`](transitions.md#api-joint-transitions)         | Shared-draw joint law              |
+| [`lcm.fixed_transition`](transitions.md#api-state-transitions)        | Identity law                       |
+| [`lcm.AgeSpecializedFunction`](transitions.md#api-age-specialization) | Age-varying function               |
+| [`lcm.AgeSpecializedGrid`](transitions.md#api-age-specialization)     | Age-varying grid                   |
+| [`lcm.Phased`](transitions.md#api-solve-and-simulation-phases)        | Solve/simulate variants            |
+| [`lcm.Condition`](conditions.md)                                      | Structured Boolean expression      |
+| [`lcm.ref`](conditions.md#api-condition-syntax)                       | Named reference                    |
+| [`lcm.implies`](conditions.md#api-condition-syntax)                   | Conditional requirement            |
+| [`lcm.case_boundary`](case_pieces.md#api-boundary-predicate)          | Structured case boundary           |
+| [`lcm.piece`](case_pieces.md#api-piece-formulas)                      | Piece decorator                    |
+| [`lcm.smooth_helper`](case_pieces.md#api-piece-formulas)              | Reviewed smooth-helper attestation |
+| [`lcm.affine_breakpoint`](piecewise_affine.md#api-affine-breakpoint)  | Schedule breakpoint                |
+| [`lcm.piecewise_affine`](piecewise_affine.md)                         | Piecewise-affine schedule          |
 
 ## Preferences, results, and persistence
 
-| Public name                                                             | Canonical documentation        |
-| ----------------------------------------------------------------------- | ------------------------------ |
-| [`lcm.LinearAggregator`](../methods/preferences.md)                     | Linear Koopmans form           |
-| [`lcm.CESAggregator`](../methods/preferences.md)                        | CES Koopmans form              |
-| [`lcm.CertaintyEquivalent`](../methods/preferences.md)                  | Certainty-equivalent contract  |
-| [`lcm.LinearExpectation`](../methods/preferences.md)                    | Linear lottery reduction       |
-| [`lcm.PowerMean`](../methods/preferences.md)                            | Power-mean reduction           |
-| [`lcm.QuasiArithmeticMean`](../methods/preferences.md)                  | Quasi-arithmetic reduction     |
-| [`lcm.SimulationResult`](runtime_and_results.md#simulationresult)       | Deferred simulation result     |
-| [`lcm.save_solution`](runtime_and_results.md#standalone-persistence)    | Save value functions           |
-| [`lcm.load_solution`](runtime_and_results.md#standalone-persistence)    | Load value functions           |
-| [`lcm.SolveSnapshot`](runtime_and_results.md#standalone-persistence)    | Solve diagnostic snapshot      |
-| [`lcm.SimulateSnapshot`](runtime_and_results.md#standalone-persistence) | Simulation diagnostic snapshot |
-| [`lcm.load_snapshot`](runtime_and_results.md#standalone-persistence)    | Load diagnostic snapshot       |
-| [`lcm.__version__`](public_api.md)                                      | Installed pylcm version        |
+| Public name                                                                 | Canonical documentation        |
+| --------------------------------------------------------------------------- | ------------------------------ |
+| [`lcm.LinearAggregator`](../methods/preferences.md)                         | Linear Koopmans form           |
+| [`lcm.CESAggregator`](../methods/preferences.md)                            | CES Koopmans form              |
+| [`lcm.CertaintyEquivalent`](../methods/preferences.md)                      | Certainty-equivalent contract  |
+| [`lcm.LinearExpectation`](../methods/preferences.md)                        | Linear lottery reduction       |
+| [`lcm.PowerMean`](../methods/preferences.md)                                | Power-mean reduction           |
+| [`lcm.QuasiArithmeticMean`](../methods/preferences.md)                      | Quasi-arithmetic reduction     |
+| [`lcm.SimulationResult`](runtime_and_results.md#api-simulation-result)      | Deferred simulation result     |
+| [`lcm.save_solution`](runtime_and_results.md#api-standalone-persistence)    | Save value functions           |
+| [`lcm.load_solution`](runtime_and_results.md#api-standalone-persistence)    | Load value functions           |
+| [`lcm.SolveSnapshot`](runtime_and_results.md#api-standalone-persistence)    | Solve diagnostic snapshot      |
+| [`lcm.SimulateSnapshot`](runtime_and_results.md#api-standalone-persistence) | Simulation diagnostic snapshot |
+| [`lcm.load_snapshot`](runtime_and_results.md#api-standalone-persistence)    | Load diagnostic snapshot       |
+| [`lcm.__version__`](public_api.md)                                          | Installed pylcm version        |
 
 ## Explicit public submodule surfaces
 
@@ -102,38 +102,38 @@ surfaces remain outside that top-level namespace:
 
 ## Collective regimes and value-dependent choice
 
-| Public name                                                                      | Canonical documentation                  |
-| -------------------------------------------------------------------------------- | ---------------------------------------- |
-| [`lcm.CollectiveUtility`](collective_regimes.md#collectiveutility)               | One utility per stakeholder, one action  |
-| [`lcm.ParetoObjective`](collective_regimes.md#paretoobjective)                   | Weighted household objective             |
-| [`lcm.ValueDependentConstraint`](collective_regimes.md#valuedependentconstraint) | Constraint that reads stakeholder values |
-| [`lcm.ValueDependentTransition`](collective_regimes.md#valuedependenttransition) | Gated transition to a target regime      |
-| [`lcm.StakeholderRoute`](collective_regimes.md#stakeholderroute)                 | One source stakeholder's route across it |
-| [`lcm.ProjectedRegimeValue`](collective_regimes.md#projectedregimevalue)         | Another regime's value, projected        |
+| Public name                                                                            | Canonical documentation                  |
+| -------------------------------------------------------------------------------------- | ---------------------------------------- |
+| [`lcm.CollectiveUtility`](collective_regimes.md#api-collective-utility)                | One utility per stakeholder, one action  |
+| [`lcm.ParetoObjective`](collective_regimes.md#api-pareto-objective)                    | Weighted household objective             |
+| [`lcm.ValueDependentConstraint`](collective_regimes.md#api-value-dependent-constraint) | Constraint that reads stakeholder values |
+| [`lcm.ValueDependentTransition`](collective_regimes.md#api-value-dependent-transition) | Gated transition to a target regime      |
+| [`lcm.StakeholderRoute`](collective_regimes.md#api-stakeholder-route)                  | One source stakeholder's route across it |
+| [`lcm.ProjectedRegimeValue`](collective_regimes.md#api-projected-regime-value)         | Another regime's value, projected        |
 
 ## Solvers and configurations
 
-| Public name                                                                          | Canonical documentation         |
-| ------------------------------------------------------------------------------------ | ------------------------------- |
-| [`lcm.solvers.GridSearch`](solvers.md#gridsearch)                                    | General grid search             |
-| [`lcm.solvers.EGM`](solvers.md#egm)                                                  | Plain endogenous-grid method    |
-| [`lcm.solvers.DCEGM`](solvers.md#dcegm)                                              | General-resources EGM           |
-| [`lcm.solvers.NEGM`](solvers.md#negm)                                                | Nested DCEGM                    |
-| [`lcm.solvers.NBEGM`](solvers.md#nbegm)                                              | Declared non-convex-budget EGM  |
-| [`lcm.solvers.NNBEGM`](solvers.md#nnbegm)                                            | Nested NBEGM                    |
-| [`lcm.solvers.EnvelopeConfig`](envelopes.md)                                         | DCEGM envelope union            |
-| [`lcm.solvers.ExactEnvelope`](envelopes.md#exact-envelope-availability)              | Certified envelope              |
-| [`lcm.solvers.FUESEnvelope`](envelopes.md#approximate-backends)                      | FUES configuration              |
-| [`lcm.solvers.RFCEnvelope`](envelopes.md#approximate-backends)                       | RFC configuration               |
-| [`lcm.solvers.LTMEnvelope`](envelopes.md#approximate-backends)                       | LTM configuration               |
-| [`lcm.solvers.MSSEnvelope`](envelopes.md#approximate-backends)                       | MSS configuration               |
-| [`lcm.solvers.OuterSearch`](outer_search.md#outer-search)                            | Outer-search marker             |
-| [`lcm.solvers.FiniteOuterGrid`](outer_search.md#finiteoutergrid)                     | Finite search                   |
-| [`lcm.solvers.AdaptiveOuterMesh`](outer_search.md#adaptiveoutermesh)                 | Adaptive continuous search      |
-| [`lcm.solvers.OuterBranchAggregator`](outer_search.md#branch-aggregation)            | Branch-aggregation marker       |
-| [`lcm.solvers.DeterministicOuterMaximum`](outer_search.md#deterministicoutermaximum) | Hard maximum                    |
-| [`lcm.solvers.UniformObservedFixedCost`](outer_search.md#uniformobservedfixedcost)   | Analytic fixed-cost integration |
-| [`lcm.solvers.BranchAggregateResult`](outer_search.md#uniformobservedfixedcost)      | Aggregation output              |
+| Public name                                                                                | Canonical documentation         |
+| ------------------------------------------------------------------------------------------ | ------------------------------- |
+| [`lcm.solvers.GridSearch`](solvers.md#api-grid-search)                                     | General grid search             |
+| [`lcm.solvers.EGM`](solvers.md#api-egm)                                                    | Plain endogenous-grid method    |
+| [`lcm.solvers.DCEGM`](solvers.md#api-dcegm)                                                | General-resources EGM           |
+| [`lcm.solvers.NEGM`](solvers.md#api-negm)                                                  | Nested DCEGM                    |
+| [`lcm.solvers.NBEGM`](solvers.md#api-nbegm)                                                | Declared non-convex-budget EGM  |
+| [`lcm.solvers.NNBEGM`](solvers.md#api-nnbegm)                                              | Nested NBEGM                    |
+| [`lcm.solvers.EnvelopeConfig`](envelopes.md)                                               | DCEGM envelope union            |
+| [`lcm.solvers.ExactEnvelope`](envelopes.md#api-exact-envelope-availability)                | Certified envelope              |
+| [`lcm.solvers.FUESEnvelope`](envelopes.md#api-approximate-envelope-backends)               | FUES configuration              |
+| [`lcm.solvers.RFCEnvelope`](envelopes.md#api-approximate-envelope-backends)                | RFC configuration               |
+| [`lcm.solvers.LTMEnvelope`](envelopes.md#api-approximate-envelope-backends)                | LTM configuration               |
+| [`lcm.solvers.MSSEnvelope`](envelopes.md#api-approximate-envelope-backends)                | MSS configuration               |
+| [`lcm.solvers.OuterSearch`](outer_search.md#api-outer-search)                              | Outer-search marker             |
+| [`lcm.solvers.FiniteOuterGrid`](outer_search.md#api-finite-outer-grid)                     | Finite search                   |
+| [`lcm.solvers.AdaptiveOuterMesh`](outer_search.md#api-adaptive-outer-mesh)                 | Adaptive continuous search      |
+| [`lcm.solvers.OuterBranchAggregator`](outer_search.md#api-branch-aggregation)              | Branch-aggregation marker       |
+| [`lcm.solvers.DeterministicOuterMaximum`](outer_search.md#api-deterministic-outer-maximum) | Hard maximum                    |
+| [`lcm.solvers.UniformObservedFixedCost`](outer_search.md#api-uniform-observed-fixed-cost)  | Analytic fixed-cost integration |
+| [`lcm.solvers.BranchAggregateResult`](outer_search.md#api-uniform-observed-fixed-cost)     | Aggregation output              |
 
 The remaining exported solver infrastructure is currently contributor-facing, not a
 supported out-of-tree extension seam:

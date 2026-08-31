@@ -36,10 +36,12 @@ functions = {
 }
 ```
 
-The two user obligations are:
+The three user obligations are:
 
 1. every function returned by `build(age)` has the same call signature;
-1. equal `signature(age)` values imply identical closure behavior.
+1. equal `signature(age)` values imply identical closure behavior;
+1. `build(age)` is deterministic and side-effect-free, because model construction may
+   resolve the same age multiple times.
 
 The signature is a correctness precondition and a compilation-reuse key. Include every
 varying ingredient when in doubt.

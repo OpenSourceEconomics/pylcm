@@ -7,7 +7,11 @@ title: Outer search and branch aggregation
 `NNBEGM` separates two decisions: how adjuster candidates are generated, and how the
 keeper and adjuster branches combine.
 
+(api-outer-search)=
+
 ## Outer search
+
+(api-finite-outer-grid)=
 
 ### `FiniteOuterGrid`
 
@@ -15,9 +19,13 @@ keeper and adjuster branches combine.
 FiniteOuterGrid(grid=..., batch_size=0)
 ```
 
-Solves one exact inner problem per grid node and returns a grid-snapped outer action.
-The result is exact relative to that finite candidate set. Positive `batch_size` streams
-nodes before folding them into the running maximum.
+Solves one exact inner problem per outer post-decision target in `grid` and selects a
+grid-snapped target. Simulation recovers the declared outer action by exactly inverting
+the post-decision map, so that action may lie between action-grid nodes. The result is
+exact relative to the finite target set. Positive `batch_size` streams targets before
+folding them into the running maximum.
+
+(api-adaptive-outer-mesh)=
 
 ### `AdaptiveOuterMesh`
 
@@ -52,7 +60,11 @@ narrow peak between sampled points.
 
 `OuterSearch` is the abstract configuration marker.
 
+(api-branch-aggregation)=
+
 ## Branch aggregation
+
+(api-deterministic-outer-maximum)=
 
 ### `DeterministicOuterMaximum`
 
@@ -61,6 +73,8 @@ DeterministicOuterMaximum()
 ```
 
 Takes `max(V_keeper, V_adjuster)` with the keeper winning exact ties.
+
+(api-uniform-observed-fixed-cost)=
 
 ### `UniformObservedFixedCost`
 

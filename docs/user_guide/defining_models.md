@@ -249,7 +249,7 @@ joint support, one probability function, and one output projection per affected 
 Do not also declare separate transition laws for those outputs.
 
 See [Transitions](transitions.ipynb) for the workflow and
-[Transitions and phase specialization](../reference/transitions.md#joint-transitions)
+[Transitions and phase specialization](../reference/transitions.md#api-joint-transitions)
 for the exact support and output contract.
 
 ## See Also

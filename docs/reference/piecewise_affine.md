@@ -31,6 +31,8 @@ def resources(liquid, first_threshold, asset_test, transfer):
     ...
 ```
 
+(api-affine-breakpoint)=
+
 ## `affine_breakpoint`
 
 `affine_breakpoint(threshold, kind="continuous_kink", indexed_by=None, static_index=None, threshold_subkey=None)`

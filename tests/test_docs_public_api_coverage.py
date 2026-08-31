@@ -15,6 +15,7 @@ _LCM_ENTRY = re.compile(r"\[`lcm\.([A-Za-z_][A-Za-z0-9_]*)`\]")
 _SOLVER_ENTRY = re.compile(r"\[`lcm\.solvers\.([A-Za-z_][A-Za-z0-9_]*)`\]")
 _ALL_ENTRY = re.compile(r"\[`(lcm(?:\.[A-Za-z_][A-Za-z0-9_]*)+)`\]")
 _LOCAL_DESTINATION = re.compile(r"\[`lcm(?:\.solvers)?\.[^`]+`\]\(([^)]+)\)")
+_EXPLICIT_LABEL = re.compile(r"^\(([^)]+)\)=$", re.MULTILINE)
 _SUBMODULE_ENTRY = re.compile(
     r"\[`(lcm\.(?:params|koopmans_aggregation))\.([A-Za-z_][A-Za-z0-9_]*)`\]"
 )
@@ -55,6 +56,23 @@ def test_public_api_index_local_destinations_exist():
             missing.append(path)
 
     assert missing == []
+
+
+def test_public_api_index_fragments_resolve_in_the_declared_source():
+    """Each fragment is an explicit label owned by its declared source file."""
+    text = _API_INDEX.read_text(encoding="utf-8")
+
+    misplaced = []
+    for destination in _LOCAL_DESTINATION.findall(text):
+        split = urlsplit(destination)
+        if not split.fragment:
+            continue
+        source = _API_INDEX.parent / split.path
+        labels = set(_EXPLICIT_LABEL.findall(source.read_text(encoding="utf-8")))
+        if split.fragment not in labels:
+            misplaced.append(destination)
+
+    assert misplaced == []
 
 
 def test_public_api_index_covers_allowlisted_submodule_surfaces():

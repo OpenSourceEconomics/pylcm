@@ -4,6 +4,8 @@ title: Model and Regime
 
 # Model and Regime
 
+(api-model)=
+
 ## `Model`
 
 `Model(...)` assembles regimes over one lifecycle:
@@ -43,6 +45,8 @@ Public inspection attributes include:
 
 `model._regimes` is private canonical engine state.
 
+(api-regime)=
+
 ## `Regime`
 
 A general regime declares:
@@ -74,6 +78,8 @@ required by EGM-family solvers. See
 [Consumption-saving regimes and margins](consumption_savings.md). Collective fields on
 `Regime` are documented separately in [Collective regimes](collective_regimes.md).
 
+(api-extreme-value-taste-shocks)=
+
 ## `ExtremeValueTasteShocks`
 
 Declare IID extreme-value shocks on the Cartesian product of a regime's discrete actions
@@ -98,7 +104,7 @@ discrete-action combination, and takes the argmax. For any fixed candidate value
 expected latent perturbed maximum equals their smoothed log-sum. The shock affects the
 choice, while simulation publishes the selected unshocked value. DCEGM simulation uses
 grid-restricted candidates and therefore need not reproduce its off-grid solve value or
-choice probabilities; see [Solvers and capabilities](solvers.md#dcegm).
+choice probabilities; see [Solvers and capabilities](solvers.md#api-dcegm).
 
 This feature requires at least one discrete action and is implemented by `GridSearch`
 and `DCEGM`. It is rejected for `NEGM`, `NBEGM`, and `NNBEGM`; on a collective regime;

@@ -34,6 +34,8 @@ You may also choose `Condition` simply because its declarative form is clearer. 
 not expand the mathematical set of Booleans available to grid search, and it does not
 make an unsupported constraint supported by an EGM solver.
 
+(api-condition-syntax)=
+
 ## Syntax
 
 `ref(name)` refers to a state, action, DAG output, parameter, or declared margin role.

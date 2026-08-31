@@ -24,6 +24,8 @@ solver = DCEGM(savings_grid=..., envelope=LTMEnvelope())
 These five typed objects are the supported strategies. `EnvelopeConfig` is their union;
 string selectors are invalid.
 
+(api-exact-envelope-availability)=
+
 ## Exact envelope availability
 
 The certified exact-affine read is **forward-mode differentiable only**. It carries a
@@ -52,6 +54,8 @@ explicit no-kernel installation option are in
 `max_runs` bounds supported envelope topology. `cell_batch_size` sets how many
 independent state cells the exact native operation resolves in parallel; `None` selects
 serial resolution.
+
+(api-approximate-envelope-backends)=
 
 ## Approximate backends
 
