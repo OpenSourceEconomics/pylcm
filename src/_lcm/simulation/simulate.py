@@ -1637,22 +1637,23 @@ def _read_nested_policy(
     # The keeper is a separately solved exact branch and may lie outside a legal,
     # narrower adjuster mesh. Validate it against the state domain carried by the
     # inverse; validate an adjusting proposal against the mesh it was solved on.
-    # Both branches use the same exact-or-adjacent target-association predicate.
+    # Both branches use the same endpoint-and-containment predicate.
     transition_image = transition_at(outer_action)
-    pointwise_replay_ok = outer_candidate_is_admissible(
-        image=transition_image,
-        target=chosen_post_decision,
-        low=jnp.where(
-            adjust,
-            jnp.asarray(outer_nodes[0], dtype=transition_image.dtype),
-            jnp.asarray(
+    pointwise_replay_ok = jnp.where(
+        adjust,
+        outer_candidate_is_admissible(
+            image=transition_image,
+            target=chosen_post_decision,
+            low=jnp.asarray(outer_nodes[0], dtype=transition_image.dtype),
+            high=jnp.asarray(outer_nodes[-1], dtype=transition_image.dtype),
+        ),
+        outer_candidate_is_admissible(
+            image=transition_image,
+            target=chosen_post_decision,
+            low=jnp.asarray(
                 payload.replay_capability.inverse.low, dtype=transition_image.dtype
             ),
-        ),
-        high=jnp.where(
-            adjust,
-            jnp.asarray(outer_nodes[-1], dtype=transition_image.dtype),
-            jnp.asarray(
+            high=jnp.asarray(
                 payload.replay_capability.inverse.high, dtype=transition_image.dtype
             ),
         ),

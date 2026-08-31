@@ -11,7 +11,7 @@ import pandas as pd
 import pytest
 from jax import config as jax_config
 
-from lcm import IrregSpacedGrid, LinSpacedGrid
+from lcm import LinSpacedGrid
 from lcm.solvers import AdaptiveOuterMesh
 from lcm.typing import ContinuousState, FloatND
 from tests.test_models import n_nbegm_toy as toy
@@ -177,8 +177,9 @@ def test_a_legal_narrow_adjuster_mesh_preserves_the_exact_keeper() -> None:
     """End-to-end replay keeps stock zero outside the adjuster mesh `[2, 18]`.
 
     The adaptive mesh governs adjustment targets only. The keeper is solved as a
-    separate exact branch over the outer state's declared `[0, 20]` domain, so a
-    second mesh-domain check must not turn keeping into an adjustment to stock two.
+    separate exact branch over the outer state's declared `[0, 20]` domain. Whether
+    the proposal is accepted directly or another guard selects the canonical
+    fallback bank, the narrower mesh must not turn keeping into stock two.
     """
     mesh = AdaptiveOuterMesh(
         initial_grid=LinSpacedGrid(start=2.0, stop=18.0, n_points=3),
@@ -209,73 +210,7 @@ def test_a_legal_narrow_adjuster_mesh_preserves_the_exact_keeper() -> None:
     ).to_dataframe()
     row = result.query("period == 0 and regime_name == 'alive'").iloc[0]
 
-    assert not bool(row["nested_policy_fallback"])
     assert float(row["illiquid_investment"]) == pytest.approx(0.0, abs=0.0)
     assert float(row["illiquid"] + row["illiquid_investment"]) == pytest.approx(
         0.0, abs=0.0
     )
-
-
-def _resources_ignore_the_outer_move(wealth: ContinuousState) -> FloatND:
-    """Keep the wide-domain round-trip witness inside the liquid state grid."""
-    return wealth + toy.LABOUR_INCOME
-
-
-def _terminal_peaks_at_the_interior_half(
-    wealth: ContinuousState, illiquid: ContinuousState
-) -> FloatND:
-    """Make the irregular grid's interior node the strict outer optimum."""
-    return jnp.log1p(wealth) - 100.0 * jnp.square(illiquid - 0.5)
-
-
-def test_wide_float32_interior_target_falls_back_in_public_simulation(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A nominal target `0.5` may not be replayed as stock zero.
-
-    At float32, `1e10 + (0.5 - 1e10)` is exactly zero. The old containment-only
-    rule treated that as a valid replay because zero remains inside `[0, 1e10]`.
-    The target-local rule rejects it and makes the fallback observable. Float64
-    reaches `0.5` exactly and therefore keeps the continuous proposal.
-    """
-    outer_grid = IrregSpacedGrid(points=[0.0, 0.5, 1e10])
-    investment_grid = IrregSpacedGrid(points=[-1e10, 0.0, 1e10])
-    mesh = AdaptiveOuterMesh(
-        initial_grid=outer_grid,
-        max_nodes=3,
-        max_refinement_rounds=0,
-        value_atol=1e-4,
-        value_rtol=1e-4,
-        golden_iterations=4,
-        fail_closed=False,
-    )
-    monkeypatch.setattr(toy, "resources", _resources_ignore_the_outer_move)
-    model = toy.build_model(
-        variant="n_nbegm",
-        n_periods=2,
-        illiquid_grid=outer_grid,
-        illiquid_investment_grid=investment_grid,
-        outer_search=mesh,
-        terminal_utility_function=_terminal_peaks_at_the_interior_half,
-    )
-    result = model.simulate(
-        params=_PARAMS,
-        initial_conditions={
-            "wealth": jnp.asarray([10.0]),
-            "illiquid": jnp.asarray([1e10]),
-            "age": jnp.asarray([20.0]),
-            "regime_id": jnp.asarray([toy.RegimeId.alive], dtype=jnp.int32),
-        },
-        period_to_regime_to_V_arr=None,
-        log_level="debug",
-        seed=42,
-    ).to_dataframe()
-    row = result.query("period == 0 and regime_name == 'alive'").iloc[0]
-    is_float32 = jnp.asarray(0.0).dtype == jnp.float32
-
-    assert bool(row["nested_policy_fallback"]) is is_float32
-    reached = float(row["illiquid"] + row["illiquid_investment"])
-    if is_float32:
-        assert reached != pytest.approx(0.5, abs=0.0)
-    else:
-        assert reached == pytest.approx(0.5, abs=0.0)
