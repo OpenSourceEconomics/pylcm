@@ -8,8 +8,8 @@ import numpy as np
 import pytest
 
 from _lcm.probability import scaled_down_by_power_of_two
-from _lcm.regime_building.Q_and_F import _expectation_over_stochastic_nodes
-from lcm.typing import FloatND
+from _lcm.regime_building.zero_safe import zero_safe_average
+from lcm.typing import FloatND, IntND
 
 
 def _maybe_jit(
@@ -18,19 +18,30 @@ def _maybe_jit(
     return jax.jit(func) if compiled else func
 
 
-def test_production_reduction_avoids_general_exponent_balancing() -> None:
-    """Keep `ldexp`/`frexp` off the target-node expectation hot path."""
-    dtype = jnp.zeros(()).dtype
-    traced = jax.make_jaxpr(_expectation_over_stochastic_nodes)(
-        values=jnp.ones(5, dtype=dtype),
-        weights=jnp.full(5, 0.2, dtype=dtype),
-        shifts=jnp.zeros(5, dtype=jnp.int32),
-    )
-    graph = str(traced)
+def _mean(values: FloatND, weights: FloatND, shifts: IntND) -> FloatND:
+    """The scaled weighted mean, as a positional-argument function to transform."""
+    return zero_safe_average(values, weights=weights, shifts=shifts)
 
-    assert "name=ldexp" not in graph
-    assert "name=frexp" not in graph
-    assert "clz" not in graph
+
+@pytest.mark.parametrize("primitive", ["ldexp", "frexp"])
+def test_the_reduction_scales_by_bit_arithmetic_not_by_a_general_primitive(
+    primitive: str,
+) -> None:
+    """Keep the general exponent primitives off the stochastic-node hot path.
+
+    Every scale this reduction applies is a non-positive power of two, which
+    `scaled_down_by_power_of_two` performs on the bits. Reaching for `ldexp` or
+    `frexp` instead would run a general exponent decomposition over the whole
+    value surface — twice, since the mass and the numerator each need the scale.
+    """
+    dtype = jnp.zeros(()).dtype
+    traced = jax.make_jaxpr(_mean)(
+        jnp.ones(5, dtype=dtype),
+        jnp.full(5, 0.2, dtype=dtype),
+        jnp.zeros(5, dtype=jnp.int32),
+    )
+
+    assert f"name={primitive}" not in str(traced)
 
 
 @pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
@@ -159,12 +170,12 @@ def test_a_large_rare_contribution_is_formed_before_its_scale_is_applied(
     dtype = jnp.zeros(()).dtype
     tiny = jnp.asarray(jnp.finfo(dtype).tiny, dtype=dtype)
     large = jnp.asarray(1.0, dtype=dtype) / tiny
-    reduce = _maybe_jit(_expectation_over_stochastic_nodes, compiled=compiled)
+    reduce = _maybe_jit(_mean, compiled=compiled)
 
     got = reduce(
-        values=jnp.asarray([0.0, large], dtype=dtype),
-        weights=jnp.asarray([1.0, tiny], dtype=dtype),
-        shifts=jnp.asarray([0, 2], dtype=jnp.int32),
+        jnp.asarray([0.0, large], dtype=dtype),
+        jnp.asarray([1.0, tiny], dtype=dtype),
+        jnp.asarray([0, 2], dtype=jnp.int32),
     )
 
     np.testing.assert_allclose(np.asarray(got), np.asarray(0.25, dtype=dtype))
@@ -176,7 +187,7 @@ def test_a_live_nonfinite_node_is_not_reclassified_as_null_by_its_scale(
     *, compiled: bool, kind: str
 ) -> None:
     """A live node stays non-finite even when its plain weight underflows."""
-    reduce = _maybe_jit(_expectation_over_stochastic_nodes, compiled=compiled)
+    reduce = _maybe_jit(_mean, compiled=compiled)
     spread = 300 if jnp.zeros(()).dtype == jnp.float32 else 2800
     nonfinite = {
         "nan": jnp.nan,
@@ -185,9 +196,9 @@ def test_a_live_nonfinite_node_is_not_reclassified_as_null_by_its_scale(
     }[kind]
 
     got = reduce(
-        values=jnp.asarray([1.0, nonfinite]),
-        weights=jnp.ones(2),
-        shifts=jnp.asarray([0, spread], dtype=jnp.int32),
+        jnp.asarray([1.0, nonfinite]),
+        jnp.ones(2),
+        jnp.asarray([0, spread], dtype=jnp.int32),
     )
 
     if kind == "nan":
@@ -203,12 +214,12 @@ def test_a_represented_zero_remains_the_null_event_at_any_scale(
     *, compiled: bool
 ) -> None:
     """A genuine zero coefficient annihilates a non-finite value."""
-    reduce = _maybe_jit(_expectation_over_stochastic_nodes, compiled=compiled)
+    reduce = _maybe_jit(_mean, compiled=compiled)
 
     got = reduce(
-        values=jnp.asarray([1.0, jnp.nan]),
-        weights=jnp.asarray([1.0, 0.0]),
-        shifts=jnp.asarray([0, 300], dtype=jnp.int32),
+        jnp.asarray([1.0, jnp.nan]),
+        jnp.asarray([1.0, 0.0]),
+        jnp.asarray([0, 300], dtype=jnp.int32),
     )
 
     np.testing.assert_allclose(np.asarray(got), np.asarray(1.0))
@@ -217,12 +228,12 @@ def test_a_represented_zero_remains_the_null_event_at_any_scale(
 @pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
 def test_the_mass_is_read_on_the_same_common_scale(*, compiled: bool) -> None:
     """Weights `(1, 1/4)` price the second node at one fifth."""
-    reduce = _maybe_jit(_expectation_over_stochastic_nodes, compiled=compiled)
+    reduce = _maybe_jit(_mean, compiled=compiled)
 
     got = reduce(
-        values=jnp.asarray([0.0, 1.0]),
-        weights=jnp.ones(2),
-        shifts=jnp.asarray([0, 2], dtype=jnp.int32),
+        jnp.asarray([0.0, 1.0]),
+        jnp.ones(2),
+        jnp.asarray([0, 2], dtype=jnp.int32),
     )
 
     np.testing.assert_allclose(np.asarray(got), np.asarray(0.2))

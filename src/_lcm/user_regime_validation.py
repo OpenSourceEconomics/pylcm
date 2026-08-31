@@ -9,26 +9,30 @@ public module keeps `lcm.regime` to class definitions.
 
 import ast
 import inspect
+import math
 import textwrap
+from collections import Counter
 from collections.abc import Callable, Iterator, Mapping
 from typing import TYPE_CHECKING, cast
 
 from dags.tree import QNAME_DELIMITER
 
-from _lcm.certainty_equivalent import PowerMean
+from _lcm.certainty_equivalent import PowerMean, aggregates_nonlinearly
 from _lcm.grids import DiscreteGrid, Grid
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.processes.base import _ContinuousStochasticProcess
+from _lcm.processes.iid import _IIDProcess
 from _lcm.typing import ActiveFunction, ProcessName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
 from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
-from lcm.exceptions import RegimeInitializationError
+from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.koopmans_aggregation import CESAggregator
 from lcm.phased import Phased
-from lcm.solvers import NBEGM, NNBEGM
+from lcm.solvers import NBEGM, NNBEGM, GridSearch
 from lcm.transition import (
     AgeSpecializedFunction,
     AgeSpecializedGrid,
+    JointTransition,
     MarkovTransition,
 )
 
@@ -96,6 +100,346 @@ def _callable_mapping_errors(
     return error_messages
 
 
+def _validate_collective_regime(regime: lcm.regime.Regime) -> None:
+    """Validate a collective (stakeholder-valued) regime.
+
+    Both the terminal and the non-terminal continuation cases are implemented.
+    Checked here are the properties a bare `Regime` already
+    determines on its own: a non-empty, duplicate-free `stakeholders` tuple,
+    the regime-local `value_constraints` / `same_period_refs` grammar, and — if
+    `pareto_objective` is given — weight keys matching the stakeholder names,
+    with every constant weight finite, non-negative, and a positive total (the
+    zero-safe scalarization in `collective._weighted_sum` treats an exact-zero
+    weight as a deliberate exclusion, so a non-finite or negative weight, or an
+    all-zero declaration, would silently produce a meaningless or undefined
+    household objective rather than erroring).
+
+    What a collective regime needs but a model-level slot may supply — the
+    per-stakeholder `utility_<s>` functions — is completeness, so
+    `_validate_completeness` checks it once the regimes are finalized at model
+    build. The household argmax runs over whatever action product the regime
+    declares, which may be continuous or empty.
+
+    Features the collective solve does not implement raise `NotImplementedError`:
+    EV1 taste shocks
+    (the collective argmax is the hard household maximum), a nonlinear
+    certainty equivalent (the per-stakeholder continuation is the linear
+    expectation), and any solver other than `GridSearch`.
+
+    Called from `Regime.__post_init__` only when `stakeholders is not None`, so
+    the default singleton path never reaches it.
+    """
+    stakeholders = cast("tuple[str, ...]", regime.stakeholders)
+
+    if regime.taste_shocks is not None:
+        raise NotImplementedError(
+            "EV1 taste shocks on a collective (stakeholder-valued) regime are "
+            "not yet implemented: the collective solve takes the hard household "
+            "argmax of the Pareto-weighted objective, not a smoothed maximum. "
+            "Drop `taste_shocks` on this regime, or model the choice as a "
+            "singleton regime."
+        )
+    # Every non-terminal regime carries a certainty equivalent, and
+    # `LinearExpectation` is the expected-utility default the collective path
+    # implements -- so the test is the CE's type, not whether one is attached.
+    if aggregates_nonlinearly(regime.certainty_equivalent):
+        raise NotImplementedError(
+            "A nonlinear certainty equivalent on a collective "
+            "(stakeholder-valued) regime is not yet implemented: the "
+            "per-stakeholder continuation is the linear expectation "
+            "E[V'^s]. Use `certainty_equivalent=LinearExpectation()` on this "
+            "regime."
+        )
+    if not isinstance(regime.solver, GridSearch):
+        raise NotImplementedError(
+            "Collective (stakeholder-valued) regimes are only implemented for "
+            "the GridSearch solver: the household argmax and per-stakeholder "
+            "value readout run over the full action product. Use "
+            "`solver=GridSearch()` for this regime."
+        )
+    error_messages: list[str] = []
+    error_messages.extend(_collective_value_constraint_errors(regime))
+    error_messages.extend(_stakeholders_tuple_errors(stakeholders))
+    error_messages.extend(_collective_weights_errors(regime, stakeholders))
+
+    if error_messages:
+        raise RegimeInitializationError(format_messages(error_messages))
+
+
+def _stakeholders_tuple_errors(stakeholders: tuple[str, ...]) -> list[str]:
+    """Collect errors for an empty or duplicate-containing `stakeholders` tuple."""
+    if not stakeholders:
+        return ["`stakeholders` must be a non-empty tuple for a collective regime."]
+
+    duplicate_counts = Counter(stakeholders)
+    duplicates = sorted(name for name, count in duplicate_counts.items() if count > 1)
+    if duplicates:
+        return [
+            (
+                f"`stakeholders` must not contain duplicate names; got "
+                f"{stakeholders} (duplicated: {duplicates})."
+            )
+        ]
+    return []
+
+
+def _collective_weights_errors(
+    regime: lcm.regime.Regime, stakeholders: tuple[str, ...]
+) -> list[str]:
+    """Collect errors for a collective regime's `pareto_objective`.
+
+    Weight keys must match `stakeholders`, and a weight declared as a constant
+    must be finite, non-negative, and — across the constants — leave a positive
+    total. The zero-safe scalarization treats an exact-zero weight as a
+    deliberate exclusion, so a non-finite or negative weight, or an all-zero
+    declaration, would silently produce a meaningless or undefined household
+    objective rather than erroring. A weight declared as a function is checked
+    against the parameters it is solved with, where its values exist.
+    """
+    objective = regime.pareto_objective
+    if objective is None:
+        return []
+
+    declared = set(objective.weights)
+    if declared != set(stakeholders):
+        missing = sorted(set(stakeholders) - declared)
+        extra = sorted(declared - set(stakeholders))
+        return [
+            (
+                f"`pareto_objective.weights` weighs {sorted(declared)}, but "
+                f"this regime's stakeholders are {sorted(stakeholders)}: "
+                f"missing {missing}, unknown {extra}."
+            )
+        ]
+
+    constants = {
+        name: float(weight)
+        for name, weight in objective.weights.items()
+        if not callable(weight)
+    }
+    non_finite_or_negative = {
+        name: weight
+        for name, weight in constants.items()
+        if not math.isfinite(weight) or weight < 0
+    }
+    if non_finite_or_negative:
+        return [
+            (
+                "`pareto_objective.weights` must be finite and non-negative "
+                f"for every stakeholder; got {non_finite_or_negative}."
+            )
+        ]
+    if len(constants) == len(objective.weights) and sum(constants.values()) <= 0:
+        return [
+            (
+                "`pareto_objective.weights` must leave a positive total; an "
+                "all-zero declaration leaves the household scalarization "
+                "identically zero for every action, so the argmax is undefined."
+            )
+        ]
+    return []
+
+
+def _collective_value_constraint_errors(regime: lcm.regime.Regime) -> list[str]:
+    """Collect the regime-local errors of `value_constraints` / `same_period_refs`.
+
+    Cross-regime properties — the reference regime's
+    existence, its stakeholder layout, projection coverage, co-activity, and
+    reference cycles — are validated at model processing, where the other
+    regimes are known.
+    """
+    stakeholders = cast("tuple[str, ...]", regime.stakeholders)
+    error_messages: list[str] = []
+
+    if regime.same_period_refs and not regime.value_constraints:
+        error_messages.append(
+            "`same_period_refs` without `value_constraints` has no consumer: "
+            "the reference values are only readable by value-constraint "
+            "predicates. Declare the predicates, or drop the references."
+        )
+
+    invalid_names = [
+        name
+        for name in [*regime.value_constraints, *regime.same_period_refs]
+        if QNAME_DELIMITER in name
+    ]
+    if invalid_names:
+        error_messages.append(
+            f"Value-constraint and reference-value names cannot contain the "
+            f"reserved separator '{QNAME_DELIMITER}': {invalid_names}."
+        )
+
+    # The engine-facing names: a value constraint's own name is the key its
+    # declaration sits under, so reading the declared names would report
+    # every value constraint as colliding with itself.
+    taken = (
+        set(regime.decomposed_functions)
+        | set(regime.decomposed_constraints)
+        | set(regime.states)
+        | set(regime.actions)
+    )
+    colliding = sorted(
+        (set(regime.value_constraints) | set(regime.same_period_refs)) & taken
+    )
+    if colliding:
+        error_messages.append(
+            f"Value-constraint / reference-value name(s) {colliding} collide "
+            "with a function, constraint, state, or action of the regime. "
+            "Reference values enter the predicates as named arguments, so the "
+            "names must be unambiguous."
+        )
+
+    error_messages.extend(_reference_projection_free_param_errors(regime))
+
+    if regime.value_constraints:
+        shadowed_q = sorted({f"Q_{s}" for s in stakeholders} & taken)
+        if shadowed_q:
+            error_messages.append(
+                f"Name(s) {shadowed_q} are reserved for the per-stakeholder "
+                "action values that `value_constraints` predicates read; the "
+                "regime declares a function, constraint, state, or action of "
+                "the same name. Rename it."
+            )
+
+    return error_messages
+
+
+def _reference_projection_free_param_errors(regime: lcm.regime.Regime) -> list[str]:
+    """Reject regime-level reference projections that introduce free parameters.
+
+    A `same_period_refs` projection resolves through the DECLARING regime's DAG
+    and additionally receives that regime's `period` / `age`. Anything else in
+    its signature is supplied by nothing: it never reaches the params template,
+    so the accepted model has no valid parameter assignment. (Inside a
+    `GatedEdge`, extra arguments ARE collected as the source regime's edge
+    parameters, so this rule is regime-level only.)
+
+    Args:
+        regime: The user regime whose references are checked.
+
+    Returns:
+        List of error messages, one per offending projection argument.
+
+    """
+    supplied = (
+        set(regime.decomposed_functions)
+        | set(regime.states)
+        | set(regime.actions)
+        | set(regime.decomposed_constraints)
+        | set(regime.derived_categoricals)
+        | {"period", "age"}
+    )
+    return [
+        f"The projection of reference {ref_name!r} for state "
+        f"'{state_name}' takes argument '{arg}', which the declaring regime "
+        "does not supply. A regime-level reference projection resolves through "
+        "this regime's own DAG and its period/age, and may not introduce a free "
+        "parameter: it would never appear in `get_params_template()`. Compute "
+        f"'{arg}' as a function of the regime, or declare it as a state or "
+        "action."
+        for ref_name, ref in regime.same_period_refs.items()
+        for state_name, func in ref.projection.items()
+        for arg in inspect.signature(func).parameters
+        if arg not in supplied
+    ]
+
+
+def _validate_gated_edges(regime: lcm.regime.Regime) -> None:
+    """Validate a regime's `gated_edges` declarations (regime-local part).
+
+    Checks the properties knowable without the other
+    regimes: the gate is a plain boolean callable (a stochastic, probabilistic
+    gate — a `MarkovTransition` — is not implemented); every declared edge
+    targets one of the regime's reachable transition targets; the legs cover the
+    SOURCE's stakeholder structure (exactly one leg for a singleton source, one
+    per stakeholder for a collective source). Cross-regime properties — the
+    target and fallback regimes exist, the stakeholder names resolve, the
+    projections cover the reference states — are validated at model processing.
+
+    A gated-edge SOURCE is restricted to the `GridSearch` solver with no taste
+    shocks or certainty equivalent: the source reads the folded `Wbar` through
+    the grid-search continuation machinery, which no DC-EGM, taste-shock, or
+    certainty-equivalent source has.
+
+    Called from `Regime.__post_init__` only when `gated_edges` is non-empty, so
+    the default path never reaches it.
+    """
+    _fail_if_gated_edge_source_out_of_scope(regime)
+
+    error_messages: list[str] = []
+    transition_targets = _regime_transition_target_names(regime.transition)
+    source_stakeholders = regime.stakeholders
+
+    for target_name, edge in regime.gated_edges.items():
+        prefix = f"the value-dependent transition into {target_name!r}: "
+        if isinstance(edge.gate, MarkovTransition):
+            error_messages.append(
+                f"{prefix}the gate must be a plain boolean function. A "
+                "`MarkovTransition` (stochastic / probabilistic gate) is not "
+                "implemented — a gated edge routes on a boolean gate."
+            )
+        elif not callable(edge.gate):
+            error_messages.append(f"{prefix}the gate must be a callable.")
+        if transition_targets is not None and target_name not in transition_targets:
+            error_messages.append(
+                f"{prefix}a gated edge must target one of the regime's reachable "
+                f"transition targets {sorted(transition_targets)}; declare the "
+                f"transition into '{target_name}' as well."
+            )
+        if not edge.legs:
+            error_messages.append(f"{prefix}must declare at least one leg.")
+        elif source_stakeholders is None:
+            if len(edge.legs) != 1:
+                error_messages.append(
+                    f"{prefix}a singleton source regime must declare exactly one "
+                    f"leg (got {sorted(edge.legs)})."
+                )
+        elif set(edge.legs) != set(source_stakeholders):
+            error_messages.append(
+                f"{prefix}the legs must be keyed by exactly the source "
+                f"stakeholders {sorted(source_stakeholders)}; got "
+                f"{sorted(edge.legs)}."
+            )
+
+    if error_messages:
+        raise RegimeInitializationError(format_messages(error_messages))
+
+
+def _fail_if_gated_edge_source_out_of_scope(regime: lcm.regime.Regime) -> None:
+    """Reject a gated-edge source outside the GridSearch / no-shock scope."""
+    if not isinstance(regime.solver, GridSearch):
+        raise NotImplementedError(
+            "Gated edges are only implemented for GridSearch source "
+            "regimes: the source reads the folded continuation through the "
+            "grid-search machinery, which a DC-EGM regime does not have. Use "
+            "`solver=GridSearch()`."
+        )
+    if regime.taste_shocks is not None:
+        raise NotImplementedError(
+            "Gated edges on a taste-shock source regime are not implemented."
+        )
+    if aggregates_nonlinearly(regime.certainty_equivalent):
+        raise NotImplementedError(
+            "Gated edges on a certainty-equivalent source regime are not implemented."
+        )
+
+
+def _regime_transition_target_names(transition: object) -> set[str] | None:
+    """Return the reachable target regime names of a regime transition, if known.
+
+    A per-target dict names them directly; a bare callable or `MarkovTransition`
+    resolves its target only at runtime, so returns `None` (skip the membership
+    check). `Phased` uses its solve variant.
+    """
+    from lcm.phased import Phased  # noqa: PLC0415
+
+    if isinstance(transition, Phased):
+        transition = transition.solve
+    if isinstance(transition, Mapping):
+        return {str(key) for key in cast("Mapping[str, object]", transition)}
+    return None
+
+
 def _validate_mapping_contents(regime: lcm.regime.Regime) -> None:
     """Exhaustively check key/value types of `regime`'s mapping fields.
 
@@ -118,11 +462,13 @@ def _validate_mapping_contents(regime: lcm.regime.Regime) -> None:
             attr_name="actions", mapping=regime.actions, allow_phase_variants=False
         ),
         *_callable_mapping_errors(
-            attr_name="functions", mapping=regime.functions, allow_phase_variants=True
+            attr_name="functions",
+            mapping=regime.decomposed_functions,
+            allow_phase_variants=True,
         ),
         *_callable_mapping_errors(
             attr_name="constraints",
-            mapping=regime.constraints,
+            mapping=regime.decomposed_constraints,
             allow_phase_variants=False,
         ),
     ]
@@ -142,7 +488,10 @@ def _validate_logical_consistency(regime: lcm.regime.Regime) -> None:
     """
     error_messages: list[str] = []
 
-    all_function_names = [*regime.constraints.keys(), *regime.functions.keys()]
+    all_function_names = [
+        *regime.decomposed_constraints.keys(),
+        *regime.decomposed_functions.keys(),
+    ]
     invalid_function_names = [
         name for name in all_function_names if QNAME_DELIMITER in name
     ]
@@ -174,13 +523,16 @@ def _validate_logical_consistency(regime: lcm.regime.Regime) -> None:
 
     error_messages.extend(_validate_active(regime.active))
     error_messages.extend(_state_transition_grammar_errors(regime))
-    error_messages.extend(_regime_transition_grammar_errors(regime.transition))
+    error_messages.extend(_joint_transition_grammar_errors(regime))
+    error_messages.extend(
+        _regime_transition_grammar_errors(regime.decomposed_transition)
+    )
     error_messages.extend(
         _age_specialized_scope_errors(
-            transition=regime.transition,
+            transition=regime.decomposed_transition,
             state_transitions=regime.state_transitions,
-            functions=regime.functions,
-            constraints=regime.constraints,
+            functions=regime.decomposed_functions,
+            constraints=regime.decomposed_constraints,
             terminal=regime.terminal,
         )
     )
@@ -403,14 +755,26 @@ def _regime_transition_grammar_errors(transition: object) -> list[str]:
     return error_messages
 
 
-def _validate_completeness(regime: lcm.regime.Regime) -> list[str]:
+def _validate_completeness(
+    *, regime: lcm.regime.Regime, reserved_value_columns: frozenset[str]
+) -> list[str]:
     """Collect completeness errors for a finalized (post-merge) regime.
+
+    Args:
+        regime: The finalized regime to check.
+        reserved_value_columns: The `value_<stakeholder>` names published by
+            the model's collective regimes — the whole model's, not this
+            regime's, because the published frame is one table over all of
+            them.
 
     These properties hold only for the regime the model actually runs —
     a bare user `Regime` may legitimately lack them until model-level slots
     are merged in:
 
-    - a `utility` entry in `functions`
+    - a `utility` entry in `functions` — a per-stakeholder `utility_<s>` for
+      each stakeholder of a collective regime
+    - no declaration under a name any of the model's collective regimes
+      publishes as a `value_<stakeholder>` column
     - state-transition coverage (every non-process state has a law; terminal
       regimes have none; identity laws refer to existing states)
     - no state/action name overlap
@@ -419,11 +783,30 @@ def _validate_completeness(regime: lcm.regime.Regime) -> list[str]:
     """
     error_messages: list[str] = []
 
-    if "utility" not in regime.functions:
+    if regime.stakeholders is not None:
+        # A collective regime supplies a per-stakeholder `utility_<s>` in place
+        # of a single `utility`.
+        missing = [
+            s
+            for s in regime.stakeholders
+            if f"utility_{s}" not in regime.decomposed_functions
+        ]
+        if missing:
+            error_messages.append(
+                "A collective regime must provide a per-stakeholder utility "
+                f"function for each stakeholder. Missing: "
+                f"{[f'utility_{s}' for s in missing]}.",
+            )
+    elif "utility" not in regime.decomposed_functions:
         error_messages.append(
             "A 'utility' function must be provided in the functions dictionary.",
         )
 
+    error_messages.extend(
+        _published_value_column_errors(
+            regime=regime, reserved_value_columns=reserved_value_columns
+        )
+    )
     error_messages.extend(_state_transition_coverage_errors(regime))
     error_messages.extend(_validate_function_output_grid_indexing(regime))
     error_messages.extend(_validate_distributed_grids(regime))
@@ -438,6 +821,40 @@ def _validate_completeness(regime: lcm.regime.Regime) -> list[str]:
         )
 
     return error_messages
+
+
+def _published_value_column_errors(
+    *, regime: lcm.regime.Regime, reserved_value_columns: frozenset[str]
+) -> list[str]:
+    """Collect errors for declarations that shadow a published value column.
+
+    A collective regime publishes one `value_<stakeholder>` column per
+    stakeholder, unconditionally, and the published frame is a single table
+    over every regime — so a singleton regime standing beside a collective one
+    claims the same column with a state of that name. A declaration that
+    collides neither wins the column nor errors at publication: the frame
+    carries the stakeholder's value under that name twice and the declared
+    variable is absent. The collision is refused here, where the name is still
+    the author's, and against the model's stakeholders rather than the
+    declaring regime's.
+    """
+    declared = (
+        set(regime.states)
+        | set(regime.actions)
+        | set(regime.functions)
+        | set(regime.constraints)
+        | set(regime.derived_categoricals)
+    )
+    colliding = sorted(reserved_value_columns & declared)
+    if not colliding:
+        return []
+    return [
+        (
+            "A collective regime publishes a `value_<stakeholder>` column for "
+            "each of its stakeholders, so those names are reserved. Rename the "
+            f"following declarations: {colliding}."
+        ),
+    ]
 
 
 def _validate_distributed_grids(regime: lcm.regime.Regime) -> list[str]:
@@ -599,7 +1016,7 @@ def _validate_function_output_grid_indexing(
     if it ever produces false positives, prefer deleting it over hardening
     it to chase every way the pattern can hide.
     """
-    function_output_names = set(regime.functions)
+    function_output_names = set(regime.decomposed_functions)
     discrete_grid_names = (
         {name for name, grid in regime.states.items() if isinstance(grid, DiscreteGrid)}
         | {
@@ -619,7 +1036,11 @@ def _validate_function_output_grid_indexing(
     # whatever it computed (typically an array indexable by `grid`) and
     # the consumer pattern is correct.
     function_inputs = _function_input_names(
-        {name: func for name, func in regime.functions.items() if func is not None}
+        {
+            name: func
+            for name, func in regime.decomposed_functions.items()
+            if func is not None
+        }
     )
     consumers = _collect_indexing_consumers(regime)
 
@@ -675,11 +1096,11 @@ def _collect_indexing_consumers(
     `Phased`; the regime transition contributes itself.
     """
     consumers: list[tuple[str, Callable]] = []
-    for name, func in regime.functions.items():
+    for name, func in regime.decomposed_functions.items():
         if func is None:
             continue
         consumers.extend((name, variant) for variant in _function_variants(func))
-    for name, constraint in regime.constraints.items():
+    for name, constraint in regime.decomposed_constraints.items():
         if constraint is None:
             continue
         consumers.extend((name, variant) for variant in _function_variants(constraint))
@@ -750,8 +1171,94 @@ def _state_transition_grammar_errors(regime: lcm.regime.Regime) -> list[str]:
     return error_messages
 
 
+def _joint_transition_grammar_errors(  # noqa: C901, PLR0912
+    regime: lcm.regime.Regime,
+) -> list[str]:
+    """Validate locally knowable joint-kernel grammar and edge scope."""
+    if not regime.joint_transitions:
+        return []
+    if regime.terminal:
+        return ["Terminal regimes must have empty joint_transitions."]
+
+    error_messages: list[str] = []
+    reachable = _regime_transition_target_names(regime.transition)
+    # A joint node's name may not clash with anything already spoken for,
+    # and that is both what the author wrote and what the engine binds: a
+    # value constraint's own key is a live name, and so is each
+    # stakeholder's `utility_<s>`. Neither set contains the other.
+    declared_names = (
+        set(regime.states)
+        | set(regime.actions)
+        | set(regime.functions)
+        | set(regime.decomposed_functions)
+        | set(regime.constraints)
+        | set(regime.decomposed_constraints)
+        | set(regime.derived_categoricals)
+    )
+    reserved_prefixes = ("next_", "support_", "weight_", "key_")
+    for target_name, kernels in regime.joint_transitions.items():
+        if not isinstance(target_name, str):
+            error_messages.append(
+                f"joint_transitions target key {target_name!r} must be a string."
+            )
+            continue
+        if reachable is not None and target_name not in reachable:
+            error_messages.append(
+                "Joint-transition targets must be reachable under the declared "
+                f"regime transition {sorted(reachable)}; got '{target_name}'."
+            )
+        if not isinstance(kernels, Mapping) or not kernels:
+            error_messages.append(
+                f"joint_transitions['{target_name}'] must be a nonempty mapping "
+                "from node names to `JointTransition` declarations."
+            )
+            continue
+        for kernel_name, raw in kernels.items():
+            prefix = f"joint_transitions['{target_name}'][{kernel_name!r}]"
+            if not isinstance(kernel_name, str):
+                error_messages.append(f"{prefix}: the node name must be a string.")
+            elif QNAME_DELIMITER in kernel_name:
+                error_messages.append(
+                    f"{prefix}: node names cannot contain the reserved separator "
+                    f"'{QNAME_DELIMITER}'."
+                )
+            elif (
+                reserved_prefix := next(
+                    (
+                        candidate
+                        for candidate in reserved_prefixes
+                        if kernel_name.startswith(candidate)
+                    ),
+                    None,
+                )
+            ) is not None:
+                error_messages.append(
+                    f"{prefix}: the joint node name {kernel_name!r} uses reserved "
+                    f"transition prefix {reserved_prefix!r}."
+                )
+            else:
+                colliding = sorted(
+                    {kernel_name, f"support_{kernel_name}"} & declared_names
+                )
+                if colliding:
+                    error_messages.append(
+                        f"{prefix}: the joint node name {kernel_name!r} collides "
+                        "with source state, action, function, constraint, derived "
+                        f"categorical, or synthesized support name(s): {colliding}."
+                    )
+            variants = (raw.solve, raw.simulate) if isinstance(raw, Phased) else (raw,)
+            for variant in variants:
+                if not isinstance(variant, JointTransition):
+                    error_messages.append(
+                        f"{prefix}: each value must be a `JointTransition`, or "
+                        "`Phased` wrapping one for each phase."
+                    )
+                    break
+    return error_messages
+
+
 def _state_transition_coverage_errors(regime: lcm.regime.Regime) -> list[str]:
-    """Validate that `state_transitions` covers exactly the regime's states."""
+    """Validate that ordinary or joint laws cover the regime's states."""
     error_messages: list[str] = []
 
     process_names: set[ProcessName] = {
@@ -788,7 +1295,15 @@ def _state_transition_coverage_errors(regime: lcm.regime.Regime) -> list[str]:
             )
         return error_messages
 
-    missing = non_process_names - set(regime.state_transitions)
+    joint_output_names = {
+        output_name
+        for kernels in regime.joint_transitions.values()
+        for raw in kernels.values()
+        for joint in ((raw.solve, raw.simulate) if isinstance(raw, Phased) else (raw,))
+        if isinstance(joint, JointTransition)
+        for output_name in joint.outputs
+    }
+    missing = non_process_names - set(regime.state_transitions) - joint_output_names
     if missing:
         error_messages.append(
             f"Every non-process state must have an entry in state_transitions. "
@@ -884,7 +1399,7 @@ def _law_has_free_parameter(law: object, regime: lcm.regime.Regime) -> bool:
     variables = (
         set(regime.states)
         | set(regime.actions)
-        | set(regime.functions)
+        | set(regime.decomposed_functions)
         | {f"next_{state_name}" for state_name in regime.states}
         | {f"next_{state_name}" for state_name in regime.state_transitions}
         | {"period", "age", "E_next_V"}
@@ -975,6 +1490,484 @@ def _state_transition_variants(value: object) -> tuple[tuple[object, str], ...]:
     if isinstance(value, Phased):
         return ((value.solve, " solve variant"), (value.simulate, " simulate variant"))
     return ((value, ""),)
+
+
+def _fold_state_names(regime: lcm.regime.Regime) -> tuple[StateName, ...]:
+    """Return the regime's IID-process states declared `fold=True`."""
+    return tuple(name for name, grid in regime.states.items() if _is_folded(grid))
+
+
+def _is_folded(grid: object) -> bool:
+    """Whether a state's grid is an IID process declaring `fold=True`."""
+    return isinstance(grid, _IIDProcess) and grid.fold
+
+
+def _flatten_transition_callables(value: object) -> list[Callable]:
+    """Return every callable reachable from a `state_transitions` / `transition` entry.
+
+    Unwraps `Phased` (both variants) and per-target `Mapping`s; `MarkovTransition`
+    and `_IdentityTransition` are themselves callables with an introspectable
+    signature (`MarkovTransition` sets `__wrapped__`; `_IdentityTransition` sets
+    `__signature__`), so `inspect.signature` resolves them correctly downstream.
+    """
+    if value is None:
+        return []
+    if isinstance(value, Phased):
+        return _flatten_transition_callables(
+            value.solve
+        ) + _flatten_transition_callables(value.simulate)
+    if isinstance(value, Mapping):
+        out: list[Callable] = []
+        for entry in value.values():
+            out.extend(_flatten_transition_callables(entry))
+        return out
+    if callable(value):
+        return [cast("Callable", value)]
+    return []
+
+
+def _fold_dependency_closure(
+    *, roots: tuple[Callable, ...], resolution_table: Mapping[str, Callable | Phased]
+) -> set[str]:
+    """Return every argument name in the transitive DAG ancestry of `roots`.
+
+    Walks argument names of each root; whenever a name matches an entry of
+    `resolution_table` (an ordinary regime function or constraint), its
+    variants' argument names are pulled in too, recursively. Leaf names
+    (states, actions, params, `period`/`age`) terminate the walk. This is the
+    same "does X depend on Y" question `_find_function_output_grid_indexing`
+    answers by AST-walking; here a signature walk suffices because the
+    question is about *argument names*, not source text.
+    """
+    seen_names: set[str] = set()
+    stack: list[Callable] = list(roots)
+    visited_ids: set[int] = set()
+    while stack:
+        func = stack.pop()
+        if id(func) in visited_ids:
+            continue
+        visited_ids.add(id(func))
+        try:
+            params = inspect.signature(func).parameters
+        except ValueError, TypeError:
+            continue
+        for name in params:
+            if name in seen_names:
+                continue
+            seen_names.add(name)
+            entry = resolution_table.get(name)
+            if entry is not None:
+                stack.extend(_function_variants(entry))
+    return seen_names
+
+
+def _validate_fold_declarations(regime: lcm.regime.Regime) -> None:
+    """Reject `fold=True` IID-process declarations the fold machinery can't support.
+
+    A fold integrates a shock's node axis into the stored value by quadrature
+    immediately after the period's max-over-actions / collective readout, so
+    nothing may condition on which node was realized beyond that point:
+
+    - a same-period gate / value-constraint predicate that reads the
+      shock's realized value — these read live per-node values to decide a
+      within-period household choice or a dissolution/consent gate, which the
+      fold has already averaged away by the time any *other* regime's
+      same-period logic runs;
+    - a next-period transition (state or regime) that reads the shock's
+      realized value — a folded shock is integrated out, so no downstream
+      state may depend on which node was realized;
+    - EV1 `taste_shocks` on the same regime — the taste-shock reduction is a
+      separate closed-form max over discrete actions; the two reductions are
+      not composed;
+    - a nonlinear `certainty_equivalent` on the same regime — the fold
+      reduction is always the ARITHMETIC `zero_safe_average`, exact only for
+      the linear expectation `E[V']`; a nonlinear certainty equivalent needs
+      the shock's node axis intact to apply its own aggregator;
+    - any solver other than `GridSearch` — the fold reduction is implemented
+      only in the grid-search max-Q-over-a kernel;
+    - a process with runtime-supplied distribution params — the fold weights
+      are computed once at kernel-build time from the process's own
+      (fully-specified) `compute_transition_probs`.
+
+    A persistent (non-IID) process has no `fold` field at all, so `fold=True`
+    on one is rejected by the type system before this validator ever runs.
+
+    A folded state redeclared in a regime reachable from this one — including
+    itself, so a shock redrawn every period — is supported: no solve-phase
+    continuation edge is built for a folded process, so nothing tries to
+    interpolate an axis the stored value no longer has.
+    """
+    fold_names = _fold_state_names(regime)
+    if not fold_names:
+        return
+
+    error_messages = [
+        *_fold_scope_errors(regime, fold_names),
+        *_fold_same_period_read_errors(regime, fold_names),
+        *_fold_transition_read_errors(regime, fold_names),
+    ]
+    if error_messages:
+        raise RegimeInitializationError(format_messages(error_messages))
+
+
+def _fail_if_collective_regime_folds(
+    *, user_regimes: Mapping[RegimeName, lcm.regime.Regime]
+) -> None:
+    """Reject a collective regime that declares a folded state.
+
+    A collective regime publishes a dissolution flag beside its value: where no
+    action satisfies every stakeholder's participation constraint it flags the
+    cell and writes `-inf`, a sentinel meaning "not sustainable, take the
+    outside option" that a gated edge resolves against the outside option. That
+    sentinel is not a number on the household's own scale, and quadrature over
+    it is not an expectation — `w * -inf` is `-inf` for any positive weight, so
+    one dissolving node sets the whole sum to `-inf`, while the flag is set by
+    any dissolving node at all. A state that dissolves with small probability
+    would be stored as dissolving with certainty.
+
+    `Regime.stakeholders` states the same refusal, so an author meets it both
+    where the combination is declared and where it is caught. The regime name
+    lives in the model's `regimes` dict rather than on the regime, so the check
+    runs at model build rather than in the regime-local
+    `_validate_fold_declarations` — which lets the message name the regime the
+    author has to edit.
+
+    Args:
+        user_regimes: Mapping of regime names to user-provided `Regime`
+            instances.
+
+    Raises:
+        ModelInitializationError: Naming every collective regime that folds,
+            together with the folded state(s) it declares.
+
+    """
+    error_messages = [
+        f"Regime '{regime_name}' declares stakeholders "
+        f"{list(regime.stakeholders)} and fold=True on "
+        f"state(s) {sorted(fold_names)}. Folding a shock out of a collective "
+        "regime's stored value is not supported: a cell where no action "
+        "satisfies every stakeholder's participation constraint carries -inf "
+        "as a not-sustainable sentinel, which a gated edge resolves to the "
+        "outside option rather than reading as a value. Averaging that "
+        "sentinel over the shock's nodes would price a household that "
+        "dissolves at one node as dissolving at all of them. Drop `fold=True` "
+        "on the shock, or drop `stakeholders` on the regime."
+        for regime_name, regime in user_regimes.items()
+        if regime.stakeholders is not None and (fold_names := _fold_state_names(regime))
+    ]
+    if error_messages:
+        raise ModelInitializationError(format_messages(error_messages))
+
+
+def _fail_if_a_folded_conditioner_can_move(
+    *, user_regimes: Mapping[RegimeName, lcm.regime.Regime]
+) -> None:
+    """Reject a folded conditioned shock whose conditioner moves on the way in.
+
+    A folded shock that is a state at period `t` was realized between `t - 1`
+    and `t`, so `StateConditioned` dates its quadrature row at the conditioning
+    state's `t - 1` value. The fold gathers that row along the conditioning
+    state's axis of the array it reduces, which is the `t` value. The two are
+    the same number only while the conditioner cannot change across that step.
+
+    The regime declaring the fold cannot settle this alone: a regime that
+    transitions into it may hand over a different category, leaving the folding
+    regime's own law an identity while the value still changed. Every regime
+    that can reach the folding one is therefore checked here.
+
+    Raises:
+        ModelInitializationError: If any regime reaching a folding regime can
+            move that fold's conditioning state.
+    """
+    error_messages: list[str] = []
+    for regime_name, regime in user_regimes.items():
+        for name in _fold_state_names(regime):
+            conditioned = cast("_IIDProcess", regime.states[name]).state_conditioned
+            if conditioned is None:
+                continue
+            movers = sorted(
+                source_name
+                for source_name, source in user_regimes.items()
+                if regime_name in _reachable_regime_targets(source, user_regimes)
+                and _state_law_can_move(
+                    regime=source, state_name=conditioned.on, toward=regime_name
+                )
+            )
+            if not movers:
+                continue
+            error_messages.append(
+                f"fold=True on state {name!r} of regime {regime_name!r} is not "
+                f"supported together with a conditioning state that can move: "
+                f"{name!r} draws its scale from {conditioned.on!r} as of the "
+                f"period BEFORE the shock is realized, while regime(s) "
+                f"{movers} reach {regime_name!r} and give {conditioned.on!r} a "
+                f"law of motion. The fold gathers that state's row along the "
+                f"axis it is reducing, which is one period later, so a subject "
+                f"arriving with a changed category would be priced against a "
+                f"distribution the declared transition never draws from. "
+                f"Declare {conditioned.on!r} with "
+                f"`fixed_transition({conditioned.on!r})` in those regimes, or "
+                f"drop `fold=True`."
+            )
+    if error_messages:
+        raise ModelInitializationError(format_messages(error_messages))
+
+
+def _state_law_can_move(
+    *, regime: lcm.regime.Regime, state_name: StateName, toward: RegimeName
+) -> bool:
+    """Whether this regime moves `state_name` on the edge into `toward`.
+
+    A per-target law is read at its `toward` entry alone: a regime that moves the
+    state toward one target and holds it fixed toward another says nothing about
+    the edge in question, and refusing it would be an over-refusal.
+    """
+    declared = regime.state_transitions.get(state_name)
+    variants = (
+        (declared.solve, declared.simulate)
+        if isinstance(declared, Phased)
+        else (declared,)
+    )
+    laws = [
+        law
+        for variant in variants
+        for law in _flatten_transition_callables(
+            variant.get(toward) if isinstance(variant, Mapping) else variant
+        )
+    ]
+    return bool(laws) and not all(
+        getattr(law, "_is_auto_identity", False) for law in laws
+    )
+
+
+def _reachable_regime_targets(
+    regime: lcm.regime.Regime, user_regimes: Mapping[RegimeName, lcm.regime.Regime]
+) -> frozenset[RegimeName]:
+    """The regimes this one's transition can structurally reach.
+
+    A per-target dict declares its own key set. A ``Phased`` transition is
+    classified through either already-validated variant, whose form and target
+    keys agree by the phase grammar. Every remaining form is coarse and reaches
+    every regime in the model.
+    """
+    transition = regime.transition
+    if transition is None:
+        return frozenset()
+    if isinstance(transition, Phased):
+        # The phase grammar requires both variants to have the same form and,
+        # for per-target mappings, the same target keys. Resolve either side
+        # before classifying the transition; treating the outer marker as a
+        # coarse callable would falsely connect this source to every regime.
+        transition = transition.solve
+    if isinstance(transition, Mapping):
+        return frozenset(transition)
+    return frozenset(user_regimes)
+
+
+def _fold_scope_errors(
+    regime: lcm.regime.Regime, fold_names: tuple[StateName, ...]
+) -> list[str]:
+    """Collect the regime-wide (not DAG-dependency) fold restrictions."""
+    error_messages: list[str] = []
+    runtime_params = [
+        name
+        for name in fold_names
+        if cast("_IIDProcess", regime.states[name]).params_to_pass_at_runtime
+    ]
+    if runtime_params:
+        error_messages.append(
+            f"fold=True on state(s) {sorted(runtime_params)} is not yet "
+            "supported together with runtime-supplied distribution params: "
+            "the fold weights are computed once, at kernel-build time, from "
+            "the process's own (fully-specified) `compute_transition_probs`. "
+            "Supply the distribution params directly on the process, or drop "
+            "`fold=True`."
+        )
+    if regime.taste_shocks is not None:
+        error_messages.append(
+            f"fold=True on state(s) {sorted(fold_names)} is not supported "
+            "together with EV1 `taste_shocks` on the same regime: the "
+            "taste-shock reduction is a closed-form max over discrete "
+            "actions, and folding an IID state is a separate quadrature "
+            "reduction over a state axis — the two reductions are not "
+            "composed."
+        )
+    if aggregates_nonlinearly(regime.certainty_equivalent):
+        error_messages.append(
+            f"fold=True on state(s) {sorted(fold_names)} is not supported "
+            "together with an explicit `certainty_equivalent`: the fold "
+            "reduction (`_wrap_with_fold_reduction`) averages the shock's "
+            "node axis ARITHMETICALLY, which is exact only for the LINEAR "
+            "expectation E[V']. A certainty equivalent needs the shock's node "
+            "axis intact to apply its own aggregator instead. Drop "
+            "`fold=True`, or drop `certainty_equivalent`. Note this rejects "
+            "EVERY non-None `certainty_equivalent`, including one that is "
+            "semantically linear (e.g. a parameter-free identity "
+            "`QuasiArithmeticMean`, which is equivalent to leaving it None). "
+            "That is a deliberate over-rejection, not a claim that your "
+            "aggregator is nonlinear: admitting the linear ones would mean "
+            "proving linearity of an arbitrary user aggregator here."
+        )
+    if not isinstance(regime.solver, GridSearch):
+        error_messages.append(
+            f"fold=True on state(s) {sorted(fold_names)} is only implemented "
+            "for the `GridSearch` solver: the fold reduction runs inside the "
+            "grid-search max-Q-over-a kernel. Use `solver=GridSearch()`, or "
+            "drop `fold=True`."
+        )
+    error_messages.extend(_moving_conditioner_errors(regime, fold_names))
+    return error_messages
+
+
+def _moving_conditioner_errors(
+    regime: lcm.regime.Regime, fold_names: tuple[StateName, ...]
+) -> list[str]:
+    """Reject a folded conditioned shock whose conditioning state has a law.
+
+    `StateConditioned` dates the conditioning value at `t`: the scale of the
+    innovation realized between `t` and `t + 1` is set by where the subject is
+    at `t`. The fold gathers one row per category along the conditioning
+    state's own axis of the value array it reduces, which is that state read
+    one period later. While the conditioner cannot change the two coincide; as
+    soon as it has a law of motion they do not, and the folded value prices a
+    distribution the declared transition never draws from.
+
+    This is the regime-local half of the rule. A conditioner moved by a regime
+    that transitions into this one is caught at model build, where the reaching
+    regimes are known.
+    """
+    error_messages: list[str] = []
+    for name in fold_names:
+        conditioned = cast("_IIDProcess", regime.states[name]).state_conditioned
+        if conditioned is None:
+            continue
+        laws = _flatten_transition_callables(
+            regime.state_transitions.get(conditioned.on)
+        )
+        if not laws:
+            # The conditioner's law may be a model-level broadcast that has not
+            # been merged yet, so silence here is not evidence that it cannot
+            # move. The model-level guard settles it once the merged laws are
+            # known.
+            continue
+        if all(getattr(law, "_is_auto_identity", False) for law in laws):
+            continue
+        error_messages.append(
+            f"fold=True on state {name!r} is not supported together with a "
+            f"conditioning state that can move: {name!r} draws its scale from "
+            f"{conditioned.on!r} as of the period BEFORE the shock is "
+            f"realized, while the fold gathers that state's row along the "
+            f"axis of the period it is reducing. Those are the same value "
+            f"only while {conditioned.on!r} cannot change, so a law of motion "
+            f"on it would price a distribution the transition never draws "
+            f"from. Declare {conditioned.on!r} with "
+            f"`fixed_transition({conditioned.on!r})`, or drop `fold=True`."
+        )
+    return error_messages
+
+
+def _fold_resolution_table(regime: lcm.regime.Regime) -> dict[str, Callable | Phased]:
+    """Regime functions/constraints usable as DAG-ancestor resolution targets."""
+    return {
+        **{k: v for k, v in regime.decomposed_constraints.items() if v is not None},
+        **{k: v for k, v in regime.decomposed_functions.items() if v is not None},
+    }
+
+
+def _fold_same_period_roots(regime: lcm.regime.Regime) -> list[tuple[str, Callable]]:
+    """Named same-period gate / value-constraint / reference-projection roots.
+
+    Deliberately EXCLUDES this regime's own OUTBOUND `gated_edges[...].gate`
+    and `gated_edges[...].gate_refs[...]` projections: a
+    `GatedEdge`'s `gate` and its `gate_refs` projections are compiled and
+    evaluated on the TARGET regime's grid/DAG
+    (`_attach_gated_edge_folds`/`_resolve_gated_edge`), never on this
+    (source) regime's own — so an argument name they declare has no
+    relationship to a state THIS regime folds, even when the names happen to
+    collide (e.g. both regimes declare a `wage_shock`). Walking them here as
+    if they were source-local reads produced false positives: a source
+    folding a state whose name a target-grid gate merely reuses was
+    incorrectly rejected. The genuine cross-regime hazard — this regime
+    itself being read nodewise as a gated-edge target, leg fallback, or
+    same-period reference — is the now-COMPLETE
+    `_fail_if_folded_regime_is_same_period_endpoint` guard in
+    `regime_building/processing.py`, which correctly checks the TARGET side
+    of the very same declarations. `value_constraints` and
+    `same_period_refs` stay as roots here: both are evaluated on THIS
+    (source) regime's own grid/DAG, so a source-local name collision there
+    is a real same-period read of this regime's own fold name.
+    """
+    roots: list[tuple[str, Callable]] = []
+    for name, predicate in regime.value_constraints.items():
+        roots.extend(
+            (f"constraint {name!r}", variant)
+            for variant in _function_variants(predicate)
+        )
+    for ref_name, ref in regime.same_period_refs.items():
+        roots.extend(
+            (f"reference {ref_name!r}", func) for func in ref.projection.values()
+        )
+    return roots
+
+
+def _fold_same_period_read_errors(
+    regime: lcm.regime.Regime, fold_names: tuple[StateName, ...]
+) -> list[str]:
+    """Reject a fold name read by a same-period gate / value-constraint."""
+    resolution_table = _fold_resolution_table(regime)
+    error_messages: list[str] = []
+    for label, func in _fold_same_period_roots(regime):
+        hit = _fold_names_ordered_intersection(
+            fold_names,
+            _fold_dependency_closure(roots=(func,), resolution_table=resolution_table),
+        )
+        if hit:
+            error_messages.append(
+                f"fold=True on state(s) {hit} conflicts with {label}, which "
+                "reads the shock's realized value: a same-period gate / "
+                "value-constraint / reference projection needs the unfolded "
+                "per-node value, but a folded state's node axis is "
+                "averaged away before the period's value is published. Drop "
+                "`fold=True` on the shock, or stop reading it there."
+            )
+    return error_messages
+
+
+def _fold_transition_read_errors(
+    regime: lcm.regime.Regime, fold_names: tuple[StateName, ...]
+) -> list[str]:
+    """Reject a fold name read by a next-period state / regime transition."""
+    transition_roots: list[Callable] = []
+    for value in regime.state_transitions.values():
+        transition_roots.extend(_flatten_transition_callables(value))
+    transition_roots.extend(_flatten_transition_callables(regime.decomposed_transition))
+
+    resolution_table = _fold_resolution_table(regime)
+    transition_hit: set[str] = set()
+    for func in transition_roots:
+        transition_hit |= _fold_dependency_closure(
+            roots=(func,), resolution_table=resolution_table
+        )
+    transition_hit &= set(fold_names)
+    if not transition_hit:
+        return []
+    return [
+        (
+            f"fold=True on state(s) {sorted(transition_hit)} conflicts with a "
+            "next-period transition that reads the shock's realized value: a "
+            "folded shock is integrated out at solve time, so no downstream "
+            "state or regime transition may condition on which node was "
+            "realized. Drop `fold=True`, or stop conditioning the transition "
+            "on it."
+        )
+    ]
+
+
+def _fold_names_ordered_intersection(
+    fold_names: tuple[StateName, ...], other: set[str]
+) -> list[StateName]:
+    """Return `fold_names` filtered to `other`, preserving `fold_names`' order."""
+    return [name for name in fold_names if name in other]
 
 
 def _validate_per_target_dict(

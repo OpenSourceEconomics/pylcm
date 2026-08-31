@@ -9,7 +9,10 @@ from _lcm.regime_building.next_state import (
     get_next_state_function_for_simulation,
     get_next_state_function_for_solution,
 )
-from _lcm.regime_building.processing import process_regimes
+from _lcm.regime_building.processing import (
+    _build_transition_plans,
+    process_regimes,
+)
 from lcm import LinearAggregator, LinearExpectation
 from lcm.ages import AgeGrid
 from lcm.typing import ContinuousState, ScalarInt
@@ -96,7 +99,17 @@ def test_get_next_state_function_with_simulate_target():
         transitions=transitions,  # ty: ignore[invalid-argument-type]
         functions=functions,  # ty: ignore[invalid-argument-type]
         all_grids=all_grids,
-        transition_laws=MappingProxyType({}),
+        transition_plans=_build_transition_plans(
+            source_regime_name="source",
+            transitions=transitions,  # ty: ignore[invalid-argument-type]
+            processed_functions=functions,
+            all_grids=all_grids,
+            entered_processes=frozenset(),
+            explicit_entry_processes=frozenset(),
+            support_index_processes=frozenset(),
+            joint_transitions={},
+            phase_name="simulation",
+        ),
     )
 
     got = got_func(state=jnp.array([1.0, 2.0]))

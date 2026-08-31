@@ -1,0 +1,123 @@
+---
+title: Resource contract for collective and gated models
+---
+
+# Resource contract for collective and gated models
+
+A collective regime and a value-dependent transition each buy something a singleton
+model does not have, and each costs something a singleton model does not pay. This page
+names the workloads those costs are measured on, says which axis each one is allowed to
+grow along, and states what a regression is.
+
+It is a contract, not a report: the numbers live in the ASV history, and what is written
+down here is the *shape* each cost is allowed to have. A change that moves a level is
+reviewed against the history; a change that moves an **order** is a defect whatever the
+level.
+
+## The workloads
+
+All of them are in `benchmarks/asv/bench_collective_household.py`. The first six run
+over the marriage market of `lcm_examples.collective_household`: two singles who marry
+under mutual consent, a household with a participation constraint on each partner, and a
+dissolution edge keyed by the continuing household. `ReferenceChainSolve` is not that
+model — it builds a synthetic chain of collective links with no gated edge, no consent
+and no dissolution, so that reference depth is the only thing varying.
+
+| Workload                    | Class                                                         | What it isolates                                                                                                                                |
+| --------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Model construction          | `CollectiveHouseholdConstruct`                                | The phase scan, the lowering of the collective declarations, and per-edge parameter discovery, with nothing traced or compiled.                 |
+| First-solve assembly        | `CollectiveHouseholdSolve.track_compilation_time`             | A whole first `solve()`: tracing, lowering, compiling-or-loading every kernel and fold, AND running the backward induction. See the note below. |
+| Warm solve                  | `CollectiveHouseholdSolve.time_execution`                     | What an estimation loop pays per parameter vector.                                                                                              |
+| Host memory, solve          | `CollectiveHouseholdSolve.peakmem_execution`                  | Resident peak while backward induction runs.                                                                                                    |
+| Device memory, solve        | `CollectiveHouseholdSolveGpuPeakMem`                          | Device peak on the same workload.                                                                                                               |
+| Simulation over cohort size | `CollectiveHouseholdSimulate`, `n_subjects ∈ {1e3, 1e4, 1e5}` | Routing: one gate evaluation per edge per period over the whole population.                                                                     |
+| Transitive reference depth  | `ReferenceChainSolve`, `depth ∈ {1, 2, 4, 8}`                 | The closure a value constraint opens: link `k` reads link `k-1` in the same period.                                                             |
+
+## The budgets
+
+Each budget is an **order**, because that is what a benchmark suite can defend across
+machines and backends. A level is defended by the ASV history on one machine.
+
+- **Model construction** is `O(regimes × phases × declarations)` and involves no device
+  work. It is allowed to grow with the number of declarations a model makes and with
+  nothing else. Construction that grew with a *grid* size would mean a grid was
+  materialized during the scan.
+- **First-solve assembly** is `O(regimes × periods)` programs plus `O(edges × periods)`
+  folds. It contains no gate evaluator: those are compiled on the simulate side, when a
+  declared `Model(n_subjects=N)` matches the first `simulate()` call, and this workload
+  only solves. Nothing here sets `n_subjects`, so the ahead-of-time path is deliberately
+  outside the contract's measured surface.
+- **Warm solve** is `O(periods × regimes × cells)`, the same order as a singleton model
+  of the same total grid size. A collective regime multiplies the cell count by its
+  stakeholder count; a gated edge adds one fold over the target's grid per period. It
+  may not grow with the *number of subjects*, which appears nowhere in the solve.
+- **Simulation** is `O(periods × (regimes + edges) × subjects)` and therefore linear in
+  the cohort. The three cohort sizes exist to make a super-linear term visible; a slope
+  above one between adjacent points is the regression this workload is for.
+- **Memory**, host and device, is `O(largest single V array + working set)` and does not
+  accumulate across periods. Backward induction frees each period's intermediates, so a
+  peak that grew with the *number of periods* would mean it stopped.
+- **The shape cache** is bounded by the model, not by the run. A gate evaluator's
+  population call is keyed on `(callable, cohort size)` and every other program on
+  `(callable, dedup key)`, all of which are properties of the model and its declared
+  batch size. Repeated `solve()` / `simulate()` calls at one cohort size may not add
+  entries; a cache that grew per call would recompile per call.
+
+## What the first-solve number is, and is not
+
+`track_compilation_time` is not a compilation time. The timed region is a whole
+`model.solve()` call, so the number is everything that first solve does: tracing,
+lowering, *either* compiling each program or loading it from the persistent cache, and
+then running the backward induction itself. Which of compile-or-load happened is
+invisible in the number, and so is the execution term.
+
+Measured on this workload, on one GPU backend, with the cache directory asserted empty
+before the run and populated after (60 entries):
+
+|                                                       | seconds |
+| ----------------------------------------------------- | ------- |
+| first solve, empty cache                              | 1.99    |
+| first solve of a freshly built model, cache populated | 1.11    |
+| repeat solve of the same model object                 | 0.04    |
+
+So the cache covers a little under half of a cold first solve, and execution is about 2%
+of it — small here, but it is a term that grows with the grid while the assembly terms
+grow with the number of programs, so the split is not fixed. The saving from a cache hit
+also grows with the model, because compilation grows with program size while tracing and
+lowering grow with program count.
+
+Three things follow, all about how to *read* a change in this line:
+
+- A movement is a movement in first-solve cost, not in compiler work, unless the cache
+  state was the same on both sides. Pin it — point `JAX_COMPILATION_CACHE_DIR` at a
+  fresh directory — for any comparison meant to be about compilation.
+- A number from one machine is not comparable to one from another whose cache holds a
+  different set of programs. The ASV history is per machine for this reason.
+- On a model whose grids are large enough for execution to dominate, this line stops
+  being an assembly measurement at all. Read it next to `time_execution`, which is the
+  same solve with the programs already in memory.
+
+## Where a pointwise reoptimization mode would sit
+
+`off_grid="pointwise"` reads the operands at the landing point and gates them there, in
+both phases, using the kernels the model already has. A future reoptimization mode —
+recomputing the target's own optimum at the realized point — is a different kernel and
+is kept statically separate from the default one: it must be selectable per edge, must
+not appear in a model that did not ask for it, and carries its own entries in this table
+before it is offered. Its cost is `O(subjects × target action grid)` per edge per
+period, which is a different order from the default's `O(subjects)`, so the two may not
+share a budget line.
+
+## Running them
+
+```bash
+pixi run -e benchmarks-cuda12 asv-quick     # one repetition, for a smoke check
+pixi run -e benchmarks-cuda12 asv-run       # the tracked run; refuses a dirty worktree
+pixi run -e benchmarks-cuda12 asv-compare   # against a previous commit
+```
+
+The GPU peak-memory companions need a CUDA environment and a device that publishes
+memory statistics. There is no skip path: nothing in the suite raises ASV's
+NotImplementedError or detects a device, so on a machine without one they fail rather
+than abstain. Run them only where a GPU is present; the host `peakmem_*` rows are the
+portable ones.

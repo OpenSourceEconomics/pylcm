@@ -66,7 +66,9 @@ type StatesPerRegime = MappingProxyType[RegimeName, RegimeStates]
 # `MappingProxyType` before passing it in; pylcm producers still wrap on
 # the way out to preserve immutability at runtime. Values are 1-D arrays
 # of length `n_subjects`; the validator checks the rank-1 invariant.
-type InitialConditions = Mapping[StateName | Literal["regime_id"], Float1D | Int1D]
+type InitialConditions = Mapping[
+    StateName | Literal["regime_id", "own_stakeholder"], Float1D | Int1D
+]
 
 # JAX PRNG keys (`jax.random`) carry the dedicated `key<fry>` dtype, which
 # jaxtyping matches via `Key` — distinct from `FloatND`/`IntND`. Covers both a
@@ -98,12 +100,13 @@ type FlatParams = MappingProxyType[RegimeName, FlatRegimeParams]
 
 # Immutable templates, used internally. Within a regime, a key is either:
 # - a function name ⇒ that function's params (`{param: type-string}`)
-# - a target regime's name ⇒ per-target transition params nested one level
-#   deeper (`{transition_func: {param: type-string}}`)
+# - a target regime's name ⇒ target-local transition params. Ordinary output
+#   laws nest one level deeper (`{next_state: {param: type-string}}`); a joint
+#   kernel additionally owns role branches for its support and probabilities
+#   (`{kernel: {support: {...}, probabilities: {...}}}`).
+type RegimeParamsTemplateNode = str | MappingProxyType[str, RegimeParamsTemplateNode]
 type RegimeParamsTemplate = MappingProxyType[
-    FunctionName | RegimeName,
-    MappingProxyType[str, str]
-    | MappingProxyType[TransitionFunctionName, MappingProxyType[str, str]],
+    FunctionName | RegimeName, MappingProxyType[str, RegimeParamsTemplateNode]
 ]
 type ParamsTemplate = MappingProxyType[RegimeName, RegimeParamsTemplate]
 
@@ -118,6 +121,30 @@ type SimulationPolicy = (
 type PeriodToRegimeToSimulationPolicy = MappingProxyType[
     int, MappingProxyType[RegimeName, SimulationPolicy]
 ]
+# Sparse over regimes: the inner mapping carries an entry only for COLLECTIVE
+# regimes. `True` on the state cells whose action mask is empty
+# (distinct from a numeric `-inf` value); empty inner mappings for models
+# without collective regimes. Returned as `backward_induction.solve`'s third
+# element and consumed by `simulate` to route a dissolution-gated edge whose gate
+# reads `D_target`.
+type PeriodToRegimeToDissolutionFlags = MappingProxyType[
+    int, MappingProxyType[RegimeName, BoolND]
+]
+# What `Model.solve` returns: the value functions, plus whatever its two opt-in
+# flags append, in the order `return_simulation_policy` then
+# `return_dissolution_flags`. The precise member per flag combination is what
+# `Model.solve`'s `@overload`s select; this names the whole space once, for the
+# catch-all overload and the implementation signature.
+type ModelSolveReturn = (
+    PeriodToRegimeToVArr
+    | tuple[PeriodToRegimeToVArr, PeriodToRegimeToSimulationPolicy]
+    | tuple[PeriodToRegimeToVArr, PeriodToRegimeToDissolutionFlags]
+    | tuple[
+        PeriodToRegimeToVArr,
+        PeriodToRegimeToSimulationPolicy,
+        PeriodToRegimeToDissolutionFlags,
+    ]
+)
 
 
 @runtime_checkable
@@ -244,7 +271,9 @@ class MaxQOverAFunction(Protocol):
     """The function that maximizes Q over all actions.
 
     Q is the state-action value function. The MaxQOverCFunction returns the maximum of Q
-    over all actions.
+    over all actions. For a collective regime the core returns the pair
+    `(V, D)` — the stakeholder-axis value array plus the boolean dissolution
+    flag — instead of the plain V array.
 
     Used for both type checking and beartype runtime checks.
 
@@ -254,7 +283,7 @@ class MaxQOverAFunction(Protocol):
         self,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
         **kwargs: Any,  # noqa: ANN401
-    ) -> FloatND: ...
+    ) -> FloatND | tuple[FloatND, BoolND]: ...
 
 
 @runtime_checkable

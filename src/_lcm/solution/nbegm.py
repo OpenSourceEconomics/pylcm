@@ -2378,7 +2378,9 @@ def _fail_if_discrete_action_feeds_continuation(
 
     regime = context.user_regimes[context.regime_name]
     funcs: dict[str, Callable[..., object]] = {
-        name: func for name, func in regime.functions.items() if callable(func)
+        name: func
+        for name, func in regime.decomposed_functions.items()
+        if callable(func)
     }
     budget_nodes = {budget_target, post_decision_function}
 
@@ -4413,7 +4415,7 @@ def _build_nbegm_continuation_plan(
         user_regimes=context.user_regimes,
         functions=context.functions,
         transitions=context.transitions,
-        transition_laws=context.transition_laws,
+        transition_plans=context.transition_plans,
         stateful_targets=stateful_targets,
         scalar_targets=scalar_targets,
         compute_regime_transition_probs=compute_regime_transition_probs,
@@ -6508,8 +6510,8 @@ def _build_ride_along_carry_template(
     # `_assemble_ride_carry`'s predicate (continuous-only, jump-free): that path
     # returns a `policy` array leaf, so the template must carry the same leaf or
     # a standalone ride-along NBEGM continuation (rolled cross-period, lowered
-    # against this template) would have a different pytree than the runtime carry
-    # than the runtime carry. The NNBEGM collapse strips its own runtime leaf, so its
+    # against this template) would have a different pytree than the runtime
+    # carry. The NNBEGM collapse strips its own runtime leaf, so its
     # outer continuation stays policy-free against its own template.
     row = jnp.concatenate(
         [liquid_grid, jnp.repeat(liquid_grid[-1:], 2 * n_breakpoints)]

@@ -856,8 +856,8 @@ class _NNBEGMPeriodKernel:
     a discrete choice whose winning branch is collapsed out of the published
     carry rows (`derive_inner_sim_policy` cannot recover which branch won
     off-grid), so the nested payload is NOT published and simulation keeps the
-    grid-argmax path. Empty for the v1 continuous-only
-    scope, where publication proceeds."""
+    grid-argmax path. Empty for a continuous-only regime, where publication
+    proceeds."""
 
     replay_functions: EconFunctionsMapping
     """The regime's processed functions, read for the signatures a simulation

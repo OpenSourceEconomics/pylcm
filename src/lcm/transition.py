@@ -1,5 +1,5 @@
-"""User-facing vocabulary: `fixed_transition`, `MarkovTransition`,
-`AgeSpecializedFunction`, `AgeSpecializedGrid`.
+"""User-facing transition vocabulary: `fixed_transition`, `MarkovTransition`,
+`JointTransition`, `AgeSpecializedFunction`, and `AgeSpecializedGrid`.
 
 A thin leaf module with no dependency on `Regime`, the validators, or the
 regime-building code. Keeping the vocabulary here lets the user-facing
@@ -8,16 +8,19 @@ all import it without an import cycle.
 
 """
 
-from collections.abc import Callable, Hashable
+from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any
 
+import jax
 from beartype import beartype
 
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.grids.continuous import ContinuousGrid
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.typing import StateName
+from lcm.exceptions import RegimeInitializationError
 from lcm.typing import FloatND, UserFunction
 
 
@@ -82,6 +85,131 @@ class MarkovTransition:
 
     def __call__(self, *args: Any, **kwargs: Any) -> FloatND:  # noqa: ANN401
         return self.func(*args, **kwargs)
+
+
+def _freeze_joint_support(value: Any) -> Any:  # noqa: ANN401
+    """Freeze the container structure of a literal joint-support pytree."""
+    if isinstance(value, Mapping):
+        return MappingProxyType(
+            {key: _freeze_joint_support(item) for key, item in value.items()}
+        )
+    if isinstance(value, list | tuple):
+        return tuple(_freeze_joint_support(item) for item in value)
+    return value
+
+
+def _literal_joint_support_schema(
+    support: Any,  # noqa: ANN401
+) -> tuple[object, tuple[tuple[tuple[int, ...], object], ...]] | None:
+    """Return a literal support's pytree and leaf event-shape/dtype schema."""
+    if callable(support):
+        return None
+    leaves, tree = jax.tree_util.tree_flatten(support)
+    schema = tuple(
+        (tuple(leaf.shape[1:]), leaf.dtype)
+        for leaf in leaves
+        if hasattr(leaf, "shape") and hasattr(leaf, "dtype")
+    )
+    return tree, schema
+
+
+@beartype(conf=REGIME_CONF)
+@dataclass(frozen=True, kw_only=True)
+class JointTransition:
+    """One finite-support lottery shared by several target-state laws.
+
+    A source regime owns joint transitions on an explicitly named target edge.
+    ``support`` is either a literal JAX pytree whose leaves have leading axis
+    ``support_size``, or a callable returning such a pytree. ``probabilities``
+    returns the matching probability vector. Each entry of ``outputs`` is a
+    target-state law; its function can read the sampled support node through the
+    joint-transition mapping key declared on :class:`lcm.Regime`.
+
+    The declaration only specifies the joint lottery. The enclosing mapping
+    supplies both its target regime and the local node name::
+
+        joint_transitions={
+            "couple": {
+                "partner_match": JointTransition(
+                    support_size=2,
+                    support={"wage": wages, "health": health_codes},
+                    probabilities=match_probabilities,
+                    outputs={"wage": next_wage, "health": next_health},
+                )
+            }
+        }
+    """
+
+    support_size: int
+    """Number of nodes on the joint finite support."""
+
+    support: Any
+    """Literal support pytree, or callable returning one."""
+
+    probabilities: Callable[..., FloatND]
+    """Function returning probabilities along the joint-support axis."""
+
+    outputs: Mapping[StateName, UserFunction]
+    """Target-state laws sharing the sampled support node."""
+
+    def __post_init__(self) -> None:
+        if self.support_size < 1:
+            raise RegimeInitializationError(
+                "`JointTransition.support_size` must be a positive integer."
+            )
+        if not self.outputs:
+            raise RegimeInitializationError(
+                "`JointTransition.outputs` must contain at least one target-state "
+                "output law."
+            )
+        invalid_outputs = [
+            name
+            for name, output in self.outputs.items()
+            if not isinstance(name, str) or not callable(output)
+        ]
+        if invalid_outputs:
+            raise RegimeInitializationError(
+                "Every `JointTransition.outputs` key must be a state-name string "
+                "and every value must be callable; invalid output(s): "
+                f"{invalid_outputs}."
+            )
+
+        if not callable(self.support):
+            leaves, _ = jax.tree_util.tree_flatten(self.support)
+            if not leaves:
+                raise RegimeInitializationError(
+                    "`JointTransition.support` must contain at least one support leaf."
+                )
+            invalid_shapes = [
+                getattr(leaf, "shape", None)
+                for leaf in leaves
+                if not hasattr(leaf, "shape")
+                or not leaf.shape
+                or leaf.shape[0] != self.support_size
+            ]
+            if invalid_shapes:
+                raise RegimeInitializationError(
+                    "Every literal `JointTransition.support` leaf must have leading "
+                    f"axis `support_size={self.support_size}`; got invalid leaf "
+                    f"shape(s) {invalid_shapes}."
+                )
+            try:
+                nonfinite_leaves = [
+                    index
+                    for index, leaf in enumerate(leaves)
+                    if not bool(jax.numpy.all(jax.numpy.isfinite(leaf)))
+                ]
+            except TypeError:
+                nonfinite_leaves = list(range(len(leaves)))
+            if nonfinite_leaves:
+                raise RegimeInitializationError(
+                    "Every literal `JointTransition.support` leaf must contain "
+                    "only finite numeric or boolean values; nonfinite or "
+                    f"unsupported leaf index(es): {nonfinite_leaves}."
+                )
+
+        object.__setattr__(self, "support", _freeze_joint_support(self.support))
+        object.__setattr__(self, "outputs", MappingProxyType(dict(self.outputs)))
 
 
 @dataclass(frozen=True)

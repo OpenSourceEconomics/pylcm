@@ -15,6 +15,7 @@ import orbax.checkpoint as ocp
 import pandas as pd
 
 from _lcm.engine import PeriodRegimeSimulationData, Regime
+from _lcm.regime_building.collective import NO_ROLE
 from _lcm.simulation.additional_targets import (
     _collect_all_available_targets,
     _resolve_targets,
@@ -578,6 +579,7 @@ def _raw_results_to_array_tree(
                 "actions": dict(data.actions),
                 "states": dict(data.states),
                 "in_regime": data.in_regime,
+                "own_stakeholder": data.own_stakeholder,
                 "nested_policy_fallback": data.nested_policy_fallback,
             }
             for period, data in regime_dict.items()
@@ -599,6 +601,12 @@ def _array_tree_to_raw_results(
                         actions=MappingProxyType(period_dict["actions"]),
                         states=MappingProxyType(period_dict["states"]),
                         in_regime=period_dict["in_regime"],
+                        own_stakeholder=period_dict.get(
+                            "own_stakeholder",
+                            jnp.full_like(
+                                period_dict["in_regime"], NO_ROLE, dtype=jnp.int32
+                            ),
+                        ),
                         nested_policy_fallback=period_dict.get(
                             "nested_policy_fallback",
                             jnp.zeros_like(period_dict["in_regime"], dtype=bool),

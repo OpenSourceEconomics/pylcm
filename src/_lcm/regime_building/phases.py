@@ -27,7 +27,12 @@ from _lcm.typing import FunctionName, RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import RegimeInitializationError
 from lcm.phased import Phased
-from lcm.transition import AgeSpecializedGrid, MarkovTransition
+from lcm.transition import (
+    AgeSpecializedGrid,
+    JointTransition,
+    MarkovTransition,
+    _literal_joint_support_schema,
+)
 from lcm.typing import UserFunction
 
 if TYPE_CHECKING:
@@ -45,6 +50,9 @@ type _PhaseRegimeTransition = (
     | Mapping[RegimeName, MarkovTransition | _CoarseTransitionCell]
     | None
 )
+type _PhaseJointTransitions = MappingProxyType[
+    RegimeName, MappingProxyType[str, JointTransition]
+]
 
 
 def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
@@ -85,12 +93,18 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
         f"with the regime function of the same name. Rename one of "
         f"the two."
         for name in carried_imputations
-        if name in user_regime.functions
+        # The engine-facing names, not the declared ones: a carried state
+        # spelled like a stakeholder's utility collides with the entry that
+        # utility is decomposed into, and the overlay below would win.
+        if name in user_regime.decomposed_functions
     ]
     solve_functions = {**solve_functions, **carried_imputations}
 
     solve_state_transitions, simulate_state_transitions = _split_state_transitions(
         user_regime=user_regime
+    )
+    solve_joint_transitions, simulate_joint_transitions, joint_transition_errors = (
+        _split_joint_transitions(user_regime=user_regime)
     )
 
     carried_only = frozenset(simulate_grid_states) - frozenset(solve_grid_states)
@@ -145,6 +159,7 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
         + state_errors
         + collision_errors
         + carried_errors
+        + joint_transition_errors
         + transition_errors
         + terminal_errors
         + ([] if terminal else aggregator_errors)
@@ -154,7 +169,7 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
 
     constraints = {
         name: cast("ConstraintLike", declaration)
-        for name, declaration in user_regime.constraints.items()
+        for name, declaration in user_regime.decomposed_constraints.items()
         if declaration is not None
     }
 
@@ -163,6 +178,7 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
         functions: dict[FunctionName, UserFunction],
         grid_states: dict[StateName, Grid | AgeSpecializedGrid],
         state_transitions: dict[StateName, _PhaseStateTransition],
+        joint_transitions: _PhaseJointTransitions,
         regime_transition: _PhaseRegimeTransition,
         koopmans_aggregator: UserFunction | None,
     ) -> RegimePhaseSpec:
@@ -175,6 +191,7 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
             constraints=normalize_constraints(constraints=constraints),
             grid_states=MappingProxyType(grid_states),
             state_transitions=MappingProxyType(state_transitions),
+            joint_transitions=joint_transitions,
             koopmans_aggregator=koopmans_aggregator,
             regime_transition=regime_transition,
             # A per-target dict is stochastic by construction (each cell is a
@@ -189,6 +206,7 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
             functions=solve_functions,
             grid_states=solve_grid_states,
             state_transitions=solve_state_transitions,
+            joint_transitions=solve_joint_transitions,
             regime_transition=solve_transition,
             koopmans_aggregator=cast("UserFunction | None", solve_aggregator),
         ),
@@ -196,6 +214,7 @@ def normalize_regime_phases(user_regime: lcm.regime.Regime) -> PhasedRegimeSpec:
             functions=simulate_functions,
             grid_states=simulate_grid_states,
             state_transitions=simulate_state_transitions,
+            joint_transitions=simulate_joint_transitions,
             regime_transition=simulate_transition,
             koopmans_aggregator=cast("UserFunction | None", simulate_aggregator),
         ),
@@ -256,12 +275,12 @@ def phase_variation_paths(
     Bare values broadcast one object to both phases. A ``Phased`` declaration
     is replay-invariant only when ``solve is simulate``; semantic equality is
     deliberately irrelevant. The scan follows the complete public grammar:
-    functions, states, state transitions, the regime transition, and the
-    singleton Koopmans aggregator.
+    functions, states, state transitions, joint transitions, the regime
+    transition, and the singleton Koopmans aggregator.
     """
     varied: list[str] = []
     for slot_name, declarations in (
-        ("functions", user_regime.functions),
+        ("functions", user_regime.decomposed_functions),
         ("states", user_regime.states),
         ("state_transitions", user_regime.state_transitions),
     ):
@@ -272,6 +291,16 @@ def phase_variation_paths(
                 and declaration.solve is not declaration.simulate
             ):
                 varied.append(f"{slot_name}[{name!r}]")
+
+    for target_name in sorted(user_regime.joint_transitions):
+        kernels = user_regime.joint_transitions[target_name]
+        for kernel_name in sorted(kernels):
+            declaration = kernels[kernel_name]
+            if (
+                isinstance(declaration, Phased)
+                and declaration.solve is not declaration.simulate
+            ):
+                varied.append(f"joint_transitions[{target_name!r}][{kernel_name!r}]")
 
     transition = user_regime.transition
     if isinstance(transition, Phased) and transition.solve is not transition.simulate:
@@ -335,6 +364,9 @@ class RegimePhaseSpec:
     """Phase-resolved laws of motion, restricted to this phase's grid states
     plus target-only entries."""
 
+    joint_transitions: _PhaseJointTransitions
+    """Phase-resolved joint kernels, explicitly scoped by target and node name."""
+
     koopmans_aggregator: UserFunction | None
     """Phase-resolved Bellman aggregator; `None` for terminal regimes."""
 
@@ -364,7 +396,7 @@ def _split_functions(
     solve_functions: dict[FunctionName, UserFunction] = {}
     simulate_functions: dict[FunctionName, UserFunction] = {}
     errors: list[str] = []
-    for name, value in user_regime.functions.items():
+    for name, value in user_regime.decomposed_functions.items():
         if isinstance(value, Phased):
             variants = (
                 ("solve", value.solve, solve_functions),
@@ -447,6 +479,9 @@ def _normalize_phased_state(
       `functions`
     - a stochastic-process grid on either side ⇒ processes have intrinsic
       transitions and cannot be phase-variant
+    - an `AgeSpecializedGrid` on either side ⇒ the marker is resolved to each
+      period's concrete grid only for a top-level `states` value, so a nested
+      one would reach the kernels unresolved
 
     Returns the carried state's solve-phase imputation and simulate-phase
     grid (both `None` when the declaration is rejected), and the violations.
@@ -462,6 +497,26 @@ def _normalize_phased_state(
                 (
                     f"states['{name}']: stochastic-process grids have intrinsic "
                     f"transitions and cannot be phase-variant."
+                )
+            ],
+        )
+    marker_sides = [
+        phase_label
+        for phase_label, side in (("solve", solve_side), ("simulate", simulate_side))
+        if isinstance(side, AgeSpecializedGrid)
+    ]
+    if marker_sides:
+        return (
+            None,
+            None,
+            [
+                (
+                    f"states['{name}']: `AgeSpecializedGrid` is not supported "
+                    f"inside `Phased` (here: {', '.join(marker_sides)}). Declare "
+                    f"an age-specialized grid as a plain `states` entry — pylcm "
+                    f"resolves the marker to each period's concrete grid there "
+                    f"and nowhere else, so a nested one would reach the kernels "
+                    f"unresolved."
                 )
             ],
         )
@@ -525,6 +580,93 @@ def _split_state_transitions(
     return solve_state_transitions, simulate_state_transitions
 
 
+def _split_joint_transitions(
+    *, user_regime: lcm.regime.Regime
+) -> tuple[_PhaseJointTransitions, _PhaseJointTransitions, list[str]]:
+    """Resolve whole-kernel phase variants and validate their static schema."""
+    solve: dict[RegimeName, MappingProxyType[str, JointTransition]] = {}
+    simulate: dict[RegimeName, MappingProxyType[str, JointTransition]] = {}
+    errors: list[str] = []
+
+    for target_name, kernels in user_regime.joint_transitions.items():
+        solve_kernels: dict[str, JointTransition] = {}
+        simulate_kernels: dict[str, JointTransition] = {}
+        for kernel_name, raw in kernels.items():
+            prefix = f"joint_transitions['{target_name}']['{kernel_name}']"
+            if isinstance(raw, Phased):
+                if not isinstance(raw.solve, JointTransition) or not isinstance(
+                    raw.simulate, JointTransition
+                ):
+                    errors.append(
+                        f"{prefix}: both `Phased` variants must be "
+                        "`JointTransition` declarations."
+                    )
+                    continue
+                errors.extend(
+                    _joint_transition_phase_compatibility_errors(
+                        prefix=prefix, solve=raw.solve, simulate=raw.simulate
+                    )
+                )
+                solve_kernels[kernel_name] = raw.solve
+                simulate_kernels[kernel_name] = raw.simulate
+            elif isinstance(raw, JointTransition):
+                solve_kernels[kernel_name] = raw
+                simulate_kernels[kernel_name] = raw
+            else:
+                errors.append(
+                    f"{prefix} must be a `JointTransition`, or `Phased` wrapping "
+                    "one for each phase."
+                )
+        solve[target_name] = MappingProxyType(solve_kernels)
+        simulate[target_name] = MappingProxyType(simulate_kernels)
+
+    return MappingProxyType(solve), MappingProxyType(simulate), errors
+
+
+def _joint_transition_phase_compatibility_errors(
+    *, prefix: str, solve: JointTransition, simulate: JointTransition
+) -> list[str]:
+    """Check the compile-time contract shared by two phase variants."""
+    errors: list[str] = []
+    if set(solve.outputs) != set(simulate.outputs):
+        errors.append(
+            f"{prefix}: solve and simulate variants must have identical "
+            f"output-state key sets; got {sorted(solve.outputs)} and "
+            f"{sorted(simulate.outputs)}."
+        )
+    if solve.support_size != simulate.support_size:
+        errors.append(
+            f"{prefix}: solve and simulate variants must have identical "
+            f"`support_size`; got {solve.support_size} and {simulate.support_size}."
+        )
+
+    solve_schema = _literal_joint_support_schema(solve.support)
+    simulate_schema = _literal_joint_support_schema(simulate.support)
+    if solve_schema is not None and simulate_schema is not None:
+        solve_tree, solve_leaves = solve_schema
+        simulate_tree, simulate_leaves = simulate_schema
+        if solve_tree != simulate_tree:
+            errors.append(
+                f"{prefix}: solve and simulate literal supports must have "
+                "identical pytree structure."
+            )
+        elif tuple(shape for shape, _ in solve_leaves) != tuple(
+            shape for shape, _ in simulate_leaves
+        ):
+            errors.append(
+                f"{prefix}: solve and simulate literal support leaves must have "
+                "identical event shapes."
+            )
+        elif tuple(dtype for _, dtype in solve_leaves) != tuple(
+            dtype for _, dtype in simulate_leaves
+        ):
+            errors.append(
+                f"{prefix}: solve and simulate literal support leaves must have "
+                "identical dtype values."
+            )
+    return errors
+
+
 def _carried_law_errors(*, name: StateName, law: _PhaseStateTransition) -> list[str]:
     """Validate the law of motion of a carried state declared via `Phased`.
 
@@ -559,7 +701,7 @@ def _split_regime_transition(
     Returns the solve-phase variant, the simulate-phase variant, and the
     grammar violations found along the way.
     """
-    raw = user_regime.transition
+    raw = user_regime.decomposed_transition
     if not isinstance(raw, Phased):
         return (
             cast("_PhaseRegimeTransition", raw),

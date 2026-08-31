@@ -1,15 +1,15 @@
 """Consumption-savings model with state-conditioned income risk (stochastic volatility).
 
 A minimal example of the *state-conditioned shock* primitive: the standard deviation of
-the IID income shock depends on a discrete ``uncertainty`` regime (low vs high) — a
-current-regime conditioning of ``sigma``. The regime follows its own
-``MarkovTransition``; the income shock is discretized once on a FIXED common grid (from
-the scalar ``sigma``), and each regime's transition row is evaluated directly at the
-from-value with that regime's ``sigma``.
+the IID income shock depends on a discrete `uncertainty` regime (low vs high) — a
+current-regime conditioning of `sigma`. The regime follows its own
+`MarkovTransition`; the income shock is discretized once on a FIXED common grid (from
+the scalar `sigma`), and each regime's transition row is evaluated directly at the
+from-value with that regime's `sigma`.
 
-Supported for CDF-binned ``NormalIIDProcess`` (``gauss_hermite=False``) and
-``TauchenAR1Process``; Gauss-Hermite IID and Rouwenhorst are rejected (their fixed-node
-kernels cannot carry a state-conditioned ``sigma``).
+Supported for CDF-binned `NormalIIDProcess` (`gauss_hermite=False`) and
+`TauchenAR1Process`; Gauss-Hermite IID and Rouwenhorst are rejected (their fixed-node
+kernels cannot carry a state-conditioned `sigma`).
 """
 
 import functools
@@ -62,7 +62,7 @@ def next_wealth(
 
 
 def next_uncertainty(uncertainty: DiscreteState, persistence: float) -> FloatND:
-    """Symmetric two-state regime: stay with probability ``persistence``."""
+    """Symmetric two-state regime: stay with probability `persistence`."""
     stay = persistence
     return jnp.where(
         uncertainty == Uncertainty.low,

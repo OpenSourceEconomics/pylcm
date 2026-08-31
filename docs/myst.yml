@@ -42,6 +42,7 @@ project:
         - file: user_guide/regimes.ipynb
         - file: user_guide/grids.md
         - file: user_guide/transitions.ipynb
+        - file: user_guide/collective_regimes.md
         - file: user_guide/age_specialized.md
         - file: user_guide/continuous_stochastic_processes.md
         - file: user_guide/parameters.md
@@ -82,6 +83,7 @@ project:
         - file: development/conventions.md
         - file: development/continuous_integration.md
         - file: development/benchmarking.md
+        - file: development/collective_resource_contract.md
     - file: credits.md
       title: Credits & Acknowledgments
   error_rules:

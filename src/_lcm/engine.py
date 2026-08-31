@@ -12,7 +12,8 @@ from _lcm.continuation import ContinuationPayload, EGMContinuationSpec
 from _lcm.grids import DiscreteGrid, Grid, IrregSpacedGrid
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.reachability import PhaseReachability
-from _lcm.transition_laws import TransitionLaws
+from _lcm.regime_building.collective import ParetoWeights
+from _lcm.transition_plans import TargetTransitionPlans
 from _lcm.typing import (
     ActionName,
     ArgmaxQOverAFunction,
@@ -39,14 +40,15 @@ from lcm.typing import (
     ContinuousState,
     DiscreteAction,
     DiscreteState,
-    Float1D,
     FloatND,
+    Int1D,
     IntND,
     ScalarFloat,
     ScalarInt,
 )
 
 if TYPE_CHECKING:
+    from _lcm.regime_building.gated_edges import ResolvedGatedEdge
     from _lcm.solution.contract import PeriodKernel
 
     # The contract module imports this one at runtime, so `PeriodKernel` is
@@ -351,7 +353,7 @@ class SolutionPhase:
     transitions: TransitionFunctionsMapping
     """Immutable mapping of transition names to transition functions."""
 
-    transition_laws: TransitionLaws
+    transition_plans: TargetTransitionPlans
     """Immutable mapping of target regime names to their transition laws."""
 
     reachability: PhaseReachability
@@ -400,6 +402,13 @@ class SolutionPhase:
 
     Run once, on the first solve, by `check_solver_params`; empty for a solver
     whose scope is decided by structure alone.
+    """
+
+    pareto_weights: ParetoWeights | None = None
+    """The household's Pareto weight evaluator, or `None` for a singleton regime.
+
+    Kept here so the params-bound preflight can read the weights the solve will
+    actually use, rather than re-deriving them from the user declaration.
     """
 
     resolved_fixed_params: FlatRegimeParams = MappingProxyType({})
@@ -641,7 +650,7 @@ class SimulationPhase:
     transitions: TransitionFunctionsMapping
     """Immutable mapping of transition names to transition functions."""
 
-    transition_laws: TransitionLaws
+    transition_plans: TargetTransitionPlans
     """Immutable mapping of target regime names to their transition laws."""
 
     reachability: PhaseReachability
@@ -652,6 +661,18 @@ class SimulationPhase:
 
     argmax_and_max_Q_over_a: MappingProxyType[int, ArgmaxQOverAFunction]
     """Immutable mapping of period to argmax-and-max-Q functions."""
+
+    edge_reference_periods: frozenset[int] = frozenset()
+    """Periods whose decision program reads a gated edge's projected operands.
+
+    A gate reference and a leg fallback are read inside the source's own
+    decision function — but only where that function carries the gated
+    continuation. A regime whose gate is applied by the simulate router
+    instead never names them, and a period whose edge target is inactive has
+    no gated continuation to read. The two sites that hand the channel over,
+    AOT lowering and the runtime call, both consult this set, so the compiled
+    program's pytree and the call's arguments cannot disagree.
+    """
 
     Q_and_F: MappingProxyType[int, QAndFFunction]
     """Immutable mapping of period to pointwise state-action value functions.
@@ -809,6 +830,16 @@ class Regime:
     has_taste_shocks: bool = False
     """Whether the regime declares EV1 taste shocks on its discrete actions."""
 
+    fold_state_names: tuple[StateName, ...] = ()
+    """IID-process states declared `fold=True`, or empty (the default).
+
+    A folded state is integrated out of the stored value by quadrature at
+    solve time, so it is NOT an axis of the regime's stored `V`-array: the
+    backward-induction V topology (`_get_regime_V_shapes_and_shardings`)
+    excludes it from the shape/sharding it computes for this regime. Empty
+    keeps the default path byte-identical.
+    """
+
     certainty_equivalent: CertaintyEquivalent | None
     """Nonlinear certainty equivalent declared by the regime, if any."""
 
@@ -825,6 +856,59 @@ class Regime:
     lists every such prefix across both phases so canonical flat params can
     materialize one shared leaf per target. Empty when every law's params
     are user-granular or absent.
+    """
+
+    stakeholders: tuple[str, ...] | None = None
+    """Ordered stakeholder names for a collective regime, or `None` (singleton).
+
+    When set, the regime's value-function array carries a
+    trailing length-`len(stakeholders)` axis: the backward-induction V topology
+    appends it so the zero template and the roll match the collective kernel's
+    stakeholder-valued output.
+    """
+
+    stakeholder_names_to_ids: MappingProxyType[str, int] = MappingProxyType({})
+    """The model's role vocabulary: every regime's stakeholder names, as codes.
+
+    One vocabulary for the whole model, carried on every regime, so a role
+    survives the move between regimes that name their stakeholders differently
+    and a simulated row can carry it as an integer. `NO_ROLE` is what a row in
+    a singleton regime carries — it occupies no household's role.
+    """
+
+    edge_reference_regimes: tuple[RegimeName, ...] = ()
+    """Regimes a gated edge reads a projected value from, or empty.
+
+    A gate reference and a leg fallback both name another regime's value at
+    coordinates a projection produces. Neither is tabulated on the target's
+    grid, so both are read where the source lands — inside the source's own
+    kernel — at the value of the period the source lands in. The rolled V
+    mapping already carries that array; these names are what pick it out and
+    thread each reference regime's OWN grid params beside it.
+    """
+
+    same_period_ref_regimes: tuple[RegimeName, ...] = ()
+    """Regimes whose SAME-period V this regime's solve kernel reads, or empty.
+
+    Non-empty only for a collective regime declaring
+    `same_period_refs`. The backward-induction loop orders each period's active
+    regimes topologically by these edges (references solved first) and passes
+    the referenced regimes' freshly solved V arrays into this regime's kernel
+    call. Empty for every other regime — the default path is unchanged.
+    """
+
+    gated_edges: MappingProxyType[RegimeName, ResolvedGatedEdge] = MappingProxyType({})
+    """This regime's gated edges keyed by TARGET regime name, or empty.
+
+    Non-empty only for a source regime declaring
+    `gated_edges`: each entry folds a gated continuation object `Wbar` on the
+    target regime's grid at each period's end, which this regime's continuation
+    reads in place of the raw target V. Empty for every other regime.
+
+    Each entry carries its own compiled callables — the `Wbar` fold, the
+    simulate-side gate evaluator, and one fallback state projector per leg —
+    so a consumer reads them off the edge it is already holding rather than
+    re-pairing parallel mappings by target name or by leg position.
     """
 
 
@@ -959,12 +1043,22 @@ def _distribute_states_to_devices(
     return MappingProxyType(placed)
 
 
+#: Highest rank a simulated value array can carry: the subject axis, plus at
+#: most one trailing stakeholder axis for a collective regime.
+_MAX_SIMULATED_V_RANK = 2
+
+
 @dataclasses.dataclass(frozen=True)
 class PeriodRegimeSimulationData:
     """Raw simulation data for one period in one regime."""
 
-    V_arr: Float1D
+    V_arr: FloatND
     """Value function array for all subjects at this period.
+
+    Shape `(n_subjects,)` for a singleton regime; `(n_subjects,
+    n_stakeholders)` for a collective regime — each stakeholder's own
+    value at the household's shared argmax, mirroring the solve-side V's
+    trailing stakeholder axis.
 
     The grid-argmax value: where the off-grid policy read replaces the
     continuous action, this value belongs to the pre-replacement gridded
@@ -981,6 +1075,16 @@ class PeriodRegimeSimulationData:
     in_regime: Bool1D
     """Boolean mask indicating which subjects are in this regime at this period."""
 
+    own_stakeholder: Int1D
+    """The role each subject occupies here, as a code in the model's role
+    vocabulary (`Regime.stakeholder_names_to_ids`).
+
+    A row in a collective regime carries the stakeholder it IS — the wife's row
+    her role, the husband's his — which is what decides the leg it follows when
+    the household ends. A row in a singleton regime occupies no role and carries
+    `NO_ROLE`.
+    """
+
     nested_policy_fallback: Bool1D
     """Per-subject flag that the continuous-outer (nested) off-grid policy read
     was refused and fell back to the grid-argmax action pair at this period.
@@ -996,6 +1100,44 @@ class PeriodRegimeSimulationData:
     the gridded fallback, not the model's off-grid optimum.
     """
 
+    def __post_init__(self) -> None:
+        """Check `V_arr` against the per-subject axis every other field carries.
+
+        `V_arr` is rank-polymorphic so a collective regime can publish one value
+        per stakeholder, which means its annotation admits any rank and cannot
+        state the agreement the record depends on: a leading subject axis
+        matching `in_regime`, and at most one trailing role axis. A `V_arr` that
+        disagrees misaligns every value in the simulated frame against the
+        actions and states beside it, and nothing downstream re-derives the
+        pairing.
+
+        Raises:
+            ValueError: `V_arr` has no subject axis, has more than one axis
+                beyond it, or its leading axis is not the subject axis.
+        """
+        # Reached with a non-array leaf whenever a pytree traversal rebuilds the
+        # record from something other than arrays — a shape-dtype struct still
+        # answers, an arbitrary placeholder does not. Topology is only defined
+        # for a leaf that carries a shape.
+        V_shape = getattr(self.V_arr, "shape", None)
+        mask_shape = getattr(self.in_regime, "shape", None)
+        if V_shape is None or mask_shape is None:
+            return
+        if not 1 <= len(V_shape) <= _MAX_SIMULATED_V_RANK:
+            msg = (
+                f"V_arr must be a per-subject value array, optionally with a "
+                f"trailing stakeholder axis for a collective regime, so its "
+                f"rank is 1 or 2; got shape {V_shape}."
+            )
+            raise ValueError(msg)
+        if V_shape[0] != mask_shape[0]:
+            msg = (
+                f"V_arr's leading axis is the subject axis and must match the "
+                f"per-subject `in_regime` mask: V_arr has {V_shape[0]} rows, "
+                f"`in_regime` has {mask_shape[0]}."
+            )
+            raise ValueError(msg)
+
 
 # Register as a JAX pytree so traversals like `jax.block_until_ready` and
 # `jax.tree.map` recurse into the fields instead of treating the dataclass
@@ -1006,6 +1148,13 @@ class PeriodRegimeSimulationData:
 # whose materialisation workspace dwarfs the per-period output.
 jax.tree_util.register_dataclass(
     PeriodRegimeSimulationData,
-    data_fields=("V_arr", "actions", "states", "in_regime", "nested_policy_fallback"),
+    data_fields=(
+        "V_arr",
+        "actions",
+        "states",
+        "in_regime",
+        "own_stakeholder",
+        "nested_policy_fallback",
+    ),
     meta_fields=(),
 )

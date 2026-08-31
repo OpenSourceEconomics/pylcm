@@ -4,8 +4,9 @@
 runs: model-level `derived_categoricals` are merged in, the model-level
 Koopmans aggregator and certainty equivalent are injected into non-terminal
 regimes that declare none, and completeness is validated (a
-`utility` entry, state-transition coverage, no state/action overlap,
-distributed-grid rules). The result is a plain
+`utility` entry — a per-stakeholder `utility_<s>` and at least one discrete
+action for a collective regime — state-transition coverage, no state/action
+overlap, distributed-grid rules). The result is a plain
 `lcm.regime.Regime`, still in user vocabulary — coarse laws, `Phased`
 containers, and per-target dicts survive untouched, so the params template
 reads the user's coarseness off it.
@@ -25,7 +26,11 @@ from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.constraints.ir import Condition
 from _lcm.grids import DiscreteGrid
 from _lcm.typing import FunctionName, RegimeName
-from _lcm.user_regime_validation import _validate_completeness
+from _lcm.user_regime_validation import (
+    _fail_if_a_folded_conditioner_can_move,
+    _fail_if_collective_regime_folds,
+    _validate_completeness,
+)
 from _lcm.utils.error_messages import format_messages
 from lcm.case_piece import CaseBoundary
 from lcm.consumption_savings_regime import (
@@ -81,8 +86,17 @@ def finalize_regimes(
             prefixed.
 
     """
+    _fail_if_collective_regime_folds(user_regimes=user_regimes)
     _fail_if_continuation_slot_is_mixed(user_regimes, "koopmans_aggregator")
     _fail_if_continuation_slot_is_mixed(user_regimes, "certainty_equivalent")
+    # The published frame is one table over every regime, so the names its
+    # collective regimes claim are reserved for all of them.
+    reserved_value_columns = frozenset(
+        f"value_{stakeholder}"
+        for regime in user_regimes.values()
+        if regime.stakeholders is not None
+        for stakeholder in regime.stakeholders
+    )
     result: dict[RegimeName, FinalizedUserRegime] = {}
     for regime_name, user_regime in user_regimes.items():
         merged = _merge_derived_categoricals(
@@ -90,7 +104,7 @@ def finalize_regimes(
             user_regime=user_regime,
             derived_categoricals=derived_categoricals,
         )
-        functions = dict(user_regime.functions)
+        functions = dict(user_regime.decomposed_functions)
         _compose_case_piece_outputs(functions=functions)
         _compose_margin_resources(
             regime_name=regime_name,
@@ -115,19 +129,28 @@ def finalize_regimes(
                 if user_regime.certainty_equivalent is not None
                 else certainty_equivalent
             )
-        finalized = user_regime.replace(
+        # The engine composed these from `decomposed_functions`, so writing
+        # them straight into `functions` would put the decomposition where the
+        # declaration was. The write-back goes by provenance instead.
+        finalized = user_regime.with_engine_functions(
+            engine_functions=MappingProxyType(functions),
             derived_categoricals=merged,
-            functions=MappingProxyType(functions),
             koopmans_aggregator=regime_koopmans_aggregator,
             certainty_equivalent=regime_certainty_equivalent,
         )
-        error_messages = _validate_completeness(finalized)
+        error_messages = _validate_completeness(
+            regime=finalized, reserved_value_columns=reserved_value_columns
+        )
         if error_messages:
             raise RegimeInitializationError(
                 f"In regime '{regime_name}': {format_messages(error_messages)}"
             )
         finalized._validate_finalized_structure(regime_name=regime_name)  # noqa: SLF001
         result[regime_name] = finalized
+    # Runs on the finalized regimes: a conditioner's law may arrive as a
+    # model-level broadcast, so whether it can move is only settled once the
+    # merge is done.
+    _fail_if_a_folded_conditioner_can_move(user_regimes=MappingProxyType(result))
     return MappingProxyType(result)
 
 

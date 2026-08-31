@@ -55,8 +55,7 @@ from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.regime_building.next_state import get_next_state_function_for_solution
 from _lcm.regime_building.Q_and_F import partition_continuation_targets
 from _lcm.regime_building.V import VInterpolationInfo
-from _lcm.transition_laws import TransitionLaws
-from _lcm.transition_laws import is_stochastic as law_is_stochastic
+from _lcm.transition_plans import TargetTransitionPlans
 from _lcm.typing import (
     ActionName,
     EconFunctionsMapping,
@@ -469,7 +468,7 @@ def build_continuation_plan(
     user_regimes: Mapping[RegimeName, UserRegime],
     functions: EconFunctionsMapping,
     transitions: TransitionFunctionsMapping,
-    transition_laws: TransitionLaws,
+    transition_plans: TargetTransitionPlans,
     stateful_targets: tuple[RegimeName, ...],
     scalar_targets: tuple[RegimeName, ...],
     compute_regime_transition_probs: RegimeTransitionFunction,
@@ -496,7 +495,7 @@ def build_continuation_plan(
         user_regimes=user_regimes,
         functions=functions,
         transitions=transitions,
-        transition_laws=transition_laws,
+        transition_plans=transition_plans,
         stateful_targets=stateful_targets,
         post_decision_name=post_decision_name,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
@@ -1808,7 +1807,7 @@ def _build_child_reads(
     user_regimes: Mapping[RegimeName, UserRegime],
     functions: EconFunctionsMapping,
     transitions: TransitionFunctionsMapping,
-    transition_laws: TransitionLaws,
+    transition_plans: TargetTransitionPlans,
     stateful_targets: tuple[RegimeName, ...],
     post_decision_name: FunctionName,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
@@ -1856,9 +1855,9 @@ def _build_child_reads(
             ):
                 return True
             transition_name = f"next_{name}"
-            return transition_name in target_transition_names and law_is_stochastic(
-                transition_laws, target, transition_name
-            )
+            return transition_name in target_transition_names and transition_plans[
+                target
+            ].is_lottery(transition_name)
 
         stochastic_flags = tuple(_is_stochastic(name) for name in discrete_state_names)
         stochastic_state_names = tuple(

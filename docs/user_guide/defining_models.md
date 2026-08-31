@@ -236,6 +236,97 @@ model = Model(
 )
 ```
 
+## Correlated State Transitions
+
+Use `MarkovTransition` when one state has its own stochastic law. When several target
+states must use the same realization, declare one edge-owned `JointTransition` instead.
+The outer key is the target regime; the inner key is the transition-local node name
+supplied to every output law.
+
+```python
+import jax.numpy as jnp
+
+from lcm import JointTransition, MarkovTransition, Regime, fixed_transition
+from lcm.typing import FloatND, IntND
+
+
+MATCH_SUPPORT = {
+    "partner_wealth": jnp.asarray([0.5, 2.0]),
+    "partner_health": jnp.asarray([0, 1], dtype=jnp.int32),
+}
+
+
+def match_probabilities(match_type: IntND, match_weights: FloatND) -> FloatND:
+    return match_weights[match_type]
+
+
+def next_wealth(wealth, partner_match):
+    return wealth + partner_match["partner_wealth"]
+
+
+def next_partner_health(partner_match):
+    return partner_match["partner_health"].astype(jnp.int32)
+
+
+single = Regime(
+    transition={"couple": MarkovTransition(probability_of_couple)},
+    states={"wealth": wealth_grid, "match_type": match_type_grid},
+    state_transitions={"match_type": fixed_transition("match_type")},
+    joint_transitions={
+        "couple": {
+            "partner_match": JointTransition(
+                support_size=2,
+                support=MATCH_SUPPORT,
+                probabilities=match_probabilities,
+                outputs={
+                    "wealth": next_wealth,
+                    "partner_health": next_partner_health,
+                },
+            ),
+        },
+    },
+    actions=single_actions,
+    functions={"utility": single_utility},
+)
+```
+
+Every support leaf has leading axis `support_size`; one aligned row is enumerated in
+solve and sampled in simulation. The latent `partner_match` is not a state or grid, adds
+no value-function axis, and never appears in initial conditions or simulation results.
+The expectation over its nodes is formed inside the action value before the source
+action is maximized.
+
+A callable support may read only `period`, `age`, and parameters. Probabilities may also
+read source states, actions, and helpers. Output laws may transform the shared node
+using source values and may read already-resolved `next_<state>` outputs on the same
+target edge. Invalid support shapes and probabilities are rejected during the
+params-bound runtime preflight; probabilities are never silently normalized.
+
+An output may target a **stochastic process** as well as an ordinary grid, which is how
+correlated innovations land on a grid pylcm discretized for you rather than one you
+discretized by hand. The output law still names a physical value; because the target's
+value function is stored on the process's nodes, that value reaches the continuation as
+its coefficients in the node basis — the hat weights of linear interpolation. Naming a
+node reads that node alone; naming a point between nodes reads the linear interpolation
+of the target's value function, which is the only reading its nodes support. The output
+law displaces the process's own law on that edge, so the correlation the kernel imposes
+is what the target is entered at. The support is the contract: a value outside the
+process's grid has no representation in that basis and yields `NaN`, which the caller's
+value function reports rather than extrapolating.
+
+Parameters for support and probabilities live below the kernel name, while output
+parameters keep the ordinary target-local `next_<state>` paths:
+
+```text
+params[source][target][kernel]["support"]
+params[source][target][kernel]["probabilities"]
+params[source][target]["next_wealth"]
+```
+
+Use `Phased(solve=JointTransition(...), simulate=JointTransition(...))` around the whole
+kernel for perceived versus realized dynamics. Both variants must retain the same output
+names, support size, and literal support schema.
+
 ## See Also
 
 - [Writing Economics](write_economics.ipynb) — function DAGs and regime design

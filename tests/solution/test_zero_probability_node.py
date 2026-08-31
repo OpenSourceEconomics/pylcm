@@ -16,7 +16,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.regime_building.Q_and_F import _expectation_over_stochastic_nodes
+from _lcm.regime_building.zero_safe import zero_safe_average
 from lcm import (
     AgeGrid,
     CertaintyEquivalent,
@@ -161,8 +161,8 @@ def test_a_nonlinear_certainty_equivalent_omits_the_same_nodes() -> None:
 
 def test_the_expectation_drops_a_zero_weight_node_rather_than_multiplying_it() -> None:
     """`E[V] = 1` for values `[1, NaN]` under weights `[1, 0]`."""
-    got = _expectation_over_stochastic_nodes(
-        values=jnp.asarray([1.0, jnp.nan]),
+    got = zero_safe_average(
+        jnp.asarray([1.0, jnp.nan]),
         weights=jnp.asarray([1.0, 0.0]),
         shifts=jnp.zeros(2, dtype=jnp.int32),
     )
@@ -173,23 +173,23 @@ def test_the_expectation_drops_a_zero_weight_node_rather_than_multiplying_it() -
 def test_a_negative_weight_is_not_laundered_into_a_zero_contribution() -> None:
     """A weight below zero is a malformed transition, not an impossible node.
 
-    Values `[1, 2]` at weights `[1, -1]` give `1 - 2 = -1`. Dropping the
-    negative node instead would give `1`, a value that looks like the answer to
-    a well-posed question, so the malformed weight has to carry through.
+    Values `[1, 2]` at weights `[1, -1/2]` give `(1 - 1) / (1/2) = 0`. Dropping
+    the negative node instead would give `1`, a value that looks like the answer
+    to a well-posed question, so the malformed weight has to carry through.
     """
-    got = _expectation_over_stochastic_nodes(
-        values=jnp.asarray([1.0, 2.0]),
-        weights=jnp.asarray([1.0, -1.0]),
+    got = zero_safe_average(
+        jnp.asarray([1.0, 2.0]),
+        weights=jnp.asarray([1.0, -0.5]),
         shifts=jnp.zeros(2, dtype=jnp.int32),
     )
 
-    np.testing.assert_allclose(np.asarray(got), np.asarray(-1.0))
+    np.testing.assert_allclose(np.asarray(got), np.asarray(0.0), atol=1e-6)
 
 
 def test_a_nan_weight_stays_poison() -> None:
     """A weight that is not a number is not a probability of zero either."""
-    got = _expectation_over_stochastic_nodes(
-        values=jnp.asarray([1.0, 2.0]),
+    got = zero_safe_average(
+        jnp.asarray([1.0, 2.0]),
         weights=jnp.asarray([1.0, jnp.nan]),
         shifts=jnp.zeros(2, dtype=jnp.int32),
     )
@@ -210,16 +210,16 @@ def _mean_of_a_common_and_a_rare_node(
     *, rare_value: float, rare_weight: float, compile_it: bool
 ) -> FloatND:
     """The mean over a node of weight one and one a whole scale gap below it."""
-    reduce = (
-        jax.jit(_expectation_over_stochastic_nodes)
-        if compile_it
-        else _expectation_over_stochastic_nodes
-    )
+
+    def mean(values: FloatND, weights: FloatND, shifts: IntND) -> FloatND:
+        return zero_safe_average(values, weights=weights, shifts=shifts)
+
+    reduce = jax.jit(mean) if compile_it else mean
     return jnp.asarray(
         reduce(
-            values=jnp.asarray([1.0, rare_value]),
-            weights=jnp.asarray([1.0, rare_weight]),
-            shifts=jnp.asarray([0, _wide_spread()], dtype=jnp.int32),
+            jnp.asarray([1.0, rare_value]),
+            jnp.asarray([1.0, rare_weight]),
+            jnp.asarray([0, _wide_spread()], dtype=jnp.int32),
         )
     )
 

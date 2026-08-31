@@ -50,7 +50,7 @@ from _lcm.regime_building.phases import (
 from _lcm.typing import RegimeName, StateName
 from _lcm.utils.error_messages import format_messages
 from lcm.exceptions import ModelInitializationError
-from lcm.transition import AgeSpecializedGrid, MarkovTransition
+from lcm.transition import AgeSpecializedGrid, JointTransition, MarkovTransition
 from lcm.typing import ContinuousState, DiscreteState, UserFunction
 
 type _CanonicalLaw = UserFunction | MarkovTransition
@@ -60,6 +60,9 @@ type _CanonicalStateTransitions = MappingProxyType[
 type _CanonicalRegimeTransition = (
     MappingProxyType[RegimeName, MarkovTransition | _CoarseTransitionCell] | None
 )
+type _CanonicalJointTransitions = MappingProxyType[
+    RegimeName, MappingProxyType[str, JointTransition]
+]
 
 
 def canonicalize_regimes(
@@ -155,11 +158,25 @@ def canonicalize_phased_regimes(
                 all_regime_names=all_regime_names,
                 source_label=f"regime '{regime_name}' ({phase_name})",
                 temporal_targets=canonical_targets,
+                claimed_joint_cells=frozenset(
+                    (target, output)
+                    for target, kernels in phase_slice.joint_transitions.items()
+                    for kernel in kernels.values()
+                    for output in kernel.outputs
+                ),
             )
-            errors += slice_errors
+            canonical_joint, joint_errors = _canonicalize_joint_transitions(
+                phase_slice=phase_slice,
+                states_per_regime=states_per_regime,
+                all_regime_names=all_regime_names,
+                source_label=f"regime '{regime_name}' ({phase_name})",
+                temporal_targets=canonical_targets,
+            )
+            errors += slice_errors + joint_errors
             canonical_slice = dataclasses.replace(
                 phase_slice,
                 state_transitions=cast("MappingProxyType", canonical_transitions),
+                joint_transitions=canonical_joint,
                 regime_transition=_canonicalize_regime_transition(
                     regime_transition=phase_slice.regime_transition,
                     target_names=canonical_targets,
@@ -183,6 +200,7 @@ def _canonicalize_phase_transitions(
     all_regime_names: frozenset[RegimeName] | None = None,
     source_label: str = "",
     temporal_targets: frozenset[RegimeName] | None = None,
+    claimed_joint_cells: frozenset[tuple[RegimeName, StateName]] = frozenset(),
 ) -> tuple[_CanonicalStateTransitions, list[str]]:
     """Expand one phase slice's laws into the canonical per-target form.
 
@@ -210,6 +228,7 @@ def _canonicalize_phase_transitions(
             target_regime_name
             for target_regime_name in required_targets
             if state_name in states_per_regime.get(target_regime_name, frozenset())
+            and (target_regime_name, state_name) not in claimed_joint_cells
         }
         if carriers:
             canonical[state_name] = MappingProxyType(
@@ -238,9 +257,82 @@ def _canonicalize_phase_transitions(
             target_regime_name: law
             for target_regime_name, law in named.items()
             if target_regime_name in required
+            and (target_regime_name, state_name) not in claimed_joint_cells
         }
+        collisions = {
+            target_regime_name
+            for target_regime_name in named
+            if (target_regime_name, state_name) in claimed_joint_cells
+        }
+        if collisions:
+            errors.append(
+                f"{source_label}: multiple producers claim target-state cell(s) "
+                f"{[(target, state_name) for target in sorted(collisions)]}; an "
+                "explicit per-target ordinary law and a joint-transition output "
+                "cannot own the same state."
+            )
         if cells:
             canonical[state_name] = MappingProxyType(cells)
+
+    return MappingProxyType(canonical), errors
+
+
+def _canonicalize_joint_transitions(
+    *,
+    phase_slice: RegimePhaseSpec,
+    states_per_regime: Mapping[RegimeName, frozenset[StateName]],
+    all_regime_names: frozenset[RegimeName],
+    source_label: str,
+    temporal_targets: frozenset[RegimeName],
+) -> tuple[_CanonicalJointTransitions, list[str]]:
+    """Validate explicit edge scope and unique output ownership of joint kernels."""
+    if phase_slice.regime_transition is None:
+        return MappingProxyType({}), []
+
+    declared_targets, errors = _declared_target_errors(
+        regime_transition=phase_slice.regime_transition,
+        all_regime_names=all_regime_names,
+        source_label=source_label,
+    )
+    canonical: dict[RegimeName, MappingProxyType[str, JointTransition]] = {}
+    for target, kernels in phase_slice.joint_transitions.items():
+        if target not in all_regime_names:
+            errors.append(
+                f"{source_label}: joint_transitions names unknown target '{target}'."
+            )
+            continue
+        if target not in declared_targets:
+            errors.append(
+                f"{source_label}: joint_transitions target '{target}' is not in the "
+                "regime transition's candidate support."
+            )
+            continue
+        if target not in temporal_targets:
+            errors.append(
+                f"{source_label}: joint_transitions target '{target}' is not "
+                "reachable in this phase's temporal graph."
+            )
+            continue
+
+        owners: dict[StateName, str] = {}
+        for kernel_name, kernel in kernels.items():
+            for output in kernel.outputs:
+                if output not in states_per_regime[target]:
+                    errors.append(
+                        f"{source_label}: joint-transition output '{output}' of "
+                        f"kernel '{kernel_name}' is not a target state of regime "
+                        f"'{target}'."
+                    )
+                previous = owners.get(output)
+                if previous is not None:
+                    errors.append(
+                        f"{source_label}: multiple producers claim target-state "
+                        f"cell ('{target}', '{output}'): joint kernels "
+                        f"'{previous}' and '{kernel_name}'."
+                    )
+                else:
+                    owners[output] = kernel_name
+        canonical[target] = MappingProxyType(dict(kernels))
 
     return MappingProxyType(canonical), errors
 

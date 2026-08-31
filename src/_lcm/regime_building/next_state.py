@@ -17,10 +17,9 @@ from _lcm.processes.state_conditioned import (
     gather_sigma,
     sigma_array_by_code,
 )
-from _lcm.transition_laws import (
-    TransitionLaws,
-    is_interpolation_basis,
-    is_stochastic,
+from _lcm.transition_plans import (
+    LotteryLifetime,
+    TargetTransitionPlans,
 )
 from _lcm.typing import (
     EconFunctionsMapping,
@@ -75,7 +74,7 @@ def get_next_state_function_for_simulation(
     transitions: TransitionFunctionsMapping,
     functions: EconFunctionsMapping,
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
-    transition_laws: TransitionLaws,
+    transition_plans: TargetTransitionPlans,
 ) -> NextStateSimulationFunction:
     """Get function that computes the next states during the simulation.
 
@@ -94,7 +93,7 @@ def get_next_state_function_for_simulation(
         transitions: Nested mapping of target regime names to transition functions.
         functions: Immutable mapping of auxiliary functions of a regime.
         all_grids: Immutable mapping of regime names to Grid spec objects.
-        transition_laws: Immutable mapping of target regime names to their
+        transition_plans: Immutable mapping of target regime names to their
             transition laws.
 
     Returns:
@@ -110,11 +109,14 @@ def get_next_state_function_for_simulation(
             target_regime_name=target_regime_name,
             bundle=bundle,
             all_grids=all_grids,
-            transition_laws=transition_laws,
+            transition_plans=transition_plans,
         )
         per_target_funcs[target_regime_name] = concatenate_functions(
             functions=dict(extended) | dict(functions),
-            targets=list(extended.keys()),
+            targets=[
+                output.next_state_name
+                for output in transition_plans[target_regime_name].outputs.values()
+            ],
             return_type="dict",
             enforce_signature=False,
             set_annotations=True,
@@ -134,7 +136,7 @@ def get_next_stochastic_weights_function(
     regime_name: RegimeName,
     functions: EconFunctionsMapping,
     transitions: MappingProxyType[TransitionFunctionName, TransitionFunction],
-    transition_laws: TransitionLaws,
+    transition_plans: TargetTransitionPlans,
 ) -> Callable[..., dict[str, FloatND | IntND]]:
     """Get function that computes the weights for the next stochastic states.
 
@@ -142,7 +144,7 @@ def get_next_stochastic_weights_function(
         regime_name: Name of the regime that the transitions target.
         functions: Immutable mapping of auxiliary functions of the model.
         transitions: Transitions to the target regime.
-        transition_laws: Immutable mapping of target regime names to their
+        transition_plans: Immutable mapping of target regime names to their
             transition laws.
 
     Returns:
@@ -153,8 +155,8 @@ def get_next_stochastic_weights_function(
         regime_name=regime_name,
         functions=functions,
         transitions=transitions,
-        transition_laws=transition_laws,
-        select=is_stochastic,
+        transition_plans=transition_plans,
+        select=lambda plans, target, name: plans[target].is_lottery(name),
     )
 
 
@@ -163,7 +165,7 @@ def get_next_interpolation_basis_weights_function(
     regime_name: RegimeName,
     functions: EconFunctionsMapping,
     transitions: MappingProxyType[TransitionFunctionName, TransitionFunction],
-    transition_laws: TransitionLaws,
+    transition_plans: TargetTransitionPlans,
 ) -> Callable[..., dict[str, FloatND | IntND]]:
     """Get function that computes the node-basis weights of the declared entries.
 
@@ -175,7 +177,7 @@ def get_next_interpolation_basis_weights_function(
         regime_name: Name of the regime that the transitions target.
         functions: Immutable mapping of auxiliary functions of the model.
         transitions: Transitions to the target regime.
-        transition_laws: Immutable mapping of target regime names to their
+        transition_plans: Immutable mapping of target regime names to their
             transition laws.
 
     Returns:
@@ -186,8 +188,8 @@ def get_next_interpolation_basis_weights_function(
         regime_name=regime_name,
         functions=functions,
         transitions=transitions,
-        transition_laws=transition_laws,
-        select=is_interpolation_basis,
+        transition_plans=transition_plans,
+        select=lambda plans, target, name: plans[target].has_interpolation_basis(name),
     )
 
 
@@ -196,8 +198,8 @@ def _get_next_weights_function(
     regime_name: RegimeName,
     functions: EconFunctionsMapping,
     transitions: MappingProxyType[TransitionFunctionName, TransitionFunction],
-    transition_laws: TransitionLaws,
-    select: Callable[[TransitionLaws, RegimeName, TransitionFunctionName], bool],
+    transition_plans: TargetTransitionPlans,
+    select: Callable[[TargetTransitionPlans, RegimeName, TransitionFunctionName], bool],
 ) -> Callable[..., dict[str, FloatND | IntND]]:
     """Build the DAG producing one kind of target-qualified weight vector.
 
@@ -205,7 +207,7 @@ def _get_next_weights_function(
         regime_name: Name of the regime that the transitions target.
         functions: Immutable mapping of auxiliary functions of the model.
         transitions: Transitions to the target regime.
-        transition_laws: Immutable mapping of target regime names to their
+        transition_plans: Immutable mapping of target regime names to their
             transition laws.
         select: Predicate picking the laws whose weights to build.
 
@@ -216,7 +218,7 @@ def _get_next_weights_function(
     targets = [
         f"weight_{regime_name}__{func_name}"
         for func_name in transitions
-        if select(transition_laws, regime_name, func_name)
+        if select(transition_plans, regime_name, func_name)
     ]
     # A weight law may read another transition's `next_<state>` output within the
     # same target's DAG -- the supported transition-reads-transition composition
@@ -240,7 +242,7 @@ def _get_next_weights_function(
     available_transitions = {
         name: func
         for name, func in transitions.items()
-        if not is_stochastic(transition_laws, regime_name, name)
+        if not transition_plans[regime_name].is_lottery(name)
     }
     return concatenate_functions(
         functions=dict(available_transitions) | dict(functions),
@@ -256,7 +258,7 @@ def _extend_bundle_for_simulation(
     target_regime_name: RegimeName,
     bundle: MappingProxyType[TransitionFunctionName, Callable[..., FloatND | IntND]],
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
-    transition_laws: TransitionLaws,
+    transition_plans: TargetTransitionPlans,
 ) -> dict[TransitionFunctionName, Callable[..., FloatND | IntND]]:
     """Replace stochastic transitions for one target with realisation wrappers.
 
@@ -274,23 +276,33 @@ def _extend_bundle_for_simulation(
         bundle: Mapping of unqualified `next_<state>` transition names
             to functions, restricted to one target regime.
         all_grids: Immutable mapping of regime names to Grid spec objects.
-        transition_laws: Immutable mapping of target regime names to their
+        transition_plans: Immutable mapping of target regime names to their
             transition laws.
 
     Returns:
         Extended transitions dictionary keyed by unqualified `next_<state>` names.
 
     """
-    laws = transition_laws.get(target_regime_name, MappingProxyType({}))
+    plan = transition_plans[target_regime_name]
     extended: dict[TransitionFunctionName, Callable[..., FloatND | IntND]] = dict(
         bundle
     )
     for next_state_name in bundle:
-        law = laws.get(next_state_name)
-        if law is None or not law.stochastic:
+        lottery = plan.lotteries.get(next_state_name)
+        if lottery is None:
+            continue
+        if lottery.lifetime is LotteryLifetime.TRANSITION_LOCAL:
+            extended[next_state_name] = _create_joint_stochastic_next_func(
+                target_regime_name=target_regime_name,
+                lottery_name=next_state_name,
+                support_provider_name=lottery.support_provider_name,
+                support_size=lottery.support_signature.size,
+                node_annotation=lottery.node_annotation,
+            )
             continue
         state_name = next_state_name.removeprefix("next_")
-        if law.continuous_process:
+        output = plan.outputs[state_name]
+        if output.continuous_process:
             extended[next_state_name] = _create_continuous_stochastic_next_func(
                 target_regime_name=target_regime_name,
                 next_state_name=next_state_name,
@@ -303,6 +315,43 @@ def _extend_bundle_for_simulation(
                 labels=all_grids[target_regime_name][state_name].to_jax(),
             )
     return extended
+
+
+def _create_joint_stochastic_next_func(
+    *,
+    target_regime_name: RegimeName,
+    lottery_name: TransitionFunctionName,
+    support_provider_name: str | None,
+    support_size: int | None,
+    node_annotation: str | None,
+) -> Callable[..., Any]:
+    """Draw one support node and publish its whole pytree to dependent outputs."""
+    if support_provider_name is None or support_size is None or node_annotation is None:
+        raise ModelInitializationError(
+            f"Joint lottery '{target_regime_name}__{lottery_name}' lacks its "
+            "support provider or static support size."
+        )
+    qname = qname_from_tree_path((target_regime_name, lottery_name))
+
+    @with_signature(
+        args={
+            f"weight_{qname}": "FloatND",
+            f"key_{qname}": "PRNGKeyND",
+            support_provider_name: node_annotation,
+        },
+        return_annotation=node_annotation,
+    )
+    def realized_node(**kwargs: Any) -> Any:  # noqa: ANN401
+        index = jax.random.choice(
+            key=kwargs[f"key_{qname}"],
+            a=support_size,
+            p=kwargs[f"weight_{qname}"],
+        )
+        return jax.tree_util.tree_map(
+            lambda leaf: leaf[index], kwargs[support_provider_name]
+        )
+
+    return realized_node
 
 
 def _create_discrete_stochastic_next_func(

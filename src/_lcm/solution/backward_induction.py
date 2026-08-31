@@ -1,16 +1,34 @@
 import dataclasses
 import functools
 import gc
+import inspect
 import logging
 import os
 import time
-from collections.abc import Callable, Hashable, Mapping
+from collections.abc import Callable, Hashable, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from types import MappingProxyType
+from typing import cast
 
 import jax
 
-from _lcm.engine import Regime, StateActionSpace
+from _lcm.engine import Regime, StateActionSpace, _build_regime_sharding
+from _lcm.regime_building.gated_edges import (
+    EDGE_PERIOD_CONTEXT_ARGS,
+    CompiledEdgeFold,
+    bind_edge_period_context,
+    build_reference_params_mapping_for_fold,
+    build_same_period_mapping_for_fold,
+    edge_may_fold_at_period,
+    gate_reads_dissolution_flag,
+    source_reads_folded_wbar,
+)
+from _lcm.regime_building.Q_and_F import (
+    EDGE_REF_PARAMS_ARG,
+    EDGE_REF_V_ARG,
+    SAME_PERIOD_PARAMS_ARG,
+    SAME_PERIOD_V_ARG,
+)
 from _lcm.solution.contract import (
     BackwardInductionResult,
     ContinuationPayload,
@@ -26,6 +44,7 @@ from _lcm.solution.diagnostics import (
 from _lcm.solution.v_topology import (
     _build_zero_V_arr,
     _get_regime_V_shapes_and_shardings,
+    _RegimeVTopology,
 )
 from _lcm.typing import FlatParams, RegimeName
 from _lcm.utils.logging import (
@@ -37,8 +56,13 @@ from _lcm.utils.logging import (
     validation_raises,
 )
 from lcm.ages import AgeGrid
-from lcm.exceptions import InvalidValueFunctionError
-from lcm.typing import FloatND
+from lcm.exceptions import InvalidValueFunctionError, ModelInitializationError
+from lcm.typing import BoolND, ContinuousState, DiscreteState, FloatND
+
+# Stands in for a period's flag mapping when the model retains no dissolution
+# flags, so every period key is present with nothing behind it. One shared
+# instance: it is immutable and carries no arrays.
+_NO_DISSOLUTION_FLAGS: MappingProxyType[RegimeName, BoolND] = MappingProxyType({})
 
 
 def solve(  # noqa: C901, PLR0915
@@ -50,6 +74,7 @@ def solve(  # noqa: C901, PLR0915
     enable_jit: bool,
     collect_simulation_policies: bool = False,
     max_compilation_workers: int | None = None,
+    retain_dissolution_flags: bool = True,
 ) -> BackwardInductionResult:
     """Solve a model by backward induction, whatever solver each regime declares.
 
@@ -70,16 +95,39 @@ def solve(  # noqa: C901, PLR0915
             period boundary instead of retaining one device-sized artifact per period.
         max_compilation_workers: Maximum number of threads for parallel XLA compilation.
             Defaults to `os.cpu_count()`.
+        retain_dissolution_flags: Whether a caller wants the per-period
+            dissolution flags on the result for their own sake. A model whose
+            gates read `D_target` retains them regardless — the flags are a
+            simulate-side input there, not an inspection artifact.
 
     Returns:
         The named backward-induction outputs: the immutable mapping of periods
-        to regime value-function arrays, and, when requested, the immutable
-        mapping of periods to each regime's published simulation policy. The
-        policy mapping is empty when `collect_simulation_policies` is false.
+        to regime value-function arrays, the immutable mapping of periods to each
+        regime's published simulation policy (the off-grid policy artifact
+        simulation can interpolate; regimes whose kernels publish none have no
+        entry, and the whole mapping is empty when
+        `collect_simulation_policies` is false), and the immutable mapping of
+        periods to each COLLECTIVE regime's dissolution flag `D` — `True` on the
+        state cells whose action mask is empty, distinct from a numeric `-inf`
+        value; empty inner mappings for models without collective regimes, so
+        the default path only gains an empty dissolution mapping.
 
     """
-    next_regime_to_V_arr, next_regime_to_continuation = _build_continuation_templates(
+    # The state-action spaces and the fence that reads them depend only on
+    # `regimes` and `flat_params`, so a colliding model is rejected before a
+    # single kernel is compiled rather than after every regime-period has been
+    # AOT-compiled.
+    base_state_action_spaces = _build_base_state_action_spaces(
         regimes=regimes, flat_params=flat_params
+    )
+    _reject_edge_fold_state_param_collisions(
+        regimes=regimes,
+        base_state_action_spaces=base_state_action_spaces,
+        flat_params=flat_params,
+    )
+
+    next_regime_to_V_arr, next_regime_to_continuation, next_edge_to_V_arr = (
+        _build_continuation_templates(regimes=regimes, flat_params=flat_params)
     )
 
     # AOT-compile all unique solve kernels in parallel.
@@ -89,6 +137,7 @@ def solve(  # noqa: C901, PLR0915
         ages=ages,
         next_regime_to_V_arr=next_regime_to_V_arr,
         next_regime_to_continuation=next_regime_to_continuation,
+        next_edge_to_V_arr=next_edge_to_V_arr,
         enable_jit=enable_jit,
         max_compilation_workers=max_compilation_workers,
         logger=logger,
@@ -96,6 +145,21 @@ def solve(  # noqa: C901, PLR0915
 
     solution: dict[int, MappingProxyType[RegimeName, FloatND]] = {}
     simulation_policies: dict[int, MappingProxyType[RegimeName, SimulationPolicy]] = {}
+    dissolution_flags: dict[int, MappingProxyType[RegimeName, BoolND]] = {}
+
+    # Every collective kernel publishes `D`, but only two things read the
+    # ACCUMULATED per-period mapping: forward simulation, for a gate that
+    # declares the `D_target` operand, and a caller that asked for the flags.
+    # A gate's own signature settles the first, so the answer is known before
+    # the first kernel runs; where it is `False` and nobody asked, each period's
+    # flags go out of scope with the period that produced them instead of
+    # staying live for the whole induction. The per-period flags themselves are
+    # built either way — the edge fold below reads them while they are current.
+    publish_dissolution_flags = retain_dissolution_flags or any(
+        gate_reads_dissolution_flag(edge=edge)
+        for regime in regimes.values()
+        for edge in regime.gated_edges.values()
+    )
 
     # Async diagnostics accumulators: per-period NaN/Inf flags (and the
     # debug min/max/mean trio) live here as device-side scalars during
@@ -141,15 +205,12 @@ def solve(  # noqa: C901, PLR0915
     logger.info("Starting solution")
     total_start = time.monotonic()
 
-    # backwards induction loop
-    base_state_action_spaces = _build_base_state_action_spaces(
-        regimes=regimes, flat_params=flat_params
-    )
-
     # A published simulation policy is a solve output; no backward step reads
-    # it. Retaining one per period can pin continuation-sized device buffers, so
-    # value-only solves discard it at the period boundary. A requesting consumer
-    # receives host copies, which simulation re-materializes on device.
+    # it. Its buffers can alias the period's continuation buffer, so retaining
+    # one per period pins a continuation-sized device buffer per period for the
+    # whole induction. Value-only solves therefore discard it at the period
+    # boundary; a requesting consumer receives host copies, which simulation
+    # re-materializes on device.
     host_device = jax.devices("cpu")[0] if collect_simulation_policies else None
 
     for period in reversed(range(ages.n_periods)):
@@ -157,6 +218,7 @@ def solve(  # noqa: C901, PLR0915
         period_solution: dict[RegimeName, FloatND] = {}
         period_continuations: dict[RegimeName, ContinuationPayload] = {}
         period_simulation_policies: dict[RegimeName, SimulationPolicy] = {}
+        period_dissolution_flags: dict[RegimeName, BoolND] = {}
 
         active_regimes = {
             regime_name: regime
@@ -170,9 +232,18 @@ def solve(  # noqa: C901, PLR0915
             n_active_regimes=len(active_regimes),
         )
 
-        for regime_name, regime in active_regimes.items():
+        # Regimes declaring `same_period_refs` read
+        # other regimes' V of THIS period, so those references must be solved
+        # first — order the period's active regimes topologically by the
+        # reference edges (stable: dict order among independent regimes).
+        # Models without references keep the plain dict order.
+        for regime_name in _order_regime_names_by_same_period_refs(
+            active_regimes=active_regimes
+        ):
+            regime = active_regimes[regime_name]
             result = _run_period_kernel(
                 regime=regime,
+                regime_name=regime_name,
                 period=period,
                 compiled_cores=compiled_functions[(regime_name, period)],
                 state_action_space=base_state_action_spaces[regime_name],
@@ -181,6 +252,8 @@ def solve(  # noqa: C901, PLR0915
                 next_regime_to_V_arr=next_regime_to_V_arr,
                 next_regime_to_continuation=next_regime_to_continuation,
                 logger=logger,
+                next_edge_to_V_arr=next_edge_to_V_arr,
+                period_solution=period_solution,
             )
             V_arr = result.V_arr
             # The published V mapping is the calling convention for every
@@ -203,6 +276,11 @@ def solve(  # noqa: C901, PLR0915
                 period_continuations[regime_name] = result.continuation
             if collect_simulation_policies and result.simulation_policy is not None:
                 period_simulation_policies[regime_name] = result.simulation_policy
+            # A collective regime publishes its
+            # empty-mask dissolution flag D alongside V; singleton regimes
+            # leave it None and never touch this mapping.
+            if result.dissolution is not None:
+                period_dissolution_flags[regime_name] = result.dissolution
             running_any_nan, running_any_inf = _fold_period_diagnostics(
                 V_arr=V_arr,
                 regime_name=regime_name,
@@ -235,6 +313,23 @@ def solve(  # noqa: C901, PLR0915
                 # implies a finished `min`/`max` too.
                 diagnostic_mean[-1].block_until_ready()
 
+        # Fold each declared gated edge whose target
+        # was solved this period onto the target grid, and roll the resulting
+        # Wbar into the edge continuation the source reads next period. Reads
+        # only the still-live period-t arrays (`period_solution`,
+        # `period_dissolution_flags`). The node fold is streamed to cap peak
+        # memory; parents then read Wbar in place of the raw target V via the
+        # existing next_regime_to_V_arr threading.
+        next_edge_to_V_arr = _roll_gated_edges(
+            regimes=regimes,
+            ages=ages,
+            period=period,
+            period_solution=period_solution,
+            period_dissolution_flags=period_dissolution_flags,
+            base_state_action_spaces=base_state_action_spaces,
+            flat_params=flat_params,
+            next_edge_to_V_arr=next_edge_to_V_arr,
+        )
         next_regime_to_V_arr, next_regime_to_continuation = _roll_continuation_inputs(
             regimes=regimes,
             period_solution=period_solution,
@@ -243,6 +338,17 @@ def solve(  # noqa: C901, PLR0915
             next_regime_to_continuation=next_regime_to_continuation,
         )
         solution[period] = MappingProxyType(period_solution)
+        # Publish each collective regime's dissolution
+        # flag D alongside V, where a reader exists. Kept as a plain per-period
+        # mapping (not rolled like `next_regime_to_V_arr`): nothing consumes a
+        # NEXT-period D — a gated edge's gate reads the still-live per-period
+        # flags at each period's end, before the roll (above). The period keys
+        # match `solution`'s either way; only the arrays behind them differ.
+        dissolution_flags[period] = (
+            MappingProxyType(period_dissolution_flags)
+            if publish_dissolution_flags
+            else _NO_DISSOLUTION_FLAGS
+        )
         if collect_simulation_policies:
             assert host_device is not None  # noqa: S101
             simulation_policies[period] = MappingProxyType(
@@ -292,7 +398,7 @@ def solve(  # noqa: C901, PLR0915
         except InvalidValueFunctionError as error:
             raise_or_warn(logger=logger, error=error)
 
-    _drain_V_arr_shards(solution=solution)
+    _drain_V_arr_shards(solution=solution, dissolution_flags=dissolution_flags)
 
     total_elapsed = time.monotonic() - total_start
     logger.info("Solution complete  (%s)", format_duration(seconds=total_elapsed))
@@ -300,6 +406,7 @@ def solve(  # noqa: C901, PLR0915
     return BackwardInductionResult(
         value_functions=MappingProxyType(solution),
         simulation_policies=MappingProxyType(simulation_policies),
+        dissolution_flags=MappingProxyType(dissolution_flags),
     )
 
 
@@ -328,6 +435,7 @@ def _release_rolled_continuations(
 def _run_period_kernel(
     *,
     regime: Regime,
+    regime_name: RegimeName,
     period: int,
     compiled_cores: MappingProxyType[str, Callable],
     state_action_space: StateActionSpace,
@@ -336,6 +444,8 @@ def _run_period_kernel(
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
     logger: logging.Logger,
+    next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
+    period_solution: Mapping[RegimeName, FloatND],
 ) -> KernelResult:
     """Invoke one regime's period adapter for one period.
 
@@ -343,8 +453,18 @@ def _run_period_kernel(
     solver type. The adapter wraps the regime's shared jitted core(s) (passed in
     AOT-compiled as `compiled_cores`), calls them with the solver's own argument
     layout, and returns a `KernelResult` — the value-function array plus the
-    optional generic outputs (`continuation`, `simulation_policy`), which the
-    backward-induction loop accumulates.
+    optional generic outputs (`continuation`, `simulation_policy`, and the
+    collective `dissolution` flag D), which the backward-induction loop
+    accumulates.
+
+    A regime declaring `same_period_refs` additionally
+    receives the referenced regimes' V arrays of THIS period, read off
+    `period_solution` — the within-period topological order guarantees they were
+    solved earlier in this period's loop. a source
+    declaring `gated_edges` receives its own rolled Wbar arrays, keyed by target
+    regime name, which the grid-search kernel substitutes for the raw target V in
+    `next_regime_to_V_arr`. Every other regime's adapter is called with the
+    unchanged uniform signature.
 
     `period`/`age` are passed as JAX arrays (not Python scalars) so a shared
     `jax.jit` function is traced once with abstract shapes, not recompiled
@@ -360,12 +480,24 @@ def _run_period_kernel(
     """
     period_kernel = regime.solution.period_kernels[period]
 
-    # With `AgeSpecializedGrid` states, tabulate period-t's value function on
-    # period-t's own grid nodes rather than the representative base axis. This is
-    # what keeps the tabulation on the same grid as the continuation, which reads
-    # V_{t+1} on period-(t+1)'s grid; the two halves disagreeing makes the solved
-    # value function wrong at every node, not merely imprecise. Same shape as the
-    # base, so the shared compiled core is not retraced.
+    # AGE-SPECIALIZED STATES: tabulate period-t's value function on period-t's grid
+    # nodes, not on the representative base axis. This is what keeps the tabulation
+    # on the same grid as the continuation, which reads V_{t+1} on period-(t+1)'s
+    # grid; the two halves disagreeing makes the solved value function wrong at
+    # every node, not merely imprecise. Same shape as the base, so the shared
+    # compiled core is not retraced.
+    #
+    # This consumer was DROPPED by cascade merge 80f5e79 ("Cascade
+    # feat/age-specialized into feat/dcegm"). The age-specialized side called
+    # `_states_for_period` in exactly two places -- the solve hot loop and the
+    # failure-path reconstruction -- and the merge kept only the second, which moved
+    # into `diagnostics.py`. `_build_period_state_axes` kept computing the axes and
+    # `SolutionPhase.period_state_axes` kept carrying them, so nothing looked broken:
+    # the data was still built and stored, just never read by the solver. Every
+    # period then solved on the base axis, which is wrong exactly where the
+    # age-specific grid diverges from it -- the last pre-retirement ages -- and
+    # showed up as `-inf` in the worker value function at ages 57-59 in
+    # blundellFemaleLaborSupply2016.
     state_action_space = dataclasses.replace(
         state_action_space,
         states=MappingProxyType(
@@ -379,6 +511,21 @@ def _run_period_kernel(
         ),
     )
 
+    same_period_kwargs: dict[str, object] = {}
+    if regime.same_period_ref_regimes:
+        same_period_kwargs["same_period_regime_to_V_arr"] = MappingProxyType(
+            {
+                ref_regime_name: period_solution[ref_regime_name]
+                for ref_regime_name in regime.same_period_ref_regimes
+            }
+        )
+    same_period_kwargs.update(
+        _edge_kwargs(
+            regime=regime,
+            regime_name=regime_name,
+            next_edge_to_V_arr=next_edge_to_V_arr,
+        )
+    )
     return period_kernel(
         compiled_cores=compiled_cores,
         state_action_space=state_action_space,
@@ -388,7 +535,46 @@ def _run_period_kernel(
         period=period,
         ages=ages,
         logger=logger,
+        **same_period_kwargs,
     )
+
+
+def _order_regime_names_by_same_period_refs(
+    *,
+    active_regimes: dict[RegimeName, Regime],
+) -> tuple[RegimeName, ...]:
+    """Topologically order one period's active regimes by `same_period_refs`.
+
+    A regime reading another regime's same-period V
+    must be solved after it. Stable Kahn ordering: at each step the first (in
+    dict order) not-yet-placed regime whose active references are all placed is
+    emitted, so models without references keep the plain dict order exactly. A
+    cycle is rejected at model build (`_fail_if_same_period_ref_cycle`); the
+    raise here is a defensive backstop for direct engine callers.
+    """
+    if not any(regime.same_period_ref_regimes for regime in active_regimes.values()):
+        return tuple(active_regimes)
+    placed: dict[RegimeName, None] = {}
+    remaining = dict(active_regimes)
+    while remaining:
+        ready = next(
+            (
+                regime_name
+                for regime_name, regime in remaining.items()
+                if all(ref not in remaining for ref in regime.same_period_ref_regimes)
+            ),
+            None,
+        )
+        if ready is None:
+            msg = (
+                "same_period_refs form a cycle among the period's active "
+                f"regimes: {sorted(remaining)}. This should have been "
+                "rejected at model build."
+            )
+            raise RuntimeError(msg)
+        placed[ready] = None
+        del remaining[ready]
+    return tuple(placed)
 
 
 def _roll_continuation_inputs(
@@ -441,6 +627,282 @@ def _roll_continuation_inputs(
         }
     )
     return rolled_V_arr, rolled_continuation
+
+
+# A gated edge's continuation slot is keyed by the
+# (source regime, target regime) pair — a source has at most one edge per target,
+# and the same target is read raw by other regimes, so the edge cannot share the
+# plain regime-keyed V slot.
+type _EdgeKey = tuple[RegimeName, RegimeName]
+
+
+def _roll_gated_edges(
+    *,
+    regimes: MappingProxyType[RegimeName, Regime],
+    ages: AgeGrid,
+    period: int,
+    period_solution: dict[RegimeName, FloatND],
+    period_dissolution_flags: dict[RegimeName, BoolND],
+    base_state_action_spaces: dict[RegimeName, StateActionSpace],
+    flat_params: FlatParams,
+    next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
+) -> MappingProxyType[_EdgeKey, FloatND]:
+    """Fold every gated edge whose target was solved this period; roll the rest.
+
+    For each declared edge whose target regime (and
+    every reference regime it reads) was solved in the period just completed,
+    evaluate its `Wbar` producer on the still-live period-`t` arrays and
+    store it; edges whose target is inactive this period keep their previous
+    `Wbar` (the roll semantics of `next_regime_to_V_arr`). Keeps the full key
+    set so the pytree structure stays JIT-stable.
+
+    Which of the two an edge gets is `edge_may_fold_at_period`'s answer, the
+    same one forward simulation consults. The fold at period `t` is read by
+    the source at `t - 1`, so whether a source exists there decides what an
+    unsolved reference regime means: at an unread period it is the legitimate
+    boundary no-op of a self-loop edge at its target's earliest active period,
+    and the previous `Wbar` stands; at a read period it is a misconfigured
+    edge, and the fold refuses rather than feed the source a stale value.
+
+    The gate and the projections are evaluated on the target's grid nodes at
+    `period` — the same nodes the target's value function being folded was
+    tabulated on. An `AgeSpecializedGrid` keeps `n_points` fixed while its
+    bounds move with age, so reading the representative axis instead passes
+    every shape check and folds the value at the wrong coordinates.
+    """
+    if not next_edge_to_V_arr:
+        return next_edge_to_V_arr
+    rolled: dict[_EdgeKey, FloatND] = dict(next_edge_to_V_arr)
+    for source_name, source in regimes.items():
+        for target_name, edge in source.gated_edges.items():
+            if not edge_may_fold_at_period(
+                edge=edge,
+                source_name=source_name,
+                fold_period=period,
+                solved_regimes=period_solution,
+                source_reads_wbar=source_reads_folded_wbar(
+                    source_active_periods=source.active_periods,
+                    fold_period=period,
+                ),
+            ):
+                continue
+            # The fold compiled for THIS period: the gate references and leg
+            # fallbacks are interpolated on their own regimes' grids as of the
+            # period being folded, which an `AgeSpecializedGrid` moves without
+            # changing their shape.
+            fold = edge.fold_at(period=period)
+            same_period_mapping = build_same_period_mapping_for_fold(
+                edge=edge,
+                period_solution=period_solution,
+                period_dissolution_flags=period_dissolution_flags,
+            )
+            wbar = _evaluate_edge_fold(
+                fold=fold,
+                fold_period=period,
+                fold_age=ages.period_to_age(period),
+                target_states=cast(
+                    "Mapping[str, ContinuousState | DiscreteState]",
+                    _states_for_period(
+                        regime=regimes[target_name],
+                        state_action_space=base_state_action_spaces[target_name],
+                        period=period,
+                    ),
+                ),
+                same_period_mapping=same_period_mapping,
+                source_flat_params=flat_params[source_name],
+                reference_flat_params=build_reference_params_mapping_for_fold(
+                    edge=edge, flat_params=flat_params
+                ),
+            )
+            rolled[(source_name, target_name)] = _match_leaf_template_sharding(
+                leaf=wbar,
+                template_leaf=next_edge_to_V_arr[(source_name, target_name)],
+            )
+    return MappingProxyType(rolled)
+
+
+def _reject_edge_fold_state_param_collisions(
+    *,
+    regimes: MappingProxyType[RegimeName, Regime],
+    base_state_action_spaces: Mapping[RegimeName, StateActionSpace],
+    flat_params: FlatParams,
+) -> None:
+    """Reject a gated edge whose fold binds one leaf as BOTH a target state and a
+    source param.
+
+    A gate / gate-ref projection / fallback projection declares its arguments by
+    bare name. `get_edge_fold` exposes the target's state grids and the source's
+    gate/projection params in ONE flat signature, so a name that is simultaneously
+    a TARGET STATE of the target regime and a key of `flat_params[source]` occupies
+    a single leaf that two binders both claim: `_evaluate_edge_fold` (below)
+    overwrites the state grid with the source param, so the SOLVE-side `Wbar`
+    reads the param, while the simulate evaluator's `_expose`
+    (`get_edge_simulate_gate_evaluator`) classifies the same name as a state
+    BEFORE it would record a source param, so the SIMULATE-side gate reads the
+    realized target state. Solve and simulate then evaluate DIFFERENT predicates
+    for the same edge -- the gate flips, `Wbar` changes, or a fallback
+    coordinate is written from the wrong value, all silently.
+
+    Why this is a solve-time (not construction-time) fence: a gate/projection
+    param is bound from a BARE key the user adds to `flat_params[source]`, never
+    from the function-qualified regime params template, so it is absent from
+    `regime_to_flat_param_names[source]` and the collision is only visible once
+    `flat_params` is in hand. A LEGITIMATE direct target-state read (a gate that
+    reads a target state the source never supplies as a param -- e.g. a reused
+    state NAME across two regimes) is untouched, because that name is not a key of
+    `flat_params[source]`.
+    """
+    for source_name, source in regimes.items():
+        if not source.gated_edges:
+            continue
+        source_param_names = set(flat_params[source_name])
+        for target_name, edge in source.gated_edges.items():
+            compiled_folds = tuple(edge.folds_by_period.values())
+            if not compiled_folds:
+                # The target regime is active in no period, so it holds no
+                # value to fold and no fold was compiled — there is no
+                # signature to check, and no `Wbar` this edge could ever feed.
+                continue
+            # Any compiled period answers: a fold's signature is built from
+            # names — the target's states, the gate's and the projections'
+            # parameters — and an `AgeSpecializedGrid` may vary only its nodes,
+            # never a grid's class, shape, or points mode. So every period's
+            # fold exposes the same leaves, and the collisions this rejects are
+            # a property of the edge rather than of one period.
+            # Every name this edge binds, on BOTH sides of the seam: the fold's
+            # operand surfaces, the combiner that gates them (which carries the
+            # projected readers), and the simulate gate evaluator. The check
+            # below is about a name meaning one thing in solve and another in
+            # simulate, so reading one side's signature alone would miss exactly
+            # the names only the other side declares.
+            evaluators = tuple(edge.simulate_gate_evaluators_by_period.values())
+            sig_params = set().union(
+                *(
+                    set(inspect.signature(func).parameters)
+                    for func in (
+                        compiled_folds[0].surfaces,
+                        compiled_folds[0].combine.combine,
+                        *evaluators[:1],
+                    )
+                )
+            )
+            target_state_names = set(base_state_action_spaces[target_name].states)
+            collisions = sorted(sig_params & target_state_names & source_param_names)
+            if collisions:
+                msg = (
+                    f"The gated edge '{source_name}' -> '{target_name}' has a gate "
+                    f"or projection argument {collisions} that is simultaneously a "
+                    f"TARGET state of '{target_name}' and a source parameter in "
+                    f"`flat_params['{source_name}']`. The fold's single leaf for "
+                    "each such name is bound as the source param on the solve side "
+                    "(`_evaluate_edge_fold`) but as the realized target state on the "
+                    "simulate side (`get_edge_simulate_gate_evaluator`), so the "
+                    "solved `Wbar` and the simulate router would evaluate different "
+                    "gates. Rename the source parameter (or the target state) so the "
+                    "two namespaces are disjoint."
+                )
+                raise ModelInitializationError(msg)
+            # A source flat-param key (or target state) that shadows one of the
+            # internal ENGINE argument names is a second solve/simulate divergence
+            # of the same class: on the solve side
+            # `_evaluate_edge_fold` binds `SAME_PERIOD_V_ARG` to the value mapping
+            # and `SAME_PERIOD_PARAMS_ARG` to the reference params, then overwrites
+            # those slots with any same-named source flat-param; on the simulate
+            # side `_expose` classifies the identical spelling as the engine arg
+            # BEFORE it can be recorded as a source param. So a source scalar named
+            # `same_period_regime_to_params` opens the gate on solve (scalar) but
+            # closes it on simulate (mapping), and a source
+            # `same_period_regime_to_V_arr` overwrites the value mapping outright.
+            # Reserve the engine names against both source params and target
+            # states, whether or not THIS edge binds them. Which of the two
+            # params mappings an edge names depends on its topology — a gate
+            # reference reads one, a leg fallback the other — so keying the
+            # reservation on the signature would let the same spelling be a
+            # source param under one topology and engine vocabulary under a
+            # neighbouring one. The absence of the name from a fold is what
+            # makes it dangerous, not its presence: it is then qualified into
+            # the target namespace and fails much later, inside solve.
+            engine_args = {
+                SAME_PERIOD_V_ARG,
+                SAME_PERIOD_PARAMS_ARG,
+                EDGE_REF_V_ARG,
+                EDGE_REF_PARAMS_ARG,
+                *EDGE_PERIOD_CONTEXT_ARGS,
+            }
+            engine_collisions = sorted(
+                engine_args & (source_param_names | target_state_names)
+            )
+            if engine_collisions:
+                msg = (
+                    f"The gated edge '{source_name}' -> '{target_name}' has a gate "
+                    f"or projection argument {engine_collisions} that shadows a "
+                    "reserved internal engine argument name "
+                    f"({sorted(engine_args)}). Such a name is bound as the source "
+                    "parameter / target state on one side of the solve/simulate seam "
+                    "but as the engine's value/params mapping on the other, so the "
+                    "solved `Wbar` and the simulate router would evaluate different "
+                    "gates (or crash when a source value overwrites the value "
+                    "mapping). Rename the source parameter (or the target state) so "
+                    "it does not collide with a reserved engine argument."
+                )
+                raise ModelInitializationError(msg)
+
+
+def _evaluate_edge_fold(
+    *,
+    fold: CompiledEdgeFold,
+    fold_period: int,
+    fold_age: float | None,
+    target_states: Mapping[str, ContinuousState | DiscreteState],
+    same_period_mapping: Mapping[RegimeName, FloatND],
+    source_flat_params: Mapping[str, object],
+    reference_flat_params: Mapping[RegimeName, Mapping[str, object]],
+) -> FloatND:
+    """Call one edge's fold with exactly the arguments its signature declares.
+
+    Every parameter the fold needs is bound from the SOURCE regime — the fold is
+    the source's own continuation object, and its gate / projections are declared
+    on the source, so this is the namespace they are written against. (It is also
+    the contract the simulate-side gate evaluator and leg projectors must match
+    argument for argument; see `_lcm.regime_building.gated_edges
+    .EdgeArgProvenance`.) The one exception is a REFERENCE regime's own
+    interpolation grid, which belongs to neither the source nor the target:
+    those params ride in `reference_flat_params` under
+    `Q_and_F.SAME_PERIOD_PARAMS_ARG`, keyed by regime, and the reference readers
+    resolve them internally.
+
+    The target regime's grid may carry DISCRETE state axes (an encoded
+    categorical, or any other `DiscreteGrid` state) alongside continuous ones,
+    so `target_states` is typed as `base_state_action_spaces[target_name].
+    states` is at the source — `ContinuousState | DiscreteState`
+    (`_lcm.engine.StateActionSpace.states`), not float-only. Narrowing it to
+    `FloatND` makes a discrete state raise `BeartypeCallHintParamViolation` at
+    the `int32`-vs-float check inside `fold`, even though `get_edge_fold`'s
+    `jnp.meshgrid` state broadcast tolerates either dtype.
+    """
+    surfaces = fold.surfaces
+    sig_params = set(inspect.signature(surfaces).parameters)
+    kwargs: dict[str, object] = {
+        name: arr for name, arr in target_states.items() if name in sig_params
+    }
+    kwargs.update(
+        {
+            name: value
+            for name, value in source_flat_params.items()
+            if name in sig_params
+        }
+    )
+    kwargs.update(
+        bind_edge_period_context(
+            surfaces,
+            fold_period=fold_period,
+            fold_age=fold_age,
+        )
+    )
+    kwargs[SAME_PERIOD_V_ARG] = same_period_mapping
+    if SAME_PERIOD_PARAMS_ARG in sig_params:
+        kwargs[SAME_PERIOD_PARAMS_ARG] = reference_flat_params
+    return surfaces(**kwargs)
 
 
 def _match_continuation_template_sharding(
@@ -511,16 +973,22 @@ def _build_continuation_templates(
 ) -> tuple[
     MappingProxyType[RegimeName, FloatND],
     MappingProxyType[RegimeName, ContinuationPayload],
+    MappingProxyType[_EdgeKey, FloatND],
 ]:
     """Build the period-invariant continuation-input templates.
 
-    Both mappings keep the same pytree structure (keys and shapes) across all
+    All mappings keep the same pytree structure (keys and shapes) across all
     periods, avoiding JIT re-compilation from pytree mismatches:
 
     - the V template holds a zero array per regime, shaped (and sharded) like
       the regime's V array;
     - the continuation template holds entries only for continuation-publishing
-      regimes, in the key order reused every period.
+      regimes, in the key order reused every period;
+    - the gated-edge template holds a zero `Wbar` per declared edge,
+      shaped like the target regime's V state grid plus the source regime's
+      stakeholder axis (a singleton source: the target grid alone). Empty for
+      models without gated edges, so the default path only gains an empty third
+      mapping.
     """
     regime_V_topology = _get_regime_V_shapes_and_shardings(
         regimes=regimes,
@@ -539,7 +1007,97 @@ def _build_continuation_templates(
             if regime.solution.continuation_template is not None
         }
     )
-    return next_regime_to_V_arr, next_regime_to_continuation
+    next_edge_to_V_arr = MappingProxyType(
+        {
+            (source_name, target_name): _build_zero_V_arr(topology=topology)
+            for source_name, target_name, topology in _iter_edge_topologies(
+                regimes=regimes, flat_params=flat_params
+            )
+        }
+    )
+    return next_regime_to_V_arr, next_regime_to_continuation, next_edge_to_V_arr
+
+
+def _edge_kwargs(
+    *,
+    regime: Regime,
+    regime_name: RegimeName,
+    next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
+) -> dict[str, object]:
+    """Build a source kernel's gated-edge `Wbar` argument, keyed by target.
+
+    The kernel substitutes each entry for the raw target V in
+    `next_regime_to_V_arr`. Lowering and execution both go through this one
+    function, so the pytree the kernel is compiled against is the pytree it is
+    called with. Empty for a regime declaring no gated edge.
+    """
+    if not regime.gated_edges:
+        return {}
+    return {
+        "edge_regime_to_V_arr": MappingProxyType(
+            {
+                target_name: next_edge_to_V_arr[(regime_name, target_name)]
+                for target_name in regime.gated_edges
+            }
+        )
+    }
+
+
+def _iter_edge_topologies(
+    *,
+    regimes: MappingProxyType[RegimeName, Regime],
+    flat_params: FlatParams,
+) -> Iterator[tuple[RegimeName, RegimeName, _RegimeVTopology]]:
+    """Yield `(source, target, Wbar topology)` for every declared gated edge.
+
+    An edge's continuation lands on the target regime's state grid, so its axes
+    — and the device sharding a `distributed=True` target state asks for — are
+    the target's, built by the same sharding plan the target's own V template
+    goes through. On top of them sits one replicated channel axis carrying the
+    operands the gate and the branches are built from: the channels differ in
+    which surface they hold, not in which slice of the target grid they read.
+
+    Both the state-action space and the sharding plan are the target's alone,
+    so they are built once per target however many sources reach it. The space
+    completes runtime grids from params, which is the expensive half.
+    """
+    n_devices = len(jax.devices())
+    target_shapes: dict[RegimeName, tuple[int, ...]] = {}
+    target_shardings: dict[RegimeName, jax.NamedSharding | None] = {}
+    for source_name, source in regimes.items():
+        if not source.gated_edges:
+            continue
+        for target_name in source.gated_edges:
+            if target_name not in target_shapes:
+                target = regimes[target_name]
+                target_states = target.solution.state_action_space(
+                    regime_params=flat_params[target_name]
+                ).states
+                target_shapes[target_name] = tuple(
+                    len(v) for v in target_states.values()
+                )
+                sharding_plan = _build_regime_sharding(
+                    grids=target.solution.grids, n_devices=n_devices
+                )
+                target_shardings[target_name] = (
+                    sharding_plan.V_arr_sharding(tuple(target_states))
+                    if sharding_plan is not None
+                    else None
+                )
+            shape = target_shapes[target_name]
+            sharding = target_shardings[target_name]
+            n_channels = source.gated_edges[target_name].channels.count
+            if n_channels:
+                shape = (*shape, n_channels)
+                if sharding is not None:
+                    sharding = jax.NamedSharding(
+                        mesh=sharding.mesh, spec=jax.P(*sharding.spec, None)
+                    )
+            yield (
+                source_name,
+                target_name,
+                _RegimeVTopology(shape=shape, sharding=sharding),
+            )
 
 
 def _build_base_state_action_spaces(
@@ -564,17 +1122,19 @@ def _build_base_state_action_spaces(
 def _drain_V_arr_shards(
     *,
     solution: dict[int, MappingProxyType[RegimeName, FloatND]],
+    dissolution_flags: dict[int, MappingProxyType[RegimeName, BoolND]] | None = None,
 ) -> None:
-    """Block until every V_arr shard is materialised on its device.
+    """Block until every V_arr (and dissolution-flag) shard is materialised.
 
     Solve → simulate barrier: backward induction returns sharded V_arrs,
     but the simulate phase must consume materialised arrays rather than
     in-flight kernels. `jax.block_until_ready` walks the pytree of V_arrs
     and blocks per-shard (no host transfer, no cross-device collective);
     free when kernels are already done, the minimum necessary sync when
-    they are not. V stays sharded across devices.
+    they are not. V stays sharded across devices. The collective dissolution
+    flags ride along in the same barrier.
     """
-    jax.block_until_ready(solution)
+    jax.block_until_ready((solution, dissolution_flags))
 
 
 def _compile_all_functions(
@@ -584,6 +1144,7 @@ def _compile_all_functions(
     ages: AgeGrid,
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
+    next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
     enable_jit: bool,
     max_compilation_workers: int | None,
     logger: logging.Logger,
@@ -611,6 +1172,9 @@ def _compile_all_functions(
             for constructing lowering arguments.
         next_regime_to_continuation: Template with consistent keys and carry
             shapes for constructing lowering arguments.
+        next_edge_to_V_arr: Template with consistent keys and `Wbar` shapes
+            for constructing a source kernel's gated-edge lowering arguments;
+            empty for models without gated edges.
         enable_jit: Whether to JIT-compile the functions of the internal regimes.
         max_compilation_workers: Maximum threads for parallel compilation.
             Defaults to `os.cpu_count()`.
@@ -666,6 +1230,11 @@ def _compile_all_functions(
         unique.items(), 1
     ):
         regime = regimes[regime_name]
+        edge_kwargs = _edge_kwargs(
+            regime=regime,
+            regime_name=regime_name,
+            next_edge_to_V_arr=next_edge_to_V_arr,
+        )
         lower_args = regime.solution.period_kernels[period].build_lower_args(
             core_key=core_key,
             state_action_space=regime.solution.state_action_space(
@@ -676,6 +1245,7 @@ def _compile_all_functions(
             flat_params=flat_params,
             period=period,
             ages=ages,
+            **edge_kwargs,
         )
         label = f"{regime_name} {core_key} (age {ages.values[period].item()})"
         labels[func_id] = label

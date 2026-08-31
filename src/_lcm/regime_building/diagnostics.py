@@ -9,7 +9,7 @@ The fused output is consumed by `_enrich_with_diagnostics` in
 `_lcm.utils.error_handling`.
 """
 
-from collections.abc import Callable, Hashable
+from collections.abc import Callable, Hashable, Mapping
 from types import MappingProxyType
 from typing import Any, cast
 
@@ -29,11 +29,12 @@ from _lcm.regime_building.age_normalization import (
     resolve_periodized_nodes,
 )
 from _lcm.regime_building.Q_and_F import (
+    GatedContinuationSchedule,
     get_compute_intermediates,
     partition_continuation_targets,
 )
 from _lcm.regime_building.V import VInterpolationInfo
-from _lcm.transition_laws import TransitionLaws
+from _lcm.transition_plans import TargetTransitionPlans
 from _lcm.typing import (
     ActionName,
     ConstraintFunctionsMapping,
@@ -58,7 +59,7 @@ def _build_compute_intermediates_per_period(
     functions: EconFunctionsMapping,
     constraints: ConstraintFunctionsMapping,
     transitions: TransitionFunctionsMapping,
-    transition_laws: TransitionLaws,
+    transition_plans: TargetTransitionPlans,
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     state_action_space: StateActionSpace,
@@ -70,6 +71,9 @@ def _build_compute_intermediates_per_period(
     period_to_regime_v_interp: (
         MappingProxyType[int, MappingProxyType[RegimeName, VInterpolationInfo]] | None
     ) = None,
+    gated_continuations: Mapping[RegimeName, GatedContinuationSchedule] = (
+        MappingProxyType({})
+    ),
 ) -> MappingProxyType[int, Callable]:
     """Build diagnostic intermediate closures for each period of a non-terminal regime.
 
@@ -87,7 +91,7 @@ def _build_compute_intermediates_per_period(
         constraints: Immutable mapping of constraint functions.
         transitions: Immutable mapping of regime-to-regime transition
             functions.
-        transition_laws: Immutable mapping of target regime names to their
+        transition_plans: Immutable mapping of target regime names to their
             transition laws.
         compute_regime_transition_probs: Regime transition probability
             function for the current regime.
@@ -101,6 +105,9 @@ def _build_compute_intermediates_per_period(
             renamed to qnames.
         certainty_equivalent: Nonlinear certainty equivalent declared by the
             regime, or `None`.
+        gated_continuations: Mapping of target regime names to the gated-edge
+            continuation spec that target's leaf is read under. Empty for a
+            regime declaring no `gated_edges`.
 
     Returns:
         Immutable mapping of period index to fused closure.
@@ -129,6 +136,12 @@ def _build_compute_intermediates_per_period(
         constraints=constraints,
         grid_schedule=grid_schedule,
         continuation_info=continuation_info,
+        gated_reference_regimes=MappingProxyType(
+            {
+                target: schedule.reference_regimes
+                for target, schedule in gated_continuations.items()
+            }
+        ),
     )
 
     configs = group_periods_by_key(active_periods, group_key)
@@ -145,6 +158,17 @@ def _build_compute_intermediates_per_period(
             targets=targets,
             regime_to_v_interpolation_info=continuation_info(representative_period),
         )
+        # The combiner compiled for the period the source LANDS in, matching
+        # `_build_Q_and_F_per_period`: a gate reference on an age-specialized
+        # grid is read on that period's nodes.
+        landing_period = representative_period + 1
+        period_gated_continuations = MappingProxyType(
+            {
+                target: schedule.by_period[landing_period]
+                for target, schedule in gated_continuations.items()
+                if landing_period in schedule.by_period
+            }
+        )
         compute_intermediates = get_compute_intermediates(
             flat_param_names=flat_param_names,
             functions=cast(
@@ -158,7 +182,7 @@ def _build_compute_intermediates_per_period(
             period_targets=stateful_targets,
             scalar_targets=scalar_targets,
             transitions=transitions,
-            transition_laws=transition_laws,
+            transition_plans=transition_plans,
             compute_regime_transition_probs=compute_regime_transition_probs,
             regime_to_v_interpolation_info=continuation_info(representative_period),
             koopmans_aggregator=koopmans_aggregator,
@@ -167,6 +191,7 @@ def _build_compute_intermediates_per_period(
             # every state, so none of the solve kernel's co-mapped axes have
             # been sliced off here.
             co_map_state_names=(),
+            gated_continuations=period_gated_continuations,
         )
         mapped = _productmap_over_state_action_space(
             func=compute_intermediates,

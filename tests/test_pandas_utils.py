@@ -19,6 +19,7 @@ from _lcm.params.processing import broadcast_to_template
 from lcm import (
     AgeGrid,
     DiscreteGrid,
+    JointTransition,
     LinSpacedGrid,
     MarkovTransition,
     Model,
@@ -27,7 +28,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.regime import Regime as UserRegime
-from lcm.typing import ScalarFloat, ScalarInt
+from lcm.typing import FloatND, ScalarFloat, ScalarInt
 from tests.test_models.basic_discrete import (
     Health,
 )
@@ -1624,7 +1625,7 @@ def test_convert_series_with_derived_categoricals() -> None:
 def test_convert_series_per_target_transition() -> None:
     """Per-target state transitions should be convertible."""
     from lcm import AgeGrid, MarkovTransition  # noqa: PLC0415
-    from lcm.typing import DiscreteState, FloatND, Period  # noqa: PLC0415
+    from lcm.typing import DiscreteState, Period  # noqa: PLC0415
 
     @categorical(ordered=False)
     class _RId:
@@ -1722,7 +1723,6 @@ def test_build_outcome_mapping_qualified_func_name() -> None:
 def test_convert_series_structured_derived_categoricals() -> None:
     """Regime-level derived_categoricals should allow different grids per regime."""
     from lcm import AgeGrid  # noqa: PLC0415
-    from lcm.typing import FloatND  # noqa: PLC0415
 
     @categorical(ordered=False)
     class _RId:
@@ -1894,7 +1894,7 @@ def test_convert_series_cross_grid_transition() -> None:
     match the target's grid size (2), not the source's (3).
     """
     from lcm import MarkovTransition  # noqa: PLC0415
-    from lcm.typing import DiscreteState, FloatND, Period  # noqa: PLC0415
+    from lcm.typing import DiscreteState, Period  # noqa: PLC0415
 
     @categorical(ordered=True)
     class _HealthPre:
@@ -2071,3 +2071,146 @@ def test_initial_conditions_map_discrete_pair_labels_to_codes():
         conditions["occupation"],
         jnp.array([Occupation.white_collar, Occupation.blue_collar]),
     )
+
+
+# JointTransition parameter roles use one extra qname level for support and
+# probabilities; output parameters retain the ordinary target-local next_* path.
+def _series_joint_target_probability() -> FloatND:
+    return jnp.asarray(1.0)
+
+
+def _series_joint_support(
+    support_shift: FloatND, period: ScalarInt
+) -> dict[str, FloatND]:
+    shift = support_shift[period]
+    return {"wealth": jnp.asarray([shift, shift + 1.0])}
+
+
+def _series_joint_probabilities(
+    probability_by_period: FloatND, period: ScalarInt
+) -> FloatND:
+    probability = probability_by_period[period]
+    return jnp.asarray([probability, 1.0 - probability])
+
+
+def _series_joint_next_wealth(
+    match: dict[str, FloatND],
+    output_shift: FloatND,
+    scalar_offset: ScalarFloat,
+    period: ScalarInt,
+) -> FloatND:
+    return match["wealth"] + output_shift[period] + scalar_offset
+
+
+def test_convert_series_resolves_joint_support_probability_and_output_roles() -> None:
+    """Nested joint qnames resolve to the callable that declares each Series param."""
+    source = UserRegime(
+        transition={"target": MarkovTransition(_series_joint_target_probability)},
+        functions={"utility": lambda: jnp.asarray(0.0)},
+        joint_transitions={
+            "target": {
+                "match": JointTransition(
+                    support_size=2,
+                    support=_series_joint_support,
+                    probabilities=_series_joint_probabilities,
+                    outputs={"wealth": _series_joint_next_wealth},
+                )
+            }
+        },
+    )
+    target = UserRegime(
+        transition=None,
+        states={"wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=11)},
+        functions={"utility": lambda wealth: wealth},
+    )
+    ages = AgeGrid(start=20, stop=21, step="Y")
+    age_index = pd.Index([20.0, 21.0], name="age")
+    flat_params = {
+        "source": {
+            "target__match__support__support_shift": pd.Series(
+                [1.0, 2.0], index=age_index
+            ),
+            "target__match__probabilities__probability_by_period": pd.Series(
+                [0.25, 0.75], index=age_index
+            ),
+            "target__next_wealth__output_shift": pd.Series([3.0, 4.0], index=age_index),
+            # A scalar joint-output parameter coexists with Series leaves and must
+            # pass through without being mistaken for a target-regime function.
+            "target__next_wealth__scalar_offset": 0.5,
+        }
+    }
+
+    converted = convert_series_in_params(
+        flat_params=flat_params,
+        ages=ages,
+        user_regimes={"source": source, "target": target},
+        regime_names_to_ids=MappingProxyType(
+            {"source": jnp.int32(0), "target": jnp.int32(1)}
+        ),
+    )["source"]
+
+    np.testing.assert_allclose(
+        np.asarray(converted["target__match__support__support_shift"]), [1.0, 2.0]
+    )
+    np.testing.assert_allclose(
+        np.asarray(converted["target__match__probabilities__probability_by_period"]),
+        [0.25, 0.75],
+    )
+    np.testing.assert_allclose(
+        np.asarray(converted["target__next_wealth__output_shift"]), [3.0, 4.0]
+    )
+    assert converted["target__next_wealth__scalar_offset"] == 0.5
+
+
+def _series_joint_next_health(
+    health: ScalarInt,
+    match: FloatND,
+    transition_matrix: FloatND,
+) -> ScalarInt:
+    """Read a source row; the Series' next_health level supplies its outcome axis."""
+    return jnp.argmax(transition_matrix[health]) + jnp.asarray(0 * match, jnp.int32)
+
+
+def test_joint_output_series_uses_the_explicit_target_for_its_outcome_axis() -> None:
+    """A target-only categorical output resolves its Series axis on that target."""
+    source = UserRegime(
+        transition={"target": MarkovTransition(_series_joint_target_probability)},
+        states={"health": DiscreteGrid(Health)},
+        functions={"utility": lambda health: jnp.asarray(health, dtype=float)},
+        joint_transitions={
+            "target": {
+                "match": JointTransition(
+                    support_size=1,
+                    support=jnp.asarray([0], dtype=jnp.int32),
+                    probabilities=lambda: jnp.asarray([1.0]),
+                    outputs={"health": _series_joint_next_health},
+                )
+            }
+        },
+    )
+    target = UserRegime(
+        transition=None,
+        states={"health": DiscreteGrid(Health)},
+        functions={"utility": lambda health: jnp.asarray(health, dtype=float)},
+    )
+    index = pd.MultiIndex.from_tuples(
+        [
+            ("bad", "bad"),
+            ("bad", "good"),
+            ("good", "bad"),
+            ("good", "good"),
+        ],
+        names=["health", "next_health"],
+    )
+    series = pd.Series([0.9, 0.1, 0.2, 0.8], index=index)
+
+    converted = convert_series_in_params(
+        flat_params={"source": {"target__next_health__transition_matrix": series}},
+        ages=AgeGrid(start=20, stop=21, step="Y"),
+        user_regimes={"source": source, "target": target},
+        regime_names_to_ids=MappingProxyType(
+            {"source": jnp.int32(0), "target": jnp.int32(1)}
+        ),
+    )["source"]["target__next_health__transition_matrix"]
+
+    np.testing.assert_allclose(np.asarray(converted), [[0.9, 0.1], [0.2, 0.8]])

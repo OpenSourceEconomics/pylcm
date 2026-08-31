@@ -216,9 +216,8 @@ def test_every_fori_loop_body_index_annotation_admits_a_python_int() -> None:
         f"the scan found {len(sites)} annotated `fori_loop` bodies; the known "
         "one lives in `_lcm.optimization.golden_section`, so a smaller count "
         "means the scan broke, not that the code is clean. The second site, in "
-        "`_lcm.egm.upper_envelope.query`, went away with the exact "
-        "kernel: it carries arrays through a `lax.scan` and annotates no loop "
-        "index at all."
+        "`_lcm.egm.upper_envelope.query`, carries arrays through a `lax.scan` "
+        "and annotates no loop index at all."
     )
 
     rejected = []

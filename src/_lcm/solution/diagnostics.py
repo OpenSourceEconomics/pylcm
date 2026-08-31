@@ -22,6 +22,7 @@ from _lcm.solution.v_topology import (
     _get_regime_V_shapes_and_shardings,
 )
 from _lcm.solution.validate_V import validate_V
+from _lcm.transition_plans import InterpolationBasisInfo
 from _lcm.typing import FlatParams, RegimeName
 from _lcm.utils.logging import v_array_has_inf, v_array_has_nan
 from lcm.ages import AgeGrid
@@ -249,9 +250,9 @@ def _raise_at(
         period=row.period,
         entered_process_names=tuple(
             law.next_state_name.removeprefix("next_")
-            for bundle in regime.solution.transition_laws.values()
-            for law in bundle.values()
-            if law.interpolation_basis
+            for plan in regime.solution.transition_plans.values()
+            for law in plan.outputs.values()
+            if isinstance(law.continuation_coordinate, InterpolationBasisInfo)
         ),
     )
 

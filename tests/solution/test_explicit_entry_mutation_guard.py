@@ -16,6 +16,7 @@ source, so it stays valid as the surrounding code changes.
 """
 
 import dataclasses
+from types import MappingProxyType
 from typing import Any
 
 import jax.numpy as jnp
@@ -23,7 +24,6 @@ import numpy as np
 import pytest
 
 from _lcm.regime_building import processing
-from _lcm.transition_laws import TransitionLawInfo
 from lcm import (
     AgeGrid,
     MarkovTransition,
@@ -128,30 +128,37 @@ def test_relabelling_the_declared_entry_as_a_draw_is_rejected(
     An entry's coefficients express one value in the target's node basis; a
     draw's weights are probabilities over those nodes. Nothing is both, and the
     model says so instead of pricing the coefficients as probabilities.
+
+    What is excluded is a law realizing its OWN draw over those nodes, so the
+    mutation names each law's own next state. A law reading a sibling edge's
+    draw is a different thing and stays legal — that is how a correlated joint
+    output lands on a process's grid.
     """
-    original = processing._build_transition_laws
+    original = processing._build_transition_plans
 
     def _as_all_stochastic(**kwargs: Any) -> Any:
-        laws = original(**kwargs)
-        return type(laws)(
+        plans = original(**kwargs)
+        return type(plans)(
             {
-                target: type(bundle)(
-                    {
-                        name: dataclasses.replace(
-                            info,
-                            stochastic=info.stochastic or info.interpolation_basis,
-                            interpolation_basis=False,
-                        )
-                        if isinstance(info, TransitionLawInfo)
-                        else info
-                        for name, info in bundle.items()
-                    }
+                target: dataclasses.replace(
+                    plan,
+                    outputs=MappingProxyType(
+                        {
+                            state: dataclasses.replace(
+                                output,
+                                lottery_dependencies=frozenset(
+                                    {output.next_state_name}
+                                ),
+                            )
+                            for state, output in plan.outputs.items()
+                        }
+                    ),
                 )
-                for target, bundle in laws.items()
+                for target, plan in plans.items()
             }
         )
 
-    monkeypatch.setattr(processing, "_build_transition_laws", _as_all_stochastic)
+    monkeypatch.setattr(processing, "_build_transition_plans", _as_all_stochastic)
 
     with pytest.raises(ModelInitializationError, match="carries the node basis"):
         _build_model()

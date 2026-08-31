@@ -1,4 +1,4 @@
-"""The standalone ride-along NBEGM continuation pytree.
+"""The standalone ride-along NBEGM continuation pytree carries its policy leaf.
 
 On the continuous-only, jump-free ride-along path, `_assemble_ride_carry` populates
 the exact-consumption `EGMCarry.policy` leaf, so the runtime carry

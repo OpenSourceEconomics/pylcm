@@ -34,8 +34,20 @@ from _lcm.engine import (
     StateActionSpace,
 )
 from _lcm.grids import ContinuousGrid, DiscreteGrid
+from _lcm.reachability import PhaseReachability
+from _lcm.regime_building.collective import NO_ROLE
 from _lcm.regime_building.ndimage import map_coordinates
+from _lcm.regime_building.Q_and_F import (
+    EDGE_REF_PARAMS_ARG,
+    EDGE_REF_V_ARG,
+    SAME_PERIOD_PARAMS_ARG,
+    SAME_PERIOD_V_ARG,
+)
 from _lcm.simulation.additional_targets import _compute_targets
+from _lcm.simulation.gated_routing import (
+    route_gated_edges,
+    substitute_gated_edge_continuations,
+)
 from _lcm.simulation.initial_conditions import (
     MISSING_CAT_CODE,
     build_initial_states,
@@ -75,6 +87,7 @@ from _lcm.utils.logging import (
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import (
+    InvalidInitialConditionsError,
     InvalidSimulationInputError,
     InvalidValueFunctionError,
     UnrepresentableOuterCandidateError,
@@ -90,6 +103,17 @@ from lcm.typing import (
     ScalarFloat,
     ScalarInt,
 )
+
+# What `substitute_gated_edge_continuations` returns for one (regime, period):
+# the substituted continuation values, and the same-period mapping each firing
+# edge was folded on.
+type _GatedEdgeFolds = tuple[
+    MappingProxyType[RegimeName, FloatND],
+    MappingProxyType[RegimeName, MappingProxyType[RegimeName, FloatND]],
+]
+
+# Gated-edge folds already evaluated, keyed by source regime and period.
+type _GatedEdgeFoldCache = dict[tuple[RegimeName, int], _GatedEdgeFolds]
 
 
 def simulate(
@@ -108,6 +132,9 @@ def simulate(
     seed: int | None = None,
     subject_batch_size: int = 0,
     original_n_subjects: int | None = None,
+    period_to_regime_to_dissolution_flags: MappingProxyType[
+        int, MappingProxyType[RegimeName, BoolND]
+    ] = MappingProxyType({}),
 ) -> SimulationResult:
     """Simulate the model forward in time given pre-computed value function arrays.
 
@@ -148,6 +175,15 @@ def simulate(
             by `pad_initial_conditions_to_multiple`. When set, RNG keys are sized to it
             and the trailing pad rows are trimmed from the results before they are
             returned. `None` means no padding was applied.
+        period_to_regime_to_dissolution_flags: Immutable mapping of periods to each
+            COLLECTIVE regime's dissolution flag `D`, as returned by
+            `backward_induction.solve`'s third element. Empty (the default)
+            for models without gated edges reading `D_target`, or when the
+            caller does not have it at hand. Surfaced publicly by
+            `Model.solve(return_dissolution_flags=True)` and the
+            `period_to_regime_to_dissolution_flags` argument of
+            `Model.simulate` (and threaded automatically through the
+            auto-solve path when `Model.simulate` solves first).
 
     Returns:
         SimulationResult object. Call .to_dataframe() to get a pandas DataFrame.
@@ -159,8 +195,18 @@ def simulate(
     logger.info("Starting simulation")
     total_start = time.monotonic()
 
-    # Extract state arrays from initial conditions, which include the regime on top.
-    initial_states = {k: v for k, v in initial_conditions.items() if k != "regime_id"}
+    # Extract state arrays from initial conditions, which include the regime
+    # and each subject's role on top. Neither is a state of any regime.
+    initial_states = {
+        k: v
+        for k, v in initial_conditions.items()
+        if k not in {"regime_id", "own_stakeholder"}
+    }
+    initial_own_stakeholder = _initial_own_stakeholder(
+        initial_conditions=initial_conditions,
+        regimes=regimes,
+        regime_names_to_ids=regime_names_to_ids,
+    )
 
     # Forward-simulate one subject chunk at a time. Subjects are independent across
     # the forward path (no cross-subject reduction), so each chunk runs the full
@@ -187,6 +233,24 @@ def simulate(
     # round-trip for downstream targets).
     host_device = jax.devices("cpu")[0] if batch_size < n_subjects else None
 
+    # A gated edge's `Wbar` fold reads the solved value arrays, the dissolution
+    # flags, the params and the target's own period-`t + 1` grid — nothing that
+    # says which subjects are being simulated — so every chunk after the first
+    # would recompute an identical array. Memoize it per (source regime,
+    # period) and share it across chunks.
+    #
+    # The store keeps one target-V-shaped `Wbar` per (regime, period, edge)
+    # alive until the last chunk finishes, rather than letting each period's
+    # drop. A chunked run pays that to stop re-folding; a single pass visits
+    # each (regime, period) once and has nothing to save, so it keeps nothing —
+    # and neither does a model that declares no edge.
+    gated_edge_fold_cache: _GatedEdgeFoldCache | None = (
+        {}
+        if batch_size < n_subjects
+        and any(regime.gated_edges for regime in regimes.values())
+        else None
+    )
+
     chunk_results: list[dict[RegimeName, dict[int, PeriodRegimeSimulationData]]] = []
     for chunk_start in range(0, n_subjects, batch_size):
         # `n_subjects` is padded up to a multiple of `batch_size` upstream (see
@@ -199,6 +263,7 @@ def simulate(
                 name: array[subject_slice] for name, array in initial_states.items()
             },
             initial_regime_ids=initial_conditions["regime_id"][subject_slice],
+            initial_own_stakeholder=initial_own_stakeholder[subject_slice],
             starting_periods=starting_periods[subject_slice],
             n_subjects=n_subjects,
             subject_slice=subject_slice,
@@ -207,11 +272,13 @@ def simulate(
             regime_names_to_ids=regime_names_to_ids,
             regime_ids_to_names=regime_ids_to_names,
             period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+            period_to_regime_to_dissolution_flags=period_to_regime_to_dissolution_flags,
             period_to_regime_to_sim_policy=period_to_regime_to_sim_policy,
             flat_params=flat_params,
             ages=ages,
             seed=seed,
             logger=logger,
+            gated_edge_fold_cache=gated_edge_fold_cache,
         )
         if host_device is not None:
             # `block_until_ready` forces the D2H copy to complete before the loop
@@ -289,11 +356,16 @@ def _simulate_subject_chunk(
     period_to_regime_to_V_arr: MappingProxyType[
         int, MappingProxyType[RegimeName, FloatND]
     ],
+    period_to_regime_to_dissolution_flags: MappingProxyType[
+        int, MappingProxyType[RegimeName, BoolND]
+    ],
     flat_params: FlatParams,
     ages: AgeGrid,
     seed: int,
     logger: logging.Logger,
+    initial_own_stakeholder: Int1D,
     period_to_regime_to_sim_policy: PeriodToRegimeToSimulationPolicy | None = None,
+    gated_edge_fold_cache: _GatedEdgeFoldCache | None = None,
 ) -> dict[RegimeName, dict[int, PeriodRegimeSimulationData]]:
     """Run the full period loop for one chunk of subjects.
 
@@ -302,6 +374,11 @@ def _simulate_subject_chunk(
     chunk's position in the full population so RNG keys stay full-population and are
     sliced by global index. The key stream is re-derived from `seed` here so the
     per-period carry is identical across chunks (it is subject-count-independent).
+    `initial_own_stakeholder`: each subject's seeded role, already sliced to
+    this chunk. It is carried through the period loop and updated wherever a
+    gated edge routes a row, so a dissolution follows the row's own leg.
+    `gated_edge_fold_cache`: the caller's chunk-spanning store of gated-edge
+    folds, or `None` to evaluate each fold locally.
 
     Returns the per-(regime, period) results for this chunk's subjects.
     """
@@ -310,6 +387,7 @@ def _simulate_subject_chunk(
     subject_regime_ids = jnp.full_like(
         initial_regime_ids, MISSING_CAT_CODE, dtype=jnp.int32
     )
+    own_stakeholder = jnp.full_like(initial_own_stakeholder, NO_ROLE, dtype=jnp.int32)
 
     simulation_results: dict[RegimeName, dict[int, PeriodRegimeSimulationData]] = {
         regime_name: {} for regime_name in regimes
@@ -336,8 +414,15 @@ def _simulate_subject_chunk(
             subject_regime_ids,
         )
 
+        # A subject's seeded role arrives with it, in the same period its
+        # seeded regime does; before that it occupies none.
+        own_stakeholder = jnp.where(
+            starting_periods == period, initial_own_stakeholder, own_stakeholder
+        )
+
         prev_regime_ids = subject_regime_ids
         new_subject_regime_ids = subject_regime_ids
+        new_own_stakeholder = own_stakeholder
 
         active_regimes = {
             regime_name: regime
@@ -348,10 +433,11 @@ def _simulate_subject_chunk(
         log_period_header(logger=logger, age=age, n_active_regimes=len(active_regimes))
 
         for regime_name, regime in active_regimes.items():
-            result, new_states, new_subject_regime_ids, key = (
+            result, new_states, new_subject_regime_ids, new_own_stakeholder, key = (
                 _simulate_regime_in_period(
                     regime_name=regime_name,
                     regime=regime,
+                    regimes=regimes,
                     base_state_action_space=base_state_action_spaces[regime_name],
                     period=period,
                     age=age,
@@ -359,6 +445,8 @@ def _simulate_subject_chunk(
                     subject_regime_ids=subject_regime_ids,
                     new_subject_regime_ids=new_subject_regime_ids,
                     period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+                    period_to_regime_to_dissolution_flags=period_to_regime_to_dissolution_flags,
+                    base_state_action_spaces=base_state_action_spaces,
                     sim_policy=(period_to_regime_to_sim_policy or {})
                     .get(period, {})
                     .get(regime_name),
@@ -383,6 +471,14 @@ def _simulate_subject_chunk(
                     n_subjects=n_subjects,
                     subject_slice=subject_slice,
                     original_n_subjects=original_n_subjects,
+                    own_stakeholder=own_stakeholder,
+                    new_own_stakeholder=new_own_stakeholder,
+                    gated_edge_fold_age=(
+                        ages.period_to_age(period + 1)
+                        if period + 1 < ages.n_periods
+                        else None
+                    ),
+                    gated_edge_fold_cache=gated_edge_fold_cache,
                 )
             )
             states = new_states
@@ -391,14 +487,25 @@ def _simulate_subject_chunk(
             # Out-of-regime subjects carry placeholder entries (possibly -inf,
             # when their state is infeasible under this regime's problem);
             # validate only the subjects simulated in this regime.
+            #
+            # A collective regime's `V_arr` carries a
+            # trailing stakeholder axis (`(n_subjects, n_stakeholders)`), so
+            # `in_regime` (always `(n_subjects,)`) needs trailing singleton
+            # axes to broadcast against it; a singleton regime's `V_arr` is
+            # already `(n_subjects,)` and this is a no-op reshape.
+            in_regime_broadcast = result.in_regime.reshape(
+                result.in_regime.shape
+                + (1,) * (result.V_arr.ndim - result.in_regime.ndim)
+            )
             log_nan_in_V(
                 logger=logger,
                 regime_name=regime_name,
                 age=age,
-                V_arr=jnp.where(result.in_regime, result.V_arr, 0.0),
+                V_arr=jnp.where(in_regime_broadcast, result.V_arr, 0.0),
             )
 
         subject_regime_ids = new_subject_regime_ids
+        own_stakeholder = new_own_stakeholder
 
         log_regime_transitions(
             logger=logger,
@@ -451,6 +558,9 @@ def _concatenate_chunk_results(
                     }
                 ),
                 in_regime=jnp.concatenate([data.in_regime for data in per_chunk]),
+                own_stakeholder=jnp.concatenate(
+                    [data.own_stakeholder for data in per_chunk]
+                ),
                 nested_policy_fallback=jnp.concatenate(
                     [data.nested_policy_fallback for data in per_chunk]
                 ),
@@ -498,11 +608,63 @@ def _require_next_period_values(
     )
 
 
+def _referenced_value_kwargs(
+    *,
+    regime: Regime,
+    period_to_regime_to_V_arr: Mapping[int, Mapping[RegimeName, FloatND]],
+    flat_params: FlatParams,
+    period: int,
+) -> dict[str, object]:
+    """Build the value mappings one regime's kernel reads beside its own grids.
+
+    Two channels, each empty for a regime that declares nothing on it, and each
+    carrying the referenced value together with the reference regime's OWN
+    params — the split the solve-side grid-search kernel makes, so both phases
+    read one operator:
+
+    - a value constraint's same-period reference, at THIS period's value;
+    - a gated edge's gate references and leg fallbacks, read where the row
+      lands and therefore at the value of the period it lands IN.
+
+    Args:
+        regime: The canonical regime being simulated.
+        period_to_regime_to_V_arr: Solved values, by period and regime.
+        flat_params: Immutable mapping of regime names to flat params.
+        period: The period the row decides in; it lands in the next one.
+
+    Returns:
+        Mapping of engine argument names to their per-regime mappings.
+
+    """
+    kwargs: dict[str, object] = {}
+    if regime.same_period_ref_regimes:
+        this_period_V = period_to_regime_to_V_arr.get(period, MappingProxyType({}))
+        kwargs[SAME_PERIOD_V_ARG] = MappingProxyType(
+            {ref: this_period_V[ref] for ref in regime.same_period_ref_regimes}
+        )
+        kwargs[SAME_PERIOD_PARAMS_ARG] = MappingProxyType(
+            {ref: flat_params[ref] for ref in regime.same_period_ref_regimes}
+        )
+    # The same set the AOT lowering consults, so a compiled program's pytree
+    # and this call's arguments name the same channels.
+    if period in regime.simulation.edge_reference_periods:
+        landing_V = period_to_regime_to_V_arr.get(period + 1, MappingProxyType({}))
+        kwargs[EDGE_REF_V_ARG] = MappingProxyType(
+            {ref: landing_V[ref] for ref in regime.edge_reference_regimes}
+        )
+        kwargs[EDGE_REF_PARAMS_ARG] = MappingProxyType(
+            {ref: flat_params[ref] for ref in regime.edge_reference_regimes}
+        )
+    return kwargs
+
+
 def _simulate_regime_in_period(
     *,
     regime_name: RegimeName,
     regime: Regime,
+    regimes: Mapping[RegimeName, Regime],
     base_state_action_space: StateActionSpace,
+    base_state_action_spaces: Mapping[RegimeName, StateActionSpace],
     period: int,
     age: ScalarInt | ScalarFloat,
     states: StatesPerRegime,
@@ -510,6 +672,9 @@ def _simulate_regime_in_period(
     new_subject_regime_ids: Int1D,
     period_to_regime_to_V_arr: MappingProxyType[
         int, MappingProxyType[RegimeName, FloatND]
+    ],
+    period_to_regime_to_dissolution_flags: MappingProxyType[
+        int, MappingProxyType[RegimeName, BoolND]
     ],
     flat_params: FlatParams,
     regime_names_to_ids: RegimeNamesToIds,
@@ -520,10 +685,14 @@ def _simulate_regime_in_period(
     n_subjects: int,
     subject_slice: slice,
     original_n_subjects: int | None = None,
+    own_stakeholder: Int1D,
+    new_own_stakeholder: Int1D,
+    gated_edge_fold_age: float | None = None,
     sim_policy: (
         EGMSimPolicy | NBEGMGridPolicy | NNBEGMSimPolicy | NestedEGMSimPolicy | None
     ) = None,
-) -> tuple[PeriodRegimeSimulationData, StatesPerRegime, Int1D, PRNGKeyND]:
+    gated_edge_fold_cache: _GatedEdgeFoldCache | None = None,
+) -> tuple[PeriodRegimeSimulationData, StatesPerRegime, Int1D, Int1D, PRNGKeyND]:
     """Simulate one regime for one period.
 
     This function processes all subjects in a given regime for a single period,
@@ -532,8 +701,14 @@ def _simulate_regime_in_period(
     Args:
         regime_name: Name of the current regime.
         regime: Internal representation of the regime.
+        regimes: Every regime of the model, keyed by name. A gated edge folds
+            its target's value on that target's own period-`t + 1` state axes,
+            which are read off the target regime itself.
         base_state_action_space: The regime's params-completed state-action
             space, built once per simulate call.
+        base_state_action_spaces: Every regime's params-completed state-action
+            space — a gated edge's value-and-gate fold needs its TARGET
+            regime's own state grids, not just this regime's.
         period: Current period (0-indexed).
         age: Age corresponding to current period.
         states: Carrier of current-period state arrays for every regime and
@@ -541,6 +716,8 @@ def _simulate_regime_in_period(
         subject_regime_ids: Current regime membership for all subjects.
         new_subject_regime_ids: Array to populate with next period's regime memberships.
         period_to_regime_to_V_arr: Value function arrays for all periods and regimes.
+        period_to_regime_to_dissolution_flags: Each COLLECTIVE regime's dissolution
+            flag `D` per period; empty for models without one.
         flat_params: Model parameters for all regimes.
         regime_names_to_ids: Mapping from regime names to integer IDs.
         decision_targets_next_period: This source's retained *solution*-graph
@@ -556,15 +733,30 @@ def _simulate_regime_in_period(
         n_subjects: Total number of subjects (the full population), used to keep RNG
             key generation independent of how subjects are chunked.
         subject_slice: Global-index slice of the subjects in this chunk.
+        own_stakeholder: The role each subject occupies this period, as a code
+            in the model's role vocabulary. Decides which leg of a gated edge
+            a row follows, and is published beside the states.
+        new_own_stakeholder: Array to populate with next period's roles, in the
+            same accumulate-across-regimes manner as
+            `new_subject_regime_ids`.
+        gated_edge_fold_age: Age corresponding to `period + 1`; threaded to
+            gated-edge folds, gate evaluators, and fallback projectors.
         sim_policy: The regime's published off-grid simulation policy for this
             period, or `None`. Consumed only where the regime qualifies
             (`regime.simulation.egm_policy_read`).
+        gated_edge_fold_cache: Store of gated-edge folds already evaluated for
+            some (regime, period), shared across subject chunks by `simulate`.
+            The fold depends on no subject, so a chunk that finds its
+            (regime, period) there reuses it instead of recomputing an
+            identical array. `None` evaluates the fold locally and keeps
+            nothing, which is what an unchunked run wants.
 
     Returns:
         Tuple containing:
         - PeriodRegimeSimulationData for this regime-period
         - Updated state carrier
         - Updated new_subject_regime_ids array
+        - Updated new_own_stakeholder array
         - Updated JAX random key
 
     """
@@ -590,12 +782,50 @@ def _simulate_regime_in_period(
         source_period=period,
     )
 
+    # The simulate value router. A regime declaring
+    # `gated_edges` must have its OWN action choice informed by the gated
+    # continuation `Wbar`, not the target's raw (ungated) value — substitute
+    # it into `next_regime_to_V_arr` exactly like the solve-side kernel does
+    # (`_with_edge_substitution`), computed here from the already-solved
+    # next-period arrays. `same_period_mappings` (the target V / `D` /
+    # reference-V arrays each firing edge was folded on, per target) feeds
+    # the REGIME-ROUTING step below, after the action and candidate
+    # next-states are known — `route_gated_edges` RECOMPUTES the gate from
+    # these rather than interpolating a baked boolean.
+    # No-op (returns the inputs unchanged) for a regime without
+    # `gated_edges`.
+    #
+    # Every input the fold reads is fixed for the whole `simulate` call, so a
+    # chunked run evaluates it once per (regime, period) and reads the rest off
+    # `gated_edge_fold_cache` (see `simulate`). Both halves of the result are
+    # immutable and consumed read-only, so sharing them across chunks is a
+    # reuse, not an aliasing hazard.
+    cache = gated_edge_fold_cache if regime.gated_edges else None
+    folds = None if cache is None else cache.get((regime_name, period))
+    if folds is None:
+        folds = substitute_gated_edge_continuations(
+            regime=regime,
+            regime_name=regime_name,
+            regimes=regimes,
+            period=period,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            base_state_action_spaces=base_state_action_spaces,
+            period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+            period_to_regime_to_dissolution_flags=period_to_regime_to_dissolution_flags,
+            flat_params=flat_params,
+            fold_age=gated_edge_fold_age,
+        )
+        if cache is not None:
+            cache[regime_name, period] = folds
+    next_regime_to_V_arr, same_period_mappings = folds
+
+    n_chunk_subjects = subject_ids_in_regime.shape[0]
     direct_nnbegm_replay = isinstance(sim_policy, NNBEGMSimPolicy) and isinstance(
         regime.simulation.egm_policy_read, NNBEGMPolicyRead
     )
     if direct_nnbegm_replay:
-        # The published payload already names the complete finite candidate set.
-        # Do not compile or execute the unrelated Cartesian simulate-action argmax.
+        # The payload names the complete finite candidate set, so the unrelated
+        # Cartesian simulation argmax is neither compiled nor executed.
         optimal_actions, V_arr = _replay_nnbegm_candidates(
             optimal_actions=MappingProxyType({}),
             regime=regime,
@@ -611,16 +841,17 @@ def _simulate_regime_in_period(
         )
         nested_fallback = None
     else:
-        # The Q-function values contain the information of how much value each
-        # action combination is worth. To find the optimal discrete action, we
-        # therefore only need to maximize the Q-function values over all actions.
         argmax_and_max_Q_over_a = regime.simulation.argmax_and_max_Q_over_a[period]
+
+        same_period_kwargs = _referenced_value_kwargs(
+            regime=regime,
+            period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+            flat_params=flat_params,
+            period=period,
+        )
 
         taste_shock_kwargs = {}
         if regime.has_taste_shocks:
-            # Per-subject Gumbel keys are generated for the full population and
-            # sliced by global subject index, so a subject's draw is invariant to
-            # how the population is chunked.
             key, gumbel_keys = generate_simulation_keys(
                 key=key,
                 names=["taste_shock"],
@@ -636,10 +867,18 @@ def _simulate_regime_in_period(
             **state_action_space.continuous_actions,
             **taste_shock_kwargs,
             next_regime_to_V_arr=next_regime_to_V_arr,
+            **same_period_kwargs,
             **flat_params[regime_name],
             period=jnp.int32(period),
             age=age,
         )
+        # A stateless collective result lacks the leading subject axis that
+        # every downstream simulation operation expects.
+        if regime.stakeholders is not None and not state_action_space.states:
+            indices_optimal_actions = jnp.broadcast_to(
+                jnp.asarray(indices_optimal_actions), (n_chunk_subjects,)
+            )
+            V_arr = jnp.broadcast_to(V_arr[None, ...], (n_chunk_subjects, *V_arr.shape))
         optimal_actions = _lookup_values_from_indices(
             flat_indices=indices_optimal_actions,
             grids=state_action_space.actions,
@@ -661,13 +900,22 @@ def _simulate_regime_in_period(
                 logger=logger,
             )
         )
+
     if validation_enabled(logger):
         try:
             # Out-of-regime subjects carry placeholder entries (their state is
             # meaningless under this regime's problem); validate only the
             # subjects simulated in this regime.
+            #
+            # `V_arr` carries a trailing stakeholder
+            # axis for a collective regime; broadcast the mask the same way
+            # as the diagnostic logger below.
+            in_regime_mask = subject_ids_in_regime.reshape(
+                subject_ids_in_regime.shape
+                + (1,) * (V_arr.ndim - subject_ids_in_regime.ndim)
+            )
             validate_V(
-                V_arr=jnp.where(subject_ids_in_regime, V_arr, 0.0),
+                V_arr=jnp.where(in_regime_mask, V_arr, 0.0),
                 age=age,
                 regime_name=regime_name,
             )
@@ -677,7 +925,6 @@ def _simulate_regime_in_period(
     # Store results for this regime-period
     # For state-less regimes (e.g., terminal regimes with no states), V_arr may be a
     # scalar. We need to broadcast it to match this chunk's subject count.
-    n_chunk_subjects = subject_ids_in_regime.shape[0]
     if V_arr.ndim == 0:
         V_arr = jnp.broadcast_to(V_arr, (n_chunk_subjects,))
 
@@ -695,6 +942,7 @@ def _simulate_regime_in_period(
         actions=optimal_actions,
         states=states[regime_name],
         in_regime=subject_ids_in_regime,
+        own_stakeholder=own_stakeholder,
         nested_policy_fallback=nested_policy_fallback,
     )
 
@@ -736,9 +984,40 @@ def _simulate_regime_in_period(
             subject_slice=subject_slice,
             original_n_subjects=original_n_subjects,
         )
+        # The value router's routing half. A gated
+        # edge's target is always ALSO an ordinary declared transition
+        # target, so `calculate_next_states` already computed candidate
+        # target states above and `calculate_next_regime_membership` already
+        # drew a (gate-blind) next regime id; `route_gated_edges` now
+        # RECOMPUTES the gate at those candidate states
+        # and OVERRIDES both — the target when open, a leg's fallback (with
+        # its own projected states) when closed — for every subject in this
+        # regime. No-op for a regime without `gated_edges`.
+        next_states, new_subject_regime_ids, new_own_stakeholder = route_gated_edges(
+            regime=regime,
+            # `same_period_mappings` holds the `period + 1` arrays
+            # `substitute_gated_edge_continuations` folded above, so the gate
+            # is recomputed against that period's grids.
+            fold_period=period + 1,
+            same_period_mappings=same_period_mappings,
+            next_states=next_states,
+            regime_names_to_ids=regime_names_to_ids,
+            new_subject_regime_ids=new_subject_regime_ids,
+            subjects_in_regime=subject_ids_in_regime,
+            flat_params=flat_params,
+            own_stakeholder=own_stakeholder,
+            new_own_stakeholder=new_own_stakeholder,
+            fold_age=gated_edge_fold_age,
+        )
         states = next_states
 
-    return simulation_result, states, new_subject_regime_ids, key
+    return (
+        simulation_result,
+        states,
+        new_subject_regime_ids,
+        new_own_stakeholder,
+        key,
+    )
 
 
 def _replace_continuous_action_with_policy_read(  # noqa: PLR0911
@@ -1219,6 +1498,9 @@ def _read_nested_policy(
       actions, and a preliminary admissibility mask for the keeper followed by
       every published mesh node. The caller canonical-scores every surviving
       row before selecting a fallback.
+
+    Inference must refuse whenever any fallback entry is True; the flag reaches
+    the user as the `nested_policy_fallback` column.
     """
     _fail_if_the_published_capability_is_not_replayable(payload=payload)
     keeper_pol = payload.keeper
@@ -2569,6 +2851,157 @@ def _lookup_values_from_indices(
 vmapped_unravel_index = jax.jit(
     vmap(jnp.unravel_index, in_axes=(0, None)), static_argnums=1
 )
+
+
+def _regimes_reachable_from(
+    *, start: RegimeName, reachability: PhaseReachability
+) -> frozenset[RegimeName]:
+    """Return `start` and every regime a subject starting there can end up in.
+
+    The walk is over the construction-time graph's period-union, so a regime
+    stays in the closure when any period retains the edge that leads to it.
+    That is the conservative direction for a question about what a subject
+    might yet encounter.
+
+    Args:
+        start: The regime a subject begins in.
+        reachability: The simulate phase's static regime graph.
+
+    Returns:
+        Frozen set of reachable regime names, including `start` itself.
+
+    """
+    closure = {start}
+    frontier = [start]
+    while frontier:
+        for target in reachability.union_targets(source=frontier.pop()):
+            if target not in closure:
+                closure.add(target)
+                frontier.append(target)
+    return frozenset(closure)
+
+
+def _initial_own_stakeholder(
+    *,
+    initial_conditions: InitialConditions,
+    regimes: MappingProxyType[RegimeName, Regime],
+    regime_names_to_ids: RegimeNamesToIds,
+) -> Int1D:
+    """Read and validate each subject's seeded role.
+
+    A subject starting in a collective regime IS one of that regime's
+    stakeholders, and which one decides where its row goes when the household
+    ends. Nothing in the model answers that — a cohort of wives and a cohort of
+    husbands are the same states in the same regime — so it is declared, and a
+    collective start without it is refused rather than defaulted to whichever
+    stakeholder happens to be declared first.
+
+    The seed is demanded exactly where the answer turns on it, which is a
+    property of the starting regime rather than of the model:
+
+    - A role selects among a gated edge's legs, so it is read only where some
+      regime the cohort can still arrive at declares an edge with more than one
+      leg. A row keeps its role across an ordinary regime transition, so the
+      question is asked over the start's forward closure, not over its own
+      edges alone.
+    - A collective start whose closure contains no such edge has no route,
+      regime or state projection that can differ by role, and needs no seed —
+      a role-routing regime elsewhere in the model decides nothing for it.
+    - A subject starting in a singleton regime occupies no role either.
+
+    Both unseeded cases default to `NO_ROLE`.
+
+    Args:
+        initial_conditions: The user's flat initial conditions.
+        regimes: Immutable mapping of regime names to canonical regimes.
+        regime_names_to_ids: Immutable mapping of regime names to codes.
+
+    Returns:
+        Each subject's role code.
+
+    Raises:
+        InvalidInitialConditionsError: A subject starts with no role in a
+            collective regime that can reach one routing by role, or carries a
+            code the model's vocabulary does not define.
+    """
+    regime_ids = initial_conditions["regime_id"]
+    role_ids = next(
+        (regime.stakeholder_names_to_ids for regime in regimes.values()),
+        MappingProxyType({}),
+    )
+    collective_names = [
+        name for name, regime in regimes.items() if regime.stakeholders is not None
+    ]
+    role_routing = frozenset(
+        name
+        for name, regime in regimes.items()
+        if any(len(edge.legs) > 1 for edge in regime.gated_edges.values())
+    )
+    reachability = next(iter(regimes.values())).simulation.reachability
+    starts_needing_a_role = {
+        name: sorted(
+            _regimes_reachable_from(start=name, reachability=reachability)
+            & role_routing
+        )
+        for name in collective_names
+    }
+    starts_needing_a_role = {
+        name: routes for name, routes in starts_needing_a_role.items() if routes
+    }
+
+    declared = initial_conditions.get("own_stakeholder")
+    if declared is None:
+        occupied = sorted(
+            name
+            for name in starts_needing_a_role
+            if bool(jnp.any(regime_ids == regime_names_to_ids[name]))
+        )
+        if occupied:
+            reachable_routes = sorted(
+                {name for start in occupied for name in starts_needing_a_role[start]}
+            )
+            msg = (
+                f"Subjects starting in the collective regime(s) {occupied} need "
+                "an `own_stakeholder` entry in `initial_conditions`, naming the "
+                f"role each one occupies (one of {dict(role_ids)}). They can "
+                f"reach the collective regime(s) {reachable_routes}, which "
+                "declare a gated edge whose legs differ by stakeholder, and "
+                "which partner a row is decides which of them it takes — so it "
+                "is a modelling decision rather than something the engine may "
+                "pick."
+            )
+            raise InvalidInitialConditionsError(msg)
+        return jnp.full_like(regime_ids, NO_ROLE, dtype=jnp.int32)
+
+    own_stakeholder = jnp.asarray(declared, dtype=jnp.int32)
+    known = jnp.asarray([NO_ROLE, *role_ids.values()], dtype=jnp.int32)
+    if not bool(jnp.all(jnp.isin(own_stakeholder, known))):
+        msg = (
+            f"`own_stakeholder` carries codes outside the model's role "
+            f"vocabulary {dict(role_ids)} (the no-role sentinel {NO_ROLE} is "
+            f"also accepted): {own_stakeholder.tolist()}."
+        )
+        raise InvalidInitialConditionsError(msg)
+
+    # The vocabulary is model-wide, so a code being in it does not make it a
+    # role of the regime the subject starts in. Checking against that regime's
+    # own stakeholders is what establishes the invariant routing then keeps:
+    # every row in a collective regime carries one of ITS roles, so the leg
+    # selection always has a leg to find.
+    for name in collective_names:
+        starts_here = regime_ids == regime_names_to_ids[name]
+        declared_here = jnp.asarray(
+            [role_ids[s] for s in regimes[name].stakeholders or ()], dtype=jnp.int32
+        )
+        if bool(jnp.any(starts_here & ~jnp.isin(own_stakeholder, declared_here))):
+            msg = (
+                f"Subjects starting in the collective regime {name!r} carry an "
+                "`own_stakeholder` that is not one of its stakeholders "
+                f"{regimes[name].stakeholders}. Roles are model-wide codes, so "
+                "a valid code may still name a role this regime does not have."
+            )
+            raise InvalidInitialConditionsError(msg)
+    return own_stakeholder
 
 
 def _compute_starting_periods(

@@ -17,7 +17,7 @@ from typing import Any
 import jax.numpy as jnp
 
 from _lcm.engine import StateActionSpace
-from _lcm.typing import FlatRegimeParams, PeriodToRegimeToVArr, RegimeName, StateName
+from _lcm.typing import FlatRegimeParams, PeriodToRegimeToVArr, RegimeName
 from _lcm.utils.logging import v_array_has_nan
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
@@ -309,57 +309,64 @@ def contains_nan(period_to_regime_to_V_arr: PeriodToRegimeToVArr) -> bool:
 def validate_supplied_V_shapes(
     *,
     period_to_regime_to_V_arr: PeriodToRegimeToVArr,
-    regime_to_state_names: Mapping[RegimeName, tuple[StateName, ...]],
+    regime_to_expected_rank: Mapping[RegimeName, int],
 ) -> None:
     """Fail if a supplied value function has the wrong number of axes.
 
-    A regime's value function is a table indexed by that regime's states, so it
-    carries one axis per declared state; a regime declaring no states has a
-    rank-zero value function, a single number.
+    The rank a solve produces is the rank `simulate` accepts, so the expected
+    rank comes from the same rule the solver builds V with
+    (`_lcm.solution.v_topology.expected_V_rank`): one axis per solve state kept
+    as a grid axis, plus a trailing stakeholder axis for a collective regime. A
+    regime whose every state is folded away has a rank-zero value function, a
+    single number.
 
-    Nothing downstream can recover this. An array of the wrong rank still
-    broadcasts, so it reaches the Bellman equation as an ordinary value and
+    Nothing downstream can recover a rank mismatch. An array of the wrong rank
+    still broadcasts, so it reaches the Bellman equation as an ordinary value and
     either fails far from its origin — as a shape complaint naming some other
     array — or silently contributes an expectation over an axis the regime does
-    not have. The declared state space is known only here, which is why the
-    check lives at the boundary that accepts a caller-supplied solution.
+    not have. The expected rank is known only here, which is why the check lives
+    at the boundary that accepts a caller-supplied solution.
 
     Only the rank is checked, not the axis lengths. Under age-specialized grids
     a regime's grids legitimately change length from period to period, so a
-    length check would reject valid models; the number of states does not vary
-    with age, so the rank check is safe wherever the length check would not be.
+    length check would reject valid models; the rank does not vary with age, so
+    the rank check is safe wherever the length check would not be.
 
     Args:
         period_to_regime_to_V_arr: Mapping of periods to regime names to value
             function arrays, as supplied by the caller.
-        regime_to_state_names: Mapping of regime names to the tuple of state
-            names each regime declares.
+        regime_to_expected_rank: Mapping of regime names to the rank each
+            regime's value function has.
 
     Raises:
-        InvalidValueFunctionError: If any array's rank disagrees with the number
-            of states declared by the regime it is keyed under.
+        InvalidValueFunctionError: If any array's rank disagrees with the rank
+            of the regime it is keyed under.
 
     """
     mismatches = []
     for period, regime_to_V_arr in period_to_regime_to_V_arr.items():
         for regime_name, V_arr in regime_to_V_arr.items():
-            if regime_name not in regime_to_state_names:
+            if regime_name not in regime_to_expected_rank:
                 continue
-            state_names = regime_to_state_names[regime_name]
+            expected = regime_to_expected_rank[regime_name]
             actual = tuple(jnp.shape(V_arr))
-            if len(actual) != len(state_names):
+            if len(actual) != expected:
                 mismatches.append(
                     f"  period {period}, regime {regime_name!r}: value function "
-                    f"has shape {actual} ({len(actual)} axes), but the regime "
-                    f"declares {len(state_names)} state(s) {list(state_names)}"
+                    f"has shape {actual} ({len(actual)} axes), but this regime's "
+                    f"value function has {expected} axes (one per state that is "
+                    f"not folded, plus one for the stakeholder axis of a "
+                    f"collective regime)"
                 )
     if mismatches:
         detail = "\n".join(mismatches)
         msg = (
-            "Supplied value function arrays do not match the state spaces of "
+            "Supplied value function arrays do not match the value functions of "
             "the regimes they are keyed under:\n"
             f"{detail}\n"
-            "A regime's value function has one axis per declared state, in "
-            "declaration order; a regime with no states has a rank-zero array."
+            "A regime's value function has one axis per solve state it keeps as "
+            "a grid axis, in declaration order, plus a trailing stakeholder axis "
+            "when the regime is collective. A folded state is integrated out by "
+            "quadrature when the value is stored and contributes no axis."
         )
         raise InvalidValueFunctionError(msg)

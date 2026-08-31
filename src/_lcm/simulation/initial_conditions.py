@@ -236,13 +236,12 @@ def trim_pad_from_raw_results(
 
     Note:
         The fields are read off the dataclass rather than enumerated here. An
-        enumeration is a second, silent copy of the structure's definition, and it
-        went stale: `nested_policy_fallback` was added to
-        `PeriodRegimeSimulationData` without being added to this list, so
-        `dataclasses.replace` carried the untrimmed field straight through. The
-        result was a leaf `batch_size`-padded to 24 rows against a 21-row
-        `_in_regime` mask, and `to_dataframe` died on the boolean index. Deriving
-        the list means the next field added cannot reintroduce that.
+        enumeration is a second copy of the structure's definition that nothing
+        keeps in step, and a field it omits is carried through at its padded
+        width — a leaf padded to the batch multiple against a shorter
+        `_in_regime` mask, which `to_dataframe` then indexes out of bounds.
+        Deriving the list means a field added to the structure is trimmed
+        without editing this function.
 
     """
     trimmed: dict[RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]] = {}
@@ -373,7 +372,14 @@ def validate_initial_conditions(
             )
         )
 
-    initial_states = {k: v for k, v in initial_conditions.items() if k != "regime_id"}
+    # `own_stakeholder` names a role rather than a state, so it is excluded
+    # alongside `regime_id` — the structural check below reports any key that
+    # is not a state of the regime the subject starts in.
+    initial_states = {
+        k: v
+        for k, v in initial_conditions.items()
+        if k not in {"regime_id", "own_stakeholder"}
+    }
 
     # Validate regime names and state names/shapes first; early-exit on errors so that
     # downstream checks (discrete codes, feasibility) can assume correct names.

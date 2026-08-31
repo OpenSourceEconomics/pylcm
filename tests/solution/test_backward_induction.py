@@ -24,6 +24,13 @@ class MockSolutionPhase:
     period_kernels: dict[int, PeriodKernel]
     _base_state_action_space: StateActionSpace
     grids: MappingProxyType[StateOrActionName, Grid]
+    state_names: tuple[StateOrActionName, ...]
+    """Solve-phase state names, mirroring the real `SolutionPhase` property.
+
+    Sizes the stored value function, so it must name exactly the states of the
+    `StateActionSpace` this mock hands out — a mock that claims axes the space
+    does not carry makes the V topology and the rank rule disagree.
+    """
     compute_intermediates: dict = dataclasses.field(default_factory=dict)
     continuation_template: None = None
     period_state_axes: (
@@ -66,12 +73,12 @@ class MockRegime(Regime):
 
 
 def test_backward_induction():
-    """Test solve brute with hand written inputs.
+    """`solve` runs backward induction over hand-written engine inputs.
 
-    Normally, these inputs would be created from a model specification. For now this can
-    be seen as reference of what the functions that process a model specification need
-    to produce.
-
+    The inputs a model specification would normally produce -- flat params, a
+    state-action space, and a per-period `Q_and_F` -- are written out literally
+    here, so this doubles as a reference for what the regime-building pipeline
+    has to hand `solve`.
     """
     flat_params = MappingProxyType({"discount_factor": jnp.asarray(0.9)})
 
@@ -139,6 +146,7 @@ def test_backward_induction():
             ),
             _base_state_action_space=state_action_space,
             grids=MappingProxyType({}),
+            state_names=("lazy", "wealth"),
         ),
         active_periods=[0, 1],
     )
@@ -178,7 +186,7 @@ def test_backward_induction_single_period_Qc_arr():
     )
 
     def _Q_and_F(a, c, b, d, next_regime_to_V_arr, period, age):  # noqa: ARG001
-        # next_regime_to_V_arr is now a dict but not used in this test
+        # `next_regime_to_V_arr` is part of the kernel signature; this Q ignores it.
         util = d
         feasib = d <= a + b + c
         return util, feasib
@@ -203,6 +211,7 @@ def test_backward_induction_single_period_Qc_arr():
             ),
             _base_state_action_space=state_action_space,
             grids=MappingProxyType({}),
+            state_names=(),
         ),
         active_periods=[0, 1],
     )
@@ -215,5 +224,5 @@ def test_backward_induction_single_period_Qc_arr():
         enable_jit=False,
     )
 
-    # Solution is now dict[int, dict[RegimeName, FloatND]], need to extract the V_arr
+    # `value_functions` is keyed by period, then by regime name.
     aaae(got.value_functions[0]["default"], expected)

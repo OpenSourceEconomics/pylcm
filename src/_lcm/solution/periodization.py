@@ -6,7 +6,7 @@ from types import MappingProxyType
 from typing import cast
 
 from _lcm.solution.contract import SolverBuildContext
-from _lcm.transition_laws import TransitionLaws
+from _lcm.transition_plans import TargetTransitionPlans
 from _lcm.typing import (
     ConstraintFunctionsMapping,
     EconFunction,
@@ -52,7 +52,7 @@ def solver_period_group_key(
         periodized_tree_signature(context.constraints, period),
         periodized_tree_signature(context.constraint_functions, period),
         periodized_tree_signature(context.transitions, period),
-        periodized_tree_signature(context.transition_laws, period),
+        periodized_tree_signature(context.transition_plans, period),
         periodized_node_signature(context.koopmans_aggregator, period),
         periodized_node_signature(context.compute_regime_transition_probs, period),
         current_grid_signature,
@@ -87,8 +87,9 @@ def resolve_solver_build_context(
         "TransitionFunctionsMapping",
         resolve_periodized_tree(context.transitions, period),
     )
-    transition_laws = cast(
-        "TransitionLaws", resolve_periodized_tree(context.transition_laws, period)
+    transition_plans = cast(
+        "TargetTransitionPlans",
+        resolve_periodized_tree(context.transition_plans, period),
     )
     return replace(
         context,
@@ -96,7 +97,7 @@ def resolve_solver_build_context(
         constraints=constraints,
         constraint_functions=constraint_functions,
         transitions=transitions,
-        transition_laws=transition_laws,
+        transition_plans=transition_plans,
         koopmans_aggregator=cast(
             "EconFunction | None",
             resolve_periodized_node(context.koopmans_aggregator, period),
