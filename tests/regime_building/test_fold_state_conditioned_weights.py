@@ -25,6 +25,7 @@ from lcm import (
     MarkovTransition,
     Model,
     NormalIIDProcess,
+    Phased,
     Regime,
     categorical,
     fixed_transition,
@@ -424,3 +425,105 @@ def test_a_conditioner_moved_only_toward_another_target_is_accepted() -> None:
     )
 
     assert set(model.user_regimes) == {"entry", "folding", "sideways", "done"}
+
+
+@categorical(ordered=False)
+class PhasedSplitRegimeId:
+    safe_entry: ScalarInt
+    moving_entry: ScalarInt
+    folding: ScalarInt
+    sideways: ScalarInt
+    done: ScalarInt
+
+
+def _probability_one() -> FloatND:
+    return jnp.asarray(1.0)
+
+
+def test_phased_target_mapping_preserves_narrow_fold_reachability() -> None:
+    """A phase marker around a target mapping keeps that mapping's target set.
+
+    `safe_entry -> folding` holds `risk_type` fixed. A disconnected
+    `moving_entry -> sideways` path changes it, and the moving entry declares
+    its target mapping through `Phased`. The fold guard must resolve either
+    phase before computing reachability; treating the outer marker as a coarse
+    transition would falsely claim that `moving_entry` reaches `folding` and
+    reject this valid model.
+    """
+    safe_entry = Regime(
+        transition={"folding": MarkovTransition(_probability_one)},
+        active=lambda age: age < 1,
+        states={
+            "risk_type": DiscreteGrid(RiskType),
+            "wage_shock": _shock(
+                sigma=StateConditioned(on="risk_type", by=SIGMA_BY_RISK),
+                fold=False,
+            ),
+        },
+        state_transitions={"risk_type": fixed_transition("risk_type")},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _utility},
+    )
+    moving_entry = Regime(
+        transition=Phased(
+            solve={"sideways": MarkovTransition(_probability_one)},
+            simulate={"sideways": MarkovTransition(_probability_one)},
+        ),
+        active=lambda age: age < 1,
+        states={
+            "risk_type": DiscreteGrid(RiskType),
+            "wage_shock": _shock(
+                sigma=StateConditioned(on="risk_type", by=SIGMA_BY_RISK),
+                fold=False,
+            ),
+        },
+        state_transitions={"risk_type": _next_risk_type},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _utility},
+    )
+    folding = Regime(
+        transition=lambda: PhasedSplitRegimeId.done,
+        active=lambda age: 1 <= age < 2,
+        states={
+            "risk_type": DiscreteGrid(RiskType),
+            "wage_shock": _shock(
+                sigma=StateConditioned(on="risk_type", by=SIGMA_BY_RISK)
+            ),
+        },
+        state_transitions={"risk_type": fixed_transition("risk_type")},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": _utility},
+    )
+    sideways = Regime(
+        transition=lambda: PhasedSplitRegimeId.done,
+        active=lambda age: 1 <= age < 2,
+        states={"risk_type": DiscreteGrid(RiskType)},
+        state_transitions={"risk_type": fixed_transition("risk_type")},
+        actions={"work": DiscreteGrid(Work)},
+        functions={"utility": lambda work: jnp.asarray(work) * 0.0},
+    )
+    done = Regime(
+        transition=None,
+        active=lambda age: age >= 2,
+        functions={"utility": lambda: jnp.asarray(0.0)},
+    )
+
+    model = Model(
+        regimes={
+            "safe_entry": safe_entry,
+            "moving_entry": moving_entry,
+            "folding": folding,
+            "sideways": sideways,
+            "done": done,
+        },
+        ages=_THREE_AGES,
+        regime_id_class=PhasedSplitRegimeId,
+    )
+
+    assert set(model.user_regimes) == {
+        "safe_entry",
+        "moving_entry",
+        "folding",
+        "sideways",
+        "done",
+    }

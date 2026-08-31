@@ -1745,12 +1745,20 @@ def _reachable_regime_targets(
 ) -> frozenset[RegimeName]:
     """The regimes this one's transition can structurally reach.
 
-    A per-target dict declares its own key set; every other form is coarse and
-    reaches every regime in the model.
+    A per-target dict declares its own key set. A ``Phased`` transition is
+    classified through either already-validated variant, whose form and target
+    keys agree by the phase grammar. Every remaining form is coarse and reaches
+    every regime in the model.
     """
     transition = regime.transition
     if transition is None:
         return frozenset()
+    if isinstance(transition, Phased):
+        # The phase grammar requires both variants to have the same form and,
+        # for per-target mappings, the same target keys. Resolve either side
+        # before classifying the transition; treating the outer marker as a
+        # coarse callable would falsely connect this source to every regime.
+        transition = transition.solve
     if isinstance(transition, Mapping):
         return frozenset(transition)
     return frozenset(user_regimes)

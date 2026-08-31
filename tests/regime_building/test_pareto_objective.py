@@ -486,6 +486,16 @@ def _impute_power() -> ScalarInt:
     return Power.high
 
 
+def _power_signal() -> ScalarInt:
+    """An ordinary solve-function ancestor of the carried-state imputation."""
+    return Power.high
+
+
+def _impute_power_from_signal(power_signal: ScalarInt) -> ScalarInt:
+    """Resolve the carried state through an ordinary regime-function output."""
+    return power_signal
+
+
 def _carry_power(power: DiscreteState) -> ScalarInt:
     """The seeded bargaining power persists through the panel."""
     return power
@@ -535,6 +545,59 @@ def test_a_weight_reading_a_carried_state_solves_on_its_imputation() -> None:
     axis alone.
     """
     model = _build_carried_power_model()
+
+    solution = model.solve(params=_params(), log_level="debug")
+
+    np.testing.assert_array_almost_equal(
+        np.asarray(solution[0]["couple"]),
+        np.array([3.0, 0.0]),
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+def test_a_carried_weight_preserves_ordinary_imputation_dependencies() -> None:
+    """The carried imputation reaches an ordinary helper as a DAG dependency.
+
+    `weight_f(power)` reads a carried state, whose solve imputation is
+    `impute_power(power_signal)`. The ordinary `power_signal` function produces
+    `high`; it is not a parameter named `power__power_signal`. The resulting
+    weights select her preferred action and publish stakeholder values `(3, 0)`.
+    """
+    couple = Regime(
+        transition=_next_regime,
+        active=lambda age: age < 1,
+        states={
+            "power": Phased(
+                solve=_impute_power_from_signal,
+                simulate=DiscreteGrid(Power),
+            ),
+        },
+        state_transitions={"power": _carry_power},
+        actions={"choice": DiscreteGrid(Choice)},
+        functions={
+            "power_signal": _power_signal,
+            "utility": CollectiveUtility(
+                utilities={"f": _utility_f, "m": _utility_m},
+                objective=ParetoObjective(
+                    weights={"f": _weight_f_by_power, "m": _weight_m_by_power}
+                ),
+            ),
+        },
+    )
+    couple_terminal = Regime(
+        transition=None,
+        active=lambda age: age >= 1,
+        functions={
+            "utility": CollectiveUtility(
+                utilities={"f": _terminal_zero, "m": _terminal_zero}
+            )
+        },
+    )
+    model = Model(
+        regimes={"couple": couple, "couple_terminal": couple_terminal},
+        ages=_AGES,
+        regime_id_class=RegimeId,
+    )
 
     solution = model.solve(params=_params(), log_level="debug")
 

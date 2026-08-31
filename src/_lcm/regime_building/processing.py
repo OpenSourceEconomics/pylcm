@@ -1348,6 +1348,7 @@ def _resolve_pareto_weights(
                 for name in spec.carried_only_state_names
             }
         ),
+        solve_functions=spec.solution.functions,
     )
 
 
