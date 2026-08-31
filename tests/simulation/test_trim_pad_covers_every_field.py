@@ -22,7 +22,7 @@ _N_REAL = 7
 _N_PADDED = 8
 
 
-def _column(field: dataclasses.Field, n_rows: int):
+def _column(*, field: dataclasses.Field, n_rows: int):
     """A per-subject column whose dtype satisfies `field`'s annotation.
 
     The dtype is read off the annotation rather than fixed, because these fields are
@@ -51,7 +51,7 @@ def _period_data(n_rows: int) -> PeriodRegimeSimulationData:
     """
     kwargs: dict[str, Any] = {}
     for field in dataclasses.fields(PeriodRegimeSimulationData):
-        column = _column(field, n_rows)
+        column = _column(field=field, n_rows=n_rows)
         if field.name in _MAPPING_FIELDS:
             kwargs[field.name] = MappingProxyType({"a": column, "b": column})
         else:
@@ -133,7 +133,7 @@ def test_the_coverage_check_rejects_a_field_left_behind(skipped: str):
     field = next(
         f for f in dataclasses.fields(PeriodRegimeSimulationData) if f.name == skipped
     )
-    padded_column = _column(field, _N_PADDED)
+    padded_column = _column(field=field, n_rows=_N_PADDED)
     value = (
         MappingProxyType({"a": padded_column, "b": padded_column})
         if skipped in _MAPPING_FIELDS

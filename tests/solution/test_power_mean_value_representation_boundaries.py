@@ -34,7 +34,7 @@ def test_constant_lottery_keeps_boundary_payoff_bits(exponent: float) -> None:
     dtype = jnp.zeros(()).dtype
     wide = 1100 if dtype.itemsize == 8 else 200
 
-    def aggregate(values, shifts):
+    def aggregate(*, values, shifts):
         return weighted_power_mean(
             values=values,
             weights=jnp.asarray([2.0, 1.0, 0.5], dtype=dtype),
@@ -50,7 +50,7 @@ def test_constant_lottery_keeps_boundary_payoff_bits(exponent: float) -> None:
             jnp.asarray([0, wide - 20, wide], dtype=jnp.int32),
         ):
             expected_bits = _bits(payoff)
-            assert _bits(aggregate(values, shifts)) == expected_bits
+            assert _bits(aggregate(values=values, shifts=shifts)) == expected_bits
             assert _bits(compiled(values, shifts)) == expected_bits
 
 

@@ -111,6 +111,7 @@ def wage_income(wage: ContinuousState) -> FloatND:
 
 
 def housing_cost(
+    *,
     housing: ContinuousState,
     new_housing: ContinuousState,
     return_housing: float,
@@ -146,6 +147,7 @@ def housing_cost(
 
 
 def resources_before_outer_cost(
+    *,
     liquid: ContinuousState,
     income: FloatND,
     return_liquid: float,
@@ -161,7 +163,7 @@ def resources_before_outer_cost(
     return (1.0 + return_liquid) * liquid + income
 
 
-def savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
+def savings(*, resources: FloatND, consumption: ContinuousAction) -> FloatND:
     """Inner post-decision liquid balance `a' = resources - c`."""
     return resources - consumption
 
@@ -177,7 +179,7 @@ def next_liquid(savings: FloatND) -> ContinuousState:
 
 
 def new_housing(
-    housing: ContinuousState, housing_investment: ContinuousAction
+    *, housing: ContinuousState, housing_investment: ContinuousAction
 ) -> ContinuousState:
     """The house chosen this period, `H' = H + housing_investment`.
 
@@ -204,6 +206,7 @@ def serviced_housing(new_housing: ContinuousState) -> FloatND:
 
 
 def utility(
+    *,
     consumption: ContinuousAction,
     serviced_housing: FloatND,
     alpha: float,
@@ -229,7 +232,7 @@ def utility(
 
 
 def inverse_marginal_utility(
-    marginal_continuation: FloatND, gamma_c: float, alpha: float
+    *, marginal_continuation: FloatND, gamma_c: float, alpha: float
 ) -> FloatND:
     """Invert the consumption marginal utility `u'(c) = alpha·c^{-gamma_C}`.
 
@@ -243,6 +246,7 @@ def inverse_marginal_utility(
 
 
 def bequest(
+    *,
     liquid: ContinuousState,
     housing: ContinuousState,
     return_liquid: float,
@@ -292,7 +296,7 @@ def _retirement_income() -> FloatND:
 
 
 def _euler_coupled_next_liquid(
-    savings: FloatND, next_housing: ContinuousState
+    *, savings: FloatND, next_housing: ContinuousState
 ) -> ContinuousState:
     """Euler-coupled liquid law for the rejection guardrail test.
 

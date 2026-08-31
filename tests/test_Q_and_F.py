@@ -132,6 +132,7 @@ def internal_functions_illustrative():
         return period + 18
 
     def mandatory_retirement_constraint(
+        *,
         retirement: DiscreteAction,
         age: int | Int1D,
     ) -> BoolND:
@@ -139,6 +140,7 @@ def internal_functions_illustrative():
         return jnp.logical_or(retirement == 1, age < 65)
 
     def mandatory_lagged_retirement_constraint(
+        *,
         lagged_retirement: DiscreteState,
         age: int | Int1D,
     ) -> BoolND:
@@ -146,6 +148,7 @@ def internal_functions_illustrative():
         return jnp.logical_or(lagged_retirement == 1, age < 66)
 
     def absorbing_retirement_constraint(
+        *,
         retirement: DiscreteAction,
         lagged_retirement: DiscreteState,
     ) -> BoolND:
@@ -265,6 +268,7 @@ def test_get_U_and_F_with_annotated_constraints():
 
     # Constraint with type annotations
     def budget_constraint(
+        *,
         consumption: float,
         wealth: float,
     ) -> bool:
@@ -303,7 +307,7 @@ def test_get_U_and_F_with_annotated_constraints():
     assert F.item() is False
 
 
-def _health_probs(health: DiscreteState, probs_array: FloatND) -> FloatND:
+def _health_probs(*, health: DiscreteState, probs_array: FloatND) -> FloatND:
     return probs_array[health]
 
 
@@ -332,19 +336,20 @@ def _build_partial_coverage_model(
     """
 
     def _utility(
+        *,
         consumption: float,
         health: DiscreteState,
     ) -> FloatND:
         return jnp.log(consumption)
 
-    def _next_wealth(consumption: float, wealth: float) -> float:
+    def _next_wealth(*, consumption: float, wealth: float) -> float:
         return wealth - consumption
 
     work = UserRegime(
         active=lambda age: age <= 2,
         states={
             "wealth": LinSpacedGrid(start=1, stop=5, n_points=3),
-            "health": DiscreteGrid(_PartialCoverageHealth),
+            "health": DiscreteGrid(category_class=_PartialCoverageHealth),
         },
         state_transitions={
             "wealth": _next_wealth,
@@ -362,7 +367,7 @@ def _build_partial_coverage_model(
         active=lambda age: age <= 2,
         states={
             "wealth": LinSpacedGrid(start=1, stop=5, n_points=3),
-            "health": DiscreteGrid(_PartialCoverageHealth),
+            "health": DiscreteGrid(category_class=_PartialCoverageHealth),
         },
         state_transitions={
             "wealth": _next_wealth,
@@ -440,7 +445,7 @@ def _sum_utility(utility_level: FloatND) -> FloatND:
     return utility_level
 
 
-def _epstein_zin_W(utility: FloatND, CE: FloatND) -> FloatND:
+def _epstein_zin_W(*, utility: FloatND, CE: FloatND) -> FloatND:
     return utility + CE
 
 
@@ -451,7 +456,7 @@ def _low_and_high_probs(regime_prob_low: FloatND) -> MappingProxyType[str, Float
 
 
 def _raw_low_and_high_probs(
-    regime_prob_low: FloatND, regime_prob_high: FloatND
+    *, regime_prob_low: FloatND, regime_prob_high: FloatND
 ) -> MappingProxyType[str, FloatND]:
     """Return two raw probabilities without forcing their represented sum to one."""
     return MappingProxyType({"low": regime_prob_low, "high": regime_prob_high})
@@ -467,8 +472,8 @@ _STATELESS_V_INFO = VInterpolationInfo(
 
 
 def _build_two_target_closure(
-    builder: Callable,
     *,
+    builder: Callable,
     certainty_equivalent: CertaintyEquivalent | None,
     probs_function: Callable = _low_and_high_probs,
     flat_param_names: frozenset[str] = frozenset(
@@ -527,7 +532,7 @@ def _two_target_call_kwargs(
 def _linear_expectation_action_values(*, dtype: Any) -> tuple[np.ndarray, np.ndarray]:
     """Return Q values for an accepted near-unit-mass lottery and a safe action."""
     Q_and_F = _build_two_target_closure(
-        get_Q_and_F,
+        builder=get_Q_and_F,
         certainty_equivalent=LinearExpectation(),
         probs_function=_raw_low_and_high_probs,
         flat_param_names=frozenset(),
@@ -568,6 +573,7 @@ def _linear_expectation_action_values(*, dtype: Any) -> tuple[np.ndarray, np.nda
     ],
 )
 def test_linear_expectation_fast_path_normalizes_accepted_regime_mass(
+    *,
     request: pytest.FixtureRequest,
     fixture_name: str,
     dtype: Any,
@@ -600,7 +606,7 @@ def test_linear_expectation_normalizes_mass_carried_by_stateless_targets(
     that value.
     """
     Q_and_F = _build_two_target_closure(
-        get_Q_and_F,
+        builder=get_Q_and_F,
         certainty_equivalent=LinearExpectation(),
         probs_function=_raw_low_and_high_probs,
         flat_param_names=frozenset(),
@@ -630,7 +636,9 @@ def test_linear_expectation_normalizes_mass_carried_by_stateless_targets(
 
 def test_power_mean_regime_lottery_stays_finite_in_float64(x64_enabled: None):
     """A `(1e-50, 2e-50)` regime lottery at risk aversion 8 keeps its exact value."""
-    Q_and_F = _build_two_target_closure(get_Q_and_F, certainty_equivalent=PowerMean())
+    Q_and_F = _build_two_target_closure(
+        builder=get_Q_and_F, certainty_equivalent=PowerMean()
+    )
     got = jax.jit(
         lambda: Q_and_F(
             **_two_target_call_kwargs(
@@ -647,7 +655,9 @@ def test_power_mean_regime_lottery_stays_finite_in_float64(x64_enabled: None):
 
 def test_power_mean_regime_lottery_stays_finite_in_float32(x64_disabled: None):
     """A `(1e-8, 2e-8)` regime lottery at risk aversion 8 keeps its exact value."""
-    Q_and_F = _build_two_target_closure(get_Q_and_F, certainty_equivalent=PowerMean())
+    Q_and_F = _build_two_target_closure(
+        builder=get_Q_and_F, certainty_equivalent=PowerMean()
+    )
     got = jax.jit(
         lambda: Q_and_F(
             **_two_target_call_kwargs(
@@ -697,7 +707,9 @@ def _assert_the_even_lottery_wins(
     assert even > skewed > 0.0
     utility_advantage = 0.4 * (even - skewed)
 
-    Q_and_F = _build_two_target_closure(get_Q_and_F, certainty_equivalent=PowerMean())
+    Q_and_F = _build_two_target_closure(
+        builder=get_Q_and_F, certainty_equivalent=PowerMean()
+    )
     Q_per_action = jax.jit(
         lambda: jnp.asarray(
             [
@@ -723,6 +735,7 @@ def _assert_the_even_lottery_wins(
 
 @pytest.mark.parametrize(("risk_aversion", "scale"), _FLOAT64_ACTION_CASES)
 def test_bellman_prefers_the_higher_certainty_equivalent_at_any_scale(
+    *,
     x64_enabled: None,
     risk_aversion: float,
     scale: float,
@@ -735,6 +748,7 @@ def test_bellman_prefers_the_higher_certainty_equivalent_at_any_scale(
 
 @pytest.mark.parametrize(("risk_aversion", "scale"), _FLOAT32_ACTION_CASES)
 def test_bellman_prefers_the_higher_certainty_equivalent_at_any_scale_float32(
+    *,
     x64_disabled: None,
     risk_aversion: float,
     scale: float,
@@ -757,7 +771,9 @@ def _tiny_anchor_action_values(
     The risky action puts a near-zero probability on a continuation value far
     below the other branch; the safe action pays `safe_value` for certain.
     """
-    Q_and_F = _build_two_target_closure(get_Q_and_F, certainty_equivalent=PowerMean())
+    Q_and_F = _build_two_target_closure(
+        builder=get_Q_and_F, certainty_equivalent=PowerMean()
+    )
     risky = Q_and_F(
         **_two_target_call_kwargs(
             values=risky_values,
@@ -836,9 +852,11 @@ def test_diagnostic_intermediates_reproduce_the_Bellman_Q(x64_enabled: None):
         risk_aversion=8.0,
         dtype=jnp.float64,
     )
-    Q_and_F = _build_two_target_closure(get_Q_and_F, certainty_equivalent=PowerMean())
+    Q_and_F = _build_two_target_closure(
+        builder=get_Q_and_F, certainty_equivalent=PowerMean()
+    )
     compute_intermediates = _build_two_target_closure(
-        get_compute_intermediates, certainty_equivalent=PowerMean()
+        builder=get_compute_intermediates, certainty_equivalent=PowerMean()
     )
     Q_arr = jax.jit(lambda: Q_and_F(**call_kwargs)[0])()
     diagnostic_Q_arr = jax.jit(lambda: compute_intermediates(**call_kwargs)[3])()
@@ -870,7 +888,7 @@ class _MassRegimeId:
 
 
 def _model_emitting_total_regime_mass(
-    total_mass: float, certainty_equivalent: CertaintyEquivalent
+    *, total_mass: float, certainty_equivalent: CertaintyEquivalent
 ) -> Model:
     """A two-regime model whose transition emits `total_mass` in every period.
 
@@ -910,13 +928,15 @@ def _model_emitting_total_regime_mass(
 
 
 def _solve_alive_without_validation(
-    total_mass: float, certainty_equivalent: CertaintyEquivalent
+    *, total_mass: float, certainty_equivalent: CertaintyEquivalent
 ) -> FloatND:
     """Solve the model at `log_level="off"` and return `alive`'s first V array."""
     alive_params: dict[str, Any] = {"discount_factor": 0.95}
     if not isinstance(certainty_equivalent, LinearExpectation):
         alive_params["certainty_equivalent"] = {"risk_aversion": 2.0}
-    model = _model_emitting_total_regime_mass(total_mass, certainty_equivalent)
+    model = _model_emitting_total_regime_mass(
+        total_mass=total_mass, certainty_equivalent=certainty_equivalent
+    )
     return model.solve(params={"alive": alive_params}, log_level="off")[0]["alive"]
 
 
@@ -924,7 +944,7 @@ def _solve_alive_without_validation(
     "certainty_equivalent", [LinearExpectation(), PowerMean()], ids=["linear", "power"]
 )
 def test_solve_at_log_level_off_poisons_a_regime_transition_that_drops_mass(
-    certainty_equivalent: CertaintyEquivalent, x64_enabled: None
+    *, certainty_equivalent: CertaintyEquivalent, x64_enabled: None
 ):
     """A regime transition emitting 0.977 of unit mass solves to NaN.
 
@@ -934,7 +954,9 @@ def test_solve_at_log_level_off_poisons_a_regime_transition_that_drops_mass(
     marks the difference. The check therefore lives in the arithmetic rather
     than in runtime validation, which `log_level="off"` skips.
     """
-    V_arr = _solve_alive_without_validation(0.977, certainty_equivalent)
+    V_arr = _solve_alive_without_validation(
+        total_mass=0.977, certainty_equivalent=certainty_equivalent
+    )
     assert bool(jnp.all(jnp.isnan(V_arr)))
 
 
@@ -959,7 +981,10 @@ def test_solve_at_log_level_off_poisons_a_regime_transition_that_drops_mass(
     ids=["linear", "power"],
 )
 def test_solve_at_unit_regime_mass_reproduces_the_unchecked_arithmetic(
-    certainty_equivalent: CertaintyEquivalent, expected: list[float], x64_enabled: None
+    *,
+    certainty_equivalent: CertaintyEquivalent,
+    expected: list[float],
+    x64_enabled: None,
 ):
     """Unit regime mass reaches the value function the unchecked arithmetic gives.
 
@@ -969,7 +994,9 @@ def test_solve_at_unit_regime_mass_reproduces_the_unchecked_arithmetic(
     adds no arithmetic is a separate, backend-independent claim, tested against
     the predicate rather than against a solve.
     """
-    V_arr = _solve_alive_without_validation(1.0, certainty_equivalent)
+    V_arr = _solve_alive_without_validation(
+        total_mass=1.0, certainty_equivalent=certainty_equivalent
+    )
     np.testing.assert_allclose(
         np.asarray(V_arr), np.array(expected), rtol=1e-15, atol=0.0
     )
@@ -1010,7 +1037,7 @@ def _model_with_alive_active_at_every_age(
     "certainty_equivalent", [LinearExpectation(), PowerMean()], ids=["linear", "power"]
 )
 def test_solve_poisons_a_non_terminal_regime_with_no_reachable_target(
-    certainty_equivalent: CertaintyEquivalent, x64_enabled: None
+    *, certainty_equivalent: CertaintyEquivalent, x64_enabled: None
 ):
     """The period where a non-terminal regime has no target left solves to NaN.
 
@@ -1032,7 +1059,7 @@ def test_solve_poisons_a_non_terminal_regime_with_no_reachable_target(
 
 
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
-def test_unit_regime_mass_divisor_is_exactly_one(dtype: Any, x64_enabled: None):
+def test_unit_regime_mass_divisor_is_exactly_one(*, dtype: Any, x64_enabled: None):
     """At unit mass the per-target route divides by exactly `1.0`.
 
     Division by exactly one is the identity in IEEE754, so the check cannot
@@ -1040,12 +1067,17 @@ def test_unit_regime_mass_divisor_is_exactly_one(dtype: Any, x64_enabled: None):
     """
     mass = jnp.ones((3,), dtype=dtype)
     no_negative = jnp.zeros((3,), dtype=bool)
-    assert _unit_regime_mass_or_nan(mass, no_negative).tolist() == [1.0] * 3
+    assert (
+        _unit_regime_mass_or_nan(
+            probability_mass=mass, has_negative_probability=no_negative
+        ).tolist()
+        == [1.0] * 3
+    )
 
 
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
 def test_unit_regime_mass_predicate_passes_accumulated_float_error(
-    dtype: Any, x64_enabled: None
+    *, dtype: Any, x64_enabled: None
 ):
     """Mass that misses one by realistic accumulation error is accepted.
 
@@ -1055,7 +1087,11 @@ def test_unit_regime_mass_predicate_passes_accumulated_float_error(
     """
     accumulated = jnp.asarray(1.0, dtype=dtype) + 32.0 * jnp.finfo(dtype).eps
     no_negative = jnp.zeros((), dtype=bool)
-    assert bool(_regime_mass_is_a_distribution(accumulated, no_negative))
+    assert bool(
+        _regime_mass_is_a_distribution(
+            probability_mass=accumulated, has_negative_probability=no_negative
+        )
+    )
 
 
 def _dtype() -> np.dtype:

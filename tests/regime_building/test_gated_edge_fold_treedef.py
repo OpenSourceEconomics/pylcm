@@ -118,7 +118,7 @@ def _build_mapping(*, gate, supply_flag: bool) -> MappingProxyType:
     )
 
 
-def _consent_gate(V_target_f: FloatND, V_target_m: FloatND) -> BoolND:
+def _consent_gate(*, V_target_f: FloatND, V_target_m: FloatND) -> BoolND:
     """Consent holds where both partners are worth more together than apart."""
     return (V_target_f > 0.0) & (V_target_m > 0.0)
 

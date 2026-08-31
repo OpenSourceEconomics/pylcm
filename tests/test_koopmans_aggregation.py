@@ -56,7 +56,7 @@ def test_default_aggregator_is_LinearAggregator():
 
 
 @pytest.mark.parametrize("value", [1e-50, 2e-50])
-def test_CESAggregator_is_idempotent_at_tiny_values(x64_enabled: None, value: float):
+def test_CESAggregator_is_idempotent_at_tiny_values(*, x64_enabled: None, value: float):
     """`W(x, x) == x`: aggregating a value with itself returns it, at any scale."""
     result = CESAggregator()(
         utility=jnp.asarray(value),
@@ -103,7 +103,7 @@ def test_CESAggregator_ranks_actions_correctly_near_unit_ies_float32():
 
 
 @pytest.mark.parametrize("ies", [0.125, 0.5, 0.999999, 1.0, 1.000001, 2.0, 8.0])
-def test_CESAggregator_matches_the_exact_ces_value(x64_enabled: None, ies: float):
+def test_CESAggregator_matches_the_exact_ces_value(*, x64_enabled: None, ies: float):
     """The aggregator reproduces the CES value to within a few ulps of exact.
 
     The reference is evaluated in 60-digit arithmetic rather than as the
@@ -154,7 +154,7 @@ def test_CESAggregator_is_continuous_across_unit_ies(x64_enabled: None):
 
 @pytest.mark.parametrize(("discount_factor", "expected"), [(0.0, 2.0), (1.0, 3.0)])
 def test_CESAggregator_at_extreme_discount_factors(
-    x64_enabled: None, discount_factor: float, expected: float
+    *, x64_enabled: None, discount_factor: float, expected: float
 ):
     """`beta = 0` returns the utility and `beta = 1` the certainty equivalent."""
     result = CESAggregator()(
@@ -299,6 +299,7 @@ _IES_VALUES = (0.7, 1.0, 1.0 + 1e-6, 1.0 - 1e-6, 8.0, 0.125)
 @pytest.mark.parametrize("discount_factor", _DISCOUNT_FACTORS)
 @pytest.mark.parametrize("ies", _IES_VALUES)
 def test_CESAggregator_equals_the_general_power_mean(
+    *,
     request: pytest.FixtureRequest,
     fixture_name: str,
     discount_factor: float,

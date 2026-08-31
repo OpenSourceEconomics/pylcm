@@ -53,7 +53,7 @@ def _utility(consumption: float) -> FloatND:
     return jnp.log(consumption)
 
 
-def _next_wealth(wealth: float, consumption: float) -> float:
+def _next_wealth(*, wealth: float, consumption: float) -> float:
     return wealth - consumption
 
 
@@ -61,7 +61,7 @@ def _next_regime(age: float) -> ScalarInt:  # noqa: ARG001
     return jnp.asarray(0, dtype=jnp.int32)
 
 
-def _health_probs(health: int, probs_array: FloatND) -> FloatND:
+def _health_probs(*, health: int, probs_array: FloatND) -> FloatND:
     return probs_array[health]
 
 
@@ -136,7 +136,10 @@ def test_per_target_dict_is_restricted_to_named_targets() -> None:
 def test_fixed_transition_desugars_to_per_target_identities() -> None:
     """A `fixed_transition` entry becomes identity laws toward each carrier."""
     overrides: dict[str, Any] = {
-        "states": {"wealth": _wealth_grid(), "health": DiscreteGrid(_Health)},
+        "states": {
+            "wealth": _wealth_grid(),
+            "health": DiscreteGrid(category_class=_Health),
+        },
         "state_transitions": {
             "wealth": _next_wealth,
             "health": fixed_transition("health"),
@@ -158,7 +161,10 @@ def test_fixed_transition_desugars_to_per_target_identities() -> None:
 def test_markov_law_broadcasts_as_markov() -> None:
     """A stochastic law stays `MarkovTransition`-wrapped in every cell."""
     overrides: dict[str, Any] = {
-        "states": {"wealth": _wealth_grid(), "health": DiscreteGrid(_Health)},
+        "states": {
+            "wealth": _wealth_grid(),
+            "health": DiscreteGrid(category_class=_Health),
+        },
         "state_transitions": {
             "wealth": _next_wealth,
             "health": MarkovTransition(_health_probs),

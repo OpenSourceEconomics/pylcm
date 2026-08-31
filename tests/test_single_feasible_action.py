@@ -58,6 +58,7 @@ def _utility(consumption: ContinuousAction) -> FloatND:
 
 
 def _next_wealth(
+    *,
     wealth: ContinuousState,
     consumption: ContinuousAction,
 ) -> ContinuousState:
@@ -65,12 +66,12 @@ def _next_wealth(
 
 
 def _borrowing_constraint(
-    consumption: ContinuousAction, wealth: ContinuousState
+    *, consumption: ContinuousAction, wealth: ContinuousState
 ) -> FloatND:
     return consumption <= wealth
 
 
-def _next_regime(age: int, last_alive_age: int) -> FloatND:
+def _next_regime(*, age: int, last_alive_age: int) -> FloatND:
     """Deterministic regime transition: alive→alive while age<last, then alive→dead."""
     return jnp.where(age >= last_alive_age, RegimeId.dead, RegimeId.alive)
 
@@ -289,6 +290,7 @@ class AliveDeadRegimeId:
 
 
 def _crra_bequest(
+    *,
     assets: ContinuousState,
     pref_type: DiscreteState,
     bequest_shifter: float,
@@ -312,6 +314,7 @@ def _crra_bequest(
 
 
 def _alive_utility(
+    *,
     consumption: ContinuousAction,
     pref_type: DiscreteState,
     consumption_weight: FloatND,
@@ -322,16 +325,16 @@ def _alive_utility(
 
 
 def _next_assets(
-    assets: ContinuousState, consumption: ContinuousAction
+    *, assets: ContinuousState, consumption: ContinuousAction
 ) -> ContinuousState:
     return assets - consumption
 
 
-def _alive_borrow(consumption: ContinuousAction, assets: ContinuousState) -> FloatND:
+def _alive_borrow(*, consumption: ContinuousAction, assets: ContinuousState) -> FloatND:
     return consumption <= assets
 
 
-def _alive_to_dead(age: int, last_alive_age: int) -> FloatND:
+def _alive_to_dead(*, age: int, last_alive_age: int) -> FloatND:
     """Deterministic regime transition; returns a scalar regime ID."""
     return jnp.where(
         age >= last_alive_age, AliveDeadRegimeId.dead, AliveDeadRegimeId.alive
@@ -350,7 +353,7 @@ def _build_alive_dead_model(
         functions={"utility": _alive_utility},
         states={
             "assets": LinSpacedGrid(start=1.0, stop=20.0, n_points=5),
-            "pref_type": DiscreteGrid(PrefType, batch_size=1),
+            "pref_type": DiscreteGrid(category_class=PrefType, batch_size=1),
         },
         state_transitions={
             "assets": _next_assets,
@@ -366,7 +369,7 @@ def _build_alive_dead_model(
         functions={"utility": _crra_bequest},
         states={
             "assets": LinSpacedGrid(start=1.0, stop=20.0, n_points=5),
-            "pref_type": DiscreteGrid(PrefType, batch_size=1),
+            "pref_type": DiscreteGrid(category_class=PrefType, batch_size=1),
         },
         active=lambda _age: True,
     )
@@ -438,7 +441,7 @@ def test_map_coordinates_returns_nan_for_non_finite_coordinate(bad_coord):
     segment) will produce NaN in V.
     """
     V_arr = jnp.array([1.0, 5.0, 12.0])
-    out = map_coordinates(V_arr, coordinates=[jnp.array(bad_coord)])
+    out = map_coordinates(input=V_arr, coordinates=[jnp.array(bad_coord)])
     assert jnp.isnan(out)
 
 
@@ -481,13 +484,13 @@ def _runtime_state_grid_model() -> tuple[Model, dict, dict]:
         alive: ScalarInt
         dead: ScalarInt
 
-    def utility(consumption, wealth):
+    def utility(*, consumption, wealth):
         return jnp.log(consumption) + 0.0 * wealth
 
-    def next_wealth(wealth, consumption):
+    def next_wealth(*, wealth, consumption):
         return wealth - consumption
 
-    def borrow(consumption, wealth):  # noqa: ARG001
+    def borrow(*, consumption, wealth):  # noqa: ARG001
         # The validator sees `wealth` as a per-subject array with the
         # subject-supplied initial values, but `consumption` as the *grid*
         # (placeholder zeros for runtime grids). With a feasibility check
@@ -495,7 +498,7 @@ def _runtime_state_grid_model() -> tuple[Model, dict, dict]:
         # infeasible until the runtime points replace the placeholder.
         return consumption > 0
 
-    def next_regime(age, last_alive_age):
+    def next_regime(*, age, last_alive_age):
         return jnp.where(
             age >= last_alive_age, RuntimeRegimeId.dead, RuntimeRegimeId.alive
         )

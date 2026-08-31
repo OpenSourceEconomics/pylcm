@@ -52,7 +52,7 @@ def _evolve_pension_wealth(pension_wealth: float) -> float:
     return pension_wealth * 1.03
 
 
-def _next_wealth(wealth: float, consumption: float) -> float:
+def _next_wealth(*, wealth: float, consumption: float) -> float:
     return wealth - consumption
 
 
@@ -137,7 +137,7 @@ def _working(*, transition: UserFunction | Phased) -> UserRegime:
     value, because that value belongs to the period the target is in.
     """
 
-    def _feasible_plain(consumption: float, wealth: float) -> bool:
+    def _feasible_plain(*, consumption: float, wealth: float) -> bool:
         return consumption <= wealth
 
     return UserRegime(

@@ -214,7 +214,9 @@ def is_renting(housing_choice: DiscreteAction) -> BoolND:
     return housing_choice == Housing.rent
 
 
-def serviced_housing(housing_choice: DiscreteAction, rental_service: float) -> FloatND:
+def serviced_housing(
+    *, housing_choice: DiscreteAction, rental_service: float
+) -> FloatND:
     """Housing services `h` consumed this period.
 
     Owning serves the chosen stock `H'`; renting serves the rental service level
@@ -226,6 +228,7 @@ def serviced_housing(housing_choice: DiscreteAction, rental_service: float) -> F
 
 
 def utility(
+    *,
     consumption: ContinuousAction,
     serviced_housing: FloatND,
     alpha: float,
@@ -255,6 +258,7 @@ def wage_income(wage: ContinuousState) -> FloatND:
 
 
 def housing_flow(
+    *,
     housing: DiscreteState,
     housing_choice: DiscreteAction,
     tau: float,
@@ -285,6 +289,7 @@ def housing_flow(
 
 
 def resources(
+    *,
     assets: ContinuousState,
     wage_income: FloatND,
     housing_flow: FloatND,
@@ -302,7 +307,7 @@ def resources(
     return (1.0 + interest_rate) * assets - tax + wage_income + housing_flow
 
 
-def savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
+def savings(*, resources: FloatND, consumption: ContinuousAction) -> FloatND:
     """Post-decision financial balance `a' = resources - c`."""
     return resources - consumption
 
@@ -321,7 +326,9 @@ def next_housing(housing_choice: DiscreteAction) -> DiscreteState:
     return housing_choice
 
 
-def inverse_marginal_utility(marginal_continuation: FloatND, alpha: float) -> FloatND:
+def inverse_marginal_utility(
+    *, marginal_continuation: FloatND, alpha: float
+) -> FloatND:
     """Invert the consumption marginal utility `u'(c) = alpha / c`.
 
     `c = alpha / mc`. The housing-service term is additively separable from
@@ -333,6 +340,7 @@ def inverse_marginal_utility(marginal_continuation: FloatND, alpha: float) -> Fl
 
 
 def next_assets_brute(
+    *,
     assets: ContinuousState,
     wage_income: FloatND,
     housing_flow: FloatND,
@@ -353,6 +361,7 @@ def next_assets_brute(
 
 
 def borrowing_constraint(
+    *,
     assets: ContinuousState,
     wage_income: FloatND,
     housing_flow: FloatND,
@@ -379,6 +388,7 @@ def borrowing_constraint(
 
 
 def resources_taxed(
+    *,
     assets: ContinuousState,
     wage_income: FloatND,
     housing_flow: FloatND,
@@ -400,6 +410,7 @@ def resources_taxed(
 
 
 def next_assets_brute_taxed(
+    *,
     assets: ContinuousState,
     wage_income: FloatND,
     housing_flow: FloatND,
@@ -417,6 +428,7 @@ def next_assets_brute_taxed(
 
 
 def borrowing_constraint_taxed(
+    *,
     assets: ContinuousState,
     wage_income: FloatND,
     housing_flow: FloatND,
@@ -437,6 +449,7 @@ def borrowing_constraint_taxed(
 
 
 def bequest(
+    *,
     assets: ContinuousState,
     housing: DiscreteState,
     interest_rate: float,
@@ -450,7 +463,7 @@ def bequest(
     return theta * estate
 
 
-def next_regime(age: int, final_age_alive: float) -> ScalarInt:
+def next_regime(*, age: int, final_age_alive: float) -> ScalarInt:
     """Transition to `dead` at the final living age, else stay working."""
     return jnp.where(
         age >= final_age_alive,
@@ -516,7 +529,7 @@ def build_model(
     dead = UserRegime(
         transition=None,
         active=lambda age, fa=final_age_alive: age >= fa,
-        states={"assets": assets_grid, "housing": DiscreteGrid(Housing)},
+        states={"assets": assets_grid, "housing": DiscreteGrid(category_class=Housing)},
         functions={"utility": bequest},
     )
 
@@ -526,7 +539,7 @@ def build_model(
             active=lambda age, fa=final_age_alive: age < fa,
             states={
                 "assets": assets_grid,
-                "housing": DiscreteGrid(Housing),
+                "housing": DiscreteGrid(category_class=Housing),
                 "wage": wage_process,
             },
             state_transitions={
@@ -535,7 +548,7 @@ def build_model(
             },
             actions={
                 "consumption": consumption_grid,
-                "housing_choice": DiscreteGrid(Housing),
+                "housing_choice": DiscreteGrid(category_class=Housing),
             },
             constraints={"borrowing_constraint": borrowing},
             functions={
@@ -557,7 +570,7 @@ def build_model(
         active=lambda age, fa=final_age_alive: age < fa,
         states={
             "assets": assets_grid,
-            "housing": DiscreteGrid(Housing),
+            "housing": DiscreteGrid(category_class=Housing),
             "wage": wage_process,
         },
         state_transitions={
@@ -566,7 +579,7 @@ def build_model(
         },
         actions={
             "consumption": consumption_grid,
-            "housing_choice": DiscreteGrid(Housing),
+            "housing_choice": DiscreteGrid(category_class=Housing),
         },
         functions={
             "utility": utility,

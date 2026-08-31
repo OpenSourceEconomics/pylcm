@@ -66,7 +66,7 @@ def _next_regime() -> ScalarInt:
     return RegimeId.terminal
 
 
-def _utility(wage_shock: FloatND, work: DiscreteAction) -> FloatND:
+def _utility(*, wage_shock: FloatND, work: DiscreteAction) -> FloatND:
     """Working pays the realized shock; leisure pays a fixed outside option."""
     return jnp.where(work == 1, wage_shock, OUTSIDE_OPTION)
 
@@ -113,13 +113,13 @@ def _conditioned_model() -> Model:
         transition=_next_regime,
         active=lambda age: age < 1,
         states={
-            "risk_type": DiscreteGrid(RiskType),
+            "risk_type": DiscreteGrid(category_class=RiskType),
             "wage_shock": _shock(
                 sigma=StateConditioned(on="risk_type", by=SIGMA_BY_RISK)
             ),
         },
         state_transitions={"risk_type": fixed_transition("risk_type")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility},
     )
     terminal = Regime(
@@ -144,7 +144,7 @@ def _unconditioned_model(*, sigma: float) -> Model:
         transition=_next_regime,
         active=lambda age: age < 1,
         states={"wage_shock": _shock(sigma=sigma)},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility},
     )
     terminal = Regime(
@@ -257,13 +257,13 @@ def test_a_folded_shock_whose_conditioner_can_move_is_rejected() -> None:
             transition=_next_regime,
             active=lambda age: age < 1,
             states={
-                "risk_type": DiscreteGrid(RiskType),
+                "risk_type": DiscreteGrid(category_class=RiskType),
                 "wage_shock": _shock(
                     sigma=StateConditioned(on="risk_type", by=SIGMA_BY_RISK)
                 ),
             },
             state_transitions={"risk_type": _next_risk_type},
-            actions={"work": DiscreteGrid(Work)},
+            actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _utility},
         )
 
@@ -299,27 +299,27 @@ def test_a_conditioner_moved_by_a_source_regime_is_rejected() -> None:
         transition=_to_folding,
         active=lambda age: age < 1,
         states={
-            "risk_type": DiscreteGrid(RiskType),
+            "risk_type": DiscreteGrid(category_class=RiskType),
             "wage_shock": _shock(
                 sigma=StateConditioned(on="risk_type", by=SIGMA_BY_RISK),
                 fold=False,
             ),
         },
         state_transitions={"risk_type": _next_risk_type},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility},
     )
     folding = Regime(
         transition=_to_done,
         active=lambda age: 1 <= age < 2,
         states={
-            "risk_type": DiscreteGrid(RiskType),
+            "risk_type": DiscreteGrid(category_class=RiskType),
             "wage_shock": _shock(
                 sigma=StateConditioned(on="risk_type", by=SIGMA_BY_RISK)
             ),
         },
         state_transitions={"risk_type": fixed_transition("risk_type")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility},
     )
     done = Regime(
@@ -371,7 +371,7 @@ def test_a_conditioner_moved_only_toward_another_target_is_accepted() -> None:
         },
         active=lambda age: age < 1,
         states={
-            "risk_type": DiscreteGrid(RiskType),
+            "risk_type": DiscreteGrid(category_class=RiskType),
             "wage_shock": _shock(
                 sigma=StateConditioned(on="risk_type", by=SIGMA_BY_RISK),
                 fold=False,
@@ -383,28 +383,28 @@ def test_a_conditioner_moved_only_toward_another_target_is_accepted() -> None:
                 "sideways": _next_risk_type,
             }
         },
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility},
     )
     folding = Regime(
         transition=_to_done_from_split,
         active=lambda age: 1 <= age < 2,
         states={
-            "risk_type": DiscreteGrid(RiskType),
+            "risk_type": DiscreteGrid(category_class=RiskType),
             "wage_shock": _shock(
                 sigma=StateConditioned(on="risk_type", by=SIGMA_BY_RISK)
             ),
         },
         state_transitions={"risk_type": fixed_transition("risk_type")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility},
     )
     sideways = Regime(
         transition=_to_done_from_split,
         active=lambda age: 1 <= age < 2,
-        states={"risk_type": DiscreteGrid(RiskType)},
+        states={"risk_type": DiscreteGrid(category_class=RiskType)},
         state_transitions={"risk_type": fixed_transition("risk_type")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": lambda work: jnp.asarray(work, dtype=jnp.float64) * 0.0},
     )
     done = Regime(
@@ -454,14 +454,14 @@ def test_phased_target_mapping_preserves_narrow_fold_reachability() -> None:
         transition={"folding": MarkovTransition(_probability_one)},
         active=lambda age: age < 1,
         states={
-            "risk_type": DiscreteGrid(RiskType),
+            "risk_type": DiscreteGrid(category_class=RiskType),
             "wage_shock": _shock(
                 sigma=StateConditioned(on="risk_type", by=SIGMA_BY_RISK),
                 fold=False,
             ),
         },
         state_transitions={"risk_type": fixed_transition("risk_type")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility},
     )
     moving_entry = Regime(
@@ -471,35 +471,35 @@ def test_phased_target_mapping_preserves_narrow_fold_reachability() -> None:
         ),
         active=lambda age: age < 1,
         states={
-            "risk_type": DiscreteGrid(RiskType),
+            "risk_type": DiscreteGrid(category_class=RiskType),
             "wage_shock": _shock(
                 sigma=StateConditioned(on="risk_type", by=SIGMA_BY_RISK),
                 fold=False,
             ),
         },
         state_transitions={"risk_type": _next_risk_type},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility},
     )
     folding = Regime(
         transition=lambda: PhasedSplitRegimeId.done,
         active=lambda age: 1 <= age < 2,
         states={
-            "risk_type": DiscreteGrid(RiskType),
+            "risk_type": DiscreteGrid(category_class=RiskType),
             "wage_shock": _shock(
                 sigma=StateConditioned(on="risk_type", by=SIGMA_BY_RISK)
             ),
         },
         state_transitions={"risk_type": fixed_transition("risk_type")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility},
     )
     sideways = Regime(
         transition=lambda: PhasedSplitRegimeId.done,
         active=lambda age: 1 <= age < 2,
-        states={"risk_type": DiscreteGrid(RiskType)},
+        states={"risk_type": DiscreteGrid(category_class=RiskType)},
         state_transitions={"risk_type": fixed_transition("risk_type")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": lambda work: jnp.asarray(work) * 0.0},
     )
     done = Regime(

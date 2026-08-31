@@ -141,10 +141,10 @@ def test_power_mean_aggregate_log_limit_is_geometric_mean(x64_enabled: None):
 def test_quasi_arithmetic_mean_param_names_union_over_both_callables():
     """`param_names` is the union of transform and inverse args minus `value`."""
 
-    def g(value: FloatND, theta: FloatND) -> FloatND:
+    def g(*, value: FloatND, theta: FloatND) -> FloatND:
         return value * theta
 
-    def g_inv(value: FloatND, theta: FloatND, offset: FloatND) -> FloatND:
+    def g_inv(*, value: FloatND, theta: FloatND, offset: FloatND) -> FloatND:
         return value / theta + offset
 
     ce = QuasiArithmeticMean(transform=g, inverse=g_inv)
@@ -179,12 +179,12 @@ def _utility_dead(wealth: ContinuousState) -> FloatND:
 
 
 def _next_wealth(
-    wealth: ContinuousState, consumption: ContinuousAction
+    *, wealth: ContinuousState, consumption: ContinuousAction
 ) -> ContinuousState:
     return wealth - consumption
 
 
-def _budget(consumption: ContinuousAction, wealth: ContinuousState) -> BoolND:
+def _budget(*, consumption: ContinuousAction, wealth: ContinuousState) -> BoolND:
     return consumption <= wealth
 
 
@@ -192,7 +192,7 @@ def _resources(wealth: ContinuousState) -> FloatND:
     return wealth
 
 
-def _savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
+def _savings(*, resources: FloatND, consumption: ContinuousAction) -> FloatND:
     return resources - consumption
 
 
@@ -200,7 +200,9 @@ def _next_regime() -> ScalarInt:
     return _RegimeId.dead
 
 
-def _new_stock(stock: ContinuousState, investment: ContinuousAction) -> ContinuousState:
+def _new_stock(
+    *, stock: ContinuousState, investment: ContinuousAction
+) -> ContinuousState:
     return stock + investment
 
 
@@ -386,7 +388,7 @@ def _resources(wealth: ContinuousState) -> FloatND:
     return wealth
 
 
-def _savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
+def _savings(*, resources: FloatND, consumption: ContinuousAction) -> FloatND:
     return resources - consumption
 
 
@@ -488,7 +490,7 @@ def test_nbegm_certainty_equivalent_rejects_a_jump_breakpoint():
     def _u(consumption: ContinuousAction) -> FloatND:
         return consumption
 
-    def _gross_income(wealth: ContinuousState, kind: DiscreteState) -> FloatND:
+    def _gross_income(*, wealth: ContinuousState, kind: DiscreteState) -> FloatND:
         return wealth + 0.5 * kind
 
     @piecewise_affine(
@@ -496,10 +498,10 @@ def test_nbegm_certainty_equivalent_rejects_a_jump_breakpoint():
         variable="gross_income",
         breakpoints=(affine_breakpoint(threshold="fpl_cliff", kind="jump"),),
     )
-    def _subsidy(gross_income: FloatND, fpl_cliff: float) -> FloatND:
+    def _subsidy(*, gross_income: FloatND, fpl_cliff: float) -> FloatND:
         return jnp.where(gross_income < fpl_cliff, 1.0, 0.0)
 
-    def _jump_resources(gross_income: FloatND, subsidy: FloatND) -> FloatND:
+    def _jump_resources(*, gross_income: FloatND, subsidy: FloatND) -> FloatND:
         return gross_income + subsidy
 
     def _next_wealth_from_savings(savings: FloatND) -> ContinuousState:
@@ -510,7 +512,7 @@ def test_nbegm_certainty_equivalent_rejects_a_jump_breakpoint():
     )
     alive = ConsumptionSavingsRegime(
         transition=_next_regime,
-        states={"wealth": _WEALTH, "kind": DiscreteGrid(_Kind)},
+        states={"wealth": _WEALTH, "kind": DiscreteGrid(category_class=_Kind)},
         state_transitions={
             "wealth": _next_wealth_from_savings,
             "kind": fixed_transition("kind"),
@@ -535,14 +537,14 @@ def test_nbegm_certainty_equivalent_rejects_a_jump_breakpoint():
         ),
     )
 
-    def _dead_utility(wealth: ContinuousState, kind: DiscreteState) -> FloatND:
+    def _dead_utility(*, wealth: ContinuousState, kind: DiscreteState) -> FloatND:
         return jnp.sqrt(wealth) + 0.0 * kind
 
     dead = Regime(
         transition=None,
         states={
             "wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
-            "kind": DiscreteGrid(_Kind),
+            "kind": DiscreteGrid(category_class=_Kind),
         },
         functions={"utility": _dead_utility},
     )
@@ -568,16 +570,16 @@ def test_nbegm_certainty_equivalent_rejects_a_varying_elasticity_flow():
         lo: ScalarInt
         hi: ScalarInt
 
-    def _u(consumption: ContinuousAction, kind: DiscreteState) -> FloatND:
+    def _u(*, consumption: ContinuousAction, kind: DiscreteState) -> FloatND:
         return consumption + 0.1 * consumption**2 + 0.0 * kind
 
-    def _ride_resources(wealth: ContinuousState, kind: DiscreteState) -> FloatND:
+    def _ride_resources(*, wealth: ContinuousState, kind: DiscreteState) -> FloatND:
         return wealth + 0.5 * kind
 
     def _next_wealth_from_savings(savings: FloatND) -> ContinuousState:
         return savings
 
-    def _dead_utility(wealth: ContinuousState, kind: DiscreteState) -> FloatND:
+    def _dead_utility(*, wealth: ContinuousState, kind: DiscreteState) -> FloatND:
         return jnp.sqrt(wealth) + 0.0 * kind
 
     nbegm = NBEGM(
@@ -585,7 +587,7 @@ def test_nbegm_certainty_equivalent_rejects_a_varying_elasticity_flow():
     )
     alive = ConsumptionSavingsRegime(
         transition=_next_regime,
-        states={"wealth": _WEALTH, "kind": DiscreteGrid(_Kind)},
+        states={"wealth": _WEALTH, "kind": DiscreteGrid(category_class=_Kind)},
         state_transitions={
             "wealth": _next_wealth_from_savings,
             "kind": fixed_transition("kind"),
@@ -611,7 +613,7 @@ def test_nbegm_certainty_equivalent_rejects_a_varying_elasticity_flow():
         transition=None,
         states={
             "wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
-            "kind": DiscreteGrid(_Kind),
+            "kind": DiscreteGrid(category_class=_Kind),
         },
         functions={"utility": _dead_utility},
     )
@@ -646,16 +648,16 @@ def test_nbegm_certainty_equivalent_accepts_a_single_power_flow_in_float32(
         lo: ScalarInt
         hi: ScalarInt
 
-    def _u(consumption: ContinuousAction, kind: DiscreteState) -> FloatND:
+    def _u(*, consumption: ContinuousAction, kind: DiscreteState) -> FloatND:
         return consumption * jnp.exp(0.1 * kind)
 
-    def _ride_resources(wealth: ContinuousState, kind: DiscreteState) -> FloatND:
+    def _ride_resources(*, wealth: ContinuousState, kind: DiscreteState) -> FloatND:
         return wealth + 0.5 * kind
 
     def _next_wealth_from_savings(savings: FloatND) -> ContinuousState:
         return savings
 
-    def _dead_utility(wealth: ContinuousState, kind: DiscreteState) -> FloatND:
+    def _dead_utility(*, wealth: ContinuousState, kind: DiscreteState) -> FloatND:
         return jnp.sqrt(wealth) + 0.0 * kind
 
     nbegm = NBEGM(
@@ -665,7 +667,7 @@ def test_nbegm_certainty_equivalent_accepts_a_single_power_flow_in_float32(
         transition=_next_regime,
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=5),
-            "kind": DiscreteGrid(_Kind),
+            "kind": DiscreteGrid(category_class=_Kind),
         },
         state_transitions={
             "wealth": _next_wealth_from_savings,
@@ -692,7 +694,7 @@ def test_nbegm_certainty_equivalent_accepts_a_single_power_flow_in_float32(
         transition=None,
         states={
             "wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
-            "kind": DiscreteGrid(_Kind),
+            "kind": DiscreteGrid(category_class=_Kind),
         },
         functions={"utility": _dead_utility},
     )
@@ -720,16 +722,16 @@ def test_nbegm_certainty_equivalent_rejects_a_negative_flow():
         lo: ScalarInt
         hi: ScalarInt
 
-    def _u(consumption: ContinuousAction, kind: DiscreteState) -> FloatND:
+    def _u(*, consumption: ContinuousAction, kind: DiscreteState) -> FloatND:
         return -consumption + 0.0 * kind
 
-    def _ride_resources(wealth: ContinuousState, kind: DiscreteState) -> FloatND:
+    def _ride_resources(*, wealth: ContinuousState, kind: DiscreteState) -> FloatND:
         return wealth + 0.5 * kind
 
     def _next_wealth_from_savings(savings: FloatND) -> ContinuousState:
         return savings
 
-    def _dead_utility(wealth: ContinuousState, kind: DiscreteState) -> FloatND:
+    def _dead_utility(*, wealth: ContinuousState, kind: DiscreteState) -> FloatND:
         return jnp.sqrt(wealth) + 0.0 * kind
 
     nbegm = NBEGM(
@@ -737,7 +739,7 @@ def test_nbegm_certainty_equivalent_rejects_a_negative_flow():
     )
     alive = ConsumptionSavingsRegime(
         transition=_next_regime,
-        states={"wealth": _WEALTH, "kind": DiscreteGrid(_Kind)},
+        states={"wealth": _WEALTH, "kind": DiscreteGrid(category_class=_Kind)},
         state_transitions={
             "wealth": _next_wealth_from_savings,
             "kind": fixed_transition("kind"),
@@ -763,7 +765,7 @@ def test_nbegm_certainty_equivalent_rejects_a_negative_flow():
         transition=None,
         states={
             "wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
-            "kind": DiscreteGrid(_Kind),
+            "kind": DiscreteGrid(category_class=_Kind),
         },
         functions={"utility": _dead_utility},
     )
@@ -793,21 +795,21 @@ def test_nbegm_certainty_equivalent_rejects_a_liquid_reading_continuation():
         lo: ScalarInt
         hi: ScalarInt
 
-    def _u(consumption: ContinuousAction, kind: DiscreteState) -> FloatND:
+    def _u(*, consumption: ContinuousAction, kind: DiscreteState) -> FloatND:
         return consumption + 0.0 * kind
 
-    def _ride_resources(wealth: ContinuousState, kind: DiscreteState) -> FloatND:
+    def _ride_resources(*, wealth: ContinuousState, kind: DiscreteState) -> FloatND:
         return wealth + 0.5 * kind
 
     def _next_wealth_with_transfer(
-        savings: FloatND, wealth: ContinuousState
+        *, savings: FloatND, wealth: ContinuousState
     ) -> ContinuousState:
         # An asset-tested transfer: piecewise-constant in the current liquid
         # state, so the interval-constancy probe passes and the continuation
         # routes through the per-interval step.
         return savings + jnp.where(wealth < 100.0, 0.4, 0.0)
 
-    def _dead_utility(wealth: ContinuousState, kind: DiscreteState) -> FloatND:
+    def _dead_utility(*, wealth: ContinuousState, kind: DiscreteState) -> FloatND:
         return jnp.sqrt(wealth) + 0.0 * kind
 
     nbegm = NBEGM(
@@ -815,7 +817,7 @@ def test_nbegm_certainty_equivalent_rejects_a_liquid_reading_continuation():
     )
     alive = ConsumptionSavingsRegime(
         transition=_next_regime,
-        states={"wealth": _WEALTH, "kind": DiscreteGrid(_Kind)},
+        states={"wealth": _WEALTH, "kind": DiscreteGrid(category_class=_Kind)},
         state_transitions={
             "wealth": _next_wealth_with_transfer,
             "kind": fixed_transition("kind"),
@@ -841,7 +843,7 @@ def test_nbegm_certainty_equivalent_rejects_a_liquid_reading_continuation():
         transition=None,
         states={
             "wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
-            "kind": DiscreteGrid(_Kind),
+            "kind": DiscreteGrid(category_class=_Kind),
         },
         functions={"utility": _dead_utility},
     )
@@ -1237,6 +1239,7 @@ def test_power_mean_is_stable_near_unit_gamma_for_quadrature_roundoff_mass(
 
 
 def _stable_power_mean(
+    *,
     values: tuple[float, ...],
     weights: tuple[float, ...],
     risk_aversion: float,
@@ -1284,6 +1287,7 @@ _FLOAT32_STRESS_CASES = [(8.0, 1e-8), (12.0, 1e-5), (20.0, 1e-3)]
 
 @pytest.mark.parametrize(("risk_aversion", "scale"), _FLOAT64_STRESS_CASES)
 def test_power_mean_aggregate_matches_reference_at_float64_scales(
+    *,
     x64_enabled: None,
     risk_aversion: float,
     scale: float,
@@ -1296,12 +1300,15 @@ def test_power_mean_aggregate_matches_reference_at_float64_scales(
         weights=jnp.asarray(weights, dtype=jnp.float64),
         params={"risk_aversion": jnp.asarray(risk_aversion, dtype=jnp.float64)},
     )
-    expected = _stable_power_mean(values, weights, risk_aversion)
+    expected = _stable_power_mean(
+        values=values, weights=weights, risk_aversion=risk_aversion
+    )
     np.testing.assert_allclose(float(got), expected, rtol=1e-12, atol=0.0)
 
 
 @pytest.mark.parametrize(("risk_aversion", "scale"), _FLOAT32_STRESS_CASES)
 def test_power_mean_aggregate_matches_reference_at_float32_scales(
+    *,
     x64_disabled: None,
     risk_aversion: float,
     scale: float,
@@ -1314,15 +1321,17 @@ def test_power_mean_aggregate_matches_reference_at_float32_scales(
         weights=jnp.asarray(weights, dtype=jnp.float32),
         params={"risk_aversion": jnp.asarray(risk_aversion, dtype=jnp.float32)},
     )
-    expected = _stable_power_mean(values, weights, risk_aversion)
+    expected = _stable_power_mean(
+        values=values, weights=weights, risk_aversion=risk_aversion
+    )
     np.testing.assert_allclose(float(got), expected, rtol=5e-5, atol=0.0)
 
 
 def _aggregate_power_mean(
+    *,
     values: tuple[float, ...],
     weights: tuple[float, ...],
     risk_aversion: float,
-    *,
     dtype: Any,
     execution: str = "eager",
 ) -> float:
@@ -1371,6 +1380,7 @@ _FLOAT32_ANCHOR_WEIGHTS = (1e-4, 1e-6, 1e-8, 1e-12)
 @pytest.mark.parametrize("anchor_weight", _FLOAT64_ANCHOR_WEIGHTS)
 @pytest.mark.parametrize("n_nodes", _TINY_ANCHOR_N_NODES)
 def test_power_mean_aggregate_keeps_a_tiny_anchor_mass_at_float64(
+    *,
     x64_enabled: None,
     n_nodes: int,
     anchor_weight: float,
@@ -1385,9 +1395,13 @@ def test_power_mean_aggregate_keeps_a_tiny_anchor_mass_at_float64(
         anchor_position=anchor_position,
     )
     got = _aggregate_power_mean(
-        values, weights, 8.0, dtype=jnp.float64, execution=execution
+        values=values,
+        weights=weights,
+        risk_aversion=8.0,
+        dtype=jnp.float64,
+        execution=execution,
     )
-    expected = _stable_power_mean(values, weights, 8.0)
+    expected = _stable_power_mean(values=values, weights=weights, risk_aversion=8.0)
     np.testing.assert_allclose(got, expected, rtol=1e-12, atol=0.0)
 
 
@@ -1396,6 +1410,7 @@ def test_power_mean_aggregate_keeps_a_tiny_anchor_mass_at_float64(
 @pytest.mark.parametrize("anchor_weight", _FLOAT32_ANCHOR_WEIGHTS)
 @pytest.mark.parametrize("n_nodes", _TINY_ANCHOR_N_NODES)
 def test_power_mean_aggregate_keeps_a_tiny_anchor_mass_at_float32(
+    *,
     x64_disabled: None,
     n_nodes: int,
     anchor_weight: float,
@@ -1410,23 +1425,35 @@ def test_power_mean_aggregate_keeps_a_tiny_anchor_mass_at_float32(
         anchor_position=anchor_position,
     )
     got = _aggregate_power_mean(
-        values, weights, 8.0, dtype=jnp.float32, execution=execution
+        values=values,
+        weights=weights,
+        risk_aversion=8.0,
+        dtype=jnp.float32,
+        execution=execution,
     )
-    expected = _stable_power_mean(values, weights, 8.0)
+    expected = _stable_power_mean(values=values, weights=weights, risk_aversion=8.0)
     np.testing.assert_allclose(got, expected, rtol=5e-5, atol=0.0)
 
 
 def test_power_mean_aggregate_at_a_float64_witness_anchor_weight(x64_enabled: None):
     """`(1e-50, 1)` at weights `(1e-20, 1)` and risk aversion 8 is `7.1969e-48`."""
     got = _aggregate_power_mean(
-        (1e-50, 1.0), (1e-20, 1.0 - 1e-20), 8.0, dtype=jnp.float64
+        values=(1e-50, 1.0),
+        weights=(1e-20, 1.0 - 1e-20),
+        risk_aversion=8.0,
+        dtype=jnp.float64,
     )
     np.testing.assert_allclose(got, 7.196856730011521e-48, rtol=1e-12, atol=0.0)
 
 
 def test_power_mean_aggregate_at_a_float32_witness_anchor_weight(x64_disabled: None):
     """`(1e-8, 1)` at weights `(1e-8, 1)` and risk aversion 8 is `1.3895e-7`."""
-    got = _aggregate_power_mean((1e-8, 1.0), (1e-8, 1.0 - 1e-8), 8.0, dtype=jnp.float32)
+    got = _aggregate_power_mean(
+        values=(1e-8, 1.0),
+        weights=(1e-8, 1.0 - 1e-8),
+        risk_aversion=8.0,
+        dtype=jnp.float32,
+    )
     np.testing.assert_allclose(got, 1.3894954943731376e-7, rtol=5e-5, atol=0.0)
 
 
@@ -1516,7 +1543,7 @@ def test_power_mean_rejects_a_custom_transform_or_inverse(overridden: str):
     other callables would silently ignore them.
     """
 
-    def g(value: FloatND, theta: FloatND) -> FloatND:
+    def g(*, value: FloatND, theta: FloatND) -> FloatND:
         return value * theta
 
     with pytest.raises(RegimeInitializationError, match="QuasiArithmeticMean"):
@@ -1530,13 +1557,17 @@ def test_power_mean_aggregate_is_zero_at_a_zero_valued_node(x64_enabled: None):
     infinity, so the mean of the transformed lottery is infinite and the
     certainty equivalent is `inf^(-1/2) = 0`.
     """
-    got = _aggregate_power_mean((0.0, 1.0), (0.5, 0.5), 3.0, dtype=jnp.float64)
+    got = _aggregate_power_mean(
+        values=(0.0, 1.0), weights=(0.5, 0.5), risk_aversion=3.0, dtype=jnp.float64
+    )
     np.testing.assert_allclose(got, 0.0, atol=0.0)
 
 
 def test_power_mean_aggregate_is_zero_at_an_underflowed_node(x64_disabled: None):
     """A float32 branch that underflows to zero yields a zero certainty equivalent."""
-    got = _aggregate_power_mean((1e-50, 1.0), (0.5, 0.5), 3.0, dtype=jnp.float32)
+    got = _aggregate_power_mean(
+        values=(1e-50, 1.0), weights=(0.5, 0.5), risk_aversion=3.0, dtype=jnp.float32
+    )
     np.testing.assert_allclose(got, 0.0, atol=0.0)
 
 
@@ -1631,11 +1662,11 @@ def test_power_mean_aggregate_reports_a_bad_param_type_as_invalid_params():
         )
 
 
-def _power_transform(value: FloatND, risk_aversion: FloatND) -> FloatND:
+def _power_transform(*, value: FloatND, risk_aversion: FloatND) -> FloatND:
     return value ** (1.0 - risk_aversion)
 
 
-def _power_inverse(value: FloatND, risk_aversion: FloatND) -> FloatND:
+def _power_inverse(*, value: FloatND, risk_aversion: FloatND) -> FloatND:
     return value ** (1.0 / (1.0 - risk_aversion))
 
 
@@ -1663,10 +1694,10 @@ def test_solve_with_a_generic_quasi_arithmetic_mean_matches_the_power_mean():
 def test_quasi_arithmetic_mean_aggregate_normalizes_a_non_unit_mass_lottery():
     """Scaling every weight by a constant leaves the generic mean unchanged."""
 
-    def g(value: FloatND, theta: FloatND) -> FloatND:
+    def g(*, value: FloatND, theta: FloatND) -> FloatND:
         return value * theta
 
-    def g_inv(value: FloatND, theta: FloatND) -> FloatND:
+    def g_inv(*, value: FloatND, theta: FloatND) -> FloatND:
         return value / theta
 
     ce = QuasiArithmeticMean(transform=g, inverse=g_inv)
@@ -1687,10 +1718,10 @@ def test_quasi_arithmetic_mean_aggregate_is_transform_sum_inverse():
     declares: `transform` sees `theta`, `inverse` sees `theta` and `offset`.
     """
 
-    def g(value: FloatND, theta: FloatND) -> FloatND:
+    def g(*, value: FloatND, theta: FloatND) -> FloatND:
         return value * theta
 
-    def g_inv(value: FloatND, theta: FloatND, offset: FloatND) -> FloatND:
+    def g_inv(*, value: FloatND, theta: FloatND, offset: FloatND) -> FloatND:
         return value / theta + offset
 
     got = QuasiArithmeticMean(transform=g, inverse=g_inv).aggregate(
@@ -1714,7 +1745,7 @@ def _health_probs(health: DiscreteState) -> FloatND:
     )
 
 
-def _survival_probs(health: DiscreteState, period: Period) -> FloatND:
+def _survival_probs(*, health: DiscreteState, period: Period) -> FloatND:
     alive_next = jnp.where(health == _Health.good, 0.9, 0.7) * (period < 1)
     return jnp.array([alive_next, 1.0 - alive_next])
 
@@ -1731,7 +1762,7 @@ def _make_scale_equivariant_model(scale: float) -> Model:
     """
 
     def next_wealth(
-        wealth: ContinuousState, consumption: ContinuousAction
+        *, wealth: ContinuousState, consumption: ContinuousAction
     ) -> ContinuousState:
         return jnp.clip(wealth - consumption + 0.5 * scale, 0.5 * scale, 12.0 * scale)
 
@@ -1745,7 +1776,7 @@ def _make_scale_equivariant_model(scale: float) -> Model:
         transition=MarkovTransition(_survival_probs),
         states={
             "wealth": LinSpacedGrid(start=0.5 * scale, stop=12.0 * scale, n_points=6),
-            "health": DiscreteGrid(_Health),
+            "health": DiscreteGrid(category_class=_Health),
         },
         state_transitions={
             "wealth": next_wealth,
@@ -1796,7 +1827,7 @@ def _make_mixed_target_model(scale: float) -> Model:
     """
 
     def next_wealth(
-        wealth: ContinuousState, consumption: ContinuousAction
+        *, wealth: ContinuousState, consumption: ContinuousAction
     ) -> ContinuousState:
         return jnp.clip(wealth - consumption + 0.5 * scale, 0.5 * scale, 12.0 * scale)
 
@@ -1810,7 +1841,7 @@ def _make_mixed_target_model(scale: float) -> Model:
         transition=MarkovTransition(_survival_probs),
         states={
             "wealth": LinSpacedGrid(start=0.5 * scale, stop=12.0 * scale, n_points=6),
-            "health": DiscreteGrid(_Health),
+            "health": DiscreteGrid(category_class=_Health),
         },
         state_transitions={
             "wealth": {"alive": next_wealth},
@@ -1858,6 +1889,7 @@ def _assert_solved_values_are_equivariant(
 
 @pytest.mark.parametrize("risk_aversion", [2.0, 50.0])
 def test_solved_values_are_equivariant_to_rescaling_the_model(
+    *,
     x64_enabled: None,
     risk_aversion: float,
 ):
@@ -1872,6 +1904,7 @@ def test_solved_values_are_equivariant_to_rescaling_the_model(
 
 @pytest.mark.parametrize("risk_aversion", [2.0, 20.0])
 def test_solved_values_are_equivariant_to_rescaling_the_model_float32(
+    *,
     x64_disabled: None,
     risk_aversion: float,
 ):
@@ -1886,6 +1919,7 @@ def test_solved_values_are_equivariant_to_rescaling_the_model_float32(
 
 @pytest.mark.parametrize("risk_aversion", [2.0, 50.0])
 def test_solved_values_are_equivariant_with_a_stateless_target_regime(
+    *,
     x64_enabled: None,
     risk_aversion: float,
 ):
@@ -1900,6 +1934,7 @@ def test_solved_values_are_equivariant_with_a_stateless_target_regime(
 
 @pytest.mark.parametrize("risk_aversion", [2.0, 20.0])
 def test_solved_values_are_equivariant_with_a_stateless_target_regime_float32(
+    *,
     x64_disabled: None,
     risk_aversion: float,
 ):
@@ -1974,6 +2009,7 @@ def _identity(value: FloatND) -> FloatND:
 
 @pytest.mark.parametrize("risk_aversion", [0.0, 0.5, 2.0, 5.0])
 def test_power_mean_aggregate_matches_its_own_transform_and_inverse(
+    *,
     x64_enabled: None,
     risk_aversion: float,
 ):
@@ -2284,7 +2320,7 @@ def _scaled_case() -> tuple[Any, int, float]:
     return dtype, exponent, tolerance
 
 
-def _scaled_lottery(dtype: Any, exponent: int) -> tuple[Any, Any]:
+def _scaled_lottery(*, dtype: Any, exponent: int) -> tuple[Any, Any]:
     """A joint lottery over two independent axes, one node rare in both."""
     axes = [jnp.asarray([1.0, 2.0**exponent], dtype=dtype)] * 2
     coefficients = []
@@ -2300,7 +2336,7 @@ def _scaled_lottery(dtype: Any, exponent: int) -> tuple[Any, Any]:
     )
 
 
-def _exact_linear_mean(dtype: Any, exponent: int) -> float:
+def _exact_linear_mean(*, dtype: Any, exponent: int) -> float:
     """The lottery's exact expectation, in rational arithmetic."""
     probability = Fraction(1, 1 << (-exponent))
     rare = probability * probability
@@ -2327,7 +2363,7 @@ def test_a_node_too_rare_to_flatten_still_carries_its_value(mean) -> None:
     reduction that drops the node reports zero for a quantity that is not small.
     """
     dtype, exponent, tolerance = _scaled_case()
-    coefficients, shifts = _scaled_lottery(dtype, exponent)
+    coefficients, shifts = _scaled_lottery(dtype=dtype, exponent=exponent)
     values = jnp.zeros((4,), dtype=dtype).at[-1].set(jnp.finfo(dtype).max)
 
     got = jax.jit(mean.aggregate_scaled)(
@@ -2336,7 +2372,7 @@ def test_a_node_too_rare_to_flatten_still_carries_its_value(mean) -> None:
 
     np.testing.assert_allclose(
         np.asarray(got),
-        _exact_linear_mean(np.dtype(dtype), exponent),
+        _exact_linear_mean(dtype=np.dtype(dtype), exponent=exponent),
         rtol=tolerance,
         atol=0,
     )
@@ -2443,7 +2479,7 @@ def test_differentiating_a_scaled_lottery_fails_loudly(mean) -> None:
     like a flat objective.
     """
     dtype, exponent, _ = _scaled_case()
-    coefficients, shifts = _scaled_lottery(dtype, exponent)
+    coefficients, shifts = _scaled_lottery(dtype=dtype, exponent=exponent)
     values = jnp.zeros((4,), dtype=dtype).at[-1].set(1.0)
 
     def reduce_lottery(values: FloatND) -> FloatND:
@@ -2458,7 +2494,7 @@ def test_differentiating_a_scaled_lottery_fails_loudly(mean) -> None:
 def test_a_scaled_lottery_still_reduces_under_jit() -> None:
     """Refusing the derivative leaves the primal reduction untouched."""
     dtype, exponent, tolerance = _scaled_case()
-    coefficients, shifts = _scaled_lottery(dtype, exponent)
+    coefficients, shifts = _scaled_lottery(dtype=dtype, exponent=exponent)
     values = jnp.zeros((4,), dtype=dtype).at[-1].set(1.0)
 
     got = jax.jit(LinearExpectation().aggregate_scaled)(

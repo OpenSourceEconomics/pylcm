@@ -73,7 +73,7 @@ def _utility(consumption: ContinuousAction) -> FloatND:
 
 
 def _next_wealth(
-    wealth: ContinuousState, consumption: ContinuousAction
+    *, wealth: ContinuousState, consumption: ContinuousAction
 ) -> ContinuousState:
     return wealth - consumption
 
@@ -93,8 +93,8 @@ def _enter_shock() -> FloatND:
 
 
 def _solve_coarse_into_process_only_target(
-    level: float,
     *,
+    level: float,
     process: UniformIIDProcess | TauchenAR1Process | None = None,
 ):
     """Build a coarse-transition model whose target's only state is a process.
@@ -144,7 +144,7 @@ def test_a_coarse_transition_into_an_iid_target_is_priced_at_its_own_law():
     node equals -- so this distinguishes pricing at the law from pricing at any
     one node, and from dropping the target and publishing `log(1.0) = 0`.
     """
-    solution = _solve_coarse_into_process_only_target(0.0)
+    solution = _solve_coarse_into_process_only_target(level=0.0)
     last_living = max(period for period in solution if "alive" in solution[period])
     got = np.asarray(solution[last_living]["alive"])
     expected = np.log(1.0) + _DISCOUNT * np.mean(_UNIFORM_NODES)
@@ -169,7 +169,7 @@ def test_a_coarse_transition_into_an_ar1_target_is_refused():
     """
     with pytest.raises(ModelInitializationError) as excinfo:
         _solve_coarse_into_process_only_target(
-            10.0,
+            level=10.0,
             process=TauchenAR1Process(n_points=3, gauss_hermite=False),
         )
     message = str(excinfo.value)
@@ -280,7 +280,7 @@ def _tiny_alive_utility() -> FloatND:
     return jnp.asarray(0.0)
 
 
-def _tiny_budget(consumption: ContinuousAction, wealth: ContinuousState) -> BoolND:
+def _tiny_budget(*, consumption: ContinuousAction, wealth: ContinuousState) -> BoolND:
     return consumption <= wealth
 
 

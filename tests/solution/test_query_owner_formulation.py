@@ -43,7 +43,7 @@ from tests.conftest import DECIMAL_PRECISION, EXACT_KERNEL_SKIP_REASON
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
 
-def _key_at(key: _TieBreakKey, column: int) -> tuple[float, ...]:
+def _key_at(*, key: _TieBreakKey, column: int) -> tuple[float, ...]:
     """Return one segment's ordered tie-break fields as plain floats."""
     return tuple(float(field[0, column]) for field in key)
 
@@ -202,7 +202,7 @@ def test_distinct_slopes_are_not_collapsed_onto_one_tie_break_key(
         slope_low=slope_low,
     )
 
-    assert _key_at(key, 0) != _key_at(key, 1)
+    assert _key_at(key=key, column=0) != _key_at(key=key, column=1)
 
 
 def test_a_subnormal_affine_reading_is_never_published_as_zero() -> None:

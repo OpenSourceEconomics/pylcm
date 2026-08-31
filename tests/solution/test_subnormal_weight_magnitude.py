@@ -79,7 +79,7 @@ def _largest_finite() -> ScalarFloat:
     return jnp.asarray(np.finfo(_active_dtype()).max, dtype=_active_dtype())
 
 
-def _lottery_value(weight: ScalarFloat, rare_value: ScalarFloat) -> float:
+def _lottery_value(*, weight: ScalarFloat, rare_value: ScalarFloat) -> float:
     """A two-target continuation: unit mass on one, `weight` on `rare_value`."""
     common = zero_safe_weighted_term(
         weight=jnp.asarray(1.0, dtype=_active_dtype()),
@@ -92,7 +92,7 @@ def _lottery_value(weight: ScalarFloat, rare_value: ScalarFloat) -> float:
     return float((common + rare) / (1.0 + float(weight)))
 
 
-def _exact_lottery_value(weight: ScalarFloat, rare_value: ScalarFloat) -> float:
+def _exact_lottery_value(*, weight: ScalarFloat, rare_value: ScalarFloat) -> float:
     """The same continuation in exact arithmetic."""
     w = float(weight)
     return (1.0 + w * float(rare_value)) / (1.0 + w)
@@ -114,8 +114,8 @@ def test_a_subnormal_weight_never_contributes_more_than_its_true_share(
     weight = _subnormal_at(weight_at)
     value = _largest_finite()
 
-    got = _lottery_value(weight, value)
-    exact = _exact_lottery_value(weight, value)
+    got = _lottery_value(weight=weight, rare_value=value)
+    exact = _exact_lottery_value(weight=weight, rare_value=value)
 
     assert got <= exact * (1.0 + _tolerance())
 
@@ -125,8 +125,8 @@ def test_the_smallest_subnormal_weight_does_not_invent_a_contribution() -> None:
     weight = _smallest_subnormal()
     value = _largest_finite()
 
-    got = _lottery_value(weight, value)
-    exact = _exact_lottery_value(weight, value)
+    got = _lottery_value(weight=weight, rare_value=value)
+    exact = _exact_lottery_value(weight=weight, rare_value=value)
 
     np.testing.assert_allclose(got, exact, rtol=_tolerance())
 
@@ -136,7 +136,7 @@ def test_a_negative_smallest_subnormal_does_not_subtract_real_mass() -> None:
     weight = -_smallest_subnormal()
     value = _largest_finite()
 
-    assert abs(_lottery_value(weight, value) - 1.0) <= _tolerance()
+    assert abs(_lottery_value(weight=weight, rare_value=value) - 1.0) <= _tolerance()
 
 
 def test_a_subnormal_weight_does_not_distort_a_nonlinear_aggregation() -> None:

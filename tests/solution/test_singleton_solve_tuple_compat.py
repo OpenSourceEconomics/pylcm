@@ -34,7 +34,7 @@ _N_PERIODS = 2
 
 def _singleton_model():
     """A two-regime (retirement/dead) model with no collective regimes."""
-    return get_retirement_only_model("dcegm", _N_PERIODS)
+    return get_retirement_only_model(solver="dcegm", n_periods=_N_PERIODS)
 
 
 def test_singleton_solve_bare_call_returns_legacy_mapping_not_a_tuple():
@@ -46,7 +46,7 @@ def test_singleton_solve_bare_call_returns_legacy_mapping_not_a_tuple():
     regimes.
     """
     model = _singleton_model()
-    params = get_retirement_only_params(_N_PERIODS)
+    params = get_retirement_only_params(n_periods=_N_PERIODS)
     got = model.solve(params=params, log_level="off")
 
     assert not isinstance(got, tuple)
@@ -61,7 +61,7 @@ def test_singleton_solve_with_simulation_policy_returns_legacy_two_tuple():
     singleton-only model — no dissolution-flags element appended.
     """
     model = _singleton_model()
-    params = get_retirement_only_params(_N_PERIODS)
+    params = get_retirement_only_params(n_periods=_N_PERIODS)
     result = model.solve(params=params, log_level="off", return_simulation_policy=True)
 
     assert isinstance(result, tuple)
@@ -79,7 +79,7 @@ def test_singleton_solve_dissolution_flags_opt_in_returns_empty_mapping():
     rather than containing a per-regime flag array.
     """
     model = _singleton_model()
-    params = get_retirement_only_params(_N_PERIODS)
+    params = get_retirement_only_params(n_periods=_N_PERIODS)
     value_functions, dissolution_flags = model.solve(
         params=params, log_level="off", return_dissolution_flags=True
     )

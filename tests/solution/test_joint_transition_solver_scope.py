@@ -33,7 +33,7 @@ def _target_utility(estate: ContinuousState) -> FloatND:
     return jnp.log(estate)
 
 
-def _savings(wealth: ContinuousState, consumption: ContinuousAction) -> FloatND:
+def _savings(*, wealth: ContinuousState, consumption: ContinuousAction) -> FloatND:
     return wealth - consumption
 
 
@@ -45,7 +45,7 @@ def _joint_probabilities() -> FloatND:
     return jnp.asarray([0.25, 0.75])
 
 
-def _next_estate(savings: FloatND, match: FloatND) -> ContinuousState:
+def _next_estate(*, savings: FloatND, match: FloatND) -> ContinuousState:
     return savings + match
 
 

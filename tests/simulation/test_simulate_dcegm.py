@@ -72,7 +72,7 @@ def test_dcegm_simulated_consumption_matches_brute_force():
     two grid steps over this horizon.
     """
     n_periods = 6
-    params = dcegm_variants.get_retirement_only_params(n_periods)
+    params = dcegm_variants.get_retirement_only_params(n_periods=n_periods)
     n_subjects = 4
     initial_conditions = {
         "wealth": jnp.array([10.0, 50.0, 150.0, 300.0]),
@@ -85,7 +85,9 @@ def test_dcegm_simulated_consumption_matches_brute_force():
     consumption = {}
     first_decision = {}
     for solver in ["brute_force", "dcegm"]:
-        model = dcegm_variants.get_retirement_only_model(solver, n_periods)
+        model = dcegm_variants.get_retirement_only_model(
+            solver=solver, n_periods=n_periods
+        )
         result = model.simulate(
             params=params,
             initial_conditions=initial_conditions,
@@ -125,8 +127,10 @@ def test_dcegm_simulate_enforces_intrinsic_budget_constraint():
     constraint would.
     """
     n_periods = 4
-    model = dcegm_variants.get_retirement_only_model("dcegm", n_periods)
-    params = dcegm_variants.get_retirement_only_params(n_periods)
+    model = dcegm_variants.get_retirement_only_model(
+        solver="dcegm", n_periods=n_periods
+    )
+    params = dcegm_variants.get_retirement_only_params(n_periods=n_periods)
     savings_lower_bound = dcegm_variants.SAVINGS_FLOOR
     initial_wealth = jnp.array([5.0, 10.0, 50.0])
     # The infeasible region exists by construction: the consumption grid
@@ -206,8 +210,8 @@ def test_dcegm_full_model_simulates_end_to_end():
     converts to a DataFrame.
     """
     n_periods = 6
-    model = dcegm_variants.get_full_model("dcegm", n_periods)
-    params = dcegm_variants.get_full_params(n_periods)
+    model = dcegm_variants.get_full_model(solver="dcegm", n_periods=n_periods)
+    params = dcegm_variants.get_full_params(n_periods=n_periods)
     n_subjects = 3
     savings_lower_bound = dcegm_variants.SAVINGS_FLOOR
 
@@ -256,8 +260,10 @@ def test_dcegm_simulate_consumes_the_provided_solution():
     """
     n_periods = 4
     initial_wealth = 20.0
-    model = dcegm_variants.get_retirement_only_model("dcegm", n_periods)
-    params = dcegm_variants.get_retirement_only_params(n_periods)
+    model = dcegm_variants.get_retirement_only_model(
+        solver="dcegm", n_periods=n_periods
+    )
+    params = dcegm_variants.get_retirement_only_params(n_periods=n_periods)
     solved = model.solve(params=params, log_level="debug")
     zeroed = MappingProxyType(
         {
@@ -297,7 +303,7 @@ def test_dcegm_simulate_consumes_the_provided_solution():
 
 
 def _simulation_savings_with_double_consumption(
-    wealth: ContinuousState, consumption: ContinuousAction
+    *, wealth: ContinuousState, consumption: ContinuousAction
 ) -> FloatND:
     return wealth - 2.0 * consumption
 
@@ -333,7 +339,7 @@ def test_dcegm_simulation_evaluates_a_phase_resolved_savings_bound() -> None:
     n_periods = 4
     initial_wealth = 10.0
     model = _phase_variant_savings_model(n_periods)
-    params = dcegm_variants.get_retirement_only_params(n_periods)
+    params = dcegm_variants.get_retirement_only_params(n_periods=n_periods)
     solved = model.solve(params=params, log_level="off")
     zeroed = MappingProxyType(
         {
@@ -378,8 +384,10 @@ def test_dcegm_solver_machinery_is_not_a_result_target():
     inversion, so it is not computable from simulation data).
     """
     n_periods = 3
-    model = dcegm_variants.get_retirement_only_model("dcegm", n_periods)
-    params = dcegm_variants.get_retirement_only_params(n_periods)
+    model = dcegm_variants.get_retirement_only_model(
+        solver="dcegm", n_periods=n_periods
+    )
+    params = dcegm_variants.get_retirement_only_params(n_periods=n_periods)
 
     result = model.simulate(
         params=params,

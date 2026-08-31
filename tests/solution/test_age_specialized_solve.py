@@ -59,7 +59,7 @@ def _make_model(policy_bonus: UserFunction) -> Model:
         transition=_next_regime,
         active=lambda age: age < 75,
         states={
-            "health": DiscreteGrid(Health),
+            "health": DiscreteGrid(category_class=Health),
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=6),
         },
         state_transitions={
@@ -214,12 +214,12 @@ def _f1_next_regime(period: Period) -> ScalarInt:
 
 
 def _f1_next_capital(
-    capital: DiscreteState, invest: DiscreteAction, boost: IntND
+    *, capital: DiscreteState, invest: DiscreteAction, boost: IntND
 ) -> DiscreteState:
     return jnp.clip(capital + invest * boost, 0, 2)
 
 
-def _f1_utility(capital: DiscreteState, invest: DiscreteAction) -> FloatND:
+def _f1_utility(*, capital: DiscreteState, invest: DiscreteAction) -> FloatND:
     return capital * 1.0 - invest * 0.5
 
 
@@ -240,8 +240,8 @@ def _f1_make_model(boost: UserFunction) -> Model:
     working = UserRegime(
         transition=_f1_next_regime,
         active=lambda age: age < 55,
-        states={"capital": DiscreteGrid(_Capital)},
-        actions={"invest": DiscreteGrid(_Invest)},
+        states={"capital": DiscreteGrid(category_class=_Capital)},
+        actions={"invest": DiscreteGrid(category_class=_Invest)},
         state_transitions={"capital": _f1_next_capital},
         functions={"utility": _f1_utility, "boost": boost},
     )
@@ -294,11 +294,11 @@ def _utility_of_consumption(consumption: float) -> FloatND:
     return jnp.log(consumption)
 
 
-def _feasible_consumption(consumption: float, wealth: float) -> bool:
+def _feasible_consumption(*, consumption: float, wealth: float) -> bool:
     return consumption <= wealth
 
 
-def _next_wealth_spend(wealth: float, consumption: float) -> float:
+def _next_wealth_spend(*, wealth: float, consumption: float) -> float:
     return wealth - consumption + 1.0
 
 
@@ -310,7 +310,7 @@ def _cap_of_age(age: float) -> Callable[..., bool]:
     specialized *constraint* node exists in the target pool.
     """
 
-    def wealth_cap(consumption: float, wealth: float) -> bool:
+    def wealth_cap(*, consumption: float, wealth: float) -> bool:
         return consumption <= wealth + age
 
     return wealth_cap

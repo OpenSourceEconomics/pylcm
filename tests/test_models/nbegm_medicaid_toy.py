@@ -41,7 +41,7 @@ from tests.test_models.nbegm_common import (
 )
 
 medicaid_eligible = lcm.case_boundary(
-    lcm.ref("liquid") < lcm.ref("medicaid_asset_limit"),
+    condition=lcm.ref("liquid") < lcm.ref("medicaid_asset_limit"),
     kind="jump",
 )
 
@@ -59,7 +59,7 @@ def subsidy_private(subsidy_low: float) -> FloatND:
 
 
 def subsidy(
-    subsidy_medicaid: FloatND, subsidy_private: FloatND, medicaid_eligible: BoolND
+    *, subsidy_medicaid: FloatND, subsidy_private: FloatND, medicaid_eligible: BoolND
 ) -> FloatND:
     """Brute-force combination of the two subsidy pieces (NBEGM ignores this)."""
     return jnp.where(medicaid_eligible, subsidy_medicaid, subsidy_private)
@@ -119,7 +119,7 @@ def build_model(
         },
         liquid_law=next_liquid_from_savings,
         alive_solver=resolve_solver(
-            variant,
+            variant=variant,
             savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
             envelope_arithmetic=envelope_arithmetic,
         ),

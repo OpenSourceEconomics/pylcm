@@ -149,7 +149,7 @@ def _next_x_offgrid(x: ContinuousState) -> FloatND:
     return jnp.full_like(x, _REALIZED_X)
 
 
-def _u_src(x: ContinuousState, work: DiscreteAction) -> FloatND:
+def _u_src(*, x: ContinuousState, work: DiscreteAction) -> FloatND:
     return jnp.zeros_like(x) * work
 
 
@@ -161,7 +161,7 @@ def _u_fallback(x: ContinuousState) -> FloatND:
     return jnp.zeros_like(x)
 
 
-def _threshold_gate(V_target: FloatND, gate_threshold: FloatND) -> BoolND:
+def _threshold_gate(*, V_target: FloatND, gate_threshold: FloatND) -> BoolND:
     """Gate reading an operand from the TARGET's namespace (`V_target`, via the
     target-grid interpolator) and a param from the SOURCE's (`gate_threshold`)
     — so both `args_from_target_params` and `args_from_source_params` are
@@ -189,7 +189,7 @@ def _make_f2_regimes() -> dict[str, Regime]:
         active=lambda age: age < 1,
         states={"x": IrregSpacedGrid(n_points=2)},
         state_transitions={"x": _next_x_offgrid},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_src},
     )
     target = Regime(
@@ -243,7 +243,7 @@ def _solve_f2_fixture():
     return regimes, regime_names_to_ids, flat_params, solution
 
 
-def _f2_same_period_mappings(regimes, flat_params, solution):
+def _f2_same_period_mappings(*, regimes, flat_params, solution):
     base_state_action_spaces = {
         name: regime.solution.state_action_space(regime_params=flat_params[name])
         for name, regime in regimes.items()
@@ -262,7 +262,7 @@ def _f2_same_period_mappings(regimes, flat_params, solution):
     return same_period_mappings
 
 
-def exposed_param_name(evaluator, *, qname: str, namespace: str) -> str:
+def exposed_param_name(*, evaluator, qname: str, namespace: str) -> str:
     """The signature leaf under which `evaluator` exposes `namespace`'s `qname`.
 
     Shared with `test_gated_edge_simulate_operand_recompute.py`: a test that
@@ -303,10 +303,10 @@ def test_gate_evaluator_provenance_partitions_its_signature():
     # The target's grid points and the gate's own threshold are each attributed
     # to exactly one namespace...
     target_points = exposed_param_name(
-        evaluator, qname="x__points", namespace=TARGET_PARAMS
+        evaluator=evaluator, qname="x__points", namespace=TARGET_PARAMS
     )
     threshold = exposed_param_name(
-        evaluator, qname=_GATE_THRESHOLD_QNAME, namespace=SOURCE_PARAMS
+        evaluator=evaluator, qname=_GATE_THRESHOLD_QNAME, namespace=SOURCE_PARAMS
     )
     assert target_points != threshold
 
@@ -348,7 +348,9 @@ def test_gate_reads_target_grid_points_not_the_source_s_same_named_ones():
     src = regimes["src"]
     target_id = regime_names_to_ids["target"]
     fallback_id = regime_names_to_ids["fallback"]
-    same_period_mappings = _f2_same_period_mappings(regimes, flat_params, solution)
+    same_period_mappings = _f2_same_period_mappings(
+        regimes=regimes, flat_params=flat_params, solution=solution
+    )
     assert "target" in same_period_mappings
 
     # Ground truth: V_target is 1 + 2x, exactly linear on the target's own
@@ -375,10 +377,10 @@ def test_gate_reads_target_grid_points_not_the_source_s_same_named_ones():
     )
 
     points_arg = exposed_param_name(
-        evaluator, qname="x__points", namespace=TARGET_PARAMS
+        evaluator=evaluator, qname="x__points", namespace=TARGET_PARAMS
     )
     threshold_arg = exposed_param_name(
-        evaluator, qname=_GATE_THRESHOLD_QNAME, namespace=SOURCE_PARAMS
+        evaluator=evaluator, qname=_GATE_THRESHOLD_QNAME, namespace=SOURCE_PARAMS
     )
 
     def _gate(points) -> bool:
@@ -386,7 +388,7 @@ def test_gate_reads_target_grid_points_not_the_source_s_same_named_ones():
         return bool(
             np.asarray(
                 _call_vmapped_with_accepted_kwargs(
-                    evaluator,
+                    func=evaluator,
                     batched_kwargs=candidate_target_states,
                     static_kwargs={
                         points_arg: jnp.asarray(points),
@@ -418,11 +420,11 @@ def test_gate_reads_target_grid_points_not_the_source_s_same_named_ones():
     # merged — each leaf is looked up in exactly the one namespace that owns it.
     new_style_gate = jnp.asarray(
         _call_vmapped_with_accepted_kwargs(
-            evaluator,
+            func=evaluator,
             batched_kwargs=candidate_target_states,
             static_kwargs={
                 **bind_provenance_params(
-                    evaluator.arg_provenance,
+                    provenance=evaluator.arg_provenance,
                     flat_params=flat_params,
                     source_name="src",
                     target_name="target",
@@ -441,7 +443,7 @@ def test_gate_reads_target_grid_points_not_the_source_s_same_named_ones():
     # target's interpolator, with the source's same-named param present in
     # `flat_params` throughout and unable to reach that leaf.
     bound = bind_provenance_params(
-        evaluator.arg_provenance,
+        provenance=evaluator.arg_provenance,
         flat_params=flat_params,
         source_name="src",
         target_name="target",
@@ -511,7 +513,7 @@ def _make_f3_regimes() -> dict[str, Regime]:
         active=lambda age: age < 1,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         state_transitions={"x": _identity_x},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_src},
     )
     stateless_target = Regime(
@@ -654,7 +656,7 @@ def test_vmap_without_axis_size_fails_for_a_stateless_target():
 
     # And the production body, on the identical inputs, does not raise.
     result = _call_vmapped_with_accepted_kwargs(
-        evaluator,
+        func=evaluator,
         batched_kwargs={},
         static_kwargs=static,
         axis_size=4,

@@ -37,11 +37,11 @@ def _utility(consumption):
     return jnp.log(consumption) + _VALUE_OF_BEING_ALIVE
 
 
-def _next_wealth(wealth, consumption):
+def _next_wealth(*, wealth, consumption):
     return wealth - consumption
 
 
-def _next_regime(consumption, age):
+def _next_regime(*, consumption, age):
     # The action itself decides the regime, so the value of the stateless target
     # enters `Q` action by action. Everyone leaves after the last active age, so
     # no probability mass is ever sent to an inactive regime.

@@ -131,7 +131,7 @@ def _make_model_with_a_gate_reading_a_broadcast_state() -> Model:
         active=lambda age: age < 1,
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": _next_wage},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility_worker},
     )
     return Model(
@@ -179,7 +179,7 @@ def _make_model_with_a_projection_reading_a_target_state() -> Model:
         active=lambda age: age < 1,
         states={"wage": _WAGE_GRID, "bonus": _BONUS_GRID},
         state_transitions={"wage": _next_wage, "bonus": fixed_transition("bonus")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility_worker},
     )
     return Model(
@@ -221,7 +221,7 @@ def _probability_one(age: FloatND) -> FloatND:
 
 
 def _utility_worker(
-    wage: ContinuousState, work: DiscreteAction, bonus: ContinuousState
+    *, wage: ContinuousState, work: DiscreteAction, bonus: ContinuousState
 ) -> FloatND:
     """Working earns the wage; the bonus accrues either way."""
     return wage * work + bonus
@@ -253,12 +253,12 @@ def _project_wage_from_bonus(bonus: ContinuousState) -> ContinuousState:
 
 
 def _gate_reading_bonus(
-    V_target: FloatND, V_outside_ref: FloatND, bonus: ContinuousState
+    *, V_target: FloatND, V_outside_ref: FloatND, bonus: ContinuousState
 ) -> BoolND:
     """Retirement is open when it beats the outside option and a bonus is due."""
     return (V_target > V_outside_ref) & (bonus > 0.5)
 
 
-def _gate_comparing_values(V_target: FloatND, V_outside_ref: FloatND) -> BoolND:
+def _gate_comparing_values(*, V_target: FloatND, V_outside_ref: FloatND) -> BoolND:
     """Retirement is open when it beats the outside option."""
     return V_target > V_outside_ref

@@ -147,16 +147,16 @@ def _egm() -> Solver:
     return _bound(EGM(savings_grid=dcegm_paper_twin.SAVINGS_GRID))
 
 
-def _routes_of(solver: Solver, *, phase: str = "solve") -> tuple[ConstraintRoute, ...]:
+def _routes_of(*, solver: Solver, phase: str = "solve") -> tuple[ConstraintRoute, ...]:
     """The routes `solver` declares for one phase, asserted to be declared."""
     routes = solver.build_constraint_routes(context=_route_context(phase=phase))
     assert routes is not None
     return routes
 
 
-def _disposition(solver, *, constraint, phase="solve"):
+def _disposition(*, solver, constraint, phase="solve"):
     """Plan one constraint over `solver`'s routes for one phase."""
-    routes = _routes_of(solver, phase=phase)
+    routes = _routes_of(solver=solver, phase=phase)
     plan = plan_constraints(
         constraints=normalize_constraints(constraints={"c": constraint}),
         routes=routes,
@@ -167,14 +167,18 @@ def _disposition(solver, *, constraint, phase="solve"):
 
 def test_grid_search_evaluates_over_the_whole_state_action_product() -> None:
     """Every name is in scope where grid search evaluates, so nothing is refused."""
-    disposition = _disposition(GridSearch(), constraint=ref("consumption") <= 5.0)
+    disposition = _disposition(
+        solver=GridSearch(), constraint=ref("consumption") <= 5.0
+    )
 
     assert isinstance(disposition, Evaluate)
 
 
 def test_grid_search_evaluates_at_the_state_action_stage_when_solving() -> None:
     """Grid search has whole candidates in hand, not a discrete combination."""
-    disposition = _disposition(GridSearch(), constraint=ref("consumption") <= 5.0)
+    disposition = _disposition(
+        solver=GridSearch(), constraint=ref("consumption") <= 5.0
+    )
 
     assert disposition.stage == "state_action"
 
@@ -182,7 +186,7 @@ def test_grid_search_evaluates_at_the_state_action_stage_when_solving() -> None:
 def test_grid_search_evaluates_at_the_simulation_stage_when_simulating() -> None:
     """The simulate phase checks feasibility against the subject's own candidate."""
     disposition = _disposition(
-        GridSearch(), constraint=ref("consumption") <= 5.0, phase="simulate"
+        solver=GridSearch(), constraint=ref("consumption") <= 5.0, phase="simulate"
     )
 
     assert disposition.stage == "simulation"
@@ -191,7 +195,7 @@ def test_grid_search_evaluates_at_the_simulation_stage_when_simulating() -> None
 def test_plain_egm_evaluates_no_user_constraint_when_solving() -> None:
     """The envelope-free kernel calls no predicate, so it refuses rather than drops."""
     disposition = _disposition(
-        _egm(),
+        solver=_egm(),
         constraint=ref("consumption") <= 5.0,
     )
 
@@ -201,7 +205,7 @@ def test_plain_egm_evaluates_no_user_constraint_when_solving() -> None:
 def test_plain_egm_evaluates_the_simulate_phase_feasibility_check() -> None:
     """Its simulate phase has whole candidates, including a synthesized budget."""
     disposition = _disposition(
-        _egm(),
+        solver=_egm(),
         constraint=ref("consumption") <= 5.0,
         phase="simulate",
     )
@@ -211,42 +215,42 @@ def test_plain_egm_evaluates_the_simulate_phase_feasibility_check() -> None:
 
 def test_dcegm_evaluates_a_constraint_over_its_discrete_combination() -> None:
     """A discrete action is bound per combination, so a constraint on it is callable."""
-    disposition = _disposition(_dcegm(), constraint=ref("retire") <= 1)
+    disposition = _disposition(solver=_dcegm(), constraint=ref("retire") <= 1)
 
     assert isinstance(disposition, Evaluate)
 
 
 def test_dcegm_evaluates_at_the_discrete_combo_stage() -> None:
     """DC-EGM's feasibility predicate is built per discrete combination."""
-    disposition = _disposition(_dcegm(), constraint=ref("retire") <= 1)
+    disposition = _disposition(solver=_dcegm(), constraint=ref("retire") <= 1)
 
     assert disposition.stage == "discrete_combo"
 
 
 def test_dcegm_refuses_a_constraint_reading_its_continuous_action() -> None:
     """The consumption the Euler inversion produces is not bound per combination."""
-    disposition = _disposition(_dcegm(), constraint=ref("consumption") <= 5.0)
+    disposition = _disposition(solver=_dcegm(), constraint=ref("consumption") <= 5.0)
 
     assert isinstance(disposition, Reject)
 
 
 def test_dcegm_evaluates_a_constraint_over_a_passive_continuous_state() -> None:
     """Every continuous state other than the Euler state is bound per combination."""
-    disposition = _disposition(_dcegm(), constraint=ref("housing") >= 0.0)
+    disposition = _disposition(solver=_dcegm(), constraint=ref("housing") >= 0.0)
 
     assert isinstance(disposition, Evaluate)
 
 
 def test_dcegm_refuses_a_constraint_reading_its_euler_state() -> None:
     """The Euler state is the axis the inversion produces, not a combination input."""
-    disposition = _disposition(_dcegm(), constraint=ref("wealth") >= 0.0)
+    disposition = _disposition(solver=_dcegm(), constraint=ref("wealth") >= 0.0)
 
     assert isinstance(disposition, Reject)
 
 
 def test_dcegm_evaluates_a_constraint_over_a_regime_parameter() -> None:
     """A param is a constant wherever the kernel evaluates."""
-    disposition = _disposition(_dcegm(), constraint=ref("interest_rate") >= 0.0)
+    disposition = _disposition(solver=_dcegm(), constraint=ref("interest_rate") >= 0.0)
 
     assert isinstance(disposition, Evaluate)
 
@@ -254,7 +258,7 @@ def test_dcegm_evaluates_a_constraint_over_a_regime_parameter() -> None:
 def test_dcegm_evaluates_the_simulate_phase_feasibility_check() -> None:
     """Simulation holds the realized action, so the continuous one is readable."""
     disposition = _disposition(
-        _dcegm(), constraint=ref("consumption") <= 5.0, phase="simulate"
+        solver=_dcegm(), constraint=ref("consumption") <= 5.0, phase="simulate"
     )
 
     assert isinstance(disposition, Evaluate)
@@ -307,7 +311,7 @@ def test_every_solver_declares_the_same_simulate_route() -> None:
         _dcegm(),
     )
 
-    sites = [_routes_of(solver, phase="simulate")[0].sites for solver in solvers]
+    sites = [_routes_of(solver=solver, phase="simulate")[0].sites for solver in solvers]
 
     assert [(site.stage, site.available_names) for (site,) in sites] == [
         ("simulation", None)
@@ -372,14 +376,14 @@ def test_dcegm_proves_a_bound_on_the_state_its_savings_grid_spans() -> None:
     is what makes proving it different from ignoring it. Simulation evaluates
     the declaration against its phase-resolved function pool.
     """
-    disposition = _disposition(_dcegm(), constraint=ref("savings") >= 0.0)
+    disposition = _disposition(solver=_dcegm(), constraint=ref("savings") >= 0.0)
 
     assert isinstance(disposition, ProvedByConstruction)
 
 
 def test_the_proof_names_the_savings_grid_as_what_enforces_the_bound() -> None:
     """A diagnostic has to be able to quote what discharged a constraint."""
-    disposition = _disposition(_dcegm(), constraint=ref("savings") >= 0.0)
+    disposition = _disposition(solver=_dcegm(), constraint=ref("savings") >= 0.0)
 
     assert "savings grid" in disposition.proof.reason
 
@@ -390,7 +394,7 @@ def test_a_bound_on_another_name_is_not_proved_by_the_savings_grid() -> None:
     Discharging it on the strength of its shape alone would silently drop a
     constraint the model relies on.
     """
-    disposition = _disposition(_dcegm(), constraint=ref("wealth") >= 0.0)
+    disposition = _disposition(solver=_dcegm(), constraint=ref("wealth") >= 0.0)
 
     assert isinstance(disposition, Reject)
 
@@ -398,7 +402,7 @@ def test_a_bound_on_another_name_is_not_proved_by_the_savings_grid() -> None:
 def test_egm_savings_bounds_are_evaluated_on_the_simulate_route() -> None:
     """A solve-grid proof does not discharge a simulation-time predicate."""
     dispositions = [
-        _disposition(solver, constraint=ref("savings") >= 0.0, phase="simulate")
+        _disposition(solver=solver, constraint=ref("savings") >= 0.0, phase="simulate")
         for solver in (_egm(), _dcegm())
     ]
 
@@ -408,7 +412,7 @@ def test_egm_savings_bounds_are_evaluated_on_the_simulate_route() -> None:
 def test_plain_egm_proves_the_bound_its_savings_grid_enforces() -> None:
     """The envelope-free kernel evaluates nothing, but its grid still enforces this."""
     disposition = _disposition(
-        _egm(),
+        solver=_egm(),
         constraint=ref("savings") >= 0.0,
     )
 

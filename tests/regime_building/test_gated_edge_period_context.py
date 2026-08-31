@@ -52,7 +52,7 @@ def _prob_one(age: FloatND) -> FloatND:
     return jnp.ones_like(age, dtype=float)
 
 
-def _utility_source(x: ContinuousState, work: DiscreteAction) -> FloatND:
+def _utility_source(*, x: ContinuousState, work: DiscreteAction) -> FloatND:
     return jnp.zeros_like(x) * work
 
 
@@ -84,7 +84,7 @@ def _identity_x(x: ContinuousState) -> ContinuousState:
     return x
 
 
-def _context_projection(period: ScalarInt, age: ScalarInt | ScalarFloat) -> FloatND:
+def _context_projection(*, period: ScalarInt, age: ScalarInt | ScalarFloat) -> FloatND:
     """Project to x=2 only in the edge's target period, otherwise x=0."""
     return jnp.where((period == 1) & (age == 45), 2.0, 0.0)
 
@@ -95,6 +95,7 @@ def _age_projection(age: ScalarInt | ScalarFloat) -> FloatND:
 
 
 def _context_gate_open(
+    *,
     V_reference: FloatND,
     period: ScalarInt,
     age: ScalarInt | ScalarFloat,
@@ -104,6 +105,7 @@ def _context_gate_open(
 
 
 def _context_gate_closed(
+    *,
     V_reference: FloatND,
     period: ScalarInt,
     age: ScalarInt | ScalarFloat,
@@ -112,12 +114,13 @@ def _context_gate_closed(
     return (period == 1) & (age == 45) & (V_reference < 0.0)
 
 
-def _period_gate_open(V_reference: FloatND, period: ScalarInt) -> BoolND:
+def _period_gate_open(*, V_reference: FloatND, period: ScalarInt) -> BoolND:
     """Open only in the target period after the age-only projection."""
     return (period == 1) & (V_reference > 1.5)
 
 
 def _context_gate_open_without_reference(
+    *,
     period: ScalarInt,
     age: ScalarInt | ScalarFloat,
 ) -> BoolND:
@@ -187,7 +190,7 @@ def _make_model(
                         _next_x_from_work if action_sensitive else fixed_transition("x")
                     )
                 },
-                actions={"work": DiscreteGrid(Work)},
+                actions={"work": DiscreteGrid(category_class=Work)},
                 functions={"utility": _utility_source},
             ),
             "target": Regime(
@@ -264,12 +267,12 @@ def _solve_and_simulate(
     return solution, simulation
 
 
-def _leaf_paths(node: object, prefix: tuple[str, ...] = ()) -> set[str]:
+def _leaf_paths(*, node: object, prefix: tuple[str, ...] = ()) -> set[str]:
     if isinstance(node, dict):
         return {
             path
             for key, value in node.items()
-            for path in _leaf_paths(value, (*prefix, key))
+            for path in _leaf_paths(node=value, prefix=(*prefix, key))
         }
     return {"__".join(prefix)}
 
@@ -278,7 +281,7 @@ def test_period_and_age_are_engine_context_not_gated_edge_parameters():
     """Gated-edge context names do not create user parameters."""
     model = _make_model(gate_open=True, n_subjects=None)
 
-    assert _leaf_paths(model.get_params_template()) == {
+    assert _leaf_paths(node=model.get_params_template()) == {
         "source__koopmans_aggregator__discount_factor"
     }
 

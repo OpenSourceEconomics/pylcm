@@ -35,7 +35,7 @@ def _utility(consumption):
     return jnp.log(consumption)
 
 
-def _next_regime(wealth, age):
+def _next_regime(*, wealth, age):
     leaves = (wealth >= 3.0) | (age >= _LAST_AGE - 1)
     return jnp.where(leaves, RegimeId.gone, RegimeId.alive)
 

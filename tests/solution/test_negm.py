@@ -168,7 +168,7 @@ def test_negm_configuration_does_not_change_reachability() -> None:
     """Nested EGM and grid search expose equal lifecycle graphs and hashes."""
 
     def next_wealth(
-        wealth: ContinuousState, liquid_savings: FloatND
+        *, wealth: ContinuousState, liquid_savings: FloatND
     ) -> ContinuousState:
         return negm_kinked_toy.next_wealth(liquid_savings) + 0.0 * wealth
 
@@ -223,7 +223,7 @@ def test_keeper_outer_function_threads_every_declared_argument() -> None:
     def growth(perm_income: FloatND) -> FloatND:
         return perm_income
 
-    def keep(car: ContinuousState, growth: FloatND) -> ContinuousState:
+    def keep(*, car: ContinuousState, growth: FloatND) -> ContinuousState:
         return car * 0.9 / growth
 
     functions = cast(

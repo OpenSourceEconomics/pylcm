@@ -54,7 +54,7 @@ _ENGINE_LEVEL_MODULES = frozenset(
 )
 
 
-def _calls(source: str, *, name: str) -> bool:
+def _calls(*, source: str, name: str) -> bool:
     """Report whether the source calls `name`, plain or as an attribute."""
     for node in ast.walk(ast.parse(source)):
         if isinstance(node, ast.Call):
@@ -64,7 +64,7 @@ def _calls(source: str, *, name: str) -> bool:
     return False
 
 
-def _passes_keyword(source: str, *, keyword: str) -> bool:
+def _passes_keyword(*, source: str, keyword: str) -> bool:
     """Report whether the source passes `keyword=` to any call."""
     for node in ast.walk(ast.parse(source)):
         if isinstance(node, ast.Call) and any(
@@ -87,7 +87,7 @@ _DECLARATIONS = (
 
 def _exercises_the_surface(source: str) -> bool:
     """Report whether the source declares a household, a value constraint or an edge."""
-    return any(_calls(source, name=name) for name in _DECLARATIONS)
+    return any(_calls(source=source, name=name) for name in _DECLARATIONS)
 
 
 def _module_name(*, path: PurePath, root: PurePath) -> str:
@@ -110,7 +110,7 @@ def _census() -> tuple[frozenset[str], frozenset[str]]:
         if not _exercises_the_surface(source):
             continue
         relative = _module_name(path=path, root=_TESTS_ROOT.parent)
-        target = reaching if _calls(source, name="Model") else not_reaching
+        target = reaching if _calls(source=source, name="Model") else not_reaching
         target.add(relative)
     return frozenset(reaching), frozenset(not_reaching)
 
@@ -193,7 +193,7 @@ def test_the_census_reads_syntax_not_text(*, source: str, expected: bool):
 )
 def test_reaching_model_is_a_call_not_a_mention(*, source: str, expected: bool):
     """A module is on the public route only if it actually calls `Model`."""
-    assert _calls(source, name="Model") is expected
+    assert _calls(source=source, name="Model") is expected
 
 
 #: What a regime's three declarations decompose into. A model author never

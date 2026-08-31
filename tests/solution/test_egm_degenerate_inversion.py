@@ -41,7 +41,7 @@ def _numerically_inverted_crra() -> Preferences:
     is the one with no infinity to fall back on: the bracketed Newton solve
     works in log-consumption, so an unbracketed target leaves the bracket.
     """
-    analytic = crra_preferences(_CRRA)
+    analytic = crra_preferences(crra=_CRRA)
 
     def scalar_inverse(marginal_continuation: FloatND) -> FloatND:
         return numeric_inverse_marginal_utility(
@@ -60,7 +60,7 @@ def _numerically_inverted_crra() -> Preferences:
 
 @pytest.mark.parametrize(
     "preferences",
-    [crra_preferences(_CRRA), _numerically_inverted_crra()],
+    [crra_preferences(crra=_CRRA), _numerically_inverted_crra()],
     ids=["analytic_inverse", "numeric_inverse"],
 )
 def test_a_zero_marginal_continuation_publishes_the_consume_everything_corner(

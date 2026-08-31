@@ -95,7 +95,7 @@ def test_fues_does_not_qualify_for_the_policy_read(n_points_to_scan: int | None)
         envelope=FUESEnvelope(n_points_to_scan=n_points_to_scan),
     )
     model = _model_from_alive(
-        dcegm_retirement.replace(active=lambda age: age < 50, solver=solver)
+        alive=dcegm_retirement.replace(active=lambda age: age < 50, solver=solver)
     )
     assert model._regimes["retirement"].simulation.egm_policy_read is None
 
@@ -104,7 +104,7 @@ def test_mss_backend_remains_disqualified_without_fues_controls():
     """MSS has no FUES controls and remains outside the policy-read gate."""
     solver = dataclasses.replace(DCEGM_SOLVER, envelope=MSSEnvelope())
     model = _model_from_alive(
-        dcegm_retirement.replace(active=lambda age: age < 50, solver=solver)
+        alive=dcegm_retirement.replace(active=lambda age: age < 50, solver=solver)
     )
     assert model._regimes["retirement"].simulation.egm_policy_read is None
 
@@ -119,7 +119,7 @@ def test_process_state_regime_does_not_qualify_for_the_policy_read():
     the tracked follow-up.
     """
     model = _model_from_alive(
-        _PORTABLE_DCEGM_RETIREMENT.replace(
+        alive=_PORTABLE_DCEGM_RETIREMENT.replace(
             active=lambda age: age < 50,
             liquid=dataclasses.replace(LIQUID_MARGIN, resources="resources"),
             states={
@@ -148,7 +148,7 @@ def test_asset_row_regime_does_not_qualify_for_the_policy_read():
     between adjacent nodes.
     """
     model = _model_from_alive(
-        _PORTABLE_DCEGM_RETIREMENT.replace(
+        alive=_PORTABLE_DCEGM_RETIREMENT.replace(
             active=lambda age: age < 50,
             transition=_next_regime_reads_wealth,
         )
@@ -190,11 +190,11 @@ def test_passive_state_regime_does_not_qualify_for_the_policy_read():
 def _retirement_model_with_backend(backend: EnvelopeName) -> Model:
     solver = dataclasses.replace(DCEGM_SOLVER, envelope=envelope_config(backend))
     return _model_from_alive(
-        dcegm_retirement.replace(active=lambda age: age < 50, solver=solver)
+        alive=dcegm_retirement.replace(active=lambda age: age < 50, solver=solver)
     )
 
 
-def _model_from_alive(alive, dead_states=None) -> Model:
+def _model_from_alive(*, alive, dead_states=None) -> Model:
     dead_regime = dead if dead_states is None else dead.replace(states=dead_states)
     return Model(
         regimes={"retirement": alive, "dead": dead_regime},
@@ -204,29 +204,31 @@ def _model_from_alive(alive, dead_states=None) -> Model:
 
 
 def _resources_with_shock(
-    wealth: ContinuousState, wage_shock: ContinuousState
+    *, wealth: ContinuousState, wage_shock: ContinuousState
 ) -> FloatND:
     return wealth + wage_shock
 
 
 def _savings_from_resources(
-    resources: FloatND, consumption: ContinuousAction
+    *, resources: FloatND, consumption: ContinuousAction
 ) -> FloatND:
     return resources - consumption
 
 
-def _skill_alive_utility(consumption: FloatND, skill: ContinuousState) -> FloatND:
+def _skill_alive_utility(*, consumption: FloatND, skill: ContinuousState) -> FloatND:
     # `skill` rides along as a passive state; the flow utility keeps it in the
     # DAG (0.0 * skill) without changing the consumption optimum.
     return jnp.log(consumption) + 0.0 * skill
 
 
-def _skill_bequest_utility(wealth: ContinuousState, skill: ContinuousState) -> FloatND:
+def _skill_bequest_utility(
+    *, wealth: ContinuousState, skill: ContinuousState
+) -> FloatND:
     return skill * jnp.log(wealth)
 
 
 def _next_regime_reads_wealth(
-    age: int, wealth: ContinuousState, final_age_alive: float
+    *, age: int, wealth: ContinuousState, final_age_alive: float
 ) -> ScalarInt:
     alive = (age < final_age_alive) & (wealth > -1.0e30)
     return jnp.where(

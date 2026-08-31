@@ -12,16 +12,16 @@ from tests.mock_regime import MockRegime
 def test_create_params_without_processes(binary_category_class):
     regime = MockRegime(
         actions={
-            "a": DiscreteGrid(binary_category_class),
+            "a": DiscreteGrid(category_class=binary_category_class),
         },
         states={
-            "b": DiscreteGrid(binary_category_class),
+            "b": DiscreteGrid(category_class=binary_category_class),
         },
         state_transitions={"b": lambda b: b},
         transition=lambda: 0,
         functions={"utility": lambda a, b, c: None},  # noqa: ARG005
     )
-    got = create_regime_params_template(regime)
+    got = create_regime_params_template(user_regime=regime)
     assert got == ensure_containers_are_immutable(
         {
             "koopmans_aggregator": {"discount_factor": "FloatND"},
@@ -51,12 +51,12 @@ def test_create_params_reads_concrete_function_params(binary_category_class):
     no marker handling in the template.
     """
 
-    def net_income(a, b, tax_rate):  # noqa: ARG001
+    def net_income(*, a, b, tax_rate):  # noqa: ARG001
         return tax_rate
 
     regime = MockRegime(
-        actions={"a": DiscreteGrid(binary_category_class)},
-        states={"b": DiscreteGrid(binary_category_class)},
+        actions={"a": DiscreteGrid(category_class=binary_category_class)},
+        states={"b": DiscreteGrid(category_class=binary_category_class)},
         state_transitions={"b": lambda b: b},
         transition=lambda: 0,
         functions={
@@ -64,22 +64,22 @@ def test_create_params_reads_concrete_function_params(binary_category_class):
             "net_income": net_income,
         },
     )
-    got = create_regime_params_template(regime)
+    got = create_regime_params_template(user_regime=regime)
     assert got["net_income"] == {"tax_rate": "no_annotation_found"}
 
 
 def test_create_params_unions_phased_variant_params(binary_category_class):
     """`Phased` entries contribute the union of both variants' parameters."""
 
-    def solve_income(a, b, solve_rate):  # noqa: ARG001
+    def solve_income(*, a, b, solve_rate):  # noqa: ARG001
         return solve_rate
 
-    def simulate_income(a, b, simulate_rate):  # noqa: ARG001
+    def simulate_income(*, a, b, simulate_rate):  # noqa: ARG001
         return simulate_rate
 
     regime = MockRegime(
-        actions={"a": DiscreteGrid(binary_category_class)},
-        states={"b": DiscreteGrid(binary_category_class)},
+        actions={"a": DiscreteGrid(category_class=binary_category_class)},
+        states={"b": DiscreteGrid(category_class=binary_category_class)},
         state_transitions={"b": lambda b: b},
         transition=lambda: 0,
         functions={
@@ -87,7 +87,7 @@ def test_create_params_unions_phased_variant_params(binary_category_class):
             "net_income": Phased(solve=solve_income, simulate=simulate_income),
         },
     )
-    got = create_regime_params_template(regime)
+    got = create_regime_params_template(user_regime=regime)
     assert got["net_income"] == {
         "solve_rate": "no_annotation_found",
         "simulate_rate": "no_annotation_found",
@@ -104,18 +104,18 @@ def test_create_params_walks_a_phased_function_a_transition_reads(
     variants contribute their parameters.
     """
 
-    def solve_adjustment(b, solve_rate):  # noqa: ARG001
+    def solve_adjustment(*, b, solve_rate):  # noqa: ARG001
         return solve_rate
 
-    def simulate_adjustment(b, simulate_rate):  # noqa: ARG001
+    def simulate_adjustment(*, b, simulate_rate):  # noqa: ARG001
         return simulate_rate
 
     def next_b(adjustment):
         return adjustment
 
     regime = MockRegime(
-        actions={"a": DiscreteGrid(binary_category_class)},
-        states={"b": DiscreteGrid(binary_category_class)},
+        actions={"a": DiscreteGrid(category_class=binary_category_class)},
+        states={"b": DiscreteGrid(category_class=binary_category_class)},
         state_transitions={"b": next_b},
         transition=lambda: 0,
         functions={
@@ -124,7 +124,7 @@ def test_create_params_walks_a_phased_function_a_transition_reads(
         },
     )
 
-    got = create_regime_params_template(regime)
+    got = create_regime_params_template(user_regime=regime)
 
     assert got["adjustment"] == {
         "solve_rate": "no_annotation_found",
@@ -135,7 +135,7 @@ def test_create_params_walks_a_phased_function_a_transition_reads(
 def test_create_params_with_custom_W_no_extra_params():
     """A custom H with no extra params beyond utility and CE."""
 
-    def custom_W(utility: float, CE: float) -> float:
+    def custom_W(*, utility: float, CE: float) -> float:
         return utility + CE
 
     regime = MockRegime(
@@ -148,7 +148,7 @@ def test_create_params_with_custom_W_no_extra_params():
         functions={"utility": lambda a, b, c: None},  # noqa: ARG005
         koopmans_aggregator=custom_W,
     )
-    got = create_regime_params_template(regime)
+    got = create_regime_params_template(user_regime=regime)
     assert got == ensure_containers_are_immutable(
         {"koopmans_aggregator": {}, "utility": {"c": "no_annotation_found"}}
     )
@@ -170,7 +170,7 @@ def test_default_H_with_state_named_discount_factor_is_allowed():
         functions={"utility": lambda a, discount_factor: None},  # noqa: ARG005
         transition=lambda discount_factor: discount_factor,
     )
-    got = create_regime_params_template(regime)
+    got = create_regime_params_template(user_regime=regime)
     assert got == ensure_containers_are_immutable(
         {
             "koopmans_aggregator": {},
@@ -190,7 +190,7 @@ def test_custom_W_shadowing_state_is_allowed():
     call time from the state space.
     """
 
-    def custom_W(utility: float, CE: float, wealth: float) -> float:
+    def custom_W(*, utility: float, CE: float, wealth: float) -> float:
         return utility + wealth * CE
 
     regime = MockRegime(
@@ -199,7 +199,7 @@ def test_custom_W_shadowing_state_is_allowed():
         functions={"utility": lambda a, wealth: None},  # noqa: ARG005
         koopmans_aggregator=custom_W,
     )
-    got = create_regime_params_template(regime)
+    got = create_regime_params_template(user_regime=regime)
     assert got == ensure_containers_are_immutable(
         {"koopmans_aggregator": {}, "utility": {}}
     )
@@ -214,10 +214,10 @@ def test_solve_simulate_pair_template_contains_union_of_params() -> None:
     both phases.
     """
 
-    def exponential_h(utility: float, CE: float, discount_factor: float) -> float:
+    def exponential_h(*, utility: float, CE: float, discount_factor: float) -> float:
         return utility + discount_factor * CE
 
-    def beta_delta_h(utility: float, CE: float, beta: float, delta: float) -> float:
+    def beta_delta_h(*, utility: float, CE: float, beta: float, delta: float) -> float:
         return utility + beta * delta * CE
 
     regime = MockRegime(
@@ -226,7 +226,7 @@ def test_solve_simulate_pair_template_contains_union_of_params() -> None:
         functions={"utility": lambda a, b: None},  # noqa: ARG005
         koopmans_aggregator=Phased(solve=exponential_h, simulate=beta_delta_h),
     )
-    got = create_regime_params_template(regime)
+    got = create_regime_params_template(user_regime=regime)
     assert set(got["koopmans_aggregator"]) == {"discount_factor", "beta", "delta"}
 
 
@@ -234,16 +234,16 @@ def test_regular_function_taking_state_as_argument_no_error(binary_category_clas
     """Regular functions that use states as arguments should not trigger the error."""
     regime = MockRegime(
         actions={
-            "a": DiscreteGrid(binary_category_class),
+            "a": DiscreteGrid(category_class=binary_category_class),
         },
         states={
-            "wealth": DiscreteGrid(binary_category_class),
+            "wealth": DiscreteGrid(category_class=binary_category_class),
         },
         state_transitions={"wealth": lambda wealth: wealth},
         transition=lambda: 0,
         functions={"utility": lambda a, wealth, risk_aversion: None},  # noqa: ARG005
     )
-    got = create_regime_params_template(regime)
+    got = create_regime_params_template(user_regime=regime)
     assert got == ensure_containers_are_immutable(
         {
             "koopmans_aggregator": {"discount_factor": "FloatND"},
@@ -266,14 +266,14 @@ def test_state_transition_consuming_other_next_state_is_not_a_param(
     single dict before calling `concatenate_functions`).
     """
 
-    def next_wealth(wealth: float, next_aime: float) -> float:
+    def next_wealth(*, wealth: float, next_aime: float) -> float:
         return wealth + next_aime
 
     regime = MockRegime(
-        actions={"a": DiscreteGrid(binary_category_class)},
+        actions={"a": DiscreteGrid(category_class=binary_category_class)},
         states={
-            "wealth": DiscreteGrid(binary_category_class),
-            "aime": DiscreteGrid(binary_category_class),
+            "wealth": DiscreteGrid(category_class=binary_category_class),
+            "aime": DiscreteGrid(category_class=binary_category_class),
         },
         state_transitions={
             "wealth": next_wealth,
@@ -282,7 +282,7 @@ def test_state_transition_consuming_other_next_state_is_not_a_param(
         transition=lambda: 0,
         functions={"utility": lambda a, wealth, aime: None},  # noqa: ARG005
     )
-    got = create_regime_params_template(regime)
+    got = create_regime_params_template(user_regime=regime)
     assert got == ensure_containers_are_immutable(
         {
             "koopmans_aggregator": {"discount_factor": "FloatND"},

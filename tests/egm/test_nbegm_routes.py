@@ -144,7 +144,7 @@ def _simulate_dispositions(constraints):
     return {entry.constraint_name: entry.disposition for entry in plan.entries}
 
 
-def rationing(consumption: ContinuousAction, liquid: ContinuousState) -> BoolND:
+def rationing(*, consumption: ContinuousAction, liquid: ContinuousState) -> BoolND:
     """A feasibility predicate no savings-grid node locates."""
     return jnp.square(consumption) + jnp.square(liquid) <= 400.0
 
@@ -270,7 +270,7 @@ def test_a_constraint_reading_nothing_is_refused_like_any_other():
     [(_bound_nbegm(), ("nbegm",)), (_bound_nnbegm(), ("nnbegm", "adjuster"))],
 )
 def test_the_case_piece_solvers_declare_an_empty_allow_list_not_the_default(
-    solver, solver_path
+    *, solver, solver_path
 ):
     """Neither solver leaves its routes undeclared, and neither is permissive.
 
@@ -351,7 +351,7 @@ def _comparable(value: object) -> object:
     [(_bound_nbegm(), ("nbegm",)), (_bound_nnbegm(), ("nnbegm",))],
 )
 def test_the_simulate_route_is_the_shared_one_and_not_a_local_spelling(
-    solver, solver_path
+    *, solver, solver_path
 ):
     """Simulation is the phase's pipeline, so both solvers take the shared route.
 

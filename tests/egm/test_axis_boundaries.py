@@ -83,6 +83,7 @@ def test_resolved_partition_uses_one_ulp_for_each_open_side() -> None:
 @pytest.mark.parametrize("declaration_order", ["right-left", "left-right"])
 @pytest.mark.parametrize("boundary_value", [1.0, -3.5, 2.0**-10, 2.0**10])
 def test_coincident_opposite_owners_create_an_equality_only_interval(
+    *,
     declaration_order: str,
     boundary_value: float,
 ) -> None:
@@ -135,6 +136,7 @@ def test_coincident_opposite_owners_create_an_equality_only_interval(
     ["schedule-feasibility", "feasibility-schedule"],
 )
 def test_coincident_same_owner_boundaries_leave_no_reachable_zero_width_interval(
+    *,
     owner: BoundaryOwner,
     expected_intervals: tuple[int, int, int],
     expected_regions: tuple[int, int, int],
@@ -186,7 +188,7 @@ def test_coincident_same_owner_boundaries_leave_no_reachable_zero_width_interval
     ],
 )
 def test_feasibility_comparison_selects_the_equality_owner(
-    feasible_side, includes_boundary, owner
+    *, feasible_side, includes_boundary, owner
 ) -> None:
     """The feasible half-space owns equality exactly when its operator includes it."""
     assert (
@@ -207,7 +209,7 @@ def test_feasibility_comparison_selects_the_equality_owner(
     ],
 )
 def test_schedule_boundary_kinds_normalize_to_partition_effects(
-    schedule_kind, partition_effect
+    *, schedule_kind, partition_effect
 ) -> None:
     """A flat budget is distinct from an externally compiled feasibility region."""
     assert partition_effect_for_schedule_kind(schedule_kind) == partition_effect

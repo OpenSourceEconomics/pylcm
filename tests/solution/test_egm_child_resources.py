@@ -95,27 +95,27 @@ def is_working(labor_supply: DiscreteAction) -> BoolND:
     return labor_supply == LaborChoice.work
 
 
-def labor_income(is_working: BoolND, wage: float) -> FloatND:
+def labor_income(*, is_working: BoolND, wage: float) -> FloatND:
     return jnp.where(is_working, wage, 0.0)
 
 
 def utility(
-    consumption: ContinuousAction, is_working: BoolND, disutility_of_work: float
+    *, consumption: ContinuousAction, is_working: BoolND, disutility_of_work: float
 ) -> FloatND:
     return jnp.log(consumption) - jnp.where(is_working, disutility_of_work, 0.0)
 
 
-def resources_with_bonus(wealth: ContinuousState, is_working: BoolND) -> FloatND:
+def resources_with_bonus(*, wealth: ContinuousState, is_working: BoolND) -> FloatND:
     return wealth + jnp.where(is_working, WORK_BONUS, 0.0)
 
 
 def resources_with_bonus_and_pension(
-    wealth: ContinuousState, is_working: BoolND, skill: ContinuousState
+    *, wealth: ContinuousState, is_working: BoolND, skill: ContinuousState
 ) -> FloatND:
     return wealth + jnp.where(is_working, WORK_BONUS, 0.0) + PENSION_RATE * skill
 
 
-def savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
+def savings(*, resources: FloatND, consumption: ContinuousAction) -> FloatND:
     return resources - consumption
 
 
@@ -124,16 +124,17 @@ def inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
 
 
 def next_wealth_from_savings(
-    savings: FloatND, labor_income: FloatND, interest_rate: float
+    *, savings: FloatND, labor_income: FloatND, interest_rate: float
 ) -> ContinuousState:
     return (1 + interest_rate) * savings + labor_income
 
 
-def next_skill(skill: ContinuousState, is_working: BoolND) -> ContinuousState:
+def next_skill(*, skill: ContinuousState, is_working: BoolND) -> ContinuousState:
     return jnp.minimum(skill + jnp.where(is_working, SKILL_GAIN, 0.0), SKILL_MAX)
 
 
 def next_wealth_brute_bonus(
+    *,
     wealth: ContinuousState,
     consumption: ContinuousAction,
     is_working: BoolND,
@@ -145,6 +146,7 @@ def next_wealth_brute_bonus(
 
 
 def next_wealth_brute_bonus_and_pension(
+    *,
     wealth: ContinuousState,
     consumption: ContinuousAction,
     is_working: BoolND,
@@ -158,12 +160,13 @@ def next_wealth_brute_bonus_and_pension(
 
 
 def budget_constraint_bonus(
-    consumption: ContinuousAction, wealth: ContinuousState, is_working: BoolND
+    *, consumption: ContinuousAction, wealth: ContinuousState, is_working: BoolND
 ) -> BoolND:
     return consumption <= wealth + jnp.where(is_working, WORK_BONUS, 0.0)
 
 
 def budget_constraint_bonus_and_pension(
+    *,
     consumption: ContinuousAction,
     wealth: ContinuousState,
     is_working: BoolND,
@@ -173,7 +176,7 @@ def budget_constraint_bonus_and_pension(
     return consumption <= wealth + bonus + PENSION_RATE * skill
 
 
-def next_regime(age: int, final_age_alive: float) -> ScalarInt:
+def next_regime(*, age: int, final_age_alive: float) -> ScalarInt:
     return jnp.where(
         age >= final_age_alive,
         BonusRegimeId.dead,
@@ -200,11 +203,11 @@ def _get_model(variant: str) -> Model:
     ages = AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
     last_age = float(ages.exact_values[-1])
 
-    def active(age: int, la: float = last_age) -> bool:
+    def active(*, age: int, la: float = last_age) -> bool:
         return age < la
 
     actions = {
-        "labor_supply": DiscreteGrid(LaborChoice),
+        "labor_supply": DiscreteGrid(category_class=LaborChoice),
         "consumption": CONSUMPTION_GRID,
     }
     if variant == "dcegm_bonus":

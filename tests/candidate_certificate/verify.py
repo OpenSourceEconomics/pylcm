@@ -74,7 +74,7 @@ def nonempty_feasibility_masks(n_candidates: int) -> tuple[Mask, ...]:
 
 
 def reference_masked_argmax(
-    values: Sequence[float], mask: Sequence[bool]
+    *, values: Sequence[float], mask: Sequence[bool]
 ) -> tuple[int, float]:
     """Return the unique feasible maximizer using an explicit scalar loop.
 
@@ -140,8 +140,12 @@ def run_rank_neighborhood_controls() -> dict[str, dict[str, Any]]:
         return (False, *mask[1:]) if all(mask) else mask
 
     def outcome(values: Sequence[float]) -> dict[str, Any]:
-        reference_index, reference_value = reference_masked_argmax(values, all_feasible)
-        mutated_index, mutated_value = _winner_after(values, all_feasible, omit_first)
+        reference_index, reference_value = reference_masked_argmax(
+            values=values, mask=all_feasible
+        )
+        mutated_index, mutated_value = _winner_after(
+            values=values, mask=all_feasible, transform=omit_first
+        )
         return {
             "values": list(values),
             "reference_index": reference_index,
@@ -160,10 +164,12 @@ def run_rank_neighborhood_controls() -> dict[str, dict[str, Any]]:
         "ordering_won_by_candidate_zero": candidate_zero_wins,
         "every_candidate_wins_exactly_one_ordering": {
             "winners": [
-                reference_masked_argmax(values, all_feasible)[0] for values in orderings
+                reference_masked_argmax(values=values, mask=all_feasible)[0]
+                for values in orderings
             ],
             "covers_every_candidate": sorted(
-                reference_masked_argmax(values, all_feasible)[0] for values in orderings
+                reference_masked_argmax(values=values, mask=all_feasible)[0]
+                for values in orderings
             )
             == list(range(n)),
         },
@@ -171,16 +177,18 @@ def run_rank_neighborhood_controls() -> dict[str, dict[str, Any]]:
 
 
 def _winner_after(
-    values: Sequence[float], mask: Mask, transform: Callable[[Mask], Mask]
+    *, values: Sequence[float], mask: Mask, transform: Callable[[Mask], Mask]
 ) -> tuple[int, float]:
-    return reference_masked_argmax(values, transform(mask))
+    return reference_masked_argmax(values=values, mask=transform(mask))
 
 
 def _pinned_witness() -> dict[str, Any]:
     before = (True,) * len(_Q_VALUES)
     after = (*before[:-1], False)
-    solve_index, solve_value = reference_masked_argmax(_Q_VALUES, before)
-    simulate_index, simulate_value = reference_masked_argmax(_Q_VALUES, after)
+    solve_index, solve_value = reference_masked_argmax(values=_Q_VALUES, mask=before)
+    simulate_index, simulate_value = reference_masked_argmax(
+        values=_Q_VALUES, mask=after
+    )
     return {
         "q_values_flat": list(_Q_VALUES),
         "all_feasible_before_mutation": list(before),
@@ -212,9 +220,13 @@ def run_mask_mutation_controls() -> dict[str, dict[str, Any]]:
             else mask
         )
 
-    def outcome(mask: Mask, transform: Callable[[Mask], Mask]) -> dict[str, Any]:
-        reference_index, reference_value = reference_masked_argmax(_Q_VALUES, mask)
-        mutated_index, mutated_value = _winner_after(_Q_VALUES, mask, transform)
+    def outcome(*, mask: Mask, transform: Callable[[Mask], Mask]) -> dict[str, Any]:
+        reference_index, reference_value = reference_masked_argmax(
+            values=_Q_VALUES, mask=mask
+        )
+        mutated_index, mutated_value = _winner_after(
+            values=_Q_VALUES, mask=mask, transform=transform
+        )
         return {
             "mask": list(mask),
             "reference_index": reference_index,
@@ -226,15 +238,15 @@ def run_mask_mutation_controls() -> dict[str, dict[str, Any]]:
             != (mutated_index, mutated_value),
         }
 
-    pinned = outcome(all_feasible, mt6)
+    pinned = outcome(mask=all_feasible, transform=mt6)
     pinned["witness"] = _pinned_witness()
-    generated_result = outcome(intermediate, generated)
+    generated_result = outcome(mask=intermediate, transform=generated)
     generated_result["neither_one_hot_nor_all_feasible"] = (
         1 < sum(intermediate) < len(intermediate)
     )
     generated_result["detected_mask_count"] = sum(
-        _winner_after(_Q_VALUES, mask, generated)
-        != reference_masked_argmax(_Q_VALUES, mask)
+        _winner_after(values=_Q_VALUES, mask=mask, transform=generated)
+        != reference_masked_argmax(values=_Q_VALUES, mask=mask)
         for mask in masks
         if sum(mask) == 3 and mask[-1] and not all(mask)
     )
@@ -258,7 +270,7 @@ def _load_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=no_duplicates)
 
 
-def _records(raw: Any, *, label: str) -> list[SourceRecord]:
+def _records(*, raw: Any, label: str) -> list[SourceRecord]:
     if not isinstance(raw, list):
         raise ValueError(f"{label} must be a list")
     records: list[SourceRecord] = []
@@ -279,7 +291,7 @@ def _records(raw: Any, *, label: str) -> list[SourceRecord]:
 
 
 def _records_from_inventory(payload: dict[str, Any]) -> list[SourceRecord]:
-    return _records(payload.get("sources"), label="sources.json sources")
+    return _records(raw=payload.get("sources"), label="sources.json sources")
 
 
 def _counter(records: Iterable[SourceRecord]) -> Counter[tuple[str, str]]:
@@ -287,6 +299,7 @@ def _counter(records: Iterable[SourceRecord]) -> Counter[tuple[str, str]]:
 
 
 def _compare_records(
+    *,
     label: str,
     expected: list[SourceRecord],
     observed: list[SourceRecord],
@@ -425,7 +438,7 @@ def _policy_profiles(path: Path) -> dict[str, ProfileDeclaration]:
         records: list[SourceRecord] = []
         if entry.get("candidate_sources") is not None:
             records = _records(
-                entry.get("candidate_sources"),
+                raw=entry.get("candidate_sources"),
                 label=f"derived policy {profile} candidate_sources",
             )
         anchor: SourceRecord | None = None
@@ -446,7 +459,7 @@ def _policy_profiles(path: Path) -> dict[str, ProfileDeclaration]:
 
 
 def _anchor_errors(
-    label: str, expected: SourceRecord, observed: SourceRecord | None
+    *, label: str, expected: SourceRecord, observed: SourceRecord | None
 ) -> tuple[list[str], set[str]]:
     """Require an inventory anchor to be present and exactly equal."""
     if observed is None:
@@ -483,14 +496,14 @@ def _certificate_matrix_errors(certificate: Path) -> tuple[list[str], set[str]]:
                 found.add(child.func.attr)
         return found
 
-    def transitive_calls(name: str, seen: set[str] | None = None) -> set[str]:
+    def transitive_calls(*, name: str, seen: set[str] | None = None) -> set[str]:
         seen = set() if seen is None else seen
         if name in seen or name not in functions:
             return set()
         seen.add(name)
         result = direct_calls(functions[name])
         for called in tuple(result):
-            result |= transitive_calls(called, seen)
+            result |= transitive_calls(name=called, seen=seen)
         return result
 
     suffix = "_matches_reference_over_every_nonempty_feasibility_mask"
@@ -548,7 +561,7 @@ def _certificate_matrix_errors(certificate: Path) -> tuple[list[str], set[str]]:
                     f"once over {constant}"
                 )
                 offending.add(CERTIFICATE_PATH)
-        calls = transitive_calls(name)
+        calls = transitive_calls(name=name)
         for marker in ("reference_masked_argmax", route_marker):
             if marker not in calls:
                 errors.append(f"certificate matrix: {name} does not reach {marker}")
@@ -586,7 +599,9 @@ def _certificate_matrix_errors(certificate: Path) -> tuple[list[str], set[str]]:
     if direct_flow_test is None:
         errors.append("certificate architecture: missing direct-flow proof test")
         offending.add(CERTIFICATE_PATH)
-    elif "verify_direct_candidate_flow" not in transitive_calls(direct_flow_test.name):
+    elif "verify_direct_candidate_flow" not in transitive_calls(
+        name=direct_flow_test.name
+    ):
         errors.append(
             "certificate architecture: direct-flow proof test does not reach "
             "verify_direct_candidate_flow"
@@ -630,7 +645,9 @@ def verify_repository(
     generated = _records_from_inventory(generated_payload)
     ast_source_paths = list(derive_source_paths(root / CERTIFICATE_PATH))
     new_errors, new_paths = _compare_records(
-        "certificate AST vs committed sources.json", generated, committed
+        label="certificate AST vs committed sources.json",
+        expected=generated,
+        observed=committed,
     )
     errors += new_errors
     offending |= new_paths
@@ -670,7 +687,7 @@ def verify_repository(
                 continue
             try:
                 observed = _records(
-                    entry.get("candidate_sources"),
+                    raw=entry.get("candidate_sources"),
                     label=f"derived policy {profile} candidate_sources",
                 )
             except ValueError as error:
@@ -679,7 +696,9 @@ def verify_repository(
                 continue
             internal_policy_records[profile] = observed
             new_errors, new_paths = _compare_records(
-                f"sources.json derived policy {profile}", committed, observed
+                label=f"sources.json derived policy {profile}",
+                expected=committed,
+                observed=observed,
             )
             errors += new_errors
             offending |= new_paths
@@ -704,7 +723,7 @@ def verify_repository(
             continue
         disk_records.append({"path": item["path"], "sha256": sha256_file(path)})
     new_errors, new_paths = _compare_records(
-        "sources.json vs source bytes", committed, disk_records
+        label="sources.json vs source bytes", expected=committed, observed=disk_records
     )
     errors += new_errors
     offending |= new_paths
@@ -724,14 +743,16 @@ def verify_repository(
         for profile in REQUIRED_PROFILES:
             declaration = contract_profiles.get(profile, {})
             new_errors, new_paths = _compare_records(
-                f"profile contract {profile}", committed, declaration.get("sources", [])
+                label=f"profile contract {profile}",
+                expected=committed,
+                observed=declaration.get("sources", []),
             )
             errors += new_errors
             offending |= new_paths
             new_errors, new_paths = _anchor_errors(
-                f"profile contract {profile}",
-                expected_anchor,
-                declaration.get("anchor"),
+                label=f"profile contract {profile}",
+                expected=expected_anchor,
+                observed=declaration.get("anchor"),
             )
             errors += new_errors
             offending |= new_paths
@@ -750,16 +771,18 @@ def verify_repository(
                 offending.add(str(policy))
                 continue
             new_errors, new_paths = _anchor_errors(
-                f"explicit derived policy {profile}",
-                expected_anchor,
-                declaration.get("anchor"),
+                label=f"explicit derived policy {profile}",
+                expected=expected_anchor,
+                observed=declaration.get("anchor"),
             )
             errors += new_errors
             offending |= new_paths
             declared_sources = declaration.get("sources", [])
             if declared_sources:
                 new_errors, new_paths = _compare_records(
-                    f"explicit derived policy {profile}", committed, declared_sources
+                    label=f"explicit derived policy {profile}",
+                    expected=committed,
+                    observed=declared_sources,
                 )
                 errors += new_errors
                 offending |= new_paths
@@ -866,7 +889,9 @@ def run_source_set_mutation_controls(*, repo_root: Path) -> dict[str, dict[str, 
     }
     result: dict[str, dict[str, Any]] = {}
     for name, (records, expected_path) in mutants.items():
-        errors, paths = _compare_records(f"self-test {name}", clean, records)
+        errors, paths = _compare_records(
+            label=f"self-test {name}", expected=clean, observed=records
+        )
         result[name] = {
             "rejected": bool(errors) and expected_path in paths,
             "offending_paths": sorted(paths),
@@ -902,11 +927,11 @@ def _self_tests(repo_root: Path) -> tuple[dict[str, Any], bool]:
     all_feasible.pop("witness", None)
     intermediate = mask_controls["intermediate_three_cell"]
     one_hot_unchanged = all(
-        reference_masked_argmax(_Q_VALUES, mask)
+        reference_masked_argmax(values=_Q_VALUES, mask=mask)
         == _winner_after(
-            _Q_VALUES,
-            mask,
-            lambda candidate_mask: (
+            values=_Q_VALUES,
+            mask=mask,
+            transform=lambda candidate_mask: (
                 (*candidate_mask[:-1], False) if all(candidate_mask) else candidate_mask
             ),
         )

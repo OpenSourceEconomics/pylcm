@@ -46,7 +46,7 @@ class RegimeId:
     dead: ScalarInt
 
 
-def crra_utility(consumption: FloatND, crra: float | FloatND) -> FloatND:
+def crra_utility(*, consumption: FloatND, crra: float | FloatND) -> FloatND:
     """CRRA utility, log at `crra == 1`.
 
     The inactive power branch's exponent/denominator is clamped at `crra == 1` so
@@ -62,17 +62,17 @@ def crra_utility(consumption: FloatND, crra: float | FloatND) -> FloatND:
     )
 
 
-def utility(consumption: ContinuousAction, crra: float) -> FloatND:
+def utility(*, consumption: ContinuousAction, crra: float) -> FloatND:
     """CRRA consumption utility."""
-    return crra_utility(consumption, crra)
+    return crra_utility(consumption=consumption, crra=crra)
 
 
-def bequest(liquid: ContinuousState, crra: float) -> FloatND:
+def bequest(*, liquid: ContinuousState, crra: float) -> FloatND:
     """Terminal value: consume remaining liquid wealth."""
-    return crra_utility(liquid, crra)
+    return crra_utility(consumption=liquid, crra=crra)
 
 
-def feasible(resources: FloatND, consumption: ContinuousAction) -> BoolND:
+def feasible(*, resources: FloatND, consumption: ContinuousAction) -> BoolND:
     """Borrowing constraint: consumption cannot exceed cash-on-hand."""
     return consumption <= resources
 
@@ -83,23 +83,23 @@ next_liquid = liquid_law_from_resources
 next_liquid_from_savings = liquid_law_from_savings
 
 
-def savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
+def savings(*, resources: FloatND, consumption: ContinuousAction) -> FloatND:
     """Post-decision savings: cash-on-hand net of consumption."""
     return resources - consumption
 
 
-def prob_stay_alive(age: int, final_age_alive: float) -> FloatND:
+def prob_stay_alive(*, age: int, final_age_alive: float) -> FloatND:
     """Deterministic (0/1) probability of staying alive next period."""
     return jnp.where(age + 1 < final_age_alive, 1.0, 0.0)
 
 
-def prob_die(age: int, final_age_alive: float) -> FloatND:
+def prob_die(*, age: int, final_age_alive: float) -> FloatND:
     """Deterministic (0/1) probability of dying next period."""
     return jnp.where(age + 1 >= final_age_alive, 1.0, 0.0)
 
 
 def resolve_solver(
-    variant: str, *, savings_grid: ContinuousGrid, **nbegm_kwargs: object
+    *, variant: str, savings_grid: ContinuousGrid, **nbegm_kwargs: object
 ) -> OneMarginSolver | GridSearch:
     """Dispatch the toy's alive-regime solver from the variant name.
 

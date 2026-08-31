@@ -26,6 +26,7 @@ _PARAMS = {"discount_factor": 0.95}
 
 
 def _state_dependent_affine_outer_target(
+    *,
     illiquid: ContinuousState,
     illiquid_investment: ContinuousAction,
 ) -> ContinuousState:
@@ -339,7 +340,7 @@ def test_empty_valid_set_and_out_of_support_fail_closed() -> None:
     np.testing.assert_array_equal(np.asarray(value), [-np.inf, -np.inf])
 
 
-def _literal_bracket(points: np.ndarray, query: float) -> tuple[int, float]:
+def _literal_bracket(*, points: np.ndarray, query: float) -> tuple[int, float]:
     """Return the enclosing cell and literal linear weight for an in-grid query."""
     assert points[0] <= query <= points[-1]
     left = int(np.searchsorted(points, query, side="right") - 1)
@@ -349,8 +350,8 @@ def _literal_bracket(points: np.ndarray, query: float) -> tuple[int, float]:
 
 
 def _literal_bilinear(
-    surface: np.ndarray,
     *,
+    surface: np.ndarray,
     wealth: float | np.ndarray,
     illiquid: float,
     wealth_grid: np.ndarray,
@@ -359,7 +360,7 @@ def _literal_bilinear(
     """Independent scalar/vector bilinear interpolation with no production calls."""
     wealth_arr = np.asarray(wealth, dtype=float)
     flat = wealth_arr.reshape(-1)
-    iy, ty = _literal_bracket(illiquid_grid, illiquid)
+    iy, ty = _literal_bracket(points=illiquid_grid, query=illiquid)
     assert np.all((wealth_grid[0] <= flat) & (flat <= wealth_grid[-1]))
     ix = np.searchsorted(wealth_grid, flat, side="right") - 1
     ix = np.clip(ix, 0, len(wealth_grid) - 2)
@@ -406,7 +407,7 @@ def _scalar_bank_oracle(*, wealth: float, illiquid: float) -> dict[str, float | 
         consumption = cast(
             "float",
             _literal_bilinear(
-                inner_bank[index],
+                surface=inner_bank[index],
                 wealth=wealth,
                 illiquid=illiquid,
                 wealth_grid=wealth_grid,
@@ -416,7 +417,7 @@ def _scalar_bank_oracle(*, wealth: float, illiquid: float) -> dict[str, float | 
         target = cast(
             "float",
             _literal_bilinear(
-                target_bank[index],
+                surface=target_bank[index],
                 wealth=wealth,
                 illiquid=illiquid,
                 wealth_grid=wealth_grid,
@@ -427,7 +428,7 @@ def _scalar_bank_oracle(*, wealth: float, illiquid: float) -> dict[str, float | 
         marker = cast(
             "float",
             _literal_bilinear(
-                marker_bank[index],
+                surface=marker_bank[index],
                 wealth=wealth,
                 illiquid=illiquid,
                 wealth_grid=wealth_grid,
@@ -451,7 +452,7 @@ def _scalar_bank_oracle(*, wealth: float, illiquid: float) -> dict[str, float | 
         continuation = cast(
             "float",
             _literal_bilinear(
-                terminal_v,
+                surface=terminal_v,
                 wealth=next_wealth,
                 illiquid=target,
                 wealth_grid=wealth_grid,
@@ -491,7 +492,7 @@ def _dense_conditional_oracle(*, wealth: float, illiquid: float) -> dict[str, fl
             continue
         feasible_consumption = consumptions[inside]
         continuation = _literal_bilinear(
-            terminal_v,
+            surface=terminal_v,
             wealth=next_wealth[inside],
             illiquid=float(target),
             wealth_grid=wealth_grid,

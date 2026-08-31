@@ -44,7 +44,7 @@ def test_a_zero_probability_scalar_target_leaves_the_continuation_intact(
         as_lottery=False,
         zero=jnp.asarray(0.0),
     )
-    CE = _sum_regime_mixture(mixture_terms, like=jnp.asarray(0.0))
+    CE = _sum_regime_mixture(mixture_terms=mixture_terms, like=jnp.asarray(0.0))
 
     np.testing.assert_allclose(np.asarray(CE), 2.0)
     np.testing.assert_allclose(np.asarray(mass), 1.0)
@@ -65,6 +65,6 @@ def test_a_reachable_infeasible_target_still_propagates_its_minus_infinity():
         as_lottery=False,
         zero=jnp.asarray(0.0),
     )
-    CE = _sum_regime_mixture(mixture_terms, like=jnp.asarray(0.0))
+    CE = _sum_regime_mixture(mixture_terms=mixture_terms, like=jnp.asarray(0.0))
 
     assert np.isneginf(np.asarray(CE))

@@ -295,7 +295,7 @@ def test_exact_keeper_dominance_under_the_fixed_cost_fold(
 @pytest.mark.slow
 @pytest.mark.manual
 def test_coarse_fine_outer_convergence(
-    coarse_capture: dict, fine_capture: dict
+    *, coarse_capture: dict, fine_capture: dict
 ) -> None:
     """Refining the outer mesh barely moves the captured value surface.
 

@@ -24,7 +24,7 @@ def binary_discrete_grid():
     cls = make_dataclass("BinaryCategory", [("a", ScalarInt), ("b", ScalarInt)])
     type.__setattr__(cls, "a", jnp.int32(0))
     type.__setattr__(cls, "b", jnp.int32(1))
-    return DiscreteGrid(cls)
+    return DiscreteGrid(category_class=cls)
 
 
 @pytest.fixture
@@ -179,7 +179,7 @@ def test_get_interpolator():
         axis_names=["wealth", "working"],
     )
 
-    def _utility(wealth, working):
+    def _utility(*, wealth, working):
         return 2 * wealth - working
 
     prod_utility = productmap(
@@ -258,7 +258,7 @@ def test_get_interpolator_illustrative():
         axis_names=["a", "b"],
     )
 
-    def f(a, b):
+    def f(*, a, b):
         return a - b
 
     prod_f = productmap(

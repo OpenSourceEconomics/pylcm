@@ -104,6 +104,7 @@ def _branches(
 
 
 def _branch_at(
+    *,
     branch: tuple[float, np.ndarray, np.ndarray, np.ndarray],
     x_query: float,
     tol: float,
@@ -141,6 +142,7 @@ def _branch_at(
 
 
 def _resolve_tie(
+    *,
     branches: list[tuple[float, np.ndarray, np.ndarray, np.ndarray]],
     tied: list[tuple[float, tuple[float, float]]],
     x_query: float,
@@ -157,7 +159,9 @@ def _resolve_tie(
     eps = _RIGHT_EPS * max(1.0, abs(x_query))
     best_label, best_policy, best_right = None, np.nan, -np.inf
     for label, (_value, policy) in tied:
-        probed = _branch_at(label_to_branch[label], x_query + eps, tol)
+        probed = _branch_at(
+            branch=label_to_branch[label], x_query=x_query + eps, tol=tol
+        )
         right_value = probed[0] if probed is not None else -np.inf
         if right_value > best_right:
             best_right, best_label, best_policy = right_value, label, policy
@@ -200,7 +204,8 @@ def exact_envelope(
         evaluated = [
             (branch[0], result)
             for branch in branches
-            if (result := _branch_at(branch, float(x_point), tol)) is not None
+            if (result := _branch_at(branch=branch, x_query=float(x_point), tol=tol))
+            is not None
         ]
         if not evaluated:
             continue
@@ -215,7 +220,7 @@ def exact_envelope(
             win_label, (_win_value, win_policy) = tied[0]
         else:
             win_label, win_policy, _win_value = _resolve_tie(
-                branches, tied, float(x_point), tol
+                branches=branches, tied=tied, x_query=float(x_point), tol=tol
             )
         env_value[k] = max_value
         env_policy[k] = win_policy

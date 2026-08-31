@@ -31,7 +31,7 @@ def _crra_marginal(crra):
 
 @pytest.mark.parametrize("crra", [1.5, 2.0, 3.0])
 @pytest.mark.parametrize("m", [0.01, 0.1, 0.5, 1.0, 5.0])
-def test_numeric_inverse_matches_crra_analytic_value(crra, m):
+def test_numeric_inverse_matches_crra_analytic_value(*, crra, m):
     """The root of `c^{-crra} = m` equals the analytic `m^{-1/crra}`."""
     c = numeric_inverse_marginal_utility(
         marginal_continuation=jnp.asarray(m),
@@ -45,7 +45,7 @@ def test_numeric_inverse_matches_crra_analytic_value(crra, m):
 
 @pytest.mark.parametrize("crra", [1.5, 2.0, 3.0])
 @pytest.mark.parametrize("m", [0.05, 0.5, 2.0])
-def test_numeric_inverse_derivative_matches_crra_analytic(crra, m):
+def test_numeric_inverse_derivative_matches_crra_analytic(*, crra, m):
     """`d c*/d m` from the inverter equals the analytic CRRA derivative.
 
     For `c* = m^{-1/crra}`, `d c*/d m = -(1/crra) m^{-1/crra - 1}`. The implicit

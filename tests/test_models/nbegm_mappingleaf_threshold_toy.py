@@ -43,7 +43,7 @@ class ConsumerKind:
     hi: ScalarInt
 
 
-def gross_income(liquid: ContinuousState, base_income: float) -> FloatND:
+def gross_income(*, liquid: ContinuousState, base_income: float) -> FloatND:
     """Pre-tax income: liquid wealth plus a kind-invariant base income (monotone)."""
     return liquid + base_income
 
@@ -58,6 +58,7 @@ def gross_income(liquid: ContinuousState, base_income: float) -> FloatND:
     ),
 )
 def subsidy(
+    *,
     gross_income: FloatND,
     kind: DiscreteState,
     subsidy_low: float,
@@ -72,7 +73,7 @@ def subsidy(
     return jnp.where(gross_income < fpl_cliff[kind], subsidy_high, subsidy_low)
 
 
-def resources(gross_income: FloatND, subsidy: FloatND) -> FloatND:
+def resources(*, gross_income: FloatND, subsidy: FloatND) -> FloatND:
     """Cash-on-hand: pre-tax income plus the cliff-contingent subsidy."""
     return gross_income + subsidy
 
@@ -112,7 +113,7 @@ def build_model(
         "resources": resources,
     }
     alive_solver = resolve_solver(
-        variant,
+        variant=variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
     )
     alive_functions = {**alive_functions, "savings": savings}
@@ -128,7 +129,7 @@ def build_model(
         liquid_law=liquid_law,
         alive_solver=alive_solver,
         constraints=constraints,
-        extra_states={"kind": DiscreteGrid(ConsumerKind)},
+        extra_states={"kind": DiscreteGrid(category_class=ConsumerKind)},
         extra_state_transitions={"kind": {"alive": lcm.fixed_transition("kind")}},
     )
 

@@ -51,7 +51,7 @@ def _double_the_entry(next_shock: ScalarFloat) -> ScalarFloat:
     return 2.0 * next_shock
 
 
-def _wealth_utility(wealth: ScalarFloat, shock: ScalarFloat) -> FloatND:
+def _wealth_utility(*, wealth: ScalarFloat, shock: ScalarFloat) -> FloatND:
     return wealth + 0.0 * shock
 
 

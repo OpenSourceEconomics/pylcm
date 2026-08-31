@@ -25,6 +25,7 @@ class RegimeId:
 
 
 def _utility(
+    *,
     wealth: ContinuousState,
     income: ContinuousState,
     consumption: ContinuousAction,
@@ -33,13 +34,14 @@ def _utility(
 
 
 def _next_wealth(
+    *,
     wealth: ContinuousState,
     consumption: ContinuousAction,
 ) -> ContinuousState:
     return wealth - consumption
 
 
-def _constraint(consumption: ContinuousAction, wealth: ContinuousState) -> FloatND:
+def _constraint(*, consumption: ContinuousAction, wealth: ContinuousState) -> FloatND:
     return consumption <= wealth
 
 
@@ -104,7 +106,7 @@ def test_fully_specified_process():
         (NormalIIDProcess, {"gauss_hermite": True}),
     ],
 )
-def test_process_without_params_is_not_fully_specified(grid_cls, extra_kw):
+def test_process_without_params_is_not_fully_specified(*, grid_cls, extra_kw):
     """All distributions require explicit params — nothing is defaulted."""
     grid = grid_cls(n_points=5, **extra_kw)
     assert not grid.is_fully_specified

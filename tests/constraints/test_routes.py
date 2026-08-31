@@ -43,7 +43,7 @@ from lcm import ref
 from lcm.typing import FloatND
 
 
-def _spendable(wealth: FloatND, consumption: FloatND) -> FloatND:
+def _spendable(*, wealth: FloatND, consumption: FloatND) -> FloatND:
     """A helper the constraint reaches through rather than naming its leaves."""
     return wealth - consumption
 
@@ -421,7 +421,7 @@ def test_a_proof_is_consulted_before_a_boundary_compiler() -> None:
     assert isinstance(plan.entries[0].disposition, ProvedByConstruction)
 
 
-def _affordable(consumption: FloatND, wealth: FloatND) -> FloatND:
+def _affordable(*, consumption: FloatND, wealth: FloatND) -> FloatND:
     return consumption <= wealth
 
 

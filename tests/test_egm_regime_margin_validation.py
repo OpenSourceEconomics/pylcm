@@ -51,7 +51,7 @@ class _Employment:
     retired: ScalarInt
 
 
-_DISCRETE_GRID = DiscreteGrid(_Employment)
+_DISCRETE_GRID = DiscreteGrid(category_class=_Employment)
 
 
 def _one_margin_solver() -> OneMarginSolver:

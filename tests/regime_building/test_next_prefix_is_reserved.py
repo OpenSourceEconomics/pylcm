@@ -47,7 +47,7 @@ def _keep_wealth(wealth: ScalarFloat) -> ScalarFloat:
     return wealth
 
 
-def _wealth_and_shock(wealth: ScalarFloat, shock: ScalarFloat) -> ScalarFloat:
+def _wealth_and_shock(*, wealth: ScalarFloat, shock: ScalarFloat) -> ScalarFloat:
     return wealth + shock
 
 
@@ -85,7 +85,7 @@ def _build(
 
 
 def _utility_of_a_moved_state(
-    wealth: ScalarFloat, next_wealth: ScalarFloat
+    *, wealth: ScalarFloat, next_wealth: ScalarFloat
 ) -> ScalarFloat:
     return wealth + next_wealth
 
@@ -122,7 +122,7 @@ def _plain_utility(wealth: ScalarFloat) -> ScalarFloat:
     ids=["directly", "through_a_helper"],
 )
 def test_a_value_belonging_to_a_target_may_not_be_read_outside_a_transition(
-    functions, offender
+    *, functions, offender
 ) -> None:
     """The offending consumer is named, and the message says where the value lives."""
     with pytest.raises(InvalidNameError, match=offender):
@@ -168,7 +168,7 @@ def test_a_constraint_may_not_read_a_targets_draw() -> None:
 
 
 def _aggregator_reading_a_next_name(
-    utility: ScalarFloat, CE: ScalarFloat, next_wealth: ScalarFloat
+    *, utility: ScalarFloat, CE: ScalarFloat, next_wealth: ScalarFloat
 ) -> ScalarFloat:
     return utility + CE + next_wealth
 
@@ -195,12 +195,12 @@ def _next_aime(wealth: ScalarFloat) -> ScalarFloat:
 
 
 def _next_wealth_reading_a_sibling(
-    wealth: ScalarFloat, next_aime: ScalarFloat
+    *, wealth: ScalarFloat, next_aime: ScalarFloat
 ) -> ScalarFloat:
     return 0.5 * wealth + next_aime
 
 
-def _wealth_and_aime(wealth: ScalarFloat, aime: ScalarFloat) -> ScalarFloat:
+def _wealth_and_aime(*, wealth: ScalarFloat, aime: ScalarFloat) -> ScalarFloat:
     return wealth + aime
 
 
@@ -250,7 +250,7 @@ def _law_reading_a_shared_helper(shared: ScalarFloat) -> ScalarFloat:
 
 
 def _utility_of_a_shared_helper(
-    shared: ScalarFloat, wealth: ScalarFloat
+    *, shared: ScalarFloat, wealth: ScalarFloat
 ) -> ScalarFloat:
     return shared + wealth
 
@@ -350,7 +350,7 @@ def test_a_regime_probability_may_not_read_a_next_name() -> None:
 
 
 def _transform_reading_a_next_name(
-    value: ScalarFloat, next_wealth: ScalarFloat
+    *, value: ScalarFloat, next_wealth: ScalarFloat
 ) -> ScalarFloat:
     return value + 0.0 * next_wealth
 

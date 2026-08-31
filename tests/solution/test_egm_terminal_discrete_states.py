@@ -71,13 +71,14 @@ class RegimeId:
 
 
 def bequest_weight(
-    pref_type: DiscreteState, weight_low: float, weight_high: float
+    *, pref_type: DiscreteState, weight_low: float, weight_high: float
 ) -> FloatND:
     """Per-type bequest weight; the two types differ enough to catch misalignment."""
     return jnp.where(pref_type == PrefType.strong_bequest, weight_high, weight_low)
 
 
 def bequest_utility(
+    *,
     wealth: ContinuousState,
     pref_type: DiscreteState,
     weight_low: float,
@@ -91,7 +92,7 @@ def bequest_utility(
 
 
 def utility_retirement(
-    consumption: ContinuousAction, pref_type: DiscreteState, flow_taste: float
+    *, consumption: ContinuousAction, pref_type: DiscreteState, flow_taste: float
 ) -> FloatND:
     """Log consumption plus a per-type additive flow taste.
 
@@ -104,18 +105,18 @@ def utility_retirement(
     return jnp.log(consumption) + taste
 
 
-def savings_post(wealth: FloatND, consumption: ContinuousAction) -> FloatND:
+def savings_post(*, wealth: FloatND, consumption: ContinuousAction) -> FloatND:
     return wealth - consumption
 
 
 def next_wealth_from_savings(
-    savings_post: FloatND, interest_rate: float
+    *, savings_post: FloatND, interest_rate: float
 ) -> ContinuousState:
     return (1.0 + interest_rate) * savings_post
 
 
 def next_wealth_brute(
-    wealth: ContinuousState, consumption: ContinuousAction, interest_rate: float
+    *, wealth: ContinuousState, consumption: ContinuousAction, interest_rate: float
 ) -> ContinuousState:
     return (1.0 + interest_rate) * (wealth - consumption)
 
@@ -124,7 +125,7 @@ def inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
     return 1.0 / marginal_continuation
 
 
-def next_regime_from_retirement(age: int, final_age_alive: float) -> ScalarInt:
+def next_regime_from_retirement(*, age: int, final_age_alive: float) -> ScalarInt:
     return jnp.where(
         age >= final_age_alive,
         RegimeId.dead,
@@ -133,7 +134,7 @@ def next_regime_from_retirement(age: int, final_age_alive: float) -> ScalarInt:
 
 
 def borrowing_constraint(
-    consumption: ContinuousAction, wealth: ContinuousState
+    *, consumption: ContinuousAction, wealth: ContinuousState
 ) -> FloatND:
     return consumption <= wealth
 
@@ -143,7 +144,7 @@ def _make_dead_regime() -> UserRegime:
         transition=None,
         states={
             "wealth": BEQUEST_WEALTH_GRID,
-            "pref_type": DiscreteGrid(PrefType),
+            "pref_type": DiscreteGrid(category_class=PrefType),
         },
         functions={
             "utility": bequest_utility,
@@ -164,7 +165,10 @@ def _get_dcegm_model() -> Model:
     retirement = ConsumptionSavingsRegime(
         transition=next_regime_from_retirement,
         actions={"consumption": CONSUMPTION_GRID},
-        states={"wealth": WEALTH_GRID, "pref_type": DiscreteGrid(PrefType)},
+        states={
+            "wealth": WEALTH_GRID,
+            "pref_type": DiscreteGrid(category_class=PrefType),
+        },
         state_transitions={
             "wealth": next_wealth_from_savings,
             "pref_type": fixed_transition("pref_type"),
@@ -198,7 +202,10 @@ def _get_brute_model() -> Model:
     retirement = UserRegime(
         transition=next_regime_from_retirement,
         actions={"consumption": CONSUMPTION_GRID},
-        states={"wealth": WEALTH_GRID, "pref_type": DiscreteGrid(PrefType)},
+        states={
+            "wealth": WEALTH_GRID,
+            "pref_type": DiscreteGrid(category_class=PrefType),
+        },
         state_transitions={
             "wealth": next_wealth_brute,
             "pref_type": fixed_transition("pref_type"),

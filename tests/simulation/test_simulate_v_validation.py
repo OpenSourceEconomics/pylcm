@@ -19,7 +19,7 @@ from lcm_examples.iskhakov_et_al_2017 import get_model, get_params
 def _simulate(*, log_level: LogLevel) -> None:
     model = get_model(6)
     params = get_params(
-        6,
+        n_periods=6,
         discount_factor=0.98,
         disutility_of_work=1.0,
         interest_rate=0.0,

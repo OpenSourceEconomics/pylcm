@@ -13,14 +13,14 @@ from lcm.typing import FloatND, IntND
 
 
 def _maybe_jit(
-    func: Callable[..., FloatND], *, compiled: bool
+    *, func: Callable[..., FloatND], compiled: bool
 ) -> Callable[..., FloatND]:
     return jax.jit(func) if compiled else func
 
 
-def _mean(values: FloatND, weights: FloatND, shifts: IntND) -> FloatND:
+def _mean(*, values: FloatND, weights: FloatND, shifts: IntND) -> FloatND:
     """The scaled weighted mean, as a positional-argument function to transform."""
-    return zero_safe_average(values, weights=weights, shifts=shifts)
+    return zero_safe_average(a=values, weights=weights, shifts=shifts)
 
 
 @pytest.mark.parametrize("primitive", ["ldexp", "frexp"])
@@ -83,7 +83,7 @@ def test_downward_scaling_matches_ieee_ldexp_at_boundaries(*, compiled: bool) ->
         ],
         dtype=np.int32,
     )
-    scale = _maybe_jit(scaled_down_by_power_of_two, compiled=compiled)
+    scale = _maybe_jit(func=scaled_down_by_power_of_two, compiled=compiled)
 
     got = np.asarray(scale(jnp.asarray(values), jnp.asarray(shifts)))
     with np.errstate(over="ignore", under="ignore", invalid="ignore"):
@@ -109,7 +109,7 @@ def test_downward_scaling_rounds_subnormal_ties_to_even(*, compiled: bool) -> No
     )
     values = bits.view(np_dtype)
     shifts = np.asarray([-1, -1], dtype=np.int32)
-    scale = _maybe_jit(scaled_down_by_power_of_two, compiled=compiled)
+    scale = _maybe_jit(func=scaled_down_by_power_of_two, compiled=compiled)
 
     got = np.asarray(scale(jnp.asarray(values), jnp.asarray(shifts)))
     expected = np.ldexp(values, shifts).astype(np_dtype)
@@ -131,7 +131,7 @@ def test_downward_scaling_matches_ieee_ldexp_on_random_finite_values(
     values = values[np.isfinite(values)]
     minimum_shift = -350 if np_dtype == np.dtype(np.float32) else -3000
     shifts = rng.integers(minimum_shift, 1, size=values.size, dtype=np.int32)
-    scale = _maybe_jit(scaled_down_by_power_of_two, compiled=compiled)
+    scale = _maybe_jit(func=scaled_down_by_power_of_two, compiled=compiled)
 
     got = np.asarray(scale(jnp.asarray(values), jnp.asarray(shifts)))
     with np.errstate(over="ignore", under="ignore", invalid="ignore"):
@@ -147,9 +147,9 @@ def test_downward_scaling_has_the_expected_value_gradient(*, compiled: bool) -> 
     shifts = jnp.asarray([0, -1, -7], dtype=jnp.int32)
 
     def total(values: FloatND) -> FloatND:
-        return jnp.sum(scaled_down_by_power_of_two(values, shifts))
+        return jnp.sum(scaled_down_by_power_of_two(values=values, shift=shifts))
 
-    gradient = jax.grad(_maybe_jit(total, compiled=compiled))(
+    gradient = jax.grad(_maybe_jit(func=total, compiled=compiled))(
         jnp.asarray([1.0, 1.0, 1.0], dtype=dtype)
     )
     expected = jnp.asarray([1.0, 0.5, 2.0**-7], dtype=dtype)
@@ -170,7 +170,7 @@ def test_a_large_rare_contribution_is_formed_before_its_scale_is_applied(
     dtype = jnp.zeros(()).dtype
     tiny = jnp.asarray(jnp.finfo(dtype).tiny, dtype=dtype)
     large = jnp.asarray(1.0, dtype=dtype) / tiny
-    reduce = _maybe_jit(_mean, compiled=compiled)
+    reduce = _maybe_jit(func=_mean, compiled=compiled)
 
     got = reduce(
         jnp.asarray([0.0, large], dtype=dtype),
@@ -187,7 +187,7 @@ def test_a_live_nonfinite_node_is_not_reclassified_as_null_by_its_scale(
     *, compiled: bool, kind: str
 ) -> None:
     """A live node stays non-finite even when its plain weight underflows."""
-    reduce = _maybe_jit(_mean, compiled=compiled)
+    reduce = _maybe_jit(func=_mean, compiled=compiled)
     spread = 300 if jnp.zeros(()).dtype == jnp.float32 else 2800
     nonfinite = {
         "nan": jnp.nan,
@@ -214,7 +214,7 @@ def test_a_represented_zero_remains_the_null_event_at_any_scale(
     *, compiled: bool
 ) -> None:
     """A genuine zero coefficient annihilates a non-finite value."""
-    reduce = _maybe_jit(_mean, compiled=compiled)
+    reduce = _maybe_jit(func=_mean, compiled=compiled)
 
     got = reduce(
         jnp.asarray([1.0, jnp.nan]),
@@ -228,7 +228,7 @@ def test_a_represented_zero_remains_the_null_event_at_any_scale(
 @pytest.mark.parametrize("compiled", [False, True], ids=["eager", "jit"])
 def test_the_mass_is_read_on_the_same_common_scale(*, compiled: bool) -> None:
     """Weights `(1, 1/4)` price the second node at one fifth."""
-    reduce = _maybe_jit(_mean, compiled=compiled)
+    reduce = _maybe_jit(func=_mean, compiled=compiled)
 
     got = reduce(
         jnp.asarray([0.0, 1.0]),

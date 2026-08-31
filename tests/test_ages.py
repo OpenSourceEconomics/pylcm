@@ -28,7 +28,7 @@ from tests.test_models.deterministic.base import (
         ("Q", Fraction(1, 4)),
     ],
 )
-def test_parse_step_valid_formats(step, expected):
+def test_parse_step_valid_formats(*, step, expected):
     assert _parse_step(step) == expected
 
 

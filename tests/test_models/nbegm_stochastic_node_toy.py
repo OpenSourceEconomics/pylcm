@@ -57,7 +57,7 @@ INCOME_SCALE = 0.5
         lcm.affine_breakpoint(threshold="tax_exemption", kind="continuous_kink"),
     ),
 )
-def tax(liquid: ContinuousState, tax_rate: float, tax_exemption: float) -> FloatND:
+def tax(*, liquid: ContinuousState, tax_rate: float, tax_exemption: float) -> FloatND:
     """Continuous tax: zero below the exemption, `tax_rate` on the excess above."""
     return tax_rate * jnp.maximum(liquid - tax_exemption, 0.0)
 
@@ -68,7 +68,7 @@ def tax(liquid: ContinuousState, tax_rate: float, tax_exemption: float) -> Float
     breakpoints=(lcm.affine_breakpoint(threshold="tax_exemption", kind="jump"),),
 )
 def tax_cliff(
-    liquid: ContinuousState, tax_rate: float, tax_exemption: float, tax_lump: float
+    *, liquid: ContinuousState, tax_rate: float, tax_exemption: float, tax_lump: float
 ) -> FloatND:
     """Cliff tax: zero below the exemption, a lump plus `tax_rate` on the excess."""
     return jnp.where(
@@ -78,19 +78,20 @@ def tax_cliff(
     )
 
 
-def resources(liquid: ContinuousState, tax: FloatND, base_income: float) -> FloatND:
+def resources(*, liquid: ContinuousState, tax: FloatND, base_income: float) -> FloatND:
     """Cash-on-hand: liquid plus a flat base income, net of the tax."""
     return liquid + base_income - tax
 
 
 def coh_per_kind(
-    liquid: ContinuousState, tax: FloatND, base_income: FloatND, kind: DiscreteState
+    *, liquid: ContinuousState, tax: FloatND, base_income: FloatND, kind: DiscreteState
 ) -> FloatND:
     """Cash-on-hand whose base income is read off the ride-along `kind` code."""
     return liquid + base_income[kind] - tax
 
 
 def next_liquid(
+    *,
     resources: FloatND,
     consumption: ContinuousAction,
     income: ContinuousState,
@@ -103,6 +104,7 @@ def next_liquid(
 
 
 def next_liquid_from_savings(
+    *,
     savings: FloatND,
     income: ContinuousState,
     return_liquid: float,
@@ -158,7 +160,7 @@ def build_model(
         "resources": resources_func,
     }
     alive_solver = resolve_solver(
-        variant,
+        variant=variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
         stochastic_node_batch_size=stochastic_node_batch_size,
     )
@@ -172,9 +174,14 @@ def build_model(
     if with_kind:
         extra_state_transitions = {"kind": {"alive": lcm.fixed_transition("kind")}}
         if distributed_kind:
-            model_states = {"kind": DiscreteGrid(ConsumerKind, distributed=True)}
+            model_states = {
+                "kind": DiscreteGrid(category_class=ConsumerKind, distributed=True)
+            }
         else:
-            extra_states = {**extra_states, "kind": DiscreteGrid(ConsumerKind)}
+            extra_states = {
+                **extra_states,
+                "kind": DiscreteGrid(category_class=ConsumerKind),
+            }
 
     return make_alive_dead_model(
         n_periods=n_periods,

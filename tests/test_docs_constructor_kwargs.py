@@ -162,7 +162,7 @@ lcm.OuterContinuousMargin(bogus=1)
         (lcm.consumption_savings_regime.OuterContinuousMargin, "adjustment_cost"),
     ],
 )
-def test_the_field_probe_resolves_real_fields(cls, expected):
+def test_the_field_probe_resolves_real_fields(*, cls, expected):
     """The probe reads real constructor fields, so a negative result is evidence."""
     accepted = _accepted_keywords(cls)
 

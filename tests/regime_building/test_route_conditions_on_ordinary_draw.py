@@ -85,7 +85,7 @@ def _identity_wage(wage: ContinuousState) -> ContinuousState:
 
 
 def _same_period_mappings_for(
-    regime, *, regimes, flat_params, solution, dissolution_flags
+    *, regime, regimes, flat_params, solution, dissolution_flags
 ):
     """Fold exactly like `simulate()` does before `route_gated_edges`.
 
@@ -129,7 +129,7 @@ def test_unrelated_ordinary_draw_is_not_force_routed_through_an_open_gate():
     )
     single_f = regimes["single_f"]
     same_period_mappings = _same_period_mappings_for(
-        single_f,
+        regime=single_f,
         regimes=regimes,
         flat_params=flat_params,
         solution=solution,
@@ -193,7 +193,7 @@ def test_ordinary_draw_is_target_routes_exactly_as_before_open_and_closed():
     )
     single_f = regimes["single_f"]
     same_period_mappings = _same_period_mappings_for(
-        single_f,
+        regime=single_f,
         regimes=regimes,
         flat_params=flat_params,
         solution=solution,
@@ -247,7 +247,7 @@ def _gate_always_open(wage: ContinuousState) -> BoolND:
     return jnp.ones_like(wage, dtype=bool)
 
 
-def _u_src(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _u_src(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     return wage * work
 
 
@@ -302,7 +302,7 @@ def _make_dual_edge_regimes(*, edge_order: tuple[str, str]) -> dict[str, Regime]
         active=lambda age: age < 1,
         states={"wage": _WAGE_2},
         state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_src},
     )
     target_a = Regime(
@@ -375,7 +375,7 @@ def _route_dual_edge(*, edge_order: tuple[str, str]):
     )
     src = regimes["src"]
     same_period_mappings = _same_period_mappings_for(
-        src,
+        regime=src,
         regimes=regimes,
         flat_params=flat_params,
         solution=solution,

@@ -36,16 +36,16 @@ def _a(m: FloatND) -> FloatND:
     return 0.2 + 0.5 * m
 
 
-def _conditional_value(f: FloatND, m: FloatND) -> FloatND:
+def _conditional_value(*, f: FloatND, m: FloatND) -> FloatND:
     return -((f - _a(m)) ** 2) + jnp.log1p(m)
 
 
-def _conditional_marginal(f: FloatND, m: FloatND) -> FloatND:
+def _conditional_marginal(*, f: FloatND, m: FloatND) -> FloatND:
     """d/dm of the conditional value at fixed outer action f."""
     return (f - _a(m)) + 1.0 / (1.0 + m)
 
 
-def _carry(value: FloatND, marginal: FloatND) -> EGMCarry:
+def _carry(*, value: FloatND, marginal: FloatND) -> EGMCarry:
     return EGMCarry(
         endog_grid=jnp.broadcast_to(_M, value.shape),
         value=value,
@@ -58,8 +58,11 @@ def _analytic_bank() -> OuterCandidateBank:
     results = [
         OuterCandidateResult(
             outer_node=node,
-            V_arr=_conditional_value(node, _M),
-            carry=_carry(_conditional_value(node, _M), _conditional_marginal(node, _M)),
+            V_arr=_conditional_value(f=node, m=_M),
+            carry=_carry(
+                value=_conditional_value(f=node, m=_M),
+                marginal=_conditional_marginal(f=node, m=_M),
+            ),
             sim_policy=None,
         )
         for node in _NODES
@@ -73,7 +76,7 @@ def test_adjuster_optimum_matches_the_analytic_envelope() -> None:
     keeper_value = jnp.log1p(_M) - 1.0  # strictly worse everywhere
     collapse = collapse_continuous_candidate_bank(
         keeper_v_arr=keeper_value,
-        keeper_carry=_carry(keeper_value, jnp.full_like(_M, 0.123)),
+        keeper_carry=_carry(value=keeper_value, marginal=jnp.full_like(_M, 0.123)),
         bank=bank,
         config=_CONFIG,
     )
@@ -108,7 +111,7 @@ def test_envelope_consistency_fd_of_value_matches_marginal() -> None:
     keeper_value = jnp.log1p(_M) - 1.0
     collapse = collapse_continuous_candidate_bank(
         keeper_v_arr=keeper_value,
-        keeper_carry=_carry(keeper_value, jnp.zeros_like(_M)),
+        keeper_carry=_carry(value=keeper_value, marginal=jnp.zeros_like(_M)),
         bank=bank,
         config=_CONFIG,
     )
@@ -136,7 +139,7 @@ def test_keeper_wins_where_better_and_on_exact_ties() -> None:
     keeper_marginal = jnp.full_like(_M, 7.0)
     collapse = collapse_continuous_candidate_bank(
         keeper_v_arr=keeper_value,
-        keeper_carry=_carry(keeper_value, keeper_marginal),
+        keeper_carry=_carry(value=keeper_value, marginal=keeper_marginal),
         bank=bank,
         config=_CONFIG,
     )
@@ -154,7 +157,7 @@ def test_nan_padding_rides_through_untouched() -> None:
     tail = jnp.array([jnp.nan, jnp.nan])
     padded_grid = jnp.concatenate([_M, tail])
 
-    def padded_carry(value: FloatND, marginal: FloatND) -> EGMCarry:
+    def padded_carry(*, value: FloatND, marginal: FloatND) -> EGMCarry:
         return EGMCarry(
             endog_grid=padded_grid,
             value=value,
@@ -165,10 +168,10 @@ def test_nan_padding_rides_through_untouched() -> None:
     results = [
         OuterCandidateResult(
             outer_node=node,
-            V_arr=jnp.concatenate([_conditional_value(node, _M), tail]),
+            V_arr=jnp.concatenate([_conditional_value(f=node, m=_M), tail]),
             carry=padded_carry(
-                jnp.concatenate([_conditional_value(node, _M), tail]),
-                jnp.concatenate([_conditional_marginal(node, _M), tail]),
+                value=jnp.concatenate([_conditional_value(f=node, m=_M), tail]),
+                marginal=jnp.concatenate([_conditional_marginal(f=node, m=_M), tail]),
             ),
             sim_policy=None,
         )
@@ -178,7 +181,9 @@ def test_nan_padding_rides_through_untouched() -> None:
     keeper_value = jnp.concatenate([jnp.log1p(_M) - 1.0, tail])
     collapse = collapse_continuous_candidate_bank(
         keeper_v_arr=keeper_value,
-        keeper_carry=padded_carry(keeper_value, jnp.zeros_like(keeper_value)),
+        keeper_carry=padded_carry(
+            value=keeper_value, marginal=jnp.zeros_like(keeper_value)
+        ),
         bank=bank,
         config=_CONFIG,
     )
@@ -194,7 +199,7 @@ def test_all_infeasible_adjuster_column_keeps_finite_fold_semantics() -> None:
         OuterCandidateResult(
             outer_node=node,
             V_arr=neg_inf_row,
-            carry=_carry(neg_inf_row, jnp.zeros_like(_M)),
+            carry=_carry(value=neg_inf_row, marginal=jnp.zeros_like(_M)),
             sim_policy=None,
         )
         for node in _NODES
@@ -204,7 +209,7 @@ def test_all_infeasible_adjuster_column_keeps_finite_fold_semantics() -> None:
     keeper_marginal = jnp.where(_M < 0.5, 1.0 / (1.0 + _M), 0.3)
     collapse = collapse_continuous_candidate_bank(
         keeper_v_arr=keeper_value,
-        keeper_carry=_carry(keeper_value, keeper_marginal),
+        keeper_carry=_carry(value=keeper_value, marginal=keeper_marginal),
         bank=bank,
         config=_CONFIG,
     )

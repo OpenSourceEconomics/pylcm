@@ -142,7 +142,7 @@ def test_regression_mortality():
 
 
 def _create_grid(
-    grid_type: str, start: float, stop: float, n_points: int
+    *, grid_type: str, start: float, stop: float, n_points: int
 ) -> (
     UniformContinuousGrid
     | IrregSpacedGrid

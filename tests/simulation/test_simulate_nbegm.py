@@ -47,11 +47,13 @@ def terminal_utility(liquid: ContinuousState) -> FloatND:
     return 0.0 * liquid
 
 
-def solve_savings(liquid: ContinuousState, consumption: ContinuousAction) -> FloatND:
+def solve_savings(*, liquid: ContinuousState, consumption: ContinuousAction) -> FloatND:
     return liquid - consumption
 
 
-def simulate_savings(liquid: ContinuousState, consumption: ContinuousAction) -> FloatND:
+def simulate_savings(
+    *, liquid: ContinuousState, consumption: ContinuousAction
+) -> FloatND:
     return liquid - 2.0 * consumption
 
 

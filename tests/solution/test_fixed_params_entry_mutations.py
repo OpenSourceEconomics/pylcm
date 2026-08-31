@@ -56,7 +56,7 @@ def identity(shock: ScalarFloat) -> FloatND:
     return shock
 
 
-def source_value(model: Model, params: dict) -> float:
+def source_value(*, model: Model, params: dict) -> float:
     solution = model.solve(params=params, log_level="debug")
     p = max(period for period, regimes in solution.items() if "source" in regimes)
     return float(np.asarray(solution[p]["source"]).ravel()[0])
@@ -88,8 +88,9 @@ def gh_expectation(transform: Callable[[np.ndarray], np.ndarray]) -> float:
     ids=["normal-square", "lognormal-linear"],
 )
 def test_a_law_from_fixed_params_prices_an_entered_process(
-    coarse: bool,  # noqa: FBT001
-    enable_jit: bool,  # noqa: FBT001
+    *,
+    coarse: bool,
+    enable_jit: bool,
     process: NormalIIDProcess | LogNormalIIDProcess,
     utility: Callable[..., FloatND],
     expected: float,
@@ -121,7 +122,7 @@ def test_a_law_from_fixed_params_prices_an_entered_process(
         enable_jit=enable_jit,
     )
     np.testing.assert_allclose(
-        source_value(model, {"discount_factor": 1.0}),
+        source_value(model=model, params={"discount_factor": 1.0}),
         expected,
         rtol=5e-5,
         atol=5e-5,

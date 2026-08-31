@@ -16,7 +16,7 @@ from lcm.case_piece import (
 from lcm.exceptions import NBEGMCaseError
 
 medicaid_eligible = case_boundary(
-    lcm.ref("assets") < lcm.ref("medicaid_asset_limit"),
+    condition=lcm.ref("assets") < lcm.ref("medicaid_asset_limit"),
     kind="jump",
 )
 
@@ -24,7 +24,7 @@ medicaid_eligible = case_boundary(
 def test_case_boundary_is_an_executable_structured_condition():
     """One comparison supplies both executable truth and boundary structure."""
     predicate = case_boundary(
-        lcm.ref("assets") < lcm.ref("medicaid_asset_limit"),
+        condition=lcm.ref("assets") < lcm.ref("medicaid_asset_limit"),
         kind="jump",
     )
 
@@ -49,7 +49,7 @@ def test_case_boundary_is_an_executable_structured_condition():
 def test_case_boundary_rejects_shapes_that_are_not_one_ordering(condition):
     """A binary case split is exactly one ordered structured comparison."""
     with pytest.raises(NBEGMCaseError, match="exactly one"):
-        case_boundary(condition, kind="jump")
+        case_boundary(condition=condition, kind="jump")
 
 
 def test_piece_records_output_predicate_and_when_side():
@@ -116,7 +116,7 @@ def test_piecewise_affine_attaches_schedule_metadata():
             affine_breakpoint(threshold="bracket_high", kind="continuous_kink"),
         ),
     )
-    def tax_schedule(capital_income, rate):
+    def tax_schedule(*, capital_income, rate):
         return rate * capital_income
 
     assert tax_schedule.__lcm_piecewise_affine__ == PiecewiseAffineMeta(  # ty: ignore[unresolved-attribute]
@@ -132,7 +132,7 @@ def test_piecewise_affine_attaches_schedule_metadata():
 def test_piecewise_affine_returns_the_same_function_object():
     """The schedule decorator returns the original function, never a wrapper."""
 
-    def tax_schedule(capital_income, rate):
+    def tax_schedule(*, capital_income, rate):
         return rate * capital_income
 
     decorated = piecewise_affine(

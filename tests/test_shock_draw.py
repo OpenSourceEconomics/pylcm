@@ -43,13 +43,15 @@ _TAUCHEN_NORMAL_MIXTURE_KWARGS: dict[str, Any] = {
 _AR1_GRID_CLASSES = [TauchenAR1Process, RouwenhorstAR1Process]
 
 
-def _draw_many(grid, params, key_seed=0, current_value=None):
+def _draw_many(*, grid, params, key_seed=0, current_value=None):
     """Helper: draw _N_DRAWS samples from grid.draw_shock."""
     keys = jax.random.split(jax.random.key(key_seed), _N_DRAWS)
     if current_value is not None:
         prev = jnp.array(current_value)
-        return jnp.array([grid.draw_shock(params, k, prev) for k in keys])
-    return jnp.array([grid.draw_shock(params, k) for k in keys])
+        return jnp.array(
+            [grid.draw_shock(params=params, key=k, current_value=prev) for k in keys]
+        )
+    return jnp.array([grid.draw_shock(params=params, key=k) for k in keys])
 
 
 @pytest.mark.parametrize("params_at_init", [True, False])
@@ -62,7 +64,7 @@ def test_draw_shock_uniform(params_at_init):
     else:
         grid = UniformIIDProcess(n_points=5)
         params = MappingProxyType(kwargs)
-    draws = _draw_many(grid, params)
+    draws = _draw_many(grid=grid, params=params)
     assert jnp.all(draws >= 2.0)
     assert jnp.all(draws <= 4.0)
     aaae(draws.mean(), 3.0, decimal=1)
@@ -82,7 +84,7 @@ def test_draw_shock_normal(params_at_init):
             n_points=5, batch_size=0, distributed=False, gauss_hermite=True
         )
         params = MappingProxyType(kwargs)
-    draws = _draw_many(grid, params)
+    draws = _draw_many(grid=grid, params=params)
     aaae(draws.mean(), 5.0, decimal=1)
     aaae(draws.std(), 0.1, decimal=1)
 
@@ -99,7 +101,7 @@ def test_draw_shock_lognormal(params_at_init):
     else:
         grid = LogNormalIIDProcess(n_points=5, gauss_hermite=True)
         params = MappingProxyType(kwargs)
-    draws = _draw_many(grid, params)
+    draws = _draw_many(grid=grid, params=params)
     assert jnp.all(draws > 0)
     aaae(jnp.log(draws).mean(), 1.0, decimal=1)
     aaae(jnp.log(draws).std(), 0.1, decimal=1)
@@ -117,7 +119,7 @@ def test_draw_shock_tauchen(params_at_init):
     else:
         grid = TauchenAR1Process(n_points=5, gauss_hermite=True)
         params = MappingProxyType(kwargs)
-    draws = _draw_many(grid, params, current_value=3.0)
+    draws = _draw_many(grid=grid, params=params, current_value=3.0)
     aaae(draws.mean(), 3.5, decimal=1)
     aaae(draws.std(), 0.1, decimal=1)
 
@@ -134,7 +136,7 @@ def test_draw_shock_rouwenhorst(params_at_init):
     else:
         grid = RouwenhorstAR1Process(n_points=5)
         params = MappingProxyType(kwargs)
-    draws = _draw_many(grid, params, current_value=3.0)
+    draws = _draw_many(grid=grid, params=params, current_value=3.0)
     aaae(draws.mean(), 3.5, decimal=1)
     aaae(draws.std(), 0.1, decimal=1)
 
@@ -151,7 +153,7 @@ def test_draw_shock_normal_mixture(params_at_init):
     else:
         grid = NormalMixtureIIDProcess(n_points=5)
         params = MappingProxyType(kwargs)
-    draws = _draw_many(grid, params)
+    draws = _draw_many(grid=grid, params=params)
     p1 = kwargs["p1"]
     mu1, mu2 = kwargs["mu1"], kwargs["mu2"]
     sigma1, sigma2 = kwargs["sigma1"], kwargs["sigma2"]
@@ -176,7 +178,7 @@ def test_draw_shock_tauchen_normal_mixture(params_at_init):
         grid = TauchenNormalMixtureAR1Process(n_points=5)
         params = MappingProxyType(kwargs)
     current_value = 3.0
-    draws = _draw_many(grid, params, current_value=current_value)
+    draws = _draw_many(grid=grid, params=params, current_value=current_value)
     p1, mu1, mu2 = kwargs["p1"], kwargs["mu1"], kwargs["mu2"]
     mean_eps = p1 * mu1 + (1 - p1) * mu2
     expected_mean = kwargs["mu"] + kwargs["rho"] * current_value + mean_eps
@@ -197,8 +199,9 @@ def test_ar1_draw_shock_unconditional_moments(grid_cls):
     burn_in = 2_000
     keys = jax.random.split(jax.random.key(42), n_steps)
 
+    # keyword-only-exempt: library-callback=jax.lax.scan
     def step(y: jnp.ndarray, key: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
-        y_next = grid.draw_shock(params, key, y)
+        y_next = grid.draw_shock(params=params, key=key, current_value=y)
         return y_next, y_next
 
     y0 = jnp.array(mu / (1 - rho))

@@ -201,7 +201,9 @@ def test_crossing_segments_yield_the_analytic_upper_envelope():
     r_query = np.linspace(0.7, 3.3, 53)
     expected = np.maximum(1.0 + 0.4 * r_query, 0.1 + 0.8 * r_query)
     np.testing.assert_allclose(
-        _envelope_interp(got_grid, got_value, r_query), expected, atol=_COMPUTED_ATOL
+        _envelope_interp(grid=got_grid, value=got_value, x_query=r_query),
+        expected,
+        atol=_COMPUTED_ATOL,
     )
 
 
@@ -272,10 +274,14 @@ def test_node_aligned_crossing_publishes_right_policy_on_default_path():
     )
 
     np.testing.assert_allclose(
-        _envelope_interp(got_grid, got_policy, 10.1), 4.05, atol=_COMPUTED_ATOL
+        _envelope_interp(grid=got_grid, value=got_policy, x_query=10.1),
+        4.05,
+        atol=_COMPUTED_ATOL,
     )
     np.testing.assert_allclose(
-        _envelope_interp(got_grid, got_value, 10.1), 5.08, atol=_COMPUTED_ATOL
+        _envelope_interp(grid=got_grid, value=got_value, x_query=10.1),
+        5.08,
+        atol=_COMPUTED_ATOL,
     )
 
 
@@ -312,10 +318,14 @@ def test_multi_crossing_chain_preserves_the_middle_branch_policy():
     )
 
     np.testing.assert_allclose(
-        _envelope_interp(got_grid, got_policy, 15.0), 4.0, atol=_COMPUTED_ATOL
+        _envelope_interp(grid=got_grid, value=got_policy, x_query=15.0),
+        4.0,
+        atol=_COMPUTED_ATOL,
     )
     np.testing.assert_allclose(
-        _envelope_interp(got_grid, got_value, 15.0), 6.25, atol=_COMPUTED_ATOL
+        _envelope_interp(grid=got_grid, value=got_value, x_query=15.0),
+        6.25,
+        atol=_COMPUTED_ATOL,
     )
     assert int(n_kept) == 6
 
@@ -348,10 +358,14 @@ def test_dominated_coincident_pair_is_not_promoted_to_a_kink():
 
     assert int(n_kept) == 3
     np.testing.assert_allclose(
-        _envelope_interp(got_grid, got_value, 10.0), 6.0, atol=_COMPUTED_ATOL
+        _envelope_interp(grid=got_grid, value=got_value, x_query=10.0),
+        6.0,
+        atol=_COMPUTED_ATOL,
     )
     np.testing.assert_allclose(
-        _envelope_interp(got_grid, got_policy, 10.0), 7.0, atol=_COMPUTED_ATOL
+        _envelope_interp(grid=got_grid, value=got_policy, x_query=10.0),
+        7.0,
+        atol=_COMPUTED_ATOL,
     )
 
 

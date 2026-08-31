@@ -68,7 +68,7 @@ class RegimeId:
 
 
 def new_durable(
-    illiquid: ContinuousState, illiquid_investment: ContinuousAction
+    *, illiquid: ContinuousState, illiquid_investment: ContinuousAction
 ) -> ContinuousState:
     """The durable stock chosen this period, `s' = Z + Iz`.
 
@@ -79,7 +79,7 @@ def new_durable(
     return illiquid + illiquid_investment
 
 
-def credited(illiquid: ContinuousState, new_durable: ContinuousState) -> FloatND:
+def credited(*, illiquid: ContinuousState, new_durable: ContinuousState) -> FloatND:
     """Net liquid cost of moving the durable to `new_durable` (`s'`).
 
     A deposit (`s' > Z`) costs its face value; a withdrawal (`s' < Z`) returns
@@ -104,7 +104,7 @@ def resources_before_outer_cost(wealth: ContinuousState) -> FloatND:
     return wealth + LABOUR_INCOME
 
 
-def liquid_savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
+def liquid_savings(*, resources: FloatND, consumption: ContinuousAction) -> FloatND:
     """Inner post-decision liquid balance `a^X = R_inner - c`."""
     return resources - consumption
 
@@ -125,14 +125,14 @@ def durable_transition(new_durable: ContinuousState) -> ContinuousState:
     return new_durable
 
 
-def utility(consumption: ContinuousAction, illiquid: ContinuousState) -> FloatND:
+def utility(*, consumption: ContinuousAction, illiquid: ContinuousState) -> FloatND:
     """CRRA over `consumption + iota * illiquid` — additively separable in `s'`."""
     flow = consumption + ILLIQUID_FLOW * illiquid
     return flow ** (1.0 - RISK_AVERSION) / (1.0 - RISK_AVERSION)
 
 
 def inverse_marginal_utility(
-    marginal_continuation: FloatND, illiquid: ContinuousState
+    *, marginal_continuation: FloatND, illiquid: ContinuousState
 ) -> FloatND:
     """Inverse of `u'(c) = (c + iota*Z)^{-gamma}` in the inner consumption slot.
 
@@ -151,7 +151,7 @@ def inverse_marginal_utility(
     return marginal_continuation ** (-1.0 / RISK_AVERSION) - ILLIQUID_FLOW * illiquid
 
 
-def next_regime(age: int, final_age_alive: float) -> ScalarInt:
+def next_regime(*, age: int, final_age_alive: float) -> ScalarInt:
     return jnp.where(age >= final_age_alive, RegimeId.dead, RegimeId.alive)
 
 

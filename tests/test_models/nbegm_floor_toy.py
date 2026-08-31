@@ -32,13 +32,13 @@ from tests.test_models.nbegm_common import (
         lcm.affine_breakpoint(threshold="floor_asset", kind="hard_constraint"),
     ),
 )
-def coh_floor(liquid: ContinuousState, floor_asset: float) -> FloatND:
+def coh_floor(*, liquid: ContinuousState, floor_asset: float) -> FloatND:
     """Floor top-up: lifts effective wealth to `floor_asset` where liquid is below."""
     return jnp.maximum(liquid, floor_asset) - liquid
 
 
 def resources(
-    liquid: ContinuousState, coh_floor: FloatND, base_income: float
+    *, liquid: ContinuousState, coh_floor: FloatND, base_income: float
 ) -> FloatND:
     """Cash-on-hand: `max(liquid, floor_asset) + base_income`."""
     return liquid + coh_floor + base_income
@@ -62,7 +62,7 @@ def build_model(
         "savings": savings,
     }
     alive_solver = resolve_solver(
-        variant,
+        variant=variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
     )
 

@@ -18,7 +18,7 @@ _LIQUID = np.linspace(0.1, 30.0, 120)
 _INTERIOR = (_LIQUID > 1.5) & (_LIQUID < 27.0)
 
 
-def _solve(variant: str, *, n_consumption: int = 120) -> Mapping[int, Mapping]:
+def _solve(*, variant: str, n_consumption: int = 120) -> Mapping[int, Mapping]:
     """Solve the tax toy whose budget node is named `cash_on_hand`."""
     model = toy.build_model(
         variant=variant,
@@ -36,8 +36,8 @@ def _solve(variant: str, *, n_consumption: int = 120) -> Mapping[int, Mapping]:
 
 def test_nbegm_with_regime_owned_renamed_budget_matches_brute_every_age():
     """A margin-owned renamed budget solved by NBEGM equals brute at every age."""
-    nbegm = _solve("nbegm")
-    brute = _solve("brute", n_consumption=1500)
+    nbegm = _solve(variant="nbegm")
+    brute = _solve(variant="brute", n_consumption=1500)
     for period in brute:
         if "alive" not in brute[period] or "alive" not in nbegm[period]:
             continue

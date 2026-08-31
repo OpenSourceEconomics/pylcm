@@ -36,16 +36,16 @@ def _read_every_node(grid: FloatND) -> FloatND:
     """Interpolate `grid` at each of its own nodes."""
     axes = [range(size) for size in grid.shape]
     reads = [
-        map_coordinates(grid, [jnp.asarray(float(i)) for i in index])
+        map_coordinates(input=grid, coordinates=[jnp.asarray(float(i)) for i in index])
         for index in itertools.product(*axes)
     ]
     return jnp.asarray(reads).reshape(grid.shape)
 
 
-def _bare_multiply_reference(grid: FloatND, coordinates: list[FloatND]) -> FloatND:
+def _bare_multiply_reference(*, grid: FloatND, coordinates: list[FloatND]) -> FloatND:
     """Interpolate with an unguarded product, correct wherever the grid is finite."""
     data = [
-        _compute_indices_and_weights(coordinate, size)
+        _compute_indices_and_weights(coordinate=coordinate, input_size=size)
         for coordinate, size in zip(coordinates, grid.shape, strict=True)
     ]
     terms = []
@@ -80,7 +80,7 @@ def test_a_read_between_a_feasible_and_an_infeasible_node_is_infeasible() -> Non
     """A genuinely positive weight on `-inf` yields `-inf`, not a finite number."""
     grid = jnp.asarray([1.0, _infeasible()])
 
-    read = map_coordinates(grid, [jnp.asarray(0.5)])
+    read = map_coordinates(input=grid, coordinates=[jnp.asarray(0.5)])
 
     assert bool(jnp.isneginf(read))
 
@@ -100,8 +100,8 @@ def test_extrapolation_outside_the_grid_is_unchanged(coordinate: float) -> None:
     coord = [jnp.asarray(coordinate)]
 
     np.testing.assert_allclose(
-        float(map_coordinates(grid, coord)),
-        float(_bare_multiply_reference(grid, coord)),
+        float(map_coordinates(input=grid, coordinates=coord)),
+        float(_bare_multiply_reference(grid=grid, coordinates=coord)),
         rtol=1e-14,
     )
 
@@ -116,7 +116,7 @@ def test_the_read_stays_differentiable_at_a_node() -> None:
     grid = jnp.asarray([0.0, 2.0, 4.0, 6.0])
 
     def read(coordinate: FloatND) -> FloatND:
-        return map_coordinates(grid, [coordinate])
+        return map_coordinates(input=grid, coordinates=[coordinate])
 
     np.testing.assert_allclose(float(jax.grad(read)(jnp.asarray(1.0))), 2.0)
 
@@ -135,12 +135,18 @@ def test_finite_reads_never_reverse_a_discrete_choice() -> None:
     for _ in range(200):
         coordinates = rng.uniform(-1.0, 9.0, size=(5, 2))
         guarded = [
-            float(map_coordinates(grid, [jnp.asarray(c[0]), jnp.asarray(c[1])]))
+            float(
+                map_coordinates(
+                    input=grid, coordinates=[jnp.asarray(c[0]), jnp.asarray(c[1])]
+                )
+            )
             for c in coordinates
         ]
         bare = [
             float(
-                _bare_multiply_reference(grid, [jnp.asarray(c[0]), jnp.asarray(c[1])])
+                _bare_multiply_reference(
+                    grid=grid, coordinates=[jnp.asarray(c[0]), jnp.asarray(c[1])]
+                )
             )
             for c in coordinates
         ]

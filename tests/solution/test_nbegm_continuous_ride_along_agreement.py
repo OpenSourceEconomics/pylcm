@@ -34,7 +34,7 @@ def _interior_for_wage(wage: float) -> np.ndarray:
     return _EDGE & away_from_cliff
 
 
-def _solve(variant: str, *, n_consumption: int = 160) -> Mapping[int, Mapping]:
+def _solve(*, variant: str, n_consumption: int = 160) -> Mapping[int, Mapping]:
     """Solve the continuous-ride-along toy on the shared comparison grids."""
     model = toy.build_model(
         variant=variant,
@@ -71,8 +71,8 @@ def test_nbegm_continuous_co_state_matches_brute_across_the_cliff() -> None:
     value across the liquid interior of every continuous `wage` slice, through each
     slice's own cliff preimage (away from the straddling grid cells).
     """
-    nbegm = _solve("nbegm")
-    brute = _solve("brute", n_consumption=1800)
+    nbegm = _solve(variant="nbegm")
+    brute = _solve(variant="brute", n_consumption=1800)
     period = _terminal_adjacent_period(nbegm)
     brute_v = np.asarray(brute[period]["alive"])
     nbegm_v = np.asarray(nbegm[period]["alive"])

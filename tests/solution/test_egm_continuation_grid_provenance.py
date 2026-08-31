@@ -95,7 +95,7 @@ def _solve_pair(**grid_overrides):
     return egm, brute
 
 
-def _assert_within_sentinel(rel, sentinel):
+def _assert_within_sentinel(*, rel, sentinel):
     """Both declared statistics of the regret sample are inside the sentinel.
 
     Both are asserted, never one. A median is insensitive to a minority of badly
@@ -107,13 +107,13 @@ def _assert_within_sentinel(rel, sentinel):
     assert np.max(rel) < sentinel["max_value_regret"]
 
 
-def _assert_retired_matches_brute(egm, brute, period=_RETIREMENT_PERIOD):
+def _assert_retired_matches_brute(*, egm, brute, period=_RETIREMENT_PERIOD):
     """The retired value agrees with brute on the unconstrained liquid interior."""
     egm_v = np.asarray(egm[period]["retired"])[_RETIRED_INTERIOR]
     brute_v = np.asarray(brute[period]["retired"])[_RETIRED_INTERIOR]
     assert np.isfinite(egm_v).all()
     rel = np.abs(egm_v - brute_v) / np.abs(brute_v)
-    _assert_within_sentinel(rel, _RETIRED_SENTINEL)
+    _assert_within_sentinel(rel=rel, sentinel=_RETIRED_SENTINEL)
 
 
 def _moving_liquid_grid(*, start, stop_at_age, n_points):
@@ -146,32 +146,33 @@ def _renamed_one_asset_model(*, solver, n_consumption=14):
         alive: ScalarInt
         gone: ScalarInt
 
-    def utility(consumption: ContinuousAction, crra: float) -> FloatND:
+    def utility(*, consumption: ContinuousAction, crra: float) -> FloatND:
         return consumption ** (1.0 - crra) / (1.0 - crra)
 
-    def bequest(wealth: ContinuousState, crra: float) -> FloatND:
+    def bequest(*, wealth: ContinuousState, crra: float) -> FloatND:
         return wealth ** (1.0 - crra) / (1.0 - crra)
 
     def resources(wealth: ContinuousState) -> FloatND:
         return wealth
 
-    def savings(wealth: ContinuousState, consumption: ContinuousAction) -> FloatND:
+    def savings(*, wealth: ContinuousState, consumption: ContinuousAction) -> FloatND:
         return wealth - consumption
 
     def next_wealth(
+        *,
         savings: FloatND,
         return_liquid: float,
         retirement_income: float,
     ) -> ContinuousState:
         return (1.0 + return_liquid) * savings + retirement_income
 
-    def feasible(wealth: ContinuousState, consumption: ContinuousAction) -> BoolND:
+    def feasible(*, wealth: ContinuousState, consumption: ContinuousAction) -> BoolND:
         return consumption <= wealth
 
-    def prob_survive(age: int, last_age: float) -> FloatND:
+    def prob_survive(*, age: int, last_age: float) -> FloatND:
         return jnp.where(age + 1 < last_age, 1.0, 0.0)
 
-    def prob_gone(age: int, last_age: float) -> FloatND:
+    def prob_gone(*, age: int, last_age: float) -> FloatND:
         return jnp.where(age + 1 >= last_age, 1.0, 0.0)
 
     wealth_grid = LinSpacedGrid(start=0.1, stop=20.0, n_points=12)
@@ -249,4 +250,4 @@ def test_w5_egm_does_not_require_the_state_to_be_named_liquid():
         egm_v = np.asarray(egm[period]["alive"])[_RENAMED_UNCONSTRAINED]
         brute_v = np.asarray(brute[period]["alive"])[_RENAMED_UNCONSTRAINED]
         rel = np.abs(egm_v - brute_v) / np.abs(brute_v)
-        _assert_within_sentinel(rel, _RETIRED_SENTINEL)
+        _assert_within_sentinel(rel=rel, sentinel=_RETIRED_SENTINEL)

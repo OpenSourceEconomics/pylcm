@@ -31,7 +31,7 @@ pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_R
 _HONEST_VERDICTS = (-1, UNRESOLVED_SIGN)
 
 
-def _sign_for_exponents(dtype, jax_dtype, large_exp: int, small_exp: int) -> int:
+def _sign_for_exponents(*, dtype, jax_dtype, large_exp: int, small_exp: int) -> int:
     """Certified sign of `A - B` where B is much narrower than A.
 
     Both links rise from `-0.5` to `0.5` across their own span, so at half of B's
@@ -74,7 +74,13 @@ def test_no_width_ratio_is_certified_into_a_tie() -> None:
         ratio
         for ratio in range(1, limit + 1)
         # Centre the pair so that neither endpoint over- or underflows on its own.
-        if _sign_for_exponents(dtype, jax_dtype, ratio // 2, ratio // 2 - ratio) == 0
+        if _sign_for_exponents(
+            dtype=dtype,
+            jax_dtype=jax_dtype,
+            large_exp=ratio // 2,
+            small_exp=ratio // 2 - ratio,
+        )
+        == 0
     ]
     assert ties == []
 
@@ -87,7 +93,7 @@ def test_no_width_ratio_is_certified_into_a_tie() -> None:
     ],
 )
 def test_a_collapsed_width_is_unresolved_rather_than_tied(
-    dtype, jax_dtype, large_exp, small_exp
+    *, dtype, jax_dtype, large_exp, small_exp
 ) -> None:
     """Where the shared scaling flattens the narrow link, the sign is unresolved.
 
@@ -99,7 +105,10 @@ def test_a_collapsed_width_is_unresolved_rather_than_tied(
     if (jax_dtype is jnp.float64) != X64_ENABLED:
         pytest.skip("dtype is not the configured working precision")
     assert (
-        _sign_for_exponents(dtype, jax_dtype, large_exp, small_exp) in _HONEST_VERDICTS
+        _sign_for_exponents(
+            dtype=dtype, jax_dtype=jax_dtype, large_exp=large_exp, small_exp=small_exp
+        )
+        in _HONEST_VERDICTS
     )
 
 
@@ -115,7 +124,10 @@ def test_a_query_the_scaling_flushes_to_zero_is_unresolved_rather_than_tied() ->
     dtype, jax_dtype = _working_dtypes()
     large_exp, small_exp = (512, -549) if X64_ENABLED else (62, -63)
     assert (
-        _sign_for_exponents(dtype, jax_dtype, large_exp, small_exp) in _HONEST_VERDICTS
+        _sign_for_exponents(
+            dtype=dtype, jax_dtype=jax_dtype, large_exp=large_exp, small_exp=small_exp
+        )
+        in _HONEST_VERDICTS
     )
 
 
@@ -130,7 +142,10 @@ def test_the_verdict_does_not_depend_on_the_choice_of_units(unit_shift: int) -> 
     large_exp, small_exp = (400, -675) if X64_ENABLED else (47, -103)
     assert (
         _sign_for_exponents(
-            dtype, jax_dtype, large_exp + unit_shift, small_exp + unit_shift
+            dtype=dtype,
+            jax_dtype=jax_dtype,
+            large_exp=large_exp + unit_shift,
+            small_exp=small_exp + unit_shift,
         )
         in _HONEST_VERDICTS
     )
@@ -184,14 +199,19 @@ def test_ordinary_width_ratios_still_resolve_strictly() -> None:
     wide enough to disturb the scaling fall back to unresolved.
     """
     dtype, jax_dtype = _working_dtypes()
-    assert _sign_for_exponents(dtype, jax_dtype, 3, -17) == -1
+    assert (
+        _sign_for_exponents(
+            dtype=dtype, jax_dtype=jax_dtype, large_exp=3, small_exp=-17
+        )
+        == -1
+    )
 
 
 def _flat_gap_signs(
+    *,
     dtype,
     jax_dtype,
     half_widths: np.ndarray,
-    *,
     wide_exponent: int,
     wide_is_above: bool,
 ) -> np.ndarray:
@@ -225,7 +245,7 @@ def _flat_gap_signs(
 @pytest.mark.parametrize("wide_exponent", [-40, 0, 40])
 @pytest.mark.parametrize("wide_is_above", [True, False])
 def test_a_flat_gap_keeps_its_strict_sign_at_every_width_ratio(
-    wide_exponent: int, *, wide_is_above: bool
+    *, wide_exponent: int, wide_is_above: bool
 ) -> None:
     """Two flat links a fixed gap apart stay strictly ordered however narrow one is.
 
@@ -254,9 +274,9 @@ def test_a_flat_gap_keeps_its_strict_sign_at_every_width_ratio(
     exponents = np.arange(1, -int(np.finfo(dtype).minexp) + 1)
     half_widths = np.ldexp(np.ones(exponents.shape), -exponents).astype(dtype)
     signs = _flat_gap_signs(
-        dtype,
-        jax_dtype,
-        half_widths,
+        dtype=dtype,
+        jax_dtype=jax_dtype,
+        half_widths=half_widths,
         wide_exponent=wide_exponent,
         wide_is_above=wide_is_above,
     )
@@ -265,9 +285,9 @@ def test_a_flat_gap_keeps_its_strict_sign_at_every_width_ratio(
 
 
 def _adjacent_neighbour_signs(
+    *,
     dtype,
     jax_dtype,
-    *,
     separations: np.ndarray,
     offsets: np.ndarray,
     narrow_is_above: bool,
@@ -341,8 +361,8 @@ def test_endpoints_a_subnormal_step_apart_keep_their_strict_sign(
         )
     )
     signs = _adjacent_neighbour_signs(
-        dtype,
-        jax_dtype,
+        dtype=dtype,
+        jax_dtype=jax_dtype,
         separations=separations,
         offsets=offsets,
         narrow_is_above=narrow_is_above,

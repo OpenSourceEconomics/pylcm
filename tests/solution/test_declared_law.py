@@ -23,18 +23,19 @@ from tests.conftest import DECIMAL_PRECISION
 _SAVINGS = jnp.linspace(0.0, 10.0, 11)
 
 
-def savings(wealth: ContinuousState, consumption: FloatND) -> FloatND:
+def savings(*, wealth: ContinuousState, consumption: FloatND) -> FloatND:
     """The post-decision variable the laws below are written through."""
     return wealth - consumption
 
 
 def next_wealth_conventional(
-    savings: FloatND, return_liquid: float, retirement_income: float
+    *, savings: FloatND, return_liquid: float, retirement_income: float
 ) -> ContinuousState:
     return (1.0 + return_liquid) * savings + retirement_income
 
 
 def next_wealth_with_a_fixed_cost(
+    *,
     savings: FloatND,
     return_liquid: float,
     retirement_income: float,
@@ -49,6 +50,7 @@ def next_wealth_falling_in_savings(savings: FloatND) -> ContinuousState:
 
 
 def next_wealth_reaching_past_the_post_decision(
+    *,
     wealth: ContinuousState,
     consumption: FloatND,
     return_liquid: float,

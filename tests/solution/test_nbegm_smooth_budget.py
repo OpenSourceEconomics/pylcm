@@ -38,7 +38,7 @@ _PARAMS = {
 }
 
 
-def _resources(liquid: ContinuousState, base_income: float) -> FloatND:
+def _resources(*, liquid: ContinuousState, base_income: float) -> FloatND:
     """Cash-on-hand: liquid wealth plus base income — affine, no declarations."""
     return liquid + base_income
 
@@ -56,7 +56,7 @@ def _build_model(*, variant: str) -> Model:
         },
         liquid_law=next_liquid_from_savings,
         alive_solver=resolve_solver(
-            variant,
+            variant=variant,
             savings_grid=LinSpacedGrid(start=0.0, stop=28.0, n_points=100),
         ),
         constraints={} if variant == "nbegm" else {"feasible": feasible},

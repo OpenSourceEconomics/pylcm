@@ -19,7 +19,7 @@ from tests.solution.test_egm_discrete import (
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
 
-def test_kernel_memory_dump_emits_at_log_level_off(monkeypatch, caplog):
+def test_kernel_memory_dump_emits_at_log_level_off(*, monkeypatch, caplog):
     """With the env var on, the `[mem]` lines surface even at `log_level="off"`.
 
     `log_level="off"` pins the `lcm` logger at `CRITICAL`; capturing at exactly
@@ -41,7 +41,7 @@ def test_kernel_memory_dump_emits_at_log_level_off(monkeypatch, caplog):
     assert mem_lines, "expected per-kernel [mem] lines with the env var on at log=off"
 
 
-def test_kernel_memory_dump_silent_without_env_var(monkeypatch, caplog):
+def test_kernel_memory_dump_silent_without_env_var(*, monkeypatch, caplog):
     """Without the env var the dump is a no-op at any level (zero cost)."""
     monkeypatch.delenv("LCM_LOG_KERNEL_MEMORY", raising=False)
     model = _get_skill_model()

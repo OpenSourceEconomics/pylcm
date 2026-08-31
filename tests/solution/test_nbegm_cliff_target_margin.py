@@ -16,7 +16,7 @@ from _lcm.solution.nbegm import cliff_target_margin
 @pytest.mark.usefixtures("x64_enabled")
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
 @pytest.mark.parametrize("jump", [1.0, 1e5])
-def test_the_margin_clears_the_cliff_on_both_sides(dtype, jump: float) -> None:
+def test_the_margin_clears_the_cliff_on_both_sides(*, dtype, jump: float) -> None:
     """Both nudged targets map strictly past the jump on their own side."""
     slope = jnp.asarray(1.05, dtype=dtype)
     intercept = jnp.asarray(4.0, dtype=dtype)

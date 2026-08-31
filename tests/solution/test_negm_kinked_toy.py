@@ -79,7 +79,7 @@ _N_ILLIQUID = 6
 _FINAL_AGE_ALIVE = 25  # ages 20, 25 alive then 30 dead: a genuine continuation
 
 
-def _grid(start: float, stop: float, n_points: int) -> LinSpacedGrid:
+def _grid(*, start: float, stop: float, n_points: int) -> LinSpacedGrid:
     return LinSpacedGrid(start=start, stop=stop, n_points=n_points)
 
 
@@ -87,23 +87,25 @@ def _build_matched_negm_model(*, savings_n: int = 80, outer_n: int = 40) -> Mode
     """Build the matched 3-period NEGM model on the repaired wealth domain."""
     solver = NEGM(
         inner=DCEGM(
-            savings_grid=_grid(-5.0, 35.0, savings_n),
+            savings_grid=_grid(start=-5.0, stop=35.0, n_points=savings_n),
         ),
-        outer_grid=_grid(0.0, _ILLIQUID_MAX, outer_n),
+        outer_grid=_grid(start=0.0, stop=_ILLIQUID_MAX, n_points=outer_n),
     )
     alive = NestedConsumptionSavingsRegime(
         active=lambda age, n=_FINAL_AGE_ALIVE: age <= n,
         states={
-            "wealth": _grid(_WEALTH_MIN, _WEALTH_MAX, _N_WEALTH),
-            "illiquid": _grid(0.0, _ILLIQUID_MAX, _N_ILLIQUID),
+            "wealth": _grid(start=_WEALTH_MIN, stop=_WEALTH_MAX, n_points=_N_WEALTH),
+            "illiquid": _grid(start=0.0, stop=_ILLIQUID_MAX, n_points=_N_ILLIQUID),
         },
         state_transitions={
             "wealth": negm_kinked_toy.next_wealth,
             "illiquid": negm_kinked_toy.durable_transition,
         },
         actions={
-            "consumption": _grid(0.1, _CONSUMPTION_MAX, 25),
-            "illiquid_investment": _grid(-_INVESTMENT_BOUND, _INVESTMENT_BOUND, 25),
+            "consumption": _grid(start=0.1, stop=_CONSUMPTION_MAX, n_points=25),
+            "illiquid_investment": _grid(
+                start=-_INVESTMENT_BOUND, stop=_INVESTMENT_BOUND, n_points=25
+            ),
         },
         transition=negm_kinked_toy.next_regime,
         functions={
@@ -146,6 +148,7 @@ def _build_matched_negm_model(*, savings_n: int = 80, outer_n: int = 40) -> Mode
 
 
 def _brute_liquid_savings(
+    *,
     wealth: ContinuousState,
     consumption: ContinuousAction,
     illiquid_investment: ContinuousAction,
@@ -160,7 +163,7 @@ def _brute_liquid_savings(
 
 
 def _brute_next_illiquid(
-    illiquid: ContinuousState, illiquid_investment: ContinuousAction
+    *, illiquid: ContinuousState, illiquid_investment: ContinuousAction
 ) -> ContinuousState:
     return illiquid + illiquid_investment
 
@@ -170,7 +173,7 @@ def _liquid_floor(liquid_savings: FloatND) -> BoolND:
 
 
 def _illiquid_floor(
-    illiquid: ContinuousState, illiquid_investment: ContinuousAction
+    *, illiquid: ContinuousState, illiquid_investment: ContinuousAction
 ) -> BoolND:
     return illiquid + illiquid_investment >= 0.0
 
@@ -191,17 +194,19 @@ def _build_matched_brute_model(*, n_consumption: int, n_investment: int) -> Mode
     alive = Regime(
         active=lambda age, n=_FINAL_AGE_ALIVE: age <= n,
         states={
-            "wealth": _grid(_WEALTH_MIN, _WEALTH_MAX, _N_WEALTH),
-            "illiquid": _grid(0.0, _ILLIQUID_MAX, _N_ILLIQUID),
+            "wealth": _grid(start=_WEALTH_MIN, stop=_WEALTH_MAX, n_points=_N_WEALTH),
+            "illiquid": _grid(start=0.0, stop=_ILLIQUID_MAX, n_points=_N_ILLIQUID),
         },
         state_transitions={
             "wealth": negm_kinked_toy.next_wealth,
             "illiquid": _brute_next_illiquid,
         },
         actions={
-            "consumption": _grid(0.1, _CONSUMPTION_MAX, n_consumption),
+            "consumption": _grid(
+                start=0.1, stop=_CONSUMPTION_MAX, n_points=n_consumption
+            ),
             "illiquid_investment": _grid(
-                -_INVESTMENT_BOUND, _INVESTMENT_BOUND, n_investment
+                start=-_INVESTMENT_BOUND, stop=_INVESTMENT_BOUND, n_points=n_investment
             ),
         },
         transition=negm_kinked_toy.next_regime,
@@ -253,7 +258,7 @@ def oracle_value() -> FloatND:
     ],
 )
 def test_inverse_marginal_utility_subtracts_the_durable_flow_offset(
-    marginal_continuation: float, illiquid: float, expected_consumption: float
+    *, marginal_continuation: float, illiquid: float, expected_consumption: float
 ) -> None:
     """`(u')^{-1}(m) = m^{-1/gamma} - iota*Z` at the durable node `Z`.
 
@@ -310,7 +315,7 @@ def test_brute_oracle_reproduces_its_pinned_values(oracle_value: FloatND) -> Non
     [(15, 15), (25, 25), (45, 45)],
 )
 def test_negm_weakly_improves_on_the_matched_brute_value(
-    matched_negm_value: FloatND, n_consumption: int, n_investment: int
+    *, matched_negm_value: FloatND, n_consumption: int, n_investment: int
 ) -> None:
     """NEGM's off-grid value weakly dominates the matched brute value cell-by-cell.
 

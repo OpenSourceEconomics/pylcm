@@ -78,7 +78,7 @@ def _identity_wage(wage: ContinuousState) -> ContinuousState:
 # Consent edge: single_f (singleton) -> married_terminal (collective)
 
 
-def _u_single_f(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _u_single_f(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     return wage * work
 
 
@@ -90,15 +90,16 @@ def _u_single_m_terminal(wage: ContinuousState) -> FloatND:
     return jnp.where(wage < 1.5, 0.5, 3.0)  # {0.5, 3.0}
 
 
-def _u_married_f(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _u_married_f(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     return 2.0 * wage + 0.0 * work  # {2, 4}
 
 
-def _u_married_m(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _u_married_m(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     return wage + 0.0 * work  # {1, 2}
 
 
 def _consent_gate(
+    *,
     V_target_f: FloatND,
     V_target_m: FloatND,
     V_single_f_ref: FloatND,
@@ -117,7 +118,7 @@ def _consent_source_declaring(
         active=lambda age: age < 1,
         states={"wage": _WAGE},
         state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_single_f},
     )
 
@@ -164,7 +165,7 @@ def _make_consent_regimes() -> dict[str, Regime]:
         transition=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _u_married_f, "m": _u_married_m}
@@ -263,20 +264,20 @@ def test_consent_gate_matches_under_jit():
 _WAGE3 = LinSpacedGrid(start=1.0, stop=3.0, n_points=3)  # {1, 2, 3}
 
 
-def _u_married_ir_f(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _u_married_ir_f(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     return 3.0 * (1.0 - work) + 2.0 * wage * work
 
 
-def _u_married_ir_m(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _u_married_ir_m(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     return 0.5 * (1.0 - work) + wage * work
 
 
-def _u_single_f_ir(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _u_single_f_ir(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     target = jnp.where((wage > 1.5) & (wage < 2.5), 5.5, 1.5)
     return target * work
 
 
-def _u_single_m_ir(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _u_single_m_ir(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     return 1.0 * work + 0.0 * wage
 
 
@@ -284,15 +285,15 @@ def _u_zero(wage: ContinuousState) -> FloatND:
     return 0.0 * wage
 
 
-def _u_zero_collective(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _u_zero_collective(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     return 0.0 * wage * work
 
 
-def _ir_f(Q_f: FloatND, V_single_f_ref: FloatND, delta_f: FloatND) -> BoolND:
+def _ir_f(*, Q_f: FloatND, V_single_f_ref: FloatND, delta_f: FloatND) -> BoolND:
     return Q_f >= V_single_f_ref - delta_f
 
 
-def _ir_m(Q_m: FloatND, V_single_m_ref: FloatND, delta_m: FloatND) -> BoolND:
+def _ir_m(*, Q_m: FloatND, V_single_m_ref: FloatND, delta_m: FloatND) -> BoolND:
     return Q_m >= V_single_m_ref - delta_m
 
 
@@ -325,7 +326,7 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
         active=lambda age: age < 1,
         states={"wage": _WAGE3},
         state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _u_zero_collective, "m": _u_zero_collective}
@@ -337,7 +338,7 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
         active=lambda age: (age >= 1) & (age < 2),
         states={"wage": _WAGE3},
         state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _u_married_ir_f, "m": _u_married_ir_m}
@@ -366,7 +367,7 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
         transition=None,
         active=lambda age: age >= 2,
         states={"wage": _WAGE3},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _u_zero_collective, "m": _u_zero_collective}
@@ -378,7 +379,7 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
         active=lambda age: (age >= 1) & (age < 2),
         states={"wage": _WAGE3},
         state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_single_f_ir},
     )
     single_f_terminal = Regime(
@@ -556,7 +557,7 @@ def test_probabilistic_gate_is_rejected():
             active=lambda age: age < 1,
             states={"wage": _WAGE},
             state_transitions={"wage": fixed_transition("wage")},
-            actions={"work": DiscreteGrid(Work)},
+            actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _u_single_f},
         )
 
@@ -678,7 +679,7 @@ class EKLRegimeId:
 
 def _make_full_topology_regimes() -> dict[str, Regime]:
     def _consent_leg(
-        fallback_regime: str, stakeholder: str
+        *, fallback_regime: str, stakeholder: str
     ) -> dict[str, StakeholderRoute]:
         return {
             stakeholder: StakeholderRoute(
@@ -704,14 +705,16 @@ def _make_full_topology_regimes() -> dict[str, Regime]:
                 "married": ValueDependentTransition(
                     probability=MarkovTransition(_prob_one),
                     gate=_consent_gate,
-                    routes=_consent_leg(fallback_regime, stakeholder),
+                    routes=_consent_leg(
+                        fallback_regime=fallback_regime, stakeholder=stakeholder
+                    ),
                     gate_references=_consent_gate_refs,
                 )
             },
             active=lambda age: age < 1,
             states={"wage": _WAGE3},
             state_transitions={"wage": fixed_transition("wage")},
-            actions={"work": DiscreteGrid(Work)},
+            actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _u_single_f},
         )
 
@@ -722,7 +725,7 @@ def _make_full_topology_regimes() -> dict[str, Regime]:
         active=lambda age: (age >= 1) & (age < 2),
         states={"wage": _WAGE3},
         state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_single_f_ir},
     )
     single_m_p1 = single_f_p1.replace(
@@ -755,7 +758,7 @@ def _make_full_topology_regimes() -> dict[str, Regime]:
         active=lambda age: (age >= 1) & (age < 2),
         states={"wage": _WAGE3},
         state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _u_married_ir_f, "m": _u_married_ir_m}
@@ -784,7 +787,7 @@ def _make_full_topology_regimes() -> dict[str, Regime]:
         transition=None,
         active=lambda age: age >= 2,
         states={"wage": _WAGE3},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _u_zero_collective, "m": _u_zero_collective}
@@ -879,7 +882,7 @@ def test_singleton_source_with_two_legs_is_rejected():
             active=lambda age: age < 1,
             states={"wage": _WAGE},
             state_transitions={"wage": fixed_transition("wage")},
-            actions={"work": DiscreteGrid(Work)},
+            actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _u_single_f},
         )
 

@@ -40,7 +40,7 @@ SAVINGS_GRID = LinSpacedGrid(start=0.0, stop=28.0, n_points=40)
     variable="liquid",
     breakpoints=(lcm.affine_breakpoint(threshold="tax_kink", kind="continuous_kink"),),
 )
-def tax(liquid: ContinuousState, tax_rate: float, tax_kink: float) -> FloatND:
+def tax(*, liquid: ContinuousState, tax_rate: float, tax_kink: float) -> FloatND:
     """Continuous tax on liquid wealth above the kink."""
     return tax_rate * jnp.maximum(liquid - tax_kink, 0.0)
 
@@ -51,7 +51,7 @@ def tax(liquid: ContinuousState, tax_rate: float, tax_kink: float) -> FloatND:
     breakpoints=(lcm.affine_breakpoint(threshold="subsidy_limit", kind="jump"),),
 )
 def subsidy(
-    liquid: ContinuousState, subsidy_level: float, subsidy_limit: float
+    *, liquid: ContinuousState, subsidy_level: float, subsidy_limit: float
 ) -> FloatND:
     """Means-tested transfer that cuts off at the asset limit."""
     return jnp.where(liquid < subsidy_limit, subsidy_level, 0.0)
@@ -66,6 +66,7 @@ def subsidy(
     ),
 )
 def net_transfer(
+    *,
     liquid: ContinuousState,
     floor_level: float,
     floor_limit: float,
@@ -79,13 +80,13 @@ def net_transfer(
 
 
 def _resources_two_schedules(
-    liquid: ContinuousState, tax: FloatND, subsidy: FloatND
+    *, liquid: ContinuousState, tax: FloatND, subsidy: FloatND
 ) -> FloatND:
     return liquid - tax + subsidy
 
 
 def _resources_floor_and_cliff(
-    liquid: ContinuousState, net_transfer: FloatND
+    *, liquid: ContinuousState, net_transfer: FloatND
 ) -> FloatND:
     return liquid + net_transfer
 
@@ -99,7 +100,7 @@ def _build(*, alive_functions: Mapping[str, Callable[..., object]]) -> Model:
         alive_functions=alive_functions,
         liquid_law=next_liquid_from_savings,
         alive_solver=resolve_solver(
-            "nbegm",
+            variant="nbegm",
             savings_grid=SAVINGS_GRID,
             envelope_arithmetic="ordinary",
         ),

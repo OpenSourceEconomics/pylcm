@@ -43,7 +43,7 @@ def _prepare(carry: EGMCarry):
 
 
 def _host_read(
-    endog: np.ndarray, value: np.ndarray, marginal: np.ndarray, query: float
+    *, endog: np.ndarray, value: np.ndarray, marginal: np.ndarray, query: float
 ) -> tuple[float, float]:
     """Read one candidate row at `query`: Hermite value, linear marginal, -inf mask."""
     lower = float(np.min(endog[np.isfinite(endog)]))
@@ -81,13 +81,15 @@ def test_stacked_read_blends_the_nodewise_candidate_maximum():
     coh = jnp.array([0.0, 5.0, 10.0])
     flat = jnp.zeros(n_pad)
 
-    def rows(value_a: float, value_b: float) -> jnp.ndarray:
+    def rows(*, value_a: float, value_b: float) -> jnp.ndarray:
         return jnp.stack([jnp.full((n_pad,), value_a), jnp.full((n_pad,), value_b)])
 
     # Leading shape (durable=2, candidates=2); flat value rows, zero marginals.
     carry = EGMCarry(
         endog_grid=jnp.broadcast_to(coh, (2, 2, n_pad)),
-        value=jnp.stack([rows(2.0, 0.0), rows(1.0, 3.0)]),
+        value=jnp.stack(
+            [rows(value_a=2.0, value_b=0.0), rows(value_a=1.0, value_b=3.0)]
+        ),
         marginal_utility=jnp.broadcast_to(flat, (2, 2, n_pad)),
         taste_shock_scale=jnp.asarray(0.0),
     )
@@ -521,7 +523,12 @@ def test_stacked_read_matches_host_max_of_reads_on_curved_rows():
     weights = (1.0 - passive_value, passive_value)
     for node in range(2):
         reads = [
-            _host_read(endog[node, j], value[node, j], marginal[node, j], queries[node])
+            _host_read(
+                endog=endog[node, j],
+                value=value[node, j],
+                marginal=marginal[node, j],
+                query=queries[node],
+            )
             for j in range(2)
         ]
         winner = int(np.argmax([r[0] for r in reads]))

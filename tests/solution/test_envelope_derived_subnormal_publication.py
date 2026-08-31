@@ -34,7 +34,9 @@ def _working_case(power: int):
 
 @pytest.mark.parametrize("segment_block_size", [0, 1])
 @pytest.mark.parametrize("power_selector", ["largest", "smallest"])
-def test_derived_subnormal_is_published_or_refused(segment_block_size, power_selector):
+def test_derived_subnormal_is_published_or_refused(
+    *, segment_block_size, power_selector
+):
     """Both ends of the positive-subnormal output band obey the same contract."""
     mantissa_bits = 52 if X64_ENABLED else 23
     power = 0 if power_selector == "largest" else mantissa_bits - 1
@@ -120,13 +122,13 @@ def test_a_stored_subnormal_channel_is_published_or_refused(segment_block_size):
         arithmetic="certified",
     )
     observed = tuple(np.asarray(channel)[0] for channel in (value, policy, marginal))
-    assert _same_bits(observed[2], small), (
+    assert _same_bits(left=observed[2], right=small), (
         "a constant channel is owed its constant, "
         f"and it published {observed[2]!r} instead of {small!r}"
     )
 
 
-def _same_bits(left, right) -> bool:
+def _same_bits(*, left, right) -> bool:
     """Report whether two floats of one dtype hold the identical bit pattern.
 
     Equality cannot answer this in the subnormal band: on a flushing backend

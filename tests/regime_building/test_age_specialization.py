@@ -37,7 +37,7 @@ def _feasible_below_age(age: float):
 
 def test_node_signature_of_a_plain_callable_is_invariant():
     """A bare callable carries no age-varying closure, so its signature is constant."""
-    assert node_signature(lambda x: x, age=60.0) is INVARIANT
+    assert node_signature(node=lambda x: x, age=60.0) is INVARIANT
 
 
 def test_node_signature_of_age_specialized_varies_with_age():
@@ -46,7 +46,7 @@ def test_node_signature_of_age_specialized_varies_with_age():
         build=_feasible_below_age, signature=lambda age: ("limit", age)
     )
 
-    assert node_signature(node, age=60.0) != node_signature(node, age=61.0)
+    assert node_signature(node=node, age=60.0) != node_signature(node=node, age=61.0)
 
 
 def test_tree_signature_separates_a_constraint_that_changes_by_age():
@@ -61,8 +61,8 @@ def test_tree_signature_separates_a_constraint_that_changes_by_age():
         )
     }
 
-    assert tree_signature(constraints, age=60.0) != tree_signature(
-        constraints, age=61.0
+    assert tree_signature(tree=constraints, age=60.0) != tree_signature(
+        tree=constraints, age=61.0
     )
 
 
@@ -82,8 +82,8 @@ def test_tree_signature_recurses_into_the_nested_transition_mapping():
         }
     }
 
-    assert tree_signature(transitions, age=60.0) != tree_signature(
-        transitions, age=61.0
+    assert tree_signature(tree=transitions, age=60.0) != tree_signature(
+        tree=transitions, age=61.0
     )
 
 
@@ -92,8 +92,8 @@ def test_tree_signature_helper_is_invariant_to_key_insertion_order():
     tree_a = {"b": "second", "a": "first"}
     tree_b = {"a": "first", "b": "second"}
 
-    assert _tree_signature(tree_a, leaf_signature=str) == _tree_signature(
-        tree_b, leaf_signature=str
+    assert _tree_signature(tree=tree_a, leaf_signature=str) == _tree_signature(
+        tree=tree_b, leaf_signature=str
     )
 
 
@@ -101,7 +101,7 @@ def test_tree_signature_helper_recurses_regardless_of_leaf_signature():
     """A different `leaf_signature` still descends into nested mappings."""
     nested = {"outer": {"inner": "value"}}
 
-    assert _tree_signature(nested, leaf_signature=lambda leaf: len(str(leaf))) == (
+    assert _tree_signature(tree=nested, leaf_signature=lambda leaf: len(str(leaf))) == (
         ("outer", (("inner", len("value")),)),
     )
 
@@ -116,14 +116,16 @@ def test_tree_signature_wrappers_share_recursive_semantics():
     """
     tree = {"b": lambda x: x, "a": {"nested": lambda x: x}}
 
-    assert tree_signature(tree, age=60.0) == periodized_tree_signature(tree, period=3)
+    assert tree_signature(tree=tree, age=60.0) == periodized_tree_signature(
+        tree=tree, period=3
+    )
 
 
 def test_age_specialized_regime_transition_is_rejected(binary_category_class):
     """A policy-specialized regime `transition` is rejected for v1."""
     regime = MockRegime(
-        actions={"a": DiscreteGrid(binary_category_class)},
-        states={"b": DiscreteGrid(binary_category_class)},
+        actions={"a": DiscreteGrid(category_class=binary_category_class)},
+        states={"b": DiscreteGrid(category_class=binary_category_class)},
         state_transitions={"b": lambda b: b},
         transition=AgeSpecializedFunction(
             build=lambda age: lambda b: b,  # noqa: ARG005
@@ -143,8 +145,8 @@ def test_markov_transition_wrapping_age_specialized_is_rejected(binary_category_
     must raise.
     """
     regime = MockRegime(
-        actions={"a": DiscreteGrid(binary_category_class)},
-        states={"b": DiscreteGrid(binary_category_class)},
+        actions={"a": DiscreteGrid(category_class=binary_category_class)},
+        states={"b": DiscreteGrid(category_class=binary_category_class)},
         state_transitions={
             "b": MarkovTransition(
                 AgeSpecializedFunction(
@@ -171,8 +173,8 @@ def test_age_specialized_deterministic_state_transition_is_rejected(
     `state_transitions` must raise before any program is built.
     """
     regime = MockRegime(
-        actions={"a": DiscreteGrid(binary_category_class)},
-        states={"b": DiscreteGrid(binary_category_class)},
+        actions={"a": DiscreteGrid(category_class=binary_category_class)},
+        states={"b": DiscreteGrid(category_class=binary_category_class)},
         state_transitions={
             "b": AgeSpecializedFunction(
                 build=lambda age: lambda b: b,  # noqa: ARG005
@@ -195,7 +197,7 @@ def test_age_specialized_in_terminal_regime_is_rejected(binary_category_class):
     age's closure.
     """
     regime = MockRegime(
-        states={"b": DiscreteGrid(binary_category_class)},
+        states={"b": DiscreteGrid(category_class=binary_category_class)},
         transition=None,
         functions={
             "utility": AgeSpecializedFunction(
@@ -223,8 +225,8 @@ def test_regime_transition_reading_age_specialized_helper_is_rejected(
         return policy_threshold
 
     regime = MockRegime(
-        actions={"a": DiscreteGrid(binary_category_class)},
-        states={"b": DiscreteGrid(binary_category_class)},
+        actions={"a": DiscreteGrid(category_class=binary_category_class)},
+        states={"b": DiscreteGrid(category_class=binary_category_class)},
         transition=MarkovTransition(next_regime),
         functions={
             "utility": lambda a, b: None,  # noqa: ARG005
@@ -255,8 +257,8 @@ def test_regime_transition_reading_age_specialized_constraint_is_rejected(
         return policy_threshold
 
     regime = MockRegime(
-        actions={"a": DiscreteGrid(binary_category_class)},
-        states={"b": DiscreteGrid(binary_category_class)},
+        actions={"a": DiscreteGrid(category_class=binary_category_class)},
+        states={"b": DiscreteGrid(category_class=binary_category_class)},
         transition=MarkovTransition(next_regime),
         functions={"utility": lambda a, b: None},  # noqa: ARG005
         constraints={
@@ -288,8 +290,8 @@ def test_regime_transition_with_transitive_age_specialized_ancestor_is_rejected(
         return eligibility
 
     regime = MockRegime(
-        actions={"a": DiscreteGrid(binary_category_class)},
-        states={"b": DiscreteGrid(binary_category_class)},
+        actions={"a": DiscreteGrid(category_class=binary_category_class)},
+        states={"b": DiscreteGrid(category_class=binary_category_class)},
         transition=MarkovTransition(next_regime),
         functions={
             "utility": lambda a, b: None,  # noqa: ARG005
@@ -316,8 +318,8 @@ def test_regime_transition_markov_wrapping_age_specialized_is_rejected(
     `Regime` construction.
     """
     regime = MockRegime(
-        actions={"a": DiscreteGrid(binary_category_class)},
-        states={"b": DiscreteGrid(binary_category_class)},
+        actions={"a": DiscreteGrid(category_class=binary_category_class)},
+        states={"b": DiscreteGrid(category_class=binary_category_class)},
         transition=MarkovTransition(
             AgeSpecializedFunction(
                 build=lambda age: lambda b: b,  # noqa: ARG005

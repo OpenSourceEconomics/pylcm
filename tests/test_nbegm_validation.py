@@ -18,49 +18,49 @@ from _lcm.egm.nbegm_validation import (
 from lcm.case_piece import smooth_helper
 
 
-def smooth_oop(medical_expense, coinsurance):
+def smooth_oop(*, medical_expense, coinsurance):
     return coinsurance * medical_expense
 
 
 def test_ast_gate_accepts_a_smooth_formula():
     """An arithmetic-only formula raises no AST violation."""
-    assert find_ast_violations(smooth_oop, mode="smooth_user") == []
+    assert find_ast_violations(func=smooth_oop, mode="smooth_user") == []
 
 
 def test_ast_gate_rejects_a_python_if_in_a_piece():
     """A Python `if` is a hidden case boundary the AST gate must reject."""
 
-    def branchy(medical_expense, medicaid_asset_limit):
+    def branchy(*, medical_expense, medicaid_asset_limit):
         if medical_expense > medicaid_asset_limit:
             return 0.0
         return medical_expense
 
-    violations = find_ast_violations(branchy, mode="smooth_user")
+    violations = find_ast_violations(func=branchy, mode="smooth_user")
     assert any("if" in message.lower() for message in violations)
 
 
 def test_ast_gate_rejects_a_comparison_in_a_smooth_piece():
     """A bare comparison in smooth mode creates an undeclared boundary."""
 
-    def comparing(assets, limit):
+    def comparing(*, assets, limit):
         return (assets < limit) * assets
 
-    violations = find_ast_violations(comparing, mode="smooth_user")
+    violations = find_ast_violations(func=comparing, mode="smooth_user")
     assert any("comparison" in message.lower() for message in violations)
 
 
 def test_ast_gate_allows_a_comparison_in_a_boundary_predicate():
     """A case-boundary predicate is meant to compare; boundary mode permits it."""
 
-    def predicate(assets, limit):
+    def predicate(*, assets, limit):
         return assets < limit
 
-    assert find_ast_violations(predicate, mode="boundary") == []
+    assert find_ast_violations(func=predicate, mode="boundary") == []
 
 
 def test_ast_gate_fails_loudly_on_uninspectable_source():
     """A function whose source cannot be read fails the gate rather than passing."""
-    violations = find_ast_violations(len, mode="smooth_user")
+    violations = find_ast_violations(func=len, mode="smooth_user")
     assert len(violations) == 1
     assert "source" in violations[0].lower()
 
@@ -75,7 +75,7 @@ def test_jaxpr_gate_catches_a_where_hidden_in_a_helper():
         return hidden_where_helper(medical_expense)
 
     violations = find_jaxpr_violations(
-        piece, abstract_args=(jnp.array(1.0),), mode="smooth_user"
+        func=piece, abstract_args=(jnp.array(1.0),), mode="smooth_user"
     )
     assert violations != []
 
@@ -92,7 +92,7 @@ def test_jaxpr_gate_walks_into_a_nested_cond():
         )
 
     violations = find_jaxpr_violations(
-        hidden_cond, abstract_args=(jnp.array(1.0),), mode="smooth_user"
+        func=hidden_cond, abstract_args=(jnp.array(1.0),), mode="smooth_user"
     )
     assert violations != []
 
@@ -107,7 +107,7 @@ def test_jaxpr_gate_accepts_a_smooth_helper_chain():
         return 2.0 * helper(medical_expense)
 
     violations = find_jaxpr_violations(
-        piece, abstract_args=(jnp.array(1.0),), mode="smooth_user"
+        func=piece, abstract_args=(jnp.array(1.0),), mode="smooth_user"
     )
     assert violations == []
 

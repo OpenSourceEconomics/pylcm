@@ -25,7 +25,7 @@ _AWAY_FROM_BREAKPOINTS = _AWAY_FROM_CLIFF & (np.abs(_LIQUID - _TAX_BRACKET) > 0.
 
 
 def _solve(
-    variant: str, *, n_consumption: int = 120, mixed_schedule: bool = False
+    *, variant: str, n_consumption: int = 120, mixed_schedule: bool = False
 ) -> Mapping[int, Mapping]:
     model = toy.build_model(
         variant=variant,
@@ -44,8 +44,8 @@ def _solve(
 def test_nbegm_discrete_envelope_matches_brute_over_a_cliffed_budget() -> None:
     """`V` agrees with a 1500-point brute across the liquid interior in the
     terminal-adjacent period, honouring both the discrete choice and the cliff."""
-    nbegm = _solve("nbegm")
-    brute = _solve("brute", n_consumption=1500)
+    nbegm = _solve(variant="nbegm")
+    brute = _solve(variant="brute", n_consumption=1500)
     # Terminal-adjacent: the last period `alive` is active carries the smooth
     # terminal continuation, isolating the cliff and discrete envelope in-period.
     period = max(p for p in brute if _ALIVE in brute[p])
@@ -60,8 +60,8 @@ def test_nbegm_discrete_envelope_matches_brute_through_a_recurring_jump() -> Non
     """`V` agrees with a 1500-point brute at an early period, where the child
     value itself carries the discrete-plus-cliff jump, so each branch must read
     the continuation jump-aware rather than bridging across it."""
-    nbegm = _solve("nbegm")
-    brute = _solve("brute", n_consumption=1500)
+    nbegm = _solve(variant="nbegm")
+    brute = _solve(variant="brute", n_consumption=1500)
     period = min(p for p in brute if _ALIVE in brute[p])
     bq_v = np.asarray(nbegm[period][_ALIVE])
     brute_v = np.asarray(brute[period][_ALIVE])
@@ -77,8 +77,8 @@ def test_nbegm_discrete_envelope_matches_brute_through_a_mixed_jump_and_kink() -
     — where the child value carries the jump — the save-to-cliff candidate must
     publish a slope-scaled marginal. An unscaled marginal shifts the recovered
     policy and breaks agreement across the bracket case."""
-    nbegm = _solve("nbegm", mixed_schedule=True)
-    brute = _solve("brute", n_consumption=1500, mixed_schedule=True)
+    nbegm = _solve(variant="nbegm", mixed_schedule=True)
+    brute = _solve(variant="brute", n_consumption=1500, mixed_schedule=True)
     period = min(p for p in brute if _ALIVE in brute[p])
     bq_v = np.asarray(nbegm[period][_ALIVE])
     brute_v = np.asarray(brute[period][_ALIVE])

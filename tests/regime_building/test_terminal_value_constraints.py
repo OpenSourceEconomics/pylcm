@@ -58,12 +58,12 @@ def _twice_wage_for_him(wage: ContinuousState) -> FloatND:
     return 2.0 * wage
 
 
-def _outside_option(wage: ContinuousState, outside_option: float) -> FloatND:
+def _outside_option(*, wage: ContinuousState, outside_option: float) -> FloatND:
     """What leaving is worth to her — a parameter, so a test can move it."""
     return outside_option + jnp.zeros_like(wage)
 
 
-def _participation_f(Q_f: FloatND, V_single_f: FloatND) -> BoolND:
+def _participation_f(*, Q_f: FloatND, V_single_f: FloatND) -> BoolND:
     """She stays only where the household beats what leaving is worth."""
     return Q_f >= V_single_f
 

@@ -64,7 +64,7 @@ def _certain_target(age: FloatND) -> FloatND:
     return jnp.ones_like(age, dtype=float)
 
 
-def _utility_source(x: ContinuousState, saving: ContinuousAction) -> FloatND:
+def _utility_source(*, x: ContinuousState, saving: ContinuousAction) -> FloatND:
     return -2.0 * saving + 0.0 * x
 
 
@@ -271,7 +271,7 @@ def _healthy_gate(health: DiscreteState) -> BoolND:
 
 
 def _make_discrete_target_model(*, off_grid: Literal["pointwise", "reject"]) -> Model:
-    health = DiscreteGrid(Health)
+    health = DiscreteGrid(category_class=Health)
     return Model(
         regimes={
             "source": Regime(
@@ -328,7 +328,7 @@ class Risk:
     risky: ScalarInt
 
 
-def _witness_utility(risk: DiscreteState, x: ContinuousState) -> FloatND:
+def _witness_utility(*, risk: DiscreteState, x: ContinuousState) -> FloatND:
     """The safe action pays one unit now, whatever the source's own state."""
     return jnp.where(risk == Risk.safe, 1.0, 0.0) + 0.0 * x
 
@@ -352,7 +352,7 @@ def _witness_fallback(x: ContinuousState) -> FloatND:
     return 0.0 * x
 
 
-def _witness_gate(V_target: FloatND, V_reference: FloatND) -> BoolND:
+def _witness_gate(*, V_target: FloatND, V_reference: FloatND) -> BoolND:
     return V_target > V_reference
 
 
@@ -399,7 +399,7 @@ def _witness_model() -> Model:
                 active=lambda age: age < 1,
                 states={"x": _WITNESS_X},
                 state_transitions={"x": _witness_next_x},
-                actions={"risk": DiscreteGrid(Risk)},
+                actions={"risk": DiscreteGrid(category_class=Risk)},
                 functions={"utility": _witness_utility},
             ),
             "target": Regime(

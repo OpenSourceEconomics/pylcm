@@ -45,7 +45,7 @@ def test_multi_interval_step_matches_brute_through_a_continuous_tax_kink():
         return liquid + base - rate * jnp.maximum(liquid - exemption, 0.0)
 
     def next_value_of_liquid(liquid):
-        return crra_utility(liquid, crra)
+        return crra_utility(consumption=liquid, crra=crra)
 
     def next_marginal_of_liquid(liquid):
         return liquid ** (-crra)
@@ -63,7 +63,7 @@ def test_multi_interval_step_matches_brute_through_a_continuous_tax_kink():
         next_liquid_grid=liquid_grid,
         savings_grid=savings_grid,
         discount_factor=discount_factor,
-        preferences=crra_preferences(crra),
+        preferences=crra_preferences(crra=crra),
         next_liquid=(gross_return) * savings_grid + income,
         marginal_return=jnp.full_like(savings_grid, gross_return),
         coh_slopes=coh_slopes,
@@ -114,7 +114,7 @@ def test_multi_interval_step_matches_brute_through_a_convex_kink():
         )
 
     def next_value_of_liquid(liquid):
-        return crra_utility(liquid, crra)
+        return crra_utility(consumption=liquid, crra=crra)
 
     def next_marginal_of_liquid(liquid):
         return liquid ** (-crra)
@@ -130,7 +130,7 @@ def test_multi_interval_step_matches_brute_through_a_convex_kink():
         next_liquid_grid=liquid_grid,
         savings_grid=savings_grid,
         discount_factor=discount_factor,
-        preferences=crra_preferences(crra),
+        preferences=crra_preferences(crra=crra),
         next_liquid=(gross_return) * savings_grid + income,
         marginal_return=jnp.full_like(savings_grid, gross_return),
         coh_slopes=coh_slopes,
@@ -181,7 +181,7 @@ def test_multi_interval_step_matches_brute_through_two_continuous_kinks():
         )
 
     def next_value_of_liquid(liquid):
-        return crra_utility(liquid, crra)
+        return crra_utility(consumption=liquid, crra=crra)
 
     def next_marginal_of_liquid(liquid):
         return liquid ** (-crra)
@@ -204,7 +204,7 @@ def test_multi_interval_step_matches_brute_through_two_continuous_kinks():
         next_liquid_grid=liquid_grid,
         savings_grid=savings_grid,
         discount_factor=discount_factor,
-        preferences=crra_preferences(crra),
+        preferences=crra_preferences(crra=crra),
         next_liquid=(gross_return) * savings_grid + income,
         marginal_return=jnp.full_like(savings_grid, gross_return),
         coh_slopes=coh_slopes,
@@ -249,7 +249,7 @@ def test_multi_interval_step_matches_brute_through_a_hard_constraint_floor():
         return jnp.maximum(liquid + base, floor)
 
     def next_value_of_liquid(liquid):
-        return crra_utility(liquid, crra)
+        return crra_utility(consumption=liquid, crra=crra)
 
     def next_marginal_of_liquid(liquid):
         return liquid ** (-crra)
@@ -265,7 +265,7 @@ def test_multi_interval_step_matches_brute_through_a_hard_constraint_floor():
         next_liquid_grid=liquid_grid,
         savings_grid=savings_grid,
         discount_factor=discount_factor,
-        preferences=crra_preferences(crra),
+        preferences=crra_preferences(crra=crra),
         next_liquid=(gross_return) * savings_grid + income,
         marginal_return=jnp.full_like(savings_grid, gross_return),
         coh_slopes=coh_slopes,
@@ -310,7 +310,7 @@ def test_jump_step_matches_brute_through_two_additive_cliffs():
         return liquid + subsidy_levels[interval]
 
     def next_value_of_liquid(liquid):
-        return crra_utility(liquid, crra)
+        return crra_utility(consumption=liquid, crra=crra)
 
     def next_marginal_of_liquid(liquid):
         return liquid ** (-crra)
@@ -322,7 +322,7 @@ def test_jump_step_matches_brute_through_two_additive_cliffs():
         next_liquid_grid=liquid_grid,
         savings_grid=savings_grid,
         discount_factor=discount_factor,
-        preferences=crra_preferences(crra),
+        preferences=crra_preferences(crra=crra),
         next_liquid=(gross_return) * savings_grid + income,
         marginal_return=jnp.full_like(savings_grid, gross_return),
         subsidy_levels=subsidy_levels,
@@ -374,7 +374,7 @@ def test_unified_step_matches_brute_through_a_jump_then_a_kink():
         return liquid + subsidy - tax
 
     def next_value_of_liquid(liquid):
-        return crra_utility(liquid, crra)
+        return crra_utility(consumption=liquid, crra=crra)
 
     def next_marginal_of_liquid(liquid):
         return liquid ** (-crra)
@@ -393,7 +393,7 @@ def test_unified_step_matches_brute_through_a_jump_then_a_kink():
         next_liquid_grid=liquid_grid,
         savings_grid=savings_grid,
         discount_factor=discount_factor,
-        preferences=crra_preferences(crra),
+        preferences=crra_preferences(crra=crra),
         next_liquid=(gross_return) * savings_grid + income,
         marginal_return=jnp.full_like(savings_grid, gross_return),
         coh_slopes=coh_slopes,
@@ -443,7 +443,7 @@ def test_discrete_envelope_step_matches_brute_over_a_binary_choice():
         return liquid + base_no
 
     def next_value_of_liquid(liquid):
-        return crra_utility(liquid, crra)
+        return crra_utility(consumption=liquid, crra=crra)
 
     def next_marginal_of_liquid(liquid):
         return liquid ** (-crra)
@@ -468,7 +468,7 @@ def test_discrete_envelope_step_matches_brute_over_a_binary_choice():
         next_liquid_grid=liquid_grid,
         savings_grid=savings_grid,
         discount_factor=discount_factor,
-        preferences=crra_preferences(crra),
+        preferences=crra_preferences(crra=crra),
         next_liquid=(gross_return) * savings_grid + income,
         marginal_return=jnp.full_like(savings_grid, gross_return),
         choices=choices,
@@ -514,7 +514,7 @@ def test_discrete_envelope_step_smooths_with_an_ev1_taste_shock():
     savings_grid = jnp.linspace(0.0, 28.0, 200)
 
     def next_value_of_liquid(liquid):
-        return crra_utility(liquid, crra)
+        return crra_utility(consumption=liquid, crra=crra)
 
     def next_marginal_of_liquid(liquid):
         return liquid ** (-crra)
@@ -539,7 +539,7 @@ def test_discrete_envelope_step_smooths_with_an_ev1_taste_shock():
         next_liquid_grid=liquid_grid,
         savings_grid=savings_grid,
         discount_factor=discount_factor,
-        preferences=crra_preferences(crra),
+        preferences=crra_preferences(crra=crra),
         next_liquid=(gross_return) * savings_grid + income,
         marginal_return=jnp.full_like(savings_grid, gross_return),
         choices=choices,

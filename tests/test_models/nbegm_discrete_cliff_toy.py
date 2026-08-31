@@ -44,7 +44,7 @@ class BuyPrivate:
     breakpoints=(lcm.affine_breakpoint(threshold="tax_exemption", kind="jump"),),
 )
 def tax_cliff(
-    liquid: ContinuousState, tax_exemption: float, tax_lump: float
+    *, liquid: ContinuousState, tax_exemption: float, tax_lump: float
 ) -> FloatND:
     """Cliff tax: zero below the exemption, a flat lump above (a pure jump).
 
@@ -63,6 +63,7 @@ def tax_cliff(
     ),
 )
 def tax_mixed(
+    *,
     liquid: ContinuousState,
     tax_exemption: float,
     tax_lump: float,
@@ -82,6 +83,7 @@ def tax_mixed(
 
 
 def resources(
+    *,
     liquid: ContinuousState,
     tax: FloatND,
     buy_private: DiscreteAction,
@@ -116,7 +118,7 @@ def build_model(
         "savings": savings,
     }
     alive_solver = resolve_solver(
-        variant,
+        variant=variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
     )
 
@@ -129,7 +131,7 @@ def build_model(
         liquid_law=next_liquid_from_savings,
         alive_solver=alive_solver,
         constraints={} if variant == "nbegm" else {"feasible": feasible},
-        extra_actions={"buy_private": DiscreteGrid(BuyPrivate)},
+        extra_actions={"buy_private": DiscreteGrid(category_class=BuyPrivate)},
     )
 
 

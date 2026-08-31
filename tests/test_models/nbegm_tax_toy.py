@@ -34,12 +34,12 @@ from tests.test_models.nbegm_common import (
         lcm.affine_breakpoint(threshold="tax_exemption", kind="continuous_kink"),
     ),
 )
-def tax(liquid: ContinuousState, tax_rate: float, tax_exemption: float) -> FloatND:
+def tax(*, liquid: ContinuousState, tax_rate: float, tax_exemption: float) -> FloatND:
     """Continuous tax: zero below the exemption, `tax_rate` on the excess above."""
     return tax_rate * jnp.maximum(liquid - tax_exemption, 0.0)
 
 
-def resources(liquid: ContinuousState, tax: FloatND, base_income: float) -> FloatND:
+def resources(*, liquid: ContinuousState, tax: FloatND, base_income: float) -> FloatND:
     """Cash-on-hand: liquid wealth plus base income, net of the tax."""
     return liquid + base_income - tax
 
@@ -94,7 +94,7 @@ def build_model(
         },
         liquid_law=next_liquid_from_savings,
         alive_solver=resolve_solver(
-            variant,
+            variant=variant,
             savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
             envelope_arithmetic=envelope_arithmetic,
         ),

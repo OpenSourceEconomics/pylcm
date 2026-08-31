@@ -53,12 +53,12 @@ def _certain() -> ScalarFloat:
     return jnp.float32(1)
 
 
-def _no_utility(health: DiscreteState, mood: DiscreteState) -> FloatND:
+def _no_utility(*, health: DiscreteState, mood: DiscreteState) -> FloatND:
     return jnp.asarray(0.0) + 0.0 * health + 0.0 * mood
 
 
 def _wealth_utility(
-    wealth: ScalarFloat, health: DiscreteState, mood: DiscreteState
+    *, wealth: ScalarFloat, health: DiscreteState, mood: DiscreteState
 ) -> FloatND:
     return wealth + 0.0 * health + 0.0 * mood
 
@@ -68,7 +68,7 @@ def _keep_wealth(wealth: ScalarFloat) -> ScalarFloat:
 
 
 def _assert_carries_an_unrepresentable_probability(
-    weight: float, *, exact_product: float, tiny: float
+    *, weight: float, exact_product: float, tiny: float
 ) -> None:
     """Assert the three properties a vanished product must satisfy on any backend.
 
@@ -107,7 +107,7 @@ def test_normal_factors_with_an_unrepresentable_product_stay_nonzero(
     assert bool(jnp.all(factors >= np.finfo(np.float32).tiny))
 
     _assert_carries_an_unrepresentable_probability(
-        float(joint_weight(factors)),
+        weight=float(joint_weight(factors)),
         exact_product=factor**n_factors,
         tiny=float(np.finfo(np.float32).tiny),
     )
@@ -175,7 +175,7 @@ def test_the_rule_survives_jit() -> None:
     factors = jnp.asarray([factor, factor], dtype=jnp.float32)
 
     _assert_carries_an_unrepresentable_probability(
-        float(jax.jit(joint_weight)(factors)),
+        weight=float(jax.jit(joint_weight)(factors)),
         exact_product=factor**2,
         tiny=float(np.finfo(np.float32).tiny),
     )
@@ -195,7 +195,7 @@ def test_the_rule_holds_at_the_active_precision(n_factors: int) -> None:
     assert bool(jnp.all(factors >= tiny))
 
     _assert_carries_an_unrepresentable_probability(
-        float(joint_weight(factors)), exact_product=factor**n_factors, tiny=tiny
+        weight=float(joint_weight(factors)), exact_product=factor**n_factors, tiny=tiny
     )
 
 
@@ -232,8 +232,8 @@ def test_a_model_whose_joint_node_underflows_still_solves() -> None:
                 active=lambda age: age < 21,
                 states={
                     "wealth": _WEALTH,
-                    "health": DiscreteGrid(_Binary),
-                    "mood": DiscreteGrid(_Binary),
+                    "health": DiscreteGrid(category_class=_Binary),
+                    "mood": DiscreteGrid(category_class=_Binary),
                 },
                 state_transitions={
                     "wealth": _keep_wealth,
@@ -246,8 +246,8 @@ def test_a_model_whose_joint_node_underflows_still_solves() -> None:
                 transition=None,
                 states={
                     "wealth": _WEALTH,
-                    "health": DiscreteGrid(_Binary),
-                    "mood": DiscreteGrid(_Binary),
+                    "health": DiscreteGrid(category_class=_Binary),
+                    "mood": DiscreteGrid(category_class=_Binary),
                 },
                 functions={"utility": _wealth_utility},
             ),

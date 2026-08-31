@@ -29,7 +29,7 @@ _POLICY = jnp.array([0.0, 0.0, 10.0, 10.0, 5.0, 5.0])
 _SEGMENT = jnp.array([0.0, 0.0, 1.0, 1.0, 2.0, 2.0])
 
 
-def _published_value_at(backend, x_query):
+def _published_value_at(*, backend, x_query):
     grid, _policy, value, _n = backend.refine_envelope(
         endog_grid=_ENDOG,
         policy=_POLICY,
@@ -59,5 +59,5 @@ def test_backend_matches_oracle_on_a_non_bridging_branch(backend):
     )
     np.testing.assert_allclose(oracle_value, [0.5], atol=1e-12)
 
-    published = _published_value_at(backend, 1.5)
+    published = _published_value_at(backend=backend, x_query=1.5)
     np.testing.assert_allclose(published, 0.5, atol=1e-9)

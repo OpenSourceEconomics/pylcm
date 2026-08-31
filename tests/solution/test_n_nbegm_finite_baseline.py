@@ -73,7 +73,7 @@ def _solve_recording_kernel_results(
 
 @pytest.mark.parametrize("outer_batch_size", [0, 1, 2, 4, 7])
 def test_finite_streaming_fold_matches_frozen_corrected_baseline(
-    outer_batch_size: int, monkeypatch: pytest.MonkeyPatch
+    *, outer_batch_size: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The streaming solve reproduces the frozen corrected finite-search arrays.
 

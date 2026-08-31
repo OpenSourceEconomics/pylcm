@@ -36,15 +36,15 @@ def test_variables_from_regime_tags_kind_and_topology(binary_category_class):
     def utility(c):
         pass
 
-    def next_c(a, b):
+    def next_c(*, a, b):
         pass
 
     mock_regime = MockRegime(
         actions={
-            "a": DiscreteGrid(binary_category_class),
+            "a": DiscreteGrid(category_class=binary_category_class),
         },
         states={
-            "c": DiscreteGrid(binary_category_class),
+            "c": DiscreteGrid(category_class=binary_category_class),
         },
         state_transitions={"c": next_c},
         functions={"utility": utility},
@@ -61,15 +61,15 @@ def test_variables_from_regime_tags_kind_and_topology(binary_category_class):
 
 
 def test_get_grids(binary_category_class):
-    def next_c(a, b):
+    def next_c(*, a, b):
         pass
 
     mock_regime = MockRegime(
         actions={
-            "a": DiscreteGrid(binary_category_class),
+            "a": DiscreteGrid(category_class=binary_category_class),
         },
         states={
-            "c": DiscreteGrid(binary_category_class),
+            "c": DiscreteGrid(category_class=binary_category_class),
         },
         state_transitions={"c": next_c},
         functions={"utility": lambda _c: None},
@@ -86,16 +86,16 @@ def test_get_grids(binary_category_class):
 
 
 def test_get_grids_reorder(binary_category_class):
-    def next_state(a, b):
+    def next_state(*, a, b):
         pass
 
     mock_regime = MockRegime(
         actions={
-            "a": DiscreteGrid(binary_category_class),
+            "a": DiscreteGrid(category_class=binary_category_class),
         },
         states={
-            "b": DiscreteGrid(binary_category_class),
-            "c": DiscreteGrid(binary_category_class, batch_size=1),
+            "b": DiscreteGrid(category_class=binary_category_class),
+            "c": DiscreteGrid(category_class=binary_category_class, batch_size=1),
             "d": LinSpacedGrid(start=0, stop=1, n_points=5, batch_size=3),
             "e": LinSpacedGrid(start=0, stop=1, n_points=5, batch_size=1),
             "f": LinSpacedGrid(start=0, stop=1, n_points=5),
@@ -205,7 +205,7 @@ def _two_non_terminal_regimes() -> MappingProxyType[str, Regime]:
     def next_x(x):
         return x
 
-    def regime_transition(age, final_age):
+    def regime_transition(*, age, final_age):
         return jnp.where(age >= final_age, 1, 0)
 
     @categorical(ordered=False)
@@ -252,6 +252,7 @@ def _two_non_terminal_regimes() -> MappingProxyType[str, Regime]:
     ["next_state", "compute_regime_transition_probs"],
 )
 def test_simulate_functions_use_per_regime_callables(
+    *,
     two_non_terminal_regimes: MappingProxyType[str, Regime],
     attr: str,
 ) -> None:
@@ -264,7 +265,7 @@ def test_simulate_functions_use_per_regime_callables(
 def test_rename_params_to_qnames_with_partial():
     """Regression: dags >=0.5.1 renames bound partial keywords to qualified names."""
 
-    def utility(consumption, risk_aversion):
+    def utility(*, consumption, risk_aversion):
         return consumption ** (1 - risk_aversion)
 
     func = functools.partial(utility, risk_aversion=2.0)

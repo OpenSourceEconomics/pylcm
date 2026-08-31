@@ -99,7 +99,7 @@ def _exact_value_at(*, x_left, x_right, v_left, v_right, query) -> Fraction:
     return low + (at - left) * (high - low) / (right - left)
 
 
-def _stored_as(witness: dict, *, row_order: str) -> dict:
+def _stored_as(*, witness: dict, row_order: str) -> dict:
     """The same two branches, either as given or with the branch rows swapped.
 
     Which branch is stored first is not information about the geometry, so it
@@ -142,9 +142,9 @@ def _certificate(witness: dict) -> int:
     )
 
 
-def _published_policy(witness: dict, *, row_order: str, block_size: int) -> float:
+def _published_policy(*, witness: dict, row_order: str, block_size: int) -> float:
     """The policy the envelope publishes at the witness's query."""
-    stored = _stored_as(witness, row_order=row_order)
+    stored = _stored_as(witness=witness, row_order=row_order)
     _, policy, _ = envelope_at_query(
         endog_grid=jnp.asarray(stored["endog_grid"]),
         policy=jnp.asarray(stored["policy"]),
@@ -161,7 +161,7 @@ def _published_policy(witness: dict, *, row_order: str, block_size: int) -> floa
     ("coordinate_scale", "value_scale", "common_level"), _SCALINGS, ids=_SCALING_IDS
 )
 def test_the_certificate_never_contradicts_the_exact_margin(
-    coordinate_scale: float, value_scale: float, common_level: float
+    *, coordinate_scale: float, value_scale: float, common_level: float
 ) -> None:
     """A branch exactly above the other is never certified below it.
 
@@ -185,6 +185,7 @@ def test_the_certificate_never_contradicts_the_exact_margin(
     ("coordinate_scale", "value_scale", "common_level"), _SCALINGS, ids=_SCALING_IDS
 )
 def test_the_certified_strict_owner_supplies_every_channel(
+    *,
     segment_block_size: int,
     row_order: str,
     coordinate_scale: float,
@@ -213,7 +214,9 @@ def test_the_certified_strict_owner_supplies_every_channel(
     # decision is asserted exactly: a tolerance here would be wide enough to
     # accept the loser.
     assert (
-        _published_policy(witness, row_order=row_order, block_size=segment_block_size)
+        _published_policy(
+            witness=witness, row_order=row_order, block_size=segment_block_size
+        )
         == witness["policy_above"]
     )
 
@@ -307,7 +310,7 @@ _MASKED_BRANCH_CALLS = {
 )
 @pytest.mark.parametrize("call", sorted(_MASKED_BRANCH_CALLS))
 def test_a_masked_branch_never_turns_a_bracketed_query_into_an_abstention(
-    call: str, segment_block_size: int
+    *, call: str, segment_block_size: int
 ) -> None:
     """A masked-out candidate takes no part in deciding a query it cannot own.
 
@@ -340,7 +343,7 @@ def test_a_masked_branch_never_turns_a_bracketed_query_into_an_abstention(
     ("coordinate_scale", "value_scale", "common_level"), _SCALINGS, ids=_SCALING_IDS
 )
 def test_the_same_owner_is_published_on_every_path(
-    coordinate_scale: float, value_scale: float, common_level: float
+    *, coordinate_scale: float, value_scale: float, common_level: float
 ) -> None:
     """Blocking and row order never change what the query publishes.
 
@@ -357,7 +360,7 @@ def test_the_same_owner_is_published_on_every_path(
         common_level=common_level,
     )
     published = [
-        _published_policy(witness, row_order=order, block_size=block)
+        _published_policy(witness=witness, row_order=order, block_size=block)
         for order in ("stored", "swapped")
         for block in (0, 1, 2, 3)
     ]

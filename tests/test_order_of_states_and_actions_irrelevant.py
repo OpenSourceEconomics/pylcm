@@ -39,7 +39,7 @@ def _solve(**overrides):
     return model.solve(params=get_params(), log_level="off")
 
 
-def _periods_with(solution, regime):
+def _periods_with(*, solution, regime):
     return [period for period, regimes in solution.items() if regime in regimes]
 
 
@@ -51,7 +51,7 @@ def test_declaring_the_pension_grid_explicitly_changes_nothing():
     """
     default = _solve()
     explicit = _solve(working_pension_grid=_PLAIN)
-    periods = _periods_with(default, "working")
+    periods = _periods_with(solution=default, regime="working")
     assert periods
     for period in periods:
         np.testing.assert_array_equal(
@@ -74,7 +74,7 @@ def test_a_batched_pension_grid_transposes_the_published_working_value():
     """
     plain = _solve(working_pension_grid=_PLAIN)
     batched = _solve(working_pension_grid=_BATCHED)
-    periods = _periods_with(plain, "working")
+    periods = _periods_with(solution=plain, regime="working")
     assert periods
     for period in periods:
         expected = np.asarray(plain[period]["working"])
@@ -88,7 +88,7 @@ def test_a_batched_working_pension_grid_leaves_the_other_regimes_untouched(regim
     """Reordering one regime's axes does not disturb the regimes around it."""
     plain = _solve(working_pension_grid=_PLAIN)
     batched = _solve(working_pension_grid=_BATCHED)
-    periods = _periods_with(plain, regime)
+    periods = _periods_with(solution=plain, regime=regime)
     assert periods
     for period in periods:
         np.testing.assert_array_equal(

@@ -121,7 +121,7 @@ def _value_at(every_draw_is_rare: FloatND) -> FloatND:
 
 
 def _utility_of_three_draws(
-    draw_0: DiscreteState, draw_1: DiscreteState, draw_2: DiscreteState
+    *, draw_0: DiscreteState, draw_1: DiscreteState, draw_2: DiscreteState
 ) -> FloatND:
     """The catastrophic value where every draw is rare, and one elsewhere."""
     return _value_at(
@@ -130,6 +130,7 @@ def _utility_of_three_draws(
 
 
 def _utility_of_four_draws(
+    *,
     draw_0: DiscreteState,
     draw_1: DiscreteState,
     draw_2: DiscreteState,
@@ -173,7 +174,9 @@ def _build_model(*, with_a_safe_alternative: bool, enable_jit: bool) -> Model:
                 else {"lottery": MarkovTransition(_certain)}
             ),
             active=lambda age: age < 21,
-            actions={"plan": DiscreteGrid(Plan)} if with_a_safe_alternative else {},
+            actions={"plan": DiscreteGrid(category_class=Plan)}
+            if with_a_safe_alternative
+            else {},
             state_transitions={
                 name: {"lottery": MarkovTransition(_draw_probabilities)}
                 for name in axis_names
@@ -183,7 +186,7 @@ def _build_model(*, with_a_safe_alternative: bool, enable_jit: bool) -> Model:
         ),
         "lottery": Regime(
             transition=None,
-            states={name: DiscreteGrid(Draw) for name in axis_names},
+            states={name: DiscreteGrid(category_class=Draw) for name in axis_names},
             functions={"utility": lottery_utility},
         ),
     }

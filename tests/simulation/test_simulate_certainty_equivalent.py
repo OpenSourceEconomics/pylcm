@@ -154,6 +154,7 @@ def _simulated_period0_consumption(
 
 @pytest.mark.parametrize("risk_aversion", [2.0, 50.0])
 def test_simulated_consumption_is_equivariant_to_rescaling_the_model(
+    *,
     x64_enabled: None,  # noqa: ARG001
     risk_aversion: float,
 ):
@@ -169,6 +170,7 @@ def test_simulated_consumption_is_equivariant_to_rescaling_the_model(
 
 @pytest.mark.parametrize("risk_aversion", [2.0, 20.0])
 def test_simulated_consumption_is_equivariant_to_rescaling_the_model_float32(
+    *,
     x64_disabled: None,  # noqa: ARG001
     risk_aversion: float,
 ):

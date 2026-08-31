@@ -43,7 +43,7 @@ _PARITY_ATOL = 5e-3
 _PARITY_RTOL = 1e-3
 
 
-def _with_backend(regime, *, envelope):
+def _with_backend(*, regime, envelope):
     """Rebuild a DC-EGM regime with the chosen upper-envelope backend."""
     solver = dataclasses.replace(regime.solver, envelope=envelope_config(envelope))
     return regime.replace(solver=solver)
@@ -55,7 +55,7 @@ def _retirement_only_model(*, envelope, n_periods):
     return Model(
         regimes={
             "retirement": _with_backend(
-                dcegm_retirement, envelope=envelope_config(envelope)
+                regime=dcegm_retirement, envelope=envelope_config(envelope)
             ).replace(active=lambda age, la=last_age: age < la),
             "dead": dead,
         },
@@ -70,10 +70,10 @@ def _full_model(*, envelope, n_periods):
     return Model(
         regimes={
             "working_life": _with_backend(
-                dcegm_working_life, envelope=envelope
+                regime=dcegm_working_life, envelope=envelope
             ).replace(active=lambda age, la=last_age: age < la),
             "retirement": _with_backend(
-                dcegm_retirement_full, envelope=envelope
+                regime=dcegm_retirement_full, envelope=envelope
             ).replace(active=lambda age, la=last_age: age < la),
             "dead": base.dead,
         },
@@ -90,7 +90,7 @@ def test_rfc_matches_fues_on_concave_retirement(n_periods):
     the same candidate set identically — agreement holds tightly on every
     wealth node.
     """
-    params = get_retirement_only_params(n_periods)
+    params = get_retirement_only_params(n_periods=n_periods)
 
     fues = _retirement_only_model(envelope="fues", n_periods=n_periods).solve(
         params=params, log_level="debug"
@@ -136,13 +136,13 @@ def test_rfc_publishes_neg_inf_for_all_infeasible_combo_like_fues():
         return Model(
             regimes={
                 "working_life": _with_backend(
-                    dcegm_working_life, envelope=envelope
+                    regime=dcegm_working_life, envelope=envelope
                 ).replace(
                     constraints={"nothing_is_feasible": _nothing_is_feasible},
                     active=lambda age: age < 70,
                 ),
                 "retirement": _with_backend(
-                    dcegm_retirement_full, envelope=envelope
+                    regime=dcegm_retirement_full, envelope=envelope
                 ).replace(
                     transition=retirement_transition,
                     state_transitions={
@@ -156,7 +156,7 @@ def test_rfc_publishes_neg_inf_for_all_infeasible_combo_like_fues():
             regime_id_class=base.RegimeId,
         )
 
-    params = get_full_params(n_periods, discount_factor=0.98, wage=20.0)
+    params = get_full_params(n_periods=n_periods, discount_factor=0.98, wage=20.0)
     rfc = build("rfc").solve(params=params, log_level="debug")
 
     for period in sorted(rfc)[:-1]:
@@ -175,7 +175,7 @@ def test_rfc_matches_fues_on_discrete_choice_working_life(n_periods):
     functions agree within the no-insertion tolerance on the wealth nodes where
     both are well-defined.
     """
-    params = get_full_params(n_periods, discount_factor=0.98, wage=20.0)
+    params = get_full_params(n_periods=n_periods, discount_factor=0.98, wage=20.0)
 
     fues = _full_model(envelope="fues", n_periods=n_periods).solve(
         params=params, log_level="debug"
@@ -204,7 +204,7 @@ def test_rfc_handles_discount_factor_zero_like_fues():
     backends must publish the same value row.
     """
     n_periods = 3
-    params = get_retirement_only_params(n_periods, discount_factor=0.0)
+    params = get_retirement_only_params(n_periods=n_periods, discount_factor=0.0)
 
     fues = _retirement_only_model(envelope="fues", n_periods=n_periods).solve(
         params=params, log_level="debug"

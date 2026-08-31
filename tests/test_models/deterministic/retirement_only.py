@@ -30,7 +30,7 @@ class RetirementOnlyRegimeId:
     dead: ScalarInt
 
 
-def next_regime_from_retirement(age: int, final_age_alive: float) -> ScalarInt:
+def next_regime_from_retirement(*, age: int, final_age_alive: float) -> ScalarInt:
     return jnp.where(
         age >= final_age_alive,
         RetirementOnlyRegimeId.dead,
@@ -63,8 +63,8 @@ def get_model(n_periods: int) -> Model:
 
 
 def get_params(
-    n_periods: int,
     *,
+    n_periods: int,
     discount_factor: float = 0.98,
     interest_rate: float = 0.0,
 ) -> dict:

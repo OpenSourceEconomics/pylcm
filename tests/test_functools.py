@@ -1,5 +1,6 @@
 import inspect
 import re
+from functools import partial
 
 import jax.numpy as jnp
 import pytest
@@ -17,10 +18,10 @@ from _lcm.utils.functools import (
 
 
 def test_get_union_of_args():
-    def f(a, b):
+    def f(*, a, b):
         pass
 
-    def g(b, c):
+    def g(*, b, c):
         pass
 
     got = get_union_of_args([f, g])
@@ -98,6 +99,7 @@ def test_convert_kwargs_to_args():
 
 
 def test_allow_only_kwargs():
+    # keyword-only-exempt: library-callback=_lcm.utils.functools.allow_only_kwargs
     def f(a, /, b):
         # a is positional-only
         return a + b
@@ -105,42 +107,46 @@ def test_allow_only_kwargs():
     with pytest.raises(TypeError):
         f(a=1, b=2)  # ty: ignore[positional-only-parameter-as-kwarg]
 
-    assert allow_only_kwargs(f)(a=1, b=2) == 3
+    assert allow_only_kwargs(func=f)(a=1, b=2) == 3
 
 
 def test_allow_only_kwargs_with_keyword_only_args():
+    # keyword-only-exempt: library-callback=_lcm.utils.functools.allow_only_kwargs
     def f(a, /, *, b):
         return a + b
 
     with pytest.raises(TypeError):
         f(a=1, b=2)  # ty: ignore[positional-only-parameter-as-kwarg]
 
-    assert allow_only_kwargs(f)(a=1, b=2) == 3
+    assert allow_only_kwargs(func=f)(a=1, b=2) == 3
 
 
 def test_allow_only_kwargs_too_many_args():
+    # keyword-only-exempt: library-callback=_lcm.utils.functools.allow_only_kwargs
     def f(a, /, b):
         return a + b
 
     too_many_match = re.escape("Expected arguments: ['a', 'b'], got extra: {'c'}")
     with pytest.raises(ValueError, match=too_many_match):
-        allow_only_kwargs(f)(a=1, b=2, c=3)
+        allow_only_kwargs(func=f)(a=1, b=2, c=3)
 
 
 def test_allow_only_kwargs_too_few_args():
+    # keyword-only-exempt: library-callback=_lcm.utils.functools.allow_only_kwargs
     def f(a, /, b):
         return a + b
 
     too_few_match = re.escape("Expected arguments: ['a', 'b'], missing: {'b'}")
     with pytest.raises(ValueError, match=too_few_match):
-        allow_only_kwargs(f)(a=1)
+        allow_only_kwargs(func=f)(a=1)
 
 
 def test_allow_only_kwargs_signature_change():
+    # keyword-only-exempt: library-callback=_lcm.utils.functools.allow_only_kwargs
     def f(a, /, b, *, c):
         pass
 
-    decorated = allow_only_kwargs(f)
+    decorated = allow_only_kwargs(func=f)
     parameters = inspect.signature(decorated).parameters
 
     assert parameters["a"].kind == inspect.Parameter.KEYWORD_ONLY
@@ -149,6 +155,7 @@ def test_allow_only_kwargs_signature_change():
 
 
 def test_allow_args():
+    # keyword-only-exempt: library-callback=_lcm.utils.functools.allow_args
     def f(a, *, b):
         # b is keyword-only
         return a + b
@@ -161,7 +168,22 @@ def test_allow_args():
     assert allow_args(f)(b=2, a=1) == 3
 
 
+def test_allow_args_honors_defaulted_keyword_only_parameter():
+    def active(*, age, final_age=75):
+        return age < final_age
+
+    adapted = allow_args(partial(active, final_age=65))
+
+    assert adapted(20)
+    assert not adapted(70)
+    with pytest.raises(ValueError, match=r"Not all arguments provided\."):
+        adapted()
+    with pytest.raises(ValueError, match=r"Too many arguments provided\."):
+        adapted(20, 65, 80)
+
+
 def test_allow_args_different_kwargs_order():
+    # keyword-only-exempt: library-callback=_lcm.utils.functools.allow_args
     def f(a, b, c, *, d):
         return a + b + c + d
 
@@ -173,6 +195,7 @@ def test_allow_args_different_kwargs_order():
 
 
 def test_allow_args_too_many_args():
+    # keyword-only-exempt: library-callback=_lcm.utils.functools.allow_args
     def f(a, *, b):
         return a + b
 
@@ -181,6 +204,7 @@ def test_allow_args_too_many_args():
 
 
 def test_allow_args_too_few_args():
+    # keyword-only-exempt: library-callback=_lcm.utils.functools.allow_args
     def f(a, *, b):
         return a + b
 
@@ -189,6 +213,7 @@ def test_allow_args_too_few_args():
 
 
 def test_allow_args_with_vmap():
+    # keyword-only-exempt: library-callback=jax.vmap
     def f(a, *, b):
         # b is keyword-only
         return a + b
@@ -211,6 +236,7 @@ def test_allow_args_with_vmap():
 
 
 def test_allow_args_signature_change():
+    # keyword-only-exempt: library-callback=_lcm.utils.functools.allow_args
     def f(a, /, b, *, c):
         pass
 

@@ -131,12 +131,12 @@ def survival_of_wealth(wealth: ContinuousState) -> FloatND:
     return SURVIVAL_LOW + (SURVIVAL_HIGH - SURVIVAL_LOW) * smoothstep_in_band(wealth)
 
 
-def stay_prob(wealth: ContinuousState, age: int, final_age_alive: float) -> FloatND:
+def stay_prob(*, wealth: ContinuousState, age: int, final_age_alive: float) -> FloatND:
     return jnp.where(age >= final_age_alive, 0.0, survival_of_wealth(wealth))
 
 
-def death_prob(wealth: ContinuousState, age: int, final_age_alive: float) -> FloatND:
-    return 1.0 - stay_prob(wealth, age, final_age_alive)
+def death_prob(*, wealth: ContinuousState, age: int, final_age_alive: float) -> FloatND:
+    return 1.0 - stay_prob(wealth=wealth, age=age, final_age_alive=final_age_alive)
 
 
 def utility(consumption: ContinuousAction) -> FloatND:
@@ -144,7 +144,7 @@ def utility(consumption: ContinuousAction) -> FloatND:
 
 
 def utility_with_health(
-    consumption: ContinuousAction, health: DiscreteState
+    *, consumption: ContinuousAction, health: DiscreteState
 ) -> FloatND:
     return jnp.log(consumption) - jnp.where(
         health == Health.bad, BAD_HEALTH_PENALTY, 0.0
@@ -152,12 +152,12 @@ def utility_with_health(
 
 
 def utility_with_skill(
-    consumption: ContinuousAction, skill: ContinuousState
+    *, consumption: ContinuousAction, skill: ContinuousState
 ) -> FloatND:
     return jnp.log(consumption) + SKILL_WEIGHT * skill
 
 
-def savings(wealth: FloatND, consumption: ContinuousAction) -> FloatND:
+def savings(*, wealth: FloatND, consumption: ContinuousAction) -> FloatND:
     return wealth - consumption
 
 
@@ -165,11 +165,13 @@ def inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
     return 1.0 / marginal_continuation
 
 
-def budget_constraint(consumption: ContinuousAction, wealth: ContinuousState) -> BoolND:
+def budget_constraint(
+    *, consumption: ContinuousAction, wealth: ContinuousState
+) -> BoolND:
     return consumption <= wealth
 
 
-def next_regime(age: int, final_age_alive: float) -> ScalarInt:
+def next_regime(*, age: int, final_age_alive: float) -> ScalarInt:
     return jnp.where(
         age >= final_age_alive,
         SavingsStageRegimeId.dead,
@@ -182,12 +184,12 @@ def next_wealth_dcegm(savings: FloatND) -> ContinuousState:
 
 
 def next_wealth_brute(
-    wealth: ContinuousState, consumption: ContinuousAction
+    *, wealth: ContinuousState, consumption: ContinuousAction
 ) -> ContinuousState:
     return wealth - consumption + LABOR_INCOME
 
 
-def next_skill(skill: ContinuousState, wealth: ContinuousState) -> ContinuousState:
+def next_skill(*, skill: ContinuousState, wealth: ContinuousState) -> ContinuousState:
     return jnp.minimum(
         SKILL_DECAY * skill + SKILL_GAIN * smoothstep_in_band(wealth), SKILL_MAX
     )
@@ -317,7 +319,7 @@ def _markov_health_model(solver: str) -> Model:
         transition=next_regime,
         active=_active,
         actions={"consumption": CONSUMPTION_GRID},
-        states={"wealth": WEALTH_GRID, "health": DiscreteGrid(Health)},
+        states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=Health)},
         state_transitions={
             "wealth": next_wealth_dcegm if is_dcegm else next_wealth_brute,
             "health": MarkovTransition(health_weights),
@@ -469,7 +471,7 @@ def smooth_death_prob(wealth: ContinuousState) -> FloatND:
     return 1.0 - survival_of_wealth(wealth)
 
 
-def _build_model_with_survival_cells(stay, die) -> Model:
+def _build_model_with_survival_cells(*, stay, die) -> Model:
     working = ConsumptionSavingsRegime(
         transition={
             "working_life": MarkovTransition(stay),
@@ -502,7 +504,7 @@ def _build_model_with_survival_cells(stay, die) -> Model:
         pytest.param(narrow_stay_prob, narrow_death_prob, id="sub_cell_smoothstep"),
     ],
 )
-def test_cliff_in_regime_transition_probability_raises(stay, die):
+def test_cliff_in_regime_transition_probability_raises(*, stay, die):
     """A survival probability that jumps at node resolution fails at build.
 
     A boolean step is a genuine cliff; a smoothstep narrower than one wealth
@@ -513,11 +515,13 @@ def test_cliff_in_regime_transition_probability_raises(stay, die):
     with pytest.raises(
         ModelInitializationError, match="add grid nodes across the band"
     ):
-        _build_model_with_survival_cells(stay, die)
+        _build_model_with_survival_cells(stay=stay, die=die)
 
 
 @pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 def test_smooth_band_regime_transition_probability_constructs():
     """A survival probability ramping over many grid cells builds fine."""
-    model = _build_model_with_survival_cells(smooth_stay_prob, smooth_death_prob)
+    model = _build_model_with_survival_cells(
+        stay=smooth_stay_prob, die=smooth_death_prob
+    )
     assert model.n_periods == N_PERIODS

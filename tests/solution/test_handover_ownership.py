@@ -65,7 +65,7 @@ def _working_dtypes():
     return (np.float64, jnp.float64) if X64_ENABLED else (np.float32, jnp.float32)
 
 
-def _owner_sign(jax_dtype, *, x_query: float, offset: float, incoming_v0: float) -> int:
+def _owner_sign(*, jax_dtype, x_query: float, offset: float, incoming_v0: float) -> int:
     """`+1` where the outgoing link is above at `x_query`, `-1` where below."""
     return int(
         certified_margin_sign(
@@ -82,7 +82,7 @@ def _owner_sign(jax_dtype, *, x_query: float, offset: float, incoming_v0: float)
     )
 
 
-def _published_switch(jax_dtype, *, offset: float, incoming_v0: float) -> float | None:
+def _published_switch(*, jax_dtype, offset: float, incoming_v0: float) -> float | None:
     """The abscissa at which the refined row hands the policy over, if it does."""
     grid = jnp.asarray(
         [_OUTGOING_X0, _OUTGOING_X1, offset, offset + 1.0], dtype=jax_dtype
@@ -114,21 +114,26 @@ def _published_switch(jax_dtype, *, offset: float, incoming_v0: float) -> float 
     return float(live_grid[duplicated[0]]) if duplicated else None
 
 
-def _misplaced_switches(offset: float, n_intercepts: int) -> list[tuple[float, str]]:
+def _misplaced_switches(*, offset: float, n_intercepts: int) -> list[tuple[float, str]]:
     """Sweep the incoming link's level and collect every mislocated handover."""
     dtype, jax_dtype = _working_dtypes()
     misplaced = []
     for step in range(n_intercepts):
         incoming_v0 = float(dtype(0.005 + step * 1e-5))
-        event = _published_switch(jax_dtype, offset=offset, incoming_v0=incoming_v0)
+        event = _published_switch(
+            jax_dtype=jax_dtype, offset=offset, incoming_v0=incoming_v0
+        )
         if event is None:
             continue
         predecessor = float(np.nextafter(dtype(event), dtype(-np.inf)))
         at_predecessor = _owner_sign(
-            jax_dtype, x_query=predecessor, offset=offset, incoming_v0=incoming_v0
+            jax_dtype=jax_dtype,
+            x_query=predecessor,
+            offset=offset,
+            incoming_v0=incoming_v0,
         )
         at_event = _owner_sign(
-            jax_dtype, x_query=event, offset=offset, incoming_v0=incoming_v0
+            jax_dtype=jax_dtype, x_query=event, offset=offset, incoming_v0=incoming_v0
         )
         if at_predecessor != 1:
             misplaced.append((incoming_v0, "early"))
@@ -180,7 +185,7 @@ def test_handover_is_the_first_state_the_incoming_link_owns(offset: float) -> No
     own endpoint reads exactly. A shifted support forces every reading to travel,
     and the placement must survive that.
     """
-    assert _misplaced_switches(offset, n_intercepts=60) == []
+    assert _misplaced_switches(offset=offset, n_intercepts=60) == []
 
 
 def _common_level_cells(n_cases: int):
@@ -258,7 +263,7 @@ def _common_level_cells(n_cases: int):
     }
 
 
-def _exact_handover(cells, case: int) -> float | None:
+def _exact_handover(*, cells, case: int) -> float | None:
     """Smallest representable state at or above the exact crossing, clipped."""
     dtype, _jax_dtype = _working_dtypes()
     grid, value = cells["grid"][case], cells["value"][case]
@@ -314,7 +319,8 @@ def test_published_handovers_match_the_exact_crossing_state() -> None:
     mismatched = [
         case
         for case in published
-        if _exact_handover(cells, int(case)) not in (None, cells["bounds"][case, 1])
+        if _exact_handover(cells=cells, case=int(case))
+        not in (None, cells["bounds"][case, 1])
     ]
     assert mismatched == []
 

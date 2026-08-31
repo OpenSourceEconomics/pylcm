@@ -169,7 +169,7 @@ def test_constancy_probe_sweeps_each_discrete_arguments_actual_grid_codes():
     actual codes to catch it.
     """
 
-    def next_tracker(tracker, liquid, phase):
+    def next_tracker(*, tracker, liquid, phase):
         # d/d liquid = 0.1 * (phase-1)(phase-3)(phase-5)(phase-7): zero at every
         # synthetic integer fill the probe's constants and ramps produce, nonzero
         # at the valid codes 0 and 2.

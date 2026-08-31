@@ -16,7 +16,7 @@ _LIQUID = np.linspace(0.1, 30.0, 120)
 _INTERIOR = (_LIQUID > 1.5) & (_LIQUID < 24.0)
 
 
-def _solve(variant: str, *, n_consumption: int = 120) -> Mapping[int, Mapping]:
+def _solve(*, variant: str, n_consumption: int = 120) -> Mapping[int, Mapping]:
     """Solve the buy-private toy on the shared comparison grids."""
     model = toy.build_model(
         variant=variant,
@@ -31,8 +31,8 @@ def _solve(variant: str, *, n_consumption: int = 120) -> Mapping[int, Mapping]:
 
 def test_buy_private_discrete_envelope_matches_brute_every_age():
     """The discrete-envelope solve equals brute over the insurance choice, every age."""
-    nbegm = _solve("nbegm")
-    brute = _solve("brute", n_consumption=1500)
+    nbegm = _solve(variant="nbegm")
+    brute = _solve(variant="brute", n_consumption=1500)
     for period in brute:
         if "alive" not in brute[period] or "alive" not in nbegm[period]:
             continue

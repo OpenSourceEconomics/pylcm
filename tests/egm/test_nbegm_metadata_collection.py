@@ -13,7 +13,7 @@ from lcm.phased import Phased
     variable="income",
     breakpoints=(lcm.affine_breakpoint(threshold="cutoff", kind="jump"),),
 )
-def subsidy(income, cutoff):
+def subsidy(*, income, cutoff):
     return income - cutoff
 
 
@@ -24,7 +24,7 @@ def subsidy(income, cutoff):
         lcm.affine_breakpoint(threshold="other_cutoff", kind="continuous_kink"),
     ),
 )
-def subsidy_again(income, other_cutoff):
+def subsidy_again(*, income, other_cutoff):
     return income - other_cutoff
 
 
@@ -33,7 +33,7 @@ def rebate(income):
     return income
 
 
-def simulate_subsidy(income, cutoff):
+def simulate_subsidy(*, income, cutoff):
     return income - cutoff
 
 

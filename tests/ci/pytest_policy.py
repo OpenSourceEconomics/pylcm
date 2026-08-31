@@ -77,7 +77,7 @@ def configure(config: pytest.Config) -> None:
     config.stash[_PROFILE_KEY] = profile
 
 
-def apply(config: pytest.Config, items: list[pytest.Item]) -> None:
+def apply(*, config: pytest.Config, items: list[pytest.Item]) -> None:
     """Classify, reconcile, and select all collected nodes for one child."""
     policy = config.stash[_POLICY_KEY]
     profile = config.stash[_PROFILE_KEY]
@@ -111,7 +111,7 @@ def apply(config: pytest.Config, items: list[pytest.Item]) -> None:
             deselected.append(item)
             continue
         disposition = classify(
-            contract,
+            contract=contract,
             profile=profile,
             policy=policy,
             precision=precision,

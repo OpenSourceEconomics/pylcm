@@ -42,7 +42,7 @@ ACCOUNTED = pytest.mark.parametrize(
 
 @ACCOUNTED
 @pytest.mark.parametrize("weight", [0.0, 0.25, 1.0])
-def test_derivative_in_the_weight_is_the_value_including_at_zero(weight, accounted):
+def test_derivative_in_the_weight_is_the_value_including_at_zero(*, weight, accounted):
     """``d/dw [w * v] == v`` for finite ``v``, at ``w == 0`` as much as anywhere."""
     grad = jax.grad(
         lambda w: zero_safe_weighted_term(
@@ -54,7 +54,7 @@ def test_derivative_in_the_weight_is_the_value_including_at_zero(weight, account
 
 @ACCOUNTED
 @pytest.mark.parametrize("value", [-jnp.inf, jnp.inf, jnp.nan])
-def test_zero_weight_still_annihilates_a_nonfinite_value(value, accounted):
+def test_zero_weight_still_annihilates_a_nonfinite_value(*, value, accounted):
     """The load-bearing property: a zero weight kills any value, never yielding nan."""
     got = zero_safe_weighted_term(
         weight=jnp.asarray(0.0),
@@ -148,7 +148,7 @@ def test_map_coordinates_gradient_is_correct_on_node():
     grid = jnp.arange(10.0) ** 2
 
     def interpolate(coordinate):
-        return map_coordinates(grid, [jnp.atleast_1d(coordinate)])[0]
+        return map_coordinates(input=grid, coordinates=[jnp.atleast_1d(coordinate)])[0]
 
     for node in (1.0, 2.0, 3.0):
         slope = float(grid[int(node) + 1] - grid[int(node)])

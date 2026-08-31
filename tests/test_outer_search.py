@@ -157,14 +157,14 @@ def test_finite_outer_grid_reproduces_the_retired_legacy_pair_values() -> None:
     assert values.size == _FINITE_GRID_BASELINE_SIZE
     assert np.isfinite(values).all()
     assert_agrees_to_ulp(
-        values[:6],
-        np.asarray(_FINITE_GRID_BASELINE_HEAD, dtype=values.dtype),
+        got=values[:6],
+        expected=np.asarray(_FINITE_GRID_BASELINE_HEAD, dtype=values.dtype),
         n_ulp=_FINITE_GRID_N_ULP,
         err_msg="first six solution values",
     )
     assert_agrees_to_ulp(
-        values.sum(),
-        np.asarray(_FINITE_GRID_BASELINE_SUM, dtype=values.dtype),
+        got=values.sum(),
+        expected=np.asarray(_FINITE_GRID_BASELINE_SUM, dtype=values.dtype),
         n_ulp=_FINITE_GRID_N_ULP,
         err_msg="sum over all solution values",
     )

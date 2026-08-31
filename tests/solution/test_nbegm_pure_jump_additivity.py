@@ -31,7 +31,7 @@ from lcm.model import Model
 from tests.test_models import nbegm_jump_schedule_toy as toy
 
 
-def _check_probes(model: Model, params: dict) -> None:
+def _check_probes(*, model: Model, params: dict) -> None:
     """Run the solver's parameter-dependent preconditions, and nothing else."""
     check_solver_params(
         regimes=model._regimes,
@@ -46,7 +46,7 @@ def test_all_jump_schedule_with_a_non_unit_liquid_slope_is_refused() -> None:
     )
 
     with pytest.raises(RegimeInitializationError, match=r"slope|additive"):
-        _check_probes(model, toy.build_params(non_additive=True))
+        _check_probes(model=model, params=toy.build_params(non_additive=True))
 
 
 @pytest.mark.parametrize("enable_x64", [False, True], ids=["fp32", "fp64"])
@@ -69,7 +69,7 @@ def test_all_jump_schedule_checks_unit_slope_inside_each_declared_interval(
             cliff=10.0,
         )
         with pytest.raises(RegimeInitializationError, match=r"slope|additive"):
-            _check_probes(model, params)
+            _check_probes(model=model, params=params)
     finally:
         jax.config.update("jax_enable_x64", previous)
 
@@ -83,7 +83,7 @@ def test_schedule_over_a_nonlinear_budget_is_refused() -> None:
     model = toy.build_model(variant="nbegm", nonlinear=True, n_liquid=40, n_savings=40)
 
     with pytest.raises(RegimeInitializationError, match=r"affine|second derivative"):
-        _check_probes(model, toy.build_params(nonlinear=True))
+        _check_probes(model=model, params=toy.build_params(nonlinear=True))
 
 
 def test_affinity_check_covers_the_budget_s_upper_grid_region() -> None:
@@ -98,7 +98,8 @@ def test_affinity_check_covers_the_budget_s_upper_grid_region() -> None:
 
     with pytest.raises(RegimeInitializationError, match=r"affine|second derivative"):
         _check_probes(
-            model, toy.build_params(nonlinear_above_ten=True, nonlinear=False)
+            model=model,
+            params=toy.build_params(nonlinear_above_ten=True, nonlinear=False),
         )
 
 
@@ -107,7 +108,7 @@ def test_all_jump_schedule_with_a_unit_liquid_slope_builds() -> None:
     model = toy.build_model(
         variant="nbegm", non_additive=False, n_liquid=40, n_savings=40
     )
-    _check_probes(model, toy.build_params())
+    _check_probes(model=model, params=toy.build_params())
 
 
 def _scalar_interval_representatives(
@@ -173,8 +174,8 @@ def _scalar_interval_oracle_accepts(
 
 
 def _direct_source(
-    threshold_name: str,
     *,
+    threshold_name: str,
     equality_owner: Literal["below", "above"] = "above",
     kind: str = "jump",
 ) -> _NBEGMSource:
@@ -226,7 +227,8 @@ def _production_probe_accepts(
 
 
 def _evaluate_at_precision(
-    enable_x64: bool,  # noqa: FBT001
+    *,
+    enable_x64: bool,
     evaluate,
 ) -> bool:
     """Run one generated decision under the requested canonical JAX dtype."""
@@ -250,14 +252,15 @@ def _evaluate_at_precision(
     ids=["low", "low-permuted", "high", "high-permuted"],
 )
 def test_generated_breakpoint_positions_and_permutations_match_scalar_oracle(
-    enable_x64: bool,  # noqa: FBT001
+    *,
+    enable_x64: bool,
     threshold_values: tuple[float, float],
 ) -> None:
     """A narrow non-unit cell is found regardless of threshold value or order."""
     left, right = threshold_values
     lower, upper = sorted(threshold_values)
 
-    def budget(liquid, threshold_left, threshold_right):
+    def budget(*, liquid, threshold_left, threshold_right):
         lo = jnp.minimum(threshold_left, threshold_right)
         hi = jnp.maximum(threshold_left, threshold_right)
         return jnp.where(
@@ -266,7 +269,7 @@ def test_generated_breakpoint_positions_and_permutations_match_scalar_oracle(
             jnp.where(liquid < hi, 2.0 * liquid - 4.0, liquid + 1.0),
         )
 
-    def coefficient_at(liquid: float, _code: int) -> tuple[float, float]:
+    def coefficient_at(*, liquid: float, _code: int) -> tuple[float, float]:
         slope = 1.0 if liquid < lower or liquid >= upper else 2.0
         return slope, 0.0
 
@@ -278,14 +281,14 @@ def test_generated_breakpoint_positions_and_permutations_match_scalar_oracle(
         enable_x64=enable_x64,
     )
     production = _evaluate_at_precision(
-        enable_x64,
-        lambda: _production_probe_accepts(
+        enable_x64=enable_x64,
+        evaluate=lambda: _production_probe_accepts(
             budget=budget,
             liquid_grid=(0.0, 5.0, 10.0, 15.0, 20.0),
             params={"threshold_left": left, "threshold_right": right},
             sources=(
-                _direct_source("threshold_left"),
-                _direct_source("threshold_right"),
+                _direct_source(threshold_name="threshold_left"),
+                _direct_source(threshold_name="threshold_right"),
             ),
             require_unit_slope=True,
             enable_x64=enable_x64,
@@ -304,12 +307,12 @@ def test_generated_narrow_curved_interval_matches_scalar_oracle(
     lower = 8.875
     upper = 9.125
 
-    def budget(liquid, lower_threshold, upper_threshold):
+    def budget(*, liquid, lower_threshold, upper_threshold):
         inside = (liquid > lower_threshold) & (liquid < upper_threshold)
         curved = liquid + 0.25 * (liquid - lower_threshold) ** 2
         return jnp.where(inside, curved, liquid)
 
-    def coefficient_at(liquid: float, _code: int) -> tuple[float, float]:
+    def coefficient_at(*, liquid: float, _code: int) -> tuple[float, float]:
         return (1.0, 0.5) if lower < liquid < upper else (1.0, 0.0)
 
     oracle = _scalar_interval_oracle_accepts(
@@ -320,14 +323,14 @@ def test_generated_narrow_curved_interval_matches_scalar_oracle(
         enable_x64=enable_x64,
     )
     production = _evaluate_at_precision(
-        enable_x64,
-        lambda: _production_probe_accepts(
+        enable_x64=enable_x64,
+        evaluate=lambda: _production_probe_accepts(
             budget=budget,
             liquid_grid=(0.0, 5.0, 10.0, 15.0, 20.0),
             params={"lower_threshold": lower, "upper_threshold": upper},
             sources=(
-                _direct_source("lower_threshold"),
-                _direct_source("upper_threshold"),
+                _direct_source(threshold_name="lower_threshold"),
+                _direct_source(threshold_name="upper_threshold"),
             ),
             require_unit_slope=False,
             enable_x64=enable_x64,
@@ -345,11 +348,11 @@ def test_generated_discrete_code_branch_matches_scalar_oracle(
     """A non-unit branch live only at an actual discrete code is refused."""
     cliff = 10.25
 
-    def budget(liquid, cliff_threshold, branch_code):
+    def budget(*, liquid, cliff_threshold, branch_code):
         bad_branch = (branch_code == 7) & (liquid >= cliff_threshold)
         return jnp.where(bad_branch, 2.0 * liquid, liquid)
 
-    def coefficient_at(liquid: float, code: int) -> tuple[float, float]:
+    def coefficient_at(*, liquid: float, code: int) -> tuple[float, float]:
         return (2.0, 0.0) if code == 7 and liquid >= cliff else (1.0, 0.0)
 
     oracle = _scalar_interval_oracle_accepts(
@@ -361,12 +364,12 @@ def test_generated_discrete_code_branch_matches_scalar_oracle(
         integer_codes=(0, 7),
     )
     production = _evaluate_at_precision(
-        enable_x64,
-        lambda: _production_probe_accepts(
+        enable_x64=enable_x64,
+        evaluate=lambda: _production_probe_accepts(
             budget=budget,
             liquid_grid=(0.0, 5.0, 10.0, 15.0, 20.0),
             params={"cliff_threshold": cliff},
-            sources=(_direct_source("cliff_threshold"),),
+            sources=(_direct_source(threshold_name="cliff_threshold"),),
             require_unit_slope=True,
             enable_x64=enable_x64,
             integer_codes={"branch_code": (0, 7)},
@@ -385,7 +388,7 @@ def test_endpoint_adjacent_interval_matches_scalar_oracle(
     scalar = np.float64 if enable_x64 else np.float32
     threshold = float(np.nextafter(scalar(1.0), scalar(21.0)))
 
-    def budget(liquid, cliff_threshold):
+    def budget(*, liquid, cliff_threshold):
         del cliff_threshold
         return liquid
 
@@ -397,12 +400,12 @@ def test_endpoint_adjacent_interval_matches_scalar_oracle(
         enable_x64=enable_x64,
     )
     production = _evaluate_at_precision(
-        enable_x64,
-        lambda: _production_probe_accepts(
+        enable_x64=enable_x64,
+        evaluate=lambda: _production_probe_accepts(
             budget=budget,
             liquid_grid=(1.0, 6.0, 11.0, 16.0, 21.0),
             params={"cliff_threshold": threshold},
-            sources=(_direct_source("cliff_threshold"),),
+            sources=(_direct_source(threshold_name="cliff_threshold"),),
             require_unit_slope=True,
             enable_x64=enable_x64,
         ),
@@ -422,8 +425,9 @@ def test_endpoint_adjacent_interval_matches_scalar_oracle(
     ids=["legal-all-jump", "legal-mixed"],
 )
 def test_legal_piecewise_affine_routes_match_scalar_oracle(
-    enable_x64: bool,  # noqa: FBT001
-    require_unit_slope: bool,  # noqa: FBT001
+    *,
+    enable_x64: bool,
+    require_unit_slope: bool,
     slopes: tuple[float, float, float],
     kinds: tuple[str, str],
 ) -> None:
@@ -431,7 +435,7 @@ def test_legal_piecewise_affine_routes_match_scalar_oracle(
     lower = 8.875
     upper = 9.125
 
-    def budget(liquid, lower_threshold, upper_threshold):
+    def budget(*, liquid, lower_threshold, upper_threshold):
         return jnp.where(
             liquid < lower_threshold,
             slopes[0] * liquid + 3.0,
@@ -442,7 +446,7 @@ def test_legal_piecewise_affine_routes_match_scalar_oracle(
             ),
         )
 
-    def coefficient_at(liquid: float, _code: int) -> tuple[float, float]:
+    def coefficient_at(*, liquid: float, _code: int) -> tuple[float, float]:
         position = 0 if liquid < lower else 1 if liquid < upper else 2
         return slopes[position], 0.0
 
@@ -454,14 +458,14 @@ def test_legal_piecewise_affine_routes_match_scalar_oracle(
         enable_x64=enable_x64,
     )
     production = _evaluate_at_precision(
-        enable_x64,
-        lambda: _production_probe_accepts(
+        enable_x64=enable_x64,
+        evaluate=lambda: _production_probe_accepts(
             budget=budget,
             liquid_grid=(0.0, 5.0, 10.0, 15.0, 20.0),
             params={"lower_threshold": lower, "upper_threshold": upper},
             sources=(
-                _direct_source("lower_threshold", kind=kinds[0]),
-                _direct_source("upper_threshold", kind=kinds[1]),
+                _direct_source(threshold_name="lower_threshold", kind=kinds[0]),
+                _direct_source(threshold_name="upper_threshold", kind=kinds[1]),
             ),
             require_unit_slope=require_unit_slope,
             enable_x64=enable_x64,
@@ -481,12 +485,13 @@ def test_legal_non_unit_derived_ride_route_matches_scalar_oracle(
     scale = 2.0
     codes = (0, 1)
 
-    def derived_of_liquid(liquid, scale, ride_code):
+    def derived_of_liquid(*, liquid, scale, ride_code):
         return scale * liquid + ride_code
 
-    def budget(liquid, threshold, scale, ride_code):
+    def budget(*, liquid, threshold, scale, ride_code):
         transfer = jnp.where(
-            derived_of_liquid(liquid, scale, ride_code) < threshold,
+            derived_of_liquid(liquid=liquid, scale=scale, ride_code=ride_code)
+            < threshold,
             3.0,
             1.0,
         )
@@ -512,8 +517,8 @@ def test_legal_non_unit_derived_ride_route_matches_scalar_oracle(
         derived_state_names=("ride_code",),
     )
     production = _evaluate_at_precision(
-        enable_x64,
-        lambda: _production_probe_accepts(
+        enable_x64=enable_x64,
+        evaluate=lambda: _production_probe_accepts(
             budget=budget,
             liquid_grid=(0.0, 5.0, 10.0, 15.0, 20.0),
             params={"threshold": threshold, "scale": scale},

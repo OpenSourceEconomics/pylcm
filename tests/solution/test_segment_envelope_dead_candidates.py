@@ -27,7 +27,7 @@ _POLICY = [0.4, 0.8, 1.1, 1.3, 1.4, 1.45]
 _N_REFINED = 24
 
 
-def _refine(grid, value, policy):
+def _refine(*, grid, value, policy):
     return refine_envelope_exact(
         endog_grid=jnp.asarray(grid),
         policy=jnp.asarray(policy),
@@ -48,8 +48,12 @@ def test_a_nan_value_makes_a_candidate_absent_like_a_nan_abscissa(index):
     by_both[index] = np.nan
     by_both_grid[index] = np.nan
 
-    got_grid, got_policy, got_value, got_n = _refine(by_value_grid, by_value, _POLICY)
-    want_grid, want_policy, want_value, want_n = _refine(by_both_grid, by_both, _POLICY)
+    got_grid, got_policy, got_value, got_n = _refine(
+        grid=by_value_grid, value=by_value, policy=_POLICY
+    )
+    want_grid, want_policy, want_value, want_n = _refine(
+        grid=by_both_grid, value=by_both, policy=_POLICY
+    )
 
     assert int(got_n) == int(want_n)
     np.testing.assert_array_equal(np.asarray(got_grid), np.asarray(want_grid))
@@ -62,7 +66,9 @@ def test_a_nan_valued_candidate_does_not_poison_the_published_row():
     value = list(_VALUE)
     value[2] = np.nan
 
-    refined_grid, _, refined_value, n_kept = _refine(_GRID, value, _POLICY)
+    refined_grid, _, refined_value, n_kept = _refine(
+        grid=_GRID, value=value, policy=_POLICY
+    )
 
     assert int(n_kept) <= _N_REFINED
     live = np.asarray(refined_grid)[: int(n_kept)]

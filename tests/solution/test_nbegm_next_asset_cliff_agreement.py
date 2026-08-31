@@ -25,8 +25,8 @@ _AWAY_FROM_CLIFF = _INTERIOR & (np.abs(_LIQUID - _MEDICAID_LIMIT) > 0.4)
 
 
 def _solve(
-    variant: str,
     *,
+    variant: str,
     n_consumption: int = 120,
     savings_floor: float = 0.0,
     discount_factor: float = 0.95,
@@ -50,8 +50,8 @@ def test_nbegm_matches_brute_with_a_next_asset_cliff_terminal_adjacent():
     """With a current-asset cliff in the next-asset law and a smooth (terminal)
     continuation, the per-interval solve equals brute across the asset interior in
     both `kind` slices, away from the one cell straddling the cliff jump."""
-    nbegm = _solve("nbegm")
-    brute = _solve("brute", n_consumption=1500)
+    nbegm = _solve(variant="nbegm")
+    brute = _solve(variant="brute", n_consumption=1500)
     # The last period in which `alive` is active carries the smooth terminal
     # continuation, so the per-interval mechanism is isolated from the recurring
     # linear-continuation residual the deeper periods inherit.
@@ -70,8 +70,10 @@ def test_nbegm_matches_brute_with_a_next_asset_cliff_terminal_adjacent():
 
 def test_each_interval_uses_the_declared_positive_savings_floor():
     """Each lower corner represents the first declared savings-grid node."""
-    nbegm = _solve("nbegm", savings_floor=1.0, discount_factor=0.0)
-    brute = _solve("brute", n_consumption=1500, savings_floor=1.0, discount_factor=0.0)
+    nbegm = _solve(variant="nbegm", savings_floor=1.0, discount_factor=0.0)
+    brute = _solve(
+        variant="brute", n_consumption=1500, savings_floor=1.0, discount_factor=0.0
+    )
     period = max(p for p in brute if "alive" in brute[p])
     brute_v = np.asarray(brute[period]["alive"])
     nbegm_v = np.asarray(nbegm[period]["alive"])

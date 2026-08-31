@@ -41,7 +41,7 @@ class _Skill:
     high: ScalarInt
 
 
-def _utility_with_skill(consumption: float, skill: int) -> FloatND:
+def _utility_with_skill(*, consumption: float, skill: int) -> FloatND:
     return jnp.log(consumption) * (1.0 + 0.1 * skill)
 
 
@@ -49,7 +49,7 @@ def _utility_plain(consumption: float) -> FloatND:
     return jnp.log(consumption)
 
 
-def _next_wealth(wealth: float, consumption: float) -> float:
+def _next_wealth(*, wealth: float, consumption: float) -> float:
     return wealth - consumption
 
 
@@ -174,7 +174,7 @@ def test_none_masks_the_model_entry() -> None:
 def test_dead_regime_can_mask_a_model_level_constraint() -> None:
     """A terminal regime can opt out of a constraint shared by living regimes."""
 
-    def _borrowing_constraint(wealth: float, consumption: float) -> bool:
+    def _borrowing_constraint(*, wealth: float, consumption: float) -> bool:
         return consumption <= wealth
 
     model = _build_model(
@@ -210,7 +210,7 @@ def test_mask_without_model_entry_raises() -> None:
 def test_broadcast_state_prunes_where_unused() -> None:
     """A broadcast state survives only in regimes whose DAG reads it."""
     model = _build_model(
-        states={"skill": DiscreteGrid(_Skill)},
+        states={"skill": DiscreteGrid(category_class=_Skill)},
         state_transitions={"skill": fixed_transition("skill")},
     )
     assert "skill" in model.user_regimes["work"].states
@@ -228,7 +228,7 @@ def test_cross_regime_rescue_keeps_handover_state() -> None:
             "retired": _retired_regime(functions={"utility": _utility_with_skill}),
             "dead": UserRegime(transition=None, functions={"utility": lambda: 0.0}),
         },
-        states={"skill": DiscreteGrid(_Skill)},
+        states={"skill": DiscreteGrid(category_class=_Skill)},
         state_transitions={"skill": fixed_transition("skill")},
     )
     assert "skill" in model.user_regimes["retired"].states
@@ -239,7 +239,7 @@ def test_cross_regime_rescue_keeps_handover_state() -> None:
 def test_broadcast_action_prunes_where_unused() -> None:
     """A broadcast action survives only in regimes whose DAG reads it."""
 
-    def _utility_with_effort(consumption: float, effort: int) -> FloatND:
+    def _utility_with_effort(*, consumption: float, effort: int) -> FloatND:
         return jnp.log(consumption) - 0.1 * effort
 
     model = _build_model(
@@ -248,7 +248,7 @@ def test_broadcast_action_prunes_where_unused() -> None:
             "retired": _retired_regime(),
             "dead": UserRegime(transition=None, functions={"utility": lambda: 0.0}),
         },
-        actions={"effort": DiscreteGrid(_Skill)},
+        actions={"effort": DiscreteGrid(category_class=_Skill)},
     )
     assert "effort" in model.user_regimes["work"].actions
     assert "effort" not in model.user_regimes["retired"].actions
@@ -295,7 +295,7 @@ def test_sharded_state_pruned_anywhere_raises() -> None:
     with pytest.raises(ModelInitializationError, match=r"skill.*pruned|pruned.*skill"):
         _build_model(
             states={
-                "skill": DiscreteGrid(_Skill, distributed=True),
+                "skill": DiscreteGrid(category_class=_Skill, distributed=True),
             },
             state_transitions={"skill": fixed_transition("skill")},
             regimes={
@@ -309,7 +309,7 @@ def test_sharded_state_pruned_anywhere_raises() -> None:
 def test_model_broadcast_solves_and_simulates() -> None:
     """A model assembled from broadcast slots solves and simulates."""
     model = _build_model(
-        states={"skill": DiscreteGrid(_Skill)},
+        states={"skill": DiscreteGrid(category_class=_Skill)},
         state_transitions={"skill": fixed_transition("skill")},
     )
     result = model.simulate(

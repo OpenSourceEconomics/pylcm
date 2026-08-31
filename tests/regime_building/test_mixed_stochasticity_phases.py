@@ -43,7 +43,7 @@ class RegimeId:
     last: ScalarInt
 
 
-def utility(good: DiscreteAction, move: DiscreteAction) -> FloatND:
+def utility(*, good: DiscreteAction, move: DiscreteAction) -> FloatND:
     return 1.0 * good + 0.0 * move
 
 
@@ -81,8 +81,8 @@ IC = pd.DataFrame({"regime_name": "live", "age": 0, "good": ["bad"] * 8})
 
 def _simulate(law: Any) -> pd.DataFrame:
     common: dict[str, Any] = {
-        "states": {"good": DiscreteGrid(Good)},
-        "actions": {"move": DiscreteGrid(Move)},
+        "states": {"good": DiscreteGrid(category_class=Good)},
+        "actions": {"move": DiscreteGrid(category_class=Move)},
         "functions": {"utility": utility},
     }
     live = Regime(

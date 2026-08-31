@@ -53,7 +53,7 @@ class BuyPrivate:
         lcm.affine_breakpoint(threshold="tax_exemption", kind="continuous_kink"),
     ),
 )
-def tax(liquid: ContinuousState, tax_rate: float, tax_exemption: float) -> FloatND:
+def tax(*, liquid: ContinuousState, tax_rate: float, tax_exemption: float) -> FloatND:
     """Continuous tax: zero below the exemption, `tax_rate` on the excess above."""
     return tax_rate * jnp.maximum(liquid - tax_exemption, 0.0)
 
@@ -63,7 +63,9 @@ def tax(liquid: ContinuousState, tax_rate: float, tax_exemption: float) -> Float
     variable="liquid",
     breakpoints=(lcm.affine_breakpoint(threshold="tax_exemption", kind="jump"),),
 )
-def tax_jump(liquid: ContinuousState, tax_lump: float, tax_exemption: float) -> FloatND:
+def tax_jump(
+    *, liquid: ContinuousState, tax_lump: float, tax_exemption: float
+) -> FloatND:
     """Cliff tax: zero below the exemption, a flat lump above (an additive jump).
 
     A pure level drop in cash-on-hand at the exemption — the shape of an
@@ -75,7 +77,7 @@ def tax_jump(liquid: ContinuousState, tax_lump: float, tax_exemption: float) -> 
 
 
 def derived_income(
-    liquid: ContinuousState, buy_private: DiscreteAction, income_offset: float
+    *, liquid: ContinuousState, buy_private: DiscreteAction, income_offset: float
 ) -> FloatND:
     """Monotone income the schedule sits on — the action shifts its intercept.
 
@@ -94,7 +96,7 @@ def derived_income(
     ),
 )
 def tax_derived(
-    derived_income: FloatND, tax_rate: float, tax_exemption: float
+    *, derived_income: FloatND, tax_rate: float, tax_exemption: float
 ) -> FloatND:
     """Continuous tax on the derived income above the exemption."""
     return tax_rate * jnp.maximum(derived_income - tax_exemption, 0.0)
@@ -106,7 +108,7 @@ def tax_derived(
     breakpoints=(lcm.affine_breakpoint(threshold="tax_exemption", kind="jump"),),
 )
 def tax_derived_jump(
-    derived_income: FloatND, tax_rate: float, tax_exemption: float
+    *, derived_income: FloatND, tax_rate: float, tax_exemption: float
 ) -> FloatND:
     """Lump-sum tax jumping in at the exemption on the derived income.
 
@@ -117,6 +119,7 @@ def tax_derived_jump(
 
 
 def resources(
+    *,
     liquid: ContinuousState,
     tax: FloatND,
     buy_private: DiscreteAction,
@@ -135,7 +138,7 @@ def resources(
     ),
 )
 def surcharge(
-    derived_income: FloatND, surcharge_rate: float, surcharge_start: float
+    *, derived_income: FloatND, surcharge_rate: float, surcharge_start: float
 ) -> FloatND:
     """Continuous surcharge on the derived income above its start.
 
@@ -147,6 +150,7 @@ def surcharge(
 
 
 def resources_with_surcharge(
+    *,
     liquid: ContinuousState,
     tax: FloatND,
     surcharge: FloatND,
@@ -159,6 +163,7 @@ def resources_with_surcharge(
 
 
 def resources_nonlinear_above_ten(
+    *,
     liquid: ContinuousState,
     tax: FloatND,
     buy_private: DiscreteAction,
@@ -172,6 +177,7 @@ def resources_nonlinear_above_ten(
 
 
 def next_liquid_from_savings(
+    *,
     savings: FloatND,
     income: ContinuousState,
     return_liquid: float,
@@ -181,21 +187,21 @@ def next_liquid_from_savings(
 
 
 def next_liquid_without_income(
-    savings: FloatND, return_liquid: float
+    *, savings: FloatND, return_liquid: float
 ) -> ContinuousState:
     """Liquid law for the single-state discrete-route witness."""
     return (1.0 + return_liquid) * savings
 
 
 def next_streak(
-    streak: ContinuousState, buy_private: DiscreteAction
+    *, streak: ContinuousState, buy_private: DiscreteAction
 ) -> ContinuousState:
     """Coverage streak: grows while insured, resets otherwise (reads the action)."""
     return jnp.where(buy_private == BuyPrivate.yes, streak + 1.0, 0.0)
 
 
 def next_tracker_smooth(
-    tracker: ContinuousState, liquid: ContinuousState
+    *, tracker: ContinuousState, liquid: ContinuousState
 ) -> ContinuousState:
     """Co-state that varies smoothly (affine) in the current liquid state.
 
@@ -207,7 +213,7 @@ def next_tracker_smooth(
 
 
 def next_tracker_step(
-    tracker: ContinuousState, liquid: ContinuousState
+    *, tracker: ContinuousState, liquid: ContinuousState
 ) -> ContinuousState:
     """Co-state switched at a liquid threshold — piecewise-constant in liquid.
 
@@ -218,7 +224,7 @@ def next_tracker_step(
 
 
 def next_tracker_unprobeable(
-    tracker: ContinuousState, liquid: ContinuousState
+    *, tracker: ContinuousState, liquid: ContinuousState
 ) -> ContinuousState:
     """Co-state law the build-time constancy probe cannot differentiate.
 
@@ -231,7 +237,7 @@ def next_tracker_unprobeable(
     return tracker
 
 
-def oop(buy_private: DiscreteAction, oop_uninsured: float) -> FloatND:
+def oop(*, buy_private: DiscreteAction, oop_uninsured: float) -> FloatND:
     """Out-of-pocket medical cost: zero when insured, a fixed hit when not.
 
     An action-dependent shift of *next* liquid that does not run through the
@@ -242,6 +248,7 @@ def oop(buy_private: DiscreteAction, oop_uninsured: float) -> FloatND:
 
 
 def next_liquid_from_savings_with_oop(
+    *,
     savings: FloatND,
     income: ContinuousState,
     return_liquid: float,
@@ -252,7 +259,7 @@ def next_liquid_from_savings_with_oop(
 
 
 def prob_stay_alive_action(
-    age: int, final_age_alive: float, buy_private: DiscreteAction
+    *, age: int, final_age_alive: float, buy_private: DiscreteAction
 ) -> FloatND:
     """Survival probability that rises when insured (reads the action).
 
@@ -264,14 +271,16 @@ def prob_stay_alive_action(
 
 
 def prob_die_action(
-    age: int, final_age_alive: float, buy_private: DiscreteAction
+    *, age: int, final_age_alive: float, buy_private: DiscreteAction
 ) -> FloatND:
     """Death probability complementary to the action-dependent survival."""
-    return 1.0 - prob_stay_alive_action(age, final_age_alive, buy_private)
+    return 1.0 - prob_stay_alive_action(
+        age=age, final_age_alive=final_age_alive, buy_private=buy_private
+    )
 
 
 def prob_stay_alive_liquid(
-    age: int, final_age_alive: float, liquid: ContinuousState
+    *, age: int, final_age_alive: float, liquid: ContinuousState
 ) -> FloatND:
     """Survival probability switched at the declared tax-exemption cliff.
 
@@ -285,14 +294,16 @@ def prob_stay_alive_liquid(
 
 
 def prob_die_liquid(
-    age: int, final_age_alive: float, liquid: ContinuousState
+    *, age: int, final_age_alive: float, liquid: ContinuousState
 ) -> FloatND:
     """Death probability complementary to the liquid-dependent survival."""
-    return 1.0 - prob_stay_alive_liquid(age, final_age_alive, liquid)
+    return 1.0 - prob_stay_alive_liquid(
+        age=age, final_age_alive=final_age_alive, liquid=liquid
+    )
 
 
 def prob_stay_alive_liquid_smooth(
-    age: int, final_age_alive: float, liquid: ContinuousState
+    *, age: int, final_age_alive: float, liquid: ContinuousState
 ) -> FloatND:
     """Survival probability varying smoothly in the liquid state.
 
@@ -305,10 +316,12 @@ def prob_stay_alive_liquid_smooth(
 
 
 def prob_die_liquid_smooth(
-    age: int, final_age_alive: float, liquid: ContinuousState
+    *, age: int, final_age_alive: float, liquid: ContinuousState
 ) -> FloatND:
     """Death probability complementary to the smooth liquid-dependent survival."""
-    return 1.0 - prob_stay_alive_liquid_smooth(age, final_age_alive, liquid)
+    return 1.0 - prob_stay_alive_liquid_smooth(
+        age=age, final_age_alive=final_age_alive, liquid=liquid
+    )
 
 
 def discount_factor_action(buy_private: DiscreteAction) -> FloatND:
@@ -321,7 +334,7 @@ def discount_factor_action(buy_private: DiscreteAction) -> FloatND:
 
 
 def utility_with_action(
-    consumption: ContinuousAction, crra: float, buy_private: DiscreteAction
+    *, consumption: ContinuousAction, crra: float, buy_private: DiscreteAction
 ) -> FloatND:
     """CRRA consumption utility plus a per-branch leisure term reading the action.
 
@@ -329,7 +342,9 @@ def utility_with_action(
     `buy_private` branch has a different utility level and marginal — the case a
     single shared per-cell utility cannot represent.
     """
-    return crra_utility(consumption, crra) + LEISURE_UTILITY * buy_private
+    return (
+        crra_utility(consumption=consumption, crra=crra) + LEISURE_UTILITY * buy_private
+    )
 
 
 def build_model(  # noqa: C901, PLR0912
@@ -439,7 +454,7 @@ def build_model(  # noqa: C901, PLR0912
     if branch_batch_size:
         solver_kwargs["branch_batch_size"] = branch_batch_size
     alive_solver = resolve_solver(
-        variant,
+        variant=variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
         **solver_kwargs,
     )
@@ -481,7 +496,7 @@ def build_model(  # noqa: C901, PLR0912
         constraints=constraints,
         extra_states=extra_states,
         extra_state_transitions=extra_state_transitions,
-        extra_actions={"buy_private": DiscreteGrid(BuyPrivate)},
+        extra_actions={"buy_private": DiscreteGrid(category_class=BuyPrivate)},
         survival_transition=survival_transition,
     )
 

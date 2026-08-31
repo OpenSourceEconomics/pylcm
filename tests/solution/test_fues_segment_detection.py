@@ -31,7 +31,7 @@ _CROSSING = 1.5
 _QUERY = 1.45
 
 
-def _branch_value(grid: jnp.ndarray, policy: float) -> jnp.ndarray:
+def _branch_value(*, grid: jnp.ndarray, policy: float) -> jnp.ndarray:
     return 20.0 + (1.0 / policy) * (grid - _CROSSING)
 
 
@@ -40,8 +40,8 @@ def _refine(segment_id: jnp.ndarray | None) -> tuple[jnp.ndarray, ...]:
     policy = jnp.concatenate([jnp.full(3, _LEFT_POLICY), jnp.full(3, _RIGHT_POLICY)])
     value = jnp.concatenate(
         [
-            _branch_value(_LEFT_GRID, _LEFT_POLICY),
-            _branch_value(_RIGHT_GRID, _RIGHT_POLICY),
+            _branch_value(grid=_LEFT_GRID, policy=_LEFT_POLICY),
+            _branch_value(grid=_RIGHT_GRID, policy=_RIGHT_POLICY),
         ]
     )
     refined_grid, refined_policy, refined_value, _ = refine_envelope(

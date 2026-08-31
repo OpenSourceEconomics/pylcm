@@ -49,7 +49,7 @@ _PARAMS = {
 }
 
 
-def _resources(liquid: ContinuousState, base_income: float) -> FloatND:
+def _resources(*, liquid: ContinuousState, base_income: float) -> FloatND:
     """Cash-on-hand: liquid wealth plus base income."""
     return liquid + base_income
 

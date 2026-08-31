@@ -73,12 +73,12 @@ def test_concave_input_passes_through_unchanged():
     assert int(n_kept) == 10
     np.testing.assert_allclose(_drop_nan(got_grid), np.asarray(grid), atol=1e-12)
     np.testing.assert_allclose(
-        _envelope_interp(got_grid, got_value, np.asarray(grid)),
+        _envelope_interp(grid=got_grid, value=got_value, x_query=np.asarray(grid)),
         np.asarray(value),
         atol=_COMPUTED_ATOL,
     )
     np.testing.assert_allclose(
-        _envelope_interp(got_grid, got_policy, np.asarray(grid)),
+        _envelope_interp(grid=got_grid, value=got_policy, x_query=np.asarray(grid)),
         np.asarray(policy),
         atol=_COMPUTED_ATOL,
     )

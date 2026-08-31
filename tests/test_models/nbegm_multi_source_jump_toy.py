@@ -41,12 +41,16 @@ class ConsumerKind:
     hi: ScalarInt
 
 
-def income_a(liquid: ContinuousState, kind: DiscreteState, base_a: FloatND) -> FloatND:
+def income_a(
+    *, liquid: ContinuousState, kind: DiscreteState, base_a: FloatND
+) -> FloatND:
     """Income concept the tax bracket reads: liquid plus the kind's `a` offset."""
     return liquid + base_a[kind]
 
 
-def income_b(liquid: ContinuousState, kind: DiscreteState, base_b: FloatND) -> FloatND:
+def income_b(
+    *, liquid: ContinuousState, kind: DiscreteState, base_b: FloatND
+) -> FloatND:
     """Income concept the subsidy cliff reads: liquid plus the kind's `b` offset."""
     return liquid + base_b[kind]
 
@@ -56,7 +60,7 @@ def income_b(liquid: ContinuousState, kind: DiscreteState, base_b: FloatND) -> F
     variable="income_a",
     breakpoints=(lcm.affine_breakpoint(threshold="kink_a", kind="continuous_kink"),),
 )
-def tax_a(income_a: FloatND, rate_a: float, kink_a: float) -> FloatND:
+def tax_a(*, income_a: FloatND, rate_a: float, kink_a: float) -> FloatND:
     """Continuous tax on `income_a`: zero below the kink, `rate_a` on the excess."""
     return rate_a * jnp.maximum(income_a - kink_a, 0.0)
 
@@ -67,13 +71,13 @@ def tax_a(income_a: FloatND, rate_a: float, kink_a: float) -> FloatND:
     breakpoints=(lcm.affine_breakpoint(threshold="cliff_b", kind="jump"),),
 )
 def subsidy_b(
-    income_b: FloatND, subsidy_low: float, subsidy_high: float, cliff_b: float
+    *, income_b: FloatND, subsidy_low: float, subsidy_high: float, cliff_b: float
 ) -> FloatND:
     """Lump-sum subsidy on `income_b`: the higher amount below the cliff."""
     return jnp.where(income_b < cliff_b, subsidy_high, subsidy_low)
 
 
-def resources(income_a: FloatND, tax_a: FloatND, subsidy_b: FloatND) -> FloatND:
+def resources(*, income_a: FloatND, tax_a: FloatND, subsidy_b: FloatND) -> FloatND:
     """Cash-on-hand: income net of the tax plus the cliff-contingent subsidy."""
     return income_a - tax_a + subsidy_b
 
@@ -115,7 +119,7 @@ def build_model(
         "resources": resources,
     }
     alive_solver = resolve_solver(
-        variant,
+        variant=variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
     )
     alive_functions = {**alive_functions, "savings": savings}
@@ -131,7 +135,7 @@ def build_model(
         liquid_law=liquid_law,
         alive_solver=alive_solver,
         constraints=constraints,
-        extra_states={"kind": DiscreteGrid(ConsumerKind)},
+        extra_states={"kind": DiscreteGrid(category_class=ConsumerKind)},
         extra_state_transitions={"kind": {"alive": lcm.fixed_transition("kind")}},
     )
 

@@ -39,7 +39,7 @@ def test_coh_shift_derives_from_the_declared_cost_alone() -> None:
         """A wage-only resources term, additively separable from the house cost."""
         return jnp.exp(wage)
 
-    def housing_cost(housing: FloatND, next_housing: FloatND) -> FloatND:
+    def housing_cost(*, housing: FloatND, next_housing: FloatND) -> FloatND:
         """Round-trip cost of moving the house from `housing` to `next_housing`."""
         return next_housing - housing
 
@@ -75,7 +75,7 @@ def test_coh_shift_keeper_leg_uses_the_no_adjustment_level() -> None:
     """
     keep_rate = 0.9
 
-    def housing_cost(housing: FloatND, next_housing: FloatND) -> FloatND:
+    def housing_cost(*, housing: FloatND, next_housing: FloatND) -> FloatND:
         """Round-trip cost of moving the house from `housing` to `next_housing`."""
         return next_housing - housing
 
@@ -113,7 +113,7 @@ def _identity_marginal(*, coh: Float1D) -> Float1D:
 
 
 def _read_stacked_cell(
-    carry: EGMCarry, cell: tuple[int, ...], query: Float1D
+    *, carry: EGMCarry, cell: tuple[int, ...], query: Float1D
 ) -> Float1D:
     """Read one leading cell of a stacked carry through the query-side envelope."""
     value, _marginal = outer_envelope_at_query(
@@ -163,7 +163,7 @@ def test_adjuster_winning_by_delta_lifts_the_envelope_by_delta() -> None:
     # The stacked carry keeps every candidate: keeper + one adjuster.
     assert carry.value.shape == (1, 2, n_pad)
     query = jnp.asarray([3.0, 5.0, 7.0])
-    enveloped = _read_stacked_cell(carry, (0,), query)
+    enveloped = _read_stacked_cell(carry=carry, cell=(0,), query=query)
     expected = jnp.sqrt(query) + delta
     np.testing.assert_allclose(np.asarray(enveloped), np.asarray(expected), atol=1e-3)
 
@@ -207,7 +207,7 @@ def test_adjuster_winning_only_on_a_subinterval_is_captured() -> None:
     # An off-node query in the winning interior: the envelope must equal the
     # adjuster (keeper + hump), strictly above the keeper.
     interior = jnp.asarray([4.7, 5.3])
-    enveloped_interior = _read_stacked_cell(carry, (0,), interior)
+    enveloped_interior = _read_stacked_cell(carry=carry, cell=(0,), query=interior)
     expected_interior = jnp.sqrt(interior) + (0.5 - 0.08 * (interior - 5.0) ** 2)
     np.testing.assert_allclose(
         np.asarray(enveloped_interior), np.asarray(expected_interior), atol=1e-3
@@ -216,7 +216,7 @@ def test_adjuster_winning_only_on_a_subinterval_is_captured() -> None:
 
     # At the coh ends the keeper wins: the envelope equals the keeper value.
     ends = jnp.asarray([1.5, 8.5])
-    enveloped_ends = _read_stacked_cell(carry, (0,), ends)
+    enveloped_ends = _read_stacked_cell(carry=carry, cell=(0,), query=ends)
     np.testing.assert_allclose(
         np.asarray(enveloped_ends), np.asarray(jnp.sqrt(ends)), atol=1e-3
     )
@@ -273,7 +273,7 @@ def test_envelope_broadcasts_over_a_discrete_leading_axis() -> None:
     assert carry.value.shape == (n_discrete, 1, 2, n_pad)
     query = jnp.asarray([3.0, 5.0, 7.0])
     for node in range(n_discrete):
-        enveloped = _read_stacked_cell(carry, (node, 0), query)
+        enveloped = _read_stacked_cell(carry=carry, cell=(node, 0), query=query)
         expected = jnp.sqrt(query) + float(discrete_levels[node]) + delta
         np.testing.assert_allclose(
             np.asarray(enveloped), np.asarray(expected), atol=1e-3
@@ -352,7 +352,7 @@ def test_keeper_wins_when_no_adjuster_improves() -> None:
     )
 
     query = jnp.asarray([3.0, 5.0, 7.0])
-    enveloped = _read_stacked_cell(carry, (0,), query)
+    enveloped = _read_stacked_cell(carry=carry, cell=(0,), query=query)
     expected = jnp.sqrt(query)
     np.testing.assert_allclose(np.asarray(enveloped), np.asarray(expected), atol=1e-3)
 
@@ -367,7 +367,9 @@ def test_coh_shift_rejects_a_state_dependent_adjustment_wedge() -> None:
     of broadcasting the zero-wage cost to every wage.
     """
 
-    def housing_cost(wage: FloatND, housing: FloatND, next_housing: FloatND) -> FloatND:
+    def housing_cost(
+        *, wage: FloatND, housing: FloatND, next_housing: FloatND
+    ) -> FloatND:
         """A wage-scaled cost of moving the house — not NEGM-liftable."""
         return (1.0 + wage) * (next_housing - housing)
 

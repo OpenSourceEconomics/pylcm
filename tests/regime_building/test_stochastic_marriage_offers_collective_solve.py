@@ -105,7 +105,7 @@ def _prob_one(age: FloatND) -> FloatND:
     return jnp.ones_like(age, dtype=float)
 
 
-def _u_single_f(education: DiscreteState, work: DiscreteAction) -> FloatND:
+def _u_single_f(*, education: DiscreteState, work: DiscreteAction) -> FloatND:
     return _wage(education) * work
 
 
@@ -118,7 +118,7 @@ def _u_single_m_terminal(education: DiscreteState) -> FloatND:
 
 
 def _u_married(
-    education: DiscreteState, spouse_type: DiscreteState, work: DiscreteAction
+    *, education: DiscreteState, spouse_type: DiscreteState, work: DiscreteAction
 ) -> FloatND:
     """Pooled household income; identical for both stakeholders (symmetric split)."""
     return _wage(education) + _wage(spouse_type) + 0.0 * work
@@ -134,6 +134,7 @@ def _spouse_type_as_education(spouse_type: DiscreteState) -> DiscreteState:
 
 
 def _consent_gate(
+    *,
     V_target_f: FloatND,
     V_target_m: FloatND,
     V_single_f_ref: FloatND,
@@ -185,7 +186,7 @@ def _make_offer_regimes() -> dict[str, Regime]:
             )
         },
         active=lambda age: age < 1,
-        states={"education": DiscreteGrid(Education)},
+        states={"education": DiscreteGrid(category_class=Education)},
         state_transitions={
             "education": fixed_transition("education"),
             # Target-only state: "spouse_type" does not exist in single_f's
@@ -194,29 +195,29 @@ def _make_offer_regimes() -> dict[str, Regime]:
             # the single's own (carried) education.
             "spouse_type": {"married_terminal": MarkovTransition(_offer_probs)},
         },
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_single_f},
     )
     single_f_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        states={"education": DiscreteGrid(Education)},
+        states={"education": DiscreteGrid(category_class=Education)},
         functions={"utility": _u_single_f_terminal},
     )
     single_m_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        states={"education": DiscreteGrid(Education)},
+        states={"education": DiscreteGrid(category_class=Education)},
         functions={"utility": _u_single_m_terminal},
     )
     married_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
         states={
-            "education": DiscreteGrid(Education),
-            "spouse_type": DiscreteGrid(Education),
+            "education": DiscreteGrid(category_class=Education),
+            "spouse_type": DiscreteGrid(category_class=Education),
         },
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(utilities={"f": _u_married, "m": _u_married})
         },
@@ -383,12 +384,12 @@ def _offer_arrival_probs() -> FloatND:
     return jnp.array([0.4, 0.6])
 
 
-def _work_requires_offer(offer: DiscreteState, work: DiscreteAction) -> BoolND:
+def _work_requires_offer(*, offer: DiscreteState, work: DiscreteAction) -> BoolND:
     """EKL eq. 24: the "work" action is feasible only if an offer arrived."""
     return (offer == 1) | (work == 0)
 
 
-def _u_job(offer: DiscreteState, work: DiscreteAction) -> FloatND:  # noqa: ARG001
+def _u_job(*, offer: DiscreteState, work: DiscreteAction) -> FloatND:  # noqa: ARG001
     return 5.0 * work + 1.0 * (1.0 - work)
 
 
@@ -396,17 +397,17 @@ def _make_job_offer_regimes() -> dict[str, Regime]:
     job = Regime(
         transition=lambda age: JobRegimeId.job_terminal,  # noqa: ARG005
         active=lambda age: age < 1,
-        states={"offer": DiscreteGrid(Offer)},
+        states={"offer": DiscreteGrid(category_class=Offer)},
         state_transitions={"offer": MarkovTransition(_offer_arrival_probs)},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_job},
         constraints={"work_requires_offer": _work_requires_offer},
     )
     job_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        states={"offer": DiscreteGrid(Offer)},
-        actions={"work": DiscreteGrid(Work)},
+        states={"offer": DiscreteGrid(category_class=Offer)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_job},
         constraints={"work_requires_offer": _work_requires_offer},
     )

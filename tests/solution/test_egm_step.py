@@ -24,7 +24,7 @@ _RETURN_LIQUID = 0.02
 _INCOME = 0.50
 _P: dict[str, Any] = {
     "discount_factor": 0.98,
-    "preferences": crra_preferences(_CRRA),
+    "preferences": crra_preferences(crra=_CRRA),
     # The step takes the law's readings rather than a return and an income: where
     # each savings level lands next period, and how that landing point moves.
     "next_liquid": (1.0 + _RETURN_LIQUID) * _SAVINGS_GRID + _INCOME,

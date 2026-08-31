@@ -146,7 +146,7 @@ def _next_x_offgrid(x: ContinuousState) -> FloatND:
     return jnp.full_like(x, 0.6)
 
 
-def _u_src(x: ContinuousState, work: DiscreteAction) -> FloatND:
+def _u_src(*, x: ContinuousState, work: DiscreteAction) -> FloatND:
     return jnp.zeros_like(x) * work
 
 
@@ -162,7 +162,7 @@ def _u_fallback(x: ContinuousState) -> FloatND:
     return jnp.zeros_like(x)
 
 
-def _value_gate(V_target: FloatND, V_ref: FloatND) -> BoolND:
+def _value_gate(*, V_target: FloatND, V_ref: FloatND) -> BoolND:
     return V_target > V_ref
 
 
@@ -189,7 +189,7 @@ def _make_regimes() -> dict[str, Regime]:
         active=lambda age: age < 1,
         states={"x": _X2},
         state_transitions={"x": _next_x_offgrid},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_src},
     )
     target = Regime(
@@ -357,7 +357,7 @@ class Invest:
     invest: ScalarInt  # code 1
 
 
-def _u_curved_target(x: ContinuousState, invest: DiscreteAction) -> FloatND:
+def _u_curved_target(*, x: ContinuousState, invest: DiscreteAction) -> FloatND:
     return jnp.where(invest == 1, x, 0.7 - 0.3 * x)
 
 
@@ -373,7 +373,7 @@ def _interp_of_V_grid(x: float) -> float:
     return float(lo + (hi - lo) * x)
 
 
-def _threshold_gate(V_target: FloatND, gate_threshold: FloatND) -> BoolND:
+def _threshold_gate(*, V_target: FloatND, gate_threshold: FloatND) -> BoolND:
     """A gate whose only nonlinearity is the comparison itself, so the gate's
     flip point in `gate_threshold` IS the value operand the gate read."""
     return V_target > gate_threshold
@@ -397,14 +397,14 @@ def _make_curved_regimes() -> dict[str, Regime]:
         active=lambda age: age < 1,
         states={"x": _X2},
         state_transitions={"x": _next_x_offgrid},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_src},
     )
     target = Regime(
         transition=None,
         active=lambda age: age >= 1,
         states={"x": _X2},
-        actions={"invest": DiscreteGrid(Invest)},
+        actions={"invest": DiscreteGrid(category_class=Invest)},
         functions={"utility": _u_curved_target},
     )
     fallback = Regime(
@@ -477,12 +477,12 @@ def _measure_gate_value_read(*, x: float) -> float:
     # namespace-qualified leaf — ask the published provenance for the name
     # rather than hard-coding the qualification scheme here.
     threshold_arg = exposed_param_name(
-        evaluator, qname=_GATE_THRESHOLD_QNAME, namespace=SOURCE_PARAMS
+        evaluator=evaluator, qname=_GATE_THRESHOLD_QNAME, namespace=SOURCE_PARAMS
     )
 
     def _gate_open(threshold: float) -> bool:
         value = _call_vmapped_with_accepted_kwargs(
-            evaluator,
+            func=evaluator,
             batched_kwargs={"x": jnp.array([x])},
             static_kwargs={
                 threshold_arg: jnp.asarray(threshold),

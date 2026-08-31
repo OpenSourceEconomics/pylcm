@@ -13,8 +13,8 @@ def test_simulation_with_heterogeneous_initial_ages():
     the simulation does not yet use them to offset each subject's timeline.
     """
     n_periods = 5
-    model = get_model(n_periods)
-    params = get_params(n_periods)
+    model = get_model(n_periods=n_periods)
+    params = get_params(n_periods=n_periods)
 
     # Subject 0 starts at age 40, subject 1 starts at age 60
     result = model.simulate(

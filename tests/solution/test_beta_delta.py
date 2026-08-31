@@ -41,7 +41,7 @@ def terminal_utility(wealth: ContinuousState) -> FloatND:
 
 
 def next_wealth(
-    wealth: ContinuousState, consumption: ContinuousAction
+    *, wealth: ContinuousState, consumption: ContinuousAction
 ) -> ContinuousState:
     return wealth - consumption
 
@@ -51,12 +51,13 @@ def next_regime(age: float) -> ScalarInt:
 
 
 def borrowing_constraint(
-    consumption: ContinuousAction, wealth: ContinuousState
+    *, consumption: ContinuousAction, wealth: ContinuousState
 ) -> BoolND:
     return consumption <= wealth
 
 
 def exponential_H(
+    *,
     utility: float,
     CE: float,
     discount_factor: float,
@@ -65,6 +66,7 @@ def exponential_H(
 
 
 def beta_delta_H(
+    *,
     utility: float,
     CE: float,
     beta: float,
@@ -123,7 +125,7 @@ def _make_model(*, H_func=beta_delta_H):
     )
 
 
-def _denominators(beta, delta):
+def _denominators(*, beta, delta):
     """Return (D_0, D_1) for the given discounting type."""
     bd = beta * delta
     d1 = 1.0 + bd
@@ -131,7 +133,7 @@ def _denominators(beta, delta):
     return d0, d1
 
 
-def _denominators_naive(beta, delta):
+def _denominators_naive(*, beta, delta):
     """Return (D_0, D_1) for naive beta-delta agents."""
     bd = beta * delta
     d1 = 1.0 + bd  # same as sophisticated at t=1
@@ -159,15 +161,15 @@ def _denominators_naive(beta, delta):
         ("naive_phase_variant", 0.7, 0.95),
     ],
 )
-def test_beta_delta_consumption(label, beta, delta):
+def test_beta_delta_consumption(*, label, beta, delta):
     initial_wealth = jnp.array([20.0])
     initial_age = jnp.array([0.0])
     w0 = 20.0
 
     if label.startswith("naive"):
-        d0_exp, d1_exp = _denominators_naive(beta, delta)
+        d0_exp, d1_exp = _denominators_naive(beta=beta, delta=delta)
     else:
-        d0_exp, d1_exp = _denominators(beta, delta)
+        d0_exp, d1_exp = _denominators(beta=beta, delta=delta)
 
     expected_c0 = w0 / d0_exp
     expected_c1 = (w0 - expected_c0) / d1_exp

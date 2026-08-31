@@ -47,7 +47,7 @@ class Effort:
 
 
 def utility(
-    consumption: ContinuousAction, effort: DiscreteAction, crra: float
+    *, consumption: ContinuousAction, effort: DiscreteAction, crra: float
 ) -> FloatND:
     """CRRA felicity net of a flow cost of effort."""
     return consumption ** (1.0 - crra) / (1.0 - crra) - 0.1 * effort
@@ -58,7 +58,7 @@ def test_a_discrete_action_is_refused_at_model_construction() -> None:
     saving = ConsumptionSavingsRegime(
         actions={
             "consumption": LinSpacedGrid(start=0.05, stop=60.0, n_points=50),
-            "effort": DiscreteGrid(Effort),
+            "effort": DiscreteGrid(category_class=Effort),
         },
         states={"wealth": _WEALTH_GRID},
         state_transitions={"wealth": {"saving": next_wealth, "done": next_wealth}},

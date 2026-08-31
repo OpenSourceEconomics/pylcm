@@ -61,12 +61,13 @@ class ConsumerKind:
         lcm.affine_breakpoint(threshold="tax_exemption", kind="continuous_kink"),
     ),
 )
-def tax(liquid: ContinuousState, tax_rate: float, tax_exemption: float) -> FloatND:
+def tax(*, liquid: ContinuousState, tax_rate: float, tax_exemption: float) -> FloatND:
     """Continuous tax: zero below the exemption, `tax_rate` on the excess above."""
     return tax_rate * jnp.maximum(liquid - tax_exemption, 0.0)
 
 
 def resources(
+    *,
     liquid: ContinuousState,
     kind: DiscreteState,
     tax: FloatND,
@@ -76,17 +77,17 @@ def resources(
     return liquid + base_income[kind] - tax
 
 
-def prob_to_alive_a(age: int, final_age_alive: float) -> FloatND:
+def prob_to_alive_a(*, age: int, final_age_alive: float) -> FloatND:
     """Transition probability into `alive_a` (zero in the last living period)."""
     return jnp.where(age + 1 < final_age_alive, 0.6, 0.0)
 
 
-def prob_to_alive_b(age: int, final_age_alive: float) -> FloatND:
+def prob_to_alive_b(*, age: int, final_age_alive: float) -> FloatND:
     """Transition probability into `alive_b` (zero in the last living period)."""
     return jnp.where(age + 1 < final_age_alive, 0.4, 0.0)
 
 
-def prob_to_dead(age: int, final_age_alive: float) -> FloatND:
+def prob_to_dead(*, age: int, final_age_alive: float) -> FloatND:
     """Transition probability into `dead` (one in the last living period)."""
     return jnp.where(age + 1 >= final_age_alive, 1.0, 0.0)
 
@@ -109,7 +110,7 @@ def _build_living_regime(
         "savings": savings,
     }
     solver = resolve_solver(
-        variant,
+        variant=variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
     )
     liquid_law = next_liquid_from_savings
@@ -118,7 +119,10 @@ def _build_living_regime(
     regime_actions = {
         "consumption": LinSpacedGrid(start=0.1, stop=liquid_max, n_points=n_consumption)
     }
-    regime_states = {"liquid": liquid_grid, "kind": DiscreteGrid(ConsumerKind)}
+    regime_states = {
+        "liquid": liquid_grid,
+        "kind": DiscreteGrid(category_class=ConsumerKind),
+    }
     regime_state_transitions = {
         "liquid": {
             "alive_a": liquid_law,

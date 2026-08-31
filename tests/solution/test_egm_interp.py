@@ -234,6 +234,7 @@ def test_singleton_row_stays_constant_under_vmap_and_autodiff():
     slopes = jnp.array([[2.0, 4.0, 6.0], [2.0, jnp.nan, jnp.nan]])
 
     def summed_read(query):
+        # keyword-only-exempt: library-callback=jax.vmap
         def read_row(xp_row, fp_row, slopes_row):
             return interp.interp_on_padded_grid(
                 x_query=query, xp=xp_row, fp=fp_row, fp_slopes=slopes_row
@@ -477,7 +478,7 @@ def test_prepared_interpolation_holds_no_grid_by_query_intermediate():
     fp = jnp.sqrt(xp)
     queries = jnp.linspace(0.0, n_grid, n_query)
 
-    def read_many(search_grid, valid_length, xp, fp, queries):
+    def read_many(*, search_grid, valid_length, xp, fp, queries):
         return interp.interp_on_prepared_grid(
             x_query=queries,
             search_grid=search_grid,
@@ -683,7 +684,7 @@ def test_reads_on_an_empty_row_propagate_nan():
 
 
 def _host_right_germ(
-    xp: np.ndarray, fp: np.ndarray, slopes: np.ndarray, x_query: float
+    *, xp: np.ndarray, fp: np.ndarray, slopes: np.ndarray, x_query: float
 ) -> tuple[bool, float, float, float]:
     """Scalar NumPy reference for the value read's right germ.
 
@@ -918,7 +919,9 @@ def test_right_germ_matches_scalar_host_on_random_rows():
             fp_slopes=jnp.asarray(slopes),
         )
 
-        expected = [_host_right_germ(xp, fp, slopes, q) for q in queries]
+        expected = [
+            _host_right_germ(xp=xp, fp=fp, slopes=slopes, x_query=q) for q in queries
+        ]
         np.testing.assert_array_equal(np.asarray(got[0]), [e[0] for e in expected])
         for component in (1, 2, 3):
             rtol, atol = _GERM_COMPONENT_RTOL_ATOL[component]

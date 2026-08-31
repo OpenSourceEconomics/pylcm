@@ -24,7 +24,7 @@ _SLOPES_1 = jnp.asarray([3.818460500549095, 5.968486512864201, 0.149189404771729
 _SLOPES_2 = jnp.asarray([0.7988903116888513, 0.4719995646153583, 5.041586936324435])
 
 
-def _hermite_read(fp: jnp.ndarray, slopes: jnp.ndarray) -> float:
+def _hermite_read(*, fp: jnp.ndarray, slopes: jnp.ndarray) -> float:
     return float(
         interp_on_padded_grid(x_query=_QUERY, xp=_XP, fp=fp, fp_slopes=slopes)[0]
     )
@@ -36,11 +36,11 @@ def test_bridged_hermite_read_can_understate_the_branch_envelope() -> None:
     reads — the linear-read overstatement guarantee does not transfer."""
     value_winner_slopes = jnp.where(_F_BRANCH_1 >= _F_BRANCH_2, _SLOPES_1, _SLOPES_2)
     aggregate = _hermite_read(
-        jnp.maximum(_F_BRANCH_1, _F_BRANCH_2), value_winner_slopes
+        fp=jnp.maximum(_F_BRANCH_1, _F_BRANCH_2), slopes=value_winner_slopes
     )
     branch_envelope = max(
-        _hermite_read(_F_BRANCH_1, _SLOPES_1),
-        _hermite_read(_F_BRANCH_2, _SLOPES_2),
+        _hermite_read(fp=_F_BRANCH_1, slopes=_SLOPES_1),
+        _hermite_read(fp=_F_BRANCH_2, slopes=_SLOPES_2),
     )
     assert aggregate < branch_envelope - 1.0
     assert abs(aggregate - 1.5888147) < 1e-4

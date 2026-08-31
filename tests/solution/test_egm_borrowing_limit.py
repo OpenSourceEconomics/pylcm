@@ -35,7 +35,7 @@ def _step():
         next_liquid_grid=_NEXT_LIQUID_GRID,
         savings_grid=_SAVINGS_GRID,
         discount_factor=_DISCOUNT_FACTOR,
-        preferences=crra_preferences(2.0),
+        preferences=crra_preferences(crra=2.0),
         next_liquid=gross_return * _SAVINGS_GRID + _INCOME,
         marginal_return=jnp.full_like(_SAVINGS_GRID, gross_return),
     )
@@ -57,7 +57,7 @@ def test_a_borrowing_household_consumes_its_wealth_plus_the_limit():
 
 def test_the_constrained_value_discounts_the_landing_point_at_the_limit():
     """The continuation is reached from the limit, not from zero savings."""
-    preferences = crra_preferences(2.0)
+    preferences = crra_preferences(crra=2.0)
     expected = (
         preferences.utility(_LIQUID_GRID + _BORROWING_LIMIT)
         + _DISCOUNT_FACTOR * _NEXT_VALUE_LEVEL

@@ -60,7 +60,7 @@ def _expectation(*, values: Float1D, weights: Float1D) -> ScalarFloat:
     the one the engine's stochastic-node averages take.
     """
     return zero_safe_average(
-        values,
+        a=values,
         weights=weights,
         shifts=jnp.zeros(jnp.shape(weights), dtype=jnp.int32),
     )
@@ -110,14 +110,14 @@ def test_zero_probability_node_does_not_reverse_the_action() -> None:
         values=_array([-jnp.inf, 1.0, 2.0]),
         weights=_array([0.0, 0.5, 0.5]),
     )
-    index, _ = argmax_and_max(jnp.stack([_float(1.4), continuation]))
+    index, _ = argmax_and_max(a=jnp.stack([_float(1.4), continuation]))
     assert int(index) == 1
 
 
 @pytest.mark.parametrize("n_nodes", [2, 3, 5, 9])
 @pytest.mark.parametrize("sign", [1.0, -1.0])
 def test_zero_probability_node_is_null_at_every_position(
-    n_nodes: int, sign: float
+    *, n_nodes: int, sign: float
 ) -> None:
     """Wherever the null node sits, the live nodes state the expectation."""
     for dead in range(n_nodes):
@@ -184,6 +184,7 @@ def test_a_null_node_leaves_both_cotangents_finite() -> None:
     keeps the computation differentiable instead of poisoning the tape.
     """
 
+    # keyword-only-exempt: library-callback=jax.grad
     def expectation(values: Float1D, weights: Float1D) -> ScalarFloat:
         return _expectation(values=values, weights=weights)
 
@@ -217,7 +218,7 @@ def test_zero_probability_stateless_target_does_not_reverse_the_action() -> None
     continuation = _InheritedLinearExpectation().aggregate(
         values=values, weights=weights, params={}
     )
-    index, _ = argmax_and_max(jnp.stack([_float(1.9), continuation]))
+    index, _ = argmax_and_max(a=jnp.stack([_float(1.9), continuation]))
     assert int(index) == 1
 
 

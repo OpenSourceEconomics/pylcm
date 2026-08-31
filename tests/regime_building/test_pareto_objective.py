@@ -108,7 +108,7 @@ def _build_model(
         active=lambda age: age < 1,
         states=states or {},
         state_transitions=state_transitions or {},
-        actions={"choice": DiscreteGrid(Choice)},
+        actions={"choice": DiscreteGrid(category_class=Choice)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": utility_f, "m": utility_m}, objective=objective
@@ -219,7 +219,7 @@ def test_a_state_dependent_weight_decides_cell_by_cell() -> None:
         objective=ParetoObjective(
             weights={"f": _weight_f_by_power, "m": _weight_m_by_power}
         ),
-        states={"power": DiscreteGrid(Power)},
+        states={"power": DiscreteGrid(category_class=Power)},
         state_transitions={"power": fixed_transition("power")},
     )
 
@@ -345,7 +345,7 @@ _EXTREME_WEIGHTS = [
 
 @pytest.mark.parametrize(("weights", "expected"), _EXTREME_WEIGHTS)
 def test_the_endpoints_of_the_weight_interval_read_one_partner(
-    weights: dict[str, float], expected: list[float]
+    *, weights: dict[str, float], expected: list[float]
 ) -> None:
     """At `w = 0` and `w = 1` the household follows exactly one stakeholder.
 
@@ -425,7 +425,7 @@ def _three_stakeholder_solution(order: tuple[str, ...]) -> np.ndarray:
     household = Regime(
         transition=_next_three_regime,
         active=lambda age: age < 1,
-        actions={"choice": DiscreteGrid(Choice)},
+        actions={"choice": DiscreteGrid(category_class=Choice)},
         functions={
             "utility": CollectiveUtility(
                 utilities={name: utilities[name] for name in order},
@@ -507,10 +507,12 @@ def _build_carried_power_model() -> Model:
         transition=_next_regime,
         active=lambda age: age < 1,
         states={
-            "power": Phased(solve=_impute_power, simulate=DiscreteGrid(Power)),
+            "power": Phased(
+                solve=_impute_power, simulate=DiscreteGrid(category_class=Power)
+            ),
         },
         state_transitions={"power": _carry_power},
-        actions={"choice": DiscreteGrid(Choice)},
+        actions={"choice": DiscreteGrid(category_class=Choice)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _utility_f, "m": _utility_m},
@@ -569,11 +571,11 @@ def test_a_carried_weight_preserves_ordinary_imputation_dependencies() -> None:
         states={
             "power": Phased(
                 solve=_impute_power_from_signal,
-                simulate=DiscreteGrid(Power),
+                simulate=DiscreteGrid(category_class=Power),
             ),
         },
         state_transitions={"power": _carry_power},
-        actions={"choice": DiscreteGrid(Choice)},
+        actions={"choice": DiscreteGrid(category_class=Choice)},
         functions={
             "power_signal": _power_signal,
             "utility": CollectiveUtility(

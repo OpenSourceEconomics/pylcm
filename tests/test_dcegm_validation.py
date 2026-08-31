@@ -60,12 +60,12 @@ def _build_model(regime: UserRegime) -> Model:
 
 
 def _utility_with_direct_wealth_dependence(
-    consumption: ContinuousAction, wealth: ContinuousState
+    *, consumption: ContinuousAction, wealth: ContinuousState
 ) -> FloatND:
     return jnp.log(consumption) + 0.01 * wealth
 
 
-def _custom_aggregator(utility: FloatND, continuation: FloatND) -> FloatND:
+def _custom_aggregator(*, utility: FloatND, continuation: FloatND) -> FloatND:
     return utility + 0.9 * continuation
 
 
@@ -78,6 +78,7 @@ def _regime_transition_with_wealth_cliff(wealth: ContinuousState) -> ScalarInt:
 
 
 def _stochastic_next_wealth(
+    *,
     savings: FloatND,
     interest_rate: float,
     period: Period,  # noqa: ARG001
@@ -87,6 +88,7 @@ def _stochastic_next_wealth(
 
 
 def _stochastic_next_aime(
+    *,
     aime: ContinuousState,
     interest_rate: float,
 ) -> FloatND:
@@ -95,7 +97,7 @@ def _stochastic_next_aime(
 
 
 def _next_aime_depending_on_consumption(
-    aime: ContinuousState, consumption: ContinuousAction
+    *, aime: ContinuousState, consumption: ContinuousAction
 ) -> ContinuousState:
     return aime + 0.1 * consumption
 
@@ -113,12 +115,12 @@ def _next_wealth_memo(wealth_memo: ContinuousState) -> ContinuousState:
 
 
 def _utility_reading_carried_state(
-    consumption: ContinuousAction, wealth_memo: ContinuousState
+    *, consumption: ContinuousAction, wealth_memo: ContinuousState
 ) -> FloatND:
     return jnp.log(consumption) + 0.01 * wealth_memo
 
 
-def _without_function(regime: UserRegime, name: str) -> UserRegime:
+def _without_function(*, regime: UserRegime, name: str) -> UserRegime:
     functions = {k: v for k, v in regime.functions.items() if k != name}
     return regime.replace(functions=functions)
 
@@ -129,7 +131,7 @@ class _ShardedKind:
     b: ScalarInt
 
 
-def _utility_reading_kind(consumption: ContinuousAction, kind: ScalarInt) -> FloatND:
+def _utility_reading_kind(*, consumption: ContinuousAction, kind: ScalarInt) -> FloatND:
     return jnp.log(consumption) + 0.0 * kind
 
 
@@ -138,7 +140,7 @@ def _build_with_model_level_sharded_pruned() -> Model:
     ages = AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
     return Model(
         regimes={"retirement": VALID, "dead": dead},
-        states={"kind": DiscreteGrid(_ShardedKind, distributed=True)},
+        states={"kind": DiscreteGrid(category_class=_ShardedKind, distributed=True)},
         ages=ages,
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
     )
@@ -156,7 +158,7 @@ def _build_with_model_level_sharded_used() -> Model:
     )
     return Model(
         regimes={"retirement": retirement, "dead": dead},
-        states={"kind": DiscreteGrid(_ShardedKind, distributed=True)},
+        states={"kind": DiscreteGrid(category_class=_ShardedKind, distributed=True)},
         ages=ages,
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
     )
@@ -169,7 +171,9 @@ def _build_with_regime_level_sharded_terminal() -> Model:
         regimes={
             "retirement": VALID,
             "dead": dead.replace(
-                states={"kind": DiscreteGrid(_ShardedKind, distributed=True)}
+                states={
+                    "kind": DiscreteGrid(category_class=_ShardedKind, distributed=True)
+                }
             ),
         },
         ages=ages,
@@ -188,7 +192,7 @@ def _build_with_regime_level_sharded_terminal() -> Model:
         ),
     ],
 )
-def test_sharded_state_cannot_feed_a_dcegm_carry(build, match):
+def test_sharded_state_cannot_feed_a_dcegm_carry(*, build, match):
     """No sharded state can reach a carry consumed by a DCEGM parent.
 
     A DCEGM parent reads its carry rows by integer indexing along whole discrete
@@ -236,7 +240,7 @@ CASES = {
         "resources",
     ),
     "missing_post_decision_function": (
-        lambda: _without_function(VALID, "savings"),
+        lambda: _without_function(regime=VALID, name="savings"),
         "savings",
     ),
     "transition_bypasses_post_decision_state": (
@@ -501,13 +505,13 @@ def _kinked_supplement(wealth: ContinuousState) -> FloatND:
 
 
 def _next_wealth_with_cliff(
-    savings: FloatND, cliff_supplement: FloatND
+    *, savings: FloatND, cliff_supplement: FloatND
 ) -> ContinuousState:
     return savings + cliff_supplement
 
 
 def _next_wealth_with_kink(
-    savings: FloatND, kinked_supplement: FloatND
+    *, savings: FloatND, kinked_supplement: FloatND
 ) -> ContinuousState:
     return savings + kinked_supplement
 
@@ -538,11 +542,11 @@ def test_euler_law_with_kinked_phase_out_constructs():
     assert model.n_periods == N_PERIODS
 
 
-def _retirement_stay_prob(age: int, final_age_alive: float) -> FloatND:
+def _retirement_stay_prob(*, age: int, final_age_alive: float) -> FloatND:
     return jnp.where(age >= final_age_alive, 0.0, 1.0)
 
 
-def _retirement_death_prob(age: int, final_age_alive: float) -> FloatND:
+def _retirement_death_prob(*, age: int, final_age_alive: float) -> FloatND:
     return jnp.where(age >= final_age_alive, 1.0, 0.0)
 
 
@@ -708,7 +712,7 @@ def test_brute_force_inverse_marginal_utility_keeps_its_params():
 @pytest.mark.slow
 def test_brute_force_solver_explicit_equals_default():
     """`solver=GridSearch()` is the default: identical solution either way."""
-    params = retirement_only.get_params(N_PERIODS)
+    params = retirement_only.get_params(n_periods=N_PERIODS)
 
     default_model = retirement_only.get_model(N_PERIODS)
     explicit = retirement_only.retirement.replace(

@@ -74,7 +74,7 @@ def _next_regime() -> ScalarInt:
     return RegimeId.terminal
 
 
-def _utility(wage_shock: FloatND, work: DiscreteAction) -> FloatND:
+def _utility(*, wage_shock: FloatND, work: DiscreteAction) -> FloatND:
     """Working earns the base wage plus the shock; leisure earns nothing."""
     return work * (10.0 + wage_shock)
 
@@ -119,7 +119,7 @@ def _make_regimes(
         transition=_next_regime,
         active=lambda age: age < 1,
         states={"wage_shock": _shock(fold=fold, n_points=n_points, sigma=sigma)},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility},
     )
     terminal = Regime(
@@ -210,7 +210,7 @@ def _make_regimes_fold_omitted() -> dict[str, Regime]:
                 n_points=5, gauss_hermite=True, mu=0.0, sigma=2.0
             )
         },
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility},
     )
     terminal = Regime(
@@ -246,7 +246,9 @@ def test_fold_default_path_is_byte_identical():
 
 
 def _three_shock_regimes(*, fold: bool) -> dict[str, Regime]:
-    def _utility3(a: FloatND, b: FloatND, c: FloatND, work: DiscreteAction) -> FloatND:
+    def _utility3(
+        *, a: FloatND, b: FloatND, c: FloatND, work: DiscreteAction
+    ) -> FloatND:
         return work * (10.0 + a + b + c)
 
     period0 = Regime(
@@ -257,7 +259,7 @@ def _three_shock_regimes(*, fold: bool) -> dict[str, Regime]:
             "b": _shock(fold=fold, n_points=3, sigma=1.0),
             "c": _shock(fold=fold, n_points=3, sigma=1.0),
         },
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility3},
     )
     terminal = Regime(
@@ -278,11 +280,11 @@ def test_fold_drops_one_axis_per_folded_shock():
     assert folded[0]["period0"].ndim == unfolded[0]["period0"].ndim - 3
 
 
-def _utility_f(wage_shock: FloatND, work: DiscreteAction) -> FloatND:
+def _utility_f(*, wage_shock: FloatND, work: DiscreteAction) -> FloatND:
     return work * (10.0 + wage_shock) + 5.0 * (1.0 - work)
 
 
-def _utility_m(wage_shock: FloatND, work: DiscreteAction) -> FloatND:
+def _utility_m(*, wage_shock: FloatND, work: DiscreteAction) -> FloatND:
     return work * (6.0 + wage_shock)
 
 
@@ -300,7 +302,7 @@ def test_fold_on_taste_shocks_regime_is_rejected():
             transition=None,
             taste_shocks=ExtremeValueTasteShocks(),
             states={"wage_shock": _shock(fold=True)},
-            actions={"work": DiscreteGrid(Work)},
+            actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _utility},
         )
 
@@ -384,7 +386,7 @@ def test_fold_on_transition_conditioning_shock_is_rejected():
                 "wage_shock": _shock(fold=True),
                 "wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
             },
-            actions={"work": DiscreteGrid(Work)},
+            actions={"work": DiscreteGrid(category_class=Work)},
             state_transitions={
                 "wealth": lambda wealth, wage_shock: wealth + wage_shock,
             },
@@ -393,8 +395,8 @@ def test_fold_on_transition_conditioning_shock_is_rejected():
 
 
 def _process(
-    regimes: dict[str, Regime],
     *,
+    regimes: dict[str, Regime],
     ages: AgeGrid = _AGES,
     regime_names_to_ids: MappingProxyType = _REGIME_NAMES_TO_IDS,
 ) -> MappingProxyType:
@@ -438,7 +440,7 @@ def test_a_folded_target_shock_the_source_also_carries_needs_no_continuation_axi
     from lcm.transition import MarkovTransition  # noqa: PLC0415
 
     def _utility_with_wealth(
-        wage_shock: FloatND, work: DiscreteAction, wealth: FloatND
+        *, wage_shock: FloatND, work: DiscreteAction, wealth: FloatND
     ) -> FloatND:
         return work * (10.0 + wage_shock) + wealth
 
@@ -448,18 +450,18 @@ def test_a_folded_target_shock_the_source_also_carries_needs_no_continuation_axi
         active=lambda age: age < 1,
         states={"wage_shock": _shock(fold=False), "wealth": wealth_grid},
         state_transitions={"wealth": {"terminal": lambda wealth: wealth}},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility_with_wealth},
     )
     terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
         states={"wage_shock": _shock(fold=True), "wealth": wealth_grid},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility_with_wealth},
     )
 
-    processed = _process({"period0": period0, "terminal": terminal})
+    processed = _process(regimes={"period0": period0, "terminal": terminal})
 
     assert "next_wealth" in processed["period0"].solution.transitions["terminal"]
     assert (
@@ -475,7 +477,7 @@ def test_a_folded_target_shock_the_source_also_carries_needs_no_continuation_axi
     assert solution[1]["terminal"].shape == (3,)
 
 
-def _solve_jit(regimes: dict[str, Regime], *, enable_jit: bool) -> MappingProxyType:
+def _solve_jit(*, regimes: dict[str, Regime], enable_jit: bool) -> MappingProxyType:
     """`_solve`, but with `enable_jit` under the caller's control.
 
     The fold's exactness contract must hold on BOTH paths, and they are not
@@ -568,12 +570,12 @@ def test_fold_is_bit_exact_against_unfolded_then_averaged():
     kwargs = {"n_points": _DRIFT_N_POINTS, "sigma": _DRIFT_SIGMA}
     weights = _shock(fold=False, **kwargs).get_transition_probs()[0]
 
-    unfolded_V = _solve_jit(_make_regimes(fold=False, **kwargs), enable_jit=False)[0][
-        "period0"
-    ]
-    folded_V = _solve_jit(_make_regimes(fold=True, **kwargs), enable_jit=False)[0][
-        "period0"
-    ]
+    unfolded_V = _solve_jit(
+        regimes=_make_regimes(fold=False, **kwargs), enable_jit=False
+    )[0]["period0"]
+    folded_V = _solve_jit(regimes=_make_regimes(fold=True, **kwargs), enable_jit=False)[
+        0
+    ]["period0"]
     oracle = jnp.average(unfolded_V, weights=weights)
 
     # Guard the guard #1: strictly positive weights, so this exercises the
@@ -583,7 +585,7 @@ def test_fold_is_bit_exact_against_unfolded_then_averaged():
     # kernels, so the assertion below has something to catch. The module
     # defaults do NOT — without this, a future edit to the fixture could
     # silently defang the test into passing whatever the reducer does.
-    guarded = zero_safe_average(unfolded_V, axis=0, weights=weights, shifts=None)
+    guarded = zero_safe_average(a=unfolded_V, axis=0, weights=weights, shifts=None)
     assert _bits(oracle) != _bits(guarded)
 
     assert _bits(folded_V) == _bits(oracle)
@@ -620,12 +622,12 @@ def test_fold_jitted_matches_unfolded_then_averaged_to_summand_scale_tolerance()
     kwargs = {"n_points": _DRIFT_N_POINTS, "sigma": _DRIFT_SIGMA}
     weights = _shock(fold=False, **kwargs).get_transition_probs()[0]
 
-    unfolded_V = _solve_jit(_make_regimes(fold=False, **kwargs), enable_jit=True)[0][
-        "period0"
-    ]
-    folded_V = _solve_jit(_make_regimes(fold=True, **kwargs), enable_jit=True)[0][
-        "period0"
-    ]
+    unfolded_V = _solve_jit(
+        regimes=_make_regimes(fold=False, **kwargs), enable_jit=True
+    )[0]["period0"]
+    folded_V = _solve_jit(regimes=_make_regimes(fold=True, **kwargs), enable_jit=True)[
+        0
+    ]["period0"]
     oracle = jnp.average(unfolded_V, weights=weights)
 
     # atol + C * n * eps(dtype) * Σ|w_k V_k| — summand-scale, node-count- and
@@ -724,18 +726,18 @@ def test_a_folded_target_reached_only_by_the_regime_transition_is_enumerable():
         transition={"terminal": MarkovTransition(lambda: jnp.asarray(1.0))},
         active=lambda age: age < 1,
         states={"wage_shock": _shock(fold=False)},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility},
     )
     terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
         states={"wage_shock": _shock(fold=True)},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility},
     )
 
-    processed = _process({"period0": period0, "terminal": terminal})
+    processed = _process(regimes={"period0": period0, "terminal": terminal})
 
     assert processed["period0"].solution.transitions["terminal"] == {}
     solution = solve(
@@ -785,18 +787,18 @@ def test_a_coarse_transition_into_a_folded_target_needs_no_per_target_cells():
         transition=_next_regime,
         active=lambda age: age < 1,
         states={"wage_shock": _shock(fold=False)},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility},
     )
     terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
         states={"wage_shock": _shock(fold=True)},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility},
     )
 
-    processed = _process({"period0": period0, "terminal": terminal})
+    processed = _process(regimes={"period0": period0, "terminal": terminal})
 
     solution = solve(
         flat_params=_FLAT_PARAMS,
@@ -808,11 +810,11 @@ def test_a_coarse_transition_into_a_folded_target_needs_no_per_target_cells():
     assert solution[1]["terminal"].shape == ()
 
 
-def _u_source_shock(source_shock: FloatND, work: DiscreteAction) -> FloatND:
+def _u_source_shock(*, source_shock: FloatND, work: DiscreteAction) -> FloatND:
     return work * (10.0 + source_shock)
 
 
-def _u_target_shock(target_shock: FloatND, work: DiscreteAction) -> FloatND:
+def _u_target_shock(*, target_shock: FloatND, work: DiscreteAction) -> FloatND:
     return work * (10.0 + target_shock)
 
 
@@ -830,14 +832,14 @@ def _make_target_local_fold_regimes(*, shared: bool) -> dict[str, Regime]:
         transition=_next_regime,
         active=lambda age: age < 1,
         states={"source_shock": _shock(fold=False)},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_source_shock},
     )
     terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
         states={fold_name: _shock(fold=True)},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_source_shock if shared else _u_target_shock},
     )
     return {"period0": period0, "terminal": terminal}
@@ -894,7 +896,7 @@ def test_a_coarse_candidate_folding_a_source_carried_process_solves():
     pinning: the source reads the target's already-averaged value, and its own
     unfolded copy of the shock keeps its axis in its own period.
     """
-    processed = _process(_make_target_local_fold_regimes(shared=True))
+    processed = _process(regimes=_make_target_local_fold_regimes(shared=True))
 
     solution = solve(
         flat_params=_FLAT_PARAMS,
@@ -941,7 +943,7 @@ def test_coarse_self_transition_retains_the_self_continuation():
         transition=_next_self,
         active=lambda age: age < 2,
         states={"wage_shock": _shock(fold=False)},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility},
     )
     done = Regime(
@@ -1003,7 +1005,7 @@ def test_a_coarse_self_transition_may_fold_its_own_shock():
         transition=_next_self,
         active=lambda age: age < 2,
         states={"wage_shock": _shock(fold=True)},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility},
     )
     done = Regime(
@@ -1013,7 +1015,7 @@ def test_a_coarse_self_transition_may_fold_its_own_shock():
     )
 
     processed = _process(
-        {"stay": stay, "done": done}, ages=ages3, regime_names_to_ids=ids
+        regimes={"stay": stay, "done": done}, ages=ages3, regime_names_to_ids=ids
     )
 
     assert "next_wage_shock" not in processed["stay"].solution.transitions["stay"]
@@ -1046,7 +1048,7 @@ def test_a_coarse_candidate_that_folds_and_is_never_returned_builds():
         transition=_always_stay,
         active=lambda age: age < 1,
         states={"wage_shock": _shock(fold=False)},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility},
     )
     stay = Regime(
@@ -1058,12 +1060,14 @@ def test_a_coarse_candidate_that_folds_and_is_never_returned_builds():
         transition=None,
         active=lambda age: age >= 1,
         states={"wage_shock": _shock(fold=True)},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility},
     )
 
     processed = _process(
-        {"src": src, "stay": stay, "alt": alt}, ages=ages3, regime_names_to_ids=ids
+        regimes={"src": src, "stay": stay, "alt": alt},
+        ages=ages3,
+        regime_names_to_ids=ids,
     )
 
     assert "next_wage_shock" not in processed["src"].solution.transitions["alt"]
@@ -1094,7 +1098,7 @@ def test_coarse_regime_transition_to_shared_process_target_builds_continuation()
             transition=None,
             active=lambda age: age >= 1,
             states={"wage_shock": _shock(fold=False)},
-            actions={"work": DiscreteGrid(Work)},
+            actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": lambda wage_shock, work: work * (2.0 + wage_shock)},
         )
 
@@ -1105,7 +1109,7 @@ def test_coarse_regime_transition_to_shared_process_target_builds_continuation()
             transition=transition,
             active=lambda age: age < 1,
             states={"wage_shock": _shock(fold=False)},
-            actions={"work": DiscreteGrid(Work)},
+            actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _utility},
         )
 
@@ -1175,7 +1179,7 @@ def _make_route_to_folded_target_regimes() -> dict[str, Regime]:
         # leisure (code 0) -> 0.5; work (code 1) -> 0.0
         return 0.5 * (1.0 - jnp.asarray(work, dtype=float))
 
-    def _u_folded_B(bshock: FloatND, work: DiscreteAction) -> FloatND:
+    def _u_folded_B(*, bshock: FloatND, work: DiscreteAction) -> FloatND:
         # Mean-zero shock folds away; the constant 1.0 survives. `work` is
         # inert so the max-over-actions is the folded 1.0.
         return 1.0 + bshock + 0.0 * jnp.asarray(work, dtype=float)
@@ -1186,14 +1190,14 @@ def _make_route_to_folded_target_regimes() -> dict[str, Regime]:
             "dead_C": MarkovTransition(_route_to_C),
         },
         active=lambda age: age < 1,
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_src},
     )
     folded_B = Regime(
         transition=None,
         active=lambda age: age >= 1,
         states={"bshock": _shock(fold=True)},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_folded_B},
     )
     dead_C = Regime(
@@ -1204,7 +1208,7 @@ def _make_route_to_folded_target_regimes() -> dict[str, Regime]:
     return {"src": src, "folded_B": folded_B, "dead_C": dead_C}
 
 
-def _solve_route(regimes: dict[str, Regime], *, discount: float) -> MappingProxyType:
+def _solve_route(*, regimes: dict[str, Regime], discount: float) -> MappingProxyType:
     processed = process_regimes(
         prepared_structure=build_prepared_structure(
             user_regimes=finalize_regimes(
@@ -1262,7 +1266,9 @@ def test_folded_only_per_target_continuation_enters_expected_value():
     V_src == discount * 1.0.
     """
     discount = 0.9
-    solution = _solve_route(_make_route_to_folded_target_regimes(), discount=discount)
+    solution = _solve_route(
+        regimes=_make_route_to_folded_target_regimes(), discount=discount
+    )
     # `src` has no states: a single scalar equal to the chosen action's value.
     V_src = np.asarray(solution[0]["src"])
     assert V_src.shape == ()
@@ -1339,11 +1345,11 @@ def _make_route_to_folded_target_regimes_stateful() -> dict[str, Regime]:
     def _route_to_C(work: DiscreteAction) -> FloatND:
         return 1.0 - jnp.asarray(work, dtype=float)
 
-    def _u_src(work: DiscreteAction, wealth: FloatND) -> FloatND:
+    def _u_src(*, work: DiscreteAction, wealth: FloatND) -> FloatND:
         # leisure (code 0) -> 0.5; work (code 1) -> 0.0. `wealth` is inert.
         return 0.5 * (1.0 - jnp.asarray(work, dtype=float)) + 0.0 * wealth
 
-    def _u_folded_B(bshock: FloatND, work: DiscreteAction) -> FloatND:
+    def _u_folded_B(*, bshock: FloatND, work: DiscreteAction) -> FloatND:
         return 1.0 + bshock + 0.0 * jnp.asarray(work, dtype=float)
 
     src = Regime(
@@ -1354,14 +1360,14 @@ def _make_route_to_folded_target_regimes_stateful() -> dict[str, Regime]:
         active=lambda age: age < 1,
         states={"wealth": LinSpacedGrid(start=0.0, stop=10.0, n_points=3)},
         state_transitions={"wealth": fixed_transition("wealth")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_src},
     )
     folded_B = Regime(
         transition=None,
         active=lambda age: age >= 1,
         states={"bshock": _shock(fold=True)},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_folded_B},
     )
     dead_C = Regime(
@@ -1373,7 +1379,7 @@ def _make_route_to_folded_target_regimes_stateful() -> dict[str, Regime]:
 
 
 def _simulate_route(
-    regimes: dict[str, Regime], *, discount: float
+    *, regimes: dict[str, Regime], discount: float
 ) -> tuple[MappingProxyType, object]:
     """Solve then simulate the route-to-folded-target model; return the sim result."""
     from _lcm.simulation.simulate import simulate  # noqa: PLC0415
@@ -1460,7 +1466,7 @@ def test_folded_only_per_target_continuation_enters_simulated_value():
     """
     discount = 0.9
     solution, result = _simulate_route(
-        _make_route_to_folded_target_regimes_stateful(), discount=discount
+        regimes=_make_route_to_folded_target_regimes_stateful(), discount=discount
     )
     # Sanity: the solve side already values B correctly at every `wealth` node
     # (V_src == discount; `wealth` is inert).

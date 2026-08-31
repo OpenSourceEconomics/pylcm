@@ -50,7 +50,7 @@ class ConsumerKind:
 
 
 def resources(
-    liquid: ContinuousState, kind: DiscreteState, base_income: FloatND
+    *, liquid: ContinuousState, kind: DiscreteState, base_income: FloatND
 ) -> FloatND:
     """Cash-on-hand: liquid plus the kind's base income (no in-period cliff)."""
     return liquid + base_income[kind]
@@ -62,7 +62,7 @@ def resources(
     breakpoints=(lcm.affine_breakpoint(threshold="medicaid_limit", kind="jump"),),
 )
 def medicaid_transfer(
-    liquid: ContinuousState, medicaid_limit: float, transfer_amount: float
+    *, liquid: ContinuousState, medicaid_limit: float, transfer_amount: float
 ) -> FloatND:
     """A constant transfer to next-period liquid while assets are below the limit.
 
@@ -73,6 +73,7 @@ def medicaid_transfer(
 
 
 def next_liquid(
+    *,
     resources: FloatND,
     consumption: ContinuousAction,
     medicaid_transfer: FloatND,
@@ -86,6 +87,7 @@ def next_liquid(
 
 
 def next_liquid_from_savings(
+    *,
     savings: FloatND,
     medicaid_transfer: FloatND,
     return_liquid: float,
@@ -114,7 +116,7 @@ def build_model(
         "medicaid_transfer": medicaid_transfer,
     }
     alive_solver = resolve_solver(
-        variant,
+        variant=variant,
         savings_grid=LinSpacedGrid(
             start=savings_floor, stop=savings_max, n_points=n_savings
         ),
@@ -145,7 +147,7 @@ def build_model(
         liquid_law=liquid_law,
         alive_solver=alive_solver,
         constraints=constraints,
-        extra_states={"kind": DiscreteGrid(ConsumerKind)},
+        extra_states={"kind": DiscreteGrid(category_class=ConsumerKind)},
         extra_state_transitions={"kind": {"alive": lcm.fixed_transition("kind")}},
     )
 

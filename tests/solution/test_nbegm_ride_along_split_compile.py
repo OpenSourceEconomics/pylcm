@@ -15,7 +15,7 @@ from lcm import Model
 from tests.test_models import nbegm_ride_along_toy as ride_toy
 
 
-def _build_ride_model(variant: str, *, n_consumption: int = 120) -> Model:
+def _build_ride_model(*, variant: str, n_consumption: int = 120) -> Model:
     return ride_toy.build_model(
         variant=variant,
         n_liquid=120,
@@ -27,7 +27,7 @@ def _build_ride_model(variant: str, *, n_consumption: int = 120) -> Model:
 
 
 def _ride_along_kernel(
-    model: Model, *, params: Mapping[str, Any]
+    *, model: Model, params: Mapping[str, Any]
 ) -> tuple[Any, dict[str, Any]]:
     """Return a representative ride-along period kernel and its lowering context."""
     flat_params = model._process_params(params)
@@ -53,7 +53,7 @@ def _ride_along_kernel(
     }
 
 
-def _hlo_instruction_count(core: Callable, lower_args: Mapping[str, object]) -> int:
+def _hlo_instruction_count(*, core: Callable, lower_args: Mapping[str, object]) -> int:
     """Lower a core and count HLO instruction lines in its main computation."""
     hlo_module = jax.jit(core).lower(**dict(lower_args)).compiler_ir(dialect="hlo")
     assert hlo_module is not None
@@ -64,8 +64,8 @@ def _hlo_instruction_count(core: Callable, lower_args: Mapping[str, object]) -> 
 def test_ride_along_kernel_exposes_continuation_and_envelope_cores():
     """The ride-along kernel splits its solve into a `continuation` and an
     `envelope` core, each a distinct compiled program."""
-    model = _build_ride_model("nbegm")
-    kernel, _ = _ride_along_kernel(model, params=ride_toy.build_params())
+    model = _build_ride_model(variant="nbegm")
+    kernel, _ = _ride_along_kernel(model=model, params=ride_toy.build_params())
     assert set(kernel.cores()) == {"continuation", "envelope"}
 
 
@@ -80,13 +80,13 @@ def test_split_partitions_the_solve_into_two_asymmetric_cores():
     transition, stochastic integration, child interpolation) dominates instead. The
     boundary property the split guarantees is the asymmetry, in either direction.
     """
-    model = _build_ride_model("nbegm")
-    kernel, ctx = _ride_along_kernel(model, params=ride_toy.build_params())
+    model = _build_ride_model(variant="nbegm")
+    kernel, ctx = _ride_along_kernel(model=model, params=ride_toy.build_params())
     cores = kernel.cores()
     cont_args = kernel.build_lower_args(core_key="continuation", **ctx)
     env_args = kernel.build_lower_args(core_key="envelope", **ctx)
-    cont_ops = _hlo_instruction_count(cores["continuation"], cont_args)
-    env_ops = _hlo_instruction_count(cores["envelope"], env_args)
+    cont_ops = _hlo_instruction_count(core=cores["continuation"], lower_args=cont_args)
+    env_ops = _hlo_instruction_count(core=cores["envelope"], lower_args=env_args)
     assert min(cont_ops, env_ops) < 0.25 * max(cont_ops, env_ops), (
         cont_ops,
         env_ops,

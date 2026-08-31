@@ -19,9 +19,9 @@ _SIGMA_ZERO = 1e-8  # Effectively zero; exact 0 causes degenerate grids
 _DETERMINISTIC_ATOL = 1e-6 if X64_ENABLED else 1e-3
 
 
-def _simulate(shock_type, *, sigma, rho=0.0, mu=0.0):
-    model = get_model(_N_PERIODS, shock_type)
-    params = get_params(shock_type, sigma=sigma, mu=mu, rho=rho)
+def _simulate(*, shock_type, sigma, rho=0.0, mu=0.0):
+    model = get_model(n_periods=_N_PERIODS, shock_type=shock_type)
+    params = get_params(shock_type=shock_type, sigma=sigma, mu=mu, rho=rho)
     unconditional_mean = mu / (1 - rho)
     result = model.simulate(
         log_level="debug",
@@ -47,7 +47,7 @@ def _mean_wealth_in_final_alive_period(df):
 @pytest.mark.parametrize("shock_type", ["normal_gh", "rouwenhorst", "tauchen"])
 def test_deterministic_when_sigma_zero(shock_type):
     rho = 0.5 if shock_type in ("rouwenhorst", "tauchen") else 0.0
-    df = _simulate(shock_type, sigma=_SIGMA_ZERO, rho=rho)
+    df = _simulate(shock_type=shock_type, sigma=_SIGMA_ZERO, rho=rho)
 
     alive_df = df[df["regime_name"] == "alive"]
     for period in alive_df["period"].unique():
@@ -59,8 +59,8 @@ def test_deterministic_when_sigma_zero(shock_type):
 
 
 def test_higher_sigma_increases_mean_wealth_normal():
-    df_low = _simulate("normal_gh", sigma=0.1)
-    df_high = _simulate("normal_gh", sigma=0.5)
+    df_low = _simulate(shock_type="normal_gh", sigma=0.1)
+    df_high = _simulate(shock_type="normal_gh", sigma=0.5)
 
     assert _mean_wealth_in_final_alive_period(
         df_high
@@ -68,8 +68,8 @@ def test_higher_sigma_increases_mean_wealth_normal():
 
 
 def test_higher_sigma_increases_mean_wealth_rouwenhorst():
-    df_low = _simulate("rouwenhorst", sigma=0.1, rho=0.5)
-    df_high = _simulate("rouwenhorst", sigma=0.5, rho=0.5)
+    df_low = _simulate(shock_type="rouwenhorst", sigma=0.1, rho=0.5)
+    df_high = _simulate(shock_type="rouwenhorst", sigma=0.5, rho=0.5)
 
     assert _mean_wealth_in_final_alive_period(
         df_high
@@ -77,8 +77,8 @@ def test_higher_sigma_increases_mean_wealth_rouwenhorst():
 
 
 def test_higher_rho_increases_mean_wealth_rouwenhorst():
-    df_low = _simulate("rouwenhorst", sigma=0.3, rho=0.2)
-    df_high = _simulate("rouwenhorst", sigma=0.3, rho=0.8)
+    df_low = _simulate(shock_type="rouwenhorst", sigma=0.3, rho=0.2)
+    df_high = _simulate(shock_type="rouwenhorst", sigma=0.3, rho=0.8)
 
     assert _mean_wealth_in_final_alive_period(
         df_high
@@ -87,8 +87,8 @@ def test_higher_rho_increases_mean_wealth_rouwenhorst():
 
 def test_precautionary_savings_with_nonzero_mu():
     """Precautionary savings motive holds with non-zero drift (mu != 0)."""
-    df_low = _simulate("rouwenhorst", sigma=0.1, rho=0.5, mu=0.5)
-    df_high = _simulate("rouwenhorst", sigma=0.5, rho=0.5, mu=0.5)
+    df_low = _simulate(shock_type="rouwenhorst", sigma=0.1, rho=0.5, mu=0.5)
+    df_high = _simulate(shock_type="rouwenhorst", sigma=0.5, rho=0.5, mu=0.5)
 
     assert _mean_wealth_in_final_alive_period(
         df_high
@@ -98,8 +98,8 @@ def test_precautionary_savings_with_nonzero_mu():
 @pytest.mark.parametrize("shock_type", ["normal_gh", "rouwenhorst", "tauchen"])
 def test_precautionary_savings_versus_deterministic_baseline(shock_type):
     rho = 0.5 if shock_type in ("rouwenhorst", "tauchen") else 0.0
-    df_det = _simulate(shock_type, sigma=_SIGMA_ZERO, rho=rho)
-    df_stoch = _simulate(shock_type, sigma=0.5, rho=rho)
+    df_det = _simulate(shock_type=shock_type, sigma=_SIGMA_ZERO, rho=rho)
+    df_stoch = _simulate(shock_type=shock_type, sigma=0.5, rho=rho)
 
     assert _mean_wealth_in_final_alive_period(
         df_stoch

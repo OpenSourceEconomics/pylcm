@@ -153,6 +153,7 @@ def test_exact_winner_matches_fraction_mutations() -> None:
     query = left[:, 0].copy()  # every row has at least one bracket
     live[:, 0] = True
 
+    # keyword-only-exempt: library-callback=jax.vmap
     def resolve(lg, rg, lv, rv, mask, q):
         return exact_query_winner(
             left_grid=lg,
@@ -431,7 +432,7 @@ def _batched_operands(*, n_batch: int, n_segment: int, n_query: int):
     return left, right, v_left, v_right, live, query.astype(dtype)
 
 
-def _resolve_batched(left, right, v_left, v_right, live, query):
+def _resolve_batched(*, left, right, v_left, v_right, live, query):
     jdtype = _jdtype()
     return exact_query_winner_batched(
         left_grid=jnp.asarray(left, jdtype),

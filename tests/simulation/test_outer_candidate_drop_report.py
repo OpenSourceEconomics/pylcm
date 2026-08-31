@@ -50,7 +50,7 @@ def test_debug_raises_and_names_the_counts() -> None:
 
 
 @pytest.mark.parametrize("log_level", ["warning", "progress"])
-def test_warning_levels_report_the_drop_and_continue(log_level, caplog) -> None:
+def test_warning_levels_report_the_drop_and_continue(*, log_level, caplog) -> None:
     """At `"warning"` and `"progress"` the drop is logged and the run goes on."""
     live, dropped = _masks()
 

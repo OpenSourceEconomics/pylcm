@@ -164,9 +164,9 @@ def _make_participation_model(*, n_subjects: int | None) -> Model:
     couple = Regime(
         transition={"couple_terminal": MarkovTransition(_certain_transition)},
         active=lambda age: age < 1,
-        states={"education": DiscreteGrid(Education)},
+        states={"education": DiscreteGrid(category_class=Education)},
         state_transitions={"education": fixed_transition("education")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _couple_utility_f, "m": _couple_utility_m}
@@ -186,8 +186,8 @@ def _make_participation_model(*, n_subjects: int | None) -> Model:
     couple_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        states={"education": DiscreteGrid(Education)},
-        actions={"work": DiscreteGrid(Work)},
+        states={"education": DiscreteGrid(category_class=Education)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _zero_utility, "m": _zero_utility}
@@ -197,15 +197,15 @@ def _make_participation_model(*, n_subjects: int | None) -> Model:
     single_f = Regime(
         transition={"single_f_terminal": MarkovTransition(_certain_transition)},
         active=lambda age: age < 1,
-        states={"education": DiscreteGrid(Education)},
+        states={"education": DiscreteGrid(category_class=Education)},
         state_transitions={"education": fixed_transition("education")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _single_f_utility},
     )
     single_f_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        states={"education": DiscreteGrid(Education)},
+        states={"education": DiscreteGrid(category_class=Education)},
         functions={"utility": _zero_terminal_utility},
     )
     return Model(
@@ -231,22 +231,22 @@ def _certain_transition(age: FloatND) -> FloatND:
     return jnp.ones_like(age, dtype=float)
 
 
-def _couple_utility_f(education: DiscreteState, work: DiscreteAction) -> FloatND:
+def _couple_utility_f(*, education: DiscreteState, work: DiscreteAction) -> FloatND:
     """The wife's share of household income: three times her own wage."""
     return 3.0 * _wage(education) * work
 
 
-def _couple_utility_m(education: DiscreteState, work: DiscreteAction) -> FloatND:
+def _couple_utility_m(*, education: DiscreteState, work: DiscreteAction) -> FloatND:
     """The husband values his leisure at 5, and her education when she works."""
     return 5.0 * (1.0 - work) + education * work
 
 
-def _zero_utility(education: DiscreteState, work: DiscreteAction) -> FloatND:
+def _zero_utility(*, education: DiscreteState, work: DiscreteAction) -> FloatND:
     """The terminal couple pays nothing, whatever it does."""
     return 0.0 * education * work
 
 
-def _single_f_utility(education: DiscreteState, work: DiscreteAction) -> FloatND:
+def _single_f_utility(*, education: DiscreteState, work: DiscreteAction) -> FloatND:
     """The outside option: 1 at low education, 2 at high, and only when working."""
     return (1.0 + education) * work
 
@@ -261,6 +261,6 @@ def _identity_education(education: DiscreteState) -> DiscreteState:
     return education
 
 
-def _participation_f(Q_f: FloatND, V_single_f_ref: FloatND) -> BoolND:
+def _participation_f(*, Q_f: FloatND, V_single_f_ref: FloatND) -> BoolND:
     """The wife accepts only an action worth at least her outside option."""
     return Q_f >= V_single_f_ref

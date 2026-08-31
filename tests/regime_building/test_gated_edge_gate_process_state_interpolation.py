@@ -114,7 +114,7 @@ def _identity_wage(wage: ContinuousState) -> ContinuousState:
     return wage
 
 
-def _u_single_f(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _u_single_f(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     return wage * work
 
 
@@ -127,20 +127,21 @@ def _u_single_m_terminal(wage: ContinuousState) -> FloatND:
 
 
 def _u_married_f(
-    wage: ContinuousState, shock: FloatND, work: DiscreteAction
+    *, wage: ContinuousState, shock: FloatND, work: DiscreteAction
 ) -> FloatND:
     # 2*wage + shock ranges over [1, 5] on this grid -> work=1 always optimal.
     return (2.0 * wage + shock) * work
 
 
 def _u_married_m(
-    wage: ContinuousState, shock: FloatND, work: DiscreteAction
+    *, wage: ContinuousState, shock: FloatND, work: DiscreteAction
 ) -> FloatND:
     # wage + shock ranges over [0, 3] on this grid -> work=1 always (weakly) optimal.
     return (wage + shock) * work
 
 
 def _consent_gate(
+    *,
     V_target_f: FloatND,
     V_target_m: FloatND,
     V_single_f_ref: FloatND,
@@ -200,7 +201,7 @@ def _make_regimes() -> dict[str, Regime]:
         active=lambda age: age < 1,
         states={"wage": _WAGE, "shock": _SHOCK},
         state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_single_f},
     )
     single_f_terminal = Regime(
@@ -219,7 +220,7 @@ def _make_regimes() -> dict[str, Regime]:
         transition=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE, "shock": _SHOCK},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _u_married_f, "m": _u_married_m}

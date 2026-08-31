@@ -103,21 +103,23 @@ def survival_of_wealth(wealth: ContinuousState) -> FloatND:
     return SURVIVAL_LOW + (SURVIVAL_HIGH - SURVIVAL_LOW) * smoothstep_in_band(wealth)
 
 
-def stay_prob(wealth: ContinuousState, age: int, final_age_alive: float) -> FloatND:
+def stay_prob(*, wealth: ContinuousState, age: int, final_age_alive: float) -> FloatND:
     return jnp.where(age >= final_age_alive, 0.0, survival_of_wealth(wealth))
 
 
-def death_prob(wealth: ContinuousState, age: int, final_age_alive: float) -> FloatND:
-    return 1.0 - stay_prob(wealth, age, final_age_alive)
+def death_prob(*, wealth: ContinuousState, age: int, final_age_alive: float) -> FloatND:
+    return 1.0 - stay_prob(wealth=wealth, age=age, final_age_alive=final_age_alive)
 
 
 def utility(
-    consumption: ContinuousAction, is_working: BoolND, disutility_of_work: float
+    *, consumption: ContinuousAction, is_working: BoolND, disutility_of_work: float
 ) -> FloatND:
     return jnp.log(consumption) - jnp.where(is_working, disutility_of_work, 0.0)
 
 
-def labor_income(is_working: BoolND, income: ContinuousState, wage: float) -> FloatND:
+def labor_income(
+    *, is_working: BoolND, income: ContinuousState, wage: float
+) -> FloatND:
     return jnp.where(is_working, wage * jnp.exp(income), 0.0)
 
 
@@ -125,7 +127,7 @@ def pension_income(aime: ContinuousState) -> FloatND:
     return PENSION_RATE * aime
 
 
-def savings(wealth: FloatND, consumption: ContinuousAction) -> FloatND:
+def savings(*, wealth: FloatND, consumption: ContinuousAction) -> FloatND:
     return wealth - consumption
 
 
@@ -134,7 +136,7 @@ def inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
 
 
 def next_aime(
-    aime: ContinuousState, is_working: BoolND, income: ContinuousState
+    *, aime: ContinuousState, is_working: BoolND, income: ContinuousState
 ) -> ContinuousState:
     """Passive AIME accrual: reads the work choice and the income node only."""
     return jnp.minimum(
@@ -143,12 +145,13 @@ def next_aime(
 
 
 def next_wealth_dcegm(
-    savings: FloatND, labor_income: FloatND, pension_income: FloatND
+    *, savings: FloatND, labor_income: FloatND, pension_income: FloatND
 ) -> ContinuousState:
     return savings + labor_income + pension_income
 
 
 def next_wealth_brute(
+    *,
     wealth: ContinuousState,
     consumption: ContinuousAction,
     labor_income: FloatND,
@@ -157,7 +160,9 @@ def next_wealth_brute(
     return wealth - consumption + labor_income + pension_income
 
 
-def budget_constraint(consumption: ContinuousAction, wealth: ContinuousState) -> BoolND:
+def budget_constraint(
+    *, consumption: ContinuousAction, wealth: ContinuousState
+) -> BoolND:
     return consumption <= wealth
 
 
@@ -201,7 +206,7 @@ def _model(solver: str) -> Model:
         },
         active=_active,
         actions={
-            "labor_supply": DiscreteGrid(LaborChoice),
+            "labor_supply": DiscreteGrid(category_class=LaborChoice),
             "consumption": CONSUMPTION_GRID,
         },
         states=states,
@@ -330,7 +335,7 @@ def _euler_axis(value_array: np.ndarray) -> int:
 RATE_OF_RETURN = 0.04
 
 
-def capital_income(wealth: ContinuousState, rate_of_return: float) -> FloatND:
+def capital_income(*, wealth: ContinuousState, rate_of_return: float) -> FloatND:
     """Capital income on current wealth — reads the Euler state and a param."""
     return rate_of_return * wealth
 
@@ -349,7 +354,7 @@ def survival_of_share(medicaid_eligibility_share: FloatND) -> FloatND:
 
 
 def stay_prob_share(
-    medicaid_eligibility_share: FloatND, age: int, final_age_alive: float
+    *, medicaid_eligibility_share: FloatND, age: int, final_age_alive: float
 ) -> FloatND:
     return jnp.where(
         age >= final_age_alive, 0.0, survival_of_share(medicaid_eligibility_share)
@@ -357,9 +362,13 @@ def stay_prob_share(
 
 
 def death_prob_share(
-    medicaid_eligibility_share: FloatND, age: int, final_age_alive: float
+    *, medicaid_eligibility_share: FloatND, age: int, final_age_alive: float
 ) -> FloatND:
-    return 1.0 - stay_prob_share(medicaid_eligibility_share, age, final_age_alive)
+    return 1.0 - stay_prob_share(
+        medicaid_eligibility_share=medicaid_eligibility_share,
+        age=age,
+        final_age_alive=final_age_alive,
+    )
 
 
 def _means_test_intermediates() -> dict:
@@ -371,7 +380,7 @@ def _means_test_intermediates() -> dict:
 
 
 @functools.cache
-def _means_tested_prob_model(solver: str, *, rate_is_fixed: bool) -> Model:
+def _means_tested_prob_model(*, solver: str, rate_is_fixed: bool) -> Model:
     """Euler `wealth` + passive `aime` + process `income`; means-tested prob.
 
     The survival probability reads `wealth` through the param-dependent chain
@@ -395,7 +404,7 @@ def _means_tested_prob_model(solver: str, *, rate_is_fixed: bool) -> Model:
         },
         active=_active,
         actions={
-            "labor_supply": DiscreteGrid(LaborChoice),
+            "labor_supply": DiscreteGrid(category_class=LaborChoice),
             "consumption": CONSUMPTION_GRID,
         },
         states=states,
@@ -471,10 +480,10 @@ def test_means_tested_prob_through_param_intermediate_matches_brute_force(
     """
     params = _means_test_params(rate_is_fixed=rate_is_fixed)
     dcegm_solution: PeriodToRegimeToVArr = _means_tested_prob_model(
-        "dcegm", rate_is_fixed=rate_is_fixed
+        solver="dcegm", rate_is_fixed=rate_is_fixed
     ).solve(params=params, log_level="debug")
     brute_solution: PeriodToRegimeToVArr = _means_tested_prob_model(
-        "brute_force", rate_is_fixed=rate_is_fixed
+        solver="brute_force", rate_is_fixed=rate_is_fixed
     ).solve(params=params, log_level="debug")
     for period in sorted(brute_solution)[:-1]:
         brute_V = np.asarray(brute_solution[period]["working_life"])
@@ -505,7 +514,7 @@ def _model_with_aime_batch(aime_batch_size: int) -> Model:
         },
         active=_active,
         actions={
-            "labor_supply": DiscreteGrid(LaborChoice),
+            "labor_supply": DiscreteGrid(category_class=LaborChoice),
             "consumption": CONSUMPTION_GRID,
         },
         states={
@@ -573,7 +582,7 @@ def _invariance_tolerances(reference: np.ndarray) -> tuple[float, float]:
     return rtol, rtol * float(np.max(np.abs(reference[np.isfinite(reference)])))
 
 
-def _simulated_choices(model: Model, solution: PeriodToRegimeToVArr):
+def _simulated_choices(*, model: Model, solution: PeriodToRegimeToVArr):
     """Simulate a fixed subject panel and return it keyed by subject and period.
 
     The seed is pinned so the regime lottery draws the same shocks on both
@@ -651,11 +660,13 @@ def test_passive_aime_batch_size_leaves_the_discrete_choices_unchanged(
     """
     reference_model = _model("dcegm")
     reference = _simulated_choices(
-        reference_model, reference_model.solve(params=_params(), log_level="debug")
+        model=reference_model,
+        solution=reference_model.solve(params=_params(), log_level="debug"),
     )
     splayed_model = _model_with_aime_batch(aime_batch_size)
     splayed = _simulated_choices(
-        splayed_model, splayed_model.solve(params=_params(), log_level="debug")
+        model=splayed_model,
+        solution=splayed_model.solve(params=_params(), log_level="debug"),
     )
 
     assert list(splayed.index) == list(reference.index), (

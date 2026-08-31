@@ -126,6 +126,7 @@ def test_claw_allows_with_signature_wrapper_over_named_param_function() -> None:
     """
 
     def Q_and_F(
+        *,
         next_regime_to_V_arr: MappingProxyType[str, jnp.ndarray],  # noqa: ARG001
         action: jnp.ndarray,
         state: jnp.ndarray,
@@ -236,7 +237,7 @@ def test_golden_section_runs_eagerly() -> None:
     """`maximize_golden_section` is reachable with the claw live and jit off."""
     with jax.disable_jit():
         result = maximize_golden_section(
-            lambda x: -((x - 0.25) ** 2),
+            objective=lambda x: -((x - 0.25) ** 2),
             lower=jnp.array([0.0, -1.0]),
             upper=jnp.array([1.0, 2.0]),
             iterations=8,

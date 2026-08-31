@@ -43,13 +43,14 @@ from tests.test_models.nbegm_common import (
 
 
 def leisure(
-    wage: ContinuousState, leisure_base: float, leisure_slope: float
+    *, wage: ContinuousState, leisure_base: float, leisure_slope: float
 ) -> FloatND:
     """Leisure term riding along with the wage co-state (strictly positive)."""
     return leisure_base + leisure_slope * wage
 
 
 def utility(
+    *,
     consumption: ContinuousAction,
     leisure: FloatND,
     consumption_weight: float,
@@ -58,10 +59,10 @@ def utility(
 ) -> FloatND:
     """CES utility over a Cobb-Douglas consumption--leisure bundle."""
     bundle = consumption**consumption_weight * leisure ** (1.0 - consumption_weight)
-    return util_scale * crra_utility(bundle, crra)
+    return util_scale * crra_utility(consumption=bundle, crra=crra)
 
 
-def gross_income(liquid: ContinuousState, wage: ContinuousState) -> FloatND:
+def gross_income(*, liquid: ContinuousState, wage: ContinuousState) -> FloatND:
     """Pre-tax income: liquid wealth plus the wage co-state (monotone in liquid)."""
     return liquid + wage
 
@@ -72,7 +73,7 @@ def gross_income(liquid: ContinuousState, wage: ContinuousState) -> FloatND:
     breakpoints=(lcm.affine_breakpoint(threshold="fpl_cliff", kind="jump"),),
 )
 def subsidy_jump(
-    gross_income: FloatND, subsidy_low: float, subsidy_high: float, fpl_cliff: float
+    *, gross_income: FloatND, subsidy_low: float, subsidy_high: float, fpl_cliff: float
 ) -> FloatND:
     """Lump-sum subsidy: the higher amount below the income cliff, lower above."""
     return jnp.where(gross_income < fpl_cliff, subsidy_high, subsidy_low)
@@ -84,6 +85,7 @@ def subsidy_jump(
     breakpoints=(lcm.affine_breakpoint(threshold="fpl_cliff", kind="continuous_kink"),),
 )
 def subsidy_kink(
+    *,
     gross_income: FloatND,
     subsidy_high: float,
     subsidy_slope: float,
@@ -97,12 +99,12 @@ def subsidy_kink(
     )
 
 
-def resources(gross_income: FloatND, subsidy: FloatND) -> FloatND:
+def resources(*, gross_income: FloatND, subsidy: FloatND) -> FloatND:
     """Cash-on-hand: pre-tax income plus the cliff-contingent subsidy."""
     return gross_income + subsidy
 
 
-def next_wage(wage: ContinuousState, wage_persistence: float) -> ContinuousState:
+def next_wage(*, wage: ContinuousState, wage_persistence: float) -> ContinuousState:
     """Wage co-state law: a deterministic decay that never reads the savings slot."""
     return wage_persistence * wage
 
@@ -152,7 +154,7 @@ def build_model(
         "resources": resources,
     }
     alive_solver = resolve_solver(
-        variant,
+        variant=variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
     )
     alive_functions = {**alive_functions, "savings": savings}

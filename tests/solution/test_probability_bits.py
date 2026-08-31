@@ -100,7 +100,7 @@ def test_a_signed_zero_is_the_null_event(signed_zero: float) -> None:
     [(1.0, True), (0.5, True), (np.inf, True), (np.nan, False), (-1.0, False)],
     ids=["one", "half", "infinite", "nan", "negative"],
 )
-def test_liveness_of_an_ordinary_weight(value: float, *, live: bool) -> None:
+def test_liveness_of_an_ordinary_weight(*, value: float, live: bool) -> None:
     """The bit-level test agrees with the arithmetic one wherever both are valid."""
     assert bool(is_live(jnp.asarray(value, dtype=_dtype()))) is live
 
@@ -108,7 +108,7 @@ def test_liveness_of_an_ordinary_weight(value: float, *, live: bool) -> None:
 @pytest.mark.parametrize("magnitude", _SUBNORMALS)
 @pytest.mark.parametrize("compile_it", [False, True], ids=["eager", "jit"])
 def test_rescaling_preserves_every_ratio_exactly(
-    magnitude, *, compile_it: bool
+    *, magnitude, compile_it: bool
 ) -> None:
     """The rescaled lottery has the ratios it was given, bit for bit."""
     dtype = _dtype()
@@ -118,7 +118,7 @@ def test_rescaling_preserves_every_ratio_exactly(
         jax.jit(rescaled_lottery_weights) if compile_it else (rescaled_lottery_weights)
     )
 
-    rescaled = np.asarray(rescale(weights))
+    rescaled = np.asarray(rescale(weights=weights))
 
     exact_ratio = np.longdouble(rare) / np.longdouble(1.0)
     assert np.longdouble(rescaled[1]) / np.longdouble(rescaled[0]) == exact_ratio
@@ -129,7 +129,7 @@ def test_rescaling_lifts_every_live_weight_into_the_normal_range(magnitude) -> N
     """No live weight is left where the arithmetic would flush it."""
     weights = jnp.asarray([1.0, magnitude()], dtype=_dtype())
 
-    rescaled = rescaled_lottery_weights(weights)
+    rescaled = rescaled_lottery_weights(weights=weights)
 
     assert not bool(jnp.any(is_below_smallest_normal(rescaled) & is_live(rescaled)))
 
@@ -138,7 +138,7 @@ def test_rescaling_lifts_a_lottery_that_is_subnormal_throughout() -> None:
     """The factor is the largest each entry needs, so the widest spread survives."""
     weights = jnp.asarray([_smallest_subnormal(), _largest_subnormal()], dtype=_dtype())
 
-    rescaled = rescaled_lottery_weights(weights)
+    rescaled = rescaled_lottery_weights(weights=weights)
 
     assert bool(jnp.all(is_live(rescaled)))
     assert not bool(jnp.any(is_below_smallest_normal(rescaled)))
@@ -148,7 +148,7 @@ def test_rescaling_leaves_the_null_event_null() -> None:
     """A zero weight is not lifted into something that can occur."""
     weights = jnp.asarray([1.0, 0.0, _smallest_subnormal()], dtype=_dtype())
 
-    rescaled = rescaled_lottery_weights(weights)
+    rescaled = rescaled_lottery_weights(weights=weights)
 
     assert bool(is_represented_zero(rescaled[1]))
 
@@ -160,7 +160,7 @@ def test_rescaling_leaves_a_non_finite_weight_alone(unusable: float) -> None:
     """Neither a NaN nor an infinity has a scale to change."""
     weights = jnp.asarray([1.0, unusable], dtype=_dtype())
 
-    rescaled = np.asarray(rescaled_lottery_weights(weights))
+    rescaled = np.asarray(rescaled_lottery_weights(weights=weights))
 
     assert np.isnan(rescaled[1]) if np.isnan(unusable) else rescaled[1] == unusable
 
@@ -169,7 +169,7 @@ def test_rescaling_keeps_a_negative_weight_negative() -> None:
     """The sign survives the rescaling, so a malformed weight stays visible."""
     weights = jnp.asarray([1.0, np.negative(_smallest_subnormal())], dtype=_dtype())
 
-    rescaled = rescaled_lottery_weights(weights)
+    rescaled = rescaled_lottery_weights(weights=weights)
 
     assert bool(is_negative(rescaled[1]))
 
@@ -179,7 +179,7 @@ def test_rescaling_a_lottery_of_normal_weights_changes_nothing() -> None:
     weights = jnp.asarray([0.25, 0.5, 0.25], dtype=_dtype())
 
     np.testing.assert_array_equal(
-        np.asarray(rescaled_lottery_weights(weights)), np.asarray(weights)
+        np.asarray(rescaled_lottery_weights(weights=weights)), np.asarray(weights)
     )
 
 
@@ -187,7 +187,8 @@ def test_a_pair_is_rescaled_by_one_common_factor() -> None:
     """The two-node form gives the ratio the general form gives."""
     dtype = _dtype()
     first, second = rescaled_weight_pair(
-        jnp.asarray(1.0, dtype=dtype), jnp.asarray(_smallest_subnormal(), dtype=dtype)
+        first_weight=jnp.asarray(1.0, dtype=dtype),
+        second_weight=jnp.asarray(_smallest_subnormal(), dtype=dtype),
     )
 
     assert np.longdouble(np.asarray(second)) / np.longdouble(
@@ -199,7 +200,7 @@ def test_a_group_of_branches_is_rescaled_by_one_common_factor() -> None:
     """Branches held one array per target share the factor their lottery needs."""
     dtype = _dtype()
     scaled = rescaled_weight_group(
-        [
+        weights=[
             jnp.asarray(1.0, dtype=dtype),
             jnp.asarray(_smallest_subnormal(), dtype=dtype),
             jnp.asarray(0.0, dtype=dtype),
@@ -233,7 +234,7 @@ def test_scaling_a_lottery_never_manufactures_an_infinity() -> None:
 
 @pytest.mark.parametrize("shift", [0, 1, 7], ids=["none", "one", "several"])
 @pytest.mark.parametrize("mode", ["forward", "reverse"])
-def test_scaling_carries_the_slope_it_stands_for(shift: int, mode: str) -> None:
+def test_scaling_carries_the_slope_it_stands_for(*, shift: int, mode: str) -> None:
     """Scaling by a power of two differentiates to that power of two.
 
     The scaling is written on the bit pattern, which carries no derivative of
@@ -244,7 +245,9 @@ def test_scaling_carries_the_slope_it_stands_for(shift: int, mode: str) -> None:
     dtype = _dtype()
 
     def scale(value: Any) -> Any:
-        return scaled_by_power_of_two(value, jnp.asarray(shift, dtype=jnp.int32))
+        return scaled_by_power_of_two(
+            values=value, shift=jnp.asarray(shift, dtype=jnp.int32)
+        )
 
     at = jnp.asarray(0.75, dtype=dtype)
     differentiate = jax.jacfwd if mode == "forward" else jax.grad

@@ -52,14 +52,14 @@ def _build_inputs(n_intervals: int) -> dict:
         "liquid_grid": liquid_grid,
         "savings_grid": savings_grid,
         "discount_factor": jnp.asarray(_DISCOUNT),
-        "preferences": crra_preferences(_CRRA),
+        "preferences": crra_preferences(crra=_CRRA),
         "coh_slopes": coh_slopes,
         "coh_intercepts": coh_intercepts,
         "breakpoints": breakpoints,
     }
 
 
-def _solve_with_chunk_size(inputs: dict, chunk_size: int, monkeypatch) -> tuple:
+def _solve_with_chunk_size(*, inputs: dict, chunk_size: int, monkeypatch) -> tuple:
     monkeypatch.setattr(nbegm_step, "_CHUNK_SIZE", chunk_size)
     value, marginal, policy = nbegm_per_interval_continuation_step_savings(**inputs)
     return np.asarray(value), np.asarray(marginal), np.asarray(policy)
@@ -67,7 +67,7 @@ def _solve_with_chunk_size(inputs: dict, chunk_size: int, monkeypatch) -> tuple:
 
 @pytest.mark.parametrize("n_intervals", [4, 5, 7, 8, 11, 12])
 @pytest.mark.parametrize("chunk_size", [1, 3, 4, 5])
-def test_value_is_invariant_to_chunk_size(n_intervals, chunk_size, monkeypatch):
+def test_value_is_invariant_to_chunk_size(*, n_intervals, chunk_size, monkeypatch):
     """The merged value/marginal/policy does not depend on the chunk size.
 
     A chunk size of one is the fully sequential per-interval merge (no padding, no
@@ -78,8 +78,12 @@ def test_value_is_invariant_to_chunk_size(n_intervals, chunk_size, monkeypatch):
     point tolerance for interval counts that both do and do not divide the chunk size.
     """
     inputs = _build_inputs(n_intervals)
-    ref_value, ref_marginal, ref_policy = _solve_with_chunk_size(inputs, 1, monkeypatch)
-    value, marginal, policy = _solve_with_chunk_size(inputs, chunk_size, monkeypatch)
+    ref_value, ref_marginal, ref_policy = _solve_with_chunk_size(
+        inputs=inputs, chunk_size=1, monkeypatch=monkeypatch
+    )
+    value, marginal, policy = _solve_with_chunk_size(
+        inputs=inputs, chunk_size=chunk_size, monkeypatch=monkeypatch
+    )
     np.testing.assert_allclose(value, ref_value, atol=1e-6, rtol=1e-6, equal_nan=True)
     np.testing.assert_allclose(
         marginal, ref_marginal, atol=1e-6, rtol=1e-6, equal_nan=True

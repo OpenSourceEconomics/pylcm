@@ -37,7 +37,7 @@ def test_zero_safe_average_prices_a_downscaled_node_against_a_near_max_value():
     # can only have formed the contribution some other way.
     assert not jnp.isfinite(coefficients[0] * values[0])
 
-    result = zero_safe_average(values, weights=coefficients, shifts=shifts)
+    result = zero_safe_average(a=values, weights=coefficients, shifts=shifts)
 
     assert_allclose(result, largest / 2, rtol=10.0**-DECIMAL_PRECISION)
 
@@ -55,7 +55,7 @@ def test_zero_safe_average_prices_a_downscaled_node_along_a_reduced_axis():
 
     assert not jnp.isfinite(coefficients[0] * values[0, 0])
 
-    result = zero_safe_average(values, axis=1, weights=coefficients, shifts=shifts)
+    result = zero_safe_average(a=values, axis=1, weights=coefficients, shifts=shifts)
 
     assert_allclose(
         result,

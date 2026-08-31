@@ -35,7 +35,7 @@ def _kept(grid, *arrays):
     return (np.asarray(grid)[keep], *(np.asarray(a)[keep] for a in arrays))
 
 
-def _read_value(grid, policy, value, query):
+def _read_value(*, grid, policy, value, query):
     """Hermite value read with node slopes `1/c` (the production convention)."""
     slopes = jnp.where(jnp.isnan(policy), jnp.nan, 1.0 / policy)
     return float(
@@ -45,7 +45,7 @@ def _read_value(grid, policy, value, query):
     )
 
 
-def _read_policy(grid, policy, query):
+def _read_policy(*, grid, policy, query):
     """Linear (right-continuous at a duplicated kink) policy read."""
     return float(interp_on_padded_grid(x_query=jnp.asarray(query), xp=grid, fp=policy))
 
@@ -353,8 +353,12 @@ def test_segment_crossing_on_a_node_emits_both_branch_policies():
     at_node = np.isclose(kept_grid, 10.0, atol=_ATOL)
     assert int(at_node.sum()) == 2
     np.testing.assert_allclose(sorted(kept_policy[at_node]), [2.0, 8.0], atol=_ATOL)
-    np.testing.assert_allclose(_read_policy(g, p, 10.1), 2.0, atol=_ATOL)
-    np.testing.assert_allclose(_read_value(g, p, v, 10.1), 5.05, atol=_ATOL)
+    np.testing.assert_allclose(
+        _read_policy(grid=g, policy=p, query=10.1), 2.0, atol=_ATOL
+    )
+    np.testing.assert_allclose(
+        _read_value(grid=g, policy=p, value=v, query=10.1), 5.05, atol=_ATOL
+    )
 
 
 def test_same_source_duplicates_collapse_across_an_interleaved_source():
@@ -402,9 +406,9 @@ def test_exact_node_tie_ordering_is_invariant_to_input_order():
         )
         reads.append(
             (
-                _read_value(g, p, v, 9.5),
-                _read_policy(g, p, 9.5),
-                _read_policy(g, p, 10.1),
+                _read_value(grid=g, policy=p, value=v, query=9.5),
+                _read_policy(grid=g, policy=p, query=9.5),
+                _read_policy(grid=g, policy=p, query=10.1),
             )
         )
     np.testing.assert_allclose(reads[1], reads[0], atol=_ATOL)
@@ -440,8 +444,12 @@ def test_pointwise_lower_branch_that_owns_an_interval_is_retained():
     g, p, v, _ = refine_envelope(
         endog_grid=grid, policy=policy, value=value, savings=savings, n_refined=12
     )
-    np.testing.assert_allclose(_read_value(g, p, v, 9.5), 4.9375, atol=_ATOL)
-    np.testing.assert_allclose(_read_policy(g, p, 9.5), 8.0, atol=_ATOL)
+    np.testing.assert_allclose(
+        _read_value(grid=g, policy=p, value=v, query=9.5), 4.9375, atol=_ATOL
+    )
+    np.testing.assert_allclose(
+        _read_policy(grid=g, policy=p, query=9.5), 8.0, atol=_ATOL
+    )
 
 
 def test_mss_resolves_the_coincident_interval_ownership():
@@ -462,8 +470,12 @@ def test_mss_resolves_the_coincident_interval_ownership():
     g, p, v, _ = refine_envelope_mss(
         endog_grid=grid, policy=policy, value=value, n_refined=12
     )
-    np.testing.assert_allclose(_read_value(g, p, v, 9.5), 4.9375, atol=_ATOL)
-    np.testing.assert_allclose(_read_policy(g, p, 9.5), 8.0, atol=_ATOL)
+    np.testing.assert_allclose(
+        _read_value(grid=g, policy=p, value=v, query=9.5), 4.9375, atol=_ATOL
+    )
+    np.testing.assert_allclose(
+        _read_policy(grid=g, policy=p, query=9.5), 8.0, atol=_ATOL
+    )
 
 
 def test_segment_crossing_on_the_later_node_emits_both_branch_policies():
@@ -486,5 +498,9 @@ def test_segment_crossing_on_the_later_node_emits_both_branch_policies():
     at_node = np.isclose(kept_grid, 10.0, atol=_ATOL)
     assert int(at_node.sum()) == 2
     np.testing.assert_allclose(sorted(kept_policy[at_node]), [2.0, 8.0], atol=_ATOL)
-    np.testing.assert_allclose(_read_policy(g, p, 9.9), 8.0, atol=_ATOL)
-    np.testing.assert_allclose(_read_policy(g, p, 10.1), 2.0, atol=_ATOL)
+    np.testing.assert_allclose(
+        _read_policy(grid=g, policy=p, query=9.9), 8.0, atol=_ATOL
+    )
+    np.testing.assert_allclose(
+        _read_policy(grid=g, policy=p, query=10.1), 2.0, atol=_ATOL
+    )

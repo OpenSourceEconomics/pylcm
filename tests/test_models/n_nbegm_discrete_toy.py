@@ -51,6 +51,7 @@ class BuyPrivate:
 
 
 def resources(
+    *,
     wealth: ContinuousState,
     illiquid: ContinuousState,
     new_illiquid: ContinuousState,
@@ -63,7 +64,7 @@ def resources(
     return wealth + smooth.LABOUR_INCOME - credited - paid
 
 
-def utility(consumption: ContinuousAction, buy_private: DiscreteAction) -> FloatND:
+def utility(*, consumption: ContinuousAction, buy_private: DiscreteAction) -> FloatND:
     """CRRA over consumption plus a flat gain in the insured branch."""
     bonus = jnp.where(buy_private == BuyPrivate.yes, INSURANCE_UTILITY, 0.0)
     return (
@@ -108,7 +109,7 @@ def build_model(
     actions = {
         "consumption": smooth.CONSUMPTION_GRID,
         "illiquid_investment": illiquid_investment_grid,
-        "buy_private": DiscreteGrid(BuyPrivate),
+        "buy_private": DiscreteGrid(category_class=BuyPrivate),
     }
     active = lambda age, n=final_age_alive: age <= n  # noqa: E731
     if variant == "brute":
@@ -121,7 +122,7 @@ def build_model(
         actions = {
             "consumption": smooth.CONSUMPTION_GRID,
             "new_illiquid": smooth.OUTER_GRID,
-            "buy_private": DiscreteGrid(BuyPrivate),
+            "buy_private": DiscreteGrid(category_class=BuyPrivate),
         }
         alive = Regime(
             active=active,

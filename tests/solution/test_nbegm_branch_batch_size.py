@@ -46,8 +46,8 @@ def test_branch_batch_size_one_matches_whole_axis() -> None:
     for period in whole:
         for regime in whole[period]:
             assert_agrees_to_ulp(
-                streamed[period][regime],
-                whole[period][regime],
+                got=streamed[period][regime],
+                expected=whole[period][regime],
                 n_ulp=_PARTITION_ULP,
                 err_msg=f"period={period} regime={regime}",
             )

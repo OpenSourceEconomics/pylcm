@@ -362,7 +362,9 @@ def test_the_action_product_map_is_unbatched():
         ("get_argmax_and_max_Q_over_a", "argmax_and_max"),
     ],
 )
-def test_the_singleton_reduction_covers_every_action_axis(builder: str, reducer: str):
+def test_the_singleton_reduction_covers_every_action_axis(
+    *, builder: str, reducer: str
+):
     """The singleton value is a full reduction: masked, and over no named axis.
 
     A reduction with no `axis=` covers the whole action product. An `axis=` here
@@ -686,6 +688,7 @@ def test_direct_flow_source_seals_ignore_checkout_newline_convention(
 
 
 def _only_target(
+    *,
     work: DiscreteAction,
     consumption: ContinuousAction,
     target_work: float,
@@ -696,6 +699,7 @@ def _only_target(
 
 
 def _candidate_mask(
+    *,
     work: DiscreteAction,
     consumption: ContinuousAction,
     feasible_0: float,
@@ -716,6 +720,7 @@ def _candidate_mask(
 
 
 def _ranked_utility(
+    *,
     wealth: ContinuousState,
     work: DiscreteAction,
     consumption: ContinuousAction,
@@ -740,13 +745,14 @@ def _ranked_utility(
 
 
 def _labelled_utility(
-    wealth: ContinuousState, work: DiscreteAction, consumption: ContinuousAction
+    *, wealth: ContinuousState, work: DiscreteAction, consumption: ContinuousAction
 ) -> FloatND:
     """Give every candidate its own value, so the published one identifies it."""
     return wealth + consumption + 10.0 * work
 
 
 def _peaked_utility(
+    *,
     wealth: ContinuousState,
     work: DiscreteAction,
     consumption: ContinuousAction,
@@ -758,14 +764,14 @@ def _peaked_utility(
 
 
 def _utility_f(
-    wealth: ContinuousState, work: DiscreteAction, consumption: ContinuousAction
+    *, wealth: ContinuousState, work: DiscreteAction, consumption: ContinuousAction
 ) -> FloatND:
     """First stakeholder's own value of a candidate."""
     return wealth + consumption + 10.0 * work
 
 
 def _utility_m(
-    wealth: ContinuousState, work: DiscreteAction, consumption: ContinuousAction
+    *, wealth: ContinuousState, work: DiscreteAction, consumption: ContinuousAction
 ) -> FloatND:
     """Second stakeholder's own value of the same candidate."""
     return wealth + 2.0 * consumption + 5.0 * work
@@ -789,7 +795,7 @@ def _next_regime() -> ScalarInt:
 def _actions() -> dict[str, DiscreteGrid | LinSpacedGrid]:
     """Return the two action grids every model in this module declares."""
     return {
-        "work": DiscreteGrid(Work),
+        "work": DiscreteGrid(category_class=Work),
         "consumption": LinSpacedGrid(
             start=_CONSUMPTION_VALUES[0],
             stop=_CONSUMPTION_VALUES[-1],
@@ -848,6 +854,7 @@ def _build_model(
 
 
 def _dedup_utility_left(
+    *,
     wealth: ContinuousState,
     work: DiscreteAction,
     consumption: ContinuousAction,
@@ -863,6 +870,7 @@ def _dedup_utility_left(
 
 
 def _dedup_utility_right(
+    *,
     wealth: ContinuousState,
     work: DiscreteAction,
     consumption: ContinuousAction,
@@ -920,7 +928,7 @@ def _dedup_params(model: Model) -> dict[str, Any]:
     return params
 
 
-def _simulate_dedup_model(model: Model, *, params: dict[str, Any]):
+def _simulate_dedup_model(*, model: Model, params: dict[str, Any]):
     """Run both same-shaped decision regimes through the public AOT path."""
     result = model.simulate(
         params=params,
@@ -1035,7 +1043,7 @@ def masked_collective_model() -> Model:
 
 @pytest.mark.parametrize(("work", "consumption"), _CANDIDATES)
 def test_every_declared_candidate_can_be_the_only_feasible_one(
-    unique_feasible_model: Model, work: float, consumption: float
+    *, unique_feasible_model: Model, work: float, consumption: float
 ):
     """Constraining the search to one candidate publishes that candidate's value.
 
@@ -1054,7 +1062,7 @@ def test_every_declared_candidate_can_be_the_only_feasible_one(
 
 @pytest.mark.parametrize(("work", "consumption"), _CANDIDATES)
 def test_every_declared_candidate_can_win_the_maximization(
-    unique_maximizer_model: Model, work: float, consumption: float
+    *, unique_maximizer_model: Model, work: float, consumption: float
 ):
     """With everything feasible, the search finds whichever candidate peaks.
 
@@ -1074,7 +1082,7 @@ def test_every_declared_candidate_can_win_the_maximization(
 
 @pytest.mark.parametrize(("work", "consumption"), _CANDIDATES)
 def test_every_declared_candidate_can_be_the_household_choice(
-    collective_model: Model, work: float, consumption: float
+    *, collective_model: Model, work: float, consumption: float
 ):
     """The collective reduction reads each stakeholder's own value at the candidate.
 
@@ -1133,7 +1141,7 @@ def _simulate_acting(
 
 @pytest.mark.parametrize(("work", "consumption"), _CANDIDATES)
 def test_simulation_routes_to_every_declared_candidate(
-    unique_feasible_model: Model, work: float, consumption: float
+    *, unique_feasible_model: Model, work: float, consumption: float
 ):
     """Simulation publishes the one candidate the constraint admits.
 
@@ -1157,7 +1165,7 @@ def test_simulation_routes_to_every_declared_candidate(
 
 @pytest.mark.parametrize(("work", "consumption"), _CANDIDATES)
 def test_simulation_routes_a_household_to_every_declared_candidate(
-    collective_model: Model, work: float, consumption: float
+    *, collective_model: Model, work: float, consumption: float
 ):
     """The collective simulate reduction reaches every candidate too.
 
@@ -1288,6 +1296,7 @@ def _ranked_materialization_model(*, n_subjects: int | None) -> Model:
     "compiled_n_subjects", [None, len(_WEALTH_VALUES)], ids=["lazy", "aot"]
 )
 def test_dropping_a_discrete_grid_code_changes_every_public_candidate_view(
+    *,
     compiled_n_subjects: int | None,
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -1321,6 +1330,7 @@ def test_dropping_a_discrete_grid_code_changes_every_public_candidate_view(
     "compiled_n_subjects", [None, len(_WEALTH_VALUES)], ids=["lazy", "aot"]
 )
 def test_dropping_a_linear_grid_point_changes_every_public_candidate_view(
+    *,
     compiled_n_subjects: int | None,
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -1357,7 +1367,7 @@ def test_dropping_a_linear_grid_point_changes_every_public_candidate_view(
 
 
 def _runtime_action_utility(
-    wealth: ContinuousState, choice: ContinuousAction, target_choice: float
+    *, wealth: ContinuousState, choice: ContinuousAction, target_choice: float
 ) -> FloatND:
     """Make any selected supplied irregular action point the unique winner."""
     return wealth - (jnp.asarray(choice, dtype=float) - target_choice) ** 2
@@ -1444,6 +1454,7 @@ def _simulate_runtime_action_model(
     "compiled_n_subjects", [None, len(_WEALTH_VALUES)], ids=["lazy", "aot"]
 )
 def test_public_runtime_action_points_reach_every_candidate_view(
+    *,
     point_source: str,
     target_choice: float,
     compiled_n_subjects: int | None,
@@ -1459,10 +1470,10 @@ def test_public_runtime_action_points_reach_every_candidate_view(
 
 
 def _reference_for_mask(
-    mask: tuple[bool, ...], ranks: tuple[float, ...]
+    *, mask: tuple[bool, ...], ranks: tuple[float, ...]
 ) -> tuple[int, float, float, float]:
     """Return flat index, value, work, and consumption from the scalar oracle."""
-    index, value = reference_masked_argmax(ranks, mask)
+    index, value = reference_masked_argmax(values=ranks, mask=mask)
     work, consumption = _CANDIDATES[index]
     return index, value, work, consumption
 
@@ -1477,7 +1488,9 @@ def test_singleton_solve_matches_reference_over_every_nonempty_feasibility_mask(
     """
     for ranks in _RANK_VECTORS:
         for mask in _NONEMPTY_FEASIBILITY_MASKS:
-            _index, value, _work, _consumption = _reference_for_mask(mask, ranks)
+            _index, value, _work, _consumption = _reference_for_mask(
+                mask=mask, ranks=ranks
+            )
             observed = _solve_mask_case(
                 model=masked_singleton_model, mask=mask, ranks=ranks
             )
@@ -1490,7 +1503,9 @@ def test_singleton_simulate_matches_reference_over_every_nonempty_feasibility_ma
     """Singleton simulation agrees with the scalar oracle on every mask and ordering."""
     for ranks in _RANK_VECTORS:
         for mask in _NONEMPTY_FEASIBILITY_MASKS:
-            _index, value, work, consumption = _reference_for_mask(mask, ranks)
+            _index, value, work, consumption = _reference_for_mask(
+                mask=mask, ranks=ranks
+            )
             observed = _simulate_mask_case(
                 model=masked_singleton_model, mask=mask, ranks=ranks
             )
@@ -1596,7 +1611,7 @@ def _simulate_taste_mask_case(
 def test_aot_dedup_keeps_same_shaped_regime_reducers_distinct():
     """Different bound Q/F objects cannot share one compiled argmax program."""
     model = _build_dedup_collision_model()
-    period_0 = _simulate_dedup_model(model, params=_dedup_params(model))
+    period_0 = _simulate_dedup_model(model=model, params=_dedup_params(model))
 
     assert period_0["work"].to_numpy().tolist() == [0, 1]
     assert period_0["consumption"].to_numpy().tolist() == [1.0, 3.0]
@@ -1710,11 +1725,11 @@ def _route_to_dead(work: DiscreteAction) -> FloatND:
     return 1.0 - jnp.asarray(work, dtype=float)
 
 
-def _fold_source_utility(work: DiscreteAction, wealth: ContinuousState) -> FloatND:
+def _fold_source_utility(*, work: DiscreteAction, wealth: ContinuousState) -> FloatND:
     return 0.5 * (1.0 - jnp.asarray(work, dtype=float)) + 0.0 * wealth
 
 
-def _folded_terminal_utility(folded_shock: FloatND, work: DiscreteAction) -> FloatND:
+def _folded_terminal_utility(*, folded_shock: FloatND, work: DiscreteAction) -> FloatND:
     return 1.0 + folded_shock + 0.0 * jnp.asarray(work, dtype=float)
 
 
@@ -1728,7 +1743,7 @@ def _build_zero_weight_fold_model(*, n_subjects: int | None = None) -> Model:
         active=lambda age: age < 1,
         states={"wealth": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         state_transitions={"wealth": fixed_transition("wealth")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _fold_source_utility},
     )
     folded = Regime(
@@ -1744,7 +1759,7 @@ def _build_zero_weight_fold_model(*, n_subjects: int | None = None) -> Model:
                 fold=True,
             )
         },
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _folded_terminal_utility},
     )
     dead = Regime(
@@ -1816,6 +1831,7 @@ def test_negating_the_fold_average_reverses_the_public_candidate(
 
 @pytest.mark.parametrize("compiled_n_subjects", [None, 1], ids=["lazy", "aot"])
 def test_negating_kernel_result_reverses_the_public_candidate(
+    *,
     compiled_n_subjects: int | None,
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -2013,7 +2029,9 @@ def test_collective_solve_matches_reference_over_every_nonempty_feasibility_mask
     """Collective solve selects the same strict winner for both stakeholders."""
     for ranks in _RANK_VECTORS:
         for mask in _NONEMPTY_FEASIBILITY_MASKS:
-            _index, value, _work, _consumption = _reference_for_mask(mask, ranks)
+            _index, value, _work, _consumption = _reference_for_mask(
+                mask=mask, ranks=ranks
+            )
             observed = _solve_mask_case(
                 model=masked_collective_model, mask=mask, ranks=ranks
             )
@@ -2029,7 +2047,9 @@ def test_collective_simulate_matches_reference_over_every_nonempty_feasibility_m
     """Collective simulation agrees on action and each stakeholder's value."""
     for ranks in _RANK_VECTORS:
         for mask in _NONEMPTY_FEASIBILITY_MASKS:
-            _index, value, work, consumption = _reference_for_mask(mask, ranks)
+            _index, value, work, consumption = _reference_for_mask(
+                mask=mask, ranks=ranks
+            )
             observed = _simulate_mask_case(
                 model=masked_collective_model, mask=mask, ranks=ranks
             )
@@ -2056,12 +2076,12 @@ def _argmax_masking_the_last_action_cell() -> Callable[..., Any]:
     """
     real = max_Q_over_a_module.argmax_and_max
 
-    def patched(a: Any, *args: Any, where: Any = None, **kwargs: Any) -> Any:
+    def patched(*, a: Any, where: Any = None, **kwargs: Any) -> Any:
         # `argmax_and_max` also reduces rank-0 masks elsewhere in the engine; those
         # carry no action axis to hide a cell along, so they pass through untouched.
         if where is not None and where.ndim >= 1:
             where = where.at[..., -1].set(False)  # noqa: PD008
-        return real(a, *args, where=where, **kwargs)
+        return real(a=a, where=where, **kwargs)
 
     return patched
 

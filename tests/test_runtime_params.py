@@ -16,11 +16,12 @@ class RegimeId:
     dead: ScalarInt
 
 
-def _utility(consumption: ContinuousAction, wealth: ContinuousState) -> FloatND:
+def _utility(*, consumption: ContinuousAction, wealth: ContinuousState) -> FloatND:
     return jnp.log(consumption + 1) + 0.01 * wealth
 
 
 def _next_wealth(
+    *,
     wealth: ContinuousState,
     consumption: ContinuousAction,
     interest_rate: float,
@@ -29,7 +30,7 @@ def _next_wealth(
 
 
 def _borrowing_constraint(
-    consumption: ContinuousAction, wealth: ContinuousState
+    *, consumption: ContinuousAction, wealth: ContinuousState
 ) -> FloatND:
     return consumption <= wealth
 
@@ -252,7 +253,7 @@ def _make_action_grid_model_with_stateful_dead(
     """
 
     def _alive_utility(
-        consumption: ContinuousAction, wealth: ContinuousState
+        *, consumption: ContinuousAction, wealth: ContinuousState
     ) -> FloatND:
         return jnp.log(consumption + 1) + 0.01 * wealth
 

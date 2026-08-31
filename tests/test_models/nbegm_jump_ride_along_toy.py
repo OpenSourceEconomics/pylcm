@@ -40,6 +40,7 @@ class ConsumerKind:
 
 
 def gross_income(
+    *,
     liquid: ContinuousState,
     kind: DiscreteState,
     base_income: FloatND,
@@ -54,13 +55,13 @@ def gross_income(
     breakpoints=(lcm.affine_breakpoint(threshold="fpl_cliff", kind="jump"),),
 )
 def subsidy(
-    gross_income: FloatND, subsidy_low: float, subsidy_high: float, fpl_cliff: float
+    *, gross_income: FloatND, subsidy_low: float, subsidy_high: float, fpl_cliff: float
 ) -> FloatND:
     """Lump-sum subsidy: the higher amount below the income cliff, lower above."""
     return jnp.where(gross_income < fpl_cliff, subsidy_high, subsidy_low)
 
 
-def resources(gross_income: FloatND, subsidy: FloatND) -> FloatND:
+def resources(*, gross_income: FloatND, subsidy: FloatND) -> FloatND:
     """Cash-on-hand: pre-tax income plus the cliff-contingent subsidy."""
     return gross_income + subsidy
 
@@ -103,7 +104,7 @@ def build_model(
         "resources": resources,
     }
     alive_solver = resolve_solver(
-        variant,
+        variant=variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
         jump_read=jump_read,
     )
@@ -131,7 +132,7 @@ def build_model(
             },
         },
         extra_actions=extra_actions,
-        extra_states={"kind": DiscreteGrid(ConsumerKind)},
+        extra_states={"kind": DiscreteGrid(category_class=ConsumerKind)},
         extra_state_transitions={"kind": {"alive": lcm.fixed_transition("kind")}},
     )
 

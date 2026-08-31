@@ -576,6 +576,7 @@ def test_nested_policy_replacement_never_emits_a_degraded_interpolated_pair(
                 for penalty in (10.0, 50.0, 200.0):
 
                     def objective(
+                        *,
                         x,
                         action,
                         curvature=curvature,
@@ -591,10 +592,10 @@ def test_nested_policy_replacement_never_emits_a_degraded_interpolated_pair(
 
                     proposed_outer.append(outer)
                     proposed_consumption.append(consumption)
-                    proposed_values.append(objective(outer, consumption))
+                    proposed_values.append(objective(x=outer, action=consumption))
                     grid_values.append(
                         max(
-                            objective(float(x), 0.05 + beta * float(x) ** 2)
+                            objective(x=float(x), action=0.05 + beta * float(x) ** 2)
                             for x in nodes
                         )
                     )
@@ -834,7 +835,7 @@ def test_nested_policy_emits_a_safe_baseline_when_the_policy_read_falls_back(
     np.concatenate((np.linspace(-5.0, -0.1, 25), np.linspace(1.1, 6.0, 25))),
 )
 def test_nested_policy_rejection_replaces_a_grid_pair_outside_the_solver_domain(
-    monkeypatch, raw_outer
+    *, monkeypatch, raw_outer
 ) -> None:
     """Canonical Q alone cannot admit a pair outside the solver's domain.
 
@@ -945,6 +946,7 @@ def test_nested_policy_rejection_replaces_a_grid_pair_outside_the_solver_domain(
 
 @pytest.mark.parametrize("raw_outer", np.linspace(-0.75, -5.0, 25))
 def test_nested_policy_rejection_replaces_a_canonically_infeasible_grid_pair(
+    *,
     monkeypatch,
     raw_outer,
 ) -> None:
@@ -1274,6 +1276,7 @@ def test_nested_policy_rejection_fails_when_no_candidate_is_safe(
 
 @pytest.mark.parametrize("n_placeholders", range(1, 34))
 def test_nested_policy_failure_ignores_out_of_regime_placeholders(
+    *,
     monkeypatch,
     n_placeholders,
 ) -> None:
@@ -1462,7 +1465,7 @@ def _nested_payload(*, no_adjustment_name: str | None = None) -> NestedEGMSimPol
     )
 
 
-def _new_illiquid(illiquid, investment):
+def _new_illiquid(*, illiquid, investment):
     """`s' = Z + Iz`: the outer post-decision the replay inverts."""
     return illiquid + investment
 

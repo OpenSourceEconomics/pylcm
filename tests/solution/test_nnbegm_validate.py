@@ -41,7 +41,7 @@ class RegimeId:
 
 
 eligible = case_boundary(
-    ref("wealth") < ref("means_test"),
+    condition=ref("wealth") < ref("means_test"),
     kind="jump",
 )
 
@@ -57,11 +57,11 @@ def subsidy_private(medical_expense: float) -> FloatND:
     return jnp.where(medical_expense > 0.0, 0.9 * medical_expense, 0.0)
 
 
-def resources(wealth: ContinuousState, subsidy: FloatND) -> FloatND:
+def resources(*, wealth: ContinuousState, subsidy: FloatND) -> FloatND:
     return wealth + subsidy
 
 
-def liquid_savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
+def liquid_savings(*, resources: FloatND, consumption: ContinuousAction) -> FloatND:
     return resources - consumption
 
 
@@ -70,7 +70,7 @@ def next_wealth(liquid_savings: FloatND) -> ContinuousState:
 
 
 def new_illiquid(
-    illiquid: ContinuousState, illiquid_investment: ContinuousAction
+    *, illiquid: ContinuousState, illiquid_investment: ContinuousAction
 ) -> ContinuousState:
     """The durable stock chosen this period."""
     return illiquid + illiquid_investment
@@ -88,7 +88,7 @@ def utility(consumption: ContinuousAction) -> FloatND:
     return jnp.log(consumption)
 
 
-def terminal_utility(wealth: ContinuousState, illiquid: ContinuousState) -> FloatND:
+def terminal_utility(*, wealth: ContinuousState, illiquid: ContinuousState) -> FloatND:
     return jnp.log(wealth + illiquid + 1.0)
 
 

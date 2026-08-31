@@ -35,7 +35,7 @@ def test_boundary_targeting_marginal_scales_with_the_cash_on_hand_slope():
         coh_case_grid=coh_case_grid,
         next_value=next_value,
         discount_factor=0.95,
-        preferences=crra_preferences(crra),
+        preferences=crra_preferences(crra=crra),
         savings_grid=savings_grid,
         next_liquid=savings_grid,
         asset_limit=3.0,

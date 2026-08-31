@@ -45,7 +45,7 @@ def wage(age: float) -> float | FloatND:
     return 1 + 0.1 * age
 
 
-def next_regime(age: float, final_age_alive: float) -> ScalarInt:
+def next_regime(*, age: float, final_age_alive: float) -> ScalarInt:
     return jnp.where(
         age >= final_age_alive,
         RegimeId.dead,
@@ -61,7 +61,7 @@ DEFAULT_CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=400, n_points=500)
 
 working_life = UserRegime(
     actions={
-        "labor_supply": DiscreteGrid(LaborSupply),
+        "labor_supply": DiscreteGrid(category_class=LaborSupply),
         "consumption": DEFAULT_CONSUMPTION_GRID,
     },
     states={
@@ -89,6 +89,7 @@ dead = UserRegime(
 
 
 def get_model(
+    *,
     n_periods: int,
     wealth_grid: UniformContinuousGrid
     | IrregSpacedGrid
@@ -106,7 +107,7 @@ def get_model(
                 active=lambda age: age <= final_age_alive,
                 states={"wealth": wealth_grid},
                 actions={
-                    "labor_supply": DiscreteGrid(LaborSupply),
+                    "labor_supply": DiscreteGrid(category_class=LaborSupply),
                     "consumption": consumption_grid,
                 },
             ),
@@ -118,6 +119,7 @@ def get_model(
 
 
 def get_params(
+    *,
     n_periods: int,
     discount_factor: float = 0.95,
     disutility_of_work: float = 0.5,

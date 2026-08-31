@@ -83,12 +83,12 @@ def test_concave_input_passes_through_unchanged():
     assert int(n_kept) == 10
     np.testing.assert_allclose(_drop_nan(got_grid), np.asarray(grid), atol=1e-12)
     np.testing.assert_allclose(
-        _envelope_interp(got_grid, got_value, np.asarray(grid)),
+        _envelope_interp(grid=got_grid, value=got_value, x_query=np.asarray(grid)),
         np.asarray(value),
         atol=_COMPUTED_ATOL,
     )
     np.testing.assert_allclose(
-        _envelope_interp(got_grid, got_policy, np.asarray(grid)),
+        _envelope_interp(grid=got_grid, value=got_policy, x_query=np.asarray(grid)),
         np.asarray(policy),
         atol=_COMPUTED_ATOL,
     )
@@ -108,7 +108,7 @@ def test_envelope_value_is_the_pointwise_segment_maximum():
     )
 
     test_points = np.linspace(0.8, 3.4, 25)
-    interp = _envelope_interp(got_grid, got_value, test_points)
+    interp = _envelope_interp(grid=got_grid, value=got_value, x_query=test_points)
     expected = np.maximum(1.0 + 0.4 * test_points, 0.1 + 0.8 * test_points)
     np.testing.assert_allclose(interp, expected, atol=_COMPUTED_ATOL)
 
@@ -190,7 +190,9 @@ def test_overlapping_segment_dominates_a_bracketed_lower_node():
     )
 
     np.testing.assert_allclose(
-        _envelope_interp(got_grid, got_value, 2.0), 5.0, atol=_COMPUTED_ATOL
+        _envelope_interp(grid=got_grid, value=got_value, x_query=2.0),
+        5.0,
+        atol=_COMPUTED_ATOL,
     )
 
 
@@ -270,7 +272,9 @@ def test_dead_candidates_are_excluded_from_the_envelope():
     assert int(n_kept) == 4
     np.testing.assert_allclose(clean_grid, [1.0, 2.0, 3.0, 4.0], atol=1e-12)
     np.testing.assert_allclose(
-        _envelope_interp(got_grid, got_value, np.asarray([1.0, 2.0, 3.0, 4.0])),
+        _envelope_interp(
+            grid=got_grid, value=got_value, x_query=np.asarray([1.0, 2.0, 3.0, 4.0])
+        ),
         [0.0, 0.7, 1.1, 1.4],
         atol=_COMPUTED_ATOL,
     )

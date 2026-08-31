@@ -41,6 +41,7 @@ def _calls(node: ast.AST) -> set[str]:
 
 
 def _transitive(
+    *,
     name: str,
     defs: dict[str, ast.FunctionDef],
     seen: set[str] | None = None,
@@ -52,11 +53,11 @@ def _transitive(
     direct = _calls(defs[name])
     out = set(direct)
     for called in direct:
-        out |= _transitive(called, defs, seen)
+        out |= _transitive(name=called, defs=defs, seen=seen)
     return out
 
 
-def _fixture_constraint(tree: ast.Module, name: str) -> str | None:
+def _fixture_constraint(*, tree: ast.Module, name: str) -> str | None:
     node = _defs(tree).get(name)
     if node is None:
         return None
@@ -108,13 +109,13 @@ def main() -> int:
             sweeps = sorted(
                 name
                 for name in sweep_names
-                if name in defs and "simulate" in _transitive(name, defs)
+                if name in defs and "simulate" in _transitive(name=name, defs=defs)
             )
             fixtures: dict[str, str | None] = {}
             for name in sweeps:
                 for argument in defs[name].args.args:
                     if argument.arg.endswith("model"):
-                        constraint = _fixture_constraint(tree, argument.arg)
+                        constraint = _fixture_constraint(tree=tree, name=argument.arg)
                         if constraint is not None:
                             fixtures[argument.arg] = constraint
             only_one_hot = bool(fixtures) and all(

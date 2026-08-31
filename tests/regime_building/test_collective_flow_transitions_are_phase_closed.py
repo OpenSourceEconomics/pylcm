@@ -56,7 +56,9 @@ class RegimeId:
     last: ScalarInt
 
 
-def _service_flow(new_stock: FloatND, move: DiscreteAction, stock: FloatND) -> FloatND:
+def _service_flow(
+    *, new_stock: FloatND, move: DiscreteAction, stock: FloatND
+) -> FloatND:
     """Within-period utility reading the CHOSEN stock (NEGM service flow).
 
     `new_stock` is an ordinary function of this period's states and actions, not a
@@ -75,7 +77,7 @@ def _carry_new_stock(new_stock: FloatND) -> FloatND:
     return new_stock
 
 
-def _flat_utility(stock: FloatND, move: DiscreteAction) -> FloatND:
+def _flat_utility(*, stock: FloatND, move: DiscreteAction) -> FloatND:
     """Terminal utility FLAT in the state, so continuation cannot drive the argmax."""
     return 0.0 * stock + 0.0 * move
 
@@ -103,15 +105,15 @@ def _simulate(*, live_functions, state_transitions) -> pd.DataFrame:
         transition=_next_regime,
         active=lambda age: age < 1,
         state_transitions=state_transitions,
-        states={"stock": DiscreteGrid(Stock)},
-        actions={"move": DiscreteGrid(Move)},
+        states={"stock": DiscreteGrid(category_class=Stock)},
+        actions={"move": DiscreteGrid(category_class=Move)},
         functions=live_functions,
     )
     last = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        states={"stock": DiscreteGrid(Stock)},
-        actions={"move": DiscreteGrid(Move)},
+        states={"stock": DiscreteGrid(category_class=Stock)},
+        actions={"move": DiscreteGrid(category_class=Move)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _flat_utility, "m": _flat_utility}
@@ -178,7 +180,7 @@ def test_collective_flow_reads_the_simulate_variant_of_a_phased_helper():
     def stay_target_actual() -> FloatND:
         return jnp.array(Stock.bad)
 
-    def new_stock(move: DiscreteAction, stay_target: FloatND) -> FloatND:
+    def new_stock(*, move: DiscreteAction, stay_target: FloatND) -> FloatND:
         # Stays integral: the stock indexes a DiscreteGrid.
         return jnp.where(move == Move.stay, stay_target, 1 - stay_target)
 

@@ -67,11 +67,11 @@ def _prob_one(age: FloatND) -> FloatND:
     return jnp.ones_like(age, dtype=float)
 
 
-def _u_f(wage_shock: FloatND, work: DiscreteAction) -> FloatND:
+def _u_f(*, wage_shock: FloatND, work: DiscreteAction) -> FloatND:
     return work * (5.0 + wage_shock)
 
 
-def _u_m(wage_shock: FloatND, work: DiscreteAction) -> FloatND:
+def _u_m(*, wage_shock: FloatND, work: DiscreteAction) -> FloatND:
     return work * (3.0 + wage_shock)
 
 
@@ -87,7 +87,7 @@ def _no_dissolution_gate(D_target: BoolND) -> BoolND:
     return ~D_target
 
 
-def _solve_kwargs(regimes: dict[str, Regime], *, ages: AgeGrid) -> dict:
+def _solve_kwargs(*, regimes: dict[str, Regime], ages: AgeGrid) -> dict:
     names = list(regimes)
     finalized = finalize_regimes(
         user_regimes=regimes,
@@ -129,7 +129,7 @@ def _make_gated_target_regimes(*, fold: bool) -> dict[str, Regime]:
             )
         },
         active=lambda age: age < 1,
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_work},
     )
     source_terminal = Regime(
@@ -141,7 +141,7 @@ def _make_gated_target_regimes(*, fold: bool) -> dict[str, Regime]:
         transition=None,
         active=lambda age: age >= 1,
         states={"wage_shock": _shock(fold=fold)},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": CollectiveUtility(utilities={"f": _u_f, "m": _u_m})},
     )
     return {"source": source, "source_terminal": source_terminal, "target": target}
@@ -154,11 +154,11 @@ def test_unfolded_collective_gated_edge_target_still_constructs():
     guard protects is not at stake and the topology is built as declared.
     """
     process_regimes(
-        **_solve_kwargs(_make_gated_target_regimes(fold=False), ages=_AGES_2P)
+        **_solve_kwargs(regimes=_make_gated_target_regimes(fold=False), ages=_AGES_2P)
     )
 
 
-def _dummy_constraint(Q_f: FloatND, V_ref: FloatND) -> BoolND:
+def _dummy_constraint(*, Q_f: FloatND, V_ref: FloatND) -> BoolND:
     return Q_f >= V_ref - 100.0
 
 
@@ -168,13 +168,13 @@ def _make_same_period_ref_regimes(*, fold: bool) -> dict[str, Regime]:
         transition=None,
         active=lambda age: age < 1,
         states={"wage_shock": _shock(fold=fold)},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": CollectiveUtility(utilities={"f": _u_f, "m": _u_m})},
     )
     reader = Regime(
         transition={"reader_terminal": MarkovTransition(_prob_one)},
         active=lambda age: age < 1,
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(utilities={"f": _u_work, "m": _u_work})
         },
@@ -194,7 +194,7 @@ def _make_same_period_ref_regimes(*, fold: bool) -> dict[str, Regime]:
     reader_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(utilities={"f": _u_work, "m": _u_work})
         },
@@ -213,7 +213,9 @@ def test_unfolded_collective_same_period_reference_still_constructs():
     same-period read needs, so the declaration is built as written.
     """
     process_regimes(
-        **_solve_kwargs(_make_same_period_ref_regimes(fold=False), ages=_AGES_2P)
+        **_solve_kwargs(
+            regimes=_make_same_period_ref_regimes(fold=False), ages=_AGES_2P
+        )
     )
 
 
@@ -246,7 +248,7 @@ def _make_gate_refs_regimes(*, fold: bool) -> dict[str, Regime]:
             )
         },
         active=lambda age: age < 1,
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_work},
     )
     source_terminal = Regime(
@@ -257,7 +259,7 @@ def _make_gate_refs_regimes(*, fold: bool) -> dict[str, Regime]:
     target = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(utilities={"f": _u_work, "m": _u_work})
         },
@@ -266,7 +268,7 @@ def _make_gate_refs_regimes(*, fold: bool) -> dict[str, Regime]:
         transition=None,
         active=lambda age: age >= 1,
         states={"wage_shock": _shock(fold=fold)},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_work},
     )
     return {
@@ -286,7 +288,7 @@ def test_folded_gate_ref_reference_is_rejected():
     """
     with pytest.raises(ModelInitializationError, match=r"gate_refs|same_period_refs"):
         process_regimes(
-            **_solve_kwargs(_make_gate_refs_regimes(fold=True), ages=_AGES_2P)
+            **_solve_kwargs(regimes=_make_gate_refs_regimes(fold=True), ages=_AGES_2P)
         )
 
 
@@ -296,4 +298,6 @@ def test_unfolded_gate_ref_reference_still_constructs():
     Its per-node value is intact, which is what the gate reads, so the same
     topology is built as declared.
     """
-    process_regimes(**_solve_kwargs(_make_gate_refs_regimes(fold=False), ages=_AGES_2P))
+    process_regimes(
+        **_solve_kwargs(regimes=_make_gate_refs_regimes(fold=False), ages=_AGES_2P)
+    )

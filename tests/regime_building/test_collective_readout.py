@@ -145,19 +145,19 @@ def test_terminal_e1_end_to_end_with_real_utilities():
 
     # Consumption (public good): earnings from whoever works. Wife's utility values
     # her own leisure highly; husband's values consumption. Both see the same C.
-    def consumption(w, a):  # (state, action) -> C
+    def consumption(*, w, a):  # (state, action) -> C
         return w * a
 
-    def u_wife(w, a):
-        return consumption(w, a) + 30.0 * (1.0 - a)  # strong leisure taste
+    def u_wife(*, w, a):
+        return consumption(w=w, a=a) + 30.0 * (1.0 - a)  # strong leisure taste
 
-    def u_husband(w, a):
-        return 2.0 * consumption(w, a)  # values consumption, indifferent to leisure
+    def u_husband(*, w, a):
+        return 2.0 * consumption(w=w, a=a)  # values consumption, indifferent to leisure
 
     # Evaluate each stakeholder's utility over the action product, per state:
     # shape (n_states, n_actions).
-    q_f = jax.vmap(lambda w: jax.vmap(lambda a: u_wife(w, a))(work))(wage)
-    q_m = jax.vmap(lambda w: jax.vmap(lambda a: u_husband(w, a))(work))(wage)
+    q_f = jax.vmap(lambda w: jax.vmap(lambda a: u_wife(w=w, a=a))(work))(wage)
+    q_m = jax.vmap(lambda w: jax.vmap(lambda a: u_husband(w=w, a=a))(work))(wage)
     feas = jnp.ones((2, 2), dtype=bool)
 
     values, dissolution = collective_readout(

@@ -68,12 +68,13 @@ class WorkChoice:
         lcm.affine_breakpoint(threshold="tax_exemption", kind="continuous_kink"),
     ),
 )
-def tax(liquid: ContinuousState, tax_rate: float, tax_exemption: float) -> FloatND:
+def tax(*, liquid: ContinuousState, tax_rate: float, tax_exemption: float) -> FloatND:
     """Continuous tax: zero below the exemption, `tax_rate` on the excess above."""
     return tax_rate * jnp.maximum(liquid - tax_exemption, 0.0)
 
 
 def resources(
+    *,
     liquid: ContinuousState,
     kind: DiscreteState,
     tax: FloatND,
@@ -84,6 +85,7 @@ def resources(
 
 
 def coh_with_work(
+    *,
     liquid: ContinuousState,
     kind: DiscreteState,
     tax: FloatND,
@@ -134,7 +136,7 @@ def build_model(
     ages = AgeGrid(start=0, stop=2, step="Y")
     liquid_grid = LinSpacedGrid(start=0.1, stop=liquid_max, n_points=n_liquid)
     consumption_grid = LinSpacedGrid(start=0.1, stop=liquid_max, n_points=n_consumption)
-    kind_grid = DiscreteGrid(ConsumerKind)
+    kind_grid = DiscreteGrid(category_class=ConsumerKind)
 
     young_functions = {
         "utility": utility,
@@ -143,7 +145,7 @@ def build_model(
         "savings": savings,
     }
     young_solver = resolve_solver(
-        young_variant,
+        variant=young_variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
     )
     young_liquid_law = next_liquid_from_savings
@@ -192,7 +194,7 @@ def build_model(
     old_actions = {"consumption": consumption_grid}
     old_functions = {"utility": utility, "tax": tax, "resources": resources}
     if old_discrete_action:
-        old_actions = {"work": DiscreteGrid(WorkChoice), **old_actions}
+        old_actions = {"work": DiscreteGrid(category_class=WorkChoice), **old_actions}
         old_functions = {**old_functions, "resources": coh_with_work}
     old = Regime(
         actions=old_actions,

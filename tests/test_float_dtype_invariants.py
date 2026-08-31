@@ -215,6 +215,7 @@ def test_solve_V_arrays_at_canonical_float_dtype(x64_disabled: None):
     ids=["linspaced", "logspaced", "irregspaced"],
 )
 def test_continuous_grid_to_jax_dtype_is_canonical_under_no_x64(
+    *,
     make_grid: Callable[[], LinSpacedGrid | LogSpacedGrid | IrregSpacedGrid],
     x64_disabled: None,
 ):
@@ -236,7 +237,7 @@ def test_continuous_grid_to_jax_dtype_is_canonical_under_no_x64(
 
 @pytest.mark.parametrize("attr", ["start", "stop"])
 def test_uniform_grid_stores_endpoints_as_canonical_jax_scalar(
-    attr: str, x64_disabled: None
+    *, attr: str, x64_disabled: None
 ):
     """`LinSpacedGrid` stores `start`/`stop` as JAX scalars at canonical dtype."""
     grid = LinSpacedGrid(start=0.0, stop=100.0, n_points=10)
@@ -254,7 +255,7 @@ def test_irreg_grid_stores_points_as_canonical_jax_array(x64_disabled: None):
 
 @pytest.mark.parametrize("key", ["low", "high"])
 def test_process_params_casts_float_array_inside_mapping_leaf_to_canonical(
-    key: str, x64_disabled: None
+    *, key: str, x64_disabled: None
 ):
     """`MappingLeaf` float arrays land at `canonical_float_dtype()`."""
     template = _as_template({"regime_a": {"fun": {"sched": "MappingLeaf"}}})
@@ -284,7 +285,7 @@ def test_process_params_casts_float_array_inside_mapping_leaf_to_canonical(
 
 @pytest.mark.parametrize("index", [0, 1])
 def test_process_params_casts_float_array_inside_sequence_leaf_to_canonical(
-    index: int, x64_disabled: None
+    *, index: int, x64_disabled: None
 ):
     """`SequenceLeaf` float arrays land at `canonical_float_dtype()`."""
     template = _as_template({"regime_a": {"fun": {"sched": "SequenceLeaf"}}})

@@ -162,7 +162,7 @@ def pytest_configure(config):
 
 
 def assert_agrees_to_ulp(
-    got: ArrayLike, expected: ArrayLike, *, n_ulp: int, err_msg: str = ""
+    *, got: ArrayLike, expected: ArrayLike, n_ulp: int, err_msg: str = ""
 ) -> None:
     """Assert two arrays name the same real number to within `n_ulp` of the format.
 
@@ -212,6 +212,7 @@ def assert_agrees_to_ulp(
         raise AssertionError(msg)
 
 
+# keyword-only-exempt: library-callback=pytest.hookspec.pytest_collection_modifyitems
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]):
     """Mark the whole `tests/solution/` battery `slow`.
 
@@ -234,7 +235,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
     _validate_exact_kernel_markers(items=items)
     _apply_backend_skips(items=items)
-    pytest_policy.apply(config, items)
+    pytest_policy.apply(config=config, items=items)
 
 
 def pytest_collection_finish(session: pytest.Session) -> None:
@@ -287,6 +288,7 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
     pytest.skip(reason)
 
 
+# keyword-only-exempt: library-callback=xdist.newhooks.pytest_testnodedown
 @pytest.hookimpl(optionalhook=True)
 def pytest_testnodedown(node: object, error: object) -> None:  # noqa: ARG001
     """Collect exact-kernel skips reported by an xdist worker."""
@@ -494,6 +496,7 @@ def should_release_compiled_programs(*, config) -> bool:
     return not config.getoption("--keep-compiled-programs")
 
 
+# keyword-only-exempt: library-callback=pytest.hookspec.pytest_runtest_teardown
 def pytest_runtest_teardown(item, nextitem):
     """Release compiled programs at module boundaries, and periodically within one.
 

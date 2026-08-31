@@ -65,21 +65,22 @@ class RegimeId:
     gone: ScalarInt
 
 
-def utility(consumption: ContinuousAction, crra: float) -> FloatND:
+def utility(*, consumption: ContinuousAction, crra: float) -> FloatND:
     return consumption ** (1.0 - crra) / (1.0 - crra)
 
 
-def bequest(estate: ContinuousState, crra: float) -> FloatND:
+def bequest(*, estate: ContinuousState, crra: float) -> FloatND:
     """The terminal regime names the state it inherits `estate`."""
     return estate ** (1.0 - crra) / (1.0 - crra)
 
 
-def savings(wealth: ContinuousState, consumption: ContinuousAction) -> FloatND:
+def savings(*, wealth: ContinuousState, consumption: ContinuousAction) -> FloatND:
     """The end-of-period balance both laws below are written through."""
     return wealth - consumption
 
 
 def next_wealth(
+    *,
     savings: FloatND,
     return_liquid: float,
     retirement_income: float,
@@ -88,6 +89,7 @@ def next_wealth(
 
 
 def next_estate(
+    *,
     savings: FloatND,
     return_liquid: float,
     retirement_income: float,
@@ -96,15 +98,15 @@ def next_estate(
     return (1.0 + return_liquid) * savings + retirement_income
 
 
-def feasible(wealth: ContinuousState, consumption: ContinuousAction) -> BoolND:
+def feasible(*, wealth: ContinuousState, consumption: ContinuousAction) -> BoolND:
     return consumption <= wealth
 
 
-def prob_survive(age: int, last_age: float) -> FloatND:
+def prob_survive(*, age: int, last_age: float) -> FloatND:
     return jnp.where(age + 1 < last_age, 1.0, 0.0)
 
 
-def prob_gone(age: int, last_age: float) -> FloatND:
+def prob_gone(*, age: int, last_age: float) -> FloatND:
     return jnp.where(age + 1 >= last_age, 1.0, 0.0)
 
 

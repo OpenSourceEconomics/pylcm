@@ -31,11 +31,11 @@ class _RegimeId:
     dead: ScalarInt
 
 
-def _utility(consumption: float, wealth: float) -> FloatND:
+def _utility(*, consumption: float, wealth: float) -> FloatND:
     return jnp.log(consumption) + wealth
 
 
-def _next_wealth(wealth: float, consumption: float) -> float:
+def _next_wealth(*, wealth: float, consumption: float) -> float:
     return wealth - consumption
 
 
@@ -144,7 +144,7 @@ def test_model_level_derived_categoricals_are_merged() -> None:
         regimes={"work": work, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=_RegimeId,
-        derived_categoricals={"flag": DiscreteGrid(_Flag)},
+        derived_categoricals={"flag": DiscreteGrid(category_class=_Flag)},
     )
     assert "flag" in model.user_regimes["work"].derived_categoricals
     assert "flag" in model.user_regimes["dead"].derived_categoricals

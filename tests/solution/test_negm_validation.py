@@ -122,7 +122,7 @@ def test_margin_distinctness_recheck_rejects_outer_equal_to_inner_post_decision(
 
 
 def _euler_law_reading_outer_margin(
-    liquid_savings: FloatND, next_illiquid: ContinuousState
+    *, liquid_savings: FloatND, next_illiquid: ContinuousState
 ) -> ContinuousState:
     """A liquid Euler law that reads the outer post-decision (the pension shape).
 
@@ -151,7 +151,7 @@ def test_outer_margin_entering_inner_euler_law_is_rejected_with_2d_pointer():
 
 
 def _utility_coupling_consumption_and_durable_move(
-    consumption: ContinuousAction, new_durable: ContinuousState
+    *, consumption: ContinuousAction, new_durable: ContinuousState
 ) -> FloatND:
     """A utility that multiplies consumption by the outer post-decision.
 
@@ -187,7 +187,7 @@ def _durable_part(new_durable: ContinuousState) -> FloatND:
 
 
 def _multiplicative_utility(
-    _consumption_part: FloatND, _durable_part: FloatND
+    *, _consumption_part: FloatND, _durable_part: FloatND
 ) -> FloatND:
     return _consumption_part * _durable_part
 
@@ -227,7 +227,7 @@ def test_taste_shocked_discrete_choice_is_rejected_with_ordering_explanation():
     regime = _VALID.replace(
         actions={
             **dict(_VALID.actions),
-            "labor_supply": DiscreteGrid(_Work),
+            "labor_supply": DiscreteGrid(category_class=_Work),
         },
         functions={
             **dict(_VALID.functions),
@@ -250,7 +250,7 @@ def test_hard_discrete_action_is_rejected_with_carry_layout_explanation():
     regime = _VALID.replace(
         actions={
             **dict(_VALID.actions),
-            "labor_supply": DiscreteGrid(_Work),
+            "labor_supply": DiscreteGrid(category_class=_Work),
         },
         functions={
             **dict(_VALID.functions),
@@ -278,7 +278,10 @@ def test_passive_state_after_the_durable_is_order_independent():
 
 
 def _credited_reading_the_euler_state(
-    wealth: ContinuousState, illiquid: ContinuousState, next_illiquid: ContinuousState
+    *,
+    wealth: ContinuousState,
+    illiquid: ContinuousState,
+    next_illiquid: ContinuousState,
 ) -> FloatND:
     """A cost whose wedge scales with liquid wealth — no constant lift exists."""
     return (1.0 + 0.01 * wealth) * (next_illiquid - illiquid)
@@ -303,7 +306,7 @@ def test_outer_cost_reading_the_euler_state_is_rejected():
 
 
 def _base_reading_the_outer_margin(
-    wealth: ContinuousState, new_durable: ContinuousState
+    *, wealth: ContinuousState, new_durable: ContinuousState
 ) -> FloatND:
     """A cost-free resources base that reads the outer margin directly."""
     return wealth + 5.0 + 0.01 * new_durable
@@ -334,7 +337,7 @@ def test_resources_base_reading_the_outer_margin_is_rejected():
 
 
 def _resources_defined_by_the_user(
-    wealth: ContinuousState, credited: FloatND
+    *, wealth: ContinuousState, credited: FloatND
 ) -> FloatND:
     """A user-defined resources function alongside a declared outer cost."""
     return wealth + 5.0 - credited
@@ -500,7 +503,7 @@ def test_undeclared_outer_cost_function_is_rejected():
 
 
 def _keep_reading_the_euler_state(
-    illiquid: ContinuousState, wealth: ContinuousState
+    *, illiquid: ContinuousState, wealth: ContinuousState
 ) -> FloatND:
     """A no-adjustment candidate that reads more than the durable state."""
     return illiquid + 0.0 * wealth
@@ -533,7 +536,7 @@ def _next_wealth_from_savings(liquid_savings):
     return liquid_savings
 
 
-def _outer_law_reading_a_sibling_law(new_durable, next_wealth):
+def _outer_law_reading_a_sibling_law(*, new_durable, next_wealth):
     """An outer law that reaches the inner margin through a sibling law."""
     return new_durable + 0.1 * next_wealth
 
@@ -562,7 +565,7 @@ def _next_wealth_from_the_state_alone(wealth):
     return wealth
 
 
-def _outer_law_reading_an_independent_sibling(new_durable, next_wealth):
+def _outer_law_reading_an_independent_sibling(*, new_durable, next_wealth):
     """An outer law chained only through a law that never sees the inner margin."""
     return new_durable + 0.1 * next_wealth
 

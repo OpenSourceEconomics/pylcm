@@ -30,19 +30,19 @@ def _nbegm_inner() -> NBEGM:
 
 
 def _cubic_outer_target(
-    illiquid: ContinuousState, illiquid_investment: ContinuousAction
+    *, illiquid: ContinuousState, illiquid_investment: ContinuousAction
 ) -> ContinuousState:
     return illiquid + illiquid_investment**3
 
 
 def _zero_slope_outer_target(
-    illiquid: ContinuousState, illiquid_investment: ContinuousAction
+    *, illiquid: ContinuousState, illiquid_investment: ContinuousAction
 ) -> ContinuousState:
     return illiquid + 0 * illiquid_investment
 
 
 def _affine_outer_target(
-    illiquid: ContinuousState, illiquid_investment: ContinuousAction
+    *, illiquid: ContinuousState, illiquid_investment: ContinuousAction
 ) -> ContinuousState:
     return illiquid + 2 * illiquid_investment
 

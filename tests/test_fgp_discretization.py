@@ -40,7 +40,7 @@ FGP_SIGMA2 = 0.3430
     [(0.95, 5), (0.95, 25), (0.98, 5), (0.98, 25)],
     ids=str,
 )
-def test_tauchen_grid_span_matches_fgp(rho, n_points):
+def test_tauchen_grid_span_matches_fgp(*, rho, n_points):
     """Tauchen grid span matches FGP Eq. 5: +/- n_std * sigma_eps / sqrt(1 - rho^2)."""
     n_std = 3.0
     grid = TauchenAR1Process(
@@ -64,7 +64,7 @@ def test_tauchen_grid_span_matches_fgp(rho, n_points):
     [(0.95, 5), (0.95, 25), (0.98, 5), (0.98, 25)],
     ids=str,
 )
-def test_rouwenhorst_grid_span_matches_fgp(rho, n_points):
+def test_rouwenhorst_grid_span_matches_fgp(*, rho, n_points):
     """Rouwenhorst grid span matches FGP Eq. 13."""
     grid = RouwenhorstAR1Process(n_points=n_points, rho=rho, sigma=SIGMA_EPS, mu=0.0)
     points = grid.get_gridpoints()
@@ -89,9 +89,9 @@ def test_rouwenhorst_grid_span_matches_fgp(rho, n_points):
     ],
     ids=str,
 )
-def test_transition_rows_sum_to_one(method, rho, n_points):
+def test_transition_rows_sum_to_one(*, method, rho, n_points):
     """Each row of the transition matrix sums to 1."""
-    grid = _make_grid(method, rho, n_points)
+    grid = _make_grid(method=method, rho=rho, n_points=n_points)
     P = grid.get_transition_probs()
     aaae(P.sum(axis=1), jnp.ones(n_points), decimal=DECIMAL_PRECISION)
 
@@ -110,9 +110,9 @@ def test_transition_rows_sum_to_one(method, rho, n_points):
     ],
     ids=str,
 )
-def test_transition_probs_nonnegative(method, rho, n_points):
+def test_transition_probs_nonnegative(*, method, rho, n_points):
     """All entries of the transition matrix are non-negative."""
-    grid = _make_grid(method, rho, n_points)
+    grid = _make_grid(method=method, rho=rho, n_points=n_points)
     P = grid.get_transition_probs()
     assert jnp.all(P >= 0)
 
@@ -122,7 +122,7 @@ def test_transition_probs_nonnegative(method, rho, n_points):
     [(0.95, 5), (0.95, 25), (0.98, 5), (0.98, 25)],
     ids=str,
 )
-def test_rouwenhorst_conditional_mean(rho, n_points):
+def test_rouwenhorst_conditional_mean(*, rho, n_points):
     """Rouwenhorst conditional mean from state i equals rho * y_i (FGP Eq. 9)."""
     grid = RouwenhorstAR1Process(n_points=n_points, rho=rho, sigma=SIGMA_EPS, mu=0.0)
     points = grid.get_gridpoints()
@@ -139,7 +139,7 @@ def test_rouwenhorst_conditional_mean(rho, n_points):
     [(0.95, 5), (0.95, 25), (0.98, 5), (0.98, 25)],
     ids=str,
 )
-def test_rouwenhorst_conditional_variance(rho, n_points):
+def test_rouwenhorst_conditional_variance(*, rho, n_points):
     """Rouwenhorst conditional variance from state i equals sigma_eps^2 (FGP Eq. 11)."""
     grid = RouwenhorstAR1Process(n_points=n_points, rho=rho, sigma=SIGMA_EPS, mu=0.0)
     points = grid.get_gridpoints()
@@ -160,7 +160,7 @@ def _stationary_distribution(P):
     return pi / pi.sum()
 
 
-def _markov_chain_moments(points, P):
+def _markov_chain_moments(*, points, P):
     """Compute mean, variance, and lag-1 autocorrelation."""
     pi = _stationary_distribution(P)
     mean = jnp.dot(pi, points)
@@ -184,16 +184,16 @@ def _markov_chain_moments(points, P):
     ],
     ids=str,
 )
-def test_stationary_moments(method, rho, n_points):
+def test_stationary_moments(*, method, rho, n_points):
     """Markov chain stationary mean, variance, and autocorrelation match theory."""
-    grid = _make_grid(method, rho, n_points)
+    grid = _make_grid(method=method, rho=rho, n_points=n_points)
     points = grid.get_gridpoints()
     P = grid.get_transition_probs()
 
     expected_mean = 0.0
     expected_var = SIGMA_EPS_SQ / (1 - rho**2)
 
-    got_mean, got_var, got_autocorr = _markov_chain_moments(points, P)
+    got_mean, got_var, got_autocorr = _markov_chain_moments(points=points, P=P)
 
     # Tauchen with high persistence + few points is known to be inaccurate —
     # this is precisely the FGP finding. Use wider tolerance for that case.
@@ -212,26 +212,26 @@ def test_stationary_moments(method, rho, n_points):
     [(0.95, 5), (0.95, 25), (0.98, 5), (0.98, 25)],
     ids=str,
 )
-def test_rouwenhorst_more_accurate_than_tauchen(rho, n_points):
+def test_rouwenhorst_more_accurate_than_tauchen(*, rho, n_points):
     """Rouwenhorst variance and autocorrelation errors are <= Tauchen's."""
     expected_var = SIGMA_EPS_SQ / (1 - rho**2)
 
-    tauchen_grid = _make_grid("tauchen", rho, n_points)
+    tauchen_grid = _make_grid(method="tauchen", rho=rho, n_points=n_points)
     t_points = tauchen_grid.get_gridpoints()
     t_P = tauchen_grid.get_transition_probs()
-    _, t_var, t_autocorr = _markov_chain_moments(t_points, t_P)
+    _, t_var, t_autocorr = _markov_chain_moments(points=t_points, P=t_P)
 
-    rouw_grid = _make_grid("rouwenhorst", rho, n_points)
+    rouw_grid = _make_grid(method="rouwenhorst", rho=rho, n_points=n_points)
     r_points = rouw_grid.get_gridpoints()
     r_P = rouw_grid.get_transition_probs()
-    _, r_var, r_autocorr = _markov_chain_moments(r_points, r_P)
+    _, r_var, r_autocorr = _markov_chain_moments(points=r_points, P=r_P)
 
     # Rouwenhorst should have smaller (or equal) errors
     assert abs(r_var - expected_var) <= abs(t_var - expected_var) + 1e-12
     assert abs(r_autocorr - rho) <= abs(t_autocorr - rho) + 1e-12
 
 
-def _make_fgp_mixture_grid(n_points=5, rho=0.95, n_std=3.0):
+def _make_fgp_mixture_grid(*, n_points=5, rho=0.95, n_std=3.0):
     """Create a TauchenNormalMixture grid with FGP parameters."""
     return TauchenNormalMixtureAR1Process(
         n_points=n_points,
@@ -348,7 +348,7 @@ def test_mixture_stationary_moments():
     expected_mean = mean_eps / (1 - rho)
     expected_var = sigma_eps_sq_mix / (1 - rho**2)
 
-    got_mean, got_var, got_autocorr = _markov_chain_moments(points, P)
+    got_mean, got_var, got_autocorr = _markov_chain_moments(points=points, P=P)
 
     aaae(got_mean, expected_mean, decimal=1)
     aaae(got_var, expected_var, decimal=1)
@@ -372,7 +372,7 @@ def test_mixture_fully_specified_with_all_params():
     assert grid.get_gridpoints().shape == (5,)
 
 
-def _make_grid(method, rho, n_points):
+def _make_grid(*, method, rho, n_points):
     """Create a Tauchen or Rouwenhorst grid with FGP parameters."""
     if method == "tauchen":
         return TauchenAR1Process(

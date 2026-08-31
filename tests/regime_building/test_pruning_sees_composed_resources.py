@@ -48,16 +48,16 @@ def utility(consumption: FloatND) -> FloatND:
     return jnp.log(consumption)
 
 
-def gross_resources(wealth: ContinuousState, interest_rate: float = 0.05) -> FloatND:
+def gross_resources(*, wealth: ContinuousState, interest_rate: float = 0.05) -> FloatND:
     return (1 + interest_rate) * wealth
 
 
-def adjustment_cost(tier: DiscreteState, fee: float = 0.1) -> FloatND:
+def adjustment_cost(*, tier: DiscreteState, fee: float = 0.1) -> FloatND:
     """The only reader of `tier` anywhere in the regime."""
     return fee * tier
 
 
-def savings(resources: FloatND, consumption: FloatND) -> FloatND:
+def savings(*, resources: FloatND, consumption: FloatND) -> FloatND:
     return resources - consumption
 
 
@@ -105,11 +105,11 @@ def _build_model(*, broadcast_tier: bool, cost=adjustment_cost) -> Model:
         functions={"utility": terminal_utility},
         states={"wealth": _WEALTH},
     )
-    model_states = {"tier": DiscreteGrid(Tier)} if broadcast_tier else {}
+    model_states = {"tier": DiscreteGrid(category_class=Tier)} if broadcast_tier else {}
     model_laws = {"tier": fixed_transition("tier")} if broadcast_tier else {}
     if not broadcast_tier:
         working = working.replace(
-            states={**dict(working.states), "tier": DiscreteGrid(Tier)},
+            states={**dict(working.states), "tier": DiscreteGrid(category_class=Tier)},
             state_transitions={
                 **dict(working.state_transitions),
                 "tier": fixed_transition("tier"),

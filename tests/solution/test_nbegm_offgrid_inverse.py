@@ -81,7 +81,7 @@ def test_multi_interval_step_drops_off_grid_inverse_at_the_upper_boundary():
         return liquid + base - rate * jnp.maximum(liquid - exemption, 0.0)
 
     def next_value_of_liquid(liquid):
-        return crra_utility(liquid, crra)
+        return crra_utility(consumption=liquid, crra=crra)
 
     def next_marginal_of_liquid(liquid):
         return liquid ** (-crra)
@@ -97,7 +97,7 @@ def test_multi_interval_step_drops_off_grid_inverse_at_the_upper_boundary():
         next_liquid_grid=liquid_grid,
         savings_grid=savings_grid,
         discount_factor=discount_factor,
-        preferences=crra_preferences(crra),
+        preferences=crra_preferences(crra=crra),
         next_liquid=(gross_return) * savings_grid + income,
         marginal_return=jnp.full_like(savings_grid, gross_return),
         coh_slopes=coh_slopes,
@@ -145,7 +145,7 @@ def test_unified_step_drops_off_grid_inverse_at_the_upper_boundary():
         return liquid + base + subsidy * (liquid < cliff)
 
     def next_value_of_liquid(liquid):
-        return crra_utility(liquid, crra)
+        return crra_utility(consumption=liquid, crra=crra)
 
     def next_marginal_of_liquid(liquid):
         return liquid ** (-crra)
@@ -161,7 +161,7 @@ def test_unified_step_drops_off_grid_inverse_at_the_upper_boundary():
         next_liquid_grid=liquid_grid,
         savings_grid=savings_grid,
         discount_factor=discount_factor,
-        preferences=crra_preferences(crra),
+        preferences=crra_preferences(crra=crra),
         next_liquid=(gross_return) * savings_grid + income,
         marginal_return=jnp.full_like(savings_grid, gross_return),
         coh_slopes=coh_slopes,

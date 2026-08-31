@@ -61,7 +61,7 @@ def test_merged_value_dominates_every_feasible_savings_node_action():
         liquid_grid=liquid_grid,
         savings_grid=savings_grid,
         discount_factor=jnp.asarray(_DISCOUNT),
-        preferences=crra_preferences(_CRRA),
+        preferences=crra_preferences(crra=_CRRA),
         coh_slopes=coh_slopes,
         coh_intercepts=coh_intercepts,
         breakpoints=breakpoints,

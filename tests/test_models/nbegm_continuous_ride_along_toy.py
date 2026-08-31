@@ -28,7 +28,7 @@ from tests.test_models.nbegm_common import (
 )
 
 
-def gross_income(liquid: ContinuousState, wage: ContinuousState) -> FloatND:
+def gross_income(*, liquid: ContinuousState, wage: ContinuousState) -> FloatND:
     """Pre-tax income: liquid wealth plus the wage co-state (monotone in liquid)."""
     return liquid + wage
 
@@ -39,18 +39,18 @@ def gross_income(liquid: ContinuousState, wage: ContinuousState) -> FloatND:
     breakpoints=(lcm.affine_breakpoint(threshold="fpl_cliff", kind="jump"),),
 )
 def subsidy(
-    gross_income: FloatND, subsidy_low: float, subsidy_high: float, fpl_cliff: float
+    *, gross_income: FloatND, subsidy_low: float, subsidy_high: float, fpl_cliff: float
 ) -> FloatND:
     """Lump-sum subsidy: the higher amount below the income cliff, lower above."""
     return jnp.where(gross_income < fpl_cliff, subsidy_high, subsidy_low)
 
 
-def resources(gross_income: FloatND, subsidy: FloatND) -> FloatND:
+def resources(*, gross_income: FloatND, subsidy: FloatND) -> FloatND:
     """Cash-on-hand: pre-tax income plus the cliff-contingent subsidy."""
     return gross_income + subsidy
 
 
-def next_wage(wage: ContinuousState, wage_persistence: float) -> ContinuousState:
+def next_wage(*, wage: ContinuousState, wage_persistence: float) -> ContinuousState:
     """Wage co-state law: a deterministic decay that never reads the savings slot."""
     return wage_persistence * wage
 
@@ -99,7 +99,7 @@ def build_model(
         "resources": resources,
     }
     alive_solver = resolve_solver(
-        variant,
+        variant=variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
     )
     alive_functions = {**alive_functions, "savings": savings}

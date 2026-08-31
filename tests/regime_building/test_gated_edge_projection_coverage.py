@@ -234,7 +234,7 @@ def _build_age_specialized_model(*, fallback_projects_principal: bool) -> Model:
         active=lambda age: age < 1,
         states={"wage": _WAGE},
         state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility_src},
     )
     src_exit = Regime(
@@ -303,7 +303,7 @@ def _build_model(
         active=lambda age: age < 1,
         states={"wage": _WAGE},
         state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility_src},
     )
     src_exit = Regime(
@@ -320,7 +320,7 @@ def _build_model(
             "career": Phased(solve=_impute_career, simulate=_CAREER),
         },
         state_transitions={"wage": fixed_transition("wage"), "career": _next_career},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility_fallback},
     )
     fallback_exit = Regime(
@@ -346,7 +346,7 @@ def _prob_one(age: FloatND) -> FloatND:
     return jnp.ones_like(age, dtype=float)
 
 
-def _gate(V_fallback_ref: FloatND, wage: ContinuousState) -> BoolND:
+def _gate(*, V_fallback_ref: FloatND, wage: ContinuousState) -> BoolND:
     """The edge stays open above a wage, reading the fallback's value too."""
     return (wage > _GATE_THRESHOLD) | (V_fallback_ref < 0.0)
 
@@ -396,13 +396,13 @@ def _next_career(career: FloatND) -> FloatND:
     return career + 1.0
 
 
-def _utility_src(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _utility_src(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     """Payoff in the source regime."""
     return wage * work
 
 
 def _utility_fallback(
-    wage: ContinuousState, work: DiscreteAction, career: FloatND
+    *, wage: ContinuousState, work: DiscreteAction, career: FloatND
 ) -> FloatND:
     """Payoff in the fallback regime, reading its carried career."""
     return wage * work + 0.0 * career

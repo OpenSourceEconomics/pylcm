@@ -48,7 +48,7 @@ def _profile_grids() -> dict[str, LinSpacedGrid]:
     }
 
 
-def _bracket(value: float, grid: Sequence[float]) -> tuple[int, int, float]:
+def _bracket(*, value: float, grid: Sequence[float]) -> tuple[int, int, float]:
     if value <= grid[0]:
         lower, upper = 0, 1
     elif value >= grid[-1]:
@@ -67,10 +67,10 @@ def _terminal_read(
     illiquid_grid = [
         float(scalar(x)) for x in np.asarray(smooth.ILLIQUID_GRID.to_jax())
     ]
-    w0, w1, ww = _bracket(wealth, wealth_grid)
-    z0, z1, wz = _bracket(illiquid, illiquid_grid)
+    w0, w1, ww = _bracket(value=wealth, grid=wealth_grid)
+    z0, z1, wz = _bracket(value=illiquid, grid=illiquid_grid)
 
-    def terminal(i: int, k: int) -> np.floating:
+    def terminal(*, i: int, k: int) -> np.floating:
         return scalar(
             -scalar(smooth.TERMINAL_SCALE) / scalar(wealth_grid[i] + 1.0)
             - scalar(smooth.TERMINAL_SCALE) / scalar(illiquid_grid[k] + 1.0)
@@ -78,8 +78,14 @@ def _terminal_read(
 
     ww_s = scalar(ww)
     wz_s = scalar(wz)
-    low = scalar(terminal(w0, z0) + wz_s * scalar(terminal(w0, z1) - terminal(w0, z0)))
-    high = scalar(terminal(w1, z0) + wz_s * scalar(terminal(w1, z1) - terminal(w1, z0)))
+    low = scalar(
+        terminal(i=w0, k=z0)
+        + wz_s * scalar(terminal(i=w0, k=z1) - terminal(i=w0, k=z0))
+    )
+    high = scalar(
+        terminal(i=w1, k=z0)
+        + wz_s * scalar(terminal(i=w1, k=z1) - terminal(i=w1, k=z0))
+    )
     return scalar(low + ww_s * scalar(high - low))
 
 

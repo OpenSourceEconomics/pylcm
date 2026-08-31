@@ -37,24 +37,25 @@ class Health:
     good: ScalarInt
 
 
-def next_health(health: DiscreteState, probs_array: FloatND) -> FloatND:
+def next_health(*, health: DiscreteState, probs_array: FloatND) -> FloatND:
     return probs_array[health]
 
 
 alive_stochastic = alive_deterministic.replace(
-    states=dict(alive_deterministic.states) | {"health": DiscreteGrid(Health)},
+    states=dict(alive_deterministic.states)
+    | {"health": DiscreteGrid(category_class=Health)},
     state_transitions=dict(alive_deterministic.state_transitions)
     | {"health": MarkovTransition(next_health)},
 )
 
 
-def value_second_period_stochastic(wealth, health):
+def value_second_period_stochastic(*, wealth, health):
     """Value function in the second (last) period. Computed using pen and paper."""
     consumption = np.minimum(1, np.floor(wealth))
     return np.log(1 + consumption) * health
 
 
-def policy_second_period_stochastic(wealth, health):
+def policy_second_period_stochastic(*, wealth, health):
     """Policy function in the second (last) period. Computed using pen and paper.
 
     First column corresponds to consumption choice, second to work choice.
@@ -63,10 +64,12 @@ def policy_second_period_stochastic(wealth, health):
     policy = np.column_stack(
         (np.minimum(1, np.floor(wealth)) * health, np.zeros_like(wealth)),
     ).astype(int)
-    return matrix_to_dict_of_vectors(policy, col_names=["consumption", "labor_supply"])
+    return matrix_to_dict_of_vectors(
+        arr=policy, col_names=["consumption", "labor_supply"]
+    )
 
 
-def value_first_period_stochastic(wealth, health, params):
+def value_first_period_stochastic(*, wealth, health, params):
     """Value function in the first period. Computed using pen and paper."""
     probs_array = params["next_health"]["probs_array"]
 
@@ -86,14 +89,14 @@ def value_first_period_stochastic(wealth, health, params):
         params["discount_factor"] * params["next_health"]["probs_array"][1, 1]
     )
     value_health_1 = value_first_period_deterministic(
-        wealth, params={"discount_factor": new_discount_factor}
+        wealth=wealth, params={"discount_factor": new_discount_factor}
     )
 
     # Combined
     return np.where(health, value_health_1, value_health_0)
 
 
-def policy_first_period_stochastic(wealth, health, params):
+def policy_first_period_stochastic(*, wealth, health, params):
     """Policy function in the first period. Computed using pen and paper."""
     probs_array = params["next_health"]["probs_array"]
 
@@ -118,7 +121,7 @@ def policy_first_period_stochastic(wealth, health, params):
         params["discount_factor"] * params["next_health"]["probs_array"][1, 1]
     )
     _policy_health_1 = policy_first_period_deterministic(
-        wealth,
+        wealth=wealth,
         params={"discount_factor": new_discount_factor},
     )
 
@@ -127,11 +130,11 @@ def policy_first_period_stochastic(wealth, health, params):
     _health = health.reshape(-1, 1)
     policies = _health * policy_health_1 + (1 - _health) * policy_health_0
     return matrix_to_dict_of_vectors(
-        policies, col_names=["consumption", "labor_supply"]
+        arr=policies, col_names=["consumption", "labor_supply"]
     )
 
 
-def analytical_solve_stochastic(wealth_grid, health_grid, params):
+def analytical_solve_stochastic(*, wealth_grid, health_grid, params):
     V_arr_0 = value_first_period_stochastic(
         wealth=wealth_grid,
         health=health_grid,
@@ -141,7 +144,7 @@ def analytical_solve_stochastic(wealth_grid, health_grid, params):
     return [V_arr_0, V_arr_1]
 
 
-def analytical_simulate_stochastic(initial_wealth, initial_health, health_1, params):
+def analytical_simulate_stochastic(*, initial_wealth, initial_health, health_1, params):
     """Compute analytical simulation results in the same format as to_dataframe().
 
     Returns DataFrame with columns: period, subject_id, regime_name, value,
@@ -152,16 +155,16 @@ def analytical_simulate_stochastic(initial_wealth, initial_health, health_1, par
 
     # Period 0
     V_arr_0 = value_first_period_stochastic(
-        initial_wealth, initial_health, params=params
+        wealth=initial_wealth, health=initial_health, params=params
     )
     policy_0 = policy_first_period_stochastic(
-        initial_wealth, initial_health, params=params
+        wealth=initial_wealth, health=initial_health, params=params
     )
 
     # Period 1
-    wealth_1 = next_wealth(initial_wealth, **policy_0)
-    V_arr_1 = value_second_period_stochastic(wealth_1, health_1)
-    policy_1 = policy_second_period_stochastic(wealth_1, health_1)
+    wealth_1 = next_wealth(wealth=initial_wealth, **policy_0)
+    V_arr_1 = value_second_period_stochastic(wealth=wealth_1, health=health_1)
+    policy_1 = policy_second_period_stochastic(wealth=wealth_1, health=health_1)
 
     # Build DataFrame in the same format as to_dataframe()
     # Sorted by (subject_id, period)
@@ -211,7 +214,7 @@ HEALTH_TRANSITION = [
 @pytest.mark.parametrize("discount_factor", [0.0, 0.5, 0.9, 1.0])
 @pytest.mark.parametrize("n_wealth_points", [100, 1_000])
 @pytest.mark.parametrize("probs_array", HEALTH_TRANSITION)
-def test_stochastic_solve(discount_factor, n_wealth_points, probs_array):
+def test_stochastic_solve(*, discount_factor, n_wealth_points, probs_array):
     n_periods = 3
     ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
     new_states = dict(alive_stochastic.states)
@@ -272,7 +275,7 @@ def test_stochastic_solve(discount_factor, n_wealth_points, probs_array):
 @pytest.mark.parametrize("discount_factor", [0.0, 0.5, 0.9, 1.0])
 @pytest.mark.parametrize("n_wealth_points", [100, 1_000])
 @pytest.mark.parametrize("probs_array", HEALTH_TRANSITION)
-def test_stochastic_simulate(discount_factor, n_wealth_points, probs_array):
+def test_stochastic_simulate(*, discount_factor, n_wealth_points, probs_array):
     n_periods = 3
     ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
     new_states = dict(alive_stochastic.states)

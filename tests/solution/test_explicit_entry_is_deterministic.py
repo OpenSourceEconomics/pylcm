@@ -74,7 +74,7 @@ def _target_process() -> NormalIIDProcess:
     )
 
 
-def _power_mean(values: np.ndarray, weights: np.ndarray) -> float:
+def _power_mean(*, values: np.ndarray, weights: np.ndarray) -> float:
     """Return the weighted power mean at `_RISK_AVERSION`, computed independently."""
     normalized = weights / weights.sum()
     exponent = 1.0 - _RISK_AVERSION
@@ -119,7 +119,7 @@ _PARAMS = {
 }
 
 
-def _source_value(model: Model, params: dict) -> float:
+def _source_value(*, model: Model, params: dict) -> float:
     solution = model.solve(params=params, log_level="debug")
     last_living = max(period for period in solution if "source" in solution[period])
     return float(np.asarray(solution[last_living]["source"]).ravel()[0])
@@ -137,7 +137,7 @@ def test_entry_between_nodes_interpolates_under_a_nonlinear_ce(
     """
     model = _build_model(entry_value=1.5, enable_jit=enable_jit)
 
-    got = _source_value(model, _PARAMS)
+    got = _source_value(model=model, params=_PARAMS)
 
     expected = 0.5 * _V[1] + 0.5 * _V[2]
     np.testing.assert_almost_equal(got, expected, decimal=DECIMAL_PRECISION)
@@ -155,7 +155,7 @@ def test_entry_on_a_node_reads_that_node_under_a_nonlinear_ce(
     """
     model = _build_model(entry_value=2.0, enable_jit=enable_jit)
 
-    got = _source_value(model, _PARAMS)
+    got = _source_value(model=model, params=_PARAMS)
 
     np.testing.assert_almost_equal(got, _V[2], decimal=DECIMAL_PRECISION)
 
@@ -275,7 +275,7 @@ def test_a_linear_payoff_entry_interpolates_to_its_own_value(
         enable_jit=enable_jit,
     )
 
-    got = _source_value(model, _PARAMS)
+    got = _source_value(model=model, params=_PARAMS)
 
     np.testing.assert_almost_equal(got, 1.5, decimal=DECIMAL_PRECISION)
     assert got > 1.4 > 4.0 / 3.0
@@ -332,7 +332,7 @@ def test_a_non_power_quasi_arithmetic_mean_also_sees_one_value() -> None:
         "target": {"utility": {}},
     }
 
-    got = _source_value(model, params)
+    got = _source_value(model=model, params=params)
 
     lottery_reading = -np.log((np.exp(-_V[1]) + np.exp(-_V[2])) / 2.0)
     np.testing.assert_almost_equal(got, 2.5, decimal=DECIMAL_PRECISION)
@@ -354,7 +354,7 @@ def test_two_declared_entries_into_one_target_interpolate_jointly() -> None:
     def _enter_second() -> ScalarFloat:
         return jnp.asarray(0.5)
 
-    def _product_utility(shock: ScalarFloat, other: ScalarFloat) -> FloatND:
+    def _product_utility(*, shock: ScalarFloat, other: ScalarFloat) -> FloatND:
         return shock**2 + 10.0 * other
 
     model = Model(
@@ -392,7 +392,7 @@ def test_two_declared_entries_into_one_target_interpolate_jointly() -> None:
         "target": {"utility": {}},
     }
 
-    got = _source_value(model, params)
+    got = _source_value(model=model, params=params)
 
     # `V(shock, other) = shock**2 + 10*other` on nodes `(0,1,2) x (0,1)`.
     # Entering at `(1.5, 0.5)` is the bilinear value `2.5 + 5.0`.
@@ -403,7 +403,7 @@ def test_two_declared_entries_into_one_target_interpolate_jointly() -> None:
     )
     # The product-lottery reading is strictly smaller under this power mean, so
     # the assertion above is not satisfied by both.
-    assert _power_mean(grid[weights > 0], weights[weights > 0]) < 7.5
+    assert _power_mean(values=grid[weights > 0], weights=weights[weights > 0]) < 7.5
 
 
 def test_a_declared_entry_and_a_drawn_process_are_aggregated_differently() -> None:
@@ -419,7 +419,7 @@ def test_a_declared_entry_and_a_drawn_process_are_aggregated_differently() -> No
     def _enter_at() -> ScalarFloat:
         return jnp.asarray(1.5)
 
-    def _sum_utility(shock: ScalarFloat, extra: ScalarFloat) -> FloatND:
+    def _sum_utility(*, shock: ScalarFloat, extra: ScalarFloat) -> FloatND:
         return shock**2 + extra
 
     model = Model(
@@ -454,13 +454,13 @@ def test_a_declared_entry_and_a_drawn_process_are_aggregated_differently() -> No
         "target": {"utility": {}},
     }
 
-    got = _source_value(model, params)
+    got = _source_value(model=model, params=params)
 
     # `V(shock, extra) = shock**2 + extra`. Interpolating the declared entry at
     # `1.5` collapses the shock axis to `0.5*V(1) + 0.5*V(2) = 2.5` per `extra`
     # node, leaving a two-node lottery the drawn process weights equally.
     interpolated = 2.5 + np.array([1.0, 3.0])
-    expected = _power_mean(interpolated, np.array([0.5, 0.5]))
+    expected = _power_mean(values=interpolated, weights=np.array([0.5, 0.5]))
     np.testing.assert_almost_equal(got, expected, decimal=DECIMAL_PRECISION)
 
 
@@ -529,6 +529,6 @@ def test_the_entry_representation_decides_the_action() -> None:
         "enter": {"utility": {}},
     }
 
-    got = _source_value(model, params)
+    got = _source_value(model=model, params=params)
 
     np.testing.assert_almost_equal(got, 2.5, decimal=DECIMAL_PRECISION)

@@ -38,13 +38,17 @@ def test_f1_middle_owner_requires_open_cell_ownership_not_only_vertex_argmax():
     )
     points = all_breakpoints(branches)
     assert points == {F(0), F(1), F(2), F(3)}
-    assert exact_envelope(branches, F(3, 2))[1] == ("B",)
+    assert exact_envelope(branches=branches, q=F(3, 2))[1] == ("B",)
 
     # A deterministic branch-id tie order can pick A and C at the two breakpoint
     # vertices even though B uniquely owns the open cell between them.
     rank = {"A": 0, "C": 1, "B": 2}
-    assert min(exact_envelope(branches, F(1))[1], key=rank.__getitem__) == "A"
-    assert min(exact_envelope(branches, F(2))[1], key=rank.__getitem__) == "C"
+    assert (
+        min(exact_envelope(branches=branches, q=F(1))[1], key=rank.__getitem__) == "A"
+    )
+    assert (
+        min(exact_envelope(branches=branches, q=F(2))[1], key=rank.__getitem__) == "C"
+    )
 
 
 def test_one_action_does_not_bound_the_number_of_monotone_runs():
@@ -71,7 +75,10 @@ def test_exact_endpoint_classification_uses_margin_signs_not_root_snapping():
     """A crossing exactly at a node is a right-endpoint event, from margin signs."""
     a = FloatSegment(9.0, 10.0, 4.875, 5.0, 8.0)
     b = FloatSegment(9.5, 10.5, 4.75, 5.25, 2.0)
-    assert classify_cell(a, b, 9.5, 10.0) == ("right_endpoint", to_fraction(10.0))
+    assert classify_cell(a=a, b=b, left=9.5, right=10.0) == (
+        "right_endpoint",
+        to_fraction(10.0),
+    )
 
 
 def test_triple_crossing_has_only_two_one_sided_envelope_owners():
@@ -81,25 +88,25 @@ def test_triple_crossing_has_only_two_one_sided_envelope_owners():
         Branch("B", (F(0), F(2)), (F(-1, 5), F(1, 5)), (F(5), F(5))),
         Branch("C", (F(0), F(2)), (F(-1), F(1)), (F(1), F(1))),
     )
-    assert exact_envelope(branches, F(1, 2))[1] == ("A",)
-    assert exact_envelope(branches, F(1))[1] == ("A", "B", "C")
-    assert exact_envelope(branches, F(3, 2))[1] == ("C",)
+    assert exact_envelope(branches=branches, q=F(1, 2))[1] == ("A",)
+    assert exact_envelope(branches=branches, q=F(1))[1] == ("A", "B", "C")
+    assert exact_envelope(branches=branches, q=F(3, 2))[1] == ("C",)
 
 
 def test_exact_margin_sign_does_not_use_absolute_value_level():
     """A strictly dominant branch stays strictly dominant under a large common shift."""
     a = FloatSegment(0.0, 1.0, 1.0e12, 1.0e12 + 0.001, 1000.0)
     b = FloatSegment(0.0, 1.0, 1.0e12 + 0.002, 1.0e12 + 0.003, 500.0)
-    assert exact_margin(b, a, 0.5) > 0
+    assert exact_margin(a=b, b=a, x=0.5) > 0
 
 
 def test_collinear_overlap_needs_a_tie_interval_convention():
     """Coincident value lines are a tie interval, not a finite list of crossings."""
     a = Branch("A", (F(-4), F(3)), (F(2), F(16)), (F(1), F(1)))
     b = Branch("B", (F(1), F(5)), (F(12), F(20)), (F(2), F(2)))
-    assert brute_pair_crossings(a, b) == set()
-    assert merge_pair_crossings(a, b) == {F(1), F(3)}
-    assert exact_envelope((a, b), F(2))[1] == ("A", "B")
+    assert brute_pair_crossings(a=a, b=b) == set()
+    assert merge_pair_crossings(a=a, b=b) == {F(1), F(3)}
+    assert exact_envelope(branches=(a, b), q=F(2))[1] == ("A", "B")
 
 
 def test_consecutive_merge_matches_all_segment_pairs_on_random_branch_pairs():
@@ -118,9 +125,9 @@ def test_consecutive_merge_matches_all_segment_pairs_on_random_branch_pairs():
         b = Branch(
             "B", tuple(map(F, x_b)), tuple(map(F, v_b)), tuple(F(2) for _ in x_b)
         )
-        if has_collinear_overlap(a, b):
+        if has_collinear_overlap(a=a, b=b):
             continue
-        assert merge_pair_crossings(a, b) == brute_pair_crossings(a, b)
+        assert merge_pair_crossings(a=a, b=b) == brute_pair_crossings(a=a, b=b)
         checked += 1
     assert checked > 4900
 
@@ -133,13 +140,13 @@ def test_branch_order_and_common_value_translation_do_not_change_exact_geometry(
         Branch("C", (F(3, 5), F(6, 5)), (F(4, 5), F(7, 5)), (F(1), F(1))),
     )
     query = F(4, 5)
-    expected = exact_envelope(branches, query)
+    expected = exact_envelope(branches=branches, q=query)
     for perm in itertools.permutations(branches):
-        assert exact_envelope(perm, query) == expected
+        assert exact_envelope(branches=perm, q=query) == expected
         shifted = tuple(
             Branch(b.name, b.x, tuple(v + F(10**12) for v in b.v), b.policy)
             for b in perm
         )
-        shifted_value, shifted_owner = exact_envelope(shifted, query)
+        shifted_value, shifted_owner = exact_envelope(branches=shifted, q=query)
         assert shifted_owner == expected[1]
         assert shifted_value - F(10**12) == expected[0]

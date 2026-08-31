@@ -146,7 +146,7 @@ def utility(consumption: ContinuousAction) -> FloatND:
 
 
 def utility_with_premium(
-    consumption: ContinuousAction, buy_private: DiscreteAction
+    *, consumption: ContinuousAction, buy_private: DiscreteAction
 ) -> FloatND:
     return jnp.log(consumption) - jnp.where(
         buy_private == Insurance.buy, INSURANCE_PREMIUM, 0.0
@@ -154,12 +154,12 @@ def utility_with_premium(
 
 
 def utility_with_work(
-    consumption: ContinuousAction, labor_supply: DiscreteAction
+    *, consumption: ContinuousAction, labor_supply: DiscreteAction
 ) -> FloatND:
     return jnp.log(consumption) - jnp.where(labor_supply == LaborChoice.work, 0.3, 0.0)
 
 
-def savings(wealth: FloatND, consumption: ContinuousAction) -> FloatND:
+def savings(*, wealth: FloatND, consumption: ContinuousAction) -> FloatND:
     return wealth - consumption
 
 
@@ -167,11 +167,13 @@ def inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
     return 1.0 / marginal_continuation
 
 
-def budget_constraint(consumption: ContinuousAction, wealth: ContinuousState) -> BoolND:
+def budget_constraint(
+    *, consumption: ContinuousAction, wealth: ContinuousState
+) -> BoolND:
     return consumption <= wealth
 
 
-def next_regime(age: int, final_age_alive: float) -> ScalarInt:
+def next_regime(*, age: int, final_age_alive: float) -> ScalarInt:
     return jnp.where(
         age >= final_age_alive,
         LawTermRegimeId.dead,
@@ -179,7 +181,9 @@ def next_regime(age: int, final_age_alive: float) -> ScalarInt:
     )
 
 
-def health_net_transfer(health: DiscreteState, buy_private: DiscreteAction) -> FloatND:
+def health_net_transfer(
+    *, health: DiscreteState, buy_private: DiscreteAction
+) -> FloatND:
     oop = jnp.where(
         buy_private == Insurance.buy, OOP_WITH_INSURANCE, OOP_WITHOUT_INSURANCE
     )
@@ -194,11 +198,11 @@ def capital_supplement(wealth: ContinuousState) -> FloatND:
     return BASE_SUPPLEMENT * phase_out_share + CAPITAL_MATCH * capital_income
 
 
-def _stay_prob(age: int, final_age_alive: float, survival_rate: float) -> FloatND:
+def _stay_prob(*, age: int, final_age_alive: float, survival_rate: float) -> FloatND:
     return jnp.where(age >= final_age_alive, 0.0, survival_rate)
 
 
-def _death_prob(age: int, final_age_alive: float, survival_rate: float) -> FloatND:
+def _death_prob(*, age: int, final_age_alive: float, survival_rate: float) -> FloatND:
     return jnp.where(age >= final_age_alive, 1.0, 1.0 - survival_rate)
 
 
@@ -206,7 +210,7 @@ def is_working(labor_supply: DiscreteAction) -> BoolND:
     return labor_supply == LaborChoice.work
 
 
-def next_aime(aime: ContinuousState, is_working: BoolND) -> ContinuousState:
+def next_aime(*, aime: ContinuousState, is_working: BoolND) -> ContinuousState:
     return jnp.minimum(aime + jnp.where(is_working, AIME_GAIN, 0.0), AIME_MAX)
 
 
@@ -261,11 +265,12 @@ def _health_insurance_model(solver: str) -> Model:
     """Law term reading a discrete state and a discrete action."""
 
     def next_wealth_dcegm(
-        savings: FloatND, health_net_transfer: FloatND
+        *, savings: FloatND, health_net_transfer: FloatND
     ) -> ContinuousState:
         return savings + health_net_transfer
 
     def next_wealth_brute(
+        *,
         wealth: ContinuousState,
         consumption: ContinuousAction,
         health_net_transfer: FloatND,
@@ -278,10 +283,10 @@ def _health_insurance_model(solver: str) -> Model:
         transition=next_regime,
         active=_active,
         actions={
-            "buy_private": DiscreteGrid(Insurance),
+            "buy_private": DiscreteGrid(category_class=Insurance),
             "consumption": CONSUMPTION_GRID,
         },
-        states={"wealth": WEALTH_GRID, "health": DiscreteGrid(Health)},
+        states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=Health)},
         state_transitions={
             "wealth": next_wealth_dcegm if is_dcegm else next_wealth_brute,
             "health": fixed_transition("health"),
@@ -338,11 +343,12 @@ def _means_test_model(solver: str) -> Model:
     """Law term reading the Euler state through a decision-time function."""
 
     def next_wealth_dcegm(
-        savings: FloatND, capital_supplement: FloatND
+        *, savings: FloatND, capital_supplement: FloatND
     ) -> ContinuousState:
         return savings + capital_supplement
 
     def next_wealth_brute(
+        *,
         wealth: ContinuousState,
         consumption: ContinuousAction,
         capital_supplement: FloatND,
@@ -421,7 +427,7 @@ def _per_target_model(solver: str) -> Model:
     )
 
     def next_wealth_self_dcegm(
-        savings: FloatND, health_net_transfer: FloatND
+        *, savings: FloatND, health_net_transfer: FloatND
     ) -> ContinuousState:
         return savings + health_net_transfer
 
@@ -429,6 +435,7 @@ def _per_target_model(solver: str) -> Model:
         return savings
 
     def next_wealth_self_brute(
+        *,
         wealth: ContinuousState,
         consumption: ContinuousAction,
         health_net_transfer: FloatND,
@@ -436,7 +443,7 @@ def _per_target_model(solver: str) -> Model:
         return wealth - consumption + health_net_transfer
 
     def next_wealth_bequest_brute(
-        wealth: ContinuousState, consumption: ContinuousAction
+        *, wealth: ContinuousState, consumption: ContinuousAction
     ) -> ContinuousState:
         return wealth - consumption
 
@@ -449,10 +456,10 @@ def _per_target_model(solver: str) -> Model:
         },
         active=_active,
         actions={
-            "buy_private": DiscreteGrid(Insurance),
+            "buy_private": DiscreteGrid(category_class=Insurance),
             "consumption": CONSUMPTION_GRID,
         },
-        states={"wealth": WEALTH_GRID, "health": DiscreteGrid(Health)},
+        states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=Health)},
         state_transitions={
             "wealth": {
                 "working_life": (
@@ -520,12 +527,12 @@ def _phased_law_model(solver: str) -> Model:
         return savings
 
     def next_wealth_solve_brute(
-        wealth: ContinuousState, consumption: ContinuousAction
+        *, wealth: ContinuousState, consumption: ContinuousAction
     ) -> ContinuousState:
         return wealth - consumption + SOLVE_ADJUSTMENT
 
     def next_wealth_simulate_brute(
-        wealth: ContinuousState, consumption: ContinuousAction
+        *, wealth: ContinuousState, consumption: ContinuousAction
     ) -> ContinuousState:
         return wealth - consumption
 
@@ -596,11 +603,12 @@ def _chained_law_model(solver: str) -> Model:
     """Law term consuming a transition-DAG output of the same target."""
 
     def next_wealth_dcegm(
-        savings: FloatND, next_aime: ContinuousState
+        *, savings: FloatND, next_aime: ContinuousState
     ) -> ContinuousState:
         return savings + PENSION_ACCRUAL * next_aime
 
     def next_wealth_brute(
+        *,
         wealth: ContinuousState,
         consumption: ContinuousAction,
         next_aime: ContinuousState,
@@ -613,7 +621,7 @@ def _chained_law_model(solver: str) -> Model:
         transition=next_regime,
         active=_active,
         actions={
-            "labor_supply": DiscreteGrid(LaborChoice),
+            "labor_supply": DiscreteGrid(category_class=LaborChoice),
             "consumption": CONSUMPTION_GRID,
         },
         states={"wealth": WEALTH_GRID, "aime": AIME_GRID},

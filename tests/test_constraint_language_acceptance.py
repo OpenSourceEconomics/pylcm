@@ -35,7 +35,7 @@ def unsatisfiable(consumption: ContinuousAction) -> BoolND:
     return consumption < jnp.asarray(-1.0)
 
 
-def nonlinear(consumption: ContinuousAction, liquid: ContinuousState) -> BoolND:
+def nonlinear(*, consumption: ContinuousAction, liquid: ContinuousState) -> BoolND:
     """A general predicate whose boundary is a root in no declared coordinate."""
     return jnp.square(consumption) + jnp.square(liquid) <= 400.0
 
@@ -101,7 +101,9 @@ def test_nbegm_refuses_a_general_nonlinear_predicate():
         _build(variant="nbegm", constraints={"nonlinear": nonlinear})
 
 
-def outer_financeable(consumption: ContinuousAction, wealth: ContinuousState) -> BoolND:
+def outer_financeable(
+    *, consumption: ContinuousAction, wealth: ContinuousState
+) -> BoolND:
     """A predicate over the nested toy's liquid margin."""
     return jnp.square(consumption) + jnp.square(wealth) <= 400.0
 

@@ -19,7 +19,7 @@ from _lcm.egm.outer_interpolation import (
 _INTERP = LocalCubicOuterInterpolant()
 
 
-def _exactness_atol(expected: np.ndarray, *, floor: float) -> float:
+def _exactness_atol(*, expected: np.ndarray, floor: float) -> float:
     """`floor`, or this scale's resolution in the working format -- whichever is looser.
 
     The recovery tests below assert that a polynomial comes back to the precision the
@@ -61,12 +61,12 @@ def test_quadratic_is_recovered_exactly_with_derivative() -> None:
     np.testing.assert_allclose(
         np.asarray(value),
         expected_value,
-        atol=_exactness_atol(expected_value, floor=1e-12),
+        atol=_exactness_atol(expected=expected_value, floor=1e-12),
     )
     np.testing.assert_allclose(
         np.asarray(derivative),
         expected_slope,
-        atol=_exactness_atol(expected_slope, floor=1e-12),
+        atol=_exactness_atol(expected=expected_slope, floor=1e-12),
     )
 
 
@@ -86,12 +86,12 @@ def test_cubic_is_recovered_exactly() -> None:
     np.testing.assert_allclose(
         np.asarray(value),
         expected_value,
-        atol=_exactness_atol(expected_value, floor=1e-12),
+        atol=_exactness_atol(expected=expected_value, floor=1e-12),
     )
     np.testing.assert_allclose(
         np.asarray(derivative),
         expected_slope,
-        atol=_exactness_atol(expected_slope, floor=1e-11),
+        atol=_exactness_atol(expected=expected_slope, floor=1e-11),
     )
 
 

@@ -20,7 +20,7 @@ _INTERIOR = (_LIQUID > 1.5) & (_LIQUID < 27.0)
 
 
 def _solve(
-    variant: str, *, n_consumption: int = 120, tax_kink: float = 15.0
+    *, variant: str, n_consumption: int = 120, tax_kink: float = 15.0
 ) -> Mapping[int, Mapping]:
     """Solve the derived-income tax toy on the shared comparison grids."""
     model = toy.build_model(
@@ -36,8 +36,8 @@ def _solve(
 
 def test_nbegm_matches_brute_in_every_ride_along_slice_every_age():
     """The derived-income schedule solve equals brute in both `kind` slices."""
-    nbegm = _solve("nbegm")
-    brute = _solve("brute", n_consumption=1500)
+    nbegm = _solve(variant="nbegm")
+    brute = _solve(variant="brute", n_consumption=1500)
     for period in brute:
         if "alive" not in brute[period] or "alive" not in nbegm[period]:
             continue
@@ -73,8 +73,8 @@ def test_nbegm_matches_brute_when_kink_preimage_leaves_the_grid(
     single below-kink segment — matching brute, where the kink is likewise never
     reached.
     """
-    nbegm = _solve("nbegm", tax_kink=tax_kink)
-    brute = _solve("brute", n_consumption=1500, tax_kink=tax_kink)
+    nbegm = _solve(variant="nbegm", tax_kink=tax_kink)
+    brute = _solve(variant="brute", n_consumption=1500, tax_kink=tax_kink)
     for period in brute:
         if "alive" not in brute[period] or "alive" not in nbegm[period]:
             continue

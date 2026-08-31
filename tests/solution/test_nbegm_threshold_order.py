@@ -59,7 +59,7 @@ def test_a_single_variable_mixed_schedule_recovers_its_jump_positions():
     assert static_positions == (0,)
     # The jump's preimage sits above the kink's on the asset axis.
     sorted_preimages, jump_positions = _partition_jumps(
-        jnp.asarray([8.0, 3.0]),
+        preimages=jnp.asarray([8.0, 3.0]),
         dynamic_jumps=dynamic_jumps,
         jump_flags=jump_flags,
         n_jumps=n_jumps,

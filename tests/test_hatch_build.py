@@ -158,7 +158,7 @@ def test_the_build_states_when_it_found_no_cuda_compiler():
     assert "no nvcc" in report
 
 
-def test_native_libraries_are_built_outside_the_checkout(monkeypatch, tmp_path):
+def test_native_libraries_are_built_outside_the_checkout(*, monkeypatch, tmp_path):
     """A native build writes only to its declared payload directory."""
     source_dir = tmp_path / hatch_build.PACKAGE_DIR
     source_dir.mkdir(parents=True)
@@ -234,7 +234,7 @@ def test_windows_module_definition_exports_every_handler():
 
 
 def test_the_windows_build_uses_msvc_and_the_export_definition(
-    monkeypatch, tmp_path, capsys
+    *, monkeypatch, tmp_path, capsys
 ):
     """Windows emits a DLL through cl.exe and passes the generated .def file."""
     source_dir = tmp_path / hatch_build.PACKAGE_DIR
@@ -274,7 +274,7 @@ def test_the_windows_build_uses_msvc_and_the_export_definition(
 
 
 def test_the_windows_build_writes_its_object_file_beside_the_library(
-    monkeypatch, tmp_path
+    *, monkeypatch, tmp_path
 ):
     """The intermediate `.obj` lands beside the install payload."""
     source_dir = tmp_path / hatch_build.PACKAGE_DIR
@@ -303,7 +303,7 @@ def test_the_windows_build_writes_its_object_file_beside_the_library(
     assert f"/Fo{payload_dir}\\" in commands[0]  # codespell:ignore
 
 
-def test_a_non_msvc_cxx_is_refused_on_windows(monkeypatch, tmp_path):
+def test_a_non_msvc_cxx_is_refused_on_windows(*, monkeypatch, tmp_path):
     """`CXX` naming a compiler that cannot parse MSVC flags fails with a reason."""
     source_dir = tmp_path / hatch_build.PACKAGE_DIR
     source_dir.mkdir(parents=True)
@@ -317,7 +317,7 @@ def test_a_non_msvc_cxx_is_refused_on_windows(monkeypatch, tmp_path):
         hatch_build.build_exact_affine(root=tmp_path, jax_include_dir="C:/jax/include")
 
 
-def test_an_msvc_compatible_cxx_is_accepted_on_windows(monkeypatch, tmp_path):
+def test_an_msvc_compatible_cxx_is_accepted_on_windows(*, monkeypatch, tmp_path):
     """`clang-cl` takes MSVC flags, so it builds like `cl` does."""
     source_dir = tmp_path / hatch_build.PACKAGE_DIR
     source_dir.mkdir(parents=True)
@@ -348,7 +348,7 @@ def test_the_opt_out_builds_no_kernel(monkeypatch):
     assert hatch_build.build_exact_affine(root=Path("/nowhere")) == []
 
 
-def test_the_opt_out_names_what_it_gave_up(monkeypatch, capsys):
+def test_the_opt_out_names_what_it_gave_up(*, monkeypatch, capsys):
     """Skipping the build says which capability the install will not have."""
     monkeypatch.setenv("LCM_SKIP_EXACT_AFFINE", "1")
 
@@ -383,7 +383,7 @@ def test_a_missing_compiler_fails_loudly_without_the_opt_out(monkeypatch):
         )
 
 
-def test_the_opt_out_is_read_before_the_platform_is_consulted(monkeypatch, capsys):
+def test_the_opt_out_is_read_before_the_platform_is_consulted(*, monkeypatch, capsys):
     """On a platform that builds nothing anyway, the opt-out still names itself.
 
     The two early returns are not interchangeable: one reports a deliberate choice
@@ -398,7 +398,9 @@ def test_the_opt_out_is_read_before_the_platform_is_consulted(monkeypatch, capsy
     assert "LCM_SKIP_EXACT_AFFINE" in capsys.readouterr().out
 
 
-def test_a_compile_failure_reports_diagnostics_written_to_stdout(tmp_path, monkeypatch):
+def test_a_compile_failure_reports_diagnostics_written_to_stdout(
+    *, tmp_path, monkeypatch
+):
     """A failing compile names what the compiler said, whichever stream it used.
 
     MSVC writes its diagnostics to stdout rather than stderr, so a report built

@@ -38,13 +38,14 @@ _FINAL_AGE_ALIVE = float(_N_PERIODS - 1)
 
 
 def scaled_utility(
-    consumption: ContinuousAction, crra: float, util_scale: float
+    *, consumption: ContinuousAction, crra: float, util_scale: float
 ) -> FloatND:
     """CRRA consumption utility under an ordinary flat scale."""
-    return util_scale * crra_utility(consumption, crra)
+    return util_scale * crra_utility(consumption=consumption, crra=crra)
 
 
 def scaled_next_liquid(
+    *,
     savings: FloatND,
     return_liquid: float,
     income: float,
@@ -55,44 +56,44 @@ def scaled_next_liquid(
 
 
 def doubled_income_next_liquid(
-    savings: FloatND, return_liquid: float, income: float
+    *, savings: FloatND, return_liquid: float, income: float
 ) -> ContinuousState:
     """Affine liquid law crediting twice the income the parameter names."""
     return (1.0 + return_liquid) * savings + 2.0 * income
 
 
 def taxed_return_next_liquid(
-    savings: FloatND, return_liquid: float, income: float
+    *, savings: FloatND, return_liquid: float, income: float
 ) -> ContinuousState:
     """Affine liquid law crediting the liquid return net of a flat tax."""
     return (1.0 + 0.75 * return_liquid) * savings + income
 
 
 def endowed_next_liquid(
-    savings: FloatND, return_liquid: float, income: float
+    *, savings: FloatND, return_liquid: float, income: float
 ) -> ContinuousState:
     """Affine liquid law adding a literal endowment on top of income."""
     return (1.0 + return_liquid) * savings + income + 3.0
 
 
 def compounded_next_liquid(
-    savings: FloatND, return_liquid: float, income: float
+    *, savings: FloatND, return_liquid: float, income: float
 ) -> ContinuousState:
     """Liquid law compounding the return over two sub-periods."""
     return (1.0 + return_liquid) ** 2 * savings + income
 
 
-def doubled_subsidy_resources(liquid: ContinuousState, subsidy: FloatND) -> FloatND:
+def doubled_subsidy_resources(*, liquid: ContinuousState, subsidy: FloatND) -> FloatND:
     """Cash-on-hand crediting the subsidy twice over."""
     return liquid + 2.0 * subsidy
 
 
-def fee_charging_resources(liquid: ContinuousState, subsidy: FloatND) -> FloatND:
+def fee_charging_resources(*, liquid: ContinuousState, subsidy: FloatND) -> FloatND:
     """Cash-on-hand net of a literal participation fee."""
     return liquid + subsidy - 0.5
 
 
-def interest_bearing_resources(liquid: ContinuousState, subsidy: FloatND) -> FloatND:
+def interest_bearing_resources(*, liquid: ContinuousState, subsidy: FloatND) -> FloatND:
     """Cash-on-hand crediting within-period interest on liquid wealth."""
     return 1.05 * liquid + subsidy
 
@@ -120,7 +121,7 @@ def _build(
         },
         liquid_law=liquid_law if liquid_law is not None else next_liquid_from_savings,
         alive_solver=resolve_solver(
-            "nbegm",
+            variant="nbegm",
             savings_grid=LinSpacedGrid(start=0.0, stop=22.0, n_points=30),
         ),
         constraints={},

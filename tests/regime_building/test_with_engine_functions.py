@@ -43,17 +43,17 @@ class RegimeId:
     couple_terminal: ScalarInt
 
 
-def _u_f(wealth: ContinuousState, work: DiscreteAction) -> FloatND:
+def _u_f(*, wealth: ContinuousState, work: DiscreteAction) -> FloatND:
     """The first stakeholder's flow utility."""
     return jnp.log(wealth) - 0.1 * work
 
 
-def _u_m(wealth: ContinuousState, work: DiscreteAction) -> FloatND:
+def _u_m(*, wealth: ContinuousState, work: DiscreteAction) -> FloatND:
     """The second stakeholder's flow utility."""
     return 0.5 * jnp.log(wealth) - 0.1 * work
 
 
-def _other_u_m(wealth: ContinuousState, work: DiscreteAction) -> FloatND:
+def _other_u_m(*, wealth: ContinuousState, work: DiscreteAction) -> FloatND:
     """A different body for the second stakeholder."""
     return 0.9 * jnp.log(wealth) - 0.1 * work
 
@@ -70,7 +70,7 @@ def _couple(*, functions: Mapping[str, object]) -> Regime:
         active=lambda age: age < 1,
         states={"wealth": _WEALTH},
         state_transitions={"wealth": fixed_transition("wealth")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions=functions,  # ty: ignore[invalid-argument-type]
     )
 

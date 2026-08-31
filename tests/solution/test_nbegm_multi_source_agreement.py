@@ -22,7 +22,7 @@ _LIQUID = jnp.linspace(0.1, 30.0, 120)
 _INTERIOR = (_LIQUID > 1.5) & (_LIQUID < 27.0)
 
 
-def _solve(variant: str, *, n_consumption: int = 120) -> Mapping[int, Mapping]:
+def _solve(*, variant: str, n_consumption: int = 120) -> Mapping[int, Mapping]:
     """Solve the two-derived-variable budget toy on the shared comparison grids."""
     model = toy.build_model(
         variant=variant,
@@ -37,8 +37,8 @@ def _solve(variant: str, *, n_consumption: int = 120) -> Mapping[int, Mapping]:
 
 def test_nbegm_merges_two_derived_variable_kinks_matching_brute() -> None:
     """A budget with kinks on two derived income vars equals brute in both slices."""
-    nbegm = _solve("nbegm")
-    brute = _solve("brute", n_consumption=1500)
+    nbegm = _solve(variant="nbegm")
+    brute = _solve(variant="brute", n_consumption=1500)
     for period in brute:
         if "alive" not in brute[period] or "alive" not in nbegm[period]:
             continue
@@ -67,7 +67,7 @@ def _interior_away_from_jump(kind: int) -> np.ndarray:
     return np.asarray(edge & (jnp.abs(_LIQUID - _JUMP_PREIMAGE[kind]) > 0.75))
 
 
-def _solve_jump(variant: str, *, n_consumption: int = 160) -> Mapping[int, Mapping]:
+def _solve_jump(*, variant: str, n_consumption: int = 160) -> Mapping[int, Mapping]:
     """Solve the mixed jump-and-kink two-variable toy on the comparison grids."""
     model = jump_toy.build_model(
         variant=variant,
@@ -89,8 +89,8 @@ def test_nbegm_merges_a_jump_and_kink_across_variables_matching_brute() -> None:
     between slices; NBEGM recovers the jump's position per cell and matches the
     dense `GridSearch` value across each slice's cliff.
     """
-    nbegm = _solve_jump("nbegm")
-    brute = _solve_jump("brute", n_consumption=1800)
+    nbegm = _solve_jump(variant="nbegm")
+    brute = _solve_jump(variant="brute", n_consumption=1800)
     period = max(p for p in nbegm if "alive" in nbegm[p])
     brute_v = np.asarray(brute[period]["alive"])
     nbegm_v = np.asarray(nbegm[period]["alive"])

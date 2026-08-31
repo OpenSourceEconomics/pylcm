@@ -43,7 +43,7 @@ _SERVICEFLOW_PERIOD0_CONSUMPTION = (4.364286, 4.364286, 4.364286)
 _CONSUMPTION_ATOL = 1e-5
 
 
-def _simulate_period0_alive_consumption(model, regime_id) -> np.ndarray:
+def _simulate_period0_alive_consumption(*, model, regime_id) -> np.ndarray:
     """Solve, simulate, and return the period-0 `alive` consumption per subject."""
     solution = model.solve(params=_PARAMS, log_level="debug")
     n_subjects = len(_INITIAL_WEALTH)
@@ -80,7 +80,7 @@ def _simulate_period0_alive_consumption(model, regime_id) -> np.ndarray:
     ],
 )
 def test_negm_simulate_reproduces_the_solved_consumption(
-    build_model, regime_id, expected
+    *, build_model, regime_id, expected
 ):
     """The simulated period-0 consumption equals the solved NEGM policy.
 
@@ -89,7 +89,9 @@ def test_negm_simulate_reproduces_the_solved_consumption(
     exact consumption-grid node the backward-induction policy prescribes, to
     float32 precision.
     """
-    consumption = _simulate_period0_alive_consumption(build_model(), regime_id)
+    consumption = _simulate_period0_alive_consumption(
+        model=build_model(), regime_id=regime_id
+    )
     np.testing.assert_allclose(
         consumption, np.asarray(expected), atol=_CONSUMPTION_ATOL
     )

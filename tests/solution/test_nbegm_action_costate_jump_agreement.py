@@ -23,7 +23,7 @@ _AWAY_FROM_CLIFF = (
 )
 
 
-def _solve(variant: str, *, n_consumption: int) -> Mapping[int, Mapping]:
+def _solve(*, variant: str, n_consumption: int) -> Mapping[int, Mapping]:
     model = toy.build_model(
         variant=variant,
         n_liquid=100,
@@ -41,8 +41,8 @@ def test_branch_continuation_with_shared_parent_jump_matches_brute() -> None:
     """`V` agrees with a 1500-point brute across the liquid interior when the
     action feeds a co-state law and the budget carries an action-independent jump
     under the one-sided cliff read, over the income nodes and the co-state grid."""
-    nbegm = _solve("nbegm", n_consumption=100)
-    brute = _solve("brute", n_consumption=1500)
+    nbegm = _solve(variant="nbegm", n_consumption=100)
+    brute = _solve(variant="brute", n_consumption=1500)
     period = max(p for p in brute if _ALIVE in brute[p])
     bq_v = np.asarray(nbegm[period][_ALIVE])
     brute_v = np.asarray(brute[period][_ALIVE])

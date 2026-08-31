@@ -99,7 +99,7 @@ def arg_names(node: ast.FunctionDef) -> set[str]:
     }
 
 
-def call_named(node: ast.AST, name: str) -> list[ast.Call]:
+def call_named(*, node: ast.AST, name: str) -> list[ast.Call]:
     return [
         call
         for call in ast.walk(node)
@@ -128,7 +128,7 @@ def _resolver_name(node: ast.AST) -> str | None:
     return None
 
 
-def assignment_value(node: ast.AST, target_name: str) -> ast.AST:
+def assignment_value(*, node: ast.AST, target_name: str) -> ast.AST:
     for child in ast.walk(node):
         if isinstance(child, ast.Assign) and any(
             isinstance(target, ast.Name) and target.id == target_name
@@ -138,12 +138,12 @@ def assignment_value(node: ast.AST, target_name: str) -> ast.AST:
     raise AssertionError(f"missing assignment {target_name}")
 
 
-def assert_name(node: ast.AST, expected: str) -> None:
+def assert_name(*, node: ast.AST, expected: str) -> None:
     assert isinstance(node, ast.Name), ast.unparse(node)
     assert node.id == expected, ast.unparse(node)
 
 
-def assert_role_default(node: ast.AST, *, default: str, override: str) -> None:
+def assert_role_default(*, node: ast.AST, default: str, override: str) -> None:
     """Pin the exact form `DEFAULT if OVERRIDE is None else OVERRIDE`.
 
     Anything else -- a truthiness test, a swapped branch -- is a different routing rule
@@ -151,14 +151,14 @@ def assert_role_default(node: ast.AST, *, default: str, override: str) -> None:
     """
     assert isinstance(node, ast.IfExp), ast.unparse(node)
     assert isinstance(node.test, ast.Compare), ast.unparse(node)
-    assert_name(node.test.left, override)
+    assert_name(node=node.test.left, expected=override)
     assert len(node.test.ops) == 1
     assert isinstance(node.test.ops[0], ast.Is)
     assert len(node.test.comparators) == 1
     assert isinstance(node.test.comparators[0], ast.Constant)
     assert node.test.comparators[0].value is None
-    assert_name(node.body, default)
-    assert_name(node.orelse, override)
+    assert_name(node=node.body, expected=default)
+    assert_name(node=node.orelse, expected=override)
 
 
 def stakeholder_test(node: ast.AST) -> bool:
@@ -200,7 +200,7 @@ def assert_the_collective_builders_route_each_role(
     """
     collective = qdefs["get_Q_and_F_collective"]
     assert_role_default(
-        assignment_value(collective, "continuation_pool"),
+        node=assignment_value(node=collective, target_name="continuation_pool"),
         default="functions",
         override="continuation_functions",
     )
@@ -208,11 +208,11 @@ def assert_the_collective_builders_route_each_role(
     # The FLOW is the other half of the split: each stakeholder's within-period
     # utility and the shared feasibility must be built from `functions` -- the pool
     # of the phase being built -- never from the perceived continuation pool.
-    u_calls = call_named(collective, "_get_U_and_F")
+    u_calls = call_named(node=collective, name="_get_U_and_F")
     assert len(u_calls) == 1  # one call, building every stakeholder's felicity at once
     u_kw = keyword_map(u_calls[0])
-    assert_name(u_kw["functions"], "functions")
-    assert_name(u_kw["constraints"], "constraints")
+    assert_name(node=u_kw["functions"], expected="functions")
+    assert_name(node=u_kw["constraints"], expected="constraints")
 
     # The CONTINUATION prices the target's V under the perceived law. Both twins
     # reach it through the one aggregator, `_get_compute_CE`, so this pins the
@@ -221,11 +221,16 @@ def assert_the_collective_builders_route_each_role(
     # What the shared aggregator does with the pool is a separate assertion --
     # `assert_the_shared_continuation_builder_reads_its_own_pool` below -- because
     # the two ROLES did not merge when the two BUILDERS did.
-    ce_calls = call_named(collective, "_get_compute_CE")
-    singleton_ce_calls = call_named(qdefs["get_Q_and_F"], "_get_compute_CE")
+    ce_calls = call_named(node=collective, name="_get_compute_CE")
+    singleton_ce_calls = call_named(node=qdefs["get_Q_and_F"], name="_get_compute_CE")
     assert len(ce_calls) == len(singleton_ce_calls) == 1
-    assert_name(keyword_map(ce_calls[0])["functions"], "continuation_pool")
-    assert_name(keyword_map(singleton_ce_calls[0])["functions"], "continuation_pool")
+    assert_name(
+        node=keyword_map(ce_calls[0])["functions"], expected="continuation_pool"
+    )
+    assert_name(
+        node=keyword_map(singleton_ce_calls[0])["functions"],
+        expected="continuation_pool",
+    )
 
 
 def assert_the_shared_continuation_builder_reads_its_own_pool(
@@ -243,11 +248,11 @@ def assert_the_shared_continuation_builder_reads_its_own_pool(
     that both roles name that parameter and nothing else.
     """
     builder = qdefs["_build_target_continuation"]
-    next_calls = call_named(builder, "get_next_state_function_for_solution")
-    weight_calls = call_named(builder, "get_next_stochastic_weights_function")
+    next_calls = call_named(node=builder, name="get_next_state_function_for_solution")
+    weight_calls = call_named(node=builder, name="get_next_stochastic_weights_function")
     assert len(next_calls) == len(weight_calls) == 1
-    assert_name(keyword_map(next_calls[0])["functions"], "functions")
-    assert_name(keyword_map(weight_calls[0])["functions"], "functions")
+    assert_name(node=keyword_map(next_calls[0])["functions"], expected="functions")
+    assert_name(node=keyword_map(weight_calls[0])["functions"], expected="functions")
 
 
 def assert_every_dispatch_threads_every_role(
@@ -255,8 +260,8 @@ def assert_every_dispatch_threads_every_role(
 ) -> None:
     """The call sites must pass what the signatures now expose."""
     per_period = pdefs["_build_Q_and_F_per_period"]
-    collective_calls = call_named(per_period, "get_Q_and_F_collective")
-    singleton_calls = call_named(per_period, "get_Q_and_F")
+    collective_calls = call_named(node=per_period, name="get_Q_and_F_collective")
+    singleton_calls = call_named(node=per_period, name="get_Q_and_F")
     assert len(collective_calls) == len(singleton_calls) == 1
     ckw = keyword_map(collective_calls[0])
     skw = keyword_map(singleton_calls[0])
@@ -280,7 +285,7 @@ def assert_every_dispatch_threads_every_role(
     )
     for label, keywords in (("collective", ckw), ("singleton", skw)):
         rendered = ast.unparse(keywords["continuation_functions"])
-        assert f"{resolver}(continuation_functions" in rendered, (
+        assert f"{resolver}(mapping=continuation_functions" in rendered, (
             f"the {label} dispatch does not resolve `continuation_functions` with "
             f"`{resolver}` — the continuation sub-DAG would see an unresolved marker: "
             f"{rendered}"
@@ -320,6 +325,7 @@ def assert_no_hidden_builder_in_a_stakeholder_branch(
 
 
 def check_class_invariant(
+    *,
     q_tree: ast.Module,
     processing_tree: ast.Module,
     other_trees: dict[str, ast.Module],
@@ -338,11 +344,12 @@ def check_class_invariant(
 @dataclass(frozen=True)
 class Mutation:
     name: str
-    apply: Callable[[ast.Module, ast.Module, dict[str, ast.Module]], None]
+    apply: Callable[..., None]
 
 
-def remove_kwonly_arg(func_name: str, arg_name: str) -> Callable:
-    def mutate(q_tree, _p_tree, _others):
+def remove_kwonly_arg(*, func_name: str, arg_name: str) -> Callable:
+    def mutate(*, q_tree, p_tree, others):
+        _ = p_tree, others
         func = functions(q_tree)[func_name]
         index = next(
             i for i, arg in enumerate(func.args.kwonlyargs) if arg.arg == arg_name
@@ -353,9 +360,10 @@ def remove_kwonly_arg(func_name: str, arg_name: str) -> Callable:
     return mutate
 
 
-def remove_call_keyword(callee: str, keyword: str, occurrence: int = 0) -> Callable:
-    def mutate(_q_tree, p_tree, _others):
-        call = call_named(p_tree, callee)[occurrence]
+def remove_call_keyword(*, callee: str, keyword: str, occurrence: int = 0) -> Callable:
+    def mutate(*, q_tree, p_tree, others):
+        _ = q_tree, others
+        call = call_named(node=p_tree, name=callee)[occurrence]
         before = len(call.keywords)
         call.keywords = [kw for kw in call.keywords if kw.arg != keyword]
         assert len(call.keywords) == before - 1
@@ -363,8 +371,9 @@ def remove_call_keyword(callee: str, keyword: str, occurrence: int = 0) -> Calla
     return mutate
 
 
-def replace_assignment(name: str, expression: str) -> Callable:
-    def mutate(q_tree, _p_tree, _others):
+def replace_assignment(*, name: str, expression: str) -> Callable:
+    def mutate(*, q_tree, p_tree, others):
+        _ = p_tree, others
         func = functions(q_tree)["get_Q_and_F_collective"]
         replacement = ast.parse(expression, mode="eval").body
         for node in ast.walk(func):
@@ -379,7 +388,7 @@ def replace_assignment(name: str, expression: str) -> Callable:
 
 
 def replace_call_keyword_in(
-    func_name: str, callee: str, keyword: str, expression: str
+    *, func_name: str, callee: str, keyword: str, expression: str
 ) -> Callable:
     """Rebind one keyword of one call inside one function of `Q_and_F.py`.
 
@@ -388,9 +397,10 @@ def replace_call_keyword_in(
     behaviour it changes.
     """
 
-    def mutate(q_tree, _p_tree, _others):
+    def mutate(*, q_tree, p_tree, others):
+        _ = p_tree, others
         func = functions(q_tree)[func_name]
-        call = call_named(func, callee)[0]
+        call = call_named(node=func, name=callee)[0]
         kw = next(kw for kw in call.keywords if kw.arg == keyword)
         kw.value = ast.parse(expression, mode="eval").body
 
@@ -398,21 +408,26 @@ def replace_call_keyword_in(
 
 
 def replace_call_keyword_in_collective(
-    callee: str, keyword: str, expression: str
+    *, callee: str, keyword: str, expression: str
 ) -> Callable:
     return replace_call_keyword_in(
-        "get_Q_and_F_collective", callee, keyword, expression
+        func_name="get_Q_and_F_collective",
+        callee=callee,
+        keyword=keyword,
+        expression=expression,
     )
 
 
-def drop_age_specialization(_q_tree, p_tree, _others):
+def drop_age_specialization(*, q_tree, p_tree, others):
+    _ = q_tree, others
     func = functions(p_tree)["_build_Q_and_F_per_period"]
-    call = call_named(func, "get_Q_and_F_collective")[0]
+    call = call_named(node=func, name="get_Q_and_F_collective")[0]
     kw = next(kw for kw in call.keywords if kw.arg == "continuation_functions")
     kw.value = ast.Name(id="continuation_functions", ctx=ast.Load())
 
 
-def inject_hidden_builder(_q_tree, _p_tree, others):
+def inject_hidden_builder(*, q_tree, p_tree, others):
+    _ = q_tree, p_tree
     tree = others["_lcm/regime_building/max_Q_over_a.py"]
     branch = next(
         node
@@ -437,13 +452,13 @@ def mutation_catalog() -> list[Mutation]:
         mutations.append(
             Mutation(
                 f"drop_collective_signature_{arg}",
-                remove_kwonly_arg("get_Q_and_F_collective", arg),
+                remove_kwonly_arg(func_name="get_Q_and_F_collective", arg_name=arg),
             )
         )
         mutations.append(
             Mutation(
                 f"drop_collective_dispatch_{arg}",
-                remove_call_keyword("get_Q_and_F_collective", arg),
+                remove_call_keyword(callee="get_Q_and_F_collective", keyword=arg),
             )
         )
 
@@ -451,18 +466,22 @@ def mutation_catalog() -> list[Mutation]:
         [
             Mutation(
                 "force_continuation_to_decision_pool",
-                replace_assignment("continuation_pool", "functions"),
+                replace_assignment(name="continuation_pool", expression="functions"),
             ),
             Mutation(
                 "price_the_flow_under_the_continuation_pool",
                 replace_call_keyword_in_collective(
-                    "_get_U_and_F", "functions", "continuation_pool"
+                    callee="_get_U_and_F",
+                    keyword="functions",
+                    expression="continuation_pool",
                 ),
             ),
             Mutation(
                 "price_feasibility_under_the_continuation_pool",
                 replace_call_keyword_in_collective(
-                    "_get_U_and_F", "constraints", "continuation_pool"
+                    callee="_get_U_and_F",
+                    keyword="constraints",
+                    expression="continuation_pool",
                 ),
             ),
             # Three bypasses, at the two levels the pool now travels through.
@@ -476,25 +495,27 @@ def mutation_catalog() -> list[Mutation]:
             Mutation(
                 "bypass_continuation_pool_at_the_aggregator",
                 replace_call_keyword_in_collective(
-                    "_get_compute_CE", "functions", "functions"
+                    callee="_get_compute_CE",
+                    keyword="functions",
+                    expression="functions",
                 ),
             ),
             Mutation(
                 "bypass_continuation_pool_at_state_law",
                 replace_call_keyword_in(
-                    "_build_target_continuation",
-                    "get_next_state_function_for_solution",
-                    "functions",
-                    "bundle",
+                    func_name="_build_target_continuation",
+                    callee="get_next_state_function_for_solution",
+                    keyword="functions",
+                    expression="bundle",
                 ),
             ),
             Mutation(
                 "bypass_continuation_pool_at_weights",
                 replace_call_keyword_in(
-                    "_build_target_continuation",
-                    "get_next_stochastic_weights_function",
-                    "functions",
-                    "bundle",
+                    func_name="_build_target_continuation",
+                    callee="get_next_stochastic_weights_function",
+                    keyword="functions",
+                    expression="bundle",
                 ),
             ),
             Mutation("drop_collective_age_specialization", drop_age_specialization),
@@ -518,18 +539,18 @@ def production_trees():
 def test_the_production_source_satisfies_the_class_invariant(production_trees):
     """Guard the guard: the invariant must hold on the unmodified tree."""
     q_tree, p_tree, others = production_trees
-    check_class_invariant(q_tree, p_tree, others)
+    check_class_invariant(q_tree=q_tree, processing_tree=p_tree, other_trees=others)
 
 
 @pytest.mark.parametrize(
     "mutation", mutation_catalog(), ids=lambda mutation: mutation.name
 )
 def test_every_member_of_the_counterexample_class_is_rejected(
-    mutation, production_trees
+    *, mutation, production_trees
 ):
     """Each mutation is one way a collective path can drop or misroute a phase role."""
     q_tree, p_tree, others = (copy.deepcopy(tree) for tree in production_trees)
-    mutation.apply(q_tree, p_tree, others)
+    mutation.apply(q_tree=q_tree, p_tree=p_tree, others=others)
 
     with pytest.raises((AssertionError, KeyError, StopIteration)):
-        check_class_invariant(q_tree, p_tree, others)
+        check_class_invariant(q_tree=q_tree, processing_tree=p_tree, other_trees=others)

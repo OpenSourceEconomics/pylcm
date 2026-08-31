@@ -70,7 +70,7 @@ def _regenerate_inventory(repo_root: Path) -> None:
         )
 
 
-def _sync_contract(contract: Path, *, repo_root: Path) -> None:
+def _sync_contract(*, contract: Path, repo_root: Path) -> None:
     """Rewrite both candidate blocks from the generated inventory."""
     inventory_path = repo_root / INVENTORY
     payload = json.loads(inventory_path.read_text(encoding="utf-8"))
@@ -119,7 +119,7 @@ def _sync_contract(contract: Path, *, repo_root: Path) -> None:
     contract.write_text("\n".join(output) + "\n", encoding="utf-8")
 
 
-def _sync_policy(policy: Path, *, contract: Path, repo_root: Path) -> None:
+def _sync_policy(*, policy: Path, contract: Path, repo_root: Path) -> None:
     inventory_path = repo_root / INVENTORY
     anchor = f"sha256:{_sha256(inventory_path)}"
     try:
@@ -136,8 +136,8 @@ def _sync_policy(policy: Path, *, contract: Path, repo_root: Path) -> None:
 
 
 def _sync_manifest(
-    manifest: Path | None,
     *,
+    manifest: Path | None,
     bundle_root: Path | None,
     repo_root: Path,
     contract: Path | None,
@@ -224,7 +224,7 @@ def _sync_manifest(
 
 
 def _run_verifier(
-    repo_root: Path, *, contract: Path | None, policy: Path | None
+    *, repo_root: Path, contract: Path | None, policy: Path | None
 ) -> tuple[int, dict[str, Any]]:
     command = [
         sys.executable,
@@ -255,13 +255,13 @@ def _synchronize(
 ) -> dict[str, Any] | None:
     _regenerate_inventory(repo_root)
     if contract is not None:
-        _sync_contract(contract, repo_root=repo_root)
+        _sync_contract(contract=contract, repo_root=repo_root)
     if policy is not None:
         if contract is None:
             raise ValueError("--policy requires --contract")
-        _sync_policy(policy, contract=contract, repo_root=repo_root)
+        _sync_policy(policy=policy, contract=contract, repo_root=repo_root)
     return _sync_manifest(
-        manifest,
+        manifest=manifest,
         bundle_root=bundle_root,
         repo_root=repo_root,
         contract=contract,
@@ -345,7 +345,7 @@ def main() -> int:
                 bundle_root=bundle,
             )
             clean_exit, clean_payload = _run_verifier(
-                repo, contract=contract, policy=policy
+                repo_root=repo, contract=contract, policy=policy
             )
             clean_inventory = (repo / INVENTORY).read_text(encoding="utf-8")
             clean_contract = (
@@ -371,7 +371,7 @@ def main() -> int:
                     bundle_root=bundle,
                 )
                 exit_code, payload = _run_verifier(
-                    repo, contract=contract, policy=policy
+                    repo_root=repo, contract=contract, policy=policy
                 )
                 errors = payload.get("errors", [])
                 semantic_errors = [

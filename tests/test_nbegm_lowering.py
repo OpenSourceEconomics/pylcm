@@ -14,7 +14,7 @@ from lcm.case_piece import case_boundary, piece
 from lcm.exceptions import NBEGMCaseError
 
 medicaid_eligible = case_boundary(
-    ref("assets") < ref("medicaid_asset_limit"),
+    condition=ref("assets") < ref("medicaid_asset_limit"),
     kind="jump",
 )
 
@@ -29,7 +29,7 @@ def oop_private(medical_expense):
     return 0.9 * medical_expense
 
 
-def utility(consumption, oop):
+def utility(*, consumption, oop):
     return consumption - oop
 
 
@@ -70,7 +70,7 @@ def test_collect_rejects_a_split_missing_its_otherwise_side():
 def test_collect_rejects_a_piece_referencing_an_undeclared_boundary():
     """A piece whose predicate is not a `case_boundary` cannot be lowered."""
 
-    undeclared_boundary = case_boundary(ref("assets") < 0.0, kind="jump")
+    undeclared_boundary = case_boundary(condition=ref("assets") < 0.0, kind="jump")
 
     @piece(output="oop", when=undeclared_boundary)
     def oop_a(medical_expense):

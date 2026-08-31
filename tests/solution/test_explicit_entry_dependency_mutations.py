@@ -81,25 +81,25 @@ def _good_probs(next_shock: ScalarFloat) -> FloatND:
     )
 
 
-def _two_process_utility(shock: ScalarFloat, other: ScalarFloat) -> FloatND:
+def _two_process_utility(*, shock: ScalarFloat, other: ScalarFloat) -> FloatND:
     return shock + 10.0 * other
 
 
-def _good_utility(good: DiscreteState, shock: ScalarFloat) -> FloatND:
+def _good_utility(*, good: DiscreteState, shock: ScalarFloat) -> FloatND:
     return good + 0.0 * shock
 
 
-def _wealth_utility(wealth: ScalarFloat, shock: ScalarFloat) -> FloatND:
+def _wealth_utility(*, wealth: ScalarFloat, shock: ScalarFloat) -> FloatND:
     return wealth + 0.0 * shock
 
 
-def _source_value(model: Model, params: dict) -> float:
+def _source_value(*, model: Model, params: dict) -> float:
     solution = model.solve(params=params, log_level="debug")
     period = max(p for p in solution if "source" in solution[p])
     return float(np.asarray(solution[period]["source"]).ravel()[0])
 
 
-def _ordered[T](items: list[tuple[str, T]], *, reverse: bool) -> dict[str, T]:
+def _ordered[T](*, items: list[tuple[str, T]], reverse: bool) -> dict[str, T]:
     return dict(reversed(items)) if reverse else dict(items)
 
 
@@ -108,19 +108,20 @@ def _ordered[T](items: list[tuple[str, T]], *, reverse: bool) -> dict[str, T]:
     "reverse", [False, True], ids=["producer_first", "consumer_first"]
 )
 def test_explicit_entry_feeds_another_explicit_entry(
-    enable_jit: bool,  # noqa: FBT001
-    reverse: bool,  # noqa: FBT001
+    *,
+    enable_jit: bool,
+    reverse: bool,
 ) -> None:
     """Two chained entries at 1.5 price the affine target at 16.5, in either order."""
     state_transitions = _ordered(
-        [
+        items=[
             ("shock", {"target": _enter_shock}),
             ("other", {"target": _enter_other}),
         ],
         reverse=reverse,
     )
     target_states = _ordered(
-        [("shock", _process()), ("other", _process())], reverse=reverse
+        items=[("shock", _process()), ("other", _process())], reverse=reverse
     )
     model = Model(
         regimes={
@@ -151,7 +152,7 @@ def test_explicit_entry_feeds_another_explicit_entry(
         "target": {"utility": {}},
     }
     np.testing.assert_almost_equal(
-        _source_value(model, params), 16.5, decimal=DECIMAL_PRECISION
+        _source_value(model=model, params=params), 16.5, decimal=DECIMAL_PRECISION
     )
 
 
@@ -160,19 +161,21 @@ def test_explicit_entry_feeds_another_explicit_entry(
     "reverse", [False, True], ids=["producer_first", "consumer_first"]
 )
 def test_explicit_entry_feeds_stochastic_weight_law(
-    enable_jit: bool,  # noqa: FBT001
-    reverse: bool,  # noqa: FBT001
+    *,
+    enable_jit: bool,
+    reverse: bool,
 ) -> None:
     """A Markov law reading the entry sees 1.5, so all mass lands on `good` (1.0)."""
     state_transitions = _ordered(
-        [
+        items=[
             ("shock", {"target": _enter_shock}),
             ("good", {"target": MarkovTransition(_good_probs)}),
         ],
         reverse=reverse,
     )
     target_states = _ordered(
-        [("shock", _process()), ("good", DiscreteGrid(Good))], reverse=reverse
+        items=[("shock", _process()), ("good", DiscreteGrid(category_class=Good))],
+        reverse=reverse,
     )
     model = Model(
         regimes={
@@ -201,7 +204,7 @@ def test_explicit_entry_feeds_stochastic_weight_law(
         "target": {"utility": {}},
     }
     np.testing.assert_almost_equal(
-        _source_value(model, params), 1.0, decimal=DECIMAL_PRECISION
+        _source_value(model=model, params=params), 1.0, decimal=DECIMAL_PRECISION
     )
 
 
@@ -210,8 +213,9 @@ def test_explicit_entry_feeds_stochastic_weight_law(
     "reverse", [False, True], ids=["producer_first", "consumer_first"]
 )
 def test_explicit_entry_feeds_an_ordinary_deterministic_law(
-    enable_jit: bool,  # noqa: FBT001
-    reverse: bool,  # noqa: FBT001
+    *,
+    enable_jit: bool,
+    reverse: bool,
 ) -> None:
     """`next_wealth = 2 * next_shock` receives 1.5, so the target enters at wealth 3.0.
 
@@ -220,14 +224,14 @@ def test_explicit_entry_feeds_an_ordinary_deterministic_law(
     `(0, 2, 4)`, none of which is 3.0.
     """
     state_transitions = _ordered(
-        [
+        items=[
             ("shock", {"target": _enter_shock}),
             ("wealth", {"target": _double_the_entry}),
         ],
         reverse=reverse,
     )
     target_states = _ordered(
-        [
+        items=[
             ("shock", _process()),
             ("wealth", LinSpacedGrid(start=0.0, stop=10.0, n_points=11)),
         ],
@@ -260,5 +264,5 @@ def test_explicit_entry_feeds_an_ordinary_deterministic_law(
         "target": {"utility": {}},
     }
     np.testing.assert_almost_equal(
-        _source_value(model, params), 3.0, decimal=DECIMAL_PRECISION
+        _source_value(model=model, params=params), 3.0, decimal=DECIMAL_PRECISION
     )

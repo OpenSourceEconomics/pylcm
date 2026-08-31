@@ -334,7 +334,7 @@ def test_singleton_query_gradient_has_finite_mixed_derivatives():
     exactly zero as well — the padded bracket must not leak NaN into them.
     """
 
-    def query_gradient(fp0, slope0, x0):
+    def query_gradient(*, fp0, slope0, x0):
         row_xp = jnp.array([1.0, jnp.nan, jnp.nan]).at[0].set(x0)
         row_fp = jnp.array([5.0, jnp.nan, jnp.nan]).at[0].set(fp0)
         row_slopes = jnp.array([2.0, jnp.nan, jnp.nan]).at[0].set(slope0)
@@ -378,6 +378,7 @@ def test_singleton_linear_read_has_finite_mixed_derivatives():
     guards this; the linear read must too).
     """
 
+    # keyword-only-exempt: library-callback=jax.grad
     def query_gradient(fp0, x0):
         row_xp = jnp.array([1.0, jnp.nan, jnp.nan]).at[0].set(x0)
         row_fp = jnp.array([5.0, jnp.nan, jnp.nan]).at[0].set(fp0)
@@ -404,7 +405,7 @@ def test_singleton_linear_read_has_finite_mixed_derivatives():
     ],
     ids=["hermite", "linear", "hermite-singleton", "linear-singleton"],
 )
-def test_nan_query_gradient_is_nan_on_every_row_shape(fp_slopes, xp):
+def test_nan_query_gradient_is_nan_on_every_row_shape(*, fp_slopes, xp):
     """`jax.grad` at a NaN query is NaN — fail-loud, matching the value read.
 
     A NaN query marks an upstream failure; the value read re-pins it to NaN on

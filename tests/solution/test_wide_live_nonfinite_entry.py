@@ -82,6 +82,7 @@ def _zero_utility() -> FloatND:
 
 
 def _income_utility_of_three_draws(
+    *,
     income: ScalarFloat,
     draw_0: DiscreteState,
     draw_1: DiscreteState,
@@ -92,6 +93,7 @@ def _income_utility_of_three_draws(
 
 
 def _income_utility_of_four_draws(
+    *,
     income: ScalarFloat,
     draw_0: DiscreteState,
     draw_1: DiscreteState,
@@ -121,6 +123,7 @@ def _make_entry(rare_entry: float):
     if _n_axes() == 3:
 
         def entry_income(
+            *,
             next_draw_0: DiscreteState,
             next_draw_1: DiscreteState,
             next_draw_2: DiscreteState,
@@ -135,6 +138,7 @@ def _make_entry(rare_entry: float):
         return entry_income
 
     def entry_income(
+        *,
         next_draw_0: DiscreteState,
         next_draw_1: DiscreteState,
         next_draw_2: DiscreteState,
@@ -201,7 +205,7 @@ def _build_model(
                 transition=None,
                 states={
                     "income": UniformIIDProcess(start=0.0, stop=2.0, n_points=3),
-                    **{name: DiscreteGrid(Draw) for name in axis_names},
+                    **{name: DiscreteGrid(category_class=Draw) for name in axis_names},
                 },
                 functions={
                     "utility": (

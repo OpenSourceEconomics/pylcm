@@ -25,7 +25,7 @@ def _fixture_dtype():
     return jnp.float64 if conftest.X64_ENABLED else jnp.float32
 
 
-def _bits(value, *, dtype) -> int:
+def _bits(*, value, dtype) -> int:
     """Return the stored bit pattern of `value` in `dtype`."""
     unsigned = np.uint64 if dtype == jnp.float64 else np.uint32
     return int(np.asarray(value, dtype=dtype).view(unsigned))
@@ -64,7 +64,9 @@ def test_line_value_publishes_a_subnormal_result_from_normal_endpoints(dtype):
         ordinate=jnp.asarray([v0, v1], dtype=dtype),
     )
 
-    assert _bits(published, dtype=dtype) == _bits(smallest_subnormal, dtype=dtype)
+    assert _bits(value=published, dtype=dtype) == _bits(
+        value=smallest_subnormal, dtype=dtype
+    )
 
 
 def test_line_value_returns_the_stored_ordinate_at_a_node(dtype):
@@ -79,7 +81,7 @@ def test_line_value_returns_the_stored_ordinate_at_a_node(dtype):
         endog_grid=endog_grid,
         ordinate=ordinate,
     )
-    assert _bits(at_low, dtype=dtype) == _bits(ordinate[0], dtype=dtype)
+    assert _bits(value=at_low, dtype=dtype) == _bits(value=ordinate[0], dtype=dtype)
 
 
 def test_line_value_is_correctly_rounded_on_an_ordinary_link(dtype):
@@ -104,4 +106,4 @@ def test_line_value_is_correctly_rounded_on_an_ordinary_link(dtype):
         endog_grid=endog_grid,
         ordinate=ordinate,
     )
-    assert _bits(published, dtype=dtype) == _bits(expected, dtype=dtype)
+    assert _bits(value=published, dtype=dtype) == _bits(value=expected, dtype=dtype)

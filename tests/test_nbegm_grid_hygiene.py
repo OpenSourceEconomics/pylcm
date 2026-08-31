@@ -80,7 +80,7 @@ def _nnbegm(*, kind, name):
         ("states", "liquid", "grid of the liquid state 'liquid'"),
     ],
 )
-def test_nbegm_names_a_runtime_supplied_grid_its_kernel_reads(kind, name, role):
+def test_nbegm_names_a_runtime_supplied_grid_its_kernel_reads(*, kind, name, role):
     """The refusal identifies the regime and what the grid is to the solver."""
     with pytest.raises(ModelInitializationError, match=f"{role} in regime 'alive'"):
         _nbegm(kind=kind, name=name)
@@ -102,7 +102,7 @@ def test_nbegm_accepts_a_runtime_supplied_continuous_action_grid():
         ("states", "wealth", "grid of the liquid state 'wealth'"),
     ],
 )
-def test_nnbegm_names_a_runtime_supplied_grid_its_kernel_reads(kind, name, role):
+def test_nnbegm_names_a_runtime_supplied_grid_its_kernel_reads(*, kind, name, role):
     """Both margins' kernel grids are named the same way the one-margin ones are."""
     with pytest.raises(ModelInitializationError, match=f"{role} in regime 'alive'"):
         _nnbegm(kind=kind, name=name)

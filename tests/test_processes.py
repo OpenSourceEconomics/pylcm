@@ -124,7 +124,7 @@ _GRID_CLASSES_WITH_GH_KWARG = [
 
 
 @pytest.mark.parametrize(("grid_cls", "extra_kw"), _GRID_CLASSES_WITH_GH_KWARG)
-def test_process_grid_correct_shape_without_params(grid_cls, extra_kw):
+def test_process_grid_correct_shape_without_params(*, grid_cls, extra_kw):
     """A process grid without params returns correct-shape arrays."""
     grid = grid_cls(n_points=3, **extra_kw)
     assert not grid.is_fully_specified
@@ -190,7 +190,7 @@ def test_process_grid_correct_shape_without_params(grid_cls, extra_kw):
         ),
     ],
 )
-def test_process_grid_fully_specified_with_all_params(grid_cls, kwargs):
+def test_process_grid_fully_specified_with_all_params(*, grid_cls, kwargs):
     """A process grid with all params provided is fully specified."""
     grid = grid_cls(n_points=3, **kwargs)
     assert grid.is_fully_specified
@@ -427,7 +427,7 @@ def test_iid_normal_mixture_stationary_moments():
         n_points=21, batch_size=0, distributed=False, **kwargs
     )
     got_mean, got_std = _stationary_moments(
-        grid.get_gridpoints(), grid.get_transition_probs()
+        gridpoints=grid.get_gridpoints(), P=grid.get_transition_probs()
     )
     p1 = kwargs["p1"]
     mu1, mu2 = kwargs["mu1"], kwargs["mu2"]
@@ -495,11 +495,11 @@ def test_tauchen_normal_mixture_stationary_moments_and_autocorrelation():
     )
     expected_std = float(jnp.sqrt(sigma_eps_sq / (1 - rho**2)))
 
-    got_mean, got_std = _stationary_moments(points, P)
+    got_mean, got_std = _stationary_moments(gridpoints=points, P=P)
     aaae(got_mean, expected_mean, decimal=1)
     aaae(got_std, expected_std, decimal=1)
 
-    got_rho = _lag1_autocorrelation(points, P)
+    got_rho = _lag1_autocorrelation(gridpoints=points, P=P)
     aaae(got_rho, rho, decimal=1)
 
 
@@ -551,7 +551,7 @@ def test_rouwenhorst_matches_quantecon(case):
     aaae(grid.get_transition_probs(), qe.P, decimal=DECIMAL_PRECISION)
 
 
-def _stationary_moments(gridpoints, P):
+def _stationary_moments(*, gridpoints, P):
     """Compute mean and variance from the stationary distribution of a Markov chain."""
     # Stationary distribution: solve pi @ P = pi via eigendecomposition
     eigvals, eigvecs = jnp.linalg.eig(P.T)
@@ -563,7 +563,7 @@ def _stationary_moments(gridpoints, P):
     return float(mean), float(jnp.sqrt(var))
 
 
-def _lag1_autocorrelation(gridpoints, P):
+def _lag1_autocorrelation(*, gridpoints, P):
     """Compute lag-1 autocorrelation from gridpoints and transition matrix."""
     eigvals, eigvecs = jnp.linalg.eig(P.T)
     idx = jnp.argmin(jnp.abs(eigvals - 1.0))
@@ -588,7 +588,7 @@ def test_iid_normal_stationary_moments(gauss_hermite):
         n_std=None if gauss_hermite else 4.0,
     )
     got_mean, got_std = _stationary_moments(
-        grid.get_gridpoints(), grid.get_transition_probs()
+        gridpoints=grid.get_gridpoints(), P=grid.get_transition_probs()
     )
     aaae(got_mean, mu, decimal=1)
     aaae(got_std, sigma, decimal=1)
@@ -607,7 +607,7 @@ def test_iid_lognormal_stationary_moments(gauss_hermite):
     )
     points = grid.get_gridpoints()
     P = grid.get_transition_probs()
-    got_mean, got_std = _stationary_moments(jnp.log(points), P)
+    got_mean, got_std = _stationary_moments(gridpoints=jnp.log(points), P=P)
     aaae(got_mean, mu, decimal=1)
     aaae(got_std, sigma, decimal=1)
 
@@ -621,7 +621,7 @@ def test_iid_lognormal_stationary_moments(gauss_hermite):
     ],
     ids=["tauchen-gh", "tauchen-linspace", "rouwenhorst"],
 )
-def test_ar1_stationary_moments_and_autocorrelation(grid_cls, extra_kw):
+def test_ar1_stationary_moments_and_autocorrelation(*, grid_cls, extra_kw):
     """AR(1) stationary mean, std, and lag-1 autocorrelation match theory."""
     rho, sigma, mu = 0.8, 0.4, 1.0
     grid = grid_cls(n_points=21, rho=rho, sigma=sigma, mu=mu, **extra_kw)
@@ -631,9 +631,9 @@ def test_ar1_stationary_moments_and_autocorrelation(grid_cls, extra_kw):
     expected_mean = mu / (1 - rho)
     expected_std = sigma / jnp.sqrt(1 - rho**2)
 
-    got_mean, got_std = _stationary_moments(points, P)
+    got_mean, got_std = _stationary_moments(gridpoints=points, P=P)
     aaae(got_mean, expected_mean, decimal=1)
     aaae(got_std, expected_std, decimal=1)
 
-    got_rho = _lag1_autocorrelation(points, P)
+    got_rho = _lag1_autocorrelation(gridpoints=points, P=P)
     aaae(got_rho, rho, decimal=1)

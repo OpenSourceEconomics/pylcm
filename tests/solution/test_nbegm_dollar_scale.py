@@ -41,7 +41,7 @@ def _solve_at_scale(scale: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         next_liquid_grid=liquid_grid,
         savings_grid=savings_grid,
         discount_factor=DISCOUNT_FACTOR,
-        preferences=crra_preferences(CRRA),
+        preferences=crra_preferences(crra=CRRA),
         next_liquid=GROSS_RETURN * savings_grid + 0.5 * scale,
         marginal_return=jnp.full_like(savings_grid, GROSS_RETURN),
         coh_slopes=jnp.asarray([1.0]),

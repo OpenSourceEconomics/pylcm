@@ -50,7 +50,7 @@ def _constant_lottery_mean(*, payoff: float, risk_aversion: float) -> float:
 @pytest.mark.parametrize("risk_aversion", _RISK_AVERSIONS)
 @pytest.mark.parametrize("payoff", _LEVELS)
 def test_a_lottery_paying_one_amount_returns_that_amount_exactly(
-    payoff: float, risk_aversion: float
+    *, payoff: float, risk_aversion: float
 ) -> None:
     """The certainty equivalent of a riskless lottery is its payoff, bit for bit."""
     expected = float(jnp.asarray(payoff, dtype=jnp.zeros(()).dtype))

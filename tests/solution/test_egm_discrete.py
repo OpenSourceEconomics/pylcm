@@ -45,11 +45,11 @@ pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_R
 N_PERIODS = 4
 
 
-def _retirement_stay_prob(age: float, final_age_alive: float) -> FloatND:
+def _retirement_stay_prob(*, age: float, final_age_alive: float) -> FloatND:
     return jnp.where(age >= final_age_alive, 0.0, 1.0)
 
 
-def _retirement_death_prob(age: float, final_age_alive: float) -> FloatND:
+def _retirement_death_prob(*, age: float, final_age_alive: float) -> FloatND:
     return jnp.where(age >= final_age_alive, 1.0, 0.0)
 
 
@@ -73,7 +73,7 @@ def wage_factor(skill: DiscreteState) -> FloatND:
 
 
 def labor_income_by_skill(
-    is_working: BoolND, wage: float, wage_factor: FloatND
+    *, is_working: BoolND, wage: float, wage_factor: FloatND
 ) -> FloatND:
     return jnp.where(is_working, wage * wage_factor, 0.0)
 
@@ -84,7 +84,7 @@ def must_retire(labor_supply: DiscreteAction) -> BoolND:
 
 def _get_skill_model_params(*, wage: float = 20.0) -> dict:
     """Params for the models whose retirement regime names its target."""
-    params = get_full_params(N_PERIODS, discount_factor=0.98, wage=wage)
+    params = get_full_params(n_periods=N_PERIODS, discount_factor=0.98, wage=wage)
     params["retirement"] = {"next_wealth": {"labor_income": 0.0}}
     return params
 
@@ -97,7 +97,7 @@ def _get_skill_model() -> Model:
     working_life = dcegm_working_life.replace(
         states={
             "wealth": dcegm_working_life.states["wealth"],
-            "skill": DiscreteGrid(Skill),
+            "skill": DiscreteGrid(category_class=Skill),
         },
         state_transitions={
             "wealth": dcegm_working_life.state_transitions["wealth"],
@@ -161,12 +161,14 @@ def test_discrete_state_slices_match_single_type_models():
     skill_solution = _get_skill_model().solve(
         params=_get_skill_model_params(), log_level="debug"
     )
-    base_model = get_full_model("dcegm", N_PERIODS)
-    params = get_full_params(N_PERIODS, discount_factor=0.98, wage=20.0)
+    base_model = get_full_model(solver="dcegm", n_periods=N_PERIODS)
+    params = get_full_params(n_periods=N_PERIODS, discount_factor=0.98, wage=20.0)
     single_type_solutions = {
         "low": base_model.solve(params=params, log_level="debug"),
         "high": base_model.solve(
-            params=get_full_params(N_PERIODS, discount_factor=0.98, wage=40.0),
+            params=get_full_params(
+                n_periods=N_PERIODS, discount_factor=0.98, wage=40.0
+            ),
             log_level="debug",
         ),
     }
@@ -193,7 +195,7 @@ def test_infeasible_discrete_action_recovers_retirement_value():
     equation. Any NaN leak from the infeasible rows would poison the parent's
     aggregation (the solve runs at `log_level="debug"`, which raises on NaN).
     """
-    params = get_full_params(N_PERIODS, discount_factor=0.98, wage=20.0)
+    params = get_full_params(n_periods=N_PERIODS, discount_factor=0.98, wage=20.0)
 
     solution = _get_must_retire_model().solve(params=params, log_level="debug")
 
@@ -221,7 +223,10 @@ def test_discrete_state_layout_matches_brute_force(regime_name):
     brute_model = Model(
         regimes={
             "working_life": base.working_life.replace(
-                states={"wealth": base.WEALTH_GRID, "skill": DiscreteGrid(Skill)},
+                states={
+                    "wealth": base.WEALTH_GRID,
+                    "skill": DiscreteGrid(category_class=Skill),
+                },
                 state_transitions={
                     "wealth": base.next_wealth,
                     "skill": fixed_transition("skill"),
@@ -293,7 +298,7 @@ def test_nan_regime_transition_prob_surfaces_as_error():
         ages=ages,
         regime_id_class=RetirementOnlyRegimeId,
     )
-    params = get_retirement_only_params(n_periods)
+    params = get_retirement_only_params(n_periods=n_periods)
     # The granular transition replaces the age-based one, so its param goes
     # and the per-cell survival rate (set to NaN) arrives.
     del params["final_age_alive"]
@@ -397,7 +402,7 @@ def test_all_infeasible_regime_publishes_neg_inf_like_brute_force():
         ages=ages,
         regime_id_class=base.RegimeId,
     )
-    params = get_full_params(N_PERIODS, discount_factor=0.98, wage=20.0)
+    params = get_full_params(n_periods=N_PERIODS, discount_factor=0.98, wage=20.0)
 
     solution = doomed_model.solve(params=params, log_level="debug")
 

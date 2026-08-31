@@ -22,11 +22,12 @@ class RegimeId:
     dead: ScalarInt
 
 
-def _utility(consumption: ContinuousAction, wealth: ContinuousState) -> FloatND:
+def _utility(*, consumption: ContinuousAction, wealth: ContinuousState) -> FloatND:
     return jnp.log(consumption + 1) + 0.01 * wealth
 
 
 def _next_wealth(
+    *,
     wealth: ContinuousState,
     consumption: ContinuousAction,
     interest_rate: float,
@@ -35,7 +36,7 @@ def _next_wealth(
 
 
 def _borrowing_constraint(
-    consumption: ContinuousAction, wealth: ContinuousState
+    *, consumption: ContinuousAction, wealth: ContinuousState
 ) -> FloatND:
     return consumption <= wealth
 
@@ -44,7 +45,7 @@ def _next_regime(period: int) -> FloatND:
     return jnp.where(period >= 1, RegimeId.dead, RegimeId.alive)
 
 
-def _make_model(n_periods=3, *, extra_fixed_params=None):
+def _make_model(*, n_periods=3, extra_fixed_params=None):
     """Create a simple 2-regime model for testing."""
     alive = UserRegime(
         functions={"utility": _utility},
@@ -326,6 +327,7 @@ def _wealth_group(wealth: ContinuousState) -> ScalarInt:
 
 
 def _utility_with_group(
+    *,
     consumption: ContinuousAction,
     wealth_group: ScalarInt,
     group_bonus: FloatND,
@@ -347,7 +349,9 @@ def test_series_fixed_param_with_derived_categoricals():
         constraints={"borrowing_constraint": _borrowing_constraint},
         transition=_next_regime,
         active=lambda age: age < 2,
-        derived_categoricals={"wealth_group": DiscreteGrid(_WealthGroup)},
+        derived_categoricals={
+            "wealth_group": DiscreteGrid(category_class=_WealthGroup)
+        },
     )
     dead = UserRegime(
         transition=None,
@@ -394,7 +398,9 @@ def test_model_broadcast_merges_into_regimes():
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
-        derived_categoricals={"wealth_group": DiscreteGrid(_WealthGroup)},
+        derived_categoricals={
+            "wealth_group": DiscreteGrid(category_class=_WealthGroup)
+        },
     )
     assert isinstance(
         model.user_regimes["alive"].derived_categoricals["wealth_group"], DiscreteGrid
@@ -408,7 +414,7 @@ def test_model_broadcast_same_name_at_both_levels_raises():
     """`derived_categoricals` follows the exactly-one-level rule: a name
     defined at model level and regime level is ambiguous even when the grids
     match."""
-    wg_grid = DiscreteGrid(_WealthGroup)
+    wg_grid = DiscreteGrid(category_class=_WealthGroup)
     alive = UserRegime(
         functions={"utility": _utility_with_group, "wealth_group": _wealth_group},
         states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
@@ -450,7 +456,7 @@ def test_model_broadcast_conflicting_grids_raise():
         constraints={"borrowing_constraint": _borrowing_constraint},
         transition=_next_regime,
         active=lambda age: age < 2,
-        derived_categoricals={"wealth_group": DiscreteGrid(_OtherGroup)},
+        derived_categoricals={"wealth_group": DiscreteGrid(category_class=_OtherGroup)},
     )
     dead = UserRegime(
         transition=None,
@@ -462,7 +468,9 @@ def test_model_broadcast_conflicting_grids_raise():
             regimes={"alive": alive, "dead": dead},
             ages=AgeGrid(start=0, stop=2, step="Y"),
             regime_id_class=RegimeId,
-            derived_categoricals={"wealth_group": DiscreteGrid(_WealthGroup)},
+            derived_categoricals={
+                "wealth_group": DiscreteGrid(category_class=_WealthGroup)
+            },
         )
 
 
@@ -488,19 +496,19 @@ def test_different_regime_derived_categoricals_with_model_broadcast():
         functions={"utility": lambda: 0.0},
         transition=_next_regime,
         active=lambda age: age < 2,
-        derived_categoricals={"group_a": DiscreteGrid(_GroupA)},
+        derived_categoricals={"group_a": DiscreteGrid(category_class=_GroupA)},
     )
     dead = UserRegime(
         transition=None,
         functions={"utility": lambda: 0.0},
         active=lambda age: age >= 2,
-        derived_categoricals={"group_b": DiscreteGrid(_GroupB)},
+        derived_categoricals={"group_b": DiscreteGrid(category_class=_GroupB)},
     )
     model = Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
-        derived_categoricals={"shared": DiscreteGrid(_Shared)},
+        derived_categoricals={"shared": DiscreteGrid(category_class=_Shared)},
     )
     assert "group_a" in model.user_regimes["alive"].derived_categoricals
     assert "shared" in model.user_regimes["alive"].derived_categoricals

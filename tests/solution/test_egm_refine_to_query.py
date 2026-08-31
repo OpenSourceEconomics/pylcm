@@ -133,7 +133,7 @@ _CANDIDATE_SETS = {
 }
 
 
-def _kink_abscissa(grid, policy, value, n_pad):
+def _kink_abscissa(*, grid, policy, value, n_pad):
     """Return the lower duplicated-kink abscissa of a refined envelope, or None."""
     refined_grid, _, _, _ = fues.refine_envelope(
         endog_grid=grid, policy=policy, value=value, n_refined=n_pad
@@ -144,7 +144,7 @@ def _kink_abscissa(grid, policy, value, n_pad):
     return None if duplicates.size == 0 else float(duplicates[0])
 
 
-def _reference(grid, policy, value, x_query, n_pad):
+def _reference(*, grid, policy, value, x_query, n_pad):
     """Row-then-interpolate: refine to a full row, then publish the scalar."""
     dead = jnp.isneginf(value)
     refined_grid, refined_policy, refined_value, n_kept = fues.refine_envelope(
@@ -166,7 +166,7 @@ def _reference(grid, policy, value, x_query, n_pad):
     )
 
 
-def _streamed(grid, policy, value, x_query, n_pad):
+def _streamed(*, grid, policy, value, x_query, n_pad):
     """Refine-to-bracket: fold the single query into the scan, then publish."""
     dead = jnp.isneginf(value)
     bracket = fues.refine_to_bracket(
@@ -186,9 +186,13 @@ def _streamed(grid, policy, value, x_query, n_pad):
     )
 
 
-def _assert_equivalent(grid, policy, value, x_query, n_pad):
-    ref_v, ref_p = _reference(grid, policy, value, x_query, n_pad)
-    got_v, got_p = _streamed(grid, policy, value, x_query, n_pad)
+def _assert_equivalent(*, grid, policy, value, x_query, n_pad):
+    ref_v, ref_p = _reference(
+        grid=grid, policy=policy, value=value, x_query=x_query, n_pad=n_pad
+    )
+    got_v, got_p = _streamed(
+        grid=grid, policy=policy, value=value, x_query=x_query, n_pad=n_pad
+    )
     np.testing.assert_allclose(float(got_v), float(ref_v), atol=_ATOL)
     # Policy is published as NaN exactly where the reference does (e.g. a poisoned
     # single-live / overflow read); compare NaN-for-NaN, value otherwise.
@@ -206,7 +210,7 @@ def test_streamed_matches_row_then_interp_on_interior_query(name):
     # finite point even for the all-dead set (whose envelope is empty).
     raw_grid = np.asarray(grid)
     x_query = float(0.5 * (raw_grid.min() + raw_grid.max()))
-    _assert_equivalent(grid, policy, value, x_query, n_pad=16)
+    _assert_equivalent(grid=grid, policy=policy, value=value, x_query=x_query, n_pad=16)
 
 
 @pytest.mark.parametrize("name", list(_CANDIDATE_SETS))
@@ -214,7 +218,7 @@ def test_streamed_matches_row_then_interp_below_first_point(name):
     """A query below the lowest envelope point edge-clamps identically."""
     grid, policy, value = _CANDIDATE_SETS[name]
     x_query = float(np.min(np.asarray(grid))) - 1.0
-    _assert_equivalent(grid, policy, value, x_query, n_pad=16)
+    _assert_equivalent(grid=grid, policy=policy, value=value, x_query=x_query, n_pad=16)
 
 
 @pytest.mark.parametrize("name", list(_CANDIDATE_SETS))
@@ -222,7 +226,7 @@ def test_streamed_matches_row_then_interp_above_last_point(name):
     """A query above the highest envelope point edge-clamps identically."""
     grid, policy, value = _CANDIDATE_SETS[name]
     x_query = float(np.max(np.asarray(grid))) + 1.0
-    _assert_equivalent(grid, policy, value, x_query, n_pad=16)
+    _assert_equivalent(grid=grid, policy=policy, value=value, x_query=x_query, n_pad=16)
 
 
 @pytest.mark.parametrize(
@@ -237,9 +241,9 @@ def test_streamed_matches_row_then_interp_exactly_on_kink(name):
     row-then-interpolate publish there — the dominant correctness risk.
     """
     grid, policy, value = _CANDIDATE_SETS[name]
-    x_query = _kink_abscissa(grid, policy, value, n_pad=16)
+    x_query = _kink_abscissa(grid=grid, policy=policy, value=value, n_pad=16)
     assert x_query is not None, "fixture must produce a duplicated kink abscissa"
-    _assert_equivalent(grid, policy, value, x_query, n_pad=16)
+    _assert_equivalent(grid=grid, policy=policy, value=value, x_query=x_query, n_pad=16)
 
 
 def test_streamed_matches_row_then_interp_on_overflow():
@@ -247,8 +251,12 @@ def test_streamed_matches_row_then_interp_on_overflow():
     grid, policy, value = _crossing_segments_candidates()
     x_query = float(np.median(np.asarray(grid)))
     # `n_pad` below the envelope's kept-point count forces the overflow poison.
-    got_v, got_p = _streamed(grid, policy, value, x_query, n_pad=4)
-    ref_v, ref_p = _reference(grid, policy, value, x_query, n_pad=4)
+    got_v, got_p = _streamed(
+        grid=grid, policy=policy, value=value, x_query=x_query, n_pad=4
+    )
+    ref_v, ref_p = _reference(
+        grid=grid, policy=policy, value=value, x_query=x_query, n_pad=4
+    )
     assert np.isnan(float(ref_v))
     assert np.isnan(float(got_v))
     assert np.isnan(float(ref_p))

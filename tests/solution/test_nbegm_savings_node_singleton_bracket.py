@@ -50,7 +50,7 @@ def test_single_point_savings_node_action_stays_on_the_envelope():
         liquid_grid=liquid_grid,
         savings_grid=savings_grid,
         discount_factor=jnp.asarray(_DISCOUNT),
-        preferences=crra_preferences(_CRRA),
+        preferences=crra_preferences(crra=_CRRA),
         coh_slopes=coh_slopes,
         coh_intercepts=coh_intercepts,
         breakpoints=breakpoints,

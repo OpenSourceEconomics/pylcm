@@ -20,7 +20,7 @@ def _as_template(plain: dict) -> ParamsTemplate:
     return cast("ParamsTemplate", ensure_containers_are_immutable(plain))
 
 
-def _expected_flat_keys(params_template, regime):
+def _expected_flat_keys(*, params_template, regime):
     return {
         f"{func}__{arg}"
         for func, func_params in params_template[regime].items()
@@ -64,7 +64,7 @@ def test_params_at_function_level(params_template):
     # Check that output is flat per regime (function__param format)
     for regime in params_template:
         assert set(flat_params[regime].keys()) == _expected_flat_keys(
-            params_template, regime
+            params_template=params_template, regime=regime
         )
 
 
@@ -83,7 +83,7 @@ def test_params_at_regime_level(params_template):
     assert set(flat_params.keys()) == set(params_template.keys())
     for regime in params_template:
         assert set(flat_params[regime].keys()) == _expected_flat_keys(
-            params_template, regime
+            params_template=params_template, regime=regime
         )
 
 
@@ -106,7 +106,7 @@ def test_params_mixed_regime_function_level(params_template):
     assert set(flat_params.keys()) == set(params_template.keys())
     for regime in params_template:
         assert set(flat_params[regime].keys()) == _expected_flat_keys(
-            params_template, regime
+            params_template=params_template, regime=regime
         )
 
 
@@ -119,7 +119,7 @@ def test_params_at_model_level(params_template):
     assert set(flat_params.keys()) == set(params_template.keys())
     for regime in params_template:
         assert set(flat_params[regime].keys()) == _expected_flat_keys(
-            params_template, regime
+            params_template=params_template, regime=regime
         )
 
 

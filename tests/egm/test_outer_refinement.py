@@ -32,7 +32,7 @@ def test_unimodal_interior_maxima_beat_the_coarse_grid() -> None:
 
     nodes = jnp.linspace(0.0, 1.0, 7)
     result = safeguarded_continuous_argmax(
-        objective,
+        objective=objective,
         nodes=nodes,
         node_values=objective(nodes[:, None]),
         golden_iterations=_GOLDEN_ITERATIONS,
@@ -53,7 +53,7 @@ def test_multimodal_surface_selects_the_global_basin() -> None:
 
     nodes = jnp.linspace(0.0, 1.0, 21)
     result = safeguarded_continuous_argmax(
-        objective,
+        objective=objective,
         nodes=nodes,
         node_values=objective(nodes[:, None]),
         golden_iterations=_GOLDEN_ITERATIONS,
@@ -70,7 +70,7 @@ def test_boundary_maximum_is_kept_exactly() -> None:
 
     nodes = jnp.linspace(0.0, 1.0, 5)
     result = safeguarded_continuous_argmax(
-        objective,
+        objective=objective,
         nodes=nodes,
         node_values=objective(nodes[:, None]),
         golden_iterations=_GOLDEN_ITERATIONS,
@@ -84,7 +84,7 @@ def test_boundary_maximum_is_kept_exactly() -> None:
 def test_flat_surface_ties_break_to_the_smallest_abscissa() -> None:
     nodes = jnp.linspace(2.0, 5.0, 9)
     result = safeguarded_continuous_argmax(
-        jnp.zeros_like,
+        objective=jnp.zeros_like,
         nodes=nodes,
         node_values=jnp.zeros((9, 1)),
         golden_iterations=17,
@@ -97,7 +97,7 @@ def test_all_invalid_cell_is_reported_invalid() -> None:
     nodes = jnp.linspace(0.0, 1.0, 5)
     values = jnp.stack([jnp.full(5, -jnp.inf), jnp.linspace(0.0, 1.0, 5)], axis=1)
     result = safeguarded_continuous_argmax(
-        lambda x: jnp.broadcast_to(x, x.shape),
+        objective=lambda x: jnp.broadcast_to(x, x.shape),
         nodes=nodes,
         node_values=values,
         golden_iterations=10,
@@ -117,7 +117,7 @@ def test_broken_surrogate_cannot_lose_the_exact_winner() -> None:
         return jnp.full(jnp.broadcast_shapes(x.shape, (1,)), -jnp.inf)
 
     result = safeguarded_continuous_argmax(
-        broken,
+        objective=broken,
         nodes=nodes,
         node_values=exact,
         golden_iterations=_GOLDEN_ITERATIONS,
@@ -162,7 +162,7 @@ def test_adaptive_mesh_converges_on_a_smooth_surface() -> None:
         )
 
     search = safeguarded_continuous_argmax(
-        objective,
+        objective=objective,
         nodes=result.nodes,
         node_values=result.node_values,
         golden_iterations=_GOLDEN_ITERATIONS,

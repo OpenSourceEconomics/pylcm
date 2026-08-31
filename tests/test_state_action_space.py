@@ -12,6 +12,7 @@ from lcm.typing import ScalarInt
 
 
 def _create_variables(
+    *,
     discrete_states: list[str],
     continuous_states: list[str],
     discrete_actions: list[str],
@@ -49,7 +50,7 @@ def test_create_state_action_space_solution_discrete_action_continuous_state():
     grids = MappingProxyType(
         {
             "wealth": IrregSpacedGrid(points=[0.0, 50.0, 100.0]),
-            "work": DiscreteGrid(WorkChoice),
+            "work": DiscreteGrid(category_class=WorkChoice),
         }
     )
 
@@ -108,7 +109,7 @@ def test_state_action_space_replace_method():
     grids = MappingProxyType(
         {
             "wealth": IrregSpacedGrid(points=[0.0, 50.0, 100.0]),
-            "work": DiscreteGrid(WorkChoice),
+            "work": DiscreteGrid(category_class=WorkChoice),
         }
     )
 
@@ -136,7 +137,7 @@ def test_create_v_interpolation_info():
         functions={"utility": lambda wealth: wealth},
         states={
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
-            "health": DiscreteGrid(Health),
+            "health": DiscreteGrid(category_class=Health),
         },
         state_transitions={
             "wealth": lambda wealth: wealth,

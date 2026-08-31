@@ -35,6 +35,7 @@ class LaborSupply:
 
 
 def _utility_f(
+    *,
     consumption: ContinuousAction,
     labor_supply_f: DiscreteAction,
     match_quality: float,
@@ -48,6 +49,7 @@ def _utility_f(
 
 
 def _utility_m(
+    *,
     consumption: ContinuousAction,
     labor_supply_m: DiscreteAction,
     match_quality: float,
@@ -93,7 +95,7 @@ def test_declaring_non_terminal_stakeholders_constructs():
     regime = Regime(
         transition=_some_transition,
         states={"wealth": _WEALTH},
-        actions={"labor_supply_f": DiscreteGrid(LaborSupply)},
+        actions={"labor_supply_f": DiscreteGrid(category_class=LaborSupply)},
         state_transitions={"wealth": lambda wealth: wealth},
         functions={
             "utility": CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
@@ -116,8 +118,8 @@ def test_terminal_stakeholders_without_per_stakeholder_utility_is_rejected():
         states={"wealth": _WEALTH},
         state_transitions={"wealth": fixed_transition("wealth")},
         actions={
-            "labor_supply_f": DiscreteGrid(LaborSupply),
-            "labor_supply_m": DiscreteGrid(LaborSupply),
+            "labor_supply_f": DiscreteGrid(category_class=LaborSupply),
+            "labor_supply_m": DiscreteGrid(category_class=LaborSupply),
             "consumption": _CONSUMPTION,
         },
         functions={
@@ -129,7 +131,7 @@ def test_terminal_stakeholders_without_per_stakeholder_utility_is_rejected():
         active=lambda age: age >= 1,
         states={"wealth": _WEALTH},
         actions={
-            "labor_supply_f": DiscreteGrid(LaborSupply),
+            "labor_supply_f": DiscreteGrid(category_class=LaborSupply),
             "consumption": _CONSUMPTION,
         },
         functions={

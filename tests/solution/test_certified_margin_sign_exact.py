@@ -85,26 +85,28 @@ def _exact_sign(*, link_a, link_b, x_query, dtype) -> int:
     """
     values = []
     for x0, x1, v0, v1 in (link_a, link_b):
-        query = _exact(x_query, dtype=dtype)
-        numerator = _exact(v0, dtype=dtype) * (
-            _exact(x1, dtype=dtype) - query
-        ) + _exact(v1, dtype=dtype) * (query - _exact(x0, dtype=dtype))
-        values.append(numerator / (_exact(x1, dtype=dtype) - _exact(x0, dtype=dtype)))
+        query = _exact(term=x_query, dtype=dtype)
+        numerator = _exact(term=v0, dtype=dtype) * (
+            _exact(term=x1, dtype=dtype) - query
+        ) + _exact(term=v1, dtype=dtype) * (query - _exact(term=x0, dtype=dtype))
+        values.append(
+            numerator / (_exact(term=x1, dtype=dtype) - _exact(term=x0, dtype=dtype))
+        )
     difference = values[0] - values[1]
     return (difference > 0) - (difference < 0)
 
 
-def _exact(term, *, dtype) -> Fraction:
+def _exact(*, term, dtype) -> Fraction:
     """Return the exact value of `term` after rounding it to `dtype`."""
     return Fraction(float(np.asarray(term, dtype=dtype)))
 
 
-def _as_dtype(link, *, dtype):
+def _as_dtype(*, link, dtype):
     return [jnp.asarray(term, dtype=dtype) for term in link]
 
 
 @pytest.mark.parametrize("case_index", range(5))
-def test_certified_margin_sign_orders_links_that_underflow(case_index, dtype):
+def test_certified_margin_sign_orders_links_that_underflow(*, case_index, dtype):
     """Links whose differences underflow are still ordered by their exact values."""
     pairs = _UNDERFLOWING_PAIRS_F32 if dtype == jnp.float32 else _UNDERFLOWING_PAIRS_F64
     link_a, link_b, x_query = pairs[case_index]
@@ -113,8 +115,8 @@ def test_certified_margin_sign_orders_links_that_underflow(case_index, dtype):
     # on the way into the narrower format would test nothing.
     assert expected != 0
 
-    a_x0, a_x1, a_v0, a_v1 = _as_dtype(link_a, dtype=dtype)
-    b_x0, b_x1, b_v0, b_v1 = _as_dtype(link_b, dtype=dtype)
+    a_x0, a_x1, a_v0, a_v1 = _as_dtype(link=link_a, dtype=dtype)
+    b_x0, b_x1, b_v0, b_v1 = _as_dtype(link=link_b, dtype=dtype)
 
     got = certified_margin_sign(
         a_x0=a_x0,
@@ -133,7 +135,7 @@ def test_certified_margin_sign_orders_links_that_underflow(case_index, dtype):
 
 def test_certified_margin_sign_reports_a_tie_only_for_one_line(dtype):
     """A tie is published only where the two rational lines are exactly equal."""
-    shared = _as_dtype((0.0, 2.0, 1.0, 3.0), dtype=dtype)
+    shared = _as_dtype(link=(0.0, 2.0, 1.0, 3.0), dtype=dtype)
     got = certified_margin_sign(
         a_x0=shared[0],
         a_x1=shared[1],
@@ -150,7 +152,7 @@ def test_certified_margin_sign_reports_a_tie_only_for_one_line(dtype):
 
 def test_certified_margin_sign_is_unresolved_on_a_nonfinite_operand(dtype):
     """A non-finite operand yields the unresolved code, never a sign."""
-    link = _as_dtype((0.0, 2.0, 1.0, 3.0), dtype=dtype)
+    link = _as_dtype(link=(0.0, 2.0, 1.0, 3.0), dtype=dtype)
     got = certified_margin_sign(
         a_x0=link[0],
         a_x1=link[1],

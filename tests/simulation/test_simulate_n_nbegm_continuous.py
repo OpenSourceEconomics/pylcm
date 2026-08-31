@@ -167,7 +167,7 @@ def test_simulation_is_deterministic(simulated: pd.DataFrame) -> None:
 
 
 def _terminal_strictly_prefers_the_lower_durable(
-    wealth: ContinuousState, illiquid: ContinuousState
+    *, wealth: ContinuousState, illiquid: ContinuousState
 ) -> FloatND:
     """Keep a positive liquid marginal while making stock zero the strict optimum."""
     return jnp.log1p(wealth) - 100.0 * jnp.square(illiquid)

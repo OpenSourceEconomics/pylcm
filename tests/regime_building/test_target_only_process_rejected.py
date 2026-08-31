@@ -229,7 +229,9 @@ def test_process_only_target_matches_equivalent_target_with_inert_nonprocess_law
             enable_jit=False,
         )
 
-    def _shock_and_inert_utility(shock: ScalarFloat, extra: ScalarFloat) -> ScalarFloat:
+    def _shock_and_inert_utility(
+        *, shock: ScalarFloat, extra: ScalarFloat
+    ) -> ScalarFloat:
         return shock + jnp.float32(0) * extra
 
     def _process_and_inert_law_model() -> Model:
@@ -466,7 +468,7 @@ def test_target_only_discrete_state_on_a_nonterminal_target_is_rejected() -> Non
                 ),
                 "target": Regime(
                     transition={"terminal": MarkovTransition(_one_probability)},
-                    states={"shock": DiscreteGrid(_Outcome)},
+                    states={"shock": DiscreteGrid(category_class=_Outcome)},
                     # Target's own outgoing (target -> terminal) law satisfies
                     # completeness; it says nothing about the incoming
                     # (source -> target) edge under test.
@@ -544,7 +546,7 @@ def test_markov_entry_law_spreads_the_source_over_the_target_lottery() -> None:
             ),
             "target": Regime(
                 transition=None,
-                states={"shock": DiscreteGrid(_Outcome)},
+                states={"shock": DiscreteGrid(category_class=_Outcome)},
                 functions={"utility": _outcome_utility},
             ),
         },
@@ -562,7 +564,7 @@ def test_markov_entry_law_spreads_the_source_over_the_target_lottery() -> None:
 
 @pytest.mark.parametrize(("period", "expected"), [(0, 9.5), (1, 3.0)])
 def test_markov_entry_law_reads_the_source_age_and_its_own_params(
-    period: int, expected: float
+    *, period: int, expected: float
 ) -> None:
     """An entry law is priced at the source's age, from its own runtime params.
 
@@ -577,7 +579,7 @@ def test_markov_entry_law_reads_the_source_age_and_its_own_params(
         low: ScalarInt
         high: ScalarInt
 
-    def _entry_probs(age: float, entry_table: FloatND) -> FloatND:
+    def _entry_probs(*, age: float, entry_table: FloatND) -> FloatND:
         return entry_table[jnp.int32(age) - 20]
 
     def _outcome_utility(shock: DiscreteState) -> FloatND:
@@ -593,7 +595,7 @@ def test_markov_entry_law_reads_the_source_age_and_its_own_params(
             ),
             "target": Regime(
                 transition=None,
-                states={"shock": DiscreteGrid(_Outcome)},
+                states={"shock": DiscreteGrid(category_class=_Outcome)},
                 functions={"utility": _outcome_utility},
             ),
         },

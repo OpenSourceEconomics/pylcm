@@ -87,12 +87,12 @@ def _bits(x: object) -> object:
     return arr.view(view)
 
 
-def _product_masked_average(a: FloatND, w: FloatND) -> FloatND:
+def _product_masked_average(*, a: FloatND, w: FloatND) -> FloatND:
     """Mask the PRODUCT after the multiply, which blocks FMA fusion."""
     return jnp.sum(jnp.where(w == 0, jnp.zeros((), a.dtype), w * a)) / jnp.sum(w)
 
 
-def _product_masked_average_axis(a: FloatND, w: FloatND) -> FloatND:
+def _product_masked_average_axis(*, a: FloatND, w: FloatND) -> FloatND:
     """Product-masking recipe, reduced along `axis=1` (per row)."""
     w2 = jnp.reshape(w, (1, -1))
     numerator = jnp.sum(jnp.where(w2 == 0, jnp.zeros((), a.dtype), w2 * a), axis=1)
@@ -101,7 +101,7 @@ def _product_masked_average_axis(a: FloatND, w: FloatND) -> FloatND:
 
 def _raw_corner_sum_interpolator(
     term_fn: Callable[[FloatND, FloatND], FloatND],
-) -> Callable[[FloatND, FloatND], FloatND]:
+) -> Callable[..., FloatND]:
     """Reimplement `map_coordinates`'s 1-D corner sum with a pluggable `w*v` term.
 
     Uses the SAME internals as `_lcm.regime_building.ndimage.map_coordinates`
@@ -111,8 +111,12 @@ def _raw_corner_sum_interpolator(
     """
 
     @jax.jit
-    def interpolate(array: FloatND, coordinates: FloatND) -> FloatND:
-        interpolation_data = [_compute_indices_and_weights(coordinates, array.shape[0])]
+    def interpolate(*, array: FloatND, coordinates: FloatND) -> FloatND:
+        interpolation_data = [
+            _compute_indices_and_weights(
+                coordinate=coordinates, input_size=array.shape[0]
+            )
+        ]
         contributions = []
         for indices_and_weights in itertools.product(*interpolation_data):
             indices, weights = zip(*indices_and_weights, strict=True)
@@ -150,7 +154,7 @@ def test_zero_safe_weighted_term_matches_naive_product_when_no_zero_weight():
 def test_zero_safe_average_ignores_a_zero_weight_minus_inf_node():
     values = jnp.array([-jnp.inf, 3.0, 5.0])
     weights = jnp.array([0.0, 0.5, 0.5])
-    result = zero_safe_average(values, weights=weights, shifts=None)
+    result = zero_safe_average(a=values, weights=weights, shifts=None)
     assert bool(jnp.isfinite(result))
     np.testing.assert_allclose(float(result), 4.0)
 
@@ -181,7 +185,7 @@ def test_zero_safe_average_weighs_nodes_by_probability_not_by_coefficient():
     weights = jnp.array([1.0, 1.0])
     shifts = jnp.array([0, 1], dtype=jnp.int32)
 
-    result = zero_safe_average(values, weights=weights, shifts=shifts)
+    result = zero_safe_average(a=values, weights=weights, shifts=shifts)
 
     # p = [1.0, 0.5] -> (1.0*2 + 0.5*6) / 1.5
     np.testing.assert_allclose(float(result), 10.0 / 3.0)
@@ -198,7 +202,7 @@ def test_zero_safe_average_matches_jnp_average_on_the_finite_path():
     # tests below carry the proof that the product-masking recipe drifts.
     values = jnp.array([1.0, 3.0, 5.0])
     weights = jnp.array([0.2, 0.3, 0.5])
-    result = jax.jit(lambda a, w: zero_safe_average(a, weights=w, shifts=None))(
+    result = jax.jit(lambda a, w: zero_safe_average(a=a, weights=w, shifts=None))(
         values, weights
     )
     expected = jax.jit(lambda a, w: jnp.average(a, weights=w))(values, weights)
@@ -230,10 +234,10 @@ def test_zero_safe_average_is_bit_identical_to_jnp_average_on_the_positive_path(
         assert bool(jnp.all(weights > 0))
 
         naive = jax.jit(lambda a, w: jnp.average(a, weights=w))(values, weights)
-        guarded = jax.jit(lambda a, w: zero_safe_average(a, weights=w, shifts=None))(
+        guarded = jax.jit(lambda a, w: zero_safe_average(a=a, weights=w, shifts=None))(
             values, weights
         )
-        old = jax.jit(_product_masked_average)(values, weights)
+        old = jax.jit(_product_masked_average)(a=values, w=weights)
 
         naive_bits = _bits(naive)
         guarded_bits = _bits(guarded)
@@ -269,7 +273,7 @@ def test_zero_safe_average_is_exact_where_ties_actually_arise():
     values = jnp.array([2.5, -jnp.inf], dtype=jnp.float32)
     weights = jnp.array([1.0, 0.0], dtype=jnp.float32)
 
-    result = jax.jit(lambda a, w: zero_safe_average(a, weights=w, shifts=None))(
+    result = jax.jit(lambda a, w: zero_safe_average(a=a, weights=w, shifts=None))(
         values, weights
     )
 
@@ -295,10 +299,10 @@ def test_zero_safe_average_axis_reduction_matches_jnp_average_on_the_finite_path
     assert bool(jnp.all(weights > 0))
 
     guarded = jax.jit(
-        lambda a, w: zero_safe_average(a, axis=1, weights=w, shifts=None)
+        lambda a, w: zero_safe_average(a=a, axis=1, weights=w, shifts=None)
     )(values, weights)
     naive = jax.jit(lambda a, w: jnp.average(a, axis=1, weights=w))(values, weights)
-    old = jax.jit(_product_masked_average_axis)(values, weights)
+    old = jax.jit(_product_masked_average_axis)(a=values, w=weights)
 
     # Byte-identical on the positive path.
     np.testing.assert_array_equal(_bits(guarded), _bits(naive))
@@ -310,7 +314,7 @@ def test_zero_safe_average_raises_eagerly_on_concretely_zero_total_weight():
     values = jnp.array([1.0, 2.0])
     weights = jnp.array([0.0, 0.0])
     with pytest.raises(ValueError, match="total weight is exactly zero"):
-        zero_safe_average(values, weights=weights, shifts=None)
+        zero_safe_average(a=values, weights=weights, shifts=None)
 
 
 def test_zero_safe_average_does_not_reverse_a_nontied_action():
@@ -335,10 +339,10 @@ def test_zero_safe_average_does_not_reverse_a_nontied_action():
     assert float(jnp.sum(probabilities)) == 1.0
 
     naive = jax.jit(lambda a, w: jnp.average(a, weights=w))(nodes, probabilities)
-    guarded = jax.jit(lambda a, w: zero_safe_average(a, weights=w, shifts=None))(
+    guarded = jax.jit(lambda a, w: zero_safe_average(a=a, weights=w, shifts=None))(
         nodes, probabilities
     )
-    old = jax.jit(_product_masked_average)(nodes, probabilities)
+    old = jax.jit(_product_masked_average)(a=nodes, w=probabilities)
 
     naive_below = bool(naive < alternative)
     guarded_below = bool(guarded < alternative)
@@ -367,14 +371,16 @@ def _product_left_fold_mixture(terms: list[FloatND]) -> FloatND:
     return total
 
 
-def _value_ordered_mixture(w: FloatND, v: FloatND, order: tuple[int, ...]) -> FloatND:
+def _value_ordered_mixture(
+    *, w: FloatND, v: FloatND, order: tuple[int, ...]
+) -> FloatND:
     """Run `_sum_regime_mixture` from traced arrays: names are static, arrays traced.
 
     `order` fixes the list order the terms are appended in; each value keeps its own
     canonical name `r{i}`, so a permuted `order` must not change the sorted result.
     """
     terms = [(f"r{i}", w[i], v[i]) for i in order]
-    return _sum_regime_mixture(terms, like=v[0])
+    return _sum_regime_mixture(mixture_terms=terms, like=v[0])
 
 
 def test_sum_regime_mixture_is_zero_mass_safe():
@@ -386,7 +392,7 @@ def test_sum_regime_mixture_is_zero_mass_safe():
     """
     values = jnp.array([1.5, -jnp.inf, 2.0, 0.5], dtype=jnp.float32)
     probs = jnp.array([0.5, 0.0, 0.3, 0.2], dtype=jnp.float32)
-    result = jax.jit(lambda w, v: _value_ordered_mixture(w, v, (0, 1, 2, 3)))(
+    result = jax.jit(lambda w, v: _value_ordered_mixture(w=w, v=v, order=(0, 1, 2, 3)))(
         probs, values
     )
     assert jnp.isfinite(result)
@@ -423,7 +429,7 @@ def test_value_ordered_mixture_lands_on_the_exact_side_where_left_fold_did_not()
         v = jnp.asarray(vals, dtype=jnp.float64)
         w = jnp.asarray(probs, dtype=jnp.float64)
         value_ordered = float(
-            jax.jit(lambda w, v: _value_ordered_mixture(w, v, order))(w, v)
+            jax.jit(lambda w, v: _value_ordered_mixture(w=w, v=v, order=order))(w, v)
         )
         left_fold = float(
             jax.jit(
@@ -455,13 +461,15 @@ def test_sum_regime_mixture_is_independent_of_target_declaration_order():
         v = jnp.asarray(vals, dtype=jnp.float64)
         w = jnp.asarray(probs, dtype=jnp.float64)
         base = _bits(
-            jax.jit(lambda w, v: _value_ordered_mixture(w, v, (0, 1, 2, 3, 4)))(w, v)
+            jax.jit(
+                lambda w, v: _value_ordered_mixture(w=w, v=v, order=(0, 1, 2, 3, 4))
+            )(w, v)
         )
         for perm in [(4, 0, 3, 1, 2), (2, 1, 0, 4, 3)]:
             got = _bits(
-                jax.jit(lambda w, v, perm=perm: _value_ordered_mixture(w, v, perm))(
-                    w, v
-                )
+                jax.jit(
+                    lambda w, v, perm=perm: _value_ordered_mixture(w=w, v=v, order=perm)
+                )(w, v)
             )
             assert got == base
 
@@ -495,7 +503,9 @@ def test_sum_regime_mixture_accuracy_scales_with_summand_magnitude_not_result_ul
         v = jnp.asarray(vals, dtype=jnp.float64)
         w = jnp.asarray(probs, dtype=jnp.float64)
         got = float(
-            jax.jit(lambda w, v: _value_ordered_mixture(w, v, (0, 1, 2, 3, 4)))(w, v)
+            jax.jit(
+                lambda w, v: _value_ordered_mixture(w=w, v=v, order=(0, 1, 2, 3, 4))
+            )(w, v)
         )
     # Cancellation: the result-ULP gap is large, but the SUMMAND-scale bound holds.
     result_ulp = abs(got - exact) / np.spacing(abs(exact))
@@ -516,7 +526,7 @@ def test_sum_regime_mixture_weights_the_target_axis_not_the_stakeholder_axis():
         ("r0", jnp.asarray(0.25), jnp.asarray([0.0, 4.0])),
         ("r1", jnp.asarray(0.75), jnp.asarray([4.0, 0.0])),
     ]
-    out = _sum_regime_mixture(terms, like=jnp.zeros(2))
+    out = _sum_regime_mixture(mixture_terms=terms, like=jnp.zeros(2))
     assert [float(x) for x in out] == pytest.approx([3.0, 1.0])
 
 
@@ -528,7 +538,7 @@ def test_sum_regime_mixture_is_zero_mass_safe_on_the_stakeholder_axis():
         ("r0", jnp.asarray(1.0), jnp.asarray([1.0, 2.0])),
         ("r1", jnp.asarray(0.0), jnp.asarray([-jnp.inf, -jnp.inf])),
     ]
-    out = _sum_regime_mixture(terms, like=jnp.zeros(2))
+    out = _sum_regime_mixture(mixture_terms=terms, like=jnp.zeros(2))
     assert bool(jnp.all(jnp.isfinite(out)))
     assert [float(x) for x in out] == pytest.approx([1.0, 2.0])
 
@@ -541,7 +551,7 @@ def test_sum_regime_mixture_collective_allows_unequal_target_and_stakeholder_cou
         ("r1", jnp.asarray(0.3), jnp.asarray([2.0, 2.0])),
         ("r2", jnp.asarray(0.5), jnp.asarray([3.0, 3.0])),
     ]
-    out = _sum_regime_mixture(terms, like=jnp.zeros(2))
+    out = _sum_regime_mixture(mixture_terms=terms, like=jnp.zeros(2))
     assert [float(x) for x in out] == pytest.approx([2.3, 2.3])
 
 
@@ -573,7 +583,7 @@ _ALPHA_RENAME_VALS = [
 _ALPHA_RENAME_COMPETING = -0.007134269741330662
 
 
-def _name_sorted_mixture(names: list[str], w: FloatND, v: FloatND) -> FloatND:
+def _name_sorted_mixture(*, names: list[str], w: FloatND, v: FloatND) -> FloatND:
     """Sort `(name, p, V)` by NAME, stack, one zero-safe sum.
 
     The label-dependent reduction, run in-process so the regression can show the
@@ -592,25 +602,26 @@ def _name_sorted_mixture(names: list[str], w: FloatND, v: FloatND) -> FloatND:
     )
 
 
-def _value_sorted_mixture(names: list[str], w: FloatND, v: FloatND) -> FloatND:
+def _value_sorted_mixture(*, names: list[str], w: FloatND, v: FloatND) -> FloatND:
     """Drive `_sum_regime_mixture` (the code under test) under an alpha-renaming.
 
     Each economic term `i` keeps its own `(prob, value)`; only its NAME (`names[i]`)
     changes across relabelings.
     """
     terms = [(names[i], w[i], v[i]) for i in range(len(names))]
-    return _sum_regime_mixture(terms, like=v[0])
+    return _sum_regime_mixture(mixture_terms=terms, like=v[0])
 
 
 def _alpha_rename_mixture(
-    reducer: Callable[[list[str], FloatND, FloatND], FloatND], names: list[str]
+    *, reducer: Callable[..., FloatND], names: list[str]
 ) -> FloatND:
     """Broadcast the alpha-renaming mixture over an 8x8 carrier through two nested
     `vmap`s inside `jit` — exactly the collective site's structure — and reduce it with
     `reducer` under the alpha-renaming `names`, returning one carrier cell."""
 
+    # keyword-only-exempt: library-callback=jax.vmap
     def core(w: FloatND, v: FloatND) -> FloatND:
-        return reducer(names, w, v)
+        return reducer(names=names, w=w, v=v)
 
     carrier = jnp.ones((8, 8))
     w = jnp.asarray(_ALPHA_RENAME_PROBS)[:, None, None] * carrier
@@ -648,8 +659,8 @@ def test_sum_regime_mixture_is_invariant_to_alpha_renaming_of_the_regimes():
     with _x64(enabled=True):
         for perm in itertools.permutations(range(5)):
             names = [str(p) for p in perm]
-            new_val = _alpha_rename_mixture(_value_sorted_mixture, names)
-            old_val = _alpha_rename_mixture(_name_sorted_mixture, names)
+            new_val = _alpha_rename_mixture(reducer=_value_sorted_mixture, names=names)
+            old_val = _alpha_rename_mixture(reducer=_name_sorted_mixture, names=names)
             new_bits.add(_bits(new_val))
             new_policy.add(bool(float(new_val) > _ALPHA_RENAME_COMPETING))
             old_bits.add(_bits(old_val))
@@ -686,13 +697,13 @@ def test_map_coordinates_is_bit_identical_to_the_raw_corner_sum_off_grid():
     # Guard the guard: strictly inside (0, 1) -> no on-grid (zero-weight) corner.
     assert bool(jnp.all((coordinates > 0.0) & (coordinates < 1.0)))
 
-    real = ndimage.map_coordinates(array, [coordinates])
+    real = ndimage.map_coordinates(input=array, coordinates=[coordinates])
     plain_reference = _raw_corner_sum_interpolator(lambda w, v: w * v)(
-        array, coordinates
+        array=array, coordinates=coordinates
     )
     old_interpolator = _raw_corner_sum_interpolator(
         lambda w, v: jnp.where(w == 0, jnp.zeros((), v.dtype), w * v)
-    )(array, coordinates)
+    )(array=array, coordinates=coordinates)
 
     real_bits = _bits(real)
     reference_bits = _bits(plain_reference)
@@ -846,7 +857,7 @@ def _build_terminal_regime(**kwargs: object) -> Regime:
     base = {
         "transition": None,
         "states": {"wealth": _WEALTH},
-        "actions": {"labor_supply_f": DiscreteGrid(LaborSupply)},
+        "actions": {"labor_supply_f": DiscreteGrid(category_class=LaborSupply)},
         "functions": {
             "utility": CollectiveUtility(
                 utilities=utilities,  # ty: ignore[invalid-argument-type]

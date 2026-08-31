@@ -36,21 +36,21 @@ def _as_fraction(value: np.floating) -> Fraction:
     return Fraction(float(value))
 
 
-def _exact_crossing(grid: np.ndarray, value: np.ndarray) -> Fraction:
+def _exact_crossing(*, grid: np.ndarray, value: np.ndarray) -> Fraction:
     """Return the crossing of the two stored lines in exact rational arithmetic."""
 
-    def line(i: int, j: int) -> tuple[Fraction, Fraction]:
+    def line(*, i: int, j: int) -> tuple[Fraction, Fraction]:
         slope = (_as_fraction(value[j]) - _as_fraction(value[i])) / (
             _as_fraction(grid[j]) - _as_fraction(grid[i])
         )
         return slope, _as_fraction(value[i]) - slope * _as_fraction(grid[i])
 
-    slope_a, intercept_a = line(0, 1)
-    slope_b, intercept_b = line(2, 3)
+    slope_a, intercept_a = line(i=0, j=1)
+    slope_b, intercept_b = line(i=2, j=3)
     return (intercept_a - intercept_b) / (slope_b - slope_a)
 
 
-def _refine(grid: np.ndarray, policy: np.ndarray, value: np.ndarray):
+def _refine(*, grid: np.ndarray, policy: np.ndarray, value: np.ndarray):
     refined = jax.jit(
         lambda g, p, v: refine_envelope_exact(
             endog_grid=g, policy=p, value=v, n_refined=12, max_runs=4
@@ -61,7 +61,7 @@ def _refine(grid: np.ndarray, policy: np.ndarray, value: np.ndarray):
     return np.asarray(out_grid[:kept]), np.asarray(out_policy[:kept])
 
 
-def _read_row(grid: np.ndarray, payload: np.ndarray, query: float) -> float:
+def _read_row(*, grid: np.ndarray, payload: np.ndarray, query: float) -> float:
     """Read a refined row the way a consumer does — linearly, right-continuously."""
     upper = int(np.clip(np.searchsorted(grid, query, side="right"), 1, len(grid) - 1))
     lower = upper - 1
@@ -74,8 +74,8 @@ def _read_row(grid: np.ndarray, payload: np.ndarray, query: float) -> float:
 
 def test_the_handover_lands_on_the_exactly_representable_crossing():
     """The published duplicate is the crossing itself, not its successor."""
-    expected = np.float32(float(_exact_crossing(_GRID, _VALUE)))
-    grid, _policy = _refine(_GRID, _POLICY, _VALUE)
+    expected = np.float32(float(_exact_crossing(grid=_GRID, value=_VALUE)))
+    grid, _policy = _refine(grid=_GRID, policy=_POLICY, value=_VALUE)
     duplicate = np.flatnonzero(grid[1:] == grid[:-1])
     assert len(duplicate) == 1
     assert grid[duplicate[0]] == expected
@@ -83,9 +83,11 @@ def test_the_handover_lands_on_the_exactly_representable_crossing():
 
 def test_the_incoming_policy_is_published_at_the_crossing():
     """At the handover state the row reads the incoming link's policy."""
-    expected = np.float32(float(_exact_crossing(_GRID, _VALUE)))
-    grid, policy = _refine(_GRID, _POLICY, _VALUE)
-    assert _read_row(grid, policy, float(expected)) == float(_POLICY[2])
+    expected = np.float32(float(_exact_crossing(grid=_GRID, value=_VALUE)))
+    grid, policy = _refine(grid=_GRID, policy=_POLICY, value=_VALUE)
+    assert _read_row(grid=grid, payload=policy, query=float(expected)) == float(
+        _POLICY[2]
+    )
 
 
 @pytest.mark.parametrize("exponent", range(-30, 31))
@@ -99,8 +101,8 @@ def test_the_exact_tie_survives_a_power_of_two_rescaling(exponent: int):
     grid = (_GRID * scale).astype(np.float32)
     if not np.all(np.isfinite(grid)) or len(np.unique(grid)) != len(grid):
         pytest.skip("the rescaled grid is not representable as four distinct states")
-    expected = np.float32(float(_exact_crossing(grid, _VALUE)))
-    refined_grid, _policy = _refine(grid, _POLICY, _VALUE)
+    expected = np.float32(float(_exact_crossing(grid=grid, value=_VALUE)))
+    refined_grid, _policy = _refine(grid=grid, policy=_POLICY, value=_VALUE)
     duplicate = np.flatnonzero(refined_grid[1:] == refined_grid[:-1])
     assert len(duplicate) == 1
     assert refined_grid[duplicate[0]] == expected

@@ -157,7 +157,7 @@ def _generated_links():
     return cases
 
 
-def _queries_across(left_grid, right_grid):
+def _queries_across(*, left_grid, right_grid):
     """Endpoints, the floats just inside them, and interior points between."""
     dtype = _working_dtype()
     inward_left = np.nextafter(left_grid, dtype.type(np.inf))
@@ -172,7 +172,7 @@ def _queries_across(left_grid, right_grid):
 @pytest.mark.parametrize("block_size", [0, 1])
 @pytest.mark.parametrize("link", _generated_links())
 def test_every_read_along_a_link_agrees_with_exact_rational_arithmetic(
-    link, block_size
+    *, link, block_size
 ):
     """Both evaluation paths read a link as the affine map its endpoints define.
 
@@ -181,7 +181,7 @@ def test_every_read_along_a_link_agrees_with_exact_rational_arithmetic(
     endpoints.
     """
     left_grid, right_grid, left_value, right_value = link
-    for query in _queries_across(left_grid, right_grid):
+    for query in _queries_across(left_grid=left_grid, right_grid=right_grid):
         value, _policy = _read(
             grid=[left_grid, right_grid],
             values=[left_value, right_value],

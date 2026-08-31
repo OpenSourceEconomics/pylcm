@@ -58,7 +58,7 @@ def terminal_utility(wealth: ContinuousState) -> FloatND:
     return jnp.log(wealth)
 
 
-def savings(wealth: FloatND, consumption: ContinuousAction) -> FloatND:
+def savings(*, wealth: FloatND, consumption: ContinuousAction) -> FloatND:
     return wealth - consumption
 
 

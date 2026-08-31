@@ -74,7 +74,7 @@ def _certify(func):
         ),
     ],
 )
-def test_an_affine_map_certifies_its_exact_coefficient(func, expected) -> None:
+def test_an_affine_map_certifies_its_exact_coefficient(*, func, expected) -> None:
     """An affine dependence on the outer action reports its coefficient exactly."""
     assert _certify(func).coefficient == expected
 
@@ -163,7 +163,7 @@ def test_a_jit_wrapped_law_is_certified_through_its_sub_jaxpr() -> None:
 def test_an_untraceable_map_is_refused_rather_than_assumed() -> None:
     """A map that will not trace is refused; an unverified slope is not a slope."""
 
-    def hostile(_state, _action):
+    def hostile(*, _state, _action):
         raise RuntimeError("cannot trace")
 
     certificate = _certify(hostile)

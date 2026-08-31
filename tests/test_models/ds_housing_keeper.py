@@ -107,6 +107,7 @@ def income_value(income: DiscreteState) -> FloatND:
 
 
 def utility(
+    *,
     consumption: ContinuousAction,
     housing: ContinuousState,
     gamma_c: float,
@@ -123,6 +124,7 @@ def utility(
 
 
 def resources(
+    *,
     liquid_assets: ContinuousState,
     housing: ContinuousState,
     income_value: FloatND,
@@ -141,7 +143,7 @@ def resources(
     )
 
 
-def savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
+def savings(*, resources: FloatND, consumption: ContinuousAction) -> FloatND:
     """Post-decision liquid balance `a' = resources - consumption`."""
     return resources - consumption
 
@@ -151,12 +153,15 @@ def next_liquid_assets(savings: FloatND) -> ContinuousState:
     return savings
 
 
-def inverse_marginal_utility(marginal_continuation: FloatND, gamma_c: float) -> FloatND:
+def inverse_marginal_utility(
+    *, marginal_continuation: FloatND, gamma_c: float
+) -> FloatND:
     """Invert the consumption marginal utility: `c = (mc) ** (-1 / gamma_c)`."""
     return marginal_continuation ** (-1.0 / gamma_c)
 
 
 def next_liquid_assets_brute(
+    *,
     liquid_assets: ContinuousState,
     housing: ContinuousState,
     income_value: FloatND,
@@ -181,6 +186,7 @@ def next_liquid_assets_brute(
 
 
 def borrowing_constraint(
+    *,
     liquid_assets: ContinuousState,
     housing: ContinuousState,
     income_value: FloatND,
@@ -219,7 +225,7 @@ def income_transition(income: DiscreteState) -> FloatND:
     return pi[income]
 
 
-def next_regime(age: int, final_age_alive: float) -> ScalarInt:
+def next_regime(*, age: int, final_age_alive: float) -> ScalarInt:
     """Transition to `dead` at the final living age, else stay a keeper."""
     return jnp.where(
         age >= final_age_alive,
@@ -261,7 +267,7 @@ def build_working_regime(variant: Literal["dcegm", "brute"] = "dcegm") -> UserRe
             states={
                 "liquid_assets": LIQUID_ASSETS_GRID,
                 "housing": HOUSING_GRID,
-                "income": DiscreteGrid(Income),
+                "income": DiscreteGrid(category_class=Income),
             },
             state_transitions={
                 "liquid_assets": next_liquid_assets_brute,
@@ -281,7 +287,7 @@ def build_working_regime(variant: Literal["dcegm", "brute"] = "dcegm") -> UserRe
         states={
             "liquid_assets": LIQUID_ASSETS_GRID,
             "housing": HOUSING_GRID,
-            "income": DiscreteGrid(Income),
+            "income": DiscreteGrid(category_class=Income),
         },
         state_transitions={
             "liquid_assets": next_liquid_assets,

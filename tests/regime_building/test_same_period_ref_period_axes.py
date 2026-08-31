@@ -119,7 +119,7 @@ def test_participation_mask_ignores_the_reference_regime_later_grid():
     [(0, (0.0, 200.0)), (1, (0.0, 20.0))],
 )
 def test_reference_value_function_is_tabulated_on_that_periods_own_nodes(
-    period, expected
+    *, period, expected
 ):
     """The reference regime pays `2 * wealth` on whichever nodes its age has."""
     solution, _dissolution = _solve(later_ceiling=TIGHTENED_CEILING)
@@ -189,7 +189,7 @@ def _make_model(*, later_ceiling: float) -> Model:
         active=lambda age: age < 1,
         states={"wealth": COUPLE_GRID},
         state_transitions={"wealth": fixed_transition("wealth")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _couple_utility_f, "m": _couple_utility_m}
@@ -210,7 +210,7 @@ def _make_model(*, later_ceiling: float) -> Model:
         transition=None,
         active=lambda age: age >= 1,
         states={"wealth": COUPLE_GRID},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _zero_collective_utility, "m": _zero_collective_utility}
@@ -239,7 +239,9 @@ def _zero_utility(wealth: ContinuousState) -> FloatND:
     return 0.0 * wealth
 
 
-def _zero_collective_utility(wealth: ContinuousState, work: DiscreteAction) -> FloatND:
+def _zero_collective_utility(
+    *, wealth: ContinuousState, work: DiscreteAction
+) -> FloatND:
     """Terminal payoff of each partner: nothing left to gain."""
     return 0.0 * wealth * work
 
@@ -254,7 +256,7 @@ def _couple_utility_m(work: DiscreteAction) -> FloatND:
     return 2.0 * (1.0 - work)
 
 
-def _participation_f(Q_f: FloatND, V_single_f: FloatND, delta_f: FloatND) -> BoolND:
+def _participation_f(*, Q_f: FloatND, V_single_f: FloatND, delta_f: FloatND) -> BoolND:
     """The wife consents to an action only if it beats her single value."""
     return Q_f >= V_single_f - delta_f
 

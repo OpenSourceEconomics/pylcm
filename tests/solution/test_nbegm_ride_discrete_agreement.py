@@ -22,7 +22,7 @@ _AWAY_FROM_KINK = (
 
 
 def _solve(
-    variant: str, *, n_consumption: int = 120, jump_schedule: bool = False
+    *, variant: str, n_consumption: int = 120, jump_schedule: bool = False
 ) -> Mapping[int, Mapping]:
     model = toy.build_model(
         variant=variant,
@@ -41,8 +41,8 @@ def _solve(
 def test_nbegm_ride_along_discrete_envelope_matches_brute() -> None:
     """`V` agrees with a 1500-point brute across the liquid interior at the
     terminal-adjacent period, over the income nodes and the discrete choice."""
-    nbegm = _solve("nbegm")
-    brute = _solve("brute", n_consumption=1500)
+    nbegm = _solve(variant="nbegm")
+    brute = _solve(variant="brute", n_consumption=1500)
     period = max(p for p in brute if _ALIVE in brute[p])
     bq_v = np.asarray(nbegm[period][_ALIVE])
     brute_v = np.asarray(brute[period][_ALIVE])
@@ -63,8 +63,8 @@ def test_nbegm_ride_along_discrete_envelope_matches_brute_through_a_jump() -> No
     Each discrete branch publishes its one-sided cliff limits and the discrete
     choice is taken over them, so the enveloped value matches a dense brute that
     maximises over the insurance choice and consumption across the cliff."""
-    nbegm = _solve("nbegm", jump_schedule=True)
-    brute = _solve("brute", n_consumption=1500, jump_schedule=True)
+    nbegm = _solve(variant="nbegm", jump_schedule=True)
+    brute = _solve(variant="brute", n_consumption=1500, jump_schedule=True)
     period = max(p for p in brute if _ALIVE in brute[p])
     bq_v = np.asarray(nbegm[period][_ALIVE])
     brute_v = np.asarray(brute[period][_ALIVE])

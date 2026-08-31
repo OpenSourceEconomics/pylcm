@@ -26,6 +26,7 @@ class RegimeId:
 
 
 def _next_regime_probs(
+    *,
     period: Period,
     health: DiscreteState,
     probs_array: FloatND,
@@ -36,7 +37,7 @@ def _next_regime_probs(
 alive = UserRegime(
     transition=MarkovTransition(_next_regime_probs),
     states={
-        "health": DiscreteGrid(Health),
+        "health": DiscreteGrid(category_class=Health),
         "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
     },
     state_transitions={

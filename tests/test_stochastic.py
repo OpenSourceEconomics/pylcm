@@ -221,7 +221,7 @@ def test_compare_deterministic_and_stochastic_results_value_function(
 
 
 def _make_minimal_stochastic_model(
-    next_draw: Callable[..., FloatND], *, draw_batch_size: int = 0
+    *, next_draw: Callable[..., FloatND], draw_batch_size: int = 0
 ) -> Model:
     """Create a minimal stochastic model with a discrete state `draw`."""
 
@@ -237,21 +237,21 @@ def _make_minimal_stochastic_model(
         working_life: ScalarInt
         dead: ScalarInt
 
-    def utility(consumption: ContinuousAction, draw: DiscreteState) -> FloatND:
+    def utility(*, consumption: ContinuousAction, draw: DiscreteState) -> FloatND:
         bonus = jnp.where(draw == ShockStatus.good, 1.0, 0.0)
         return jnp.log(consumption) + bonus
 
     def next_wealth(
-        wealth: ContinuousState, consumption: ContinuousAction
+        *, wealth: ContinuousState, consumption: ContinuousAction
     ) -> ContinuousState:
         return wealth - consumption + 2.0
 
     def borrowing_constraint(
-        consumption: ContinuousAction, wealth: ContinuousState
+        *, consumption: ContinuousAction, wealth: ContinuousState
     ) -> BoolND:
         return consumption <= wealth
 
-    def next_regime(age: float, final_age_alive: float) -> ScalarInt:
+    def next_regime(*, age: float, final_age_alive: float) -> ScalarInt:
         return jnp.where(
             age >= final_age_alive, ShockRegimeId.dead, ShockRegimeId.working_life
         )
@@ -259,7 +259,9 @@ def _make_minimal_stochastic_model(
     working_regime = UserRegime(
         actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=20)},
         states={
-            "draw": DiscreteGrid(ShockStatus, batch_size=draw_batch_size),
+            "draw": DiscreteGrid(
+                category_class=ShockStatus, batch_size=draw_batch_size
+            ),
             "wealth": LinSpacedGrid(start=1, stop=10, n_points=15),
         },
         state_transitions={
@@ -306,10 +308,10 @@ def test_stochastic_zero_arg_weight_adds_discounted_expected_bonus() -> None:
     def next_draw_5050() -> FloatND:
         return jnp.array([0.5, 0.5])
 
-    V_stochastic = _make_minimal_stochastic_model(next_draw_5050).solve(
+    V_stochastic = _make_minimal_stochastic_model(next_draw=next_draw_5050).solve(
         log_level="debug", params=params
     )
-    V_degenerate = _make_minimal_stochastic_model(_always_bad_draw).solve(
+    V_degenerate = _make_minimal_stochastic_model(next_draw=_always_bad_draw).solve(
         log_level="debug", params=params
     )
 
@@ -337,10 +339,10 @@ def test_stochastic_weight_on_continuous_state_varies_continuation_by_wealth() -
         p_good = jnp.clip(wealth / 10.0, 0.1, 0.9)
         return jnp.array([1.0 - p_good, p_good])
 
-    V_stochastic = _make_minimal_stochastic_model(next_draw_wealth_dependent).solve(
-        log_level="debug", params=params
-    )
-    V_degenerate = _make_minimal_stochastic_model(_always_bad_draw).solve(
+    V_stochastic = _make_minimal_stochastic_model(
+        next_draw=next_draw_wealth_dependent
+    ).solve(log_level="debug", params=params)
+    V_degenerate = _make_minimal_stochastic_model(next_draw=_always_bad_draw).solve(
         log_level="debug", params=params
     )
 
@@ -371,12 +373,12 @@ def test_stochastic_state_batch_size_is_value_equivalent_to_no_splay() -> None:
     def next_draw_5050() -> FloatND:
         return jnp.array([0.5, 0.5])
 
-    V_unsplayed = _make_minimal_stochastic_model(next_draw_5050).solve(
+    V_unsplayed = _make_minimal_stochastic_model(next_draw=next_draw_5050).solve(
         log_level="debug", params=params
     )
-    V_splayed = _make_minimal_stochastic_model(next_draw_5050, draw_batch_size=1).solve(
-        log_level="debug", params=params
-    )
+    V_splayed = _make_minimal_stochastic_model(
+        next_draw=next_draw_5050, draw_batch_size=1
+    ).solve(log_level="debug", params=params)
 
     assert_allclose(
         V_splayed[0]["working_life"], V_unsplayed[0]["working_life"], atol=_SPLAY_ATOL

@@ -184,7 +184,7 @@ def _uncompiled_gate_evaluators(*, model: Model, n_subjects: int) -> list[str]:
         )
         if not isinstance(
             population_call(
-                edge.simulate_gate_evaluator_at(period=fold_period),
+                func=edge.simulate_gate_evaluator_at(period=fold_period),
                 axis_size=n_subjects,
             ),
             jax.stages.Compiled,
@@ -267,22 +267,22 @@ def _make_consent_model(*, n_subjects: int | None) -> Model:
             )
         },
         active=lambda age: age < 1,
-        states={"education": DiscreteGrid(Education)},
+        states={"education": DiscreteGrid(category_class=Education)},
         state_transitions={"education": fixed_transition("education")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _single_utility},
     )
     single_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        states={"education": DiscreteGrid(Education)},
+        states={"education": DiscreteGrid(category_class=Education)},
         functions={"utility": _single_terminal_utility},
     )
     married_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        states={"education": DiscreteGrid(Education)},
-        actions={"work": DiscreteGrid(Work)},
+        states={"education": DiscreteGrid(category_class=Education)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _married_utility_f, "m": _married_utility_m}
@@ -311,7 +311,7 @@ def _certain_transition(age: FloatND) -> FloatND:
     return jnp.ones_like(age, dtype=float)
 
 
-def _single_utility(education: DiscreteState, work: DiscreteAction) -> FloatND:
+def _single_utility(*, education: DiscreteState, work: DiscreteAction) -> FloatND:
     """A single woman earns her wage when she works and nothing otherwise."""
     return _wage(education) * work
 
@@ -321,12 +321,12 @@ def _single_terminal_utility(education: DiscreteState) -> FloatND:
     return 2.0 + 5.0 * education
 
 
-def _married_utility_f(education: DiscreteState, work: DiscreteAction) -> FloatND:
+def _married_utility_f(*, education: DiscreteState, work: DiscreteAction) -> FloatND:
     """The wife's share of household income: three times her own wage."""
     return 3.0 * _wage(education) * work
 
 
-def _married_utility_m(education: DiscreteState, work: DiscreteAction) -> FloatND:
+def _married_utility_m(*, education: DiscreteState, work: DiscreteAction) -> FloatND:
     """The husband's share of household income: his wife's wage."""
     return _wage(education) * work
 
@@ -336,6 +336,6 @@ def _identity_education(education: DiscreteState) -> DiscreteState:
     return education
 
 
-def _consent_gate(V_target_f: FloatND, V_single_ref: FloatND) -> BoolND:
+def _consent_gate(*, V_target_f: FloatND, V_single_ref: FloatND) -> BoolND:
     """The wife marries only when the marriage beats staying single."""
     return V_target_f > V_single_ref

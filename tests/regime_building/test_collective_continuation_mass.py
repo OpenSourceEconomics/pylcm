@@ -220,14 +220,14 @@ def _build_model(
         active=lambda age: age < source_ends_at_age,
         states={"wage": WAGE_GRID},
         state_transitions={"wage": _next_wage},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions=_source_functions(household=household, stakeholder=stakeholder),
     )
     couple_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
         states={"wage": WAGE_GRID},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions=_terminal_functions(household=household, stakeholder=stakeholder),
     )
     return Model(
@@ -290,17 +290,17 @@ def _two_target_params() -> UserParams:
     }
 
 
-def _source_utility_f(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _source_utility_f(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     """Wife's flow payoff in the source regime: her wage while she works."""
     return wage * work
 
 
-def _source_utility_m(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _source_utility_m(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     """Husband's flow payoff in the source regime: twice the wife's."""
     return 2.0 * wage * work
 
 
-def _terminal_utility_f(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _terminal_utility_f(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     """Wife's terminal payoff: a hundred times her wage while she works.
 
     Large next to the source regime's own flow payoff, so the source value is
@@ -310,7 +310,7 @@ def _terminal_utility_f(wage: ContinuousState, work: DiscreteAction) -> FloatND:
     return 100.0 * wage * work
 
 
-def _terminal_utility_m(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _terminal_utility_m(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     """Husband's terminal payoff: twice the wife's."""
     return 200.0 * wage * work
 
@@ -325,11 +325,11 @@ def _target_probability(regime_mass: float) -> FloatND:
     return jnp.asarray(regime_mass)
 
 
-def _stay_probability(age: float, stay_probability: float) -> FloatND:
+def _stay_probability(*, age: float, stay_probability: float) -> FloatND:
     """Probability of staying collective, zero once the source regime ends."""
     return jnp.where(age < 1, stay_probability, 0.0)
 
 
-def _leave_probability(age: float, leave_probability: float) -> FloatND:
+def _leave_probability(*, age: float, leave_probability: float) -> FloatND:
     """Probability of entering the terminal regime, certain once the source ends."""
     return jnp.where(age < 1, leave_probability, 1.0)

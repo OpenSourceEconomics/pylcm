@@ -66,7 +66,7 @@ def _certain_target(age: FloatND) -> FloatND:
     return jnp.ones_like(age, dtype=float)
 
 
-def _utility_source(x: ContinuousState, saving: ContinuousAction) -> FloatND:
+def _utility_source(*, x: ContinuousState, saving: ContinuousAction) -> FloatND:
     return -2.0 * saving + 0.0 * x
 
 
@@ -230,7 +230,7 @@ def _to_pair(age: FloatND) -> FloatND:
     return jnp.ones_like(age, dtype=float)
 
 
-def _u_source(wage: ContinuousState, saving: ContinuousAction) -> FloatND:
+def _u_source(*, wage: ContinuousState, saving: ContinuousAction) -> FloatND:
     return 0.0 * wage + 0.0 * saving
 
 
@@ -238,7 +238,7 @@ def _next_wage(saving: ContinuousAction) -> ContinuousState:
     return saving
 
 
-def _pair_payoff(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _pair_payoff(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     return wage + 0.0 * work
 
 
@@ -255,7 +255,7 @@ def _outside_option_m(wage: ContinuousState) -> FloatND:
     return _FALLBACK_PAYOFF + 0.0 * wage
 
 
-def _participation_f(Q_f: FloatND, V_alone_f: FloatND) -> BoolND:
+def _participation_f(*, Q_f: FloatND, V_alone_f: FloatND) -> BoolND:
     return Q_f >= V_alone_f
 
 
@@ -294,7 +294,7 @@ def _coupled_model(saving_points) -> Model:
                 transition=None,
                 active=lambda age: age >= 1,
                 states={"wage": _WAGE},
-                actions={"work": DiscreteGrid(Work)},
+                actions={"work": DiscreteGrid(category_class=Work)},
                 functions={
                     "utility": CollectiveUtility(
                         utilities={"f": _pair_payoff, "m": _pair_payoff}
@@ -350,7 +350,7 @@ _COUPLED_PARAMS = {
     ],
 )
 def test_a_landing_touching_an_empty_cell_takes_the_branch_that_pays(
-    saving_points, expected
+    *, saving_points, expected
 ):
     """A branch is opened only where the value behind it is one a branch pays.
 

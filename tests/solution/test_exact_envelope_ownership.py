@@ -27,7 +27,7 @@ def _active_dtype() -> type:
     return np.float64 if jnp.zeros(()).dtype == jnp.float64 else np.float32
 
 
-def _refine(grid, policy, value, *, n_refined: int, max_runs: int):
+def _refine(*, grid, policy, value, n_refined: int, max_runs: int):
     """Refine one candidate chain under jit and drop the NaN padding."""
     out_grid, out_policy, out_value, n_kept = jax.jit(
         lambda g, p, v: refine_envelope_exact(
@@ -43,7 +43,7 @@ def _refine(grid, policy, value, *, n_refined: int, max_runs: int):
     )
 
 
-def _read(grid: np.ndarray, ordinate: np.ndarray, query: float) -> float:
+def _read(*, grid: np.ndarray, ordinate: np.ndarray, query: float) -> float:
     """Read the published row at `query`, taking the right branch at a node."""
     upper = int(np.clip(np.searchsorted(grid, query, side="right"), 1, len(grid) - 1))
     lower = upper - 1
@@ -54,7 +54,7 @@ def _read(grid: np.ndarray, ordinate: np.ndarray, query: float) -> float:
     return float((1 - weight) * ordinate[lower] + weight * ordinate[upper])
 
 
-def _reciprocal_slope(x0, x1, v0, v1, dtype) -> float:
+def _reciprocal_slope(*, x0, x1, v0, v1, dtype) -> float:
     """Return `1 / slope` of the link, as the policy the chain carries."""
     slope = (Fraction(float(v1)) - Fraction(float(v0))) / (
         Fraction(float(x1)) - Fraction(float(x0))
@@ -62,7 +62,7 @@ def _reciprocal_slope(x0, x1, v0, v1, dtype) -> float:
     return dtype(float(1 / slope))
 
 
-def _same_reading_chain(dtype, *, scale_exponent: int = 0):
+def _same_reading_chain(*, dtype, scale_exponent: int = 0):
     """Build four runs whose boundary readings collapse onto one published value.
 
     The fourth run owns the envelope at `delta / 2` by a margin far below the
@@ -92,7 +92,9 @@ def _same_reading_chain(dtype, *, scale_exponent: int = 0):
     )
     policy = np.array(
         [
-            _reciprocal_slope(grid[i], grid[j], value[i], value[j], dtype)
+            _reciprocal_slope(
+                x0=grid[i], x1=grid[j], v0=value[i], v1=value[j], dtype=dtype
+            )
             for i, j in ((0, 1), (2, 3), (4, 5), (6, 7))
             for _ in range(2)
         ],
@@ -114,16 +116,16 @@ def test_equal_published_readings_do_not_decide_ownership():
     envelope selects rather than whichever link the rounded comparison favours.
     """
     dtype = _active_dtype()
-    grid, policy, value, query = _same_reading_chain(dtype)
+    grid, policy, value, query = _same_reading_chain(dtype=dtype)
     assert np.all(np.diff(grid - policy) > 0), "the chain must be savings-ordered"
 
     out_grid, out_policy, _out_value, keep = _refine(
-        grid, policy, value, n_refined=30, max_runs=8
+        grid=grid, policy=policy, value=value, n_refined=30, max_runs=8
     )
     assert keep <= 30, "a fully certifiable row must publish rather than fail loud"
-    assert _read(out_grid[:keep], out_policy[:keep], float(query)) == pytest.approx(
-        float(policy[6]), abs=0.0
-    )
+    assert _read(
+        grid=out_grid[:keep], ordinate=out_policy[:keep], query=float(query)
+    ) == pytest.approx(float(policy[6]), abs=0.0)
 
 
 def test_equal_published_readings_survive_a_change_of_resource_units():
@@ -135,15 +137,17 @@ def test_equal_published_readings_survive_a_change_of_resource_units():
     """
     dtype = _active_dtype()
     exponent = -100 if dtype is np.float32 else -530
-    grid, policy, value, query = _same_reading_chain(dtype, scale_exponent=exponent)
+    grid, policy, value, query = _same_reading_chain(
+        dtype=dtype, scale_exponent=exponent
+    )
 
     out_grid, out_policy, _out_value, keep = _refine(
-        grid, policy, value, n_refined=30, max_runs=8
+        grid=grid, policy=policy, value=value, n_refined=30, max_runs=8
     )
     assert keep <= 30, "a fully certifiable row must publish rather than fail loud"
-    assert _read(out_grid[:keep], out_policy[:keep], float(query)) == pytest.approx(
-        float(policy[6]), abs=0.0
-    )
+    assert _read(
+        grid=out_grid[:keep], ordinate=out_policy[:keep], query=float(query)
+    ) == pytest.approx(float(policy[6]), abs=0.0)
 
 
 @pytest.mark.parametrize(
@@ -166,7 +170,7 @@ def test_three_links_crossing_at_one_abscissa_emit_only_the_two_owners(policies)
     assert np.all(np.diff(grid - policy) > 0), "the chain must be savings-ordered"
 
     out_grid, out_policy, _out_value, keep = _refine(
-        grid, policy, value, n_refined=20, max_runs=8
+        grid=grid, policy=policy, value=value, n_refined=20, max_runs=8
     )
     assert keep <= 20, "a certifiable simultaneous event must not report overflow"
     at_event = out_grid[:keep] == dtype(1)

@@ -28,7 +28,7 @@ _FPL_CLIFF = 15.0
 _EDGE = (_LIQUID > 1.5) & (_LIQUID < 27.0)
 
 
-def _interior_for_wage(wage: float, *, breakpoint_kind: str) -> np.ndarray:
+def _interior_for_wage(*, wage: float, breakpoint_kind: str) -> np.ndarray:
     """Grid-edge interior, dropping the cells straddling this slice's cliff preimage.
 
     A jump budget has a value discontinuity at the preimage `liquid = fpl_cliff - wage`;
@@ -42,7 +42,7 @@ def _interior_for_wage(wage: float, *, breakpoint_kind: str) -> np.ndarray:
 
 
 def _solve(
-    variant: str, *, breakpoint_kind: str, n_consumption: int = 160
+    *, variant: str, breakpoint_kind: str, n_consumption: int = 160
 ) -> Mapping[int, Mapping]:
     """Solve the CES-utility ride-along toy on the shared comparison grids."""
     model = toy.build_model(
@@ -74,14 +74,14 @@ def test_nbegm_ces_utility_matches_brute(breakpoint_kind: str) -> None:
     liquid interior of every continuous `wage` slice, away from the cells straddling
     the slice's cliff preimage.
     """
-    nbegm = _solve("nbegm", breakpoint_kind=breakpoint_kind)
-    brute = _solve("brute", breakpoint_kind=breakpoint_kind, n_consumption=1800)
+    nbegm = _solve(variant="nbegm", breakpoint_kind=breakpoint_kind)
+    brute = _solve(variant="brute", breakpoint_kind=breakpoint_kind, n_consumption=1800)
     period = _terminal_adjacent_period(nbegm)
     brute_v = np.asarray(brute[period]["alive"])
     nbegm_v = np.asarray(nbegm[period]["alive"])
     for wage_idx in range(brute_v.shape[1]):
         interior = _interior_for_wage(
-            float(_WAGE[wage_idx]), breakpoint_kind=breakpoint_kind
+            wage=float(_WAGE[wage_idx]), breakpoint_kind=breakpoint_kind
         )
         np.testing.assert_allclose(
             nbegm_v[interior, wage_idx],

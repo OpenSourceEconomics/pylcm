@@ -43,7 +43,7 @@ working = UserRegime(
     transition=_next_regime,
     active=lambda age: age < 30,
     states={
-        "health": DiscreteGrid(Health),
+        "health": DiscreteGrid(category_class=Health),
         "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
     },
     state_transitions={

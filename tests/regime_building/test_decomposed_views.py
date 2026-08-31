@@ -50,7 +50,7 @@ def _budget(wealth: ContinuousState) -> FloatND:
     return wealth > 0.0
 
 
-def _ir_f(Q_f: FloatND, V_alone_f: FloatND) -> FloatND:
+def _ir_f(*, Q_f: FloatND, V_alone_f: FloatND) -> FloatND:
     """The first stakeholder's participation constraint."""
     return Q_f >= V_alone_f
 

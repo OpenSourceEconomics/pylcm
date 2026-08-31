@@ -30,6 +30,7 @@ from tests.test_models.nbegm_common import (
     ),
 )
 def subsidy(
+    *,
     liquid: ContinuousState,
     subsidy_low: float,
     subsidy_mid: float,
@@ -45,7 +46,7 @@ def subsidy(
     )
 
 
-def resources(liquid: ContinuousState, subsidy: FloatND) -> FloatND:
+def resources(*, liquid: ContinuousState, subsidy: FloatND) -> FloatND:
     """Cash-on-hand: liquid wealth plus the cliff-contingent subsidy."""
     return liquid + subsidy
 
@@ -68,7 +69,7 @@ def build_model(
         "savings": savings,
     }
     alive_solver = resolve_solver(
-        variant,
+        variant=variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
     )
 

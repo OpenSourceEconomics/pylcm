@@ -270,7 +270,7 @@ def _build_gate_ref_model() -> Model:
         },
         active=lambda age: age < 2,
         state_transitions={"balance": {"account": _entry_amount}},
-        actions={"effort": DiscreteGrid(_Effort)},
+        actions={"effort": DiscreteGrid(category_class=_Effort)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _no_felicity, "m": _no_felicity}
@@ -281,7 +281,7 @@ def _build_gate_ref_model() -> Model:
         transition=None,
         active=lambda age: (age >= 1) & (age < 3),
         states={"balance": LinSpacedGrid(start=0.0, stop=4.0, n_points=2)},
-        actions={"effort": DiscreteGrid(_Effort)},
+        actions={"effort": DiscreteGrid(category_class=_Effort)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _account_felicity_f, "m": _account_felicity_m}
@@ -374,7 +374,7 @@ def _build_dissolution_model() -> Model:
         },
         active=lambda age: age < 2,
         state_transitions={"w": {"pair": _entry_amount}},
-        actions={"effort": DiscreteGrid(_Effort)},
+        actions={"effort": DiscreteGrid(category_class=_Effort)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _no_felicity, "m": _no_felicity}
@@ -386,7 +386,7 @@ def _build_dissolution_model() -> Model:
         active=lambda age: (age >= 1) & (age < 3),
         states={"w": AgeSpecializedGrid(build=_moving_grid, signature=_moving_ceiling)},
         state_transitions={"w": fixed_transition("w")},
-        actions={"effort": DiscreteGrid(_Effort)},
+        actions={"effort": DiscreteGrid(category_class=_Effort)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _pair_felicity_f, "m": _pair_felicity_m}
@@ -398,7 +398,7 @@ def _build_dissolution_model() -> Model:
         transition=None,
         active=lambda age: age >= 2,
         states={"w": _ANNUITY_GRID},
-        actions={"effort": DiscreteGrid(_Effort)},
+        actions={"effort": DiscreteGrid(category_class=_Effort)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _no_felicity_on_w, "m": _no_felicity_on_w}
@@ -514,27 +514,27 @@ def _no_felicity(effort: DiscreteAction) -> FloatND:
     return 0.0 * effort
 
 
-def _no_felicity_on_w(w: ContinuousState, effort: DiscreteAction) -> FloatND:
+def _no_felicity_on_w(*, w: ContinuousState, effort: DiscreteAction) -> FloatND:
     """A terminal couple's felicity, zero at every state and action."""
     return 0.0 * w + 0.0 * effort
 
 
-def _account_felicity_f(balance: ContinuousState, effort: DiscreteAction) -> FloatND:
+def _account_felicity_f(*, balance: ContinuousState, effort: DiscreteAction) -> FloatND:
     """The account pays out its balance to the wife."""
     return balance + 0.0 * effort
 
 
-def _account_felicity_m(balance: ContinuousState, effort: DiscreteAction) -> FloatND:
+def _account_felicity_m(*, balance: ContinuousState, effort: DiscreteAction) -> FloatND:
     """The account pays the husband a premium on top of the balance."""
     return _M_BONUS + balance + 0.0 * effort
 
 
-def _pair_felicity_f(w: ContinuousState, effort: DiscreteAction) -> FloatND:
+def _pair_felicity_f(*, w: ContinuousState, effort: DiscreteAction) -> FloatND:
     """The pair pays out `w` to the wife."""
     return w + 0.0 * effort
 
 
-def _pair_felicity_m(w: ContinuousState, effort: DiscreteAction) -> FloatND:
+def _pair_felicity_m(*, w: ContinuousState, effort: DiscreteAction) -> FloatND:
     """The pair pays the husband a premium on top of `w`."""
     return _M_BONUS + w + 0.0 * effort
 
@@ -574,7 +574,7 @@ def _household_consents(D_target: BoolND) -> BoolND:
     return ~D_target
 
 
-def _wife_participates(Q_f: FloatND, floor_f: FloatND) -> BoolND:
+def _wife_participates(*, Q_f: FloatND, floor_f: FloatND) -> BoolND:
     """The pair is feasible only where the wife's value clears her floor."""
     return Q_f >= floor_f
 

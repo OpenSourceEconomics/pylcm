@@ -35,11 +35,11 @@ def _a(m: FloatND) -> FloatND:
     return 0.2 + 0.5 * m
 
 
-def _conditional_value(f: FloatND, m: FloatND) -> FloatND:
+def _conditional_value(*, f: FloatND, m: FloatND) -> FloatND:
     return -((f - _a(m)) ** 2) + jnp.log1p(m)
 
 
-def _conditional_marginal(f: FloatND, m: FloatND) -> FloatND:
+def _conditional_marginal(*, f: FloatND, m: FloatND) -> FloatND:
     return (f - _a(m)) + 1.0 / (1.0 + m)
 
 
@@ -53,7 +53,7 @@ def _keeper_marginal(m: FloatND) -> FloatND:
     return 1.0 / (1.0 + m) - 0.4
 
 
-def _carry(value: FloatND, marginal: FloatND) -> EGMCarry:
+def _carry(*, value: FloatND, marginal: FloatND) -> EGMCarry:
     return EGMCarry(
         endog_grid=jnp.broadcast_to(_M, value.shape),
         value=value,
@@ -66,8 +66,11 @@ def _analytic_bank() -> OuterCandidateBank:
     results = [
         OuterCandidateResult(
             outer_node=node,
-            V_arr=_conditional_value(node, _M),
-            carry=_carry(_conditional_value(node, _M), _conditional_marginal(node, _M)),
+            V_arr=_conditional_value(f=node, m=_M),
+            carry=_carry(
+                value=_conditional_value(f=node, m=_M),
+                marginal=_conditional_marginal(f=node, m=_M),
+            ),
             sim_policy=None,
         )
         for node in _NODES
@@ -77,7 +80,7 @@ def _analytic_bank() -> OuterCandidateBank:
 
 def _collapse(scale: float | None):
     bank = _analytic_bank()
-    keeper = _carry(_keeper_value(_M), _keeper_marginal(_M))
+    keeper = _carry(value=_keeper_value(_M), marginal=_keeper_marginal(_M))
     return collapse_continuous_candidate_bank(
         keeper_v_arr=_keeper_value(_M),
         keeper_carry=keeper,
@@ -89,7 +92,7 @@ def _collapse(scale: float | None):
 
 
 def _expected_by_quadrature(
-    keeper: np.ndarray, adjuster: np.ndarray, scale: float
+    *, keeper: np.ndarray, adjuster: np.ndarray, scale: float
 ) -> tuple[np.ndarray, np.ndarray]:
     edges = np.linspace(_SUPPORT[0], _SUPPORT[1], 100_001)
     chi = 0.5 * (edges[:-1] + edges[1:])
@@ -120,7 +123,9 @@ def test_expected_value_matches_dense_quadrature() -> None:
     collapse = _collapse(scale)
     keeper = np.asarray(_keeper_value(_M))
     adjuster = np.asarray(collapse.value_search.value)
-    expected, probability = _expected_by_quadrature(keeper, adjuster, scale)
+    expected, probability = _expected_by_quadrature(
+        keeper=keeper, adjuster=adjuster, scale=scale
+    )
     np.testing.assert_allclose(np.asarray(collapse.V_arr), expected, atol=1e-8)
     np.testing.assert_allclose(
         np.asarray(collapse.adjustment_probability), probability, atol=1e-4

@@ -47,7 +47,7 @@ class RegimeId:
 
 
 def utility(
-    consumption: ContinuousAction, is_working: BoolND, disutility_of_work: float
+    *, consumption: ContinuousAction, is_working: BoolND, disutility_of_work: float
 ) -> FloatND:
     # Multiplicative disutility ensures positive utility for CES aggregator
     work_factor = jnp.where(is_working, 1.0 / (1.0 + disutility_of_work), 1.0)
@@ -63,6 +63,7 @@ def is_working(labor_supply: DiscreteAction) -> BoolND:
 
 
 def next_wealth(
+    *,
     wealth: ContinuousState,
     consumption: ContinuousAction,
     labor_income: FloatND,
@@ -70,17 +71,18 @@ def next_wealth(
     return wealth - consumption + labor_income
 
 
-def next_regime(age: float, final_age_alive: float) -> ScalarInt:
+def next_regime(*, age: float, final_age_alive: float) -> ScalarInt:
     return jnp.where(age >= final_age_alive, RegimeId.dead, RegimeId.working_life)
 
 
 def borrowing_constraint(
-    consumption: ContinuousAction, wealth: ContinuousState
+    *, consumption: ContinuousAction, wealth: ContinuousState
 ) -> BoolND:
     return consumption <= wealth
 
 
 def ces_W(
+    *,
     utility: float,
     CE: float,
     discount_factor: float,
@@ -105,6 +107,7 @@ class PrefType:
 
 
 def discount_factor_from_type(
+    *,
     pref_type: DiscreteState,
     discount_factor_by_type: FloatND,
 ) -> FloatND:
@@ -117,7 +120,7 @@ def discount_factor_from_type(
     return discount_factor_by_type[pref_type]
 
 
-def _make_model(custom_W=None, *, with_pref_type: bool = False):
+def _make_model(*, custom_W=None, with_pref_type: bool = False):
     """Create a simple model, optionally with a custom `W` and pref_type state.
 
     When `with_pref_type=True`, the working-life regime gains a
@@ -144,13 +147,15 @@ def _make_model(custom_W=None, *, with_pref_type: bool = False):
     }
     dead_states: dict = {}
     if with_pref_type:
-        working_life_states["pref_type"] = DiscreteGrid(PrefType, batch_size=1)
+        working_life_states["pref_type"] = DiscreteGrid(
+            category_class=PrefType, batch_size=1
+        )
         working_life_state_transitions["pref_type"] = fixed_transition("pref_type")
-        dead_states["pref_type"] = DiscreteGrid(PrefType, batch_size=1)
+        dead_states["pref_type"] = DiscreteGrid(category_class=PrefType, batch_size=1)
 
     working_life_regime = UserRegime(
         actions={
-            "labor_supply": DiscreteGrid(LaborSupply),
+            "labor_supply": DiscreteGrid(category_class=LaborSupply),
             "consumption": LinSpacedGrid(start=0.5, stop=10, n_points=50),
         },
         states=working_life_states,
@@ -262,7 +267,7 @@ def test_default_W_not_injected_for_terminal():
 def test_custom_W_not_overwritten():
     """A regime-level aggregator survives finalization."""
 
-    def my_W(utility: float, CE: float) -> float:
+    def my_W(*, utility: float, CE: float) -> float:
         return utility + CE
 
     r = UserRegime(
@@ -386,6 +391,7 @@ def test_dag_output_feeds_default_h_monotone_in_discount_factor():
 
 
 def wealth_W(
+    *,
     utility: float,
     CE: float,
     discount_factor: float,
@@ -437,6 +443,7 @@ def test_h_consumes_continuous_state():
 
 
 def consumption_W(
+    *,
     utility: float,
     CE: float,
     discount_factor: float,
@@ -489,6 +496,7 @@ def test_h_consumes_continuous_action():
 
 
 def labor_supply_W(
+    *,
     utility: float,
     CE: float,
     discount_factor: float,
@@ -532,6 +540,7 @@ def test_h_consumes_discrete_action():
 
 
 def pref_type_direct_W(
+    *,
     utility: float,
     CE: float,
     discount_factor: float,
@@ -569,6 +578,7 @@ def test_h_consumes_discrete_state():
 
 
 def mixed_W(
+    *,
     utility: float,
     CE: float,
     discount_factor: float,
@@ -621,7 +631,7 @@ class _AgeIndexedRegimeId:
 
 
 def _W_age_varying_discount(
-    utility: FloatND, CE: FloatND, discount_factor: FloatND, age: FloatND
+    *, utility: FloatND, CE: FloatND, discount_factor: FloatND, age: FloatND
 ) -> FloatND:
     """Aggregate with a discount factor read off an age-indexed array."""
     return utility + discount_factor[age] * CE
@@ -632,7 +642,7 @@ class _AgeVaryingDiscountAggregator:
     """The same aggregator, written as a callable specification object."""
 
     def __call__(
-        self, utility: FloatND, CE: FloatND, discount_factor: FloatND, age: FloatND
+        self, *, utility: FloatND, CE: FloatND, discount_factor: FloatND, age: FloatND
     ) -> FloatND:
         return utility + discount_factor[age] * CE
 
@@ -682,7 +692,7 @@ def test_callable_object_aggregator_indexing_a_series_matches_the_function_form(
 
 
 def _solve_with_aggregator_slot(
-    koopmans_aggregator: object, aggregator_params: dict[str, float]
+    *, koopmans_aggregator: object, aggregator_params: dict[str, float]
 ) -> tuple[dict[str, str | dict[str, str | dict[str, str]]], FloatND]:
     """Return the aggregator params template and `alive`'s first V array."""
     wealth = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
@@ -727,8 +737,8 @@ _PHASED_AGGREGATOR_PARAMS = {
 def test_phased_aggregator_objects_declare_the_union_of_their_parameters():
     """`Phased` over two aggregator objects surfaces both variants' parameters."""
     template, _ = _solve_with_aggregator_slot(
-        Phased(solve=LinearAggregator(), simulate=CESAggregator()),
-        _PHASED_AGGREGATOR_PARAMS,
+        koopmans_aggregator=Phased(solve=LinearAggregator(), simulate=CESAggregator()),
+        aggregator_params=_PHASED_AGGREGATOR_PARAMS,
     )
     assert set(template) == set(_PHASED_AGGREGATOR_PARAMS)
 
@@ -736,10 +746,11 @@ def test_phased_aggregator_objects_declare_the_union_of_their_parameters():
 def test_phased_aggregator_objects_solve_with_the_solve_variant():
     """Backward induction uses the `solve` variant of a phased aggregator slot."""
     _, phased_V_arr = _solve_with_aggregator_slot(
-        Phased(solve=LinearAggregator(), simulate=CESAggregator()),
-        _PHASED_AGGREGATOR_PARAMS,
+        koopmans_aggregator=Phased(solve=LinearAggregator(), simulate=CESAggregator()),
+        aggregator_params=_PHASED_AGGREGATOR_PARAMS,
     )
     _, bare_V_arr = _solve_with_aggregator_slot(
-        LinearAggregator(), {"discount_factor": 0.95}
+        koopmans_aggregator=LinearAggregator(),
+        aggregator_params={"discount_factor": 0.95},
     )
     assert_array_equal(np.asarray(phased_V_arr), np.asarray(bare_V_arr))

@@ -49,12 +49,14 @@ class RegimeId:
     last: ScalarInt
 
 
-def _service_flow(new_stock: FloatND, move: DiscreteAction, stock: FloatND) -> FloatND:
+def _service_flow(
+    *, new_stock: FloatND, move: DiscreteAction, stock: FloatND
+) -> FloatND:
     """NEGM service-flow utility: reads the stock CHOSEN this period."""
     return 1.0 * new_stock + 0.0 * move + 0.0 * stock
 
 
-def _flat_utility(stock: FloatND, move: DiscreteAction) -> FloatND:
+def _flat_utility(*, stock: FloatND, move: DiscreteAction) -> FloatND:
     return 0.0 * stock + 0.0 * move
 
 
@@ -84,15 +86,15 @@ def _simulated(new_stock=_new_stock):
     live = Regime(
         transition=_next_regime,
         state_transitions={"stock": _carry_new_stock},
-        states={"stock": DiscreteGrid(Stock)},
-        actions={"move": DiscreteGrid(Move)},
+        states={"stock": DiscreteGrid(category_class=Stock)},
+        actions={"move": DiscreteGrid(category_class=Move)},
         functions={"utility": _service_flow, "new_stock": new_stock},
     ).replace(active=lambda age: age < 2)
     last = Regime(
         transition=None,
         state_transitions={},
-        states={"stock": DiscreteGrid(Stock)},
-        actions={"move": DiscreteGrid(Move)},
+        states={"stock": DiscreteGrid(category_class=Stock)},
+        actions={"move": DiscreteGrid(category_class=Move)},
         functions={"utility": _flat_utility},
     ).replace(active=lambda age: age >= 2)
     model = Model(

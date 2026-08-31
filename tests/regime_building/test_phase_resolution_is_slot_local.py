@@ -79,7 +79,7 @@ def next_tag_calling_the_simulate_helper(move: DiscreteAction) -> FloatND:
 
 
 def service_flow(
-    new_stock: FloatND, move: DiscreteAction, stock: FloatND, tag: FloatND
+    *, new_stock: FloatND, move: DiscreteAction, stock: FloatND, tag: FloatND
 ) -> FloatND:
     """Within-period utility reading the CHOSEN stock (NEGM service flow).
 
@@ -91,7 +91,7 @@ def service_flow(
     return 1.0 * new_stock + 0.0 * move + 0.0 * stock + 0.0 * tag
 
 
-def flat_utility(stock: FloatND, move: DiscreteAction, tag: FloatND) -> FloatND:
+def flat_utility(*, stock: FloatND, move: DiscreteAction, tag: FloatND) -> FloatND:
     """Terminal utility FLAT in the states, so continuation cannot drive the argmax."""
     return 0.0 * stock + 0.0 * move + 0.0 * tag
 
@@ -104,7 +104,10 @@ PARAMS = {"discount_factor": 0.95, "live": {}, "last": {}}
 IC = pd.DataFrame(
     {"regime_name": "live", "age": 0, "stock": ["bad"] * 8, "tag": ["bad"] * 8}
 )
-_STATES = {"stock": DiscreteGrid(Stock), "tag": DiscreteGrid(Stock)}
+_STATES = {
+    "stock": DiscreteGrid(category_class=Stock),
+    "tag": DiscreteGrid(category_class=Stock),
+}
 
 
 def _simulate(tag_law: UserFunction | Phased) -> pd.DataFrame:
@@ -112,7 +115,7 @@ def _simulate(tag_law: UserFunction | Phased) -> pd.DataFrame:
         transition=_next_regime,
         state_transitions={"stock": carry_new_stock, "tag": tag_law},
         states=_STATES,
-        actions={"move": DiscreteGrid(Move)},
+        actions={"move": DiscreteGrid(category_class=Move)},
         functions={
             "utility": service_flow,
             "new_stock": Phased(solve=_new_stock_belief, simulate=_new_stock_actual),
@@ -122,7 +125,7 @@ def _simulate(tag_law: UserFunction | Phased) -> pd.DataFrame:
         transition=None,
         state_transitions={},
         states=_STATES,
-        actions={"move": DiscreteGrid(Move)},
+        actions={"move": DiscreteGrid(category_class=Move)},
         functions={"utility": flat_utility},
     ).replace(active=lambda age: age >= 2)
     model = Model(

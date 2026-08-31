@@ -99,19 +99,19 @@ def _prob_one(age: FloatND) -> FloatND:
 # Married (collective) regime
 
 
-def _utility_married_f(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _utility_married_f(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     return 3.0 * (1.0 - work) + 2.0 * wage * work
 
 
-def _utility_married_m(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _utility_married_m(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     return 0.5 * (1.0 - work) + wage * work
 
 
-def _ir_f(Q_f: FloatND, V_single_f_ref: FloatND, delta_f: FloatND) -> BoolND:
+def _ir_f(*, Q_f: FloatND, V_single_f_ref: FloatND, delta_f: FloatND) -> BoolND:
     return Q_f >= V_single_f_ref - delta_f
 
 
-def _ir_m(Q_m: FloatND, V_single_m_ref: FloatND, delta_m: FloatND) -> BoolND:
+def _ir_m(*, Q_m: FloatND, V_single_m_ref: FloatND, delta_m: FloatND) -> BoolND:
     return Q_m >= V_single_m_ref - delta_m
 
 
@@ -122,13 +122,13 @@ def _project_wage(wage: ContinuousState) -> ContinuousState:
 # Singleton (single) regimes
 
 
-def _utility_single_f(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _utility_single_f(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     # 5.5 at w = 2, 1.5 at w = 1 and w = 3 (choosing work dominates leisure = 0).
     target = jnp.where((wage > 1.5) & (wage < 2.5), 5.5, 1.5)
     return target * work
 
 
-def _utility_single_m(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _utility_single_m(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     return 1.0 * work + 0.0 * wage
 
 
@@ -136,7 +136,7 @@ def _utility_zero(wage: ContinuousState) -> FloatND:
     return 0.0 * wage
 
 
-def _utility_zero_collective(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _utility_zero_collective(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     return 0.0 * wage * work
 
 
@@ -150,7 +150,7 @@ def _make_ir_regimes(
         active=lambda age: age < 1,
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility_single_f},
     )
     single_f_terminal = Regime(
@@ -169,7 +169,7 @@ def _make_ir_regimes(
         active=lambda age: age < 1,
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _utility_married_f, "m": _utility_married_m}
@@ -202,7 +202,7 @@ def _make_ir_regimes(
         transition=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE_GRID},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _utility_zero_collective, "m": _utility_zero_collective}
@@ -420,16 +420,16 @@ def test_projection_maps_states_and_reference_v_is_interpolated_off_grid():
         (upper-nearest-neighbour gives t_f = 5 -> D=True)
     """
 
-    def _utility_f(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+    def _utility_f(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
         return 2.0 * wage * work
 
-    def _utility_m(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+    def _utility_m(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
         return wage * work
 
-    def _utility_single(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+    def _utility_single(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
         return (2.0 * wage - 1.0) * work
 
-    def _ir(Q_f: FloatND, V_f_ref: FloatND, delta_f: FloatND) -> BoolND:
+    def _ir(*, Q_f: FloatND, V_f_ref: FloatND, delta_f: FloatND) -> BoolND:
         return Q_f >= V_f_ref - delta_f
 
     def _project(wage: ContinuousState) -> ContinuousState:
@@ -443,7 +443,7 @@ def test_projection_maps_states_and_reference_v_is_interpolated_off_grid():
         active=lambda age: age < 1,
         states={"wage": single_grid},
         state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility_single},
     )
     single_f_terminal = Regime(
@@ -457,7 +457,7 @@ def test_projection_maps_states_and_reference_v_is_interpolated_off_grid():
         active=lambda age: age < 1,
         states={"wage": married_grid},
         state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
         },
@@ -476,7 +476,7 @@ def test_projection_maps_states_and_reference_v_is_interpolated_off_grid():
         transition=None,
         active=lambda age: age >= 1,
         states={"wage": married_grid},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _utility_zero_collective, "m": _utility_zero_collective}
@@ -581,10 +581,10 @@ def test_on_path_minus_inf_value_is_not_dissolution():
     w=3: mask empty -> D=True (never inferred from V == -inf).
     """
 
-    def _utility_f(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+    def _utility_f(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
         return jnp.where(wage > 1.5, -jnp.inf, 1.0 + work)
 
-    def _utility_m(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+    def _utility_m(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
         return jnp.where(wage > 1.5, -jnp.inf, 1.0 * work)
 
     def _wage_ok(wage: ContinuousState) -> BoolND:
@@ -595,7 +595,7 @@ def test_on_path_minus_inf_value_is_not_dissolution():
         active=lambda age: age < 1,
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
         },
@@ -605,7 +605,7 @@ def test_on_path_minus_inf_value_is_not_dissolution():
         transition=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE_GRID},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _utility_zero_collective, "m": _utility_zero_collective}
@@ -673,7 +673,7 @@ def _minimal_collective_kwargs() -> dict:
         "active": lambda age: age < 1,
         "states": {"wage": _WAGE_GRID},
         "state_transitions": {"wage": fixed_transition("wage")},
-        "actions": {"work": DiscreteGrid(Work)},
+        "actions": {"work": DiscreteGrid(category_class=Work)},
     }
 
 
@@ -699,7 +699,7 @@ def test_value_constraints_on_a_terminal_collective_regime_are_accepted():
         transition=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE_GRID},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _utility_married_f, "m": _utility_married_m}
@@ -783,10 +783,10 @@ def test_same_period_ref_to_unknown_regime_is_rejected():
 def test_same_period_ref_cycle_is_rejected_at_build():
     """Two collective regimes reading each other's same-period V form a cycle."""
 
-    def _vc_a(Q_f: FloatND, V_b_ref: FloatND) -> BoolND:
+    def _vc_a(*, Q_f: FloatND, V_b_ref: FloatND) -> BoolND:
         return Q_f >= V_b_ref - 1000.0
 
-    def _vc_b(Q_f: FloatND, V_a_ref: FloatND) -> BoolND:
+    def _vc_b(*, Q_f: FloatND, V_a_ref: FloatND) -> BoolND:
         return Q_f >= V_a_ref - 1000.0
 
     def _make_couple(
@@ -799,7 +799,7 @@ def test_same_period_ref_cycle_is_rejected_at_build():
             active=lambda age: age < 1,
             states={"wage": _WAGE_GRID},
             state_transitions={"wage": fixed_transition("wage")},
-            actions={"work": DiscreteGrid(Work)},
+            actions={"work": DiscreteGrid(category_class=Work)},
             functions={
                 "utility": CollectiveUtility(
                     utilities={"f": _utility_married_f, "m": _utility_married_m}
@@ -842,7 +842,7 @@ def test_same_period_ref_cycle_is_rejected_at_build():
         transition=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE_GRID},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _utility_zero_collective, "m": _utility_zero_collective}
@@ -873,7 +873,7 @@ def test_same_period_ref_to_collective_regime_requires_stakeholder():
         active=lambda age: age < 1,
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _utility_married_f, "m": _utility_married_m}

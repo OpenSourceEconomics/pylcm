@@ -12,7 +12,7 @@ from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
 
 
 def test_native_payload_is_resolved_from_the_installed_distribution(
-    monkeypatch, tmp_path
+    *, monkeypatch, tmp_path
 ):
     """The exact kernel remains available when its source checkout disappears."""
     installed_root = tmp_path / "site-packages"

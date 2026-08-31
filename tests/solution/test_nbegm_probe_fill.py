@@ -49,21 +49,21 @@ from lcm.typing import (
 )
 
 
-def _array_fill(*args: object, **kwargs: object) -> FloatND:
+def _array_fill(**kwargs: object) -> FloatND:
     """`_probe_fill`'s result where an array is what the classification asks for."""
-    fill = _probe_fill(*args, **kwargs)  # ty: ignore[invalid-argument-type]
+    fill = _probe_fill(**kwargs)  # ty: ignore[invalid-argument-type]
     assert isinstance(fill, jax.Array)
     return fill
 
 
-def _schedule_fill(*args: object, **kwargs: object) -> MappingLeaf:
+def _schedule_fill(**kwargs: object) -> MappingLeaf:
     """`_probe_fill`'s result where a grouped param is what it asks for."""
-    fill = _probe_fill(*args, **kwargs)  # ty: ignore[invalid-argument-type]
+    fill = _probe_fill(**kwargs)  # ty: ignore[invalid-argument-type]
     assert isinstance(fill, MappingLeaf)
     return fill
 
 
-def _schedule_entry(schedule: MappingLeaf, key: str) -> FloatND:
+def _schedule_entry(*, schedule: MappingLeaf, key: str) -> FloatND:
     """One entry of a grouped param, as the array its consumers read."""
     return cast("Mapping[str, FloatND]", schedule.data)[key]
 
@@ -76,11 +76,11 @@ class _FakeRegime:
     """The regime's functions, keyed by name."""
 
 
-def _rate_term(liquid: ContinuousState, rate_of_return: ScalarFloat) -> FloatND:
+def _rate_term(*, liquid: ContinuousState, rate_of_return: ScalarFloat) -> FloatND:
     return liquid * rate_of_return
 
 
-def _table_term(schedule: Float1D, code: int) -> FloatND:
+def _table_term(*, schedule: Float1D, code: int) -> FloatND:
     return schedule[code]
 
 
@@ -127,7 +127,10 @@ def test_array_float_arg_names_lets_a_scalar_annotation_win_on_conflict() -> Non
 def test_probe_fill_gives_a_classified_array_arg_unit_1d() -> None:
     """An arg in the array set fills to shape `(1,)` so a scalar index clamps in."""
     table = _array_fill(
-        "schedule", 1.0, frozenset(), array_float_arg_names=frozenset({"schedule"})
+        name="schedule",
+        fill=1.0,
+        int_arg_names=frozenset(),
+        array_float_arg_names=frozenset({"schedule"}),
     )
     assert jnp.shape(table) == (1,)
 
@@ -135,9 +138,9 @@ def test_probe_fill_gives_a_classified_array_arg_unit_1d() -> None:
 def test_probe_fill_keeps_an_unclassified_float_arg_scalar() -> None:
     """A float arg outside the array set stays 0-d, honouring its scalar contract."""
     scalar = _array_fill(
-        "rate_of_return",
-        1.0,
-        frozenset(),
+        name="rate_of_return",
+        fill=1.0,
+        int_arg_names=frozenset(),
         array_float_arg_names=frozenset({"schedule"}),
     )
     assert jnp.ndim(scalar) == 0
@@ -180,17 +183,19 @@ def test_annotated_int_arg_names_lets_a_float_annotation_win_on_conflict() -> No
 
 def test_probe_fill_gives_an_annotated_int_arg_an_integer_fill() -> None:
     """An arg classified integer by annotation fills as int32, not float."""
-    code = _array_fill("insurance_status", 1.0, frozenset({"insurance_status"}))
+    code = _array_fill(
+        name="insurance_status", fill=1.0, int_arg_names=frozenset({"insurance_status"})
+    )
     assert code.dtype == jnp.int32
 
 
 def test_probe_fill_gives_an_array_arg_the_requested_rank() -> None:
     """A table read with two indices fills to shape `(1, 1)` at array rank 2."""
     table = _array_fill(
-        "schedule",
-        1.0,
-        frozenset(),
-        frozenset({"schedule"}),
+        name="schedule",
+        fill=1.0,
+        int_arg_names=frozenset(),
+        array_float_arg_names=frozenset({"schedule"}),
         array_rank=2,
     )
     assert jnp.shape(table) == (1, 1)
@@ -203,17 +208,17 @@ def test_probe_fill_keeps_a_scalar_arg_zero_d_at_a_higher_array_rank() -> None:
     annotate 0-d has a rank already, and raising it would violate that contract.
     """
     scalar = _array_fill(
-        "rate_of_return",
-        1.0,
-        frozenset(),
-        frozenset({"schedule"}),
+        name="rate_of_return",
+        fill=1.0,
+        int_arg_names=frozenset(),
+        array_float_arg_names=frozenset({"schedule"}),
         array_rank=2,
     )
     assert jnp.ndim(scalar) == 0
 
 
-def _reads_a_schedule(income: FloatND, tax_schedule: MappingLeaf) -> FloatND:
-    return income * _schedule_entry(tax_schedule, "marginal_rates")[0, 0]
+def _reads_a_schedule(*, income: FloatND, tax_schedule: MappingLeaf) -> FloatND:
+    return income * _schedule_entry(schedule=tax_schedule, key="marginal_rates")[0, 0]
 
 
 def test_annotated_mapping_leaf_arg_names_includes_a_schedule_param() -> None:
@@ -263,9 +268,9 @@ def test_annotated_mapping_leaf_arg_names_excludes_an_array_param() -> None:
 def test_probe_fill_gives_a_schedule_arg_a_mapping_leaf() -> None:
     """A schedule argument fills to a `MappingLeaf`, satisfying its declared type."""
     schedule = _probe_fill(
-        "tax_schedule",
-        1.0,
-        frozenset(),
+        name="tax_schedule",
+        fill=1.0,
+        int_arg_names=frozenset(),
         mapping_leaf_arg_names=frozenset({"tax_schedule"}),
     )
     assert isinstance(schedule, MappingLeaf)
@@ -279,13 +284,15 @@ def test_probe_fill_answers_any_schedule_key_at_the_requested_rank() -> None:
     whatever the model's own code asks for.
     """
     schedule = _schedule_fill(
-        "tax_schedule",
-        1.0,
-        frozenset(),
+        name="tax_schedule",
+        fill=1.0,
+        int_arg_names=frozenset(),
         mapping_leaf_arg_names=frozenset({"tax_schedule"}),
         leaf_rank=2,
     )
-    assert jnp.shape(_schedule_entry(schedule, "never_declared_anywhere")) == (1, 1)
+    assert jnp.shape(
+        _schedule_entry(schedule=schedule, key="never_declared_anywhere")
+    ) == (1, 1)
 
 
 def test_probe_fill_schedule_enters_a_compiled_call() -> None:
@@ -297,17 +304,17 @@ def test_probe_fill_schedule_enters_a_compiled_call() -> None:
     a reason that has nothing to do with the model it was called to check.
     """
     schedule = _schedule_fill(
-        "tax_schedule",
-        3.0,
-        frozenset(),
+        name="tax_schedule",
+        fill=3.0,
+        int_arg_names=frozenset(),
         mapping_leaf_arg_names=frozenset({"tax_schedule"}),
     )
 
     @jax.jit
-    def _taxed(liquid: FloatND, tax_schedule: MappingLeaf) -> FloatND:
-        return liquid * _schedule_entry(tax_schedule, "marginal_rates")[0]
+    def _taxed(*, liquid: FloatND, tax_schedule: MappingLeaf) -> FloatND:
+        return liquid * _schedule_entry(schedule=tax_schedule, key="marginal_rates")[0]
 
-    assert float(_taxed(jnp.asarray(2.0), schedule)) == 6.0
+    assert float(_taxed(liquid=jnp.asarray(2.0), tax_schedule=schedule)) == 6.0
 
 
 def test_probe_fill_ranks_schedule_contents_apart_from_plain_array_args() -> None:
@@ -318,10 +325,10 @@ def test_probe_fill_ranks_schedule_contents_apart_from_plain_array_args() -> Non
     schedule holds is readable from nothing, so the two escalate separately.
     """
     row = _array_fill(
-        "interpolation_table",
-        1.0,
-        frozenset(),
-        frozenset({"interpolation_table"}),
+        name="interpolation_table",
+        fill=1.0,
+        int_arg_names=frozenset(),
+        array_float_arg_names=frozenset({"interpolation_table"}),
         mapping_leaf_arg_names=frozenset({"tax_schedule"}),
         leaf_rank=3,
     )
@@ -369,9 +376,9 @@ def test_annotated_int_arg_names_excludes_a_boolean_param() -> None:
 def test_probe_fill_gives_an_annotated_bool_arg_a_boolean_fill() -> None:
     """An arg classified boolean by annotation fills as bool, not float."""
     flag = _array_fill(
-        "crossed_threshold",
-        3.0,
-        frozenset(),
+        name="crossed_threshold",
+        fill=3.0,
+        int_arg_names=frozenset(),
         bool_arg_names=frozenset({"crossed_threshold"}),
     )
     assert flag.dtype == jnp.bool_
@@ -379,8 +386,9 @@ def test_probe_fill_gives_an_annotated_bool_arg_a_boolean_fill() -> None:
 
 @pytest.mark.parametrize(("fill", "expected"), [(1.0, False), (3.0, True)])
 def test_probe_fill_reaches_both_sides_of_a_boolean_arg(
+    *,
     fill: float,
-    expected: bool,  # noqa: FBT001
+    expected: bool,
 ) -> None:
     """The probe's constant fills put a boolean argument on both branches.
 
@@ -388,23 +396,27 @@ def test_probe_fill_reaches_both_sides_of_a_boolean_arg(
     controls unprobed, so the fill level the probes already sweep decides it.
     """
     flag = _array_fill(
-        "crossed_threshold",
-        fill,
-        frozenset(),
+        name="crossed_threshold",
+        fill=fill,
+        int_arg_names=frozenset(),
         bool_arg_names=frozenset({"crossed_threshold"}),
     )
     assert bool(flag) is expected
 
 
-def _reads_a_two_index_table(period: ScalarInt, code: IntND, table: FloatND) -> FloatND:
+def _reads_a_two_index_table(
+    *, period: ScalarInt, code: IntND, table: FloatND
+) -> FloatND:
     return table[period, code]
 
 
-def _reads_a_one_index_row(period: ScalarInt, row: FloatND) -> FloatND:
+def _reads_a_one_index_row(*, period: ScalarInt, row: FloatND) -> FloatND:
     return row[period]
 
 
-def _reads_the_same_table_with_one_index(period: ScalarInt, table: FloatND) -> FloatND:
+def _reads_the_same_table_with_one_index(
+    *, period: ScalarInt, table: FloatND
+) -> FloatND:
     return table[period]
 
 
@@ -451,11 +463,11 @@ def test_indexed_arg_ranks_keys_a_renamed_parameter_by_its_signature_name() -> N
 def test_probe_fill_takes_an_array_arg_rank_from_the_inferred_ranks() -> None:
     """An argument read with two indices fills to `(1, 1)` on the first rung."""
     table = _array_fill(
-        "schedule",
-        1.0,
-        frozenset(),
-        frozenset({"schedule"}),
-        {"schedule": 2},
+        name="schedule",
+        fill=1.0,
+        int_arg_names=frozenset(),
+        array_float_arg_names=frozenset({"schedule"}),
+        array_arg_ranks={"schedule": 2},
     )
     assert jnp.shape(table) == (1, 1)
 
@@ -467,11 +479,11 @@ def test_probe_fill_leaves_a_scalar_arg_zero_d_despite_an_inferred_rank() -> Non
     is an array at all — that is the annotation's job, and it wins.
     """
     scalar = _array_fill(
-        "rate_of_return",
-        1.0,
-        frozenset(),
-        frozenset({"schedule"}),
-        {"rate_of_return": 2},
+        name="rate_of_return",
+        fill=1.0,
+        int_arg_names=frozenset(),
+        array_float_arg_names=frozenset({"schedule"}),
+        array_arg_ranks={"rate_of_return": 2},
     )
     assert jnp.ndim(scalar) == 0
 
@@ -604,9 +616,9 @@ def test_annotation_source_functions_keeps_every_econ_function() -> None:
 def test_probe_fill_returns_the_models_own_value_for_a_declared_parameter() -> None:
     """A parameter the model declares answers with its value, not a synthetic fill."""
     value = _probe_fill(
-        "utility__crra",
-        1.0,
-        frozenset(),
+        name="utility__crra",
+        fill=1.0,
+        int_arg_names=frozenset(),
         param_values=MappingProxyType({"utility__crra": jnp.asarray(2.5)}),
     )
 
@@ -618,10 +630,10 @@ def test_probe_fill_prefers_a_real_parameter_over_its_annotated_shape() -> None:
     table = jnp.asarray([[0.1, 0.2], [0.3, 0.4]])
 
     value = _probe_fill(
-        "taxes__marginal_rates",
-        1.0,
-        frozenset(),
-        frozenset({"taxes__marginal_rates"}),
+        name="taxes__marginal_rates",
+        fill=1.0,
+        int_arg_names=frozenset(),
+        array_float_arg_names=frozenset({"taxes__marginal_rates"}),
         param_values=MappingProxyType({"taxes__marginal_rates": table}),
     )
 
@@ -635,9 +647,9 @@ def test_probe_fill_hands_back_a_grouped_parameter_unchanged() -> None:
     )
 
     value = _probe_fill(
-        "taxes__income_tax_schedule",
-        1.0,
-        frozenset(),
+        name="taxes__income_tax_schedule",
+        fill=1.0,
+        int_arg_names=frozenset(),
         mapping_leaf_arg_names=frozenset({"taxes__income_tax_schedule"}),
         param_values=MappingProxyType({"taxes__income_tax_schedule": schedule}),
     )
@@ -648,9 +660,9 @@ def test_probe_fill_hands_back_a_grouped_parameter_unchanged() -> None:
 def test_probe_fill_synthesizes_an_argument_that_is_not_a_parameter() -> None:
     """A state, action, or unbound DAG intermediate still gets a synthetic fill."""
     value = _probe_fill(
-        "liquid",
-        3.0,
-        frozenset(),
+        name="liquid",
+        fill=3.0,
+        int_arg_names=frozenset(),
         param_values=MappingProxyType({"utility__crra": jnp.asarray(2.5)}),
     )
 

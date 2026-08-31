@@ -53,7 +53,7 @@ def _process() -> NormalIIDProcess:
     )
 
 
-def _target_utility(shock: ScalarFloat, other: ScalarFloat) -> FloatND:
+def _target_utility(*, shock: ScalarFloat, other: ScalarFloat) -> FloatND:
     return shock + 10.0 * other
 
 

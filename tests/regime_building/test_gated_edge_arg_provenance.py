@@ -135,7 +135,7 @@ def _next_x_offgrid(x: ContinuousState) -> FloatND:
     return jnp.full_like(x, _REALIZED_X)
 
 
-def _u_src(x: ContinuousState, work: DiscreteAction) -> FloatND:
+def _u_src(*, x: ContinuousState, work: DiscreteAction) -> FloatND:
     return jnp.zeros_like(x) * work
 
 
@@ -146,7 +146,7 @@ def _u_identity(x: ContinuousState) -> FloatND:
     return x
 
 
-def _solve_fixture(regimes_dict, flat_params):
+def _solve_fixture(*, regimes_dict, flat_params):
     regimes, regime_names_to_ids = _solve_and_process(
         regimes_dict=regimes_dict, ages=_AGES, regime_names=list(regimes_dict)
     )
@@ -163,7 +163,7 @@ def _solve_fixture(regimes_dict, flat_params):
     return regimes, regime_names_to_ids, solution
 
 
-def _same_period_mappings(regimes, flat_params, solution):
+def _same_period_mappings(*, regimes, flat_params, solution):
     base_state_action_spaces = {
         name: regime.solution.state_action_space(regime_params=flat_params[name])
         for name, regime in regimes.items()
@@ -207,7 +207,7 @@ def _project_to_shift(shift: FloatND) -> FloatND:
     return shift
 
 
-def _ref_gate(V_target: FloatND, ref_v: FloatND) -> BoolND:
+def _ref_gate(*, V_target: FloatND, ref_v: FloatND) -> BoolND:
     """`V_target(0.6) = 0.6` vs the reference value AT the projected point.
 
     With `V_ref(x) = x`, `ref_v` IS whichever `shift` the projection was given:
@@ -240,7 +240,7 @@ def _make_shift_regimes() -> dict[str, Regime]:
         active=lambda age: age < 1,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         state_transitions={"x": _next_x_offgrid},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_src},
     )
     target = Regime(
@@ -304,15 +304,17 @@ def test_gate_ref_projection_param_is_bound_from_the_source_not_the_target():
     """
     flat_params = _shift_flat_params()
     regimes, regime_names_to_ids, solution = _solve_fixture(
-        _make_shift_regimes(), flat_params
+        regimes_dict=_make_shift_regimes(), flat_params=flat_params
     )
     src = regimes["src"]
     evaluator = src.gated_edges["target"].simulate_gate_evaluator_at(period=1)
-    mappings = _same_period_mappings(regimes, flat_params, solution)
+    mappings = _same_period_mappings(
+        regimes=regimes, flat_params=flat_params, solution=solution
+    )
 
     # The provenance attributes `shift` to the SOURCE, and to nothing else.
     shift_arg = exposed_param_name(
-        evaluator, qname=_SHIFT_QNAME, namespace=SOURCE_PARAMS
+        evaluator=evaluator, qname=_SHIFT_QNAME, namespace=SOURCE_PARAMS
     )
     assert (
         TARGET_PARAMS,
@@ -329,7 +331,7 @@ def test_gate_ref_projection_param_is_bound_from_the_source_not_the_target():
         return bool(
             np.asarray(
                 _call_vmapped_with_accepted_kwargs(
-                    evaluator,
+                    func=evaluator,
                     batched_kwargs={"x": jnp.array([_REALIZED_X])},
                     static_kwargs={
                         shift_arg: jnp.asarray(shift_value),
@@ -397,22 +399,24 @@ def test_gate_ref_projection_param_absent_from_the_target_still_routes():
     """
     flat_params = _shift_flat_params(target_declares_shift=False)
     regimes, regime_names_to_ids, solution = _solve_fixture(
-        _make_shift_regimes(), flat_params
+        regimes_dict=_make_shift_regimes(), flat_params=flat_params
     )
     src = regimes["src"]
     evaluator = src.gated_edges["target"].simulate_gate_evaluator_at(period=1)
-    mappings = _same_period_mappings(regimes, flat_params, solution)
+    mappings = _same_period_mappings(
+        regimes=regimes, flat_params=flat_params, solution=solution
+    )
 
     assert _SHIFT_QNAME not in flat_params["target"]
     shift_arg = exposed_param_name(
-        evaluator, qname=_SHIFT_QNAME, namespace=SOURCE_PARAMS
+        evaluator=evaluator, qname=_SHIFT_QNAME, namespace=SOURCE_PARAMS
     )
 
     # The target-namespace binding, on the production evaluator: `shift` filtered
     # out of the target's (empty) params is simply not passed, and the call dies.
     with pytest.raises(Exception, match="missing required argument"):
         _call_vmapped_with_accepted_kwargs(
-            evaluator,
+            func=evaluator,
             batched_kwargs={"x": jnp.array([_REALIZED_X])},
             static_kwargs={
                 SAME_PERIOD_V_ARG: mappings["target"],
@@ -428,7 +432,7 @@ def test_gate_ref_projection_param_absent_from_the_target_still_routes():
 
     # ...and the provenance binder finds it in the namespace that owns it.
     bound = bind_provenance_params(
-        evaluator.arg_provenance,
+        provenance=evaluator.arg_provenance,
         flat_params=flat_params,
         source_name="src",
         target_name="target",
@@ -488,7 +492,7 @@ _PROJ_SRC_SHIFT = 1.0
 _PROJ_TARGET_SHIFT = 9.0
 
 
-def _target_bound_call(func, kwargs):
+def _target_bound_call(*, func, kwargs):
     """A projector call bound from the TARGET namespace, for contrast.
 
     A local copy of a `_call_with_accepted_kwargs` helper of the form
@@ -503,7 +507,7 @@ def _target_bound_call(func, kwargs):
     return func(**{name: value for name, value in kwargs.items() if name in accepted})
 
 
-def _project_x_plus_shift(x: ContinuousState, shift: FloatND) -> FloatND:
+def _project_x_plus_shift(*, x: ContinuousState, shift: FloatND) -> FloatND:
     """The leg's fallback projection: `z = x + shift`, `shift` the SOURCE's."""
     return x + shift
 
@@ -542,7 +546,7 @@ def _make_projector_regimes() -> dict[str, Regime]:
         active=lambda age: age < 1,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         state_transitions={"x": _next_x_offgrid},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_src},
     )
     target = Regime(
@@ -588,7 +592,9 @@ def test_simulate_projector_equals_the_solve_folds_projected_coordinate():
     filtered to the projector's signature — and disagrees.
     """
     flat_params = _projector_flat_params()
-    regimes, _ids, solution = _solve_fixture(_make_projector_regimes(), flat_params)
+    regimes, _ids, solution = _solve_fixture(
+        regimes_dict=_make_projector_regimes(), flat_params=flat_params
+    )
     projector = regimes["src"].gated_edges["target"].legs[0].fallback_state_projector
 
     # The two namespaces genuinely disagree about `shift`.
@@ -598,7 +604,9 @@ def test_simulate_projector_equals_the_solve_folds_projected_coordinate():
 
     # What SOLVE projected, read off the fold's own output: Wbar on the target's
     # {0, 1} grid.
-    edge_wbar = np.asarray(_same_period_wbar(regimes, flat_params, solution))
+    edge_wbar = np.asarray(
+        _same_period_wbar(regimes=regimes, flat_params=flat_params, solution=solution)
+    )
     np.testing.assert_allclose(
         edge_wbar, [0.0 + _PROJ_SRC_SHIFT, 1.0 + _PROJ_SRC_SHIFT], atol=1e-6
     )
@@ -609,7 +617,7 @@ def test_simulate_projector_equals_the_solve_folds_projected_coordinate():
     simulated = projector(
         **{name: target_states[name] for name in projector.arg_provenance.states},
         **bind_provenance_params(
-            projector.arg_provenance,
+            provenance=projector.arg_provenance,
             flat_params=flat_params,
             source_name="src",
             target_name="target",
@@ -623,7 +631,7 @@ def test_simulate_projector_equals_the_solve_folds_projected_coordinate():
     # filtered to the projector's signature. It disagrees with the fold by
     # (9.0 - 1.0).
     old_style = _target_bound_call(
-        projector, {**target_states, **flat_params["target"]}
+        func=projector, kwargs={**target_states, **flat_params["target"]}
     )
     np.testing.assert_allclose(
         np.asarray(old_style["z"]),
@@ -636,7 +644,7 @@ def test_simulate_projector_equals_the_solve_folds_projected_coordinate():
     )
 
 
-def _same_period_wbar(regimes, flat_params, solution):
+def _same_period_wbar(*, regimes, flat_params, solution):
     """The edge's `Wbar` at the target's own nodes, from the production fold.
 
     The substituted leaf is the edge's stacked operand channels, which the
@@ -645,7 +653,9 @@ def _same_period_wbar(regimes, flat_params, solution):
     combiner at those nodes is that same read, and the result is the value the
     source sees.
     """
-    channels = _same_period_channels(regimes, flat_params, solution)
+    channels = _same_period_channels(
+        regimes=regimes, flat_params=flat_params, solution=solution
+    )
     edge = regimes["src"].gated_edges["target"]
     target_nodes = regimes["target"].solution.state_action_space(
         regime_params=flat_params["target"]
@@ -681,7 +691,7 @@ def _same_period_wbar(regimes, flat_params, solution):
         for reader in edge_fold.projected_readers
     )
     projected = evaluate_projected_readers(
-        mapped_readers,
+        readers=mapped_readers,
         landing_states={
             arg: supplied[arg]
             for reader in edge_fold.projected_readers
@@ -704,7 +714,7 @@ def _same_period_wbar(regimes, flat_params, solution):
     )
 
 
-def _same_period_channels(regimes, flat_params, solution):
+def _same_period_channels(*, regimes, flat_params, solution):
     """The edge's stacked operand channels on the target grid."""
     substituted, _mappings = substitute_gated_edge_continuations(
         regime=regimes["src"],
@@ -734,10 +744,12 @@ def test_router_writes_the_fold_consistent_fallback_state():
     """
     flat_params = _projector_flat_params()
     regimes, regime_names_to_ids, solution = _solve_fixture(
-        _make_projector_regimes(), flat_params
+        regimes_dict=_make_projector_regimes(), flat_params=flat_params
     )
     src = regimes["src"]
-    mappings = _same_period_mappings(regimes, flat_params, solution)
+    mappings = _same_period_mappings(
+        regimes=regimes, flat_params=flat_params, solution=solution
+    )
 
     next_states = MappingProxyType(
         {
@@ -797,7 +809,9 @@ def test_prefixed_reference_grid_param_is_satisfiable_by_no_regime():
     """
     regimes_dict = _make_ref_grid_regimes()
     flat_params = _ref_grid_flat_params()
-    regimes, _ids, _solution = _solve_fixture(regimes_dict, flat_params)
+    regimes, _ids, _solution = _solve_fixture(
+        regimes_dict=regimes_dict, flat_params=flat_params
+    )
 
     interpolator = get_V_interpolator(
         v_interpolation_info=create_v_interpolation_info(regimes_dict["refregime"]),
@@ -871,7 +885,7 @@ def _make_ref_grid_regimes() -> dict[str, Regime]:
         active=lambda age: age < 1,
         states={"x": IrregSpacedGrid(n_points=2)},
         state_transitions={"x": _next_x_offgrid},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_src},
     )
     target = Regime(
@@ -927,11 +941,13 @@ def test_gate_ref_reads_the_reference_regimes_own_runtime_grid():
     """
     flat_params = _ref_grid_flat_params()
     regimes, regime_names_to_ids, solution = _solve_fixture(
-        _make_ref_grid_regimes(), flat_params
+        regimes_dict=_make_ref_grid_regimes(), flat_params=flat_params
     )
     src = regimes["src"]
     evaluator = src.gated_edges["target"].simulate_gate_evaluator_at(period=1)
-    mappings = _same_period_mappings(regimes, flat_params, solution)
+    mappings = _same_period_mappings(
+        regimes=regimes, flat_params=flat_params, solution=solution
+    )
 
     # The two namespaces genuinely disagree about `x__points`.
     assert not np.array_equal(
@@ -943,7 +959,7 @@ def test_gate_ref_reads_the_reference_regimes_own_runtime_grid():
         return bool(
             np.asarray(
                 _call_vmapped_with_accepted_kwargs(
-                    evaluator,
+                    func=evaluator,
                     batched_kwargs={"x": jnp.array([_REALIZED_X])},
                     static_kwargs={
                         SAME_PERIOD_V_ARG: mappings["target"],
@@ -1023,7 +1039,7 @@ def _make_fallback_grid_regimes() -> dict[str, Regime]:
         active=lambda age: age < 1,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         state_transitions={"x": _next_x_offgrid},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_src},
     )
     target = Regime(
@@ -1073,13 +1089,17 @@ def test_leg_fallback_reader_reads_the_fallback_regimes_own_runtime_grid():
             "fallback": MappingProxyType({"z__points": jnp.asarray(_FALLBACK_POINTS)}),
         }
     )
-    regimes, _ids, solution = _solve_fixture(_make_fallback_grid_regimes(), flat_params)
+    regimes, _ids, solution = _solve_fixture(
+        regimes_dict=_make_fallback_grid_regimes(), flat_params=flat_params
+    )
 
     prefixed = f"{_REF_STATE_PREFIX}z__points"
     fold = regimes["src"].gated_edges["target"].fold_at(period=1)
     assert prefixed not in get_union_of_args([fold.surfaces])
 
-    wbar = np.asarray(_same_period_wbar(regimes, flat_params, solution))
+    wbar = np.asarray(
+        _same_period_wbar(regimes=regimes, flat_params=flat_params, solution=solution)
+    )
     # Wbar = V_fallback(x) = x on the target's {0, 1} grid — exact only because
     # the read used the fallback's own irregular points.
     np.testing.assert_allclose(wbar, [0.0, 1.0], atol=1e-6)
@@ -1099,15 +1119,15 @@ def _u_wage(wage: ContinuousState) -> FloatND:
     return wage
 
 
-def _u_married_f(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _u_married_f(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     return 5.0 + 0.0 * wage * work
 
 
-def _u_married_m(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _u_married_m(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     return 0.0 * wage * work
 
 
-def _ir_f(Q_f: FloatND, V_single_f_ref: FloatND) -> BoolND:
+def _ir_f(*, Q_f: FloatND, V_single_f_ref: FloatND) -> BoolND:
     """`Q_f = 5` against the reference value read at the married node.
 
     At the married node `wage = 1.0`, projected onto `single_f`'s own points
@@ -1136,7 +1156,7 @@ def _make_e2_ref_grid_regimes() -> dict[str, Regime]:
         active=lambda age: age < 1,
         states={"wage": IrregSpacedGrid(n_points=2)},
         state_transitions={"wage": _identity_x_wage},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _u_married_f, "m": _u_married_m}
@@ -1157,7 +1177,7 @@ def _make_e2_ref_grid_regimes() -> dict[str, Regime]:
         transition=None,
         active=lambda age: age >= 1,
         states={"wage": IrregSpacedGrid(n_points=2)},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _u_married_m, "m": _u_married_m}
@@ -1288,7 +1308,7 @@ def test_e2_same_period_ref_reads_the_reference_regimes_own_runtime_grid():
 _HELPER_TARGET_SCALE = 0.9
 
 
-def _target_scaled_x(x: ContinuousState, target_scale: FloatND) -> FloatND:
+def _target_scaled_x(*, x: ContinuousState, target_scale: FloatND) -> FloatND:
     """A helper declared in the TARGET regime's functions.
 
     `target_scale` is a parameter the TARGET regime binds from
@@ -1300,7 +1320,7 @@ def _target_scaled_x(x: ContinuousState, target_scale: FloatND) -> FloatND:
     return x * target_scale
 
 
-def _gate_reads_target_helper(V_target: FloatND, target_scaled_x: FloatND) -> BoolND:
+def _gate_reads_target_helper(*, V_target: FloatND, target_scaled_x: FloatND) -> BoolND:
     """A source gate that routes through the target regime's `target_scaled_x`."""
     return V_target > target_scaled_x
 
@@ -1323,7 +1343,7 @@ def _make_target_helper_regimes() -> dict[str, Regime]:
         active=lambda age: age < 1,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         state_transitions={"x": _next_x_offgrid},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_src},
     )
     target = Regime(
@@ -1360,7 +1380,9 @@ def test_gate_reaching_a_target_function_param_is_rejected_not_misbound():
         ModelInitializationError,
         match=r"target_scale.*introduced by the TARGET regime's own functions",
     ):
-        _solve_fixture(_make_target_helper_regimes(), flat_params)
+        _solve_fixture(
+            regimes_dict=_make_target_helper_regimes(), flat_params=flat_params
+        )
 
 
 # A fence covering only the concatenated gate predicate, keyed on GLOBAL
@@ -1389,7 +1411,7 @@ def _project_through_target_helper(target_scaled_x: FloatND) -> FloatND:
     return target_scaled_x
 
 
-def _gate_ref_value_only(V_target: FloatND, scaled_ref: FloatND) -> BoolND:
+def _gate_ref_value_only(*, V_target: FloatND, scaled_ref: FloatND) -> BoolND:
     return V_target > scaled_ref
 
 
@@ -1417,7 +1439,7 @@ def _make_gate_ref_target_helper_regimes() -> dict[str, Regime]:
         active=lambda age: age < 1,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         state_transitions={"x": _next_x_offgrid},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_src},
     )
     target = Regime(
@@ -1466,7 +1488,9 @@ def test_gate_ref_projection_reaching_a_target_param_is_rejected_not_misbound():
         ModelInitializationError,
         match=r"target_scale.*introduced by the TARGET regime's own functions",
     ):
-        _solve_fixture(_make_gate_ref_target_helper_regimes(), flat_params)
+        _solve_fixture(
+            regimes_dict=_make_gate_ref_target_helper_regimes(), flat_params=flat_params
+        )
 
 
 # The fence must be ancestry-aware — it must not reject a valid direct source
@@ -1475,12 +1499,12 @@ def test_gate_ref_projection_reaching_a_target_param_is_rejected_not_misbound():
 # `_reached_target_param_leaves` (a full-solve fixture would instead exercise
 # pylcm's function-param qualification `helper__param`, which cannot collide with
 # a bare source qname and so cannot reproduce the finding at all).
-def _reached_helper(x: ContinuousState, target_scale: FloatND) -> FloatND:
+def _reached_helper(*, x: ContinuousState, target_scale: FloatND) -> FloatND:
     """A target node the consumer DOES reach — contributes `target_scale`."""
     return x * target_scale
 
 
-def _unrelated_helper(y: ContinuousState, shift: FloatND) -> FloatND:
+def _unrelated_helper(*, y: ContinuousState, shift: FloatND) -> FloatND:
     """A target node the consumer does NOT reach — its `shift` must stay clean."""
     return y * shift
 
@@ -1503,14 +1527,18 @@ def test_fence_leaf_set_is_ancestry_aware_not_global_name_matching():
 
     # A gate reaching `reached_helper` and declaring `shift` directly.
     reached = _reached_target_param_leaves(
-        dag_pool, ("V_target", "reached_helper", "shift"), state_names
+        dag_pool=dag_pool,
+        seed_args=("V_target", "reached_helper", "shift"),
+        state_names=state_names,
     )
     assert reached == frozenset({"target_scale"})
     assert "shift" not in reached  # the unrelated helper's param is NOT contested
 
     # A gate declaring only `shift` directly reaches no target node at all.
     assert (
-        _reached_target_param_leaves(dag_pool, ("V_target", "shift"), state_names)
+        _reached_target_param_leaves(
+            dag_pool=dag_pool, seed_args=("V_target", "shift"), state_names=state_names
+        )
         == frozenset()
     )
 
@@ -1529,7 +1557,7 @@ def _target_outside(x: ContinuousState) -> FloatND:
     return jnp.full_like(jnp.asarray(x, dtype=float), 0.9)
 
 
-def _gate_reads_outside(V_target: FloatND, outside: FloatND) -> BoolND:
+def _gate_reads_outside(*, V_target: FloatND, outside: FloatND) -> BoolND:
     return V_target > outside
 
 
@@ -1559,7 +1587,7 @@ def _make_gate_ref_name_collision_regimes() -> dict[str, Regime]:
         active=lambda age: age < 1,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         state_transitions={"x": _next_x_offgrid},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_src},
     )
     target = Regime(
@@ -1606,7 +1634,10 @@ def test_injected_gate_ref_name_colliding_with_a_target_node_is_rejected():
         ModelInitializationError,
         match=r"outside.*collide",
     ):
-        _solve_fixture(_make_gate_ref_name_collision_regimes(), flat_params)
+        _solve_fixture(
+            regimes_dict=_make_gate_ref_name_collision_regimes(),
+            flat_params=flat_params,
+        )
 
 
 # Two residual namespace defects survive the fences above:
@@ -1627,7 +1658,7 @@ def _target_threshold(x: ContinuousState) -> FloatND:
     return 0.9 + 0.0 * x
 
 
-def _gate_reads_shadowed_threshold(V_target: FloatND, threshold: FloatND) -> BoolND:
+def _gate_reads_shadowed_threshold(*, V_target: FloatND, threshold: FloatND) -> BoolND:
     """The source MEANS `threshold` as its own param (0.1); the target declares a
     state-only node `threshold(x)=0.9`, which name-based concatenation binds instead,
     silently reversing the gate."""
@@ -1652,7 +1683,7 @@ def _make_threshold_shadow_regimes() -> dict[str, Regime]:
         active=lambda age: age < 1,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         state_transitions={"x": _next_x_offgrid},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_src},
     )
     target = Regime(
@@ -1695,7 +1726,9 @@ def test_gate_arg_shadowed_by_state_only_target_node_is_rejected():
         ModelInitializationError,
         match=r"threshold.*TARGET regime's own function",
     ):
-        _solve_fixture(_make_threshold_shadow_regimes(), flat_params)
+        _solve_fixture(
+            regimes_dict=_make_threshold_shadow_regimes(), flat_params=flat_params
+        )
 
 
 def _gate_uses_v_target(V_target: FloatND) -> BoolND:
@@ -1726,7 +1759,7 @@ def _make_gate_ref_v_target_alias_regimes() -> dict[str, Regime]:
         active=lambda age: age < 1,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         state_transitions={"x": _next_x_offgrid},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_src},
     )
     target = Regime(
@@ -1771,7 +1804,10 @@ def test_gate_ref_key_aliasing_v_target_is_rejected():
         ModelInitializationError,
         match=r"V_target.*alias a built-in injected gate operand",
     ):
-        _solve_fixture(_make_gate_ref_v_target_alias_regimes(), flat_params)
+        _solve_fixture(
+            regimes_dict=_make_gate_ref_v_target_alias_regimes(),
+            flat_params=flat_params,
+        )
 
 
 # The gate-operand namespace must be disjoint from target STATE names.
@@ -1823,7 +1859,7 @@ def test_reject_gate_operand_state_name_collision_passes_when_disjoint():
     )
 
 
-def _gate_reads_x_operand(V_target: FloatND, x: FloatND) -> BoolND:
+def _gate_reads_x_operand(*, V_target: FloatND, x: FloatND) -> BoolND:
     """The source MEANS `x` as the target's realized STATE. A gate-ref keyed `x`
     injects the projected reference value under the SAME name; `_assemble_gate_kwargs`
     resolves the gate ref BEFORE the state mesh, so the gate silently reads the
@@ -1856,7 +1892,7 @@ def _make_gate_ref_key_aliases_target_state_regimes() -> dict[str, Regime]:
         active=lambda age: age < 1,
         states={"x": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         state_transitions={"x": _next_x_offgrid},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_src},
     )
     target = Regime(
@@ -1903,7 +1939,10 @@ def test_gate_ref_key_aliasing_a_target_state_is_rejected():
         ModelInitializationError,
         match=r"alias a gate-ref key",
     ):
-        _solve_fixture(_make_gate_ref_key_aliases_target_state_regimes(), flat_params)
+        _solve_fixture(
+            regimes_dict=_make_gate_ref_key_aliases_target_state_regimes(),
+            flat_params=flat_params,
+        )
 
 
 # A gate/projection arg that is BOTH a TARGET STATE and a
@@ -1935,18 +1974,18 @@ def _entry_x() -> FloatND:
 
 
 def _u_src_reads_x_param(
-    y: ContinuousState, work: DiscreteAction, x: FloatND
+    *, y: ContinuousState, work: DiscreteAction, x: FloatND
 ) -> FloatND:
     """Source utility reads param `x` -> `x` is a genuine source param the user
     supplies (bare) in `flat_params['src']`. It ALSO names the target's state."""
     return jnp.zeros_like(y) * work + 0.0 * x
 
 
-def _u_src_no_param(y: ContinuousState, work: DiscreteAction) -> FloatND:
+def _u_src_no_param(*, y: ContinuousState, work: DiscreteAction) -> FloatND:
     return jnp.zeros_like(y) * work
 
 
-def _gate_reads_x(V_target: FloatND, x: FloatND) -> BoolND:
+def _gate_reads_x(*, V_target: FloatND, x: FloatND) -> BoolND:
     return V_target > x
 
 
@@ -1977,7 +2016,7 @@ def _make_gate_param_aliases_target_state_regimes(
         active=lambda age: age < 1,
         states={"y": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         state_transitions={"y": _next_y_identity, "x": {"target": _entry_x}},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": _u_src_reads_x_param
             if source_supplies_x_param
@@ -2027,8 +2066,10 @@ def test_gate_param_aliasing_a_target_state_and_source_param_is_rejected():
         match=r"simultaneously a TARGET state.*and a source parameter",
     ):
         _solve_fixture(
-            _make_gate_param_aliases_target_state_regimes(source_supplies_x_param=True),
-            flat_params,
+            regimes_dict=_make_gate_param_aliases_target_state_regimes(
+                source_supplies_x_param=True
+            ),
+            flat_params=flat_params,
         )
 
 
@@ -2047,8 +2088,10 @@ def test_gate_reading_a_target_state_that_is_not_a_source_param_still_solves():
     )
     # Must not raise.
     _solve_fixture(
-        _make_gate_param_aliases_target_state_regimes(source_supplies_x_param=False),
-        flat_params,
+        regimes_dict=_make_gate_param_aliases_target_state_regimes(
+            source_supplies_x_param=False
+        ),
+        flat_params=flat_params,
     )
 
 
@@ -2065,12 +2108,12 @@ def test_gate_reading_a_target_state_that_is_not_a_source_param_still_solves():
 # the same hazard. Intersecting source-params with target STATES alone is not
 # enough; the engine names are reserved too.
 def _gate_reads_params_engine_arg(
-    V_target: FloatND, same_period_regime_to_params: FloatND
+    *, V_target: FloatND, same_period_regime_to_params: FloatND
 ) -> BoolND:
     return V_target > same_period_regime_to_params
 
 
-def _gate_reads_period_engine_arg(V_target: FloatND, period: ScalarInt) -> BoolND:
+def _gate_reads_period_engine_arg(*, V_target: FloatND, period: ScalarInt) -> BoolND:
     return V_target > period
 
 
@@ -2098,7 +2141,7 @@ def _make_source_param_aliases_regimes(gate: UserFunction) -> dict[str, Regime]:
         active=lambda age: age < 1,
         states={"y": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         state_transitions={"y": _next_y_identity, "x": {"target": _entry_x}},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_src_no_param},
     )
     target = Regime(
@@ -2130,7 +2173,7 @@ def _make_source_param_aliases_period_context_regimes() -> dict[str, Regime]:
 
 
 def _u_src_reads_v_arg_param(
-    y: ContinuousState, work: DiscreteAction, same_period_regime_to_V_arr: FloatND
+    *, y: ContinuousState, work: DiscreteAction, same_period_regime_to_V_arr: FloatND
 ) -> FloatND:
     return jnp.zeros_like(y) * work + 0.0 * same_period_regime_to_V_arr
 
@@ -2160,7 +2203,7 @@ def _make_source_param_aliases_engine_v_regimes() -> dict[str, Regime]:
         active=lambda age: age < 1,
         states={"y": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         state_transitions={"y": _next_y_identity, "x": {"target": _entry_x}},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_src_reads_v_arg_param},
     )
     target = Regime(
@@ -2189,7 +2232,7 @@ def _identity_v_arg_state(
 
 
 def _gate_reads_v_arg_state(
-    V_target: FloatND, same_period_regime_to_V_arr: FloatND
+    *, V_target: FloatND, same_period_regime_to_V_arr: FloatND
 ) -> BoolND:
     return V_target > same_period_regime_to_V_arr
 
@@ -2215,7 +2258,7 @@ def _make_target_state_aliases_engine_v_regimes() -> dict[str, Regime]:
         active=lambda age: age < 1,
         states={"y": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         state_transitions={"y": _next_y_identity, "x": {"target": _entry_x}},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_src_no_param},
     )
     target = Regime(
@@ -2252,7 +2295,10 @@ def test_source_param_aliasing_the_engine_params_arg_is_rejected():
         ModelInitializationError,
         match=r"(?i)engine|same_period_regime_to_params|reserved",
     ):
-        _solve_fixture(_make_source_param_aliases_engine_params_regimes(), flat_params)
+        _solve_fixture(
+            regimes_dict=_make_source_param_aliases_engine_params_regimes(),
+            flat_params=flat_params,
+        )
 
 
 def test_source_param_aliasing_edge_period_context_is_rejected():
@@ -2273,7 +2319,10 @@ def test_source_param_aliasing_edge_period_context_is_rejected():
         ModelInitializationError,
         match=r"(?i)engine|period|reserved",
     ):
-        _solve_fixture(_make_source_param_aliases_period_context_regimes(), flat_params)
+        _solve_fixture(
+            regimes_dict=_make_source_param_aliases_period_context_regimes(),
+            flat_params=flat_params,
+        )
 
 
 def test_source_param_aliasing_the_engine_v_arg_is_rejected():
@@ -2295,7 +2344,10 @@ def test_source_param_aliasing_the_engine_v_arg_is_rejected():
         ModelInitializationError,
         match=r"(?i)engine|same_period_regime_to_V_arr|reserved",
     ):
-        _solve_fixture(_make_source_param_aliases_engine_v_regimes(), flat_params)
+        _solve_fixture(
+            regimes_dict=_make_source_param_aliases_engine_v_regimes(),
+            flat_params=flat_params,
+        )
 
 
 def test_target_state_aliasing_the_engine_v_arg_is_rejected():
@@ -2314,7 +2366,10 @@ def test_target_state_aliasing_the_engine_v_arg_is_rejected():
         ModelInitializationError,
         match=r"(?i)engine|same_period_regime_to_V_arr|reserved",
     ):
-        _solve_fixture(_make_target_state_aliases_engine_v_regimes(), flat_params)
+        _solve_fixture(
+            regimes_dict=_make_target_state_aliases_engine_v_regimes(),
+            flat_params=flat_params,
+        )
 
 
 def test_source_param_near_engine_name_still_solves():
@@ -2337,7 +2392,7 @@ def test_source_param_near_engine_name_still_solves():
     )
 
     def _gate_near(
-        V_target: FloatND, same_period_regime_to_params_user: FloatND
+        *, V_target: FloatND, same_period_regime_to_params_user: FloatND
     ) -> BoolND:
         return V_target > same_period_regime_to_params_user
 
@@ -2360,8 +2415,8 @@ def test_source_param_near_engine_name_still_solves():
         active=lambda age: age < 1,
         states={"y": LinSpacedGrid(start=0.0, stop=1.0, n_points=2)},
         state_transitions={"y": _next_y_identity, "x": {"target": _entry_x}},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_src_no_param},
     )
     # Must not raise.
-    _solve_fixture(regimes, flat_params)
+    _solve_fixture(regimes_dict=regimes, flat_params=flat_params)

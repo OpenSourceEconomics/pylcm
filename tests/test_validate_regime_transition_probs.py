@@ -249,7 +249,7 @@ def _build_action_dependent_model() -> tuple[Model, dict]:
         transition=MarkovTransition(_next_regime_only_fails_for_leave),
         active=lambda age: age < 27,
         actions={
-            "action": DiscreteGrid(_Action),
+            "action": DiscreteGrid(category_class=_Action),
             "consumption": LinSpacedGrid(start=1, stop=10, n_points=5),
         },
         states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
@@ -288,7 +288,7 @@ def test_regime_transition_validation_passes_period_as_int32():
     seen_period_dtypes: list = []
 
     def _transition_recording_period(
-        action: DiscreteAction, period: ScalarInt
+        *, action: DiscreteAction, period: ScalarInt
     ) -> FloatND:
         seen_period_dtypes.append(getattr(period, "dtype", None))
         # `action` keeps a grid variable in the signature so validation takes
@@ -304,7 +304,7 @@ def test_regime_transition_validation_passes_period_as_int32():
         transition=MarkovTransition(_transition_recording_period),
         active=lambda age: age < 27,
         actions={
-            "action": DiscreteGrid(_Action),
+            "action": DiscreteGrid(category_class=_Action),
             "consumption": LinSpacedGrid(start=1, stop=10, n_points=5),
         },
         states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
@@ -339,7 +339,9 @@ def _invalid_survival_probs(n_periods: int) -> jnp.ndarray:
 def test_solve_raises_for_invalid_regime_transition_probs():
     """model.solve() raises for out-of-bounds regime transition probabilities."""
     model = get_model(N_PERIODS)
-    params = get_params(N_PERIODS, survival_probs=_invalid_survival_probs(N_PERIODS))
+    params = get_params(
+        n_periods=N_PERIODS, survival_probs=_invalid_survival_probs(N_PERIODS)
+    )
     with pytest.raises(InvalidRegimeTransitionProbabilitiesError):
         model.solve(log_level="debug", params=params)
 
@@ -347,11 +349,11 @@ def test_solve_raises_for_invalid_regime_transition_probs():
 def test_simulate_raises_for_invalid_regime_transition_probs():
     """model.simulate() raises for out-of-bounds regime transition probabilities."""
     model = get_model(N_PERIODS)
-    good_params = get_params(N_PERIODS)
+    good_params = get_params(n_periods=N_PERIODS)
     period_to_regime_to_V_arr = model.solve(log_level="debug", params=good_params)
 
     bad_params = get_params(
-        N_PERIODS, survival_probs=_invalid_survival_probs(N_PERIODS)
+        n_periods=N_PERIODS, survival_probs=_invalid_survival_probs(N_PERIODS)
     )
     initial_conditions = {
         "age": jnp.array([40.0]),
@@ -370,7 +372,9 @@ def test_simulate_raises_for_invalid_regime_transition_probs():
 def test_simulate_with_solve_raises_for_invalid_regime_transition_probs():
     """model.simulate(period_to_regime_to_V_arr=None) raises for out-of-bounds probs."""
     model = get_model(N_PERIODS)
-    params = get_params(N_PERIODS, survival_probs=_invalid_survival_probs(N_PERIODS))
+    params = get_params(
+        n_periods=N_PERIODS, survival_probs=_invalid_survival_probs(N_PERIODS)
+    )
     initial_conditions = {
         "age": jnp.array([40.0]),
         "wealth": jnp.array([10.0]),
@@ -455,7 +459,7 @@ def test_coarse_state_transition_is_checked_with_empty_period_targets():
             "solo": UserRegime(
                 transition={"term": MarkovTransition(_one_probability)},
                 active=lambda age: age >= 21,
-                states={"aux": DiscreteGrid(_AuxOutcome)},
+                states={"aux": DiscreteGrid(category_class=_AuxOutcome)},
                 state_transitions={"aux": MarkovTransition(_malformed_aux_probs)},
                 constraints={"aux_is_valid": lambda aux: aux >= 0},
                 functions={"utility": _zero_utility},

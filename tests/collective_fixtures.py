@@ -133,7 +133,7 @@ def make_two_stakeholder_model(
         active=lambda age: age < 1,
         states={"wage": WAGE_GRID},
         state_transitions={"wage": _next_wage},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
         },
@@ -142,7 +142,7 @@ def make_two_stakeholder_model(
         transition=None,
         active=lambda age: age >= 1,
         states={"wage": WAGE_GRID},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
         },
@@ -191,7 +191,7 @@ def make_stateless_collective_target_model(
         active=lambda age: age < 1,
         states={"wage": WAGE_GRID},
         state_transitions={"wage": _next_wage},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
         },
@@ -200,7 +200,7 @@ def make_stateless_collective_target_model(
         transition=None,
         active=lambda age: age >= 1,
         states={},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _stateless_utility_f, "m": _stateless_utility_m}
@@ -243,7 +243,7 @@ def make_folding_singleton_model(
         transition=_next_shock_regime,
         active=lambda age: age < 1,
         states={"wage_shock": FOLDED_SHOCK},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _shock_utility},
     )
     shocked_terminal = Regime(
@@ -284,7 +284,7 @@ def make_folding_collective_regime_kwargs() -> dict[str, Any]:
         "transition": _next_couple_regime,
         "active": lambda age: age < 1,
         "states": {"wage_shock": FOLDED_SHOCK},
-        "actions": {"work": DiscreteGrid(Work)},
+        "actions": {"work": DiscreteGrid(category_class=Work)},
         "functions": {
             "utility": CollectiveUtility(
                 utilities={"f": _shock_utility_f, "m": _shock_utility_m}
@@ -310,7 +310,7 @@ def make_folding_collective_regimes() -> dict[str, Regime]:
         transition=None,
         active=lambda age: age >= 1,
         states={},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _stateless_utility_f, "m": _stateless_utility_m}
@@ -396,12 +396,12 @@ def _couple_params() -> ParamsDict:
     }
 
 
-def _utility_f(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _utility_f(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     """Wife: values her own leisure highly, also sees household consumption."""
     return wage * work + 30.0 * (1.0 - work)
 
 
-def _utility_m(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _utility_m(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     """Husband: values household consumption, indifferent to leisure."""
     return 2.0 * (wage * work)
 
@@ -426,17 +426,17 @@ def _next_couple_regime() -> ScalarInt:
     return CoupleRegimeId.couple_terminal
 
 
-def _shock_utility(wage_shock: FloatND, work: DiscreteAction) -> FloatND:
+def _shock_utility(*, wage_shock: FloatND, work: DiscreteAction) -> FloatND:
     """Working earns the base wage plus the shock; leisure earns nothing."""
     return work * (10.0 + wage_shock)
 
 
-def _shock_utility_f(wage_shock: FloatND, work: DiscreteAction) -> FloatND:
+def _shock_utility_f(*, wage_shock: FloatND, work: DiscreteAction) -> FloatND:
     """Wife: the shocked wage when working, her leisure value otherwise."""
     return work * (10.0 + wage_shock) + 30.0 * (1.0 - work)
 
 
-def _shock_utility_m(wage_shock: FloatND, work: DiscreteAction) -> FloatND:
+def _shock_utility_m(*, wage_shock: FloatND, work: DiscreteAction) -> FloatND:
     """Husband: twice the shocked wage when working, nothing otherwise."""
     return 2.0 * work * (10.0 + wage_shock)
 

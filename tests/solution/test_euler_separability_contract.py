@@ -60,7 +60,7 @@ _CRRA = 2.0
 _SEPARABLE_ATOL = 1e-10
 
 
-def _linear(utility, continuation):
+def _linear(*, utility, continuation):
     return LinearAggregator()(
         utility=jnp.asarray(utility),
         CE=jnp.asarray(continuation),
@@ -68,7 +68,7 @@ def _linear(utility, continuation):
     )
 
 
-def _epstein_zin(utility, continuation):
+def _epstein_zin(*, utility, continuation):
     return CESAggregator()(
         utility=jnp.asarray(utility),
         CE=jnp.asarray(continuation),
@@ -77,7 +77,7 @@ def _epstein_zin(utility, continuation):
     )
 
 
-def _factoring_interaction(utility, continuation):
+def _factoring_interaction(*, utility, continuation):
     """A coupled aggregator that nonetheless admits an endogenous-grid step.
 
     Its marginal rate of substitution is `(1 + 0.1 CE) / (beta + 0.1 U)`, which
@@ -88,7 +88,7 @@ def _factoring_interaction(utility, continuation):
     return utility + _DISCOUNT_FACTOR * continuation + 0.1 * utility * continuation
 
 
-def _non_factoring(utility, continuation):
+def _non_factoring(*, utility, continuation):
     """An aggregator whose marginal rate of substitution does not factor.
 
     Its MRS is `(1 + 0.2 U CE) / (beta + 0.1 U^2)`, whose numerator mixes the
@@ -103,6 +103,7 @@ def _identity_flow(consumption):
     return consumption
 
 
+# keyword-only-exempt: library-callback=jax.grad
 def _log_mrs(aggregator, utility, continuation):
     """Log marginal rate of substitution between flow and continuation."""
     d_utility = jax.grad(aggregator, argnums=0)(utility, continuation)
@@ -110,7 +111,7 @@ def _log_mrs(aggregator, utility, continuation):
     return jnp.log(d_utility) - jnp.log(d_continuation)
 
 
-def _flow_curvature_of_mrs(aggregator, utility, continuation):
+def _flow_curvature_of_mrs(*, aggregator, utility, continuation):
     """`d/dU log MRS`, which is `A'(U) / A(U)` once the MRS factors.
 
     Where factorization holds this is independent of the continuation, so it is
@@ -123,13 +124,13 @@ def _flow_curvature_of_mrs(aggregator, utility, continuation):
     )
 
 
-def _separability_defect(aggregator, utility, continuation):
+def _separability_defect(*, aggregator, utility, continuation):
     """The cross partial that vanishes exactly when the FOC separates."""
     cross = jax.grad(jax.grad(_log_mrs, argnums=1), argnums=2)
     return float(cross(aggregator, jnp.asarray(utility), jnp.asarray(continuation)))
 
 
-def _euler_residual(aggregator, *, consumption, flow, flow_marginal, nu, dnu_ds):
+def _euler_residual(*, aggregator, consumption, flow, flow_marginal, nu, dnu_ds):
     """Log-form interior FOC residual, decreasing in the action.
 
     Taking logs cancels the monotone outer transform, so the residual is the
@@ -142,13 +143,13 @@ def _euler_residual(aggregator, *, consumption, flow, flow_marginal, nu, dnu_ds)
     )
 
 
-def _bisect_euler(aggregator, *, flow, flow_marginal, nu, dnu_ds):
+def _bisect_euler(*, aggregator, flow, flow_marginal, nu, dnu_ds):
     """Solve the AD-derived FOC for the action, with no closed form assumed."""
     lower, upper = 1e-8, 1e4
     for _ in range(200):
         mid = 0.5 * (lower + upper)
         residual = _euler_residual(
-            aggregator,
+            aggregator=aggregator,
             consumption=jnp.asarray(mid),
             flow=flow,
             flow_marginal=flow_marginal,
@@ -170,17 +171,19 @@ def _bisect_euler(aggregator, *, flow, flow_marginal, nu, dnu_ds):
 )
 @pytest.mark.parametrize(("utility", "continuation"), [(0.7, 1.3), (2.5, 0.4)])
 def test_built_in_aggregators_admit_an_endogenous_grid_step(
-    aggregator, utility, continuation
+    *, aggregator, utility, continuation
 ):
     """Both shipped aggregators separate, so a scalar determines the action."""
-    assert abs(_separability_defect(aggregator, utility, continuation)) < (
-        _SEPARABLE_ATOL
-    )
+    assert abs(
+        _separability_defect(
+            aggregator=aggregator, utility=utility, continuation=continuation
+        )
+    ) < (_SEPARABLE_ATOL)
 
 
 @pytest.mark.parametrize(("utility", "continuation"), [(0.7, 1.3), (2.5, 0.4)])
 def test_a_non_factoring_aggregator_is_detected_as_outside_the_contract(
-    utility, continuation
+    *, utility, continuation
 ):
     """An aggregator whose MRS does not factor is rejected.
 
@@ -188,13 +191,17 @@ def test_a_non_factoring_aggregator_is_detected_as_outside_the_contract(
     separates the two cases by orders of magnitude rather than by a threshold
     chosen to make it do so.
     """
-    defect = abs(_separability_defect(_non_factoring, utility, continuation))
+    defect = abs(
+        _separability_defect(
+            aggregator=_non_factoring, utility=utility, continuation=continuation
+        )
+    )
     assert defect > 1e-3
 
 
 @pytest.mark.parametrize(("utility", "continuation"), [(0.7, 1.3), (2.5, 0.4)])
 def test_coupling_the_two_arguments_does_not_by_itself_disqualify(
-    utility, continuation
+    *, utility, continuation
 ):
     """An aggregator may couple flow and continuation and still separate.
 
@@ -202,7 +209,13 @@ def test_coupling_the_two_arguments_does_not_by_itself_disqualify(
     criterion as "additively separable" would reject this aggregator, whose
     optimum an endogenous-grid step recovers perfectly well.
     """
-    defect = abs(_separability_defect(_factoring_interaction, utility, continuation))
+    defect = abs(
+        _separability_defect(
+            aggregator=_factoring_interaction,
+            utility=utility,
+            continuation=continuation,
+        )
+    )
     assert defect < _SEPARABLE_ATOL
 
 
@@ -210,8 +223,8 @@ def test_coupling_the_two_arguments_does_not_by_itself_disqualify(
 def test_the_derived_condition_reproduces_the_time_separable_euler_equation(dnu_ds):
     """With `LinearAggregator` the contract yields `c = (beta * dnu/ds)^(-1/crra)`."""
     got = _bisect_euler(
-        _linear,
-        flow=crra_preferences(_CRRA).utility,
+        aggregator=_linear,
+        flow=crra_preferences(crra=_CRRA).utility,
         flow_marginal=lambda c: c ** (-_CRRA),
         nu=1.0,
         dnu_ds=dnu_ds,
@@ -221,7 +234,7 @@ def test_the_derived_condition_reproduces_the_time_separable_euler_equation(dnu_
 
 
 @pytest.mark.parametrize(("nu", "dnu_ds"), [(1.4, 0.6), (0.8, 1.9)])
-def test_the_derived_condition_reproduces_the_epstein_zin_closed_form(nu, dnu_ds):
+def test_the_derived_condition_reproduces_the_epstein_zin_closed_form(*, nu, dnu_ds):
     """With `CESAggregator` the contract yields `ez_consumption_from_euler`.
 
     The kernel's closed form covers a period flow whose risk-adjusted marginal
@@ -230,7 +243,7 @@ def test_the_derived_condition_reproduces_the_epstein_zin_closed_form(nu, dnu_ds
     action without knowing the flow is a power at all.
     """
     got = _bisect_euler(
-        _epstein_zin,
+        aggregator=_epstein_zin,
         flow=_identity_flow,
         flow_marginal=jnp.ones_like,
         nu=nu,
@@ -247,7 +260,7 @@ def test_the_derived_condition_reproduces_the_epstein_zin_closed_form(nu, dnu_ds
     np.testing.assert_allclose(got, float(expected), rtol=1e-6)
 
 
-def _convex_flow_side(utility, continuation):
+def _convex_flow_side(*, utility, continuation):
     """A factoring aggregator whose flow-side factor `A` increases.
 
     Additively separable, so it factors and admits an endogenous-grid step. But
@@ -267,7 +280,7 @@ def _convex_flow_side(utility, continuation):
 )
 @pytest.mark.parametrize(("utility", "continuation"), [(0.7, 1.3), (2.5, 0.4)])
 def test_shipped_aggregators_also_admit_numeric_inversion(
-    aggregator, utility, continuation
+    *, aggregator, utility, continuation
 ):
     """Both shipped aggregators have a non-increasing flow-side factor.
 
@@ -277,11 +290,18 @@ def test_shipped_aggregators_also_admit_numeric_inversion(
     decreasing and its root unique on a bracket. `LinearAggregator` has a constant `A`;
     Epstein-Zin has `A(U) = (1-beta) U^(-rho)` with `rho > 0`.
     """
-    assert _flow_curvature_of_mrs(aggregator, utility, continuation) <= 0.0
+    assert (
+        _flow_curvature_of_mrs(
+            aggregator=aggregator, utility=utility, continuation=continuation
+        )
+        <= 0.0
+    )
 
 
 @pytest.mark.parametrize(("utility", "continuation"), [(0.7, 1.3), (2.5, 0.4)])
-def test_factorization_alone_does_not_license_numeric_inversion(utility, continuation):
+def test_factorization_alone_does_not_license_numeric_inversion(
+    *, utility, continuation
+):
     """An aggregator can factor and still forbid a bracketed root find.
 
     This is why admissibility and invertibility are two gates rather than one:
@@ -289,10 +309,17 @@ def test_factorization_alone_does_not_license_numeric_inversion(utility, continu
     whether its action may be recovered numerically instead of from a declared
     closed form.
     """
-    assert abs(_separability_defect(_convex_flow_side, utility, continuation)) < (
-        _SEPARABLE_ATOL
+    assert abs(
+        _separability_defect(
+            aggregator=_convex_flow_side, utility=utility, continuation=continuation
+        )
+    ) < (_SEPARABLE_ATOL)
+    assert (
+        _flow_curvature_of_mrs(
+            aggregator=_convex_flow_side, utility=utility, continuation=continuation
+        )
+        > 0.0
     )
-    assert _flow_curvature_of_mrs(_convex_flow_side, utility, continuation) > 0.0
 
 
 def test_the_flow_side_curvature_predicts_the_direction_of_g():

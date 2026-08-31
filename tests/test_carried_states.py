@@ -53,7 +53,7 @@ def _utility(consumption: float) -> FloatND:
     return jnp.log(consumption)
 
 
-def _next_wealth(wealth: float, consumption: float, pension_wealth: float) -> float:
+def _next_wealth(*, wealth: float, consumption: float, pension_wealth: float) -> float:
     return wealth - consumption + pension_wealth
 
 
@@ -61,7 +61,7 @@ def _next_aime(aime: float) -> float:
     return aime
 
 
-def _consumption_leq_wealth(consumption: float, wealth: float) -> bool:
+def _consumption_leq_wealth(*, consumption: float, wealth: float) -> bool:
     return consumption <= wealth
 
 
@@ -167,7 +167,7 @@ def test_carried_state_solves_like_plain_function() -> None:
             assert bool(jnp.allclose(pair_solution[period][regime_name], expected_V))
 
 
-def _simulate_pension(model: Model, *, pension_seed: list[float]) -> pd.DataFrame:
+def _simulate_pension(*, model: Model, pension_seed: list[float]) -> pd.DataFrame:
     params = cast("dict[str, Any]", model.get_params_template())
     params["working"]["koopmans_aggregator"]["discount_factor"] = 0.95
     n = len(pension_seed)
@@ -191,7 +191,7 @@ def test_simulate_seeds_and_evolves_true_pension_wealth() -> None:
     """Pension wealth is seeded from the initial conditions and evolved by its own
     transition each period (the true value, not the AIME imputation)."""
     sim = _simulate_pension(
-        _build_pension_model(pension_as_pair=True), pension_seed=[5.0, 15.0]
+        model=_build_pension_model(pension_as_pair=True), pension_seed=[5.0, 15.0]
     )
     pension = sim["pension_wealth"]
     np.testing.assert_allclose(pension.loc[(0, 0)], 5.0)
@@ -204,7 +204,7 @@ def test_simulate_decides_on_imputed_but_accounts_on_true_pension() -> None:
     """Two subjects with equal AIME impute equal pension, so they choose the same
     consumption; their realized next wealth differs by exactly the true-pension gap."""
     sim = _simulate_pension(
-        _build_pension_model(pension_as_pair=True), pension_seed=[5.0, 15.0]
+        model=_build_pension_model(pension_as_pair=True), pension_seed=[5.0, 15.0]
     )
     consumption = sim["consumption"]
     np.testing.assert_allclose(consumption.loc[(0, 0)], consumption.loc[(1, 0)])

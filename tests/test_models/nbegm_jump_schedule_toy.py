@@ -28,13 +28,13 @@ from tests.test_models.nbegm_common import (
     breakpoints=(lcm.affine_breakpoint(threshold="cliff", kind="jump"),),
 )
 def subsidy(
-    liquid: ContinuousState, subsidy_low: float, subsidy_high: float, cliff: float
+    *, liquid: ContinuousState, subsidy_low: float, subsidy_high: float, cliff: float
 ) -> FloatND:
     """Lump-sum subsidy: the higher amount below the cliff, the lower above it."""
     return jnp.where(liquid < cliff, subsidy_high, subsidy_low)
 
 
-def resources(liquid: ContinuousState, subsidy: FloatND) -> FloatND:
+def resources(*, liquid: ContinuousState, subsidy: FloatND) -> FloatND:
     """Cash-on-hand: liquid wealth plus the cliff-contingent subsidy."""
     return liquid + subsidy
 
@@ -45,6 +45,7 @@ def resources(liquid: ContinuousState, subsidy: FloatND) -> FloatND:
     breakpoints=(lcm.affine_breakpoint(threshold="cliff", kind="jump"),),
 )
 def resources_non_unit_above_cliff(
+    *,
     liquid: ContinuousState,
     subsidy_low: float,
     subsidy_high: float,
@@ -57,7 +58,7 @@ def resources_non_unit_above_cliff(
 
 
 def coh_non_additive(
-    liquid: ContinuousState, subsidy: FloatND, coh_slope: float
+    *, liquid: ContinuousState, subsidy: FloatND, coh_slope: float
 ) -> FloatND:
     """Cash-on-hand whose liquid slope is `coh_slope` (≠ 1) plus the jump subsidy.
 
@@ -69,7 +70,7 @@ def coh_non_additive(
 
 
 def coh_nonlinear(
-    liquid: ContinuousState, subsidy: FloatND, curvature: float
+    *, liquid: ContinuousState, subsidy: FloatND, curvature: float
 ) -> FloatND:
     """Cash-on-hand with genuine curvature in the liquid state, plus the subsidy.
 
@@ -81,7 +82,7 @@ def coh_nonlinear(
 
 
 def coh_nonlinear_above_ten(
-    liquid: ContinuousState, subsidy: FloatND, curvature: float
+    *, liquid: ContinuousState, subsidy: FloatND, curvature: float
 ) -> FloatND:
     """Cash-on-hand is affine below ten and curved above ten."""
     excess = jnp.maximum(liquid - 10.0, 0.0)
@@ -130,7 +131,7 @@ def build_model(
             "savings": savings,
         }
     alive_solver = resolve_solver(
-        variant,
+        variant=variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
     )
 

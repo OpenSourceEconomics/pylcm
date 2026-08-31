@@ -28,7 +28,7 @@ def _corner_value(coh: jnp.ndarray) -> np.ndarray:
         endog_grid=jnp.arange(coh.shape[0], dtype=jnp.result_type(1.0)),
         coh=coh,
         savings=jnp.asarray(0.0),
-        preferences=crra_preferences(CRRA),
+        preferences=crra_preferences(crra=CRRA),
         discount_factor=DISCOUNT_FACTOR,
         continuation=jnp.zeros_like(coh),
     )

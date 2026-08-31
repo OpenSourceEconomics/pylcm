@@ -52,22 +52,24 @@ def terminal_utility(wealth: ContinuousState) -> FloatND:
 
 
 def terminal_utility_with_action(
-    wealth: ContinuousState, bequest: ContinuousAction
+    *, wealth: ContinuousState, bequest: ContinuousAction
 ) -> FloatND:
     return jnp.log(bequest) + 0.0 * wealth
 
 
 def terminal_utility_with_type(
-    wealth: ContinuousState, preference_type: DiscreteState
+    *, wealth: ContinuousState, preference_type: DiscreteState
 ) -> FloatND:
     return jnp.log(wealth) + 0.01 * preference_type
 
 
-def savings(wealth: ContinuousState, consumption: ContinuousAction) -> FloatND:
+def savings(*, wealth: ContinuousState, consumption: ContinuousAction) -> FloatND:
     return wealth - consumption
 
 
-def doubled_savings(wealth: ContinuousState, consumption: ContinuousAction) -> FloatND:
+def doubled_savings(
+    *, wealth: ContinuousState, consumption: ContinuousAction
+) -> FloatND:
     return 2.0 * (wealth - consumption)
 
 
@@ -79,7 +81,9 @@ def next_regime() -> ScalarInt:
     return RegimeId.done
 
 
-def consumption_cap(wealth: ContinuousState, consumption: ContinuousAction) -> BoolND:
+def consumption_cap(
+    *, wealth: ContinuousState, consumption: ContinuousAction
+) -> BoolND:
     return consumption <= 0.2 * wealth
 
 
@@ -97,9 +101,9 @@ def _model(
     done_functions = {"utility": terminal_utility}
     done_actions = {}
     if discrete_state:
-        states["preference_type"] = DiscreteGrid(PreferenceType)
+        states["preference_type"] = DiscreteGrid(category_class=PreferenceType)
         state_transitions["preference_type"] = fixed_transition("preference_type")
-        done_states["preference_type"] = DiscreteGrid(PreferenceType)
+        done_states["preference_type"] = DiscreteGrid(category_class=PreferenceType)
         done_functions = {"utility": terminal_utility_with_type}
     if terminal_action:
         done_actions = {"bequest": _ACTION_GRID}

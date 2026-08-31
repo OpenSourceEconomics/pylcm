@@ -22,7 +22,7 @@ from _lcm.zero_safe import sum_in_value_order
 
 def _sort_primitive_count(*, n_entries: int) -> int:
     """Number of sort primitives the jaxpr carries for an axis of `n_entries`."""
-    jaxpr = jax.make_jaxpr(lambda values: sum_in_value_order(values, axis=0))(
+    jaxpr = jax.make_jaxpr(lambda values: sum_in_value_order(values=values, axis=0))(
         jnp.zeros(n_entries)
     )
     return str(jaxpr).count("sort")
@@ -52,15 +52,15 @@ def test_a_longer_permutable_axis_still_sorts():
 def test_a_two_entry_sum_is_identical_in_either_order(pair: tuple[float, float]):
     """Swapping two contributions cannot move a bit, so the sort buys nothing."""
     first, second = pair
-    forward = sum_in_value_order(jnp.asarray([first, second]), axis=0)
-    reverse = sum_in_value_order(jnp.asarray([second, first]), axis=0)
+    forward = sum_in_value_order(values=jnp.asarray([first, second]), axis=0)
+    reverse = sum_in_value_order(values=jnp.asarray([second, first]), axis=0)
     assert np.asarray(forward).tobytes() == np.asarray(reverse).tobytes()
 
 
 def test_a_short_axis_agrees_with_the_sorted_reduction():
     """The short-circuit publishes exactly what the sorted reduction published."""
     values = jnp.asarray([[3.0, -1.0], [2.5, 7.25]])
-    got = sum_in_value_order(values, axis=0)
+    got = sum_in_value_order(values=values, axis=0)
     expected = jnp.sum(jnp.sort(values, axis=0), axis=0)
     assert np.asarray(got).tobytes() == np.asarray(expected).tobytes()
 
@@ -68,4 +68,4 @@ def test_a_short_axis_agrees_with_the_sorted_reduction():
 @pytest.mark.parametrize("entries", [(jnp.nan, 1.0), (1.0, jnp.nan)])
 def test_a_nan_entry_poisons_the_sum_from_either_side(entries: tuple[float, float]):
     """A NaN reaches the result whichever side of the two-entry axis it sits on."""
-    assert bool(jnp.isnan(sum_in_value_order(jnp.asarray(entries), axis=0)))
+    assert bool(jnp.isnan(sum_in_value_order(values=jnp.asarray(entries), axis=0)))

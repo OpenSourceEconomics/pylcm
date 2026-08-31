@@ -60,7 +60,7 @@ def _huge(dtype):
 
 @pytest.mark.parametrize("block", BLOCK_SIZES)
 @pytest.mark.parametrize("dtype", DTYPES)
-def test_a_segment_whose_value_gap_overflows_still_publishes_its_owner(dtype, block):
+def test_a_segment_whose_value_gap_overflows_still_publishes_its_owner(*, dtype, block):
     """The winning segment is the one that is higher, at any representable gap.
 
     The two candidates' values differ by `2 * huge`, which is not representable.
@@ -82,7 +82,7 @@ def test_a_segment_whose_value_gap_overflows_still_publishes_its_owner(dtype, bl
 @pytest.mark.parametrize("block", BLOCK_SIZES)
 @pytest.mark.parametrize("dtype", DTYPES)
 def test_a_segment_whose_abscissa_span_overflows_still_publishes_its_owner(
-    dtype, block
+    *, dtype, block
 ):
     """`x1 - x0` is `+inf` here while both endpoints are finite normals.
 
@@ -105,7 +105,7 @@ def test_a_segment_whose_abscissa_span_overflows_still_publishes_its_owner(
 
 @pytest.mark.parametrize("block", BLOCK_SIZES)
 @pytest.mark.parametrize("dtype", DTYPES)
-def test_a_subnormal_interpolation_fraction_still_moves_the_outputs(dtype, block):
+def test_a_subnormal_interpolation_fraction_still_moves_the_outputs(*, dtype, block):
     """The fraction underflows, but `fraction * span` is a finite normal.
 
     Exact result is one ulp of 1; a materialized fraction publishes 0 instead.
@@ -135,7 +135,7 @@ def test_a_subnormal_interpolation_fraction_still_moves_the_outputs(dtype, block
 
 @pytest.mark.parametrize("block", BLOCK_SIZES)
 @pytest.mark.parametrize("dtype", DTYPES)
-def test_opposite_signed_outputs_publish_their_finite_midpoint(dtype, block):
+def test_opposite_signed_outputs_publish_their_finite_midpoint(*, dtype, block):
     """`right - left` is `-inf` here while the exact midpoint is exactly 0."""
     huge = _huge(dtype)
     working = np.dtype(jnp.dtype(dtype))
