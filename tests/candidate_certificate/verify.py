@@ -49,6 +49,8 @@ except ModuleNotFoundError:  # Imported as tests.candidate_certificate.verify.
         verify_direct_candidate_flow,
     )
 
+DIRECT_FLOW_PATH = "tests/candidate_certificate/direct_flow.py"
+
 SourceRecord = dict[str, str]
 # Anchor plus source set as declared by one contract or policy profile.
 ProfileDeclaration = dict[str, Any]
@@ -626,6 +628,7 @@ def verify_repository(
 
     generated_payload = build_inventory(root)
     generated = _records_from_inventory(generated_payload)
+    ast_source_paths = list(derive_source_paths(root / CERTIFICATE_PATH))
     new_errors, new_paths = _compare_records(
         "certificate AST vs committed sources.json", generated, committed
     )
@@ -768,9 +771,45 @@ def verify_repository(
     direct_flow = verify_direct_candidate_flow(repo_root=root)
     errors += [f"direct flow: {message}" for message in direct_flow["errors"]]
     offending |= set(direct_flow["offending_paths"])
+    raw_corridor_paths = direct_flow.get("certified_corridor_sources")
+    if not isinstance(raw_corridor_paths, list) or not all(
+        isinstance(item, str) for item in raw_corridor_paths
+    ):
+        errors.append("direct flow source join: corridor paths are not strings")
+        offending.add(DIRECT_FLOW_PATH)
+        corridor_paths: list[str] = []
+    else:
+        corridor_paths = raw_corridor_paths
+    source_sets = {
+        "certificate AST": ast_source_paths,
+        "committed inventory": [item["path"] for item in committed],
+    }
+    corridor_counts = Counter(corridor_paths)
+    duplicate_corridor_paths = sorted(
+        path for path, count in corridor_counts.items() if count != 1
+    )
+    if duplicate_corridor_paths:
+        errors.append(
+            "direct flow source join: duplicate corridor paths: "
+            f"{duplicate_corridor_paths}"
+        )
+        offending.add(DIRECT_FLOW_PATH)
+        offending.update(duplicate_corridor_paths)
+    for label, expected_paths in source_sets.items():
+        expected_counts = Counter(expected_paths)
+        if corridor_counts != expected_counts:
+            missing = sorted((expected_counts - corridor_counts).elements())
+            extra = sorted((corridor_counts - expected_counts).elements())
+            errors.append(
+                f"direct flow source join vs {label}: missing={missing}, extra={extra}"
+            )
+            offending.update({DIRECT_FLOW_PATH, CERTIFICATE_PATH})
+            offending.update(missing)
+            offending.update(extra)
     details.update(
         {
-            "ast_source_paths": list(derive_source_paths(root / CERTIFICATE_PATH)),
+            "ast_source_paths": ast_source_paths,
+            "direct_flow_source_paths": corridor_paths,
             "committed_sources": committed,
             "source_inventory_sha256": actual_inventory_digest,
             "inventory_anchor": expected_anchor,
