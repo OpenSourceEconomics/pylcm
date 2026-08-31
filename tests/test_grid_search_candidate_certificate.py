@@ -100,7 +100,10 @@ from tests.candidate_certificate.direct_flow import (
     direct_flow_mutation_specs,
     verify_direct_candidate_flow,
 )
-from tests.candidate_certificate.generate_sources import derive_source_paths
+from tests.candidate_certificate.generate_sources import (
+    derive_source_paths,
+    sha256_file,
+)
 from tests.candidate_certificate.verify import (
     nonempty_feasibility_masks,
     rank_vectors,
@@ -642,6 +645,44 @@ def test_certified_sources_are_read_as_utf_8_whatever_the_platform_default_is():
             _parse(relative)
 
     assert set(recorded) == {"utf-8"}
+
+
+def test_certified_source_hashes_ignore_checkout_newline_convention(tmp_path: Path):
+    """LF and CRLF worktrees represent the same sealed Python source."""
+    source = tmp_path / "source.py"
+    source.write_bytes(b"def f():\n    return 1\n")
+    lf_digest = sha256_file(source)
+
+    source.write_bytes(b"def f():\r\n    return 1\r\n")
+    assert sha256_file(source) == lf_digest
+
+    source.write_bytes(b"def f():\r\n    return 2\r\n")
+    assert sha256_file(source) != lf_digest
+
+
+def test_direct_flow_source_seals_ignore_checkout_newline_convention(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A Windows CRLF checkout satisfies the same direct-flow source seals."""
+    original = Path.read_bytes
+    certified = set(CERTIFIED_SOURCES)
+
+    def crlf_read_bytes(self: Path) -> bytes:
+        payload = original(self)
+        try:
+            relative = self.relative_to(_SRC_ROOT.parent).as_posix()
+        except ValueError:
+            return payload
+        if relative not in certified:
+            return payload
+        normalized = payload.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+        return normalized.replace(b"\n", b"\r\n")
+
+    monkeypatch.setattr(Path, "read_bytes", crlf_read_bytes)
+
+    result = verify_direct_candidate_flow(repo_root=_SRC_ROOT.parent)
+
+    assert result["ok"], "\n".join(result["errors"])
 
 
 def _only_target(
