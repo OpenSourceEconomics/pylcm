@@ -205,26 +205,49 @@ def test_flat_param_fingerprint_frames_marker_like_path_components() -> None:
     assert actual != ambiguous_legacy_encoding
 
 
-def test_model_solve_result_retains_replay_and_labels_unretained_continuations() -> (
-    None
-):
+def test_model_solve_result_omits_policy_without_replay_route() -> None:
     model = _two_period_bequest_model()
     params = get_retirement_only_params(n_periods=2, discount_factor=0.98)
 
     result = model.solve_result(params=params, log_level="off")
 
     assert result.metadata.retention is ResultRetention.VALUES_AND_REPLAY
-    policies = result.replay_artifacts.project(SIMULATION_POLICY)
-    assert 0 in policies
-    assert "retirement" in policies[0]
+    assert not result.replay_artifacts.project(SIMULATION_POLICY)
+    policy_ref = ArtifactRef(
+        period=0,
+        regime="retirement",
+        key=SIMULATION_POLICY,
+    )
     continuation_ref = ArtifactRef(
         period=0,
         regime="retirement",
         key=EGM_CONTINUATION,
     )
+    assert result.omissions[policy_ref] is OmissionReason.NOT_APPLICABLE
     assert result.omissions[continuation_ref] is OmissionReason.NOT_REQUESTED
     assert result.metadata.solver_api_version == 1
     assert not result.diagnostics
+
+
+def test_solve_result_does_not_host_copy_policy_without_replay_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_device_put = backward_induction.jax.device_put
+
+    def _reject_policy_host_copy(
+        value: object, *args: object, **kwargs: object
+    ) -> object:
+        if isinstance(value, EGMSimPolicy):
+            raise TypeError("policy without a replay route was copied to host")
+        return original_device_put(value, *args, **kwargs)
+
+    monkeypatch.setattr(backward_induction.jax, "device_put", _reject_policy_host_copy)
+    model = _two_period_bequest_model()
+    params = get_retirement_only_params(n_periods=2, discount_factor=0.98)
+
+    result = model.solve_result(params=params, log_level="off")
+
+    assert not result.replay_artifacts.project(SIMULATION_POLICY)
 
 
 def test_values_only_result_drops_replay_with_an_explicit_reason() -> None:
@@ -243,7 +266,7 @@ def test_values_only_result_drops_replay_with_an_explicit_reason() -> None:
         regime="retirement",
         key=SIMULATION_POLICY,
     )
-    assert result.omissions[policy_ref] is OmissionReason.NOT_REQUESTED
+    assert result.omissions[policy_ref] is OmissionReason.NOT_APPLICABLE
 
 
 def test_all_persistable_marks_unretained_continuation_unsupported() -> None:
@@ -656,9 +679,7 @@ def test_solution_result_value_schema_is_checked_before_forward(
         replacement = (
             jnp.reshape(value, (*value.shape, 1))
             if defect == "shape"
-            else value.astype(
-                jnp.float32 if value.dtype != jnp.dtype("float32") else jnp.float64
-            )
+            else value.astype(jnp.int32)
         )
         values = {
             outer_period: dict(regime_to_value)
@@ -880,13 +901,11 @@ def test_malformed_finite_nnbegm_payload_is_refused_before_forward(
             ),
         )
     elif defect == "candidate_dtype":
-        malformed_policy = replace(
-            policy,
-            candidate_value=policy.candidate_value.astype(
-                jnp.float32
-                if policy.candidate_value.dtype != jnp.dtype("float32")
-                else jnp.float64
-            ),
+        malformed_policy = replace(policy)
+        object.__setattr__(
+            malformed_policy,
+            "candidate_value",
+            policy.candidate_value.astype(jnp.int32),
         )
     elif defect == "state_names":
         malformed_policy = replace(
@@ -1039,6 +1058,45 @@ def test_nested_egm_payload_is_validated_recursively_before_forward(
         model.simulate(
             params=_PARAMS,
             initial_conditions=dict(_INITIAL),
+            solution=malformed,
+            log_level="off",
+        )
+
+
+def test_policy_without_a_declared_replay_route_is_refused_before_forward(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_model = _build("adaptive")
+    source_solution = source_model.solve_result(params=_PARAMS, log_level="off")
+    nested_policy = next(
+        source_solution.replay_artifacts[ref]
+        for ref in source_solution.replay_artifacts
+        if ref.key == SIMULATION_POLICY
+    )
+    assert isinstance(nested_policy, NestedEGMSimPolicy)
+
+    model, params, initial_conditions = _small_grid_search_inputs()
+    solution = model.solve_result(params=params, log_level="off")
+    policy_ref = ArtifactRef(
+        period=0,
+        regime="working_life",
+        key=SIMULATION_POLICY,
+    )
+    malformed = replace(
+        solution,
+        replay_artifacts=ArtifactStore(
+            dict(solution.replay_artifacts) | {policy_ref: nested_policy}
+        ),
+    )
+
+    def _forward_loop_must_not_run(**_kwargs: object) -> None:
+        raise AssertionError("forward simulation ran before replay-route preflight")
+
+    monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
+    with pytest.raises(InvalidSimulationInputError, match="no declared replay route"):
+        model.simulate(
+            params=params,
+            initial_conditions=initial_conditions,
             solution=malformed,
             log_level="off",
         )

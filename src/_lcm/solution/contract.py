@@ -762,16 +762,13 @@ class Solver(ABC):
 
     @property
     def publishes_simulation_policy(self) -> bool:
-        """Whether this solver publishes a policy the regime does not qualify.
+        """Whether this solver can publish a policy independently of the flat read.
 
-        Collecting simulation policies costs a host transfer per regime-period,
-        so a solve only retains them where something will read them. The usual
-        signal is regime-level (`SimulationPhase.egm_policy_read`), which is set
-        exactly when the flat endogenous-grid read applies. A solver publishing a
-        *self-describing* payload — one naming its own actions, states and search
-        settings, and therefore needing no build-time read qualification — has no
-        such signal, and the regime-level test alone would silently drop its
-        policy before simulation ever sees it. Such a solver overrides this.
+        Collecting policies costs a host transfer per regime-period, so automatic
+        simulation requests them only where a producer declares one. The canonical
+        consuming-route signal is `SimulationPhase.egm_policy_read`. A solver can
+        additionally request collection for legacy auto-solve paths when its payload
+        is self-describing. `SolutionResult` still requires a canonical consumer.
         """
         return False
 

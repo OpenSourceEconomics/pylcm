@@ -1,8 +1,8 @@
 """Public, lightweight types for labelled solver artifacts and solutions.
 
-This module is the dependency-safe beginning of pylcm's solver extension boundary.
-It deliberately contains only result identity and retention concepts: importing it
-does not require any engine-private ``_lcm`` type or concrete built-in solver payload.
+This module begins pylcm's dependency-safe solver extension boundary. Its public
+definitions cover result identity and retention without referring to engine-private
+``_lcm`` types or concrete built-in solver payloads.
 """
 
 from collections.abc import Iterator, Mapping
@@ -11,8 +11,9 @@ from enum import StrEnum
 from types import MappingProxyType
 
 import numpy as np
+from jaxtyping import Float
 
-from lcm.typing import FloatND, RegimeName, ValueND
+from lcm.typing import FloatND, RegimeName
 
 _SHA256_HEX_LENGTH = 64
 
@@ -81,7 +82,7 @@ class KernelOutput:
     to use the legacy engine-private result while that artifact schema is designed.
     """
 
-    value: ValueND | np.ndarray
+    value: FloatND | Float[np.ndarray, "*shape"]
     """The regime's value-function array on its exogenous state grid."""
 
     continuations: Mapping[ArtifactKey, object] = field(default_factory=dict)

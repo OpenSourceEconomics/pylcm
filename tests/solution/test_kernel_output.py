@@ -4,11 +4,13 @@ import ast
 import inspect
 import itertools
 from types import MappingProxyType
+from typing import get_args, get_type_hints
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from jaxtyping import Float
 
 from _lcm.continuation import EGMContinuationSpec
 from _lcm.egm.carry import EGMCarry
@@ -26,6 +28,7 @@ from lcm.solver_api import (
     ResultRetention,
 )
 from lcm.solvers import EGM
+from lcm.typing import FloatND
 from tests.solution.test_egm_solver import _SAVINGS_GRID, _model, _params
 
 
@@ -101,6 +104,14 @@ def test_kernel_output_is_public_dependency_safe_and_defensively_immutable() -> 
 
     numpy_output = KernelOutput(value=np.asarray([2.0], dtype=np.float32))
     assert isinstance(numpy_output.value, np.ndarray)
+
+
+def test_kernel_output_value_annotation_matches_runtime_float_contract() -> None:
+    """The public hint excludes array dtypes that construction rejects."""
+    annotation = get_type_hints(KernelOutput)["value"]
+
+    expected = {repr(FloatND), repr(Float[np.ndarray, "*shape"])}
+    assert {repr(member) for member in get_args(annotation)} == expected
 
 
 @pytest.mark.parametrize(

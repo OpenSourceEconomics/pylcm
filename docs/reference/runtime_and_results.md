@@ -42,9 +42,9 @@ V_working = solution.value(period=0, regime="working")
 The result and its supporting types live in the lightweight `lcm.solver_api` submodule;
 they are not re-exported from the top-level `lcm` namespace. The retention modes are:
 
-| Mode                        | Returned artifacts                                                           |
+| Mode                        | Retention-controlled result data                                             |
 | --------------------------- | ---------------------------------------------------------------------------- |
-| `VALUES`                    | Value functions only                                                         |
+| `VALUES`                    | Values; no replay artifacts                                                  |
 | `VALUES_AND_REPLAY`         | Values plus applicable simulation-policy and dissolution artifacts (default) |
 | `ALL_PERSISTABLE_ARTIFACTS` | All currently persistable artifacts; presently the same replay set           |
 

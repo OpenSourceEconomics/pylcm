@@ -658,6 +658,20 @@ class Model:
         The result is bound to this in-memory model instance and to the exact
         canonical flat parameters used here. That instance identity survives a
         pickle round trip of the model, but is not a durable model fingerprint.
+
+        Args:
+            params: Model parameters compatible with `get_params_template()`.
+            log_level: Verbosity and runtime-validation policy; see `solve`.
+            retention: Post-solve artifacts to keep. It never suppresses
+                continuations required during solution or diagnostics requested by log.
+            max_compilation_workers: Maximum threads for parallel XLA compilation.
+            log_path: Optional directory for diagnostic snapshots.
+            log_keep_n_latest: Maximum snapshots to retain on disk.
+
+        Returns:
+            An immutable labelled result containing values, metadata, retained replay
+            and diagnostic artifacts, plus explicit artifact-omission reasons.
+
         """
         log = get_logger(log_level=log_level)
         flat_params = self._process_params(params)
@@ -675,6 +689,11 @@ class Model:
             log_keep_n_latest=log_keep_n_latest,
             max_compilation_workers=max_compilation_workers,
             collect_simulation_policies=retention.retains_replay,
+            simulation_policy_regimes=frozenset(
+                regime_name
+                for regime_name, regime in self._regimes.items()
+                if regime.simulation.egm_policy_read is not None
+            ),
             retain_dissolution_flags=retention.retains_replay,
             collect_solver_diagnostics=True,
             track_artifact_publication=True,
@@ -699,6 +718,7 @@ class Model:
         log_keep_n_latest: int,
         max_compilation_workers: int | None,
         collect_simulation_policies: bool,
+        simulation_policy_regimes: frozenset[RegimeName] | None = None,
         retain_dissolution_flags: bool = False,
         collect_solver_diagnostics: bool = False,
         track_artifact_publication: bool = False,
@@ -729,6 +749,7 @@ class Model:
                 logger=log,
                 enable_jit=self.enable_jit,
                 collect_simulation_policies=collect_simulation_policies,
+                simulation_policy_regimes=simulation_policy_regimes,
                 collect_solver_diagnostics=collect_solver_diagnostics,
                 track_artifact_publication=track_artifact_publication,
                 max_compilation_workers=max_compilation_workers,
@@ -1154,11 +1175,30 @@ class Model:
         self._check_solution_result_replay_policies(solution=solution)
         self._check_solution_result_dissolution_flags(solution=solution)
 
-    def _check_solution_result_replay_policies(
+    def _check_solution_result_replay_policies(  # noqa: C901
         self, *, solution: SolutionResult
     ) -> None:
         """Require each solver decision that cannot be reconstructed from values."""
         policies = solution.replay_artifacts.project(SIMULATION_POLICY)
+        policies_without_route = tuple(
+            sorted(
+                (period, regime_name)
+                for period, regime_to_policy in policies.items()
+                for regime_name in regime_to_policy
+                if not isinstance(
+                    self._regimes[regime_name].simulation.egm_policy_read,
+                    EGMPolicyRead | NNBEGMPolicyRead,
+                )
+            )
+        )
+        if policies_without_route:
+            msg = (
+                f"Artifact {SIMULATION_POLICY.type_id!r} has no declared replay route "
+                "at (period, regime): "
+                f"{policies_without_route}."
+            )
+            raise InvalidSimulationInputError(msg)
+
         missing_or_mismatched_policies: list[tuple[int, RegimeName, str]] = []
         value_store = solution.values  # noqa: PD011
         for period, regime_to_value in value_store.items():
@@ -1558,9 +1598,11 @@ class Model:
             # simulate input, and backward induction reads that off the gate
             # itself, so a model whose gates read only values carries none.
             #
-            # Two signals are required because the flat endogenous-grid read is
-            # announced regime-side by `egm_policy_read`, while a self-describing
-            # nested payload is announced solver-side and leaves that field unset.
+            # The canonical `egm_policy_read` marker declares a consuming route.
+            # The solver-side flag separately requests collection for a
+            # self-describing payload in the legacy automatic-solve path; the
+            # labelled SolutionResult adapter retains only cells with a canonical
+            # consumer.
             collect_simulation_policies = any(
                 regime.simulation.egm_policy_read is not None
                 or self.user_regimes[regime_name].solver.publishes_simulation_policy

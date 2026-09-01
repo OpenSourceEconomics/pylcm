@@ -45,9 +45,23 @@ def build_solution_result(
     omissions: dict[ArtifactRef, OmissionReason] = {}
 
     if retention.retains_replay:
+        declared_replay_policies = MappingProxyType(
+            {
+                period: MappingProxyType(
+                    {
+                        regime_name: payload
+                        for regime_name, payload in regime_to_payload.items()
+                        if regimes[regime_name].simulation.egm_policy_read is not None
+                    }
+                )
+                for period, regime_to_payload in (
+                    internal_result.simulation_policies.items()
+                )
+            }
+        )
         _add_nested_artifacts(
             target=replay,
-            nested=internal_result.simulation_policies,
+            nested=declared_replay_policies,
             key=SIMULATION_POLICY,
         )
         _add_nested_artifacts(
@@ -90,6 +104,7 @@ def build_solution_result(
                 regime_name,
             ) in internal_result.published_simulation_policy_cells
             policy_read = regime.simulation.egm_policy_read
+            has_replay_route = policy_read is not None
             is_unpublished_adaptive_policy = (
                 isinstance(policy_read, NNBEGMPolicyRead)
                 and policy_read.replay_policy_is_nested
@@ -103,7 +118,7 @@ def build_solution_result(
             if can_publish_policy and policy_ref not in replay:
                 omissions[policy_ref] = (
                     OmissionReason.NOT_APPLICABLE
-                    if is_unpublished_adaptive_policy
+                    if not has_replay_route or is_unpublished_adaptive_policy
                     else OmissionReason.NOT_REQUESTED
                     if did_publish_policy and not retention.retains_replay
                     else OmissionReason.NOT_APPLICABLE

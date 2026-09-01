@@ -93,6 +93,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     logger: logging.Logger,
     enable_jit: bool,
     collect_simulation_policies: bool = False,
+    simulation_policy_regimes: frozenset[RegimeName] | None = None,
     collect_solver_diagnostics: bool = False,
     track_artifact_publication: bool = False,
     max_compilation_workers: int | None = None,
@@ -115,6 +116,8 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             policies to the host. The solve kernels may publish an internal policy
             alongside their other outputs, but a value-only solve drops it at the
             period boundary instead of retaining one device-sized artifact per period.
+        simulation_policy_regimes: Optional canonical-regime allowlist for policy
+            collection. ``None`` preserves the legacy all-publishers behavior.
         collect_solver_diagnostics: Whether to retain a kernel's numerical
             self-report. Existing ``solve`` and automatic-simulation paths leave
             this false; ``solve_result`` opts in, with ``log_level`` still deciding
@@ -317,7 +320,10 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             if result.continuation is not None:
                 period_continuations[regime_name] = result.continuation
             if result.simulation_policy is not None:
-                if collect_simulation_policies:
+                if collect_simulation_policies and (
+                    simulation_policy_regimes is None
+                    or regime_name in simulation_policy_regimes
+                ):
                     period_simulation_policies[regime_name] = result.simulation_policy
                 if track_artifact_publication:
                     published_simulation_policy_cells.add((period, regime_name))

@@ -1083,9 +1083,10 @@ def _replace_continuous_action_with_policy_read(  # noqa: PLR0911
     if sim_policy is None:
         return optimal_actions, grid_values, None
     if isinstance(sim_policy, NestedEGMSimPolicy):
-        # The nested (continuous-outer) payload is self-describing (it names
-        # both actions, the liquid state, and the search settings), so it
-        # needs no build-time `egm_policy_read` qualification of its own.
+        # The nested payload names the actions, liquid state, and search settings,
+        # so this reader does not consult fields of `egm_policy_read`. The
+        # model/result boundary still requires that marker to declare the cell's
+        # consuming route before a labelled replay artifact reaches this point.
         (
             nested_actions,
             nested_fallback,

@@ -237,13 +237,13 @@ class NNBEGM(TwoMarginSolver):
 
     @property
     def publishes_simulation_policy(self) -> bool:
-        """The nested payload is self-describing, so no regime read qualifies it.
+        """Request collection of the self-describing nested replay payload.
 
-        `NestedEGMSimPolicy` names both actions, the liquid state and the search
-        settings, which is why an N-NB-EGM regime never sets
-        `SimulationPhase.egm_policy_read`. Without this declaration the solve's
-        policy-collection gate — which tests that regime-level field — would drop
-        the payload, and simulation would silently fall back to the grid argmax.
+        Canonical processing also installs `NNBEGMPolicyRead` as the consuming-route
+        marker used by labelled-result preflight. This solver-side declaration keeps
+        policy collection explicit for legacy automatic solve/simulate paths; the
+        payload itself still names the actions, state, and search settings its reader
+        needs.
         """
         return True
 

@@ -19,6 +19,7 @@ import pytest
 import lcm
 import lcm.consumption_savings_regime
 import lcm.outer_search
+import lcm.solver_api
 import lcm.solvers
 
 _DOCS = Path(__file__).parents[1] / "docs"
@@ -28,13 +29,20 @@ _QUALIFIED_PUBLIC_MODULES = {
     "lcm",
     "lcm.consumption_savings_regime",
     "lcm.outer_search",
+    "lcm.solver_api",
     "lcm.solvers",
 }
 
 
 def _public_constructors() -> dict[str, Any]:
     """Map each documented public class name to the class object."""
-    modules = (lcm, lcm.solvers, lcm.outer_search, lcm.consumption_savings_regime)
+    modules = (
+        lcm,
+        lcm.solvers,
+        lcm.solver_api,
+        lcm.outer_search,
+        lcm.consumption_savings_regime,
+    )
     found: dict[str, Any] = {}
     for module in modules:
         for name in getattr(module, "__all__", ()):

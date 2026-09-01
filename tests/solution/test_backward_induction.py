@@ -33,6 +33,7 @@ class MockSolutionPhase:
     """
     compute_intermediates: dict = dataclasses.field(default_factory=dict)
     continuation_template: None = None
+    continuation_spec: None = None
     period_state_axes: (
         MappingProxyType[int, MappingProxyType[StateOrActionName, object]] | None
     ) = None
