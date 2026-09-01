@@ -154,7 +154,7 @@
           },
           {
             "path": "src/_lcm/utils/functools.py",
-            "sha256": "6d1b4e15fe1b08306418c4ec83af1813347380d9a8e9b2083012d81ebe7a170f"
+            "sha256": "e6707e1f76493a28023a1f1f536414ba6792df063e6cfc161fca2690b8f5bc1c"
           },
           {
             "path": "src/_lcm/utils/namespace.py",
@@ -178,7 +178,7 @@
           }
         ],
         "source_count": 43,
-        "source_inventory_sha256": "8fbe66a380ce2672aa50e0542f2d3a2b7f37877865d822b89c4b6007145e4691"
+        "source_inventory_sha256": "7aa762af3fb6089cc6340847dfb8db9739adbaf173db2a2d935a6d957722db40"
       },
       "fast": {
         "candidate_sources": [
@@ -332,7 +332,7 @@
           },
           {
             "path": "src/_lcm/utils/functools.py",
-            "sha256": "6d1b4e15fe1b08306418c4ec83af1813347380d9a8e9b2083012d81ebe7a170f"
+            "sha256": "e6707e1f76493a28023a1f1f536414ba6792df063e6cfc161fca2690b8f5bc1c"
           },
           {
             "path": "src/_lcm/utils/namespace.py",
@@ -356,13 +356,13 @@
           }
         ],
         "source_count": 43,
-        "source_inventory_sha256": "8fbe66a380ce2672aa50e0542f2d3a2b7f37877865d822b89c4b6007145e4691"
+        "source_inventory_sha256": "7aa762af3fb6089cc6340847dfb8db9739adbaf173db2a2d935a6d957722db40"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "8fbe66a380ce2672aa50e0542f2d3a2b7f37877865d822b89c4b6007145e4691",
+  "source_inventory_sha256": "7aa762af3fb6089cc6340847dfb8db9739adbaf173db2a2d935a6d957722db40",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -514,7 +514,7 @@
     },
     {
       "path": "src/_lcm/utils/functools.py",
-      "sha256": "6d1b4e15fe1b08306418c4ec83af1813347380d9a8e9b2083012d81ebe7a170f"
+      "sha256": "e6707e1f76493a28023a1f1f536414ba6792df063e6cfc161fca2690b8f5bc1c"
     },
     {
       "path": "src/_lcm/utils/namespace.py",
