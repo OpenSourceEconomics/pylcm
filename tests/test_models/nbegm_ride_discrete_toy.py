@@ -373,6 +373,7 @@ def build_model(  # noqa: C901, PLR0912
     branch_batch_size: int = 0,
     include_income: bool = True,
     probe_failure: str = "reject",
+    probe_schedule: str = "every_solve",
 ) -> Model:
     """Create the (alive, dead) ride-along toy with a discrete insurance choice.
 
@@ -451,6 +452,8 @@ def build_model(  # noqa: C901, PLR0912
     solver_kwargs: dict[str, object] = {}
     if probe_failure != "reject":
         solver_kwargs["probe_failure"] = probe_failure
+    if probe_schedule != "every_solve":
+        solver_kwargs["probe_schedule"] = probe_schedule
     if branch_batch_size:
         solver_kwargs["branch_batch_size"] = branch_batch_size
     alive_solver = resolve_solver(

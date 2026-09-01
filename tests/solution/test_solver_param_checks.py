@@ -118,7 +118,7 @@ def test_param_check_does_not_run_at_model_construction() -> None:
 
 
 def test_param_check_runs_on_solve() -> None:
-    """The first solve runs the check exactly once."""
+    """A solve runs each published check exactly once for its parameter draw."""
     check = _RecordingCheck()
     model = _build_model(check=check)
 

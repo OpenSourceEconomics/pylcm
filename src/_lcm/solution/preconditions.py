@@ -8,10 +8,13 @@ coefficients that only exist once the user supplies params, so the check cannot
 run in `Solver.validate`, which the engine calls while building kernels at
 `Model` construction.
 
-Such a solver publishes its checks as `SolutionKernels.param_checks`. `Model`
-calls `check_solver_params` for every solve because the evaluated functions can
-change with every parameter draw; a precondition established for one draw says
-nothing about another.
+Such a solver publishes its checks as `SolutionKernels.param_checks`, and `Model`
+hands every published check every parameter draw. How many of those draws a check
+actually evaluates is the solver's own decision: a precondition established for
+one draw need not hold for another, but for many models the declarations that
+decide it do not move with the parameters, and re-deriving the same verdict on
+every criterion evaluation is the dominant cost of the solve. NB-EGM exposes that
+choice as `NBEGM.probe_schedule`.
 """
 
 from collections.abc import Mapping
