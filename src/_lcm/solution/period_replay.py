@@ -62,6 +62,7 @@ def replay_period(*, directory: Path) -> PeriodReplay:
 
     result = _run_period_kernel(
         regime=regime,
+        capture_target=None,
         compiled_cores=_compile_cores_for_one_period(
             regime=regime, period=period, kernel_kwargs=kernel_kwargs
         ),

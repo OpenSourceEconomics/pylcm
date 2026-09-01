@@ -15,6 +15,7 @@ import re
 import numpy as np
 import pytest
 
+from _lcm.solution import backward_induction
 from lcm import AgeGrid, Model
 from lcm.persistence import replay_period
 from tests.regime_building.test_gated_edges_collective_solve import (
@@ -90,6 +91,26 @@ def test_replay_reproduces_the_value_function_of_the_full_solve(
     )
 
 
+def test_replay_does_not_recapture_when_the_selector_remains_set(
+    *, monkeypatch, tmp_path
+):
+    """Replay reads a selected capture without writing into its directory."""
+    _, solution = _solve_capturing(
+        monkeypatch=monkeypatch, tmp_path=tmp_path, target="working_life@1"
+    )
+    capture = tmp_path / "working_life@1"
+    capture.chmod(0o555)
+    try:
+        replay = replay_period(directory=capture)
+    finally:
+        capture.chmod(0o755)
+
+    np.testing.assert_array_equal(
+        np.asarray(replay.result.V_arr),
+        np.asarray(solution[1]["working_life"]),
+    )
+
+
 def test_replay_runs_one_kernel_and_no_others(*, monkeypatch, tmp_path, caplog):
     """Replay does not re-solve the periods above the captured one."""
     _solve_capturing(
@@ -122,6 +143,27 @@ def test_a_malformed_target_is_rejected_loudly(*, monkeypatch, tmp_path, target)
     monkeypatch.setenv("LCM_CAPTURE_DIR", str(tmp_path))
     model = get_model(n_periods=_N_PERIODS)
     params = get_params(n_periods=_N_PERIODS)
+    with pytest.raises(ValueError, match="LCM_CAPTURE_PERIOD"):
+        model.solve(params=params, log_level="off")
+
+
+def test_a_malformed_target_is_rejected_before_kernel_compilation(
+    *, monkeypatch, tmp_path
+):
+    """Capture selection is validated before solve kernels are compiled."""
+    monkeypatch.setenv("LCM_CAPTURE_PERIOD", "working_life")
+    monkeypatch.setenv("LCM_CAPTURE_DIR", str(tmp_path))
+
+    def fail_if_compilation_starts(*_args: object, **_kwargs: object) -> None:
+        msg = "kernel compilation started"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(
+        backward_induction, "_compile_all_functions", fail_if_compilation_starts
+    )
+    model = get_model(n_periods=_N_PERIODS)
+    params = get_params(n_periods=_N_PERIODS)
+
     with pytest.raises(ValueError, match="LCM_CAPTURE_PERIOD"):
         model.solve(params=params, log_level="off")
 

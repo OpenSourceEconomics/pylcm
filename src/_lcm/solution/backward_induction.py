@@ -45,7 +45,11 @@ from _lcm.solution.kernel_attribution import (
     log_executed_kernel,
     log_module_fanout,
 )
-from _lcm.solution.period_capture import capture_kernel_inputs
+from _lcm.solution.period_capture import (
+    PeriodCaptureTarget,
+    capture_kernel_inputs,
+    resolve_capture_target,
+)
 from _lcm.solution.v_topology import (
     _build_zero_V_arr,
     _get_regime_V_shapes_and_shardings,
@@ -118,6 +122,8 @@ def solve(  # noqa: C901, PLR0915
         the default path only gains an empty dissolution mapping.
 
     """
+    capture_target = resolve_capture_target()
+
     # The state-action spaces and the fence that reads them depend only on
     # `regimes` and `flat_params`, so a colliding model is rejected before a
     # single kernel is compiled rather than after every regime-period has been
@@ -251,6 +257,7 @@ def solve(  # noqa: C901, PLR0915
                 regime_name=regime_name,
                 period=period,
                 compiled_cores=compiled_functions[(regime_name, period)],
+                capture_target=capture_target,
                 state_action_space=base_state_action_spaces[regime_name],
                 flat_params=flat_params,
                 ages=ages,
@@ -443,6 +450,7 @@ def _run_period_kernel(
     regime_name: RegimeName,
     period: int,
     compiled_cores: MappingProxyType[str, Callable],
+    capture_target: PeriodCaptureTarget | None,
     state_action_space: StateActionSpace,
     flat_params: FlatParams,
     ages: AgeGrid,
@@ -485,9 +493,10 @@ def _run_period_kernel(
     """
     period_kernel = regime.solution.period_kernels[period]
 
-    # Captured before the period-specific state axes are substituted below, so a
-    # replay re-enters this function at the top and repeats every step of it.
+    # Captured before the period-specific state axes are substituted below. Replay
+    # re-enters this funnel with capture explicitly disabled.
     capture_kernel_inputs(
+        capture_target=capture_target,
         regime=regime,
         regime_name=regime_name,
         period=period,

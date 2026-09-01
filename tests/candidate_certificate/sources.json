@@ -130,7 +130,7 @@
           },
           {
             "path": "src/_lcm/solution/backward_induction.py",
-            "sha256": "6d6df2531238bee57ae275b02959fe4901f48a9b13fc82792296dd0c4022f82e"
+            "sha256": "c2516960628c94ccc384af8789eeeeccd8d6f090368745f51fe06e3fa8f6d96e"
           },
           {
             "path": "src/_lcm/solution/contract.py",
@@ -178,7 +178,7 @@
           }
         ],
         "source_count": 43,
-        "source_inventory_sha256": "1459247596b68e65170a9cb1c67d73dd343fd50b31acc8cd9d0d46934465d9ae"
+        "source_inventory_sha256": "4cfb3a1573e1d33ba84bc40346323eb86be7d96bcc0d370981dd44309de0ab05"
       },
       "fast": {
         "candidate_sources": [
@@ -308,7 +308,7 @@
           },
           {
             "path": "src/_lcm/solution/backward_induction.py",
-            "sha256": "6d6df2531238bee57ae275b02959fe4901f48a9b13fc82792296dd0c4022f82e"
+            "sha256": "c2516960628c94ccc384af8789eeeeccd8d6f090368745f51fe06e3fa8f6d96e"
           },
           {
             "path": "src/_lcm/solution/contract.py",
@@ -356,13 +356,13 @@
           }
         ],
         "source_count": 43,
-        "source_inventory_sha256": "1459247596b68e65170a9cb1c67d73dd343fd50b31acc8cd9d0d46934465d9ae"
+        "source_inventory_sha256": "4cfb3a1573e1d33ba84bc40346323eb86be7d96bcc0d370981dd44309de0ab05"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "1459247596b68e65170a9cb1c67d73dd343fd50b31acc8cd9d0d46934465d9ae",
+  "source_inventory_sha256": "4cfb3a1573e1d33ba84bc40346323eb86be7d96bcc0d370981dd44309de0ab05",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -490,7 +490,7 @@
     },
     {
       "path": "src/_lcm/solution/backward_induction.py",
-      "sha256": "6d6df2531238bee57ae275b02959fe4901f48a9b13fc82792296dd0c4022f82e"
+      "sha256": "c2516960628c94ccc384af8789eeeeccd8d6f090368745f51fe06e3fa8f6d96e"
     },
     {
       "path": "src/_lcm/solution/contract.py",

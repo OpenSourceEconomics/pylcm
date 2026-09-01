@@ -29,12 +29,14 @@ from typing import Any
 from _lcm.persistence.io import _save_pkl
 from _lcm.typing import RegimeName
 
+type PeriodCaptureTarget = tuple[RegimeName, int]
+
 _TARGET_ENV = "LCM_CAPTURE_PERIOD"
 _DIR_ENV = "LCM_CAPTURE_DIR"
 _PAYLOAD_NAME = "kernel_inputs.pkl"
 
 
-def capture_target() -> tuple[RegimeName, int] | None:
+def resolve_capture_target() -> PeriodCaptureTarget | None:
     """Return the regime-period selected for capture, or `None`.
 
     Raises:
@@ -55,6 +57,7 @@ def capture_target() -> tuple[RegimeName, int] | None:
 
 def capture_kernel_inputs(
     *,
+    capture_target: PeriodCaptureTarget | None,
     regime: Any,  # noqa: ANN401 - the canonical Regime, circular to import here
     regime_name: RegimeName,
     period: int,
@@ -65,8 +68,7 @@ def capture_kernel_inputs(
     The compiled cores are deliberately absent: they are rebuilt at replay from
     the captured regime, which is what keeps the capture portable.
     """
-    target = capture_target()
-    if target != (regime_name, period):
+    if capture_target != (regime_name, period):
         return
 
     directory = Path(os.environ.get(_DIR_ENV, ".")) / f"{regime_name}@{period}"
