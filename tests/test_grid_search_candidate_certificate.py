@@ -38,10 +38,11 @@ The standard-library AST
 proof rejects any extra assignment, branch, slice, index, mask, `where`, rank,
 gap, support-size, shape, or axis transformation. The collective path permits
 only the independently checked split of the trailing stakeholder axis and pins
-the shared scalarization, argmax, and gather implementations exactly. The two
-taste-shock routes additionally pin masking, continuous reduction, logsum,
-per-discrete-cell mean-zero Gumbel noise, and flat-index reconstruction, including
-the deep shared helper bodies. The construction and correctness of Q/F values
+the shared scalarization, argmax, and gather implementations exactly. The three
+taste-shock routes additionally pin masking, continuous reduction, the streamed
+branch-hard-max then dynamically bound log-sum-exp composition, per-discrete-cell
+mean-zero Gumbel noise, and flat-index reconstruction, including the deep shared
+helper bodies. The construction and correctness of Q/F values
 and feasibility—including user DAGs, constraints, transitions, interpolation,
 continuation arithmetic, and folded-process weights—is outside this certificate
 and remains owned by its dedicated semantic tests.
@@ -73,6 +74,7 @@ from numpy.testing import assert_array_almost_equal as aaae
 from _lcm.regime_building import max_Q_over_a as max_Q_over_a_module
 from _lcm.simulation import compile as simulation_compile_module
 from _lcm.simulation import simulate as simulation_module
+from _lcm.solution import action_streaming as action_streaming_module
 from _lcm.solution import grid_search as grid_search_module
 from lcm import (
     AgeGrid,
@@ -297,7 +299,7 @@ def _splatted_chains(*, node: ast.AST) -> set[str]:
 
 
 def test_build_period_kernels_passes_the_whole_action_name_tuple():
-    """The kernel builder hands `get_max_Q_over_a` the space's own action names.
+    """Both solve builders receive the state-action space's own action names.
 
     Anything that filtered, sliced or rebuilt the tuple here would shrink the
     search without shrinking the declared grids, which is exactly the omission
@@ -305,12 +307,15 @@ def test_build_period_kernels_passes_the_whole_action_name_tuple():
     """
     tree = _parse("src/_lcm/solution/grid_search.py")
     builder = _definition(tree=tree, qualname="GridSearch.build_period_kernels")
-    call = _calls_named(node=builder, name="get_max_Q_over_a")[0]
+    calls = [
+        *_calls_named(node=builder, name="get_max_Q_over_a"),
+        *_calls_named(node=builder, name="get_streaming_max_Q_over_a"),
+    ]
 
-    assert (
-        _chain(_keyword(call=call, name="action_names"))
-        == "context.state_action_space.action_names"
-    )
+    assert {_chain(_keyword(call=call, name="action_names")) for call in calls} == {
+        "context.state_action_space.action_names",
+        "action_names",
+    }
 
 
 @pytest.mark.parametrize("method", ["build_lower_args", "__call__"])
@@ -497,16 +502,32 @@ def test_q_and_f_arrays_reach_full_reducers_without_candidate_transformation():
     assert tuple(sorted(result["certified_corridor_sources"])) == CERTIFIED_SOURCES
 
 
+def test_streamed_reducer_sources_are_literal_certificate_obligations():
+    """The generated inventory owns every live streamed transport helper."""
+    assert isinstance(_parse("src/_lcm/execution/core_program.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/solution/action_streaming.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/solution/action_reduction.py"), ast.Module)
+    assert isinstance(
+        _parse("src/_lcm/solution/collective_action_reduction.py"), ast.Module
+    )
+    assert isinstance(
+        _parse("src/_lcm/solution/logsumexp_action_reduction.py"), ast.Module
+    )
+
+
 def test_direct_flow_certificate_names_every_supported_route():
-    """The universal proof covers both taste-shock routes as first-class routes."""
+    """The universal proof names every dense and streamed choice route."""
     result = verify_direct_candidate_flow(repo_root=_SRC_ROOT.parent)
 
     assert set(result["routes"]) == {
         "singleton_solve",
+        "singleton_streamed_solve",
         "singleton_simulate",
         "collective_solve",
+        "collective_streamed_solve",
         "collective_simulate",
         "taste_shock_solve",
+        "taste_shock_streamed_solve",
         "taste_shock_simulate",
     }
 
@@ -611,20 +632,92 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         "candidate_materialization:negate_cast_runtime_points",
         "candidate_materialization:negate_series_runtime_points",
         "candidate_materialization:negate_fixed_runtime_points",
+        "streaming_provider:dense_function",
+        "streaming_provider:arguments_filtered",
+        "streaming_provider:action_names_slice",
+        "streaming_provider:action_extents_slice",
+        "streaming_provider:width_keyword_collision_bypassed",
+        "streaming_provider:collective_reducer_dropped",
+        "streaming_provider:collective_output_role_dropped",
+        "streaming_ev1_provider:reducer_dropped",
+        "streaming_ev1_provider:discrete_axis_count_changed",
+        "streaming_dispatch:bypass_compiled_core",
+        "streaming_collective:builder_dissolution_inverted",
+        "streaming_collective:builder_stakeholder_axis_sliced",
+        "streaming_collective:published_dissolution_inverted",
+        "streaming_ev1:runtime_scale_constant",
+        "streaming_ev1:scale_signature_dropped",
+        "streaming_ev1:published_value_negated",
+        "streaming_ev1:composite_version_changed",
+        "streaming_ev1:hard_max_semantic_key_dropped",
+        "streaming_ev1:logsum_semantic_key_dropped",
+        "streaming_ev1:scale_rebound",
+        "streaming_ev1:continuous_extent_changed",
+        "streaming_ev1:skip_last_block",
+        "streaming_ev1:admit_padded_tail",
+        "streaming_ev1:branch_identity_shifted",
+        "streaming_ev1:branch_transition_ignored",
+        "streaming_ev1:branch_value_negated",
+        "streaming_ev1:last_branch_not_flushed",
+        "streaming_ev1:reverse_block_order",
+        "streaming_logsumexp:filter_first_branch",
+        "streaming_logsumexp:ignore_right_partial",
+        "streaming_logsumexp:scale_dropped_at_finalize",
+        "streaming_logsumexp:semantic_key_changed",
+        "streaming_logsumexp:bind_negates_scale",
+        "terminal_wrapper:core_program_dropped",
+        "streaming_resolver:bypass_static_width_binding",
+        "streaming_resolver:arguments_filtered",
+        "streaming_resolver:specialization_drops_axes",
+        "streaming_resolver:output_roles_dropped",
+        "streaming_blocks:skip_last_block",
+        "streaming_blocks:admit_padded_tail",
+        "streaming_blocks:block_local_action_ids",
+        "streaming_blocks:reverse_coordinate_decode",
+        "streaming_hard_max:filter_last_identity",
+        "streaming_collective_blocks:skip_last_block",
+        "streaming_collective_blocks:admit_padded_tail",
+        "streaming_collective_blocks:block_local_action_ids",
+        "streaming_collective_blocks:objective_uses_first_stakeholder",
+        "streaming_hard_max:ignore_right_partial",
+        "streaming_hard_max:signed_zero_normalization_bypassed",
+        "streaming_hard_max:semantic_key_changed",
+        "streaming_aot:provider_ignored",
+        "streaming_aot:validation_before_width_selection_bypassed",
+        "streaming_aot:resolved_function_bypassed",
+        "streaming_collective_hard_max:filter_last_identity",
+        "streaming_collective_hard_max:ignore_right_partial",
+        "streaming_collective_hard_max:signed_zero_normalization_bypassed",
+        "streaming_collective_hard_max:semantic_key_changed",
+        "streaming_collective_hard_max:stakeholder_gather_decoupled",
+        "streaming_collective_hard_max:winner_identity_shifted",
+        "streaming_aot:resolved_arguments_bypassed",
+        "streaming_aot:specialization_dropped",
+        "streaming_aot:lower_dense_function",
     }
     required.update(
         f"{route}:candidate_index_{index}"
         for route in ("taste_shock_solve", "taste_shock_simulate")
         for index in range(len(_CANDIDATES))
     )
+    required.update(
+        f"streaming_blocks:candidate_index_{index}" for index in range(len(_CANDIDATES))
+    )
+    required.update(
+        f"streaming_collective_blocks:candidate_index_{index}"
+        for index in range(len(_CANDIDATES))
+    )
+    required.update(
+        f"streaming_ev1:candidate_index_{index}" for index in range(len(_CANDIDATES))
+    )
 
     assert required <= names
     # Independent literals make both cardinality and family identity part of this
     # certificate, rather than trusting constants supplied by the mutation generator.
-    assert len(names) == 193
+    assert len(names) == 273
     assert (
         hashlib.sha256(("\n".join(sorted(names)) + "\n").encode()).hexdigest()
-        == "1eb1dedd339ec35f8a7e722903d45ec74209e529b54df6e2c1e07d71cc5e9fb3"
+        == "0c479d1be6b5d707c18f3f95ed4c79a94d42bf2780a4fcf6d598980ac71de1eb"
     )
 
 
@@ -2142,36 +2235,17 @@ def test_masking_one_simulate_candidate_leaves_the_others_alone():
     assert rows["consumption"] == [_CONSUMPTION_VALUES[0]] * len(_WEALTH_VALUES)
 
 
-def _productmap_dropping_the_last_action_cell(
-    *, action_names: frozenset[str]
-) -> Callable[..., Any]:
-    """Return a `productmap` that hides the last cell of the action product.
-
-    Args:
-        action_names: Names identifying the action product map, so the state
-            product map built by the same function is left alone.
+def _streaming_block_dropping_the_last_action_cell() -> Callable[..., Any]:
+    """Return an action-block evaluator that hides global candidate five.
 
     Returns:
-        A drop-in replacement for `productmap`.
+        A drop-in replacement for `_evaluate_block`.
     """
-    real = max_Q_over_a_module.productmap
+    real = action_streaming_module._evaluate_block
 
-    def patched(
-        *,
-        func: Any,
-        variables: tuple[str, ...],
-        batch_sizes: dict[str, int],
-    ) -> Any:
-        mapped = real(func=func, variables=variables, batch_sizes=batch_sizes)
-        if frozenset(variables) != action_names:
-            return mapped
-
-        @functools.wraps(mapped, assigned=("__name__", "__qualname__", "__doc__"))
-        def masked(**call_kwargs: Any) -> Any:
-            Q_arr, F_arr = mapped(**call_kwargs)
-            return Q_arr, F_arr.at[..., -1].set(False)  # noqa: PD008
-
-        return masked
+    def patched(**kwargs: Any) -> Any:
+        values, feasible, global_ids = real(**kwargs)
+        return values, feasible & (global_ids != 5), global_ids
 
     return patched
 
@@ -2190,11 +2264,9 @@ def _solve_with_the_last_action_cell_dropped(
     """
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(
-            max_Q_over_a_module,
-            "productmap",
-            _productmap_dropping_the_last_action_cell(
-                action_names=frozenset({"work", "consumption"})
-            ),
+            action_streaming_module,
+            "_evaluate_block",
+            _streaming_block_dropping_the_last_action_cell(),
         )
         model = _build_model(
             utility=_labelled_utility,

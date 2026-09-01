@@ -11,7 +11,34 @@ from typing import NamedTuple
 
 import jax.numpy as jnp
 
+from _lcm.solution.collective_action_reduction import (
+    COLLECTIVE_HARD_MAX_REDUCTION,
+    CollectiveHardMaxAccumulator,
+    CollectiveHardMaxReduction,
+    CollectiveHardMaxResult,
+)
+from _lcm.solution.logsumexp_action_reduction import (
+    LOGSUMEXP_REDUCTION,
+    LogSumExpAccumulator,
+    LogSumExpReduction,
+    LogSumExpResult,
+)
 from lcm.typing import BoolND, FloatND, IntND
+
+__all__ = [
+    "COLLECTIVE_HARD_MAX_REDUCTION",
+    "HARD_MAX_REDUCTION",
+    "LOGSUMEXP_REDUCTION",
+    "CollectiveHardMaxAccumulator",
+    "CollectiveHardMaxReduction",
+    "CollectiveHardMaxResult",
+    "HardMaxAccumulator",
+    "HardMaxReduction",
+    "HardMaxResult",
+    "LogSumExpAccumulator",
+    "LogSumExpReduction",
+    "LogSumExpResult",
+]
 
 
 class HardMaxAccumulator(NamedTuple):
@@ -48,6 +75,11 @@ class HardMaxReduction:
     ``argmax`` publish global identity zero, even if action zero is infeasible. This is
     an exact-equivalence rule, not a preferred mathematical treatment of NaNs.
     """
+
+    @property
+    def semantic_key(self) -> tuple[str, int]:
+        """Stable identity of the exact singleton hard-max contract."""
+        return ("hard-max", 1)
 
     def initialize(self, *, value_template: FloatND) -> HardMaxAccumulator:
         """Create an empty accumulator with ``value_template``'s shape and dtype."""
@@ -110,9 +142,26 @@ class HardMaxReduction:
         choose_right = right.any_feasible & (
             ~left.any_feasible | (left.any_feasible & right_wins_both_feasible)
         )
+        selected_best_value = jnp.where(choose_right, right.best_value, left.best_value)
+        both_feasible_zero = (
+            left.any_feasible
+            & right.any_feasible
+            & (left.best_value == 0)
+            & (right.best_value == 0)
+        )
+        signed_zero_max = jnp.where(
+            jnp.signbit(left.best_value) & jnp.signbit(right.best_value),
+            -jnp.zeros_like(left.best_value),
+            jnp.zeros_like(left.best_value),
+        )
 
         return HardMaxAccumulator(
-            best_value=jnp.where(choose_right, right.best_value, left.best_value),
+            # Dense max publishes +0 for a {-0, +0} tie, independently of which
+            # global identity wins the replay tie. Sign conjunction is the exact,
+            # commutative and associative maximum over signed zeros.
+            best_value=jnp.where(
+                both_feasible_zero, signed_zero_max, selected_best_value
+            ),
             best_global_action_id=jnp.where(
                 choose_right,
                 right.best_global_action_id,

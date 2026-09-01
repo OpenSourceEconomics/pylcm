@@ -82,6 +82,12 @@ Use `GridSearch` for genuinely coupled multi-dimensional choices, unsupported
 constraints, or any problem whose required structure cannot be declared honestly. It is
 also the baseline against which specialized solutions should be checked.
 
+GridSearch work still covers the full represented action support. Eligible JIT
+solve-value routes evaluate bounded C-order action blocks; routes with folded or
+co-mapped states, value references, or gated targets remain dense, as does all
+simulation-policy construction. Treat the blockwise route as an execution detail until
+runtime and peak-memory effects have been measured for the model and hardware at hand.
+
 The EGM routes require named liquid roles. Nested routes add named outer roles.
 Institutional kinks and cliffs must be declared as case pieces or a piecewise-affine
 schedule from the outset.
@@ -107,7 +113,12 @@ Among correct representations, compare:
 
 - **candidate growth:** action products for grid search; savings nodes, branches,
   stochastic nodes, and outer candidates for EGM-family methods;
-- **peak memory:** dense candidates versus streamed envelope/outer batches;
+- **source-level execution shape:** bounded action blocks on eligible singleton and
+  collective hard-max and singleton EV1 JIT solve-value GridSearch routes; dense
+  GridSearch fallbacks and simulation-policy construction; streamed envelope/outer
+  batches in structural solvers;
+- **measured peak memory:** bounded source-level blocks do not establish device peak;
+  measure compiler and runtime memory for the exact model and profile;
 - **compilation:** number and size of distinct JAX programs;
 - **hardware:** dense static work often favors GPUs; sequential topology scans often
   favor CPUs;

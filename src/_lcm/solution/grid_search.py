@@ -1,10 +1,11 @@
 """The default grid-search solver.
 
 `GridSearch` runs the max-Q-over-a grid search. Its `build_period_kernels`
-returns one `PeriodKernel` per period — a non-jitted adapter that wraps the
-shared jitted core (identity-deduped by `id(Q_and_F)`, so periods sharing a
-core reuse one compiled program), calls it with the grid-search argument
-layout, and assembles a `KernelResult` outside JIT.
+returns one `PeriodKernel` per period. Eligible hard-max, collective, and EV1 solve
+kernels declare their canonical action product for blockwise execution, and the engine
+binds the block width before lowering. Folded or co-mapped states and value-dependent
+edges retain the dense kernel. The adapter assembles the resulting `KernelResult`
+outside JIT.
 
 The kernel-building imports (`jax`, `get_max_Q_over_a`) are function-local so
 the public `lcm.solvers` façade stays a thin re-export that pulls in no
@@ -12,7 +13,9 @@ numerical engine modules.
 """
 
 import functools
+import inspect
 import logging
+import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from types import MappingProxyType
@@ -30,11 +33,23 @@ from _lcm.constraints.routes import (
 )
 from _lcm.continuation import EGMContinuationLayout
 from _lcm.engine import StateActionSpace
+from _lcm.execution.core_program import (
+    CoreExecutionRequirements,
+    CoreProgram,
+    StreamableProductAxis,
+)
 from _lcm.execution.output_layout import (
     DISSOLUTION_FLAG,
     VALUE,
 )
 from _lcm.processes.base import _ContinuousStochasticProcess
+from _lcm.solution.action_reduction import (
+    COLLECTIVE_HARD_MAX_REDUCTION,
+    HARD_MAX_REDUCTION,
+)
+from _lcm.solution.action_streaming import (
+    GridSearchEV1ActionReduction,
+)
 from _lcm.solution.contract import (
     ConstraintRouteContext,
     ContinuationPayload,
@@ -46,6 +61,7 @@ from _lcm.solution.contract import (
     simulation_route,
 )
 from _lcm.typing import (
+    ActionName,
     FlatParams,
     MaxQOverAFunction,
     RegimeName,
@@ -55,6 +71,9 @@ from lcm.ages import AgeGrid
 from lcm.typing import (
     FloatND,
 )
+
+_ACTION_AXIS_NAME = "action"
+_ACTION_WIDTH_KEYWORD = "_lcm_action_block_width"
 
 
 @beartype(conf=REGIME_CONF)
@@ -112,16 +131,20 @@ class GridSearch(Solver):
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Build one max-Q-over-a period adapter per period.
 
-        Periods sharing the same Q_and_F object reuse a single jitted core,
-        and therefore a single compiled program.
+        Periods sharing the same Q_and_F object reuse the same dense and streamed
+        function objects so the execution layer can deduplicate their lowerings.
         """
-        from _lcm.regime_building.max_Q_over_a import get_max_Q_over_a  # noqa: PLC0415
+        from _lcm.regime_building.max_Q_over_a import (  # noqa: PLC0415
+            get_max_Q_over_a,
+            get_streaming_max_Q_over_a,
+        )
         from _lcm.regime_building.processing import (  # noqa: PLC0415
             get_conditioned_fold_weights_by_code,
         )
 
         built: dict[int, MaxQOverAFunction] = {}
         unwrapped: dict[int, MaxQOverAFunction] = {}
+        streamed: dict[int, MaxQOverAFunction] = {}
         result: dict[int, PeriodKernel] = {}
         # Fold weights are the folded process's own marginal distribution, a
         # plain constant computed once here at kernel-build time and never
@@ -144,6 +167,9 @@ class GridSearch(Solver):
                     name=name, grid=process, grids=context.grids
                 )
                 fold_conditioning[name] = process.state_conditioned.on
+        stream_actions = _supports_action_streaming(context=context)
+        action_names = context.state_action_space.action_names
+        action_extents = context.state_action_space.actions_grid_shapes
         for period, Q_and_F in context.Q_and_F_functions.items():
             q_id = id(Q_and_F)
             if q_id not in built:
@@ -170,33 +196,96 @@ class GridSearch(Solver):
                 )
                 built[q_id] = jax.jit(func) if context.enable_jit else func
                 unwrapped[q_id] = func
+                if stream_actions:
+                    streamed[q_id] = get_streaming_max_Q_over_a(
+                        Q_and_F=Q_and_F,
+                        batch_sizes={
+                            name: grid.batch_size
+                            for name, grid in context.grids.items()
+                            if name in context.state_action_space.state_names
+                        },
+                        action_names=action_names,
+                        state_names=context.state_action_space.state_names,
+                        n_discrete_action_axes=len(
+                            context.state_action_space.discrete_actions
+                        ),
+                        has_taste_shocks=context.has_taste_shocks,
+                        co_map_state_names=context.co_map_state_names,
+                        co_map_v_arr_in_axes=context.co_map_v_arr_in_axes,
+                        stakeholders=context.stakeholders,
+                        pareto_weights=context.pareto_weights,
+                        fold_state_names=context.fold_state_names,
+                        fold_weights=MappingProxyType(fold_weights),
+                        fold_conditioning=MappingProxyType(fold_conditioning),
+                    )
             result[period] = _GridSearchPeriodKernel(
                 core=built[q_id],
                 unwrapped_core=unwrapped[q_id],
+                streamed_core=streamed.get(q_id),
+                action_names=action_names,
+                action_extents=action_extents,
                 regime_name=context.regime_name,
                 collective=context.stakeholders is not None,
                 same_period_ref_regimes=context.same_period_ref_regimes,
+                has_taste_shocks=context.has_taste_shocks,
+                n_discrete_action_axes=len(context.state_action_space.discrete_actions),
                 edge_reference_regimes=context.edge_reference_regimes,
                 edge_target_regimes=context.edge_target_regimes,
             )
         return SolutionKernels(period_kernels=MappingProxyType(result))
 
 
+def _supports_action_streaming(*, context: SolverBuildContext) -> bool:
+    """Return whether this regime supports the streamed solve route."""
+    action_extents = context.state_action_space.actions_grid_shapes
+    return (
+        bool(context.state_action_space.action_names)
+        and math.prod(action_extents) > 1
+        and all(
+            _ACTION_WIDTH_KEYWORD not in inspect.signature(Q_and_F).parameters
+            for Q_and_F in context.Q_and_F_functions.values()
+        )
+        and (
+            not context.has_taste_shocks
+            or (
+                context.enable_jit
+                and context.stakeholders is None
+                and bool(context.state_action_space.discrete_actions)
+            )
+        )
+        and not context.fold_state_names
+        and not context.co_map_state_names
+        and not context.co_map_v_arr_in_axes
+        and not context.same_period_ref_regimes
+        and not context.edge_reference_regimes
+        and not context.edge_target_regimes
+    )
+
+
 @dataclass(frozen=True, kw_only=True)
 class _GridSearchPeriodKernel:
     """The grid-search period adapter — wraps one max-Q-over-a core.
 
-    Closes over the regime name (to project its flat params) and the shared
-    jitted core. Calling it evaluates Q on the full state-action product and
-    maximizes over the actions, returning a `KernelResult` whose only output is
-    the value-function array — no continuation, no simulation policy.
+    Closes over the regime name and shared core. Calling the dense fallback evaluates
+    Q on the full state-action product; eligible planned execution instead streams
+    that product. Both publish the value array, plus the dissolution flag for a
+    collective regime, and neither publishes a continuation or simulation policy.
     """
 
     core: Callable
     """The shared jitted max-Q-over-a core (`id`-deduped across periods)."""
 
     unwrapped_core: Callable | None = None
-    """The same core before GridSearch's legacy JIT wrapper, for planned lowering."""
+    """The same dense core before GridSearch's JIT wrapper."""
+
+    streamed_core: Callable | None = None
+    """Action-streaming core, or `None` for an unsupported route."""
+
+    action_names: tuple[ActionName, ...] = ()
+    """Canonical C-order action-coordinate names for the streamed core."""
+
+    action_extents: tuple[int, ...] = ()
+    """Static coordinate extents aligned with `action_names`."""
 
     regime_name: RegimeName
     """Name of the regime whose flat params this adapter projects."""
@@ -209,6 +298,12 @@ class _GridSearchPeriodKernel:
     of the plain V array; the adapter unpacks it into the `KernelResult`.
     `False` keeps the singleton default byte-identical.
     """
+
+    has_taste_shocks: bool = False
+    """Whether this singleton core uses EV1 branch smoothing."""
+
+    n_discrete_action_axes: int = 0
+    """Number of leading discrete coordinates in the canonical action product."""
 
     edge_reference_regimes: tuple[RegimeName, ...] = ()
     """Regimes a gated edge reads a projected value from, or empty.
@@ -275,6 +370,49 @@ class _GridSearchPeriodKernel:
         """Return the single max-Q-over-a core under the `"main"` key."""
         return MappingProxyType({"main": self.core})
 
+    def build_core_program(
+        self,
+        *,
+        core_key: str,
+        arguments: Mapping[str, object],
+    ) -> CoreProgram | None:
+        """Declare the eligible GridSearch action product for engine planning.
+
+        Unsupported numerical routes keep using the dense core. The program
+        snapshots exactly the arguments built by this adapter; the planner owns
+        only the static block width and binds it before lowering.
+        """
+        if core_key != "main":
+            msg = f"GridSearch has no core named {core_key!r}."
+            raise KeyError(msg)
+        if self.streamed_core is None:
+            return None
+        return CoreProgram(
+            function=self.streamed_core,
+            arguments=arguments,
+            requirements=CoreExecutionRequirements(
+                streamable_axes=(
+                    StreamableProductAxis(
+                        name=_ACTION_AXIS_NAME,
+                        coordinate_names=self.action_names,
+                        coordinate_extents=self.action_extents,
+                        canonical_order="c",
+                        reduction=(
+                            COLLECTIVE_HARD_MAX_REDUCTION
+                            if self.collective
+                            else GridSearchEV1ActionReduction(
+                                n_discrete_action_axes=self.n_discrete_action_axes
+                            )
+                            if self.has_taste_shocks
+                            else HARD_MAX_REDUCTION
+                        ),
+                        width_keyword=_ACTION_WIDTH_KEYWORD,
+                    ),
+                )
+            ),
+            output_roles=((VALUE, DISSOLUTION_FLAG) if self.collective else VALUE),
+        )
+
     def output_roles(self, *, core_key: str) -> object:
         """Name the core output leaves whose concrete layout the engine owns."""
         if core_key != "main":
@@ -316,6 +454,11 @@ class _GridSearchPeriodKernel:
                 None
                 if self.unwrapped_core is None
                 else functools.partial(self.unwrapped_core, **regime_fixed)
+            ),
+            streamed_core=(
+                None
+                if self.streamed_core is None
+                else functools.partial(self.streamed_core, **regime_fixed)
             ),
         )
 

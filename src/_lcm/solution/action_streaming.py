@@ -1,33 +1,74 @@
-"""Blockwise-action equivalence reference for ordinary singleton grid search.
+"""Blockwise action maximization for GridSearch solve kernels.
 
-This is deliberately not wired into the production GridSearch path.  It isolates one
-planner-owned execution choice: enumerate the canonical action product in fixed-width
-blocks and combine the results with a mergeable hard-max state. The reference proves
-only value, feasibility, and action-identity equivalence. It makes no runtime or peak-
-memory claim: compiler fusion, rematerialization, and allocation still require direct
-measurement. The reference excludes taste shocks, collective scalarization, outer
-state mapping, and folded state axes; those semantics must be layered on only after this
-kernel is established as an exact ordinary-singleton reference.
+The streamed GridSearch route enumerates the canonical action product in fixed-width
+blocks and combines them with a mergeable hard-max state. It preserves value,
+feasibility, tie-breaking, and global action identity across block boundaries. The
+collective route retains every stakeholder's value at one shared household winner;
+the EV1 route hard-maxes continuous cells within each discrete prefix before logsum.
+Compiler fusion, rematerialization, and allocation still determine measured runtime
+and peak memory. Folded and co-mapped state axes use the dense GridSearch route.
 """
 
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from functools import partial
-from typing import Any
+from typing import Any, NamedTuple
 
 import jax
 import jax.numpy as jnp
 
+from _lcm.regime_building.collective import _weighted_sum
 from _lcm.solution.action_reduction import (
+    COLLECTIVE_HARD_MAX_REDUCTION,
     HARD_MAX_REDUCTION,
+    LOGSUMEXP_REDUCTION,
+    CollectiveHardMaxAccumulator,
+    CollectiveHardMaxResult,
     HardMaxAccumulator,
     HardMaxResult,
+    LogSumExpAccumulator,
+    LogSumExpResult,
+)
+from _lcm.solution.logsumexp_action_reduction import (
+    BoundLogSumExpReduction,
 )
 
 _INT32_MAX = 2_147_483_647
+_COLLECTIVE_BLOCK_NDIM = 2
 _Block = tuple[jax.Array, jax.Array, jax.Array]
 _ScanCarry = tuple[HardMaxAccumulator, jax.Array]
+_CollectiveBlock = tuple[jax.Array, jax.Array, jax.Array, jax.Array]
+_CollectiveScanCarry = tuple[CollectiveHardMaxAccumulator, jax.Array]
+
+
+_EV1ScanCarry = tuple["_EV1ActionAccumulator", jax.Array]
+
+
+class _EV1ActionAccumulator(NamedTuple):
+    """Open discrete branch plus the exponential mass of completed branches."""
+
+    active_branch_id: jax.Array
+    branch: HardMaxAccumulator
+    completed_branches: LogSumExpAccumulator
+
+
+@dataclass(frozen=True)
+class GridSearchEV1ActionReduction:
+    """Composite reduction identity for streamed GridSearch EV1 values."""
+
+    n_discrete_action_axes: int
+
+    @property
+    def semantic_key(self) -> tuple[object, ...]:
+        """Identify the ordered branch-hard-max then log-sum-exp contract."""
+        return (
+            "grid-search-ev1-action-reduction",
+            1,
+            self.n_discrete_action_axes,
+            HARD_MAX_REDUCTION.semantic_key,
+            LOGSUMEXP_REDUCTION.semantic_key,
+        )
 
 
 def build_streaming_max_Q_over_a(
@@ -36,7 +77,7 @@ def build_streaming_max_Q_over_a(
     action_names: tuple[str, ...],
     block_width: int,
 ) -> Callable[..., HardMaxResult]:
-    """Build the fixed-state blockwise hard-max reference callable.
+    """Build the fixed-state blockwise hard-max callable.
 
     ``action_names`` defines the canonical product order: the final action is the
     fastest-moving coordinate, exactly as C-order flattening of the corresponding
@@ -50,11 +91,93 @@ def build_streaming_max_Q_over_a(
 
     At the source-program level, ``Q_and_F`` is vmapped over one block at a time and a
     padded final block is marked infeasible before reduction. The scan emits ``None``
-    as its history. Those facts establish the reference program's structure, not an
-    executable runtime or peak-memory bound after compiler transformation. The
-    reduction deliberately retains GridSearch's established feasible-NaN behavior:
+    as its history. These source-level properties do not by themselves bound runtime
+    or peak memory after compiler transformation. The reduction deliberately retains
+    GridSearch's established feasible-NaN behavior:
     a NaN maximum publishes action identity zero, even when that action is infeasible.
     """
+    _validate_streaming_configuration(
+        action_names=action_names, block_width=block_width
+    )
+    return _StreamingHardMax(
+        Q_and_F=Q_and_F,
+        action_names=action_names,
+        block_width=block_width,
+    )
+
+
+def build_streaming_ev1_max_Q_over_a(
+    *,
+    Q_and_F: Callable[..., tuple[Any, Any]],
+    action_names: tuple[str, ...],
+    n_discrete_action_axes: int,
+    block_width: int,
+    scale: Any,  # noqa: ANN401
+) -> Callable[..., LogSumExpResult]:
+    """Build the fixed-state EV1 expected-maximum callable.
+
+    The action product stays one flat C-order stream. Its leading discrete
+    coordinates define contiguous branches; the trailing continuous coordinates
+    are hard-maxed within each branch. Exactly one finalized value per branch then
+    enters a log-sum-exp reduction bound to ``scale`` for its complete lifetime.
+    """
+    _validate_streaming_configuration(
+        action_names=action_names, block_width=block_width
+    )
+    if (
+        not isinstance(n_discrete_action_axes, int)
+        or isinstance(n_discrete_action_axes, bool)
+        or not 1 <= n_discrete_action_axes <= len(action_names)
+    ):
+        raise ValueError(
+            "n_discrete_action_axes must identify a non-empty leading action prefix"
+        )
+    return _StreamingEV1ExpectedMax(
+        Q_and_F=Q_and_F,
+        action_names=action_names,
+        n_discrete_action_axes=n_discrete_action_axes,
+        block_width=block_width,
+        scale=scale,
+    )
+
+
+def build_streaming_collective_max_Q_over_a(
+    *,
+    Q_and_F: Callable[..., tuple[Any, Any]],
+    action_names: tuple[str, ...],
+    block_width: int,
+    stakeholders: tuple[str, ...],
+    weights: Mapping[str, Any],
+) -> Callable[..., CollectiveHardMaxResult]:
+    """Build the fixed-state collective hard-max callable.
+
+    Each action cell is evaluated once through Q_and_F. Its trailing stakeholder
+    vector is scalarized with the same zero-safe, canonical household objective as
+    dense collective_readout. The collective reduction then retains every stakeholder
+    value at one global C-order winner and keeps the empty feasible set explicit.
+    """
+    _validate_streaming_configuration(
+        action_names=action_names, block_width=block_width
+    )
+    if not stakeholders:
+        raise ValueError("stakeholders must not be empty")
+    if len(set(stakeholders)) != len(stakeholders):
+        raise ValueError("stakeholders must not contain duplicates")
+    if set(stakeholders) != set(weights):
+        raise ValueError("stakeholders and weights must have identical keys")
+    return _StreamingCollectiveHardMax(
+        Q_and_F=Q_and_F,
+        action_names=action_names,
+        block_width=block_width,
+        stakeholders=stakeholders,
+        weights=weights,
+    )
+
+
+def _validate_streaming_configuration(
+    *, action_names: tuple[str, ...], block_width: int
+) -> None:
+    """Validate the common fixed-width action-product declaration."""
     if (
         not isinstance(block_width, int)
         or isinstance(block_width, bool)
@@ -65,16 +188,11 @@ def build_streaming_max_Q_over_a(
         raise ValueError("block_width exceeds the int32 identity range")
     if len(set(action_names)) != len(action_names):
         raise ValueError("action_names must not contain duplicates")
-    return _StreamingHardMax(
-        Q_and_F=Q_and_F,
-        action_names=action_names,
-        block_width=block_width,
-    )
 
 
 @dataclass(frozen=True)
 class _StreamingHardMax:
-    """Configured action-streaming reference callable."""
+    """Configured action-streaming callable."""
 
     Q_and_F: Callable[..., tuple[Any, Any]]
     action_names: tuple[str, ...]
@@ -108,6 +226,113 @@ class _StreamingHardMax:
             n_remaining=n_blocks - 1,
         )
         return HARD_MAX_REDUCTION.finalize(accumulator=accumulator)
+
+
+@dataclass(frozen=True)
+class _StreamingEV1ExpectedMax:
+    """Configured discrete-branch hard-max followed by EV1 log-sum-exp."""
+
+    Q_and_F: Callable[..., tuple[Any, Any]]
+    action_names: tuple[str, ...]
+    n_discrete_action_axes: int
+    block_width: int
+    scale: Any
+
+    def __call__(self, **kwargs: Any) -> LogSumExpResult:  # noqa: ANN401
+        action_grids, fixed_kwargs, action_sizes, n_actions = _prepare_action_call(
+            action_names=self.action_names,
+            kwargs=kwargs,
+        )
+        continuous_extent = math.prod(action_sizes[self.n_discrete_action_axes :])
+        n_blocks = (n_actions + self.block_width - 1) // self.block_width
+        reduction = LOGSUMEXP_REDUCTION.bind(scale=jnp.asarray(self.scale))
+        evaluate_block = partial(
+            _evaluate_block,
+            Q_and_F=self.Q_and_F,
+            action_names=self.action_names,
+            action_grids=action_grids,
+            action_sizes=action_sizes,
+            fixed_kwargs=fixed_kwargs,
+            n_actions=n_actions,
+            block_width=self.block_width,
+            block_offsets=jnp.arange(self.block_width, dtype=jnp.int32),
+        )
+        first_block_index = jnp.asarray(0, dtype=jnp.int32)
+        first_block = evaluate_block(block_index=first_block_index)
+        accumulator = _initialize_ev1_reduction(
+            value_template=jnp.zeros_like(first_block[0][0]),
+            reduction=reduction,
+        )
+        accumulator = _add_ev1_block(
+            accumulator=accumulator,
+            block=first_block,
+            block_index=first_block_index,
+            n_actions=n_actions,
+            block_width=self.block_width,
+            continuous_extent=continuous_extent,
+            reduction=reduction,
+        )
+        accumulator = _scan_remaining_ev1_blocks(
+            accumulator=accumulator,
+            evaluate_block=evaluate_block,
+            n_remaining=n_blocks - 1,
+            n_actions=n_actions,
+            block_width=self.block_width,
+            continuous_extent=continuous_extent,
+            reduction=reduction,
+        )
+        accumulator = _flush_ev1_branch(
+            accumulator=accumulator,
+            reduction=reduction,
+        )
+        return reduction.finalize(accumulator=accumulator.completed_branches)
+
+
+@dataclass(frozen=True)
+class _StreamingCollectiveHardMax:
+    """Configured collective action-streaming callable."""
+
+    Q_and_F: Callable[..., tuple[Any, Any]]
+    action_names: tuple[str, ...]
+    block_width: int
+    stakeholders: tuple[str, ...]
+    weights: Mapping[str, Any]
+
+    def __call__(self, **kwargs: Any) -> CollectiveHardMaxResult:  # noqa: ANN401
+        if not self.action_names:
+            return _reduce_collective_no_action(
+                Q_and_F=self.Q_and_F,
+                stakeholders=self.stakeholders,
+                weights=self.weights,
+                kwargs=kwargs,
+            )
+
+        action_grids, fixed_kwargs, action_sizes, n_actions = _prepare_action_call(
+            action_names=self.action_names,
+            kwargs=kwargs,
+        )
+        n_blocks = (n_actions + self.block_width - 1) // self.block_width
+        evaluate_block = partial(
+            _evaluate_collective_block,
+            Q_and_F=self.Q_and_F,
+            action_names=self.action_names,
+            action_grids=action_grids,
+            action_sizes=action_sizes,
+            fixed_kwargs=fixed_kwargs,
+            n_actions=n_actions,
+            block_width=self.block_width,
+            block_offsets=jnp.arange(self.block_width, dtype=jnp.int32),
+            stakeholders=self.stakeholders,
+            weights=self.weights,
+        )
+        first_block = evaluate_block(block_index=jnp.asarray(0, dtype=jnp.int32))
+        accumulator = _start_collective_reduction(block=first_block)
+        accumulator = _scan_remaining_collective_blocks(
+            accumulator=accumulator,
+            evaluate_block=evaluate_block,
+            n_remaining=n_blocks - 1,
+        )
+        return COLLECTIVE_HARD_MAX_REDUCTION.finalize(accumulator=accumulator)
 
 
 def _prepare_action_call(
@@ -172,6 +397,54 @@ def _evaluate_block(
     return values, feasible & valid, global_ids
 
 
+def _evaluate_collective_block(
+    *,
+    block_index: jax.Array,
+    Q_and_F: Callable[..., tuple[Any, Any]],
+    action_names: tuple[str, ...],
+    action_grids: tuple[jax.Array, ...],
+    action_sizes: tuple[int, ...],
+    fixed_kwargs: dict[str, Any],
+    n_actions: int,
+    block_width: int,
+    block_offsets: jax.Array,
+    stakeholders: tuple[str, ...],
+    weights: Mapping[str, Any],
+) -> _CollectiveBlock:
+    """Evaluate and scalarize one padded collective action block."""
+    block_start = block_index * block_width
+    remaining = n_actions - block_start
+    valid = block_offsets < remaining
+    safe_offsets = jnp.minimum(block_offsets, remaining - 1)
+    global_ids = block_start + safe_offsets
+
+    def evaluate_one(global_id: jax.Array) -> tuple[Any, Any]:
+        action_kwargs = _decode_action(
+            global_id=global_id,
+            action_names=action_names,
+            action_grids=action_grids,
+            action_sizes=action_sizes,
+        )
+        return Q_and_F(**fixed_kwargs, **action_kwargs)
+
+    stakeholder_values, feasible = jax.vmap(evaluate_one)(global_ids)
+    stakeholder_values = jnp.asarray(stakeholder_values)
+    feasible = jnp.asarray(feasible)
+    _validate_collective_block_Q_and_F(
+        stakeholder_values=stakeholder_values,
+        feasible=feasible,
+        n_stakeholders=len(stakeholders),
+    )
+    objectives = _weighted_sum(
+        stakeholder_Q={
+            name: stakeholder_values[..., index]
+            for index, name in enumerate(stakeholders)
+        },
+        weights=weights,
+    )
+    return objectives, stakeholder_values, feasible & valid, global_ids
+
+
 def _start_reduction(*, block: _Block) -> HardMaxAccumulator:
     """Seed a hard-max reduction from the first evaluated block."""
     values, feasible, global_ids = block
@@ -221,6 +494,175 @@ def _add_block(*, accumulator: HardMaxAccumulator, block: _Block) -> HardMaxAccu
     )
 
 
+def _initialize_ev1_reduction(
+    *,
+    value_template: jax.Array,
+    reduction: BoundLogSumExpReduction,
+) -> _EV1ActionAccumulator:
+    """Create an empty open branch and an empty completed-branch mass."""
+    return _EV1ActionAccumulator(
+        active_branch_id=jnp.asarray(-1, dtype=jnp.int32),
+        branch=HARD_MAX_REDUCTION.initialize(value_template=value_template),
+        completed_branches=reduction.initialize(value_template=value_template),
+    )
+
+
+def _add_ev1_block(
+    *,
+    accumulator: _EV1ActionAccumulator,
+    block: _Block,
+    block_index: jax.Array,
+    n_actions: int,
+    block_width: int,
+    continuous_extent: int,
+    reduction: BoundLogSumExpReduction,
+) -> _EV1ActionAccumulator:
+    """Consume valid cells in one block in canonical global-ID order."""
+    values, feasible, global_ids = block
+    remaining = n_actions - block_index * block_width
+    valid = jnp.arange(block_width, dtype=jnp.int32) < remaining
+
+    # keyword-only-exempt: library-callback=jax.lax.scan
+    def scan_one_candidate(
+        partial: _EV1ActionAccumulator,
+        candidate: tuple[jax.Array, jax.Array, jax.Array, jax.Array],
+    ) -> tuple[_EV1ActionAccumulator, None]:
+        value, is_feasible, global_id, is_valid = candidate
+        partial = jax.lax.cond(
+            is_valid,
+            lambda current: _add_valid_ev1_candidate(
+                accumulator=current,
+                value=value,
+                feasible=is_feasible,
+                global_id=global_id,
+                continuous_extent=continuous_extent,
+                reduction=reduction,
+            ),
+            lambda current: current,
+            partial,
+        )
+        return partial, None
+
+    accumulator, _history = jax.lax.scan(
+        scan_one_candidate,
+        accumulator,
+        (values, feasible, global_ids, valid),
+    )
+    return accumulator
+
+
+def _add_valid_ev1_candidate(
+    *,
+    accumulator: _EV1ActionAccumulator,
+    value: jax.Array,
+    feasible: jax.Array,
+    global_id: jax.Array,
+    continuous_extent: int,
+    reduction: BoundLogSumExpReduction,
+) -> _EV1ActionAccumulator:
+    """Add one valid cell, closing the preceding branch when necessary."""
+    branch_id = global_id // continuous_extent
+    branch_changed = (accumulator.active_branch_id >= 0) & (
+        accumulator.active_branch_id != branch_id
+    )
+    accumulator = jax.lax.cond(
+        branch_changed,
+        lambda current: _finalize_open_ev1_branch(
+            accumulator=current,
+            reduction=reduction,
+        ),
+        lambda current: current,
+        accumulator,
+    )
+    branch = HARD_MAX_REDUCTION.add(
+        accumulator=accumulator.branch,
+        values=value[jnp.newaxis],
+        feasible=feasible[jnp.newaxis],
+        action_ids=global_id[jnp.newaxis],
+    )
+    return _EV1ActionAccumulator(
+        active_branch_id=branch_id,
+        branch=branch,
+        completed_branches=accumulator.completed_branches,
+    )
+
+
+def _finalize_open_ev1_branch(
+    *,
+    accumulator: _EV1ActionAccumulator,
+    reduction: BoundLogSumExpReduction,
+) -> _EV1ActionAccumulator:
+    """Move exactly one finalized continuous-branch value into log-sum-exp."""
+    branch = HARD_MAX_REDUCTION.finalize(accumulator=accumulator.branch)
+    completed_branches = reduction.add(
+        accumulator=accumulator.completed_branches,
+        values=branch.best_value[jnp.newaxis],
+    )
+    return _EV1ActionAccumulator(
+        active_branch_id=jnp.asarray(-1, dtype=jnp.int32),
+        branch=HARD_MAX_REDUCTION.initialize(
+            value_template=jnp.zeros_like(branch.best_value)
+        ),
+        completed_branches=completed_branches,
+    )
+
+
+def _scan_remaining_ev1_blocks(
+    *,
+    accumulator: _EV1ActionAccumulator,
+    evaluate_block: Callable[..., _Block],
+    n_remaining: int,
+    n_actions: int,
+    block_width: int,
+    continuous_extent: int,
+    reduction: BoundLogSumExpReduction,
+) -> _EV1ActionAccumulator:
+    """Scan later blocks while preserving the branch open at each boundary."""
+
+    # keyword-only-exempt: library-callback=jax.lax.scan
+    def scan_one_block(
+        carry: _EV1ScanCarry,
+        _unused: None,
+    ) -> tuple[_EV1ScanCarry, None]:
+        partial, block_index = carry
+        block = evaluate_block(block_index=block_index)
+        partial = _add_ev1_block(
+            accumulator=partial,
+            block=block,
+            block_index=block_index,
+            n_actions=n_actions,
+            block_width=block_width,
+            continuous_extent=continuous_extent,
+            reduction=reduction,
+        )
+        return (partial, block_index + 1), None
+
+    (accumulator, _), _history = jax.lax.scan(
+        scan_one_block,
+        (accumulator, jnp.asarray(1, dtype=jnp.int32)),
+        xs=None,
+        length=n_remaining,
+    )
+    return accumulator
+
+
+def _flush_ev1_branch(
+    *,
+    accumulator: _EV1ActionAccumulator,
+    reduction: BoundLogSumExpReduction,
+) -> _EV1ActionAccumulator:
+    """Finalize the last non-padding branch after the complete ordered scan."""
+    return jax.lax.cond(
+        accumulator.active_branch_id >= 0,
+        lambda current: _finalize_open_ev1_branch(
+            accumulator=current,
+            reduction=reduction,
+        ),
+        lambda current: current,
+        accumulator,
+    )
+
+
 def _reduce_no_action(
     *, Q_and_F: Callable[..., tuple[Any, Any]], kwargs: dict[str, Any]
 ) -> HardMaxResult:
@@ -236,6 +678,100 @@ def _reduce_no_action(
     )
     accumulator = _start_reduction(block=block)
     return HARD_MAX_REDUCTION.finalize(accumulator=accumulator)
+
+
+def _start_collective_reduction(
+    *, block: _CollectiveBlock
+) -> CollectiveHardMaxAccumulator:
+    """Seed a collective hard-max reduction from the first evaluated block."""
+    objectives, stakeholder_values, feasible, global_ids = block
+    accumulator = COLLECTIVE_HARD_MAX_REDUCTION.initialize(
+        stakeholder_template=jnp.zeros_like(stakeholder_values[0])
+    )
+    return COLLECTIVE_HARD_MAX_REDUCTION.add(
+        accumulator=accumulator,
+        objectives=objectives,
+        stakeholder_values=stakeholder_values,
+        feasible=feasible,
+        action_ids=global_ids,
+    )
+
+
+def _scan_remaining_collective_blocks(
+    *,
+    accumulator: CollectiveHardMaxAccumulator,
+    evaluate_block: Callable[..., _CollectiveBlock],
+    n_remaining: int,
+) -> CollectiveHardMaxAccumulator:
+    """Scan remaining collective blocks without retaining a block history."""
+
+    # keyword-only-exempt: library-callback=jax.lax.scan
+    def scan_one_block(
+        carry: _CollectiveScanCarry, _unused: None
+    ) -> tuple[_CollectiveScanCarry, None]:
+        partial_accumulator, block_index = carry
+        block = evaluate_block(block_index=block_index)
+        partial_accumulator = _add_collective_block(
+            accumulator=partial_accumulator,
+            block=block,
+        )
+        return (partial_accumulator, block_index + 1), None
+
+    (accumulator, _), _history = jax.lax.scan(
+        scan_one_block,
+        (accumulator, jnp.asarray(1, dtype=jnp.int32)),
+        xs=None,
+        length=n_remaining,
+    )
+    return accumulator
+
+
+def _add_collective_block(
+    *,
+    accumulator: CollectiveHardMaxAccumulator,
+    block: _CollectiveBlock,
+) -> CollectiveHardMaxAccumulator:
+    """Merge one collective block into the household hard-max state."""
+    objectives, stakeholder_values, feasible, global_ids = block
+    return COLLECTIVE_HARD_MAX_REDUCTION.add(
+        accumulator=accumulator,
+        objectives=objectives,
+        stakeholder_values=stakeholder_values,
+        feasible=feasible,
+        action_ids=global_ids,
+    )
+
+
+def _reduce_collective_no_action(
+    *,
+    Q_and_F: Callable[..., tuple[Any, Any]],
+    stakeholders: tuple[str, ...],
+    weights: Mapping[str, Any],
+    kwargs: dict[str, Any],
+) -> CollectiveHardMaxResult:
+    """Treat a collective empty action product as one shared identity cell."""
+    stakeholder_values, feasible = Q_and_F(**kwargs)
+    stakeholder_values = jnp.asarray(stakeholder_values)
+    feasible = jnp.asarray(feasible)
+    _validate_collective_scalar_Q_and_F(
+        stakeholder_values=stakeholder_values,
+        feasible=feasible,
+        n_stakeholders=len(stakeholders),
+    )
+    objective = _weighted_sum(
+        stakeholder_Q={
+            name: stakeholder_values[index] for index, name in enumerate(stakeholders)
+        },
+        weights=weights,
+    )
+    block = (
+        objective[jnp.newaxis],
+        stakeholder_values[jnp.newaxis, :],
+        feasible[jnp.newaxis],
+        jnp.array([0], dtype=jnp.int32),
+    )
+    accumulator = _start_collective_reduction(block=block)
+    return COLLECTIVE_HARD_MAX_REDUCTION.finalize(accumulator=accumulator)
 
 
 def _decode_action(
@@ -256,10 +792,10 @@ def _decode_action(
 
 
 def _validate_scalar_Q_and_F(*, value: jax.Array, feasible: jax.Array) -> None:
-    """Validate the no-action identity against the reference contract."""
+    """Validate the no-action identity against the streaming contract."""
     if value.ndim != 0 or feasible.ndim != 0:
         raise ValueError(
-            "The ordinary-singleton streaming reference requires scalar Q and "
+            "Ordinary-singleton action streaming requires scalar Q and "
             "feasibility outputs at each action cell"
         )
     if feasible.dtype != jnp.bool_:
@@ -267,11 +803,52 @@ def _validate_scalar_Q_and_F(*, value: jax.Array, feasible: jax.Array) -> None:
 
 
 def _validate_block_Q_and_F(*, values: jax.Array, feasible: jax.Array) -> None:
-    """Validate a vmapped block against the reference contract."""
+    """Validate a vmapped block against the streaming contract."""
     if values.ndim != 1 or feasible.ndim != 1:
         raise ValueError(
-            "The ordinary-singleton streaming reference requires scalar Q and "
+            "Ordinary-singleton action streaming requires scalar Q and "
             "feasibility outputs at each action cell"
+        )
+    if feasible.dtype != jnp.bool_:
+        raise TypeError("Q_and_F feasibility output must have boolean dtype")
+
+
+def _validate_collective_scalar_Q_and_F(
+    *,
+    stakeholder_values: jax.Array,
+    feasible: jax.Array,
+    n_stakeholders: int,
+) -> None:
+    """Validate one collective action cell."""
+    if (
+        stakeholder_values.ndim != 1
+        or stakeholder_values.shape[-1] != n_stakeholders
+        or feasible.ndim != 0
+    ):
+        raise ValueError(
+            "Collective action streaming requires one trailing stakeholder "
+            "axis and scalar feasibility at each action cell"
+        )
+    if feasible.dtype != jnp.bool_:
+        raise TypeError("Q_and_F feasibility output must have boolean dtype")
+
+
+def _validate_collective_block_Q_and_F(
+    *,
+    stakeholder_values: jax.Array,
+    feasible: jax.Array,
+    n_stakeholders: int,
+) -> None:
+    """Validate a vmapped collective block against the streaming contract."""
+    if (
+        stakeholder_values.ndim != _COLLECTIVE_BLOCK_NDIM
+        or stakeholder_values.shape[-1] != n_stakeholders
+        or feasible.ndim != 1
+        or stakeholder_values.shape[0] != feasible.shape[0]
+    ):
+        raise ValueError(
+            "Collective action streaming requires one trailing stakeholder "
+            "axis and scalar feasibility at each action cell"
         )
     if feasible.dtype != jnp.bool_:
         raise TypeError("Q_and_F feasibility output must have boolean dtype")

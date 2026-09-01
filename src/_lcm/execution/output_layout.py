@@ -44,6 +44,9 @@ class _Unplanned(Enum):
     TOKEN = auto()
 
 
+_ROLES_FROM_KERNEL = object()
+# Sentinel selecting the legacy OutputLayoutAware declaration.
+
 UNPLANNED = _Unplanned.TOKEN
 # No explicit output plan; preserve the backend-selected layout.
 
@@ -77,25 +80,24 @@ def resolve_output_layout(
     core_key: str,
     value_template: object,
     state_order: tuple[StateName, ...],
+    output_roles: object = _ROLES_FROM_KERNEL,
 ) -> ResolvedOutputLayout | _Unplanned:
     """Resolve an opted-in core's logical output roles on the V-template mesh.
 
-    An unsharded regime has nothing to plan.  A distributed collective value
-    has one trailing, replicated stakeholder axis; its dissolution flag is
-    state-valued, so its spec is derived from the canonical state-axis prefix.
+    A materialized CoreProgram supplies ``output_roles`` directly and receives a
+    concrete contract even on one device. A distributed collective value has one
+    trailing, replicated stakeholder axis; its dissolution flag is state-valued, so
+    its spec is derived from the canonical state-axis prefix. Legacy kernels continue
+    to declare roles through ``OutputLayoutAware`` only when their value template has
+    a named sharding.
     """
-    if not isinstance(kernel, OutputLayoutAware):
-        return UNPLANNED
-
-    value_sharding = getattr(value_template, "sharding", None)
-    if not isinstance(value_sharding, jax.NamedSharding):
-        return UNPLANNED
-
-    roles = kernel.output_roles(core_key=core_key)
-    if roles is None:
-        # An engine-owned decorator may wrap an unaware custom kernel.  Its
-        # method exists for structural delegation, but no plan exists to pass
-        # through for that core.
+    roles, opted_in = _select_output_roles(
+        kernel=kernel,
+        core_key=core_key,
+        value_template=value_template,
+        output_roles=output_roles,
+    )
+    if not opted_in:
         return UNPLANNED
     _validate_output_roles(
         roles=roles,
@@ -104,48 +106,27 @@ def resolve_output_layout(
         state_order=state_order,
     )
 
-    # PartitionSpec may omit replicated trailing axes.  Extend it to the
-    # canonical state rank, then deliberately discard anything beyond that
-    # prefix (the collective stakeholder axis).
-    template_spec = tuple(value_sharding.spec)
-    if len(template_spec) > len(state_order) and any(
-        axis is not None for axis in template_spec[len(state_order) :]
-    ):
-        msg = (
-            "The value template shards a non-state trailing output axis; only a "
-            "replicated stakeholder axis can be dropped for dissolution output."
-        )
-        raise ValueError(msg)
-    state_spec = (*template_spec[: len(state_order)],) + (None,) * max(
-        0, len(state_order) - len(template_spec)
+    value_sharding = _require_value_sharding(value_template=value_template)
+    dissolution_sharding = _derive_dissolution_sharding(
+        value_sharding=value_sharding,
+        state_order=state_order,
     )
-    dissolution_sharding = jax.NamedSharding(
-        mesh=value_sharding.mesh,
-        spec=jax.P(*state_spec),
-        memory_kind=value_sharding.memory_kind,
+    out_shardings = jax.tree.map(
+        lambda role: _resolve_output_sharding(
+            role=role,
+            value_sharding=value_sharding,
+            dissolution_sharding=dissolution_sharding,
+        ),
+        roles,
     )
-
-    def _resolve(role: OutputRole) -> jax.NamedSharding:
-        if role is VALUE:
-            return value_sharding
-        if role is DISSOLUTION_FLAG:
-            return dissolution_sharding
-        msg = f"unreachable output role: {role!r}"
-        raise AssertionError(msg)
-
-    out_shardings = jax.tree.map(_resolve, roles)
     tree = jax.tree.structure(out_shardings)
     leaves = tuple(jax.tree.leaves(out_shardings))
-    value_shape = getattr(value_template, "shape", None)
-    value_dtype = getattr(value_template, "dtype", None)
-    if value_shape is None or value_dtype is None:
-        msg = "A planned value template must expose an absolute shape and dtype."
-        raise TypeError(msg)
-    expected_value_shape = tuple(int(size) for size in value_shape)
-    expected_value_dtype = value_dtype
-    collective = roles == (VALUE, DISSOLUTION_FLAG)
-    expected_dissolution_shape = expected_value_shape[:-1] if collective else None
-    expected_dissolution_dtype = jax.numpy.dtype(bool) if collective else None
+    (
+        expected_value_shape,
+        expected_value_dtype,
+        expected_dissolution_shape,
+        expected_dissolution_dtype,
+    ) = _expected_layout_metadata(value_template=value_template, roles=roles)
     return ResolvedOutputLayout(
         out_shardings=out_shardings,
         compilation_key=(
@@ -160,6 +141,114 @@ def resolve_output_layout(
         expected_value_dtype=expected_value_dtype,
         expected_dissolution_shape=expected_dissolution_shape,
         expected_dissolution_dtype=expected_dissolution_dtype,
+    )
+
+
+def _select_output_roles(
+    *,
+    kernel: object,
+    core_key: str,
+    value_template: object,
+    output_roles: object,
+) -> tuple[object, bool]:
+    """Select explicit roles or the legacy opt-in without consulting it early."""
+    if output_roles is not _ROLES_FROM_KERNEL:
+        if output_roles is None:
+            msg = "Explicit CoreProgram output_roles cannot be None."
+            raise ValueError(msg)
+        return output_roles, True
+    if not isinstance(kernel, OutputLayoutAware):
+        return UNPLANNED, False
+    value_sharding = getattr(value_template, "sharding", None)
+    if not isinstance(value_sharding, jax.NamedSharding):
+        # Preserve the legacy contract: an unsharded OutputLayoutAware kernel
+        # does not consult its role declaration or acquire a plan.
+        return UNPLANNED, False
+    roles = cast("OutputLayoutAware", kernel).output_roles(core_key=core_key)
+    if roles is None:
+        # A delegating legacy adapter may have no plan for this core.
+        return UNPLANNED, False
+    return roles, True
+
+
+def _require_value_sharding(*, value_template: object) -> jax.sharding.Sharding:
+    """Return the concrete sharding required by an opted-in output contract."""
+    value_sharding = getattr(value_template, "sharding", None)
+    if not isinstance(value_sharding, jax.sharding.Sharding):
+        msg = (
+            "An explicit CoreProgram output contract requires a JAX value "
+            "template with concrete output sharding."
+        )
+        raise TypeError(msg)
+    return value_sharding
+
+
+def _derive_dissolution_sharding(
+    *,
+    value_sharding: jax.sharding.Sharding,
+    state_order: tuple[StateName, ...],
+) -> jax.sharding.Sharding:
+    """Drop only a replicated trailing stakeholder axis from value placement."""
+    if not isinstance(value_sharding, jax.NamedSharding):
+        # A single-device contract still fixes where every output leaf is born.
+        return value_sharding
+
+    # PartitionSpec may omit replicated trailing axes. Extend it to the
+    # canonical state rank, then deliberately discard anything beyond that
+    # prefix (the collective stakeholder axis).
+    template_spec = tuple(value_sharding.spec)
+    if len(template_spec) > len(state_order) and any(
+        axis is not None for axis in template_spec[len(state_order) :]
+    ):
+        msg = (
+            "The value template shards a non-state trailing output axis; only a "
+            "replicated stakeholder axis can be dropped for dissolution output."
+        )
+        raise ValueError(msg)
+    state_spec = (*template_spec[: len(state_order)],) + (None,) * max(
+        0, len(state_order) - len(template_spec)
+    )
+    return jax.NamedSharding(
+        mesh=value_sharding.mesh,
+        spec=jax.P(*state_spec),
+        memory_kind=value_sharding.memory_kind,
+    )
+
+
+def _resolve_output_sharding(
+    *,
+    role: OutputRole,
+    value_sharding: jax.sharding.Sharding,
+    dissolution_sharding: jax.sharding.Sharding,
+) -> jax.sharding.Sharding:
+    """Map one validated logical role to its concrete placement."""
+    if role is VALUE:
+        return value_sharding
+    if role is DISSOLUTION_FLAG:
+        return dissolution_sharding
+    msg = f"unreachable output role: {role!r}"
+    raise AssertionError(msg)
+
+
+def _expected_layout_metadata(
+    *, value_template: object, roles: object
+) -> tuple[tuple[int, ...], object, tuple[int, ...] | None, object | None]:
+    """Derive the absolute output metadata captured by a resolved layout."""
+    value_shape = getattr(value_template, "shape", None)
+    value_dtype = getattr(value_template, "dtype", None)
+    if value_shape is None or value_dtype is None:
+        msg = "A planned value template must expose an absolute shape and dtype."
+        raise TypeError(msg)
+    expected_value_shape = tuple(int(size) for size in value_shape)
+    expected_value_dtype = value_dtype
+    collective = roles == (VALUE, DISSOLUTION_FLAG)
+    expected_dissolution_shape = expected_value_shape[:-1] if collective else None
+    expected_dissolution_dtype = jax.numpy.dtype(bool) if collective else None
+    return (
+        expected_value_shape,
+        expected_value_dtype,
+        expected_dissolution_shape,
+        expected_dissolution_dtype,
     )
 
 

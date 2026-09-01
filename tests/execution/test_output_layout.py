@@ -1,5 +1,6 @@
 """Tests for logical-output layout planning."""
 
+import functools
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import cast
@@ -218,6 +219,23 @@ def test_compilation_key_tracks_layout_tree_and_shardings():
     assert _lowering_key(func=func, layout_key=first.compilation_key) != _lowering_key(
         func=other_func, layout_key=first.compilation_key
     )
+
+
+def test_lowering_key_tracks_positional_partial_bindings() -> None:
+    def core(_static_policy: object, /) -> object:
+        return _static_policy
+
+    policy = object()
+    first = functools.partial(core, policy)
+    equivalent = functools.partial(core, policy)
+    different = functools.partial(core, object())
+
+    first_key = _lowering_key(func=first, layout_key=UNPLANNED)
+    equivalent_key = _lowering_key(func=equivalent, layout_key=UNPLANNED)
+    different_key = _lowering_key(func=different, layout_key=UNPLANNED)
+
+    assert first_key == equivalent_key
+    assert first_key != different_key
 
 
 def test_role_tree_output_mismatch_fails_during_lowering():

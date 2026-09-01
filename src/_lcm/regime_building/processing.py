@@ -41,6 +41,7 @@ from _lcm.engine import (
     StateActionSpace,
     Variables,
 )
+from _lcm.execution.core_program import CoreProgram, CoreProgramAware
 from _lcm.execution.output_layout import OutputLayoutAware
 from _lcm.grids import (
     ContinuousGrid,
@@ -2888,6 +2889,20 @@ class _TerminalCarryPeriodKernel:
     def cores(self) -> Mapping[str, Callable]:
         """Delegate to the base adapter's cores (a terminal regime is single-core)."""
         return self.base.cores()
+
+    def build_core_program(
+        self,
+        *,
+        core_key: str,
+        arguments: Mapping[str, object],
+    ) -> CoreProgram | None:
+        """Delegate the base adapter's optional execution program."""
+        if not isinstance(self.base, CoreProgramAware):
+            return None
+        return self.base.build_core_program(
+            core_key=core_key,
+            arguments=arguments,
+        )
 
     def output_roles(self, *, core_key: str) -> object:
         """Delegate the wrapped GridSearch core's logical output roles."""

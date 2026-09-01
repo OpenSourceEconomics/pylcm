@@ -30,7 +30,7 @@ remaining prerequisites.
 
 | Solver       | Required declaration                                           | Problem shape                                                                      | Hard prerequisites and supported constraints                                                                                                                                                                                                                                                          | Main tradeoff                                                                                    |
 | ------------ | -------------------------------------------------------------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `GridSearch` | `Regime` or a specialized regime                               | General discrete-continuous action product                                         | Ordinary callable constraints; no EGM structure required; supports EV1 taste shocks and transition-local joint lotteries                                                                                                                                                                                                                                              | Broadest representation; work and memory grow with the action product                            |
+| `GridSearch` | `Regime` or a specialized regime                               | General discrete-continuous action product                                         | Ordinary callable constraints; no EGM structure required; supports EV1 taste shocks and transition-local joint lotteries                                                                                                                                                                                                                                              | Broadest representation; work covers the full action product; eligible singleton/collective hard-max and singleton EV1 JIT solve-value routes evaluate bounded action blocks |
 | `EGM`        | `ConsumptionSavingsRegime` with one `LiquidMargin`             | Smooth, concave one-state/one-action cash-on-hand problem                          | Exactly one continuous state and action; no discrete/process states or actions; resources equal the liquid state; post-decision state equals state minus action; utility does not read the liquid state; default Koopmans aggregator; only a provable post-decision lower bound as a solve constraint | Narrowest contract and no upper envelope                                                         |
 | `DCEGM`      | `ConsumptionSavingsRegime` with one `LiquidMargin`             | One liquid Euler margin with a genuine resources node and optional discrete choice | Valid liquid resources and post-decision roles; declared lower bound; solver-supported discrete/passive dimensions and continuation layout; supports EV1 taste shocks                                                                                                                                                            | Adds constrained candidates and an upper envelope; simulation may re-optimize on the action grid |
 | `NBEGM`      | `ConsumptionSavingsRegime` with one `LiquidMargin`             | Supported declared kinks, jumps, hard boundaries, or smooth discrete branches      | Supported case-piece or piecewise-affine declaration; solver-proven constraint routes; no EV1 taste shocks                                                                                                                                                                                            | Preserves declared topology; structural probes and candidate geometry add cost                   |
@@ -65,8 +65,15 @@ A valid declaration is part of the model, not a hint. Start with
 GridSearch()
 ```
 
-Evaluates the complete state-action product and applies constraints directly. It is the
-broadest route and the default solver on `Regime`.
+Covers the complete represented state-action product and applies constraints directly.
+It is the broadest route and the default solver on `Regime`. Eligible JIT solve-value
+routes—ordinary singleton hard max, collective hard max, and singleton EV1 expected
+max—evaluate bounded C-order action blocks while preserving the complete support.
+These programs publish only solve-time `VALUE`, or `VALUE` plus `DISSOLUTION_FLAG` for a
+collective route; replay and policy artifacts are not integrated. Routes with folded or
+co-mapped states, value references, or gated targets remain dense, as does all
+simulation-policy construction. Runtime and peak-memory effects require
+measurement; bounded evaluation alone is not a performance claim.
 
 With EV1 taste shocks, GridSearch first maximizes over the continuous-action axes within
 each discrete-action combination and then applies the discrete log-sum. Simulation uses

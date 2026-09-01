@@ -161,6 +161,37 @@ def test_hard_max_merge_is_order_independent_and_uses_global_identity_for_ties()
     )
 
 
+@pytest.mark.parametrize(
+    "values",
+    [
+        pytest.param([-0.0, 0.0], id="negative-then-positive"),
+        pytest.param([0.0, -0.0], id="positive-then-negative"),
+        pytest.param([-0.0, -0.0], id="both-negative"),
+    ],
+)
+@pytest.mark.parametrize("blocks", [((0,), (1,)), ((1,), (0,))])
+def test_hard_max_merge_matches_dense_signed_zero_and_keeps_smallest_id(
+    *,
+    values: list[float],
+    blocks: tuple[tuple[int, ...], ...],
+) -> None:
+    """The numeric maximum and replay identity are independent tie outputs."""
+    value_array = jnp.asarray(values, dtype=jnp.float32)[jnp.newaxis, :]
+    expected = jnp.max(value_array, axis=-1)
+
+    result = _reduce_blocks(
+        values=value_array,
+        feasible=jnp.ones_like(value_array, dtype=bool),
+        action_ids=jnp.array([0, 1], dtype=jnp.int32),
+        blocks=blocks,
+    )
+
+    assert_array_equal(result.best_value, expected)
+    assert_array_equal(jnp.signbit(result.best_value), jnp.signbit(expected))
+    assert_array_equal(result.best_global_action_id, jnp.array([0]))
+    assert_array_equal(result.any_feasible, jnp.array([True]))
+
+
 def test_hard_max_preserves_grid_search_feasible_nan_identity_quirk():
     values = np.array([[10.0, 12.0, np.nan, 7.0]], dtype=np.float32)
     feasible = np.array([[False, True, True, True]])

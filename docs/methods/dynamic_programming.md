@@ -60,10 +60,16 @@ reason is developed in
 
 ## The solver changes the representation of the maximization
 
-`GridSearch` constructs the full state-action product and evaluates the objective and
-constraints on it. EGM-family solvers replace one continuous maximization with an
-Euler-equation inversion and therefore need stronger assumptions and named economic
-roles.
+`GridSearch` covers the full represented state-action product. On eligible JIT
+solve-value routes—ordinary singleton hard max, collective hard max, and singleton EV1
+expected max—it evaluates bounded C-order action blocks and reduces them without
+changing that candidate support. These programs publish only solve-time `VALUE`, or
+`VALUE` plus `DISSOLUTION_FLAG` for a collective route; replay and policy artifacts are
+not integrated. Folded states, co-mapped states, value references, gated targets, and
+all simulation-policy construction still use dense action evaluation. This execution
+route does not by itself establish a runtime or peak-memory improvement. EGM-family
+solvers replace one continuous maximization with an Euler-equation inversion and
+therefore need stronger assumptions and named economic roles.
 
 This is why solver selection belongs before detailed model authoring. The economic
 problem and the numerical representation have to agree; changing only `solver=...`

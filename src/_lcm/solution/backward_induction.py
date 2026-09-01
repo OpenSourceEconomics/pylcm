@@ -11,10 +11,19 @@ from types import MappingProxyType
 from typing import cast
 
 import jax
+import jax.numpy as jnp
 
 from _lcm.engine import Regime, StateActionSpace, _build_regime_sharding
+from _lcm.execution.core_program import (
+    CoreProgram,
+    CoreProgramAware,
+    _validate_core_program,
+    resolve_core_program,
+)
 from _lcm.execution.output_layout import (
+    DISSOLUTION_FLAG,
     UNPLANNED,
+    VALUE,
     OutputLayoutAware,
     PlannedCore,
     ResolvedOutputLayout,
@@ -1310,15 +1319,13 @@ def _compile_all_functions(
 ) -> dict[tuple[RegimeName, int], MappingProxyType[str, Callable]]:
     """AOT-compile all unique solve cores in parallel.
 
-    Each regime exposes one period adapter per period; the adapter wraps one or
-    more shared jitted cores, keyed by a stable per-kernel name (`cores()`).
-    Most kernels carry a single `"main"` core; a multi-core kernel carries
-    several named cores, each a distinct traced program. Many
-    periods share the same core object, so this deduplicates the cores by
-    identity, lowers each unique core once (sequential — tracing is
-    single-threaded) with the adapter's per-key lowering arguments, then compiles
-    the XLA programs in parallel via a thread pool (XLA releases the GIL during
-    compilation). The loop stays free of any solver-type fork.
+    Each regime exposes named cores through its period adapter. For every core, the
+    engine first materializes the adapter's exact arguments and optional
+    `CoreProgram`; a program supplies the planner-resolved callable, static choices,
+    and output roles. The complete callable, abstract arguments, specialization, and
+    output layout form the lowering key. Each unique program is lowered once
+    (sequentially, because tracing is single-threaded), then the XLA programs compile
+    in parallel via a thread pool. The loop stays free of solver-type forks.
 
     When JIT is disabled (`enable_jit=False`), returns the raw cores without
     compilation.
@@ -1358,16 +1365,23 @@ def _compile_all_functions(
     if not enable_jit:
         return _group_cores_by_regime_period(all_functions)
 
-    # Resolve output placement before choosing representatives.  The same
-    # callable lowered for two different output layouts is two different XLA
-    # programs; equal callable+layout pairs still share one compilation.
-    all_layouts, lowering_keys, lowering_functions = (
-        _resolve_output_layouts_and_lowering_keys(
-            all_functions=all_functions,
-            regimes=regimes,
-            flat_params=flat_params,
-            next_regime_to_V_arr=next_regime_to_V_arr,
-        )
+    # Materialize each named core's exact arguments and optional CoreProgram
+    # before representative selection. The resulting function, arguments, roles,
+    # specialization, and layout form one lowering source of truth.
+    (
+        all_layouts,
+        lowering_keys,
+        lowering_functions,
+        lowering_arguments,
+        lowering_output_roles,
+    ) = _resolve_output_layouts_and_lowering_keys(
+        all_functions=all_functions,
+        regimes=regimes,
+        flat_params=flat_params,
+        ages=ages,
+        next_regime_to_V_arr=next_regime_to_V_arr,
+        next_regime_to_continuation=next_regime_to_continuation,
+        next_edge_to_V_arr=next_edge_to_V_arr,
     )
 
     # Keep one representative per lowering key so its adapter can build the
@@ -1397,31 +1411,15 @@ def _compile_all_functions(
     )
 
     # Phase 1: Lower all unique cores (sequential — tracing is not thread-safe
-    # and must happen on the main thread). Each adapter builds the named core's
-    # lowering arguments off a fresh, params-completed state-action space.
+    # and must happen on the main thread). Arguments were materialized before
+    # representative selection and are reused verbatim here.
     lowered: dict[Hashable, jax.stages.Lowered] = {}
     labels: dict[Hashable, str] = {}
     for i, (lowering_key, (func, regime_name, period, core_key)) in enumerate(
         unique.items(), 1
     ):
-        regime = regimes[regime_name]
-        edge_kwargs = _edge_kwargs(
-            regime=regime,
-            regime_name=regime_name,
-            next_edge_to_V_arr=next_edge_to_V_arr,
-        )
-        lower_args = regime.solution.period_kernels[period].build_lower_args(
-            core_key=core_key,
-            state_action_space=regime.solution.state_action_space(
-                regime_params=flat_params[regime_name],
-            ),
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            next_regime_to_continuation=next_regime_to_continuation,
-            flat_params=flat_params,
-            period=period,
-            ages=ages,
-            **edge_kwargs,
-        )
+        triple = (regime_name, period, core_key)
+        lower_args = lowering_arguments[triple]
         label = f"{regime_name} {core_key} (age {ages.values[period].item()})"
         labels[lowering_key] = label
         log_module_fanout(
@@ -1432,7 +1430,6 @@ def _compile_all_functions(
         logger.info("%d/%d  %s", i, n_unique, label)
         logger.info("  lowering ...")
         start = time.monotonic()
-        triple = (regime_name, period, core_key)
         layout = all_layouts[triple]
         jitted = (
             jax.jit(func)
@@ -1442,7 +1439,15 @@ def _compile_all_functions(
                 out_shardings=cast("ResolvedOutputLayout", layout).out_shardings,
             )
         )
-        lowered[lowering_key] = jitted.lower(**lower_args)
+        low = jitted.lower(**lower_args)
+        _assert_lowered_output_roles(
+            lowered=low,
+            output_roles=lowering_output_roles[triple],
+            value_template=next_regime_to_V_arr[regime_name],
+            layout=layout,
+            label=label,
+        )
+        lowered[lowering_key] = low
         elapsed = time.monotonic() - start
         logger.info("  lowered in %s", format_duration(seconds=elapsed))
 
@@ -1504,55 +1509,358 @@ def _count_triples_per_lowering_key(
     return counts
 
 
+_CoreTriple = tuple[RegimeName, int, str]
+
+
 def _resolve_output_layouts_and_lowering_keys(
     *,
-    all_functions: Mapping[tuple[RegimeName, int, str], Callable],
+    all_functions: Mapping[_CoreTriple, Callable],
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
+    ages: AgeGrid,
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+    next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
+    next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
 ) -> tuple[
-    dict[tuple[RegimeName, int, str], ResolvedOutputLayout | object],
-    dict[tuple[RegimeName, int, str], Hashable],
-    dict[tuple[RegimeName, int, str], Callable],
+    dict[_CoreTriple, ResolvedOutputLayout | object],
+    dict[_CoreTriple, Hashable],
+    dict[_CoreTriple, Callable],
+    dict[_CoreTriple, Mapping[str, object]],
+    dict[_CoreTriple, object | None],
 ]:
-    """Resolve every triple before representative selection and form AOT keys."""
-    layouts: dict[tuple[RegimeName, int, str], ResolvedOutputLayout | object] = {}
-    lowering_keys: dict[tuple[RegimeName, int, str], Hashable] = {}
-    lowering_functions: dict[tuple[RegimeName, int, str], Callable] = {}
+    """Materialize each core's complete, immutable lowering description."""
+    layouts: dict[_CoreTriple, ResolvedOutputLayout | object] = {}
+    lowering_keys: dict[_CoreTriple, Hashable] = {}
+    lowering_functions: dict[_CoreTriple, Callable] = {}
+    lowering_arguments: dict[_CoreTriple, Mapping[str, object]] = {}
+    lowering_output_roles: dict[_CoreTriple, object | None] = {}
     for (regime_name, period, core_key), func in all_functions.items():
         regime = regimes[regime_name]
+        kernel = regime.solution.period_kernels[period]
         state_action_space = regime.solution.state_action_space(
             regime_params=flat_params[regime_name]
         )
+        arguments = kernel.build_lower_args(
+            core_key=core_key,
+            state_action_space=state_action_space,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            next_regime_to_continuation=next_regime_to_continuation,
+            flat_params=flat_params,
+            period=period,
+            ages=ages,
+            **_edge_kwargs(
+                regime=regime,
+                regime_name=regime_name,
+                next_edge_to_V_arr=next_edge_to_V_arr,
+            ),
+        )
+        program = (
+            kernel.build_core_program(core_key=core_key, arguments=arguments)
+            if isinstance(kernel, CoreProgramAware)
+            else None
+        )
+        if program is None:
+            lowering_func = func
+            lowering_args = arguments
+            output_roles = None
+            specialization_key: Hashable | None = None
+        else:
+            _assert_core_program_arguments(program=program, arguments=arguments)
+            resolved = resolve_core_program(
+                program=program,
+                tile_widths=_initial_tile_widths(program=program),
+            )
+            lowering_func = resolved.function
+            lowering_args = resolved.arguments
+            output_roles = resolved.output_roles
+            specialization_key = resolved.specialization_key
+
         state_order = tuple(
             name
             for name in state_action_space.states
             if name not in regime.fold_state_names
         )
-        layout = resolve_output_layout(
-            kernel=regime.solution.period_kernels[period],
-            core_key=core_key,
-            value_template=next_regime_to_V_arr[regime_name],
-            state_order=state_order,
+        layout = (
+            resolve_output_layout(
+                kernel=kernel,
+                core_key=core_key,
+                value_template=next_regime_to_V_arr[regime_name],
+                state_order=state_order,
+            )
+            if program is None
+            else resolve_output_layout(
+                kernel=kernel,
+                core_key=core_key,
+                value_template=next_regime_to_V_arr[regime_name],
+                state_order=state_order,
+                output_roles=output_roles,
+            )
         )
         triple = (regime_name, period, core_key)
         layouts[triple] = layout
-        lowering_func = (
-            func
-            if layout is UNPLANNED
-            else cast(
-                "OutputLayoutAware", regime.solution.period_kernels[period]
-            ).core_for_output_layout(core_key=core_key)
-        )
+        if program is None and layout is not UNPLANNED:
+            lowering_func = cast("OutputLayoutAware", kernel).core_for_output_layout(
+                core_key=core_key
+            )
         lowering_functions[triple] = lowering_func
+        lowering_arguments[triple] = lowering_args
+        lowering_output_roles[triple] = output_roles
         layout_key = UNPLANNED if layout is UNPLANNED else layout.compilation_key
-        lowering_keys[triple] = _lowering_key(func=lowering_func, layout_key=layout_key)
-    return layouts, lowering_keys, lowering_functions
+        lowering_keys[triple] = _lowering_key(
+            func=lowering_func,
+            layout_key=layout_key,
+            arguments=lowering_args,
+            specialization_key=specialization_key,
+            output_roles=output_roles,
+        )
+    return (
+        layouts,
+        lowering_keys,
+        lowering_functions,
+        lowering_arguments,
+        lowering_output_roles,
+    )
 
 
-def _lowering_key(*, func: Callable, layout_key: Hashable) -> Hashable:
-    """Pair callable identity with output layout for AOT deduplication."""
-    return (_func_dedup_key(func=func), layout_key)
+_INITIAL_TILE_WIDTH_CAP = 64
+
+
+def _initial_tile_widths(*, program: CoreProgram) -> dict[str, int]:
+    """Choose a bounded, strictly streaming width for every declared axis."""
+    _validate_core_program(program=program)
+    result: dict[str, int] = {}
+    for axis in program.requirements.streamable_axes:
+        if axis.extent <= 1:
+            msg = (
+                f"Streamable axis {axis.name!r} must have extent greater than one; "
+                "the kernel should opt out when no partial block exists."
+            )
+            raise ValueError(msg)
+        upper_bound = min(_INITIAL_TILE_WIDTH_CAP, axis.extent - 1)
+        result[axis.name] = 1 << (upper_bound.bit_length() - 1)
+    return result
+
+
+def _assert_core_program_arguments(
+    *,
+    program: CoreProgram,
+    arguments: Mapping[str, object],
+) -> None:
+    """Require the provider to preserve the exact lowering argument mapping."""
+    if tuple(program.arguments) != tuple(arguments):
+        msg = (
+            "CoreProgram arguments must preserve every build_lower_args key in "
+            "the same order."
+        )
+        raise ValueError(msg)
+    replaced = [
+        name for name in arguments if program.arguments[name] is not arguments[name]
+    ]
+    if replaced:
+        msg = (
+            "CoreProgram arguments must preserve the exact build_lower_args "
+            f"values; replaced keys: {replaced!r}."
+        )
+        raise ValueError(msg)
+
+
+def _lowering_key(
+    *,
+    func: Callable,
+    layout_key: Hashable,
+    arguments: Mapping[str, object] | None = None,
+    specialization_key: Hashable | None = None,
+    output_roles: object | None = None,
+) -> Hashable:
+    """Identify one callable, abstract input tree, specialization, and layout."""
+    return (
+        _func_dedup_key(func=func),
+        (None if arguments is None else _abstract_arguments_key(arguments=arguments)),
+        specialization_key,
+        _output_roles_key(output_roles=output_roles),
+        layout_key,
+    )
+
+
+def _abstract_arguments_key(
+    *,
+    arguments: Mapping[str, object],
+) -> Hashable:
+    """Describe dynamic kwargs by pytree and abstract leaf metadata."""
+    return tuple(
+        (name, _abstract_value_key(value=value)) for name, value in arguments.items()
+    )
+
+
+def _abstract_value_key(*, value: object) -> Hashable:
+    """Describe one dynamic argument without retaining its concrete value."""
+    tree = jax.tree.structure(value)
+    leaves = jax.tree.leaves(value)
+    return (
+        _hashable_metadata(tree),
+        tuple(_abstract_leaf_key(leaf=leaf) for leaf in leaves),
+    )
+
+
+def _abstract_leaf_key(*, leaf: object) -> Hashable:
+    """Return the tracing-relevant metadata for one dynamic leaf."""
+    raw_shape = getattr(leaf, "shape", None)
+    shape = (
+        None if raw_shape is None else tuple(int(dimension) for dimension in raw_shape)
+    )
+    return (
+        type(leaf),
+        shape,
+        _hashable_metadata(getattr(leaf, "dtype", None)),
+        getattr(leaf, "weak_type", None),
+        _hashable_metadata(getattr(leaf, "sharding", None)),
+    )
+
+
+def _hashable_metadata(value: object) -> Hashable:
+    """Return metadata directly when hashable and a stable spelling otherwise."""
+    try:
+        hash(value)
+    except TypeError:
+        return (type(value), repr(value))
+    return cast("Hashable", value)
+
+
+def _output_roles_key(*, output_roles: object | None) -> Hashable:
+    """Encode a declared logical output tree in the lowering identity."""
+    if output_roles is None:
+        return None
+    return (
+        _hashable_metadata(jax.tree.structure(output_roles)),
+        tuple(_hashable_metadata(leaf) for leaf in jax.tree.leaves(output_roles)),
+    )
+
+
+_NO_EXPECTED_SHARDING = object()
+
+
+def _assert_lowered_output_roles(
+    *,
+    lowered: jax.stages.Lowered,
+    output_roles: object | None,
+    value_template: object,
+    label: str,
+    layout: ResolvedOutputLayout | object = UNPLANNED,
+) -> None:
+    """Reject lowered output that violates the declared role contract."""
+    if output_roles is None:
+        return
+    _assert_lowered_output_tree(
+        output_roles=output_roles,
+        output_info=lowered.out_info,
+        label=label,
+    )
+    expected_value_shape, expected_value_dtype = _expected_value_metadata(
+        value_template=value_template,
+        label=label,
+    )
+    role_leaves = jax.tree.leaves(output_roles)
+    output_leaves = jax.tree.leaves(lowered.out_info)
+    expected_shardings = (
+        jax.tree.leaves(layout.out_shardings)
+        if isinstance(layout, ResolvedOutputLayout)
+        else None
+    )
+    for index, (role, output_info) in enumerate(
+        zip(role_leaves, output_leaves, strict=True)
+    ):
+        expected_metadata = _expected_role_metadata(
+            role=role,
+            value_shape=expected_value_shape,
+            value_dtype=expected_value_dtype,
+            label=label,
+        )
+        expected_sharding = (
+            _NO_EXPECTED_SHARDING
+            if expected_shardings is None
+            else expected_shardings[index]
+        )
+        _assert_lowered_output_leaf(
+            output_info=output_info,
+            label=label,
+            expected_metadata=expected_metadata,
+            expected_sharding=expected_sharding,
+        )
+
+
+def _assert_lowered_output_tree(
+    *, output_roles: object, output_info: object, label: str
+) -> None:
+    """Require the lowered pytree to match the solver's declared role tree."""
+    expected = jax.tree.structure(output_roles)
+    actual = jax.tree.structure(output_info)
+    if actual != expected:
+        msg = (
+            f"{label} lowered output tree {actual} does not match declared "
+            f"output roles {expected}."
+        )
+        raise TypeError(msg)
+
+
+def _expected_value_metadata(
+    *, value_template: object, label: str
+) -> tuple[tuple[int, ...], object]:
+    """Read the absolute value metadata used by every declared role."""
+    value_shape = getattr(value_template, "shape", None)
+    value_dtype = getattr(value_template, "dtype", None)
+    if value_shape is None or value_dtype is None:
+        msg = f"{label} value template must expose an absolute shape and dtype."
+        raise TypeError(msg)
+    return tuple(int(size) for size in value_shape), value_dtype
+
+
+def _expected_role_metadata(
+    *,
+    role: object,
+    value_shape: tuple[int, ...],
+    value_dtype: object,
+    label: str,
+) -> tuple[str, tuple[int, ...], object]:
+    """Derive one lowered leaf's metadata from its logical role."""
+    if role is VALUE:
+        return "value", value_shape, value_dtype
+    if role is DISSOLUTION_FLAG:
+        return "dissolution", value_shape[:-1], jnp.dtype(bool)
+    msg = f"{label} declared unsupported output role {role!r}."
+    raise TypeError(msg)
+
+
+def _assert_lowered_output_leaf(
+    *,
+    output_info: object,
+    label: str,
+    expected_metadata: tuple[str, tuple[int, ...], object],
+    expected_sharding: object,
+) -> None:
+    """Check one lowered leaf's shape, dtype, and optional placement."""
+    role_label, expected_shape, expected_dtype = expected_metadata
+    actual_shape = getattr(output_info, "shape", None)
+    if actual_shape != expected_shape:
+        msg = (
+            f"{label} {role_label} output shape mismatch: "
+            f"expected {expected_shape}, got {actual_shape}."
+        )
+        raise TypeError(msg)
+    actual_dtype = getattr(output_info, "dtype", None)
+    if actual_dtype != expected_dtype:
+        msg = (
+            f"{label} {role_label} output dtype mismatch: "
+            f"expected {expected_dtype}, got {actual_dtype}."
+        )
+        raise TypeError(msg)
+    if expected_sharding is not _NO_EXPECTED_SHARDING:
+        actual_sharding = getattr(output_info, "sharding", None)
+        if actual_sharding != expected_sharding:
+            msg = (
+                f"{label} {role_label} output sharding mismatch: "
+                f"expected {expected_sharding}, got {actual_sharding}."
+            )
+            raise TypeError(msg)
 
 
 def _attach_resolved_output_layout(
@@ -1645,9 +1953,9 @@ def _func_dedup_key(*, func: Callable) -> Hashable:
 
     For `functools.partial` objects wrapping shared JIT functions, deduplicate
     by the underlying function's identity together with the `id()` of every
-    keyword-argument value. This is correct even when different partials
-    bind different value objects — two partials share a compiled program
-    only when every keyword value is the same object.
+    positional- and keyword-argument value. This is correct even when different
+    partials bind different value objects — two partials share a compiled
+    program only when every bound value is the same object.
 
     For plain callables, use object identity.
 
@@ -1656,5 +1964,6 @@ def _func_dedup_key(*, func: Callable) -> Hashable:
         return (
             id(func.func),
             tuple((k, id(v)) for k, v in sorted(func.keywords.items())),
+            tuple(id(value) for value in func.args),
         )
     return id(func)

@@ -18,6 +18,11 @@ from _lcm.regime_building.collective import (
     collective_readout,
 )
 from _lcm.regime_building.zero_safe import zero_safe_average
+from _lcm.solution.action_streaming import (
+    build_streaming_collective_max_Q_over_a,
+    build_streaming_ev1_max_Q_over_a,
+    build_streaming_max_Q_over_a,
+)
 from _lcm.typing import (
     ActionName,
     ArgmaxQOverAFunction,
@@ -305,6 +310,176 @@ def get_max_Q_over_a(
             callable_with="only_args",
         )
     return cast("MaxQOverAFunction", allow_only_kwargs(func=mapped, enforce=False))
+
+
+def get_streaming_max_Q_over_a(
+    *,
+    Q_and_F: Callable[..., tuple[FloatND, BoolND]],
+    batch_sizes: dict[StateName, int],
+    action_names: tuple[ActionName, ...],
+    state_names: tuple[StateName, ...],
+    n_discrete_action_axes: int = 0,
+    has_taste_shocks: bool = False,
+    co_map_state_names: tuple[StateName, ...] = (),
+    co_map_v_arr_in_axes: tuple[MappingProxyType[RegimeName, int | None], ...] = (),
+    stakeholders: tuple[str, ...] | None = None,
+    pareto_weights: ParetoWeights | None = None,
+    fold_state_names: tuple[StateName, ...] = (),
+    fold_weights: Mapping[StateName, FloatND] = MappingProxyType({}),
+    fold_conditioning: Mapping[StateName, StateName] = MappingProxyType({}),
+) -> MaxQOverAFunction:
+    """Build a singleton or collective V kernel that streams the action product.
+
+    The returned raw callable has the same dynamic argument layout as
+    get_max_Q_over_a plus one required static keyword,
+    _lcm_action_block_width. The execution planner binds that width before
+    tracing. For each state cell, the fixed-cell reducer evaluates actions in
+    canonical C order. A hard-max singleton publishes its best value; an EV1
+    singleton first hard-maxes each discrete-prefix branch and then log-sums the
+    branch values; a collective regime publishes every stakeholder's value at one
+    shared household winner plus the empty-feasible-set flag. The existing state
+    productmap constructs the complete output arrays. Folded and co-mapped states
+    remain on the dense GridSearch route.
+    """
+    _fail_if_full_V_streaming_route_is_unsupported(
+        has_taste_shocks=has_taste_shocks,
+        stakeholders=stakeholders,
+        pareto_weights=pareto_weights,
+        fold_state_names=fold_state_names,
+        fold_weights=fold_weights,
+        fold_conditioning=fold_conditioning,
+        co_map_state_names=co_map_state_names,
+        co_map_v_arr_in_axes=co_map_v_arr_in_axes,
+    )
+    if has_taste_shocks and not 1 <= n_discrete_action_axes <= len(action_names):
+        raise ValueError(
+            "EV1 action streaming requires a non-empty leading discrete-action prefix"
+        )
+
+    extra_param_names = _get_extra_param_names(
+        Q_and_F=Q_and_F,
+        action_names=action_names,
+        state_names=state_names,
+    )
+    if has_taste_shocks and TASTE_SHOCK_SCALE_PARAM not in extra_param_names:
+        extra_param_names.append(TASTE_SHOCK_SCALE_PARAM)
+    q_and_f_arg_names = frozenset(inspect.signature(Q_and_F).parameters)
+
+    if pareto_weights is not None:
+        extra_param_names = list(
+            dict.fromkeys((*extra_param_names, *pareto_weights.param_names))
+        )
+
+    @with_signature(
+        args=[
+            "next_regime_to_V_arr",
+            *action_names,
+            *state_names,
+            *extra_param_names,
+            "_lcm_action_block_width",
+        ],
+        return_annotation=(
+            "tuple[FloatND, BoolND]" if stakeholders is not None else "FloatND"
+        ),
+        enforce=False,
+    )
+    def streamed_max_Q_over_a(
+        *,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+        _lcm_action_block_width: int,
+        **states_actions_params: _ParamsLeaf,
+    ) -> FloatND | tuple[FloatND, BoolND]:
+        q_and_f_params = {
+            name: value
+            for name, value in states_actions_params.items()
+            if name in q_and_f_arg_names
+        }
+        if has_taste_shocks:
+            ev1_cell = build_streaming_ev1_max_Q_over_a(
+                Q_and_F=Q_and_F,
+                action_names=action_names,
+                n_discrete_action_axes=n_discrete_action_axes,
+                block_width=_lcm_action_block_width,
+                scale=cast(
+                    "ScalarFloat",
+                    states_actions_params[TASTE_SHOCK_SCALE_PARAM],
+                ),
+            )
+            ev1_result = ev1_cell(
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                **q_and_f_params,
+            )
+            return ev1_result.smoothed_value
+
+        if stakeholders is None:
+            fixed_cell = build_streaming_max_Q_over_a(
+                Q_and_F=Q_and_F,
+                action_names=action_names,
+                block_width=_lcm_action_block_width,
+            )
+            result = fixed_cell(
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                **q_and_f_params,
+            )
+            return result.best_value
+
+        collective_cell = build_streaming_collective_max_Q_over_a(
+            Q_and_F=Q_and_F,
+            action_names=action_names,
+            block_width=_lcm_action_block_width,
+            stakeholders=stakeholders,
+            weights=_evaluate_pareto_weights(
+                pareto_weights=pareto_weights,
+                states_actions_params=states_actions_params,
+            ),
+        )
+        collective_result = collective_cell(
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            **q_and_f_params,
+        )
+        return (
+            collective_result.best_stakeholder_values,
+            ~collective_result.any_feasible,
+        )
+
+    return cast(
+        "MaxQOverAFunction",
+        productmap(
+            func=streamed_max_Q_over_a,
+            variables=state_names,
+            batch_sizes={name: batch_sizes[name] for name in state_names},
+        ),
+    )
+
+
+def _fail_if_full_V_streaming_route_is_unsupported(
+    *,
+    has_taste_shocks: bool,
+    stakeholders: tuple[str, ...] | None,
+    pareto_weights: ParetoWeights | None,
+    fold_state_names: tuple[StateName, ...],
+    fold_weights: Mapping[StateName, FloatND],
+    fold_conditioning: Mapping[StateName, StateName],
+    co_map_state_names: tuple[StateName, ...],
+    co_map_v_arr_in_axes: tuple[MappingProxyType[RegimeName, int | None], ...],
+) -> None:
+    """Reject routes unsupported by full-value action streaming."""
+    if has_taste_shocks and stakeholders is not None:
+        raise NotImplementedError(
+            "Full-V action streaming does not support collective EV1 regimes."
+        )
+    if (stakeholders is None) != (pareto_weights is None):
+        raise ValueError(
+            "Collective action streaming requires stakeholders and Pareto weights."
+        )
+    if fold_state_names or fold_weights or fold_conditioning:
+        raise NotImplementedError(
+            "Full-V action streaming does not support fold states."
+        )
+    if co_map_state_names or co_map_v_arr_in_axes:
+        raise NotImplementedError(
+            "Full-V action streaming does not support co-map states."
+        )
 
 
 def _wrap_with_fold_reduction(

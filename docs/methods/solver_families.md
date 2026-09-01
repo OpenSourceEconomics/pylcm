@@ -38,10 +38,15 @@ $$
 N_a = \prod_j n_j
 $$
 
-at every state cell. This is expensive as action dimensions accumulate, but it makes few
-structural assumptions. Dense candidates also map naturally to accelerators and can be
-chunked to control memory. Grid search is exact relative to its action grids, not to the
-underlying continuous choice set.
+at every state cell. Total work therefore still covers the complete represented action
+support. Eligible JIT solve-value routes—ordinary singleton hard max, collective hard
+max, and singleton EV1 expected max—evaluate bounded C-order action blocks, while routes
+with folded or co-mapped states, value references, or gated targets remain dense. The
+streamed programs publish solve-time values (and collective dissolution flags), not
+replay or policy artifacts; all simulation-policy construction remains dense. The
+blockwise route does not establish a runtime or peak-memory improvement without
+measurement. Grid search is exact relative to its action grids, not to the underlying
+continuous choice set.
 
 ## EGM replaces search with inversion
 
