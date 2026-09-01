@@ -635,15 +635,16 @@ class SolutionKernels:
     """Concrete EGM continuation template bundled with its static layout."""
 
     param_checks: tuple[ParamCheck, ...] = ()
-    """Preconditions the engine runs once, on the first solve, against real params.
+    """Preconditions the engine passes every parameter draw against real params.
 
     A solver whose scope condition is a property of the *evaluated* model — the
     budget's affinity in the liquid state, a carried law's constancy between
     breakpoints — cannot check it in `validate_build`, which runs before any
     parameter value exists. It publishes the check here instead, and the engine
-    calls each entry in order as `check(flat_params=...)` the first time the
-    model is solved. Empty for a solver whose scope is decided by structure
-    alone.
+    calls each entry in order as `check(flat_params=...)` for every draw. Each
+    check owns its evaluation schedule and any cached verdict, so different
+    solvers can choose different schedules in the same model. Empty for a solver
+    whose scope is decided by structure alone.
     """
 
     @property

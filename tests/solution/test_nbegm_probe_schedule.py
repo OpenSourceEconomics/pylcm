@@ -1,27 +1,62 @@
 """How often NB-EGM re-runs its parameter-dependent preconditions.
 
-The affine-budget and interval-constancy preconditions differentiate the model's
-DAG against real parameter values, so they cannot run at model build and are
-charged per solve instead — which an estimation loop pays on every criterion
-evaluation. `probe_schedule` decides how often they run:
+The affine-budget, interval-constancy, and single-power-flow preconditions
+differentiate the model's DAG against real parameter values, so they cannot run
+at model build and are charged per solve instead — which an estimation loop pays
+on every criterion evaluation. `probe_schedule` decides how often they run:
 
 - `"every_solve"` — check every draw; the safe default because parameters can
   invalidate a declaration after an earlier draw passed.
 - `"first_solve"` — check once per model, then trust the author's assertion that
   validity is parameter-invariant over the supported domain.
-- `"never"` — skip them entirely; the model author asserts both preconditions.
+- `"never"` — skip them entirely; the model author asserts all three preconditions.
 """
 
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, Literal
 
+import jax.numpy as jnp
 import pytest
 
 from _lcm.solution import nbegm as nbegm_module
 from _lcm.solution.preconditions import check_solver_params
+from lcm import (
+    AgeGrid,
+    CESAggregator,
+    DiscreteGrid,
+    LinSpacedGrid,
+    PowerMean,
+    Regime,
+    categorical,
+    fixed_transition,
+)
+from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.exceptions import RegimeInitializationError
 from lcm.model import Model
 from lcm.solvers import NBEGM
+from lcm.typing import (
+    ContinuousAction,
+    ContinuousState,
+    DiscreteState,
+    FloatND,
+    ScalarInt,
+)
 from tests.test_models import nbegm_ride_discrete_toy as ride_toy
+
+
+@categorical(ordered=False)
+class _RegimeId:
+    alive: ScalarInt
+    dead: ScalarInt
+
+
+@categorical(ordered=False)
+class _Kind:
+    low: ScalarInt
+    high: ScalarInt
+
+
+type ProbeSchedule = Literal["first_solve", "every_solve", "never"]
 
 
 def _run_probes(*, model: Model, params: dict | None = None) -> None:
@@ -32,6 +67,84 @@ def _run_probes(*, model: Model, params: dict | None = None) -> None:
             ride_toy.build_params() if params is None else params
         ),
     )
+
+
+def _single_power_model(*, probe_schedule: ProbeSchedule) -> Model:
+    """Build an Epstein-Zin ride-along model with flow `q(c) = c + B`."""
+
+    def _flow(
+        *, consumption: ContinuousAction, kind: DiscreteState, flow_offset: float
+    ) -> FloatND:
+        return consumption + flow_offset + 0.0 * kind
+
+    def _resources(*, wealth: ContinuousState, kind: DiscreteState) -> FloatND:
+        return wealth + 0.5 * kind
+
+    def _savings(*, resources: FloatND, consumption: ContinuousAction) -> FloatND:
+        return resources - consumption
+
+    def _next_wealth(savings: FloatND) -> ContinuousState:
+        return savings
+
+    def _next_regime() -> ScalarInt:
+        return _RegimeId.dead
+
+    def _bequest(*, wealth: ContinuousState, kind: DiscreteState) -> FloatND:
+        return jnp.sqrt(wealth) + 0.0 * kind
+
+    wealth = LinSpacedGrid(start=1.0, stop=10.0, n_points=5)
+    kind = DiscreteGrid(category_class=_Kind)
+    alive = ConsumptionSavingsRegime(
+        transition=_next_regime,
+        states={"wealth": wealth, "kind": kind},
+        state_transitions={
+            "wealth": _next_wealth,
+            "kind": fixed_transition("kind"),
+        },
+        actions={"consumption": LinSpacedGrid(start=0.5, stop=5.0, n_points=5)},
+        functions={
+            "utility": _flow,
+            "resources": _resources,
+            "savings": _savings,
+        },
+        koopmans_aggregator=CESAggregator(),
+        certainty_equivalent=PowerMean(),
+        solver=NBEGM(
+            savings_grid=LinSpacedGrid(start=0.0, stop=10.0, n_points=5),
+            probe_schedule=probe_schedule,
+        ),
+        active=lambda age: age < 41,
+        liquid=LiquidMargin(
+            state="wealth",
+            action="consumption",
+            resources="resources",
+            post_decision_state="savings",
+        ),
+    )
+    dead = Regime(
+        transition=None,
+        states={"wealth": wealth, "kind": kind},
+        functions={"utility": _bequest},
+    )
+    return Model(
+        regimes={"alive": alive, "dead": dead},
+        ages=AgeGrid(start=40, stop=41, step="Y"),
+        regime_id_class=_RegimeId,
+    )
+
+
+def _single_power_params(*, model: Model, flow_offset: float) -> dict[str, Any]:
+    """Fill the model's parameter template and set the flow offset."""
+
+    def _fill(node: object) -> object:
+        if isinstance(node, Mapping):
+            return {key: _fill(value) for key, value in node.items()}
+        return 1.0
+
+    params = _fill(model.get_params_template())
+    assert isinstance(params, dict)
+    params["alive"]["utility"]["flow_offset"] = flow_offset
+    return params
 
 
 # Every count in this module is relative to the first solve's tally, so a probe
@@ -91,6 +204,33 @@ def test_default_rejects_a_later_draw_that_invalidates_budget_affinity() -> None
                 curvature=0.05,
             ),
         )
+
+
+@pytest.mark.parametrize(
+    ("probe_schedule", "rejects_later_draw"),
+    [
+        ("every_solve", True),
+        ("first_solve", False),
+        ("never", False),
+    ],
+)
+def test_probe_schedule_controls_single_power_flow_revalidation(
+    *, probe_schedule: ProbeSchedule, rejects_later_draw: bool
+) -> None:
+    """The schedule controls whether a later non-power flow is rejected."""
+    model = _single_power_model(probe_schedule=probe_schedule)
+
+    _run_probes(
+        model=model,
+        params=_single_power_params(model=model, flow_offset=0.0),
+    )
+    later_params = _single_power_params(model=model, flow_offset=0.25)
+
+    if rejects_later_draw:
+        with pytest.raises(RegimeInitializationError, match="single power"):
+            _run_probes(model=model, params=later_params)
+    else:
+        _run_probes(model=model, params=later_params)
 
 
 def test_first_solve_runs_the_preconditions_once_across_two_solves(
