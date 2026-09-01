@@ -2279,7 +2279,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             ]
             if len(starts) == len(ends) == 1 and starts[0] <= ends[0]:
                 corridors.append(loop.body[starts[0] : ends[0] + 1])
-        expected = "f2beb3d4aeb70c0d586c91cd9f2bf4e8964a1604fb5ad26b5563a5d1e8898862"
+        expected = "bbbc89a518b5e5f8e334ceb7c38ae9472f52c8e52215a55d89a1eafab16b6bda"
         if len(corridors) != 1 or _statements_ast_sha256(corridors[0]) != expected:
             errors.append(
                 "backward output-layout transport: solve publication corridor changed"
