@@ -52,8 +52,8 @@ def _scalar_oracle(
         # GridSearch computes the value with a masked max, then the identity from
         # ``argmax(feasible & (value == max_value))``. A feasible NaN therefore
         # poisons the max; every equality is false and argmax publishes position 0,
-        # even when action 0 is infeasible. This is legacy compatibility, not a
-        # preferred mathematical NaN policy.
+        # even when action 0 is infeasible. This preserves exact equivalence; it is not
+        # a preferred mathematical NaN policy.
         if has_feasible_nan:
             best_values[state_index] = np.nan
             best_ids[state_index] = 0

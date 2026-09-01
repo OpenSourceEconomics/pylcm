@@ -1,6 +1,6 @@
 """Public, lightweight types for labelled solver artifacts and solutions.
 
-This module begins pylcm's dependency-safe solver extension boundary. Its public
+This module defines pylcm's dependency-safe solver extension boundary. Its public
 definitions cover result identity and retention without referring to engine-private
 ``_lcm`` types or concrete built-in solver payloads.
 """
@@ -77,9 +77,9 @@ class KernelOutput:
     construction and exposed as immutable views so a producer cannot mutate a
     published kernel result after returning it.
 
-    Numerical diagnostics are intentionally not a field of this initial public
-    contract. Existing in-tree solvers that publish ``SolverDiagnostics`` continue
-    to use the legacy engine-private result while that artifact schema is designed.
+    Numerical diagnostics are kept outside this producer envelope. In-tree solvers
+    that publish ``SolverDiagnostics`` use the engine-private result representation
+    until that payload is represented as a public artifact.
     """
 
     value: FloatND | Float[np.ndarray, "*shape"]

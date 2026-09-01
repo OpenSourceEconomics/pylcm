@@ -1,9 +1,9 @@
-"""Private logical-output layout planning for distributed solve kernels.
+"""Logical-output layout planning for distributed solve kernels.
 
 The solver names what each output *means*.  The engine, which owns the regime
 topology and device mesh, resolves those roles to concrete shardings.  This is
 deliberately narrower than an execution configuration: it plans output
-placement only, and only for kernels that explicitly opt in.
+placement for kernels that declare logical output roles.
 """
 
 from collections.abc import Callable, Hashable
@@ -45,7 +45,7 @@ class _Unplanned(Enum):
 
 
 UNPLANNED = _Unplanned.TOKEN
-# No explicit output plan; preserve the backend-selected legacy behaviour.
+# No explicit output plan; preserve the backend-selected layout.
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -170,7 +170,7 @@ def _validate_output_roles(
     value_template: object,
     state_order: tuple[StateName, ...],
 ) -> None:
-    """Fail closed outside the two output trees supported by this experiment."""
+    """Fail closed outside the supported logical output trees."""
     role_leaves = jax.tree.leaves(roles)
     if not role_leaves:
         msg = f"Core {core_key!r} declared an empty output-role tree."
@@ -185,7 +185,7 @@ def _validate_output_roles(
     if roles is not VALUE and roles != (VALUE, DISSOLUTION_FLAG):
         msg = (
             f"Core {core_key!r} declared unsupported output roles {roles!r}. "
-            "This experiment accepts exactly VALUE or "
+            "Supported role trees are exactly VALUE or "
             "(VALUE, DISSOLUTION_FLAG)."
         )
         raise ValueError(msg)

@@ -154,7 +154,7 @@ _SOURCE_SEALS = {
     MAX_Q_SOURCE: "5420e559c718b4c14e07f69fefd6eb445a2b1316821893f90b48c19f53622c10",
     PROCESSING_SOURCE: "19f5de0a9b6597589afd1ff45ca92c6521a6d5bdc807cba4cfcc3ddcac4c6836",
     GRID_SEARCH_SOURCE: "7cc71dc5c92ea1872f3a433d38ef7cd6579fe61365e4a816840b93b77d120205",
-    OUTPUT_LAYOUT_SOURCE: "0f6d13d3304354e4656d0c06c47f6514c7e8b1f4cd4d67eca927f78094b7ce22",
+    OUTPUT_LAYOUT_SOURCE: "b5c3cfdb3612f9eb4c6139af62528a9d082a70ecfae1a07c9911192368a0a7a1",
     DISPATCHERS_SOURCE: "ef1d85c4fa7dbfbedc2c4afc36f307b915975c8a4a379aa40380fe8c89ecb663",
     FUNCTOOLS_SOURCE: "e6707e1f76493a28023a1f1f536414ba6792df063e6cfc161fca2690b8f5bc1c",
     CONTAINERS_SOURCE: "0838079e35ba498009d8af7e6ed717f870a96a2fdc628d25e80310cd630174a9",
@@ -1677,7 +1677,7 @@ def _output_layout_errors(tree: ast.Module) -> list[str]:
             label="output layout",
             contracts={
                 "resolve_output_layout": "ef308811973c1391e1d1001b55051153612250a17578aa0e8852ed9b002c32b4",
-                "_validate_output_roles": "2f580d7eeb144f485ac54e59f9150980cd54dc2b164252836ef13e5db39e5e90",
+                "_validate_output_roles": "8bf237a4b6a84fddd8bb2d425c25561498531ff01121c205fcd3be28fca480c7",
                 "assert_output_layout": "78b4040ad158cd8201ce739cfc08ee3e0ddc1d91b0019bbff5689e5b2bebd0f3",
                 "_assert_output_metadata": "8612094c85183f9c7cfa568bb0aad875ce729c79c60b31126efd8d04785644ca",
                 "PlannedCore.__call__": "05bb94fd00a52947741192747b970a1ef45b8a01c8dcb814c4099ab50b9c4707",

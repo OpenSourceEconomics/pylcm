@@ -44,7 +44,7 @@ artifacts internally. Dissolution flags are required when a collective regime's
 `ValueDependentTransition` has a gate that reads `D_target` — the dissolution flag of a
 collective target — during simulation.
 
-### Experimental labelled result workflow
+### Labelled result workflow (experimental)
 
 `solve_result()` keeps values and the artifacts needed to replay a solve in one labelled
 object. The types are deliberately available from `lcm.solver_api`, not from the
@@ -162,8 +162,8 @@ result = model.simulate(
 
 Forward simulation using solved value functions. Each agent starts from the given
 initial conditions and makes optimal decisions at each period. Returns a
-`SimulationResult` object. A `SolutionResult` from the experimental workflow above can
-instead be supplied through `solution=...`.
+`SimulationResult` object. A `SolutionResult` from the labelled workflow above can be
+supplied through `solution=...` instead.
 
 ## Simulate without pre-solving
 

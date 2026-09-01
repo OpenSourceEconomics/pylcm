@@ -1,6 +1,5 @@
-"""Private execution-planning experiments.
+"""Execution planning for solve kernels.
 
-Nothing in this package is a public execution-configuration API.  The first
-experiment gives selected in-tree kernels a way to name the logical roles of
-their outputs so the engine can request their final device layout at lowering.
+Solve kernels name the logical roles of their outputs here so the engine can
+resolve their final device layouts before lowering.
 """

@@ -21,11 +21,12 @@ either the value mapping or the historical tuple of parallel mappings.
 
 (api-solution-result)=
 
-### Experimental labelled solution results
+### Labelled solution results (experimental)
 
-`model.solve_result(...)` is an experimental, migration-oriented alternative that keeps
-values, metadata, replay artifacts, diagnostics, and explicit omission reasons in one
-`SolutionResult`:
+`model.solve_result(...)` keeps values, metadata, replay artifacts, diagnostics, and
+explicit omission reasons in one `SolutionResult`. This interface remains experimental
+while persistence and the complete out-of-tree solver contract are still being
+implemented:
 
 ```python
 from lcm.solver_api import ResultRetention

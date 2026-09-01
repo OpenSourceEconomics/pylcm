@@ -46,7 +46,7 @@ class HardMaxReduction:
     from an all-infeasible cell. A feasible NaN preserves GridSearch's existing
     full-array behavior: the maximum is NaN and the all-false equality mask makes
     ``argmax`` publish global identity zero, even if action zero is infeasible. This is
-    a legacy-compatibility rule, not a preferred mathematical treatment of NaNs.
+    an exact-equivalence rule, not a preferred mathematical treatment of NaNs.
     """
 
     def initialize(self, *, value_template: FloatND) -> HardMaxAccumulator:
@@ -85,7 +85,7 @@ class HardMaxReduction:
         left: HardMaxAccumulator,
         right: HardMaxAccumulator,
     ) -> HardMaxAccumulator:
-        """Merge partials independently of schedule, including legacy NaN id zero."""
+        """Merge partials independently of schedule, including the NaN id-zero rule."""
         left_nan = jnp.isnan(left.best_value)
         right_nan = jnp.isnan(right.best_value)
         right_wins_both_feasible = (

@@ -1,11 +1,11 @@
-"""Blockwise-action equivalence experiment for ordinary singleton grid search.
+"""Blockwise-action equivalence reference for ordinary singleton grid search.
 
 This is deliberately not wired into the production GridSearch path.  It isolates one
 planner-owned execution choice: enumerate the canonical action product in fixed-width
-blocks and combine the results with a mergeable hard-max state. The experiment proves
+blocks and combine the results with a mergeable hard-max state. The reference proves
 only value, feasibility, and action-identity equivalence. It makes no runtime or peak-
 memory claim: compiler fusion, rematerialization, and allocation still require direct
-measurement. The experiment excludes taste shocks, collective scalarization, outer
+measurement. The reference excludes taste shocks, collective scalarization, outer
 state mapping, and folded state axes; those semantics must be layered on only after this
 kernel is established as an exact ordinary-singleton reference.
 """
@@ -36,12 +36,12 @@ def build_streaming_max_Q_over_a(
     action_names: tuple[str, ...],
     block_width: int,
 ) -> Callable[..., HardMaxResult]:
-    """Build a private fixed-state blockwise hard-max equivalence callable.
+    """Build the fixed-state blockwise hard-max reference callable.
 
     ``action_names`` defines the canonical product order: the final action is the
     fastest-moving coordinate, exactly as C-order flattening of the corresponding
     product-map output.  ``block_width`` is an internal build decision standing in for
-    a future graph-wide planner choice.  It intentionally appears on neither a grid
+    a graph-wide planner choice.  It intentionally appears on neither a grid
     nor a solver's public configuration.
 
     The returned callable accepts one one-dimensional grid for each action name plus
@@ -50,10 +50,10 @@ def build_streaming_max_Q_over_a(
 
     At the source-program level, ``Q_and_F`` is vmapped over one block at a time and a
     padded final block is marked infeasible before reduction. The scan emits ``None``
-    as its history. Those facts establish the equivalence program's structure, not an
+    as its history. Those facts establish the reference program's structure, not an
     executable runtime or peak-memory bound after compiler transformation. The
-    reduction deliberately retains GridSearch's legacy feasible-NaN behavior: a NaN
-    maximum publishes action identity zero, even when that action is infeasible.
+    reduction deliberately retains GridSearch's established feasible-NaN behavior:
+    a NaN maximum publishes action identity zero, even when that action is infeasible.
     """
     if (
         not isinstance(block_width, int)
@@ -74,7 +74,7 @@ def build_streaming_max_Q_over_a(
 
 @dataclass(frozen=True)
 class _StreamingHardMax:
-    """Configured private action-streaming callable."""
+    """Configured action-streaming reference callable."""
 
     Q_and_F: Callable[..., tuple[Any, Any]]
     action_names: tuple[str, ...]
@@ -256,10 +256,10 @@ def _decode_action(
 
 
 def _validate_scalar_Q_and_F(*, value: jax.Array, feasible: jax.Array) -> None:
-    """Validate the no-action identity against the experiment's scalar contract."""
+    """Validate the no-action identity against the reference contract."""
     if value.ndim != 0 or feasible.ndim != 0:
         raise ValueError(
-            "The ordinary-singleton streaming experiment requires scalar Q and "
+            "The ordinary-singleton streaming reference requires scalar Q and "
             "feasibility outputs at each action cell"
         )
     if feasible.dtype != jnp.bool_:
@@ -267,10 +267,10 @@ def _validate_scalar_Q_and_F(*, value: jax.Array, feasible: jax.Array) -> None:
 
 
 def _validate_block_Q_and_F(*, values: jax.Array, feasible: jax.Array) -> None:
-    """Validate a vmapped block against the experiment's scalar cell contract."""
+    """Validate a vmapped block against the reference contract."""
     if values.ndim != 1 or feasible.ndim != 1:
         raise ValueError(
-            "The ordinary-singleton streaming experiment requires scalar Q and "
+            "The ordinary-singleton streaming reference requires scalar Q and "
             "feasibility outputs at each action cell"
         )
     if feasible.dtype != jnp.bool_:

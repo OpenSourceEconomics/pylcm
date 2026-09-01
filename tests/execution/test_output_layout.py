@@ -1,4 +1,4 @@
-"""Tests for the private logical-output layout experiment."""
+"""Tests for logical-output layout planning."""
 
 from collections.abc import Callable
 from dataclasses import dataclass
