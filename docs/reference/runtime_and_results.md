@@ -59,7 +59,11 @@ Metadata binds the result to the exact in-memory `Model` instance and to a SHA-2
 digest of the canonical flat parameters used for the solve. The instance token survives
 when that model is pickled and restored, but it is deliberately not a durable model
 fingerprint. Each `(period, regime)` value also has a lightweight `ValueArraySchema`
-recording its exact shape, dtype, and canonical named axes.
+recording its exact shape, dtype, and canonical named axes. That record is descriptive:
+it does not authenticate the value. Simulation uses an immutable descriptor owned by the
+model, built from the canonical model and parameters plus private solve-side facts for
+data-dependent adaptive axes, then checks the value and its repeated schema
+independently against that description.
 
 Solver diagnostics follow `log_level`, independently of retention. Continuation
 artifacts used during backward induction are not currently retainable: their absence is
@@ -80,16 +84,19 @@ value, policy, or dissolution-flag arguments.
 
 Before consuming a `SolutionResult`, simulation checks its in-memory model identity,
 canonical-parameter digest, schema versions, period count, regime order, solver types,
-and exact active period/regime value coverage. It unconditionally checks every value's
-shape, dtype, and named axes, including at `log_level="off"`. All artifact stores and
-omission records must address active result cells; one reference cannot appear in
-multiple stores or be both present and recorded as omitted. Simulation also validates
-the structure of every required EGM/NNBEGM replay policy and checks collective
-dissolution flags for Boolean dtype and the exact collective state shape. A values-only
-result is therefore sufficient for a model whose decisions are fully recoverable from
-values, but fails closed before forward simulation when a required replay artifact is
-absent or invalid. Use the default `ResultRetention.VALUES_AND_REPLAY` when the model
-may require such artifacts.
+and exact active period/regime value coverage. It unconditionally checks every value and
+its descriptive schema independently against the model-owned shape, canonical dtype, and
+named axes, including at `log_level="off"`. All artifact stores and omission records
+must address active result cells with the exact key version and channel; one reference
+cannot appear in multiple stores or be both present and recorded as omitted. Simulation
+also checks required EGM/NNBEGM replay policies against the model-owned payload type,
+canonical dtypes, complete ordered axes, action roles, categorical code domains, and
+consuming route. Collective dissolution flags are checked against the model-owned
+Boolean dtype and exact collective state shape. A values-only result is therefore
+sufficient for a model whose decisions are fully recoverable from values, but fails
+closed before forward simulation when a required replay artifact is absent or invalid.
+Use the default `ResultRetention.VALUES_AND_REPLAY` when the model may require such
+artifacts.
 
 `subject_batch_size` streams subjects without changing results. `seed` controls random
 draws. A collective model may require `period_to_regime_to_dissolution_flags` and

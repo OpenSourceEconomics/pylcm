@@ -67,6 +67,7 @@ from _lcm.grids import ContinuousGrid, DiscreteGrid, Grid
 from _lcm.solution.contract import (
     ConstraintRouteContext,
     ContinuationPayload,
+    GeneratedReplayAuthority,
     KernelResult,
     PeriodKernel,
     SimulationPolicy,
@@ -999,18 +1000,13 @@ class _NNBEGMPeriodKernel:
         # It reads the declared map's structure, which is what both searches
         # depend on and neither owns; certifying inside one of them leaves the
         # other free to publish a replay policy for a map nothing can invert.
-        outer_inverse = self._certify_outer_inverse(
+        replay_capability = derive_nnbegm_replay_capability(
+            period_kernel=self,
             state_action_space=state_action_space,
             flat_params=flat_params,
             period=period,
             ages=ages,
         )
-        # One capability per period, settled before either outer search runs and
-        # carried by whichever policy is published. It answers what a replay may
-        # assume — the map's coefficient, the stock domain, the arguments a
-        # replay can bind, the row axes it can address — so neither search
-        # decides that for itself and no reader re-derives it.
-        replay_capability = self._resolve_replay_capability(inverse=outer_inverse)
         if isinstance(self.outer_search, AdaptiveOuterMesh):
             return self._solve_continuous(
                 replay_capability=replay_capability,
@@ -1225,9 +1221,10 @@ class _NNBEGMPeriodKernel:
             config=config,
             fail_closed=config.fail_closed,
         )
+        mesh_nodes_host = np.asarray(mesh.nodes)
         bank = build_outer_candidate_bank(
             outer_nodes=mesh.nodes,
-            results=[cache[float(node)] for node in np.asarray(mesh.nodes)],
+            results=[cache[float(node)] for node in mesh_nodes_host],
         )
         if self.branch_fixed_cost is None:
             fixed_cost_scale = None
@@ -1343,6 +1340,13 @@ class _NNBEGMPeriodKernel:
             V_arr=collapse.V_arr,
             continuation=collapse.carry,
             simulation_policy=sim_policy,
+            generated_replay_authority=(
+                GeneratedReplayAuthority(
+                    adaptive_outer_nodes=tuple(float(node) for node in mesh_nodes_host)
+                )
+                if nested_published
+                else None
+            ),
             diagnostics=diagnostics,
         )
 
@@ -1629,6 +1633,38 @@ class _NNBEGMPeriodKernel:
             period=period,
         )
         return jnp.where(represented, candidate_targets, jnp.nan)
+
+
+def derive_nnbegm_replay_capability(
+    *,
+    period_kernel: PeriodKernel,
+    state_action_space: StateActionSpace,
+    flat_params: FlatParams,
+    period: int,
+    ages: AgeGrid,
+) -> OuterReplayCapability:
+    """Derive one period's replay capability from canonical model inputs.
+
+    The solve calls this before publishing a policy, and labelled-result preflight
+    calls it again without consulting that policy. Keeping the structural
+    certificate behind one model-owned seam prevents a returned capability from
+    authenticating its own inverse coefficient or route diagnostics.
+    """
+    if not isinstance(period_kernel, _NNBEGMPeriodKernel):
+        msg = (
+            "NNBEGM replay authority requires the canonical NNBEGM period kernel, "
+            f"got {type(period_kernel).__name__}."
+        )
+        raise TypeError(msg)
+    inverse = period_kernel._certify_outer_inverse(  # noqa: SLF001
+        state_action_space=state_action_space,
+        flat_params=flat_params,
+        period=period,
+        ages=ages,
+    )
+    return period_kernel._resolve_replay_capability(  # noqa: SLF001
+        inverse=inverse
+    )
 
 
 def _fail_if_the_solve_grid_cannot_reconstruct_a_candidate(

@@ -16,7 +16,7 @@ from pandas.testing import assert_frame_equal
 import lcm.model as model_module
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
-from _lcm.engine import EGMPolicyRead
+from _lcm.regime_building import processing as regime_processing
 from _lcm.solution import artifacts as private_artifacts
 from _lcm.solution import backward_induction
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
@@ -42,6 +42,7 @@ from lcm.solver_api import (
     SolutionResult,
     ValueArraySchema,
 )
+from lcm.solvers import MSSEnvelope
 from lcm.typing import UserInitialConditions, UserParams
 from tests.regime_building.test_collective_regime_simulate import (
     _DISSOLUTION_PARAMS,
@@ -53,7 +54,10 @@ from tests.simulation.test_nnbegm_split_workflow_parity import (
     _build,
 )
 from tests.solution.test_egm_published_policy import _two_period_bequest_model
+from tests.test_models.deterministic import base as deterministic_base
 from tests.test_models.deterministic.dcegm_variants import (
+    get_full_model,
+    get_full_params,
     get_retirement_only_params,
 )
 from tests.test_models.deterministic.regression import (
@@ -522,6 +526,45 @@ def test_retained_adaptive_nnbegm_result_replays_the_same_policy_as_legacy() -> 
     assert_frame_equal(direct.to_dataframe(), legacy.to_dataframe())
 
 
+def test_adaptive_authority_and_result_survive_pickle_for_valid_replay() -> None:
+    model = _build("adaptive")
+    solution = model.solve_result(params=_PARAMS, log_level="off")
+    fingerprint = solution.metadata.params_fingerprint
+    before = {
+        ref: descriptor.adaptive_outer_nodes
+        for ref, descriptor in model._solution_authorities[fingerprint].replay.items()
+        if ref.key == SIMULATION_POLICY and descriptor.adaptive_outer_nodes is not None
+    }
+    assert before
+
+    restored_model, restored_solution = cloudpickle.loads(
+        cloudpickle.dumps((model, solution))
+    )
+    restored_authority = restored_model._solution_authorities[fingerprint]
+    after = {
+        ref: descriptor.adaptive_outer_nodes
+        for ref, descriptor in restored_authority.replay.items()
+        if ref in before
+    }
+
+    assert after == before
+    for ref, expected_nodes in after.items():
+        policy = cast("NestedEGMSimPolicy", restored_solution.replay_artifacts[ref])
+        assert expected_nodes == tuple(
+            float(node) for node in np.asarray(policy.adjuster.outer_nodes)
+        )
+
+    replay = restored_model.simulate(
+        params=_PARAMS,
+        initial_conditions=dict(_INITIAL),
+        solution=restored_solution,
+        log_level="off",
+        seed=42,
+    )
+
+    assert replay.n_subjects == len(_INITIAL["wealth"])
+
+
 def test_retained_dissolution_result_replays_the_same_flags_as_legacy() -> None:
     model = _make_dissolution_model()
     solution = model.solve_result(params=_DISSOLUTION_PARAMS, log_level="off")
@@ -950,38 +993,39 @@ def test_malformed_finite_nnbegm_payload_is_refused_before_forward(
 def test_declared_egm_policy_read_requires_a_valid_egm_payload_before_forward(
     *, payload: str | None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    model, params, initial_conditions = _small_grid_search_inputs()
+    get_full_model.cache_clear()
+    monkeypatch.setattr(
+        regime_processing,
+        "_CROSSING_COMPLETE_ENVELOPES",
+        (MSSEnvelope,),
+    )
+    model = get_full_model(solver="dcegm", n_periods=2, envelope="mss")
+    get_full_model.cache_clear()
+    params = get_full_params(n_periods=2)
+    initial_conditions = {
+        "wealth": jnp.asarray([2.0]),
+        "age": jnp.asarray([40.0]),
+        "regime_id": jnp.asarray(
+            [deterministic_base.RegimeId.working_life], dtype=jnp.int32
+        ),
+    }
     solution = model.solve_result(params=params, log_level="off")
     regime_name = "working_life"
-    regime = model._regimes[regime_name]
-    model._regimes = MappingProxyType(
-        dict(model._regimes)
-        | {
-            regime_name: replace(
-                regime,
-                simulation=replace(
-                    regime.simulation,
-                    egm_policy_read=EGMPolicyRead(
-                        action_name="consumption",
-                        resources_target="consumption",
-                        savings_lower_bound=0.0,
-                    ),
-                ),
-            )
-        }
+    ref = next(
+        ref
+        for ref in solution.replay_artifacts
+        if ref.key == SIMULATION_POLICY and ref.regime == regime_name
     )
-    if payload is not None:
-        ref = ArtifactRef(period=0, regime=regime_name, key=SIMULATION_POLICY)
-        malformed_policy = EGMSimPolicy(
-            endog_grid=jnp.ones(3),
-            policy=jnp.ones(3),
-            value=jnp.ones(2),
-            marginal_utility=jnp.ones(3),
+    entries = dict(solution.replay_artifacts)
+    if payload is None:
+        entries.pop(ref)
+    else:
+        policy = cast("EGMSimPolicy", entries[ref])
+        entries[ref] = replace(
+            policy,
+            value=policy.value[..., :-1],
         )
-        solution = replace(
-            solution,
-            replay_artifacts=ArtifactStore({ref: malformed_policy}),
-        )
+    solution = replace(solution, replay_artifacts=ArtifactStore(entries))
 
     def _forward_loop_must_not_run(**_kwargs: object) -> None:
         raise AssertionError("forward simulation ran before EGM replay preflight")
@@ -997,7 +1041,7 @@ def test_declared_egm_policy_read_requires_a_valid_egm_payload_before_forward(
         )
 
 
-def test_adaptive_policy_omission_distinguishes_unpublished_from_dropped(
+def test_adaptive_policy_omission_is_derived_from_model_authority(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     model = _build("adaptive")
@@ -1018,6 +1062,7 @@ def test_adaptive_policy_omission_distinguishes_unpublished_from_dropped(
         return replace(
             original(**kwargs),  # ty: ignore[invalid-argument-type]
             simulation_policy=None,
+            generated_replay_authority=None,
         )
 
     monkeypatch.setattr(backward_induction, "_run_period_kernel", _without_policy)
@@ -1027,7 +1072,7 @@ def test_adaptive_policy_omission_distinguishes_unpublished_from_dropped(
         retention=ResultRetention.VALUES,
     )
 
-    assert never_published.omissions[policy_ref] is OmissionReason.NOT_APPLICABLE
+    assert never_published.omissions[policy_ref] is OmissionReason.NOT_REQUESTED
 
 
 def test_nested_egm_payload_is_validated_recursively_before_forward(
@@ -1128,7 +1173,7 @@ def test_values_only_dissolution_result_is_refused_before_forward_simulation(
         )
 
 
-@pytest.mark.parametrize("defect", ["dtype", "shape"])
+@pytest.mark.parametrize("defect", ["type", "dtype", "shape"])
 def test_malformed_dissolution_flag_is_refused_before_forward(
     *, defect: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1138,11 +1183,12 @@ def test_malformed_dissolution_flag_is_refused_before_forward(
         ref for ref in solution.replay_artifacts if ref.key == DISSOLUTION_FLAG
     )
     flag = solution.replay_artifacts[flag_ref]
-    malformed_flag = (
-        jnp.asarray(flag, dtype=jnp.float32)
-        if defect == "dtype"
-        else jnp.reshape(jnp.asarray(flag), (*jnp.asarray(flag).shape, 1))
-    )
+    if defect == "type":
+        malformed_flag = np.asarray(flag, dtype=np.bool_)
+    elif defect == "dtype":
+        malformed_flag = jnp.asarray(flag, dtype=jnp.float32)
+    else:
+        malformed_flag = jnp.reshape(jnp.asarray(flag), (*jnp.asarray(flag).shape, 1))
     entries = dict(solution.replay_artifacts)
     entries[flag_ref] = malformed_flag
     malformed = replace(solution, replay_artifacts=ArtifactStore(entries))
@@ -1152,6 +1198,37 @@ def test_malformed_dissolution_flag_is_refused_before_forward(
 
     monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
     with pytest.raises(InvalidSimulationInputError, match="mismatched_payload"):
+        model.simulate(
+            params=_DISSOLUTION_PARAMS,
+            initial_conditions={},
+            solution=malformed,
+            log_level="off",
+        )
+
+
+def test_dissolution_flag_is_refused_from_the_wrong_artifact_channel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = _make_dissolution_model()
+    solution = model.solve_result(params=_DISSOLUTION_PARAMS, log_level="off")
+    flag_ref = next(
+        ref for ref in solution.replay_artifacts if ref.key == DISSOLUTION_FLAG
+    )
+    replay_entries = dict(solution.replay_artifacts)
+    flag = replay_entries.pop(flag_ref)
+    malformed = replace(
+        solution,
+        replay_artifacts=ArtifactStore(replay_entries),
+        auxiliary_artifacts=ArtifactStore(
+            dict(solution.auxiliary_artifacts) | {flag_ref: flag}
+        ),
+    )
+
+    def _forward_loop_must_not_run(**_kwargs: object) -> None:
+        raise AssertionError("forward simulation ran before dissolution preflight")
+
+    monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
+    with pytest.raises(InvalidSimulationInputError, match="wrong channels"):
         model.simulate(
             params=_DISSOLUTION_PARAMS,
             initial_conditions={},

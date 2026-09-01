@@ -611,9 +611,14 @@ loaded = SimulationResult.load(directory=Path("path/to/dir"))
 artifacts, metadata, and explicit omission reasons separate; its default retention keeps
 replay artifacts. `model.simulate(solution=...)` unconditionally checks that the result
 came from the same model instance (whose token survives a pickle round trip), used the
-exact canonical parameters, has matching value schemas, and supplies valid required
-built-in artifacts. This interface remains experimental: `SolutionResult` persistence
-and a stable out-of-tree solver plugin API are not implemented yet.
+exact canonical parameters, and supplies valid required built-in artifacts. Returned
+value schemas and replay metadata are descriptive: both they and their payloads are
+checked independently against immutable descriptors owned by the producing and consuming
+model. Those descriptors come from the canonical model and parameters, plus private
+solve-side facts for data-dependent adaptive axes, and include exact dtypes, ordered
+axes, action roles, and categorical domains. This interface remains experimental:
+`SolutionResult` persistence and a stable out-of-tree solver plugin API are not
+implemented yet.
 
 ### Initial Conditions Format
 

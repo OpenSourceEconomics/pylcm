@@ -416,6 +416,14 @@ class SolverBuildContext:
 
 
 @dataclass(frozen=True, kw_only=True)
+class GeneratedReplayAuthority:
+    """Trusted dynamic replay facts emitted beside, never read from, a payload."""
+
+    adaptive_outer_nodes: tuple[float, ...]
+    """Exact generated outer mesh, in candidate-axis order."""
+
+
+@dataclass(frozen=True, kw_only=True)
 class KernelResult:
     """One regime-period solve output, assembled outside JIT.
 
@@ -438,6 +446,9 @@ class KernelResult:
 
     simulation_policy: SimulationPolicy | None = None
     """Published off-grid simulation policy, or `None`."""
+
+    generated_replay_authority: GeneratedReplayAuthority | None = None
+    """Dynamic replay facts produced independently beside the public payload."""
 
     dissolution: BoolND | None = None
     """The dissolution / empty-feasible-set flag `D` on the state axes, or `None`.
@@ -470,6 +481,11 @@ class BackwardInductionResult:
 
     Sparse over regimes: only kernels that publish a policy contribute entries.
     """
+
+    generated_replay_authorities: MappingProxyType[
+        int, MappingProxyType[RegimeName, GeneratedReplayAuthority]
+    ] = MappingProxyType({})
+    """Trusted dynamic facts kept outside the public replay payload store."""
 
     dissolution_flags: PeriodToRegimeToDissolutionFlags = MappingProxyType({})
     """Immutable mapping of period to each COLLECTIVE regime's dissolution flag `D`.

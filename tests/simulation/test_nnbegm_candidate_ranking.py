@@ -144,6 +144,18 @@ def _synthetic_replay(
     if state is None:
         state = jnp.array([0.37])
     discrete_names = ("choice",) if discrete_codes is not None else ()
+    candidate_codes = (
+        ()
+        if discrete_codes is None
+        else tuple(tuple(int(code) for code in row) for row in discrete_codes)
+    )
+    code_domains = MappingProxyType(
+        {}
+        if discrete_codes is None
+        else {
+            "choice": tuple(sorted({int(row[0]) for row in discrete_codes})),
+        }
+    )
     policy = NNBEGMSimPolicy(
         candidate_inner_action=_constant_surfaces(inner),
         candidate_outer_target=_constant_surfaces(outer),
@@ -195,6 +207,22 @@ def _synthetic_replay(
                 outer_post_decision="outer_target",
                 outer_no_adjustment_target=None,
                 outer_state_name="outer_state",
+                inner_action_name="inner",
+                outer_action_name="outer",
+                state_names=("state",),
+                state_axis_lengths_by_period=MappingProxyType({0: (2,)}),
+                row_discrete_state_names=(),
+                row_passive_state_names=(),
+                row_axis_lengths_by_period=MappingProxyType({0: ()}),
+                discrete_action_names=discrete_names,
+                discrete_action_code_domains=code_domains,
+                candidate_discrete_action_codes=candidate_codes,
+                candidate_count=len(inner),
+                float_dtype=str(jnp.asarray(0.0).dtype),
+                integer_dtype=str(jnp.asarray(0, dtype=jnp.int32).dtype),
+                outer_grid_values=tuple(float(value) for value in outer),
+                n_keeper_candidates=0,
+                outer_state_domain_by_period=MappingProxyType({0: (0.0, 200.0)}),
             ),
         ),
     )

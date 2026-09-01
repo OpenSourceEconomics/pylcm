@@ -76,9 +76,12 @@ mode.
 
 Simulation validates the originating in-memory model instance, exact canonical
 parameters, result versions, value coverage, each value's shape/dtype/named axes, and
-the structure of required replay artifacts before forward execution. These structural
-checks still run at `log_level="off"`; missing or malformed required artifacts fail
-closed with an explanation. Pass either `solution=...` or the legacy
+the structure of required replay artifacts before forward execution. Returned schemas
+and replay metadata are descriptive, not authoritative: values and artifacts are each
+checked independently against immutable descriptors owned by the producing and consuming
+model, including exact dtypes, ordered axes, action roles, and categorical domains.
+These structural checks still run at `log_level="off"`; missing or malformed required
+artifacts fail closed with an explanation. Pass either `solution=...` or the legacy
 value/policy/dissolution mappings, never both.
 
 This labelled boundary is experimental. It does not yet provide `SolutionResult`

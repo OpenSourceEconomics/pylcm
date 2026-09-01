@@ -10,7 +10,7 @@
           },
           {
             "path": "src/_lcm/engine.py",
-            "sha256": "7a535d7a32c58a84c191eb8bb3c9a62b43f3dbc88857104a26fc1aee3f04541d"
+            "sha256": "6d3962297eab6d6053619533211fa0e5a79fecf925cad671dc3c4d9d5bcc80e7"
           },
           {
             "path": "src/_lcm/execution/core_program.py",
@@ -98,7 +98,7 @@
           },
           {
             "path": "src/_lcm/regime_building/processing.py",
-            "sha256": "399099166d4adc43caac28a010b557734cd7afb63281d56a728e4bd1abc4fe46"
+            "sha256": "e9fc3dc1b8b703f12867f336ce4439356edc2fbafc919ae2014cd939234a1b56"
           },
           {
             "path": "src/_lcm/regime_building/zero_safe.py",
@@ -146,7 +146,7 @@
           },
           {
             "path": "src/_lcm/solution/backward_induction.py",
-            "sha256": "3fd3fbc4e753ce95c4c372ae31ff5bb50c8b9c54644308354da1b5e02f064945"
+            "sha256": "726ebe2ffa397eda3d77fede7489f456a96dce94afd1162a8db64b88d0d3be57"
           },
           {
             "path": "src/_lcm/solution/collective_action_reduction.py",
@@ -154,7 +154,7 @@
           },
           {
             "path": "src/_lcm/solution/contract.py",
-            "sha256": "320bb70423c7f086e98096d212be6146c486353eaf493818bffd07ec6a2c72af"
+            "sha256": "e0ea892e2a146395a9eaa4b084f1a29b5064ce80093ac3ae674445e29475df9a"
           },
           {
             "path": "src/_lcm/solution/grid_search.py",
@@ -194,7 +194,7 @@
           },
           {
             "path": "src/lcm/model.py",
-            "sha256": "aba936fb5176a470e7296c24ac0fcdbb7ee465475194569099a6cb17aa03a13c"
+            "sha256": "5045a42535a33d4337700c7161bf31ade717b43a60c3f79ef71cbe3c537347cf"
           },
           {
             "path": "src/lcm/result.py",
@@ -202,7 +202,7 @@
           }
         ],
         "source_count": 49,
-        "source_inventory_sha256": "6b49dae7fa124d4adb5c7670705c2a28526743a0d12298d625a8d3551eaa8647"
+        "source_inventory_sha256": "b2981a5fbe6fd6391314b2cacb45e54cee708035fe45d15b0762283673c2ddf6"
       },
       "fast": {
         "candidate_sources": [
@@ -212,7 +212,7 @@
           },
           {
             "path": "src/_lcm/engine.py",
-            "sha256": "7a535d7a32c58a84c191eb8bb3c9a62b43f3dbc88857104a26fc1aee3f04541d"
+            "sha256": "6d3962297eab6d6053619533211fa0e5a79fecf925cad671dc3c4d9d5bcc80e7"
           },
           {
             "path": "src/_lcm/execution/core_program.py",
@@ -300,7 +300,7 @@
           },
           {
             "path": "src/_lcm/regime_building/processing.py",
-            "sha256": "399099166d4adc43caac28a010b557734cd7afb63281d56a728e4bd1abc4fe46"
+            "sha256": "e9fc3dc1b8b703f12867f336ce4439356edc2fbafc919ae2014cd939234a1b56"
           },
           {
             "path": "src/_lcm/regime_building/zero_safe.py",
@@ -348,7 +348,7 @@
           },
           {
             "path": "src/_lcm/solution/backward_induction.py",
-            "sha256": "3fd3fbc4e753ce95c4c372ae31ff5bb50c8b9c54644308354da1b5e02f064945"
+            "sha256": "726ebe2ffa397eda3d77fede7489f456a96dce94afd1162a8db64b88d0d3be57"
           },
           {
             "path": "src/_lcm/solution/collective_action_reduction.py",
@@ -356,7 +356,7 @@
           },
           {
             "path": "src/_lcm/solution/contract.py",
-            "sha256": "320bb70423c7f086e98096d212be6146c486353eaf493818bffd07ec6a2c72af"
+            "sha256": "e0ea892e2a146395a9eaa4b084f1a29b5064ce80093ac3ae674445e29475df9a"
           },
           {
             "path": "src/_lcm/solution/grid_search.py",
@@ -396,7 +396,7 @@
           },
           {
             "path": "src/lcm/model.py",
-            "sha256": "aba936fb5176a470e7296c24ac0fcdbb7ee465475194569099a6cb17aa03a13c"
+            "sha256": "5045a42535a33d4337700c7161bf31ade717b43a60c3f79ef71cbe3c537347cf"
           },
           {
             "path": "src/lcm/result.py",
@@ -404,13 +404,13 @@
           }
         ],
         "source_count": 49,
-        "source_inventory_sha256": "6b49dae7fa124d4adb5c7670705c2a28526743a0d12298d625a8d3551eaa8647"
+        "source_inventory_sha256": "b2981a5fbe6fd6391314b2cacb45e54cee708035fe45d15b0762283673c2ddf6"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "6b49dae7fa124d4adb5c7670705c2a28526743a0d12298d625a8d3551eaa8647",
+  "source_inventory_sha256": "b2981a5fbe6fd6391314b2cacb45e54cee708035fe45d15b0762283673c2ddf6",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -418,7 +418,7 @@
     },
     {
       "path": "src/_lcm/engine.py",
-      "sha256": "7a535d7a32c58a84c191eb8bb3c9a62b43f3dbc88857104a26fc1aee3f04541d"
+      "sha256": "6d3962297eab6d6053619533211fa0e5a79fecf925cad671dc3c4d9d5bcc80e7"
     },
     {
       "path": "src/_lcm/execution/core_program.py",
@@ -506,7 +506,7 @@
     },
     {
       "path": "src/_lcm/regime_building/processing.py",
-      "sha256": "399099166d4adc43caac28a010b557734cd7afb63281d56a728e4bd1abc4fe46"
+      "sha256": "e9fc3dc1b8b703f12867f336ce4439356edc2fbafc919ae2014cd939234a1b56"
     },
     {
       "path": "src/_lcm/regime_building/zero_safe.py",
@@ -554,7 +554,7 @@
     },
     {
       "path": "src/_lcm/solution/backward_induction.py",
-      "sha256": "3fd3fbc4e753ce95c4c372ae31ff5bb50c8b9c54644308354da1b5e02f064945"
+      "sha256": "726ebe2ffa397eda3d77fede7489f456a96dce94afd1162a8db64b88d0d3be57"
     },
     {
       "path": "src/_lcm/solution/collective_action_reduction.py",
@@ -562,7 +562,7 @@
     },
     {
       "path": "src/_lcm/solution/contract.py",
-      "sha256": "320bb70423c7f086e98096d212be6146c486353eaf493818bffd07ec6a2c72af"
+      "sha256": "e0ea892e2a146395a9eaa4b084f1a29b5064ce80093ac3ae674445e29475df9a"
     },
     {
       "path": "src/_lcm/solution/grid_search.py",
@@ -602,7 +602,7 @@
     },
     {
       "path": "src/lcm/model.py",
-      "sha256": "aba936fb5176a470e7296c24ac0fcdbb7ee465475194569099a6cb17aa03a13c"
+      "sha256": "5045a42535a33d4337700c7161bf31ade717b43a60c3f79ef71cbe3c537347cf"
     },
     {
       "path": "src/lcm/result.py",

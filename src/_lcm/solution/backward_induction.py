@@ -50,6 +50,7 @@ from _lcm.regime_building.Q_and_F import (
 from _lcm.solution.contract import (
     BackwardInductionResult,
     ContinuationPayload,
+    GeneratedReplayAuthority,
     KernelResult,
     SimulationPolicy,
 )
@@ -188,6 +189,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
 
     solution: dict[int, MappingProxyType[RegimeName, FloatND]] = {}
     simulation_policies: dict[int, MappingProxyType[RegimeName, SimulationPolicy]] = {}
+    generated_replay_authorities: dict[
+        int, MappingProxyType[RegimeName, GeneratedReplayAuthority]
+    ] = {}
     dissolution_flags: dict[int, MappingProxyType[RegimeName, BoolND]] = {}
     solver_diagnostics: dict[int, MappingProxyType[RegimeName, SolverDiagnostics]] = {}
     published_simulation_policy_cells: set[tuple[int, RegimeName]] = set()
@@ -268,6 +272,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         period_solution: dict[RegimeName, FloatND] = {}
         period_continuations: dict[RegimeName, ContinuationPayload] = {}
         period_simulation_policies: dict[RegimeName, SimulationPolicy] = {}
+        period_generated_replay_authorities: dict[
+            RegimeName, GeneratedReplayAuthority
+        ] = {}
         period_dissolution_flags: dict[RegimeName, BoolND] = {}
         period_solver_diagnostics: dict[RegimeName, SolverDiagnostics] = {}
 
@@ -336,6 +343,20 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                     period_simulation_policies[regime_name] = result.simulation_policy
                 if track_artifact_publication:
                     published_simulation_policy_cells.add((period, regime_name))
+            if result.generated_replay_authority is not None:
+                if result.simulation_policy is None:
+                    msg = (
+                        "A generated replay authority has no matching simulation "
+                        f"policy at ({period}, {regime_name!r})."
+                    )
+                    raise TypeError(msg)
+                if collect_simulation_policies and (
+                    simulation_policy_regimes is None
+                    or regime_name in simulation_policy_regimes
+                ):
+                    period_generated_replay_authorities[regime_name] = (
+                        result.generated_replay_authority
+                    )
             # A collective regime publishes its
             # empty-mask dissolution flag D alongside V; singleton regimes
             # leave it None and never touch this mapping.
@@ -427,6 +448,10 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                     )
                 }
             )
+        if period_generated_replay_authorities:
+            generated_replay_authorities[period] = MappingProxyType(
+                period_generated_replay_authorities
+            )
         if period_solver_diagnostics:
             assert host_device is not None  # noqa: S101
             solver_diagnostics[period] = MappingProxyType(
@@ -483,6 +508,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     return BackwardInductionResult(
         value_functions=MappingProxyType(solution),
         simulation_policies=MappingProxyType(simulation_policies),
+        generated_replay_authorities=MappingProxyType(generated_replay_authorities),
         dissolution_flags=MappingProxyType(dissolution_flags),
         diagnostics=MappingProxyType(solver_diagnostics),
         published_simulation_policy_cells=frozenset(published_simulation_policy_cells),

@@ -3,11 +3,11 @@
 import hashlib
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from _lcm.engine import NNBEGMPolicyRead, Regime
+from _lcm.engine import Regime
 from _lcm.params.mapping_leaf import MappingLeaf
 from _lcm.params.sequence_leaf import SequenceLeaf
 from _lcm.regime_building.finalize import FinalizedUserRegime
@@ -28,8 +28,17 @@ from lcm.solver_api import (
     ValueArraySchema,
 )
 
+if TYPE_CHECKING:
+    from _lcm.solution.model_authority import SolutionAuthority
+else:
+    # The beartype import claw resolves annotations at runtime. Importing the
+    # concrete type here would close the artifacts -> authority -> artifacts cycle;
+    # static checking keeps the precise type above while runtime checks the rest of
+    # this private bridge's fully concrete signature.
+    SolutionAuthority = Any
 
-def build_solution_result(
+
+def build_solution_result(  # noqa: C901, PLR0912
     *,
     internal_result: BackwardInductionResult,
     retention: ResultRetention,
@@ -38,6 +47,7 @@ def build_solution_result(
     n_periods: int,
     model_instance_id: str,
     params_fingerprint: str,
+    authority: SolutionAuthority,
 ) -> SolutionResult:
     """Label existing engine outputs without changing their numerical meaning."""
     replay: dict[ArtifactRef, object] = {}
@@ -99,30 +109,31 @@ def build_solution_result(
                 regime=regime_name,
                 key=SIMULATION_POLICY,
             )
+            policy_descriptor = authority.replay[policy_ref]
             did_publish_policy = (
                 period,
                 regime_name,
             ) in internal_result.published_simulation_policy_cells
             policy_read = regime.simulation.egm_policy_read
-            has_replay_route = policy_read is not None
-            is_unpublished_adaptive_policy = (
-                isinstance(policy_read, NNBEGMPolicyRead)
-                and policy_read.replay_policy_is_nested
-                and not did_publish_policy
-            )
             can_publish_policy = (
                 did_publish_policy
                 or policy_read is not None
                 or user_regime.solver.publishes_simulation_policy
             )
             if can_publish_policy and policy_ref not in replay:
-                omissions[policy_ref] = (
-                    OmissionReason.NOT_APPLICABLE
-                    if not has_replay_route or is_unpublished_adaptive_policy
-                    else OmissionReason.NOT_REQUESTED
-                    if did_publish_policy and not retention.retains_replay
-                    else OmissionReason.NOT_APPLICABLE
-                )
+                if not policy_descriptor.applicable:
+                    omissions[policy_ref] = OmissionReason.NOT_APPLICABLE
+                elif not retention.retains_replay:
+                    omissions[policy_ref] = OmissionReason.NOT_REQUESTED
+                elif policy_descriptor.required:
+                    msg = (
+                        "A model-authoritative replay route published no required "
+                        f"artifact at ({period}, {regime_name!r}, "
+                        f"{SIMULATION_POLICY.type_id!r})."
+                    )
+                    raise RuntimeError(msg)
+                else:
+                    omissions[policy_ref] = OmissionReason.NOT_APPLICABLE
 
             if regime.stakeholders is not None:
                 dissolution_ref = ArtifactRef(
@@ -131,11 +142,19 @@ def build_solution_result(
                     key=DISSOLUTION_FLAG,
                 )
                 if dissolution_ref not in replay:
-                    omissions[dissolution_ref] = (
-                        OmissionReason.NOT_APPLICABLE
-                        if retention.retains_replay
-                        else OmissionReason.NOT_REQUESTED
-                    )
+                    dissolution_descriptor = authority.replay[dissolution_ref]
+                    if not retention.retains_replay:
+                        omissions[dissolution_ref] = OmissionReason.NOT_REQUESTED
+                    elif dissolution_descriptor.required:
+                        msg = (
+                            "A model-authoritative replay route published no "
+                            "required artifact at "
+                            f"({period}, {regime_name!r}, "
+                            f"{DISSOLUTION_FLAG.type_id!r})."
+                        )
+                        raise RuntimeError(msg)
+                    else:
+                        omissions[dissolution_ref] = OmissionReason.NOT_APPLICABLE
 
     return SolutionResult(
         values=internal_result.value_functions,
@@ -160,16 +179,14 @@ def build_solution_result(
             value_schemas=MappingProxyType(
                 {
                     (period, regime_name): ValueArraySchema(
-                        shape=tuple(value.shape),
-                        dtype=str(value.dtype),
-                        axis_names=_canonical_value_axis_names(
-                            regime=regimes[regime_name]
-                        ),
+                        shape=authority.values[(period, regime_name)].shape,
+                        dtype=authority.values[(period, regime_name)].dtype,
+                        axis_names=(authority.values[(period, regime_name)].axis_names),
                     )
                     for period, regime_to_value in (
                         internal_result.value_functions.items()
                     )
-                    for regime_name, value in regime_to_value.items()
+                    for regime_name in regime_to_value
                 }
             ),
         ),
