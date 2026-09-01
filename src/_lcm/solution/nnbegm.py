@@ -938,7 +938,7 @@ class _NNBEGMPeriodKernel:
         outer-grid node so its lowered program matches the shape every per-node
         call traces; the keeper lowers with no outer binding.
         """
-        role, inner_key = core_key.split(":", maxsplit=1)
+        role, inner_key = core_key.split(sep=":", maxsplit=1)
         if role == "keeper":
             return self.keeper_kernel.build_lower_args(
                 core_key=inner_key,

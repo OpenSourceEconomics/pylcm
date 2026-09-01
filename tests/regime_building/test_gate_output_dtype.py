@@ -48,7 +48,7 @@ def _prob_one(age: FloatND) -> FloatND:
     return jnp.ones_like(age, dtype=float)
 
 
-def _utility_source(x: ContinuousState, work: DiscreteAction) -> FloatND:
+def _utility_source(*, x: ContinuousState, work: DiscreteAction) -> FloatND:
     return jnp.zeros_like(x) * work
 
 
@@ -94,7 +94,7 @@ def _make_model(*, gate) -> Model:
                 active=lambda age: age < 45,
                 states={"x": _X},
                 state_transitions={"x": fixed_transition("x")},
-                actions={"work": DiscreteGrid(Work)},
+                actions={"work": DiscreteGrid(category_class=Work)},
                 functions={"utility": _utility_source},
             ),
             "target": Regime(

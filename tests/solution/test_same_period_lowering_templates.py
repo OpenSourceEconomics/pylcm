@@ -185,7 +185,7 @@ def _build_model() -> Model:
         active=lambda age: age < 1,
         states={"wage": _WAGE},
         state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(_Work)},
+        actions={"work": DiscreteGrid(category_class=_Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _couple_utility_f, "m": _couple_utility_m}
@@ -269,6 +269,6 @@ def _wage_clears_the_floor(wage: ContinuousState) -> BoolND:
     return wage > _WAGE_FLOOR
 
 
-def _wife_participates(Q_f: FloatND, V_single_ref: FloatND) -> BoolND:
+def _wife_participates(*, Q_f: FloatND, V_single_ref: FloatND) -> BoolND:
     """The wife accepts an action only if it beats her same-period single value."""
     return Q_f >= V_single_ref

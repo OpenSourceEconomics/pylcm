@@ -53,6 +53,7 @@ class PartnerStatus:
 
 
 def utility_working(
+    *,
     consumption: ContinuousAction,
     is_working: BoolND,
     health: DiscreteState,
@@ -64,6 +65,7 @@ def utility_working(
 
 
 def utility_retirement(
+    *,
     consumption: ContinuousAction,
     health: DiscreteState,  # noqa: ARG001
     partner: DiscreteState,  # noqa: ARG001
@@ -71,11 +73,12 @@ def utility_retirement(
     return jnp.log(consumption)
 
 
-def labor_income(is_working: BoolND, wage: FloatND) -> FloatND:
+def labor_income(*, is_working: BoolND, wage: FloatND) -> FloatND:
     return jnp.where(is_working, wage, 0.0)
 
 
 def next_wealth(
+    *,
     wealth: ContinuousState,
     consumption: ContinuousAction,
     labor_income: FloatND,
@@ -85,7 +88,7 @@ def next_wealth(
     return (1 + interest_rate) * (wealth - consumption) + labor_income + partner
 
 
-def next_health(health: DiscreteState, partner: DiscreteState) -> FloatND:
+def next_health(*, health: DiscreteState, partner: DiscreteState) -> FloatND:
     """Stochastic transition with JIT-calculated markov transition probabilities."""
     return jnp.where(
         health == Health.bad,
@@ -103,6 +106,7 @@ def next_health(health: DiscreteState, partner: DiscreteState) -> FloatND:
 
 
 def next_partner(
+    *,
     period: Period,
     labor_supply: DiscreteAction,
     partner: DiscreteState,
@@ -119,8 +123,8 @@ CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=100, n_points=200)
 
 working_life = _base_working_life.replace(
     states={
-        "health": DiscreteGrid(Health),
-        "partner": DiscreteGrid(PartnerStatus),
+        "health": DiscreteGrid(category_class=Health),
+        "partner": DiscreteGrid(category_class=PartnerStatus),
         "wealth": WEALTH_GRID,
     },
     state_transitions={
@@ -129,7 +133,7 @@ working_life = _base_working_life.replace(
         "wealth": next_wealth,
     },
     actions={
-        "labor_supply": DiscreteGrid(LaborSupply),
+        "labor_supply": DiscreteGrid(category_class=LaborSupply),
         "consumption": CONSUMPTION_GRID,
     },
     functions={
@@ -141,8 +145,8 @@ working_life = _base_working_life.replace(
 
 retirement = _base_retirement.replace(
     states={
-        "health": DiscreteGrid(Health),
-        "partner": DiscreteGrid(PartnerStatus),
+        "health": DiscreteGrid(category_class=Health),
+        "partner": DiscreteGrid(category_class=PartnerStatus),
         "wealth": WEALTH_GRID,
     },
     state_transitions={
@@ -173,6 +177,7 @@ def get_model(n_periods: int) -> Model:
 
 
 def get_params(
+    *,
     n_periods,
     discount_factor=0.95,
     disutility_of_work=0.5,

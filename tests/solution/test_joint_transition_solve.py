@@ -299,7 +299,7 @@ def _bdy_probabilities_with_size(support_size: int) -> Callable[[], FloatND]:
 
 
 def _bdy_next_wealth(
-    wealth: ContinuousState, partner_match: Mapping[str, FloatND | IntND]
+    *, wealth: ContinuousState, partner_match: Mapping[str, FloatND | IntND]
 ) -> FloatND:
     return wealth + partner_match["partner_wealth"]
 
@@ -317,6 +317,7 @@ def _bdy_next_eps_p(
 
 
 def _bdy_couple_utility_f(
+    *,
     wealth: ContinuousState,
     ybar_p: ContinuousState,
     eps_p: DiscreteState,
@@ -333,12 +334,15 @@ def _bdy_couple_utility_f(
 
 
 def _bdy_couple_utility_m(
+    *,
     wealth: ContinuousState,
     ybar_p: ContinuousState,
     eps_p: DiscreteState,
     household_choice: DiscreteAction,
 ) -> FloatND:
-    return 2 * _bdy_couple_utility_f(wealth, ybar_p, eps_p, household_choice)
+    return 2 * _bdy_couple_utility_f(
+        wealth=wealth, ybar_p=ybar_p, eps_p=eps_p, household_choice=household_choice
+    )
 
 
 def _bdy_single_utility(wealth: ContinuousState) -> FloatND:
@@ -403,11 +407,11 @@ def _bdy_model(*, enable_jit: bool, support_size: int = 2) -> Model:
             "couple": Regime(
                 transition=None,
                 active=lambda age: age >= 1,
-                actions={"household_choice": DiscreteGrid(BDYChoice)},
+                actions={"household_choice": DiscreteGrid(category_class=BDYChoice)},
                 states={
                     "wealth": IrregSpacedGrid(points=_BDY_WEALTH_POINTS),
                     "ybar_p": IrregSpacedGrid(points=(-1.0, 1.0)),
-                    "eps_p": DiscreteGrid(BDYEps),
+                    "eps_p": DiscreteGrid(category_class=BDYEps),
                 },
                 functions={
                     "utility": CollectiveUtility(

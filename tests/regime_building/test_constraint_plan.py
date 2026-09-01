@@ -59,7 +59,7 @@ class Work:
     retired: ScalarInt
 
 
-def utility(consumption: ContinuousAction, work: DiscreteAction) -> FloatND:
+def utility(*, consumption: ContinuousAction, work: DiscreteAction) -> FloatND:
     return jnp.log(consumption) + 0.0 * work
 
 
@@ -67,7 +67,7 @@ def terminal_utility(wealth: ContinuousState) -> FloatND:
     return jnp.log(jnp.clip(wealth, 1e-8))
 
 
-def savings(wealth: FloatND, consumption: ContinuousAction) -> FloatND:
+def savings(*, wealth: FloatND, consumption: ContinuousAction) -> FloatND:
     return wealth - consumption
 
 
@@ -92,7 +92,10 @@ def works_or_retires(work: DiscreteAction) -> FloatND:
 def _model(*, solver: OneMarginSolver | GridSearch, constraint: UserFunction) -> Model:
     """Build a one-period model whose saving regime declares `constraint`."""
     saving_regime = ConsumptionSavingsRegime(
-        actions={"consumption": _ACTION_GRID, "work": DiscreteGrid(Work)},
+        actions={
+            "consumption": _ACTION_GRID,
+            "work": DiscreteGrid(category_class=Work),
+        },
         states={"wealth": _WEALTH_GRID},
         state_transitions={"wealth": {"done": next_wealth}},
         constraints={"declared": constraint},

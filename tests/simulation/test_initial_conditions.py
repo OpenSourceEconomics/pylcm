@@ -42,7 +42,7 @@ def model() -> Model:
         active: ScalarInt
         terminal: ScalarInt
 
-    def utility(wealth: ContinuousState, health: DiscreteState) -> FloatND:  # noqa: ARG001
+    def utility(*, wealth: ContinuousState, health: DiscreteState) -> FloatND:  # noqa: ARG001
         return jnp.array(0.0)
 
     def next_regime(period: int) -> ScalarInt:
@@ -59,7 +59,7 @@ def model() -> Model:
         functions={"utility": utility},
         states={
             "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
-            "health": DiscreteGrid(Health),
+            "health": DiscreteGrid(category_class=Health),
         },
         state_transitions={
             "wealth": lambda wealth: wealth,
@@ -105,7 +105,7 @@ def test_build_initial_states_single_regime(model: Model) -> None:
 
 
 def test_validate_initial_conditions_valid_input(
-    model: Model, flat_params: FlatParams
+    *, model: Model, flat_params: FlatParams
 ) -> None:
     """Valid input should not raise."""
     validate_initial_conditions(
@@ -123,7 +123,7 @@ def test_validate_initial_conditions_valid_input(
 
 
 def test_validate_initial_conditions_missing_state(
-    model: Model, flat_params: FlatParams
+    *, model: Model, flat_params: FlatParams
 ) -> None:
     """Missing state should raise InvalidInitialConditionsError."""
     with pytest.raises(
@@ -143,7 +143,7 @@ def test_validate_initial_conditions_missing_state(
 
 
 def test_validate_initial_conditions_extra_state(
-    model: Model, flat_params: FlatParams
+    *, model: Model, flat_params: FlatParams
 ) -> None:
     """Extra state should raise InvalidInitialConditionsError."""
     with pytest.raises(InvalidInitialConditionsError, match="Unknown initial states"):
@@ -163,7 +163,7 @@ def test_validate_initial_conditions_extra_state(
 
 
 def test_validate_initial_conditions_inconsistent_lengths(
-    model: Model, flat_params: FlatParams
+    *, model: Model, flat_params: FlatParams
 ) -> None:
     """Arrays with different lengths should raise InvalidInitialConditionsError."""
     with pytest.raises(InvalidInitialConditionsError, match="same length"):
@@ -182,7 +182,7 @@ def test_validate_initial_conditions_inconsistent_lengths(
 
 
 def test_validate_initial_conditions_invalid_discrete_value(
-    model: Model, flat_params: FlatParams
+    *, model: Model, flat_params: FlatParams
 ) -> None:
     """Invalid discrete state code should raise InvalidInitialConditionsError."""
     with pytest.raises(InvalidInitialConditionsError, match=r"Invalid values.*health"):
@@ -201,7 +201,7 @@ def test_validate_initial_conditions_invalid_discrete_value(
 
 
 def test_validate_initial_conditions_invalid_regime_id(
-    model: Model, flat_params: FlatParams
+    *, model: Model, flat_params: FlatParams
 ) -> None:
     """Invalid regime id should raise InvalidInitialConditionsError."""
     with pytest.raises(InvalidInitialConditionsError, match="Invalid regime"):
@@ -220,7 +220,7 @@ def test_validate_initial_conditions_invalid_regime_id(
 
 
 def test_validate_initial_conditions_invalid_age_values(
-    model: Model, flat_params: FlatParams
+    *, model: Model, flat_params: FlatParams
 ) -> None:
     """Age values not on the grid should raise InvalidInitialConditionsError."""
     with pytest.raises(InvalidInitialConditionsError, match="Invalid age values"):
@@ -247,7 +247,7 @@ def test_validate_initial_conditions_invalid_age_values(
 
 
 def _next_wealth(
-    wealth: ContinuousState, consumption: ContinuousAction
+    *, wealth: ContinuousState, consumption: ContinuousAction
 ) -> ContinuousState:
     return wealth - consumption + 2.0
 
@@ -265,11 +265,11 @@ def _make_constraint_model(wealth_grid) -> Model:
         return jnp.log(consumption)
 
     def borrowing_constraint(
-        consumption: ContinuousAction, wealth: ContinuousState
+        *, consumption: ContinuousAction, wealth: ContinuousState
     ) -> BoolND:
         return consumption <= wealth
 
-    def next_regime(age: float, final_age_alive: float) -> ScalarInt:
+    def next_regime(*, age: float, final_age_alive: float) -> ScalarInt:
         return jnp.where(age >= final_age_alive, RegimeId.dead, RegimeId.working_life)
 
     working_regime = UserRegime(
@@ -415,7 +415,7 @@ def test_irreg_spaced_grid_with_runtime_points():
         )
 
 
-def test_missing_age_error_message(model: Model, flat_params: FlatParams) -> None:
+def test_missing_age_error_message(*, model: Model, flat_params: FlatParams) -> None:
     """Missing 'age' in initial conditions should produce a helpful message."""
     with pytest.raises(
         InvalidInitialConditionsError,
@@ -452,12 +452,12 @@ def _make_constrained_asymmetric_model() -> Model:
         return jnp.log(consumption)
 
     def borrowing_constraint(
-        consumption: ContinuousAction, wealth: ContinuousState
+        *, consumption: ContinuousAction, wealth: ContinuousState
     ) -> BoolND:
         return consumption <= wealth
 
     def next_wealth(
-        wealth: ContinuousState, consumption: ContinuousAction
+        *, wealth: ContinuousState, consumption: ContinuousAction
     ) -> ContinuousState:
         return wealth - consumption + 60.0
 
@@ -513,6 +513,7 @@ def _make_asymmetric_state_model() -> Model:
         dead: ScalarInt
 
     def utility(
+        *,
         wealth: ContinuousState,
         health: DiscreteState,  # noqa: ARG001
     ) -> FloatND:
@@ -525,7 +526,7 @@ def _make_asymmetric_state_model() -> Model:
         functions={"utility": utility},
         states={
             "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
-            "health": DiscreteGrid(Health),
+            "health": DiscreteGrid(category_class=Health),
         },
         state_transitions={
             "wealth": lambda wealth: wealth,

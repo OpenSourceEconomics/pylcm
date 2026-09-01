@@ -27,6 +27,7 @@ class _AR1Process(_ContinuousStochasticProcess):
     @abstractmethod
     def draw_shock(
         self,
+        *,
         params: MappingProxyType[str, ScalarFloat | ScalarInt],
         key: PRNGKeyND,
         current_value: ScalarFloat,
@@ -128,6 +129,7 @@ class TauchenAR1Process(_AR1Process):
 
     def draw_shock(
         self,
+        *,
         params: MappingProxyType[str, ScalarFloat | ScalarInt],
         key: PRNGKeyND,
         current_value: ScalarFloat,
@@ -202,6 +204,7 @@ class RouwenhorstAR1Process(_AR1Process):
 
     def draw_shock(
         self,
+        *,
         params: MappingProxyType[str, ScalarFloat | ScalarInt],
         key: PRNGKeyND,
         current_value: ScalarFloat,
@@ -316,11 +319,12 @@ class TauchenNormalMixtureAR1Process(_AR1Process):
 
     def draw_shock(
         self,
+        *,
         params: MappingProxyType[str, ScalarFloat | ScalarInt],
         key: PRNGKeyND,
         current_value: ScalarFloat,
     ) -> ScalarFloat:
-        key1, key2 = jax.random.split(key)
+        key1, key2 = jax.random.split(key=key)
         component = jax.random.bernoulli(key1, params["p1"])
         normal = jax.random.normal(key2)
         eps = jnp.where(

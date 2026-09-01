@@ -168,9 +168,11 @@ def _value_quotient(
     unit = (jnp.ones_like(endpoint), zero, zero)
     return (
         _select_double_double(
-            at_endpoint, dd_from_difference(endpoint, level), numerator
+            condition=at_endpoint,
+            when=dd_from_difference(endpoint, level),
+            otherwise=numerator,
         ),
-        _select_double_double(at_endpoint, unit, divisor),
+        _select_double_double(condition=at_endpoint, when=unit, otherwise=divisor),
     )
 
 
@@ -232,7 +234,7 @@ def _smallest_finite_exponent(*terms: FloatND) -> IntND:
 
 
 def _select_double_double(
-    condition: BoolND, when: DoubleDouble, otherwise: DoubleDouble
+    *, condition: BoolND, when: DoubleDouble, otherwise: DoubleDouble
 ) -> DoubleDouble:
     """Choose elementwise between two double-doubles, word by word."""
     return (
@@ -242,7 +244,7 @@ def _select_double_double(
     )
 
 
-def _take_column(value: DoubleDouble, index: IntND) -> DoubleDouble:
+def _take_column(*, value: DoubleDouble, index: IntND) -> DoubleDouble:
     """Gather one segment's double-double per query row, word by word."""
     return (
         jnp.take_along_axis(value[0], index, axis=1),
@@ -1083,8 +1085,8 @@ def _envelope_dense(
         margin = certified_quotient_margin(
             left_numerator=numerator,
             left_divisor=divisor,
-            right_numerator=_take_column(numerator, pivot),
-            right_divisor=_take_column(divisor, pivot),
+            right_numerator=_take_column(value=numerator, index=pivot),
+            right_divisor=_take_column(value=divisor, index=pivot),
         )
         contending = _contending_against(
             brackets=brackets,
@@ -1326,7 +1328,7 @@ def _highest_reading_line_over_blocks(
     flat: Float1D,
     dtype: jnp.dtype,
     held: _ComparableLines | None,
-    eligible: Callable[[_BlockTerms, _ComparableLines], BoolND],
+    eligible: Callable[..., BoolND],
 ) -> tuple[_ComparableLines, FloatND]:
     """Keep the highest-reading eligible link across all blocks, as a line.
 
@@ -1338,6 +1340,7 @@ def _highest_reading_line_over_blocks(
     """
     n_query = flat.shape[0]
 
+    # keyword-only-exempt: library-callback=jax.lax.scan
     def step(
         carry: tuple[FloatND, ...], block_and_live: tuple[FloatND, BoolND]
     ) -> tuple[tuple[FloatND, ...], None]:
@@ -1345,7 +1348,7 @@ def _highest_reading_line_over_blocks(
         block, block_live = block_and_live
         terms = _block_query_terms(block=block, live=block_live, flat=flat)
         lines = _block_lines(block=block, live=block_live)
-        candidate = jnp.where(eligible(terms, lines), terms.value, -jnp.inf)
+        candidate = jnp.where(eligible(terms=terms, lines=lines), terms.value, -jnp.inf)
         index = jnp.argmax(candidate, axis=1)[:, None]
         take = jnp.take_along_axis(candidate, index, axis=1)[:, 0] > best_read
         taken = (
@@ -1424,21 +1427,21 @@ def _link_blocks(*, links: _SegmentLinks, block_size: int) -> tuple[FloatND, Boo
     n_segment = links.live.shape[0]
     pad = (-n_segment) % block_size
 
-    def padded(column: FloatND, fill: float) -> FloatND:
+    def padded(*, column: FloatND, fill: float) -> FloatND:
         if pad == 0:
             return column
         return jnp.concatenate([column, jnp.full((pad,), fill, dtype=column.dtype)])
 
     columns = jnp.stack(
         [
-            padded(links.left_grid, 0.0),
-            padded(links.right_grid, 0.0),
-            padded(links.left_value, 0.0),
-            padded(links.right_value, 0.0),
-            padded(links.left_policy, 0.0),
-            padded(links.right_policy, 0.0),
-            padded(links.left_marginal, 0.0),
-            padded(links.right_marginal, 0.0),
+            padded(column=links.left_grid, fill=0.0),
+            padded(column=links.right_grid, fill=0.0),
+            padded(column=links.left_value, fill=0.0),
+            padded(column=links.right_value, fill=0.0),
+            padded(column=links.left_policy, fill=0.0),
+            padded(column=links.right_policy, fill=0.0),
+            padded(column=links.left_marginal, fill=0.0),
+            padded(column=links.right_marginal, fill=0.0),
         ],
         axis=1,
     )
@@ -1502,7 +1505,7 @@ def _envelope_blocked_ordinary(
     blocks, live_blocks = _link_blocks(links=links, block_size=block_size)
 
     def block_best(
-        block: FloatND, block_live: BoolND
+        *, block: FloatND, block_live: BoolND
     ) -> tuple[_OrdinaryRank, tuple[FloatND, ...]]:
         """The block's own winner per query, as its rank and its channels."""
         terms = _block_query_terms(
@@ -1535,12 +1538,15 @@ def _envelope_blocked_ordinary(
             (pick(terms.value), pick(terms.policy), pick(terms.marginal)),
         )
 
+    # keyword-only-exempt: library-callback=jax.lax.scan
     def step(
         carry: tuple[FloatND, ...], block_and_live: tuple[FloatND, BoolND]
     ) -> tuple[tuple[FloatND, ...], None]:
         held = _OrdinaryRank(*carry[:4])
         standing = carry[4:]
-        offered, channels = block_best(*block_and_live)
+        offered, channels = block_best(
+            block=block_and_live[0], block_live=block_and_live[1]
+        )
         decided = jnp.zeros((n_query,), dtype=bool)
         take = jnp.zeros((n_query,), dtype=bool)
         for challenging, holding in zip(offered, held, strict=True):
@@ -1618,7 +1624,7 @@ def _envelope_blocked(
         flat=flat,
         dtype=dtype,
         held=None,
-        eligible=lambda terms, _lines: terms.brackets,
+        eligible=lambda terms, lines: terms.brackets,  # noqa: ARG005
     )
     level = jnp.where(jnp.isfinite(best_read), best_read, 0.0)
     pivot_numerator, pivot_divisor = _value_quotient(
@@ -1647,6 +1653,7 @@ def _envelope_blocked(
             right_divisor=pivot_divisor,
         )
 
+    # keyword-only-exempt: library-callback=jax.lax.scan
     def bounds_step(
         carry: FloatND, block_and_live: tuple[FloatND, BoolND]
     ) -> tuple[FloatND, None]:
@@ -1672,7 +1679,7 @@ def _envelope_blocked(
     )
     certain_lower = running[:, None]
 
-    def block_contending(terms: _BlockTerms, lines: _ComparableLines) -> BoolND:
+    def block_contending(*, terms: _BlockTerms, lines: _ComparableLines) -> BoolND:
         """Which of the block's bracketing links the margins leave in contention."""
         return _contending_against(
             brackets=terms.brackets,
@@ -1697,7 +1704,7 @@ def _envelope_blocked(
             dtype=dtype,
             held=standing,
             eligible=lambda terms, lines, standing=standing: (
-                block_contending(terms, lines)
+                block_contending(terms=terms, lines=lines)
                 & (
                     _sign_against_reference(
                         lines=lines, reference=standing, query=flat[:, None]
@@ -1707,6 +1714,7 @@ def _envelope_blocked(
             ),
         )
 
+    # keyword-only-exempt: library-callback=jax.lax.scan
     def winner_step(
         carry: tuple[_TieBreakKey, FloatND, FloatND, FloatND, BoolND, BoolND],
         block_and_live: tuple[FloatND, BoolND],
@@ -1715,7 +1723,7 @@ def _envelope_blocked(
         block, block_live = block_and_live
         terms = _block_query_terms(block=block, live=block_live, flat=flat)
         lines = _block_lines(block=block, live=block_live)
-        contending = block_contending(terms, lines)
+        contending = block_contending(terms=terms, lines=lines)
         sign = _sign_against_reference(
             lines=lines, reference=reference, query=flat[:, None]
         )

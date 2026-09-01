@@ -24,15 +24,17 @@ _REQUIRES_X64 = pytest.mark.skipif(
 )
 
 
+# keyword-only-exempt: library-callback=jax.jvp
 def _read_pair(x0, x1, v0, v1, q):
     return exact_affine_read(x0=x0, x1=x1, v0=v0, v1=v1, x_query=q)
 
 
+# keyword-only-exempt: library-callback=jax.vmap
 def _read_value(x0, x1, v0, v1, q):
     return _read_pair(x0, x1, v0, v1, q)[0]
 
 
-def _directional_fraction(primals, tangents) -> float:
+def _directional_fraction(*, primals, tangents) -> float:
     x0, x1, v0, v1, q = (Fraction(float(x)) for x in primals)
     dx0, dx1, dv0, dv1, dq = (Fraction(float(x)) for x in tangents)
     width = x1 - x0
@@ -43,7 +45,7 @@ def _directional_fraction(primals, tangents) -> float:
     )
 
 
-def _public_value(dtype, q):
+def _public_value(*, dtype, q):
     value, _, _ = envelope_at_query(
         endog_grid=jnp.asarray([0.0, 1.0], dtype=dtype),
         policy=jnp.asarray([1.0, 3.0], dtype=dtype),
@@ -60,7 +62,7 @@ def _public_value(dtype, q):
 def test_public_certified_envelope_has_fixed_owner_query_derivative(dtype) -> None:
     q = jnp.asarray(0.25, dtype=dtype)
     one = jnp.asarray(1.0, dtype=dtype)
-    primal, tangent = jax.jvp(lambda z: _public_value(dtype, z), (q,), (one,))
+    primal, tangent = jax.jvp(lambda z: _public_value(dtype=dtype, q=z), (q,), (one,))
     np.testing.assert_allclose(np.asarray(primal), np.asarray(0.5, dtype=dtype))
     np.testing.assert_allclose(np.asarray(tangent), np.asarray(2.0, dtype=dtype))
 
@@ -68,7 +70,7 @@ def test_public_certified_envelope_has_fixed_owner_query_derivative(dtype) -> No
 @pytest.mark.parametrize("dtype", _DTYPES)
 def test_public_certified_envelope_supports_forward_over_forward(dtype) -> None:
     q = jnp.asarray(0.25, dtype=dtype)
-    second = jax.jacfwd(jax.jacfwd(lambda z: _public_value(dtype, z)))(q)
+    second = jax.jacfwd(jax.jacfwd(lambda z: _public_value(dtype=dtype, q=z)))(q)
     tolerance = 1e-5 if dtype == jnp.float32 else 1e-12
     np.testing.assert_allclose(np.asarray(second), 0.0, atol=tolerance, rtol=0)
 
@@ -78,7 +80,7 @@ def test_direct_exact_read_all_five_operands_match_fraction_oracle(dtype) -> Non
     primals = tuple(jnp.asarray(x, dtype=dtype) for x in (0.2, 1.3, -2.0, 4.0, 0.7))
     tangents = tuple(jnp.asarray(x, dtype=dtype) for x in (0.1, -0.2, 0.3, -0.4, 0.5))
     (value, status), (value_dot, status_dot) = jax.jvp(_read_pair, primals, tangents)
-    expected = _directional_fraction(primals, tangents)
+    expected = _directional_fraction(primals=primals, tangents=tangents)
     tolerance = 2e-5 if dtype == jnp.float32 else 2e-13
     assert int(status) == 0
     assert np.isfinite(float(value))
@@ -106,8 +108,8 @@ def test_generated_smooth_family_matches_fraction_oracle(dtype) -> None:
     expected = np.asarray(
         [
             _directional_fraction(
-                tuple(np.asarray(x)[i] for x in primals),
-                tuple(np.asarray(x)[i] for x in tangents),
+                primals=tuple(np.asarray(x)[i] for x in primals),
+                tangents=tuple(np.asarray(x)[i] for x in tangents),
             )
             for i in range(64)
         ]
@@ -132,6 +134,7 @@ def test_owner_and_status_have_float0_tangents(*, batched: bool) -> None:
         query = jnp.asarray([[0.5], [0.5]], dtype=dtype)
         live = jnp.ones_like(left, dtype=bool)
 
+        # keyword-only-exempt: library-callback=jax.jvp
         def owner(a, b, c, d, q):
             return exact_query_winner_batched(
                 left_grid=a,
@@ -149,6 +152,7 @@ def test_owner_and_status_have_float0_tangents(*, batched: bool) -> None:
         query = jnp.asarray([0.5], dtype=dtype)
         live = jnp.ones_like(left, dtype=bool)
 
+        # keyword-only-exempt: library-callback=jax.jvp
         def owner(a, b, c, d, q):
             return exact_query_winner(
                 left_grid=a,
@@ -240,6 +244,7 @@ def test_varying_segment_vmap_composes_with_jvp() -> None:
     live = jnp.ones_like(left, dtype=bool)
     query = jnp.asarray([0.5, 0.5])
 
+    # keyword-only-exempt: library-callback=jax.vmap
     def one(a, b, c, d, mask, q):
         return exact_query_winner(
             left_grid=a,
@@ -276,7 +281,7 @@ def test_direct_forward_over_forward_read_is_finite() -> None:
 
 @pytest.mark.parametrize("dtype", _DTYPES)
 @pytest.mark.parametrize("shape", [(), (3,), (2, 3)])
-def test_alternate_shapes_preserve_tangent_shape(dtype, shape) -> None:
+def test_alternate_shapes_preserve_tangent_shape(*, dtype, shape) -> None:
     base = np.ones(shape or (), dtype=np.dtype(dtype))
     primals = tuple(
         jnp.asarray(x, dtype=dtype)
@@ -294,7 +299,7 @@ def test_alternate_shapes_preserve_tangent_shape(dtype, shape) -> None:
 @pytest.mark.parametrize("scale", [2.0**-20, 1.0, 2.0**20])
 @pytest.mark.parametrize("translation", [-1e6, 0.0, 1e6])
 def test_scale_translation_mutations_follow_working_geometry(
-    dtype, scale, translation
+    *, dtype, scale, translation
 ) -> None:
     primals = tuple(
         jnp.asarray(x, dtype=dtype)
@@ -312,7 +317,7 @@ def test_scale_translation_mutations_follow_working_geometry(
     )
     (_, status), (observed, _) = jax.jvp(_read_pair, primals, tangents)
     if bool(np.asarray(primals[1] > primals[0])):
-        expected = _directional_fraction(primals, tangents)
+        expected = _directional_fraction(primals=primals, tangents=tangents)
         tolerance = 1e-3 if dtype == jnp.float32 else 2e-9
         assert int(status) == 0
         np.testing.assert_allclose(
@@ -394,6 +399,7 @@ def test_permuting_unique_segments_preserves_physical_owner_and_float0() -> None
             query,
         )
 
+        # keyword-only-exempt: library-callback=jax.jvp
         def resolve(a, b, c, d, q):
             return exact_query_winner(
                 left_grid=a,
@@ -417,7 +423,7 @@ def test_permuting_unique_segments_preserves_physical_owner_and_float0() -> None
 def test_certified_read_carries_the_slope_in_forward_mode(dtype) -> None:
     """`jax.jacfwd` reports the exact affine slope of the certified read."""
     q = jnp.asarray(0.25, dtype=dtype)
-    observed = jax.jacfwd(lambda z: _public_value(dtype, z))(q)
+    observed = jax.jacfwd(lambda z: _public_value(dtype=dtype, q=z))(q)
     np.testing.assert_allclose(np.asarray(observed), np.asarray(2.0, dtype=dtype))
 
 
@@ -432,4 +438,4 @@ def test_certified_read_refuses_reverse_mode(dtype) -> None:
     """
     q = jnp.asarray(0.25, dtype=dtype)
     with pytest.raises((AssertionError, TypeError, ValueError)):
-        jax.grad(lambda z: _public_value(dtype, z))(q)
+        jax.grad(lambda z: _public_value(dtype=dtype, q=z))(q)

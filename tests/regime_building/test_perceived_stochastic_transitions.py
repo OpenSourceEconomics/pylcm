@@ -51,7 +51,7 @@ class RegimeId:
     last: ScalarInt
 
 
-def utility(good: DiscreteAction, move: DiscreteAction) -> FloatND:
+def utility(*, good: DiscreteAction, move: DiscreteAction) -> FloatND:
     # Flow utility is FLAT in the action (`move` enters with a zero weight, only so that
     # every action is "used"), so the argmax is decided purely by the law that weights
     # next period's V. That is what makes the belief/truth wedge observable in `move`.
@@ -79,8 +79,8 @@ def _next_regime(period):
 
 def _model(law: Any) -> Model:
     common: dict[str, Any] = {
-        "states": {"good": DiscreteGrid(Good)},
-        "actions": {"move": DiscreteGrid(Move)},
+        "states": {"good": DiscreteGrid(category_class=Good)},
+        "actions": {"move": DiscreteGrid(category_class=Move)},
         "functions": {"utility": utility},
     }
     live = Regime(
@@ -197,16 +197,16 @@ def test_markov_and_process_states_coexist():
     """
 
     def utility_with_shock(
-        good: DiscreteAction, move: DiscreteAction, shock: FloatND
+        *, good: DiscreteAction, move: DiscreteAction, shock: FloatND
     ) -> FloatND:
         return 1.0 * good + 0.0 * move + 0.0 * shock
 
     common: dict[str, Any] = {
         "states": {
-            "good": DiscreteGrid(Good),
+            "good": DiscreteGrid(category_class=Good),
             "shock": NormalIIDProcess(n_points=3, gauss_hermite=True),
         },
-        "actions": {"move": DiscreteGrid(Move)},
+        "actions": {"move": DiscreteGrid(category_class=Move)},
         "functions": {"utility": utility_with_shock},
     }
     live = Regime(
@@ -270,13 +270,13 @@ def test_continuation_helper_resolves_from_the_solve_phase():
     def target_actual() -> FloatND:
         return jnp.array(0.0)  # in truth it does not
 
-    def next_good(move: DiscreteAction, stay_target: FloatND) -> FloatND:
+    def next_good(*, move: DiscreteAction, stay_target: FloatND) -> FloatND:
         to_good = jnp.where(move == Move.stay, stay_target, 1.0 - stay_target)
         return _point_mass(to_good)
 
     common: dict[str, Any] = {
-        "states": {"good": DiscreteGrid(Good)},
-        "actions": {"move": DiscreteGrid(Move)},
+        "states": {"good": DiscreteGrid(category_class=Good)},
+        "actions": {"move": DiscreteGrid(category_class=Move)},
         "functions": {
             "utility": utility,
             "stay_target": Phased(solve=target_belief, simulate=target_actual),
@@ -333,8 +333,8 @@ def test_both_phase_variants_get_their_own_metadata_entry():
                 simulate=MarkovTransition(next_good_actual),
             )
         },
-        states={"good": DiscreteGrid(Good)},
-        actions={"move": DiscreteGrid(Move)},
+        states={"good": DiscreteGrid(category_class=Good)},
+        actions={"move": DiscreteGrid(category_class=Move)},
         functions={"utility": utility},
     )
     entries = collect_stochastic_state_transitions(
@@ -352,8 +352,8 @@ def test_bare_law_keeps_its_unqualified_key_and_no_phase():
     live = Regime(
         transition=_next_regime,
         state_transitions={"good": MarkovTransition(next_good_actual)},
-        states={"good": DiscreteGrid(Good)},
-        actions={"move": DiscreteGrid(Move)},
+        states={"good": DiscreteGrid(category_class=Good)},
+        actions={"move": DiscreteGrid(category_class=Move)},
         functions={"utility": utility},
     )
     entries = collect_stochastic_state_transitions(

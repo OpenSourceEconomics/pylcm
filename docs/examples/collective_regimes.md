@@ -27,7 +27,7 @@ couple = Regime(
     active=lambda age: age < 1,
     states={"wage": LinSpacedGrid(start=8.0, stop=40.0, n_points=2)},
     state_transitions={"wage": next_wage},
-    actions={"work": DiscreteGrid(Work)},
+    actions={"work": DiscreteGrid(category_class=Work)},
     functions={
         "utility": CollectiveUtility(
             utilities={"f": utility_f, "m": utility_m},
@@ -70,7 +70,7 @@ action value against that same-period outside option through a
 `ValueDependentConstraint`:
 
 ```python
-def participation_f(Q_f, V_single_f_ref):
+def participation_f(*, Q_f, V_single_f_ref):
     return Q_f >= V_single_f_ref - 0.5
 
 

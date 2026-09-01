@@ -55,7 +55,7 @@ def _owner_policy(*, block_size: int, gap: float) -> float:
 
 @pytest.mark.parametrize("block_size", [0, 1])
 @pytest.mark.parametrize("gap_in_ulp", [1, 2, 4])
-def test_the_higher_branch_owns_a_gap_of_a_few_ulp(gap_in_ulp, block_size):
+def test_the_higher_branch_owns_a_gap_of_a_few_ulp(*, gap_in_ulp, block_size):
     """A branch higher by one ULP owns the query, under either evaluation path."""
     owner = _owner_policy(block_size=block_size, gap=_ulp_gap(gap_in_ulp))
     assert owner == _WINNER_POLICY

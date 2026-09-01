@@ -72,7 +72,7 @@ def test_oracle_winner_is_the_segment_label_not_the_list_index():
         ([0.0, 1.0], [0.0, 0.0], [0.0, np.nan]),  # non-finite segment label
     ],
 )
-def test_oracle_fails_loudly_on_nonfinite_live_input(value, policy, segment_id):
+def test_oracle_fails_loudly_on_nonfinite_live_input(*, value, policy, segment_id):
     """A live candidate with a non-finite value/policy/label raises, not crashes."""
     with pytest.raises(TopologyError):
         exact_envelope(

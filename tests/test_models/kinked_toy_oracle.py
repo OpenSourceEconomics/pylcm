@@ -76,6 +76,7 @@ class RegimeId:
 
 
 def liquid_savings(
+    *,
     wealth: ContinuousState,
     consumption: ContinuousAction,
     illiquid_investment: ContinuousAction,
@@ -96,12 +97,12 @@ def next_wealth(liquid_savings: FloatND) -> ContinuousState:
 
 
 def next_illiquid(
-    illiquid: ContinuousState, illiquid_investment: ContinuousAction
+    *, illiquid: ContinuousState, illiquid_investment: ContinuousAction
 ) -> ContinuousState:
     return illiquid + illiquid_investment
 
 
-def utility(consumption: ContinuousAction, illiquid: ContinuousState) -> FloatND:
+def utility(*, consumption: ContinuousAction, illiquid: ContinuousState) -> FloatND:
     flow = consumption + ILLIQUID_FLOW * illiquid
     return flow ** (1.0 - RISK_AVERSION) / (1.0 - RISK_AVERSION)
 
@@ -111,7 +112,7 @@ def liquid_floor(liquid_savings: FloatND) -> BoolND:
 
 
 def illiquid_floor(
-    illiquid: ContinuousState, illiquid_investment: ContinuousAction
+    *, illiquid: ContinuousState, illiquid_investment: ContinuousAction
 ) -> BoolND:
     return illiquid + illiquid_investment >= 0.0
 
@@ -120,7 +121,7 @@ def positive_consumption(consumption: ContinuousAction) -> BoolND:
     return consumption > 0.05
 
 
-def next_regime(age: int, final_age_alive: float) -> ScalarInt:
+def next_regime(*, age: int, final_age_alive: float) -> ScalarInt:
     return jnp.where(age >= final_age_alive, RegimeId.dead, RegimeId.alive)
 
 
@@ -194,7 +195,7 @@ def _git_sha() -> str:
 
 
 def _interp_next_v(
-    v_next: FloatND, wealth_query: FloatND, illiquid_query: FloatND
+    *, v_next: FloatND, wealth_query: FloatND, illiquid_query: FloatND
 ) -> FloatND:
     """Bilinear interpolation of the next-period `alive` V at a query point.
 
@@ -204,12 +205,12 @@ def _interp_next_v(
     Bellman maximizer independently of the solver's own search.
     """
 
-    def _coord(query: FloatND, lo: float, hi: float, n: int) -> FloatND:
+    def _coord(*, query: FloatND, lo: float, hi: float, n: int) -> FloatND:
         frac = (query - lo) / (hi - lo) * (n - 1)
         return jnp.clip(frac, 0.0, n - 1.0)
 
-    cw = _coord(wealth_query, WEALTH_MIN, WEALTH_MAX, N_X)
-    ci = _coord(illiquid_query, 0.0, ILLIQUID_MAX, N_Z)
+    cw = _coord(query=wealth_query, lo=WEALTH_MIN, hi=WEALTH_MAX, n=N_X)
+    ci = _coord(query=illiquid_query, lo=0.0, hi=ILLIQUID_MAX, n=N_Z)
     w0 = jnp.floor(cw).astype(jnp.int32)
     i0 = jnp.floor(ci).astype(jnp.int32)
     w1 = jnp.clip(w0 + 1, 0, N_X - 1)
@@ -245,7 +246,9 @@ def _recompute_corner_maximizer(v_next_alive: FloatND) -> dict[str, float]:
     next_z = illiquid + iz_mesh
     flow = c_mesh + ILLIQUID_FLOW * illiquid
     flow_utility = flow ** (1.0 - RISK_AVERSION) / (1.0 - RISK_AVERSION)
-    continuation = _interp_next_v(v_next_alive, next_w, next_z)
+    continuation = _interp_next_v(
+        v_next=v_next_alive, wealth_query=next_w, illiquid_query=next_z
+    )
     feasible = (savings >= LIQUID_CREDIT_LIMIT) & (next_z >= 0.0) & (c_mesh > 0.05)
     objective = jnp.where(
         feasible, flow_utility + DISCOUNT_FACTOR * continuation, -jnp.inf

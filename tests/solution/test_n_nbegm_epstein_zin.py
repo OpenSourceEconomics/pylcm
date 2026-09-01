@@ -63,17 +63,18 @@ class _RegimeId:
 
 
 def _new_illiquid(
-    illiquid: ContinuousState, illiquid_investment: ContinuousAction
+    *, illiquid: ContinuousState, illiquid_investment: ContinuousAction
 ) -> ContinuousState:
     """The durable stock chosen this period, `s' = Z + Iz`."""
     return illiquid + illiquid_investment
 
 
-def _credited(illiquid: ContinuousState, new_illiquid: ContinuousState) -> FloatND:
+def _credited(*, illiquid: ContinuousState, new_illiquid: ContinuousState) -> FloatND:
     return new_illiquid - illiquid
 
 
 def _resources(
+    *,
     wealth: ContinuousState,
     illiquid: ContinuousState,
     new_illiquid: ContinuousState,
@@ -85,7 +86,7 @@ def _resources(
     )
 
 
-def _liquid_savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
+def _liquid_savings(*, resources: FloatND, consumption: ContinuousAction) -> FloatND:
     return resources - consumption
 
 
@@ -97,21 +98,23 @@ def _durable_transition(new_illiquid: ContinuousState) -> ContinuousState:
     return new_illiquid
 
 
-def _utility(consumption: ContinuousAction, new_illiquid: ContinuousState) -> FloatND:
+def _utility(
+    *, consumption: ContinuousAction, new_illiquid: ContinuousState
+) -> FloatND:
     """Cobb-Douglas composite of consumption and the chosen durable service."""
     return consumption**_PHI * new_illiquid ** (1.0 - _PHI)
 
 
-def _bequest(wealth: ContinuousState, illiquid: ContinuousState) -> FloatND:
+def _bequest(*, wealth: ContinuousState, illiquid: ContinuousState) -> FloatND:
     """Strictly positive terminal estate over both stocks."""
     return jnp.sqrt(wealth + illiquid + 1.0)
 
 
-def _prob_alive(age: int, final_age_alive: float) -> FloatND:
+def _prob_alive(*, age: int, final_age_alive: float) -> FloatND:
     return jnp.where(age >= final_age_alive, 0.0, _SURVIVAL)
 
 
-def _prob_dead(age: int, final_age_alive: float) -> FloatND:
+def _prob_dead(*, age: int, final_age_alive: float) -> FloatND:
     return jnp.where(age >= final_age_alive, 1.0, 1.0 - _SURVIVAL)
 
 
@@ -123,7 +126,9 @@ def _budget_feasible(liquid_savings: FloatND) -> FloatND:
     return liquid_savings >= 0.0
 
 
-def _consumption_feasible(resources: FloatND, consumption: ContinuousAction) -> FloatND:
+def _consumption_feasible(
+    *, resources: FloatND, consumption: ContinuousAction
+) -> FloatND:
     return consumption <= resources
 
 

@@ -60,7 +60,7 @@ def _probability_dead(age: float) -> FloatND:
 
 
 def _utility(
-    wealth: ContinuousState, wage_shock: FloatND, work: DiscreteAction
+    *, wealth: ContinuousState, wage_shock: FloatND, work: DiscreteAction
 ) -> FloatND:
     """Working pays the period's own shock; leisure pays a fixed outside option."""
     return jnp.where(work == 1, wage_shock, OUTSIDE_OPTION) + 0.0 * wealth
@@ -85,7 +85,7 @@ def _build_model(*, fold: bool) -> Model:
             ),
         },
         state_transitions={"wealth": fixed_transition("wealth")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility},
     )
     dead = Regime(

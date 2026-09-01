@@ -197,7 +197,7 @@ def _prob_one(age: FloatND) -> FloatND:
     return jnp.ones_like(age, dtype=float)
 
 
-def _u_zero_collective(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _u_zero_collective(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     return 0.0 * wage * work
 
 
@@ -238,7 +238,7 @@ def _make_shared_fallback_regimes() -> dict[str, Regime]:
         active=lambda age: age < 1,
         states={"wage": _WAGE_3},
         state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _u_zero_collective, "m": _u_zero_collective}
@@ -249,7 +249,7 @@ def _make_shared_fallback_regimes() -> dict[str, Regime]:
         transition=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE_3},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _u_zero_collective, "m": _u_zero_collective}
@@ -399,12 +399,12 @@ def test_a_singleton_sources_sole_leg_answers_for_every_row():
 # `value` column.
 
 
-def _u_couple_f(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _u_couple_f(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     consumption = wage * work
     return consumption + 30.0 * (1.0 - work)
 
 
-def _u_couple_m(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _u_couple_m(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     consumption = wage * work
     return 2.0 * consumption
 
@@ -422,7 +422,7 @@ def _make_all_collective_regimes() -> dict[str, Regime]:
         active=lambda age: age < 1,
         states={"wage": _WAGE_GRID_2},
         state_transitions={"wage": _next_wage},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(utilities={"f": _u_couple_f, "m": _u_couple_m})
         },
@@ -431,7 +431,7 @@ def _make_all_collective_regimes() -> dict[str, Regime]:
         transition=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE_GRID_2},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(utilities={"f": _u_couple_f, "m": _u_couple_m})
         },
@@ -521,7 +521,7 @@ def _u_stateless_m(work: DiscreteAction) -> FloatND:
 def _make_stateless_collective_regime() -> dict[str, Regime]:
     regime = Regime(
         transition=None,
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _u_stateless_f, "m": _u_stateless_m}

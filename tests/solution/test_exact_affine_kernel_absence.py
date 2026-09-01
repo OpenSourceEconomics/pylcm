@@ -51,7 +51,7 @@ def test_construction_on_a_kernelless_platform_reports_the_absence_as_such(
     assert not excinfo.errisinstance(ModelInitializationError)
 
 
-def test_current_cpu_backend_requires_the_cpu_library_file(monkeypatch, tmp_path):
+def test_current_cpu_backend_requires_the_cpu_library_file(*, monkeypatch, tmp_path):
     """The skip predicate is false until the selected CPU kernel file exists."""
     library = tmp_path / "libcertified_affine_ffi_cpu.so"
     monkeypatch.setattr(ffi, "_CPU_LIBRARY", library)
@@ -63,7 +63,7 @@ def test_current_cpu_backend_requires_the_cpu_library_file(monkeypatch, tmp_path
 
 
 def test_current_gpu_backend_requires_both_cpu_and_cuda_library_files(
-    monkeypatch, tmp_path
+    *, monkeypatch, tmp_path
 ):
     """A CPU library alone cannot satisfy an exact verdict on a GPU backend."""
     cpu_library = tmp_path / "libcertified_affine_ffi_cpu.so"
@@ -116,7 +116,7 @@ def test_availability_is_false_where_the_kernel_file_is_absent(monkeypatch):
 
 
 def test_a_present_kernel_missing_a_target_fails_as_a_broken_build(
-    monkeypatch, tmp_path
+    *, monkeypatch, tmp_path
 ):
     """A stale shared object is present, not skippable, and names the rebuild."""
     library = tmp_path / "libcertified_affine_ffi_cpu.so"
@@ -138,7 +138,7 @@ def test_a_present_kernel_missing_a_target_fails_as_a_broken_build(
 
 
 def test_a_present_unloadable_kernel_is_unavailable_but_not_absent(
-    monkeypatch, tmp_path
+    *, monkeypatch, tmp_path
 ):
     """Load failure remains a hard build failure rather than a skip condition."""
     library = tmp_path / "libcertified_affine_ffi_cpu.so"
@@ -171,7 +171,7 @@ def test_a_platform_with_no_kernel_file_reports_it_is_not_built(monkeypatch):
     assert ffi.kernel_built() is False
 
 
-def test_a_present_kernel_counts_as_built_before_it_is_loaded(monkeypatch, tmp_path):
+def test_a_present_kernel_counts_as_built_before_it_is_loaded(*, monkeypatch, tmp_path):
     """Presence alone distinguishes a potentially broken build from absence."""
     library = tmp_path / "libcertified_affine_ffi_cpu.so"
     library.touch()
@@ -227,7 +227,7 @@ def _f(value):
     ],
     ids=["compare", "read", "handover", "cell_hull"],
 )
-def test_every_entry_point_reports_a_missing_kernel(monkeypatch, request_a_verdict):
+def test_every_entry_point_reports_a_missing_kernel(*, monkeypatch, request_a_verdict):
     """No exact entry point reaches XLA without a kernel behind it."""
     monkeypatch.setattr(ffi, "_CPU_LIBRARY", Path("/nowhere/libcertified.so"))
     monkeypatch.setattr(ffi, "_REGISTERED", False)
@@ -236,7 +236,7 @@ def test_every_entry_point_reports_a_missing_kernel(monkeypatch, request_a_verdi
         request_a_verdict()
 
 
-def test_registration_is_reported_as_done_only_once(monkeypatch, tmp_path):
+def test_registration_is_reported_as_done_only_once(*, monkeypatch, tmp_path):
     """A second verdict request does not re-register existing targets."""
     library = tmp_path / "libcertified_affine_ffi_cpu.so"
     library.touch()

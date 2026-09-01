@@ -114,7 +114,7 @@ def test_implies_is_vacuously_true_where_the_premise_fails() -> None:
 def test_an_opaque_callable_becomes_a_condition_that_still_evaluates() -> None:
     """A bare predicate stays legal and keeps its behaviour."""
 
-    def feasible(consumption: FloatND, wealth: FloatND) -> FloatND:
+    def feasible(*, consumption: FloatND, wealth: FloatND) -> FloatND:
         return consumption <= wealth
 
     condition = Condition.from_callable(feasible)
@@ -129,7 +129,7 @@ def test_an_opaque_callable_becomes_a_condition_that_still_evaluates() -> None:
 def test_an_opaque_callable_reports_its_signature_as_dependencies() -> None:
     """Its parameter names are what a solver must supply."""
 
-    def feasible(consumption: FloatND, wealth: FloatND) -> FloatND:
+    def feasible(*, consumption: FloatND, wealth: FloatND) -> FloatND:
         return consumption <= wealth
 
     assert Condition.from_callable(feasible).dependencies == frozenset(
@@ -140,7 +140,7 @@ def test_an_opaque_callable_reports_its_signature_as_dependencies() -> None:
 def test_an_opaque_condition_exposes_no_structure() -> None:
     """A solver cannot mistake an opaque predicate for a structured one."""
 
-    def feasible(consumption: FloatND, wealth: FloatND) -> FloatND:
+    def feasible(*, consumption: FloatND, wealth: FloatND) -> FloatND:
         return consumption <= wealth
 
     assert Condition.from_callable(feasible).is_opaque

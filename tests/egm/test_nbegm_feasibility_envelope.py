@@ -24,7 +24,7 @@ from _lcm.egm.upper_envelope.query import envelope_at_query
     ],
 )
 def test_feasibility_partition_owns_equality_from_the_comparison(
-    feasible_side, includes_boundary, expected_value
+    *, feasible_side, includes_boundary, expected_value
 ) -> None:
     """All four inequality forms give the threshold to exactly one side."""
     boundary = jnp.float32(4.0)
@@ -138,6 +138,7 @@ def test_infeasible_queries_mask_all_published_channels_together() -> None:
 
 @pytest.mark.parametrize("fixture_name", ["x64_enabled", "x64_disabled"])
 def test_feasibility_envelope_supports_both_precisions_jit_and_vmap(
+    *,
     request: pytest.FixtureRequest,
     fixture_name: str,
 ) -> None:

@@ -18,7 +18,7 @@ def _support(match_location: float) -> dict[str, FloatND]:
     return {"wealth": jnp.asarray([match_location, match_location + 1])}
 
 
-def _solve_probabilities(match_probability: float, age: float) -> FloatND:  # noqa: ARG001
+def _solve_probabilities(*, match_probability: float, age: float) -> FloatND:  # noqa: ARG001
     return jnp.asarray([match_probability, 1 - match_probability])
 
 
@@ -26,7 +26,7 @@ def _simulate_probabilities(realized_match_probability: float) -> FloatND:
     return jnp.asarray([realized_match_probability, 1 - realized_match_probability])
 
 
-def _next_wealth(match: dict[str, FloatND], wealth_shift: float) -> FloatND:
+def _next_wealth(*, match: dict[str, FloatND], wealth_shift: float) -> FloatND:
     return match["wealth"] + wealth_shift
 
 
@@ -54,7 +54,7 @@ def test_joint_kernel_params_follow_role_and_output_ownership() -> None:
         },
     )
 
-    template = cast("Any", create_regime_params_template(regime))
+    template = cast("Any", create_regime_params_template(user_regime=regime))
 
     assert template["target"]["match"]["support"] == {"match_location": "float"}
     assert template["target"]["match"]["probabilities"] == {

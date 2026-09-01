@@ -61,7 +61,7 @@ class _RegimeId:
     dead: ScalarInt
 
 
-def _utility(consumption: ContinuousAction, health: ContinuousState) -> FloatND:
+def _utility(*, consumption: ContinuousAction, health: ContinuousState) -> FloatND:
     """Flow scaled by the IID node — positive, and single-power in consumption."""
     return consumption * jnp.exp(health)
 
@@ -70,11 +70,11 @@ def _resources(liquid: ContinuousState) -> FloatND:
     return liquid + _BASE_INCOME
 
 
-def _savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
+def _savings(*, resources: FloatND, consumption: ContinuousAction) -> FloatND:
     return resources - consumption
 
 
-def _feasible(resources: FloatND, consumption: ContinuousAction) -> FloatND:
+def _feasible(*, resources: FloatND, consumption: ContinuousAction) -> FloatND:
     return consumption <= resources
 
 
@@ -86,7 +86,7 @@ def _terminal_value(liquid: ContinuousState) -> FloatND:
     return jnp.sqrt(liquid + 1.0)
 
 
-def _next_regime(age: int, final_age_alive: float) -> ScalarInt:
+def _next_regime(*, age: int, final_age_alive: float) -> ScalarInt:
     return jnp.where(age >= final_age_alive, _RegimeId.dead, _RegimeId.alive)
 
 

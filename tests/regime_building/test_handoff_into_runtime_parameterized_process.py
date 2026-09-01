@@ -55,7 +55,7 @@ def _reset_shock(shock: ScalarFloat) -> ScalarFloat:
     return jnp.float32(1)
 
 
-def _build(source_states, source_state_transitions) -> Model:
+def _build(*, source_states, source_state_transitions) -> Model:
     return Model(
         regimes={
             "source": Regime(
@@ -80,8 +80,8 @@ def test_handing_an_ordinary_grid_to_a_runtime_process_is_rejected() -> None:
     """A source grid shadowing a runtime-parameterized target process is rejected."""
     with pytest.raises(ModelInitializationError):
         _build(
-            {"shock": LinSpacedGrid(start=0.0, stop=2.0, n_points=3)},
-            {"shock": _reset_shock},
+            source_states={"shock": LinSpacedGrid(start=0.0, stop=2.0, n_points=3)},
+            source_state_transitions={"shock": _reset_shock},
         )
 
 
@@ -89,8 +89,8 @@ def test_the_rejection_names_the_process_and_the_target() -> None:
     """The message names the state and the regime whose law is supplied at runtime."""
     with pytest.raises(ModelInitializationError) as excinfo:
         _build(
-            {"shock": LinSpacedGrid(start=0.0, stop=2.0, n_points=3)},
-            {"shock": _reset_shock},
+            source_states={"shock": LinSpacedGrid(start=0.0, stop=2.0, n_points=3)},
+            source_state_transitions={"shock": _reset_shock},
         )
 
     message = str(excinfo.value)
@@ -104,7 +104,9 @@ def test_carrying_the_same_runtime_process_still_solves() -> None:
     Utility is the source's own shock and the continuation is the target's process
     mean of one, so `V = shock + 1` across the process's nodes at zero, one and two.
     """
-    model = _build({"shock": _RUNTIME_PROCESS}, {})
+    model = _build(
+        source_states={"shock": _RUNTIME_PROCESS}, source_state_transitions={}
+    )
 
     V = model.solve(params=_PARAMS, log_level="off")
 

@@ -95,7 +95,7 @@ class _Reads:
         self.min_exponent = np.inf
 
 
-def _quotient_exponent(numerator: FloatND, width: FloatND) -> FloatND:
+def _quotient_exponent(*, numerator: FloatND, width: FloatND) -> FloatND:
     """Lower-bound `log2|numerator / width|` without ever forming the quotient.
 
     `frexp` splits each operand into a mantissa in [0.5, 1) and an exponent, so the
@@ -110,6 +110,7 @@ def _quotient_exponent(numerator: FloatND, width: FloatND) -> FloatND:
 
 @pytest.fixture(name="instrumented_reads")
 def _fixture_instrumented_reads(
+    *,
     monkeypatch: pytest.MonkeyPatch,
     x64_disabled: None,  # noqa: ARG001
 ) -> _Reads:
@@ -129,7 +130,9 @@ def _fixture_instrumented_reads(
         width = x1 - x0
         usable = jnp.isfinite(numerator) & jnp.isfinite(width) & (width != 0.0)
         usable &= numerator != 0.0
-        exponent = jnp.where(usable, _quotient_exponent(numerator, width), jnp.int32(0))
+        exponent = jnp.where(
+            usable, _quotient_exponent(numerator=numerator, width=width), jnp.int32(0)
+        )
         # One scalar per call, not one array. An earlier version shipped every cell
         # to the host and took 59 minutes; the bound it produced was the same.
         jax.debug.callback(observe, jnp.min(exponent))

@@ -25,7 +25,9 @@ def test_limit_from_below_stays_below_the_cliff_when_no_node_lies_between():
     the branch above `0.7`.
     """
     below = float(
-        _bounded_limit_below(GRID, VALUES, limit=0.7, prev_limit=0.3, n=GRID.shape[0])
+        _bounded_limit_below(
+            grid=GRID, values=VALUES, limit=0.7, prev_limit=0.3, n=GRID.shape[0]
+        )
     )
     np.testing.assert_allclose(below, 0.0, atol=1e-12)
 
@@ -33,7 +35,9 @@ def test_limit_from_below_stays_below_the_cliff_when_no_node_lies_between():
 def test_limit_from_above_stays_above_the_cliff_when_no_node_lies_between():
     """With `(0.3, 0.7)` empty, the limit above `0.3` reads the node at `1.0`."""
     above = float(
-        _bounded_limit_above(GRID, VALUES, limit=0.3, next_limit=0.7, n=GRID.shape[0])
+        _bounded_limit_above(
+            grid=GRID, values=VALUES, limit=0.3, next_limit=0.7, n=GRID.shape[0]
+        )
     )
     np.testing.assert_allclose(above, 1.0, atol=1e-12)
 
@@ -45,7 +49,9 @@ def test_limit_from_below_extrapolates_from_two_in_interval_nodes():
     `9.0`, so the limit at `3.5` extends that secant to `11.5`.
     """
     below = float(
-        _bounded_limit_below(GRID, VALUES, limit=3.5, prev_limit=0.5, n=GRID.shape[0])
+        _bounded_limit_below(
+            grid=GRID, values=VALUES, limit=3.5, prev_limit=0.5, n=GRID.shape[0]
+        )
     )
     np.testing.assert_allclose(below, 11.5, atol=1e-12)
 
@@ -57,6 +63,8 @@ def test_limit_from_above_extrapolates_from_two_in_interval_nodes():
     `4.0`; extending that secant back to `0.5` gives `-0.5`.
     """
     above = float(
-        _bounded_limit_above(GRID, VALUES, limit=0.5, next_limit=3.5, n=GRID.shape[0])
+        _bounded_limit_above(
+            grid=GRID, values=VALUES, limit=0.5, next_limit=3.5, n=GRID.shape[0]
+        )
     )
     np.testing.assert_allclose(above, -0.5, atol=1e-12)

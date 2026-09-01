@@ -49,24 +49,24 @@ class _RegimeId:
     dead: ScalarInt
 
 
-def _utility(consumption: ContinuousAction, service_level: float) -> FloatND:
+def _utility(*, consumption: ContinuousAction, service_level: float) -> FloatND:
     """Cobb-Douglas composite of consumption and a fixed service — stays positive."""
     return consumption**_PHI * service_level ** (1.0 - _PHI)
 
 
-def _resources(liquid: ContinuousState, base_income: float) -> FloatND:
+def _resources(*, liquid: ContinuousState, base_income: float) -> FloatND:
     return liquid + base_income
 
 
-def _savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
+def _savings(*, resources: FloatND, consumption: ContinuousAction) -> FloatND:
     return resources - consumption
 
 
-def _feasible(resources: FloatND, consumption: ContinuousAction) -> FloatND:
+def _feasible(*, resources: FloatND, consumption: ContinuousAction) -> FloatND:
     return consumption <= resources
 
 
-def _next_liquid(savings: FloatND, income: ContinuousState) -> ContinuousState:
+def _next_liquid(*, savings: FloatND, income: ContinuousState) -> ContinuousState:
     return (1.0 + _RETURN) * savings + _INCOME_SCALE * jnp.exp(income)
 
 
@@ -74,11 +74,11 @@ def _bequest(liquid: ContinuousState) -> FloatND:
     return jnp.sqrt(liquid + 1.0)
 
 
-def _prob_alive(age: int, final_age_alive: float) -> FloatND:
+def _prob_alive(*, age: int, final_age_alive: float) -> FloatND:
     return jnp.where(age >= final_age_alive, 0.0, _SURVIVAL)
 
 
-def _prob_dead(age: int, final_age_alive: float) -> FloatND:
+def _prob_dead(*, age: int, final_age_alive: float) -> FloatND:
     return jnp.where(age >= final_age_alive, 1.0, 1.0 - _SURVIVAL)
 
 

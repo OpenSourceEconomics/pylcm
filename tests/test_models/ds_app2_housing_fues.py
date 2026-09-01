@@ -131,7 +131,7 @@ def _retirement_income(retirement_pension: float) -> FloatND:
     return jnp.asarray(retirement_pension)
 
 
-def savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
+def savings(*, resources: FloatND, consumption: ContinuousAction) -> FloatND:
     """Inner post-decision liquid balance `a' = resources - c`."""
     return resources - consumption
 
@@ -151,6 +151,7 @@ def next_housing(housing_choice: DiscreteAction) -> DiscreteState:
 
 
 def utility(
+    *,
     consumption: ContinuousAction,
     serviced_housing: FloatND,
     alpha: float,
@@ -172,7 +173,7 @@ def utility(
 
 
 def inverse_marginal_utility(
-    marginal_continuation: FloatND, alpha: float, gamma_c: float
+    *, marginal_continuation: FloatND, alpha: float, gamma_c: float
 ) -> FloatND:
     """Invert the consumption marginal utility `u'(c) = alpha*c^{-gamma_C}`.
 
@@ -307,6 +308,7 @@ def build_model(  # noqa: C901
         return stock_levels[housing_choice]
 
     def housing_cost(
+        *,
         housing: DiscreteState,
         housing_choice: DiscreteAction,
         tau: float,
@@ -328,6 +330,7 @@ def build_model(  # noqa: C901
         return jnp.where(housing_choice == housing, 0.0, round_trip_cost)
 
     def resources(
+        *,
         liquid: ContinuousState,
         housing_cost: FloatND,
         income: FloatND,
@@ -342,6 +345,7 @@ def build_model(  # noqa: C901
         return (1.0 + return_liquid) * liquid + income - housing_cost
 
     def next_liquid_brute(
+        *,
         liquid: ContinuousState,
         housing_cost: FloatND,
         income: FloatND,
@@ -358,6 +362,7 @@ def build_model(  # noqa: C901
         return (1.0 + return_liquid) * liquid + income - housing_cost - consumption
 
     def borrowing_constraint(
+        *,
         liquid: ContinuousState,
         housing_cost: FloatND,
         income: FloatND,
@@ -370,6 +375,7 @@ def build_model(  # noqa: C901
         ) >= 0.0
 
     def bequest(
+        *,
         liquid: ContinuousState,
         housing: DiscreteState,
         return_liquid: float,
@@ -379,7 +385,7 @@ def build_model(  # noqa: C901
         estate = (1.0 + return_liquid) * liquid + stock_levels[housing]
         return theta_bar * estate
 
-    housing_grid = DiscreteGrid(housing_class)
+    housing_grid = DiscreteGrid(category_class=housing_class)
     dead = UserRegime(
         transition=None,
         active=lambda age, fa=final_age: age >= fa,

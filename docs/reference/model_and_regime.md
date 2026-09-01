@@ -115,9 +115,10 @@ or `Model` construction, before solve.
 
 ## Derived categoricals
 
-Use `derived_categoricals={"name": DiscreteGrid(Category)}` when a parameter is indexed
-by a categorical function output rather than by a state or action. The function must
-return an integer code, not a Boolean, because it is used as an array index under JIT.
+Use `derived_categoricals={"name": DiscreteGrid(category_class=Category)}` when a
+parameter is indexed by a categorical function output rather than by a state or action.
+The function must return an integer code, not a Boolean, because it is used as an array
+index under JIT.
 
 ## Parameter ownership
 

@@ -47,16 +47,16 @@ class BonusChoice:
 
 
 def _bonus_utility(
-    consumption: ContinuousAction, take_bonus: DiscreteAction
+    *, consumption: ContinuousAction, take_bonus: DiscreteAction
 ) -> FloatND:
     return jnp.log(consumption) - _EFFORT_COST * take_bonus
 
 
-def _bonus_resources(wealth: ContinuousState, take_bonus: DiscreteAction) -> FloatND:
+def _bonus_resources(*, wealth: ContinuousState, take_bonus: DiscreteAction) -> FloatND:
     return wealth + _BONUS * take_bonus
 
 
-def _savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
+def _savings(*, resources: FloatND, consumption: ContinuousAction) -> FloatND:
     return resources - consumption
 
 
@@ -64,7 +64,7 @@ def _inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
     return 1.0 / marginal_continuation
 
 
-def _bequest_utility(wealth: ContinuousState, age: float) -> FloatND:
+def _bequest_utility(*, wealth: ContinuousState, age: float) -> FloatND:
     return (age / 50.0) * jnp.log(wealth)
 
 
@@ -76,7 +76,7 @@ def _bonus_model() -> Model:
         liquid=dataclasses.replace(dcegm_retirement.liquid, resources="resources"),
         actions={
             "consumption": dcegm_retirement.actions["consumption"],
-            "take_bonus": DiscreteGrid(BonusChoice),
+            "take_bonus": DiscreteGrid(category_class=BonusChoice),
         },
         functions={
             "utility": _bonus_utility,
@@ -105,7 +105,7 @@ def test_pointwise_canonical_q_at_the_grid_argmax_action_reproduces_its_value():
     pointwise could not be compared with the grid winner.
     """
     model = _bonus_model()
-    params = get_retirement_only_params(2, discount_factor=_DISCOUNT_FACTOR)
+    params = get_retirement_only_params(n_periods=2, discount_factor=_DISCOUNT_FACTOR)
     period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
 
     regime = model._regimes["retirement"]
@@ -170,7 +170,7 @@ def test_off_grid_replacement_never_scores_below_the_grid_pair():
     return a pair the finite-grid decision would have beaten.
     """
     model = _bonus_model()
-    params = get_retirement_only_params(2, discount_factor=_DISCOUNT_FACTOR)
+    params = get_retirement_only_params(n_periods=2, discount_factor=_DISCOUNT_FACTOR)
     off_grid_wealth = jnp.asarray([12.0, 37.5, 88.25, 210.0])
     n_subjects = off_grid_wealth.shape[0]
 

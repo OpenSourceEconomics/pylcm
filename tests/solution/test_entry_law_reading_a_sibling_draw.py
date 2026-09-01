@@ -70,7 +70,7 @@ def _income_from_helper(scaled_draw: ScalarFloat) -> ScalarFloat:
     return scaled_draw
 
 
-def _income_plus_shock(income: ScalarFloat, shock: ScalarFloat) -> ScalarFloat:
+def _income_plus_shock(*, income: ScalarFloat, shock: ScalarFloat) -> ScalarFloat:
     return income + shock
 
 
@@ -132,7 +132,7 @@ def _utility_reading_the_noise(noise: ScalarFloat) -> ScalarFloat:
 
 
 def _wealth_and_shock(
-    wealth: ScalarFloat, shock: ScalarFloat, noise: ScalarFloat
+    *, wealth: ScalarFloat, shock: ScalarFloat, noise: ScalarFloat
 ) -> ScalarFloat:
     return wealth + shock + 0.0 * noise
 
@@ -198,7 +198,7 @@ def _income_between_two_nodes(next_shock: ContinuousState) -> ScalarFloat:
     return next_shock + 0.5
 
 
-def _income_only(income: ScalarFloat, shock: ScalarFloat) -> ScalarFloat:
+def _income_only(*, income: ScalarFloat, shock: ScalarFloat) -> ScalarFloat:
     return income + 0.0 * shock
 
 
@@ -265,7 +265,7 @@ def _health_probs_from_a_draw(next_shock: ContinuousState) -> FloatND:
     return jnp.stack([1.0 - next_shock / 4.0, next_shock / 4.0])
 
 
-def _health_and_shock(health: ScalarInt, shock: ScalarFloat) -> ScalarFloat:
+def _health_and_shock(*, health: ScalarInt, shock: ScalarFloat) -> ScalarFloat:
     return health + shock
 
 
@@ -289,7 +289,10 @@ def test_a_draw_conditioned_on_a_sibling_draw_is_rejected() -> None:
                 ),
                 "target": Regime(
                     transition=None,
-                    states={"health": DiscreteGrid(Health), "shock": _THREE_NODES},
+                    states={
+                        "health": DiscreteGrid(category_class=Health),
+                        "shock": _THREE_NODES,
+                    },
                     functions={"utility": _health_and_shock},
                 ),
             },

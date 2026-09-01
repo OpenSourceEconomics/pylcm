@@ -24,8 +24,8 @@ _SEED = 42
 
 def _simulate(shock_type):
     model = get_model(
-        N_PERIODS,
-        shock_type,
+        n_periods=N_PERIODS,
+        shock_type=shock_type,
         wealth_grid_type="log",
         wealth_start=0.5,
         wealth_stop=50.0,
@@ -33,7 +33,7 @@ def _simulate(shock_type):
         consumption_n_points=20,
     )
     params = get_params(
-        shock_type,
+        shock_type=shock_type,
         sigma=SIGMA_EPS,
         rho=RHO,
         interest_rate=R,
@@ -58,8 +58,8 @@ def _simulate(shock_type):
 def test_model_solves(shock_type):
     """Model solves without error."""
     model = get_model(
-        N_PERIODS,
-        shock_type,
+        n_periods=N_PERIODS,
+        shock_type=shock_type,
         wealth_grid_type="log",
         wealth_start=0.5,
         wealth_stop=50.0,
@@ -67,7 +67,7 @@ def test_model_solves(shock_type):
         consumption_n_points=20,
     )
     params = get_params(
-        shock_type,
+        shock_type=shock_type,
         sigma=SIGMA_EPS,
         rho=RHO,
         interest_rate=R,

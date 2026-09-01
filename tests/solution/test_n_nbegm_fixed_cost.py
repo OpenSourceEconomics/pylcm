@@ -188,7 +188,7 @@ def test_zero_width_support_is_rejected() -> None:
     [(-2.0, "-2"), (float("nan"), "nan"), (float("inf"), "inf")],
 )
 def test_scale_outside_the_supported_range_is_rejected_before_the_solve(
-    level: float, reported: str
+    *, level: float, reported: str
 ) -> None:
     """Reject negative and nonfinite scales before compiling the solve."""
     aggregator = UniformObservedFixedCost(

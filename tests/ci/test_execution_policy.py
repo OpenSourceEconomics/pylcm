@@ -17,9 +17,9 @@ def test_an_unmarked_test_is_owned_by_the_cpu_pr_lane():
     """Cheap tests run once on CPU instead of being replayed on every GPU."""
     contract = ExecutionContract()
 
-    assert classify(contract, profile=Profile.CPU, policy=Policy.PR).selected
+    assert classify(contract=contract, profile=Profile.CPU, policy=Policy.PR).selected
     assert classify(
-        contract, profile=Profile.GPU_SMALL, policy=Policy.PR
+        contract=contract, profile=Profile.GPU_SMALL, policy=Policy.PR
     ).matrix_deselected
 
 
@@ -32,16 +32,22 @@ def test_representative_precision_is_fp64_on_cpu_and_fp32_on_small_gpu():
     )
 
     assert classify(
-        cpu_contract, profile=Profile.CPU, policy=Policy.PR, precision="64"
+        contract=cpu_contract, profile=Profile.CPU, policy=Policy.PR, precision="64"
     ).selected
     assert classify(
-        cpu_contract, profile=Profile.CPU, policy=Policy.PR, precision="32"
+        contract=cpu_contract, profile=Profile.CPU, policy=Policy.PR, precision="32"
     ).matrix_deselected
     assert classify(
-        gpu_contract, profile=Profile.GPU_SMALL, policy=Policy.PR, precision="32"
+        contract=gpu_contract,
+        profile=Profile.GPU_SMALL,
+        policy=Policy.PR,
+        precision="32",
     ).selected
     assert classify(
-        gpu_contract, profile=Profile.GPU_SMALL, policy=Policy.PR, precision="64"
+        contract=gpu_contract,
+        profile=Profile.GPU_SMALL,
+        policy=Policy.PR,
+        precision="64",
     ).matrix_deselected
 
 
@@ -54,13 +60,13 @@ def test_full_suite_lifts_tiers_and_precision_ownership_but_not_capabilities():
     )
 
     assert classify(
-        gpu_contract,
+        contract=gpu_contract,
         profile=Profile.GPU_SMALL,
         policy=Policy.FULL,
         precision="64",
     ).selected
     assert classify(
-        gpu_contract, profile=Profile.CPU, policy=Policy.FULL, precision="64"
+        contract=gpu_contract, profile=Profile.CPU, policy=Policy.FULL, precision="64"
     ).capability_skipped
 
 
@@ -116,8 +122,11 @@ def test_unknown_marker_arguments_are_rejected():
         (Policy.FULL, True),
     ],
 )
-def test_production_tests_enter_only_nightly_or_full(policy, selected):
+def test_production_tests_enter_only_nightly_or_full(*, policy, selected):
     """Production-scale witnesses stay out of bounded pull-request policies."""
     contract = ExecutionContract(tier=Policy.NIGHTLY)
 
-    assert classify(contract, profile=Profile.CPU, policy=policy).selected is selected
+    assert (
+        classify(contract=contract, profile=Profile.CPU, policy=policy).selected
+        is selected
+    )

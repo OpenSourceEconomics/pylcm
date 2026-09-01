@@ -96,7 +96,7 @@ def test_phased_joint_transition_resolves_whole_kernel_per_phase() -> None:
     ],
 )
 def test_phased_joint_transition_requires_a_static_support_schema(
-    simulate: JointTransition, match: str
+    *, simulate: JointTransition, match: str
 ) -> None:
     """Phase variants keep identical outputs and support shape/dtype contracts."""
     with pytest.raises(RegimeInitializationError, match=match):

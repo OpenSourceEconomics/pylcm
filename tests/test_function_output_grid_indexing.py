@@ -50,13 +50,14 @@ class RegimeId:
 
 
 def _per_type_scale_takes_pref_type(
-    pref_type: DiscreteState, some_param: FloatND
+    *, pref_type: DiscreteState, some_param: FloatND
 ) -> FloatND:
     """Takes pref_type — output is per-cell scalar; consumer must not re-index."""
     return jnp.abs(1.0 / (1.0 - some_param[pref_type]))
 
 
 def _utility_redundantly_indexes(
+    *,
     consumption: ContinuousAction,
     pref_type: DiscreteState,
     per_type_scale: FloatND,
@@ -88,7 +89,7 @@ def _make_clashing_model() -> Model:
             "utility": _utility_redundantly_indexes,
             "per_type_scale": _per_type_scale_takes_pref_type,
         },
-        states={"pref_type": DiscreteGrid(PrefType)},
+        states={"pref_type": DiscreteGrid(category_class=PrefType)},
         state_transitions={"pref_type": fixed_transition("pref_type")},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
         transition=_next_regime,
@@ -117,6 +118,7 @@ def test_function_output_indexed_by_state_raises():
 
 
 def _utility_consumes_scalar(
+    *,
     consumption: ContinuousAction,
     pref_type: DiscreteState,  # noqa: ARG001
     per_type_scale: FloatND,
@@ -133,7 +135,7 @@ def test_safe_pattern_does_not_raise():
             "utility": _utility_consumes_scalar,
             "per_type_scale": _per_type_scale_takes_pref_type,
         },
-        states={"pref_type": DiscreteGrid(PrefType)},
+        states={"pref_type": DiscreteGrid(category_class=PrefType)},
         state_transitions={"pref_type": fixed_transition("pref_type")},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
         transition=_next_regime,
@@ -168,7 +170,7 @@ def test_array_valued_producer_indexed_by_state_does_not_raise():
             "utility": _utility_redundantly_indexes,
             "per_type_scale": _per_type_scale_array_output,
         },
-        states={"pref_type": DiscreteGrid(PrefType)},
+        states={"pref_type": DiscreteGrid(category_class=PrefType)},
         state_transitions={"pref_type": fixed_transition("pref_type")},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
         transition=_next_regime,
@@ -198,10 +200,13 @@ def test_function_output_indexed_by_derived_categorical_raises():
     def _is_married(spousal_income: DiscreteState) -> DiscreteState:
         return jnp.int32(spousal_income > 0)
 
-    def _per_marital_scale(is_married: DiscreteState, some_param: FloatND) -> FloatND:
+    def _per_marital_scale(
+        *, is_married: DiscreteState, some_param: FloatND
+    ) -> FloatND:
         return jnp.abs(1.0 / (1.0 - some_param[is_married]))
 
     def _utility_clash(
+        *,
         consumption: ContinuousAction,
         is_married: DiscreteState,
         per_marital_scale: FloatND,
@@ -224,10 +229,10 @@ def test_function_output_indexed_by_derived_categorical_raises():
                 "per_marital_scale": _per_marital_scale,
                 "is_married": _is_married,
             },
-            states={"spousal_income": DiscreteGrid(SpousalIncome)},
+            states={"spousal_income": DiscreteGrid(category_class=SpousalIncome)},
             state_transitions={"spousal_income": fixed_transition("spousal_income")},
             actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
-            derived_categoricals={"is_married": DiscreteGrid(IsMarried)},
+            derived_categoricals={"is_married": DiscreteGrid(category_class=IsMarried)},
             transition=_next_regime,
             active=lambda age: age < 2,
         )
@@ -241,10 +246,13 @@ def test_function_output_indexed_by_discrete_action_raises():
         no_work: ScalarInt
         work: ScalarInt
 
-    def _per_choice_scale(labor_supply: DiscreteAction, some_param: FloatND) -> FloatND:
+    def _per_choice_scale(
+        *, labor_supply: DiscreteAction, some_param: FloatND
+    ) -> FloatND:
         return jnp.abs(1.0 / (1.0 - some_param[labor_supply]))
 
     def _utility_clash(
+        *,
         consumption: ContinuousAction,
         labor_supply: DiscreteAction,
         per_choice_scale: FloatND,
@@ -260,11 +268,11 @@ def test_function_output_indexed_by_discrete_action_raises():
                 "utility": _utility_clash,
                 "per_choice_scale": _per_choice_scale,
             },
-            states={"pref_type": DiscreteGrid(PrefType)},
+            states={"pref_type": DiscreteGrid(category_class=PrefType)},
             state_transitions={"pref_type": fixed_transition("pref_type")},
             actions={
                 "consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5),
-                "labor_supply": DiscreteGrid(WorkChoice),
+                "labor_supply": DiscreteGrid(category_class=WorkChoice),
             },
             transition=_next_regime,
             active=lambda age: age < 2,
@@ -275,6 +283,7 @@ def test_constraint_indexing_function_output_by_state_raises():
     """The check applies to regime constraints too, not only `functions`."""
 
     def _constraint_indexing_function_output(
+        *,
         consumption: ContinuousAction,
         pref_type: DiscreteState,
         per_type_scale: FloatND,
@@ -292,7 +301,7 @@ def test_constraint_indexing_function_output_by_state_raises():
                 ),
                 "per_type_scale": _per_type_scale_takes_pref_type,
             },
-            states={"pref_type": DiscreteGrid(PrefType)},
+            states={"pref_type": DiscreteGrid(category_class=PrefType)},
             state_transitions={"pref_type": fixed_transition("pref_type")},
             actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
             constraints={"feasibility": _constraint_indexing_function_output},
@@ -323,7 +332,7 @@ def test_phased_function_in_functions_does_not_crash_validation():
             "per_type_scale": _per_type_scale_takes_pref_type,
             "scaled": Phased(solve=_scale_solve, simulate=_scale_simulate),
         },
-        states={"pref_type": DiscreteGrid(PrefType)},
+        states={"pref_type": DiscreteGrid(category_class=PrefType)},
         state_transitions={"pref_type": fixed_transition("pref_type")},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
         transition=_next_regime,
@@ -342,6 +351,7 @@ def test_phased_function_in_functions_does_not_crash_validation():
 
 
 def _scale_solve_unsafe(
+    *,
     pref_type: DiscreteState,
     per_type_scale: FloatND,
 ) -> FloatND:
@@ -365,7 +375,7 @@ def test_phased_function_solve_variant_unsafe_indexing_raises():
                 "per_type_scale": _per_type_scale_takes_pref_type,
                 "scaled": Phased(solve=_scale_solve_unsafe, simulate=_scale_simulate),
             },
-            states={"pref_type": DiscreteGrid(PrefType)},
+            states={"pref_type": DiscreteGrid(category_class=PrefType)},
             state_transitions={"pref_type": fixed_transition("pref_type")},
             actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
             transition=_next_regime,

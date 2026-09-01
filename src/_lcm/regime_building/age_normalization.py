@@ -176,14 +176,14 @@ class AgeNormalizationResult:
     grid_schedule: AgeGridSchedule | None
 
 
-def resolve_periodized_node(node: object, period: int) -> object:
+def resolve_periodized_node(*, node: object, period: int) -> object:
     """Return a periodized function's concrete callable for `period`; else it."""
     if isinstance(node, (PeriodizedUserFunction, PeriodizedEconFunction)):
         return node.resolve(period)
     return node
 
 
-def periodized_node_signature(node: object, period: int) -> Hashable:
+def periodized_node_signature(*, node: object, period: int) -> Hashable:
     """`node`'s period signature: its explicit signature, or `INVARIANT`."""
     if isinstance(node, (PeriodizedUserFunction, PeriodizedEconFunction)):
         return node.signature(period)
@@ -191,7 +191,7 @@ def periodized_node_signature(node: object, period: int) -> Hashable:
 
 
 def resolve_periodized_nodes(
-    mapping: Mapping[str, object], period: int
+    *, mapping: Mapping[str, object], period: int
 ) -> Mapping[str, object]:
     """Resolve every periodized function in a flat mapping at `period`.
 
@@ -204,12 +204,15 @@ def resolve_periodized_nodes(
     ):
         return mapping
     return MappingProxyType(
-        {name: resolve_periodized_node(node, period) for name, node in mapping.items()}
+        {
+            name: resolve_periodized_node(node=node, period=period)
+            for name, node in mapping.items()
+        }
     )
 
 
 def resolve_periodized_tree(
-    tree: Mapping[str, object], period: int
+    *, tree: Mapping[str, object], period: int
 ) -> Mapping[str, object]:
     """Resolve periodized leaves recursively while preserving mapping structure."""
     if not any(
@@ -220,16 +223,16 @@ def resolve_periodized_tree(
     return MappingProxyType(
         {
             name: (
-                resolve_periodized_tree(node, period)
+                resolve_periodized_tree(tree=node, period=period)
                 if isinstance(node, Mapping)
-                else resolve_periodized_node(node, period)
+                else resolve_periodized_node(node=node, period=period)
             )
             for name, node in tree.items()
         }
     )
 
 
-def periodized_tree_signature(tree: Mapping[str, object], period: int) -> Hashable:
+def periodized_tree_signature(*, tree: Mapping[str, object], period: int) -> Hashable:
     """Fingerprint a (possibly nested) mapping of nodes at `period`.
 
     Recurse into `Mapping` values and emit sorted `(path, signature)` pairs, so a
@@ -237,7 +240,8 @@ def periodized_tree_signature(tree: Mapping[str, object], period: int) -> Hashab
     Mirrors the structure of pylcm's nested transition trees.
     """
     return _tree_signature(
-        tree, leaf_signature=lambda node: periodized_node_signature(node, period)
+        tree=tree,
+        leaf_signature=lambda node: periodized_node_signature(node=node, period=period),
     )
 
 
@@ -319,8 +323,7 @@ def assert_continuation_grids_agree(
 
 
 def group_periods_by_key(
-    active_periods: tuple[int, ...],
-    key: Callable[[int], K],
+    *, active_periods: tuple[int, ...], key: Callable[..., K]
 ) -> dict[K, list[int]]:
     """Group a regime's active periods by a caller-supplied signature key.
 
@@ -330,13 +333,12 @@ def group_periods_by_key(
     """
     configs: dict[K, list[int]] = {}
     for period in active_periods:
-        configs.setdefault(key(period), []).append(period)
+        configs.setdefault(key(period=period), []).append(period)
     return configs
 
 
 def expand_groups_to_periods(
-    grouped_periods: Mapping[K, list[int]],
-    built_by_group: Mapping[K, T],
+    *, grouped_periods: Mapping[K, list[int]], built_by_group: Mapping[K, T]
 ) -> MappingProxyType[int, T]:
     """Map each period back to the compiled object built for its group."""
     result: dict[int, T] = {}
@@ -431,12 +433,12 @@ def continuation_group_key(
                 regime_to_v_interpolation_info=continuation_info(period),
             )
         signature = (
-            periodized_tree_signature(functions, period),
-            periodized_tree_signature(constraints, period),
+            periodized_tree_signature(tree=functions, period=period),
+            periodized_tree_signature(tree=constraints, period=period),
             continuation_sig,
             scalar_targets,
             (
-                periodized_tree_signature(continuation_functions, period)
+                periodized_tree_signature(tree=continuation_functions, period=period)
                 if continuation_functions is not None
                 else ()
             ),
@@ -592,7 +594,7 @@ def _resolve_grid_marker(
         )
         nodes = grid.to_jax()
         try:
-            traits = _grid_traits(grid, nodes=nodes)
+            traits = _grid_traits(grid=grid, nodes=nodes)
         except _GridTraitsError as error:
             msg = (
                 f"AgeSpecializedGrid '{state_name}' in regime '{regime_name}' at "
@@ -604,7 +606,8 @@ def _resolve_grid_marker(
         elif first_traits != traits:
             msg = (
                 f"AgeSpecializedGrid '{state_name}' in regime '{regime_name}' is not "
-                f"shape-invariant: {_describe_trait_mismatch(first_traits, traits)} "
+                "shape-invariant: "
+                f"{_describe_trait_mismatch(first=first_traits, other=traits)} "
                 f"The first active age is period {first_period}, the offending one is "
                 f"period {period}. Age-varying grids must keep the same class, "
                 f"batch_size, points mode and resolved node shape/dtype at every "
@@ -624,8 +627,7 @@ def _resolve_grid_marker(
 
 
 def _representative_function(
-    value: object,
-    function_cache: dict[int, _ResolvedFunctionMarker],
+    *, value: object, function_cache: dict[int, _ResolvedFunctionMarker]
 ) -> object:
     """Replace an age-function marker (bare or inside `Phased`) by its concrete.
 
@@ -637,11 +639,16 @@ def _representative_function(
     if isinstance(value, Phased):
         return Phased(
             solve=cast(
-                "UserFunction", _representative_function(value.solve, function_cache)
+                "UserFunction",
+                _representative_function(
+                    value=value.solve, function_cache=function_cache
+                ),
             ),
             simulate=cast(
                 "UserFunction",
-                _representative_function(value.simulate, function_cache),
+                _representative_function(
+                    value=value.simulate, function_cache=function_cache
+                ),
             ),
         )
     return value
@@ -662,18 +669,18 @@ def _representative_regime(
     function sets, and age-invariant validation.
     """
     functions = {
-        name: _representative_function(value, function_cache)
+        name: _representative_function(value=value, function_cache=function_cache)
         for name, value in user_regime.functions.items()
     }
     constraints = {
-        name: _representative_function(value, function_cache)
+        name: _representative_function(value=value, function_cache=function_cache)
         for name, value in user_regime.constraints.items()
     }
     states = {
         name: (
             grid_cache[id(spec)].representative
             if isinstance(spec, AgeSpecializedGrid)
-            else _representative_function(spec, function_cache)
+            else _representative_function(value=spec, function_cache=function_cache)
         )
         for name, spec in user_regime.states.items()
     }
@@ -685,8 +692,7 @@ def _representative_regime(
 
 
 def _periodize_functions(
-    mapping: Mapping[str, object],
-    function_cache: dict[int, _ResolvedFunctionMarker],
+    *, mapping: Mapping[str, object], function_cache: dict[int, _ResolvedFunctionMarker]
 ) -> MappingProxyType[str, object]:
     """Replace every age-function marker in a phase-slice mapping.
 
@@ -707,6 +713,7 @@ def _periodize_functions(
 
 
 def _periodize_constraints(
+    *,
     constraints: ProcessedConstraintsMapping,
     function_cache: dict[int, _ResolvedFunctionMarker],
 ) -> ProcessedConstraintsMapping:
@@ -719,8 +726,10 @@ def _periodize_constraints(
     a periodized declaration beside a condition still closed over the marker.
     """
     periodized = _periodize_functions(
-        {name: constraint.declaration for name, constraint in constraints.items()},
-        function_cache,
+        mapping={
+            name: constraint.declaration for name, constraint in constraints.items()
+        },
+        function_cache=function_cache,
     )
     return normalize_constraints(
         constraints=cast("Mapping[FunctionName, ConstraintLike]", periodized)
@@ -756,9 +765,13 @@ def _rewrite_phase_slice(
         phase_slice,
         functions=cast(
             "MappingProxyType",
-            _periodize_functions(phase_slice.functions, function_cache),
+            _periodize_functions(
+                mapping=phase_slice.functions, function_cache=function_cache
+            ),
         ),
-        constraints=_periodize_constraints(phase_slice.constraints, function_cache),
+        constraints=_periodize_constraints(
+            constraints=phase_slice.constraints, function_cache=function_cache
+        ),
         grid_states=MappingProxyType(grid_states),
     )
 

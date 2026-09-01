@@ -235,7 +235,7 @@ def _payload(
     )
 
 
-def _new_illiquid(illiquid, investment):
+def _new_illiquid(*, illiquid, investment):
     """`s' = Z + Iz`: the outer post-decision the replay inverts."""
     return illiquid + investment
 
@@ -402,7 +402,7 @@ def _build(route: str):
     )
 
 
-def _simulate(model, *, period_to_regime_to_V_arr=None, policies=None):
+def _simulate(*, model, period_to_regime_to_V_arr=None, policies=None):
     """Simulate the toy from the shared initial conditions."""
     return model.simulate(
         params=_PARAMS,
@@ -434,8 +434,8 @@ def test_both_workflows_publish_the_same_endpoint_admissions(solved) -> None:
     model, values, policies = solved
 
     assert_frame_equal(
-        _simulate(model, period_to_regime_to_V_arr=values, policies=policies),
-        _simulate(model, period_to_regime_to_V_arr=None),
+        _simulate(model=model, period_to_regime_to_V_arr=values, policies=policies),
+        _simulate(model=model, period_to_regime_to_V_arr=None),
     )
 
 
@@ -465,7 +465,7 @@ def test_a_simulated_nonnegative_model_admits_every_realized_subject(
         return verdict
 
     monkeypatch.setattr(simulation_module, "outer_candidate_is_admissible", record)
-    frame = _simulate(_build("adaptive"), period_to_regime_to_V_arr=None)
+    frame = _simulate(model=_build("adaptive"), period_to_regime_to_V_arr=None)
 
     # An empty recording would mean the predicate under test was never the rule
     # consulted, which the assertions below must not read as agreement.
@@ -737,7 +737,7 @@ def test_a_subject_with_no_publishable_pair_fails_loud() -> None:
 
 @pytest.mark.parametrize("case", _ENDPOINT_CASES, ids=["lower", "upper"])
 def test_containment_alone_would_publish_a_missed_endpoint(
-    case: dict, monkeypatch: pytest.MonkeyPatch
+    *, case: dict, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Weakening the endpoint verdict to containment re-admits the missed stock.
 

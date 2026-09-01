@@ -30,7 +30,7 @@ def _reader_cache_entries(next_m_grids):
     income = 1.0
 
     @jax.jit
-    def read(next_value, next_marginal, next_liquid_grid):
+    def read(*, next_value, next_marginal, next_liquid_grid):
         return egm_one_asset_step(
             next_value=next_value,
             next_marginal=next_marginal,
@@ -38,7 +38,7 @@ def _reader_cache_entries(next_m_grids):
             next_liquid_grid=next_liquid_grid,
             savings_grid=savings_grid,
             discount_factor=0.98,
-            preferences=crra_preferences(2.0),
+            preferences=crra_preferences(crra=2.0),
             next_liquid=gross_return * savings_grid + income,
             marginal_return=jnp.full_like(savings_grid, gross_return),
         ).value
@@ -46,7 +46,11 @@ def _reader_cache_entries(next_m_grids):
     for next_liquid_grid in next_m_grids:
         next_value = 2.0 * next_liquid_grid
         next_marginal = jnp.full_like(next_liquid_grid, 2.0)
-        read(next_value, next_marginal, next_liquid_grid).block_until_ready()
+        read(
+            next_value=next_value,
+            next_marginal=next_marginal,
+            next_liquid_grid=next_liquid_grid,
+        ).block_until_ready()
     return read._cache_size()  # ty: ignore[unresolved-attribute]
 
 

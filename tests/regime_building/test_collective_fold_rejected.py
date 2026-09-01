@@ -122,7 +122,7 @@ def _folding_collective_regimes_with_participation() -> dict[str, Regime]:
         active=lambda age: age < 1,
         states={"wage": WAGE_GRID, "wage_shock": FOLDED_SHOCK},
         state_transitions={"wage": _fixed_wage},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _shocked_wage_utility_f, "m": _consumption_m}
@@ -136,7 +136,7 @@ def _folding_collective_regimes_with_participation() -> dict[str, Regime]:
         transition=None,
         active=lambda age: age >= 1,
         states={},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _terminal_utility_f, "m": _terminal_utility_m}
@@ -147,20 +147,20 @@ def _folding_collective_regimes_with_participation() -> dict[str, Regime]:
 
 
 def _shocked_wage_utility_f(
-    wage: ContinuousState, wage_shock: FloatND, work: DiscreteAction
+    *, wage: ContinuousState, wage_shock: FloatND, work: DiscreteAction
 ) -> FloatND:
     """Wife: the shocked wage when working, her leisure value otherwise."""
     return work * (wage + wage_shock) + 30.0 * (1.0 - work)
 
 
 def _consumption_m(
-    wage: ContinuousState, wage_shock: FloatND, work: DiscreteAction
+    *, wage: ContinuousState, wage_shock: FloatND, work: DiscreteAction
 ) -> FloatND:
     """Husband: household consumption, which only the wife's work produces."""
     return 2.0 * work * (wage + wage_shock)
 
 
-def _participation_m(Q_m: FloatND, floor_m: float) -> BoolND:
+def _participation_m(*, Q_m: FloatND, floor_m: float) -> BoolND:
     """Husband stays only where his own action value clears his outside option."""
     return Q_m >= floor_m
 

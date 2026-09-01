@@ -71,7 +71,7 @@ def _evolve_carried(carried: ScalarFloat) -> ScalarFloat:
     return carried
 
 
-def _entered_process_model(fixed_params: dict, *, enable_jit: bool = False) -> Model:
+def _entered_process_model(*, fixed_params: dict, enable_jit: bool = False) -> Model:
     """Build a source entering a target process whose law it does not carry."""
     return Model(
         regimes={
@@ -113,8 +113,9 @@ _SPELLINGS = {
 @pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
 @pytest.mark.parametrize("spelling", sorted(_SPELLINGS))
 def test_every_level_pins_an_entered_process_law(
+    *,
     spelling: str,
-    enable_jit: bool,  # noqa: FBT001
+    enable_jit: bool,
 ) -> None:
     """A law written at any accepted level fixes the process at construction.
 
@@ -123,7 +124,7 @@ def test_every_level_pins_an_entered_process_law(
     that value — building alone would not show the law was actually bound.
     """
     solution = _entered_process_model(
-        _SPELLINGS[spelling], enable_jit=enable_jit
+        fixed_params=_SPELLINGS[spelling], enable_jit=enable_jit
     ).solve(params=_SOLVE_PARAMS, log_level="debug")
 
     np.testing.assert_allclose(np.asarray(solution[0]["source"]), _MU, atol=1e-6)
@@ -132,7 +133,9 @@ def test_every_level_pins_an_entered_process_law(
 @pytest.mark.parametrize("spelling", sorted(_SPELLINGS))
 def test_a_bound_law_leaves_the_params_template(spelling: str) -> None:
     """However it is written, a bound law stops being a runtime parameter."""
-    template = _entered_process_model(_SPELLINGS[spelling]).get_params_template()
+    template = _entered_process_model(
+        fixed_params=_SPELLINGS[spelling]
+    ).get_params_template()
 
     assert "shock" not in template["target"]
 
@@ -144,7 +147,7 @@ def test_one_law_written_at_two_levels_is_an_error() -> None:
     ordinary fixed parameter and gets the same answer.
     """
     with pytest.raises(InvalidNameError, match="Ambiguous"):
-        _entered_process_model({"mu": _MU, "target": {"shock": _LAW}})
+        _entered_process_model(fixed_params={"mu": _MU, "target": {"shock": _LAW}})
 
 
 def test_a_broadcast_that_binds_a_law_still_reaches_a_function() -> None:
@@ -192,7 +195,7 @@ def test_an_unknown_fixed_param_is_rejected_as_it_always_was() -> None:
     everything else in the same call.
     """
     with pytest.raises(InvalidParamsError, match=r"(?i)unknown"):
-        _entered_process_model({**_LAW, "not_a_parameter": 1.0})
+        _entered_process_model(fixed_params={**_LAW, "not_a_parameter": 1.0})
 
 
 def test_a_non_scalar_law_names_the_parameter_it_cannot_pin() -> None:
@@ -202,7 +205,9 @@ def test_a_non_scalar_law_names_the_parameter_it_cannot_pin() -> None:
     generic entry failure, because the two have different fixes.
     """
     with pytest.raises(InvalidParamsError, match="target__shock__mu"):
-        _entered_process_model({"target": {"shock": {**_LAW, "mu": jnp.zeros(3)}}})
+        _entered_process_model(
+            fixed_params={"target": {"shock": {**_LAW, "mu": jnp.zeros(3)}}}
+        )
 
 
 def test_a_lognormal_law_pins_from_a_broadcast_too() -> None:
@@ -281,7 +286,7 @@ def test_one_resolved_process_object_reaches_every_consumer() -> None:
     diagnostics, simulation — reads `user_regimes`, so pinning that the process
     there is fully specified pins that they all see the same resolved object.
     """
-    model = _entered_process_model({"target": {"shock": _LAW}})
+    model = _entered_process_model(fixed_params={"target": {"shock": _LAW}})
 
     process = model.user_regimes["target"].states["shock"]
 
@@ -344,7 +349,7 @@ def test_a_law_left_to_runtime_still_cannot_be_entered() -> None:
     that block it.
     """
     with pytest.raises(ModelInitializationError) as excinfo:
-        _entered_process_model({})
+        _entered_process_model(fixed_params={})
 
     message = str(excinfo.value)
     assert "stochastic process 'shock'" in message

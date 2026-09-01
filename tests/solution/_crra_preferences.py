@@ -12,7 +12,7 @@ from _lcm.egm.preferences import Preferences
 from lcm.typing import FloatND
 
 
-def crra_preferences(crra: float, *, disutility: float = 0.0) -> Preferences:
+def crra_preferences(*, crra: float, disutility: float = 0.0) -> Preferences:
     """Build the CRRA bundle `u(c) = c**(1-crra) / (1-crra) - disutility`.
 
     Args:

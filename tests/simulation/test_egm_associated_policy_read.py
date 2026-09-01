@@ -33,7 +33,7 @@ _MARGINAL = jnp.array([2.0, 0.2, jnp.nan])
 _COMPETITOR_VALUE_AT_R1 = -0.05
 
 
-def _branch_objective(resources: float, consumption: float) -> float:
+def _branch_objective(*, resources: float, consumption: float) -> float:
     """Branch A's flow-plus-continuation objective `log c + W_A(R - c)`."""
     return (
         math.log(consumption) + math.log(resources - consumption) + 2.0 * math.log(2.0)
@@ -58,7 +58,10 @@ def test_inverting_the_limited_hermite_value_derivative_returns_a_dominated_acti
     )(resources)
     inverted_action = 1.0 / float(derivative)  # (u')^{-1}(m) = 1/m for log utility
 
-    assert _branch_objective(1.0, inverted_action) < _COMPETITOR_VALUE_AT_R1
+    assert (
+        _branch_objective(resources=1.0, consumption=inverted_action)
+        < _COMPETITOR_VALUE_AT_R1
+    )
 
 
 def test_objective_ranked_linear_policy_read_is_not_dominated():
@@ -72,4 +75,7 @@ def test_objective_ranked_linear_policy_read_is_not_dominated():
         interp_on_padded_grid(x_query=jnp.asarray(1.0), xp=_ENDOG, fp=_POLICY)
     )
 
-    assert _branch_objective(1.0, policy_action) >= _COMPETITOR_VALUE_AT_R1
+    assert (
+        _branch_objective(resources=1.0, consumption=policy_action)
+        >= _COMPETITOR_VALUE_AT_R1
+    )

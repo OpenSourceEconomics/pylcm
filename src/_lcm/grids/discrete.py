@@ -13,7 +13,10 @@ class DiscreteGrid(Grid):
 
     Args:
         category_class: The category class representing the grid categories. Must
-            be a dataclass with fields that have unique int values.
+            be a dataclass with fields that have unique int values. The legacy
+            single-positional-argument form remains supported for compatibility.
+        batch_size: Size of the batches that are looped over during the solution.
+        distributed: Whether to distribute the grid over available devices.
 
     Raises:
         GridInitializationError: If the `category_class` is not a dataclass with int
@@ -23,8 +26,24 @@ class DiscreteGrid(Grid):
 
     @beartype(conf=GRID_CONF)
     def __init__(
-        self, category_class: type, batch_size: int = 0, *, distributed: bool = False
+        self,
+        *legacy_category_class: type,
+        category_class: type | None = None,
+        batch_size: int = 0,
+        distributed: bool = False,
     ) -> None:
+        if len(legacy_category_class) > 1:
+            msg = "DiscreteGrid accepts at most one positional argument."
+            raise TypeError(msg)
+        if legacy_category_class:
+            if category_class is not None:
+                msg = "DiscreteGrid got multiple values for 'category_class'."
+                raise TypeError(msg)
+            category_class = legacy_category_class[0]
+        elif category_class is None:
+            msg = "DiscreteGrid missing required argument: 'category_class'."
+            raise TypeError(msg)
+
         _fail_if_batch_size_combined_with_distributed(
             batch_size=batch_size, distributed=distributed
         )

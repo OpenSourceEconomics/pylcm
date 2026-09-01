@@ -948,7 +948,7 @@ def _simulate_regime_in_period(
 
     # Update states and regime membership for next period
     if not regime.terminal:
-        next_states_key, next_regime_key, key = jax.random.split(key, 3)
+        next_states_key, next_regime_key, key = jax.random.split(key=key, num=3)
 
         next_states = calculate_next_states(
             regime=regime,
@@ -1533,7 +1533,7 @@ def _read_nested_policy(
         passive_bracket = (lo, hi, weight)
 
     def blended_read(
-        pol: EGMSimPolicy, field: Literal["policy", "value"]
+        *, pol: EGMSimPolicy, field: Literal["policy", "value"]
     ) -> tuple[FloatND, BoolND]:
         if passive_bracket is None:
             return _interp_rows_with_support(
@@ -1563,12 +1563,12 @@ def _read_nested_policy(
             support_lo & support_hi,
         )
 
-    keeper_value, keeper_support = blended_read(keeper_pol, "value")
-    keeper_action, _ = blended_read(keeper_pol, "policy")
+    keeper_value, keeper_support = blended_read(pol=keeper_pol, field="value")
+    keeper_action, _ = blended_read(pol=keeper_pol, field="policy")
 
     def candidate_read(pol: EGMSimPolicy) -> tuple[FloatND, BoolND, FloatND]:
-        value, support = blended_read(pol, "value")
-        action, _ = blended_read(pol, "policy")
+        value, support = blended_read(pol=pol, field="value")
+        action, _ = blended_read(pol=pol, field="policy")
         return value, support, action
 
     candidate_values, candidate_support, candidate_actions = vmap(candidate_read)(
@@ -1582,7 +1582,7 @@ def _read_nested_policy(
     profile = jnp.where(candidate_support, candidate_values, -jnp.inf)
     interpolant = LocalCubicOuterInterpolant()
     search = safeguarded_continuous_argmax(
-        lambda query: interpolant.evaluate(
+        objective=lambda query: interpolant.evaluate(
             nodes=outer_nodes, values=profile, query=query
         ),
         nodes=outer_nodes,
@@ -1788,7 +1788,7 @@ def _best_admissible_replay_candidate(
         (keeper_reaches_target, adjusters_reach_target), axis=0
     )
 
-    def resources_at(outer_action: FloatND, image: FloatND) -> FloatND:
+    def resources_at(*, outer_action: FloatND, image: FloatND) -> FloatND:
         return _nested_resources(
             payload=payload,
             regime=regime,
@@ -1801,7 +1801,7 @@ def _best_admissible_replay_candidate(
             n_subjects=n_subjects,
         )
 
-    resources = vmap(resources_at)(outer_actions, images)
+    resources = vmap(resources_at)(outer_action=outer_actions, image=images)
     preliminary_admissible = (
         reaches_target
         & support
@@ -1965,7 +1965,7 @@ def _nested_grid_baseline(
     )
 
     def canonical_at_branch(
-        outer_action: FloatND, inner_action: FloatND
+        *, outer_action: FloatND, inner_action: FloatND
     ) -> tuple[FloatND, BoolND]:
         branch_actions = MappingProxyType(
             {
@@ -1986,7 +1986,7 @@ def _nested_grid_baseline(
         )
 
     replay_values, replay_q_feasible = vmap(canonical_at_branch)(
-        safe_outer_actions, safe_inner_actions
+        outer_action=safe_outer_actions, inner_action=safe_inner_actions
     )
     replay_admissible = (
         replay_preliminary & replay_q_feasible & jnp.isfinite(replay_values)
@@ -2067,8 +2067,8 @@ def _nested_resources(
 
 
 def _resolve_function_kwargs(
-    func: Callable[..., FloatND],
     *,
+    func: Callable[..., FloatND],
     states: Mapping[StateOrActionName, FloatND | IntND],
     bindings: Mapping[str, FloatND],
     flat_params: FlatRegimeParams,
@@ -2130,7 +2130,7 @@ def _outer_transition_offset_and_forward(
 
     def resolve(action_value: FloatND) -> dict[str, FloatND | IntND]:
         bound = _resolve_function_kwargs(
-            transition,
+            func=transition,
             states=states,
             bindings={payload.outer_action_name: action_value},
             flat_params=flat_params,
@@ -2259,7 +2259,7 @@ def _keeper_post_decision(
         return jnp.asarray(durable)
     keep_func = _replay_function(regime=regime, name=payload.outer_no_adjustment_name)
     kwargs = _resolve_function_kwargs(
-        keep_func,
+        func=keep_func,
         states=states,
         bindings={},
         flat_params=flat_params,

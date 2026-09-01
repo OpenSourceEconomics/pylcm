@@ -79,7 +79,9 @@ def _compile_policy(contract: Path) -> dict[str, Any]:
     return {"contract_version": "1", "target": "", "profiles": profiles}
 
 
-def _run_join(root: Path, policy_payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+def _run_join(
+    *, root: Path, policy_payload: dict[str, Any]
+) -> tuple[int, dict[str, Any]]:
     policy_path = root / "compiled-policy.json"
     policy_path.write_text(json.dumps(policy_payload, indent=2), encoding="utf-8")
     completed = subprocess.run(
@@ -136,7 +138,9 @@ def main() -> int:
                 ]
             ]
             clean_policy = _compile_policy(root / CONTRACT)
-            clean_exit, clean_payload = _run_join(root, clean_policy)
+            clean_exit, clean_payload = _run_join(
+                root=root, policy_payload=clean_policy
+            )
 
             cases: dict[str, dict[str, Any]] = {}
 
@@ -146,7 +150,7 @@ def main() -> int:
                 original = target.read_bytes()
                 target.write_bytes(original + b"\n# certified-source perturbation\n")
                 _regenerate(root)
-                exit_code, payload = _run_join(root, clean_policy)
+                exit_code, payload = _run_join(root=root, policy_payload=clean_policy)
                 cases[f"byte_change:{path}"] = {
                     "exit": exit_code,
                     "errors": payload.get("errors", []),
@@ -169,7 +173,7 @@ def main() -> int:
                         for profile in PROFILES
                     },
                 }
-                exit_code, payload = _run_join(root, stale)
+                exit_code, payload = _run_join(root=root, policy_payload=stale)
                 cases[f"anchor_replaced_by:{path}"] = {
                     "exit": exit_code,
                     "errors": payload.get("errors", []),
@@ -181,7 +185,7 @@ def main() -> int:
                 "target": "",
                 "profiles": {profile: {} for profile in PROFILES},
             }
-            exit_code, payload = _run_join(root, empty)
+            exit_code, payload = _run_join(root=root, policy_payload=empty)
             cases["anchor_absent"] = {
                 "exit": exit_code,
                 "errors": payload.get("errors", []),

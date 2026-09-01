@@ -90,6 +90,7 @@ def _log_of_nonnegative_bits(values: FloatND) -> FloatND:
     return jnp.where(subnormal, subnormal_log, direct_log)
 
 
+# keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
 def _log_of_nonnegative_jvp(
     primals: tuple[FloatND], tangents: tuple[FloatND]
 ) -> tuple[FloatND, FloatND]:
@@ -149,7 +150,7 @@ def is_live(values: FloatND) -> BoolND:
     return (_magnitude_bits(arr) != 0) & ~is_negative(arr) & ~jnp.isnan(arr)
 
 
-def rescaled_lottery_weights(weights: FloatND, *, axis: int | None = -1) -> FloatND:
+def rescaled_lottery_weights(*, weights: FloatND, axis: int | None = -1) -> FloatND:
     """Return the weights scaled so every live one is a normal number.
 
     A weighted mean depends on the weights only through their ratios, so
@@ -193,7 +194,7 @@ def rescaled_lottery_weights(weights: FloatND, *, axis: int | None = -1) -> Floa
         axis=axis,
         keepdims=True,
     )
-    return scaled_by_power_of_two(arr, jnp.minimum(needed, room))
+    return scaled_by_power_of_two(values=arr, shift=jnp.minimum(needed, room))
 
 
 def normalized_scaled_weights(
@@ -348,7 +349,7 @@ def restored_against_a_nonfinite_value(
 
 
 def rescaled_weight_pair(
-    first_weight: FloatND, second_weight: FloatND
+    *, first_weight: FloatND, second_weight: FloatND
 ) -> tuple[FloatND, FloatND]:
     """Return a two-node lottery's weights scaled by one common power of two.
 
@@ -359,13 +360,13 @@ def rescaled_weight_pair(
     second = jnp.asarray(second_weight)
     shift = jnp.maximum(_shift_to_normal(first), _shift_to_normal(second))
     return (
-        scaled_by_power_of_two(first, shift),
-        scaled_by_power_of_two(second, shift),
+        scaled_by_power_of_two(values=first, shift=shift),
+        scaled_by_power_of_two(values=second, shift=shift),
     )
 
 
 def rescaled_weight_group(
-    weights: Sequence[FloatND], *, cofactors: Sequence[FloatND] | None = None
+    *, weights: Sequence[FloatND], cofactors: Sequence[FloatND] | None = None
 ) -> tuple[FloatND, ...]:
     """Return weights carried as separate arrays, scaled by one common factor.
 
@@ -394,13 +395,15 @@ def rescaled_weight_group(
     if cofactors is None:
         cofactors = [jnp.asarray(1.0, dtype=jnp.asarray(w).dtype) for w in weights]
     needed = [
-        _shift_to_keep_product_normal(w, c)
+        _shift_to_keep_product_normal(weight=w, cofactor=c)
         for w, c in zip(weights, cofactors, strict=True)
     ]
     shift = functools.reduce(jnp.maximum, needed)
     headroom = functools.reduce(jnp.minimum, [_binades_of_headroom(w) for w in weights])
     shift = jnp.minimum(shift, headroom)
-    return tuple(scaled_by_power_of_two(jnp.asarray(w), shift) for w in weights)
+    return tuple(
+        scaled_by_power_of_two(values=jnp.asarray(w), shift=shift) for w in weights
+    )
 
 
 def scaled_exact_product(factors: FloatND) -> tuple[FloatND, _BitsND]:
@@ -451,7 +454,9 @@ def scaled_exact_product(factors: FloatND) -> tuple[FloatND, _BitsND]:
         jnp.minimum((1 - bias) - smallest, bias - largest), jnp.zeros((), jnp.int32)
     ).astype(jnp.int32)
     scaled = _encoded(
-        parts.significand, parts.exponent + shift, negative=parts.negative
+        significand=parts.significand,
+        exponent=parts.exponent + shift,
+        negative=parts.negative,
     )
     return jnp.where(parts.ordinary, parts.plain, scaled), shift
 
@@ -489,7 +494,11 @@ def exact_product(factors: FloatND) -> FloatND:
     return jnp.where(
         parts.ordinary,
         parts.plain,
-        _encoded(parts.significand, parts.exponent, negative=parts.negative),
+        _encoded(
+            significand=parts.significand,
+            exponent=parts.exponent,
+            negative=parts.negative,
+        ),
     )
 
 
@@ -518,7 +527,9 @@ def nonzero_exact_product(factors: FloatND) -> FloatND:
     """
     arr = jnp.asarray(factors)
     parts = _product_parts(arr)
-    encoded = _encoded(parts.significand, parts.exponent, negative=parts.negative)
+    encoded = _encoded(
+        significand=parts.significand, exponent=parts.exponent, negative=parts.negative
+    )
     smallest_magnitude = jnp.asarray(
         jnp.finfo(arr.dtype).smallest_subnormal, dtype=arr.dtype
     )
@@ -530,7 +541,7 @@ def nonzero_exact_product(factors: FloatND) -> FloatND:
     )
 
 
-def balanced_product(weight: FloatND, value: FloatND) -> FloatND:
+def balanced_product(*, weight: FloatND, value: FloatND) -> FloatND:
     """Return `weight * value` with the exponent moved onto the smaller operand.
 
     A weight below the normal range is flushed as an operand, so a node of
@@ -556,6 +567,7 @@ def balanced_product(weight: FloatND, value: FloatND) -> FloatND:
     return _balanced_with_tangent(jnp.asarray(weight), jnp.asarray(value))
 
 
+# keyword-only-exempt: library-callback=jax.custom_jvp
 def _balanced_bits(weight: FloatND, value: FloatND) -> FloatND:
     """Multiply with the exponent moved onto the weight, without a derivative.
 
@@ -582,9 +594,10 @@ def _balanced_bits(weight: FloatND, value: FloatND) -> FloatND:
     lowered_value = jax.lax.bitcast_convert_type(
         jnp.where(movable, lowered, value_bits), value_arr.dtype
     )
-    return _scaled_bits(weight_arr, shift) * lowered_value
+    return _scaled_bits(values=weight_arr, shift=shift) * lowered_value
 
 
+# keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
 def _balanced_jvp(
     primals: tuple[FloatND, FloatND], tangents: tuple[FloatND, FloatND]
 ) -> tuple[FloatND, FloatND]:
@@ -646,7 +659,7 @@ def _product_parts(values: FloatND) -> _ProductParts:
     )
 
 
-def _encoded(significand: FloatND, exponent: _BitsND, *, negative: BoolND) -> FloatND:
+def _encoded(*, significand: FloatND, exponent: _BitsND, negative: BoolND) -> FloatND:
     """Return `significand * 2**exponent` written straight into the bit pattern.
 
     `significand` is a positive number the caller has already reduced to
@@ -700,7 +713,7 @@ def _significand_in_unit_range(values: FloatND) -> FloatND:
     return jax.lax.bitcast_convert_type(normalized | unit_exponent, arr.dtype)
 
 
-def scaled_down_by_power_of_two(values: FloatND, shift: _BitsND) -> FloatND:
+def scaled_down_by_power_of_two(*, values: FloatND, shift: _BitsND) -> FloatND:
     """Return `values * 2**shift` for a non-positive integer `shift`.
 
     This is the downward-only counterpart of `scaled_by_power_of_two`.
@@ -732,6 +745,7 @@ def scaled_down_by_power_of_two(values: FloatND, shift: _BitsND) -> FloatND:
     return _scaled_down_with_tangent(jnp.asarray(values), shift)
 
 
+# keyword-only-exempt: library-callback=jax.custom_jvp
 def _scaled_down_bits(values: FloatND, shift: _BitsND) -> FloatND:
     """Scale downward by editing the exponent/significand fields directly."""
     arr = jnp.asarray(values)
@@ -780,13 +794,14 @@ def _scaled_down_bits(values: FloatND, shift: _BitsND) -> FloatND:
     return jax.lax.bitcast_convert_type(output_bits, arr.dtype)
 
 
+# keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
 def _scaled_down_jvp(
     primals: tuple[FloatND, _BitsND], tangents: tuple[FloatND, Any]
 ) -> tuple[FloatND, FloatND]:
     """Differentiate downward scaling as multiplication by `2**shift`."""
     values, shift = primals
     values_dot, _ = tangents
-    slope = _scaled_down_bits(jnp.ones_like(values), shift)
+    slope = _scaled_down_bits(values=jnp.ones_like(values), shift=shift)
     return (
         _scaled_down_with_tangent(values, shift),
         values_dot * slope,
@@ -797,7 +812,7 @@ _scaled_down_with_tangent = jax.custom_jvp(_scaled_down_bits)
 _scaled_down_with_tangent.defjvp(_scaled_down_jvp)
 
 
-def scaled_by_power_of_two(values: FloatND, shift: _BitsND) -> FloatND:
+def scaled_by_power_of_two(*, values: FloatND, shift: _BitsND) -> FloatND:
     """Return `values * 2**shift`, exactly, for an integer `shift`.
 
     Written entirely on the bit pattern, with no floating-point arithmetic
@@ -825,6 +840,7 @@ def scaled_by_power_of_two(values: FloatND, shift: _BitsND) -> FloatND:
     return _scaled_with_tangent(jnp.asarray(values), shift)
 
 
+# keyword-only-exempt: library-callback=jax.custom_jvp
 def _scaled_bits(values: FloatND, shift: _BitsND) -> FloatND:
     """Write `values * 2**shift` straight into the bit pattern."""
     arr = jnp.asarray(values)
@@ -852,6 +868,7 @@ def _scaled_bits(values: FloatND, shift: _BitsND) -> FloatND:
     return jax.lax.bitcast_convert_type(jnp.where(keep, bits, sign | scaled), arr.dtype)
 
 
+# keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
 def _scaled_bits_jvp(
     primals: tuple[FloatND, _BitsND], tangents: tuple[FloatND, Any]
 ) -> tuple[FloatND, FloatND]:
@@ -870,7 +887,7 @@ def _scaled_bits_jvp(
     arr = jnp.asarray(values)
     slope = jnp.where(
         shift <= _exponent_bias(arr),
-        _scaled_bits(jnp.ones_like(arr), shift),
+        _scaled_bits(values=jnp.ones_like(arr), shift=shift),
         jnp.asarray(jnp.inf, dtype=arr.dtype),
     )
     return _scaled_with_tangent(values, shift), values_dot * slope
@@ -883,7 +900,7 @@ _scaled_with_tangent = jax.custom_jvp(_scaled_bits)
 _scaled_with_tangent.defjvp(_scaled_bits_jvp)
 
 
-def _shift_to_keep_product_normal(weight: FloatND, cofactor: FloatND) -> _BitsND:
+def _shift_to_keep_product_normal(*, weight: FloatND, cofactor: FloatND) -> _BitsND:
     """Return the binades needed to keep `weight * cofactor` a normal number.
 
     Read off the exponents rather than from the product itself, which is the

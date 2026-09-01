@@ -558,7 +558,7 @@ def process_regimes(  # noqa: PLR0915
             # state names are what let a `next_<state>` argument be classified by
             # the role that reads it rather than mistaken for a parameter.
             regime_name: create_regime_params_template(
-                user_regime,
+                user_regime=user_regime,
                 other_regime_state_names=frozenset(
                     state_name
                     for other_name, other in representative_user_regimes.items()
@@ -647,7 +647,7 @@ def process_regimes(  # noqa: PLR0915
             # phase builds. Both are `None` for a singleton (non-collective)
             # regime, which is what the downstream builds branch on.
             stakeholders = user_regime.stakeholders
-            pareto_weights = _resolve_pareto_weights(user_regime, spec)
+            pareto_weights = _resolve_pareto_weights(user_regime=user_regime, spec=spec)
             # The (deduplicated, order-preserving) regimes
             # whose same-period V this regime reads; drives the within-period
             # topological solve order and the kernel's same-period V threading.
@@ -815,7 +815,7 @@ def process_regimes(  # noqa: PLR0915
     # the folds read no source kernel, so re-attaching them to the fresh regimes
     # reproduces the same compiled objects.
     gated_continuations_by_source = _gated_continuation_specs(
-        canonical_regimes, ages=ages
+        canonical_regimes=canonical_regimes, ages=ages
     )
     if gated_continuations_by_source:
         canonical_regimes = _attach_gated_edge_folds(
@@ -833,9 +833,7 @@ def process_regimes(  # noqa: PLR0915
 
 
 def _gated_continuation_specs(
-    canonical_regimes: Mapping[RegimeName, Regime],
-    *,
-    ages: AgeGrid,
+    *, canonical_regimes: Mapping[RegimeName, Regime], ages: AgeGrid
 ) -> MappingProxyType[
     RegimeName, MappingProxyType[RegimeName, GatedContinuationSchedule]
 ]:
@@ -998,16 +996,16 @@ def _attach_gated_edge_folds(
             # target's grid enters it whether or not a reference names it.
             fold_read_regimes = resolved_edge.interpolated_regimes
             grouped_fold_periods = group_periods_by_key(
-                fold_periods,
-                functools.partial(
+                active_periods=fold_periods,
+                key=functools.partial(
                     _edge_grid_group_key,
                     grid_schedule=grid_schedule,
                     read_regimes=fold_read_regimes,
                 ),
             )
             grouped_evaluator_periods = group_periods_by_key(
-                fold_periods,
-                functools.partial(
+                active_periods=fold_periods,
+                key=functools.partial(
                     _edge_grid_group_key,
                     grid_schedule=grid_schedule,
                     read_regimes=(target_name, *fold_read_regimes),
@@ -1056,10 +1054,11 @@ def _attach_gated_edge_folds(
                     target_has_process_axis=target_has_process_axis,
                 )
             folds_by_period = expand_groups_to_periods(
-                grouped_fold_periods, folds_by_group
+                grouped_periods=grouped_fold_periods, built_by_group=folds_by_group
             )
             simulate_gate_evaluators_by_period = expand_groups_to_periods(
-                grouped_evaluator_periods, evaluators_by_group
+                grouped_periods=grouped_evaluator_periods,
+                built_by_group=evaluators_by_group,
             )
             legs_with_projectors = tuple(
                 dataclass_replace(
@@ -1135,8 +1134,8 @@ def _v_interpolation_info_at_period(
 
 
 def _edge_grid_group_key(
-    period: int,
     *,
+    period: int,
     grid_schedule: AgeGridSchedule | None,
     read_regimes: tuple[RegimeName, ...],
 ) -> Hashable:
@@ -1220,7 +1219,7 @@ def _resolve_gated_edge(
     source_stakeholders = user_regimes[source_name].stakeholders
 
     def _stakeholder_index(
-        regime_name: RegimeName, stakeholder: str | None
+        *, regime_name: RegimeName, stakeholder: str | None
     ) -> int | None:
         regime_stakeholders = user_regimes[regime_name].stakeholders
         if regime_stakeholders is None:
@@ -1231,7 +1230,9 @@ def _resolve_gated_edge(
         return ResolvedProjectedRegimeValue(
             regime=ref.regime,
             projection=ref.projection,
-            stakeholder_index=_stakeholder_index(ref.regime, ref.stakeholder),
+            stakeholder_index=_stakeholder_index(
+                regime_name=ref.regime, stakeholder=ref.stakeholder
+            ),
             stakeholder=ref.stakeholder,
         )
 
@@ -1321,7 +1322,7 @@ def _edge_reference_regimes(user_regime: UserRegime) -> tuple[RegimeName, ...]:
 
 
 def _resolve_pareto_weights(
-    user_regime: UserRegime, spec: PhasedRegimeSpec
+    *, user_regime: UserRegime, spec: PhasedRegimeSpec
 ) -> ParetoWeights | None:
     """Resolve a collective regime's household Pareto weight evaluator.
 
@@ -2303,9 +2304,10 @@ def _state_handoff_errors(
                     )
                     error_messages.append(
                         f"{phase_name} phase, period {period} "
-                        f"(age {_display_age(ages, period)}), source '{source}' -> "
+                        f"(age {_display_age(ages=ages, period=period)}), "
+                        f"source '{source}' -> "
                         f"period {period + 1} "
-                        f"(age {_display_age(ages, period + 1)}), "
+                        f"(age {_display_age(ages=ages, period=period + 1)}), "
                         f"target '{target}' retains a {status.name} edge. The "
                         f"target declares {state_kind} '{state_name}', but the "
                         f"source does not carry '{state_name}' and defines no "
@@ -2360,8 +2362,8 @@ def _runtime_param_entry_error(
     named = ", ".join(f"'{param}'" for param in sorted(runtime_params))
     return (
         f"{phase_name} phase, period {period} "
-        f"(age {_display_age(ages, period)}), source '{source}' -> "
-        f"period {period + 1} (age {_display_age(ages, period + 1)}), "
+        f"(age {_display_age(ages=ages, period=period)}), source '{source}' -> "
+        f"period {period + 1} (age {_display_age(ages=ages, period=period + 1)}), "
         f"target '{target}' retains a {status.name} edge. The target declares "
         f"stochastic process '{state_name}', which the source does not carry, "
         f"so entering it means placing the next value on that process's own "
@@ -2373,7 +2375,7 @@ def _runtime_param_entry_error(
     )
 
 
-def _display_age(ages: AgeGrid, period: int) -> float:
+def _display_age(*, ages: AgeGrid, period: int) -> float:
     """Return period's age as a decimal float, never a raw `Fraction`."""
     return float(ages.exact_values[period])
 
@@ -2796,7 +2798,9 @@ def _build_solution_phase(
     published_solution_functions = (
         cast(
             "EconFunctionsMapping",
-            resolve_periodized_nodes(core.functions, solution_active_periods[0]),
+            resolve_periodized_nodes(
+                mapping=core.functions, period=solution_active_periods[0]
+            ),
         )
         if solution_active_periods
         else core.functions
@@ -3604,7 +3608,9 @@ def _build_simulation_phase(  # noqa: PLR0915
     published_simulate_functions = (
         cast(
             "EconFunctionsMapping",
-            resolve_periodized_nodes(simulate_functions, simulation_active_periods[0]),
+            resolve_periodized_nodes(
+                mapping=simulate_functions, period=simulation_active_periods[0]
+            ),
         )
         if simulation_active_periods
         else simulate_functions
@@ -3612,7 +3618,9 @@ def _build_simulation_phase(  # noqa: PLR0915
     published_simulate_constraints = (
         cast(
             "ConstraintFunctionsMapping",
-            resolve_periodized_nodes(constraints, simulation_active_periods[0]),
+            resolve_periodized_nodes(
+                mapping=constraints, period=simulation_active_periods[0]
+            ),
         )
         if simulation_active_periods
         else constraints
@@ -4012,7 +4020,9 @@ def _process_regime_core(
         )
 
     for func_name, func in deterministic_transition_functions.items():
-        names_key = _extract_template_names_key(func_name, regime_params_template)
+        names_key = _extract_template_names_key(
+            func_name=func_name, regime_params_template=regime_params_template
+        )
         processed_functions[func_name] = _rename_params_to_qnames(
             func=func,
             regime_params_template=regime_params_template,
@@ -4031,7 +4041,9 @@ def _process_regime_core(
             func=func,
             regime_params_template=regime_params_template,
             param_key=func_name,
-            names_key=_extract_template_names_key(func_name, regime_params_template),
+            names_key=_extract_template_names_key(
+                func_name=func_name, regime_params_template=regime_params_template
+            ),
         )
         processed_functions[func_name] = _get_discrete_markov_next_function(
             func=func,
@@ -4318,7 +4330,7 @@ def _process_joint_transitions(
                 cast("UserFunction", kernel.support)
                 if callable(kernel.support)
                 else _literal_joint_support(
-                    kernel.support, node_annotation=node_annotation
+                    support=kernel.support, node_annotation=node_annotation
                 )
             )
             processed_functions[support_name] = _rename_params_to_qnames(
@@ -4390,11 +4402,7 @@ def _joint_node_annotation(
     return next(iter(annotations), "Any")
 
 
-def _literal_joint_support(
-    support: object,
-    *,
-    node_annotation: str,
-) -> EconFunction:
+def _literal_joint_support(*, support: object, node_annotation: str) -> EconFunction:
     """Lift an immutable literal support pytree into the target-local DAG."""
 
     @with_signature(args={}, return_annotation=node_annotation)
@@ -4941,7 +4949,9 @@ def _granular_param_expansions(
                 if law_name == "next_regime":
                     continue
                 qname = qname_from_tree_path((target_regime_name, law_name))
-                names_key = _extract_template_names_key(qname, regime_params_template)
+                names_key = _extract_template_names_key(
+                    func_name=qname, regime_params_template=regime_params_template
+                )
                 if names_key != qname and regime_params_template.get(names_key):
                     expansions.setdefault(names_key, set()).add(qname)
     return MappingProxyType(
@@ -4982,8 +4992,7 @@ def _declaration_param_expansions(
 
 
 def _extract_template_names_key(
-    func_name: str,
-    regime_params_template: RegimeParamsTemplate,
+    *, func_name: str, regime_params_template: RegimeParamsTemplate
 ) -> str:
     """Extract the template key under which a function's param names live.
 
@@ -5289,7 +5298,7 @@ def _get_conditioned_weights_func(
         name=name, grid=grid, sc=sc, grids=grids
     )
     nodes = grid.get_gridpoints()
-    sigma_by_code = sigma_array_by_code(conditioning_grid, sc.by)
+    sigma_by_code = sigma_array_by_code(cond_grid=conditioning_grid, by=sc.by)
     fixed = dict(grid.params)
     mu_fixed, rho_fixed = fixed["mu"], fixed.get("rho")
 
@@ -5297,7 +5306,7 @@ def _get_conditioned_weights_func(
 
     @with_signature(args=args, return_annotation="FloatND", enforce=False)
     def weights_func_conditioned(*a: FloatND, **kwargs: FloatND) -> Float1D:  # noqa: ARG001
-        sigma = gather_sigma(sigma_by_code, kwargs[sc.on])
+        sigma = gather_sigma(sigma_by_code=sigma_by_code, code=kwargs[sc.on])
         return conditioned_row(
             family=family,
             nodes=nodes,
@@ -5360,7 +5369,7 @@ def get_conditioned_fold_weights_by_code(
                 mu=fixed["mu"],
                 rho=fixed.get("rho"),
             )
-            for sigma in sigma_array_by_code(conditioning_grid, sc.by)
+            for sigma in sigma_array_by_code(cond_grid=conditioning_grid, by=sc.by)
         ]
     )
 
@@ -5637,7 +5646,7 @@ def _validate_categoricals(
 
         for state_name, raw in source_regime.state_transitions.items():
             source_grid = _get_simple_transition_discrete_grid(
-                source_regime, state_name, raw
+                user_regime=source_regime, state_name=state_name, raw=raw
             )
             if source_grid is None:
                 continue
@@ -5659,7 +5668,7 @@ def _validate_categoricals(
                     )
 
     # Validate ordered flag consistency across regimes
-    _validate_ordered_flags(user_regimes, error_messages)
+    _validate_ordered_flags(user_regimes=user_regimes, error_messages=error_messages)
 
     if error_messages:
         raise ModelInitializationError(format_messages(error_messages))
@@ -5706,8 +5715,7 @@ def compute_merged_discrete_categories(
 
 
 def _validate_ordered_flags(
-    user_regimes: Mapping[RegimeName, UserRegime],
-    error_messages: list[str],
+    *, user_regimes: Mapping[RegimeName, UserRegime], error_messages: list[str]
 ) -> None:
     """Validate that the ordered flag is consistent for each discrete variable.
 
@@ -5773,7 +5781,9 @@ def _merge_ordered_categories(
     contradictory.
     """
     edges, all_nodes, in_degree = _build_ordering_graph(regime_categories)
-    return _unique_topological_sort(edges, all_nodes, in_degree)
+    return _unique_topological_sort(
+        edges=edges, all_nodes=all_nodes, in_degree=in_degree
+    )
 
 
 def _build_ordering_graph(
@@ -5799,9 +5809,7 @@ def _build_ordering_graph(
 
 
 def _unique_topological_sort(
-    edges: dict[str, set[str]],
-    all_nodes: set[str],
-    in_degree: dict[str, int],
+    *, edges: dict[str, set[str]], all_nodes: set[str], in_degree: dict[str, int]
 ) -> tuple[str, ...] | None:
     """Return the unique topological order, or None if ambiguous or cyclic."""
     queue = [n for n in all_nodes if in_degree[n] == 0]
@@ -5825,9 +5833,7 @@ def _unique_topological_sort(
 
 
 def _get_simple_transition_discrete_grid(
-    user_regime: UserRegime,
-    state_name: StateName,
-    raw: object,
+    *, user_regime: UserRegime, state_name: StateName, raw: object
 ) -> DiscreteGrid | None:
     """Return the source DiscreteGrid for a simple transition.
 
@@ -5848,7 +5854,9 @@ def _get_simple_transition_discrete_grid(
         variants = [
             variant
             for variant in (raw.solve, raw.simulate)
-            if _get_simple_transition_discrete_grid(user_regime, state_name, variant)
+            if _get_simple_transition_discrete_grid(
+                user_regime=user_regime, state_name=state_name, raw=variant
+            )
             is not None
         ]
         if not variants:
@@ -6446,7 +6454,7 @@ def _build_Q_and_F_per_period(
         ),
     )
 
-    configs = group_periods_by_key(active_periods, group_key)
+    configs = group_periods_by_key(active_periods=active_periods, key=group_key)
 
     # Build one Q_and_F per distinct group, resolving periodized functions and
     # constraints at the group's representative period. Equal signature ⇒ identical
@@ -6497,11 +6505,15 @@ def _build_Q_and_F_per_period(
                 koopmans_aggregator=koopmans_aggregator,
                 functions=cast(
                     "EconFunctionsMapping",
-                    resolve_periodized_nodes(functions, representative_period),
+                    resolve_periodized_nodes(
+                        mapping=functions, period=representative_period
+                    ),
                 ),
                 constraints=cast(
                     "ConstraintFunctionsMapping",
-                    resolve_periodized_nodes(constraints, representative_period),
+                    resolve_periodized_nodes(
+                        mapping=constraints, period=representative_period
+                    ),
                 ),
                 # `period_targets` means the stateful targets: the ones whose
                 # continuation is actually interpolated this period.
@@ -6535,7 +6547,7 @@ def _build_Q_and_F_per_period(
                     cast(
                         "EconFunctionsMapping",
                         resolve_periodized_nodes(
-                            continuation_functions, representative_period
+                            mapping=continuation_functions, period=representative_period
                         ),
                     )
                     if continuation_functions is not None
@@ -6548,11 +6560,15 @@ def _build_Q_and_F_per_period(
             flat_param_names=flat_param_names,
             functions=cast(
                 "EconFunctionsMapping",
-                resolve_periodized_nodes(functions, representative_period),
+                resolve_periodized_nodes(
+                    mapping=functions, period=representative_period
+                ),
             ),
             constraints=cast(
                 "ConstraintFunctionsMapping",
-                resolve_periodized_nodes(constraints, representative_period),
+                resolve_periodized_nodes(
+                    mapping=constraints, period=representative_period
+                ),
             ),
             period_targets=stateful_targets,
             scalar_targets=scalar_targets,
@@ -6570,7 +6586,7 @@ def _build_Q_and_F_per_period(
                 cast(
                     "EconFunctionsMapping",
                     resolve_periodized_nodes(
-                        continuation_functions, representative_period
+                        mapping=continuation_functions, period=representative_period
                     ),
                 )
                 if continuation_functions is not None
@@ -6579,7 +6595,7 @@ def _build_Q_and_F_per_period(
             gated_continuations=period_gated_continuations,
         )
 
-    return expand_groups_to_periods(configs, built)
+    return expand_groups_to_periods(grouped_periods=configs, built_by_group=built)
 
 
 def _build_argmax_and_max_Q_over_a_per_period(
@@ -6681,8 +6697,8 @@ def _build_nnbegm_outer_target_functions(
 ) -> MappingProxyType[int, Callable[..., Mapping[str, FloatND]]]:
     """Build the smallest period-resolved DAG needed for replay inversion."""
     configs = group_periods_by_key(
-        active_periods,
-        lambda period: periodized_tree_signature(functions, period),
+        active_periods=active_periods,
+        key=lambda period: periodized_tree_signature(tree=functions, period=period),
     )
     targets = [outer_post_decision]
     if outer_no_adjustment_target is not None:
@@ -6694,7 +6710,9 @@ def _build_nnbegm_outer_target_functions(
         target_function = concatenate_functions(
             functions=cast(
                 "EconFunctionsMapping",
-                resolve_periodized_nodes(functions, representative_period),
+                resolve_periodized_nodes(
+                    mapping=functions, period=representative_period
+                ),
             ),
             targets=targets,
             return_type="dict",
@@ -6702,7 +6720,7 @@ def _build_nnbegm_outer_target_functions(
         )
         built[key] = cast("Callable[..., Mapping[str, FloatND]]", target_function)
 
-    return expand_groups_to_periods(configs, built)
+    return expand_groups_to_periods(grouped_periods=configs, built_by_group=built)
 
 
 def _build_next_state_vmapped(
@@ -6726,8 +6744,8 @@ def _build_next_state_vmapped(
     period shares a single function, exactly as an age-invariant model.
     """
     configs = group_periods_by_key(
-        active_periods,
-        lambda period: (
+        active_periods=active_periods,
+        key=lambda period: (
             (
                 ()
                 if period == phase_reachability.n_periods - 1
@@ -6735,7 +6753,7 @@ def _build_next_state_vmapped(
                     period=period, source=source_regime_name
                 )
             ),
-            periodized_tree_signature(functions, period),
+            periodized_tree_signature(tree=functions, period=period),
         ),
     )
 
@@ -6755,7 +6773,9 @@ def _build_next_state_vmapped(
         next_state = get_next_state_function_for_simulation(
             functions=cast(
                 "EconFunctionsMapping",
-                resolve_periodized_nodes(functions, representative_period),
+                resolve_periodized_nodes(
+                    mapping=functions, period=representative_period
+                ),
             ),
             transitions=period_transitions,
             transition_plans=transition_plans,
@@ -6770,7 +6790,7 @@ def _build_next_state_vmapped(
         )
         built[key] = jax.jit(next_state_vmapped) if enable_jit else next_state_vmapped
 
-    return expand_groups_to_periods(configs, built)
+    return expand_groups_to_periods(grouped_periods=configs, built_by_group=built)
 
 
 def _fail_if_phase_state_nodes_disagree(
@@ -6857,7 +6877,7 @@ def _fail_if_phase_state_nodes_disagree(
                 msg = (
                     f"Regime {regime_name!r} resolves state {state_name!r} in "
                     f"period {period} to different nodes in its two phases: "
-                    f"{_describe_node_disagreement(solve_axis, simulate_axis)}. "
+                    f"{_describe_node_disagreement(solve_axis=solve_axis, simulate_axis=simulate_axis)}. "  # noqa: E501
                     "A solve that certifies candidates against one grid and a "
                     "simulation that replays them against another disagree "
                     "about which values are representable. This is an internal "
@@ -6867,7 +6887,7 @@ def _fail_if_phase_state_nodes_disagree(
                 raise RegimeInitializationError(msg)
 
 
-def _describe_node_disagreement(solve_axis: Float1D, simulate_axis: Float1D) -> str:
+def _describe_node_disagreement(*, solve_axis: Float1D, simulate_axis: Float1D) -> str:
     """Return the offending values, not merely the shapes they came in.
 
     Two axes of equal length differ somewhere in their values, and naming the

@@ -48,7 +48,7 @@ def _wealth_utility(wealth: ScalarFloat) -> ScalarFloat:
 
 
 def _wealth_and_health_utility(
-    wealth: ScalarFloat, health: DiscreteState
+    *, wealth: ScalarFloat, health: DiscreteState
 ) -> ScalarFloat:
     return wealth + health.astype(jnp.float32)
 
@@ -69,7 +69,10 @@ def model() -> Model:
             "source": Regime(
                 transition={"target": MarkovTransition(lambda: jnp.float32(1))},
                 active=lambda age: age < 22,
-                states={"wealth": _WEALTH, "health": DiscreteGrid(Health)},
+                states={
+                    "wealth": _WEALTH,
+                    "health": DiscreteGrid(category_class=Health),
+                },
                 state_transitions={
                     "health": MarkovTransition(_health_probs),
                     "wealth": Phased(
@@ -80,7 +83,10 @@ def model() -> Model:
             ),
             "target": Regime(
                 transition=None,
-                states={"wealth": _WEALTH, "health": DiscreteGrid(Health)},
+                states={
+                    "wealth": _WEALTH,
+                    "health": DiscreteGrid(category_class=Health),
+                },
                 functions={"utility": _wealth_and_health_utility},
             ),
         },

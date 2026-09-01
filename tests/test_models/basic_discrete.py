@@ -32,7 +32,7 @@ def _next_regime() -> ScalarInt:
 working_life = UserRegime(
     transition=_next_regime,
     states={
-        "health": DiscreteGrid(Health),
+        "health": DiscreteGrid(category_class=Health),
         "wealth": LinSpacedGrid(start=0, stop=100, n_points=10),
     },
     state_transitions={
@@ -45,7 +45,7 @@ working_life = UserRegime(
 retirement = UserRegime(
     transition=_next_regime,
     states={
-        "health": DiscreteGrid(Health),
+        "health": DiscreteGrid(category_class=Health),
         "wealth": LinSpacedGrid(start=0, stop=100, n_points=10),
     },
     state_transitions={

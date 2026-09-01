@@ -31,7 +31,15 @@ def test_jump_aware_interp_does_not_bridge_a_neighboring_jump():
     # 2.6 sits in the middle segment (level 50). Its above-first-cliff limit must be
     # the middle segment's value, not a bridge toward the above-second-cliff 100.
     query = jnp.array([2.6])
-    out = np.asarray(_jump_aware_interp(query, grid, values, breakpoints, "otherwise"))
+    out = np.asarray(
+        _jump_aware_interp(
+            query=query,
+            grid=grid,
+            values=values,
+            breakpoints=breakpoints,
+            equality_owner="otherwise",
+        )
+    )
     np.testing.assert_allclose(out, [50.0], atol=1e-6)
 
 
@@ -44,7 +52,15 @@ def test_jump_aware_interp_below_side_does_not_bridge_previous_jump():
     # 3.4 sits in the middle segment (level 50). Its below-second-cliff limit must be
     # the middle segment's value, not a bridge back toward the below-first-cliff 10.
     query = jnp.array([3.4])
-    out = np.asarray(_jump_aware_interp(query, grid, values, breakpoints, "otherwise"))
+    out = np.asarray(
+        _jump_aware_interp(
+            query=query,
+            grid=grid,
+            values=values,
+            breakpoints=breakpoints,
+            equality_owner="otherwise",
+        )
+    )
     np.testing.assert_allclose(out, [50.0], atol=1e-6)
 
 
@@ -56,7 +72,9 @@ def test_bounded_limit_below_uses_only_nodes_above_the_previous_cliff():
     values = jnp.array([10.0, 10.0, 10.0, 50.0, 100.0, 100.0, 100.0])
     # Approaching the second cliff (3.5) from below, bounded above the first (2.5):
     # only node 3 (value 50) qualifies, so the limit is the middle level 50.
-    out = float(_bounded_limit_below(grid, values, limit=3.5, prev_limit=2.5, n=7))
+    out = float(
+        _bounded_limit_below(grid=grid, values=values, limit=3.5, prev_limit=2.5, n=7)
+    )
     np.testing.assert_allclose(out, 50.0, atol=1e-6)
 
 
@@ -67,7 +85,9 @@ def test_bounded_limit_above_uses_only_nodes_below_the_next_cliff():
     values = jnp.array([10.0, 10.0, 10.0, 50.0, 100.0, 100.0, 100.0])
     # Approaching the first cliff (2.5) from above, bounded below the second (3.5):
     # only node 3 (value 50) qualifies, so the limit is the middle level 50.
-    out = float(_bounded_limit_above(grid, values, limit=2.5, next_limit=3.5, n=7))
+    out = float(
+        _bounded_limit_above(grid=grid, values=values, limit=2.5, next_limit=3.5, n=7)
+    )
     np.testing.assert_allclose(out, 50.0, atol=1e-6)
 
 
@@ -95,7 +115,7 @@ def test_boundary_targeting_coh_reads_continuation_without_bridging_lower_cliff(
         coh_case_grid=coh_case_grid,
         next_value=next_value,
         discount_factor=discount_factor,
-        preferences=crra_preferences(crra),
+        preferences=crra_preferences(crra=crra),
         savings_grid=savings_grid,
         next_liquid=gross_return * savings_grid + income,
         asset_limit=asset_limit,

@@ -25,7 +25,7 @@ from tests.conftest import EXACT_KERNEL_SKIP_REASON
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
 
-def _folded_row(n_links: int, n_per_link: int, seed: int = 0):
+def _folded_row(*, n_links: int, n_per_link: int, seed: int = 0):
     """A value correspondence folded into `n_links` overlapping monotone runs."""
     rng = np.random.default_rng(seed=seed)
     grids, policies, values = [], [], []
@@ -45,7 +45,7 @@ def _folded_row(n_links: int, n_per_link: int, seed: int = 0):
 
 
 def _capacity_by_row_arrays(
-    jaxpr_text: str, row_extents: set[int], max_runs: int
+    *, jaxpr_text: str, row_extents: set[int], max_runs: int
 ) -> dict[str, int]:
     """Count arrays carrying a capacity axis together with a whole-row axis.
 
@@ -63,7 +63,7 @@ def _capacity_by_row_arrays(
 
 @pytest.mark.parametrize("n_rows", [None, 1, 3])
 @pytest.mark.parametrize("cell_batch_size", [None, 3])
-def test_no_capacity_by_row_array_is_materialized(cell_batch_size, n_rows):
+def test_no_capacity_by_row_array_is_materialized(*, cell_batch_size, n_rows):
     """No array pairs the run capacity with a whole-row axis, at any row count.
 
     The workspace has to be bounded by the chunk, so a shape must not grow with
@@ -77,6 +77,7 @@ def test_no_capacity_by_row_array_is_materialized(cell_batch_size, n_rows):
     n_cells = int(len(np.unique(np.asarray(grid))) - 1)
     assert max_runs not in {n_candidates, n_cells}, "the axes must stay tellable apart"
 
+    # keyword-only-exempt: library-callback=jax.vmap
     def refine(g, p, v):
         return refine_envelope_exact(
             endog_grid=g,
@@ -99,7 +100,7 @@ def test_no_capacity_by_row_array_is_materialized(cell_batch_size, n_rows):
         )
 
     offenders = _capacity_by_row_arrays(
-        str(jaxpr), row_extents={n_candidates, n_cells}, max_runs=max_runs
+        jaxpr_text=str(jaxpr), row_extents={n_candidates, n_cells}, max_runs=max_runs
     )
     assert offenders == {}, offenders
 

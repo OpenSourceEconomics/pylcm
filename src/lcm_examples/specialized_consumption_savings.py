@@ -46,7 +46,9 @@ def terminal_utility(wealth: ContinuousState) -> FloatND:
     return jnp.log1p(wealth)
 
 
-def savings(wealth: ContinuousState, consumption: ContinuousAction) -> ContinuousState:
+def savings(
+    *, wealth: ContinuousState, consumption: ContinuousAction
+) -> ContinuousState:
     """Liquid post-decision balance."""
     return wealth - consumption
 
@@ -112,6 +114,7 @@ def build_one_margin_model(*, enable_jit: bool = True) -> Model:
     ),
 )
 def tax(
+    *,
     liquid: ContinuousState,
     tax_rate: float,
     tax_exemption: float,
@@ -121,6 +124,7 @@ def tax(
 
 
 def resources(
+    *,
     liquid: ContinuousState,
     tax: FloatND,
     income: float,
@@ -130,6 +134,7 @@ def resources(
 
 
 def savings_after_tax(
+    *,
     resources: FloatND,
     consumption: ContinuousAction,
 ) -> ContinuousState:
@@ -215,14 +220,14 @@ def kinked_tax_initial_conditions() -> dict:
 
 
 def new_illiquid(
-    illiquid: ContinuousState, illiquid_investment: ContinuousAction
+    *, illiquid: ContinuousState, illiquid_investment: ContinuousAction
 ) -> ContinuousState:
     """Post-decision illiquid stock."""
     return illiquid + illiquid_investment
 
 
 def adjustment_cost(
-    illiquid: ContinuousState, new_illiquid: ContinuousState
+    *, illiquid: ContinuousState, new_illiquid: ContinuousState
 ) -> FloatND:
     """Liquid cost of changing the illiquid stock."""
     return new_illiquid - illiquid
@@ -234,7 +239,7 @@ def resources_before_cost(wealth: ContinuousState) -> FloatND:
 
 
 def liquid_savings(
-    resources: FloatND, consumption: ContinuousAction
+    *, resources: FloatND, consumption: ContinuousAction
 ) -> ContinuousState:
     """Liquid post-decision balance after the outer adjustment."""
     return resources - consumption
@@ -252,7 +257,9 @@ def next_illiquid(new_illiquid: ContinuousState) -> ContinuousState:
     return new_illiquid
 
 
-def nested_utility(consumption: ContinuousAction, illiquid: ContinuousState) -> FloatND:
+def nested_utility(
+    *, consumption: ContinuousAction, illiquid: ContinuousState
+) -> FloatND:
     """Utility from consumption and the current illiquid stock."""
     return jnp.log(consumption) + 0.05 * jnp.log1p(illiquid)
 
@@ -263,7 +270,7 @@ def inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
 
 
 def nested_terminal_utility(
-    wealth: ContinuousState, illiquid: ContinuousState
+    *, wealth: ContinuousState, illiquid: ContinuousState
 ) -> FloatND:
     """Terminal value of both assets."""
     return jnp.log1p(wealth) + 0.5 * jnp.log1p(illiquid)

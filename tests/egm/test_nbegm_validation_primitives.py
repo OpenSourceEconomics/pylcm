@@ -28,9 +28,11 @@ def _pick(income):
     ("func", "prim"),
     [(_bracket, "floor"), (_cap, "reduce_max"), (_pick, "argmax")],
 )
-def test_jaxpr_gate_rejects_a_staircase_or_selection_primitive(func, prim) -> None:
+def test_jaxpr_gate_rejects_a_staircase_or_selection_primitive(*, func, prim) -> None:
     """A hidden `floor` / `reduce_max` / `argmax` is reported by its primitive name."""
-    violations = find_jaxpr_violations(func, abstract_args=(1.0,), mode="smooth_user")
+    violations = find_jaxpr_violations(
+        func=func, abstract_args=(1.0,), mode="smooth_user"
+    )
     assert any(f"`{prim}`" in violation for violation in violations)
 
 
@@ -40,7 +42,10 @@ def test_jaxpr_gate_accepts_a_genuinely_smooth_formula() -> None:
     def smooth(income):
         return 0.3 * income + 0.01 * income**2
 
-    assert find_jaxpr_violations(smooth, abstract_args=(1.0,), mode="smooth_user") == []
+    assert (
+        find_jaxpr_violations(func=smooth, abstract_args=(1.0,), mode="smooth_user")
+        == []
+    )
 
 
 def _indexes_an_array_parameter(schedule):
@@ -50,7 +55,7 @@ def _indexes_an_array_parameter(schedule):
 def test_jaxpr_gate_reports_an_untraceable_piece_as_a_violation() -> None:
     """A piece the build-time fills cannot trace is a loud message, not a raw error."""
     violations = find_jaxpr_violations(
-        _indexes_an_array_parameter, abstract_args=(1.0,), mode="smooth_user"
+        func=_indexes_an_array_parameter, abstract_args=(1.0,), mode="smooth_user"
     )
     assert any("could not be traced" in violation for violation in violations)
 
@@ -59,7 +64,7 @@ def test_jaxpr_gate_warns_instead_of_reporting_under_assume_declared() -> None:
     """`probe_failure='assume_declared'` downgrades a tracing failure to a warning."""
     with pytest.warns(UserWarning, match="could not be traced"):
         violations = find_jaxpr_violations(
-            _indexes_an_array_parameter,
+            func=_indexes_an_array_parameter,
             abstract_args=(1.0,),
             mode="smooth_user",
             probe_failure="assume_declared",
@@ -82,5 +87,5 @@ def _compares(x):
 @pytest.mark.parametrize("piece", [_floors, _argmins, _compares])
 def test_ast_gate_rejects_a_staircase_or_comparison_call(piece) -> None:
     """The AST gate names a piecewise call written directly in the piece."""
-    violations = find_ast_violations(piece, mode="smooth_user")
+    violations = find_ast_violations(func=piece, mode="smooth_user")
     assert any("piecewise function" in violation for violation in violations)

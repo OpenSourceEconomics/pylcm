@@ -66,7 +66,7 @@ def _scaled_law_brute(alpha: float):
     return next_illiquid_brute
 
 
-def _build_negm_model(alpha: float, *, durable_law=None) -> Model:
+def _build_negm_model(*, alpha: float, durable_law=None) -> Model:
     """The service-flow toy with a scaled durable law, solved by NEGM."""
     alive = NestedConsumptionSavingsRegime(
         active=lambda age, n=toy.FINAL_AGE_ALIVE: age <= n,
@@ -161,7 +161,7 @@ def test_negm_applies_the_declared_scaling_of_the_durable_stock():
     choice sets stop coinciding and the gap stops measuring the law. Appreciation
     is covered by the ordering witness below, which needs no shared grid.
     """
-    v_negm = np.asarray(_solve_period0_alive(_build_negm_model(DEPRECIATION)))
+    v_negm = np.asarray(_solve_period0_alive(_build_negm_model(alpha=DEPRECIATION)))
     v_brute = np.asarray(_solve_period0_alive(_build_brute_model(DEPRECIATION)))
     deviation = np.abs(v_negm - v_brute)
     assert float(deviation.mean()) < 0.06
@@ -180,7 +180,7 @@ def test_the_value_rises_with_the_share_of_the_stock_that_survives():
     ordering needs no oracle and so no shared choice set.
     """
     values = [
-        np.asarray(_solve_period0_alive(_build_negm_model(alpha)))
+        np.asarray(_solve_period0_alive(_build_negm_model(alpha=alpha)))
         for alpha in (DEPRECIATION, 1.0, APPRECIATION)
     ]
     for lower, higher in pairwise(values):
@@ -198,9 +198,9 @@ def test_an_outer_law_reading_the_inner_savings_margin_is_rejected():
     """
 
     def euler_coupled_durable_transition(
-        new_durable: ContinuousState, liquid_savings: FloatND
+        *, new_durable: ContinuousState, liquid_savings: FloatND
     ) -> ContinuousState:
         return new_durable + 0.1 * liquid_savings
 
     with pytest.raises(ModelInitializationError, match="inner margin"):
-        _build_negm_model(1.0, durable_law=euler_coupled_durable_transition)
+        _build_negm_model(alpha=1.0, durable_law=euler_coupled_durable_transition)

@@ -18,7 +18,7 @@ def drop_nan(arr: jnp.ndarray) -> np.ndarray:
 
 
 def envelope_interp(
-    grid: jnp.ndarray, value: jnp.ndarray, x_query: float | np.ndarray
+    *, grid: jnp.ndarray, value: jnp.ndarray, x_query: float | np.ndarray
 ) -> np.ndarray:
     """Interpolate a refined row's values at `x_query`, ignoring the NaN tail."""
     keep = ~np.isnan(np.asarray(grid))

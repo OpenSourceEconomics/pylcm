@@ -67,7 +67,7 @@ def test_constrained_consume_all_solution_has_an_exact_euler_residual():
         consumption=c_star,
         next_consumption=next_liquid,
         discount_factor=_DISCOUNT,
-        preferences=crra_preferences(_CRRA),
+        preferences=crra_preferences(crra=_CRRA),
         next_liquid=next_liquid,
         marginal_return=marginal_return,
     )
@@ -85,7 +85,7 @@ def _retired_median_euler_error(*, n_liquid):
         next_liquid_grid=liquid_grid,
         savings_grid=savings_grid,
         discount_factor=_DISCOUNT,
-        preferences=crra_preferences(_CRRA),
+        preferences=crra_preferences(crra=_CRRA),
         next_liquid=(1.0 + _RETURN) * savings_grid + _INCOME,
         marginal_return=jnp.full_like(savings_grid, 1.0 + _RETURN),
     )
@@ -100,7 +100,7 @@ def _retired_median_euler_error(*, n_liquid):
             consumption=step.consumption,
             next_consumption=liquid_grid,
             discount_factor=_DISCOUNT,
-            preferences=crra_preferences(_CRRA),
+            preferences=crra_preferences(crra=_CRRA),
             next_liquid=next_liquid,
             marginal_return=marginal_return,
         )
@@ -166,7 +166,7 @@ def test_euler_error_vanishes_for_a_policy_optimal_under_a_fixed_cost_law():
         consumption=c_star,
         next_consumption=liquid_grid,
         discount_factor=_DISCOUNT,
-        preferences=crra_preferences(_CRRA),
+        preferences=crra_preferences(crra=_CRRA),
         next_liquid=next_liquid,
         marginal_return=marginal_return,
     )

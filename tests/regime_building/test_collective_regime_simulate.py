@@ -130,12 +130,12 @@ class CoupleRegimeId:
     couple_terminal: ScalarInt
 
 
-def _utility_f(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _utility_f(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     consumption = wage * work
     return consumption + 30.0 * (1.0 - work)
 
 
-def _utility_m(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _utility_m(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     consumption = wage * work
     return 2.0 * consumption
 
@@ -157,7 +157,7 @@ def _make_couple_regimes() -> dict[str, Regime]:
         active=lambda age: age < 1,
         states={"wage": _WAGE_GRID_2},
         state_transitions={"wage": _next_wage},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
         },
@@ -166,7 +166,7 @@ def _make_couple_regimes() -> dict[str, Regime]:
         transition=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE_GRID_2},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
         },
@@ -314,7 +314,7 @@ def test_couple_simulate_with_runtime_validation_enabled():
 _WAGE_2 = LinSpacedGrid(start=1.0, stop=2.0, n_points=2)  # {1.0, 2.0}
 
 
-def _u_single_f(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _u_single_f(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     return wage * work
 
 
@@ -326,15 +326,16 @@ def _u_single_m_terminal(wage: ContinuousState) -> FloatND:
     return jnp.where(wage < 1.5, 0.5, 3.0)  # {0.5, 3.0}
 
 
-def _u_married_f(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _u_married_f(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     return 2.0 * wage + 0.0 * work  # {2, 4}
 
 
-def _u_married_m(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _u_married_m(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     return wage + 0.0 * work  # {1, 2}
 
 
 def _consent_gate(
+    *,
     V_target_f: FloatND,
     V_target_m: FloatND,
     V_single_f_ref: FloatND,
@@ -373,7 +374,7 @@ def _make_consent_regimes() -> dict[str, Regime]:
         active=lambda age: age < 1,
         states={"wage": _WAGE_2},
         state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_single_f},
     )
     single_f_terminal = Regime(
@@ -392,7 +393,7 @@ def _make_consent_regimes() -> dict[str, Regime]:
         transition=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE_2},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _u_married_f, "m": _u_married_m}
@@ -526,20 +527,20 @@ def test_consent_routing_never_populates_the_non_routed_target():
 _WAGE_3 = LinSpacedGrid(start=1.0, stop=3.0, n_points=3)  # {1, 2, 3}
 
 
-def _u_married_ir_f(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _u_married_ir_f(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     return 3.0 * (1.0 - work) + 2.0 * wage * work
 
 
-def _u_married_ir_m(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _u_married_ir_m(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     return 0.5 * (1.0 - work) + wage * work
 
 
-def _u_single_f_ir(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _u_single_f_ir(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     target = jnp.where((wage > 1.5) & (wage < 2.5), 5.5, 1.5)
     return target * work
 
 
-def _u_single_m_ir(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _u_single_m_ir(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     return 1.0 * work + 0.0 * wage
 
 
@@ -547,15 +548,15 @@ def _u_zero(wage: ContinuousState) -> FloatND:
     return 0.0 * wage
 
 
-def _u_zero_collective(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _u_zero_collective(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     return 0.0 * wage * work
 
 
-def _ir_f(Q_f: FloatND, V_single_f_ref: FloatND, delta_f: FloatND) -> BoolND:
+def _ir_f(*, Q_f: FloatND, V_single_f_ref: FloatND, delta_f: FloatND) -> BoolND:
     return Q_f >= V_single_f_ref - delta_f
 
 
-def _ir_m(Q_m: FloatND, V_single_m_ref: FloatND, delta_m: FloatND) -> BoolND:
+def _ir_m(*, Q_m: FloatND, V_single_m_ref: FloatND, delta_m: FloatND) -> BoolND:
     return Q_m >= V_single_m_ref - delta_m
 
 
@@ -588,7 +589,7 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
         active=lambda age: age < 1,
         states={"wage": _WAGE_3},
         state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _u_zero_collective, "m": _u_zero_collective}
@@ -600,7 +601,7 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
         active=lambda age: (age >= 1) & (age < 2),
         states={"wage": _WAGE_3},
         state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _u_married_ir_f, "m": _u_married_ir_m}
@@ -629,7 +630,7 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
         transition=None,
         active=lambda age: age >= 2,
         states={"wage": _WAGE_3},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _u_zero_collective, "m": _u_zero_collective}
@@ -641,7 +642,7 @@ def _make_dissolution_regimes() -> dict[str, Regime]:
         active=lambda age: (age >= 1) & (age < 2),
         states={"wage": _WAGE_3},
         state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_single_f_ir},
     )
     single_f_terminal = Regime(
@@ -905,23 +906,23 @@ def _identity_educ(educ: DiscreteState) -> DiscreteState:
 
 
 def _u_single_f_educ(
-    wage: ContinuousState, work: DiscreteAction, educ: DiscreteState
+    *, wage: ContinuousState, work: DiscreteAction, educ: DiscreteState
 ) -> FloatND:
     return wage * work + 0.0 * educ
 
 
-def _u_single_f_terminal_educ(wage: ContinuousState, educ: DiscreteState) -> FloatND:
+def _u_single_f_terminal_educ(*, wage: ContinuousState, educ: DiscreteState) -> FloatND:
     return 1.5 * wage + 0.0 * educ  # {1.5, 3.0}
 
 
 def _u_married_f_educ(
-    wage: ContinuousState, work: DiscreteAction, educ: DiscreteState
+    *, wage: ContinuousState, work: DiscreteAction, educ: DiscreteState
 ) -> FloatND:
     return 2.0 * wage + 0.0 * work + 0.0 * educ  # {2, 4}
 
 
 def _u_married_m_educ(
-    wage: ContinuousState, work: DiscreteAction, educ: DiscreteState
+    *, wage: ContinuousState, work: DiscreteAction, educ: DiscreteState
 ) -> FloatND:
     return wage + 0.0 * work + 0.0 * educ  # {1, 2}
 
@@ -957,18 +958,18 @@ def _make_consent_regimes_with_discrete_target_axis() -> dict[str, Regime]:
         # ONLY difference vs. `_make_consent_regimes`: an added discrete
         # "educ" state, carried as-is (`fixed_transition`), on the source and
         # every regime the gated edge's fold/gate/fallback touch.
-        states={"wage": _WAGE_2, "educ": DiscreteGrid(Educ)},
+        states={"wage": _WAGE_2, "educ": DiscreteGrid(category_class=Educ)},
         state_transitions={
             "wage": fixed_transition("wage"),
             "educ": fixed_transition("educ"),
         },
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_single_f_educ},
     )
     single_f_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        states={"wage": _WAGE_2, "educ": DiscreteGrid(Educ)},
+        states={"wage": _WAGE_2, "educ": DiscreteGrid(category_class=Educ)},
         functions={"utility": _u_single_f_terminal_educ},
     )
     single_m_terminal = Regime(
@@ -980,8 +981,8 @@ def _make_consent_regimes_with_discrete_target_axis() -> dict[str, Regime]:
     married_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        states={"wage": _WAGE_2, "educ": DiscreteGrid(Educ)},
-        actions={"work": DiscreteGrid(Work)},
+        states={"wage": _WAGE_2, "educ": DiscreteGrid(category_class=Educ)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _u_married_f_educ, "m": _u_married_m_educ}
@@ -1392,7 +1393,7 @@ def _next_solo_regime() -> ScalarInt:
     return SoloRegimeId.solo_terminal
 
 
-def _u_solo(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _u_solo(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     consumption = wage * work
     return consumption + 30.0 * (1.0 - work)
 
@@ -1411,7 +1412,7 @@ def _make_solo_regimes() -> dict[str, Regime]:
         active=lambda age: age < 1,
         states={"wage": _WAGE_GRID_2},
         state_transitions={"wage": _next_wage},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_solo},
     )
     solo_terminal = Regime(
@@ -1497,7 +1498,7 @@ def test_to_dataframe_singleton_only_value_column_is_unchanged():
 _REPEAT_GATE_THRESHOLD = 2.0
 
 
-def _u_src_repeat(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _u_src_repeat(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     return wage + 0.0 * work
 
 
@@ -1554,7 +1555,7 @@ def _make_repeating_self_loop_regimes() -> dict[str, Regime]:
         active=lambda age: age < 2,
         states={"wage": _WAGE_2},
         state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_src_repeat},
     )
     src_exit = Regime(

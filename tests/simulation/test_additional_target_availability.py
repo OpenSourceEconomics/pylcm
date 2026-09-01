@@ -59,8 +59,8 @@ def test_all_candidates_are_classified_from_one_dependency_graph(monkeypatch):
 
     classify = inspect.unwrap(target_module._decision_only_target_names)
     decision_only = classify(
-        regime,
-        {"decision", "downstream", "safe"},
+        regime=regime,
+        candidates={"decision", "downstream", "safe"},
     )
 
     assert decision_only == {"decision", "downstream"}

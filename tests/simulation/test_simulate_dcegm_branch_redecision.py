@@ -50,16 +50,16 @@ class BonusChoice:
 
 
 def _bonus_utility(
-    consumption: ContinuousAction, take_bonus: DiscreteAction
+    *, consumption: ContinuousAction, take_bonus: DiscreteAction
 ) -> FloatND:
     return jnp.log(consumption) - _EFFORT_COST * take_bonus
 
 
-def _bonus_resources(wealth: ContinuousState, take_bonus: DiscreteAction) -> FloatND:
+def _bonus_resources(*, wealth: ContinuousState, take_bonus: DiscreteAction) -> FloatND:
     return wealth + _BONUS * take_bonus
 
 
-def _savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
+def _savings(*, resources: FloatND, consumption: ContinuousAction) -> FloatND:
     return resources - consumption
 
 
@@ -67,7 +67,7 @@ def _inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
     return 1.0 / marginal_continuation
 
 
-def _bequest_utility(wealth: ContinuousState, age: float) -> FloatND:
+def _bequest_utility(*, wealth: ContinuousState, age: float) -> FloatND:
     return (age / 50.0) * jnp.log(wealth)
 
 
@@ -80,7 +80,7 @@ def _bonus_model(constraints: dict | None = None) -> Model:
         solver=solver,
         actions={
             "consumption": dcegm_retirement.actions["consumption"],
-            "take_bonus": DiscreteGrid(BonusChoice),
+            "take_bonus": DiscreteGrid(category_class=BonusChoice),
         },
         functions={
             "utility": _bonus_utility,
@@ -102,8 +102,8 @@ def _bonus_model(constraints: dict | None = None) -> Model:
     )
 
 
-def _simulate_period_0(model: Model, off_grid_wealth: np.ndarray):
-    params = get_retirement_only_params(2, discount_factor=_DISCOUNT_FACTOR)
+def _simulate_period_0(*, model: Model, off_grid_wealth: np.ndarray):
+    params = get_retirement_only_params(n_periods=2, discount_factor=_DISCOUNT_FACTOR)
     initial_conditions = {
         "wealth": jnp.asarray(off_grid_wealth),
         "age": jnp.full(off_grid_wealth.shape, 40.0),
@@ -153,9 +153,9 @@ def test_branch_redecision_matches_the_closed_form_switch_and_policy():
     optimum — a grid-restricted pair can do neither.
     """
     off_grid_wealth = _off_grid_wealth_straddling_the_switch()
-    period_0 = _simulate_period_0(_bonus_model(), off_grid_wealth).sort_values(
-        "subject_id"
-    )
+    period_0 = _simulate_period_0(
+        model=_bonus_model(), off_grid_wealth=off_grid_wealth
+    ).sort_values("subject_id")
 
     take = period_0["take_bonus"].to_numpy()
     expected_take = (off_grid_wealth < _SWITCH_WEALTH).astype(take.dtype)
@@ -189,7 +189,9 @@ def test_branch_redecision_respects_discrete_action_constraints():
     """
     off_grid_wealth = _off_grid_wealth_straddling_the_switch()
     model = _bonus_model(constraints={"bonus_forbidden": _bonus_forbidden})
-    period_0 = _simulate_period_0(model, off_grid_wealth).sort_values("subject_id")
+    period_0 = _simulate_period_0(
+        model=model, off_grid_wealth=off_grid_wealth
+    ).sort_values("subject_id")
 
     take = period_0["take_bonus"].to_numpy()
     np.testing.assert_array_equal(take, np.zeros_like(take))

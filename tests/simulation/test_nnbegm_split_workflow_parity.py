@@ -76,8 +76,8 @@ def _build(route: str) -> Model:
 
 
 def _simulate(
-    model: Model,
     *,
+    model: Model,
     period_to_regime_to_V_arr: PeriodToRegimeToVArr | None,
     policies: PeriodToRegimeToSimulationPolicy | None = None,
 ) -> pd.DataFrame:
@@ -116,8 +116,8 @@ def test_separate_solve_and_simulate_matches_the_automatic_route(
     """The documented split workflow reproduces automatic solve-and-simulate."""
     model, values, policies = solved
     assert_frame_equal(
-        _simulate(model, period_to_regime_to_V_arr=values, policies=policies),
-        _simulate(model, period_to_regime_to_V_arr=None),
+        _simulate(model=model, period_to_regime_to_V_arr=values, policies=policies),
+        _simulate(model=model, period_to_regime_to_V_arr=None),
     )
 
 
@@ -127,7 +127,7 @@ def test_supplied_values_without_any_replay_policies_are_refused(
     """Dropping the replay mapping is refused rather than silently re-optimized."""
     model, values, _ = solved
     with pytest.raises(InvalidSimulationInputError, match="replay policy"):
-        _simulate(model, period_to_regime_to_V_arr=values, policies=None)
+        _simulate(model=model, period_to_regime_to_V_arr=values, policies=None)
 
 
 def test_replay_policies_published_by_the_other_outer_search_are_refused() -> None:
@@ -143,7 +143,7 @@ def test_replay_policies_published_by_the_other_outer_search_are_refused() -> No
 
     with pytest.raises(InvalidSimulationInputError, match="replay policy"):
         _simulate(
-            adaptive_model,
+            model=adaptive_model,
             period_to_regime_to_V_arr=adaptive_values,
             policies=finite_policies,
         )
@@ -198,7 +198,9 @@ def test_split_replay_does_not_certify_the_declared_outer_map_itself() -> None:
     values, policies = model.solve(
         params=_PARAMS, log_level="debug", return_simulation_policy=True
     )
-    expected = _simulate(model, period_to_regime_to_V_arr=values, policies=policies)
+    expected = _simulate(
+        model=model, period_to_regime_to_V_arr=values, policies=policies
+    )
 
     def refuse(**_kwargs):
         raise AssertionError("split replay re-certified the declared outer map")
@@ -206,6 +208,8 @@ def test_split_replay_does_not_certify_the_declared_outer_map_itself() -> None:
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(outer_affine_structure, "certify_outer_coefficient", refuse)
         patch.setattr(outer_inversion, "certify_declared_outer_inverse", refuse)
-        got = _simulate(model, period_to_regime_to_V_arr=values, policies=policies)
+        got = _simulate(
+            model=model, period_to_regime_to_V_arr=values, policies=policies
+        )
 
     assert_frame_equal(got, expected)

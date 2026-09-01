@@ -59,7 +59,7 @@ class FiniteOuterGrid(OuterSearch):
     `0` solves every node at once. A memory knob only — value-invariant."""
 
     def __post_init__(self) -> None:
-        _fail_if_batch_size_negative(self.batch_size, field="batch_size")
+        _fail_if_batch_size_negative(batch_size=self.batch_size, field="batch_size")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -148,7 +148,7 @@ class AdaptiveOuterMesh(OuterSearch):
     An inference release gate over those is the caller's to build."""
 
     def __post_init__(self) -> None:
-        _fail_if_batch_size_negative(self.batch_size, field="batch_size")
+        _fail_if_batch_size_negative(batch_size=self.batch_size, field="batch_size")
         if self.max_nodes < 2:  # noqa: PLR2004
             msg = f"max_nodes must be >= 2, got {self.max_nodes}."
             raise RegimeInitializationError(msg)
@@ -179,7 +179,7 @@ class AdaptiveOuterMesh(OuterSearch):
             raise RegimeInitializationError(msg)
 
 
-def _fail_if_batch_size_negative(batch_size: int, *, field: str) -> None:
+def _fail_if_batch_size_negative(*, batch_size: int, field: str) -> None:
     if batch_size < 0:
         msg = f"{field} must be >= 0, got {batch_size}."
         raise RegimeInitializationError(msg)

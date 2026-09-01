@@ -353,7 +353,9 @@ def bind_continuation(
     )
     child_readers = {
         target: _get_child_carry_reader(
-            read=_with_co_map_states(plan.child_reads[target], co_map_state_names),
+            read=_with_co_map_states(
+                read=plan.child_reads[target], co_map_state_names=co_map_state_names
+            ),
             carry=next_regime_to_continuation[target],
             combo_pool=combo_pool,
             post_decision_name=plan.post_decision_name,
@@ -512,7 +514,7 @@ def build_continuation_plan(
 
 
 def _with_co_map_states(
-    read: _ChildRead, co_map_state_names: tuple[StateName, ...]
+    *, read: _ChildRead, co_map_state_names: tuple[StateName, ...]
 ) -> _ChildRead:
     """Tag a child read with the co-mapped states among its discrete-state axes.
 
@@ -749,6 +751,7 @@ def _compute_row_queries_and_gradients(
         else {}
     )
 
+    # keyword-only-exempt: library-callback=jax.value_and_grad
     def composed_row(
         savings: ScalarFloat, row_values: tuple[ScalarFloat | ScalarInt, ...]
     ) -> ScalarFloat:
@@ -871,7 +874,7 @@ def _expect_over_stochastic_nodes(
         weight_vecs=weight_vecs, node_indices=flat_node_indices
     )
 
-    def _weighted_node_sum(values: FloatND, weights: FloatND) -> ScalarFloat:
+    def _weighted_node_sum(*, values: FloatND, weights: FloatND) -> ScalarFloat:
         # A zero-weight node contributes exactly 0.0 even when its smoothed
         # value is -inf, while a NaN weight still poisons the sum and a
         # negative one stays visible rather than collapsing to zero.
@@ -926,6 +929,7 @@ def _expect_over_stochastic_nodes(
                 shift=node_shift,
             )
 
+        # keyword-only-exempt: library-callback=jax.lax.scan
         def accumulate(
             carry: tuple[ScalarFloat, ScalarFloat],
             block: tuple[tuple[IntND, ...], FloatND],
@@ -934,8 +938,10 @@ def _expect_over_stochastic_nodes(
             block_values, block_marginals = jax.vmap(read_at_nodes)(block_indices)
             acc_value, acc_marginal = carry
             return (
-                acc_value + _weighted_node_sum(block_values, block_weights),
-                acc_marginal + _weighted_node_sum(block_marginals, block_weights),
+                acc_value
+                + _weighted_node_sum(values=block_values, weights=block_weights),
+                acc_marginal
+                + _weighted_node_sum(values=block_marginals, weights=block_weights),
             ), None
 
         (smoothed_value, smoothed_marginal), _ = jax.lax.scan(
@@ -964,8 +970,8 @@ def _expect_over_stochastic_nodes(
             ),
             shift=node_shift,
         )
-    smoothed_value = _weighted_node_sum(node_values, joint_weights)
-    smoothed_marginal = _weighted_node_sum(node_marginals, joint_weights)
+    smoothed_value = _weighted_node_sum(values=node_values, weights=joint_weights)
+    smoothed_marginal = _weighted_node_sum(values=node_marginals, weights=joint_weights)
     return (
         _on_node_scale(values=smoothed_value, shift=node_shift),
         _on_node_scale(values=smoothed_marginal, shift=node_shift),
@@ -1029,12 +1035,12 @@ def _on_node_scale(*, values: FloatND, shift: IntND) -> FloatND:
     arr = jnp.asarray(values)
     shift_arr = jnp.asarray(shift)
     smallest_that_survives = scaled_by_power_of_two(
-        jnp.asarray(jnp.finfo(arr.dtype).tiny, dtype=arr.dtype), shift_arr
+        values=jnp.asarray(jnp.finfo(arr.dtype).tiny, dtype=arr.dtype), shift=shift_arr
     )
     return jnp.where(
         (shift_arr > 0) & (jnp.abs(arr) < smallest_that_survives),
         jnp.zeros_like(arr),
-        scaled_by_power_of_two(arr, -shift_arr),
+        scaled_by_power_of_two(values=arr, shift=-shift_arr),
     )
 
 
@@ -1074,6 +1080,7 @@ def _accumulate_ez_partials_over_blocks(
     zero = jnp.zeros((), dtype=dtype)
     one = jnp.ones((), dtype=dtype)
 
+    # keyword-only-exempt: library-callback=jax.lax.scan
     def accumulate_partials(
         carry: tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat],
         block: tuple[tuple[IntND, ...], FloatND],
@@ -1275,14 +1282,28 @@ def _aggregate_child_choices(
     #   leading order.
     if paired_marginal_read:
         value_at_child, marginal_at_child = jax.vmap(_value_and_slope_row)(
-            search_rows, valid_rows, grid_rows, value_rows, marginal_rows, queries_flat
+            search_grid=search_rows,
+            valid_length=valid_rows,
+            xp=grid_rows,
+            fp=value_rows,
+            fp_slopes=marginal_rows,
+            x_query=queries_flat,
         )
     else:
         value_at_child = jax.vmap(_interp_value_row)(
-            search_rows, valid_rows, grid_rows, value_rows, marginal_rows, queries_flat
+            search_grid=search_rows,
+            valid_length=valid_rows,
+            xp=grid_rows,
+            fp=value_rows,
+            fp_slopes=marginal_rows,
+            x_query=queries_flat,
         )
         marginal_at_child = jax.vmap(_interp_row)(
-            search_rows, valid_rows, grid_rows, marginal_rows, queries_flat
+            search_grid=search_rows,
+            valid_length=valid_rows,
+            xp=grid_rows,
+            fp=marginal_rows,
+            x_query=queries_flat,
         )
     # The passive blend interpolates a list of finite marginal-like payloads.
     # The regular path carries the single marginal read; the stacked NEGM path
@@ -1486,7 +1507,14 @@ def _stacked_blend_payloads(
     """
     right_germ_at_child, left_germ_at_child, left_marginal_at_child = jax.vmap(
         _germ_and_left_record_rows
-    )(search_rows, valid_rows, grid_rows, value_rows, marginal_rows, queries_flat)
+    )(
+        search_grid=search_rows,
+        valid_length=valid_rows,
+        xp=grid_rows,
+        fp=value_rows,
+        fp_slopes=marginal_rows,
+        x_query=queries_flat,
+    )
     # Only rows with a finite first node have a support to fall below;
     # `row_lower` is `+inf` on an all-NaN (poisoned) row, whose NaN read must
     # reach the candidate maximum fail-loud instead of becoming an ordinary
@@ -1511,7 +1539,12 @@ def _stacked_blend_payloads(
     # slope, not the ordinary right/clamp derivative.
     if paired_marginal_read:
         left_marginal_at_child = jax.vmap(_left_slope_row)(
-            search_rows, valid_rows, grid_rows, value_rows, marginal_rows, queries_flat
+            search_grid=search_rows,
+            valid_length=valid_rows,
+            xp=grid_rows,
+            fp=value_rows,
+            fp_slopes=marginal_rows,
+            x_query=queries_flat,
         )
         left_marginal_at_child = jnp.where(
             above_row_support, 0.0, left_marginal_at_child
@@ -1537,16 +1570,14 @@ def _stacked_blend_payloads(
         left_marginal_at_child=left_marginal_at_child.reshape(block_shape),
         right_dead_at_child=at_or_above_row_support.reshape(block_shape),
         left_dead_at_child=at_or_below_row_support.reshape(block_shape),
-        right_germ_at_child=_reshaped_germ(right_germ_at_child, shape=block_shape),
-        left_germ_at_child=_reshaped_germ(left_germ_at_child, shape=block_shape),
+        right_germ_at_child=_reshaped_germ(germ=right_germ_at_child, shape=block_shape),
+        left_germ_at_child=_reshaped_germ(germ=left_germ_at_child, shape=block_shape),
     )
     return value_at_child, [right_side, left_side, right_alive]
 
 
 def _reshaped_germ(
-    germ: tuple[BoolND, FloatND, FloatND, FloatND],
-    *,
-    shape: tuple[int, ...],
+    *, germ: tuple[BoolND, FloatND, FloatND, FloatND], shape: tuple[int, ...]
 ) -> tuple[BoolND, FloatND, FloatND, FloatND]:
     """Reshape every component of a value germ to `shape`."""
     alive, first, second, third = germ
@@ -1581,6 +1612,7 @@ def _choose_blended_side(
 
 
 def _interp_value_row(
+    *,
     search_grid: Float1D,
     valid_length: ScalarInt,
     xp: Float1D,
@@ -1588,7 +1620,7 @@ def _interp_value_row(
     fp_slopes: Float1D,
     x_query: ScalarFloat,
 ) -> ScalarFloat:
-    """Interpolate one carry value row at its query; positional per `jax.vmap`."""
+    """Interpolate one carry value row at its query."""
     return interp_on_prepared_grid(
         x_query=x_query,
         search_grid=search_grid,
@@ -1600,13 +1632,14 @@ def _interp_value_row(
 
 
 def _interp_row(
+    *,
     search_grid: Float1D,
     valid_length: ScalarInt,
     xp: Float1D,
     fp: Float1D,
     x_query: ScalarFloat,
 ) -> ScalarFloat:
-    """Interpolate one carry row at its own query; positional per `jax.vmap`."""
+    """Interpolate one carry row at its own query."""
     return interp_on_prepared_grid(
         x_query=x_query,
         search_grid=search_grid,
@@ -1617,6 +1650,7 @@ def _interp_row(
 
 
 def _value_and_slope_row(
+    *,
     search_grid: Float1D,
     valid_length: ScalarInt,
     xp: Float1D,
@@ -1624,7 +1658,7 @@ def _value_and_slope_row(
     fp_slopes: Float1D,
     x_query: ScalarFloat,
 ) -> tuple[ScalarFloat, ScalarFloat]:
-    """Value read and its analytic derivative; positional per `jax.vmap`.
+    """Value read and its analytic derivative.
 
     The closed-form derivative of the selected piece — not autodiff through
     the bracket-selection program, whose `searchsorted`/`clip` representation
@@ -1642,6 +1676,7 @@ def _value_and_slope_row(
 
 
 def _left_slope_row(
+    *,
     search_grid: Float1D,
     valid_length: ScalarInt,
     xp: Float1D,
@@ -1649,7 +1684,7 @@ def _left_slope_row(
     fp_slopes: Float1D,
     x_query: ScalarFloat,
 ) -> ScalarFloat:
-    """Left-side analytic derivative of the value read; positional per `jax.vmap`.
+    """Left-side analytic derivative of the value read.
 
     The paired left payload: an on-node query lands in its LEFT bracket
     (evaluated at the bracket's right edge), so a duplicated terminal abscissa
@@ -1669,6 +1704,7 @@ def _left_slope_row(
 
 
 def _germ_and_left_record_rows(
+    *,
     search_grid: Float1D,
     valid_length: ScalarInt,
     xp: Float1D,
@@ -1680,7 +1716,7 @@ def _germ_and_left_record_rows(
     tuple[ScalarBool, ScalarFloat, ScalarFloat, ScalarFloat],
     ScalarFloat,
 ]:
-    """Germs and left-record marginal of one row; positional per `jax.vmap`."""
+    """Germs and left-record marginal of one row."""
     right_germ = interp_right_germ_on_prepared_grid(
         x_query=x_query,
         search_grid=search_grid,
@@ -1843,6 +1879,7 @@ def _build_child_reads(
         target_transition_names = frozenset(transitions[target])
 
         def _is_stochastic(
+            *,
             name: StateName,
             target: RegimeName = target,
             target_info: VInterpolationInfo = target_info,
@@ -1859,7 +1896,9 @@ def _build_child_reads(
                 target
             ].is_lottery(transition_name)
 
-        stochastic_flags = tuple(_is_stochastic(name) for name in discrete_state_names)
+        stochastic_flags = tuple(
+            _is_stochastic(name=name) for name in discrete_state_names
+        )
         stochastic_state_names = tuple(
             name
             for name, is_stochastic in zip(

@@ -70,7 +70,7 @@ _STRADDLED = {
 
 @pytest.mark.parametrize("block_size", _ROUTES)
 @pytest.mark.parametrize("position", sorted(_STRADDLED))
-def test_a_straddled_lone_point_owns_the_query_it_brackets(position, block_size):
+def test_a_straddled_lone_point_owns_the_query_it_brackets(*, position, block_size):
     """A lone point storing the larger value wins against a rival passing over it."""
     case = _STRADDLED[position]
     published, _, _ = _envelope(
@@ -88,7 +88,9 @@ def test_a_straddled_lone_point_owns_the_query_it_brackets(position, block_size)
 
 @pytest.mark.parametrize("block_size", _ROUTES)
 @pytest.mark.parametrize("position", sorted(_STRADDLED))
-def test_a_straddled_lone_point_loses_to_a_rival_reading_higher(position, block_size):
+def test_a_straddled_lone_point_loses_to_a_rival_reading_higher(
+    *, position, block_size
+):
     """A lone point storing the smaller value does not take the query from the rival."""
     case = _STRADDLED[position]
     published, _, _ = _envelope(
@@ -161,7 +163,7 @@ def test_coincident_nodes_storing_different_values_publish_the_larger(position):
     )
 
 
-def _straddled_case(rng, *, dtype):
+def _straddled_case(*, rng, dtype):
     """Draw one lone point at zero with a rival strictly straddling it.
 
     The rival's endpoints are placed so its reading at zero is a definite
@@ -205,7 +207,7 @@ def test_the_certified_owner_at_zero_agrees_with_the_ordinary_read(seed):
     dtype = jnp.zeros(()).dtype
     rng = np.random.default_rng(seed=seed)
     for _ in range(24):
-        case = _straddled_case(rng, dtype=dtype)
+        case = _straddled_case(rng=rng, dtype=dtype)
         certified = _envelope(**case, arithmetic="certified")
         ordinary = _envelope(**case, arithmetic="ordinary")
         for channel, got, expected in zip(
@@ -220,7 +222,7 @@ def test_the_certified_owner_at_zero_agrees_with_the_ordinary_read(seed):
             )
 
 
-def _step_ulps(value, *, steps, dtype):
+def _step_ulps(*, value, steps, dtype):
     """Return `value` moved `steps` representable steps, signed toward ±inf."""
     out = dtype(value)
     toward = dtype(np.inf if steps > 0 else -np.inf)
@@ -233,7 +235,7 @@ def _step_ulps(value, *, steps, dtype):
 @pytest.mark.parametrize("width_exponent", [-8, -60, -120, -400, -1000])
 @pytest.mark.parametrize("lone_point_is_higher", [True, False])
 def test_the_higher_line_owns_the_abscissa_at_any_width_ratio(
-    lone_point_is_higher, width_exponent, block_size
+    *, lone_point_is_higher, width_exponent, block_size
 ):
     """Whichever line reads higher owns the abscissa however narrow the rival is.
 
@@ -258,7 +260,7 @@ def test_the_higher_line_owns_the_abscissa_at_any_width_ratio(
     half_width = dtype(np.ldexp(1.0, width_exponent))
     rival_value = dtype(0.75)
     point_value = _step_ulps(
-        rival_value, steps=64 if lone_point_is_higher else -64, dtype=dtype
+        value=rival_value, steps=64 if lone_point_is_higher else -64, dtype=dtype
     )
     expected = (
         (point_value, dtype(1.0), dtype(11.0))

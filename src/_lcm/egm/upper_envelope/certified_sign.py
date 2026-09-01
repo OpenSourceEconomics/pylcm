@@ -193,8 +193,8 @@ def certified_quotient_margin(
 
     """
     determinant = dd_add(
-        _bounded_product(left_numerator, right_divisor),
-        dd_negate(_bounded_product(right_numerator, left_divisor)),
+        _bounded_product(left=left_numerator, right=right_divisor),
+        dd_negate(_bounded_product(left=right_numerator, right=left_divisor)),
     )
     divisor_product = dd_mul(left_divisor, right_divisor)
     high, low = dd_quotient(determinant, divisor_product)
@@ -242,7 +242,7 @@ def certified_quotient_margin(
     in_domain = (
         jnp.isfinite(left_numerator[0] * right_divisor[0])
         & jnp.isfinite(right_numerator[0] * left_divisor[0])
-        & _product_in_transform_domain(left_divisor[0], right_divisor[0])
+        & _product_in_transform_domain(a=left_divisor[0], b=right_divisor[0])
     )
     return QuotientMargin(
         value=value,
@@ -264,7 +264,7 @@ def affine_numerator(
     )
 
 
-def _same_bits(left: FloatND, right: FloatND) -> BoolND:
+def _same_bits(*, left: FloatND, right: FloatND) -> BoolND:
     """Report whether two floats have identical representations.
 
     Float equality is the wrong instrument wherever an operand may be
@@ -348,7 +348,7 @@ _IEEE_FIELDS = {
 
 
 def _round_trips(
-    scaled: tuple[FloatND, ...], source: tuple[FloatND, ...], exponent: IntND
+    *, scaled: tuple[FloatND, ...], source: tuple[FloatND, ...], exponent: IntND
 ) -> BoolND:
     """Report whether scaling every operand by `2**-exponent` lost nothing.
 
@@ -401,7 +401,7 @@ def _smallest_exponent(*terms: FloatND) -> IntND:
     return exponent
 
 
-def _bounded_product(left: DoubleDouble, right: DoubleDouble) -> DoubleDouble:
+def _bounded_product(*, left: DoubleDouble, right: DoubleDouble) -> DoubleDouble:
     """Return the product, or a certified bound where it underflows.
 
     Dekker's transform is exact only while the product and the splitting
@@ -427,7 +427,7 @@ def _bounded_product(left: DoubleDouble, right: DoubleDouble) -> DoubleDouble:
 
 
 def _bounded_mul_float(
-    value: DoubleDouble, factor: FloatND
+    *, value: DoubleDouble, factor: FloatND
 ) -> tuple[DoubleDouble, BoolND]:
     """Return the product by a plain float, or a certified bound where it underflows.
 
@@ -509,12 +509,14 @@ def _link_distances(
         (scaled_query, scaled_x0),
         (scaled_x1, scaled_x0),
     )
-    distances = tuple(_bounded_difference(left, right) for left, right in pairs)
+    distances = tuple(_bounded_difference(a=left, b=right) for left, right in pairs)
     rescaled, on_scale = _on_its_own_scale(distances)
-    return rescaled, on_scale & _round_trips(scaled, source, exponent)
+    return rescaled, on_scale & _round_trips(
+        scaled=scaled, source=source, exponent=exponent
+    )
 
 
-def _bounded_difference(a: FloatND, b: FloatND) -> DoubleDouble:
+def _bounded_difference(*, a: FloatND, b: FloatND) -> DoubleDouble:
     """Return `a - b`, recording the smallest normal as its tail where it flushed.
 
     Two operands that differ cannot have an exact difference of zero, so a zero
@@ -583,7 +585,7 @@ def _on_its_own_scale(
     return tuple(rescaled), reduce(operator.and_, leading_survived)
 
 
-def _product_in_transform_domain(a: FloatND, b: FloatND) -> BoolND:
+def _product_in_transform_domain(*, a: FloatND, b: FloatND) -> BoolND:
     """Report whether `two_prod(a, b)` stays inside its exact domain.
 
     Dekker's transform is exact only while the product and the splitting
@@ -611,8 +613,8 @@ def _any_bound_floored(distances: tuple[DoubleDouble, ...]) -> BoolND:
 
 
 def _certified_sign_of(
-    value: DoubleDouble,
     *,
+    value: DoubleDouble,
     finite: BoolND,
     readable: BoolND,
     bound_is_a_fallback: BoolND,

@@ -55,7 +55,7 @@ class RegimeId:
 
 
 def utility_working(
-    consumption: ContinuousAction, is_working: BoolND, disutility_of_work: float
+    *, consumption: ContinuousAction, is_working: BoolND, disutility_of_work: float
 ) -> FloatND:
     work_disutility = jnp.where(is_working, disutility_of_work, 0.0)
     return jnp.log(consumption) - work_disutility
@@ -65,7 +65,7 @@ def utility_retirement(consumption: ContinuousAction) -> FloatND:
     return jnp.log(consumption)
 
 
-def labor_income(is_working: BoolND, wage: float | FloatND) -> FloatND:
+def labor_income(*, is_working: BoolND, wage: float | FloatND) -> FloatND:
     return jnp.where(is_working, wage, 0.0)
 
 
@@ -74,6 +74,7 @@ def is_working(labor_supply: DiscreteAction) -> BoolND:
 
 
 def next_wealth(
+    *,
     wealth: ContinuousState,
     consumption: ContinuousAction,
     labor_income: FloatND,
@@ -83,18 +84,18 @@ def next_wealth(
 
 
 def borrowing_constraint(
-    consumption: ContinuousAction, wealth: ContinuousState
+    *, consumption: ContinuousAction, wealth: ContinuousState
 ) -> BoolND:
     return consumption <= wealth
 
 
-def savings(wealth: FloatND, consumption: ContinuousAction) -> FloatND:
+def savings(*, wealth: FloatND, consumption: ContinuousAction) -> FloatND:
     """End-of-period savings (the post-decision state)."""
     return wealth - consumption
 
 
 def next_wealth_from_savings(
-    savings: FloatND, labor_income: FloatND, interest_rate: float
+    *, savings: FloatND, labor_income: FloatND, interest_rate: float
 ) -> ContinuousState:
     """Wealth transition written in terms of the post-decision state.
 
@@ -110,6 +111,7 @@ def inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
 
 
 def next_regime_from_working(
+    *,
     labor_supply: DiscreteAction,
     age: int,
     final_age_alive: float,
@@ -125,7 +127,7 @@ def next_regime_from_working(
     )
 
 
-def next_regime_from_retirement(age: int, final_age_alive: float) -> ScalarInt:
+def next_regime_from_retirement(*, age: int, final_age_alive: float) -> ScalarInt:
     return jnp.where(
         age >= final_age_alive,
         RegimeId.dead,
@@ -142,7 +144,7 @@ _DEFAULT_LAST_AGE = _DEFAULT_AGE_GRID.exact_values[-1]
 
 working_life = Regime(
     actions={
-        "labor_supply": DiscreteGrid(LaborSupply),
+        "labor_supply": DiscreteGrid(category_class=LaborSupply),
         "consumption": CONSUMPTION_GRID,
     },
     states={"wealth": WEALTH_GRID},
@@ -207,7 +209,7 @@ DCEGM_SOLVER = DCEGM(
 #   identity and the savings-grid lower bound intrinsically.
 dcegm_working_life = ConsumptionSavingsRegime(
     actions={
-        "labor_supply": DiscreteGrid(LaborSupply),
+        "labor_supply": DiscreteGrid(category_class=LaborSupply),
         "consumption": CONSUMPTION_GRID,
     },
     states={"wealth": WEALTH_GRID},
@@ -307,6 +309,7 @@ def get_dcegm_model(n_periods: int) -> Model:
 
 
 def get_params(
+    *,
     n_periods: int,
     discount_factor: float = 0.95,
     disutility_of_work: float = 0.5,

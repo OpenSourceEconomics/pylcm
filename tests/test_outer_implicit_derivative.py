@@ -28,12 +28,12 @@ from _lcm.optimization.implicit_outer_derivative import (
 _BOUNDS = (jnp.array([0.0]), jnp.array([1.0]))
 
 
-def _quadratic(f, theta):
+def _quadratic(*, f, theta):
     """`Q(f, theta) = -(f - theta/2)^2`: f* = theta/2, df*/dtheta = 1/2."""
     return -((f - theta / 2.0) ** 2)
 
 
-def _scaled_quadratic(f, theta):
+def _scaled_quadratic(*, f, theta):
     """`Q = -theta * (f - 0.4)^2 + theta`: f* fixed, value moves with theta.
 
     df*/dtheta = 0 and the envelope value tangent is
@@ -42,7 +42,7 @@ def _scaled_quadratic(f, theta):
     return -theta * (f - 0.4) ** 2 + theta
 
 
-def _bimodal(f, theta):
+def _bimodal(*, f, theta):
     """Two basins; theta scales the right-hand peak's height.
 
     Peaks near f=0.2 (height 1) and f=0.8 (height theta). For theta > 1 the
@@ -129,7 +129,11 @@ def test_diagnostics_clean_on_interior_problem() -> None:
     theta = jnp.array(0.6)
     f_star, _, margin = continuous_outer_optimum(_quadratic, theta, _BOUNDS)
     diag = implicit_optimum_diagnostics(
-        _quadratic, theta=theta, f_star=f_star, basin_margin=margin, bounds=_BOUNDS
+        objective=_quadratic,
+        theta=theta,
+        f_star=f_star,
+        basin_margin=margin,
+        bounds=_BOUNDS,
     )
     assert not bool(diag.unresolved[0])
 
@@ -137,14 +141,18 @@ def test_diagnostics_clean_on_interior_problem() -> None:
 def test_diagnostics_flag_boundary_optimum() -> None:
     """`Q = f` maximizes at the upper bound; the tangent is one-sided."""
 
-    def linear(f, theta):
+    def linear(*, f, theta):
         return theta * f
 
     theta = jnp.array(1.0)
     f_star, _, margin = continuous_outer_optimum(linear, theta, _BOUNDS)
     np.testing.assert_allclose(np.asarray(f_star), [1.0], atol=1e-6)
     diag = implicit_optimum_diagnostics(
-        linear, theta=theta, f_star=f_star, basin_margin=margin, bounds=_BOUNDS
+        objective=linear,
+        theta=theta,
+        f_star=f_star,
+        basin_margin=margin,
+        bounds=_BOUNDS,
     )
     assert bool(diag.at_upper_bound[0])
     assert bool(diag.unresolved[0])
@@ -153,13 +161,13 @@ def test_diagnostics_flag_boundary_optimum() -> None:
 def test_diagnostics_flag_flat_curvature() -> None:
     """A constant objective has Q_ff = 0 everywhere: flat-top flag fires."""
 
-    def flat(f, theta):
+    def flat(*, f, theta):
         return jnp.zeros_like(f) + 0.0 * theta
 
     theta = jnp.array(1.0)
     f_star, _, margin = continuous_outer_optimum(flat, theta, _BOUNDS)
     diag = implicit_optimum_diagnostics(
-        flat, theta=theta, f_star=f_star, basin_margin=margin, bounds=_BOUNDS
+        objective=flat, theta=theta, f_star=f_star, basin_margin=margin, bounds=_BOUNDS
     )
     assert bool(diag.flat_curvature[0])
     assert bool(diag.unresolved[0])
@@ -172,7 +180,7 @@ def test_diagnostics_flag_tied_basins() -> None:
     """theta = 1 makes the bimodal peaks equal-height: basin tie fires."""
     theta = jnp.array(1.0)
 
-    def symmetric(f, theta):
+    def symmetric(*, f, theta):
         # Exactly symmetric twin peaks: the mesh (odd-sized, symmetric on
         # [0,1]) sees identical best and runner-up basin values.
         return (
@@ -183,7 +191,11 @@ def test_diagnostics_flag_tied_basins() -> None:
 
     f_star, _, margin = continuous_outer_optimum(symmetric, theta, _BOUNDS)
     diag = implicit_optimum_diagnostics(
-        symmetric, theta=theta, f_star=f_star, basin_margin=margin, bounds=_BOUNDS
+        objective=symmetric,
+        theta=theta,
+        f_star=f_star,
+        basin_margin=margin,
+        bounds=_BOUNDS,
     )
     assert bool(diag.basin_tie[0])
     assert bool(diag.unresolved[0])
@@ -200,7 +212,7 @@ def test_diagnostics_flag_nonstationary_kink_optimum() -> None:
     sided) curvature-scale, and is not basin-tied.
     """
 
-    def tent(f, theta):
+    def tent(*, f, theta):
         # Peak at f = 0.3; slopes theta up on the left, -2*theta on the right.
         # The maximum is AT the kink; forward-mode Q_f there is one-sided and
         # far from zero. A parabola floor keeps Q_ff well-defined and negative.
@@ -210,7 +222,7 @@ def test_diagnostics_flag_nonstationary_kink_optimum() -> None:
     f_star, _, margin = continuous_outer_optimum(tent, theta, _BOUNDS)
     np.testing.assert_allclose(np.asarray(f_star), [0.3], atol=1e-3)
     diag = implicit_optimum_diagnostics(
-        tent, theta=theta, f_star=f_star, basin_margin=margin, bounds=_BOUNDS
+        objective=tent, theta=theta, f_star=f_star, basin_margin=margin, bounds=_BOUNDS
     )
     assert bool(diag.nonstationary[0])
     assert bool(diag.unresolved[0])
@@ -224,7 +236,11 @@ def test_smooth_interior_optimum_is_stationary() -> None:
     theta = jnp.array(0.6)
     f_star, _, margin = continuous_outer_optimum(_quadratic, theta, _BOUNDS)
     diag = implicit_optimum_diagnostics(
-        _quadratic, theta=theta, f_star=f_star, basin_margin=margin, bounds=_BOUNDS
+        objective=_quadratic,
+        theta=theta,
+        f_star=f_star,
+        basin_margin=margin,
+        bounds=_BOUNDS,
     )
     assert not bool(diag.nonstationary[0])
 
@@ -233,7 +249,7 @@ def test_vectorized_cells_get_per_cell_tangents() -> None:
     """Heterogeneous brackets and a shared theta: per-cell implicit tangents."""
     bounds = (jnp.array([0.0, 0.0, 0.2]), jnp.array([1.0, 0.9, 1.0]))
 
-    def per_cell(f, theta):
+    def per_cell(*, f, theta):
         # f* = theta * c per cell, c = (0.3, 0.5, 0.7): df*/dtheta = c.
         centers = jnp.array([0.3, 0.5, 0.7])
         return -((f - theta * centers) ** 2)
@@ -262,7 +278,7 @@ def test_composes_under_jit() -> None:
 def test_multidimensional_theta_jacobian() -> None:
     """theta in R^2: f* = (theta_0 + 2 theta_1)/4, closed-form gradient."""
 
-    def q(f, theta):
+    def q(*, f, theta):
         return -((f - (theta[0] + 2.0 * theta[1]) / 4.0) ** 2)
 
     theta = jnp.array([0.4, 0.3])

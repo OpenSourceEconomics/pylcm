@@ -41,6 +41,7 @@ class RegimeId:
 
 
 def utility(
+    *,
     consumption: ContinuousAction,
     labor_supply: DiscreteAction,
     disutility_of_work: float,
@@ -51,15 +52,16 @@ def utility(
     ) - disutility_of_work * (labor_supply == LaborSupply.work)
 
 
-def utility_retirement(wealth: ContinuousState, risk_aversion: float) -> FloatND:
+def utility_retirement(*, wealth: ContinuousState, risk_aversion: float) -> FloatND:
     return wealth ** (1 - risk_aversion) / (1 - risk_aversion)
 
 
-def earnings(labor_supply: DiscreteAction, wage: float) -> FloatND:
+def earnings(*, labor_supply: DiscreteAction, wage: float) -> FloatND:
     return jnp.where(labor_supply == LaborSupply.work, wage, 0.0)
 
 
 def taxes_transfers(
+    *,
     earnings: FloatND,
     wealth: ContinuousState,
     consumption_floor: float,
@@ -73,6 +75,7 @@ def taxes_transfers(
 
 
 def end_of_period_wealth(
+    *,
     wealth: ContinuousState,
     earnings: FloatND,
     taxes_transfers: FloatND,
@@ -81,7 +84,9 @@ def end_of_period_wealth(
     return wealth + earnings - taxes_transfers - consumption
 
 
-def next_wealth(end_of_period_wealth: FloatND, interest_rate: float) -> ContinuousState:
+def next_wealth(
+    *, end_of_period_wealth: FloatND, interest_rate: float
+) -> ContinuousState:
     return (1 + interest_rate) * end_of_period_wealth
 
 
@@ -89,7 +94,7 @@ def borrowing_constraint(end_of_period_wealth: FloatND) -> BoolND:
     return end_of_period_wealth >= 0
 
 
-def next_regime(age: int, last_working_age: float) -> ScalarInt:
+def next_regime(*, age: int, last_working_age: float) -> ScalarInt:
     return jnp.where(
         age >= last_working_age, RegimeId.retirement, RegimeId.working_life
     )
@@ -108,7 +113,7 @@ working_life = Regime(
     states={"wealth": WEALTH_GRID},
     state_transitions={"wealth": next_wealth},
     actions={
-        "labor_supply": DiscreteGrid(LaborSupply),
+        "labor_supply": DiscreteGrid(category_class=LaborSupply),
         "consumption": CONSUMPTION_GRID,
     },
     functions={

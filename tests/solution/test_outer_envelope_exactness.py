@@ -35,6 +35,7 @@ from _lcm.egm.outer_envelope import (
 
 
 def _host_envelope(
+    *,
     candidate_endog: np.ndarray,
     candidate_value: np.ndarray,
     candidate_marginal: np.ndarray,
@@ -99,7 +100,10 @@ def test_query_side_envelope_matches_host_max_of_reads_at_event_abscissae():
         x_query=jnp.asarray(events),
     )
     host_value, host_marginal = _host_envelope(
-        candidate_endog, candidate_value, candidate_marginal, events
+        candidate_endog=candidate_endog,
+        candidate_value=candidate_value,
+        candidate_marginal=candidate_marginal,
+        x_query=events,
     )
 
     np.testing.assert_allclose(np.asarray(value), host_value, atol=1e-9)
@@ -174,10 +178,10 @@ def test_stacked_carry_lifts_candidates_into_common_coh_and_round_trips():
         x_query=events,
     )
     host_value, host_marginal = _host_envelope(
-        np.array([[0.0, 1.0, 2.0], [0.5, 1.5, 2.5]]),
-        np.array([[0.0, 1.0, 2.0], [1.0, 1.6, 2.0]]),
-        np.array([[1.0, 1.0, 1.0], [0.8, 0.5, 0.3]]),
-        np.asarray(events),
+        candidate_endog=np.array([[0.0, 1.0, 2.0], [0.5, 1.5, 2.5]]),
+        candidate_value=np.array([[0.0, 1.0, 2.0], [1.0, 1.6, 2.0]]),
+        candidate_marginal=np.array([[1.0, 1.0, 1.0], [0.8, 0.5, 0.3]]),
+        x_query=np.asarray(events),
     )
 
     np.testing.assert_allclose(np.asarray(value), host_value, atol=1e-9)

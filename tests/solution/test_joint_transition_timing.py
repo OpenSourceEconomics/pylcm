@@ -40,7 +40,7 @@ def _uniform() -> FloatND:
     return jnp.asarray([0.5, 0.5])
 
 
-def _next_payoff(choice: DiscreteAction, shock: Mapping[str, FloatND]) -> FloatND:
+def _next_payoff(*, choice: DiscreteAction, shock: Mapping[str, FloatND]) -> FloatND:
     risky = jnp.where(shock["high"], 10.0, 0.0)
     return jnp.where(choice == Choice.risky, risky, 6.0)
 
@@ -55,7 +55,7 @@ def test_action_maximizes_expected_continuation_not_each_realized_node(
             "source": Regime(
                 transition={"target": MarkovTransition(_certain)},
                 active=lambda age: age < 21,
-                actions={"choice": DiscreteGrid(Choice)},
+                actions={"choice": DiscreteGrid(category_class=Choice)},
                 functions={"utility": lambda: jnp.asarray(0.0)},
                 joint_transitions={
                     "target": {

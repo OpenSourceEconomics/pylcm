@@ -113,7 +113,7 @@ def consent_model_and_solution():
 
 @pytest.mark.parametrize("expected_in_message", ["own_stakeholder", "married"])
 def test_collective_source_without_an_own_role_is_refused(
-    dissolution_model_and_solution, expected_in_message
+    *, dissolution_model_and_solution, expected_in_message
 ):
     """Starting a cohort in a collective regime with no role is a caller error.
 
@@ -134,7 +134,7 @@ def test_collective_source_without_an_own_role_is_refused(
     ],
 )
 def test_named_own_role_routes_the_dissolving_row_to_its_own_leg(
-    dissolution_model_and_solution, fallback_regime, expected_membership
+    *, dissolution_model_and_solution, fallback_regime, expected_membership
 ):
     """An all-husbands cohort dissolves into `single_m`, never into `single_f`.
 
@@ -266,7 +266,7 @@ def _make_unreachable_role_routing_regimes():
         active=lambda age: age < 1,
         states={"wage": _WAGE_3},
         state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _u_zero_collective, "m": _u_zero_collective}
@@ -277,7 +277,7 @@ def _make_unreachable_role_routing_regimes():
         transition=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE_3},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _u_zero_collective, "m": _u_zero_collective}
@@ -377,7 +377,7 @@ def test_a_start_that_runs_into_a_role_dependent_route_still_needs_an_own_role()
         active=lambda age: age < 1,
         states={"wage": _WAGE_3},
         state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _u_zero_collective, "m": _u_zero_collective}

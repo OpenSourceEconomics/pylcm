@@ -115,7 +115,7 @@ def _baseline(*, monkeypatch, payload, replay, canonical_q, state=0.0):
 
 
 def test_lower_solve_value_canonical_feasible_branch_survives(
-    monkeypatch, enable_x64
+    *, monkeypatch, enable_x64
 ) -> None:
     """Feasibility is applied branchwise before canonical-Q ranking."""
     del enable_x64
@@ -144,7 +144,7 @@ def test_lower_solve_value_canonical_feasible_branch_survives(
 
 
 def test_canonical_q_not_solve_value_selects_the_branch(
-    monkeypatch, enable_x64
+    *, monkeypatch, enable_x64
 ) -> None:
     """A lower published value wins when its canonical Q is higher."""
     del enable_x64
@@ -171,7 +171,7 @@ def test_canonical_q_not_solve_value_selects_the_branch(
     assert float(value[0]) == 2.0
 
 
-def test_keeper_then_ascending_node_tie_order(monkeypatch, enable_x64) -> None:
+def test_keeper_then_ascending_node_tie_order(*, monkeypatch, enable_x64) -> None:
     """First-maximum order is keeper, then ascending published node index."""
     del enable_x64
     monkeypatch.setattr(
@@ -216,7 +216,7 @@ def test_keeper_then_ascending_node_tie_order(monkeypatch, enable_x64) -> None:
     assert float(actions["outer"][0]) == 0.0
 
 
-def test_all_infeasible_branches_leave_no_winner(monkeypatch, enable_x64) -> None:
+def test_all_infeasible_branches_leave_no_winner(*, monkeypatch, enable_x64) -> None:
     """An all-invalid bank is reported unavailable instead of emitting row zero."""
     del enable_x64
     monkeypatch.setattr(
@@ -241,7 +241,7 @@ def test_all_infeasible_branches_leave_no_winner(monkeypatch, enable_x64) -> Non
     assert np.isneginf(float(value[0]))
 
 
-def test_branch_keeps_its_conditional_inner_action(monkeypatch, enable_x64) -> None:
+def test_branch_keeps_its_conditional_inner_action(*, monkeypatch, enable_x64) -> None:
     """Canonical ranking cannot pair a node with another node's inner policy."""
     del enable_x64
     monkeypatch.setattr(
@@ -274,7 +274,7 @@ def test_branch_keeps_its_conditional_inner_action(monkeypatch, enable_x64) -> N
 
 
 def test_narrow_mesh_preserves_a_keeper_inside_the_state_domain(
-    monkeypatch, enable_x64
+    *, monkeypatch, enable_x64
 ) -> None:
     """The separately solved keeper is not an adjuster-mesh candidate.
 
@@ -319,7 +319,7 @@ def test_narrow_mesh_preserves_a_keeper_inside_the_state_domain(
 
 
 def test_nested_keeper_proposal_is_not_rechecked_against_the_adjuster_mesh(
-    monkeypatch, enable_x64
+    *, monkeypatch, enable_x64
 ) -> None:
     """The public replacement boundary preserves keeper-domain provenance.
 

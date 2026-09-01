@@ -26,11 +26,12 @@ class RegimeId:
     dead: ScalarInt
 
 
-def _utility(consumption: ContinuousAction, wealth: ContinuousState) -> FloatND:
+def _utility(*, consumption: ContinuousAction, wealth: ContinuousState) -> FloatND:
     return jnp.log(consumption + 1) + 0.01 * wealth
 
 
 def _next_wealth(
+    *,
     wealth: ContinuousState,
     consumption: ContinuousAction,
     interest_rate: float,
@@ -39,7 +40,7 @@ def _next_wealth(
 
 
 def _borrowing_constraint(
-    consumption: ContinuousAction, wealth: ContinuousState
+    *, consumption: ContinuousAction, wealth: ContinuousState
 ) -> FloatND:
     return consumption <= wealth
 
@@ -123,7 +124,7 @@ def test_off_level_solves_without_diagnostics(caplog: pytest.LogCaptureFixture):
 
 
 def test_debug_level_emits_per_period_stats(
-    caplog: pytest.LogCaptureFixture, tmp_path: Path
+    *, caplog: pytest.LogCaptureFixture, tmp_path: Path
 ):
     """log_level="debug" logs a min/max/mean line for every (regime, period)."""
     model = _make_model()

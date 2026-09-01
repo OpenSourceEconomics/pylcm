@@ -33,6 +33,11 @@ jobs:
         # The prek `ty` hook is skipped on pre-commit.ci (no pixi envs there);
         # this job runs it against the `type-checking` env instead.
         run: pixi run -e type-checking prek run ty --all-files
+      - name: Enforce keyword-only convention
+        shell: bash {0}
+        # The hook is pixi-backed and therefore runs here rather than on
+        # pre-commit.ci, alongside the other static repository contract.
+        run: pixi run -e type-checking prek run keyword-only-convention --all-files
   # A required status check matches by exact check-run name, and `name:` above
   # overrides what gets reported -- so branch protection's context `ty` never
   # matched `Run ty on the codebase on 3.14` and sat "Expected -- Waiting for

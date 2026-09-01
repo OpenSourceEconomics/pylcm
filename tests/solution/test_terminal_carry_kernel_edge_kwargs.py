@@ -249,7 +249,7 @@ def _identity_wealth(wealth: ContinuousState) -> ContinuousState:
     return wealth
 
 
-def _move_gate(V_target: FloatND, V_stay_ref: FloatND) -> BoolND:
+def _move_gate(*, V_target: FloatND, V_stay_ref: FloatND) -> BoolND:
     """The household moves only where the move value beats the stay value."""
     return V_target > V_stay_ref
 
@@ -264,7 +264,7 @@ def _saver_resources(assets: ContinuousState) -> FloatND:
     return assets
 
 
-def _savings(assets: ContinuousState, consumption: ContinuousAction) -> FloatND:
+def _savings(*, assets: ContinuousState, consumption: ContinuousAction) -> FloatND:
     """The post-decision balance the asset law of motion is written through."""
     return assets - consumption
 

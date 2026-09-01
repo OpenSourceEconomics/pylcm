@@ -149,6 +149,7 @@ def _flatten_egm_sim_policy(
     return children, aux
 
 
+# keyword-only-exempt: library-callback=jax.tree_util.register_pytree_node
 def _unflatten_egm_sim_policy(
     aux: tuple[Any, ...], children: Sequence[Any]
 ) -> EGMSimPolicy:
@@ -265,6 +266,7 @@ def _flatten_grid_policy(
     ), aux
 
 
+# keyword-only-exempt: library-callback=jax.tree_util.register_pytree_node
 def _unflatten_grid_policy(
     aux: tuple[Any, ...], children: Sequence[Any]
 ) -> NBEGMGridPolicy:
@@ -299,6 +301,7 @@ def _flatten_nnbegm_policy(
     ), aux
 
 
+# keyword-only-exempt: library-callback=jax.tree_util.register_pytree_node
 def _unflatten_nnbegm_policy(
     aux: tuple[Any, ...], children: Sequence[Any]
 ) -> NNBEGMSimPolicy:

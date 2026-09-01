@@ -232,7 +232,7 @@ def _make_regimes() -> dict[str, Regime]:
         active=lambda age: age < 1,
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "wage_group": _wage_group,
             "utility": CollectiveUtility(
@@ -242,7 +242,7 @@ def _make_regimes() -> dict[str, Regime]:
                 }
             ),
         },
-        derived_categoricals={"wage_group": DiscreteGrid(WageGroup)},
+        derived_categoricals={"wage_group": DiscreteGrid(category_class=WageGroup)},
         constraints={"work_pays": _work_pays},
     )
     couple_ir = Regime(
@@ -250,7 +250,7 @@ def _make_regimes() -> dict[str, Regime]:
         active=lambda age: (age >= 1) & (age < 2),
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _utility_collective, "m": _utility_collective}
@@ -279,7 +279,7 @@ def _make_regimes() -> dict[str, Regime]:
         transition=None,
         active=lambda age: age >= 2,
         states={"wage": _WAGE_GRID},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _utility_collective, "m": _utility_collective}
@@ -291,7 +291,7 @@ def _make_regimes() -> dict[str, Regime]:
         active=lambda age: (age >= 1) & (age < 2),
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility_single_f},
     )
     single_m = single_f.replace(functions={"utility": _utility_single_m})
@@ -322,6 +322,7 @@ def _wage_group(wage: ContinuousState) -> IntND:
 
 
 def _utility_f_with_group(
+    *,
     wage: ContinuousState,
     work: DiscreteAction,
     wage_group: IntND,
@@ -331,27 +332,27 @@ def _utility_f_with_group(
     return wage * work + group_bonus[wage_group]
 
 
-def _utility_m_solve(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _utility_m_solve(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     """The husband's payoff during backward induction."""
     return 0.5 * wage * work
 
 
-def _utility_m_simulate(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _utility_m_simulate(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     """The husband's payoff as simulation records it."""
     return 0.5 * wage * work
 
 
-def _utility_collective(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _utility_collective(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     """A stakeholder's payoff: the wage when working, nothing otherwise."""
     return wage * work
 
 
-def _utility_single_f(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _utility_single_f(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     """The single wife's payoff: twice the wage when working."""
     return 2.0 * wage * work
 
 
-def _utility_single_m(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _utility_single_m(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     """The single husband's payoff: the wage when working."""
     return wage * work
 
@@ -361,7 +362,7 @@ def _utility_terminal_single(wage: ContinuousState) -> FloatND:
     return 0.5 * wage
 
 
-def _work_pays(wage: ContinuousState, work: DiscreteAction) -> BoolND:
+def _work_pays(*, wage: ContinuousState, work: DiscreteAction) -> BoolND:
     """Working is only feasible above the lowest wage node."""
     return (work == 0) | (wage > 1.0)
 
@@ -376,11 +377,11 @@ def _no_dissolution_gate(D_target: BoolND) -> BoolND:
     return ~D_target
 
 
-def _ir_f(Q_f: FloatND, V_single_f_ref: FloatND, delta_f: FloatND) -> BoolND:
+def _ir_f(*, Q_f: FloatND, V_single_f_ref: FloatND, delta_f: FloatND) -> BoolND:
     """The wife participates while the match beats her outside option."""
     return Q_f >= V_single_f_ref - delta_f
 
 
-def _ir_m(Q_m: FloatND, V_single_m_ref: FloatND, delta_m: FloatND) -> BoolND:
+def _ir_m(*, Q_m: FloatND, V_single_m_ref: FloatND, delta_m: FloatND) -> BoolND:
     """The husband participates while the match beats his outside option."""
     return Q_m >= V_single_m_ref - delta_m

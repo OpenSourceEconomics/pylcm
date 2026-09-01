@@ -22,7 +22,7 @@ from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
 
-def _row_read(grid: np.ndarray, payload: np.ndarray, query: float) -> float:
+def _row_read(*, grid: np.ndarray, payload: np.ndarray, query: float) -> float:
     """Right-continuous read of a refined row, as the simulation reader does."""
     upper = int(np.clip(np.searchsorted(grid, query, side="right"), 1, len(grid) - 1))
     lower = upper - 1
@@ -33,7 +33,7 @@ def _row_read(grid: np.ndarray, payload: np.ndarray, query: float) -> float:
     return float((1 - weight) * payload[lower] + weight * payload[upper])
 
 
-def _bracketing_floats(dtype, b0, b1):
+def _bracketing_floats(*, dtype, b0, b1):
     """The two adjacent floats straddling the exact crossing of the two links."""
     exact = Fraction(float(b0)) / (
         Fraction(float(dtype(0.125))) - Fraction(float(b1)) + Fraction(float(b0))
@@ -46,7 +46,7 @@ def _bracketing_floats(dtype, b0, b1):
     return near, near
 
 
-def _links(dtype, jax_dtype, target):
+def _links(*, dtype, jax_dtype, target):
     """Two links crossing at `target`, with policies 8 (outgoing) and 2 (incoming)."""
     b0 = dtype((0.125 - 0.5) * target)
     b1 = dtype(b0 + dtype(0.5))
@@ -67,7 +67,7 @@ def _links(dtype, jax_dtype, target):
     ],
 )
 def test_switch_lands_on_the_first_state_the_incoming_branch_owns(
-    dtype, jax_dtype, target
+    *, dtype, jax_dtype, target
 ) -> None:
     """The state below the crossing keeps the outgoing policy, the one above takes over.
 
@@ -77,7 +77,9 @@ def test_switch_lands_on_the_first_state_the_incoming_branch_owns(
     """
     if (jax_dtype is jnp.float64) != X64_ENABLED:
         pytest.skip("dtype is not the configured working precision")
-    grid, policy, value, b0, b1 = _links(dtype, jax_dtype, target)
+    grid, policy, value, b0, b1 = _links(
+        dtype=dtype, jax_dtype=jax_dtype, target=target
+    )
 
     refined_grid, refined_policy, _value, n_kept = jax.jit(
         lambda g, p, v: refine_envelope_exact(
@@ -87,7 +89,7 @@ def test_switch_lands_on_the_first_state_the_incoming_branch_owns(
     n = int(n_kept)
     assert n <= 8
 
-    lower, upper = _bracketing_floats(dtype, b0, b1)
+    lower, upper = _bracketing_floats(dtype=dtype, b0=b0, b1=b1)
     signs = [
         int(
             certified_margin_sign(
@@ -108,5 +110,5 @@ def test_switch_lands_on_the_first_state_the_incoming_branch_owns(
 
     live_grid = np.asarray(refined_grid[:n])
     live_policy = np.asarray(refined_policy[:n])
-    assert _row_read(live_grid, live_policy, lower) == 8.0
-    assert _row_read(live_grid, live_policy, upper) == 2.0
+    assert _row_read(grid=live_grid, payload=live_policy, query=lower) == 8.0
+    assert _row_read(grid=live_grid, payload=live_policy, query=upper) == 2.0

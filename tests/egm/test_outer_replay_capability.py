@@ -23,13 +23,14 @@ _BINDABLE = frozenset({"illiquid", "wealth", "interest_rate", "period", "age"})
 
 
 def _new_illiquid(
-    illiquid: ContinuousState, illiquid_investment: ContinuousAction
+    *, illiquid: ContinuousState, illiquid_investment: ContinuousAction
 ) -> ContinuousState:
     """`s' = Z + Iz`: replayable from the durable stock and the outer action."""
     return illiquid + illiquid_investment
 
 
 def _new_illiquid_reading_consumption(
+    *,
     illiquid: ContinuousState,
     illiquid_investment: ContinuousAction,
     consumption: ContinuousAction,

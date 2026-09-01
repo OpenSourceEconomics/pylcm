@@ -52,7 +52,7 @@ def _shock_utility(shock: ScalarFloat) -> ScalarFloat:
     return shock
 
 
-def _wealth_plus_shock(wealth: ScalarFloat, shock: ScalarFloat) -> ScalarFloat:
+def _wealth_plus_shock(*, wealth: ScalarFloat, shock: ScalarFloat) -> ScalarFloat:
     return wealth + shock
 
 
@@ -68,7 +68,7 @@ def _next_wealth_via_helper(scaled: ScalarFloat) -> ScalarFloat:
     return scaled
 
 
-def _build(functions, next_wealth) -> Model:
+def _build(*, functions, next_wealth) -> Model:
     return Model(
         regimes={
             "source": Regime(
@@ -94,8 +94,13 @@ _PARAMS = {"source": {"koopmans_aggregator": {"discount_factor": 1.0}}}
 @pytest.fixture(params=["direct", "through_a_helper"])
 def model(request: pytest.FixtureRequest) -> Model:
     if request.param == "direct":
-        return _build({"utility": _no_utility}, _next_wealth_from_draw)
-    return _build({"utility": _no_utility, "scaled": _scaled}, _next_wealth_via_helper)
+        return _build(
+            functions={"utility": _no_utility}, next_wealth=_next_wealth_from_draw
+        )
+    return _build(
+        functions={"utility": _no_utility, "scaled": _scaled},
+        next_wealth=_next_wealth_via_helper,
+    )
 
 
 def test_the_continuation_is_the_expectation_over_the_draw(model: Model) -> None:

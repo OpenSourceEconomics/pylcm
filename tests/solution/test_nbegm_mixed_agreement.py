@@ -19,7 +19,7 @@ _NEAR = (np.abs(_LIQUID - 6.0) < 0.4) | (np.abs(_LIQUID - 16.0) < 0.4)
 _KEEP = _INTERIOR & ~_NEAR
 
 
-def _solve(variant: str, *, n_consumption: int = 120) -> Mapping[int, Mapping]:
+def _solve(*, variant: str, n_consumption: int = 120) -> Mapping[int, Mapping]:
     """Solve the mixed toy on the shared comparison grids."""
     model = toy.build_model(
         variant=variant,
@@ -34,8 +34,8 @@ def _solve(variant: str, *, n_consumption: int = 120) -> Mapping[int, Mapping]:
 
 def test_mixed_schedule_matches_brute_through_cliff_and_kink_every_age():
     """The mixed solve equals brute through the cliff and the kink at every age."""
-    nbegm = _solve("nbegm")
-    brute = _solve("brute", n_consumption=1500)
+    nbegm = _solve(variant="nbegm")
+    brute = _solve(variant="brute", n_consumption=1500)
     for period in brute:
         if "alive" not in brute[period] or "alive" not in nbegm[period]:
             continue

@@ -9,7 +9,9 @@ import pytest
 import lcm
 from lcm.exceptions import NBEGMCaseError, PyLCMError
 
-predicate = lcm.case_boundary(lcm.ref("liquid") < lcm.ref("limit"), kind="jump")
+predicate = lcm.case_boundary(
+    condition=lcm.ref("liquid") < lcm.ref("limit"), kind="jump"
+)
 
 
 def test_a_piece_naming_neither_side_is_an_lcm_error() -> None:
@@ -27,7 +29,7 @@ def test_a_piece_naming_both_sides_is_rejected() -> None:
 def test_an_equality_condition_cannot_declare_a_binary_case_split() -> None:
     """A case boundary must order the liquid coordinate around one threshold."""
     with pytest.raises(NBEGMCaseError, match="exactly one"):
-        lcm.case_boundary(lcm.ref("liquid") == lcm.ref("limit"), kind="jump")
+        lcm.case_boundary(condition=lcm.ref("liquid") == lcm.ref("limit"), kind="jump")
 
 
 def test_a_multi_dotted_breakpoint_threshold_is_rejected() -> None:

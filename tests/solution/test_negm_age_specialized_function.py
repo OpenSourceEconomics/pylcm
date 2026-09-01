@@ -71,7 +71,7 @@ def _make_penalised_credited(age: float):
     penalty = 0.10 + 0.02 * (age - _MIN_AGE)
 
     def credited_at_age(
-        illiquid: ContinuousState, new_durable: ContinuousState
+        *, illiquid: ContinuousState, new_durable: ContinuousState
     ) -> FloatND:
         investment = new_durable - illiquid
         return jnp.where(investment < 0.0, (1.0 - penalty) * investment, investment)

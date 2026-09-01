@@ -77,7 +77,7 @@ class RegimeId:
 
 
 def new_illiquid(
-    illiquid: ContinuousState, illiquid_investment: ContinuousAction
+    *, illiquid: ContinuousState, illiquid_investment: ContinuousAction
 ) -> ContinuousState:
     """The durable stock chosen this period, `s' = Z + Iz`.
 
@@ -88,12 +88,13 @@ def new_illiquid(
     return illiquid + illiquid_investment
 
 
-def credited(illiquid: ContinuousState, new_illiquid: ContinuousState) -> FloatND:
+def credited(*, illiquid: ContinuousState, new_illiquid: ContinuousState) -> FloatND:
     """Net liquid cost of moving the durable to `new_illiquid` — one-for-one."""
     return new_illiquid - illiquid
 
 
 def resources(
+    *,
     wealth: ContinuousState,
     illiquid: ContinuousState,
     new_illiquid: ContinuousState,
@@ -115,7 +116,7 @@ def resources_before_outer_cost(wealth: ContinuousState) -> FloatND:
     return wealth + LABOUR_INCOME
 
 
-def liquid_savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
+def liquid_savings(*, resources: FloatND, consumption: ContinuousAction) -> FloatND:
     """Inner post-decision liquid balance."""
     return resources - consumption
 
@@ -145,7 +146,7 @@ def inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
     return marginal_continuation ** (-1.0 / RISK_AVERSION)
 
 
-def terminal_utility(wealth: ContinuousState, illiquid: ContinuousState) -> FloatND:
+def terminal_utility(*, wealth: ContinuousState, illiquid: ContinuousState) -> FloatND:
     """Separably curved terminal payoff over both asset stocks.
 
     Decreasing marginal value in each stock keeps every optimum interior: the
@@ -156,7 +157,7 @@ def terminal_utility(wealth: ContinuousState, illiquid: ContinuousState) -> Floa
     return -TERMINAL_SCALE / (wealth + 1.0) - TERMINAL_SCALE / (illiquid + 1.0)
 
 
-def next_regime(age: int, final_age_alive: float) -> ScalarInt:
+def next_regime(*, age: int, final_age_alive: float) -> ScalarInt:
     return jnp.where(age >= final_age_alive, RegimeId.dead, RegimeId.alive)
 
 

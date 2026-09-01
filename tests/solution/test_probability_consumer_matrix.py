@@ -110,7 +110,11 @@ def test_a_negative_subnormal_fails_the_regime_distribution_guard() -> None:
     negative = jnp.asarray(np.negative(_smallest_subnormal()), dtype=dtype)
     mass = jnp.asarray(1.0, dtype=dtype) + negative
 
-    assert not bool(_regime_mass_is_a_distribution(mass, is_negative(negative)))
+    assert not bool(
+        _regime_mass_is_a_distribution(
+            probability_mass=mass, has_negative_probability=is_negative(negative)
+        )
+    )
 
 
 def test_a_lottery_of_valid_probabilities_passes_the_guard() -> None:
@@ -119,7 +123,11 @@ def test_a_lottery_of_valid_probabilities_passes_the_guard() -> None:
     rare = jnp.asarray(_smallest_subnormal(), dtype=dtype)
     mass = jnp.asarray(1.0, dtype=dtype) + rare
 
-    assert bool(_regime_mass_is_a_distribution(mass, is_negative(rare)))
+    assert bool(
+        _regime_mass_is_a_distribution(
+            probability_mass=mass, has_negative_probability=is_negative(rare)
+        )
+    )
 
 
 @pytest.mark.parametrize("rare_weight", _RARE_WEIGHTS)
@@ -138,7 +146,7 @@ def test_a_zero_weight_node_is_still_donor_replaced(rare_weight) -> None:
 @pytest.mark.parametrize("rare_weight", _RARE_WEIGHTS)
 @pytest.mark.parametrize("compile_it", [False, True], ids=["eager", "jit"])
 def test_a_subnormal_weight_on_an_infinity_keeps_it_in_a_linear_expectation(
-    rare_weight, *, compile_it: bool
+    *, rare_weight, compile_it: bool
 ) -> None:
     """A reachable state where no action is feasible is worth `-inf`."""
     dtype = _dtype()
@@ -180,7 +188,7 @@ def test_a_subnormal_weight_on_a_finite_value_is_bounded_in_a_linear_expectation
 @pytest.mark.parametrize("rare_weight", _RARE_WEIGHTS)
 @pytest.mark.parametrize("compile_it", [False, True], ids=["eager", "jit"])
 def test_a_subnormal_weight_is_priced_under_a_power_mean_certainty_equivalent(
-    rare_weight, *, compile_it: bool
+    *, rare_weight, compile_it: bool
 ) -> None:
     """`PowerMean` prices the rare node at the share the transform gives it."""
     dtype = _dtype()

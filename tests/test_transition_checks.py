@@ -49,11 +49,11 @@ WEALTH_GRID = LinSpacedGrid(start=1, stop=10, n_points=3)
 CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=5, n_points=3)
 
 
-def _next_wealth(wealth: ContinuousState, consumption: ContinuousAction) -> FloatND:
+def _next_wealth(*, wealth: ContinuousState, consumption: ContinuousAction) -> FloatND:
     return wealth - consumption
 
 
-def _budget(wealth: ContinuousState, consumption: ContinuousAction) -> BoolND:
+def _budget(*, wealth: ContinuousState, consumption: ContinuousAction) -> BoolND:
     return consumption <= wealth
 
 
@@ -84,7 +84,7 @@ def _terminal_regime() -> UserRegime:
 
 def _model_with_state_probs(next_health_func) -> Model:
     alive = UserRegime(
-        states={"wealth": WEALTH_GRID, "health": DiscreteGrid(_Health)},
+        states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=_Health)},
         actions={"consumption": CONSUMPTION_GRID},
         state_transitions={
             "wealth": _next_wealth,
@@ -132,6 +132,7 @@ def test_runtime_check_catches_invalidity_hidden_at_some_grid_points() -> None:
     """
 
     def sneaky_health_probs(
+        *,
         wealth: ContinuousState,
         health: DiscreteState,  # noqa: ARG001
     ) -> FloatND:
@@ -193,7 +194,7 @@ def test_log_level_off_skips_runtime_check() -> None:
 
 @pytest.mark.parametrize("log_level", ["warning", "progress"])
 def test_warn_levels_log_invalid_probs_and_continue(
-    log_level: LogLevel, caplog: pytest.LogCaptureFixture
+    *, log_level: LogLevel, caplog: pytest.LogCaptureFixture
 ) -> None:
     """At 'warning'/'progress', invalid state probs log a warning; solve continues."""
 
@@ -220,6 +221,7 @@ def test_subscript_order_swap_raises_at_process_time() -> None:
         terminal: ScalarInt
 
     def swapped_probs(
+        *,
         period: ScalarInt,
         health: DiscreteState,
         probs_array: FloatND,
@@ -232,7 +234,7 @@ def test_subscript_order_swap_raises_at_process_time() -> None:
         return jnp.asarray(_LocalRegimeId.terminal)
 
     alive = UserRegime(
-        states={"wealth": WEALTH_GRID, "health": DiscreteGrid(_Local)},
+        states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=_Local)},
         actions={"consumption": CONSUMPTION_GRID},
         state_transitions={
             "wealth": _next_wealth,
@@ -309,7 +311,7 @@ def test_per_target_dict_skips_unreachable_targets() -> None:
         return wealth
 
     def _utility_with_heir(
-        wealth: ContinuousState, heir_present: DiscreteState
+        *, wealth: ContinuousState, heir_present: DiscreteState
     ) -> FloatND:
         return wealth * heir_present
 
@@ -331,7 +333,7 @@ def test_per_target_dict_skips_unreachable_targets() -> None:
         functions={"utility": _utility_with_heir},
         states={
             "wealth": LinSpacedGrid(start=1, stop=10, n_points=3),
-            "heir_present": DiscreteGrid(_Heir),
+            "heir_present": DiscreteGrid(category_class=_Heir),
         },
         # Active only at age 0 — never the next period of `alive`.
         active=lambda age: age < 1,
@@ -375,7 +377,9 @@ def test_per_target_dict_validates_each_entry() -> None:
     def _utility_alive(wealth: ContinuousState) -> FloatND:
         return wealth
 
-    def _utility_dead(wealth: ContinuousState, heir_present: DiscreteState) -> FloatND:
+    def _utility_dead(
+        *, wealth: ContinuousState, heir_present: DiscreteState
+    ) -> FloatND:
         return wealth * heir_present
 
     def _to_dead(age: float) -> ScalarInt:  # noqa: ARG001
@@ -396,7 +400,7 @@ def test_per_target_dict_validates_each_entry() -> None:
         functions={"utility": _utility_dead},
         states={
             "wealth": LinSpacedGrid(start=1, stop=10, n_points=3),
-            "heir_present": DiscreteGrid(_Heir),
+            "heir_present": DiscreteGrid(category_class=_Heir),
         },
         active=lambda age: age >= 1,
     )
@@ -427,8 +431,9 @@ def _good_health_probs(health: DiscreteState) -> FloatND:
     ],
 )
 def test_snapshot_written_only_at_debug_on_valid_solve(
+    *,
     log_level: LogLevel,
-    expect_snapshot: bool,  # noqa: FBT001
+    expect_snapshot: bool,
     tmp_path: Path,
 ) -> None:
     """With `log_path` set, a valid solve writes a snapshot only at `"debug"`.
@@ -488,13 +493,13 @@ def _model_with_fixed_param_health_probs() -> Model:
     pre-solve numerical validator must do the same merge.
     """
 
-    def health_probs(health: DiscreteState, transition_bias: float) -> FloatND:
+    def health_probs(*, health: DiscreteState, transition_bias: float) -> FloatND:
         good_row = jnp.array([0.5 - transition_bias, 0.5 + transition_bias])
         bad_row = jnp.array([0.5, 0.5])
         return jnp.where(health == _Health.good, good_row, bad_row)
 
     alive = UserRegime(
-        states={"wealth": WEALTH_GRID, "health": DiscreteGrid(_Health)},
+        states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=_Health)},
         actions={"consumption": CONSUMPTION_GRID},
         state_transitions={
             "wealth": _next_wealth,
@@ -546,6 +551,7 @@ def _model_with_per_target_fixed_param_health_probs() -> Model:
         return jnp.array([0.5 - transition_bias, 0.5 + transition_bias])
 
     def _utility_terminal_with_health(
+        *,
         wealth: ContinuousState,
         health: DiscreteState,  # noqa: ARG001
     ) -> FloatND:
@@ -566,7 +572,7 @@ def _model_with_per_target_fixed_param_health_probs() -> Model:
     terminal = UserRegime(
         transition=None,
         functions={"utility": _utility_terminal_with_health},
-        states={"wealth": WEALTH_GRID, "health": DiscreteGrid(_Health)},
+        states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=_Health)},
         active=lambda age: age >= 1,
     )
     return Model(
@@ -604,7 +610,7 @@ def test_state_validator_catches_bad_probs_when_using_fixed_param() -> None:
     but actually runs the numerical check.
     """
 
-    def bad_health_probs(health: DiscreteState, transition_bias: float) -> FloatND:
+    def bad_health_probs(*, health: DiscreteState, transition_bias: float) -> FloatND:
         # Bias is added to row 0 only, so `transition_bias=0.6` makes the
         # `good` row sum to 1.6 — well outside the row-sum tolerance.
         return jnp.where(
@@ -614,7 +620,7 @@ def test_state_validator_catches_bad_probs_when_using_fixed_param() -> None:
         )
 
     alive = UserRegime(
-        states={"wealth": WEALTH_GRID, "health": DiscreteGrid(_Health)},
+        states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=_Health)},
         actions={"consumption": CONSUMPTION_GRID},
         state_transitions={
             "wealth": _next_wealth,

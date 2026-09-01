@@ -102,12 +102,14 @@ def is_working(labor_supply: DiscreteAction) -> BoolND:
     return labor_supply == LaborChoice.work
 
 
-def labor_income(is_working: BoolND, income: ContinuousState, wage: float) -> FloatND:
+def labor_income(
+    *, is_working: BoolND, income: ContinuousState, wage: float
+) -> FloatND:
     return jnp.where(is_working, wage * jnp.exp(income), 0.0)
 
 
 def utility_with_labor(
-    consumption: ContinuousAction, is_working: BoolND, disutility_of_work: float
+    *, consumption: ContinuousAction, is_working: BoolND, disutility_of_work: float
 ) -> FloatND:
     return jnp.log(consumption) - jnp.where(is_working, disutility_of_work, 0.0)
 
@@ -116,7 +118,7 @@ def utility_consumption_only(consumption: ContinuousAction) -> FloatND:
     return jnp.log(consumption)
 
 
-def savings(wealth: FloatND, consumption: ContinuousAction) -> FloatND:
+def savings(*, wealth: FloatND, consumption: ContinuousAction) -> FloatND:
     return wealth - consumption
 
 
@@ -125,12 +127,13 @@ def inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
 
 
 def next_wealth_from_savings_with_labor(
-    savings: FloatND, labor_income: FloatND, interest_rate: float
+    *, savings: FloatND, labor_income: FloatND, interest_rate: float
 ) -> ContinuousState:
     return (1 + interest_rate) * savings + BASE_INCOME + labor_income
 
 
 def next_wealth_brute_with_labor(
+    *,
     wealth: ContinuousState,
     consumption: ContinuousAction,
     labor_income: FloatND,
@@ -140,12 +143,13 @@ def next_wealth_brute_with_labor(
 
 
 def next_wealth_from_savings_iid(
-    savings: FloatND, income: ContinuousState, interest_rate: float
+    *, savings: FloatND, income: ContinuousState, interest_rate: float
 ) -> ContinuousState:
     return (1 + interest_rate) * savings + IID_INCOME_SCALE * jnp.exp(income)
 
 
 def next_wealth_brute_iid(
+    *,
     wealth: ContinuousState,
     consumption: ContinuousAction,
     income: ContinuousState,
@@ -157,12 +161,12 @@ def next_wealth_brute_iid(
 
 
 def borrowing_constraint(
-    consumption: ContinuousAction, wealth: ContinuousState
+    *, consumption: ContinuousAction, wealth: ContinuousState
 ) -> BoolND:
     return consumption <= wealth
 
 
-def next_regime(age: int, final_age_alive: float) -> ScalarInt:
+def next_regime(*, age: int, final_age_alive: float) -> ScalarInt:
     return jnp.where(
         age >= final_age_alive,
         ProcessRegimeId.dead,
@@ -184,7 +188,7 @@ def _income_process(shock_type: str) -> RouwenhorstAR1Process | NormalIIDProcess
 
 
 @functools.cache
-def _get_model(solver: str, shock_type: str) -> Model:
+def _get_model(*, solver: str, shock_type: str) -> Model:
     """Build one (solver, shock_type) model variant.
 
     - `shock_type="rouwenhorst"`: persistent AR(1) income scaling the wage of
@@ -197,13 +201,13 @@ def _get_model(solver: str, shock_type: str) -> Model:
     ages = AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
     last_age = float(ages.exact_values[-1])
 
-    def active(age: int, la: float = last_age) -> bool:
+    def active(*, age: int, la: float = last_age) -> bool:
         return age < la
 
     states = {"wealth": WEALTH_GRID, "income": _income_process(shock_type)}
     if shock_type == "rouwenhorst":
         actions = {
-            "labor_supply": DiscreteGrid(LaborChoice),
+            "labor_supply": DiscreteGrid(category_class=LaborChoice),
             "consumption": CONSUMPTION_GRID,
         }
         shared_functions = {
@@ -289,10 +293,10 @@ def test_rouwenhorst_process_matches_dense_brute_force():
     unreliable.
     """
     params = _get_params("rouwenhorst")
-    dcegm_solution = _get_model("dcegm", "rouwenhorst").solve(
+    dcegm_solution = _get_model(solver="dcegm", shock_type="rouwenhorst").solve(
         params=params, log_level="debug"
     )
-    brute_solution = _get_model("brute", "rouwenhorst").solve(
+    brute_solution = _get_model(solver="brute", shock_type="rouwenhorst").solve(
         params=params, log_level="debug"
     )
 
@@ -316,8 +320,12 @@ def test_iid_process_matches_dense_brute_force():
     the child read is averaged over the quadrature nodes with those weights.
     """
     params = _get_params("iid")
-    dcegm_solution = _get_model("dcegm", "iid").solve(params=params, log_level="debug")
-    brute_solution = _get_model("brute", "iid").solve(params=params, log_level="debug")
+    dcegm_solution = _get_model(solver="dcegm", shock_type="iid").solve(
+        params=params, log_level="debug"
+    )
+    brute_solution = _get_model(solver="brute", shock_type="iid").solve(
+        params=params, log_level="debug"
+    )
 
     for period in sorted(brute_solution)[:-1]:
         brute_V = np.asarray(brute_solution[period]["alive"])
@@ -344,4 +352,6 @@ def test_nan_process_params_surface_as_error():
     params["alive"]["income"] = {"mu": 0.0, "sigma": 0.25, "rho": float("nan")}
 
     with pytest.raises(InvalidValueFunctionError):
-        _get_model("dcegm", "rouwenhorst").solve(params=params, log_level="debug")
+        _get_model(solver="dcegm", shock_type="rouwenhorst").solve(
+            params=params, log_level="debug"
+        )

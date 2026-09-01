@@ -39,7 +39,7 @@ def utility(consumption: ContinuousAction) -> FloatND:
 
 
 def new_wealth(
-    wealth: ContinuousState, consumption: ContinuousAction
+    *, wealth: ContinuousState, consumption: ContinuousAction
 ) -> ContinuousState:
     """The post-decision balance this period's choice leaves behind."""
     return 1.05 * (wealth - consumption)

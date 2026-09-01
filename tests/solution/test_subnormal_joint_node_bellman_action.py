@@ -97,23 +97,23 @@ def _row(*, bet: DiscreteAction, level: DiscreteState, reachable: bool) -> Float
     return jnp.stack([low, 1.0 - low])
 
 
-def _health_probs(bet: DiscreteAction, health: DiscreteState) -> FloatND:
+def _health_probs(*, bet: DiscreteAction, health: DiscreteState) -> FloatND:
     return _row(bet=bet, level=health, reachable=True)
 
 
-def _mood_probs(bet: DiscreteAction, mood: DiscreteState) -> FloatND:
+def _mood_probs(*, bet: DiscreteAction, mood: DiscreteState) -> FloatND:
     return _row(bet=bet, level=mood, reachable=True)
 
 
-def _unreachable_health_probs(bet: DiscreteAction, health: DiscreteState) -> FloatND:
+def _unreachable_health_probs(*, bet: DiscreteAction, health: DiscreteState) -> FloatND:
     return _row(bet=bet, level=health, reachable=False)
 
 
-def _unreachable_mood_probs(bet: DiscreteAction, mood: DiscreteState) -> FloatND:
+def _unreachable_mood_probs(*, bet: DiscreteAction, mood: DiscreteState) -> FloatND:
     return _row(bet=bet, level=mood, reachable=False)
 
 
-def _terminal_payoff(health: DiscreteState, mood: DiscreteState) -> FloatND:
+def _terminal_payoff(*, health: DiscreteState, mood: DiscreteState) -> FloatND:
     """A payoff near the top of the range, standing only at the joint low node."""
     at_the_node = (health == _Level.low) & (mood == _Level.low)
     return jnp.where(
@@ -122,7 +122,7 @@ def _terminal_payoff(health: DiscreteState, mood: DiscreteState) -> FloatND:
 
 
 def _model(*, node_is_reachable: bool = True) -> Model:
-    levels = DiscreteGrid(_Level)
+    levels = DiscreteGrid(category_class=_Level)
     health_probs = _health_probs if node_is_reachable else _unreachable_health_probs
     mood_probs = _mood_probs if node_is_reachable else _unreachable_mood_probs
     return Model(
@@ -130,7 +130,7 @@ def _model(*, node_is_reachable: bool = True) -> Model:
             "alive": Regime(
                 transition={"dead": MarkovTransition(_certain)},
                 active=lambda age: age < 21,
-                actions={"bet": DiscreteGrid(_Bet)},
+                actions={"bet": DiscreteGrid(category_class=_Bet)},
                 states={"health": levels, "mood": levels},
                 state_transitions={
                     "health": MarkovTransition(health_probs),

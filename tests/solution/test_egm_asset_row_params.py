@@ -111,7 +111,7 @@ def utility(consumption: ContinuousAction) -> FloatND:
     return jnp.log(consumption)
 
 
-def savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
+def savings(*, resources: FloatND, consumption: ContinuousAction) -> FloatND:
     return resources - consumption
 
 
@@ -124,12 +124,12 @@ def next_wealth_dcegm(savings: FloatND) -> ContinuousState:
 
 
 def next_wealth_brute(
-    resources: FloatND, consumption: ContinuousAction
+    *, resources: FloatND, consumption: ContinuousAction
 ) -> ContinuousState:
     return resources - consumption + LABOR_INCOME
 
 
-def next_regime(age: int, final_age_alive: float) -> ScalarInt:
+def next_regime(*, age: int, final_age_alive: float) -> ScalarInt:
     return jnp.where(
         age >= final_age_alive,
         AssetRowRegimeId.dead,
@@ -181,7 +181,7 @@ def _assert_working_life_V_matches(
 # Slice 1: child resources reads a model param
 
 
-def resources_with_rate(wealth: ContinuousState, rate_of_return: float) -> FloatND:
+def resources_with_rate(*, wealth: ContinuousState, rate_of_return: float) -> FloatND:
     """Cash-on-hand including a capital-income return on current wealth."""
     return wealth * (1.0 + rate_of_return)
 
@@ -191,19 +191,21 @@ def survival_of_wealth(wealth: ContinuousState) -> FloatND:
 
 
 def stay_prob_wealth(
-    wealth: ContinuousState, age: int, final_age_alive: float
+    *, wealth: ContinuousState, age: int, final_age_alive: float
 ) -> FloatND:
     return jnp.where(age >= final_age_alive, 0.0, survival_of_wealth(wealth))
 
 
 def death_prob_wealth(
-    wealth: ContinuousState, age: int, final_age_alive: float
+    *, wealth: ContinuousState, age: int, final_age_alive: float
 ) -> FloatND:
-    return 1.0 - stay_prob_wealth(wealth, age, final_age_alive)
+    return 1.0 - stay_prob_wealth(
+        wealth=wealth, age=age, final_age_alive=final_age_alive
+    )
 
 
 def budget_constraint_rate(
-    consumption: ContinuousAction, wealth: ContinuousState, rate_of_return: float
+    *, consumption: ContinuousAction, wealth: ContinuousState, rate_of_return: float
 ) -> BoolND:
     return consumption <= wealth * (1.0 + rate_of_return)
 
@@ -279,7 +281,7 @@ def test_child_resources_reading_param_matches_brute_force():
 # Slice 2: regime-transition prob reads a param-dependent intermediate
 
 
-def capital_income(wealth: ContinuousState, rate_of_return: float) -> FloatND:
+def capital_income(*, wealth: ContinuousState, rate_of_return: float) -> FloatND:
     return rate_of_return * wealth
 
 
@@ -296,35 +298,39 @@ def survival_of_share(share_of_income: FloatND) -> FloatND:
 
 
 def stay_prob_share(
-    share_of_income: FloatND, age: int, final_age_alive: float
+    *, share_of_income: FloatND, age: int, final_age_alive: float
 ) -> FloatND:
     return jnp.where(age >= final_age_alive, 0.0, survival_of_share(share_of_income))
 
 
 def death_prob_share(
-    share_of_income: FloatND, age: int, final_age_alive: float
+    *, share_of_income: FloatND, age: int, final_age_alive: float
 ) -> FloatND:
-    return 1.0 - stay_prob_share(share_of_income, age, final_age_alive)
+    return 1.0 - stay_prob_share(
+        share_of_income=share_of_income, age=age, final_age_alive=final_age_alive
+    )
 
 
 def savings_from_wealth(
-    wealth: ContinuousState, consumption: ContinuousAction
+    *, wealth: ContinuousState, consumption: ContinuousAction
 ) -> FloatND:
     return wealth - consumption
 
 
 def next_wealth_brute_from_wealth(
-    wealth: ContinuousState, consumption: ContinuousAction
+    *, wealth: ContinuousState, consumption: ContinuousAction
 ) -> ContinuousState:
     return wealth - consumption + LABOR_INCOME
 
 
-def budget_constraint(consumption: ContinuousAction, wealth: ContinuousState) -> BoolND:
+def budget_constraint(
+    *, consumption: ContinuousAction, wealth: ContinuousState
+) -> BoolND:
     return consumption <= wealth
 
 
 @functools.cache
-def _smoothstep_intermediate_model(solver: str, *, rate_is_fixed: bool) -> Model:
+def _smoothstep_intermediate_model(*, solver: str, rate_is_fixed: bool) -> Model:
     """Survival probability reading wealth through a param-dependent chain.
 
     When `rate_is_fixed`, `rate_of_return` is supplied through `fixed_params`
@@ -407,10 +413,10 @@ def test_regime_prob_reading_param_intermediate_matches_brute_force(
     if rate_is_fixed:
         del params["rate_of_return"]
     dcegm_solution = _smoothstep_intermediate_model(
-        "dcegm", rate_is_fixed=rate_is_fixed
+        solver="dcegm", rate_is_fixed=rate_is_fixed
     ).solve(params=params, log_level="debug")
     brute_solution = _smoothstep_intermediate_model(
-        "brute_force", rate_is_fixed=rate_is_fixed
+        solver="brute_force", rate_is_fixed=rate_is_fixed
     ).solve(params=params, log_level="debug")
     _assert_working_life_V_matches(
         dcegm_solution=dcegm_solution, brute_solution=brute_solution
@@ -428,7 +434,7 @@ def next_aime(aime: ContinuousState) -> ContinuousState:
 
 
 def pension_wealth_imputed(
-    aime: ContinuousState, rate_of_return: float
+    *, aime: ContinuousState, rate_of_return: float
 ) -> ContinuousState:
     """Solve-phase pension wealth imputed from AIME and the return param."""
     return aime * (1.0 + rate_of_return)
@@ -439,18 +445,19 @@ def next_pension_wealth(pension_wealth: ContinuousState) -> ContinuousState:
 
 
 def resources_with_pension(
-    wealth: ContinuousState, pension_wealth: ContinuousState
+    *, wealth: ContinuousState, pension_wealth: ContinuousState
 ) -> FloatND:
     return wealth + PENSION_ACCRUAL * pension_wealth
 
 
 def resources_with_pension_brute(
-    wealth: ContinuousState, aime: ContinuousState, rate_of_return: float
+    *, wealth: ContinuousState, aime: ContinuousState, rate_of_return: float
 ) -> FloatND:
     return wealth + PENSION_ACCRUAL * (aime * (1.0 + rate_of_return))
 
 
 def budget_constraint_pension(
+    *,
     consumption: ContinuousAction,
     wealth: ContinuousState,
     aime: ContinuousState,
@@ -549,7 +556,7 @@ def test_imputed_pension_wealth_feeding_resources_matches_brute_force():
 # Slice 4: a decreasing (parameter-dependent) resources map fails loud
 
 
-def resources_decreasing(wealth: ContinuousState, offset: float) -> FloatND:
+def resources_decreasing(*, wealth: ContinuousState, offset: float) -> FloatND:
     """Cash-on-hand that decreases in wealth: `offset - wealth`.
 
     Positive over the wealth grid (with `offset` above the top node) but strictly

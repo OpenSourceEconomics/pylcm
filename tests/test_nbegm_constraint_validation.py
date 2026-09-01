@@ -54,7 +54,7 @@ from tests.test_models.nbegm_medicaid_toy import (
 )
 
 
-def rationing(consumption: ContinuousAction, liquid: ContinuousState) -> BoolND:
+def rationing(*, consumption: ContinuousAction, liquid: ContinuousState) -> BoolND:
     """A feasibility predicate whose boundary is a root in no declared coordinate.
 
     Deliberately not a bound on the post-decision state: no savings-grid node
@@ -83,7 +83,7 @@ def _build_model(
         },
         liquid_law=next_liquid_from_savings,
         alive_solver=resolve_solver(
-            variant,
+            variant=variant,
             savings_grid=LinSpacedGrid(start=0.0, stop=20.0, n_points=10),
         ),
         constraints=constraints,
@@ -91,7 +91,7 @@ def _build_model(
 
 
 def _savings_from_liquid(
-    liquid: ContinuousState, consumption: ContinuousAction
+    *, liquid: ContinuousState, consumption: ContinuousAction
 ) -> FloatND:
     """Return the post-decision liquid state from direct resources."""
     return liquid - consumption
@@ -120,7 +120,7 @@ def _build_smooth_model(
         alive_functions={"utility": utility, "savings": _savings_from_liquid},
         liquid_law=next_liquid_from_savings,
         alive_solver=resolve_solver(
-            variant,
+            variant=variant,
             savings_grid=LinSpacedGrid(start=0.0, stop=8.0, n_points=30),
             jump_read=jump_read,
         ),
@@ -150,7 +150,7 @@ def _build_scheduled_model(
         alive_functions={"utility": utility, "savings": savings, **functions},
         liquid_law=next_liquid_from_savings,
         alive_solver=resolve_solver(
-            "nbegm",
+            variant="nbegm",
             savings_grid=LinSpacedGrid(start=0.0, stop=8.0, n_points=30),
         ),
         constraints=constraints,
@@ -259,6 +259,7 @@ def test_nbegm_matches_grid_search_on_a_breakpoint_aligned_grid() -> None:
     ],
 )
 def test_nbegm_enforces_full_empty_and_intersected_feasible_domains(
+    *,
     declaration,
     expected,
 ) -> None:
@@ -301,6 +302,7 @@ def test_nbegm_enforces_full_empty_and_intersected_feasible_domains(
     ],
 )
 def test_nbegm_composes_feasibility_with_kinks_and_flat_budget_floors(
+    *,
     functions,
     budget_params,
 ) -> None:
@@ -467,6 +469,7 @@ def test_nbegm_publishes_a_one_sided_feasibility_carry(monkeypatch) -> None:
     ],
 )
 def test_nbegm_carry_retains_the_declared_topology_at_a_grid_endpoint(
+    *,
     monkeypatch,
     declaration,
     boundary: float,
@@ -553,7 +556,9 @@ def test_grid_search_accepts_the_same_constraint():
     assert "rationing" in model._regimes["alive"].solution.constraints
 
 
-def nested_rationing(consumption: ContinuousAction, wealth: ContinuousState) -> BoolND:
+def nested_rationing(
+    *, consumption: ContinuousAction, wealth: ContinuousState
+) -> BoolND:
     """A general feasibility predicate over the nested toy's liquid margin."""
     return jnp.square(consumption) + jnp.square(wealth) <= 400.0
 

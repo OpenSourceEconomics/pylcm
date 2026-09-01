@@ -30,7 +30,7 @@ from _lcm.utils.namespace import ParamsQnameDepth
     ],
 )
 def test_params_qname_depth_matches_real_qname(
-    tree_path: tuple[str, ...], expected_depth: int
+    *, tree_path: tuple[str, ...], expected_depth: int
 ) -> None:
     qname = qname_from_tree_path(tree_path)
     assert len(tree_path_from_qname(qname)) == expected_depth

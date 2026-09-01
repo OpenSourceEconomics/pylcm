@@ -47,7 +47,7 @@ def _uint_view(dtype: type[np.floating]) -> type[np.unsignedinteger]:
 
 
 def _step_bits(
-    value: np.floating, *, steps: int, dtype: type[np.floating]
+    *, value: np.floating, steps: int, dtype: type[np.floating]
 ) -> np.floating:
     """Move `value` by `steps` representable places using its bit pattern.
 
@@ -60,7 +60,7 @@ def _step_bits(
     return dtype(np.asarray(uint(bits)).view(dtype)[()])
 
 
-def _is_normal(value: np.floating, *, dtype: type[np.floating]) -> bool:
+def _is_normal(*, value: np.floating, dtype: type[np.floating]) -> bool:
     return bool(abs(float(value)) >= float(np.finfo(dtype).tiny))
 
 
@@ -98,8 +98,11 @@ def _narrow_links(dtype: type[np.floating]) -> list[Geometry]:
     for binade in range(0, significand_bits, 4):
         base = dtype(np.ldexp(float(tiny), binade))
         for separation in (2, 3, 5, 8, 17, 64):
-            upper = _step_bits(base, steps=separation, dtype=dtype)
-            if not (_is_normal(base, dtype=dtype) and _is_normal(upper, dtype=dtype)):
+            upper = _step_bits(value=base, steps=separation, dtype=dtype)
+            if not (
+                _is_normal(value=base, dtype=dtype)
+                and _is_normal(value=upper, dtype=dtype)
+            ):
                 continue
             if not _separation_is_subnormal(low=base, high=upper, dtype=dtype):
                 continue
@@ -123,14 +126,14 @@ def _query_for(
     )
     match placement:
         case "inside":
-            query = _step_bits(x0, steps=max(1, separation // 2), dtype=dtype)
+            query = _step_bits(value=x0, steps=max(1, separation // 2), dtype=dtype)
         case "below":
-            query = _step_bits(x0, steps=-max(1, separation), dtype=dtype)
+            query = _step_bits(value=x0, steps=-max(1, separation), dtype=dtype)
         case "above":
-            query = _step_bits(x1, steps=max(1, separation), dtype=dtype)
+            query = _step_bits(value=x1, steps=max(1, separation), dtype=dtype)
         case _:  # pragma: no cover - guarded by parametrization
             raise AssertionError(placement)
-    return query if _is_normal(query, dtype=dtype) else None
+    return query if _is_normal(value=query, dtype=dtype) else None
 
 
 def _certified(
@@ -173,7 +176,7 @@ def _ordinary_links(dtype: type[np.floating]) -> list[Geometry]:
     links: list[Geometry] = []
     for exponent in exponents:
         base = dtype(np.ldexp(1.0, exponent))
-        upper = _step_bits(base, steps=8, dtype=dtype)
+        upper = _step_bits(value=base, steps=8, dtype=dtype)
         separation = Fraction(float(upper)) - Fraction(float(base))
         if (
             separation <= 0
@@ -192,8 +195,9 @@ def _widest_rival_half_width(dtype: type[np.floating]) -> np.floating:
 @pytest.mark.parametrize("placement", ["inside", "below", "above"])
 @pytest.mark.parametrize("narrow_is_higher", [False, True])
 def test_a_wide_rival_never_certifies_a_tie_against_an_ordinary_narrow_link(
+    *,
     placement: str,
-    narrow_is_higher: bool,  # noqa: FBT001
+    narrow_is_higher: bool,
 ) -> None:
     """No input is subnormal, and a strict exact ordering still survives.
 
@@ -204,7 +208,7 @@ def test_a_wide_rival_never_certifies_a_tie_against_an_ordinary_narrow_link(
     """
     dtype, jax_dtype = _working_dtypes()
     lower = dtype(0.75)
-    higher = _step_bits(lower, steps=64, dtype=dtype)
+    higher = _step_bits(value=lower, steps=64, dtype=dtype)
     wide_value, narrow_value = (lower, higher) if narrow_is_higher else (higher, lower)
     wide_half = _widest_rival_half_width(dtype)
     tiny = float(np.finfo(dtype).tiny)
@@ -256,13 +260,14 @@ def test_a_wide_rival_never_certifies_a_tie_against_an_ordinary_narrow_link(
 @pytest.mark.parametrize("placement", ["inside", "below", "above"])
 @pytest.mark.parametrize("narrow_is_higher", [False, True])
 def test_subnormal_separation_never_certifies_a_tie_between_ordered_lines(
+    *,
     placement: str,
-    narrow_is_higher: bool,  # noqa: FBT001
+    narrow_is_higher: bool,
 ) -> None:
     """A strict exact ordering is certified correctly or refused, never tied."""
     dtype, jax_dtype = _working_dtypes()
     lower = dtype(0.75)
-    higher = _step_bits(lower, steps=64, dtype=dtype)
+    higher = _step_bits(value=lower, steps=64, dtype=dtype)
     wide_value, narrow_value = (lower, higher) if narrow_is_higher else (higher, lower)
 
     violations: list[str] = []

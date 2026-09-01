@@ -81,12 +81,12 @@ def survival_of_wealth(wealth: ContinuousState) -> FloatND:
     return 0.5 + 0.45 * smoothstep(wealth)
 
 
-def stay_prob(wealth: ContinuousState, age: int, final_age_alive: float) -> FloatND:
+def stay_prob(*, wealth: ContinuousState, age: int, final_age_alive: float) -> FloatND:
     return jnp.where(age >= final_age_alive, 0.0, survival_of_wealth(wealth))
 
 
-def death_prob(wealth: ContinuousState, age: int, final_age_alive: float) -> FloatND:
-    return 1.0 - stay_prob(wealth, age, final_age_alive)
+def death_prob(*, wealth: ContinuousState, age: int, final_age_alive: float) -> FloatND:
+    return 1.0 - stay_prob(wealth=wealth, age=age, final_age_alive=final_age_alive)
 
 
 def health_transition(health: DiscreteState) -> FloatND:
@@ -96,14 +96,14 @@ def health_transition(health: DiscreteState) -> FloatND:
     return jnp.stack([others, others, stay])
 
 
-def utility(consumption: ContinuousAction, health: DiscreteState) -> FloatND:
+def utility(*, consumption: ContinuousAction, health: DiscreteState) -> FloatND:
     penalty = jnp.where(
         health == Health.bad, 0.2, jnp.where(health == Health.fair, 0.1, 0.0)
     )
     return jnp.log(consumption) - penalty
 
 
-def savings(wealth: FloatND, consumption: ContinuousAction) -> FloatND:
+def savings(*, wealth: FloatND, consumption: ContinuousAction) -> FloatND:
     return wealth - consumption
 
 
@@ -137,7 +137,7 @@ def _model(health_batch_size: int) -> Model:
         actions={"consumption": CONSUMPTION_GRID},
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=N_WEALTH),
-            "health": DiscreteGrid(Health, batch_size=health_batch_size),
+            "health": DiscreteGrid(category_class=Health, batch_size=health_batch_size),
         },
         state_transitions={
             "wealth": next_wealth,
@@ -201,8 +201,8 @@ def test_discrete_combo_batch_size_leaves_value_function_unchanged(
             got_V = np.asarray(splayed[period][regime_name])
             assert ref_V.shape == got_V.shape
             assert_agrees_to_ulp(
-                got_V,
-                ref_V,
+                got=got_V,
+                expected=ref_V,
                 n_ulp=_INVARIANCE_ULP,
                 err_msg=f"period={period}, regime={regime_name}",
             )
@@ -215,7 +215,7 @@ class Marital:
 
 
 def utility_two_combos(
-    consumption: ContinuousAction, health: DiscreteState, married: DiscreteState
+    *, consumption: ContinuousAction, health: DiscreteState, married: DiscreteState
 ) -> FloatND:
     penalty = jnp.where(
         health == Health.bad, 0.2, jnp.where(health == Health.fair, 0.1, 0.0)
@@ -238,8 +238,8 @@ def _two_combo_model(batch_size: int) -> Model:
         actions={"consumption": CONSUMPTION_GRID},
         states={
             "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=N_WEALTH),
-            "health": DiscreteGrid(Health, batch_size=batch_size),
-            "married": DiscreteGrid(Marital, batch_size=batch_size),
+            "health": DiscreteGrid(category_class=Health, batch_size=batch_size),
+            "married": DiscreteGrid(category_class=Marital, batch_size=batch_size),
         },
         state_transitions={
             "wealth": next_wealth,
@@ -294,8 +294,8 @@ def test_two_discrete_combo_axes_splayed_together_match_unsplayed(batch_size: in
             got_V = np.asarray(splayed[period][regime_name])
             assert ref_V.shape == got_V.shape
             assert_agrees_to_ulp(
-                got_V,
-                ref_V,
+                got=got_V,
+                expected=ref_V,
                 n_ulp=_INVARIANCE_ULP,
                 err_msg=f"period={period}",
             )

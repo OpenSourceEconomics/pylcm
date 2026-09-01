@@ -56,6 +56,7 @@ class AdjustChoice:
 
 
 def _cash_on_hand(
+    *,
     liquid: ContinuousState,
     housing: ContinuousState,
     adjust: DiscreteAction,
@@ -78,6 +79,7 @@ def _cash_on_hand(
 
 
 def _serviced_housing(
+    *,
     housing: ContinuousState,
     adjust: DiscreteAction,
     new_housing: ContinuousAction,
@@ -87,6 +89,7 @@ def _serviced_housing(
 
 
 def utility(
+    *,
     consumption: ContinuousAction,
     housing: ContinuousState,
     adjust: DiscreteAction,
@@ -95,12 +98,16 @@ def utility(
     housing_weight: float,
 ) -> FloatND:
     """CRRA consumption utility plus the housing-service flow `alpha*log(h)`."""
-    serviced = _serviced_housing(housing, adjust, new_housing)
+    serviced = _serviced_housing(
+        housing=housing, adjust=adjust, new_housing=new_housing
+    )
     consumption_utility = (consumption ** (1.0 - crra) - 1.0) / (1.0 - crra)
     return consumption_utility + housing_weight * jnp.log(serviced)
 
 
-def bequest(liquid: ContinuousState, housing: ContinuousState, crra: float) -> FloatND:
+def bequest(
+    *, liquid: ContinuousState, housing: ContinuousState, crra: float
+) -> FloatND:
     """Terminal value: consume liquid wealth plus the resale value of the house.
 
     Uses the un-normalized CRRA form, without the `-1` normalization the flow
@@ -112,6 +119,7 @@ def bequest(liquid: ContinuousState, housing: ContinuousState, crra: float) -> F
 
 
 def next_liquid(
+    *,
     liquid: ContinuousState,
     housing: ContinuousState,
     consumption: ContinuousAction,
@@ -139,15 +147,17 @@ def next_liquid(
 
 
 def next_housing(
+    *,
     housing: ContinuousState,
     adjust: DiscreteAction,
     new_housing: ContinuousAction,
 ) -> ContinuousState:
     """Next-period housing stock: the new house if adjusting, else the old one."""
-    return _serviced_housing(housing, adjust, new_housing)
+    return _serviced_housing(housing=housing, adjust=adjust, new_housing=new_housing)
 
 
 def feasible(
+    *,
     liquid: ContinuousState,
     housing: ContinuousState,
     consumption: ContinuousAction,
@@ -175,7 +185,7 @@ def feasible(
     return consumption <= cash - borrowing_floor
 
 
-def next_regime_from_working(age: int, final_age_alive: float) -> ScalarInt:
+def next_regime_from_working(*, age: int, final_age_alive: float) -> ScalarInt:
     return jnp.where(age + 1 >= final_age_alive, RegimeId.dead, RegimeId.working)
 
 
@@ -211,7 +221,7 @@ def get_model(
             "new_housing": LinSpacedGrid(
                 start=borrowing_floor, stop=housing_max, n_points=n_new_housing
             ),
-            "adjust": DiscreteGrid(AdjustChoice),
+            "adjust": DiscreteGrid(category_class=AdjustChoice),
         },
         states={"liquid": liquid_grid, "housing": housing_grid},
         state_transitions={"liquid": next_liquid, "housing": next_housing},

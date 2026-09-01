@@ -45,15 +45,15 @@ _SHOCK_GRID_KWARGS: dict[str, dict[str, Any]] = {
 }
 
 
-def next_health(health: DiscreteState, probs_array: FloatND) -> FloatND:
+def next_health(*, health: DiscreteState, probs_array: FloatND) -> FloatND:
     return probs_array[health]
 
 
-def next_wealth(consumption: ContinuousAction, wealth: ContinuousState) -> FloatND:
+def next_wealth(*, consumption: ContinuousAction, wealth: ContinuousState) -> FloatND:
     return wealth - consumption
 
 
-def next_regime(age: float, final_age_alive: float) -> ScalarInt:
+def next_regime(*, age: float, final_age_alive: float) -> ScalarInt:
     return jnp.where(
         age >= final_age_alive,
         RegimeId.dead,
@@ -62,12 +62,13 @@ def next_regime(age: float, final_age_alive: float) -> ScalarInt:
 
 
 def wealth_constraint(
-    wealth: ContinuousState, income: ContinuousState, consumption: ContinuousAction
+    *, wealth: ContinuousState, income: ContinuousState, consumption: ContinuousAction
 ):
     return wealth - consumption + jnp.exp(income) >= 0
 
 
 def utility(
+    *,
     wealth: ContinuousState,  # noqa: ARG001
     income: ContinuousState,  # noqa: ARG001
     health: DiscreteState,
@@ -90,6 +91,7 @@ class RegimeId:
 
 @functools.cache
 def get_model(
+    *,
     n_periods: int,
     distribution_type: Literal[
         "uniform", "normal", "lognormal", "tauchen", "rouwenhorst"
@@ -104,7 +106,7 @@ def get_model(
             "income": _SHOCK_GRID_CLASSES[distribution_type](
                 n_points=5, **_SHOCK_GRID_KWARGS[distribution_type]
             ),
-            "health": DiscreteGrid(Health),
+            "health": DiscreteGrid(category_class=Health),
         },
         state_transitions={
             "wealth": next_wealth,
@@ -137,7 +139,7 @@ class MultiRegimeId:
 
 
 def _next_regime_multi(
-    age: float, work_final_age: float, retire_final_age: float
+    *, age: float, work_final_age: float, retire_final_age: float
 ) -> ScalarInt:
     return jnp.where(
         age >= retire_final_age,
@@ -148,6 +150,7 @@ def _next_regime_multi(
 
 @functools.cache
 def get_multi_regime_model(
+    *,
     n_periods: int,
     distribution_type: Literal[
         "uniform", "normal", "lognormal", "tauchen", "rouwenhorst"
@@ -169,7 +172,7 @@ def get_multi_regime_model(
         states={
             "wealth": LinSpacedGrid(start=1, stop=5, n_points=5),
             "income": shock_grid_cls(n_points=5, **shock_kwargs),
-            "health": DiscreteGrid(Health),
+            "health": DiscreteGrid(category_class=Health),
         },
         state_transitions={
             "wealth": next_wealth,
@@ -187,7 +190,7 @@ def get_multi_regime_model(
         states={
             "wealth": LinSpacedGrid(start=1, stop=5, n_points=5),
             "income": shock_grid_cls(n_points=5, **shock_kwargs),
-            "health": DiscreteGrid(Health),
+            "health": DiscreteGrid(category_class=Health),
         },
         state_transitions={
             "wealth": next_wealth,

@@ -47,7 +47,7 @@ def _alive_utility(health: DiscreteState) -> FloatND:
     return health + 0.0
 
 
-def _last_utility(health: DiscreteState, spend: DiscreteAction) -> FloatND:
+def _last_utility(*, health: DiscreteState, spend: DiscreteAction) -> FloatND:
     return health + 0.0 * spend
 
 
@@ -63,15 +63,15 @@ def model() -> Model:
             "alive": Regime(
                 transition=_next_regime,
                 active=lambda age: age < 26,
-                states={"health": DiscreteGrid(_Health)},
+                states={"health": DiscreteGrid(category_class=_Health)},
                 state_transitions={"health": MarkovTransition(_health_probs)},
                 functions={"utility": _alive_utility},
             ),
             "last": Regime(
                 transition=None,
                 active=lambda age: age >= 26,
-                states={"health": DiscreteGrid(_Health)},
-                actions={"spend": DiscreteGrid(_Spend)},
+                states={"health": DiscreteGrid(category_class=_Health)},
+                actions={"spend": DiscreteGrid(category_class=_Spend)},
                 constraints={"survives_to_spend": _survives_to_spend},
                 functions={"utility": _last_utility},
             ),

@@ -56,21 +56,22 @@ class RegimeId:
     done: ScalarInt
 
 
-def utility(consumption: ContinuousAction, crra: float) -> FloatND:
+def utility(*, consumption: ContinuousAction, crra: float) -> FloatND:
     return consumption ** (1.0 - crra) / (1.0 - crra)
 
 
-def terminal_utility(wealth: ContinuousState, crra: float) -> FloatND:
+def terminal_utility(*, wealth: ContinuousState, crra: float) -> FloatND:
     """The last period consumes everything on hand."""
     return wealth ** (1.0 - crra) / (1.0 - crra)
 
 
-def savings(wealth: ContinuousState, consumption: ContinuousAction) -> FloatND:
+def savings(*, wealth: ContinuousState, consumption: ContinuousAction) -> FloatND:
     """The end-of-period balance the law of motion is written through."""
     return wealth - consumption
 
 
 def next_wealth(
+    *,
     savings: FloatND,
     return_liquid: float,
     retirement_income: float,
@@ -78,15 +79,15 @@ def next_wealth(
     return (1.0 + return_liquid) * savings + retirement_income
 
 
-def feasible(wealth: ContinuousState, consumption: ContinuousAction) -> BoolND:
+def feasible(*, wealth: ContinuousState, consumption: ContinuousAction) -> BoolND:
     return consumption <= wealth
 
 
-def prob_continue(age: int, last_age: float) -> FloatND:
+def prob_continue(*, age: int, last_age: float) -> FloatND:
     return jnp.where(age + 1 < last_age, 1.0, 0.0)
 
 
-def prob_stop(age: int, last_age: float) -> FloatND:
+def prob_stop(*, age: int, last_age: float) -> FloatND:
     return jnp.where(age + 1 >= last_age, 1.0, 0.0)
 
 
@@ -172,7 +173,7 @@ def _params():
     }
 
 
-def _closed_form(wealth, *, periods_of_consumption):
+def _closed_form(*, wealth, periods_of_consumption):
     """Analytical consumption and value with `periods_of_consumption` left."""
     gross_return = 1.0 + _RETURN
     kappa = (_DISCOUNT_FACTOR * gross_return ** (1.0 - _CRRA)) ** (1.0 / _CRRA)
@@ -191,7 +192,9 @@ def test_egm_value_matches_the_analytical_solution(period):
         params=_params(), log_level="debug"
     )
     wealth = np.asarray(_WEALTH_GRID.to_jax())[_UNCONSTRAINED]
-    _, expected = _closed_form(wealth, periods_of_consumption=_N_PERIODS - period)
+    _, expected = _closed_form(
+        wealth=wealth, periods_of_consumption=_N_PERIODS - period
+    )
     got = np.asarray(solution[period]["saving"])[_UNCONSTRAINED]
     np.testing.assert_allclose(got, expected, rtol=1e-2)
 

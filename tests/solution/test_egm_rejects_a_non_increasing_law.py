@@ -23,6 +23,7 @@ from tests.solution.test_egm_solver import (
 
 
 def next_wealth_falling_in_savings(
+    *,
     savings: FloatND,
     return_liquid: float,
     retirement_income: float,

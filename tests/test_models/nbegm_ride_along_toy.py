@@ -41,22 +41,26 @@ class ConsumerKind:
     hi: ScalarInt
 
 
-def crra_of_kind(kind: DiscreteState, crra_by_kind: FloatND) -> FloatND:
+def crra_of_kind(*, kind: DiscreteState, crra_by_kind: FloatND) -> FloatND:
     """Per-kind CRRA coefficient read off the ride-along `kind` code."""
     return crra_by_kind[kind]
 
 
-def utility_per_kind(consumption: ContinuousAction, crra_of_kind: FloatND) -> FloatND:
+def utility_per_kind(
+    *, consumption: ContinuousAction, crra_of_kind: FloatND
+) -> FloatND:
     """CRRA consumption utility whose curvature differs across `kind` slices.
 
     Stands in for a model whose utility parameters are indexed by a ride-along
     preference type through an intermediate DAG node, so the Euler inversion
     must use each cell's own curvature.
     """
-    return crra_utility(consumption, crra_of_kind)
+    return crra_utility(consumption=consumption, crra=crra_of_kind)
 
 
-def discount_factor(kind: DiscreteState, discount_factor_by_kind: FloatND) -> FloatND:
+def discount_factor(
+    *, kind: DiscreteState, discount_factor_by_kind: FloatND
+) -> FloatND:
     """Per-kind subjective discount factor read off the ride-along `kind` code.
 
     Stands in for a model whose discount factor is a DAG function of a ride-along
@@ -74,12 +78,13 @@ def discount_factor(kind: DiscreteState, discount_factor_by_kind: FloatND) -> Fl
         lcm.affine_breakpoint(threshold="tax_exemption", kind="continuous_kink"),
     ),
 )
-def tax(liquid: ContinuousState, tax_rate: float, tax_exemption: float) -> FloatND:
+def tax(*, liquid: ContinuousState, tax_rate: float, tax_exemption: float) -> FloatND:
     """Continuous tax: zero below the exemption, `tax_rate` on the excess above."""
     return tax_rate * jnp.maximum(liquid - tax_exemption, 0.0)
 
 
 def resources(
+    *,
     liquid: ContinuousState,
     kind: DiscreteState,
     tax: FloatND,
@@ -134,7 +139,7 @@ def build_model(
         # weight differs across slices, exercising DAG-resolved discounting.
         alive_functions = {**alive_functions, "discount_factor": discount_factor}
     alive_solver = resolve_solver(
-        variant,
+        variant=variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
         **(dict(nbegm_overrides) if nbegm_overrides else {}),
     )
@@ -154,10 +159,14 @@ def build_model(
         liquid_law=liquid_law,
         alive_solver=alive_solver,
         constraints=constraints,
-        extra_states=({} if distributed_kind else {"kind": DiscreteGrid(ConsumerKind)}),
+        extra_states=(
+            {}
+            if distributed_kind
+            else {"kind": DiscreteGrid(category_class=ConsumerKind)}
+        ),
         extra_state_transitions={"kind": {"alive": lcm.fixed_transition("kind")}},
         model_states=(
-            {"kind": DiscreteGrid(ConsumerKind, distributed=True)}
+            {"kind": DiscreteGrid(category_class=ConsumerKind, distributed=True)}
             if distributed_kind
             else None
         ),

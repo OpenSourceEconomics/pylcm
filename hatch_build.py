@@ -464,6 +464,7 @@ class CustomBuildHook(BuildHookInterface):
 
     PLUGIN_NAME = "custom"
 
+    # keyword-only-exempt: library-callback=hatchling.BuildHookInterface.initialize
     def initialize(self, version: str, build_data: dict) -> None:  # noqa: ARG002
         """Compile and force-include the installed native payload."""
         output_dir = Path(self.directory) / "pylcm-native"

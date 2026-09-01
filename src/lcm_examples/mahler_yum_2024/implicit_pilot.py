@@ -170,7 +170,7 @@ def capture_pilot_problem(
 
 
 def node_value(
-    problem: PilotProblem, node: FloatND | float, theta: FloatND | float
+    *, problem: PilotProblem, node: FloatND | float, theta: FloatND | float
 ) -> FloatND:
     """The adjuster branch's exact value surface at outer node `node`.
 
@@ -204,7 +204,7 @@ def node_value(
 
 
 def select_pilot_cells(
-    problem: PilotProblem, *, n_cells: int = 2, n_probe: int = 9
+    *, problem: PilotProblem, n_cells: int = 2, n_probe: int = 9
 ) -> np.ndarray:
     """Flat state-cell indices whose baseline effort optimum is interior.
 
@@ -215,7 +215,9 @@ def select_pilot_cells(
     """
     probes = np.linspace(0.0, 1.0, n_probe)
     probe_solve = jax.jit(
-        lambda node: node_value(problem, node, problem.theta_baseline)
+        lambda node: node_value(
+            problem=problem, node=node, theta=problem.theta_baseline
+        )
     )
     values = np.stack(
         [np.asarray(probe_solve(jnp.asarray(node))).reshape(-1) for node in probes],
@@ -236,7 +238,7 @@ def select_pilot_cells(
 
 
 def build_pilot_objective(
-    problem: PilotProblem, cell_indices: np.ndarray
+    *, problem: PilotProblem, cell_indices: np.ndarray
 ) -> Callable[[FloatND, FloatND], FloatND]:
     """`Q(f, theta)` per pilot cell, as one JAX-transformable callable.
 
@@ -245,9 +247,12 @@ def build_pilot_objective(
     """
     idx = jnp.asarray(np.asarray(cell_indices))
 
+    # keyword-only-exempt: library-callback=jax.jvp
     def objective(f_arr: FloatND, theta: FloatND) -> FloatND:
         def one(node: FloatND) -> FloatND:
-            return jnp.reshape(node_value(problem, node, theta), (-1,))[idx]
+            return jnp.reshape(
+                node_value(problem=problem, node=node, theta=theta), (-1,)
+            )[idx]
 
         return jnp.diagonal(jax.vmap(one)(f_arr))
 
@@ -324,9 +329,9 @@ def no_valid_derivative_reasons(
 
 
 def run_pilot(
+    *,
     problem: PilotProblem,
     cell_indices: np.ndarray,
-    *,
     n_mesh: int = 9,
     polish_iterations: int = 28,
     relative_step: float = 1e-2,
@@ -337,7 +342,7 @@ def run_pilot(
     `|D(h/2) - D(h)| / 3`; the acceptance band belongs to the caller (the
     test), per section 19.3: AD is rejected on disagreement, not FD.
     """
-    objective = build_pilot_objective(problem, cell_indices)
+    objective = build_pilot_objective(problem=problem, cell_indices=cell_indices)
     n = len(cell_indices)
     bounds = (jnp.zeros(n), jnp.ones(n))
     theta0 = jnp.asarray(problem.theta_baseline)
@@ -345,7 +350,11 @@ def run_pilot(
 
     def solve_at(theta: FloatND) -> tuple[FloatND, FloatND, FloatND]:
         return continuous_outer_optimum(
-            objective, theta, bounds, n_mesh, polish_iterations
+            objective=objective,
+            theta=theta,
+            bounds=bounds,
+            n_mesh=n_mesh,
+            polish_iterations=polish_iterations,
         )
 
     f_star, _value, margin = solve_at(theta0)
@@ -367,7 +376,7 @@ def run_pilot(
     fd_h2 = (np.asarray(f_plus_h2) - np.asarray(f_minus_h2)) / (2.0 * half_step)
     richardson = (4.0 * fd_h2 - fd_h) / 3.0
     diagnostics = implicit_optimum_diagnostics(
-        objective,
+        objective=objective,
         theta=theta0,
         f_star=f_star,
         basin_margin=margin,

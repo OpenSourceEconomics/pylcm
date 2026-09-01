@@ -58,7 +58,7 @@ def _zero_utility() -> FloatND:
     return jnp.asarray(0.0)
 
 
-def _income_utility(income: ScalarFloat, health: DiscreteState) -> FloatND:
+def _income_utility(*, income: ScalarFloat, health: DiscreteState) -> FloatND:
     return income + 0.0 * health
 
 
@@ -67,7 +67,7 @@ def _entry_income(next_health: DiscreteState) -> FloatND:
     return jnp.asarray(_ENTRY_VALUES)[next_health]
 
 
-def _build(health_probabilities, certainty_equivalent=None) -> Model:
+def _build(*, health_probabilities, certainty_equivalent=None) -> Model:
     def _health_probabilities() -> FloatND:
         return jnp.asarray(health_probabilities)
 
@@ -88,7 +88,7 @@ def _build(health_probabilities, certainty_equivalent=None) -> Model:
                 transition=None,
                 states={
                     "income": UniformIIDProcess(start=0.0, stop=2.0, n_points=3),
-                    "health": DiscreteGrid(Health),
+                    "health": DiscreteGrid(category_class=Health),
                 },
                 functions={"utility": _income_utility},
             ),
@@ -109,7 +109,7 @@ def _build(health_probabilities, certainty_equivalent=None) -> Model:
     ids=["first_only", "last_only", "even_split", "uneven_split"],
 )
 def test_an_impossible_node_may_name_a_value_outside_the_targets_support(
-    health_probabilities, expected
+    *, health_probabilities, expected
 ) -> None:
     """The continuation is the average over the nodes that can occur.
 
@@ -117,7 +117,7 @@ def test_an_impossible_node_may_name_a_value_outside_the_targets_support(
     support, and carries no probability in any of these distributions. The value
     is the probability-weighted entry over the remaining nodes.
     """
-    model = _build(health_probabilities)
+    model = _build(health_probabilities=health_probabilities)
 
     V = model.solve(params=_PARAMS, log_level="off")
 
@@ -130,7 +130,7 @@ def test_a_reachable_node_outside_the_targets_support_still_fails_loudly() -> No
     The entry names 10.0 where income lives on `[0, 2]`, so there is no value to
     hand over and the continuation says so rather than quietly dropping the node.
     """
-    model = _build((0.5, 0.5, 0.0))
+    model = _build(health_probabilities=(0.5, 0.5, 0.0))
 
     V = model.solve(params=_PARAMS, log_level="off")
 
@@ -144,7 +144,9 @@ def test_a_nonlinear_certainty_equivalent_omits_the_same_nodes() -> None:
     is the harmonic mean `1 / (0.5/1 + 0.5/2)`, and the impossible node between
     them enters neither the transform nor the average.
     """
-    model = _build((0.5, 0.0, 0.5), certainty_equivalent=PowerMean())
+    model = _build(
+        health_probabilities=(0.5, 0.0, 0.5), certainty_equivalent=PowerMean()
+    )
     params = {
         "source": {
             "koopmans_aggregator": {"discount_factor": 1.0},
@@ -162,7 +164,7 @@ def test_a_nonlinear_certainty_equivalent_omits_the_same_nodes() -> None:
 def test_the_expectation_drops_a_zero_weight_node_rather_than_multiplying_it() -> None:
     """`E[V] = 1` for values `[1, NaN]` under weights `[1, 0]`."""
     got = zero_safe_average(
-        jnp.asarray([1.0, jnp.nan]),
+        a=jnp.asarray([1.0, jnp.nan]),
         weights=jnp.asarray([1.0, 0.0]),
         shifts=jnp.zeros(2, dtype=jnp.int32),
     )
@@ -178,7 +180,7 @@ def test_a_negative_weight_is_not_laundered_into_a_zero_contribution() -> None:
     to a well-posed question, so the malformed weight has to carry through.
     """
     got = zero_safe_average(
-        jnp.asarray([1.0, 2.0]),
+        a=jnp.asarray([1.0, 2.0]),
         weights=jnp.asarray([1.0, -0.5]),
         shifts=jnp.zeros(2, dtype=jnp.int32),
     )
@@ -189,7 +191,7 @@ def test_a_negative_weight_is_not_laundered_into_a_zero_contribution() -> None:
 def test_a_nan_weight_stays_poison() -> None:
     """A weight that is not a number is not a probability of zero either."""
     got = zero_safe_average(
-        jnp.asarray([1.0, 2.0]),
+        a=jnp.asarray([1.0, 2.0]),
         weights=jnp.asarray([1.0, jnp.nan]),
         shifts=jnp.zeros(2, dtype=jnp.int32),
     )
@@ -211,15 +213,15 @@ def _mean_of_a_common_and_a_rare_node(
 ) -> FloatND:
     """The mean over a node of weight one and one a whole scale gap below it."""
 
-    def mean(values: FloatND, weights: FloatND, shifts: IntND) -> FloatND:
-        return zero_safe_average(values, weights=weights, shifts=shifts)
+    def mean(*, values: FloatND, weights: FloatND, shifts: IntND) -> FloatND:
+        return zero_safe_average(a=values, weights=weights, shifts=shifts)
 
     reduce = jax.jit(mean) if compile_it else mean
     return jnp.asarray(
         reduce(
-            jnp.asarray([1.0, rare_value]),
-            jnp.asarray([1.0, rare_weight]),
-            jnp.asarray([0, _wide_spread()], dtype=jnp.int32),
+            values=jnp.asarray([1.0, rare_value]),
+            weights=jnp.asarray([1.0, rare_weight]),
+            shifts=jnp.asarray([0, _wide_spread()], dtype=jnp.int32),
         )
     )
 
@@ -324,7 +326,9 @@ def test_a_user_written_certainty_equivalent_is_handed_no_impossible_nodes() -> 
     masks, so `0 * NaN` would take the well-specified nodes down with it unless
     the engine has already replaced that value.
     """
-    model = _build((0.5, 0.0, 0.5), certainty_equivalent=_PlainWeightedMean())
+    model = _build(
+        health_probabilities=(0.5, 0.0, 0.5), certainty_equivalent=_PlainWeightedMean()
+    )
 
     V = model.solve(params=_PARAMS, log_level="off")
 

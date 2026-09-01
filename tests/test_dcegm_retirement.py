@@ -37,7 +37,7 @@ ANALYTICAL_CASES = {
 }
 
 
-def _load_analytical(case: str, kind: str) -> np.ndarray:
+def _load_analytical(*, case: str, kind: str) -> np.ndarray:
     return np.genfromtxt(
         TEST_DATA.joinpath("analytical_solution", f"{case}__values_{kind}.csv"),
         delimiter=",",
@@ -45,22 +45,22 @@ def _load_analytical(case: str, kind: str) -> np.ndarray:
 
 
 def _stack_regime_V(
-    period_to_regime_to_V_arr: PeriodToRegimeToVArr, regime: str
+    *, period_to_regime_to_V_arr: PeriodToRegimeToVArr, regime: str
 ) -> np.ndarray:
     periods = sorted(period_to_regime_to_V_arr)[:-1]
     return np.stack([np.asarray(period_to_regime_to_V_arr[p][regime]) for p in periods])
 
 
 @pytest.mark.parametrize(("case", "spec"), ANALYTICAL_CASES.items())
-def test_dcegm_matches_analytical_solution(case, spec):
+def test_dcegm_matches_analytical_solution(*, case, spec):
     """DC-EGM reproduces the analytical worker and retired value functions.
 
     Tighter than the brute-force tolerance: the secondary kinks from the
     retirement choice are exactly where the envelope step pays off.
     """
-    model = get_full_model("dcegm", spec["n_periods"])
+    model = get_full_model(solver="dcegm", n_periods=spec["n_periods"])
     params = get_full_params(
-        spec["n_periods"],
+        n_periods=spec["n_periods"],
         discount_factor=0.98,
         disutility_of_work=spec["disutility_of_work"],
         interest_rate=0.0,
@@ -70,18 +70,20 @@ def test_dcegm_matches_analytical_solution(case, spec):
     period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
 
     for kind, regime in [("worker", "working_life"), ("retired", "retirement")]:
-        numerical = _stack_regime_V(period_to_regime_to_V_arr, regime)
-        analytical = _load_analytical(case, kind)
+        numerical = _stack_regime_V(
+            period_to_regime_to_V_arr=period_to_regime_to_V_arr, regime=regime
+        )
+        analytical = _load_analytical(case=case, kind=kind)
         # Elementwise — every (period, node) value must hit the analytical
         # solution; aggregating over periods could hide a localized error.
         np.testing.assert_allclose(numerical, analytical, atol=0.03, err_msg=f"{kind}")
 
 
-def _retirement_stay_prob(age: float, final_age_alive: float) -> FloatND:
+def _retirement_stay_prob(*, age: float, final_age_alive: float) -> FloatND:
     return jnp.where(age >= final_age_alive, 0.0, 1.0)
 
 
-def _retirement_death_prob(age: float, final_age_alive: float) -> FloatND:
+def _retirement_death_prob(*, age: float, final_age_alive: float) -> FloatND:
     return jnp.where(age >= final_age_alive, 1.0, 0.0)
 
 
@@ -102,7 +104,7 @@ def test_brute_force_regime_targeting_dcegm_regime_agrees_with_all_brute():
     ages = AgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
     last_age = float(ages.exact_values[-1])
 
-    def active(age: float, la: float = last_age) -> bool:
+    def active(*, age: float, la: float = last_age) -> bool:
         return age < la
 
     mixed = Model(
@@ -120,10 +122,10 @@ def test_brute_force_regime_targeting_dcegm_regime_agrees_with_all_brute():
         ages=ages,
         regime_id_class=base.RegimeId,
     )
-    params = get_full_params(n_periods, discount_factor=0.98, wage=20.0)
+    params = get_full_params(n_periods=n_periods, discount_factor=0.98, wage=20.0)
 
     mixed_solution = mixed.solve(params=params, log_level="debug")
-    brute_solution = get_full_model("brute_force", n_periods).solve(
+    brute_solution = get_full_model(solver="brute_force", n_periods=n_periods).solve(
         params=params, log_level="debug"
     )
 
@@ -138,12 +140,12 @@ def test_brute_force_regime_targeting_dcegm_regime_agrees_with_all_brute():
             )
 
 
-def _smoothed_model_pair(n_periods: int, shocks) -> dict[str, Model]:
+def _smoothed_model_pair(*, n_periods: int, shocks) -> dict[str, Model]:
     """Equivalent-spec pair with EV1 taste shocks on the working regime."""
     ages = AgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
     last_age = float(ages.exact_values[-1])
 
-    def active(age: float, la: float = last_age) -> bool:
+    def active(*, age: float, la: float = last_age) -> bool:
         return age < la
 
     brute = Model(
@@ -187,10 +189,10 @@ def test_smoothed_model_brute_and_dcegm_agree():
     n_periods = 4
     scale = 0.2
     n_brute_unstable_nodes = 12
-    params = get_full_params(n_periods, discount_factor=0.98, wage=20.0)
+    params = get_full_params(n_periods=n_periods, discount_factor=0.98, wage=20.0)
     params["working_life"]["taste_shocks"] = {"scale": scale}
 
-    models = _smoothed_model_pair(n_periods, ExtremeValueTasteShocks())
+    models = _smoothed_model_pair(n_periods=n_periods, shocks=ExtremeValueTasteShocks())
     solutions = {
         solver: model.solve(params=params, log_level="debug")
         for solver, model in models.items()

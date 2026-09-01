@@ -154,6 +154,7 @@ def next_lagged_effort(new_lagged_effort: ContinuousState) -> ContinuousState:
 
 
 def working_utility(
+    *,
     effort_cost: FloatND,
     work_disutility: FloatND,
     consumption_utility: FloatND,
@@ -162,12 +163,15 @@ def working_utility(
     return consumption_utility - work_disutility - effort_cost
 
 
-def retirement_utility(effort_cost: FloatND, consumption_utility: FloatND) -> FloatND:
+def retirement_utility(
+    *, effort_cost: FloatND, consumption_utility: FloatND
+) -> FloatND:
     """Flow utility after the work-only margin has disappeared."""
     return consumption_utility - effort_cost
 
 
 def raw_cash_on_hand(
+    *,
     net_income: FloatND,
     wealth: ContinuousState,
     gross_interest_rate: FloatND,
@@ -184,6 +188,7 @@ def raw_cash_on_hand(
     ),
 )
 def cash_on_hand(
+    *,
     raw_cash_on_hand: FloatND,
     min_consumption: FloatND,
 ) -> FloatND:
@@ -196,7 +201,7 @@ def cash_on_hand(
     return jnp.maximum(raw_cash_on_hand, min_consumption)
 
 
-def saving(cash_on_hand: FloatND, consumption: ContinuousAction) -> FloatND:
+def saving(*, cash_on_hand: FloatND, consumption: ContinuousAction) -> FloatND:
     """Inner post-decision liquid balance."""
     return cash_on_hand - consumption
 
@@ -205,12 +210,15 @@ def next_wealth(saving: FloatND) -> ContinuousState:
     return saving
 
 
-def adjustment_cost_scale(period: Period, adjustment_cost_envelope: FloatND) -> FloatND:
+def adjustment_cost_scale(
+    *, period: Period, adjustment_cost_envelope: FloatND
+) -> FloatND:
     """Scale `B` of the uniform observed fixed adjustment cost, per period."""
     return adjustment_cost_envelope[period]
 
 
 def dead_utility(
+    *,
     wealth: ContinuousState,
     discount_type: DiscreteState,  # noqa: ARG001
 ) -> FloatND:
@@ -232,7 +240,7 @@ def build_dead_regime() -> Regime:
         active=partial(dead_is_active, initial_age=int(ages.values[0])),
         states={
             "wealth": IrregSpacedGrid(points=_WEALTH_GRID_POINTS),
-            "discount_type": DiscreteGrid(DiscountType),
+            "discount_type": DiscreteGrid(category_class=DiscountType),
         },
         functions={"utility": dead_utility},
     )
@@ -305,13 +313,13 @@ def build_working_regime(
         active=working_is_active,
         states={
             "wealth": IrregSpacedGrid(points=_WEALTH_GRID_POINTS),
-            "health": DiscreteGrid(Health),
+            "health": DiscreteGrid(category_class=Health),
             "productivity_shock": prod_shock_grid,
             "lagged_effort": LinSpacedGrid(start=0.0, stop=1.0, n_points=N_HABIT_GRID),
-            "education": DiscreteGrid(Education),
-            "productivity": DiscreteGrid(ProductivityType),
-            "health_type": DiscreteGrid(HealthType),
-            "discount_type": DiscreteGrid(DiscountType),
+            "education": DiscreteGrid(category_class=Education),
+            "productivity": DiscreteGrid(category_class=ProductivityType),
+            "health_type": DiscreteGrid(category_class=HealthType),
+            "discount_type": DiscreteGrid(category_class=DiscountType),
         },
         state_transitions={
             "wealth": next_wealth,
@@ -323,7 +331,7 @@ def build_working_regime(
             "discount_type": fixed_transition("discount_type"),
         },
         actions={
-            "labor_supply": DiscreteGrid(LaborSupply),
+            "labor_supply": DiscreteGrid(category_class=LaborSupply),
             "consumption": LinSpacedGrid(
                 start=0.01, stop=30.0, n_points=N_CONSUMPTION_GRID
             ),
@@ -374,11 +382,11 @@ def build_retirement_regime(
         active=partial(retirement_is_active, final_age_alive=int(ages.values[-2])),
         states={
             "wealth": IrregSpacedGrid(points=_WEALTH_GRID_POINTS),
-            "health": DiscreteGrid(Health),
+            "health": DiscreteGrid(category_class=Health),
             "lagged_effort": LinSpacedGrid(start=0.0, stop=1.0, n_points=N_HABIT_GRID),
-            "education": DiscreteGrid(Education),
-            "health_type": DiscreteGrid(HealthType),
-            "discount_type": DiscreteGrid(DiscountType),
+            "education": DiscreteGrid(category_class=Education),
+            "health_type": DiscreteGrid(category_class=HealthType),
+            "discount_type": DiscreteGrid(category_class=DiscountType),
         },
         state_transitions={
             "wealth": next_wealth,

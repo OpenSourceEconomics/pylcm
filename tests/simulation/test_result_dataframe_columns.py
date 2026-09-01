@@ -187,7 +187,7 @@ def _make_reverse_alphabetical_collective_model() -> Model:
         active=lambda age: age < 1,
         states={"wage": WAGE_GRID},
         state_transitions={"wage": _next_wage},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"wife": _utility_wife, "husband": _utility_husband}
@@ -198,7 +198,7 @@ def _make_reverse_alphabetical_collective_model() -> Model:
         transition=None,
         active=lambda age: age >= 1,
         states={"wage": WAGE_GRID},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"wife": _utility_wife, "husband": _utility_husband}
@@ -225,14 +225,14 @@ def _make_solo_model_with_value_prefixed_target() -> Model:
         active=lambda age: age < 1,
         states={"wage": WAGE_GRID},
         state_transitions={"wage": _next_wage},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _solo_utility, "value_of_leisure": _value_of_leisure},
     )
     retired = Regime(
         transition=None,
         active=lambda age: age >= 1,
         states={"wage": WAGE_GRID},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _solo_utility, "value_of_leisure": _value_of_leisure},
     )
     return Model(
@@ -254,7 +254,7 @@ def _make_collective_model_with_colliding_state() -> Model:
         active=lambda age: age < 1,
         states={"value_f": WAGE_GRID},
         state_transitions={"value_f": _next_colliding_state},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _colliding_utility_f, "m": _colliding_utility_m}
@@ -265,7 +265,7 @@ def _make_collective_model_with_colliding_state() -> Model:
         transition=None,
         active=lambda age: age >= 1,
         states={"value_f": WAGE_GRID},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _colliding_utility_f, "m": _colliding_utility_m}
@@ -292,7 +292,7 @@ def _make_mixed_model_with_a_singleton_state_shadowing_a_value_column() -> Model
         active=lambda age: age < 1,
         states={"wage": WAGE_GRID},
         state_transitions={"wage": _next_wage},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _utility_wife, "m": _utility_husband}
@@ -303,7 +303,7 @@ def _make_mixed_model_with_a_singleton_state_shadowing_a_value_column() -> Model
         transition=None,
         active=lambda age: age >= 1,
         states={"wage": WAGE_GRID},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _utility_wife, "m": _utility_husband}
@@ -315,14 +315,14 @@ def _make_mixed_model_with_a_singleton_state_shadowing_a_value_column() -> Model
         active=lambda age: age < 1,
         states={"value_f": WAGE_GRID},
         state_transitions={"value_f": _next_colliding_state},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _colliding_solo_utility},
     )
     solo_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
         states={"value_f": WAGE_GRID},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _colliding_solo_utility},
     )
     return Model(
@@ -342,23 +342,25 @@ def _probability_one(age: FloatND) -> FloatND:
     return jnp.ones_like(age, dtype=float)
 
 
-def _colliding_solo_utility(value_f: ContinuousState, work: DiscreteAction) -> FloatND:
+def _colliding_solo_utility(
+    *, value_f: ContinuousState, work: DiscreteAction
+) -> FloatND:
     """The singleton's earnings from the state its author called `value_f`."""
     return value_f * work
 
 
-def _utility_wife(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _utility_wife(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     """Wife: values her own leisure highly, also sees household consumption."""
     return wage * work + 30.0 * (1.0 - work)
 
 
-def _utility_husband(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _utility_husband(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     """Husband: values household consumption, indifferent to leisure."""
     return 2.0 * (wage * work)
 
 
 def _solo_utility(
-    wage: ContinuousState, work: DiscreteAction, value_of_leisure: FloatND
+    *, wage: ContinuousState, work: DiscreteAction, value_of_leisure: FloatND
 ) -> FloatND:
     """Earnings when working, the value of leisure otherwise."""
     return wage * work + value_of_leisure
@@ -369,12 +371,12 @@ def _value_of_leisure(work: DiscreteAction) -> FloatND:
     return 30.0 * (1.0 - work)
 
 
-def _colliding_utility_f(value_f: ContinuousState, work: DiscreteAction) -> FloatND:
+def _colliding_utility_f(*, value_f: ContinuousState, work: DiscreteAction) -> FloatND:
     """Wife: her earnings from the state the model author called `value_f`."""
     return value_f * work + 30.0 * (1.0 - work)
 
 
-def _colliding_utility_m(value_f: ContinuousState, work: DiscreteAction) -> FloatND:
+def _colliding_utility_m(*, value_f: ContinuousState, work: DiscreteAction) -> FloatND:
     """Husband: household consumption out of the same state."""
     return 2.0 * (value_f * work)
 

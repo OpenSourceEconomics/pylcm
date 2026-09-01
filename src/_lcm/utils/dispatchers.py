@@ -49,9 +49,10 @@ def map_over_leading_axis[InputTree, OutputTree](
         raise ValueError("every leaf of xs must share a leading row count")
     if batch_size < 0:
         raise ValueError(f"batch_size must be non-negative, got {batch_size}")
+    positional_func = allow_args(func)
     if 0 < batch_size < n_rows:
-        return jax.lax.map(func, xs, batch_size=batch_size)
-    return jax.vmap(func)(xs)
+        return jax.lax.map(positional_func, xs, batch_size=batch_size)
+    return jax.vmap(positional_func)(xs)
 
 
 def simulation_spacemap(
@@ -114,7 +115,7 @@ def simulation_spacemap(
     # Callables do not necessarily have a __signature__ attribute.
     mapped.__signature__ = inspect.signature(mappable_func)  # ty: ignore[unresolved-attribute]
 
-    return cast("FunctionWithArrayReturn", allow_only_kwargs(mapped))
+    return cast("FunctionWithArrayReturn", allow_only_kwargs(func=mapped))
 
 
 def vmap_1d(
@@ -167,9 +168,11 @@ def vmap_1d(
 
     co_mapped_in_axes = co_mapped_in_axes or MappingProxyType({})
 
+    positional_func = allow_args(func)
+
     # Handle empty variables case - nothing to vmap over
     if not positions and not co_mapped_in_axes:
-        vmapped = func
+        vmapped = positional_func
     else:
         # Create in_axes to apply vmap over variables. This has one entry for each
         # argument of func, indicating whether the argument should be mapped over or
@@ -183,13 +186,13 @@ def vmap_1d(
         for name, axes in co_mapped_in_axes.items():
             in_axes_for_vmap[parameters.index(name)] = axes
 
-        vmapped = vmap(func, in_axes=in_axes_for_vmap)
-    vmapped.__signature__ = signature  # ty: ignore[unresolved-attribute]
+        vmapped = vmap(positional_func, in_axes=in_axes_for_vmap)
 
     if callable_with == "only_kwargs":
-        out = allow_only_kwargs(vmapped, enforce=False)
+        out = allow_only_kwargs(func=vmapped, enforce=False)
     else:
         out = vmapped
+    out.__signature__ = signature  # ty: ignore[unresolved-attribute]
 
     return cast("FunctionWithArrayReturn", out)
 
@@ -248,7 +251,9 @@ def productmap(
     new_signature = signature.replace(parameters=new_parameters)
     mapped.__signature__ = new_signature  # ty: ignore[unresolved-attribute]
 
-    return cast("FunctionWithArrayReturn", allow_only_kwargs(mapped, enforce=False))
+    return cast(
+        "FunctionWithArrayReturn", allow_only_kwargs(func=mapped, enforce=False)
+    )
 
 
 def _base_productmap_batched(
@@ -298,7 +303,7 @@ def _base_productmap_batched(
 
         # Recursively map over one more product axis
         def map_one_more(
-            loop_func: FunctionWithArrayReturn, axis: str
+            *, loop_func: FunctionWithArrayReturn, axis: str
         ) -> FunctionWithArrayReturn:
             def func_mapped_over_one_more_axis(
                 *already_mapped_args: Any,  # noqa: ANN401
@@ -316,7 +321,9 @@ def _base_productmap_batched(
 
         # Loop over all product axes
         for axis in reversed(product_axes):
-            func_with_partialled_args = map_one_more(func_with_partialled_args, axis)
+            func_with_partialled_args = map_one_more(
+                loop_func=func_with_partialled_args, axis=axis
+            )
 
         return cast("FloatND", func_with_partialled_args())
 

@@ -33,7 +33,7 @@ _CONSTRAINED = (_LIQUID > 0.3) & (_LIQUID < 3.0)
 
 
 def _solve(
-    variant: str, params: dict, *, n_consumption: int = 120
+    *, variant: str, params: dict, n_consumption: int = 120
 ) -> Mapping[int, Mapping[str, object]]:
     """Solve the Medicaid toy on the shared comparison grids."""
     model = toy.build_model(
@@ -86,8 +86,8 @@ def test_nbegm_matches_brute_through_a_recurring_jump_every_age():
     whole asset interior, every period.
     """
     params = toy.build_params()
-    nbegm = _solve("nbegm", params)
-    brute = _solve("brute", params, n_consumption=1500)
+    nbegm = _solve(variant="nbegm", params=params)
+    brute = _solve(variant="brute", params=params, n_consumption=1500)
     for period in brute:
         if "alive" not in brute[period] or "alive" not in nbegm[period]:
             continue
@@ -109,8 +109,8 @@ def test_nbegm_matches_brute_in_the_constrained_low_asset_region():
     region the interior agreement slice deliberately excludes.
     """
     params = toy.build_params()
-    nbegm = _solve("nbegm", params)
-    brute = _solve("brute", params, n_consumption=1500)
+    nbegm = _solve(variant="nbegm", params=params)
+    brute = _solve(variant="brute", params=params, n_consumption=1500)
     for period in brute:
         if "alive" not in brute[period] or "alive" not in nbegm[period]:
             continue
@@ -131,8 +131,8 @@ def test_nbegm_matches_brute_multiperiod_without_a_value_jump():
     solution must track brute across the whole horizon.
     """
     params = toy.build_params(subsidy_high=0.5, subsidy_low=0.5)
-    nbegm = _solve("nbegm", params)
-    brute = _solve("brute", params, n_consumption=1500)
+    nbegm = _solve(variant="nbegm", params=params)
+    brute = _solve(variant="brute", params=params, n_consumption=1500)
     for period in brute:
         if "alive" not in brute[period] or "alive" not in nbegm[period]:
             continue
@@ -152,8 +152,8 @@ def test_nbegm_reproduces_the_medicaid_value_drop_at_the_boundary():
     higher than just above; the otherwise side owns the exact boundary.
     """
     params = toy.build_params()
-    nbegm = _solve("nbegm", params)
-    brute = _solve("brute", params, n_consumption=1500)
+    nbegm = _solve(variant="nbegm", params=params)
+    brute = _solve(variant="brute", params=params, n_consumption=1500)
     period = _last_alive_period(brute)
     below = np.argmin(np.abs(_LIQUID - 7.5))
     above = np.argmin(np.abs(_LIQUID - 8.5))
@@ -233,7 +233,7 @@ def test_nbegm_rejects_a_piece_with_a_hidden_where():
     """A smooth piece hiding `jnp.where` fails the smoothness gate at model build."""
 
     predicate = lcm.case_boundary(
-        lcm.ref("liquid") < lcm.ref("limit"),
+        condition=lcm.ref("liquid") < lcm.ref("limit"),
         kind="jump",
     )
 
@@ -258,7 +258,7 @@ def _build_nbegm_with_boundary(
 ) -> Model:
     """Assemble a one-period NBEGM toy with one structured boundary."""
 
-    predicate = lcm.case_boundary(condition, kind=kind)
+    predicate = lcm.case_boundary(condition=condition, kind=kind)
 
     @lcm.piece(output="subsidy", when=predicate)
     def subsidy_when(subsidy_high):
@@ -300,7 +300,9 @@ def test_nbegm_accepts_a_state_independent_computed_threshold():
     def limit(raw_limit: float) -> FloatND:
         return jnp.asarray(raw_limit)
 
-    predicate = lcm.case_boundary(lcm.ref("liquid") < lcm.ref("limit"), kind="jump")
+    predicate = lcm.case_boundary(
+        condition=lcm.ref("liquid") < lcm.ref("limit"), kind="jump"
+    )
 
     @lcm.piece(output="subsidy", when=predicate)
     def subsidy_when(subsidy_high):
@@ -346,12 +348,12 @@ def test_nbegm_rejects_a_state_dependent_subsidy_piece():
     """
 
     predicate = lcm.case_boundary(
-        lcm.ref("liquid") < lcm.ref("limit"),
+        condition=lcm.ref("liquid") < lcm.ref("limit"),
         kind="jump",
     )
 
     @lcm.piece(output="subsidy", when=predicate)
-    def subsidy_when(liquid, subsidy_high):
+    def subsidy_when(*, liquid, subsidy_high):
         return subsidy_high * jnp.ones_like(liquid)
 
     @lcm.piece(output="subsidy", otherwise=predicate)
@@ -378,7 +380,7 @@ def test_nbegm_rejects_a_piece_whose_helper_hides_a_where():
         return jnp.where(subsidy_high > 0.0, subsidy_high, 0.0)
 
     predicate = lcm.case_boundary(
-        lcm.ref("liquid") < lcm.ref("limit"),
+        condition=lcm.ref("liquid") < lcm.ref("limit"),
         kind="jump",
     )
 

@@ -127,7 +127,9 @@ def _levels() -> tuple[float, ...]:
 
 @pytest.mark.parametrize("block_size", [0, 1, 2, 3])
 @pytest.mark.parametrize("level", _levels())
-def test_the_exactly_highest_branch_supplies_the_policy(level: float, block_size: int):
+def test_the_exactly_highest_branch_supplies_the_policy(
+    *, level: float, block_size: int
+):
     """The branch the stored values put highest is the one that owns the query."""
     query = _just_left_of_crossing()
 
@@ -139,7 +141,7 @@ def test_the_exactly_highest_branch_supplies_the_policy(level: float, block_size
 @pytest.mark.parametrize("block_size", [0, 1, 2, 3])
 @pytest.mark.parametrize("level", _levels())
 def test_the_marginal_comes_from_the_same_branch_as_the_policy(
-    level: float, block_size: int
+    *, level: float, block_size: int
 ):
     """Value, policy, and marginal are published from one branch."""
     query = _just_left_of_crossing()
@@ -153,7 +155,7 @@ def test_the_marginal_comes_from_the_same_branch_as_the_policy(
 
 @pytest.mark.parametrize("block_size", [0, 1, 2, 3])
 @pytest.mark.parametrize("level", _levels())
-def test_the_steeper_branch_owns_the_crossing_itself(level: float, block_size: int):
+def test_the_steeper_branch_owns_the_crossing_itself(*, level: float, block_size: int):
     """At an exact tie the right-continuous rule takes the branch continuing higher."""
     got_policy, _ = _published(level=level, query=_CROSSING, block_size=block_size)
 
@@ -162,7 +164,9 @@ def test_the_steeper_branch_owns_the_crossing_itself(level: float, block_size: i
 
 @pytest.mark.parametrize("transform", ["eager", "jit", "vmap"])
 @pytest.mark.parametrize("level", _levels())
-def test_the_owner_is_the_same_under_every_execution_path(level: float, transform: str):
+def test_the_owner_is_the_same_under_every_execution_path(
+    *, level: float, transform: str
+):
     """Tracing or batching the query changes nothing about who owns it."""
     query = _just_left_of_crossing()
 
@@ -182,7 +186,7 @@ def test_the_owner_is_the_same_under_every_execution_path(level: float, transfor
     # at a few ULP still names one branch — while leaving the fused arithmetic
     # each path compiles free to land on a representable neighbour.
     assert_agrees_to_ulp(
-        run().ravel()[0],
-        jnp.asarray(_exact_owner_policy(level=level, query=query)),
+        got=run().ravel()[0],
+        expected=jnp.asarray(_exact_owner_policy(level=level, query=query)),
         n_ulp=2,
     )

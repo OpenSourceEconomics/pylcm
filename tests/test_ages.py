@@ -28,7 +28,7 @@ from tests.test_models.deterministic.base import (
         ("Q", Fraction(1, 4)),
     ],
 )
-def test_parse_step_valid_formats(step, expected):
+def test_parse_step_valid_formats(*, step, expected):
     assert _parse_step(step) == expected
 
 
@@ -84,6 +84,12 @@ def test_age_grid_get_periods_where():
     ages = AgeGrid(start=18, stop=22, step="Y")
     periods = ages.get_periods_where(lambda age: age >= 21)
     assert periods == (3, 4)
+
+
+def test_age_grid_get_periods_where_accepts_numpy_ufunc() -> None:
+    ages = AgeGrid(start=0, stop=2, step="Y")
+
+    assert ages.get_periods_where(np.isfinite) == (0, 1, 2)
 
 
 def test_age_grid_no_params_raises():

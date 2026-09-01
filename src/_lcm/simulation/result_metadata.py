@@ -88,6 +88,7 @@ class ResultMetadata:
 
 
 def _get_output_dtypes(
+    *,
     user_regimes: Mapping[RegimeName, UserRegime],
     regime_names_to_ids: RegimeNamesToIds,
 ) -> MappingProxyType[str, pd.CategoricalDtype]:

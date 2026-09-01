@@ -106,6 +106,7 @@ def test_backward_induction():
     )
 
     def _Q_and_F(
+        *,
         consumption,
         lazy,
         wealth,
@@ -185,7 +186,7 @@ def test_backward_induction_single_period_Qc_arr():
         state_and_discrete_action_names=("a", "b", "c"),
     )
 
-    def _Q_and_F(a, c, b, d, next_regime_to_V_arr, period, age):  # noqa: ARG001
+    def _Q_and_F(*, a, c, b, d, next_regime_to_V_arr, period, age):  # noqa: ARG001
         # `next_regime_to_V_arr` is part of the kernel signature; this Q ignores it.
         util = d
         feasib = d <= a + b + c

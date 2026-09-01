@@ -39,11 +39,11 @@ class _RegimeId:
     dead: ScalarInt
 
 
-def _utility(consumption: float, health: float) -> FloatND:
+def _utility(*, consumption: float, health: float) -> FloatND:
     return jnp.log(consumption) + health
 
 
-def _next_wealth(wealth: float, consumption: float) -> float:
+def _next_wealth(*, wealth: float, consumption: float) -> float:
     return wealth - consumption
 
 
@@ -57,7 +57,7 @@ def _build_regime(**overrides: Any) -> UserRegime:
         "transition": _next_regime,
         "active": lambda age: age < 2,
         "states": {
-            "health": DiscreteGrid(_Health),
+            "health": DiscreteGrid(category_class=_Health),
             "wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=10),
         },
         "state_transitions": {

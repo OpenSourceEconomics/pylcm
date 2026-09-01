@@ -150,6 +150,14 @@ repos:
         language: script
         types:
           - jupyter
+      - id: keyword-only-convention
+        name: functions with two named arguments are keyword-only
+        entry: pixi run -e type-checking python -m tests.ci.keyword_only_convention
+        language: system
+        types_or:
+          - python
+          - jupyter
+          - markdown
       - id: no-hardcoded-user-paths
         name: no hardcoded user-specific absolute paths
         language: pygrep
@@ -213,8 +221,9 @@ repos:
 ci:
   autoupdate_schedule: monthly
   # pre-commit.ci has no pixi environments and blocks network at hook runtime;
-  # the GitHub Actions run-ty job covers type checking, and pixi-lock-check
-  # needs a pixi binary that pre-commit.ci does not provide.
+  # the GitHub Actions run-ty job covers type checking and the keyword-only
+  # convention, while pixi-lock-check needs a pixi binary that pre-commit.ci
+  # does not provide.
   #
   # The two script hooks live in the `.ai-instructions` submodule, which
   # pre-commit.ci does not check out, so there they fail as a missing
@@ -223,6 +232,7 @@ ci:
   # lose CI coverage and holds only where the submodule is present, which is
   # every developer clone and no CI job here.
   skip:
+    - keyword-only-convention
     - ty
     - pixi-lock-check
     - pre-push-hooks-installed

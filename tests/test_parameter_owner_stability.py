@@ -12,7 +12,7 @@ from _lcm.optimization.implicit_outer_derivative import (
 )
 
 
-def _branches(f, theta, center, slope):
+def _branches(*, f, theta, center, slope):
     q0 = -((f - (center + slope * theta)) ** 2) + theta
     q1 = -((f - (center - slope * theta)) ** 2) - theta
     return q0, q1
@@ -20,21 +20,23 @@ def _branches(f, theta, center, slope):
 
 @pytest.mark.parametrize("center", [0.2, 0.3, 0.7])
 @pytest.mark.parametrize("slope", [0.25, 1.0, 2.0])
-def test_parameter_direction_switch_is_unresolved(center: float, slope: float) -> None:
+def test_parameter_direction_switch_is_unresolved(
+    *, center: float, slope: float
+) -> None:
     """A stable-index baseline owner cannot certify a two-sided parameter tangent."""
 
-    def objective(f, theta):
-        q0, q1 = _branches(f, theta, center, slope)
+    def objective(*, f, theta):
+        q0, q1 = _branches(f=f, theta=theta, center=center, slope=slope)
         return jnp.maximum(q0, q1)
 
-    def branch_id(f, theta):
-        q0, q1 = _branches(f, theta, center, slope)
+    def branch_id(*, f, theta):
+        q0, q1 = _branches(f=f, theta=theta, center=center, slope=slope)
         return jnp.where(q0 >= q1, 0, 1)
 
     theta0 = jnp.asarray(0.0)
     f_star = jnp.asarray(center)
     diag = implicit_optimum_diagnostics(
-        objective,
+        objective=objective,
         theta=theta0,
         f_star=f_star,
         basin_margin=jnp.asarray(1.0),
@@ -48,8 +50,8 @@ def test_parameter_direction_switch_is_unresolved(center: float, slope: float) -
     # two-sided derivative exists.  A legacy branch label is intentionally
     # incomplete provenance and must not be reported as a certificate.
     h = 1e-6
-    assert int(branch_id(f_star, jnp.asarray(h))) != int(
-        branch_id(f_star, jnp.asarray(-h))
+    assert int(branch_id(f=f_star, theta=jnp.asarray(h))) != int(
+        branch_id(f=f_star, theta=jnp.asarray(-h))
     )
     assert not bool(diag.branch_certified)
     assert bool(diag.unresolved), (
@@ -59,13 +61,13 @@ def test_parameter_direction_switch_is_unresolved(center: float, slope: float) -
     )
 
 
-def _smooth_objective(f, theta):
+def _smooth_objective(*, f, theta):
     return -0.5 * (f - 0.4) ** 2 + theta * (f - 0.4)
 
 
 def _record(
-    signature,
     *,
+    signature,
     decided=True,
     strict_primary=True,
     complete=True,
@@ -78,9 +80,9 @@ def _record(
     )
 
 
-def _diagnose(record, *, extras=(), require=True):
+def _diagnose(*, record, extras=(), require=True):
     return implicit_optimum_diagnostics(
-        _smooth_objective,
+        objective=_smooth_objective,
         theta=jnp.asarray(0.0),
         f_star=jnp.asarray(0.4),
         basin_margin=jnp.asarray(1.0),
@@ -92,10 +94,10 @@ def _diagnose(record, *, extras=(), require=True):
 
 
 def test_strict_complete_composite_record_is_certified() -> None:
-    def record(f, theta):
+    def record(*, f, theta):
         del theta
         zero = jnp.zeros_like(f, dtype=jnp.int32)
-        return _record((zero + 2, zero, zero + 1, zero, zero + 1))
+        return _record(signature=(zero + 2, zero, zero + 1, zero, zero + 1))
 
     extras = (
         (jnp.asarray(0.4001), jnp.asarray(1e-3)),
@@ -103,7 +105,7 @@ def test_strict_complete_composite_record_is_certified() -> None:
         (jnp.asarray(0.40005), jnp.asarray(5e-4)),
         (jnp.asarray(0.39995), jnp.asarray(-5e-4)),
     )
-    diag = _diagnose(record, extras=extras)
+    diag = _diagnose(record=record, extras=extras)
     assert bool(diag.branch_certified)
     assert not bool(diag.unresolved)
     assert not bool(diag.owner_missing)
@@ -118,18 +120,18 @@ def test_strict_complete_composite_record_is_certified() -> None:
     ],
 )
 def test_status_tie_and_incomplete_records_fail_closed(
-    flag: str, expected_field: str
+    *, flag: str, expected_field: str
 ) -> None:
-    def record(f, theta):
+    def record(*, f, theta):
         del f, theta
         return _record(
-            (jnp.asarray(3, dtype=jnp.int32),),
+            signature=(jnp.asarray(3, dtype=jnp.int32),),
             decided=flag != "unresolved",
             strict_primary=flag != "tie",
             complete=flag != "incomplete",
         )
 
-    diag = _diagnose(record)
+    diag = _diagnose(record=record)
     assert not bool(diag.branch_certified)
     assert bool(diag.unresolved)
     assert bool(getattr(diag, expected_field))
@@ -137,7 +139,7 @@ def test_status_tie_and_incomplete_records_fail_closed(
 
 def test_missing_provenance_fails_closed_when_certification_is_required() -> None:
     diag = implicit_optimum_diagnostics(
-        _smooth_objective,
+        objective=_smooth_objective,
         theta=jnp.asarray(0.0),
         f_star=jnp.asarray(0.4),
         basin_margin=jnp.asarray(1.0),
@@ -153,58 +155,58 @@ def test_missing_provenance_fails_closed_when_certification_is_required() -> Non
 def test_any_composite_component_change_fails_closed(component: int) -> None:
     """Segment, inner choice, floor, constraint and branch identities all bind."""
 
-    def record(f, theta):
+    def record(*, f, theta):
         del theta
         changed = jnp.asarray(f > 0.4, dtype=jnp.int32)
         fields = [jnp.asarray(0, dtype=jnp.int32) for _ in range(5)]
         fields[component] = changed
-        return _record(tuple(fields))
+        return _record(signature=tuple(fields))
 
-    diag = _diagnose(record)
+    diag = _diagnose(record=record)
     assert bool(diag.owner_changed)
     assert not bool(diag.branch_certified)
     assert bool(diag.unresolved)
 
 
 def test_parameter_only_signature_change_fails_closed() -> None:
-    def record(f, theta):
+    def record(*, f, theta):
         del f
-        return _record((jnp.asarray(theta > 0.0, dtype=jnp.int32),))
+        return _record(signature=(jnp.asarray(theta > 0.0, dtype=jnp.int32),))
 
-    diag = _diagnose(record)
+    diag = _diagnose(record=record)
     assert bool(diag.owner_changed)
     assert bool(diag.unresolved)
 
 
 def test_mixed_corner_only_signature_change_fails_closed() -> None:
-    def record(f, theta):
+    def record(*, f, theta):
         mixed = (f > 0.4) & (theta > 0.0)
-        return _record((jnp.asarray(mixed, dtype=jnp.int32),))
+        return _record(signature=(jnp.asarray(mixed, dtype=jnp.int32),))
 
-    diag = _diagnose(record)
+    diag = _diagnose(record=record)
     assert bool(diag.owner_changed)
     assert bool(diag.unresolved)
 
 
 def test_reoptimized_h_and_h2_points_are_part_of_the_certificate() -> None:
-    def record(f, theta):
+    def record(*, f, theta):
         del f
-        return _record((jnp.asarray(theta > 5e-3, dtype=jnp.int32),))
+        return _record(signature=(jnp.asarray(theta > 5e-3, dtype=jnp.int32),))
 
     # The built-in parameter radius is 1e-5, so only this independently
     # reoptimized Richardson point crosses the signature boundary.
     extras = ((jnp.asarray(0.41), jnp.asarray(1e-2)),)
-    diag = _diagnose(record, extras=extras)
+    diag = _diagnose(record=record, extras=extras)
     assert bool(diag.owner_changed)
     assert bool(diag.unresolved)
 
 
 def test_empty_signature_is_incomplete_even_when_callback_claims_complete() -> None:
-    def empty_record(f, theta):
+    def empty_record(*, f, theta):
         del f, theta
-        return _record(())
+        return _record(signature=())
 
-    diag = _diagnose(empty_record)
+    diag = _diagnose(record=empty_record)
     assert bool(diag.owner_incomplete)
     assert not bool(diag.branch_certified)
     assert bool(diag.unresolved)
@@ -214,10 +216,10 @@ def test_vectorized_jit_certificate_is_per_cell() -> None:
     def evaluate(theta):
         f_star = jnp.asarray([0.3, 0.4])
 
-        def objective(f, t):
+        def objective(*, f, t):
             return -0.5 * (f - jnp.asarray([0.3, 0.4])) ** 2 + 0.0 * t
 
-        def record(f, t):
+        def record(*, f, t):
             del t
             return OwnerProvenance(
                 signature=(jnp.zeros_like(f, dtype=jnp.int32),),
@@ -227,7 +229,7 @@ def test_vectorized_jit_certificate_is_per_cell() -> None:
             )
 
         diag = implicit_optimum_diagnostics(
-            objective,
+            objective=objective,
             theta=theta,
             f_star=f_star,
             basin_margin=jnp.ones_like(f_star),

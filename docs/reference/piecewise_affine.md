@@ -26,7 +26,7 @@ import lcm
         ),
     ),
 )
-def resources(liquid, first_threshold, asset_test, transfer):
+def resources(*, liquid, first_threshold, asset_test, transfer):
     # The function remains the executable economic schedule.
     ...
 ```

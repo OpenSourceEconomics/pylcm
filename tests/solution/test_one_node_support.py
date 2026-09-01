@@ -56,7 +56,7 @@ def _enter_at_the_node_from_wealth(wealth: ScalarFloat) -> ScalarFloat:
     return jnp.float32(0)
 
 
-def _shock_and_wealth(shock: ScalarFloat, wealth: ScalarFloat) -> ScalarFloat:
+def _shock_and_wealth(*, shock: ScalarFloat, wealth: ScalarFloat) -> ScalarFloat:
     return shock + wealth
 
 

@@ -26,7 +26,7 @@ _ITERATIONS = 40
 def test_interior_quadratic_maximum_to_golden_accuracy() -> None:
     """An interior parabola vertex is located to the bracket-shrink accuracy."""
     result = maximize_golden_section(
-        lambda x: -((x - 0.3) ** 2),
+        objective=lambda x: -((x - 0.3) ** 2),
         lower=jnp.array([0.0]),
         upper=jnp.array([1.0]),
         iterations=_ITERATIONS,
@@ -46,14 +46,14 @@ def test_interior_quadratic_maximum_to_golden_accuracy() -> None:
 
 
 @pytest.mark.parametrize(("slope", "argmax"), [(1.0, 1.0), (-1.0, 0.0)])
-def test_boundary_maximum_is_found_exactly(slope: float, argmax: float) -> None:
+def test_boundary_maximum_is_found_exactly(*, slope: float, argmax: float) -> None:
     """A monotone objective's boundary maximum is returned EXACTLY.
 
     Golden section converges toward, never onto, a boundary; only the explicit
     endpoint evaluation makes the boundary abscissa itself a candidate.
     """
     result = maximize_golden_section(
-        lambda x: slope * x,
+        objective=lambda x: slope * x,
         lower=jnp.array([0.0]),
         upper=jnp.array([1.0]),
         iterations=_ITERATIONS,
@@ -70,7 +70,7 @@ def test_flat_objective_ties_break_to_the_smaller_abscissa() -> None:
     `>`, so the tie is deterministic, not float-noise-dependent.
     """
     result = maximize_golden_section(
-        jnp.zeros_like,
+        objective=jnp.zeros_like,
         lower=jnp.array([2.0]),
         upper=jnp.array([5.0]),
         iterations=17,
@@ -82,7 +82,7 @@ def test_flat_objective_ties_break_to_the_smaller_abscissa() -> None:
 def test_degenerate_bracket_is_accepted() -> None:
     """`lower == upper` is a legal bracket: the point itself is returned."""
     result = maximize_golden_section(
-        lambda x: -(x**2),
+        objective=lambda x: -(x**2),
         lower=jnp.array([1.5]),
         upper=jnp.array([1.5]),
         iterations=8,
@@ -102,7 +102,7 @@ def test_vectorized_heterogeneous_brackets() -> None:
         return -((x - centers) ** 2)
 
     result = maximize_golden_section(
-        objective, lower=lower, upper=upper, iterations=_ITERATIONS
+        objective=objective, lower=lower, upper=upper, iterations=_ITERATIONS
     )
     np.testing.assert_allclose(np.asarray(result.x), np.asarray(centers), atol=1e-6)
 
@@ -110,7 +110,7 @@ def test_vectorized_heterogeneous_brackets() -> None:
 def test_invalid_mask_propagates_and_reports_neg_inf() -> None:
     """Masked cells are not searched: `x = lower`, `value = -inf`, invalid."""
     result = maximize_golden_section(
-        lambda x: x,
+        objective=lambda x: x,
         lower=jnp.array([0.0, 0.0]),
         upper=jnp.array([1.0, 1.0]),
         iterations=10,
@@ -126,7 +126,7 @@ def test_invalid_mask_propagates_and_reports_neg_inf() -> None:
 def test_inverted_bracket_is_invalid_not_an_error() -> None:
     """`upper < lower` marks the cell invalid rather than raising in-trace."""
     result = maximize_golden_section(
-        lambda x: x,
+        objective=lambda x: x,
         lower=jnp.array([1.0]),
         upper=jnp.array([0.0]),
         iterations=5,
@@ -143,7 +143,7 @@ def test_nan_probes_are_treated_as_neg_inf_not_poison() -> None:
         return jnp.where(x < 0.5, jnp.nan, -((x - 0.75) ** 2))
 
     result = maximize_golden_section(
-        objective,
+        objective=objective,
         lower=jnp.array([0.0]),
         upper=jnp.array([1.0]),
         iterations=_ITERATIONS,
@@ -158,7 +158,7 @@ def test_jit_and_vmap_compose() -> None:
 
     def run(center: FloatND) -> FloatND:
         result = maximize_golden_section(
-            lambda x: -((x - center) ** 2),
+            objective=lambda x: -((x - center) ** 2),
             lower=jnp.zeros(()),
             upper=jnp.ones(()),
             iterations=30,
@@ -177,7 +177,7 @@ def test_x64_determinism_same_inputs_same_bits() -> None:
 
     def solve() -> GoldenSectionResult:
         return maximize_golden_section(
-            lambda x: jnp.sin(3.0 * x) - 0.1 * x,
+            objective=lambda x: jnp.sin(3.0 * x) - 0.1 * x,
             lower=jnp.linspace(0.0, 0.5, 7),
             upper=jnp.linspace(1.5, 4.0, 7),
             iterations=51,
@@ -191,14 +191,14 @@ def test_x64_determinism_same_inputs_same_bits() -> None:
 def test_width_tolerance_gates_converged() -> None:
     """`converged` reflects the requested final bracket width."""
     tight = maximize_golden_section(
-        lambda x: -(x**2),
+        objective=lambda x: -(x**2),
         lower=jnp.array([0.0]),
         upper=jnp.array([1.0]),
         iterations=40,
         width_tolerance=1e-6,
     )
     loose = maximize_golden_section(
-        lambda x: -(x**2),
+        objective=lambda x: -(x**2),
         lower=jnp.array([0.0]),
         upper=jnp.array([1.0]),
         iterations=3,
@@ -212,5 +212,5 @@ def test_negative_iterations_raise() -> None:
     """A negative static budget is a config error, caught eagerly."""
     with pytest.raises(ValueError, match="iterations"):
         maximize_golden_section(
-            lambda x: x, lower=jnp.zeros(1), upper=jnp.ones(1), iterations=-1
+            objective=lambda x: x, lower=jnp.zeros(1), upper=jnp.ones(1), iterations=-1
         )

@@ -35,7 +35,7 @@ def _utility(consumption: float) -> FloatND:
     return jnp.log(consumption)
 
 
-def _next_wealth(wealth: float, consumption: float) -> float:
+def _next_wealth(*, wealth: float, consumption: float) -> float:
     return wealth - consumption
 
 
@@ -72,7 +72,7 @@ def _build_regime(**overrides: Any) -> UserRegime:
     return UserRegime(**spec)
 
 
-def _build_model(work: UserRegime, retired: UserRegime | None = None) -> Model:
+def _build_model(*, work: UserRegime, retired: UserRegime | None = None) -> Model:
     # `retired` outlives `work` by one age so that the mass `work` sends it in
     # its final transition lands on an active regime, and hands everything to
     # `dead` in its own final transition.
@@ -102,7 +102,7 @@ def _build_model(work: UserRegime, retired: UserRegime | None = None) -> Model:
 def test_granular_transition_solves_and_simulates() -> None:
     """A model with per-target regime transitions solves and simulates; the
     realized memberships are drawn from the declared distribution."""
-    model = _build_model(_build_regime())
+    model = _build_model(work=_build_regime())
     result = model.simulate(
         params={
             "work": {"discount_factor": 0.95},
@@ -126,18 +126,18 @@ def test_granular_transition_solves_and_simulates() -> None:
 def test_template_has_per_target_regime_transition_keys() -> None:
     """Each granular cell's parameters surface under the target's branch."""
 
-    def _prob_dead_with_param(age: int, hazard: float) -> ScalarFloat:
+    def _prob_dead_with_param(*, age: int, hazard: float) -> ScalarFloat:
         return jnp.clip(hazard * (1.0 + age), 0.0, 1.0)
 
     work = _build_regime(
         transition={
             "work": MarkovTransition(
-                lambda age, hazard: 1.0 - _prob_dead_with_param(age, hazard)
+                lambda age, hazard: 1.0 - _prob_dead_with_param(age=age, hazard=hazard)
             ),
             "dead": MarkovTransition(_prob_dead_with_param),
         },
     )
-    model = _build_model(work)
+    model = _build_model(work=work)
     template = model.get_params_template()
     assert "hazard" in template["work"]["dead"]["next_regime"]
     assert "hazard" in template["work"]["work"]["next_regime"]
@@ -168,7 +168,7 @@ def test_unknown_target_in_granular_dict_raises() -> None:
         },
     )
     with pytest.raises(ModelInitializationError, match=r"valhalla"):
-        _build_model(work)
+        _build_model(work=work)
 
 
 def test_phased_granular_with_differing_key_sets_raises() -> None:
@@ -198,7 +198,7 @@ def test_uncovered_reachable_target_raises_with_remedy() -> None:
     with pytest.raises(
         ModelInitializationError, match=r"retired.*wealth|wealth.*retired"
     ):
-        _build_model(work)
+        _build_model(work=work)
 
 
 def test_granular_keys_narrow_reachability() -> None:
@@ -211,13 +211,13 @@ def test_granular_keys_narrow_reachability() -> None:
         },
         state_transitions={"wealth": {"retired": _next_wealth}},
     )
-    model = _build_model(work)
+    model = _build_model(work=work)
     assert "work" in model.user_regimes
 
 
 def test_per_target_regime_transition_template_nests_under_target() -> None:
     """Granular cells' params nest under the target in the template."""
     work = _build_regime()
-    model = _build_model(work)
+    model = _build_model(work=work)
     template = model.get_params_template()
     assert "next_regime" in template["work"]["retired"]

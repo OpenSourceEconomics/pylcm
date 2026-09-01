@@ -69,9 +69,9 @@ def _three_categorical_reader():
     return _reader(
         state_names=("cat0", "cat1", "cat2", "shock", "wealth"),
         discrete_states={
-            "cat0": DiscreteGrid(Three),
-            "cat1": DiscreteGrid(Two),
-            "cat2": DiscreteGrid(Three),
+            "cat0": DiscreteGrid(category_class=Three),
+            "cat1": DiscreteGrid(category_class=Two),
+            "cat2": DiscreteGrid(category_class=Three),
             "shock": _SHOCK,
         },
         continuous_states={"wealth": _WEALTH},
@@ -161,7 +161,7 @@ def test_one_categorical_axis_reads_the_named_category():
     """A single categorical axis alongside a process and a continuous axis."""
     reader = _reader(
         state_names=("cat0", "shock", "wealth"),
-        discrete_states={"cat0": DiscreteGrid(Three), "shock": _SHOCK},
+        discrete_states={"cat0": DiscreteGrid(category_class=Three), "shock": _SHOCK},
         continuous_states={"wealth": _WEALTH},
     )
     V_arr = _V_arr((3, 5, 5))
@@ -214,7 +214,7 @@ def test_process_axis_read_beyond_the_node_range_clamps_to_the_edge_node():
     """A process value outside the discretized support reads the nearest node."""
     reader = _reader(
         state_names=("cat0", "shock"),
-        discrete_states={"cat0": DiscreteGrid(Three), "shock": _SHOCK},
+        discrete_states={"cat0": DiscreteGrid(category_class=Three), "shock": _SHOCK},
         continuous_states={},
     )
     V_arr = _V_arr((3, 5))
@@ -329,7 +329,7 @@ def test_pinned_kernel_gradient_matches_the_unpinned_gradient():
     """A pinned axis carries no derivative of its own, and none is lost elsewhere."""
     V_arr = _V_arr((3, 5))
 
-    def read(wealth, *, pinned_axes):
+    def read(*, wealth, pinned_axes):
         return map_coordinates(
             input=V_arr,
             coordinates=[jnp.asarray(1.0), wealth],
@@ -337,8 +337,8 @@ def test_pinned_kernel_gradient_matches_the_unpinned_gradient():
         )
 
     query = jnp.asarray(2.4)
-    unpinned = jax.grad(lambda w: read(w, pinned_axes=()))(query)
-    pinned = jax.grad(lambda w: read(w, pinned_axes=(0,)))(query)
+    unpinned = jax.grad(lambda w: read(wealth=w, pinned_axes=()))(query)
+    pinned = jax.grad(lambda w: read(wealth=w, pinned_axes=(0,)))(query)
     np.testing.assert_almost_equal(
         float(pinned), float(unpinned), decimal=DECIMAL_PRECISION
     )

@@ -52,7 +52,7 @@ def _next_wage_shock(match: dict[str, FloatND]) -> FloatND:
     return match["innovation"]
 
 
-def _utility(wealth: float, wage_shock: float) -> FloatND:
+def _utility(*, wealth: float, wage_shock: float) -> FloatND:
     """Convex in the shock, so interpolating the nodes is visible in the value."""
     return jnp.asarray(wealth) + wage_shock**2
 

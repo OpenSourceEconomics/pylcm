@@ -26,7 +26,7 @@ class _IdentityTransition:
     _is_auto_identity: bool = True
 
     def __init__(
-        self, state_name: StateName, *, annotation: TypeAliasType | None = None
+        self, *, state_name: StateName, annotation: TypeAliasType | None = None
     ) -> None:
         self._state_name = state_name
         self.__name__ = f"next_{state_name}"

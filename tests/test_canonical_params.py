@@ -34,15 +34,15 @@ def _utility(consumption: float) -> FloatND:
     return jnp.log(consumption)
 
 
-def _next_wealth(wealth: float, consumption: float) -> float:
+def _next_wealth(*, wealth: float, consumption: float) -> float:
     return wealth - consumption
 
 
-def _next_wealth_taxed(wealth: float, consumption: float, exit_tax: float) -> float:
+def _next_wealth_taxed(*, wealth: float, consumption: float, exit_tax: float) -> float:
     return (wealth - consumption) * (1.0 - exit_tax)
 
 
-def _prob_dead(age: float, hazard: float) -> FloatND:
+def _prob_dead(*, age: float, hazard: float) -> FloatND:
     return jnp.clip(hazard * age, 0.0, 1.0)
 
 
@@ -50,7 +50,7 @@ def _work_regime(**overrides: Any) -> UserRegime:
     spec: dict[str, Any] = {
         "transition": {
             "retired": MarkovTransition(
-                lambda age, hazard: 1.0 - _prob_dead(age, hazard)
+                lambda age, hazard: 1.0 - _prob_dead(age=age, hazard=hazard)
             ),
             "dead": MarkovTransition(_prob_dead),
         },
@@ -155,7 +155,9 @@ def test_broadcast_state_law_params_bind_granular_in_canonical_params() -> None:
     canonical flat params (`target__func__param`), all targets sharing one
     leaf; the coarse spelling does not appear there."""
 
-    def _next_wealth_growth(wealth: float, consumption: float, growth: float) -> float:
+    def _next_wealth_growth(
+        *, wealth: float, consumption: float, growth: float
+    ) -> float:
         return (wealth - consumption) * growth
 
     work = _work_regime(state_transitions={"wealth": _next_wealth_growth})
@@ -233,7 +235,7 @@ def test_coarse_regime_transition_rejects_per_target_params() -> None:
     """A coarse regime transition is evaluated once and shared across targets,
     so target-nested params for it are rejected."""
 
-    def _prob_vector(age: float, hazard: float) -> FloatND:
+    def _prob_vector(*, age: float, hazard: float) -> FloatND:
         dead = jnp.clip(hazard * age, 0.0, 1.0)
         return jnp.stack([jnp.zeros_like(dead), 1.0 - dead, dead])
 

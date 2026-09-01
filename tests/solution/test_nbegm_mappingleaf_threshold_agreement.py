@@ -31,7 +31,7 @@ def _interior_for_kind(kind: int) -> np.ndarray:
     return _EDGE & away_from_cliff
 
 
-def _solve(variant: str, *, n_consumption: int = 160) -> Mapping[int, Mapping]:
+def _solve(*, variant: str, n_consumption: int = 160) -> Mapping[int, Mapping]:
     """Solve the leaf-nested-threshold toy on the shared comparison grids."""
     model = toy.build_model(
         variant=variant,
@@ -61,8 +61,8 @@ def test_nbegm_mappingleaf_threshold_matches_brute_across_each_cliff():
     through each slice's own cliff preimage (away from the single straddling grid
     cell).
     """
-    nbegm = _solve("nbegm")
-    brute = _solve("brute", n_consumption=1800)
+    nbegm = _solve(variant="nbegm")
+    brute = _solve(variant="brute", n_consumption=1800)
     period = _terminal_adjacent_period(nbegm)
     brute_v = np.asarray(brute[period]["alive"])
     nbegm_v = np.asarray(nbegm[period]["alive"])

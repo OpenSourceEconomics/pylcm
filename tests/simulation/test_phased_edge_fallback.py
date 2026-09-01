@@ -151,7 +151,7 @@ _PARAMS = {
 }
 
 
-def _simulate(model: Model, solution):
+def _simulate(*, model: Model, solution):
     """Two subjects, one on each side of the gate."""
     return model.simulate(
         params=_PARAMS,
@@ -195,7 +195,7 @@ def test_a_routed_row_lands_in_the_simulate_legs_regime() -> None:
     model = _make_model()
     solution = model.solve(params=_PARAMS, log_level="off")
 
-    result = _simulate(model, solution)
+    result = _simulate(model=model, solution=solution)
 
     np.testing.assert_array_equal(
         np.asarray(result.raw_results["shelter"][1].in_regime), [True, False]
@@ -210,7 +210,7 @@ def test_a_routed_row_lands_at_the_simulate_legs_state() -> None:
     model = _make_model()
     solution = model.solve(params=_PARAMS, log_level="off")
 
-    result = _simulate(model, solution)
+    result = _simulate(model=model, solution=solution)
 
     np.testing.assert_array_almost_equal(
         np.asarray(result.raw_results["shelter"][1].states["wealth"])[0],
@@ -228,7 +228,7 @@ def test_a_routed_row_carries_the_simulate_legs_role() -> None:
     model = _make_model()
     solution = model.solve(params=_PARAMS, log_level="off")
 
-    result = _simulate(model, solution)
+    result = _simulate(model=model, solution=solution)
 
     assert (
         int(result.raw_results["shelter"][1].own_stakeholder[0])
@@ -241,7 +241,7 @@ def test_the_open_branch_is_untouched_by_the_phase_split() -> None:
     model = _make_model()
     solution = model.solve(params=_PARAMS, log_level="off")
 
-    result = _simulate(model, solution)
+    result = _simulate(model=model, solution=solution)
 
     np.testing.assert_array_equal(
         np.asarray(result.raw_results["retired"][1].in_regime), [False, True]

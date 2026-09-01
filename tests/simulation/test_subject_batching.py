@@ -68,7 +68,7 @@ def _simulate_df(
     )
 
 
-def _assert_columns_invariant(baseline: pd.DataFrame, batched: pd.DataFrame) -> None:
+def _assert_columns_invariant(*, baseline: pd.DataFrame, batched: pd.DataFrame) -> None:
     assert list(batched.columns) == list(baseline.columns)
     for column in baseline.columns:
         if pd.api.types.is_float_dtype(baseline[column]):
@@ -97,7 +97,7 @@ def test_simulation_output_is_invariant_to_subject_batch_size(
     """
     baseline = _simulate_df(subject_batch_size=0)
     batched = _simulate_df(subject_batch_size=subject_batch_size)
-    _assert_columns_invariant(baseline, batched)
+    _assert_columns_invariant(baseline=baseline, batched=batched)
 
 
 @pytest.mark.parametrize("subject_batch_size", [2, 3, 100])
@@ -114,7 +114,7 @@ def test_to_dataframe_targets_are_invariant_to_subject_batch_size(
     batched = _simulate_df(
         subject_batch_size=subject_batch_size, additional_targets=["utility"]
     )
-    _assert_columns_invariant(baseline, batched)
+    _assert_columns_invariant(baseline=baseline, batched=batched)
 
 
 @pytest.mark.parametrize("subject_batch_size", [2, 3, 4])
@@ -132,7 +132,7 @@ def test_aot_compiled_simulation_is_invariant_to_subject_batch_size(
     """
     baseline = _simulate_df(subject_batch_size=0)
     batched = _simulate_df(subject_batch_size=subject_batch_size, n_subjects=7)
-    _assert_columns_invariant(baseline, batched)
+    _assert_columns_invariant(baseline=baseline, batched=batched)
 
 
 def test_raw_results_are_host_resident_jax_arrays_when_batched() -> None:

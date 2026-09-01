@@ -31,7 +31,7 @@ class BuyPrivate:
 
 
 def resources(
-    liquid: ContinuousState, buy_private: DiscreteAction, premium: float
+    *, liquid: ContinuousState, buy_private: DiscreteAction, premium: float
 ) -> FloatND:
     """Cash-on-hand: liquid plus base income, less the premium when buying."""
     return liquid + 3.0 - premium * buy_private
@@ -54,7 +54,7 @@ def build_model(
         "savings": savings,
     }
     alive_solver = resolve_solver(
-        variant,
+        variant=variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
     )
 
@@ -67,7 +67,7 @@ def build_model(
         liquid_law=next_liquid_from_savings,
         alive_solver=alive_solver,
         constraints={} if variant == "nbegm" else {"feasible": feasible},
-        extra_actions={"buy_private": DiscreteGrid(BuyPrivate)},
+        extra_actions={"buy_private": DiscreteGrid(category_class=BuyPrivate)},
     )
 
 

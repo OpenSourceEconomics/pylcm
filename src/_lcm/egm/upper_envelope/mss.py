@@ -305,6 +305,7 @@ def _crossing_blocks(
     n_query = query_grid.shape[0]
     live = ~query_drop
 
+    # keyword-only-exempt: library-callback=jax.lax.scan
     def step(
         carry: tuple[ScalarInt, ScalarInt, FloatND], idx: ScalarInt
     ) -> tuple[tuple[ScalarInt, ScalarInt, FloatND], _CrossingRow]:
@@ -382,6 +383,7 @@ def _flatten_crossing_row(row: _CrossingRow) -> tuple[tuple[Any, ...], None]:
     return tuple(getattr(row, name) for name in _CROSSING_ROW_FIELDS), None
 
 
+# keyword-only-exempt: library-callback=jax.tree_util.register_pytree_node
 def _unflatten_crossing_row(_aux: None, children: Sequence[Any]) -> _CrossingRow:
     row = object.__new__(_CrossingRow)
     for name, child in zip(_CROSSING_ROW_FIELDS, children, strict=True):

@@ -59,6 +59,7 @@ def test_the_keeper_candidate_costs_the_direct_variant_nothing_extra() -> None:
 
 
 def _bracket_with_nearest_segment_extrapolation(
+    *,
     value: float,
     grid: Sequence[float],
 ) -> tuple[int, int, float]:
@@ -82,7 +83,11 @@ def _terminal_grid(
     illiquid_grid = [float(scalar(x)) for x in np.asarray(toy.ILLIQUID_GRID.to_jax())]
     values = [
         [
-            float(_scalar_terminal_utility(wealth, illiquid, scalar))
+            float(
+                _scalar_terminal_utility(
+                    wealth=wealth, illiquid=illiquid, scalar=scalar
+                )
+            )
             for illiquid in illiquid_grid
         ]
         for wealth in wealth_grid
@@ -100,8 +105,12 @@ def _bilinear_terminal_read(
     scalar: type[np.floating],
 ) -> float:
     """Independent scalar multilinear interpolation/extrapolation."""
-    w0, w1, ww = _bracket_with_nearest_segment_extrapolation(wealth, wealth_grid)
-    z0, z1, wz = _bracket_with_nearest_segment_extrapolation(illiquid, illiquid_grid)
+    w0, w1, ww = _bracket_with_nearest_segment_extrapolation(
+        value=wealth, grid=wealth_grid
+    )
+    z0, z1, wz = _bracket_with_nearest_segment_extrapolation(
+        value=illiquid, grid=illiquid_grid
+    )
     ww_s = scalar(ww)
     wz_s = scalar(wz)
     low = scalar(
@@ -116,6 +125,7 @@ def _bilinear_terminal_read(
 
 
 def _scalar_terminal_utility(
+    *,
     wealth: float,
     illiquid: float,
     scalar: type[np.floating],
@@ -128,6 +138,7 @@ def _scalar_terminal_utility(
 
 
 def _scalar_resources(
+    *,
     wealth: float,
     illiquid: float,
     target: float,
@@ -139,6 +150,7 @@ def _scalar_resources(
 
 
 def _scalar_utility(
+    *,
     consumption: float | np.floating,
     scalar: type[np.floating],
 ) -> np.floating:
@@ -157,7 +169,9 @@ def _score_pair(
     terminal_data: tuple[list[float], list[float], list[list[float]]],
 ) -> float:
     """Score one public joint action without any production policy helper."""
-    resources = _scalar_resources(wealth, illiquid, target, scalar)
+    resources = _scalar_resources(
+        wealth=wealth, illiquid=illiquid, target=target, scalar=scalar
+    )
     savings = scalar(resources - scalar(consumption))
     next_wealth = scalar(scalar(1.0 + toy.LIQUID_RATE) * savings)
     wealth_grid, illiquid_grid, terminal_values = terminal_data
@@ -171,7 +185,7 @@ def _score_pair(
             scalar=scalar,
         )
     )
-    flow = _scalar_utility(consumption, scalar)
+    flow = _scalar_utility(consumption=consumption, scalar=scalar)
     return float(scalar(flow + scalar(_PARAMS["discount_factor"]) * continuation))
 
 
@@ -190,7 +204,11 @@ def _enumerate_joint_candidate(
 
     best: tuple[float, float, float, int] | None = None
     for candidate_index, target in enumerate([float(scalar(illiquid)), *outer_nodes]):
-        resources = float(_scalar_resources(wealth, illiquid, target, scalar))
+        resources = float(
+            _scalar_resources(
+                wealth=wealth, illiquid=illiquid, target=target, scalar=scalar
+            )
+        )
         upper = min(upper_support, resources - toy.SAVINGS_FLOOR)
         if not np.isfinite(upper) or upper < lower_support:
             continue

@@ -43,7 +43,7 @@ class RegimeId:
 
 
 def utility_working(
-    consumption: ContinuousAction, is_working: BoolND, disutility_of_work: float
+    *, consumption: ContinuousAction, is_working: BoolND, disutility_of_work: float
 ) -> FloatND:
     work_disutility = jnp.where(is_working, disutility_of_work, 0.0)
     return jnp.log(consumption) - work_disutility
@@ -53,7 +53,7 @@ def utility_retirement(consumption: ContinuousAction) -> FloatND:
     return jnp.log(consumption)
 
 
-def labor_income(is_working: BoolND, wage: float | FloatND) -> FloatND:
+def labor_income(*, is_working: BoolND, wage: float | FloatND) -> FloatND:
     return jnp.where(is_working, wage, 0.0)
 
 
@@ -62,6 +62,7 @@ def is_working(labor_supply: DiscreteAction) -> BoolND:
 
 
 def next_wealth(
+    *,
     wealth: ContinuousState,
     consumption: ContinuousAction,
     labor_income: FloatND,
@@ -71,6 +72,7 @@ def next_wealth(
 
 
 def next_regime_from_working(
+    *,
     labor_supply: DiscreteAction,
     period: Period,
     survival_probs: FloatND,
@@ -92,6 +94,7 @@ def next_regime_from_working(
 
 
 def next_regime_from_retirement(
+    *,
     period: Period,
     survival_probs: FloatND,
 ) -> FloatND:
@@ -106,7 +109,7 @@ def next_regime_from_retirement(
 
 
 def borrowing_constraint(
-    consumption: ContinuousAction, wealth: ContinuousState
+    *, consumption: ContinuousAction, wealth: ContinuousState
 ) -> BoolND:
     return consumption <= wealth
 
@@ -120,7 +123,7 @@ _DEFAULT_LAST_AGE = _DEFAULT_AGE_GRID.exact_values[-1]
 
 working_life = Regime(
     actions={
-        "labor_supply": DiscreteGrid(LaborSupply),
+        "labor_supply": DiscreteGrid(category_class=LaborSupply),
         "consumption": CONSUMPTION_GRID,
     },
     states={"wealth": WEALTH_GRID},
@@ -197,6 +200,7 @@ def _default_survival_probs(n_periods: int) -> FloatND:
 
 
 def get_params(
+    *,
     n_periods: int,
     discount_factor: float = 0.95,
     disutility_of_work: float = 0.5,

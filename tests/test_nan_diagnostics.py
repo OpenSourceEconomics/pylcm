@@ -101,6 +101,7 @@ def _build_nan_model() -> tuple[Model, dict]:
         terminal: ScalarInt
 
     def utility(
+        *,
         consumption: ContinuousAction,
         wealth: ContinuousState,
     ) -> FloatND:
@@ -108,15 +109,15 @@ def _build_nan_model() -> tuple[Model, dict]:
         return jnp.log(consumption) + nan_term
 
     def next_wealth(
-        wealth: ContinuousState, consumption: ContinuousAction
+        *, wealth: ContinuousState, consumption: ContinuousAction
     ) -> ContinuousState:
         return wealth - consumption
 
-    def next_regime(period: int, n_periods: int) -> ScalarInt:
+    def next_regime(*, period: int, n_periods: int) -> ScalarInt:
         return jnp.where(period == (n_periods - 2), 1, 0)
 
     def borrowing_constraint(
-        consumption: ContinuousAction, wealth: ContinuousState
+        *, consumption: ContinuousAction, wealth: ContinuousState
     ) -> BoolND:
         return consumption <= wealth
 
@@ -164,15 +165,15 @@ def _build_always_nan_model() -> tuple[Model, dict]:
         return jnp.full_like(consumption, jnp.nan)
 
     def next_wealth(
-        wealth: ContinuousState, consumption: ContinuousAction
+        *, wealth: ContinuousState, consumption: ContinuousAction
     ) -> ContinuousState:
         return wealth - consumption
 
-    def next_regime(period: int, n_periods: int) -> ScalarInt:
+    def next_regime(*, period: int, n_periods: int) -> ScalarInt:
         return jnp.where(period == (n_periods - 2), 1, 0)
 
     def borrowing_constraint(
-        consumption: ContinuousAction, wealth: ContinuousState
+        *, consumption: ContinuousAction, wealth: ContinuousState
     ) -> BoolND:
         return consumption <= wealth
 

@@ -24,6 +24,7 @@ F = Fraction
 
 
 def _refine(
+    *,
     grid: list[float],
     policy: list[float],
     value: list[float],
@@ -43,7 +44,7 @@ def _refine(
     )
 
 
-def _read(grid: np.ndarray, ordinate: np.ndarray, x: float) -> float:
+def _read(*, grid: np.ndarray, ordinate: np.ndarray, x: float) -> float:
     """Read the refined row at `x`, taking the right branch at a duplicated node."""
     return float(np.interp(x, grid, ordinate))
 
@@ -64,19 +65,29 @@ F1_VALUE = [1.0, 1.1, 0.84, 0.84 + 1.0 / 3.0, 0.8, 1.4]
 
 def test_a_middle_branch_owning_an_interior_interval_is_published():
     """Branch B owns R in [0.686, 0.96] and must survive the envelope."""
-    grid, policy, value, _ = _refine(F1_GRID, F1_POLICY, F1_VALUE)
+    grid, policy, value, _ = _refine(grid=F1_GRID, policy=F1_POLICY, value=F1_VALUE)
     # Exact envelope at R=0.8 is B: value 0.84 + 0.8/3, policy 3.
-    assert _read(grid, value, 0.8) == pytest.approx(0.84 + 0.8 / 3.0, abs=_tolerance())
-    assert _read(grid, policy, 0.8) == pytest.approx(3.0, abs=_tolerance())
+    assert _read(grid=grid, ordinate=value, x=0.8) == pytest.approx(
+        0.84 + 0.8 / 3.0, abs=_tolerance()
+    )
+    assert _read(grid=grid, ordinate=policy, x=0.8) == pytest.approx(
+        3.0, abs=_tolerance()
+    )
 
 
 def test_an_exact_node_aligned_crossing_separates_the_two_policies():
     """A and B meet exactly at R=10, and B owns the right-hand side."""
     grid, policy, value, _ = _refine(
-        [9.0, 10.0, 9.5, 10.5], [8.0, 8.0, 2.0, 2.0], [4.875, 5.0, 4.75, 5.25]
+        grid=[9.0, 10.0, 9.5, 10.5],
+        policy=[8.0, 8.0, 2.0, 2.0],
+        value=[4.875, 5.0, 4.75, 5.25],
     )
-    assert _read(grid, policy, 10.1) == pytest.approx(2.0, abs=_tolerance())
-    assert _read(grid, value, 10.1) == pytest.approx(5.05, abs=_tolerance())
+    assert _read(grid=grid, ordinate=policy, x=10.1) == pytest.approx(
+        2.0, abs=_tolerance()
+    )
+    assert _read(grid=grid, ordinate=value, x=10.1) == pytest.approx(
+        5.05, abs=_tolerance()
+    )
 
 
 def test_a_strictly_dominant_branch_is_not_masked_by_a_large_value_level():
@@ -84,17 +95,19 @@ def test_a_strictly_dominant_branch_is_not_masked_by_a_large_value_level():
     level = 1.0e12 if jnp.zeros(()).dtype == jnp.float64 else 1.0e5
     gap = 2.0 * float(jnp.spacing(jnp.asarray(level)))
     grid, policy, _value, _ = _refine(
-        [0.0, 1.0, 0.0, 1.0],
-        [1000.0, 1000.0, 500.0, 500.0],
-        [level, level + gap, level + 2.0 * gap, level + 3.0 * gap],
+        grid=[0.0, 1.0, 0.0, 1.0],
+        policy=[1000.0, 1000.0, 500.0, 500.0],
+        value=[level, level + gap, level + 2.0 * gap, level + 3.0 * gap],
     )
-    assert _read(grid, policy, 0.5) == pytest.approx(500.0, abs=_tolerance())
+    assert _read(grid=grid, ordinate=policy, x=0.5) == pytest.approx(
+        500.0, abs=_tolerance()
+    )
 
 
 def test_a_single_concave_branch_passes_through_unchanged():
     """With nothing to refine the envelope reproduces the candidate chain."""
     grid, policy, value, n_kept = _refine(
-        [1.0, 2.0, 3.0], [0.5, 1.0, 1.5], [0.0, 1.0, 1.5]
+        grid=[1.0, 2.0, 3.0], policy=[0.5, 1.0, 1.5], value=[0.0, 1.0, 1.5]
     )
     assert n_kept == 3
     np.testing.assert_allclose(grid, [1.0, 2.0, 3.0])
@@ -118,12 +131,14 @@ def test_the_refined_row_is_weakly_ascending_and_nan_padded():
 def test_dead_candidates_are_excluded_from_the_envelope():
     """NaN-padded candidates neither contribute nor bridge a branch."""
     grid, _policy, value, _ = _refine(
-        [1.0, 2.0, float("nan"), 3.0],
-        [0.5, 1.0, float("nan"), 1.5],
-        [0.0, 1.0, float("nan"), 1.5],
+        grid=[1.0, 2.0, float("nan"), 3.0],
+        policy=[0.5, 1.0, float("nan"), 1.5],
+        value=[0.0, 1.0, float("nan"), 1.5],
     )
     assert np.all(np.isfinite(grid))
-    assert _read(grid, value, 1.5) == pytest.approx(0.5, abs=_tolerance())
+    assert _read(grid=grid, ordinate=value, x=1.5) == pytest.approx(
+        0.5, abs=_tolerance()
+    )
 
 
 def _oracle_branches() -> tuple[Branch, ...]:
@@ -140,9 +155,11 @@ def _oracle_branches() -> tuple[Branch, ...]:
 )
 def test_published_value_matches_the_exact_rational_envelope(query: float):
     """The refined row agrees with the exact envelope away from the nodes too."""
-    grid, _policy, value, _ = _refine(F1_GRID, F1_POLICY, F1_VALUE)
-    expected, _owners = exact_envelope(_oracle_branches(), Fraction(query))
-    assert _read(grid, value, query) == pytest.approx(float(expected), abs=_tolerance())
+    grid, _policy, value, _ = _refine(grid=F1_GRID, policy=F1_POLICY, value=F1_VALUE)
+    expected, _owners = exact_envelope(branches=_oracle_branches(), q=Fraction(query))
+    assert _read(grid=grid, ordinate=value, x=query) == pytest.approx(
+        float(expected), abs=_tolerance()
+    )
 
 
 def test_a_crossing_rounding_onto_a_node_still_hands_over():

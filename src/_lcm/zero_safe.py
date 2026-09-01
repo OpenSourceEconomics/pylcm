@@ -249,7 +249,7 @@ def zero_safe_weighted_term(
     )
     if subnormal_is_accounted_for:
         return effective_weight * safe_value
-    return balanced_product(effective_weight, safe_value)
+    return balanced_product(weight=effective_weight, value=safe_value)
 
 
 #: Longest permutable axis whose reduction order cannot matter: a single entry
@@ -257,7 +257,7 @@ def zero_safe_weighted_term(
 _MAX_ORDER_FREE_AXIS_LENGTH = 2
 
 
-def sum_in_value_order(values: FloatND, *, axis: int = 0) -> FloatND:
+def sum_in_value_order(*, values: FloatND, axis: int = 0) -> FloatND:
     """Sum `values` after canonicalising the floating-point reduction order.
 
     Floating-point addition is not associative.  When the entries are keyed by
@@ -338,12 +338,12 @@ def scaled_weighted_terms(
     room = binades_above_smallest_normal(arr)
     on_the_weight = jnp.maximum(scale, -room)
     return scaled_down_by_power_of_two(
-        zero_safe_weighted_term(
-            weight=scaled_down_by_power_of_two(arr, on_the_weight),
+        values=zero_safe_weighted_term(
+            weight=scaled_down_by_power_of_two(values=arr, shift=on_the_weight),
             value=values,
             subnormal_is_accounted_for=False,
         ),
-        scale - on_the_weight,
+        shift=scale - on_the_weight,
     )
 
 

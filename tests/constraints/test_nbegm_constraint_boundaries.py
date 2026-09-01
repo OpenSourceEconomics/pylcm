@@ -26,8 +26,8 @@ from lcm.typing import BoolND, FloatND
 
 
 def _compile(
-    declaration: Condition | object,
     *,
+    declaration: Condition | object,
     param_names: frozenset[str] = frozenset({"limit"}),
 ) -> CompileBoundary | Reject:
     constraints = normalize_constraints(
@@ -71,13 +71,14 @@ def _compile(
     ],
 )
 def test_nbegm_compiles_each_ordered_liquid_boundary(
+    *,
     declaration: Condition,
     feasible_side: str,
     boundary_membership: Literal["included", "excluded"],
     threshold_kind: type[Ref | Const],
 ) -> None:
     """Operand order and comparison strictness determine side and ownership."""
-    disposition = _compile(declaration)
+    disposition = _compile(declaration=declaration)
 
     assert isinstance(disposition, CompileBoundary)
     payload = disposition.program.payload
@@ -97,7 +98,7 @@ def test_nbegm_compiles_a_conjunction_in_declaration_order() -> None:
     """Each comparison in an intersection becomes one feasibility surface."""
     declaration = (ref("liquid") >= ref("limit")) & (ref("liquid") < 10.0)
 
-    disposition = _compile(declaration)
+    disposition = _compile(declaration=declaration)
 
     assert isinstance(disposition, CompileBoundary)
     payload = disposition.program.payload
@@ -112,7 +113,7 @@ def test_nbegm_compiles_a_conjunction_in_declaration_order() -> None:
 def test_nbegm_qualifies_a_constraint_parameter_threshold() -> None:
     """A declared parameter is stored under its processed callable's flat name."""
     disposition = _compile(
-        ref("liquid") >= ref("limit"),
+        declaration=ref("liquid") >= ref("limit"),
         param_names=frozenset({"eligible__limit"}),
     )
 
@@ -125,7 +126,7 @@ def test_nbegm_qualifies_a_constraint_parameter_threshold() -> None:
 def test_compiled_surfaces_resolve_runtime_thresholds_inside_jit() -> None:
     """Literal and flat-parameter surfaces become one runtime axis partition."""
     disposition = _compile(
-        (ref("liquid") >= ref("limit")) & (ref("liquid") < 9.0),
+        declaration=(ref("liquid") >= ref("limit")) & (ref("liquid") < 9.0),
         param_names=frozenset({"eligible__limit"}),
     )
     assert isinstance(disposition, CompileBoundary)
@@ -160,7 +161,7 @@ def test_compiled_surfaces_resolve_runtime_thresholds_inside_jit() -> None:
 )
 def test_nbegm_rejects_non_conjunctive_structure(declaration: Condition) -> None:
     """A union, complement, or implication is not a set of intersected surfaces."""
-    disposition = _compile(declaration)
+    disposition = _compile(declaration=declaration)
 
     assert isinstance(disposition, Reject)
     assert "eligible" in disposition.reason
@@ -174,7 +175,7 @@ def _opaque(liquid: FloatND) -> BoolND:
 
 def test_nbegm_rejects_an_opaque_constraint() -> None:
     """Arbitrary executable logic supplies no boundary surfaces to compile."""
-    disposition = _compile(_opaque)
+    disposition = _compile(declaration=_opaque)
 
     assert isinstance(disposition, Reject)
     assert "eligible" in disposition.reason
@@ -184,7 +185,7 @@ def test_nbegm_rejects_an_opaque_constraint() -> None:
 @pytest.mark.parametrize("declaration", [ref("liquid") == 5.0, ref("liquid") != 5.0])
 def test_nbegm_rejects_non_ordering_comparisons(declaration: Condition) -> None:
     """Equality and inequality do not name one feasible side of a threshold."""
-    disposition = _compile(declaration)
+    disposition = _compile(declaration=declaration)
 
     assert isinstance(disposition, Reject)
     assert "<, <=, >, or >=" in disposition.reason
@@ -203,14 +204,14 @@ def test_nbegm_rejects_non_ordering_comparisons(declaration: Condition) -> None:
     ],
 )
 def test_nbegm_rejects_unsupported_boundary_operands(
-    declaration: Condition, message: str
+    *, declaration: Condition, message: str
 ) -> None:
     """A surface is liquid versus a literal or a parameter available unchanged."""
     param_names = (
         frozenset() if "limit" in declaration.dependencies else frozenset({"limit"})
     )
 
-    disposition = _compile(declaration, param_names=param_names)
+    disposition = _compile(declaration=declaration, param_names=param_names)
 
     assert isinstance(disposition, Reject)
     assert "eligible" in disposition.reason

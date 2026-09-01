@@ -129,10 +129,10 @@ def test_regime_overlapping_states_actions(binary_category_class):
     """Regime finalization rejects overlapping state and action names."""
     regime = UserRegime(
         states={
-            "health": DiscreteGrid(binary_category_class),
+            "health": DiscreteGrid(category_class=binary_category_class),
         },
         state_transitions={"health": fixed_transition("health")},
-        actions={"health": DiscreteGrid(binary_category_class)},
+        actions={"health": DiscreteGrid(category_class=binary_category_class)},
         functions={"utility": lambda: 0},
         transition=lambda: 0,
         active=lambda age: age < 5,
@@ -170,7 +170,7 @@ def test_model_requires_terminal_regime(binary_category_class):
 
     regime = UserRegime(
         states={
-            "health": DiscreteGrid(binary_category_class),
+            "health": DiscreteGrid(category_class=binary_category_class),
         },
         state_transitions={"health": lambda health: health},
         actions={},
@@ -196,7 +196,7 @@ def test_model_requires_non_terminal_regime(binary_category_class):
     dead = UserRegime(
         transition=None,
         states={
-            "health": DiscreteGrid(binary_category_class),
+            "health": DiscreteGrid(category_class=binary_category_class),
         },
         functions={"utility": lambda health: health * 0},
         active=lambda age: age >= 1,
@@ -227,7 +227,7 @@ def test_model_accepts_multiple_terminal_regimes(binary_category_class):
 
     alive = UserRegime(
         states={
-            "health": DiscreteGrid(binary_category_class),
+            "health": DiscreteGrid(category_class=binary_category_class),
         },
         state_transitions={"health": lambda health: health},
         functions={"utility": lambda health: health},
@@ -237,7 +237,7 @@ def test_model_accepts_multiple_terminal_regimes(binary_category_class):
     dead1 = UserRegime(
         transition=None,
         states={
-            "health": DiscreteGrid(binary_category_class),
+            "health": DiscreteGrid(category_class=binary_category_class),
         },
         functions={"utility": lambda health: health * 0},
         active=lambda age: age >= 1,
@@ -245,7 +245,7 @@ def test_model_accepts_multiple_terminal_regimes(binary_category_class):
     dead2 = UserRegime(
         transition=None,
         states={
-            "health": DiscreteGrid(binary_category_class),
+            "health": DiscreteGrid(category_class=binary_category_class),
         },
         functions={"utility": lambda health: health * 0},
         active=lambda age: age >= 1,
@@ -269,7 +269,7 @@ def test_model_regime_id_mapping_created_from_dict_keys(binary_category_class):
 
     alive = UserRegime(
         states={
-            "health": DiscreteGrid(binary_category_class),
+            "health": DiscreteGrid(category_class=binary_category_class),
         },
         state_transitions={"health": lambda health: health},
         functions={"utility": lambda health: health},
@@ -279,7 +279,7 @@ def test_model_regime_id_mapping_created_from_dict_keys(binary_category_class):
     dead = UserRegime(
         transition=None,
         states={
-            "health": DiscreteGrid(binary_category_class),
+            "health": DiscreteGrid(category_class=binary_category_class),
         },
         functions={"utility": lambda health: health * 0},
         active=lambda age: age >= 1,
@@ -304,7 +304,7 @@ def test_model_regime_name_validation(binary_category_class):
 
     alive = UserRegime(
         states={
-            "health": DiscreteGrid(binary_category_class),
+            "health": DiscreteGrid(category_class=binary_category_class),
         },
         state_transitions={"health": lambda health: health},
         functions={"utility": lambda health: health},
@@ -314,7 +314,7 @@ def test_model_regime_name_validation(binary_category_class):
     dead = UserRegime(
         transition=None,
         states={
-            "health": DiscreteGrid(binary_category_class),
+            "health": DiscreteGrid(category_class=binary_category_class),
         },
         functions={"utility": lambda health: health * 0},
         active=lambda age: age >= 1,
@@ -355,7 +355,7 @@ def test_unused_state_raises_error():
                 stop=100,
                 n_points=10,
             ),
-            "unused_state": DiscreteGrid(UnusedState),
+            "unused_state": DiscreteGrid(category_class=UnusedState),
         },
         state_transitions={
             "wealth": lambda wealth, consumption: wealth - consumption,
@@ -371,7 +371,7 @@ def test_unused_state_raises_error():
         functions={"utility": lambda wealth: wealth * 0.5},
         states={
             "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
-            "unused_state": DiscreteGrid(UnusedState),
+            "unused_state": DiscreteGrid(category_class=UnusedState),
         },
         active=lambda age: age >= 5,
     )
@@ -416,7 +416,9 @@ def test_unused_action_raises_error():
         },
         actions={
             "consumption": LinSpacedGrid(start=1, stop=50, n_points=10),
-            "unused_action": DiscreteGrid(UnusedAction),  # Not used anywhere!
+            "unused_action": DiscreteGrid(
+                category_class=UnusedAction
+            ),  # Not used anywhere!
         },
         transition=MarkovTransition(lambda: jnp.array([0.9, 0.1])),
         active=lambda age: age < 5,
@@ -464,14 +466,14 @@ def test_constraint_naming_a_transition_output_is_rejected():
         not_employed: ScalarInt
         employed: ScalarInt
 
-    def next_regime(age: float, model_end_age: int) -> ScalarInt:
+    def next_regime(*, age: float, model_end_age: int) -> ScalarInt:
         return jnp.where(age == model_end_age, RegimeId.dead, RegimeId.alive)
 
     def model_end_age(value: int) -> int:
         return value
 
     def utility(
-        consumption_q: ContinuousAction, lagged_employment: DiscreteState
+        *, consumption_q: ContinuousAction, lagged_employment: DiscreteState
     ) -> FloatND:
         return jnp.log(consumption_q + lagged_employment * 0.001)
 
@@ -479,7 +481,7 @@ def test_constraint_naming_a_transition_output_is_rejected():
         return 0.0
 
     def next_assets(
-        assets: ContinuousState, consumption_q: ContinuousAction
+        *, assets: ContinuousState, consumption_q: ContinuousAction
     ) -> ContinuousState:
         return assets - consumption_q
 
@@ -499,11 +501,11 @@ def test_constraint_naming_a_transition_output_is_rejected():
         functions={"utility": utility, "model_end_age": model_end_age},
         actions={
             "consumption_q": LinSpacedGrid(start=1, stop=10, n_points=5),
-            "employment": DiscreteGrid(EmploymentStatus),
+            "employment": DiscreteGrid(category_class=EmploymentStatus),
         },
         states={
             "assets": LinSpacedGrid(start=10, stop=100, n_points=5),
-            "lagged_employment": DiscreteGrid(EmploymentLastPeriod),
+            "lagged_employment": DiscreteGrid(category_class=EmploymentLastPeriod),
         },
         state_transitions={
             "assets": next_assets,
@@ -545,7 +547,7 @@ def test_state_only_used_in_transitions():
         not_employed: ScalarInt
         employed: ScalarInt
 
-    def next_regime(age: float, model_end_age: int) -> ScalarInt:
+    def next_regime(*, age: float, model_end_age: int) -> ScalarInt:
         return jnp.where(age == model_end_age, RegimeId.dead, RegimeId.alive)
 
     def model_end_age(value: int) -> int:
@@ -553,7 +555,7 @@ def test_state_only_used_in_transitions():
 
     # Utility does NOT use assets directly
     def utility(
-        consumption_q: ContinuousAction, lagged_employment: DiscreteState
+        *, consumption_q: ContinuousAction, lagged_employment: DiscreteState
     ) -> FloatND:
         return jnp.log(consumption_q + lagged_employment * 0.001)
 
@@ -562,7 +564,7 @@ def test_state_only_used_in_transitions():
 
     # Assets is used in transition but not in utility
     def next_assets(
-        assets: ContinuousState, consumption_q: ContinuousAction
+        *, assets: ContinuousState, consumption_q: ContinuousAction
     ) -> ContinuousState:
         return assets - consumption_q
 
@@ -578,11 +580,11 @@ def test_state_only_used_in_transitions():
         functions={"utility": utility, "model_end_age": model_end_age},
         actions={
             "consumption_q": LinSpacedGrid(start=1, stop=10, n_points=5),
-            "employment": DiscreteGrid(EmploymentStatus),
+            "employment": DiscreteGrid(category_class=EmploymentStatus),
         },
         states={
             "assets": LinSpacedGrid(start=10, stop=100, n_points=5),
-            "lagged_employment": DiscreteGrid(EmploymentLastPeriod),
+            "lagged_employment": DiscreteGrid(category_class=EmploymentLastPeriod),
         },
         state_transitions={
             "assets": next_assets,
@@ -624,13 +626,13 @@ def test_state_only_in_transitions_with_terminal_regime():
         low: ScalarInt
         high: ScalarInt
 
-    def utility(consumption, wealth):
+    def utility(*, consumption, wealth):
         return jnp.log(consumption) + 0.01 * wealth
 
     def dead_utility():
         return 0.0
 
-    def next_wealth(wealth, consumption, type_var: DiscreteState):
+    def next_wealth(*, wealth, consumption, type_var: DiscreteState):
         """type_var affects wealth transition but does NOT appear in utility."""
         return (1 + 0.05 * type_var) * (wealth - consumption)
 
@@ -643,7 +645,7 @@ def test_state_only_in_transitions_with_terminal_regime():
         functions={"utility": utility},
         states={
             "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
-            "type_var": DiscreteGrid(TypeVar),
+            "type_var": DiscreteGrid(category_class=TypeVar),
         },
         state_transitions={
             "wealth": next_wealth,

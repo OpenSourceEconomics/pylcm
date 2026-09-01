@@ -83,7 +83,7 @@ def segments(branch: Branch) -> tuple[Segment, ...]:
     )
 
 
-def exact_intersection(a: Segment, b: Segment) -> Fraction | None:
+def exact_intersection(*, a: Segment, b: Segment) -> Fraction | None:
     """Return the exact crossing abscissa of two links inside their overlap.
 
     Returns `None` when the links do not overlap or are collinear/parallel
@@ -103,18 +103,18 @@ def exact_intersection(a: Segment, b: Segment) -> Fraction | None:
     return q if lo <= q <= hi else None
 
 
-def brute_pair_crossings(a: Branch, b: Branch) -> set[Fraction]:
+def brute_pair_crossings(*, a: Branch, b: Branch) -> set[Fraction]:
     """Return every crossing abscissa over all link pairs of two branches."""
     out: set[Fraction] = set()
     for seg_a in segments(a):
         for seg_b in segments(b):
-            q = exact_intersection(seg_a, seg_b)
+            q = exact_intersection(a=seg_a, b=seg_b)
             if q is not None:
                 out.add(q)
     return out
 
 
-def merge_pair_crossings(a: Branch, b: Branch) -> set[Fraction]:
+def merge_pair_crossings(*, a: Branch, b: Branch) -> set[Fraction]:
     """Return the crossings of two x-monotone branches via a merged sweep.
 
     Merges the two node sequences over their common support and tests the one
@@ -138,7 +138,7 @@ def merge_pair_crossings(a: Branch, b: Branch) -> set[Fraction]:
         active_b = next((s for s in seg_b if s.x0 <= mid <= s.x1), None)
         if active_a is None or active_b is None:
             continue
-        q = exact_intersection(active_a, active_b)
+        q = exact_intersection(a=active_a, b=active_b)
         if q is not None and left <= q <= right:
             out.add(q)
     for q in cuts:
@@ -154,7 +154,7 @@ def merge_pair_crossings(a: Branch, b: Branch) -> set[Fraction]:
 
 
 def exact_envelope(
-    branches: tuple[Branch, ...], q: Fraction
+    *, branches: tuple[Branch, ...], q: Fraction
 ) -> tuple[Fraction, tuple[str, ...]]:
     """Return the exact envelope value and the sorted owner names at `q`."""
     candidates: list[tuple[Fraction, str]] = [
@@ -174,12 +174,12 @@ def all_breakpoints(branches: tuple[Branch, ...]) -> set[Fraction]:
     """Return every node abscissa and every pairwise run crossing."""
     points = {x for branch in branches for x in branch.x}
     for a, b in combinations(branches, 2):
-        points |= merge_pair_crossings(a, b)
+        points |= merge_pair_crossings(a=a, b=b)
     return points
 
 
 def interval_owners(
-    branches: tuple[Branch, ...], points: set[Fraction]
+    *, branches: tuple[Branch, ...], points: set[Fraction]
 ) -> list[tuple[Fraction, Fraction, tuple[str, ...]]]:
     """Return the exact owner of every open cell between consecutive breakpoints.
 
@@ -193,7 +193,7 @@ def interval_owners(
             continue
         mid = (left + right) / 2
         try:
-            _, owners = exact_envelope(branches, mid)
+            _, owners = exact_envelope(branches=branches, q=mid)
         except ValueError:
             continue
         out.append((left, right, owners))
@@ -234,7 +234,7 @@ class FloatSegment:
         )
 
 
-def exact_value(seg: FloatSegment, x: float | Fraction) -> Fraction:
+def exact_value(*, seg: FloatSegment, x: float | Fraction) -> Fraction:
     """Return the exact value of a float link at `x`."""
     x0, x1, v0, v1 = seg.exact()
     q = x if isinstance(x, Fraction) else to_fraction(x)
@@ -243,9 +243,9 @@ def exact_value(seg: FloatSegment, x: float | Fraction) -> Fraction:
     return (v0 * (x1 - q) + v1 * (q - x0)) / (x1 - x0)
 
 
-def exact_margin(a: FloatSegment, b: FloatSegment, x: float | Fraction) -> Fraction:
+def exact_margin(*, a: FloatSegment, b: FloatSegment, x: float | Fraction) -> Fraction:
     """Return the exact value difference `a - b` at `x`."""
-    return exact_value(a, x) - exact_value(b, x)
+    return exact_value(seg=a, x=x) - exact_value(seg=b, x=x)
 
 
 def sign(x: Fraction) -> int:
@@ -253,14 +253,14 @@ def sign(x: Fraction) -> int:
     return (x > 0) - (x < 0)
 
 
-def exact_crossing(a: FloatSegment, b: FloatSegment) -> Fraction | None:
+def exact_crossing(*, a: FloatSegment, b: FloatSegment) -> Fraction | None:
     """Return the exact crossing of two float links inside their overlap, else None."""
     lo = max(to_fraction(a.x0), to_fraction(b.x0))
     hi = min(to_fraction(a.x1), to_fraction(b.x1))
     if lo > hi:
         return None
-    margin_lo = exact_margin(a, b, lo)
-    margin_hi = exact_margin(a, b, hi)
+    margin_lo = exact_margin(a=a, b=b, x=lo)
+    margin_hi = exact_margin(a=a, b=b, x=hi)
     if margin_lo == margin_hi:
         return lo if margin_lo == 0 and lo == hi else None
     root = lo - margin_lo * (hi - lo) / (margin_hi - margin_lo)
@@ -268,7 +268,7 @@ def exact_crossing(a: FloatSegment, b: FloatSegment) -> Fraction | None:
 
 
 def classify_cell(
-    a: FloatSegment, b: FloatSegment, left: float, right: float
+    *, a: FloatSegment, b: FloatSegment, left: float, right: float
 ) -> tuple[str, Fraction | None]:
     """Classify a cell by the certified endpoint signs of the value difference.
 
@@ -276,7 +276,10 @@ def classify_cell(
     `"tie_interval"` with the exact crossing abscissa where applicable.
     """
     left_q, right_q = to_fraction(left), to_fraction(right)
-    margin_left, margin_right = exact_margin(a, b, left_q), exact_margin(a, b, right_q)
+    margin_left, margin_right = (
+        exact_margin(a=a, b=b, x=left_q),
+        exact_margin(a=a, b=b, x=right_q),
+    )
     if margin_left == 0 and margin_right == 0:
         return "tie_interval", None
     if margin_left == 0:
@@ -289,7 +292,7 @@ def classify_cell(
     return "none", None
 
 
-def has_collinear_overlap(a: Branch, b: Branch) -> bool:
+def has_collinear_overlap(*, a: Branch, b: Branch) -> bool:
     """Return whether any two links coincide on a positive-width overlap."""
     for seg_a in segments(a):
         for seg_b in segments(b):

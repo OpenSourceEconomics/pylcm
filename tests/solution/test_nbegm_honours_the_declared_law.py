@@ -35,17 +35,18 @@ _SAVINGS_GRID = LinSpacedGrid(start=0.0, stop=20.0, n_points=400)
 _INTERIOR = slice(8, None)
 
 
-def feasible(liquid: ContinuousState, consumption: ContinuousAction) -> BoolND:
+def feasible(*, liquid: ContinuousState, consumption: ContinuousAction) -> BoolND:
     """Consumption cannot exceed the directly declared liquid resources."""
     return consumption <= liquid
 
 
-def savings(liquid: ContinuousState, consumption: ContinuousAction) -> FloatND:
+def savings(*, liquid: ContinuousState, consumption: ContinuousAction) -> FloatND:
     """Post-decision savings subtract consumption from the liquid state."""
     return liquid - consumption
 
 
 def next_liquid_net_of_a_fixed_cost(
+    *,
     savings: FloatND,
     return_liquid: FloatND,
     income: FloatND,
@@ -67,7 +68,7 @@ def _model(*, variant, n_consumption=120):
             "savings": savings,
         },
         liquid_law=next_liquid_net_of_a_fixed_cost,
-        alive_solver=resolve_solver(variant, savings_grid=_SAVINGS_GRID),
+        alive_solver=resolve_solver(variant=variant, savings_grid=_SAVINGS_GRID),
         constraints={} if variant == "nbegm" else {"feasible": feasible},
         liquid_resources="liquid",
     )

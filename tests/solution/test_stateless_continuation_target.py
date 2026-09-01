@@ -43,11 +43,11 @@ def _utility(consumption):
     return jnp.log(consumption)
 
 
-def _next_wealth(wealth, consumption):
+def _next_wealth(*, wealth, consumption):
     return wealth - consumption
 
 
-def _next_regime(wealth, age):
+def _next_regime(*, wealth, age):
     # Wealth at or above the threshold leaves for the stateless regime; everyone
     # leaves after the last age at which `alive` is active, so no probability mass
     # is ever sent to an inactive regime.
@@ -142,13 +142,17 @@ def _solve_with_an_unreachable_stateless_regime(limbo_bequest: float):
     a perfectly ordinary active stateless regime with a large payoff.
     """
 
-    def _leaves(wealth, age):
+    def _leaves(*, wealth, age):
         return (wealth >= _LEAVE_AT_WEALTH) | (age >= _LAST_AGE - 1)
 
     alive = Regime(
         transition={
-            "alive": MarkovTransition(lambda wealth, age: 1.0 - _leaves(wealth, age)),
-            "gone": MarkovTransition(lambda wealth, age: 1.0 * _leaves(wealth, age)),
+            "alive": MarkovTransition(
+                lambda wealth, age: 1.0 - _leaves(wealth=wealth, age=age)
+            ),
+            "gone": MarkovTransition(
+                lambda wealth, age: 1.0 * _leaves(wealth=wealth, age=age)
+            ),
         },
         active=lambda age: age < _LAST_AGE,
         states={"wealth": _WEALTH_GRID},

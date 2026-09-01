@@ -76,7 +76,7 @@ class DS2024HousingFuesRegimeId:
     dead: ScalarInt
 
 
-def savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
+def savings(*, resources: FloatND, consumption: ContinuousAction) -> FloatND:
     """Inner post-decision liquid balance `a' = resources - c`."""
     return resources - consumption
 
@@ -91,7 +91,9 @@ def next_housing(housing_choice: DiscreteAction) -> DiscreteState:
     return housing_choice
 
 
-def inverse_marginal_utility(marginal_continuation: FloatND, gamma_c: float) -> FloatND:
+def inverse_marginal_utility(
+    *, marginal_continuation: FloatND, gamma_c: float
+) -> FloatND:
     """Invert the consumption marginal utility `u'(c) = c^{-gamma_C}`.
 
     `c = mc^{-1/gamma_C}`; the log housing-service term is separable and drops out.
@@ -143,7 +145,7 @@ def build_model(  # noqa: C901
         ]
     )
     housing_class = _make_housing_levels(n_housing=n_housing)
-    housing_grid = DiscreteGrid(housing_class)
+    housing_grid = DiscreteGrid(category_class=housing_class)
     liquid_grid = LinSpacedGrid(start=0.0, stop=liquid_max, n_points=n_grid)
     consumption_grid = LinSpacedGrid(
         start=0.05, stop=liquid_max, n_points=n_consumption
@@ -165,6 +167,7 @@ def build_model(  # noqa: C901
         return stock_levels[housing_choice]
 
     def housing_cost(
+        *,
         housing: DiscreteState,
         housing_choice: DiscreteAction,
         delta: float,
@@ -182,6 +185,7 @@ def build_model(  # noqa: C901
         return jnp.where(housing_choice == housing, 0.0, round_trip)
 
     def resources(
+        *,
         liquid: ContinuousState,
         housing_cost: FloatND,
         income_value: FloatND,
@@ -191,6 +195,7 @@ def build_model(  # noqa: C901
         return (1.0 + return_liquid) * liquid + income_value - housing_cost
 
     def next_liquid_brute(
+        *,
         liquid: ContinuousState,
         housing_cost: FloatND,
         income_value: FloatND,
@@ -203,6 +208,7 @@ def build_model(  # noqa: C901
         )
 
     def borrowing_constraint(
+        *,
         liquid: ContinuousState,
         housing_cost: FloatND,
         income_value: FloatND,
@@ -215,6 +221,7 @@ def build_model(  # noqa: C901
         ) >= 0.0
 
     def utility(
+        *,
         consumption: ContinuousAction,
         serviced_housing: FloatND,
         gamma_c: float,
@@ -225,6 +232,7 @@ def build_model(  # noqa: C901
         return consumption_utility + alpha * jnp.log(serviced_housing)
 
     def bequest(
+        *,
         liquid: ContinuousState,
         housing: DiscreteState,
         return_liquid: float,
@@ -266,7 +274,7 @@ def build_model(  # noqa: C901
             states={
                 "liquid": liquid_grid,
                 "housing": housing_grid,
-                "income": DiscreteGrid(Income),
+                "income": DiscreteGrid(category_class=Income),
             },
             state_transitions={
                 "liquid": next_liquid_brute,
@@ -295,7 +303,7 @@ def build_model(  # noqa: C901
         states={
             "liquid": liquid_grid,
             "housing": housing_grid,
-            "income": DiscreteGrid(Income),
+            "income": DiscreteGrid(category_class=Income),
         },
         state_transitions={
             "liquid": next_liquid,

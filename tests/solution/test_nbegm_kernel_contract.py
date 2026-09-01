@@ -45,13 +45,13 @@ from tests.test_models.nbegm_medicaid_toy import (
 SAVINGS_GRID = LinSpacedGrid(start=0.0, stop=20.0, n_points=40)
 
 
-def utility_with_gamma(consumption: ContinuousAction, gamma: float) -> FloatND:
+def utility_with_gamma(*, consumption: ContinuousAction, gamma: float) -> FloatND:
     """CRRA consumption utility whose coefficient is named `gamma`."""
-    return crra_utility(consumption, gamma)
+    return crra_utility(consumption=consumption, crra=gamma)
 
 
 def next_liquid_with_interest(
-    savings: FloatND, interest: float, income: float
+    *, savings: FloatND, interest: float, income: float
 ) -> ContinuousState:
     """Liquid law of motion whose gross-return parameter is named `interest`."""
     return (1.0 + interest) * savings + income
@@ -66,7 +66,7 @@ def _build(*, alive_functions, liquid_law):
         alive_functions=alive_functions,
         liquid_law=liquid_law,
         alive_solver=resolve_solver(
-            "nbegm",
+            variant="nbegm",
             savings_grid=SAVINGS_GRID,
             envelope_arithmetic="ordinary",
         ),
@@ -147,7 +147,7 @@ def test_a_budget_node_named_for_its_own_domain_still_satisfies_the_contract() -
 
 
 def _hand_written_liquid_law(
-    savings: FloatND, return_liquid: float, income: float
+    *, savings: FloatND, return_liquid: float, income: float
 ) -> ContinuousState:
     """A user's own spelling of the conventional law, computing the same value."""
     return (1.0 + return_liquid) * savings + income
@@ -174,7 +174,7 @@ def test_a_hand_written_liquid_law_solves_the_same_problem() -> None:
 
 
 def _liquid_law_from_resources(
-    resources: FloatND, consumption: ContinuousAction, return_liquid: float
+    *, resources: FloatND, consumption: ContinuousAction, return_liquid: float
 ) -> ContinuousState:
     """The conventional law written as a displacement of cash-on-hand."""
     return (1.0 + return_liquid) * (resources - consumption)
@@ -215,7 +215,7 @@ def test_a_regime_without_a_post_decision_savings_node_is_refused() -> None:
             alive_functions={"utility": utility, **without_savings},
             liquid_law=next_liquid_from_savings,
             alive_solver=resolve_solver(
-                "nbegm",
+                variant="nbegm",
                 savings_grid=SAVINGS_GRID,
                 envelope_arithmetic="ordinary",
             ),
@@ -226,19 +226,19 @@ def test_a_regime_without_a_post_decision_savings_node_is_refused() -> None:
         )
 
 
-def _hand_written_budget(liquid: ContinuousState, subsidy: FloatND) -> FloatND:
+def _hand_written_budget(*, liquid: ContinuousState, subsidy: FloatND) -> FloatND:
     """A user's own spelling of the fixed cash-on-hand, computing the same value."""
     return liquid + subsidy
 
 
-def _rescaled_budget(liquid: ContinuousState, subsidy: FloatND) -> FloatND:
+def _rescaled_budget(*, liquid: ContinuousState, subsidy: FloatND) -> FloatND:
     """The fixed cash-on-hand scaled by `1 + 9e-6`, invisible to any probe set."""
     return (1.0 + 9e-6) * (liquid + subsidy)
 
 
 @functools.wraps(resources)
 def _wrapped_behavior_changing_budget(
-    liquid: ContinuousState, subsidy: FloatND
+    *, liquid: ContinuousState, subsidy: FloatND
 ) -> FloatND:
     """A wrapped declaration whose behavior differs from the supplied form."""
     return resources(liquid, subsidy) + 1.0

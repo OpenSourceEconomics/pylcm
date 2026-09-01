@@ -84,7 +84,7 @@ def _next_regime_probs(age: float) -> FloatND:  # noqa: ARG001
     return jnp.asarray([1.0, 0.0])
 
 
-def _next_wealth(wealth: float, consumption: float) -> float:
+def _next_wealth(*, wealth: float, consumption: float) -> float:
     return wealth - consumption
 
 
@@ -246,7 +246,7 @@ def test_phased_markov_regime_transition_sets_stochastic_flags() -> None:
     ],
 )
 def test_invalid_phased_state_combinations_are_rejected(
-    solve_side: Any, simulate_side: Any, match: str
+    *, solve_side: Any, simulate_side: Any, match: str
 ) -> None:
     """Of the states matrix, only `Phased(solve=callable, simulate=Grid)` is valid."""
     with pytest.raises(RegimeInitializationError, match=match):
@@ -272,7 +272,7 @@ class _CoverageStatus:
     "grid",
     [
         LinSpacedGrid(start=0.0, stop=20.0, n_points=4, batch_size=1),
-        DiscreteGrid(_CoverageStatus, distributed=True),
+        DiscreteGrid(category_class=_CoverageStatus, distributed=True),
     ],
 )
 def test_carried_state_grid_with_solve_only_knobs_is_rejected(grid: Any) -> None:
@@ -399,8 +399,8 @@ def test_phased_in_derived_categoricals_is_rejected() -> None:
         _build_regime(
             derived_categoricals={
                 "coverage": Phased(
-                    solve=DiscreteGrid(_CoverageStatus),
-                    simulate=DiscreteGrid(_CoverageStatus),
+                    solve=DiscreteGrid(category_class=_CoverageStatus),
+                    simulate=DiscreteGrid(category_class=_CoverageStatus),
                 )
             }
         )
@@ -455,15 +455,15 @@ def _next_regime_working(age: float) -> ScalarInt:
     return jnp.where(age < 62, _RegimeId.working, _RegimeId.dead)
 
 
-def _belief_next_wealth(wealth: float, consumption: float) -> float:
+def _belief_next_wealth(*, wealth: float, consumption: float) -> float:
     return wealth - consumption
 
 
-def _true_next_wealth(wealth: float, consumption: float) -> float:
+def _true_next_wealth(*, wealth: float, consumption: float) -> float:
     return (wealth - consumption) * 1.1
 
 
-def _consumption_leq_wealth(consumption: float, wealth: float) -> bool:
+def _consumption_leq_wealth(*, consumption: float, wealth: float) -> bool:
     return consumption <= wealth
 
 
@@ -544,11 +544,11 @@ def test_phased_law_solution_matches_bare_solve_law() -> None:
             assert bool(jnp.allclose(phased_solution[period][regime_name], expected_V))
 
 
-def _belief_drift_law(wealth: float, belief_drift: float) -> float:
+def _belief_drift_law(*, wealth: float, belief_drift: float) -> float:
     return wealth * belief_drift
 
 
-def _true_drift_law(wealth: float, true_drift: float) -> float:
+def _true_drift_law(*, wealth: float, true_drift: float) -> float:
     return wealth * true_drift
 
 
@@ -575,7 +575,7 @@ def test_phased_law_params_template_unions_both_variants() -> None:
     assert "true_drift" in template["working"]["next_wealth"]
 
 
-def _income_law(income: float, rho: float, sigma: float) -> float:
+def _income_law(*, income: float, rho: float, sigma: float) -> float:
     return rho * income + sigma
 
 
@@ -605,7 +605,7 @@ def _build_wrong_beliefs_model() -> Model:
 
 
 def _simulate_income_panel(
-    model: Model, *, rho_belief: float, rho_true: float
+    *, model: Model, rho_belief: float, rho_true: float
 ) -> np.ndarray:
     result = model.simulate(
         params={
@@ -647,7 +647,7 @@ def test_renamed_phased_law_realized_path_follows_rho_true() -> None:
     """The simulated income path follows the simulate-side persistence:
     `next_income = rho_true * income + sigma`."""
     model = _build_wrong_beliefs_model()
-    income = _simulate_income_panel(model, rho_belief=0.95, rho_true=0.8)
+    income = _simulate_income_panel(model=model, rho_belief=0.95, rho_true=0.8)
     np.testing.assert_allclose(
         income,
         [2.0, 0.8 * 2.0 + 0.5, 4.0, 0.8 * 4.0 + 0.5],
@@ -659,8 +659,8 @@ def test_renamed_phased_law_realized_path_ignores_rho_belief() -> None:
     """`rho_belief` enters only the solve side: changing it leaves the
     realized income path untouched."""
     model = _build_wrong_beliefs_model()
-    income_high = _simulate_income_panel(model, rho_belief=0.95, rho_true=0.8)
-    income_low = _simulate_income_panel(model, rho_belief=0.2, rho_true=0.8)
+    income_high = _simulate_income_panel(model=model, rho_belief=0.95, rho_true=0.8)
+    income_low = _simulate_income_panel(model=model, rho_belief=0.2, rho_true=0.8)
     np.testing.assert_allclose(income_high, income_low, atol=0)
 
 
@@ -831,7 +831,7 @@ def test_phased_regime_transition_solution_matches_bare_solve_variant() -> None:
             assert bool(jnp.allclose(phased_solution[period][regime_name], expected_V))
 
 
-def _retire_when_pension_rich(pension_wealth: float, age: float) -> ScalarInt:
+def _retire_when_pension_rich(*, pension_wealth: float, age: float) -> ScalarInt:
     return jnp.where(
         (pension_wealth > 10.0) | (age >= 62), _RegimeId.dead, _RegimeId.working
     )
@@ -900,11 +900,13 @@ def test_model_builds_when_a_transition_reads_a_phased_function():
         working: ScalarInt
         dead: ScalarInt
 
-    def solve_adjustment(wealth: ScalarFloat, solve_rate: ScalarFloat) -> ScalarFloat:
+    def solve_adjustment(
+        *, wealth: ScalarFloat, solve_rate: ScalarFloat
+    ) -> ScalarFloat:
         return wealth * solve_rate
 
     def simulate_adjustment(
-        wealth: ScalarFloat, simulate_rate: ScalarFloat
+        *, wealth: ScalarFloat, simulate_rate: ScalarFloat
     ) -> ScalarFloat:
         return wealth * simulate_rate
 

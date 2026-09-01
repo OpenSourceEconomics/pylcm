@@ -50,7 +50,7 @@ class WorkChoice:
 
 
 def utility_alive(
-    consumption: ContinuousAction, work: DiscreteAction, kappa: float
+    *, consumption: ContinuousAction, work: DiscreteAction, kappa: float
 ) -> FloatND:
     return jnp.log(consumption) - kappa * work
 
@@ -60,6 +60,7 @@ def utility_done(wealth: ContinuousState) -> FloatND:
 
 
 def next_wealth(
+    *,
     wealth: ContinuousState,
     consumption: ContinuousAction,
     work: DiscreteAction,
@@ -68,7 +69,9 @@ def next_wealth(
     return wealth - consumption + wage * work
 
 
-def budget_constraint(consumption: ContinuousAction, wealth: ContinuousState) -> BoolND:
+def budget_constraint(
+    *, consumption: ContinuousAction, wealth: ContinuousState
+) -> BoolND:
     return consumption <= wealth
 
 
@@ -81,7 +84,7 @@ alive = UserRegime(
     states={"wealth": WEALTH_GRID},
     state_transitions={"wealth": next_wealth},
     actions={
-        "work": DiscreteGrid(WorkChoice),
+        "work": DiscreteGrid(category_class=WorkChoice),
         "consumption": CONSUMPTION_GRID,
     },
     constraints={"budget_constraint": budget_constraint},

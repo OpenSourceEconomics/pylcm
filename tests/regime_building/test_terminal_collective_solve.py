@@ -36,13 +36,13 @@ class Work:
     work: ScalarInt  # code 1
 
 
-def _utility_f(wage: FloatND, work: DiscreteAction) -> FloatND:
+def _utility_f(*, wage: FloatND, work: DiscreteAction) -> FloatND:
     """Wife: values her own leisure highly, also sees household consumption."""
     consumption = wage * work
     return consumption + 30.0 * (1.0 - work)
 
 
-def _utility_m(wage: FloatND, work: DiscreteAction) -> FloatND:
+def _utility_m(*, wage: FloatND, work: DiscreteAction) -> FloatND:
     """Husband: values household consumption, indifferent to leisure."""
     consumption = wage * work
     return 2.0 * consumption
@@ -52,7 +52,7 @@ def test_terminal_collective_regime_solves_with_stakeholder_axis():
     regime = Regime(
         transition=None,  # terminal
         states={"wage": LinSpacedGrid(start=10.0, stop=40.0, n_points=2)},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
         },

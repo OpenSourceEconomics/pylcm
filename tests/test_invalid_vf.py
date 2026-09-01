@@ -30,6 +30,7 @@ class RegimeId:
 @pytest.fixture
 def regimes_and_ages(n_periods: int) -> tuple[dict[str, UserRegime], AgeGrid]:
     def utility(
+        *,
         consumption: ContinuousAction,
         wealth: ContinuousState,  # noqa: ARG001
         health: ContinuousState,  # noqa: ARG001
@@ -37,6 +38,7 @@ def regimes_and_ages(n_periods: int) -> tuple[dict[str, UserRegime], AgeGrid]:
         return jnp.log(consumption)
 
     def next_wealth(
+        *,
         wealth: ContinuousState,
         consumption: ContinuousAction,
     ) -> ContinuousState:
@@ -45,13 +47,13 @@ def regimes_and_ages(n_periods: int) -> tuple[dict[str, UserRegime], AgeGrid]:
     def next_health(health: ContinuousState) -> ContinuousState:
         return health
 
-    def next_regime(period: int, n_periods: int) -> ScalarInt:
+    def next_regime(*, period: int, n_periods: int) -> ScalarInt:
         transition_into_terminal = period == (n_periods - 2)
         # 0 = non_terminal, 1 = terminal (based on dict order)
         return jnp.where(transition_into_terminal, 1, 0)
 
     def borrowing_constraint(
-        consumption: ContinuousAction, wealth: ContinuousState
+        *, consumption: ContinuousAction, wealth: ContinuousState
     ) -> BoolND:
         return consumption <= wealth
 
@@ -97,6 +99,7 @@ def nan_value_model(
     regimes, ages = regimes_and_ages
 
     def invalid_utility(
+        *,
         consumption: ContinuousAction,
         wealth: ContinuousState,
         health: ContinuousState,
@@ -128,6 +131,7 @@ def inf_value_model(
     regimes, ages = regimes_and_ages
 
     def invalid_utility(
+        *,
         consumption: ContinuousAction,
         wealth: ContinuousState,
         health: ContinuousState,
@@ -164,14 +168,14 @@ def params(n_periods: int) -> UserParams:
 
 
 def test_solve_model_with_inf_value_function_does_not_raise_error(
-    inf_value_model: Model, params: UserParams
+    *, inf_value_model: Model, params: UserParams
 ) -> None:
     # This should not raise an error
     inf_value_model.solve(log_level="debug", params=params)
 
 
 def test_simulate_model_with_nan_value_function_array_raises_error(
-    nan_value_model: Model, params: UserParams
+    *, nan_value_model: Model, params: UserParams
 ) -> None:
     initial_conditions = {
         "wealth": jnp.array([1.5, 2.0]),
@@ -190,7 +194,7 @@ def test_simulate_model_with_nan_value_function_array_raises_error(
 
 
 def test_simulate_model_with_inf_value_function_array_does_not_raise_error(
-    inf_value_model: Model, params: UserParams
+    *, inf_value_model: Model, params: UserParams
 ) -> None:
     initial_conditions = {
         "wealth": jnp.array([1.5, 2.0]),
@@ -211,14 +215,14 @@ def test_simulate_model_with_inf_value_function_array_does_not_raise_error(
 
 
 def test_nan_error_includes_regime_name(
-    nan_value_model: Model, params: UserParams
+    *, nan_value_model: Model, params: UserParams
 ) -> None:
     with pytest.raises(InvalidValueFunctionError, match="non_terminal"):
         nan_value_model.solve(log_level="debug", params=params)
 
 
 def test_nan_error_includes_nan_count(
-    nan_value_model: Model, params: UserParams
+    *, nan_value_model: Model, params: UserParams
 ) -> None:
     with pytest.raises(InvalidValueFunctionError, match=r"\d+ of \d+ values are NaN"):
         nan_value_model.solve(log_level="debug", params=params)

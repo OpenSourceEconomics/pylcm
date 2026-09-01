@@ -51,6 +51,7 @@ class RegimeId:
 
 
 def utility_discrete(
+    *,
     consumption: DiscreteAction,
     is_working: BoolND,
     disutility_of_work: float,
@@ -58,10 +59,15 @@ def utility_discrete(
     # In the discrete model, consumption is defined as "low" or "high". This can be
     # translated to the levels 1 and 2.
     consumption_level = 1 + (consumption == DiscreteConsumption.high)
-    return utility(consumption_level, is_working, disutility_of_work)
+    return utility(
+        consumption=consumption_level,
+        is_working=is_working,
+        disutility_of_work=disutility_of_work,
+    )
 
 
 def next_wealth_discrete(
+    *,
     wealth: DiscreteState,
     consumption: DiscreteAction,
     labor_income: FloatND,
@@ -69,13 +75,18 @@ def next_wealth_discrete(
 ) -> DiscreteState:
     # For discrete state variables, we need to assure that the next state is also a
     # valid state, i.e., it is a member of the discrete grid.
-    continuous = next_wealth(wealth, consumption, labor_income, interest_rate)
+    continuous = next_wealth(
+        wealth=wealth,
+        consumption=consumption,
+        labor_income=labor_income,
+        interest_rate=interest_rate,
+    )
     return jnp.clip(
         jnp.rint(continuous), DiscreteWealth.low, DiscreteWealth.high
     ).astype(jnp.int32)
 
 
-def next_regime(age: float, final_age_alive: float) -> ScalarInt:
+def next_regime(*, age: float, final_age_alive: float) -> ScalarInt:
     return jnp.where(
         age >= final_age_alive,
         RegimeId.dead,
@@ -83,7 +94,9 @@ def next_regime(age: float, final_age_alive: float) -> ScalarInt:
     )
 
 
-def borrowing_constraint(consumption: DiscreteAction, wealth: DiscreteState) -> BoolND:
+def borrowing_constraint(
+    *, consumption: DiscreteAction, wealth: DiscreteState
+) -> BoolND:
     return consumption <= wealth
 
 
@@ -92,11 +105,11 @@ _DEFAULT_LAST_ACTIVE_AGE = 50 + (_DEFAULT_N_PERIODS - 2) * 10
 
 working_life = UserRegime(
     actions={
-        "labor_supply": DiscreteGrid(LaborSupply),
-        "consumption": DiscreteGrid(DiscreteConsumption),
+        "labor_supply": DiscreteGrid(category_class=LaborSupply),
+        "consumption": DiscreteGrid(category_class=DiscreteConsumption),
     },
     states={
-        "wealth": DiscreteGrid(DiscreteWealth),
+        "wealth": DiscreteGrid(category_class=DiscreteWealth),
     },
     state_transitions={
         "wealth": next_wealth_discrete,
@@ -137,6 +150,7 @@ def get_model(n_periods: int) -> Model:
 
 
 def get_params(
+    *,
     n_periods: int,
     discount_factor: float = 0.95,
     disutility_of_work: float = 0.5,

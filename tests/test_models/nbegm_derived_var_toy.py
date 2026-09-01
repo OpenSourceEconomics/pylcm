@@ -43,6 +43,7 @@ class ConsumerKind:
 
 
 def gross_income(
+    *,
     liquid: ContinuousState,
     kind: DiscreteState,
     base_income: FloatND,
@@ -56,12 +57,12 @@ def gross_income(
     variable="gross_income",
     breakpoints=(lcm.affine_breakpoint(threshold="tax_kink", kind="continuous_kink"),),
 )
-def tax(gross_income: FloatND, tax_rate: float, tax_kink: float) -> FloatND:
+def tax(*, gross_income: FloatND, tax_rate: float, tax_kink: float) -> FloatND:
     """Continuous tax: zero below the kink, `tax_rate` on income above it."""
     return tax_rate * jnp.maximum(gross_income - tax_kink, 0.0)
 
 
-def resources(gross_income: FloatND, tax: FloatND) -> FloatND:
+def resources(*, gross_income: FloatND, tax: FloatND) -> FloatND:
     """Cash-on-hand: pre-tax income net of the tax."""
     return gross_income - tax
 
@@ -100,7 +101,7 @@ def build_model(
         "resources": resources,
     }
     alive_solver = resolve_solver(
-        variant,
+        variant=variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
     )
     alive_functions = {**alive_functions, "savings": savings}
@@ -116,7 +117,7 @@ def build_model(
         liquid_law=liquid_law,
         alive_solver=alive_solver,
         constraints=constraints,
-        extra_states={"kind": DiscreteGrid(ConsumerKind)},
+        extra_states={"kind": DiscreteGrid(category_class=ConsumerKind)},
         extra_state_transitions={"kind": {"alive": lcm.fixed_transition("kind")}},
     )
 

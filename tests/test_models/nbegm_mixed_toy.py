@@ -32,6 +32,7 @@ from tests.test_models.nbegm_common import (
     ),
 )
 def net_transfer(
+    *,
     liquid: ContinuousState,
     subsidy_low: float,
     subsidy_high: float,
@@ -45,7 +46,7 @@ def net_transfer(
     return subsidy - tax
 
 
-def resources(liquid: ContinuousState, net_transfer: FloatND) -> FloatND:
+def resources(*, liquid: ContinuousState, net_transfer: FloatND) -> FloatND:
     """Cash-on-hand: liquid wealth plus the net transfer."""
     return liquid + net_transfer
 
@@ -68,7 +69,7 @@ def build_model(
         "savings": savings,
     }
     alive_solver = resolve_solver(
-        variant,
+        variant=variant,
         savings_grid=LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
     )
 

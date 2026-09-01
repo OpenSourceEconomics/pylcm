@@ -42,7 +42,7 @@ def _next_regime(age: float) -> ScalarInt:
     return jnp.where(age < 61, RegimeId.working, RegimeId.dead)
 
 
-def _utility(wealth: float, effort: DiscreteAction) -> FloatND:
+def _utility(*, wealth: float, effort: DiscreteAction) -> FloatND:
     return jnp.asarray(wealth) - 0.1 * effort
 
 
@@ -81,7 +81,7 @@ def _build_model(*, probabilities) -> Model:
         transition=_next_regime,
         active=lambda age: age < 64,
         states={"wealth": LinSpacedGrid(start=1.0, stop=10.0, n_points=3)},
-        actions={"effort": DiscreteGrid(Effort)},
+        actions={"effort": DiscreteGrid(category_class=Effort)},
         functions={"utility": _utility},
         joint_transitions={
             "working": {

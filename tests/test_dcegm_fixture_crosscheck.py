@@ -112,7 +112,7 @@ def test_clustered_savings_grid_resolves_excluded_low_wealth_nodes():
         ),
     ],
 )
-def test_twin_smoothed_value_matches_dcegm_reference(solver, rtol, atol, reference):
+def test_twin_smoothed_value_matches_dcegm_reference(*, solver, rtol, atol, reference):
     """pylcm's smoothed V equals the independent `dcegm` solution.
 
     Tolerances are looser for brute force (consumption-grid resolution) than for

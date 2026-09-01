@@ -37,7 +37,7 @@ pytestmark = pytest.mark.slow
 _DISCOUNT_FACTOR = 0.98
 
 
-def _bequest_utility(wealth: ContinuousState, age: float) -> FloatND:
+def _bequest_utility(*, wealth: ContinuousState, age: float) -> FloatND:
     return (age / 50.0) * jnp.log(wealth)
 
 
@@ -79,7 +79,7 @@ def test_dcegm_simulated_consumption_is_off_grid_closed_form():
     must.
     """
     model = _closed_form_model()
-    params = get_retirement_only_params(2, discount_factor=_DISCOUNT_FACTOR)
+    params = get_retirement_only_params(n_periods=2, discount_factor=_DISCOUNT_FACTOR)
 
     # Seed subjects at wealth strictly between consumption-grid nodes (the
     # consumption grid shares spacing with the wealth grid in this example).
@@ -129,9 +129,9 @@ def test_discrete_action_regime_consumption_can_leave_the_action_grid():
     """
     n_periods = 3
     model = dcegm_variants.get_full_model(
-        "dcegm", n_periods, envelope=envelope_config("mss")
+        solver="dcegm", n_periods=n_periods, envelope=envelope_config("mss")
     )
-    params = dcegm_variants.get_full_params(n_periods)
+    params = dcegm_variants.get_full_params(n_periods=n_periods)
 
     wealth_nodes = np.asarray(WEALTH_GRID.to_jax())
     off_grid_wealth = 0.5 * (wealth_nodes[5:9] + wealth_nodes[6:10])
@@ -163,13 +163,13 @@ def test_discrete_action_regime_consumption_can_leave_the_action_grid():
 
 
 def _skill_bequest_utility(
-    wealth: ContinuousState, skill: ContinuousState, age: float
+    *, wealth: ContinuousState, skill: ContinuousState, age: float
 ) -> FloatND:
     return skill * (age / 50.0) * jnp.log(wealth)
 
 
 def _skill_alive_utility(
-    consumption: ContinuousState, skill: ContinuousState
+    *, consumption: ContinuousState, skill: ContinuousState
 ) -> FloatND:
     # The zero-weight `skill` term keeps the FOC at `1/c` while satisfying the
     # every-state-is-used model validation; `skill` matters through the
@@ -224,7 +224,7 @@ def test_passive_state_regime_keeps_the_grid_consumption_path():
     re-decision across the passive axis exists.
     """
     model = _skill_model()
-    params = get_retirement_only_params(2, discount_factor=_DISCOUNT_FACTOR)
+    params = get_retirement_only_params(n_periods=2, discount_factor=_DISCOUNT_FACTOR)
 
     wealth_nodes = np.asarray(WEALTH_GRID.to_jax())
     off_grid_wealth = 0.5 * (wealth_nodes[5:9] + wealth_nodes[6:10])
@@ -292,7 +292,7 @@ def test_phase_variant_utility_keeps_the_grid_consumption_path():
         ages=AgeGrid(start=40, stop=50, step="10Y"),
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
     )
-    params = get_retirement_only_params(2, discount_factor=_DISCOUNT_FACTOR)
+    params = get_retirement_only_params(n_periods=2, discount_factor=_DISCOUNT_FACTOR)
 
     wealth_nodes = np.asarray(WEALTH_GRID.to_jax())
     off_grid_wealth = 0.5 * (wealth_nodes[5:9] + wealth_nodes[6:10])

@@ -47,7 +47,7 @@ TEST_COORDINATES_SHAPES = [
 ]
 
 
-def _make_test_data(shape, coordinates_shape, dtype):
+def _make_test_data(*, shape, coordinates_shape, dtype):
     rng = np.random.default_rng()
     x = np.arange(np.prod(shape), dtype=dtype).reshape(shape)
     c = [(size - 1) * rng.random(coordinates_shape).astype(dtype) for size in shape]
@@ -59,23 +59,25 @@ def _make_test_data(shape, coordinates_shape, dtype):
 @pytest.mark.parametrize("coordinates_shape", TEST_COORDINATES_SHAPES)
 @pytest.mark.parametrize("dtype", TEST_DTYPES)
 def test_map_coordinates_against_scipy(
-    map_coordinates, shape, coordinates_shape, dtype
+    *, map_coordinates, shape, coordinates_shape, dtype
 ):
     """Test that JAX and LCM implementations behave as scipy."""
-    x, c = _make_test_data(shape, coordinates_shape, dtype=dtype)
+    x, c = _make_test_data(
+        shape=shape, coordinates_shape=coordinates_shape, dtype=dtype
+    )
 
     x_jax = jnp.asarray(x)
     c_jax = [jnp.asarray(c_i) for c_i in c]
 
-    expected = scipy_map_coordinates(x, c)
-    got = map_coordinates(x_jax, c_jax)
+    expected = scipy_map_coordinates(input=x, coordinates=c)
+    got = map_coordinates(input=x_jax, coordinates=c_jax)
 
     assert_array_almost_equal(got, expected, decimal=DECIMAL_PRECISION)
 
 
 @pytest.mark.parametrize("map_coordinates", JAX_BASED_IMPLEMENTATIONS)
 @pytest.mark.parametrize("dtype", TEST_DTYPES)
-def test_map_coordinates_round_half_against_scipy(map_coordinates, dtype):
+def test_map_coordinates_round_half_against_scipy(*, map_coordinates, dtype):
     """Test that JAX and LCM implementations round as scipy."""
     x = np.arange(-5, 5, dtype=dtype)
     c = np.array([[0.5, 1.5, 2.5, 6.5, 8.5]])
@@ -83,8 +85,8 @@ def test_map_coordinates_round_half_against_scipy(map_coordinates, dtype):
     x_jax = jnp.asarray(x)
     c_jax = [jnp.asarray(c_i) for c_i in c]
 
-    expected = scipy_map_coordinates(x, c)
-    got = map_coordinates(x_jax, c_jax)
+    expected = scipy_map_coordinates(input=x, coordinates=c)
+    got = map_coordinates(input=x_jax, coordinates=c_jax)
 
     assert_array_almost_equal(got, expected, decimal=DECIMAL_PRECISION)
 
@@ -97,7 +99,7 @@ def test_gradients(map_coordinates):
 
     def f(step):
         coordinates = x + step
-        shifted = map_coordinates(x, [coordinates])
+        shifted = map_coordinates(input=x, coordinates=[coordinates])
         return ((x - shifted) ** 2)[border:-border].mean()
 
     # Gradient of f(step) is 2 * step

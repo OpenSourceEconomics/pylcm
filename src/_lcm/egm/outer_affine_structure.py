@@ -140,7 +140,9 @@ def certify_outer_coefficient(
     )
 
 
-def _coefficient_of(var: object, carried: Mapping[object, Fraction]) -> Fraction | None:
+def _coefficient_of(
+    *, var: object, carried: Mapping[object, Fraction]
+) -> Fraction | None:
     """Return a variable's coefficient, treating a jaxpr `Literal` as untainted.
 
     Literals are unhashable, so they cannot be dict keys at all -- and a literal
@@ -163,7 +165,7 @@ def _walk(
 
     for eqn in jaxpr.eqns:  # ty: ignore[unresolved-attribute]
         prim = eqn.primitive.name
-        operands = [_coefficient_of(var, carried) for var in eqn.invars]
+        operands = [_coefficient_of(var=var, carried=carried) for var in eqn.invars]
         if all(coefficient is None for coefficient in operands):
             # Nothing tainted flows in, so whatever this computes is a constant
             # with respect to the outer action -- however nonlinear it is.

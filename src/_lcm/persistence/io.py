@@ -33,15 +33,12 @@ def _find_project_root() -> Path | None:
     return None
 
 
-def _save_pkl(path: Path, obj: object) -> None:
+def _save_pkl(*, path: Path, obj: object) -> None:
     """Save an object to a pickle file atomically."""
-    _atomic_dump(obj, path, protocol=pickle.HIGHEST_PROTOCOL)
+    _atomic_dump(obj=obj, path=path, protocol=pickle.HIGHEST_PROTOCOL)
 
 
-def _save_h5(
-    path: Path,
-    period_to_regime_to_V_arr: PeriodToRegimeToVArr,
-) -> None:
+def _save_h5(*, path: Path, period_to_regime_to_V_arr: PeriodToRegimeToVArr) -> None:
     """Write value function arrays to an HDF5 file.
 
     Datasets are stored at `/{period}/{regime_name}/V_arr`.
@@ -76,12 +73,7 @@ def _load_h5(path: Path) -> PeriodToRegimeToVArr:
     )
 
 
-def _write_metadata(
-    snap_dir: Path,
-    *,
-    snapshot_type: str,
-    fields: list[str],
-) -> None:
+def _write_metadata(*, snap_dir: Path, snapshot_type: str, fields: list[str]) -> None:
     """Write metadata.json into a snapshot directory."""
     metadata = {
         "snapshot_type": snapshot_type,
@@ -120,7 +112,7 @@ def _write_environment_files(snap_dir: Path) -> None:
     (snap_dir / "REPRODUCE.md").write_text(reproduce_md, encoding="utf-8")
 
 
-def _snapshot_counter(entry: Path, prefix: str) -> int:
+def _snapshot_counter(*, entry: Path, prefix: str) -> int:
     """Parse the numeric counter suffix of a snapshot directory.
 
     Returns `-1` for a name that does not end in an integer, so callers can
@@ -132,17 +124,17 @@ def _snapshot_counter(entry: Path, prefix: str) -> int:
         return -1
 
 
-def _next_counter(parent_path: Path, prefix: str) -> int:
+def _next_counter(*, parent_path: Path, prefix: str) -> int:
     """Compute the next monotonic counter for snapshot directories with given prefix."""
     counters = [
         counter
         for entry in parent_path.glob(f"{prefix}_*/")
-        if (counter := _snapshot_counter(entry, prefix)) >= 0
+        if (counter := _snapshot_counter(entry=entry, prefix=prefix)) >= 0
     ]
     return max(counters, default=0) + 1
 
 
-def _enforce_retention(parent_path: Path, prefix: str, *, keep_n_latest: int) -> None:
+def _enforce_retention(*, parent_path: Path, prefix: str, keep_n_latest: int) -> None:
     """Delete oldest snapshot directories so that at most keep_n_latest remain.
 
     Directories are ordered by their parsed integer counter, not by name, so
@@ -153,15 +145,15 @@ def _enforce_retention(parent_path: Path, prefix: str, *, keep_n_latest: int) ->
         (
             entry
             for entry in parent_path.glob(f"{prefix}_*/")
-            if _snapshot_counter(entry, prefix) >= 0
+            if _snapshot_counter(entry=entry, prefix=prefix) >= 0
         ),
-        key=lambda entry: _snapshot_counter(entry, prefix),
+        key=lambda entry: _snapshot_counter(entry=entry, prefix=prefix),
     )
     for snap_dir in existing[: max(0, len(existing) - keep_n_latest)]:
         shutil.rmtree(snap_dir)
 
 
-def _atomic_dump(obj: object, path: str | Path, *, protocol: int) -> Path:
+def _atomic_dump(*, obj: object, path: str | Path, protocol: int) -> Path:
     """Serialize `obj` to `path` in an atomic (all-or-nothing) way.
 
     Args:

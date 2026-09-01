@@ -186,8 +186,8 @@ class Disposition:
 
 
 def classify(  # noqa: PLR0911
-    contract: ExecutionContract,
     *,
+    contract: ExecutionContract,
     profile: Profile,
     policy: Policy,
     precision: Precision | None = None,

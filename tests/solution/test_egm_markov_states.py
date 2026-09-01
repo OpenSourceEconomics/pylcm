@@ -95,14 +95,14 @@ class Health:
 
 
 def utility_with_health(
-    consumption: ContinuousAction, health: DiscreteState
+    *, consumption: ContinuousAction, health: DiscreteState
 ) -> FloatND:
     return jnp.log(consumption) - jnp.where(
         health == Health.bad, BAD_HEALTH_PENALTY, 0.0
     )
 
 
-def savings(wealth: FloatND, consumption: ContinuousAction) -> FloatND:
+def savings(*, wealth: FloatND, consumption: ContinuousAction) -> FloatND:
     return wealth - consumption
 
 
@@ -110,11 +110,13 @@ def inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
     return 1.0 / marginal_continuation
 
 
-def budget_constraint(consumption: ContinuousAction, wealth: ContinuousState) -> BoolND:
+def budget_constraint(
+    *, consumption: ContinuousAction, wealth: ContinuousState
+) -> BoolND:
     return consumption <= wealth
 
 
-def next_regime(age: int, final_age_alive: float) -> ScalarInt:
+def next_regime(*, age: int, final_age_alive: float) -> ScalarInt:
     return jnp.where(
         age >= final_age_alive,
         MarkovRegimeId.dead,
@@ -127,12 +129,12 @@ def next_wealth_dcegm(savings: FloatND) -> ContinuousState:
 
 
 def next_wealth_brute(
-    wealth: ContinuousState, consumption: ContinuousAction
+    *, wealth: ContinuousState, consumption: ContinuousAction
 ) -> ContinuousState:
     return wealth - consumption + LABOR_INCOME
 
 
-def health_transition(health: DiscreteState, age: int) -> FloatND:
+def health_transition(*, health: DiscreteState, age: int) -> FloatND:
     """Markov health law varying by current health and period.
 
     Health is sticky and improves with age. The row over next-period
@@ -208,7 +210,7 @@ def _same_grid_markov_model(solver: str) -> Model:
         transition=next_regime,
         active=_active,
         actions={"consumption": CONSUMPTION_GRID},
-        states={"wealth": WEALTH_GRID, "health": DiscreteGrid(Health)},
+        states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=Health)},
         state_transitions={
             "wealth": next_wealth_dcegm if is_dcegm else next_wealth_brute,
             "health": MarkovTransition(health_transition),
@@ -274,7 +276,7 @@ class CrossGridRegimeId:
     dead: ScalarInt
 
 
-def utility_early(consumption: ContinuousAction, health: DiscreteState) -> FloatND:
+def utility_early(*, consumption: ContinuousAction, health: DiscreteState) -> FloatND:
     """Utility with a three-level health penalty."""
     penalty = jnp.where(
         health == Health3.good,
@@ -305,11 +307,11 @@ def late_health_transition(health: DiscreteState) -> FloatND:
     return jnp.stack([p_good, 1.0 - p_good])
 
 
-def to_live_prob(age: int, final_age_alive: float) -> FloatND:
+def to_live_prob(*, age: int, final_age_alive: float) -> FloatND:
     return jnp.where(age >= final_age_alive, 0.0, 1.0)
 
 
-def to_dead_prob(age: int, final_age_alive: float) -> FloatND:
+def to_dead_prob(*, age: int, final_age_alive: float) -> FloatND:
     return jnp.where(age >= final_age_alive, 1.0, 0.0)
 
 
@@ -332,7 +334,7 @@ def _cross_grid_markov_model(solver: str) -> Model:
         },
         active=lambda age: age < 40 + (N_PERIODS - 1) * 10,
         actions={"consumption": CONSUMPTION_GRID},
-        states={"wealth": WEALTH_GRID, "health": DiscreteGrid(Health3)},
+        states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=Health3)},
         state_transitions={
             "wealth": next_wealth_dcegm if is_dcegm else next_wealth_brute,
             "health": {"late": MarkovTransition(remap_health_to_two)},
@@ -370,7 +372,7 @@ def _cross_grid_markov_model(solver: str) -> Model:
         },
         active=lambda age: age < 40 + (N_PERIODS - 1) * 10,
         actions={"consumption": CONSUMPTION_GRID},
-        states={"wealth": WEALTH_GRID, "health": DiscreteGrid(Health)},
+        states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=Health)},
         state_transitions={
             "wealth": next_wealth_dcegm if is_dcegm else next_wealth_brute,
             "health": {"late": MarkovTransition(late_health_transition)},
@@ -438,7 +440,7 @@ BASE_INCOME = 5.0
 
 
 def utility_with_health_only(
-    consumption: ContinuousAction, health: DiscreteState
+    *, consumption: ContinuousAction, health: DiscreteState
 ) -> FloatND:
     return jnp.log(consumption) - jnp.where(
         health == Health.bad, BAD_HEALTH_PENALTY, 0.0
@@ -446,12 +448,13 @@ def utility_with_health_only(
 
 
 def next_wealth_joint_dcegm(
-    savings: FloatND, income: ContinuousState
+    *, savings: FloatND, income: ContinuousState
 ) -> ContinuousState:
     return savings + BASE_INCOME + jnp.exp(income)
 
 
 def next_wealth_joint_brute(
+    *,
     wealth: ContinuousState,
     consumption: ContinuousAction,
     income: ContinuousState,
@@ -482,7 +485,7 @@ def _joint_process_markov_model(solver: str) -> Model:
         states={
             "wealth": WEALTH_GRID,
             "income": RouwenhorstAR1Process(n_points=N_INCOME_NODES),
-            "health": DiscreteGrid(Health),
+            "health": DiscreteGrid(category_class=Health),
         },
         state_transitions={
             "wealth": next_wealth_joint_dcegm if is_dcegm else next_wealth_joint_brute,
@@ -569,19 +572,19 @@ def income_transfer(savings: FloatND) -> FloatND:
 
 
 def income_transfer_brute(
-    wealth: ContinuousState, consumption: ContinuousAction
+    *, wealth: ContinuousState, consumption: ContinuousAction
 ) -> FloatND:
     return jnp.maximum(0.0, INCOME_FLOOR - (wealth - consumption + LABOR_INCOME))
 
 
 def next_wealth_floor_dcegm(
-    savings: FloatND, income_transfer: FloatND
+    *, savings: FloatND, income_transfer: FloatND
 ) -> ContinuousState:
     return savings + LABOR_INCOME + income_transfer
 
 
 def next_wealth_floor_brute(
-    wealth: ContinuousState, consumption: ContinuousAction, income_transfer: FloatND
+    *, wealth: ContinuousState, consumption: ContinuousAction, income_transfer: FloatND
 ) -> ContinuousState:
     return wealth - consumption + LABOR_INCOME + income_transfer
 
@@ -607,7 +610,7 @@ def _point_mass_floor_model(solver: str) -> Model:
         transition=next_regime,
         active=_active,
         actions={"consumption": CONSUMPTION_GRID},
-        states={"wealth": WEALTH_GRID, "health": DiscreteGrid(Health)},
+        states={"wealth": WEALTH_GRID, "health": DiscreteGrid(category_class=Health)},
         state_transitions={
             "wealth": next_wealth_floor_dcegm if is_dcegm else next_wealth_floor_brute,
             "health": MarkovTransition(point_mass_health_transition),

@@ -66,7 +66,7 @@ def test_regime_weights_keep_the_values_they_were_declared_with():
     declared_weights = {"f": 0.25, "m": 0.75}
     regime = Regime(
         transition=None,
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _wife_payoff, "m": _husband_payoff},
@@ -114,7 +114,7 @@ def test_saved_collective_result_lacking_stakeholder_metadata_names_the_field(
 def test_gather_at_the_household_argmax_over_no_action_axis_keeps_every_cell():
     """With no action axis to reduce, every cell's value is its own gathered value."""
     q = jnp.asarray([[1.0, 2.0], [3.0, 4.0]])
-    argmax_flat, _ = argmax_and_max(q, axis=(), initial=-jnp.inf)
+    argmax_flat, _ = argmax_and_max(a=q, axis=(), initial=-jnp.inf)
 
     gathered = _gather_along_actions(q=q, argmax_flat=argmax_flat, action_axes=())
 
@@ -204,7 +204,7 @@ def _make_singleton_target_dissolution_gate_regimes() -> MappingProxyType[str, R
         active=lambda age: age < 1,
         states={"wage": GATE_WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _wage_utility},
     )
     target = Regime(
@@ -242,7 +242,7 @@ def _identity_wage(wage: ContinuousState) -> ContinuousState:
     return wage
 
 
-def _wage_utility(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _wage_utility(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     """Source payoff: the wage when working, nothing otherwise."""
     return wage * work
 

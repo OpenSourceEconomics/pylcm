@@ -42,7 +42,7 @@ def test_flat_continuation_publishes_the_corner_envelope_not_an_all_nan_row():
         next_liquid_grid=LIQUID_GRID,
         savings_grid=SAVINGS_GRID,
         discount_factor=DISCOUNT_FACTOR,
-        preferences=crra_preferences(CRRA),
+        preferences=crra_preferences(crra=CRRA),
         next_liquid=(GROSS_RETURN) * SAVINGS_GRID + INCOME,
         marginal_return=jnp.full_like(SAVINGS_GRID, GROSS_RETURN),
         coh_slopes=jnp.asarray([0.0, 1.0]),

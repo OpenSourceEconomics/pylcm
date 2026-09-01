@@ -26,6 +26,7 @@ pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_R
 
 
 def _exact_line_margin(
+    *,
     a: tuple[float, float, float, float],
     b: tuple[float, float, float, float],
     x: float,
@@ -48,6 +49,7 @@ def _exact_line_margin(
 
 
 def _sign_at(
+    *,
     a: tuple[float, float, float, float],
     b: tuple[float, float, float, float],
     x: float,
@@ -76,16 +78,16 @@ F3_B = (9.5, 10.5, 4.75, 5.25)
 
 def test_exact_node_aligned_crossing_is_a_certified_tie():
     """Two links meeting exactly at a node have margin sign 0 there."""
-    assert _sign_at(F3_A, F3_B, 10.0) == 0
+    assert _sign_at(a=F3_A, b=F3_B, x=10.0) == 0
 
 
 @pytest.mark.parametrize(("x_query", "expected"), [(9.9, 1), (10.1, -1)])
 def test_margin_sign_matches_the_exact_rational_sign_around_the_crossing(
-    x_query: float, expected: int
+    *, x_query: float, expected: int
 ):
     """The certified sign matches the exact rational sign on both sides."""
-    assert _exact_line_margin(F3_A, F3_B, x_query) == expected
-    assert _sign_at(F3_A, F3_B, x_query) == expected
+    assert _exact_line_margin(a=F3_A, b=F3_B, x=x_query) == expected
+    assert _sign_at(a=F3_A, b=F3_B, x=x_query) == expected
 
 
 def _as_represented(x: float) -> float:
@@ -111,8 +113,8 @@ def test_strict_dominance_survives_a_large_common_value_level():
     b = (0.0, 1.0, level + 2.0 * gap, level + 3.0 * gap)
     # The gap must survive rounding, or the witness is vacuous.
     assert _as_represented(a[2]) != _as_represented(b[2])
-    assert _exact_line_margin(a, b, 0.5) == -1
-    assert _sign_at(a, b, 0.5) == -1
+    assert _exact_line_margin(a=a, b=b, x=0.5) == -1
+    assert _sign_at(a=a, b=b, x=0.5) == -1
 
 
 def test_margin_sign_is_invariant_to_a_common_additive_shift():
@@ -123,7 +125,7 @@ def test_margin_sign_is_invariant_to_a_common_additive_shift():
     shifted_a = (a[0], a[1], a[2] + shift, a[3] + shift)
     shifted_b = (b[0], b[1], b[2] + shift, b[3] + shift)
     assert _as_represented(shifted_a[2]) != _as_represented(shifted_b[2])
-    assert _sign_at(a, b, 0.5) == _sign_at(shifted_a, shifted_b, 0.5) == -1
+    assert _sign_at(a=a, b=b, x=0.5) == _sign_at(a=shifted_a, b=shifted_b, x=0.5) == -1
 
 
 def test_links_that_round_to_the_same_representation_are_a_certified_tie():
@@ -133,18 +135,18 @@ def test_links_that_round_to_the_same_representation_are_a_certified_tie():
     a = (0.0, 1.0, level, level)
     b = (0.0, 1.0, level + below_one_ulp, level + below_one_ulp)
     assert _as_represented(a[2]) == _as_represented(b[2])
-    assert _sign_at(a, b, 0.5) == 0
+    assert _sign_at(a=a, b=b, x=0.5) == 0
 
 
 def test_identical_links_are_a_certified_tie():
     """A link compared with itself has an exactly zero margin."""
-    assert _sign_at(F3_A, F3_A, 9.5) == 0
+    assert _sign_at(a=F3_A, b=F3_A, x=9.5) == 0
 
 
 def test_non_finite_input_is_unresolved_rather_than_a_silent_sign():
     """A dead (NaN) endpoint cannot certify a sign."""
     dead = (9.0, 10.0, float("nan"), 5.0)
-    assert _sign_at(dead, F3_B, 9.75) == UNRESOLVED_SIGN
+    assert _sign_at(a=dead, b=F3_B, x=9.75) == UNRESOLVED_SIGN
 
 
 def _flushed_distance_witness() -> tuple[
@@ -188,8 +190,8 @@ def test_a_distance_in_the_subnormal_band_yields_the_exact_sign():
     a, b, query = _flushed_distance_witness()
     # The lines are strictly ordered, so a tie or an abstention would both be
     # wrong — this is a decidable contest, not a near one.
-    assert _exact_line_margin(a, b, query) == 1
-    assert _sign_at(a, b, query) == _exact_line_margin(a, b, query)
+    assert _exact_line_margin(a=a, b=b, x=query) == 1
+    assert _sign_at(a=a, b=b, x=query) == _exact_line_margin(a=a, b=b, x=query)
 
 
 def _flushed_endpoint_product_witness() -> tuple[
@@ -221,8 +223,8 @@ def test_a_margin_carried_by_a_flushed_product_is_not_certified_as_a_tie():
     a, b, query = _flushed_endpoint_product_witness()
     # `A` is strictly below `B` at the query, so a tie is not one of the honest
     # answers — the certificate either reproduces the sign or declines to.
-    assert _exact_line_margin(a, b, query) == -1
-    assert _sign_at(a, b, query) in (-1, UNRESOLVED_SIGN, BELOW_RESOLUTION_SIGN)
+    assert _exact_line_margin(a=a, b=b, x=query) == -1
+    assert _sign_at(a=a, b=b, x=query) in (-1, UNRESOLVED_SIGN, BELOW_RESOLUTION_SIGN)
 
 
 def _crossing_links_read_beside_their_crossing() -> tuple[
@@ -254,8 +256,8 @@ def test_links_whose_products_differ_below_resolution_are_not_certified_equal():
     tie. Strictly ordered links must not be given it.
     """
     a, b, query = _crossing_links_read_beside_their_crossing()
-    assert _exact_line_margin(a, b, query) == -1
-    assert _sign_at(a, b, query) in (-1, UNRESOLVED_SIGN, BELOW_RESOLUTION_SIGN)
+    assert _exact_line_margin(a=a, b=b, x=query) == -1
+    assert _sign_at(a=a, b=b, x=query) in (-1, UNRESOLVED_SIGN, BELOW_RESOLUTION_SIGN)
 
 
 def test_certified_sign_matches_the_rational_oracle_on_randomized_links():
@@ -272,11 +274,11 @@ def test_certified_sign_matches_the_rational_oracle_on_randomized_links():
         a = (a_x0, a_x1, float(raw[4]), float(raw[4]) + 0.5)
         b = (b_x0, b_x1, float(raw[0]), float(raw[2]) - 0.25)
         x_query = float(raw[3])
-        got = _sign_at(a, b, x_query)
+        got = _sign_at(a=a, b=b, x=x_query)
         if got == UNRESOLVED_SIGN:
             unresolved += 1
             continue
-        assert got == _exact_line_margin(a, b, x_query)
+        assert got == _exact_line_margin(a=a, b=b, x=x_query)
     assert unresolved == 0
 
 

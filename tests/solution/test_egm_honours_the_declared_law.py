@@ -42,6 +42,7 @@ _FIXED_COST = 0.5
 
 
 def next_wealth_net_of_a_fixed_cost(
+    *,
     savings: FloatND,
     return_liquid: float,
     retirement_income: float,

@@ -36,7 +36,11 @@ def test_kink_aware_interp_returns_the_otherwise_side_at_the_exact_limit():
     limit = 8.0
     at_limit = float(
         _kink_aware_interp(
-            jnp.asarray([limit]), grid, values, limit, equality_owner="otherwise"
+            query=jnp.asarray([limit]),
+            grid=grid,
+            values=values,
+            limit=limit,
+            equality_owner="otherwise",
         )[0]
     )
     np.testing.assert_allclose(at_limit, 0.0, atol=1e-9)
@@ -49,7 +53,11 @@ def test_kink_aware_interp_returns_the_when_side_at_the_exact_limit():
     limit = 8.0
     at_limit = float(
         _kink_aware_interp(
-            jnp.asarray([limit]), grid, values, limit, equality_owner="when"
+            query=jnp.asarray([limit]),
+            grid=grid,
+            values=values,
+            limit=limit,
+            equality_owner="when",
         )[0]
     )
     np.testing.assert_allclose(at_limit, 10.0, atol=1e-9)
@@ -82,7 +90,7 @@ def test_case_step_matches_a_dense_brute_through_a_value_jump():
         next_liquid_grid=liquid_grid,
         savings_grid=savings_grid,
         discount_factor=beta,
-        preferences=crra_preferences(crra),
+        preferences=crra_preferences(crra=crra),
         next_liquid=(1.0 + return_liquid) * savings_grid + income,
         marginal_return=jnp.full_like(savings_grid, 1.0 + return_liquid),
         subsidy=subsidy,
@@ -115,7 +123,7 @@ def test_case_step_matches_a_dense_brute_through_a_value_jump():
     ],
 )
 def test_direct_route_offers_both_declared_savings_endpoints(
-    savings_grid, next_value, expected_savings
+    *, savings_grid, next_value, expected_savings
 ):
     """A direct route admits both finite endpoints of its savings grid."""
     liquid = jnp.linspace(20.0, 30.0, 20)
@@ -127,7 +135,7 @@ def test_direct_route_offers_both_declared_savings_endpoints(
         next_liquid_grid=savings,
         savings_grid=savings,
         discount_factor=0.95,
-        preferences=crra_preferences(2.0),
+        preferences=crra_preferences(crra=2.0),
         next_liquid=savings,
         marginal_return=jnp.ones_like(savings),
         subsidy=0.0,

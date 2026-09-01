@@ -48,7 +48,7 @@ def _utility(consumption: float) -> FloatND:
     return jnp.log(consumption)
 
 
-def _consumption_leq_wealth(consumption: float, wealth: float) -> bool:
+def _consumption_leq_wealth(*, consumption: float, wealth: float) -> bool:
     return consumption <= wealth
 
 

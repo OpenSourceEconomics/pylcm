@@ -319,7 +319,7 @@ def _make_regimes(*, carrying_fallback: bool) -> dict[str, Regime]:
                 "wage": fixed_transition("wage"),
                 "career": _next_career,
             },
-            actions={"work": DiscreteGrid(Work)},
+            actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _utility_single_f_with_career},
         )
     else:
@@ -329,7 +329,7 @@ def _make_regimes(*, carrying_fallback: bool) -> dict[str, Regime]:
             active=lambda age: (age >= 1) & (age < 2),
             states={"wage": _WAGE},
             state_transitions={"wage": fixed_transition("wage")},
-            actions={"work": DiscreteGrid(Work)},
+            actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _utility_single_f},
         )
 
@@ -357,7 +357,7 @@ def _make_regimes(*, carrying_fallback: bool) -> dict[str, Regime]:
         active=lambda age: age < 1,
         states={"wage": _WAGE},
         state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _utility_married_f, "m": _utility_married_m}
@@ -368,7 +368,7 @@ def _make_regimes(*, carrying_fallback: bool) -> dict[str, Regime]:
         transition=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _utility_married_f, "m": _utility_married_m}
@@ -380,7 +380,7 @@ def _make_regimes(*, carrying_fallback: bool) -> dict[str, Regime]:
         active=lambda age: (age >= 1) & (age < 2),
         states={"wage": _WAGE},
         state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility_single_m},
     )
     single_terminal = Regime(
@@ -429,23 +429,23 @@ def _next_career(career: FloatND) -> FloatND:
     return career + 1.0
 
 
-def _utility_married_f(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _utility_married_f(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     """Wife's payoff while married: she values her leisure and the wage."""
     return 3.0 * (1.0 - work) + 2.0 * wage * work
 
 
-def _utility_married_m(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _utility_married_m(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     """Husband's payoff while married: he values household consumption."""
     return 0.5 * (1.0 - work) + wage * work
 
 
-def _utility_single_f(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _utility_single_f(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     """Wife's payoff in her own regime."""
     return 1.5 * wage * work
 
 
 def _utility_single_f_with_career(
-    wage: ContinuousState, work: DiscreteAction, career: FloatND
+    *, wage: ContinuousState, work: DiscreteAction, career: FloatND
 ) -> FloatND:
     """Wife's payoff in her own regime, reading her career at a zero weight.
 
@@ -456,7 +456,7 @@ def _utility_single_f_with_career(
     return 1.5 * wage * work + 0.0 * career
 
 
-def _utility_single_m(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _utility_single_m(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     """Husband's payoff in his own regime."""
     return 1.0 * wage * work
 

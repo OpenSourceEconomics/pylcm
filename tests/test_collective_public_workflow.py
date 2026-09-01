@@ -63,12 +63,12 @@ def _make_model(*, n_subjects: int | None) -> Model:
     )
 
 
-def _leaf_paths(node: object, prefix: tuple[str, ...] = ()) -> dict[str, object]:
+def _leaf_paths(*, node: object, prefix: tuple[str, ...] = ()) -> dict[str, object]:
     """Flatten a nested template to `regime__function__parameter` leaf paths."""
     if isinstance(node, dict):
         flattened: dict[str, object] = {}
         for key, value in node.items():
-            flattened |= _leaf_paths(value, (*prefix, key))
+            flattened |= _leaf_paths(node=value, prefix=(*prefix, key))
         return flattened
     return {"__".join(prefix): node}
 
@@ -116,13 +116,13 @@ def test_the_template_asks_for_exactly_the_parameters_the_model_consumes():
     """The template's leaves are the model's parameters — no more, no fewer."""
     template = _make_model(n_subjects=None).get_params_template()
 
-    assert frozenset(_leaf_paths(template)) == _EXPECTED_TEMPLATE_LEAVES
+    assert frozenset(_leaf_paths(node=template)) == _EXPECTED_TEMPLATE_LEAVES
 
 
 def test_every_template_leaf_is_a_parameter_this_test_can_name():
     """A leaf whose name this test cannot fill would make the fill silently partial."""
     template = _make_model(n_subjects=None).get_params_template()
-    leaf_names = {path.rsplit("__", 1)[-1] for path in _leaf_paths(template)}
+    leaf_names = {path.rsplit("__", 1)[-1] for path in _leaf_paths(node=template)}
 
     assert leaf_names <= set(_VALUES)
 

@@ -48,11 +48,11 @@ def _retired_utility(wealth: ContinuousState) -> FloatND:
 
 
 def _build_tiny_model(*, enable_jit: bool, n_subjects: int):
-    def utility(consumption: ContinuousAction, wealth: ContinuousState) -> FloatND:
+    def utility(*, consumption: ContinuousAction, wealth: ContinuousState) -> FloatND:
         return jnp.log(consumption + wealth)
 
     def next_wealth(
-        wealth: ContinuousState, consumption: ContinuousAction
+        *, wealth: ContinuousState, consumption: ContinuousAction
     ) -> ContinuousState:
         return wealth - consumption
 
@@ -107,7 +107,7 @@ def solved(model_and_params):
 # -- save_solution / load_solution ---------------------------------------------------
 
 
-def test_save_and_load_solution_roundtrip(tmp_path, solved):
+def test_save_and_load_solution_roundtrip(*, tmp_path, solved):
     path = tmp_path / "solution.h5"
     save_solution(period_to_regime_to_V_arr=solved, path=path)
 
@@ -122,7 +122,7 @@ def test_save_and_load_solution_roundtrip(tmp_path, solved):
             )
 
 
-def test_save_solution_missing_parent_dir(tmp_path, solved):
+def test_save_solution_missing_parent_dir(*, tmp_path, solved):
     path = tmp_path / "nonexistent" / "solution.h5"
     with pytest.raises(FileNotFoundError):
         save_solution(period_to_regime_to_V_arr=solved, path=path)
@@ -131,7 +131,7 @@ def test_save_solution_missing_parent_dir(tmp_path, solved):
 # -- debug snapshots ------------------------------------------------------------------
 
 
-def test_solve_debug_persists_snapshot(tmp_path, model_and_params):
+def test_solve_debug_persists_snapshot(*, tmp_path, model_and_params):
     model, params = model_and_params
     period_to_regime_to_V_arr = model.solve(
         params=params, log_level="debug", log_path=tmp_path
@@ -151,7 +151,7 @@ def test_solve_debug_persists_snapshot(tmp_path, model_and_params):
             )
 
 
-def test_simulate_debug_persists_snapshot(tmp_path, model_and_params):
+def test_simulate_debug_persists_snapshot(*, tmp_path, model_and_params):
     model, params = model_and_params
     period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
 
@@ -166,12 +166,12 @@ def test_simulate_debug_persists_snapshot(tmp_path, model_and_params):
     dirs = sorted(tmp_path.glob("simulate_snapshot_*/"))
     assert len(dirs) == 1
 
-    snapshot = load_snapshot(dirs[0])
+    snapshot = load_snapshot(path=dirs[0])
     assert isinstance(snapshot, SimulateSnapshot)
     assert snapshot.result is not None
 
 
-def test_simulate_with_solve_debug_persists_snapshot(tmp_path, model_and_params):
+def test_simulate_with_solve_debug_persists_snapshot(*, tmp_path, model_and_params):
     model, params = model_and_params
     model.simulate(
         params=params,
@@ -184,7 +184,7 @@ def test_simulate_with_solve_debug_persists_snapshot(tmp_path, model_and_params)
     dirs = sorted(tmp_path.glob("simulate_snapshot_*/"))
     assert len(dirs) == 1
 
-    snapshot = load_snapshot(dirs[0])
+    snapshot = load_snapshot(path=dirs[0])
     assert isinstance(snapshot, SimulateSnapshot)
     assert snapshot.period_to_regime_to_V_arr is not None
     assert snapshot.result is not None
@@ -209,19 +209,19 @@ def test_simulate_debug_persists_snapshot_with_aot_compiled_regimes(tmp_path):
 
     dirs = sorted(tmp_path.glob("simulate_snapshot_*/"))
     assert len(dirs) == 1
-    snapshot = load_snapshot(dirs[0])
+    snapshot = load_snapshot(path=dirs[0])
     assert isinstance(snapshot, SimulateSnapshot)
     assert snapshot.result is not None
 
 
-def test_solve_no_persistence_when_not_debug(tmp_path, model_and_params):
+def test_solve_no_persistence_when_not_debug(*, tmp_path, model_and_params):
     model, params = model_and_params
     model.solve(params=params, log_level="progress", log_path=tmp_path)
 
     assert len(list(tmp_path.iterdir())) == 0
 
 
-def test_simulate_no_persistence_when_not_debug(tmp_path, model_and_params):
+def test_simulate_no_persistence_when_not_debug(*, tmp_path, model_and_params):
     model, params = model_and_params
     period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
 
@@ -242,7 +242,7 @@ def test_debug_without_log_path_solves(model_and_params):
     model.solve(params=params, log_level="debug")
 
 
-def test_log_keep_n_latest_deletes_old_snapshots(tmp_path, model_and_params):
+def test_log_keep_n_latest_deletes_old_snapshots(*, tmp_path, model_and_params):
     model, params = model_and_params
 
     for _ in range(5):
@@ -257,7 +257,7 @@ def test_log_keep_n_latest_deletes_old_snapshots(tmp_path, model_and_params):
     assert dirs[2].name == "solve_snapshot_005"
 
 
-def test_snapshot_contains_environment_files(tmp_path, model_and_params):
+def test_snapshot_contains_environment_files(*, tmp_path, model_and_params):
     model, params = model_and_params
     model.solve(params=params, log_level="debug", log_path=tmp_path)
 
@@ -277,7 +277,7 @@ def test_snapshot_contains_environment_files(tmp_path, model_and_params):
     assert "pixi install --frozen" in reproduce
 
 
-def test_snapshot_contains_pixi_lock_and_pyproject(tmp_path, model_and_params):
+def test_snapshot_contains_pixi_lock_and_pyproject(*, tmp_path, model_and_params):
     model, params = model_and_params
     model.solve(params=params, log_level="debug", log_path=tmp_path)
 
@@ -287,7 +287,7 @@ def test_snapshot_contains_pixi_lock_and_pyproject(tmp_path, model_and_params):
     assert (snap_dir / "pixi.lock").exists()
 
 
-def test_snapshot_contains_h5_arrays(tmp_path, model_and_params):
+def test_snapshot_contains_h5_arrays(*, tmp_path, model_and_params):
     model, params = model_and_params
     model.solve(params=params, log_level="debug", log_path=tmp_path)
 
@@ -297,7 +297,9 @@ def test_snapshot_contains_h5_arrays(tmp_path, model_and_params):
     assert (snap_dir / "params.pkl").exists()
 
 
-def test_load_snapshot_warns_on_platform_mismatch(tmp_path, model_and_params, caplog):
+def test_load_snapshot_warns_on_platform_mismatch(
+    *, tmp_path, model_and_params, caplog
+):
     model, params = model_and_params
     model.solve(params=params, log_level="debug", log_path=tmp_path)
 
@@ -307,31 +309,31 @@ def test_load_snapshot_warns_on_platform_mismatch(tmp_path, model_and_params, ca
         patch("lcm.persistence._get_platform", return_value="fake_arch-FakeOS"),
         caplog.at_level(logging.WARNING, logger="lcm.persistence"),
     ):
-        load_snapshot(snap_dir)
+        load_snapshot(path=snap_dir)
     assert "environment may not match" in caplog.text
 
 
-def test_load_snapshot_with_exclude(tmp_path, model_and_params):
+def test_load_snapshot_with_exclude(*, tmp_path, model_and_params):
     model, params = model_and_params
     model.solve(params=params, log_level="debug", log_path=tmp_path)
 
     snap_dir = min(tmp_path.glob("solve_snapshot_*/"))
 
-    snapshot = load_snapshot(snap_dir, exclude=["period_to_regime_to_V_arr"])
+    snapshot = load_snapshot(path=snap_dir, exclude=["period_to_regime_to_V_arr"])
     assert isinstance(snapshot, SolveSnapshot)
     assert snapshot.period_to_regime_to_V_arr is None
     assert snapshot.model is not None
     assert snapshot.params is not None
 
 
-def test_solve_snapshot_round_trip(tmp_path, model_and_params):
+def test_solve_snapshot_round_trip(*, tmp_path, model_and_params):
     model, params = model_and_params
     period_to_regime_to_V_arr = model.solve(
         params=params, log_level="debug", log_path=tmp_path
     )
 
     snap_dir = min(tmp_path.glob("solve_snapshot_*/"))
-    snapshot = load_snapshot(snap_dir)
+    snapshot = load_snapshot(path=snap_dir)
 
     # Verify the loaded model can re-solve
     assert isinstance(snapshot.model, Model)

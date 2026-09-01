@@ -53,12 +53,12 @@ def _next_terminal() -> ScalarInt:
     return RegimeId.terminal
 
 
-def _utility_start(wealth: ContinuousState, work: DiscreteAction) -> FloatND:
+def _utility_start(*, wealth: ContinuousState, work: DiscreteAction) -> FloatND:
     """No payoff of its own — `start` exists only to route into `bonus`."""
     return 0.0 * wealth + 0.0 * work
 
 
-def _utility_bonus(bonus_shock: FloatND, work: DiscreteAction) -> FloatND:
+def _utility_bonus(*, bonus_shock: FloatND, work: DiscreteAction) -> FloatND:
     """Working pays the realized bonus; leisure pays a fixed outside option."""
     return jnp.where(work == 1, bonus_shock, OUTSIDE_OPTION)
 
@@ -69,7 +69,7 @@ def _build_model(*, fold: bool) -> Model:
         active=lambda age: age < 1,
         states={"wealth": WEALTH},
         state_transitions={"wealth": fixed_transition("wealth")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility_start},
     )
     bonus = Regime(
@@ -85,7 +85,7 @@ def _build_model(*, fold: bool) -> Model:
                 fold=fold,
             )
         },
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility_bonus},
     )
     terminal = Regime(

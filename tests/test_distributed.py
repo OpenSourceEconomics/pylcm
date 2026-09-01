@@ -128,8 +128,8 @@ def _make_correct_distributed_model(
         ages=AgeGrid(start=0, stop=5, step="Y"),
         regime_id_class=RegimeId,
         states={
-            "type1": DiscreteGrid(Type, distributed=distributed),
-            "type2": DiscreteGrid(Type, distributed=distributed),
+            "type1": DiscreteGrid(category_class=Type, distributed=distributed),
+            "type2": DiscreteGrid(category_class=Type, distributed=distributed),
         },
         state_transitions={
             "type1": fixed_transition("type1"),
@@ -196,8 +196,8 @@ def wrong_distributed_model():
         ages=AgeGrid(start=0, stop=5, step="Y"),
         regime_id_class=RegimeId,
         states={
-            "type1": DiscreteGrid(Type, distributed=True),
-            "type2": DiscreteGrid(Type, distributed=True),
+            "type1": DiscreteGrid(category_class=Type, distributed=True),
+            "type2": DiscreteGrid(category_class=Type, distributed=True),
         },
         state_transitions={
             "type1": fixed_transition("type1"),
@@ -243,7 +243,7 @@ def test_distributed_solve_matches_single_device_per_type():
             )
 
 
-def _compiled_solve_kernel_hlo(model: Model, *, regime_name: str, period: int) -> str:
+def _compiled_solve_kernel_hlo(*, model: Model, regime_name: str, period: int) -> str:
     """Lower and compile a regime's period kernel exactly as backward induction does.
 
     Reproduces the AOT lowering args (sharded states, sharded continuation-V
@@ -295,13 +295,13 @@ def test_distributed_solve_kernel_does_not_all_gather_continuation_v():
     `all-gather` collective assembling the full continuation V on every device.
     """
     model = _make_correct_distributed_model(distributed=True)
-    hlo = _compiled_solve_kernel_hlo(model, regime_name="working_life", period=0)
+    hlo = _compiled_solve_kernel_hlo(model=model, regime_name="working_life", period=0)
     assert "all-gather" not in hlo
 
 
 @_skip_pytest_parallel
 def test_solve_returns_template_sharded_V_even_when_kernel_output_is_replicated(
-    correct_distributed_model, monkeypatch
+    *, correct_distributed_model, monkeypatch
 ):
     """`solve()` publishes V arrays carrying the distributed template sharding.
 
@@ -416,7 +416,7 @@ def test_simulation_running_on_multiple_cpus(correct_distributed_model):
 
 @_skip_pytest_parallel
 def test_save_load_preserves_sharding_and_dataframe(
-    correct_distributed_model, tmp_path
+    *, correct_distributed_model, tmp_path
 ):
     """`save` / `load` round-trip preserves per-shard data and DataFrame output.
 
@@ -529,6 +529,7 @@ def test_simulation_pads_non_device_multiple_subject_count(correct_distributed_m
 @_skip_pytest_parallel
 @pytest.mark.parametrize("subject_batch_size", [3, 4])
 def test_distributed_simulation_with_subject_batching_matches_single_pass(
+    *,
     correct_distributed_model,
     subject_batch_size,
 ):
@@ -647,8 +648,8 @@ def partially_distributed_model():
         ages=AgeGrid(start=0, stop=5, step="Y"),
         regime_id_class=RegimeId,
         states={
-            "type1": DiscreteGrid(Type, distributed=True),
-            "type2": DiscreteGrid(Type, distributed=True),
+            "type1": DiscreteGrid(category_class=Type, distributed=True),
+            "type2": DiscreteGrid(category_class=Type, distributed=True),
         },
         state_transitions={
             "type1": fixed_transition("type1"),
@@ -696,7 +697,7 @@ def test_distributed_action_grid_raises_at_regime_init():
             "wealth": lambda wealth, choice: wealth - choice,
         },
         actions={
-            "choice": DiscreteGrid(Choice, distributed=True),
+            "choice": DiscreteGrid(category_class=Choice, distributed=True),
         },
         transition=lambda age: age,
     )

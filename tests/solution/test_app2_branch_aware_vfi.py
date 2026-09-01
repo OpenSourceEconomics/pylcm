@@ -35,7 +35,7 @@ N_LOW_NODES = 12
     ("n_grid", "n_housing", "n_consumption", "n_periods"), [(12, 4, 60, 3)]
 )
 def test_standard_vfi_oracle_reproduces_brute(
-    n_grid: int, n_housing: int, n_consumption: int, n_periods: int
+    *, n_grid: int, n_housing: int, n_consumption: int, n_periods: int
 ):
     """The oracle's standard mode matches pylcm's brute solve cell for cell.
 
@@ -77,7 +77,7 @@ def test_standard_vfi_oracle_reproduces_brute(
     ("n_grid", "n_housing", "n_consumption", "n_periods"), [(40, 5, 400, 5)]
 )
 def test_comparator_ordering_localizes_to_ss_band(
-    n_grid: int, n_housing: int, n_consumption: int, n_periods: int
+    *, n_grid: int, n_housing: int, n_consumption: int, n_periods: int
 ):
     """The comparator-ordering gap is non-negative and confined to the (S, s) band.
 

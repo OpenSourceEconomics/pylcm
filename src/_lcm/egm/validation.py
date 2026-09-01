@@ -1095,7 +1095,7 @@ def _fail_if_numeric_spot_checks_fail(
         )
 
         def _violates(
-            r_lo: float, r_hi: float, *, strict: bool = require_strict
+            *, r_lo: float, r_hi: float, strict: bool = require_strict
         ) -> bool:
             return r_hi <= r_lo + atol if strict else r_hi < r_lo - atol
 
@@ -1108,7 +1108,7 @@ def _fail_if_numeric_spot_checks_fail(
                 resources_at[1:],
                 strict=True,
             )
-            if _violates(float(r_lo), float(r_hi))
+            if _violates(r_lo=float(r_lo), r_hi=float(r_hi))
         ]
         if bad:
             requirement = "strictly increasing" if require_strict else "non-decreasing"
@@ -1228,7 +1228,7 @@ def _fail_if_inverse_marginal_utility_inconsistent(
     for utility_kwargs, inverse_kwargs in zip(
         utility_contexts, inverse_contexts, strict=True
     ):
-
+        # keyword-only-exempt: library-callback=jax.grad
         def utility_of_action(
             action_value: ScalarFloat,
             _kwargs: dict[str, object] = utility_kwargs,
@@ -1313,7 +1313,7 @@ def _fail_if_savings_stage_function_jumps_in_euler_state(
         **_solve_grids(slot=user_regime.states),
         **_solve_grids(slot=user_regime.actions),
     }
-    euler_points = jnp.sort(grids[solver.continuous_state].to_jax())
+    euler_points = jnp.sort(a=grids[solver.continuous_state].to_jax())
     euler_sample = _node_resolution_sample(grid_points=euler_points)
     savings_points = solver.savings_grid.to_jax()
     savings_value = savings_points[savings_points.shape[0] // 2]

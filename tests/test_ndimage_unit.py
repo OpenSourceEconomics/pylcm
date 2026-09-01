@@ -18,14 +18,14 @@ def test_map_coordinates_wrong_input_dimensions():
         jnp.array([1], dtype=jnp.int32),
     ]  # len = 2
     with pytest.raises(ValueError, match="coordinates must be a sequence of length"):
-        map_coordinates(values, coordinates)
+        map_coordinates(input=values, coordinates=coordinates)
 
 
 def test_map_coordinates_extrapolation():
     x = jnp.arange(3.0)
     c = [jnp.array([-2.0, -1.0, 5.0, 10.0])]
 
-    got = map_coordinates(x, c)
+    got = map_coordinates(input=x, coordinates=c)
     expected = c[0]
 
     assert_array_equal(got, expected)
@@ -68,7 +68,7 @@ def test_linear_indices_and_weights_inside_domain():
     coordinates = jnp.array([0, 0.5, 1])
 
     (idx_low, weight_low), (idx_high, weight_high) = _compute_indices_and_weights(
-        coordinates, input_size=2
+        coordinate=coordinates, input_size=2
     )
 
     assert_array_equal(idx_low, jnp.array([0, 0, 0], dtype=jnp.int32))
@@ -81,7 +81,7 @@ def test_linear_indices_and_weights_outside_domain():
     coordinates = jnp.array([-1.0, 2.0])
 
     (idx_low, weight_low), (idx_high, weight_high) = _compute_indices_and_weights(
-        coordinates, input_size=2
+        coordinate=coordinates, input_size=2
     )
 
     assert_array_equal(idx_low, jnp.array([0, 0], dtype=jnp.int32))

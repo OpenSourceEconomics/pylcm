@@ -153,6 +153,7 @@ def test_piecewise_log_grid_uses_log_spacing_with_the_same_ownership() -> None:
     ("owner", "expected_coordinate"), [("right", 3.0), ("left", 2.0)]
 )
 def test_breakpoint_coordinate_follows_ownership(
+    *,
     grid_cls: type[PiecewiseLinSpacedGrid | PiecewiseLogSpacedGrid],
     start: float,
     breakpoint_value: float,
@@ -186,7 +187,7 @@ def test_breakpoint_coordinate_follows_ownership(
     ],
 )
 def test_piecewise_grid_rejects_invalid_bounds(
-    kwargs: dict[str, object], message: str
+    *, kwargs: dict[str, object], message: str
 ) -> None:
     """Endpoints and breakpoints define a finite strictly ordered domain."""
     breakpoints = tuple(

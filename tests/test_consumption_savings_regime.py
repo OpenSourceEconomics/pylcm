@@ -45,7 +45,7 @@ class _Employment:
     retired: ScalarInt
 
 
-_DISCRETE_GRID = DiscreteGrid(_Employment)
+_DISCRETE_GRID = DiscreteGrid(category_class=_Employment)
 
 _LIQUID = LiquidMargin(
     state="wealth",
@@ -65,19 +65,19 @@ def utility(consumption_bonus):
     return consumption_bonus
 
 
-def consumption_bonus(consumption, bonus=1.0):
+def consumption_bonus(*, consumption, bonus=1.0):
     return consumption + bonus
 
 
-def resources(wealth, transfer=0.0):
+def resources(*, wealth, transfer=0.0):
     return wealth + transfer
 
 
-def savings(resources, consumption):
+def savings(*, resources, consumption):
     return resources - consumption
 
 
-def next_wealth(savings, interest_rate=0.0):
+def next_wealth(*, savings, interest_rate=0.0):
     return (1 + interest_rate) * savings
 
 

@@ -70,7 +70,7 @@ def test_ordinary_weights_are_unchanged_by_the_scale_safe_path():
 
 
 @pytest.mark.parametrize(("name", "expected"), [("f", 0.75), ("m", 0.25)])
-def test_unequal_weights_keep_their_declared_ratio(name, expected):
+def test_unequal_weights_keep_their_declared_ratio(*, name, expected):
     """Normalization preserves the ratio the modeller declared."""
     weights = _normalized({"f": 3.0, "m": 1.0})
 

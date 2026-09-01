@@ -70,13 +70,13 @@ class RegimeId:
     couple_terminal: ScalarInt  # code 1
 
 
-def _utility_f(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _utility_f(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     """Wife: values her own leisure highly, also sees household consumption."""
     consumption = wage * work
     return consumption + 30.0 * (1.0 - work)
 
 
-def _utility_m(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _utility_m(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     """Husband: values household consumption, indifferent to leisure."""
     consumption = wage * work
     return 2.0 * consumption
@@ -103,7 +103,7 @@ def _make_couple_regimes() -> dict[str, Regime]:
         active=lambda age: age < 1,
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": _next_wage},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
         },
@@ -112,7 +112,7 @@ def _make_couple_regimes() -> dict[str, Regime]:
         transition=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE_GRID},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
         },
@@ -210,7 +210,7 @@ class Mood:
 
 
 def _utility_f_mood(
-    wage: ContinuousState, work: DiscreteAction, mood: DiscreteState
+    *, wage: ContinuousState, work: DiscreteAction, mood: DiscreteState
 ) -> FloatND:
     """As `_utility_f`, plus a mood bonus only the wife's felicity carries."""
     consumption = wage * work
@@ -242,12 +242,12 @@ def test_nonterminal_collective_stochastic_state_expectation_is_per_stakeholder(
     couple = Regime(
         transition=_next_regime,
         active=lambda age: age < 1,
-        states={"mood": DiscreteGrid(Mood), "wage": _WAGE_GRID},
+        states={"mood": DiscreteGrid(category_class=Mood), "wage": _WAGE_GRID},
         state_transitions={
             "mood": MarkovTransition(_next_mood),
             "wage": _next_wage,
         },
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _utility_f_mood, "m": _utility_m}
@@ -257,8 +257,8 @@ def test_nonterminal_collective_stochastic_state_expectation_is_per_stakeholder(
     couple_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        states={"mood": DiscreteGrid(Mood), "wage": _WAGE_GRID},
-        actions={"work": DiscreteGrid(Work)},
+        states={"mood": DiscreteGrid(category_class=Mood), "wage": _WAGE_GRID},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _utility_f_mood, "m": _utility_m}
@@ -375,7 +375,7 @@ def test_nonterminal_collective_regime_with_singleton_target_is_rejected():
         active=lambda age: age < 1,
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": _next_wage},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
         },
@@ -421,7 +421,7 @@ def test_collective_regime_with_taste_shocks_is_rejected():
             taste_shocks=ExtremeValueTasteShocks(),
             states={"wage": _WAGE_GRID},
             state_transitions={"wage": _next_wage},
-            actions={"work": DiscreteGrid(Work)},
+            actions={"work": DiscreteGrid(category_class=Work)},
             functions={
                 "utility": CollectiveUtility(
                     utilities={"f": _utility_f, "m": _utility_m}
@@ -438,7 +438,7 @@ def test_collective_regime_with_certainty_equivalent_is_rejected():
             certainty_equivalent=PowerMean(),
             states={"wage": _WAGE_GRID},
             state_transitions={"wage": _next_wage},
-            actions={"work": DiscreteGrid(Work)},
+            actions={"work": DiscreteGrid(category_class=Work)},
             functions={
                 "utility": CollectiveUtility(
                     utilities={"f": _utility_f, "m": _utility_m}

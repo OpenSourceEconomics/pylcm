@@ -76,7 +76,7 @@ def _build_model(*, net_wage: UserFunction | AgeSpecializedFunction) -> Model:
         transition=_next_regime,
         active=lambda age: age < 1,
         states={"wealth": WEALTH_GRID, "wage_shock": FOLDED_SHOCK},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility, "net_wage": net_wage},
         state_transitions={"wealth": _next_wealth},
     )
@@ -114,7 +114,7 @@ def _net_wage_signature(age: float) -> Hashable:
 
 
 def _utility(
-    wealth: ContinuousState, wage_shock: FloatND, work: DiscreteAction
+    *, wealth: ContinuousState, wage_shock: FloatND, work: DiscreteAction
 ) -> FloatND:
     """Return wealth plus the shocked wage when working, wealth otherwise."""
     return wealth + work * (10.0 + wage_shock)
@@ -125,7 +125,7 @@ def _terminal_utility(wealth: ContinuousState) -> FloatND:
     return wealth
 
 
-def _next_wealth(wealth: ContinuousState, net_wage: FloatND) -> ContinuousState:
+def _next_wealth(*, wealth: ContinuousState, net_wage: FloatND) -> ContinuousState:
     """Return next period's wealth: today's wealth plus the net wage."""
     return wealth + net_wage
 

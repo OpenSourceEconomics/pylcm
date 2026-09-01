@@ -96,6 +96,7 @@ def _make_model_and_params(
         dead: ScalarInt
 
     def next_regime_from_working(
+        *,
         labor_supply: DiscreteAction,
         age: float,
         final_age_alive: float,
@@ -110,14 +111,14 @@ def _make_model_and_params(
             ),
         )
 
-    def next_regime_from_retirement(age: float, final_age_alive: float) -> ScalarInt:
+    def next_regime_from_retirement(*, age: float, final_age_alive: float) -> ScalarInt:
         return jnp.where(age >= final_age_alive, RegimeId.dead, RegimeId.retirement)
 
-    def savings(wealth: ContinuousState, consumption: ContinuousAction) -> FloatND:
+    def savings(*, wealth: ContinuousState, consumption: ContinuousAction) -> FloatND:
         return wealth - consumption
 
     def next_wealth_from_savings(
-        savings: FloatND, labor_income: FloatND, interest_rate: float
+        *, savings: FloatND, labor_income: FloatND, interest_rate: float
     ) -> ContinuousState:
         return (1 + interest_rate) * savings + labor_income
 
@@ -132,7 +133,7 @@ def _make_model_and_params(
 
     working_life = Regime(
         actions={
-            "labor_supply": DiscreteGrid(LaborSupply),
+            "labor_supply": DiscreteGrid(category_class=LaborSupply),
             "consumption": consumption_grid,
         },
         states={"wealth": wealth_grid},

@@ -13,7 +13,7 @@ import jax.numpy as jnp
 from lcm.typing import Float1D, FloatND, ScalarFloat
 
 
-def crra_utility(consumption: FloatND, crra: ScalarFloat | float) -> FloatND:
+def crra_utility(*, consumption: FloatND, crra: ScalarFloat | float) -> FloatND:
     """CRRA utility, log at `crra == 1`."""
     return jnp.where(
         crra == 1.0,
@@ -40,7 +40,7 @@ def dense_brute_value(
     consumption = fractions[:, None] * coh[None, :]
     savings = coh[None, :] - consumption
     next_liquid = gross_return * savings + income
-    value = crra_utility(consumption, crra) + discount_factor * next_value_of_liquid(
-        next_liquid
-    )
+    value = crra_utility(
+        consumption=consumption, crra=crra
+    ) + discount_factor * next_value_of_liquid(next_liquid)
     return jnp.max(value, axis=0)

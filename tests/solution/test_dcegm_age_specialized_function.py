@@ -51,9 +51,9 @@ def _make_scaled_utility(age: float):
     extra_work_disutility = 0.05 * (age - MIN_AGE)
 
     def utility_working(
-        consumption: ContinuousAction, is_working: BoolND, rho: float, delta: float
+        *, consumption: ContinuousAction, is_working: BoolND, rho: float, delta: float
     ) -> FloatND:
-        return crra(consumption, rho) - jnp.where(
+        return crra(consumption=consumption, rho=rho) - jnp.where(
             is_working, delta + extra_work_disutility, 0.0
         )
 
@@ -154,7 +154,7 @@ def test_age_specialized_utility_actually_moves_the_dcegm_solution():
     assert moved, "the age-specialized utility left every period unchanged"
 
 
-def _compiled_cores(model: Model, regime_name: str) -> list[int]:
+def _compiled_cores(*, model: Model, regime_name: str) -> list[int]:
     """Identity of each period's compiled core — the object periods actually share."""
     kernels = model._regimes[regime_name].solution.period_kernels
     return [
@@ -184,7 +184,8 @@ def test_periods_with_distinct_signatures_do_not_share_a_compiled_core(solver_ki
     age's closure at every age.
     """
     cores = _compiled_cores(
-        _twin(solver_kind=solver_kind, age_specialized=True), "working_life"
+        model=_twin(solver_kind=solver_kind, age_specialized=True),
+        regime_name="working_life",
     )
     assert len(set(cores)) == len(cores)
 
@@ -211,10 +212,12 @@ def test_an_age_invariant_regime_still_shares_programs_across_periods(solver_kin
     dropping the specialization strictly reduces the number of programs.
     """
     shared = _compiled_cores(
-        _twin(solver_kind=solver_kind, age_specialized=False), "working_life"
+        model=_twin(solver_kind=solver_kind, age_specialized=False),
+        regime_name="working_life",
     )
     specialized = _compiled_cores(
-        _twin(solver_kind=solver_kind, age_specialized=True), "working_life"
+        model=_twin(solver_kind=solver_kind, age_specialized=True),
+        regime_name="working_life",
     )
     assert len(set(shared)) < len(shared)
     assert len(set(shared)) < len(set(specialized))

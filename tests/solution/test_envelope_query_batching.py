@@ -28,6 +28,7 @@ def _jdtype():
     return jnp.float64 if X64_ENABLED else jnp.float32
 
 
+# keyword-only-exempt: library-callback=jax.vmap
 def _evaluate(level, query):
     """Publish the envelope of a rising link and a flat link at height `level`."""
     dtype = _jdtype()

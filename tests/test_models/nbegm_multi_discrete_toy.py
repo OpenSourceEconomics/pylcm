@@ -69,12 +69,13 @@ class LaborSupply:
         lcm.affine_breakpoint(threshold="tax_exemption", kind="continuous_kink"),
     ),
 )
-def tax(liquid: ContinuousState, tax_rate: float, tax_exemption: float) -> FloatND:
+def tax(*, liquid: ContinuousState, tax_rate: float, tax_exemption: float) -> FloatND:
     """Continuous tax: zero below the exemption, `tax_rate` on the excess above."""
     return tax_rate * jnp.maximum(liquid - tax_exemption, 0.0)
 
 
 def resources_two_actions(
+    *,
     liquid: ContinuousState,
     tax: FloatND,
     buy_private: DiscreteAction,
@@ -88,6 +89,7 @@ def resources_two_actions(
 
 
 def resources_three_actions(
+    *,
     liquid: ContinuousState,
     tax: FloatND,
     buy_private: DiscreteAction,
@@ -110,6 +112,7 @@ def resources_three_actions(
 
 
 def utility_two_actions(
+    *,
     consumption: ContinuousAction,
     crra: float,
     buy_private: DiscreteAction,
@@ -117,13 +120,14 @@ def utility_two_actions(
 ) -> FloatND:
     """CRRA consumption utility plus the value of coverage and of claiming."""
     return (
-        crra_utility(consumption, crra)
+        crra_utility(consumption=consumption, crra=crra)
         + COVERAGE_UTILITY * buy_private
         + CLAIM_UTILITY * claim_benefit
     )
 
 
 def utility_three_actions(
+    *,
     consumption: ContinuousAction,
     crra: float,
     buy_private: DiscreteAction,
@@ -132,7 +136,7 @@ def utility_three_actions(
 ) -> FloatND:
     """CRRA consumption, plus coverage and claiming value, less leisure lost."""
     return (
-        crra_utility(consumption, crra)
+        crra_utility(consumption=consumption, crra=crra)
         + COVERAGE_UTILITY * buy_private
         + CLAIM_UTILITY * claim_benefit
         - LEISURE_UTILITY * labor_supply
@@ -140,6 +144,7 @@ def utility_three_actions(
 
 
 def next_liquid_from_savings(
+    *,
     savings: FloatND,
     income: ContinuousState,
     return_liquid: float,
@@ -174,11 +179,11 @@ def build_model(
         msg = f"n_actions must be 2 or 3, got {n_actions}."
         raise ValueError(msg)
     extra_actions = {
-        "buy_private": DiscreteGrid(BuyPrivate),
-        "claim_benefit": DiscreteGrid(ClaimBenefit),
+        "buy_private": DiscreteGrid(category_class=BuyPrivate),
+        "claim_benefit": DiscreteGrid(category_class=ClaimBenefit),
     }
     if n_actions == 3:
-        extra_actions["labor_supply"] = DiscreteGrid(LaborSupply)
+        extra_actions["labor_supply"] = DiscreteGrid(category_class=LaborSupply)
     alive_functions = {
         "utility": utility_two_actions if n_actions == 2 else utility_three_actions,
         "tax": tax,
@@ -188,7 +193,7 @@ def build_model(
         "savings": savings,
     }
     alive_solver = resolve_solver(
-        variant,
+        variant=variant,
         savings_grid=lcm.LinSpacedGrid(start=0.0, stop=savings_max, n_points=n_savings),
         jump_read=jump_read,
         envelope_arithmetic=envelope_arithmetic,

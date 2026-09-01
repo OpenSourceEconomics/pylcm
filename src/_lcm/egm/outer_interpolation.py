@@ -159,7 +159,7 @@ class LocalCubicOuterInterpolant:
         out_shape = jnp.broadcast_shapes(query.shape, state_shape)
         query_b = jnp.broadcast_to(query, out_shape)
         values_b = jnp.broadcast_to(
-            _pad_state_axes(values, out_ndim=len(out_shape)),
+            _pad_state_axes(stacked=values, out_ndim=len(out_shape)),
             (n_nodes, *out_shape),
         )
 
@@ -209,7 +209,9 @@ class LocalCubicOuterInterpolant:
         valid = in_domain & endpoint_finite
         if interval_valid is not None:
             declared = jnp.broadcast_to(
-                _pad_state_axes(jnp.asarray(interval_valid), out_ndim=len(out_shape)),
+                _pad_state_axes(
+                    stacked=jnp.asarray(interval_valid), out_ndim=len(out_shape)
+                ),
                 (n_nodes - 1, *out_shape),
             ).reshape(n_nodes - 1, -1)
             valid = valid & jnp.take_along_axis(declared, interval[None], axis=0)[0]
@@ -220,7 +222,7 @@ class LocalCubicOuterInterpolant:
         )
 
 
-def _pad_state_axes(stacked: FloatND | BoolND, *, out_ndim: int) -> FloatND | BoolND:
+def _pad_state_axes(*, stacked: FloatND | BoolND, out_ndim: int) -> FloatND | BoolND:
     """Insert singleton state axes after the leading candidate axis.
 
     Broadcasting aligns from the right, so a stacked `(C, *S)` array must

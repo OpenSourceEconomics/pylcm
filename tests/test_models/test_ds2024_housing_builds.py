@@ -121,7 +121,7 @@ def test_ds2024_housing_negm_matches_brute_on_interior():
     assert float((difference <= BRUTE_CELL_TOL).mean()) >= MIN_FRACTION_WITHIN
 
 
-def _pooled_interior_difference(pylcm_solution, oracle):
+def _pooled_interior_difference(*, pylcm_solution, oracle):
     """Pooled absolute interior `V` difference between a pylcm solve and the oracle.
 
     The oracle stores the alive value as `(income, house, liquid)` and the terminal
@@ -159,7 +159,7 @@ def test_ds2024_housing_vfi_oracle_matches_brute_at_zero_delta():
         n_grid=N_GRID, n_periods=N_PERIODS, n_consumption=400, delta=0.0
     )
 
-    difference = _pooled_interior_difference(brute, oracle)
+    difference = _pooled_interior_difference(pylcm_solution=brute, oracle=oracle)
 
     assert float(difference.mean()) < BRUTE_MEAN_TOL
     assert float((difference <= BRUTE_CELL_TOL).mean()) >= MIN_FRACTION_WITHIN
@@ -190,7 +190,7 @@ def test_ds2024_housing_negm_keeper_depreciation_matches_vfi_oracle():
         read="clamp",
     )
 
-    difference = _pooled_interior_difference(negm, oracle)
+    difference = _pooled_interior_difference(pylcm_solution=negm, oracle=oracle)
 
     assert float(difference.mean()) < ORACLE_MEAN_TOL
     assert float((difference <= ORACLE_CELL_TOL).mean()) >= MIN_FRACTION_WITHIN
@@ -235,7 +235,11 @@ def test_ds2024_housing_negm_improves_on_nested_outer_refinement():
             delta=0.10,
             n_outer_grid=n_outer_grid,
         ).solve(params=build_params(variant="negm", delta=0.10), log_level="debug")
-        means.append(float(_pooled_interior_difference(negm, oracle).mean()))
+        means.append(
+            float(
+                _pooled_interior_difference(pylcm_solution=negm, oracle=oracle).mean()
+            )
+        )
 
     assert means[0] > means[1] > means[2]
     assert means[2] < means[0] / 2

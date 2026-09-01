@@ -94,7 +94,7 @@ def test_per_target_reduction_reads_each_node_on_its_own_scale() -> None:
     coefficients, shifts = _wide_target()
     values = jnp.asarray([0.0, jnp.finfo(_dtype()).max], dtype=_dtype())
 
-    got = zero_safe_average(values, weights=coefficients, shifts=shifts)
+    got = zero_safe_average(a=values, weights=coefficients, shifts=shifts)
 
     assert int(got > _smallest_safe_value()) == 0
 
@@ -104,7 +104,7 @@ def test_per_target_reduction_reads_each_node_on_its_own_scale_under_jit() -> No
     coefficients, shifts = _wide_target()
     values = jnp.asarray([0.0, jnp.finfo(_dtype()).max], dtype=_dtype())
 
-    got = jax.jit(lambda a, w, s: zero_safe_average(a, weights=w, shifts=s))(
+    got = jax.jit(lambda a, w, s: zero_safe_average(a=a, weights=w, shifts=s))(
         values, coefficients, shifts
     )
 

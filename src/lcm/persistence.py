@@ -99,10 +99,9 @@ class SimulateSnapshot:
     """Platform string, e.g. `"x86_64-Linux"`."""
 
 
+# keyword-only-exempt: primary-argument=path
 def load_snapshot(
-    path: Path,
-    *,
-    exclude: Sequence[str] = (),
+    path: Path, *, exclude: Sequence[str] = ()
 ) -> SolveSnapshot | SimulateSnapshot:
     """Load a debug snapshot directory from disk.
 
@@ -200,7 +199,7 @@ def save_solution(
     p = Path(path)
     if not p.parent.is_dir():
         raise FileNotFoundError(f"Parent directory does not exist: {p.parent}")
-    _save_h5(p, period_to_regime_to_V_arr)
+    _save_h5(path=p, period_to_regime_to_V_arr=period_to_regime_to_V_arr)
     return p
 
 

@@ -41,7 +41,7 @@ def _dtype_case() -> tuple[Any, tuple[int, ...]]:
     return dtype, (0, 64, 200, 512, 800, 1020)
 
 
-def _value(fraction: float, dtype: Any) -> float:
+def _value(*, fraction: float, dtype: Any) -> float:
     """Turn a value fraction into a concrete value of the working dtype."""
     if fraction == 1.0:
         return 1.0
@@ -89,7 +89,10 @@ def _rows() -> tuple[
     ):
         row_significands = (1.0, rare_significand)
         row_shifts = (0, rare_shift)
-        row_values = (_value(likely_fraction, dtype), _value(rare_fraction, dtype))
+        row_values = (
+            _value(fraction=likely_fraction, dtype=dtype),
+            _value(fraction=rare_fraction, dtype=dtype),
+        )
         mean = _exact_mean(
             significands=row_significands, shifts=row_shifts, values=row_values
         )

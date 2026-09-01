@@ -50,7 +50,7 @@ def _candidates(*, first_endogenous_point, publish_resources, borrowing_limit):
     ],
 )
 def test_degenerate_span_yields_no_constrained_candidates(
-    case, first_endogenous_point, publish_resources
+    *, case, first_endogenous_point, publish_resources
 ):
     """A degenerate constrained interval contributes only dead candidates."""
     actions, values = _candidates(

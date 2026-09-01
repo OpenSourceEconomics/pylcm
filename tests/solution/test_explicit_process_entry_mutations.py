@@ -48,7 +48,8 @@ def source_value(model: Model) -> float:
 @pytest.mark.parametrize("mu", [-1.5, 0.0, 2.25])
 @pytest.mark.parametrize("sigma", [0.3, 1.2])
 def test_entry_at_the_mean_is_priced_at_the_mean_not_its_position(
-    enable_jit: bool,  # noqa: FBT001
+    *,
+    enable_jit: bool,
     n_points: int,
     mu: float,
     sigma: float,

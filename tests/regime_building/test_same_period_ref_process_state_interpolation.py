@@ -105,7 +105,7 @@ _REGIME_NAMES_TO_IDS = MappingProxyType(
 )
 
 
-def _utility_shock_ref(shock: FloatND, work: DiscreteAction) -> FloatND:
+def _utility_shock_ref(*, shock: FloatND, work: DiscreteAction) -> FloatND:
     return work * (10.0 + shock)
 
 
@@ -123,7 +123,7 @@ def _make_shock_ref_regimes() -> dict[str, Regime]:
         transition={"shock_ref_terminal": MarkovTransition(_prob_one)},
         active=lambda age: age < 1,
         states={"shock": _SHOCK},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility_shock_ref},
     )
     shock_ref_terminal = Regime(
@@ -186,7 +186,7 @@ def _solve_shock_ref_only() -> tuple[np.ndarray, np.ndarray]:
     return nodes, V_ref
 
 
-def _hand_interpolate(nodes: np.ndarray, V_ref: np.ndarray, value: float) -> float:
+def _hand_interpolate(*, nodes: np.ndarray, V_ref: np.ndarray, value: float) -> float:
     """Independent linear-interpolation formula (ascending `nodes`)."""
     idx_upper = int(
         np.clip(np.searchsorted(nodes, value, side="right"), 1, len(nodes) - 1)
@@ -204,26 +204,28 @@ def _target_values() -> np.ndarray:
     shock_values = np.asarray(
         [float(_project_shock(jnp.asarray(w))) for w in [0.0, 2.0]]
     )
-    return np.array([_hand_interpolate(nodes, V_ref, s) for s in shock_values])
+    return np.array(
+        [_hand_interpolate(nodes=nodes, V_ref=V_ref, value=s) for s in shock_values]
+    )
 
 
 _TARGET = _target_values()
 
 
-def _utility_married_f(wage: FloatND, work: DiscreteAction) -> FloatND:
+def _utility_married_f(*, wage: FloatND, work: DiscreteAction) -> FloatND:
     target = jnp.where(wage < 1.0, _TARGET[0], _TARGET[1])
     return work * target
 
 
-def _utility_married_m(wage: FloatND, work: DiscreteAction) -> FloatND:
+def _utility_married_m(*, wage: FloatND, work: DiscreteAction) -> FloatND:
     return 1.0 * work + 0.0 * wage
 
 
-def _utility_married_terminal(wage: FloatND, work: DiscreteAction) -> FloatND:
+def _utility_married_terminal(*, wage: FloatND, work: DiscreteAction) -> FloatND:
     return 0.0 * wage * work
 
 
-def _vc_f(Q_f: FloatND, V_shock_ref: FloatND) -> BoolND:
+def _vc_f(*, Q_f: FloatND, V_shock_ref: FloatND) -> BoolND:
     """Feasible only when `Q_f` matches the interpolated reference EXACTLY.
 
     A wrong interpolation (wrong node pair, wrong weight, or an integer
@@ -241,7 +243,7 @@ def _make_regimes() -> dict[str, Regime]:
         active=lambda age: age < 1,
         states={"wage": _WAGE},
         state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _utility_married_f, "m": _utility_married_m}
@@ -262,7 +264,7 @@ def _make_regimes() -> dict[str, Regime]:
         transition=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={

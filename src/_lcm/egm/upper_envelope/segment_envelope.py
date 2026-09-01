@@ -202,7 +202,7 @@ def _node_cells(
     most one link to it.
     """
     sort_key = jnp.where(dead, jnp.inf, endog_grid)
-    sorted_x = jnp.sort(sort_key)
+    sorted_x = jnp.sort(a=sort_key)
     left = sorted_x[:-1]
     right = sorted_x[1:]
     live = jnp.isfinite(left) & jnp.isfinite(right) & (right > left)
@@ -255,7 +255,7 @@ def _active_links_at_cell(
     # cell holds is one entry per run and nothing that grows with the row.
     n_steps = max(int(n_candidates).bit_length(), 1)
 
-    def locate(start: ScalarInt, n_nodes: ScalarInt) -> tuple[BoolND, IntND, IntND]:
+    def locate(*, start: ScalarInt, n_nodes: ScalarInt) -> tuple[BoolND, IntND, IntND]:
         low = jnp.zeros_like(n_nodes)
         high = n_nodes
         for _ in range(n_steps):
@@ -273,7 +273,7 @@ def _active_links_at_cell(
         safe = jnp.clip(safe, 0, n_candidates - 2)
         return live, runs.order[safe], runs.order[safe + 1]
 
-    return jax.vmap(locate)(runs.start, runs.n_nodes)
+    return jax.vmap(locate)(start=runs.start, n_nodes=runs.n_nodes)
 
 
 def _sub_cells_per_node_cell(
@@ -312,7 +312,7 @@ def _sub_cells_per_node_cell(
     padded = n_chunks * chunk
     n_candidates = endog_grid.shape[0]
 
-    def pad(array: FloatND | BoolND, *, fill: float | bool) -> FloatND | BoolND:
+    def pad(*, array: FloatND | BoolND, fill: float | bool) -> FloatND | BoolND:
         return jnp.concatenate(
             [array, jnp.full(padded - n_cells, fill, dtype=array.dtype)]
         )
@@ -320,13 +320,13 @@ def _sub_cells_per_node_cell(
     # Padding cells are dead, so they contribute no sub-cell and cannot change
     # the row; they only make the cell count divide by the chunk.
     chunks = (
-        pad(cell_left, fill=0.0).reshape(n_chunks, chunk),
-        pad(cell_right, fill=0.0).reshape(n_chunks, chunk),
-        pad(cell_live, fill=False).reshape(n_chunks, chunk),
+        pad(array=cell_left, fill=0.0).reshape(n_chunks, chunk),
+        pad(array=cell_right, fill=0.0).reshape(n_chunks, chunk),
+        pad(array=cell_live, fill=False).reshape(n_chunks, chunk),
     )
 
     def split(
-        left: FloatND, right: FloatND, live_cell: BoolND
+        *, left: FloatND, right: FloatND, live_cell: BoolND
     ) -> tuple[FloatND, FloatND, IntND, IntND, BoolND, ScalarBool]:
         live, low, high = _active_links_at_cell(
             runs=runs, cell_left=left, cell_live=live_cell, n_candidates=n_candidates
@@ -348,19 +348,20 @@ def _sub_cells_per_node_cell(
 
     type _RowCarry = tuple[ScalarInt, FloatND, FloatND, IntND, IntND, ScalarBool]
 
+    # keyword-only-exempt: library-callback=jax.lax.scan
     def append_chunk(
         carry: _RowCarry, cells: tuple[FloatND, FloatND, BoolND]
     ) -> tuple[_RowCarry, None]:
         cursor, row_left, row_right, row_low, row_high, poisoned = carry
         sub_left, sub_right, owner_low, owner_high, sub_live, unresolved = jax.vmap(
             split
-        )(*cells)
+        )(left=cells[0], right=cells[1], live_cell=cells[2])
         keep = sub_live.reshape(-1)
         target = cursor + jnp.cumsum(keep.astype(jnp.int32)) - 1
         slot = jnp.where(keep, target, n_slots)
 
         def place(
-            row: FloatND | IntND, source: FloatND | IntND, empty: float
+            *, row: FloatND | IntND, source: FloatND | IntND, empty: float
         ) -> FloatND | IntND:
             return row.at[slot].set(
                 jnp.where(keep, source.reshape(-1), empty), mode="drop"
@@ -368,10 +369,10 @@ def _sub_cells_per_node_cell(
 
         return (
             cursor + jnp.sum(keep, dtype=jnp.int32),
-            place(row_left, sub_left, jnp.nan),
-            place(row_right, sub_right, jnp.nan),
-            place(row_low, owner_low, 0),
-            place(row_high, owner_high, 0),
+            place(row=row_left, source=sub_left, empty=jnp.nan),
+            place(row=row_right, source=sub_right, empty=jnp.nan),
+            place(row=row_low, source=owner_low, empty=0),
+            place(row=row_high, source=owner_high, empty=0),
             poisoned | jnp.any(unresolved),
         ), None
 

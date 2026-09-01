@@ -75,7 +75,7 @@ def test_joint_transition_is_an_edge_owned_public_declaration() -> None:
     ],
 )
 def test_joint_transition_rejects_locally_invalid_declarations(
-    kwargs: dict[str, object], match: str
+    *, kwargs: dict[str, object], match: str
 ) -> None:
     """A joint kernel requires a nonempty finite support and output mapping."""
     with pytest.raises(RegimeInitializationError, match=match):

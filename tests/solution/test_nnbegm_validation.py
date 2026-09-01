@@ -117,7 +117,7 @@ def test_explicitly_masked_outer_function_is_rejected_before_model_build() -> No
 
 
 def _euler_law_reading_outer_margin(
-    liquid_savings: FloatND, new_illiquid: ContinuousState
+    *, liquid_savings: FloatND, new_illiquid: ContinuousState
 ) -> ContinuousState:
     """A liquid Euler law whose return depends on the chosen durable stock."""
     return (1.0 + n_nbegm_toy.LIQUID_RATE) * liquid_savings + 0.01 * new_illiquid
@@ -135,7 +135,7 @@ def test_an_euler_law_reading_the_outer_margin_is_accepted() -> None:
 
 
 def _utility_coupling_consumption_and_durable_move(
-    consumption: ContinuousAction, new_illiquid: ContinuousState
+    *, consumption: ContinuousAction, new_illiquid: ContinuousState
 ) -> FloatND:
     """A Cobb-Douglas composite of consumption and chosen durable service."""
     composite = consumption**0.8 * new_illiquid**0.2
@@ -170,7 +170,7 @@ def test_a_regime_with_a_non_nested_solver_is_left_alone() -> None:
 
 
 def _outer_law_reading_the_inner_savings(
-    new_illiquid: ContinuousState, liquid_savings: FloatND
+    *, new_illiquid: ContinuousState, liquid_savings: FloatND
 ) -> ContinuousState:
     """A durable law whose carried stock depends on the inner savings choice."""
     return new_illiquid + 0.01 * liquid_savings
@@ -209,7 +209,7 @@ def test_an_outer_law_reading_the_inner_savings_margin_is_rejected() -> None:
 
 
 def _outer_law_reading_a_sibling_law(
-    new_illiquid: ContinuousState, next_wealth: ContinuousState
+    *, new_illiquid: ContinuousState, next_wealth: ContinuousState
 ) -> ContinuousState:
     """A durable law reaching the inner margin through the Euler-state law."""
     return new_illiquid + 0.01 * next_wealth
@@ -277,7 +277,7 @@ def test_model_build_runs_the_dynamic_nnbegm_contract_check() -> None:
     ],
 )
 def test_a_finite_outer_grid_reaching_outside_the_outer_state_domain_is_refused(
-    outer_start: float, outer_stop: float, offending: str
+    *, outer_start: float, outer_stop: float, offending: str
 ) -> None:
     """Every finite outer node must name a value the outer state can hold.
 
@@ -359,7 +359,7 @@ _MESH = AdaptiveOuterMesh(
 
 
 def _lossy_new_illiquid(
-    illiquid: ContinuousState, illiquid_investment: ContinuousAction
+    *, illiquid: ContinuousState, illiquid_investment: ContinuousAction
 ) -> ContinuousState:
     """`s' = Z + Iz`, with the outer action round-tripped through float16.
 
@@ -397,7 +397,7 @@ def test_a_lossy_outer_map_is_refused_before_any_policy_is_published(
 
 
 def _doubled_new_illiquid(
-    illiquid: ContinuousState, illiquid_investment: ContinuousAction
+    *, illiquid: ContinuousState, illiquid_investment: ContinuousAction
 ) -> ContinuousState:
     """`s' = Z + 2 * Iz`: affine in the outer action, at two units per unit."""
     return illiquid + 2.0 * illiquid_investment
@@ -545,6 +545,7 @@ def test_the_continuous_outer_mesh_refuses_a_second_passive_continuous_state() -
 
 
 def _new_illiquid_reading_consumption(
+    *,
     illiquid: ContinuousState,
     illiquid_investment: ContinuousAction,
     consumption: ContinuousAction,
@@ -661,7 +662,7 @@ _ADAPTIVE_ROUTES = frozenset({"adaptive_solve", "automatic_simulation"})
 
 @pytest.mark.parametrize("route", sorted(_UNSUPPORTED_ROUTES))
 def test_no_route_returns_a_replay_policy_for_an_uninvertible_map(
-    route: str, monkeypatch: pytest.MonkeyPatch
+    *, route: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """An unsupported declaration leaves every route with no policy object at all.
 

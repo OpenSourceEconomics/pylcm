@@ -15,7 +15,8 @@ an outcome grid and its transition mechanism.
   irregular ages.
 - `@categorical(ordered=True|False)` creates a categorical code class. Every annotated
   field uses `ScalarInt` and receives a consecutive `jnp.int32` code.
-- `DiscreteGrid(Category)` turns that category class into a state or action grid.
+- `DiscreteGrid(category_class=Category)` turns that category class into a state or
+  action grid.
 
 The explicit `ordered` flag matters: interpolation and comparison may use ordering only
 when the economics declares it.

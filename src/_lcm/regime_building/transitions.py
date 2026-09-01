@@ -29,6 +29,7 @@ from lcm.typing import ContinuousState, DiscreteState, UserFunction
 
 
 def collect_state_transitions(
+    *,
     states: Mapping[StateName, Grid | Phased | AgeSpecializedGrid | None],
     state_transitions: Mapping[
         StateName,
@@ -38,7 +39,6 @@ def collect_state_transitions(
         | Mapping[RegimeName, UserFunction | Callable | Phased]
         | None,
     ],
-    *,
     joint_output_names: Collection[StateName] = (),
 ) -> dict[TransitionFunctionName, UserFunction | Phased]:
     """Collect state transition functions from `state_transitions`.
@@ -95,7 +95,7 @@ def _make_identity_fn(
     *, state_name: StateName, annotation: TypeAliasType
 ) -> _IdentityTransition:
     """Create an identity transition for a fixed state."""
-    return _IdentityTransition(state_name, annotation=annotation)
+    return _IdentityTransition(state_name=state_name, annotation=annotation)
 
 
 def _add_raw_transition(
@@ -135,7 +135,7 @@ def _add_raw_transition(
         isinstance(raw.solve, Mapping) or isinstance(raw.simulate, Mapping)
     ):
 
-        def _cell(side: object, target: RegimeName) -> UserFunction:
+        def _cell(*, side: object, target: RegimeName) -> UserFunction:
             # A per-target dict yields its cell; a bare law broadcasts over targets.
             if isinstance(side, Mapping):
                 by_target = cast("Mapping[RegimeName, object]", side)
@@ -147,8 +147,8 @@ def _add_raw_transition(
         for target_regime_name in targets:
             key = f"next_{name}{QNAME_DELIMITER}{target_regime_name}"
             transitions[key] = Phased(
-                solve=_cell(raw.solve, target_regime_name),
-                simulate=_cell(raw.simulate, target_regime_name),
+                solve=_cell(side=raw.solve, target=target_regime_name),
+                simulate=_cell(side=raw.simulate, target=target_regime_name),
             )
     elif callable(raw) or isinstance(raw, Phased):
         transitions[f"next_{name}"] = cast("UserFunction", raw)

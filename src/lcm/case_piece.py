@@ -85,11 +85,7 @@ class PiecewiseAffineMeta:
     """Ordered thresholds splitting the schedule into affine segments."""
 
 
-def case_boundary(
-    condition: Condition,
-    *,
-    kind: BoundaryKind,
-) -> CaseBoundary:
+def case_boundary(*, condition: Condition, kind: BoundaryKind) -> CaseBoundary:
     """Declare an executable binary case split from one structured condition.
 
     Args:

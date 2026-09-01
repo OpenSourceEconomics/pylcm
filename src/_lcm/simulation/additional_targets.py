@@ -100,10 +100,12 @@ def _get_available_targets_for_regime(regime: Regime) -> set[str]:
     candidates = {name for name in sim.functions if name not in excluded} | {
         name for name in sim.constraints if name not in excluded
     }
-    return candidates - _decision_only_target_names(regime, candidates)
+    return candidates - _decision_only_target_names(
+        regime=regime, candidates=candidates
+    )
 
 
-def _decision_only_target_names(regime: Regime, candidates: set[str]) -> set[str]:
+def _decision_only_target_names(*, regime: Regime, candidates: set[str]) -> set[str]:
     """Names whose realized recomputation would not be the decision's quantity.
 
     Reading a chosen `next_<state>` does not by itself make a function
@@ -256,7 +258,9 @@ def _compute_targets(
     if not subject_batch_size or subject_batch_size >= n_rows:
         kwargs = {k: jnp.asarray(v) for k, v in inputs.items()}
         result = vectorized_func(**all_params, **kwargs)
-        return {k: _one_value_per_row(v, n_rows=n_rows) for k, v in result.items()}
+        return {
+            k: _one_value_per_row(values=v, n_rows=n_rows) for k, v in result.items()
+        }
 
     # Slice the (host-resident) inputs and move only one chunk to the device at a
     # time, so the fused DAG's workspace is bounded by the chunk.
@@ -267,7 +271,7 @@ def _compute_targets(
         chunk_result = vectorized_func(**all_params, **chunk_kwargs)
         chunk_outputs.append(
             {
-                k: np.asarray(_one_value_per_row(v, n_rows=stop - start))
+                k: np.asarray(_one_value_per_row(values=v, n_rows=stop - start))
                 for k, v in chunk_result.items()
             }
         )
@@ -279,9 +283,7 @@ def _compute_targets(
 
 
 def _one_value_per_row(
-    values: FloatND | IntND | BoolND | np.ndarray | float,
-    *,
-    n_rows: int,
+    *, values: FloatND | IntND | BoolND | np.ndarray | float, n_rows: int
 ) -> FloatND | IntND | BoolND:
     """Return a target's values shaped as exactly one entry per row.
 

@@ -104,7 +104,7 @@ def _cases() -> list[tuple[dict, dict, float, float]]:
 
 @pytest.mark.parametrize(("left", "right", "query", "level"), _cases())
 def test_the_exact_margin_lies_inside_the_certified_interval(
-    left: dict, right: dict, query: float, level: float
+    *, left: dict, right: dict, query: float, level: float
 ):
     """The exact margin between two links is within the bound the margin reports."""
     margin = _certified(left=left, right=right, query=query, level=level)

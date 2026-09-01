@@ -243,10 +243,10 @@ def cast_params_to_canonical_dtypes(flat_params: FlatParams) -> FlatParams:
     # identity and large array leaves are not copied per slot.
     memo: dict[int, Any] = {}
 
-    def _cast_shared(value: Any, *, name: str) -> Any:  # noqa: ANN401
+    def _cast_shared(*, value: Any, name: str) -> Any:  # noqa: ANN401
         key = id(value)
         if key not in memo:
-            memo[key] = _cast_leaves_to_canonical_dtype(value, name=name)
+            memo[key] = _cast_leaves_to_canonical_dtype(value=value, name=name)
         return memo[key]
 
     return cast(
@@ -256,7 +256,7 @@ def cast_params_to_canonical_dtypes(flat_params: FlatParams) -> FlatParams:
                 regime: MappingProxyType(
                     {
                         param_qname: _cast_shared(
-                            value, name=f"{regime}{QNAME_DELIMITER}{param_qname}"
+                            value=value, name=f"{regime}{QNAME_DELIMITER}{param_qname}"
                         )
                         for param_qname, value in leaves.items()
                     }
@@ -267,7 +267,7 @@ def cast_params_to_canonical_dtypes(flat_params: FlatParams) -> FlatParams:
     )
 
 
-def _cast_leaves_to_canonical_dtype(value: Any, *, name: str) -> Any:  # noqa: ANN401, C901, PLR0911
+def _cast_leaves_to_canonical_dtype(*, value: Any, name: str) -> Any:  # noqa: ANN401, C901, PLR0911
     """Cast a single params leaf to its canonical pylcm dtype.
 
     Strict whitelist — every code path either casts or raises.
@@ -300,14 +300,14 @@ def _cast_leaves_to_canonical_dtype(value: Any, *, name: str) -> Any:  # noqa: A
     if isinstance(value, UserMappingLeaf):
         return MappingLeaf(
             {
-                k: _cast_leaves_to_canonical_dtype(v, name=f"{name}.{k}")
+                k: _cast_leaves_to_canonical_dtype(value=v, name=f"{name}.{k}")
                 for k, v in value.data.items()
             }
         )
     if isinstance(value, UserSequenceLeaf):
         return SequenceLeaf(
             [
-                _cast_leaves_to_canonical_dtype(v, name=f"{name}[{i}]")
+                _cast_leaves_to_canonical_dtype(value=v, name=f"{name}[{i}]")
                 for i, v in enumerate(value.data)
             ]
         )
@@ -322,17 +322,17 @@ def _cast_leaves_to_canonical_dtype(value: Any, *, name: str) -> Any:  # noqa: A
     if isinstance(value, bool):
         return jnp.bool_(value)
     if isinstance(value, int):
-        return safe_to_int_dtype(value, name=name)
+        return safe_to_int_dtype(value=value, name=name)
     if isinstance(value, float):
-        return safe_to_float_dtype(value, name=name)
+        return safe_to_float_dtype(value=value, name=name)
     if isinstance(value, (Array, np.ndarray)):
         kind = value.dtype.kind
         if kind == "b":
             return jnp.asarray(value, dtype=jnp.bool_)
         if kind in ("i", "u"):
-            return safe_to_int_dtype(value, name=name)
+            return safe_to_int_dtype(value=value, name=name)
         if kind == "f":
-            return safe_to_float_dtype(value, name=name)
+            return safe_to_float_dtype(value=value, name=name)
         msg = (
             f"{name!r}: array dtype {value.dtype} not supported "
             f"(expected bool / int / float)."
@@ -563,13 +563,13 @@ def get_flat_param_names(regime_params_template: RegimeParamsTemplate) -> set[st
     """
     result: set[str] = set()
 
-    def collect(prefix: tuple[str, ...], node: object) -> None:
+    def collect(*, prefix: tuple[str, ...], node: object) -> None:
         if isinstance(node, Mapping):
             for name, child in node.items():
-                collect((*prefix, name), child)
+                collect(prefix=(*prefix, name), node=child)
         else:
             result.add(qname_from_tree_path(prefix))
 
     for key, value in regime_params_template.items():
-        collect((key,), value)
+        collect(prefix=(key,), node=value)
     return result

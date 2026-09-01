@@ -139,7 +139,7 @@ class NEGM(TwoMarginSolver):
 
     def __post_init__(self) -> None:
         _fail_if_outer_grid_is_stochastic(self.outer_grid)
-        _fail_if_outer_batch_size_negative(self.outer_batch_size)
+        _fail_if_outer_batch_size_negative(outer_batch_size=self.outer_batch_size)
 
     def _with_margins(
         self,
@@ -236,7 +236,9 @@ class NEGM(TwoMarginSolver):
         ):
             group_functions = cast(
                 "EconFunctionsMapping",
-                resolve_periodized_nodes(context.functions, period_group[0]),
+                resolve_periodized_nodes(
+                    mapping=context.functions, period=period_group[0]
+                ),
             )
             adjuster_context = replace(
                 context,
@@ -405,7 +407,9 @@ class NEGM(TwoMarginSolver):
             )
             group_functions = cast(
                 "EconFunctionsMapping",
-                resolve_periodized_nodes(context.functions, representative_period),
+                resolve_periodized_nodes(
+                    mapping=context.functions, period=representative_period
+                ),
             )
             no_adjustment_func = (
                 group_functions[bound_self.outer_no_adjustment_candidate]
@@ -518,9 +522,9 @@ def _periodized_function_groups(
 
     groups: dict[Hashable, list[int]] = {}
     for period in periods:
-        groups.setdefault(periodized_tree_signature(functions, period), []).append(
-            period
-        )
+        groups.setdefault(
+            periodized_tree_signature(tree=functions, period=period), []
+        ).append(period)
     return tuple(tuple(group) for group in groups.values())
 
 
@@ -945,7 +949,7 @@ def _build_coh_shift_function(
             )
             raise InvalidParamsError(msg)
 
-        def cost_at(durable: FloatND, outer: FloatND) -> FloatND:
+        def cost_at(*, durable: FloatND, outer: FloatND) -> FloatND:
             bindings = {durable_state_name: durable, outer_post_decision: outer}
             return cost_func(
                 **{
@@ -959,7 +963,8 @@ def _build_coh_shift_function(
         return jax.vmap(
             lambda durable: jax.vmap(
                 lambda outer: (
-                    cost_at(durable, outer) - cost_at(durable, keeper_level(durable))
+                    cost_at(durable=durable, outer=outer)
+                    - cost_at(durable=durable, outer=keeper_level(durable))
                 )
             )(outer_values)
         )(durable_values)
@@ -1089,7 +1094,7 @@ def _with_outer_post_decision(
 
 
 def _fail_if_outer_batch_size_negative(
-    outer_batch_size: int, *, solver_name: str = "NEGM"
+    *, outer_batch_size: int, solver_name: str = "NEGM"
 ) -> None:
     """Reject a negative outer batch size, naming the solver that declared it."""
     if outer_batch_size < 0:

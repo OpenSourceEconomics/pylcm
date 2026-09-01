@@ -37,7 +37,7 @@ def _interior_for_kind(kind: int) -> np.ndarray:
     return _EDGE & away_from_cliff
 
 
-def _solve(variant: str, *, n_consumption: int = 160) -> Mapping[int, Mapping]:
+def _solve(*, variant: str, n_consumption: int = 160) -> Mapping[int, Mapping]:
     """Solve the jump-ride-along toy on the shared comparison grids."""
     model = toy.build_model(
         variant=variant,
@@ -63,8 +63,8 @@ def test_nbegm_jump_matches_brute_across_the_cliff_smooth_continuation():
     `GridSearch` value across the asset interior of both `kind` slices, through
     each slice's own cliff preimage (away from the single straddling grid cell).
     """
-    nbegm = _solve("nbegm")
-    brute = _solve("brute", n_consumption=1800)
+    nbegm = _solve(variant="nbegm")
+    brute = _solve(variant="brute", n_consumption=1800)
     period = _terminal_adjacent_period(nbegm)
     brute_v = np.asarray(brute[period]["alive"])
     nbegm_v = np.asarray(nbegm[period]["alive"])
@@ -91,7 +91,7 @@ def test_nbegm_jump_ride_along_recurring_is_resolution_limited():
     the remainder needs an explicit save-to-cliff candidate (an off-grid
     savings candidate at each child breakpoint preimage).
     """
-    brute = _solve("brute", n_consumption=1800)
+    brute = _solve(variant="brute", n_consumption=1800)
     period = min(period for period in brute if "alive" in brute[period])
 
     def _worst_recurring_error(n_savings: int) -> float:

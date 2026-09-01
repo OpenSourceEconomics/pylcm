@@ -158,6 +158,7 @@ def _make_keep_housing(delta: float) -> Callable[[ContinuousState], FloatND]:
 
 
 def housing_cost(
+    *,
     housing: ContinuousState,
     new_housing: ContinuousState,
     delta: float,
@@ -183,6 +184,7 @@ def housing_cost(
 
 
 def resources_before_outer_cost(
+    *,
     liquid: ContinuousState,
     income_value: FloatND,
     return_liquid: float,
@@ -198,7 +200,7 @@ def resources_before_outer_cost(
     return (1.0 + return_liquid) * liquid + income_value
 
 
-def savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
+def savings(*, resources: FloatND, consumption: ContinuousAction) -> FloatND:
     """Inner post-decision liquid balance `a' = resources - c`."""
     return resources - consumption
 
@@ -209,7 +211,7 @@ def next_liquid(savings: FloatND) -> ContinuousState:
 
 
 def new_housing(
-    housing: ContinuousState, housing_investment: ContinuousAction
+    *, housing: ContinuousState, housing_investment: ContinuousAction
 ) -> ContinuousState:
     """The house chosen this period, `H' = H + housing_investment`.
 
@@ -234,6 +236,7 @@ def serviced_housing(new_housing: ContinuousState) -> FloatND:
 
 
 def utility(
+    *,
     consumption: ContinuousAction,
     serviced_housing: FloatND,
     gamma_c: float,
@@ -250,7 +253,9 @@ def utility(
     return consumption_utility + alpha * jnp.log(serviced_housing)
 
 
-def inverse_marginal_utility(marginal_continuation: FloatND, gamma_c: float) -> FloatND:
+def inverse_marginal_utility(
+    *, marginal_continuation: FloatND, gamma_c: float
+) -> FloatND:
     """Invert the consumption marginal utility `u'(c) = c^{-gamma_C}`.
 
     `c = mc^{-1/gamma_C}`. The log housing-service term is separable and drops
@@ -260,6 +265,7 @@ def inverse_marginal_utility(marginal_continuation: FloatND, gamma_c: float) -> 
 
 
 def next_liquid_brute(
+    *,
     liquid: ContinuousState,
     housing_cost: FloatND,
     income_value: FloatND,
@@ -271,6 +277,7 @@ def next_liquid_brute(
 
 
 def borrowing_constraint(
+    *,
     liquid: ContinuousState,
     housing_cost: FloatND,
     income_value: FloatND,
@@ -284,6 +291,7 @@ def borrowing_constraint(
 
 
 def bequest(
+    *,
     liquid: ContinuousState,
     housing: ContinuousState,
     return_liquid: float,
@@ -384,7 +392,7 @@ def build_model(
             states={
                 "liquid": liquid_grid,
                 "housing": housing_grid,
-                "income": DiscreteGrid(Income),
+                "income": DiscreteGrid(category_class=Income),
             },
             state_transitions={
                 "liquid": next_liquid_brute,
@@ -428,7 +436,7 @@ def build_model(
         states={
             "liquid": liquid_grid,
             "housing": housing_grid,
-            "income": DiscreteGrid(Income),
+            "income": DiscreteGrid(category_class=Income),
         },
         state_transitions={
             "liquid": next_liquid,

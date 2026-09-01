@@ -187,7 +187,7 @@ def compile_all_simulation_phases(
     # itself, so the compiled program is installed there rather than swapped
     # into a regime field.
     for key, (evaluator, axis_size) in gate_calls.items():
-        install_population_call(evaluator, axis_size=axis_size, call=compiled[key])
+        install_population_call(func=evaluator, axis_size=axis_size, call=compiled[key])
 
     return _swap_in_compiled(
         regimes=regimes,
@@ -409,7 +409,7 @@ def _collect_edge_gate_evaluators(
             )
             gate_calls[key] = (evaluator, n_subjects)
             unique[key] = (
-                population_call(evaluator, axis_size=n_subjects),
+                population_call(func=evaluator, axis_size=n_subjects),
                 args,
                 (
                     f"{regime_name}/gate into {target_name} "
@@ -475,13 +475,13 @@ def _build_gate_evaluator_args(
     }
     static_kwargs: dict[str, object] = {
         **bind_provenance_params(
-            evaluator.arg_provenance,  # ty: ignore[unresolved-attribute]
+            provenance=evaluator.arg_provenance,  # ty: ignore[unresolved-attribute]
             flat_params=flat_params,
             source_name=source_name,
             target_name=target_name,
         ),
         **bind_edge_period_context(
-            evaluator, fold_period=fold_period, fold_age=fold_age
+            func=evaluator, fold_period=fold_period, fold_age=fold_age
         ),
         SAME_PERIOD_V_ARG: build_same_period_mapping_for_fold(
             edge=edge,
@@ -500,7 +500,7 @@ def _build_gate_evaluator_args(
         ),
     }
     return split_population_call_args(
-        evaluator,
+        func=evaluator,
         batched_kwargs=candidate_target_states,
         static_kwargs=static_kwargs,
     )
@@ -648,7 +648,7 @@ def _build_argmax_args(
     """
     base = regime.solution.state_action_space(regime_params=regime_params)
     subject_states = _subject_shape_arrays(
-        base.states, n_subjects=n_subjects, sharding=subject_sharding
+        base_arrays=base.states, n_subjects=n_subjects, sharding=subject_sharding
     )
     same_period_args: dict[str, object] = {}
     if regime.same_period_ref_regimes:
@@ -705,18 +705,18 @@ def _build_next_state_args(
 ) -> dict[str, object]:
     base = regime.solution.state_action_space(regime_params=regime_params)
     subject_states = _subject_shape_arrays(
-        base.states, n_subjects=n_subjects, sharding=subject_sharding
+        base_arrays=base.states, n_subjects=n_subjects, sharding=subject_sharding
     )
     # Simulate-only states (carried states declared via `Phased`)
     # are not solve grid axes, so they are absent from `state_action_space`. The
     # simulate `next_state` program carries and reads them, so seed each one.
     subject_states.update(
         _simulate_only_subject_states(
-            regime, n_subjects=n_subjects, sharding=subject_sharding
+            regime=regime, n_subjects=n_subjects, sharding=subject_sharding
         )
     )
     subject_actions = _subject_shape_arrays(
-        {**base.discrete_actions, **base.continuous_actions},
+        base_arrays={**base.discrete_actions, **base.continuous_actions},
         n_subjects=n_subjects,
         sharding=subject_sharding,
     )
@@ -754,15 +754,15 @@ def _build_crtp_args(
 ) -> dict[str, object]:
     base = regime.solution.state_action_space(regime_params=regime_params)
     subject_states = _subject_shape_arrays(
-        base.states, n_subjects=n_subjects, sharding=subject_sharding
+        base_arrays=base.states, n_subjects=n_subjects, sharding=subject_sharding
     )
     # The realized draw reads carried states as leaves, so the lower-args
     # must seed them like the next_state program's.
     simulate_only_states = _simulate_only_subject_states(
-        regime, n_subjects=n_subjects, sharding=subject_sharding
+        regime=regime, n_subjects=n_subjects, sharding=subject_sharding
     )
     subject_actions = _subject_shape_arrays(
-        {**base.discrete_actions, **base.continuous_actions},
+        base_arrays={**base.discrete_actions, **base.continuous_actions},
         n_subjects=n_subjects,
         sharding=subject_sharding,
     )
@@ -777,10 +777,7 @@ def _build_crtp_args(
 
 
 def _simulate_only_subject_states(
-    regime: Regime,
-    *,
-    n_subjects: int,
-    sharding: jax.NamedSharding | None,
+    *, regime: Regime, n_subjects: int, sharding: jax.NamedSharding | None
 ) -> dict[str, FloatND | IntND]:
     """Return `(n_subjects,)` zeros for the regime's simulate-only states.
 
@@ -797,8 +794,8 @@ def _simulate_only_subject_states(
 
 
 def _subject_shape_arrays(
-    base_arrays: Mapping[str, FloatND | IntND],
     *,
+    base_arrays: Mapping[str, FloatND | IntND],
     n_subjects: int,
     sharding: jax.NamedSharding | None,
 ) -> dict[str, FloatND | IntND]:

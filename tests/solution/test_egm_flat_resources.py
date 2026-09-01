@@ -70,7 +70,7 @@ def resources_with_high_floor(wealth: ContinuousState) -> FloatND:
     return jnp.maximum(wealth, HIGH_FLOOR)
 
 
-def savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
+def savings(*, resources: FloatND, consumption: ContinuousAction) -> FloatND:
     return resources - consumption
 
 
@@ -79,12 +79,13 @@ def inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
 
 
 def next_wealth_from_savings(
-    savings: FloatND, interest_rate: float, pension: float
+    *, savings: FloatND, interest_rate: float, pension: float
 ) -> ContinuousState:
     return (1 + interest_rate) * savings + pension
 
 
 def next_wealth_brute(
+    *,
     resources: FloatND,
     consumption: ContinuousAction,
     interest_rate: float,
@@ -93,7 +94,7 @@ def next_wealth_brute(
     return (1 + interest_rate) * (resources - consumption) + pension
 
 
-def budget_constraint(consumption: ContinuousAction, resources: FloatND) -> BoolND:
+def budget_constraint(*, consumption: ContinuousAction, resources: FloatND) -> BoolND:
     return consumption <= resources
 
 
@@ -103,7 +104,7 @@ def _get_means_tested_model(variant: str) -> Model:
     ages = AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
     last_age = float(ages.exact_values[-1])
 
-    def active(age: int, la: float = last_age) -> bool:
+    def active(*, age: int, la: float = last_age) -> bool:
         return age < la
 
     if variant == "brute":

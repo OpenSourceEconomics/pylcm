@@ -42,7 +42,7 @@ from lcm.exceptions import RegimeInitializationError
         pytest.param(Fraction(0), False, id="zero"),
     ],
 )
-def test_only_a_power_of_two_coefficient_inverts_exactly(coefficient, invertible):
+def test_only_a_power_of_two_coefficient_inverts_exactly(*, coefficient, invertible):
     """Dividing by a power of two is exact in binary; dividing by three is not.
 
     The coefficient decides what the inverse may attempt, and nothing more. A
@@ -174,13 +174,13 @@ def _targets(**overrides):
     """Build a post-decision DAG returning the outer target by name."""
     coefficient = overrides.get("coefficient", 1.0)
 
-    def func(illiquid, illiquid_investment):
+    def func(*, illiquid, illiquid_investment):
         return {"new_illiquid": illiquid + coefficient * illiquid_investment}
 
     return func
 
 
-def _certify(func, *, domain=(0.0, 20.0)):
+def _certify(*, func, domain=(0.0, 20.0)):
     return certify_declared_outer_inverse(
         func=func,
         arg_names=("illiquid", "illiquid_investment"),
@@ -194,7 +194,7 @@ def _certify(func, *, domain=(0.0, 20.0)):
 
 def test_the_certified_inverse_carries_the_coefficient_and_the_domain() -> None:
     """A unit affine map certifies coefficient one over the declared domain."""
-    inverse = _certify(_targets())
+    inverse = _certify(func=_targets())
 
     assert inverse.coefficient == Fraction(1)
     assert (inverse.low, inverse.high) == (0.0, 20.0)
@@ -208,7 +208,7 @@ def test_a_non_dyadic_coefficient_is_refused_where_it_is_declared() -> None:
     declare a map that can be inverted.
     """
     with pytest.raises(RegimeInitializationError) as refusal:
-        _certify(_targets(coefficient=3.0))
+        _certify(func=_targets(coefficient=3.0))
 
     assert "working" in str(refusal.value)
     assert "3" in str(refusal.value)
@@ -218,17 +218,17 @@ def test_a_non_dyadic_coefficient_is_refused_where_it_is_declared() -> None:
 def test_a_map_ignoring_the_outer_action_is_refused_as_uninvertible() -> None:
     """A constant map retains nothing about the action that reached it."""
     with pytest.raises(RegimeInitializationError):
-        _certify(lambda illiquid, illiquid_investment: {"new_illiquid": illiquid})  # noqa: ARG005
+        _certify(func=lambda illiquid, illiquid_investment: {"new_illiquid": illiquid})  # noqa: ARG005
 
 
 def test_a_non_affine_map_is_refused_rather_than_approximated() -> None:
     """A squared action has no single coefficient, so the map is refused."""
 
-    def squared(illiquid, illiquid_investment):
+    def squared(*, illiquid, illiquid_investment):
         return {"new_illiquid": illiquid + illiquid_investment**2}
 
     with pytest.raises(RegimeInitializationError):
-        _certify(squared)
+        _certify(func=squared)
 
 
 def test_inverting_a_retained_endpoint_publishes_the_action_and_its_image() -> None:
@@ -237,7 +237,7 @@ def test_inverting_a_retained_endpoint_publishes_the_action_and_its_image() -> N
     At the measured witness state the recovered action reaches the floor exactly,
     so the candidate is admitted and its image is the endpoint itself.
     """
-    inverse = _certify(_targets())
+    inverse = _certify(func=_targets())
     at_zero = jnp.asarray([3.8263208866119385], dtype=jnp.float32)
     target = jnp.asarray([0.0], dtype=jnp.float32)
 
@@ -260,7 +260,7 @@ def test_an_inversion_landing_off_the_domain_is_dropped_not_published() -> None:
     slope route produced. Nothing raises: the candidate is dropped and the rest
     of the bank is unaffected.
     """
-    inverse = _certify(_targets())
+    inverse = _certify(func=_targets())
     at_zero = jnp.asarray([3.8263209, 5.0], dtype=jnp.float32)
     target = jnp.asarray([0.0, 10.0], dtype=jnp.float32)
     overshoot = jnp.asarray([-7.152557e-07, 0.0], dtype=jnp.float32)
@@ -284,15 +284,15 @@ def _endpoint_failures(*, states, endpoint, route):
     inversions can be compared on exactly the same states and the same map.
     """
     target = jnp.full_like(states, endpoint)
-    image = states + route(states, target)
+    image = states + route(at_zero=states, target=target)
     return int(jnp.sum(image != target))
 
 
-def _certified_route(at_zero, target):
+def _certified_route(*, at_zero, target):
     return recover_outer_action(target=target, at_zero=at_zero, coefficient=Fraction(1))
 
 
-def _secant_route(at_zero, target):
+def _secant_route(*, at_zero, target):
     """Recover the action by dividing through a slope read from two evaluations."""
     one = jnp.ones_like(at_zero)
     slope = (at_zero + one) - at_zero
@@ -334,7 +334,7 @@ def test_every_certified_endpoint_recovery_is_admitted(endpoint) -> None:
     """
     states = jnp.linspace(0.5, 20.0, 20_001, dtype=jnp.float32)
     target = jnp.full_like(states, endpoint)
-    action = _certified_route(states, target)
+    action = _certified_route(at_zero=states, target=target)
 
     admissible = outer_candidate_is_admissible(
         image=states + action,

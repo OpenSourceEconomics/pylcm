@@ -40,7 +40,7 @@ def utility(consumption):
     return consumption
 
 
-def next_wealth(wealth, consumption):
+def next_wealth(*, wealth, consumption):
     return wealth - consumption
 
 
@@ -213,27 +213,27 @@ def test_markov_transition_rejects_non_callable():
 
 def test_identity_transition_call():
     """Identity transition returns the state value unchanged."""
-    identity = _IdentityTransition("wealth", annotation=ContinuousState)
+    identity = _IdentityTransition(state_name="wealth", annotation=ContinuousState)
     result = identity(wealth=jnp.array(42.0))
     assert result == jnp.array(42.0)
 
 
 def test_identity_transition_discrete():
     """Identity transition works for discrete states."""
-    identity = _IdentityTransition("education", annotation=DiscreteState)
+    identity = _IdentityTransition(state_name="education", annotation=DiscreteState)
     result = identity(education=jnp.array(1, dtype=jnp.int32))
     assert result == jnp.array(1, dtype=jnp.int32)
 
 
 def test_identity_transition_name():
     """Identity transition has the correct __name__."""
-    identity = _IdentityTransition("wealth", annotation=ContinuousState)
+    identity = _IdentityTransition(state_name="wealth", annotation=ContinuousState)
     assert identity.__name__ == "next_wealth"
 
 
 def test_identity_transition_signature():
     """Identity transition has a proper signature with annotation."""
-    identity = _IdentityTransition("wealth", annotation=ContinuousState)
+    identity = _IdentityTransition(state_name="wealth", annotation=ContinuousState)
     sig = inspect.signature(identity)
     assert list(sig.parameters) == ["wealth"]
     assert sig.parameters["wealth"].annotation is ContinuousState
@@ -242,7 +242,7 @@ def test_identity_transition_signature():
 
 def test_identity_transition_annotations():
     """Identity transition exposes __annotations__ for dags discovery."""
-    identity = _IdentityTransition("education", annotation=DiscreteState)
+    identity = _IdentityTransition(state_name="education", annotation=DiscreteState)
     assert identity.__annotations__ == {
         "education": DiscreteState,
         "return": DiscreteState,
@@ -251,7 +251,7 @@ def test_identity_transition_annotations():
 
 def test_identity_transition_is_auto_identity():
     """Identity transition is flagged as auto-generated."""
-    identity = _IdentityTransition("x", annotation=ContinuousState)
+    identity = _IdentityTransition(state_name="x", annotation=ContinuousState)
     assert identity._is_auto_identity is True
 
 
@@ -266,7 +266,7 @@ def test_get_all_functions_includes_identity_for_fixed_discrete_state():
     regime = UserRegime(
         transition=lambda: 0,
         functions={"utility": lambda education: education},
-        states={"education": DiscreteGrid(Edu)},
+        states={"education": DiscreteGrid(category_class=Edu)},
         state_transitions={"education": fixed_transition("education")},
     )
     all_funcs = regime.get_all_functions()
@@ -375,7 +375,7 @@ def test_discrete_state_grid_without_explicit_transition_raises():
     regime = UserRegime(
         transition=lambda: 0,
         functions={"utility": lambda status: status},
-        states={"status": DiscreteGrid(Status)},
+        states={"status": DiscreteGrid(category_class=Status)},
     )
     with pytest.raises(
         RegimeInitializationError, match="must have an entry in state_transitions"
@@ -390,7 +390,7 @@ def test_collect_state_transitions_missing_state_raises():
     with pytest.raises(
         RegimeInitializationError, match="has no entry in state_transitions"
     ):
-        collect_state_transitions(states, state_transitions={})
+        collect_state_transitions(states=states, state_transitions={})
 
 
 def test_regime_with_fixed_states_only():
@@ -402,16 +402,16 @@ def test_regime_with_fixed_states_only():
         dead: ScalarInt
 
     def fixed_utility(
-        consumption: ContinuousAction, wealth: ContinuousState
+        *, consumption: ContinuousAction, wealth: ContinuousState
     ) -> FloatND:
         return jnp.log(consumption) + 0.01 * wealth
 
     def fixed_borrowing(
-        consumption: ContinuousAction, wealth: ContinuousState
+        *, consumption: ContinuousAction, wealth: ContinuousState
     ) -> BoolND:
         return consumption <= wealth
 
-    def fixed_next_regime(age: float, final_age_alive: float) -> ScalarInt:
+    def fixed_next_regime(*, age: float, final_age_alive: float) -> ScalarInt:
         dead = FixedRegimeId.dead
         working = FixedRegimeId.working_life
         return jnp.where(age >= final_age_alive, dead, working)

@@ -140,7 +140,7 @@ def _build_model(
     )
 
 
-def _source_value(model: Model, params: dict) -> float:
+def _source_value(*, model: Model, params: dict) -> float:
     solution = model.solve(params=params, log_level="debug")
     last_living = max(period for period in solution if "source" in solution[period])
     return float(np.asarray(solution[last_living]["source"]).ravel()[0])
@@ -149,8 +149,9 @@ def _source_value(model: Model, params: dict) -> float:
 @pytest.mark.parametrize("coarse", [False, True], ids=["granular", "coarse"])
 @pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])
 def test_normal_gauss_hermite_entry_weights_a_nonlinear_payoff(
-    coarse: bool,  # noqa: FBT001
-    enable_jit: bool,  # noqa: FBT001
+    *,
+    coarse: bool,
+    enable_jit: bool,
 ) -> None:
     """`E[shock**2]` is the variance, not the unweighted mean of the squared nodes.
 
@@ -168,8 +169,8 @@ def test_normal_gauss_hermite_entry_weights_a_nonlinear_payoff(
         enable_jit=enable_jit,
     )
     got = _source_value(
-        model,
-        {
+        model=model,
+        params={
             "source": {
                 "utility": {},
                 "koopmans_aggregator": {"discount_factor": 1.0},
@@ -197,8 +198,8 @@ def test_lognormal_gauss_hermite_entry_weights_an_asymmetric_law() -> None:
         enable_jit=False,
     )
     got = _source_value(
-        model,
-        {
+        model=model,
+        params={
             "source": {
                 "utility": {},
                 "koopmans_aggregator": {"discount_factor": 1.0},
@@ -233,8 +234,8 @@ def test_binned_normal_entry_weights_a_nonlinear_payoff() -> None:
         enable_jit=False,
     )
     got = _source_value(
-        model,
-        {
+        model=model,
+        params={
             "source": {
                 "utility": {},
                 "koopmans_aggregator": {"discount_factor": 1.0},
@@ -283,8 +284,8 @@ def test_normal_mixture_entry_weights_a_bimodal_law() -> None:
         enable_jit=False,
     )
     got = _source_value(
-        model,
-        {
+        model=model,
+        params={
             "source": {
                 "utility": {},
                 "koopmans_aggregator": {"discount_factor": 1.0},
@@ -309,8 +310,8 @@ def test_a_uniform_law_prices_identically_either_way() -> None:
         enable_jit=False,
     )
     got = _source_value(
-        model,
-        {
+        model=model,
+        params={
             "source": {
                 "utility": {},
                 "koopmans_aggregator": {"discount_factor": 1.0},
@@ -370,8 +371,8 @@ def test_the_entry_law_decides_the_action() -> None:
         enable_jit=False,
     )
     got = _source_value(
-        model,
-        {
+        model=model,
+        params={
             "source": {
                 "utility": {},
                 "koopmans_aggregator": {"discount_factor": 1.0},
@@ -508,7 +509,7 @@ def test_explicit_entry_at_a_node_reads_that_node_alone(
     """
     model = _build_explicit_entry_model(entry_value=2.0, enable_jit=enable_jit)
 
-    got = _source_value(model, _EXPLICIT_ENTRY_PARAMS)
+    got = _source_value(model=model, params=_EXPLICIT_ENTRY_PARAMS)
 
     np.testing.assert_almost_equal(got, 4.0, decimal=DECIMAL_PRECISION)
 
@@ -526,7 +527,7 @@ def test_explicit_entry_between_nodes_interpolates_the_value(
     """
     model = _build_explicit_entry_model(entry_value=1.5, enable_jit=enable_jit)
 
-    got = _source_value(model, _EXPLICIT_ENTRY_PARAMS)
+    got = _source_value(model=model, params=_EXPLICIT_ENTRY_PARAMS)
 
     expected = 0.5 * _ENTRY_VALUES[1] + 0.5 * _ENTRY_VALUES[2]
     np.testing.assert_almost_equal(got, expected, decimal=DECIMAL_PRECISION)
@@ -540,11 +541,11 @@ def test_explicit_entry_beats_the_processs_own_law() -> None:
     entry cannot pass this.
     """
     entered = _source_value(
-        _build_explicit_entry_model(entry_value=0.0, enable_jit=False),
-        _EXPLICIT_ENTRY_PARAMS,
+        model=_build_explicit_entry_model(entry_value=0.0, enable_jit=False),
+        params=_EXPLICIT_ENTRY_PARAMS,
     )
     intrinsic = _source_value(
-        _build_model(
+        model=_build_model(
             process=NormalIIDProcess(
                 n_points=3, gauss_hermite=False, mu=1.0, sigma=0.5, n_std=2.0
             ),
@@ -552,7 +553,7 @@ def test_explicit_entry_beats_the_processs_own_law() -> None:
             coarse=False,
             enable_jit=False,
         ),
-        {
+        params={
             "source": {
                 "utility": {},
                 "koopmans_aggregator": {"discount_factor": 1.0},

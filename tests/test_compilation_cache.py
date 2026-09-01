@@ -42,7 +42,7 @@ def _env_with_home(tmp_path: Path) -> dict[str, str]:
 
 
 def _run_in_fresh_interpreter(
-    code: str, *, env: dict[str, str], cwd: Path | None = None
+    *, code: str, env: dict[str, str], cwd: Path | None = None
 ) -> str:
     result = subprocess.run(
         [sys.executable, "-c", code],
@@ -56,7 +56,7 @@ def _run_in_fresh_interpreter(
     return result.stdout.strip()
 
 
-def _project(root: Path, name: str) -> Path:
+def _project(*, root: Path, name: str) -> Path:
     """A directory that looks like a project root, i.e. carries a `pyproject.toml`."""
     project = root / name
     project.mkdir(parents=True)
@@ -68,7 +68,7 @@ def test_import_zeroes_min_compile_time_even_when_jax_is_imported_first():
     """Importing `lcm` zeroes the cache threshold, also after a prior `import jax`."""
     env = {k: v for k, v in os.environ.items() if k != _MIN_COMPILE_TIME_VAR}
     stdout = _run_in_fresh_interpreter(
-        "import jax; import lcm; "
+        code="import jax; import lcm; "
         "print(jax.config.jax_persistent_cache_min_compile_time_secs)",
         env=env,
     )
@@ -79,7 +79,7 @@ def test_import_respects_user_min_compile_time():
     """A user-set compile-time threshold survives the `lcm` import."""
     env = {**os.environ, _MIN_COMPILE_TIME_VAR: "1.5"}
     stdout = _run_in_fresh_interpreter(
-        "import jax; import lcm; "
+        code="import jax; import lcm; "
         "print(jax.config.jax_persistent_cache_min_compile_time_secs)",
         env=env,
     )
@@ -98,7 +98,7 @@ import jax.numpy as jnp
 
 jax.jit(lambda x: jnp.sin(x) + 1.0)(jnp.arange(3.0)).block_until_ready()
 """
-    _run_in_fresh_interpreter(code, env=env)
+    _run_in_fresh_interpreter(code=code, env=env)
     assert len(list(tmp_path.iterdir())) > 0
 
 
@@ -109,9 +109,9 @@ def test_import_sets_the_cache_dir_even_when_jax_is_imported_first(tmp_path: Pat
     while defining its config options — so with `jax` already imported, exporting
     it is not enough and the value has to reach `jax.config` directly.
     """
-    project = _project(tmp_path, "some-project")
+    project = _project(root=tmp_path, name="some-project")
     stdout = _run_in_fresh_interpreter(
-        "import jax; import lcm; print(jax.config.jax_compilation_cache_dir)",
+        code="import jax; import lcm; print(jax.config.jax_compilation_cache_dir)",
         env=_env_with_home(tmp_path),
         cwd=project,
     )
@@ -134,10 +134,10 @@ def test_default_cache_dir_is_separated_per_project(tmp_path: Path):
     env = _env_with_home(tmp_path)
 
     first = _run_in_fresh_interpreter(
-        read_cache_dir, env=env, cwd=_project(tmp_path, "aca-dev")
+        code=read_cache_dir, env=env, cwd=_project(root=tmp_path, name="aca-dev")
     )
     second = _run_in_fresh_interpreter(
-        read_cache_dir, env=env, cwd=_project(tmp_path, "attanasio2018")
+        code=read_cache_dir, env=env, cwd=_project(root=tmp_path, name="attanasio2018")
     )
 
     assert first == str(tmp_path / ".cache" / "jax" / "aca-dev")
@@ -156,12 +156,12 @@ def test_default_cache_dir_is_the_same_from_any_subdirectory(tmp_path: Path):
         "import jax; import lcm; print(jax.config.jax_compilation_cache_dir)"
     )
     env = _env_with_home(tmp_path)
-    project = _project(tmp_path, "my-project")
+    project = _project(root=tmp_path, name="my-project")
     nested = project / "tests" / "solution"
     nested.mkdir(parents=True)
 
-    from_root = _run_in_fresh_interpreter(read_cache_dir, env=env, cwd=project)
-    from_nested = _run_in_fresh_interpreter(read_cache_dir, env=env, cwd=nested)
+    from_root = _run_in_fresh_interpreter(code=read_cache_dir, env=env, cwd=project)
+    from_nested = _run_in_fresh_interpreter(code=read_cache_dir, env=env, cwd=nested)
 
     assert from_root == str(tmp_path / ".cache" / "jax" / "my-project")
     assert from_nested == from_root
@@ -181,8 +181,8 @@ import jax.numpy as jnp
 
 jax.jit(lambda x: jnp.sin(x) + 1.0)(jnp.arange(3.0)).block_until_ready()
 """
-    project = _project(tmp_path, "populating-project")
-    _run_in_fresh_interpreter(code, env=_env_with_home(tmp_path), cwd=project)
+    project = _project(root=tmp_path, name="populating-project")
+    _run_in_fresh_interpreter(code=code, env=_env_with_home(tmp_path), cwd=project)
     cache = tmp_path / ".cache" / "jax" / "populating-project"
     assert len(list(cache.iterdir())) > 0
 
@@ -195,7 +195,7 @@ def test_cache_name_can_be_set_explicitly(tmp_path: Path):
     coarse a split and every model would share one cache again. Naming the leaf
     separates them without making each caller spell out an absolute path.
     """
-    project = _project(tmp_path, "lcm-replications")
+    project = _project(root=tmp_path, name="lcm-replications")
     paper = project / "src" / "lcm_reps" / "somePaper2016"
     paper.mkdir(parents=True)
     env = _env_with_home(tmp_path) | {
@@ -203,7 +203,7 @@ def test_cache_name_can_be_set_explicitly(tmp_path: Path):
     }
 
     stdout = _run_in_fresh_interpreter(
-        "import jax; import lcm; print(jax.config.jax_compilation_cache_dir)",
+        code="import jax; import lcm; print(jax.config.jax_compilation_cache_dir)",
         env=env,
         cwd=paper,
     )
@@ -220,7 +220,7 @@ def test_an_explicit_cache_dir_outranks_an_explicit_cache_name(tmp_path: Path):
     }
 
     stdout = _run_in_fresh_interpreter(
-        "import jax; import lcm; print(jax.config.jax_compilation_cache_dir)",
+        code="import jax; import lcm; print(jax.config.jax_compilation_cache_dir)",
         env=env,
     )
 
@@ -233,7 +233,7 @@ def test_import_respects_a_user_supplied_cache_dir(tmp_path: Path):
     chosen.mkdir()
     env = {**os.environ, _CACHE_DIR_VAR: str(chosen)}
     stdout = _run_in_fresh_interpreter(
-        "import jax; import lcm; print(jax.config.jax_compilation_cache_dir)",
+        code="import jax; import lcm; print(jax.config.jax_compilation_cache_dir)",
         env=env,
     )
     assert stdout == str(chosen)

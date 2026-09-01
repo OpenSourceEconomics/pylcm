@@ -26,7 +26,7 @@ _N_QUADRATURE = 1_000_001
 
 
 def _quadrature(
-    keeper: float, adjuster: float, scale: float, lower: float, upper: float
+    *, keeper: float, adjuster: float, scale: float, lower: float, upper: float
 ) -> tuple[float, float]:
     """Midpoint-rule expectation and adjustment probability."""
     edges = np.linspace(lower, upper, _N_QUADRATURE + 1)
@@ -49,7 +49,7 @@ def _quadrature(
     ],
 )
 def test_closed_form_matches_dense_quadrature(
-    keeper: float, adjuster: float, scale: float, lower: float, upper: float
+    *, keeper: float, adjuster: float, scale: float, lower: float, upper: float
 ) -> None:
     result = aggregate_uniform_observed_fixed_cost(
         keeper_value=jnp.asarray(keeper),
@@ -58,7 +58,9 @@ def test_closed_form_matches_dense_quadrature(
         lower=lower,
         upper=upper,
     )
-    expected, probability = _quadrature(keeper, adjuster, scale, lower, upper)
+    expected, probability = _quadrature(
+        keeper=keeper, adjuster=adjuster, scale=scale, lower=lower, upper=upper
+    )
     # The quadrature reference is always float64, but the closed form is evaluated in
     # whatever precision the suite runs at, so its own error is a few epsilon of that
     # format. `rtol=1e-9` is a float64-grade bound: at float32 it would be testing the

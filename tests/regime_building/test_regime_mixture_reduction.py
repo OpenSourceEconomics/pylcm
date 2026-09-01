@@ -70,7 +70,7 @@ def test_compare_swap_network_matches_jax_total_order(precision: str):
         ordered = [values[i] for i in range(values.size)]
         for left, right, ascending in _bitonic_value_order_network(len(ordered)):
             ordered[left], ordered[right] = _compare_swap_values(
-                ordered[left], ordered[right], ascending=ascending
+                left=ordered[left], right=ordered[right], ascending=ascending
             )
 
         got = jnp.stack(ordered)
@@ -87,7 +87,7 @@ def test_compare_swap_preserves_one_nan_and_one_finite_operand():
     maximum = jnp.maximum(nan, finite)
     assert bool(jnp.isnan(minimum) & jnp.isnan(maximum))
 
-    lower, upper = _compare_swap_values(nan, finite, ascending=True)
+    lower, upper = _compare_swap_values(left=nan, right=finite, ascending=True)
     assert float(lower) == 1.0
     assert bool(jnp.isnan(upper))
 
@@ -96,7 +96,9 @@ def test_compare_swap_preserves_two_distinct_nan_payloads():
     """The invalid NaN class may reorder, but no payload is duplicated or lost."""
     payload_bits = jnp.asarray([0x7FC00001, 0x7FC00002], dtype=jnp.uint32)
     payloads = jax.lax.bitcast_convert_type(payload_bits, jnp.float32)
-    lower, upper = _compare_swap_values(payloads[0], payloads[1], ascending=True)
+    lower, upper = _compare_swap_values(
+        left=payloads[0], right=payloads[1], ascending=True
+    )
     got = np.sort(_bits(jnp.stack([lower, upper])))
     np.testing.assert_array_equal(got, np.sort(np.asarray(payload_bits)))
 
@@ -129,11 +131,11 @@ def test_no_stack_reduction_is_permutation_invariant_and_within_roundoff(k: int)
     p = jnp.asarray(probabilities, dtype=dtype)
     v = jnp.asarray(values, dtype=dtype)
 
-    def production(probability: FloatND, value: FloatND) -> FloatND:
+    def production(*, probability: FloatND, value: FloatND) -> FloatND:
         terms = [(f"r{i}", probability[i], value[i]) for i in range(k)]
-        return _sum_regime_mixture(terms, like=value[0])
+        return _sum_regime_mixture(mixture_terms=terms, like=value[0])
 
-    def oracle(probability: FloatND, value: FloatND) -> FloatND:
+    def oracle(*, probability: FloatND, value: FloatND) -> FloatND:
         # Literal pre-repair spelling: stack the unmultiplied operands, form one
         # vectorized zero-safe product, then reduce the target axis in value order.
         contributions = zero_safe_weighted_term(
@@ -145,8 +147,8 @@ def test_no_stack_reduction_is_permutation_invariant_and_within_roundoff(k: int)
             return jnp.sum(contributions, axis=0)
         return jnp.sum(jnp.sort(contributions, axis=0), axis=0)
 
-    got = jax.jit(production)(p, v)
-    expected = jax.jit(oracle)(p, v)
+    got = jax.jit(production)(probability=p, value=v)
+    expected = jax.jit(oracle)(probability=p, value=v)
 
     # The no-stack reduction has a source-level order; the old target-axis
     # `reduce` delegates its association and product fusion to backend codegen.
@@ -171,7 +173,10 @@ def test_no_stack_reduction_is_permutation_invariant_and_within_roundoff(k: int)
         np.arange(k - 1, -1, -1),
         np.roll(np.arange(k), 1),
     ):
-        permuted = jax.jit(production)(p[order], v[order])
+        permuted = jax.jit(production)(
+            probability=p[order],
+            value=v[order],
+        )
         np.testing.assert_array_equal(_bits(permuted), _bits(got))
 
 
@@ -184,7 +189,10 @@ def test_two_target_reduction_preserves_stored_product_bits():
         [4.4386952338486274e-14, 7.219655679768875e-15], dtype=jnp.float32
     )
     got = _sum_regime_mixture(
-        [("r0", probabilities[0], values[0]), ("r1", probabilities[1], values[1])],
+        mixture_terms=[
+            ("r0", probabilities[0], values[0]),
+            ("r1", probabilities[1], values[1]),
+        ],
         like=values[0],
     )
     expected = jnp.sum(
@@ -224,21 +232,27 @@ def test_two_target_value_order_is_invariant_across_separate_compilations(
         values = jnp.asarray([v0, v1], dtype=dtype)
 
         @jax.jit
-        def forward(probability: FloatND, value: FloatND) -> FloatND:
+        def forward(*, probability: FloatND, value: FloatND) -> FloatND:
             return _sum_regime_mixture(
-                [("r0", probability[0], value[0]), ("r1", probability[1], value[1])],
+                mixture_terms=[
+                    ("r0", probability[0], value[0]),
+                    ("r1", probability[1], value[1]),
+                ],
                 like=value[0],
             )
 
         @jax.jit
-        def reverse(probability: FloatND, value: FloatND) -> FloatND:
+        def reverse(*, probability: FloatND, value: FloatND) -> FloatND:
             return _sum_regime_mixture(
-                [("r1", probability[1], value[1]), ("r0", probability[0], value[0])],
+                mixture_terms=[
+                    ("r1", probability[1], value[1]),
+                    ("r0", probability[0], value[0]),
+                ],
                 like=value[0],
             )
 
         @jax.jit
-        def oracle(probability: FloatND, value: FloatND) -> FloatND:
+        def oracle(*, probability: FloatND, value: FloatND) -> FloatND:
             contributions = zero_safe_weighted_term(
                 weight=probability,
                 value=value,
@@ -246,9 +260,9 @@ def test_two_target_value_order_is_invariant_across_separate_compilations(
             )
             return jnp.sum(jnp.sort(contributions), axis=0)
 
-        got_forward = forward(probabilities, values)
-        got_reverse = reverse(probabilities, values)
-        expected = oracle(probabilities, values)
+        got_forward = forward(probability=probabilities, value=values)
+        got_reverse = reverse(probability=probabilities, value=values)
+        expected = oracle(probability=probabilities, value=values)
         np.testing.assert_array_equal(_bits(got_forward), _bits(got_reverse))
         np.testing.assert_array_equal(_bits(got_forward), _bits(expected))
 
@@ -261,8 +275,11 @@ def test_two_target_compare_swap_preserves_duplicate_contribution_gradients():
     weights = jnp.asarray([0.5, 0.25])
     values = jnp.asarray([2.0, 4.0])
 
+    # keyword-only-exempt: library-callback=jax.grad
     def mixture(w: FloatND, v: FloatND) -> FloatND:
-        return _sum_regime_mixture([("r0", w[0], v[0]), ("r1", w[1], v[1])], like=v[0])
+        return _sum_regime_mixture(
+            mixture_terms=[("r0", w[0], v[0]), ("r1", w[1], v[1])], like=v[0]
+        )
 
     grad_weights, grad_values = jax.jit(jax.grad(mixture, argnums=(0, 1)))(
         weights, values
@@ -276,8 +293,11 @@ def test_value_ordering_preserves_gradients_at_duplicate_contributions():
     weights = jnp.asarray([0.5, 0.25, 0.25])
     values = jnp.asarray([2.0, 4.0, 4.0])  # every contribution equals one
 
+    # keyword-only-exempt: library-callback=jax.grad
     def mixture(w: FloatND, v: FloatND) -> FloatND:
-        return _sum_regime_mixture([(f"r{i}", w[i], v[i]) for i in range(3)], like=v[0])
+        return _sum_regime_mixture(
+            mixture_terms=[(f"r{i}", w[i], v[i]) for i in range(3)], like=v[0]
+        )
 
     grad_weights, grad_values = jax.jit(jax.grad(mixture, argnums=(0, 1)))(
         weights, values
@@ -288,7 +308,7 @@ def test_value_ordering_preserves_gradients_at_duplicate_contributions():
 
 def test_invalid_nan_and_negative_probability_fail_visibly():
     live_nan = _sum_regime_mixture(
-        [
+        mixture_terms=[
             ("finite", jnp.asarray(0.5), jnp.asarray(2.0)),
             ("nan", jnp.asarray(0.5), jnp.asarray(jnp.nan)),
             ("other", jnp.asarray(0.0), jnp.asarray(-jnp.inf)),
@@ -311,7 +331,8 @@ def test_subnormal_regime_weight_keeps_its_finite_contribution():
         weight = jnp.asarray(2.0**-128, dtype=jnp.float32)
         value = jnp.asarray(2.0**126, dtype=jnp.float32)
         got = _sum_regime_mixture(
-            [("rare", weight, value)], like=jnp.asarray(0.0, dtype=jnp.float32)
+            mixture_terms=[("rare", weight, value)],
+            like=jnp.asarray(0.0, dtype=jnp.float32),
         )
         assert float(got) == pytest.approx(0.25)
 
@@ -328,7 +349,7 @@ def test_optimized_hlo_has_no_materialized_target_axis():
         probabilities = args[:k]
         values = args[k:]
         terms = [(f"r{i}", probabilities[i], values[i]) for i in range(k)]
-        return _sum_regime_mixture(terms, like=values[0])
+        return _sum_regime_mixture(mixture_terms=terms, like=values[0])
 
     compiled = jax.jit(kernel).lower(*([abstract] * (2 * k))).compile()
     optimized_hlo = compiled.as_text()
@@ -363,7 +384,7 @@ def test_full_shape_mixture_stays_within_profile_temporary_memory_budget():
         probabilities = args[:k]
         values = args[k:]
         terms = [(f"r{i}", probabilities[i], values[i]) for i in range(k)]
-        return _sum_regime_mixture(terms, like=values[0])
+        return _sum_regime_mixture(mixture_terms=terms, like=values[0])
 
     compiled = jax.jit(kernel).lower(*([abstract] * (2 * k))).compile()
     memory_analysis = compiled.memory_analysis()

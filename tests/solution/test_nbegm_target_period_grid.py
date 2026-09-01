@@ -102,7 +102,7 @@ def test_next_period_arrays_are_read_on_the_next_period_grid(next_nodes):
         next_liquid_grid=next_grid,
         savings_grid=jnp.asarray(_SAVINGS_GRID),
         discount_factor=_DISCOUNT,
-        preferences=crra_preferences(1.0),
+        preferences=crra_preferences(crra=1.0),
         next_liquid=(1.0 + _RETURN) * jnp.asarray(_SAVINGS_GRID) + _INCOME,
         marginal_return=jnp.full_like(jnp.asarray(_SAVINGS_GRID), 1.0 + _RETURN),
         subsidy_when=0.0,

@@ -36,11 +36,11 @@ def _next_regime() -> ScalarInt:
     return jnp.int32(0)
 
 
-def _utility_f(wealth: ContinuousState, work: DiscreteAction) -> FloatND:
+def _utility_f(*, wealth: ContinuousState, work: DiscreteAction) -> FloatND:
     return wealth * work
 
 
-def _utility_m(wealth: ContinuousState, work: DiscreteAction) -> FloatND:
+def _utility_m(*, wealth: ContinuousState, work: DiscreteAction) -> FloatND:
     return wealth * (1.0 - work)
 
 
@@ -48,7 +48,7 @@ def _next_wealth(wealth: ContinuousState) -> ContinuousState:
     return wealth
 
 
-def _participation_f(Q_f: FloatND, outside_option_f: FloatND) -> BoolND:
+def _participation_f(*, Q_f: FloatND, outside_option_f: FloatND) -> BoolND:
     return Q_f >= outside_option_f
 
 
@@ -57,7 +57,7 @@ def _split_wealth(wealth: ContinuousState) -> ContinuousState:
     return 0.5 * wealth
 
 
-def _halved_wealth(wealth: ContinuousState, divorce_cost: float) -> ContinuousState:
+def _halved_wealth(*, wealth: ContinuousState, divorce_cost: float) -> ContinuousState:
     """The defect: `divorce_cost` is supplied by nothing in the regime."""
     return 0.5 * wealth - divorce_cost
 
@@ -67,7 +67,7 @@ def _make_regime(*, projection) -> Regime:
         transition=_next_regime,
         states={"wealth": _WEALTH},
         state_transitions={"wealth": _next_wealth},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
         },

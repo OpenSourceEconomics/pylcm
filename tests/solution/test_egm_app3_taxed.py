@@ -52,7 +52,7 @@ MIN_FRACTION_WITHIN = 0.95
         (25.0, 0.525968 + 0.0294 * (25.0 - 20.0)),  # top bracket
     ],
 )
-def test_piecewise_tax_matches_the_bracket_schedule(assets: float, expected: float):
+def test_piecewise_tax_matches_the_bracket_schedule(*, assets: float, expected: float):
     """`T(a)` returns `B + tau_a*(a - a0)` for the bracket containing `a`."""
     got = float(piecewise_capital_income_tax(jnp.asarray(assets)))
     np.testing.assert_allclose(got, expected, atol=_TAX_ATOL)

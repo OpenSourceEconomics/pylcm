@@ -287,7 +287,7 @@ def validate_model_inputs(  # noqa: C901
         )
     error_messages.extend(
         _validate_all_variables_used(
-            user_regimes,
+            user_regimes=user_regimes,
             broadcast_variables=broadcast_variables,
             ages=ages,
             active_periods_by_regime=active_periods_by_regime,
@@ -295,7 +295,7 @@ def validate_model_inputs(  # noqa: C901
     )
     error_messages.extend(
         _validate_constraint_phase_invariance(
-            user_regimes,
+            user_regimes=user_regimes,
             ages=ages,
             active_periods_by_regime=active_periods_by_regime,
         )
@@ -385,8 +385,8 @@ def _model_wide_conditioning_names(
 
 
 def _validate_all_variables_used(
-    user_regimes: Mapping[RegimeName, UserRegime],
     *,
+    user_regimes: Mapping[RegimeName, UserRegime],
     broadcast_variables: Mapping[RegimeName, frozenset[str]] | None = None,
     ages: AgeGrid | None = None,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
@@ -487,7 +487,7 @@ def _validate_all_variables_used(
                 user_functions = cast(
                     "dict[str, Callable[..., object]]",
                     {
-                        name: resolve_node(func, representative_age)
+                        name: resolve_node(node=func, age=representative_age)
                         for name, func in user_functions.items()
                     },
                 )
@@ -541,7 +541,7 @@ def _validate_all_variables_used(
     return error_messages
 
 
-def _law_phase_varies(solve_obj: object, sim_obj: object) -> bool:
+def _law_phase_varies(*, solve_obj: object, sim_obj: object) -> bool:
     """Whether a name's `solve` and `simulate` resolutions are different laws.
 
     Object identity is the test: `get_all_functions` returns the raw user
@@ -597,8 +597,8 @@ def _is_solve_proved_post_decision_lower_bound(
 
 
 def _validate_constraint_phase_invariance(
-    user_regimes: Mapping[RegimeName, UserRegime],
     *,
+    user_regimes: Mapping[RegimeName, UserRegime],
     ages: AgeGrid | None = None,
     active_periods_by_regime: Mapping[RegimeName, tuple[int, ...]] | None = None,
 ) -> list[str]:
@@ -643,7 +643,9 @@ def _validate_constraint_phase_invariance(
         phase_varying = frozenset(
             name
             for name in solve_funcs
-            if _law_phase_varies(solve_funcs[name], sim_funcs.get(name))
+            if _law_phase_varies(
+                solve_obj=solve_funcs[name], sim_obj=sim_funcs.get(name)
+            )
         )
         # Alias each phase-varying per-target law onto the unqualified
         # `next_<state>` a constraint actually reads.
@@ -685,7 +687,7 @@ def _validate_constraint_phase_invariance(
                 ancestry_funcs = cast(
                     "dict[str, Callable[..., object]]",
                     {
-                        name: resolve_node(func, representative_age)
+                        name: resolve_node(node=func, age=representative_age)
                         for name, func in solve_funcs.items()
                     },
                 )
@@ -936,7 +938,7 @@ def _validate_param_types(flat_params: FlatParams) -> None:
     """
     for regime_name, regime_params in flat_params.items():
         for key, value in regime_params.items():
-            _check_leaf(value, f"{regime_name}__{key}")
+            _check_leaf(value=value, path=f"{regime_name}__{key}")
 
 
 def fail_if_nonpositive_taste_shock_scale(flat_params: FlatParams) -> None:
@@ -956,15 +958,15 @@ def fail_if_nonpositive_taste_shock_scale(flat_params: FlatParams) -> None:
             raise InvalidParamsError(msg)
 
 
-def _check_leaf(value: object, path: str) -> None:
+def _check_leaf(*, value: object, path: str) -> None:
     """Check a single leaf, recursing into `MappingLeaf` / `SequenceLeaf`."""
     if isinstance(value, MappingLeaf):
         for k, v in value.data.items():
-            _check_leaf(v, f"{path}.{k}")
+            _check_leaf(value=v, path=f"{path}.{k}")
         return
     if isinstance(value, SequenceLeaf):
         for i, v in enumerate(value.data):
-            _check_leaf(v, f"{path}[{i}]")
+            _check_leaf(value=v, path=f"{path}[{i}]")
         return
     if isinstance(value, Array):
         return

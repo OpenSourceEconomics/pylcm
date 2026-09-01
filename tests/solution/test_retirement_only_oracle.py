@@ -36,10 +36,10 @@ def stack_retirement_V(period_to_regime_to_V_arr: PeriodToRegimeToVArr) -> np.nd
 
 
 @pytest.mark.parametrize(("case", "n_periods"), ANALYTICAL_CASES.items())
-def test_retirement_only_brute_force_matches_analytical(case, n_periods):
+def test_retirement_only_brute_force_matches_analytical(*, case, n_periods):
     """Brute-force V of the two-regime model equals the analytical retired values."""
     model = get_model(n_periods)
-    params = get_params(n_periods, discount_factor=0.98, interest_rate=0.0)
+    params = get_params(n_periods=n_periods, discount_factor=0.98, interest_rate=0.0)
 
     period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
 

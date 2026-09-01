@@ -61,7 +61,7 @@ def _subprocess_env(base_env: Mapping[str, str]) -> dict[str, str]:
     return env
 
 
-def measure_gpu_peak(bench_module: str, bench_class: str) -> int:
+def measure_gpu_peak(*, bench_module: str, bench_class: str) -> int:
     """Run a benchmark in a subprocess and return peak GPU bytes.
 
     Args:
@@ -100,7 +100,9 @@ def measure_gpu_peak(bench_module: str, bench_class: str) -> int:
 
 
 def _track_gpu_peak_mem(self):
-    return measure_gpu_peak(self.bench_module, self.bench_class)
+    return measure_gpu_peak(
+        bench_module=self.bench_module, bench_class=self.bench_class
+    )
 
 
 _track_gpu_peak_mem.unit = "bytes"

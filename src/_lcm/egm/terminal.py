@@ -155,6 +155,7 @@ def get_terminal_wealth_carry_producer(
                 zip(discrete_state_names, discrete_codes, strict=True)
             )
 
+            # keyword-only-exempt: library-callback=jax.grad
             def utility_at_point(
                 euler_value: ScalarFloat, passive_values: tuple[ScalarFloat, ...]
             ) -> ScalarFloat:
@@ -359,12 +360,15 @@ def _grad_over_discrete_combos(
     )
 
     def build_axis(
-        prefix: tuple[IntND, ...], remaining: tuple[FloatND | IntND, ...]
+        *, prefix: tuple[IntND, ...], remaining: tuple[FloatND | IntND, ...]
     ) -> FloatND:
         if not remaining:
             return grad_at_combo(prefix)
         head, *tail = remaining
-        rows = [build_axis((*prefix, code), tuple(tail)) for code in jnp.asarray(head)]
+        rows = [
+            build_axis(prefix=(*prefix, code), remaining=tuple(tail))
+            for code in jnp.asarray(head)
+        ]
         return jnp.stack(rows, axis=0)
 
-    return build_axis((), discrete_grids)
+    return build_axis(prefix=(), remaining=discrete_grids)

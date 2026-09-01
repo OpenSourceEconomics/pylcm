@@ -177,7 +177,7 @@ def test_living_regimes_partition_ages_at_65():
         [
             [
                 WORKING_REGIME.active(int(age)),
-                RETIREMENT_REGIME.active(int(age)),
+                RETIREMENT_REGIME.active(age=int(age)),
             ]
             for age in ages.values[:-1]
         ]
@@ -274,6 +274,7 @@ def simulation_result():
     ],
 )
 def test_labor_supply_distribution(
+    *,
     simulation_result,
     period,
     expected_retired,
@@ -301,7 +302,7 @@ def test_labor_supply_distribution(
         (30, 0.9374),
     ],
 )
-def test_mean_wealth_profile(simulation_result, period, expected_mean_wealth):
+def test_mean_wealth_profile(*, simulation_result, period, expected_mean_wealth):
     """Mean wealth at key periods must match reference."""
     p = simulation_result[simulation_result["period"] == period]
     np.testing.assert_allclose(p["wealth"].mean(), expected_mean_wealth, atol=0.01)
@@ -317,7 +318,7 @@ def test_mean_wealth_profile(simulation_result, period, expected_mean_wealth):
         (30, 0.7049),
     ],
 )
-def test_health_good_fraction(simulation_result, period, expected_good_frac):
+def test_health_good_fraction(*, simulation_result, period, expected_good_frac):
     """Fraction in good health must decline with age as expected."""
     p = simulation_result[simulation_result["period"] == period]
     np.testing.assert_allclose(
@@ -335,7 +336,7 @@ def test_health_good_fraction(simulation_result, period, expected_good_frac):
         (37, 510),
     ],
 )
-def test_survival_counts(simulation_result, period, expected_alive):
+def test_survival_counts(*, simulation_result, period, expected_alive):
     """Number of surviving agents must match reference."""
     n = len(simulation_result[simulation_result["period"] == period])
     assert abs(n - expected_alive) <= 5

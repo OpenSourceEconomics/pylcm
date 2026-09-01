@@ -17,7 +17,7 @@ _LIQUID = np.linspace(0.1, 30.0, 120)
 _INTERIOR = (_LIQUID > 0.5) & (_LIQUID < 24.0)
 
 
-def _solve(variant: str, *, n_consumption: int = 120) -> Mapping[int, Mapping]:
+def _solve(*, variant: str, n_consumption: int = 120) -> Mapping[int, Mapping]:
     """Solve the floor toy on the shared comparison grids."""
     model = toy.build_model(
         variant=variant,
@@ -32,8 +32,8 @@ def _solve(variant: str, *, n_consumption: int = 120) -> Mapping[int, Mapping]:
 
 def test_floor_schedule_matches_brute_where_the_floor_binds_every_age():
     """The floor solve equals brute where it binds and above it, every age."""
-    nbegm = _solve("nbegm")
-    brute = _solve("brute", n_consumption=1500)
+    nbegm = _solve(variant="nbegm")
+    brute = _solve(variant="brute", n_consumption=1500)
     for period in brute:
         if "alive" not in brute[period] or "alive" not in nbegm[period]:
             continue

@@ -102,6 +102,7 @@ def _flatten_egm_carry(carry: EGMCarry) -> tuple[tuple[Any, ...], None]:
     return tuple(getattr(carry, name) for name in _EGM_CARRY_FIELDS), None
 
 
+# keyword-only-exempt: library-callback=jax.tree_util.register_pytree_node
 def _unflatten_egm_carry(_aux: None, children: Sequence[Any]) -> EGMCarry:
     carry = object.__new__(EGMCarry)
     for name, child in zip(_EGM_CARRY_FIELDS, children, strict=True):

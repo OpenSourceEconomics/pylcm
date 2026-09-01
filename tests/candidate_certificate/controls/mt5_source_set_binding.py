@@ -86,8 +86,8 @@ def _load_inventory(path: Path) -> list[dict[str, str]]:
 
 
 def _contract(
-    entries: list[dict[str, str]],
     *,
+    entries: list[dict[str, str]],
     anchor: dict[str, str],
     duplicate: bool = False,
 ) -> str:
@@ -158,7 +158,7 @@ def _run_verifier(
 
 
 def _copy_minimal_repo(
-    source: Path, destination: Path, entries: list[dict[str, str]]
+    *, source: Path, destination: Path, entries: list[dict[str, str]]
 ) -> None:
     paths = [CERTIFICATE, INVENTORY, *[Path(item["path"]) for item in entries]]
     for relative in paths:
@@ -215,7 +215,7 @@ def main() -> int:
                 "sha256": hashlib.sha256((repo / INVENTORY).read_bytes()).hexdigest(),
             }
             clean_contract.write_text(
-                _contract(entries, anchor=anchor), encoding="utf-8"
+                _contract(entries=entries, anchor=anchor), encoding="utf-8"
             )
             clean_exit, _clean_payload = _run_verifier(
                 verifier=verifier,
@@ -227,7 +227,7 @@ def main() -> int:
 
             deleted = entries[:-1]
             path = tmp / "delete.yaml"
-            path.write_text(_contract(deleted, anchor=anchor), encoding="utf-8")
+            path.write_text(_contract(entries=deleted, anchor=anchor), encoding="utf-8")
             code, payload = _run_verifier(
                 verifier=verifier, repo_root=repo, contract=path
             )
@@ -244,7 +244,7 @@ def main() -> int:
             }
             added = [*entries, extra]
             path = tmp / "add.yaml"
-            path.write_text(_contract(added, anchor=anchor), encoding="utf-8")
+            path.write_text(_contract(entries=added, anchor=anchor), encoding="utf-8")
             code, payload = _run_verifier(
                 verifier=verifier, repo_root=repo, contract=path
             )
@@ -252,7 +252,8 @@ def main() -> int:
 
             path = tmp / "duplicate.yaml"
             path.write_text(
-                _contract(entries, anchor=anchor, duplicate=True), encoding="utf-8"
+                _contract(entries=entries, anchor=anchor, duplicate=True),
+                encoding="utf-8",
             )
             code, payload = _run_verifier(
                 verifier=verifier, repo_root=repo, contract=path
@@ -266,7 +267,7 @@ def main() -> int:
             renamed_path = entries[-1]["path"] + ".renamed"
             renamed = [*entries[:-1], {**entries[-1], "path": renamed_path}]
             path = tmp / "rename.yaml"
-            path.write_text(_contract(renamed, anchor=anchor), encoding="utf-8")
+            path.write_text(_contract(entries=renamed, anchor=anchor), encoding="utf-8")
             code, payload = _run_verifier(
                 verifier=verifier, repo_root=repo, contract=path
             )
@@ -277,7 +278,7 @@ def main() -> int:
             }
 
             mutated_repo = tmp / "mutated-repo"
-            _copy_minimal_repo(repo, mutated_repo, entries)
+            _copy_minimal_repo(source=repo, destination=mutated_repo, entries=entries)
             changed_path = entries[-1]["path"]
             with (mutated_repo / changed_path).open("ab") as stream:
                 stream.write(b" ")

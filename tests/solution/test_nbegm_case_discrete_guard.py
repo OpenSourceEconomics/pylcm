@@ -41,26 +41,26 @@ class InsurancePlan:
     premium: ScalarInt
 
 
-def premium_cost(insurance_plan: DiscreteAction, premium_price: float) -> FloatND:
+def premium_cost(*, insurance_plan: DiscreteAction, premium_price: float) -> FloatND:
     """Out-of-pocket premium the chosen plan charges."""
     return jnp.where(insurance_plan == InsurancePlan.premium, premium_price, 0.0)
 
 
 def subsidy(
-    subsidy_medicaid: FloatND, subsidy_private: FloatND, medicaid_eligible: BoolND
+    *, subsidy_medicaid: FloatND, subsidy_private: FloatND, medicaid_eligible: BoolND
 ) -> FloatND:
     """Dense combination of the two subsidy pieces."""
     return jnp.where(medicaid_eligible, subsidy_medicaid, subsidy_private)
 
 
 def resources(
-    liquid: ContinuousState, subsidy: FloatND, premium_cost: FloatND
+    *, liquid: ContinuousState, subsidy: FloatND, premium_cost: FloatND
 ) -> FloatND:
     """Cash-on-hand: liquid wealth plus the subsidy net of the plan premium."""
     return liquid + subsidy - premium_cost
 
 
-def resources_without_premium(liquid: ContinuousState, subsidy: FloatND) -> FloatND:
+def resources_without_premium(*, liquid: ContinuousState, subsidy: FloatND) -> FloatND:
     """Cash-on-hand: liquid wealth plus the Medicaid-contingent subsidy."""
     return liquid + subsidy
 
@@ -90,11 +90,13 @@ def test_a_case_piece_regime_with_a_discrete_action_is_rejected():
             },
             liquid_law=next_liquid_from_savings,
             alive_solver=resolve_solver(
-                "nbegm",
+                variant="nbegm",
                 savings_grid=SAVINGS_GRID,
             ),
             constraints={},
-            extra_actions={"insurance_plan": DiscreteGrid(InsurancePlan)},
+            extra_actions={
+                "insurance_plan": DiscreteGrid(category_class=InsurancePlan)
+            },
         )
 
 
@@ -129,11 +131,11 @@ def test_a_case_piece_regime_with_a_second_state_names_that_state() -> None:
             },
             liquid_law=next_liquid_from_savings,
             alive_solver=resolve_solver(
-                "nbegm",
+                variant="nbegm",
                 savings_grid=SAVINGS_GRID,
             ),
             constraints={},
-            extra_states={"health": DiscreteGrid(Health)},
+            extra_states={"health": DiscreteGrid(category_class=Health)},
             extra_state_transitions={
                 "health": {"alive": keep_health, "dead": keep_health},
             },

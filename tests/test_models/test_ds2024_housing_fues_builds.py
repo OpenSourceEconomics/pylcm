@@ -47,6 +47,7 @@ def test_ds2024_housing_fues_builds_and_solves(variant: Literal["dcegm", "brute"
 
 
 def _solve(
+    *,
     variant: Literal["dcegm", "brute"],
     envelope: Literal["fues", "mss", "ltm", "rfc"],
 ) -> PeriodToRegimeToVArr:
@@ -77,8 +78,8 @@ def test_ds2024_housing_dcegm_matches_brute_in_bulk(
     the oracle is the robust check; the two backends' policies can diverge by the
     envelope-internal tie-breaking on the durable-corner cells.
     """
-    brute = _solve("brute", "rfc")
-    dcegm = _solve("dcegm", envelope)
+    brute = _solve(variant="brute", envelope="rfc")
+    dcegm = _solve(variant="dcegm", envelope=envelope)
     differences = []
     for period in sorted(brute):
         if "alive" not in brute[period]:

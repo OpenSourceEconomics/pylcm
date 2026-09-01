@@ -66,7 +66,7 @@ class RegimeId:
     dead: ScalarInt
 
 
-def _crra(consumption: FloatND, crra: float) -> FloatND:
+def _crra(*, consumption: FloatND, crra: float) -> FloatND:
     # `jnp.where` evaluates both branches, so the unselected one must stay
     # finite: at `crra == 1` the power branch is `c**0 / 0`, and while that
     # infinity is discarded from the primal it reaches the derivative as
@@ -89,28 +89,29 @@ def _crra(consumption: FloatND, crra: float) -> FloatND:
 
 
 def utility_working(
-    consumption: ContinuousAction, crra: float, work_disutility: float
+    *, consumption: ContinuousAction, crra: float, work_disutility: float
 ) -> FloatND:
     """CRRA consumption utility net of the additive disutility of work."""
-    return _crra(consumption, crra) - work_disutility
+    return _crra(consumption=consumption, crra=crra) - work_disutility
 
 
-def utility_retired(consumption: ContinuousAction, crra: float) -> FloatND:
+def utility_retired(*, consumption: ContinuousAction, crra: float) -> FloatND:
     """CRRA consumption utility; the retired agent pays no work disutility."""
-    return _crra(consumption, crra)
+    return _crra(consumption=consumption, crra=crra)
 
 
-def bequest(liquid: ContinuousState, crra: float) -> FloatND:
+def bequest(*, liquid: ContinuousState, crra: float) -> FloatND:
     """Terminal value: consume remaining liquid wealth (the pension is paid out)."""
-    return _crra(liquid, crra)
+    return _crra(consumption=liquid, crra=crra)
 
 
-def inverse_marginal_utility(marginal_continuation: FloatND, crra: float) -> FloatND:
+def inverse_marginal_utility(*, marginal_continuation: FloatND, crra: float) -> FloatND:
     """Inverse of `u'(c) = c**(-crra)`; the work disutility is additive."""
     return marginal_continuation ** (-1.0 / crra)
 
 
 def _pension_post_decision(
+    *,
     pension: ContinuousState,
     deposit: ContinuousAction,
     match_rate: float,
@@ -120,6 +121,7 @@ def _pension_post_decision(
 
 
 def next_liquid_working(
+    *,
     liquid: ContinuousState,
     consumption: ContinuousAction,
     deposit: ContinuousAction,
@@ -131,6 +133,7 @@ def next_liquid_working(
 
 
 def next_liquid_retiring(
+    *,
     liquid: ContinuousState,
     pension: ContinuousState,
     consumption: ContinuousAction,
@@ -147,7 +150,9 @@ def next_liquid_retiring(
     first retirement income is added.
     """
     liquid_post = liquid - consumption - deposit
-    pension_post = _pension_post_decision(pension, deposit, match_rate)
+    pension_post = _pension_post_decision(
+        pension=pension, deposit=deposit, match_rate=match_rate
+    )
     return (
         (1.0 + return_liquid) * liquid_post
         + pension_payout_return * pension_post
@@ -156,25 +161,31 @@ def next_liquid_retiring(
 
 
 def next_pension_working(
+    *,
     pension: ContinuousState,
     deposit: ContinuousAction,
     return_pension: float,
     match_rate: float,
 ) -> ContinuousState:
     """Pension law of motion while staying in the working regime."""
-    return (1.0 + return_pension) * _pension_post_decision(pension, deposit, match_rate)
+    return (1.0 + return_pension) * _pension_post_decision(
+        pension=pension, deposit=deposit, match_rate=match_rate
+    )
 
 
 def resources_retired(liquid: ContinuousState) -> FloatND:
     return liquid
 
 
-def savings_retired(liquid: ContinuousState, consumption: ContinuousAction) -> FloatND:
+def savings_retired(
+    *, liquid: ContinuousState, consumption: ContinuousAction
+) -> FloatND:
     """Retired end-of-period balance the liquid law is written through."""
     return liquid - consumption
 
 
 def next_liquid_retired(
+    *,
     savings: FloatND,
     return_liquid: float,
     retirement_income: float,
@@ -184,6 +195,7 @@ def next_liquid_retired(
 
 
 def feasible_working(
+    *,
     liquid: ContinuousState,
     consumption: ContinuousAction,
     deposit: ContinuousAction,
@@ -193,6 +205,7 @@ def feasible_working(
 
 
 def feasible_retired(
+    *,
     liquid: ContinuousState,
     consumption: ContinuousAction,
 ) -> BoolND:
@@ -200,22 +213,22 @@ def feasible_retired(
     return consumption <= liquid
 
 
-def prob_stay_working(age: int, retirement_age: float) -> FloatND:
+def prob_stay_working(*, age: int, retirement_age: float) -> FloatND:
     """Deterministic (0/1) probability of staying in the working regime next period."""
     return jnp.where(age + 1 < retirement_age, 1.0, 0.0)
 
 
-def prob_retire(age: int, retirement_age: float) -> FloatND:
+def prob_retire(*, age: int, retirement_age: float) -> FloatND:
     """Deterministic (0/1) probability of transitioning working->retired next period."""
     return jnp.where(age + 1 >= retirement_age, 1.0, 0.0)
 
 
-def prob_stay_retired(age: int, final_age_alive: float) -> FloatND:
+def prob_stay_retired(*, age: int, final_age_alive: float) -> FloatND:
     """Deterministic (0/1) probability of remaining retired next period."""
     return jnp.where(age + 1 < final_age_alive, 1.0, 0.0)
 
 
-def prob_die(age: int, final_age_alive: float) -> FloatND:
+def prob_die(*, age: int, final_age_alive: float) -> FloatND:
     """Deterministic (0/1) probability of transitioning retired->dead next period."""
     return jnp.where(age + 1 >= final_age_alive, 1.0, 0.0)
 

@@ -79,12 +79,12 @@ _EXPECTED_V_PERIOD_0 = np.array([[58.5, 0.0], [58.5, 0.0], [78.0, 156.0]])
 _EXPECTED_D_PERIOD_0 = np.array([False, False, False])
 
 
-def _utility_f(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _utility_f(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     """Wife: her leisure is worth a flat 30, working is worth the wage."""
     return wage * work + 30.0 * (1.0 - work)
 
 
-def _utility_m(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _utility_m(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     """Husband: values household consumption only, twice the wife's weight on it."""
     return 2.0 * (wage * work)
 
@@ -114,7 +114,7 @@ def _make_model() -> Model:
         active=lambda age: age < 1,
         states={"wage": _WAGE_GRID},
         state_transitions={"wage": _next_wage},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
         },
@@ -124,7 +124,7 @@ def _make_model() -> Model:
         transition=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE_GRID},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(utilities={"f": _utility_f, "m": _utility_m})
         },

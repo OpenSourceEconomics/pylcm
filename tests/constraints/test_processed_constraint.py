@@ -36,7 +36,7 @@ _LIQUID = LiquidMargin(
 )
 
 
-def _affordable(consumption: FloatND, wealth: FloatND) -> FloatND:
+def _affordable(*, consumption: FloatND, wealth: FloatND) -> FloatND:
     return consumption <= wealth
 
 

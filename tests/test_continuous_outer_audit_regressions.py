@@ -144,18 +144,20 @@ def test_exact_kink_optimum_is_flagged_though_ad_reads_stationary() -> None:
     """
     bounds = (jnp.array([0.0]), jnp.array([1.0]))
 
-    def kinked(f, theta):
+    def kinked(*, f, theta):
         return -theta * jnp.maximum(f - 0.3, 0.3 - f) - 0.5 * (f - 0.3) ** 2
 
     theta = jnp.array(1.0)
     f_star = jnp.array([0.3])  # exactly on the kink
 
     # A single forward-mode derivative at the symmetric kink reads approximately zero.
-    q_f = jax.jvp(lambda f: kinked(f, theta), (f_star,), (jnp.ones_like(f_star),))[1]
+    q_f = jax.jvp(
+        lambda f: kinked(f=f, theta=theta), (f_star,), (jnp.ones_like(f_star),)
+    )[1]
     assert abs(float(q_f[0])) < 1e-6
 
     diag = implicit_optimum_diagnostics(
-        kinked,
+        objective=kinked,
         theta=theta,
         f_star=f_star,
         basin_margin=jnp.array([1.0]),  # not basin-tied
@@ -248,7 +250,7 @@ def test_fail_closed_defaults_to_true() -> None:
 # raises during refinement before the collapse ever runs).
 
 
-def _cusp_surface(nodes: jnp.ndarray, state_shape: tuple[int, ...]) -> jnp.ndarray:
+def _cusp_surface(*, nodes: jnp.ndarray, state_shape: tuple[int, ...]) -> jnp.ndarray:
     """A per-cell kinked outer surface stacked on the shared mesh."""
     cusps = jnp.reshape(jnp.linspace(0.2, 0.8, int(np.prod(state_shape))), state_shape)
     lead = (slice(None),) + (None,) * len(state_shape)
@@ -263,11 +265,11 @@ def test_high_rank_state_does_not_segfault_the_eager_outer_search() -> None:
     """
     nodes = jnp.linspace(0.0, 4.0, 129, dtype=jnp.float32)
     state_shape = (2, 2, 2, 2)  # rank 4 — the KV two-asset+shock+regime shape
-    values = _cusp_surface(nodes, state_shape).astype(jnp.float32)
+    values = _cusp_surface(nodes=nodes, state_shape=state_shape).astype(jnp.float32)
     interp = LocalCubicOuterInterpolant()
 
     result = safeguarded_continuous_argmax(
-        lambda q: interp.evaluate(nodes=nodes, values=values, query=q),
+        objective=lambda q: interp.evaluate(nodes=nodes, values=values, query=q),
         nodes=nodes,
         node_values=values,
         golden_iterations=16,
@@ -277,7 +279,7 @@ def test_high_rank_state_does_not_segfault_the_eager_outer_search() -> None:
     assert bool(jnp.all(jnp.isfinite(result.value)))
 
 
-def test_worst_cell_dump_is_gated_and_changes_no_result(capsys, monkeypatch) -> None:
+def test_worst_cell_dump_is_gated_and_changes_no_result(*, capsys, monkeypatch) -> None:
     """The `LCM_OUTER_DUMP_WORST_CELL` locator emits only when set, never else.
 
     It is a pure stderr read of data `_mark_intervals` already computes (to let a
@@ -378,15 +380,15 @@ def test_constant_surface_does_not_flip_the_outer_action() -> None:
     # fp32 leg on the format rather than on the cancellation this guards against.
     dense = interp.evaluate(nodes=nodes, values=values, query=jnp.linspace(0, 3, 601))
     assert_agrees_to_ulp(
-        jnp.max(dense),
-        jnp.asarray(10.0, dtype=dense.dtype),
+        got=jnp.max(dense),
+        expected=jnp.asarray(10.0, dtype=dense.dtype),
         n_ulp=4,
         err_msg="constant surface grew an interpolation peak",
     )
 
     # ... and the tie band resolves whatever ripple remains to the smaller node.
     result = safeguarded_continuous_argmax(
-        lambda z: interp.evaluate(nodes=nodes, values=values, query=z),
+        objective=lambda z: interp.evaluate(nodes=nodes, values=values, query=z),
         nodes=nodes,
         node_values=values,
         golden_iterations=16,
@@ -420,7 +422,7 @@ def test_ninth_basin_off_node_peak_is_not_missed_by_a_bracket_cap() -> None:
         return base + bump
 
     found = safeguarded_continuous_argmax(
-        objective, nodes=node_x, node_values=node_values, golden_iterations=48
+        objective=objective, nodes=node_x, node_values=node_values, golden_iterations=48
     )
     assert float(found.value) > 150.0, "the ninth-basin off-node peak is the global max"
     assert node_x[16] < float(found.x) < node_x[18], "winner sits in the ninth basin"
@@ -428,7 +430,7 @@ def test_ninth_basin_off_node_peak_is_not_missed_by_a_bracket_cap() -> None:
     # A cap of eight refines only basins 1-8, so the ninth basin competes as its
     # exact node and a lower continuous peak wins instead.
     capped = safeguarded_continuous_argmax(
-        objective,
+        objective=objective,
         nodes=node_x,
         node_values=node_values,
         golden_iterations=48,
@@ -614,7 +616,7 @@ def _pinned_kink_objective(kink_coef: float):
     zero while that tangent error stays 1.
     """
 
-    def objective(f: jnp.ndarray, theta: jnp.ndarray) -> jnp.ndarray:
+    def objective(*, f: jnp.ndarray, theta: jnp.ndarray) -> jnp.ndarray:
         return -kink_coef * jnp.abs(f - 0.3) - 0.5 * (f - 0.3) ** 2 + theta * (f - 0.3)
 
     return objective
@@ -626,13 +628,13 @@ def test_small_amplitude_kink_is_flagged_nonstationary(kink_coef: float) -> None
     theta = jnp.asarray(0.0)
     bounds = (jnp.asarray(0.0), jnp.asarray(1.0))
     f_star, _value, basin_margin = _continuous_outer_optimum_primal(
-        objective, theta, bounds
+        objective=objective, theta=theta, bounds=bounds
     )
     # The primal pins the optimum at the kink, where the IFT tangent is wrong.
     assert abs(float(f_star) - 0.3) < 1e-3
 
     diag = implicit_optimum_diagnostics(
-        objective,
+        objective=objective,
         theta=theta,
         f_star=f_star,
         basin_margin=basin_margin,
@@ -647,16 +649,16 @@ def test_small_amplitude_kink_is_flagged_nonstationary(kink_coef: float) -> None
 def test_genuine_smooth_optimum_stays_resolved() -> None:
     """The contraction screen must not over-flag a smooth interior optimum."""
 
-    def objective(f: jnp.ndarray, theta: jnp.ndarray) -> jnp.ndarray:
+    def objective(*, f: jnp.ndarray, theta: jnp.ndarray) -> jnp.ndarray:
         return -0.5 * (f - 0.3) ** 2 + theta * (f - 0.3)
 
     theta = jnp.asarray(0.0)
     bounds = (jnp.asarray(0.0), jnp.asarray(1.0))
     f_star, _value, basin_margin = _continuous_outer_optimum_primal(
-        objective, theta, bounds
+        objective=objective, theta=theta, bounds=bounds
     )
     diag = implicit_optimum_diagnostics(
-        objective,
+        objective=objective,
         theta=theta,
         f_star=f_star,
         basin_margin=basin_margin,
@@ -683,19 +685,23 @@ def test_branch_certificate_flags_a_kink_the_value_heuristic_misses() -> None:
     theta = jnp.asarray(0.0)
     bounds = (jnp.asarray(0.0), jnp.asarray(1.0))
     f_star, _value, basin_margin = _continuous_outer_optimum_primal(
-        objective, theta, bounds
+        objective=objective, theta=theta, bounds=bounds
     )
     assert abs(float(f_star) - 0.3) < 1e-3
 
     heuristic = implicit_optimum_diagnostics(
-        objective, theta=theta, f_star=f_star, basin_margin=basin_margin, bounds=bounds
+        objective=objective,
+        theta=theta,
+        f_star=f_star,
+        basin_margin=basin_margin,
+        bounds=bounds,
     )
     # The value-only screen misses this kink and does not claim a certificate.
     assert not bool(heuristic.nonstationary)
     assert not bool(heuristic.branch_certified)
 
     certified = implicit_optimum_diagnostics(
-        objective,
+        objective=objective,
         theta=theta,
         f_star=f_star,
         basin_margin=basin_margin,
@@ -713,16 +719,16 @@ def test_branch_certificate_does_not_over_flag_a_smooth_optimum() -> None:
     """A constant branch across the probe neighborhood leaves a smooth optimum
     resolved — the exact certificate adds no false positives."""
 
-    def objective(f: jnp.ndarray, theta: jnp.ndarray) -> jnp.ndarray:
+    def objective(*, f: jnp.ndarray, theta: jnp.ndarray) -> jnp.ndarray:
         return -0.5 * (f - 0.3) ** 2 + theta * (f - 0.3)
 
     theta = jnp.asarray(0.0)
     bounds = (jnp.asarray(0.0), jnp.asarray(1.0))
     f_star, _value, basin_margin = _continuous_outer_optimum_primal(
-        objective, theta, bounds
+        objective=objective, theta=theta, bounds=bounds
     )
     diag = implicit_optimum_diagnostics(
-        objective,
+        objective=objective,
         theta=theta,
         f_star=f_star,
         basin_margin=basin_margin,

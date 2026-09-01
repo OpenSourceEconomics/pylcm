@@ -23,7 +23,7 @@ _JUMP = 10.0
     [("when", _LIMIT), ("otherwise", _LIMIT + _JUMP)],
 )
 def test_kink_aware_interp_reads_the_owning_side_at_the_limit(
-    equality_owner: EqualityOwner, value_at_limit: float
+    *, equality_owner: EqualityOwner, value_at_limit: float
 ) -> None:
     """A query exactly at the boundary reads the side that owns equality."""
     values = jnp.where(
@@ -31,7 +31,13 @@ def test_kink_aware_interp_reads_the_owning_side_at_the_limit(
         _GRID,
         _GRID + _JUMP,
     )
-    read = _kink_aware_interp(jnp.array(_LIMIT), _GRID, values, _LIMIT, equality_owner)
+    read = _kink_aware_interp(
+        query=jnp.array(_LIMIT),
+        grid=_GRID,
+        values=values,
+        limit=_LIMIT,
+        equality_owner=equality_owner,
+    )
     np.testing.assert_allclose(read, value_at_limit)
 
 
@@ -46,19 +52,37 @@ def test_kink_aware_interp_reads_the_far_side_just_past_an_on_node_limit(
         _GRID + _JUMP,
     )
     query = jnp.nextafter(jnp.array(_LIMIT), jnp.array(jnp.inf))
-    read = _kink_aware_interp(query, _GRID, values, _LIMIT, equality_owner)
+    read = _kink_aware_interp(
+        query=query,
+        grid=_GRID,
+        values=values,
+        limit=_LIMIT,
+        equality_owner=equality_owner,
+    )
     np.testing.assert_allclose(read, _LIMIT + _JUMP, rtol=1e-12)
 
 
 def test_kink_aware_interp_interpolates_within_the_lower_branch() -> None:
     """Strictly below the boundary the reader stays on the when branch."""
     values = jnp.where(_GRID <= _LIMIT, _GRID, _GRID + _JUMP)
-    read = _kink_aware_interp(jnp.array(1.5), _GRID, values, _LIMIT, "otherwise")
+    read = _kink_aware_interp(
+        query=jnp.array(1.5),
+        grid=_GRID,
+        values=values,
+        limit=_LIMIT,
+        equality_owner="otherwise",
+    )
     np.testing.assert_allclose(read, 1.5, rtol=1e-12)
 
 
 def test_kink_aware_interp_interpolates_within_the_upper_branch() -> None:
     """Strictly above the boundary the reader stays on the otherwise branch."""
     values = jnp.where(_GRID <= _LIMIT, _GRID, _GRID + _JUMP)
-    read = _kink_aware_interp(jnp.array(3.5), _GRID, values, _LIMIT, "otherwise")
+    read = _kink_aware_interp(
+        query=jnp.array(3.5),
+        grid=_GRID,
+        values=values,
+        limit=_LIMIT,
+        equality_owner="otherwise",
+    )
     np.testing.assert_allclose(read, 13.5, rtol=1e-12)

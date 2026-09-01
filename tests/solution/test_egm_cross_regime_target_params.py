@@ -93,7 +93,7 @@ def utility(consumption: ContinuousAction) -> FloatND:
     return jnp.log(consumption)
 
 
-def savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
+def savings(*, resources: FloatND, consumption: ContinuousAction) -> FloatND:
     return resources - consumption
 
 
@@ -106,7 +106,7 @@ def next_wealth_dcegm(savings: FloatND) -> ContinuousState:
 
 
 def next_wealth_brute(
-    resources: FloatND, consumption: ContinuousAction
+    *, resources: FloatND, consumption: ContinuousAction
 ) -> ContinuousState:
     return resources - consumption + LABOR_INCOME
 
@@ -151,17 +151,17 @@ def accrued_pension() -> FloatND:
     return jnp.asarray(ACCRUED_PENSION)
 
 
-def pension_value(accrued_pension: FloatND, pension_factor: float) -> FloatND:
+def pension_value(*, accrued_pension: FloatND, pension_factor: float) -> FloatND:
     """Pension income, scaling accrued pension by its regime-local factor."""
     return accrued_pension * pension_factor
 
 
-def resources_old(wealth: ContinuousState, pension_value: FloatND) -> FloatND:
+def resources_old(*, wealth: ContinuousState, pension_value: FloatND) -> FloatND:
     return wealth + pension_value
 
 
 def budget_constraint_old(
-    consumption: ContinuousAction, wealth: ContinuousState, pension_value: FloatND
+    *, consumption: ContinuousAction, wealth: ContinuousState, pension_value: FloatND
 ) -> BoolND:
     return consumption <= wealth + pension_value
 
@@ -170,25 +170,25 @@ def budget_constraint_old(
 # name as the target, but a different regime-local value.
 
 
-def resources_young(wealth: ContinuousState, pension_value: FloatND) -> FloatND:
+def resources_young(*, wealth: ContinuousState, pension_value: FloatND) -> FloatND:
     return wealth + pension_value
 
 
 def budget_constraint_young(
-    consumption: ContinuousAction, wealth: ContinuousState, pension_value: FloatND
+    *, consumption: ContinuousAction, wealth: ContinuousState, pension_value: FloatND
 ) -> BoolND:
     return consumption <= wealth + pension_value
 
 
-def next_old_stay_prob(wealth: ContinuousState, age: int) -> FloatND:
+def next_old_stay_prob(*, wealth: ContinuousState, age: int) -> FloatND:
     # At the last decision age `old` must transition into the terminal `dead`
     # regime only, since `old` is inactive in the next period.
     last_age = 40 + (N_PERIODS - 1) * 10
     return jnp.where(age >= last_age - 10, 0.0, survival_of_wealth(wealth))
 
 
-def next_old_death_prob(wealth: ContinuousState, age: int) -> FloatND:
-    return 1.0 - next_old_stay_prob(wealth, age)
+def next_old_death_prob(*, wealth: ContinuousState, age: int) -> FloatND:
+    return 1.0 - next_old_stay_prob(wealth=wealth, age=age)
 
 
 DCEGM_SOLVER = DCEGM(
@@ -208,7 +208,7 @@ def _params(*, factor_is_fixed: bool) -> dict:
 
 
 @functools.cache
-def _cross_regime_model(solver: str, *, factor_is_fixed: bool) -> Model:
+def _cross_regime_model(*, solver: str, factor_is_fixed: bool) -> Model:
     """Young (DC-EGM, asset-row) carries into a different regime `old`.
 
     `young` and `old` both expose `pension_value__pension_factor`, but each
@@ -358,10 +358,10 @@ def test_cross_regime_target_resources_param_matches_brute_force(
     """
     params = _params(factor_is_fixed=factor_is_fixed)
     dcegm_solution = _cross_regime_model(
-        "dcegm", factor_is_fixed=factor_is_fixed
+        solver="dcegm", factor_is_fixed=factor_is_fixed
     ).solve(params=params, log_level="debug")
     brute_solution = _cross_regime_model(
-        "brute_force", factor_is_fixed=factor_is_fixed
+        solver="brute_force", factor_is_fixed=factor_is_fixed
     ).solve(params=params, log_level="debug")
     _assert_young_V_matches(
         dcegm_solution=dcegm_solution, brute_solution=brute_solution

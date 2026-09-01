@@ -38,7 +38,7 @@ def _durable_transition_clone(
     return new_illiquid
 
 
-def _next_regime_clone(age: int, final_age_alive: float) -> ScalarInt:
+def _next_regime_clone(*, age: int, final_age_alive: float) -> ScalarInt:
     """Semantically equal to the toy regime law, but a distinct object."""
     return jnp.where(
         age >= final_age_alive,
@@ -231,6 +231,7 @@ def test_nnbegm_rejects_variation_before_period_kernels(
     ],
 )
 def test_nnbegm_rejects_every_genuine_phase_variation(
+    *,
     kwargs,
     oracle_path: str,
 ) -> None:

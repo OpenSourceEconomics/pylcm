@@ -30,8 +30,8 @@ _AWAY_FROM_KINK = (
 
 
 def _solve(
-    variant: str,
     *,
+    variant: str,
     n_actions: int,
     n_consumption: int = 120,
     envelope_arithmetic: str = "certified",
@@ -55,7 +55,7 @@ def _solve(
     ],
 )
 def test_nbegm_envelope_over_several_discrete_actions_matches_brute(
-    n_actions: int, n_branches: int, envelope_arithmetic: str
+    *, n_actions: int, n_branches: int, envelope_arithmetic: str
 ) -> None:
     """`V` agrees with a dense brute solve when several discrete actions are declared.
 
@@ -64,9 +64,9 @@ def test_nbegm_envelope_over_several_discrete_actions_matches_brute(
     either arithmetic and at both the narrow and the widest branch product.
     """
     nbegm = _solve(
-        "nbegm", n_actions=n_actions, envelope_arithmetic=envelope_arithmetic
+        variant="nbegm", n_actions=n_actions, envelope_arithmetic=envelope_arithmetic
     )
-    brute = _solve("brute", n_actions=n_actions, n_consumption=1200)
+    brute = _solve(variant="brute", n_actions=n_actions, n_consumption=1200)
     period = max(p for p in brute if _ALIVE in brute[p])
     nbegm_v = np.asarray(nbegm[period][_ALIVE])
     brute_v = np.asarray(brute[period][_ALIVE])

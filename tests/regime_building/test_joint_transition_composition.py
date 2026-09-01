@@ -63,7 +63,7 @@ def _next_wealth(matched_wealth: FloatND) -> FloatND:
     return matched_wealth
 
 
-def _read_income(next_wealth: FloatND, match: Mapping[str, FloatND]) -> FloatND:
+def _read_income(*, next_wealth: FloatND, match: Mapping[str, FloatND]) -> FloatND:
     return next_wealth + match["income"]
 
 
@@ -249,7 +249,7 @@ def _next_a(match_a: FloatND) -> FloatND:
     return match_a
 
 
-def _next_b(match_a: FloatND, match_b: FloatND) -> FloatND:
+def _next_b(*, match_a: FloatND, match_b: FloatND) -> FloatND:
     return match_a + match_b
 
 
@@ -368,7 +368,7 @@ def _support_reading_next_value(next_value: FloatND) -> FloatND:
     ids=["source-state", "next-output"],
 )
 def test_joint_support_cannot_read_runtime_transition_values(
-    support: object, message: str
+    *, support: object, message: str
 ) -> None:
     """Declared support is hoistable: only period, age, and params may enter it."""
     source = Regime(

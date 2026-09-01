@@ -82,10 +82,12 @@ def _user_flatten(
     return values, keys
 
 
+# keyword-only-exempt: library-callback=jax.tree_util.register_pytree_node
 def _user_unflatten(keys: tuple[str, ...], values: Sequence[Any]) -> UserMappingLeaf:
     return UserMappingLeaf(dict(zip(keys, values, strict=True)))
 
 
+# keyword-only-exempt: library-callback=jax.tree_util.register_pytree_node
 def _canonical_unflatten(keys: tuple[str, ...], values: Sequence[Any]) -> MappingLeaf:
     return MappingLeaf(dict(zip(keys, values, strict=True)))
 

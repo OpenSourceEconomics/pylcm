@@ -25,7 +25,7 @@ from _lcm.egm.upper_envelope.rfc import refine_envelope as refine_rfc
 from tests.solution._envelope_oracle import exact_envelope
 
 
-def _run_backend(backend, *, endog_grid, policy, value, marginal_utility, n_refined):
+def _run_backend(*, backend, endog_grid, policy, value, marginal_utility, n_refined):
     """Refine one candidate row with the named backend via its native signature."""
     if backend == "fues":
         return refine_fues(
@@ -69,7 +69,7 @@ def test_backend_deletes_a_strictly_dominated_branch(backend):
     segment_id = np.array([0, 0, 0, 0, 1, 1, 1, 1], dtype=float)
 
     grid, policy_out, value_out, _n = _run_backend(
-        backend,
+        backend=backend,
         endog_grid=endog_grid,
         policy=policy,
         value=value,
@@ -111,7 +111,7 @@ def test_backend_is_identity_on_a_single_concave_branch(backend):
     marginal_utility = jnp.asarray([1.0, 0.85, 0.6, 0.45, 0.3])
 
     grid, _policy_out, value_out, _n = _run_backend(
-        backend,
+        backend=backend,
         endog_grid=endog_grid,
         policy=policy,
         value=value,

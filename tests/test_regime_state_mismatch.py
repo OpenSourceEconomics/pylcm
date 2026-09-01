@@ -47,12 +47,14 @@ class RegimeId:
     dead: ScalarInt
 
 
-def hm_utility_working(consumption: ContinuousAction, health: DiscreteState) -> FloatND:
+def hm_utility_working(
+    *, consumption: ContinuousAction, health: DiscreteState
+) -> FloatND:
     return jnp.log(consumption) + health * 0.1
 
 
 def hm_utility_retirement(
-    consumption: ContinuousAction, health: DiscreteState
+    *, consumption: ContinuousAction, health: DiscreteState
 ) -> FloatND:
     return jnp.log(consumption) + health * 0.05
 
@@ -97,7 +99,7 @@ def test_discrete_state_different_categories_across_regimes():
     """
     working = UserRegime(
         states={
-            "health": DiscreteGrid(HealthWorkingLife),
+            "health": DiscreteGrid(category_class=HealthWorkingLife),
         },
         state_transitions={
             "health": hm_next_health_working,
@@ -110,7 +112,7 @@ def test_discrete_state_different_categories_across_regimes():
 
     retired = UserRegime(
         states={
-            "health": DiscreteGrid(HealthRetirement),
+            "health": DiscreteGrid(category_class=HealthRetirement),
         },
         state_transitions={
             "health": fixed_transition("health"),
@@ -174,7 +176,7 @@ def test_deterministic_target_only_state() -> None:
         functions={"utility": lambda wealth, heir_present: wealth * heir_present},
         states={
             "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
-            "heir_present": DiscreteGrid(HeirPresent),
+            "heir_present": DiscreteGrid(category_class=HeirPresent),
         },
     )
 
@@ -244,7 +246,9 @@ def test_stochastic_target_only_state() -> None:
     def next_wealth(wealth: ContinuousState) -> ContinuousState:
         return wealth
 
-    def utility_dead(wealth: ContinuousState, heir_present: DiscreteState) -> FloatND:
+    def utility_dead(
+        *, wealth: ContinuousState, heir_present: DiscreteState
+    ) -> FloatND:
         return wealth * heir_present
 
     alive = UserRegime(
@@ -267,7 +271,7 @@ def test_stochastic_target_only_state() -> None:
         functions={"utility": utility_dead},
         states={
             "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
-            "heir_present": DiscreteGrid(HeirPresent),
+            "heir_present": DiscreteGrid(category_class=HeirPresent),
         },
     )
 
@@ -316,7 +320,7 @@ def test_per_target_dict_transitions():
     """
     working = UserRegime(
         states={
-            "health": DiscreteGrid(HealthWorkingLife),
+            "health": DiscreteGrid(category_class=HealthWorkingLife),
         },
         state_transitions={
             "health": {
@@ -333,7 +337,7 @@ def test_per_target_dict_transitions():
 
     retired = UserRegime(
         states={
-            "health": DiscreteGrid(HealthRetirement),
+            "health": DiscreteGrid(category_class=HealthRetirement),
         },
         state_transitions={
             "health": fixed_transition("health"),
@@ -404,7 +408,7 @@ def test_outer_phased_per_target_dict_spans_grids():
         "dead": hm_next_health_working,
     }
     working = UserRegime(
-        states={"health": DiscreteGrid(HealthWorkingLife)},
+        states={"health": DiscreteGrid(category_class=HealthWorkingLife)},
         state_transitions={
             "health": Phased(solve=per_target, simulate=per_target),
         },
@@ -414,7 +418,7 @@ def test_outer_phased_per_target_dict_spans_grids():
         active=lambda age: age < 3,
     )
     retired = UserRegime(
-        states={"health": DiscreteGrid(HealthRetirement)},
+        states={"health": DiscreteGrid(category_class=HealthRetirement)},
         state_transitions={"health": fixed_transition("health")},
         actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=5)},
         functions={"utility": hm_utility_retirement},
@@ -458,7 +462,7 @@ def test_discrete_state_same_count_different_names():
         )
 
     work = UserRegime(
-        states={"status": DiscreteGrid(StatusA)},
+        states={"status": DiscreteGrid(category_class=StatusA)},
         state_transitions={"status": lambda status: status},
         actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=5)},
         functions={
@@ -469,7 +473,7 @@ def test_discrete_state_same_count_different_names():
     )
 
     retire = UserRegime(
-        states={"status": DiscreteGrid(StatusB)},
+        states={"status": DiscreteGrid(category_class=StatusB)},
         state_transitions={"status": fixed_transition("status")},
         actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=5)},
         functions={
@@ -512,13 +516,13 @@ def test_mixed_ordered_flags_raises():
         return _RegimeId.dead
 
     a = UserRegime(
-        states={"health": DiscreteGrid(HealthOrdered)},
+        states={"health": DiscreteGrid(category_class=HealthOrdered)},
         state_transitions={"health": fixed_transition("health")},
         functions={"utility": lambda health: health},
         transition=next_regime,
     )
     b = UserRegime(
-        states={"health": DiscreteGrid(HealthUnordered)},
+        states={"health": DiscreteGrid(category_class=HealthUnordered)},
         state_transitions={"health": fixed_transition("health")},
         functions={"utility": lambda health: health},
         transition=next_regime,
@@ -556,13 +560,13 @@ def test_both_ordered_same_categories_passes():
         return _RegimeId.dead
 
     a = UserRegime(
-        states={"health": DiscreteGrid(HealthA)},
+        states={"health": DiscreteGrid(category_class=HealthA)},
         state_transitions={"health": fixed_transition("health")},
         functions={"utility": lambda health: health},
         transition=next_regime,
     )
     b = UserRegime(
-        states={"health": DiscreteGrid(HealthB)},
+        states={"health": DiscreteGrid(category_class=HealthB)},
         state_transitions={"health": fixed_transition("health")},
         functions={"utility": lambda health: health},
         transition=next_regime,
@@ -645,7 +649,7 @@ def _next_health_2to2(health: DiscreteState) -> FloatND:
 
 
 def _next_wealth(
-    wealth: ContinuousState, consumption: ContinuousAction
+    *, wealth: ContinuousState, consumption: ContinuousAction
 ) -> ContinuousState:
     return wealth - consumption
 
@@ -685,7 +689,7 @@ def test_incomplete_per_target_reachable_target():
     # A only lists A and dead — NOT B (but A can reach B).
     regime_a = UserRegime(
         states={
-            "health": DiscreteGrid(HealthWorkingLife),
+            "health": DiscreteGrid(category_class=HealthWorkingLife),
             "wealth": _WEALTH_GRID,
         },
         state_transitions={
@@ -706,7 +710,7 @@ def test_incomplete_per_target_reachable_target():
 
     regime_b = UserRegime(
         states={
-            "health": DiscreteGrid(HealthRetirement),
+            "health": DiscreteGrid(category_class=HealthRetirement),
             "wealth": _WEALTH_GRID,
         },
         state_transitions={
@@ -761,7 +765,7 @@ def test_complete_per_target_stochastic_cross_grid() -> None:
 
     regime_a = UserRegime(
         states={
-            "health": DiscreteGrid(HealthWorkingLife),
+            "health": DiscreteGrid(category_class=HealthWorkingLife),
             "wealth": _WEALTH_GRID,
         },
         state_transitions={
@@ -783,7 +787,7 @@ def test_complete_per_target_stochastic_cross_grid() -> None:
 
     regime_b = UserRegime(
         states={
-            "health": DiscreteGrid(HealthRetirement),
+            "health": DiscreteGrid(category_class=HealthRetirement),
             "wealth": _WEALTH_GRID,
         },
         state_transitions={
@@ -828,7 +832,7 @@ def test_incomplete_per_target_unreachable_target() -> None:
     # A declares A, B, dead as its targets — NOT C.
     regime_a = UserRegime(
         states={
-            "health": DiscreteGrid(HealthWorkingLife),
+            "health": DiscreteGrid(category_class=HealthWorkingLife),
             "wealth": _WEALTH_GRID,
         },
         state_transitions={
@@ -856,7 +860,7 @@ def test_incomplete_per_target_unreachable_target() -> None:
 
     regime_b = UserRegime(
         states={
-            "health": DiscreteGrid(HealthRetirement),
+            "health": DiscreteGrid(category_class=HealthRetirement),
             "wealth": _WEALTH_GRID,
         },
         state_transitions={
@@ -884,7 +888,7 @@ def test_incomplete_per_target_unreachable_target() -> None:
 
     regime_c = UserRegime(
         states={
-            "health": DiscreteGrid(HealthRetirement),
+            "health": DiscreteGrid(category_class=HealthRetirement),
             "wealth": _WEALTH_GRID,
         },
         state_transitions={

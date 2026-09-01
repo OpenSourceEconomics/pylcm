@@ -57,7 +57,7 @@ def _no_utility() -> ScalarFloat:
     return jnp.float32(0)
 
 
-def _wealth_plus_shock(wealth: ScalarFloat, shock: ScalarFloat) -> ScalarFloat:
+def _wealth_plus_shock(*, wealth: ScalarFloat, shock: ScalarFloat) -> ScalarFloat:
     return wealth + shock
 
 

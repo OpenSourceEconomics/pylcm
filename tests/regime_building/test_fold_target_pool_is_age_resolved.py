@@ -180,7 +180,7 @@ def _keep_wealth(wealth: ContinuousState) -> ContinuousState:
     return wealth
 
 
-def _utility(wealth: ContinuousState, bonus: FloatND) -> FloatND:
+def _utility(*, wealth: ContinuousState, bonus: FloatND) -> FloatND:
     """The worker is paid its wealth plus the age's bonus."""
     return wealth + bonus
 

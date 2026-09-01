@@ -78,6 +78,7 @@ def get_params() -> dict[str, float]:
 
 
 def _shared_utility_f(
+    *,
     wage: ContinuousState,
     work: DiscreteAction,
 ) -> FloatND:
@@ -86,6 +87,7 @@ def _shared_utility_f(
 
 
 def _shared_utility_m(
+    *,
     wage: ContinuousState,
     work: DiscreteAction,
 ) -> FloatND:
@@ -114,14 +116,14 @@ def get_shared_decision_model() -> Model:
         active=lambda age: age < 1,
         states={"wage": _SHARED_WAGE_GRID},
         state_transitions={"wage": _next_shared_wage},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": shared_utility},
     )
     couple_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
         states={"wage": _SHARED_WAGE_GRID},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": shared_utility},
     )
     return Model(
@@ -144,6 +146,7 @@ def _identity_wage(wage: ContinuousState) -> ContinuousState:
 
 
 def _zero_collective_utility(
+    *,
     wage: ContinuousState,
     work: DiscreteAction,
 ) -> FloatND:
@@ -151,6 +154,7 @@ def _zero_collective_utility(
 
 
 def _participation_utility_f(
+    *,
     wage: ContinuousState,
     work: DiscreteAction,
 ) -> FloatND:
@@ -158,6 +162,7 @@ def _participation_utility_f(
 
 
 def _participation_utility_m(
+    *,
     wage: ContinuousState,
     work: DiscreteAction,
 ) -> FloatND:
@@ -177,6 +182,7 @@ def _single_m_value(wage: ContinuousState) -> FloatND:
 
 
 def _participation_f(
+    *,
     Q_f: FloatND,
     V_single_f_ref: FloatND,
 ) -> BoolND:
@@ -184,6 +190,7 @@ def _participation_f(
 
 
 def _participation_m(
+    *,
     Q_m: FloatND,
     V_single_m_ref: FloatND,
 ) -> BoolND:
@@ -218,7 +225,7 @@ def get_dissolution_model() -> Model:
         active=lambda age: (age >= 1) & (age < _DISSOLUTION_AGE),
         states={"wage": _DISSOLUTION_WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _participation_utility_f, "m": _participation_utility_m}
@@ -275,7 +282,7 @@ def get_dissolution_model() -> Model:
         active=lambda age: age < 1,
         states={"wage": _DISSOLUTION_WAGE_GRID},
         state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _zero_collective_utility, "m": _zero_collective_utility}
@@ -286,7 +293,7 @@ def get_dissolution_model() -> Model:
         transition=None,
         active=lambda age: age >= _DISSOLUTION_AGE,
         states={"wage": _DISSOLUTION_WAGE_GRID},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _zero_collective_utility, "m": _zero_collective_utility}

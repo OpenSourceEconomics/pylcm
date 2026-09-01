@@ -42,7 +42,7 @@ def test_the_liquid_state_can_fill_the_resources_role_directly():
 def test_resources_reading_beyond_the_state_are_refused():
     """`resources = wealth + transfer` reaches a leaf the kernel never applies."""
 
-    def resources(wealth, transfer=1.0):
+    def resources(*, wealth, transfer=1.0):
         return wealth + transfer
 
     with pytest.raises(ModelInitializationError, match="must be exactly a function"):

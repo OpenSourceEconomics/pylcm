@@ -75,6 +75,7 @@ def utility_scale_factor(average_consumption_equiv: float) -> FloatND:
 
 
 def bequest_utility(
+    *,
     wealth: ContinuousState,
     utility_scale_factor: FloatND,
     bequest_weight: float,
@@ -86,18 +87,18 @@ def utility_retirement(consumption: ContinuousAction) -> FloatND:
     return jnp.log(consumption)
 
 
-def savings_post(wealth: FloatND, consumption: ContinuousAction) -> FloatND:
+def savings_post(*, wealth: FloatND, consumption: ContinuousAction) -> FloatND:
     return wealth - consumption
 
 
 def next_wealth_from_savings(
-    savings_post: FloatND, interest_rate: float
+    *, savings_post: FloatND, interest_rate: float
 ) -> ContinuousState:
     return (1.0 + interest_rate) * savings_post
 
 
 def next_wealth_brute(
-    wealth: ContinuousState, consumption: ContinuousAction, interest_rate: float
+    *, wealth: ContinuousState, consumption: ContinuousAction, interest_rate: float
 ) -> ContinuousState:
     return (1.0 + interest_rate) * (wealth - consumption)
 
@@ -106,12 +107,12 @@ def inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
     return 1.0 / marginal_continuation
 
 
-def next_regime_from_retirement(age: int, final_age_alive: float) -> ScalarInt:
+def next_regime_from_retirement(*, age: int, final_age_alive: float) -> ScalarInt:
     return jnp.where(age >= final_age_alive, RegimeId.dead, RegimeId.retirement)
 
 
 def borrowing_constraint(
-    consumption: ContinuousAction, wealth: ContinuousState
+    *, consumption: ContinuousAction, wealth: ContinuousState
 ) -> FloatND:
     return consumption <= wealth
 
@@ -132,7 +133,7 @@ def _ages() -> AgeGrid:
 
 
 @functools.cache
-def _get_model(solver: str, *, scale_is_fixed: bool) -> Model:
+def _get_model(*, solver: str, scale_is_fixed: bool) -> Model:
     """Retirement model carrying into a bequest terminal reading a model param.
 
     The terminal `dead` regime's bequest reaches `average_consumption_equiv`
@@ -235,12 +236,12 @@ def test_dcegm_terminal_bequest_fixed_param_matches_brute_force(
     period agrees with the dense-grid brute-force oracle.
     """
     params = _base_params() if scale_is_fixed else _free_scale_params()
-    dcegm_solution = _get_model("dcegm", scale_is_fixed=scale_is_fixed).solve(
+    dcegm_solution = _get_model(solver="dcegm", scale_is_fixed=scale_is_fixed).solve(
         params=params, log_level="debug"
     )
-    brute_solution = _get_model("brute_force", scale_is_fixed=scale_is_fixed).solve(
-        params=params, log_level="debug"
-    )
+    brute_solution = _get_model(
+        solver="brute_force", scale_is_fixed=scale_is_fixed
+    ).solve(params=params, log_level="debug")
 
     for period in sorted(brute_solution)[:-1]:
         brute_V = np.asarray(brute_solution[period]["retirement"])

@@ -160,7 +160,9 @@ def _validate_collective_regime(regime: lcm.regime.Regime) -> None:
     error_messages: list[str] = []
     error_messages.extend(_collective_value_constraint_errors(regime))
     error_messages.extend(_stakeholders_tuple_errors(stakeholders))
-    error_messages.extend(_collective_weights_errors(regime, stakeholders))
+    error_messages.extend(
+        _collective_weights_errors(regime=regime, stakeholders=stakeholders)
+    )
 
     if error_messages:
         raise RegimeInitializationError(format_messages(error_messages))
@@ -184,7 +186,7 @@ def _stakeholders_tuple_errors(stakeholders: tuple[str, ...]) -> list[str]:
 
 
 def _collective_weights_errors(
-    regime: lcm.regime.Regime, stakeholders: tuple[str, ...]
+    *, regime: lcm.regime.Regime, stakeholders: tuple[str, ...]
 ) -> list[str]:
     """Collect errors for a collective regime's `pareto_objective`.
 
@@ -1366,7 +1368,7 @@ def _phased_per_target_shape_mismatch(
     bare_side, phase_label = (
         (value.simulate, "simulate") if solve_per_target else (value.solve, "solve")
     )
-    if _law_has_free_parameter(bare_side, regime):
+    if _law_has_free_parameter(law=bare_side, regime=regime):
         return [
             (
                 f"state_transitions['{name}']: the {phase_label} variant is a bare "
@@ -1382,7 +1384,7 @@ def _phased_per_target_shape_mismatch(
     return []
 
 
-def _law_has_free_parameter(law: object, regime: lcm.regime.Regime) -> bool:
+def _law_has_free_parameter(*, law: object, regime: lcm.regime.Regime) -> bool:
     """Whether a bare state-transition law reads a free parameter (a template leaf).
 
     A free parameter is any argument that is not a state, action, `next_<state>` node,
@@ -1602,9 +1604,9 @@ def _validate_fold_declarations(regime: lcm.regime.Regime) -> None:
         return
 
     error_messages = [
-        *_fold_scope_errors(regime, fold_names),
-        *_fold_same_period_read_errors(regime, fold_names),
-        *_fold_transition_read_errors(regime, fold_names),
+        *_fold_scope_errors(regime=regime, fold_names=fold_names),
+        *_fold_same_period_read_errors(regime=regime, fold_names=fold_names),
+        *_fold_transition_read_errors(regime=regime, fold_names=fold_names),
     ]
     if error_messages:
         raise RegimeInitializationError(format_messages(error_messages))
@@ -1688,7 +1690,8 @@ def _fail_if_a_folded_conditioner_can_move(
             movers = sorted(
                 source_name
                 for source_name, source in user_regimes.items()
-                if regime_name in _reachable_regime_targets(source, user_regimes)
+                if regime_name
+                in _reachable_regime_targets(regime=source, user_regimes=user_regimes)
                 and _state_law_can_move(
                     regime=source, state_name=conditioned.on, toward=regime_name
                 )
@@ -1741,7 +1744,7 @@ def _state_law_can_move(
 
 
 def _reachable_regime_targets(
-    regime: lcm.regime.Regime, user_regimes: Mapping[RegimeName, lcm.regime.Regime]
+    *, regime: lcm.regime.Regime, user_regimes: Mapping[RegimeName, lcm.regime.Regime]
 ) -> frozenset[RegimeName]:
     """The regimes this one's transition can structurally reach.
 
@@ -1765,7 +1768,7 @@ def _reachable_regime_targets(
 
 
 def _fold_scope_errors(
-    regime: lcm.regime.Regime, fold_names: tuple[StateName, ...]
+    *, regime: lcm.regime.Regime, fold_names: tuple[StateName, ...]
 ) -> list[str]:
     """Collect the regime-wide (not DAG-dependency) fold restrictions."""
     error_messages: list[str] = []
@@ -1815,12 +1818,14 @@ def _fold_scope_errors(
             "grid-search max-Q-over-a kernel. Use `solver=GridSearch()`, or "
             "drop `fold=True`."
         )
-    error_messages.extend(_moving_conditioner_errors(regime, fold_names))
+    error_messages.extend(
+        _moving_conditioner_errors(regime=regime, fold_names=fold_names)
+    )
     return error_messages
 
 
 def _moving_conditioner_errors(
-    regime: lcm.regime.Regime, fold_names: tuple[StateName, ...]
+    *, regime: lcm.regime.Regime, fold_names: tuple[StateName, ...]
 ) -> list[str]:
     """Reject a folded conditioned shock whose conditioning state has a law.
 
@@ -1911,15 +1916,17 @@ def _fold_same_period_roots(regime: lcm.regime.Regime) -> list[tuple[str, Callab
 
 
 def _fold_same_period_read_errors(
-    regime: lcm.regime.Regime, fold_names: tuple[StateName, ...]
+    *, regime: lcm.regime.Regime, fold_names: tuple[StateName, ...]
 ) -> list[str]:
     """Reject a fold name read by a same-period gate / value-constraint."""
     resolution_table = _fold_resolution_table(regime)
     error_messages: list[str] = []
     for label, func in _fold_same_period_roots(regime):
         hit = _fold_names_ordered_intersection(
-            fold_names,
-            _fold_dependency_closure(roots=(func,), resolution_table=resolution_table),
+            fold_names=fold_names,
+            other=_fold_dependency_closure(
+                roots=(func,), resolution_table=resolution_table
+            ),
         )
         if hit:
             error_messages.append(
@@ -1934,7 +1941,7 @@ def _fold_same_period_read_errors(
 
 
 def _fold_transition_read_errors(
-    regime: lcm.regime.Regime, fold_names: tuple[StateName, ...]
+    *, regime: lcm.regime.Regime, fold_names: tuple[StateName, ...]
 ) -> list[str]:
     """Reject a fold name read by a next-period state / regime transition."""
     transition_roots: list[Callable] = []
@@ -1964,7 +1971,7 @@ def _fold_transition_read_errors(
 
 
 def _fold_names_ordered_intersection(
-    fold_names: tuple[StateName, ...], other: set[str]
+    *, fold_names: tuple[StateName, ...], other: set[str]
 ) -> list[StateName]:
     """Return `fold_names` filtered to `other`, preserving `fold_names`' order."""
     return [name for name in fold_names if name in other]
@@ -2027,8 +2034,9 @@ def _is_plain_linear_expectation(
     mean_type = type(certainty_equivalent)
     return (
         isinstance(certainty_equivalent, LinearExpectation)
-        and _method_owner(mean_type, "aggregate") is LinearExpectation
-        and _method_owner(mean_type, "aggregate_scaled") is LinearExpectation
+        and _method_owner(mean_type=mean_type, name="aggregate") is LinearExpectation
+        and _method_owner(mean_type=mean_type, name="aggregate_scaled")
+        is LinearExpectation
     )
 
 
@@ -2057,8 +2065,8 @@ def _scaled_capability_errors(certainty_equivalent: CertaintyEquivalent) -> list
     and an explicit override of both is the author's own business.
     """
     mean_type = type(certainty_equivalent)
-    ordinary_owner = _method_owner(mean_type, "aggregate")
-    scaled_owner = _method_owner(mean_type, "aggregate_scaled")
+    ordinary_owner = _method_owner(mean_type=mean_type, name="aggregate")
+    scaled_owner = _method_owner(mean_type=mean_type, name="aggregate_scaled")
     remedy = (
         f"Implement `aggregate_scaled` on `{mean_type.__name__}` so it reduces "
         "the lottery with its scales still present, or use one of the shipped "
@@ -2087,6 +2095,6 @@ def _scaled_capability_errors(certainty_equivalent: CertaintyEquivalent) -> list
     return []
 
 
-def _method_owner(mean_type: type, name: str) -> type:
+def _method_owner(*, mean_type: type, name: str) -> type:
     """Return the most-derived class in `mean_type`'s MRO that defines `name`."""
     return next(klass for klass in mean_type.__mro__ if name in vars(klass))

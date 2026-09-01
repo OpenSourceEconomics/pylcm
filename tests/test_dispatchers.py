@@ -19,13 +19,14 @@ from lcm.exceptions import FunctionDispatchError
 
 @pytest.mark.parametrize(("batch_size", "expected"), [(0, "vmap"), (2, "lax")])
 def test_map_over_leading_axis_selects_the_declared_execution_window(
-    monkeypatch: pytest.MonkeyPatch, batch_size: int, expected: str
+    *, monkeypatch: pytest.MonkeyPatch, batch_size: int, expected: str
 ) -> None:
     """A positive batch size reaches ``lax.map`` as its actual static window."""
     selected: list[tuple[str, int | None]] = []
     original_lax_map = jax.lax.map
     original_vmap = jax.vmap
 
+    # keyword-only-exempt: library-callback=_lcm.utils.dispatchers.map_over_leading_axis
     def lax_spy(func, xs, *, batch_size=None):
         selected.append(("lax", batch_size))
         return original_lax_map(func, xs, batch_size=batch_size)
@@ -46,6 +47,7 @@ def test_map_over_leading_axis_selects_the_declared_execution_window(
     assert selected == [(expected, batch_size if expected == "lax" else None)]
 
 
+# keyword-only-exempt: library-callback=_lcm.utils.dispatchers.productmap
 def f(a, *, b, c):
     """Tests that dispatchers can handle standard arguments and keyword-only arguments.
 
@@ -81,7 +83,7 @@ def expected_productmap_f():
         (f, ["a", "b", "c"], "setup_productmap_f", "expected_productmap_f"),
     ],
 )
-def test_productmap_with_all_arguments_mapped(func, args, grids, expected, request):
+def test_productmap_with_all_arguments_mapped(*, func, args, grids, expected, request):
     grids = request.getfixturevalue(grids)
     expected = request.getfixturevalue(expected)
 
@@ -106,7 +108,7 @@ def test_productmap_with_positional_args(setup_productmap_f):
         decorated(*setup_productmap_f.values())  # ty: ignore[missing-argument]
 
 
-def test_productmap_change_arg_order(setup_productmap_f, expected_productmap_f):
+def test_productmap_change_arg_order(*, setup_productmap_f, expected_productmap_f):
     expected = jnp.transpose(expected_productmap_f, (1, 0, 2))
 
     decorated = productmap(
@@ -185,6 +187,7 @@ def test_productmap_with_some_argument_mapped_twice():
 
 
 def test_productmap_rejects_positional_only():
+    # keyword-only-exempt: library-callback=_lcm.utils.dispatchers.productmap
     def h(a, /, *, b):
         return a + b
 
@@ -229,6 +232,7 @@ def expected_spacemap():
 
 
 def test_spacemap_all_arguments_mapped(
+    *,
     setup_spacemap,
     expected_spacemap,
 ):
@@ -259,7 +263,7 @@ def test_spacemap_all_arguments_mapped(
         ),
     ],
 )
-def test_spacemap_arguments_overlap(error_msg, product_vars, combination_vars):
+def test_spacemap_arguments_overlap(*, error_msg, product_vars, combination_vars):
     with pytest.raises(ValueError, match=error_msg):
         simulation_spacemap(
             func=f, action_names=product_vars, state_names=combination_vars
@@ -267,7 +271,7 @@ def test_spacemap_arguments_overlap(error_msg, product_vars, combination_vars):
 
 
 def test_vmap_1d():
-    def func(a, b, c):
+    def func(*, a, b, c):
         return c * (a + b)
 
     vmapped = vmap_1d(func=func, variables=("a", "b"))
@@ -283,7 +287,7 @@ def test_vmap_1d_co_maps_pytree_argument_leading_axis_with_variable():
     lockstep with the mapped variable, so the body sees only the matching slice."""
     table = MappingProxyType({"r": jnp.arange(6).reshape(3, 2)})
 
-    def func(idx, table):  # noqa: ARG001
+    def func(*, idx, table):  # noqa: ARG001
         # `table["r"]` is already the per-idx slice (shape (2,)); a leftover
         # leading axis would make this the full (3, 2) and break the stack.
         return table["r"]

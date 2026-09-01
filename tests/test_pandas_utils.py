@@ -85,7 +85,7 @@ def test_build_discrete_grid_lookup_basic():
     regimes = {
         "a": UserRegime(
             transition=None,
-            states={"health": DiscreteGrid(Health)},
+            states={"health": DiscreteGrid(category_class=Health)},
             functions={"utility": lambda: 0.0},
         ),
     }
@@ -99,7 +99,7 @@ def test_build_discrete_grid_lookup_ignores_continuous():
         "a": UserRegime(
             transition=None,
             states={
-                "health": DiscreteGrid(Health),
+                "health": DiscreteGrid(category_class=Health),
                 "wealth": LinSpacedGrid(start=0, stop=100, n_points=10),
             },
             functions={"utility": lambda: 0.0},
@@ -119,12 +119,12 @@ def test_build_discrete_grid_lookup_inconsistent_raises():
     regimes = {
         "a": UserRegime(
             transition=None,
-            states={"health": DiscreteGrid(Health)},
+            states={"health": DiscreteGrid(category_class=Health)},
             functions={"utility": lambda: 0.0},
         ),
         "b": UserRegime(
             transition=None,
-            states={"health": DiscreteGrid(HealthAlt)},
+            states={"health": DiscreteGrid(category_class=HealthAlt)},
             functions={"utility": lambda: 0.0},
         ),
     }
@@ -392,8 +392,8 @@ def test_round_trip_with_discrete_model():
     )
 
     n_periods = 3
-    model = get_model(n_periods)
-    params = get_params(n_periods)
+    model = get_model(n_periods=n_periods)
+    params = get_params(n_periods=n_periods)
 
     # Raw array approach
     raw_conditions = {
@@ -451,7 +451,7 @@ def _het_next_regime() -> ScalarInt:
     return _HetRegimeId.dead
 
 
-def _het_utility(wealth: float, health: int, bonus: float) -> float:
+def _het_utility(*, wealth: float, health: int, bonus: float) -> float:
     return wealth + health + bonus
 
 
@@ -469,7 +469,7 @@ def _get_heterogeneous_health_model() -> Model:
         transition=_het_next_regime,
         active=lambda age: age < 65,
         states={
-            "health": DiscreteGrid(HealthWithDisability),
+            "health": DiscreteGrid(category_class=HealthWithDisability),
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
         },
         state_transitions={
@@ -482,7 +482,7 @@ def _get_heterogeneous_health_model() -> Model:
         transition=_het_next_regime,
         active=lambda age: 65 <= age < 80,
         states={
-            "health": DiscreteGrid(Health),
+            "health": DiscreteGrid(category_class=Health),
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
         },
         state_transitions={
@@ -562,7 +562,7 @@ def test_initial_conditions_heterogeneous_state_sets() -> None:
     def _one_probability() -> ScalarFloat:
         return jnp.float32(1)
 
-    def _utility_with_status(wealth: float, status: int) -> float:
+    def _utility_with_status(*, wealth: float, status: int) -> float:
         return wealth + status
 
     def _utility_without_status(wealth: float) -> float:
@@ -572,7 +572,7 @@ def test_initial_conditions_heterogeneous_state_sets() -> None:
         transition={"dead": MarkovTransition(_one_probability)},
         states={
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
-            "status": DiscreteGrid(_Status),
+            "status": DiscreteGrid(category_class=_Status),
         },
         state_transitions={
             "wealth": fixed_transition("wealth"),
@@ -642,7 +642,7 @@ def test_initial_conditions_process_grid_heterogeneous_state_sets() -> None:
     def _one_probability() -> ScalarFloat:
         return jnp.float32(1)
 
-    def _earner_utility(wealth: float, income: float) -> float:
+    def _earner_utility(*, wealth: float, income: float) -> float:
         return wealth + income
 
     def _retiree_utility(wealth: float) -> float:
@@ -720,7 +720,7 @@ def test_convert_series_next_function_no_outcome_axis() -> None:
     def _next_regime() -> ScalarInt:
         return _RId.dead
 
-    def _next_wealth(wealth: float, rate: float, period: int) -> float:  # noqa: ARG001
+    def _next_wealth(*, wealth: float, rate: float, period: int) -> float:  # noqa: ARG001
         return wealth * rate
 
     def _utility(wealth: float) -> float:
@@ -835,7 +835,7 @@ def _make_partner_probs_array():
     )
 
 
-def _array_to_series(arr, model):
+def _array_to_series(*, arr, model):
     """Convert a probs array to a labeled Series with named MultiIndex using ages."""
     partner_labels = ("single", "partnered")
     work_labels = ("work", "retire")
@@ -864,7 +864,7 @@ def test_array_from_series_transition_basic_round_trip():
     """4D transition probs via array_from_series."""
     model = get_stochastic_model(3)
     arr = _make_partner_probs_array()
-    series = _array_to_series(arr, model)
+    series = _array_to_series(arr=arr, model=model)
     func = model.user_regimes["working_life"].get_all_functions()["next_partner"]
     result = array_from_series(
         sr=series,
@@ -883,7 +883,7 @@ def test_array_from_series_transition_reordered_levels():
     """Reordered MultiIndex levels still produce correct output."""
     model = get_stochastic_model(3)
     arr = _make_partner_probs_array()
-    series = _array_to_series(arr, model)
+    series = _array_to_series(arr=arr, model=model)
     # Reorder levels: put next_partner first, then partner, work, age
     series = series.reorder_levels(["next_partner", "partner", "labor_supply", "age"])
     func = model.user_regimes["working_life"].get_all_functions()["next_partner"]
@@ -904,7 +904,7 @@ def test_array_from_series_transition_wrong_level_names_raises():
     """Wrong MultiIndex level names raise ValueError."""
     model = get_stochastic_model(3)
     arr = _make_partner_probs_array()
-    series = _array_to_series(arr, model)
+    series = _array_to_series(arr=arr, model=model)
     # Rename outcome level to something wrong
     series.index = series.index.set_names(
         ["age", "labor_supply", "partner", "wrong_name"]
@@ -927,7 +927,7 @@ def test_array_from_series_transition_invalid_label_raises():
     """Invalid categorical label in transition probs raises ValueError."""
     model = get_stochastic_model(3)
     arr = _make_partner_probs_array()
-    series = _array_to_series(arr, model)
+    series = _array_to_series(arr=arr, model=model)
     # Replace one label with an invalid one
     new_index = series.index.set_levels(["single", "INVALID"], level="partner")
     series.index = new_index
@@ -993,7 +993,7 @@ def test_array_from_series_transition_invalid_age_dropped():
     """Age values not on the model's AgeGrid are silently dropped (all NaN)."""
     model = get_stochastic_model(3)
     arr = _make_partner_probs_array()
-    series = _array_to_series(arr, model)
+    series = _array_to_series(arr=arr, model=model)
     # Replace age level with invalid values
     series.index = series.index.set_codes([0] * len(series), level="age").set_levels(
         [999.0], level="age"
@@ -1055,7 +1055,7 @@ def _make_regime_probs_array():
     )
 
 
-def _regime_array_to_series(arr, model):
+def _regime_array_to_series(*, arr, model):
     """Convert a regime probs array to a labeled Series using ages."""
     health_labels = ("bad", "good")
     regime_labels = ("alive", "dead")
@@ -1083,7 +1083,7 @@ def test_array_from_series_regime_transition_basic_round_trip():
     """Regime transition probs via array_from_series."""
     model = get_regime_markov_model()
     arr = _make_regime_probs_array()
-    series = _regime_array_to_series(arr, model)
+    series = _regime_array_to_series(arr=arr, model=model)
     func = model.user_regimes["alive"].get_all_functions()["next_regime"]
     result = array_from_series(
         sr=series,
@@ -1102,7 +1102,7 @@ def test_array_from_series_regime_transition_reordered_levels():
     """Reordered MultiIndex levels for regime transitions."""
     model = get_regime_markov_model()
     arr = _make_regime_probs_array()
-    series = _regime_array_to_series(arr, model)
+    series = _regime_array_to_series(arr=arr, model=model)
     series = series.reorder_levels(["next_regime", "health", "age"])
     func = model.user_regimes["alive"].get_all_functions()["next_regime"]
     result = array_from_series(
@@ -1122,7 +1122,7 @@ def test_array_from_series_regime_transition_wrong_level_names_raises():
     """Wrong MultiIndex level names for regime transition raise ValueError."""
     model = get_regime_markov_model()
     arr = _make_regime_probs_array()
-    series = _regime_array_to_series(arr, model)
+    series = _regime_array_to_series(arr=arr, model=model)
     series.index = series.index.set_names(["age", "health", "wrong_name"])
     func = model.user_regimes["alive"].get_all_functions()["next_regime"]
     with pytest.raises(ValueError, match="level names"):
@@ -1142,7 +1142,7 @@ def test_array_from_series_regime_transition_invalid_label_raises():
     """Invalid regime label in transition probs raises ValueError."""
     model = get_regime_markov_model()
     arr = _make_regime_probs_array()
-    series = _regime_array_to_series(arr, model)
+    series = _regime_array_to_series(arr=arr, model=model)
     new_index = series.index.set_levels(["alive", "INVALID"], level="next_regime")
     series.index = new_index
     func = model.user_regimes["alive"].get_all_functions()["next_regime"]
@@ -1565,7 +1565,7 @@ def test_convert_series_with_derived_categoricals() -> None:
     from tests.test_models.stochastic import LaborSupply  # noqa: PLC0415
 
     model = get_stochastic_model(3)
-    labor_grid = DiscreteGrid(LaborSupply)
+    labor_grid = DiscreteGrid(category_class=LaborSupply)
 
     # Build a Series indexed by age x labor_supply x partner x next_partner
     ages = model.ages.values  # noqa: PD011
@@ -1633,11 +1633,11 @@ def test_convert_series_per_target_transition() -> None:
         retired: ScalarInt
 
     def _health_probs(
-        period: Period, health: DiscreteState, probs_array: FloatND
+        *, period: Period, health: DiscreteState, probs_array: FloatND
     ) -> FloatND:
         return probs_array[period, health]
 
-    def _utility(health: DiscreteState, wealth: float) -> FloatND:
+    def _utility(*, health: DiscreteState, wealth: float) -> FloatND:
         return wealth + health
 
     def _next_wealth(wealth: float) -> float:
@@ -1645,7 +1645,7 @@ def test_convert_series_per_target_transition() -> None:
 
     working = UserRegime(
         states={
-            "health": DiscreteGrid(Health),
+            "health": DiscreteGrid(category_class=Health),
             "wealth": LinSpacedGrid(start=0, stop=10, n_points=5),
         },
         state_transitions={
@@ -1662,7 +1662,7 @@ def test_convert_series_per_target_transition() -> None:
     retired = UserRegime(
         transition=None,
         states={
-            "health": DiscreteGrid(Health),
+            "health": DiscreteGrid(category_class=Health),
             "wealth": LinSpacedGrid(start=0, stop=10, n_points=5),
         },
         functions={"utility": _utility},
@@ -1743,10 +1743,10 @@ def test_convert_series_structured_derived_categoricals() -> None:
     # "derived" is a DAG function output used as an index in both regimes,
     # but with different cardinalities (2 vs 3 categories). Since it's a
     # function output (not a state/action), it needs external categoricals.
-    def func_a(wealth: float, derived: FloatND, rates: FloatND) -> FloatND:  # noqa: ARG001
+    def func_a(*, wealth: float, derived: FloatND, rates: FloatND) -> FloatND:  # noqa: ARG001
         return rates[derived]
 
-    def func_b(wealth: float, derived: FloatND, rates: FloatND) -> FloatND:  # noqa: ARG001
+    def func_b(*, wealth: float, derived: FloatND, rates: FloatND) -> FloatND:  # noqa: ARG001
         return rates[derived]
 
     def _derived_a(wealth: float) -> FloatND:
@@ -1764,13 +1764,13 @@ def test_convert_series_structured_derived_categoricals() -> None:
         states={"wealth": LinSpacedGrid(start=0, stop=10, n_points=5)},
         state_transitions={"wealth": _next_wealth_sc},
         functions={"utility": func_a, "derived": _derived_a},
-        derived_categoricals={"derived": DiscreteGrid(_ChoiceA)},
+        derived_categoricals={"derived": DiscreteGrid(category_class=_ChoiceA)},
     )
     regime_b = UserRegime(
         transition=None,
         states={"wealth": LinSpacedGrid(start=0, stop=10, n_points=5)},
         functions={"utility": func_b, "derived": _derived_b},
-        derived_categoricals={"derived": DiscreteGrid(_ChoiceB)},
+        derived_categoricals={"derived": DiscreteGrid(category_class=_ChoiceB)},
     )
     model = Model(
         regimes={"regime_a": regime_a, "regime_b": regime_b},
@@ -1877,7 +1877,7 @@ def test_resolve_categoricals_conflict_raises() -> None:
 
     conflicting_regime = dataclasses.replace(
         model.user_regimes["working_life"],
-        derived_categoricals={"partner": DiscreteGrid(WrongPartner)},
+        derived_categoricals={"partner": DiscreteGrid(category_class=WrongPartner)},
     )
     with pytest.raises(ValueError, match="conflicts with model grid"):
         _resolve_categoricals(
@@ -1913,18 +1913,18 @@ def test_convert_series_cross_grid_transition() -> None:
         post65: ScalarInt
 
     def _health_probs_same(
-        period: Period, health: DiscreteState, health_trans_probs: FloatND
+        *, period: Period, health: DiscreteState, health_trans_probs: FloatND
     ) -> FloatND:
         return health_trans_probs[period, health]
 
     def _health_probs_cross(
-        period: Period, health: DiscreteState, health_trans_probs_cross: FloatND
+        *, period: Period, health: DiscreteState, health_trans_probs_cross: FloatND
     ) -> FloatND:
         return health_trans_probs_cross[period, health]
 
     pre65 = UserRegime(
         states={
-            "health": DiscreteGrid(_HealthPre),
+            "health": DiscreteGrid(category_class=_HealthPre),
             "wealth": LinSpacedGrid(start=0, stop=10, n_points=5),
         },
         state_transitions={
@@ -1941,7 +1941,7 @@ def test_convert_series_cross_grid_transition() -> None:
     post65 = UserRegime(
         transition=None,
         states={
-            "health": DiscreteGrid(_HealthPost),
+            "health": DiscreteGrid(category_class=_HealthPost),
             "wealth": LinSpacedGrid(start=0, stop=10, n_points=5),
         },
         functions={"utility": lambda health, wealth: wealth + health},
@@ -2000,7 +2000,7 @@ def test_resolve_categoricals_includes_derived_when_no_regime_name() -> None:
 
     updated_regimes = {
         name: dataclasses.replace(
-            r, derived_categoricals={"extra": DiscreteGrid(ExtraVar)}
+            r, derived_categoricals={"extra": DiscreteGrid(category_class=ExtraVar)}
         )
         for name, r in model.user_regimes.items()
     }
@@ -2030,7 +2030,7 @@ def _occupation_pair_regime() -> UserRegime:
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=10),
             "occupation": Phased(
                 solve=_impute_occupation,
-                simulate=DiscreteGrid(Occupation),
+                simulate=DiscreteGrid(category_class=Occupation),
             ),
         },
         state_transitions={
@@ -2080,20 +2080,21 @@ def _series_joint_target_probability() -> FloatND:
 
 
 def _series_joint_support(
-    support_shift: FloatND, period: ScalarInt
+    *, support_shift: FloatND, period: ScalarInt
 ) -> dict[str, FloatND]:
     shift = support_shift[period]
     return {"wealth": jnp.asarray([shift, shift + 1.0])}
 
 
 def _series_joint_probabilities(
-    probability_by_period: FloatND, period: ScalarInt
+    *, probability_by_period: FloatND, period: ScalarInt
 ) -> FloatND:
     probability = probability_by_period[period]
     return jnp.asarray([probability, 1.0 - probability])
 
 
 def _series_joint_next_wealth(
+    *,
     match: dict[str, FloatND],
     output_shift: FloatND,
     scalar_offset: ScalarFloat,
@@ -2163,6 +2164,7 @@ def test_convert_series_resolves_joint_support_probability_and_output_roles() ->
 
 
 def _series_joint_next_health(
+    *,
     health: ScalarInt,
     match: FloatND,
     transition_matrix: FloatND,
@@ -2175,7 +2177,7 @@ def test_joint_output_series_uses_the_explicit_target_for_its_outcome_axis() -> 
     """A target-only categorical output resolves its Series axis on that target."""
     source = UserRegime(
         transition={"target": MarkovTransition(_series_joint_target_probability)},
-        states={"health": DiscreteGrid(Health)},
+        states={"health": DiscreteGrid(category_class=Health)},
         functions={"utility": lambda health: jnp.asarray(health, dtype=float)},
         joint_transitions={
             "target": {
@@ -2190,7 +2192,7 @@ def test_joint_output_series_uses_the_explicit_target_for_its_outcome_axis() -> 
     )
     target = UserRegime(
         transition=None,
-        states={"health": DiscreteGrid(Health)},
+        states={"health": DiscreteGrid(category_class=Health)},
         functions={"utility": lambda health: jnp.asarray(health, dtype=float)},
     )
     index = pd.MultiIndex.from_tuples(

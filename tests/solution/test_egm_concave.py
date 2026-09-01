@@ -46,14 +46,14 @@ pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_R
 
 
 @pytest.mark.parametrize(("case", "n_periods"), ANALYTICAL_CASES.items())
-def test_dcegm_matches_analytical_on_full_wealth_grid(case, n_periods):
+def test_dcegm_matches_analytical_on_full_wealth_grid(*, case, n_periods):
     """DC-EGM V equals the analytical retired values on every wealth node.
 
     Tighter than the brute-force tolerance and with no low-wealth exclusion: the
     constrained segment makes EGM exact where grid search is unstable.
     """
-    model = get_retirement_only_model("dcegm", n_periods)
-    params = get_retirement_only_params(n_periods)
+    model = get_retirement_only_model(solver="dcegm", n_periods=n_periods)
+    params = get_retirement_only_params(n_periods=n_periods)
 
     period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
 
@@ -65,7 +65,7 @@ def test_dcegm_matches_analytical_on_full_wealth_grid(case, n_periods):
 
 
 @pytest.mark.parametrize(("case", "n_periods"), ANALYTICAL_CASES.items())
-def test_dcegm_error_not_much_worse_than_brute_force(case, n_periods):
+def test_dcegm_error_not_much_worse_than_brute_force(*, case, n_periods):
     """Diagnostic with slack: DC-EGM should not lose badly to grid search anywhere.
 
     Pointwise EGM dominance is not a theorem (the publish step interpolates onto
@@ -74,11 +74,11 @@ def test_dcegm_error_not_much_worse_than_brute_force(case, n_periods):
     `test_dcegm_matches_analytical_on_full_wealth_grid`.
     """
     analytical = load_analytical_values_retired(case)
-    params = get_retirement_only_params(n_periods)
+    params = get_retirement_only_params(n_periods=n_periods)
 
     errors = {}
     for solver in ["brute_force", "dcegm"]:
-        model = get_retirement_only_model(solver, n_periods)
+        model = get_retirement_only_model(solver=solver, n_periods=n_periods)
         got = model.solve(params=params, log_level="debug")
         numerical = stack_retirement_V(got)
         # Exclude the brute-force-unstable low-wealth nodes from the head-to-head
@@ -100,8 +100,8 @@ def test_discount_factor_zero_yields_consume_everything_values():
     refined point).
     """
     n_periods = 3
-    model = get_retirement_only_model("dcegm", n_periods)
-    params = get_retirement_only_params(n_periods, discount_factor=0.0)
+    model = get_retirement_only_model(solver="dcegm", n_periods=n_periods)
+    params = get_retirement_only_params(n_periods=n_periods, discount_factor=0.0)
 
     period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
 
@@ -115,7 +115,7 @@ def test_discount_factor_zero_yields_consume_everything_values():
         )
 
 
-def _bequest_utility(wealth: ContinuousState, age: float) -> FloatND:
+def _bequest_utility(*, wealth: ContinuousState, age: float) -> FloatND:
     return (age / 50.0) * jnp.log(wealth)
 
 
@@ -147,7 +147,9 @@ def test_age_dependent_terminal_utility_solves_to_closed_form():
         ages=AgeGrid(start=40, stop=50, step="10Y"),
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
     )
-    params = get_retirement_only_params(n_periods, discount_factor=discount_factor)
+    params = get_retirement_only_params(
+        n_periods=n_periods, discount_factor=discount_factor
+    )
 
     period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
 
@@ -171,7 +173,7 @@ class _InterestRegimeId:
     dead: ScalarInt
 
 
-def _log_consumption_value(wealth: np.ndarray, *, n_alive: int) -> np.ndarray:
+def _log_consumption_value(*, wealth: np.ndarray, n_alive: int) -> np.ndarray:
     """Closed-form retired value `V(w) = B log(w) + A` with log utility.
 
     With gross return $R_g = 1 + r$, discount factor $\\beta$, and `n_alive`
@@ -212,16 +214,16 @@ def test_dcegm_with_interest_matches_closed_form_on_dense_wealth_grid():
     def resources(wealth: ContinuousState) -> FloatND:
         return wealth
 
-    def savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
+    def savings(*, resources: FloatND, consumption: ContinuousAction) -> FloatND:
         return resources - consumption
 
-    def next_wealth(savings: FloatND, interest_rate: float) -> ContinuousState:
+    def next_wealth(*, savings: FloatND, interest_rate: float) -> ContinuousState:
         return (1.0 + interest_rate) * savings
 
     def inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
         return 1.0 / marginal_continuation
 
-    def next_regime(age: float, final_age_alive: float) -> ScalarInt:
+    def next_regime(*, age: float, final_age_alive: float) -> ScalarInt:
         return jnp.where(
             age >= final_age_alive,
             _InterestRegimeId.dead,
@@ -279,7 +281,7 @@ def test_dcegm_with_interest_matches_closed_form_on_dense_wealth_grid():
     for period in range(n_periods - 1):
         np.testing.assert_allclose(
             np.asarray(period_to_regime_to_V_arr[period]["retirement"]),
-            _log_consumption_value(wealth, n_alive=(n_periods - 1) - period),
+            _log_consumption_value(wealth=wealth, n_alive=(n_periods - 1) - period),
             atol=3e-3,
             err_msg=f"period={period}",
         )
@@ -292,8 +294,10 @@ def test_nan_param_surfaces_as_value_function_error():
     report regime and age for a DC-EGM regime just as for a brute-force one.
     """
     n_periods = 3
-    model = get_retirement_only_model("dcegm", n_periods)
-    params = get_retirement_only_params(n_periods, discount_factor=float("nan"))
+    model = get_retirement_only_model(solver="dcegm", n_periods=n_periods)
+    params = get_retirement_only_params(
+        n_periods=n_periods, discount_factor=float("nan")
+    )
 
     with pytest.raises(InvalidValueFunctionError, match="retirement"):
         model.solve(params=params, log_level="debug")
@@ -302,12 +306,12 @@ def test_nan_param_surfaces_as_value_function_error():
 def test_dcegm_solution_has_standard_v_array_layout():
     """DC-EGM publishes V arrays with the same shape/keys as the brute solver."""
     n_periods = 4
-    params = get_retirement_only_params(n_periods)
+    params = get_retirement_only_params(n_periods=n_periods)
 
-    brute = get_retirement_only_model("brute_force", n_periods).solve(
+    brute = get_retirement_only_model(solver="brute_force", n_periods=n_periods).solve(
         params=params, log_level="debug"
     )
-    dcegm = get_retirement_only_model("dcegm", n_periods).solve(
+    dcegm = get_retirement_only_model(solver="dcegm", n_periods=n_periods).solve(
         params=params, log_level="debug"
     )
 
@@ -343,7 +347,9 @@ def test_neg_inf_bequest_node_does_not_wipe_the_continuation():
         ages=AgeGrid(start=40, stop=50, step="10Y"),
         regime_id_class=retirement_only.RetirementOnlyRegimeId,
     )
-    params = get_retirement_only_params(n_periods, discount_factor=discount_factor)
+    params = get_retirement_only_params(
+        n_periods=n_periods, discount_factor=discount_factor
+    )
 
     period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
 

@@ -164,15 +164,15 @@ def _make_regimes() -> dict[str, Regime]:
             )
         },
         active=lambda age: age < 1,
-        states={"health": DiscreteGrid(Health)},
+        states={"health": DiscreteGrid(category_class=Health)},
         state_transitions={"health": _next_health},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility_source},
     )
     target = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        states={"health": DiscreteGrid(Health)},
+        states={"health": DiscreteGrid(category_class=Health)},
         functions={"utility": _utility_target},
     )
     fallback = Regime(
@@ -280,7 +280,7 @@ def _fold_output(*, regimes, flat_params, solution):
         for reader in edge_fold.projected_readers
     )
     projected = evaluate_projected_readers(
-        mapped_readers,
+        readers=mapped_readers,
         landing_states={
             arg: supplied[arg]
             for reader in edge_fold.projected_readers

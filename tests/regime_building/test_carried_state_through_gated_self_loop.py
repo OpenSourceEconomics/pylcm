@@ -93,7 +93,7 @@ def _next_career(career: FloatND) -> FloatND:
 
 
 def _u_src_repeat(
-    wage: ContinuousState, work: DiscreteAction, career: FloatND
+    *, wage: ContinuousState, work: DiscreteAction, career: FloatND
 ) -> FloatND:
     # `career` enters with a ZERO coefficient: the DAG reads it (so it is a used
     # state) but the value function is numerically identical to the carried-free
@@ -154,7 +154,7 @@ def _make_regimes() -> dict[str, Regime]:
             # target.
             "career": _next_career,
         },
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_src_repeat},
     )
     src_exit = Regime(

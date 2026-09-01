@@ -51,20 +51,20 @@ def _utility(consumption: ContinuousAction) -> FloatND:
     return consumption
 
 
-def _resources(liquid: ContinuousState, base_income: float) -> FloatND:
+def _resources(*, liquid: ContinuousState, base_income: float) -> FloatND:
     return liquid + base_income
 
 
-def _savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
+def _savings(*, resources: FloatND, consumption: ContinuousAction) -> FloatND:
     return resources - consumption
 
 
-def _feasible(resources: FloatND, consumption: ContinuousAction) -> FloatND:
+def _feasible(*, resources: FloatND, consumption: ContinuousAction) -> FloatND:
     """Borrowing constraint: consumption cannot exceed cash-on-hand."""
     return consumption <= resources
 
 
-def _next_liquid(savings: FloatND, income: ContinuousState) -> ContinuousState:
+def _next_liquid(*, savings: FloatND, income: ContinuousState) -> ContinuousState:
     return (1.0 + _RETURN) * savings + _INCOME_SCALE * jnp.exp(income)
 
 
@@ -72,7 +72,7 @@ def _terminal_value(liquid: ContinuousState) -> FloatND:
     return jnp.sqrt(liquid + 1.0)
 
 
-def _next_regime(age: int, final_age_alive: float) -> ScalarInt:
+def _next_regime(*, age: int, final_age_alive: float) -> ScalarInt:
     return jnp.where(age >= final_age_alive, _RegimeId.dead, _RegimeId.alive)
 
 

@@ -1,5 +1,7 @@
 """Double-double arithmetic built from error-free transforms.
 
+Keyword-only exemption: arithmetic-only module.
+
 A double-double represents a number as an unevaluated sum of floats. Knuth's
 `two_sum` and Dekker's `two_prod` return the rounding error of an addition or a
 multiplication exactly, so a sum or product can be carried at roughly twice the

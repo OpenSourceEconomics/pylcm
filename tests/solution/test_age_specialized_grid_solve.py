@@ -67,15 +67,15 @@ def _utility(consumption):
     return jnp.log(consumption)
 
 
-def _next_wealth(wealth, consumption, interest_rate):
+def _next_wealth(*, wealth, consumption, interest_rate):
     return (1 + interest_rate) * (wealth - consumption) + 1.0
 
 
-def _bc(consumption, wealth):
+def _bc(*, consumption, wealth):
     return consumption <= wealth
 
 
-def _next_regime(period, last):
+def _next_regime(*, period, last):
     return jnp.where(period >= last, RegimeId.dead, RegimeId.alive)
 
 
@@ -86,7 +86,7 @@ _DEAD = Regime(
 )
 
 
-def _alive_regime(wealth_grid, *, active=lambda age: age < 20 + _N - 1):
+def _alive_regime(*, wealth_grid, active=lambda age: age < 20 + _N - 1):
     return Regime(
         active=active,
         states={"wealth": wealth_grid},
@@ -100,7 +100,7 @@ def _alive_regime(wealth_grid, *, active=lambda age: age < 20 + _N - 1):
 
 def _model(wealth_grid):
     return Model(
-        regimes={"alive": _alive_regime(wealth_grid), "dead": _DEAD},
+        regimes={"alive": _alive_regime(wealth_grid=wealth_grid), "dead": _DEAD},
         ages=_AGES,
         regime_id_class=RegimeId,
         fixed_params={"last": _N - 2},
@@ -484,7 +484,7 @@ def test_age_specialized_grid_on_never_active_regime_is_rejected():
     with pytest.raises(RegimeInitializationError, match="active at no model age"):
         Model(
             regimes={
-                "alive": _alive_regime(grid, active=lambda _age: False),
+                "alive": _alive_regime(wealth_grid=grid, active=lambda _age: False),
                 "dead": _DEAD,
             },
             ages=_AGES,

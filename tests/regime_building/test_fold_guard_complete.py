@@ -70,11 +70,11 @@ def _prob_one(age: FloatND) -> FloatND:
     return jnp.ones_like(age, dtype=float)
 
 
-def _u_f(wage_shock: FloatND, work: DiscreteAction) -> FloatND:
+def _u_f(*, wage_shock: FloatND, work: DiscreteAction) -> FloatND:
     return work * (5.0 + wage_shock)
 
 
-def _u_m(wage_shock: FloatND, work: DiscreteAction) -> FloatND:
+def _u_m(*, wage_shock: FloatND, work: DiscreteAction) -> FloatND:
     return work * (3.0 + wage_shock)
 
 
@@ -94,7 +94,7 @@ def _true_gate() -> BoolND:
     return jnp.asarray(1.0) > 0.0
 
 
-def _solve_kwargs(regimes: dict[str, Regime], *, ages: AgeGrid) -> dict:
+def _solve_kwargs(*, regimes: dict[str, Regime], ages: AgeGrid) -> dict:
     names = list(regimes)
     finalized = finalize_regimes(
         user_regimes=regimes,
@@ -135,7 +135,7 @@ def _make_singleton_gated_target_regimes(*, fold: bool) -> dict[str, Regime]:
             )
         },
         active=lambda age: age < 1,
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_work},
     )
     source_terminal = Regime(
@@ -147,7 +147,7 @@ def _make_singleton_gated_target_regimes(*, fold: bool) -> dict[str, Regime]:
         transition=None,
         active=lambda age: age >= 1,
         states={"wage_shock": _shock(fold=fold)},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_work},
     )
     return {"source": source, "source_terminal": source_terminal, "target": target}
@@ -159,7 +159,7 @@ def test_folded_singleton_gated_edge_target_is_rejected():
     with pytest.raises(ModelInitializationError, match="gated_edges"):
         process_regimes(
             **_solve_kwargs(
-                _make_singleton_gated_target_regimes(fold=True), ages=_AGES_2P
+                regimes=_make_singleton_gated_target_regimes(fold=True), ages=_AGES_2P
             )
         )
 
@@ -167,11 +167,13 @@ def test_folded_singleton_gated_edge_target_is_rejected():
 def test_unfolded_singleton_gated_edge_target_still_constructs():
     """Pin: the SAME topology with `fold=False` still constructs."""
     process_regimes(
-        **_solve_kwargs(_make_singleton_gated_target_regimes(fold=False), ages=_AGES_2P)
+        **_solve_kwargs(
+            regimes=_make_singleton_gated_target_regimes(fold=False), ages=_AGES_2P
+        )
     )
 
 
-def _dummy_constraint(Q_f: FloatND, V_ref: FloatND) -> BoolND:
+def _dummy_constraint(*, Q_f: FloatND, V_ref: FloatND) -> BoolND:
     return Q_f >= V_ref - 100.0
 
 
@@ -181,13 +183,13 @@ def _make_singleton_same_period_ref_regimes(*, fold: bool) -> dict[str, Regime]:
         transition=None,
         active=lambda age: age < 1,
         states={"wage_shock": _shock(fold=fold)},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_work},
     )
     reader = Regime(
         transition={"reader_terminal": MarkovTransition(_prob_one)},
         active=lambda age: age < 1,
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(utilities={"f": _u_work, "m": _u_work})
         },
@@ -206,7 +208,7 @@ def _make_singleton_same_period_ref_regimes(*, fold: bool) -> dict[str, Regime]:
     reader_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(utilities={"f": _u_work, "m": _u_work})
         },
@@ -223,7 +225,8 @@ def test_folded_singleton_same_period_reference_is_rejected():
     with pytest.raises(ModelInitializationError, match="same_period_refs"):
         process_regimes(
             **_solve_kwargs(
-                _make_singleton_same_period_ref_regimes(fold=True), ages=_AGES_2P
+                regimes=_make_singleton_same_period_ref_regimes(fold=True),
+                ages=_AGES_2P,
             )
         )
 
@@ -232,7 +235,7 @@ def test_unfolded_singleton_same_period_reference_still_constructs():
     """Pin: the SAME topology with `fold=False` still constructs."""
     process_regimes(
         **_solve_kwargs(
-            _make_singleton_same_period_ref_regimes(fold=False), ages=_AGES_2P
+            regimes=_make_singleton_same_period_ref_regimes(fold=False), ages=_AGES_2P
         )
     )
 
@@ -261,20 +264,20 @@ def _make_edge_fallback_regimes(*, fold: bool) -> dict[str, Regime]:
             )
         },
         active=lambda age: age < 1,
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_work},
     )
     fallback_regime = Regime(
         transition=None,
         active=lambda age: age >= 1,
         states={"wage_shock": _shock(fold=fold)},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_work},
     )
     target = Regime(
         transition=None,
         active=lambda age: age >= 1,
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(utilities={"f": _u_work, "m": _u_work})
         },
@@ -292,14 +295,16 @@ def test_folded_gated_edge_leg_fallback_is_rejected():
     """
     with pytest.raises(ModelInitializationError, match="gated_edges"):
         process_regimes(
-            **_solve_kwargs(_make_edge_fallback_regimes(fold=True), ages=_AGES_2P)
+            **_solve_kwargs(
+                regimes=_make_edge_fallback_regimes(fold=True), ages=_AGES_2P
+            )
         )
 
 
 def test_unfolded_gated_edge_leg_fallback_still_constructs():
     """Pin: the SAME topology with `fold=False` still constructs."""
     process_regimes(
-        **_solve_kwargs(_make_edge_fallback_regimes(fold=False), ages=_AGES_2P)
+        **_solve_kwargs(regimes=_make_edge_fallback_regimes(fold=False), ages=_AGES_2P)
     )
 
 
@@ -319,7 +324,7 @@ def test_fold_with_nonlinear_certainty_equivalent_is_rejected():
             transition={"terminal": MarkovTransition(_prob_one)},
             active=lambda age: age < 1,
             states={"wage_shock": _shock(fold=True)},
-            actions={"work": DiscreteGrid(Work)},
+            actions={"work": DiscreteGrid(category_class=Work)},
             functions={"utility": _u_work},
             certainty_equivalent=PowerMean(),
         )
@@ -331,7 +336,7 @@ def test_fold_without_certainty_equivalent_still_constructs():
         transition={"terminal": MarkovTransition(_prob_one)},
         active=lambda age: age < 1,
         states={"wage_shock": _shock(fold=True)},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_work},
     )
 
@@ -365,7 +370,7 @@ def test_fold_source_state_name_reused_by_target_gate_is_not_rejected():
         },
         active=lambda age: age < 1,
         states={"wage_shock": _shock(fold=True)},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_f},
     )
     source_terminal = Regime(
@@ -377,12 +382,16 @@ def test_fold_source_state_name_reused_by_target_gate_is_not_rejected():
         transition=None,
         active=lambda age: age >= 1,
         states={"wage_shock": _shock(fold=False)},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_work},
     )
     process_regimes(
         **_solve_kwargs(
-            {"source": source, "source_terminal": source_terminal, "target": target},
+            regimes={
+                "source": source,
+                "source_terminal": source_terminal,
+                "target": target,
+            },
             ages=_AGES_2P,
         )
     )

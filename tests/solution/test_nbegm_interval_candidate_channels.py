@@ -46,7 +46,7 @@ def _build_inputs(n_intervals: int) -> dict:
         "liquid_grid": liquid_grid,
         "savings_grid": savings_grid,
         "discount_factor": jnp.asarray(_DISCOUNT),
-        "preferences": crra_preferences(_CRRA),
+        "preferences": crra_preferences(crra=_CRRA),
         "coh_slopes": jnp.linspace(1.0, 1.3, n_intervals),
         "coh_intercepts": jnp.linspace(0.5, 2.0, n_intervals),
         "breakpoints": breakpoints,
@@ -54,7 +54,7 @@ def _build_inputs(n_intervals: int) -> dict:
 
 
 def _capture_envelope_inputs(
-    inputs: dict, chunk_size: int, monkeypatch
+    *, inputs: dict, chunk_size: int, monkeypatch
 ) -> dict[str, np.ndarray]:
     """Solve, returning the candidate channels handed to `envelope_at_query`."""
     captured: dict[str, np.ndarray] = {}
@@ -100,18 +100,24 @@ def _live_candidates(captured: dict[str, np.ndarray]) -> np.ndarray:
 @pytest.mark.parametrize("n_intervals", [3, 4, 5, 7, 8])
 @pytest.mark.parametrize("chunk_size", [1, 4, 6])
 def test_live_candidate_channels_do_not_depend_on_the_batch_width(
-    n_intervals, chunk_size, monkeypatch
+    *, n_intervals, chunk_size, monkeypatch
 ) -> None:
     """Every live candidate reaching the envelope is the same at any batch width."""
     inputs = _build_inputs(n_intervals)
-    reference = _live_candidates(_capture_envelope_inputs(inputs, 1, monkeypatch))
-    got = _live_candidates(_capture_envelope_inputs(inputs, chunk_size, monkeypatch))
+    reference = _live_candidates(
+        _capture_envelope_inputs(inputs=inputs, chunk_size=1, monkeypatch=monkeypatch)
+    )
+    got = _live_candidates(
+        _capture_envelope_inputs(
+            inputs=inputs, chunk_size=chunk_size, monkeypatch=monkeypatch
+        )
+    )
     np.testing.assert_allclose(got, reference, atol=1e-6, rtol=1e-6)
 
 
 @pytest.mark.parametrize("chunk_size", [1, 4, 6])
 def test_each_interval_keeps_a_segment_id_block_of_its_own(
-    chunk_size, monkeypatch
+    *, chunk_size, monkeypatch
 ) -> None:
     """Interval candidates never share a segment id across intervals.
 
@@ -119,7 +125,9 @@ def test_each_interval_keeps_a_segment_id_block_of_its_own(
     intervals landing in one block would be merged as if they were one branch.
     """
     inputs = _build_inputs(n_intervals=5)
-    captured = _capture_envelope_inputs(inputs, chunk_size, monkeypatch)
+    captured = _capture_envelope_inputs(
+        inputs=inputs, chunk_size=chunk_size, monkeypatch=monkeypatch
+    )
     segment = captured["segment_id"]
     endog = captured["endog_grid"]
     live_segments = segment[np.isfinite(endog)]

@@ -70,7 +70,7 @@ class RegimeId:
 
 
 def new_durable(
-    illiquid: ContinuousState, illiquid_investment: ContinuousAction
+    *, illiquid: ContinuousState, illiquid_investment: ContinuousAction
 ) -> ContinuousState:
     """The durable stock chosen this period, `s' = Z + Iz`.
 
@@ -81,7 +81,7 @@ def new_durable(
     return illiquid + illiquid_investment
 
 
-def credited(illiquid: ContinuousState, new_durable: ContinuousState) -> FloatND:
+def credited(*, illiquid: ContinuousState, new_durable: ContinuousState) -> FloatND:
     """Net liquid cost of moving the durable to `new_durable` (`s'`).
 
     A deposit (`s' > Z`) costs its face value; a withdrawal (`s' < Z`) returns
@@ -105,7 +105,7 @@ def resources_before_outer_cost(wealth: ContinuousState) -> FloatND:
     return wealth + LABOUR_INCOME
 
 
-def liquid_savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
+def liquid_savings(*, resources: FloatND, consumption: ContinuousAction) -> FloatND:
     """Inner post-decision liquid balance `a^X = R_inner - c`."""
     return resources - consumption
 
@@ -137,7 +137,7 @@ def serviced_durable(new_durable: ContinuousState) -> FloatND:
     return ILLIQUID_FLOW * new_durable
 
 
-def utility(consumption: ContinuousAction, serviced_durable: FloatND) -> FloatND:
+def utility(*, consumption: ContinuousAction, serviced_durable: FloatND) -> FloatND:
     """CRRA over consumption plus an additive service flow from the new durable.
 
     The service term is constant given the bound outer node, so it leaves the
@@ -152,7 +152,9 @@ def inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
     return marginal_continuation ** (-1.0 / RISK_AVERSION)
 
 
-def credited_brute(illiquid: ContinuousState, new_durable: ContinuousAction) -> FloatND:
+def credited_brute(
+    *, illiquid: ContinuousState, new_durable: ContinuousAction
+) -> FloatND:
     """Brute-twin credited durable move to the chosen new stock `s'`."""
     investment = new_durable - illiquid
     return jnp.where(
@@ -163,7 +165,7 @@ def credited_brute(illiquid: ContinuousState, new_durable: ContinuousAction) -> 
 
 
 def resources_brute(
-    wealth: ContinuousState, illiquid: ContinuousState, new_durable: ContinuousAction
+    *, wealth: ContinuousState, illiquid: ContinuousState, new_durable: ContinuousAction
 ) -> FloatND:
     """Brute-twin liquid resources, in state + action terms (no next-state read)."""
     return (
@@ -174,6 +176,7 @@ def resources_brute(
 
 
 def next_wealth_brute(
+    *,
     wealth: ContinuousState,
     illiquid: ContinuousState,
     new_durable: ContinuousAction,
@@ -199,6 +202,7 @@ def serviced_durable_brute(new_durable: ContinuousAction) -> FloatND:
 
 
 def feasible(
+    *,
     wealth: ContinuousState,
     illiquid: ContinuousState,
     new_durable: ContinuousAction,
@@ -212,7 +216,7 @@ def feasible(
     return savings >= SAVINGS_FLOOR
 
 
-def next_regime(age: int, final_age_alive: float) -> ScalarInt:
+def next_regime(*, age: int, final_age_alive: float) -> ScalarInt:
     return jnp.where(age >= final_age_alive, RegimeId.dead, RegimeId.alive)
 
 

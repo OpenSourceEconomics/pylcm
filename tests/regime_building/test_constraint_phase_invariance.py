@@ -51,7 +51,7 @@ class RegimeId:
     last: ScalarInt
 
 
-def _flat_utility(stock: FloatND, move: DiscreteAction) -> FloatND:
+def _flat_utility(*, stock: FloatND, move: DiscreteAction) -> FloatND:
     return 0.0 * stock + 0.0 * move
 
 
@@ -71,8 +71,8 @@ def _last_regime() -> Regime:
     return Regime(
         transition=None,
         state_transitions={},
-        states={"stock": DiscreteGrid(Stock)},
-        actions={"move": DiscreteGrid(Move)},
+        states={"stock": DiscreteGrid(category_class=Stock)},
+        actions={"move": DiscreteGrid(category_class=Move)},
         functions={"utility": _flat_utility},
     ).replace(active=lambda age: age >= 2)
 
@@ -81,8 +81,8 @@ def _model(*, live_functions, state_transitions, constraints) -> Model:
     live = Regime(
         transition=_next_regime,
         state_transitions=state_transitions,
-        states={"stock": DiscreteGrid(Stock)},
-        actions={"move": DiscreteGrid(Move)},
+        states={"stock": DiscreteGrid(category_class=Stock)},
+        actions={"move": DiscreteGrid(category_class=Move)},
         functions=live_functions,
         constraints=constraints,
     ).replace(active=lambda age: age < 2)
@@ -122,7 +122,7 @@ def test_constraint_reading_a_phased_helper_is_rejected():
     def stay_ok_actual() -> FloatND:
         return jnp.array(False)  # noqa: FBT003
 
-    def capacity(move: DiscreteAction, stay_ok: FloatND) -> FloatND:
+    def capacity(*, move: DiscreteAction, stay_ok: FloatND) -> FloatND:
         return jnp.where(move == Move.stay, stay_ok, jnp.array(True))  # noqa: FBT003
 
     with pytest.raises(ModelInitializationError, match="phase-varying"):
@@ -178,7 +178,7 @@ def test_constraint_reaching_phased_helper_through_age_specialized_marker_is_rej
 
         return policy_target
 
-    def capacity(move: DiscreteAction, policy_target: ScalarInt) -> FloatND:
+    def capacity(*, move: DiscreteAction, policy_target: ScalarInt) -> FloatND:
         return move == policy_target
 
     with pytest.raises(ModelInitializationError, match="phase-varying"):
@@ -233,7 +233,7 @@ def test_constraint_reading_a_fixed_current_state_still_builds():
     so the question this pins down is unchanged.
     """
 
-    def utility(stock: DiscreteState, move: DiscreteAction) -> FloatND:
+    def utility(*, stock: DiscreteState, move: DiscreteAction) -> FloatND:
         return 0.0 * stock + 0.0 * move
 
     def capacity(stock: DiscreteState) -> FloatND:

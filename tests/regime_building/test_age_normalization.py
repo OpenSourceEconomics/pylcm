@@ -44,11 +44,11 @@ def _ages() -> AgeGrid:
     return AgeGrid(start=20, stop=24, step="Y")
 
 
-def _utility(consumption: float, extra: float) -> float:
+def _utility(*, consumption: float, extra: float) -> float:
     return consumption + extra
 
 
-def _next_wealth(wealth: float, consumption: float) -> float:
+def _next_wealth(*, wealth: float, consumption: float) -> float:
     return wealth - consumption
 
 
@@ -56,7 +56,7 @@ def _next_regime(age: float):  # noqa: ARG001
     return jnp.asarray(0, dtype=jnp.int32)
 
 
-def _normalized(regimes: dict[str, UserRegime], ages: AgeGrid):
+def _normalized(*, regimes: dict[str, UserRegime], ages: AgeGrid):
     finalized = finalize_regimes(
         user_regimes=regimes,
         derived_categoricals={},
@@ -89,7 +89,9 @@ def test_no_markers_passes_through_unchanged() -> None:
         functions={"utility": lambda consumption: consumption},
         state_transitions={"wealth": _next_wealth},
     )
-    finalized, result = _normalized({"work": alive, "dead": _dead()}, _ages())
+    finalized, result = _normalized(
+        regimes={"work": alive, "dead": _dead()}, ages=_ages()
+    )
 
     assert result.grid_schedule is None
     assert result.representative_user_regimes["work"] is finalized["work"]
@@ -113,7 +115,7 @@ def test_grid_builder_called_once_per_active_period() -> None:
         functions={"utility": lambda consumption: consumption},
         state_transitions={"wealth": _next_wealth},
     )
-    _, result = _normalized({"work": alive, "dead": _dead()}, _ages())
+    _, result = _normalized(regimes={"work": alive, "dead": _dead()}, ages=_ages())
 
     assert sorted(calls) == [20, 22]
     assert tuple(sorted(result.grid_schedule.by_period)) == (0, 2)
@@ -140,7 +142,7 @@ def test_function_builder_called_once_per_active_period() -> None:
         },
         state_transitions={"wealth": _next_wealth},
     )
-    _, result = _normalized({"work": alive, "dead": _dead()}, _ages())
+    _, result = _normalized(regimes={"work": alive, "dead": _dead()}, ages=_ages())
 
     # Broadcast to solve AND simulate, yet built once per active age (2), not 4x.
     assert sorted(calls) == [20, 22]
@@ -167,7 +169,7 @@ def test_representative_objects_come_from_first_active_period() -> None:
         functions={"utility": lambda consumption: consumption},
         state_transitions={"wealth": _next_wealth},
     )
-    _, result = _normalized({"work": alive, "dead": _dead()}, _ages())
+    _, result = _normalized(regimes={"work": alive, "dead": _dead()}, ages=_ages())
 
     rep_grid = result.representative_user_regimes["work"].states["wealth"]
     assert not isinstance(rep_grid, AgeSpecializedGrid)
@@ -197,7 +199,7 @@ def test_no_public_markers_remain_after_normalization() -> None:
         },
         state_transitions={"wealth": _next_wealth},
     )
-    _, result = _normalized({"work": alive, "dead": _dead()}, _ages())
+    _, result = _normalized(regimes={"work": alive, "dead": _dead()}, ages=_ages())
 
     rep = result.representative_user_regimes["work"]
     assert not any(
@@ -232,7 +234,7 @@ def test_never_active_specialized_regime_is_rejected() -> None:
         state_transitions={"wealth": _next_wealth},
     )
     with pytest.raises(RegimeInitializationError, match="active at no model age"):
-        _normalized({"work": alive, "dead": _dead()}, _ages())
+        _normalized(regimes={"work": alive, "dead": _dead()}, ages=_ages())
 
 
 def test_function_marker_build_receives_float_age_on_integer_age_grid() -> None:
@@ -263,7 +265,7 @@ def test_function_marker_build_receives_float_age_on_integer_age_grid() -> None:
         },
         state_transitions={"wealth": _next_wealth},
     )
-    _normalized({"work": alive, "dead": _dead()}, _ages())
+    _normalized(regimes={"work": alive, "dead": _dead()}, ages=_ages())
 
     assert age_types
     assert all(t is float for t in age_types)
@@ -288,7 +290,7 @@ def test_grid_marker_build_receives_float_age_on_integer_age_grid() -> None:
         functions={"utility": lambda consumption: consumption},
         state_transitions={"wealth": _next_wealth},
     )
-    _normalized({"work": alive, "dead": _dead()}, _ages())
+    _normalized(regimes={"work": alive, "dead": _dead()}, ages=_ages())
 
     assert age_types
     assert all(t is float for t in age_types)
@@ -318,7 +320,7 @@ def test_function_marker_with_varying_parameter_names_is_rejected() -> None:
         state_transitions={"wealth": _next_wealth},
     )
     with pytest.raises(RegimeInitializationError, match="parameter"):
-        _normalized({"work": alive, "dead": _dead()}, _ages())
+        _normalized(regimes={"work": alive, "dead": _dead()}, ages=_ages())
 
 
 def test_age_specialized_function_in_carried_state_solve_is_resolved() -> None:
@@ -355,7 +357,7 @@ def test_age_specialized_function_in_carried_state_solve_is_resolved() -> None:
             "pension_wealth": lambda pension_wealth: pension_wealth,
         },
     )
-    _, result = _normalized({"work": alive, "dead": _dead()}, _ages())
+    _, result = _normalized(regimes={"work": alive, "dead": _dead()}, ages=_ages())
 
     # Built once per active age, not left as an unresolved factory.
     assert sorted(calls) == [20, 22]
@@ -404,7 +406,7 @@ def test_grid_marker_resolution_calls_to_jax_once_per_period(
         functions={"utility": lambda consumption: consumption},
         state_transitions={"wealth": _next_wealth},
     )
-    _normalized({"work": alive, "dead": _dead()}, _ages())
+    _normalized(regimes={"work": alive, "dead": _dead()}, ages=_ages())
 
     assert len(calls) == 2
 
@@ -436,7 +438,7 @@ def test_age_specialized_process_state_grid_is_rejected() -> None:
         state_transitions={"shock": fixed_transition("shock")},
     )
     with pytest.raises(RegimeInitializationError, match="process"):
-        _normalized({"work": alive, "dead": _dead()}, _ages())
+        _normalized(regimes={"work": alive, "dead": _dead()}, ages=_ages())
 
 
 def test_never_active_specialized_regime_reports_the_real_cause() -> None:
@@ -500,4 +502,4 @@ def test_age_specialized_runtime_points_grid_is_rejected() -> None:
         state_transitions={"wealth": _next_wealth},
     )
     with pytest.raises(RegimeInitializationError, match="supplied at"):
-        _normalized({"work": alive, "dead": _dead()}, _ages())
+        _normalized(regimes={"work": alive, "dead": _dead()}, ages=_ages())

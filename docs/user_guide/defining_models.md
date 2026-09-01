@@ -194,7 +194,7 @@ class LaborSupply:
     work: ScalarInt
 
 
-def next_wealth(wealth, consumption, interest_rate):
+def next_wealth(*, wealth, consumption, interest_rate):
     return (wealth - consumption) * (1 + interest_rate)
 
 
@@ -204,7 +204,7 @@ def next_regime(labor_supply):
     )
 
 
-def utility(consumption, labor_supply, disutility_of_work):
+def utility(*, consumption, labor_supply, disutility_of_work):
     return jnp.log(consumption) - disutility_of_work * labor_supply
 
 
@@ -222,7 +222,7 @@ working = Regime(
     },
     actions={
         "consumption": LinSpacedGrid(start=1, stop=50, n_points=30),
-        "labor_supply": DiscreteGrid(LaborSupply),
+        "labor_supply": DiscreteGrid(category_class=LaborSupply),
     },
     functions={"utility": utility},
 )

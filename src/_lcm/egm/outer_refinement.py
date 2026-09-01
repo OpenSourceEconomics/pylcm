@@ -117,8 +117,8 @@ class SafeguardedSearchResult:
 
 
 def safeguarded_continuous_argmax(
-    objective: Callable[[FloatND], FloatND],
     *,
+    objective: Callable[[FloatND], FloatND],
     nodes: FloatND,
     node_values: FloatND,
     golden_iterations: int,
@@ -173,7 +173,7 @@ def safeguarded_continuous_argmax(
     upper = nodes[jnp.clip(top_idx + 1, 0, n_nodes - 1)]
 
     refined = maximize_golden_section(
-        objective,
+        objective=objective,
         lower=lower,
         upper=upper,
         iterations=golden_iterations,
@@ -282,13 +282,13 @@ def _consider(
     never tie.
     """
 
-    def _tie(a: FloatND, b: FloatND) -> FloatND:
+    def _tie(*, a: FloatND, b: FloatND) -> FloatND:
         both_finite = jnp.isfinite(a) & jnp.isfinite(b)
         eps = jnp.finfo(jnp.result_type(a, b)).eps
         band = _TIE_BAND_ULPS * eps * jnp.maximum(jnp.abs(a), jnp.abs(b))
         return jnp.where(both_finite, band, 0.0)
 
-    best_tie = _tie(cand_v, best_v)
+    best_tie = _tie(a=cand_v, b=best_v)
     better = (cand_v > best_v + best_tie) | (
         (jnp.abs(cand_v - best_v) <= best_tie) & (cand_x < best_x)
     )
@@ -297,7 +297,7 @@ def _consider(
     # (e.g. a refined bracket optimum that lands back on an already-folded node)
     # carries the winner's value and would install a duplicate second-best —
     # a spurious zero best/second margin that reads as a branch tie.
-    second_tie = _tie(cand_v, second_v)
+    second_tie = _tie(a=cand_v, b=second_v)
     runner_up = (
         (~better)
         & (cand_x != best_x)
@@ -561,7 +561,7 @@ def _mark_intervals(
     interval_ids = jnp.arange(n_intervals).reshape(n_intervals, *([1] * state_ndim))
     contains_opt = (interval_ids == best_idx - 1) | (interval_ids == best_idx)
 
-    sorted_values = jnp.sort(finite_values, axis=0)
+    sorted_values = jnp.sort(a=finite_values, axis=0)
     margin = sorted_values[-1] - sorted_values[-2]  # (*S,)
     abs_error = jnp.where(
         exact_finite & interp_finite, jnp.abs(exact - interpolated), 0.0

@@ -178,9 +178,11 @@ def collapse_continuous_candidate_bank(
         V_arr=V_arr,
         carry=carry,
         value_search=value_search,
-        keeper_adjuster_margin=_min_finite_margin(keeper_v_arr, value_search.value),
+        keeper_adjuster_margin=_min_finite_margin(
+            first=keeper_v_arr, second=value_search.value
+        ),
         best_second_best_margin=_min_finite_margin(
-            value_search.value, value_search.second_best_value
+            first=value_search.value, second=value_search.second_best_value
         ),
         adjustment_probability=adjustment_probability,
     )
@@ -238,7 +240,7 @@ def _continuous_outer_argmax(
         return _INTERPOLANT.evaluate(nodes=nodes, values=stacked, query=query)
 
     return safeguarded_continuous_argmax(
-        objective,
+        objective=objective,
         nodes=nodes,
         node_values=stacked,
         golden_iterations=config.golden_iterations,
@@ -289,7 +291,7 @@ def _fold_continuous(
     return jnp.where(take, payload, running)
 
 
-def _min_finite_margin(first: FloatND, second: FloatND) -> FloatND:
+def _min_finite_margin(*, first: FloatND, second: FloatND) -> FloatND:
     """Smallest `|first - second|` over cells where both are finite.
 
     `+inf` when no cell has both branches finite — an infinite margin is

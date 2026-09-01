@@ -29,7 +29,7 @@ from tests.test_models.deterministic.dcegm_variants import (
 pytestmark = pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 
 
-def _bequest_utility(wealth: ContinuousState, age: float) -> FloatND:
+def _bequest_utility(*, wealth: ContinuousState, age: float) -> FloatND:
     return (age / 50.0) * jnp.log(wealth)
 
 
@@ -59,7 +59,7 @@ def test_solve_publishes_policy_matching_closed_form_consumption():
     policy interpolated at off-grid resources must hit it.
     """
     discount_factor = 0.98
-    params = get_retirement_only_params(2, discount_factor=discount_factor)
+    params = get_retirement_only_params(n_periods=2, discount_factor=discount_factor)
 
     _v, sim_policy = _two_period_bequest_model().solve(
         params=params, log_level="debug", return_simulation_policy=True
@@ -86,7 +86,7 @@ def test_published_policies_are_host_resident():
     accelerator would pin one carry-sized buffer per period for the whole
     induction. So the returned policy arrays live on the host (CPU) device.
     """
-    params = get_retirement_only_params(2, discount_factor=0.98)
+    params = get_retirement_only_params(n_periods=2, discount_factor=0.98)
     _v, sim_policy = _two_period_bequest_model().solve(
         params=params, log_level="debug", return_simulation_policy=True
     )

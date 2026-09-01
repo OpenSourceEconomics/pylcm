@@ -235,6 +235,7 @@ def _load_survival_probs() -> pd.Series:
 
 
 def working_utility(
+    *,
     adjustment_cost_penalty: FloatND,
     effort_cost: FloatND,
     work_disutility: FloatND,
@@ -244,6 +245,7 @@ def working_utility(
 
 
 def retirement_utility(
+    *,
     adjustment_cost_penalty: FloatND,
     effort_cost: FloatND,
     consumption_utility: FloatND,
@@ -252,6 +254,7 @@ def retirement_utility(
 
 
 def discount_factor(
+    *,
     discount_type: DiscreteState,
     discount_factor_by_type: FloatND,
 ) -> FloatND:
@@ -264,6 +267,7 @@ def discount_factor(
 
 
 def work_disutility(
+    *,
     labor_supply: DiscreteAction,
     health: DiscreteState,
     education: DiscreteState,
@@ -278,6 +282,7 @@ def work_disutility(
 
 
 def adjustment_cost_penalty(
+    *,
     period: Period,
     adjustment_cost: ContinuousState,
     effort: DiscreteAction,
@@ -291,17 +296,20 @@ def adjustment_cost_penalty(
     )
 
 
-def effort_value(effort: DiscreteAction, effort_grid: FloatND) -> FloatND:
+def effort_value(*, effort: DiscreteAction, effort_grid: FloatND) -> FloatND:
     """Map effort class index to continuous [0, 1] value."""
     return effort_grid[effort]
 
 
-def lagged_effort_value(lagged_effort: DiscreteState, effort_grid: FloatND) -> FloatND:
+def lagged_effort_value(
+    *, lagged_effort: DiscreteState, effort_grid: FloatND
+) -> FloatND:
     """Map lagged effort class index to continuous [0, 1] value."""
     return effort_grid[lagged_effort]
 
 
 def consumption(
+    *,
     net_income: FloatND,
     wealth: ContinuousState,
     saving: ContinuousAction,
@@ -328,6 +336,7 @@ def consumption(
 
 
 def consumption_utility(
+    *,
     health: DiscreteState,
     consumption: FloatND,
     health_consumption_penalty: FloatND,
@@ -342,6 +351,7 @@ def consumption_utility(
 
 
 def effort_cost(
+    *,
     period: Period,
     education: DiscreteState,
     health: DiscreteState,
@@ -356,7 +366,7 @@ def effort_cost(
     )
 
 
-def working_net_income(benefits: FloatND, taxed_income: FloatND) -> FloatND:
+def working_net_income(*, benefits: FloatND, taxed_income: FloatND) -> FloatND:
     return taxed_income + benefits
 
 
@@ -365,12 +375,13 @@ def retirement_net_income(pension: FloatND) -> FloatND:
 
 
 def scaled_productivity_shock(
-    productivity_shock: ContinuousState, productivity_shock_scale: FloatND
+    *, productivity_shock: ContinuousState, productivity_shock_scale: FloatND
 ) -> FloatND:
     return productivity_shock * productivity_shock_scale
 
 
 def base_income(
+    *,
     period: Period,
     health: DiscreteState,
     education: DiscreteState,
@@ -390,6 +401,7 @@ def base_income(
 
 
 def income(
+    *,
     labor_supply: DiscreteAction,
     productivity: DiscreteState,
     scaled_productivity_shock: FloatND,
@@ -405,6 +417,7 @@ def income(
 
 
 def taxed_income(
+    *,
     income: FloatND,
     tax_scale: FloatND,
     labor_tax_rate: FloatND,
@@ -416,6 +429,7 @@ def taxed_income(
 
 
 def benefits(
+    *,
     health: DiscreteState,
     labor_supply: DiscreteAction,
     benefit_rate: FloatND,
@@ -427,6 +441,7 @@ def benefits(
 
 
 def pension(
+    *,
     education: DiscreteState,
     pension_base: FloatND,
     pension_replacement_rate: FloatND,
@@ -454,6 +469,7 @@ def next_wealth(saving: ContinuousAction) -> ContinuousState:
 
 
 def next_health(
+    *,
     period: Period,
     health: DiscreteState,
     effort_value: FloatND,
@@ -487,6 +503,7 @@ def next_lagged_effort(effort: DiscreteAction) -> DiscreteState:
 
 
 def working_to_working_probability(
+    *,
     period: Period,
     education: DiscreteState,
     health: DiscreteState,
@@ -497,6 +514,7 @@ def working_to_working_probability(
 
 
 def working_to_retirement_probability(
+    *,
     period: Period,
     education: DiscreteState,
     health: DiscreteState,
@@ -507,6 +525,7 @@ def working_to_retirement_probability(
 
 
 def working_to_dead_probability(
+    *,
     period: Period,
     education: DiscreteState,
     health: DiscreteState,
@@ -516,6 +535,7 @@ def working_to_dead_probability(
 
 
 def retirement_to_retirement_probability(
+    *,
     period: Period,
     education: DiscreteState,
     health: DiscreteState,
@@ -525,6 +545,7 @@ def retirement_to_retirement_probability(
 
 
 def retirement_to_dead_probability(
+    *,
     period: Period,
     education: DiscreteState,
     health: DiscreteState,
@@ -534,6 +555,7 @@ def retirement_to_dead_probability(
 
 
 def savings_constraint(
+    *,
     net_income: FloatND,
     wealth: ContinuousState,
     saving: ContinuousAction,
@@ -546,11 +568,11 @@ def working_is_active(age: int) -> bool:
     return age < retirement_age
 
 
-def retirement_is_active(age: int, final_age_alive: int) -> bool:
+def retirement_is_active(*, age: int, final_age_alive: int) -> bool:
     return retirement_age <= age <= final_age_alive
 
 
-def dead_is_active(age: int, initial_age: float) -> bool:
+def dead_is_active(*, age: int, initial_age: float) -> bool:
     return age > initial_age
 
 
@@ -563,14 +585,14 @@ WORKING_REGIME = Regime(
     active=working_is_active,
     states={
         "wealth": IrregSpacedGrid(points=_WEALTH_GRID_POINTS),
-        "health": DiscreteGrid(Health),
+        "health": DiscreteGrid(category_class=Health),
         "productivity_shock": prod_shock_grid,
-        "lagged_effort": DiscreteGrid(Effort),
+        "lagged_effort": DiscreteGrid(category_class=Effort),
         "adjustment_cost": UniformIIDProcess(n_points=5, start=0, stop=1),
-        "education": DiscreteGrid(Education),
-        "productivity": DiscreteGrid(ProductivityType),
-        "health_type": DiscreteGrid(HealthType),
-        "discount_type": DiscreteGrid(DiscountType),
+        "education": DiscreteGrid(category_class=Education),
+        "productivity": DiscreteGrid(category_class=ProductivityType),
+        "health_type": DiscreteGrid(category_class=HealthType),
+        "discount_type": DiscreteGrid(category_class=DiscountType),
     },
     state_transitions={
         "wealth": next_wealth,
@@ -582,9 +604,9 @@ WORKING_REGIME = Regime(
         "discount_type": fixed_transition("discount_type"),
     },
     actions={
-        "labor_supply": DiscreteGrid(LaborSupply),
+        "labor_supply": DiscreteGrid(category_class=LaborSupply),
         "saving": IrregSpacedGrid(points=_WEALTH_GRID_POINTS),
-        "effort": DiscreteGrid(Effort),
+        "effort": DiscreteGrid(category_class=Effort),
     },
     functions={
         "utility": working_utility,
@@ -624,12 +646,12 @@ RETIREMENT_REGIME = Regime(
     ),
     states={
         "wealth": IrregSpacedGrid(points=_WEALTH_GRID_POINTS),
-        "health": DiscreteGrid(Health),
-        "lagged_effort": DiscreteGrid(Effort),
+        "health": DiscreteGrid(category_class=Health),
+        "lagged_effort": DiscreteGrid(category_class=Effort),
         "adjustment_cost": UniformIIDProcess(n_points=5, start=0, stop=1),
-        "education": DiscreteGrid(Education),
-        "health_type": DiscreteGrid(HealthType),
-        "discount_type": DiscreteGrid(DiscountType),
+        "education": DiscreteGrid(category_class=Education),
+        "health_type": DiscreteGrid(category_class=HealthType),
+        "discount_type": DiscreteGrid(category_class=DiscountType),
     },
     state_transitions={
         "wealth": next_wealth,
@@ -641,7 +663,7 @@ RETIREMENT_REGIME = Regime(
     },
     actions={
         "saving": IrregSpacedGrid(points=_WEALTH_GRID_POINTS),
-        "effort": DiscreteGrid(Effort),
+        "effort": DiscreteGrid(category_class=Effort),
     },
     functions={
         "utility": retirement_utility,
@@ -681,7 +703,7 @@ DEAD_REGIME = Regime(
     states={
         # Mirrors the living regimes' `discount_type` so the dead value is
         # indexable along the same fixed-state axis. See `dead_utility`.
-        "discount_type": DiscreteGrid(DiscountType),
+        "discount_type": DiscreteGrid(category_class=DiscountType),
     },
     functions={"utility": dead_utility},
 )

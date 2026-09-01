@@ -88,7 +88,7 @@ def test_get_next_state_function_with_simulate_target():
         cat_1: ScalarInt
 
     all_grids = MappingProxyType(
-        {"mock": MappingProxyType({"b": DiscreteGrid(MockCategory)})}
+        {"mock": MappingProxyType({"b": DiscreteGrid(category_class=MockCategory)})}
     )
     transitions = MappingProxyType(
         {"mock": MappingProxyType({"next_a": f_a, "next_b": f_b})}

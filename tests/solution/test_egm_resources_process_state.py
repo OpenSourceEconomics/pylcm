@@ -80,7 +80,7 @@ def utility(consumption: ContinuousAction) -> FloatND:
 
 
 def resources(
-    wealth: ContinuousState, wage_income: FloatND, interest_rate: float
+    *, wealth: ContinuousState, wage_income: FloatND, interest_rate: float
 ) -> FloatND:
     """Financial resources: return on wealth plus the wage node's income.
 
@@ -90,7 +90,7 @@ def resources(
     return (1.0 + interest_rate) * wealth + wage_income
 
 
-def savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
+def savings(*, resources: FloatND, consumption: ContinuousAction) -> FloatND:
     return resources - consumption
 
 
@@ -103,6 +103,7 @@ def inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
 
 
 def next_wealth_brute(
+    *,
     wealth: ContinuousState,
     consumption: ContinuousAction,
     interest_rate: float,
@@ -112,6 +113,7 @@ def next_wealth_brute(
 
 
 def borrowing_constraint(
+    *,
     wealth: ContinuousState,
     consumption: ContinuousAction,
     interest_rate: float,
@@ -128,7 +130,7 @@ def borrowing_constraint(
     )
 
 
-def next_regime(age: int, final_age_alive: float) -> ScalarInt:
+def next_regime(*, age: int, final_age_alive: float) -> ScalarInt:
     return jnp.where(
         age >= final_age_alive,
         ProcessResourcesRegimeId.dead,
@@ -147,7 +149,7 @@ def _get_model(solver: str) -> Model:
     ages = AgeGrid(start=40, stop=40 + (N_PERIODS - 1) * 10, step="10Y")
     last_age = float(ages.exact_values[-1])
 
-    def active(age: int, la: float = last_age) -> bool:
+    def active(*, age: int, la: float = last_age) -> bool:
         return age < la
 
     states = {

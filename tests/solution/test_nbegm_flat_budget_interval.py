@@ -42,7 +42,7 @@ def test_flat_budget_interval_value_matches_dense_savings_max():
         liquid_grid=liquid_grid,
         savings_grid=savings_grid,
         discount_factor=jnp.asarray(_DISCOUNT),
-        preferences=crra_preferences(_CRRA),
+        preferences=crra_preferences(crra=_CRRA),
         coh_slopes=jnp.asarray([0.0]),
         coh_intercepts=jnp.asarray([_FLOOR_COH]),
         breakpoints=jnp.asarray([], dtype=liquid_grid.dtype),

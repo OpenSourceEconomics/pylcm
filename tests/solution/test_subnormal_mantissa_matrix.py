@@ -111,8 +111,8 @@ def _smallest_normal_rare_payoff(shock: ScalarFloat) -> FloatND:
 
 
 def _model(
-    rare_probability: Callable[[], ScalarFloat],
     *,
+    rare_probability: Callable[[], ScalarFloat],
     rare_payoff: Callable[..., FloatND] = _finite_rare_payoff,
     certainty_equivalent: CertaintyEquivalent | None = None,
     rare_carries_a_process: bool = True,
@@ -155,26 +155,29 @@ def _model(
 _PARAMS = {"source": {"koopmans_aggregator": {"discount_factor": 1.0}}}
 
 
-def _source_value(model: Model, log_level: LogLevel = "off") -> FloatND:
+def _source_value(*, model: Model, log_level: LogLevel = "off") -> FloatND:
     return jnp.asarray(model.solve(params=_PARAMS, log_level=log_level)[0]["source"])
 
 
 def test_a_subnormal_weight_on_a_finite_value_drops() -> None:
     """For this payoff, the true rare term rounds away and omission is exact."""
     np.testing.assert_allclose(
-        np.asarray(_source_value(_model(_largest_subnormal))), 1.0
+        np.asarray(_source_value(model=_model(rare_probability=_largest_subnormal))),
+        1.0,
     )
 
 
 def test_a_subnormal_weight_drops_for_a_target_without_stochastic_nodes() -> None:
     """The same exact-omission control holds without a stochastic target axis."""
-    model = _model(_largest_subnormal, rare_carries_a_process=False)
-    np.testing.assert_allclose(np.asarray(_source_value(model)), 1.0)
+    model = _model(rare_probability=_largest_subnormal, rare_carries_a_process=False)
+    np.testing.assert_allclose(np.asarray(_source_value(model=model)), 1.0)
 
 
 def test_a_subnormal_weight_drops_under_a_nonlinear_aggregator() -> None:
     """For this PowerMean fixture, the true rare branch also rounds away."""
-    model = _model(_largest_subnormal, certainty_equivalent=PowerMean())
+    model = _model(
+        rare_probability=_largest_subnormal, certainty_equivalent=PowerMean()
+    )
     params = {
         "source": {
             "koopmans_aggregator": {"discount_factor": 1.0},
@@ -188,33 +191,43 @@ def test_a_subnormal_weight_drops_under_a_nonlinear_aggregator() -> None:
 
 def test_a_subnormal_weight_on_an_infinite_value_keeps_the_infinity() -> None:
     """A reachable state at which no action is feasible is worth `-inf`."""
-    model = _model(_largest_subnormal, rare_payoff=_infeasible_rare_payoff)
+    model = _model(
+        rare_probability=_largest_subnormal, rare_payoff=_infeasible_rare_payoff
+    )
 
-    assert bool(jnp.all(jnp.isneginf(_source_value(model))))
+    assert bool(jnp.all(jnp.isneginf(_source_value(model=model))))
 
 
 def test_a_normal_weight_on_an_infinite_value_keeps_the_infinity() -> None:
     """The infinite branch is a rule about weights, not about small weights."""
-    model = _model(_smallest_normal, rare_payoff=_infeasible_rare_payoff)
+    model = _model(
+        rare_probability=_smallest_normal, rare_payoff=_infeasible_rare_payoff
+    )
 
-    assert bool(jnp.all(jnp.isneginf(_source_value(model))))
+    assert bool(jnp.all(jnp.isneginf(_source_value(model=model))))
 
 
 def test_a_zero_weight_on_an_infinite_value_contributes_nothing() -> None:
     """A target that cannot be reached is not made infinite by what stands at it."""
-    model = _model(_impossible, rare_payoff=_infeasible_rare_payoff)
+    model = _model(rare_probability=_impossible, rare_payoff=_infeasible_rare_payoff)
 
-    np.testing.assert_allclose(np.asarray(_source_value(model)), 1.0)
+    np.testing.assert_allclose(np.asarray(_source_value(model=model)), 1.0)
 
 
 def test_a_smallest_normal_weight_is_priced() -> None:
     """One representable step above the subnormal range, nothing is special."""
-    assert bool(jnp.all(jnp.isfinite(_source_value(_model(_smallest_normal)))))
+    assert bool(
+        jnp.all(
+            jnp.isfinite(_source_value(model=_model(rare_probability=_smallest_normal)))
+        )
+    )
 
 
 def test_a_zero_weight_leaves_the_common_target_alone() -> None:
     """A target that cannot be reached contributes nothing, and poisons nothing."""
-    np.testing.assert_allclose(np.asarray(_source_value(_model(_impossible))), 1.0)
+    np.testing.assert_allclose(
+        np.asarray(_source_value(model=_model(rare_probability=_impossible))), 1.0
+    )
 
 
 @pytest.mark.parametrize("compile_it", [False, True], ids=["eager", "jit"])
@@ -236,13 +249,18 @@ def test_weighted_term_classifies_by_bits_not_by_comparison(
     )
     negative_infinity = jnp.asarray(-jnp.inf, dtype=dtype)
 
-    def term(weight: ScalarFloat, value: ScalarFloat) -> FloatND:
+    def term(*, weight: ScalarFloat, value: ScalarFloat) -> FloatND:
         return func(weight=weight, value=value, subnormal_is_accounted_for=False)
 
-    assert bool(jnp.isneginf(term(subnormal, negative_infinity)))
-    assert float(term(jnp.asarray(0.0, dtype=dtype), negative_infinity)) == 0.0
+    assert bool(jnp.isneginf(term(weight=subnormal, value=negative_infinity)))
+    assert (
+        float(term(weight=jnp.asarray(0.0, dtype=dtype), value=negative_infinity))
+        == 0.0
+    )
     np.testing.assert_allclose(
-        float(term(subnormal, jnp.asarray(5.0, dtype=dtype))), 0.0, atol=1e-30
+        float(term(weight=subnormal, value=jnp.asarray(5.0, dtype=dtype))),
+        0.0,
+        atol=1e-30,
     )
 
 
@@ -273,7 +291,10 @@ def test_the_smallest_subnormal_is_not_enlarged_in_a_linear_continuation() -> No
     got = np.longdouble(
         np.asarray(
             _source_value(
-                _model(_smallest_subnormal, rare_payoff=_largest_finite_rare_payoff)
+                model=_model(
+                    rare_probability=_smallest_subnormal,
+                    rare_payoff=_largest_finite_rare_payoff,
+                )
             )
         )
     )
@@ -290,7 +311,7 @@ def test_the_smallest_subnormal_keeps_its_true_nonlinear_weight() -> None:
     tiny = np.longdouble(np.finfo(dtype).tiny)
     expected = (np.longdouble(1.0) + p) / (np.longdouble(1.0) + p / tiny)
     model = _model(
-        _smallest_subnormal,
+        rare_probability=_smallest_subnormal,
         rare_payoff=_smallest_normal_rare_payoff,
         certainty_equivalent=PowerMean(),
     )
@@ -314,9 +335,10 @@ def test_the_smallest_subnormal_keeps_its_true_nonlinear_weight() -> None:
 def test_a_negative_smallest_subnormal_does_not_bypass_the_distribution_guard() -> None:
     """Raw mass/minimum arithmetic must not see `-minsub` as represented `-0`."""
     model = _model(
-        lambda: -_smallest_subnormal(), rare_payoff=_largest_finite_rare_payoff
+        rare_probability=lambda: -_smallest_subnormal(),
+        rare_payoff=_largest_finite_rare_payoff,
     )
-    value = _source_value(model, log_level="off")
+    value = _source_value(model=model, log_level="off")
 
     assert bool(jnp.all(jnp.isnan(value)))
 

@@ -33,29 +33,29 @@ class _RegimeId:
     dead: ScalarInt
 
 
-def _next_aime(aime: float, labor_supply: DiscreteAction) -> FloatND:
+def _next_aime(*, aime: float, labor_supply: DiscreteAction) -> FloatND:
     """AIME accumulates by 1 unit when working, 0 otherwise."""
     return aime + jnp.where(labor_supply == _LaborSupply.work, 1.0, 0.0)
 
 
-def _next_wealth(wealth: float, consumption: float, next_aime: FloatND) -> FloatND:
+def _next_wealth(*, wealth: float, consumption: float, next_aime: FloatND) -> FloatND:
     """Next-period wealth depends on next-period AIME (the chained transition)."""
     return wealth - consumption + 0.1 * next_aime
 
 
-def _utility(consumption: float, labor_supply: DiscreteAction) -> FloatND:
+def _utility(*, consumption: float, labor_supply: DiscreteAction) -> FloatND:
     disutility = jnp.where(labor_supply == _LaborSupply.work, 0.5, 0.0)
     return jnp.log(jnp.maximum(consumption, 1e-6)) - disutility
 
 
-def _next_regime(age: int, final_age_alive: float) -> ScalarInt:
+def _next_regime(*, age: int, final_age_alive: float) -> ScalarInt:
     return jnp.where(age >= final_age_alive, _RegimeId.dead, _RegimeId.active)
 
 
 _active = UserRegime(
     transition=_next_regime,
     actions={
-        "labor_supply": DiscreteGrid(_LaborSupply),
+        "labor_supply": DiscreteGrid(category_class=_LaborSupply),
         "consumption": LinSpacedGrid(start=0.5, stop=2.0, n_points=3),
     },
     states={
@@ -175,7 +175,7 @@ class _RegimeIdF2:
     last: ScalarInt
 
 
-def _f2_next_capital(capital: DiscreteState, move: DiscreteAction) -> DiscreteState:
+def _f2_next_capital(*, capital: DiscreteState, move: DiscreteAction) -> DiscreteState:
     """Deterministic: investing lands in high capital, else persists current capital."""
     return jnp.where(move == _Move.invest, _Capital.high, capital)
 
@@ -189,7 +189,7 @@ def _f2_good_probs(next_capital: DiscreteState) -> FloatND:
     return jnp.identity(2)[next_capital]
 
 
-def _f2_utility(good: DiscreteState, move: DiscreteAction) -> FloatND:
+def _f2_utility(*, good: DiscreteState, move: DiscreteAction) -> FloatND:
     return good + 0.0 * move
 
 
@@ -201,8 +201,11 @@ def _f2_build_model() -> Model:
     live = UserRegime(
         transition=_f2_next_regime,
         active=lambda age: age < 27,
-        states={"good": DiscreteGrid(_Good), "capital": DiscreteGrid(_Capital)},
-        actions={"move": DiscreteGrid(_Move)},
+        states={
+            "good": DiscreteGrid(category_class=_Good),
+            "capital": DiscreteGrid(category_class=_Capital),
+        },
+        actions={"move": DiscreteGrid(category_class=_Move)},
         state_transitions={
             "good": MarkovTransition(_f2_good_probs),
             "capital": _f2_next_capital,

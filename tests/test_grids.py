@@ -150,8 +150,21 @@ def test_discrete_grid_creation():
         ("b", jnp.int32(1)),
         ("c", jnp.int32(2)),
     )
-    grid = DiscreteGrid(category_class)
+    grid = DiscreteGrid(category_class=category_class)
     assert np.allclose(grid.to_jax(), np.arange(3))
+
+
+def test_discrete_grid_accepts_category_class_as_legacy_positional_argument():
+    """The long-standing public constructor form remains supported."""
+    category_class = _make_dc(
+        "Category",
+        ("a", jnp.int32(0)),
+        ("b", jnp.int32(1)),
+    )
+
+    grid = DiscreteGrid(category_class)
+
+    assert grid.categories == ("a", "b")
 
 
 def test_discrete_grid_invalid_category_class():
@@ -160,7 +173,7 @@ def test_discrete_grid_invalid_category_class():
         GridInitializationError,
         match="Field values of the category_class must be `ScalarInt`",
     ):
-        DiscreteGrid(category_class)
+        DiscreteGrid(category_class=category_class)
 
 
 def test_discrete_grid_ordered_true():
@@ -170,7 +183,7 @@ def test_discrete_grid_ordered_true():
         medium: ScalarInt
         high: ScalarInt
 
-    grid = DiscreteGrid(OrderedCat)
+    grid = DiscreteGrid(category_class=OrderedCat)
     assert grid.ordered is True
 
 
@@ -180,7 +193,7 @@ def test_discrete_grid_ordered_false():
         a: ScalarInt
         b: ScalarInt
 
-    grid = DiscreteGrid(UnorderedCat)
+    grid = DiscreteGrid(category_class=UnorderedCat)
     assert grid.ordered is False
 
 
@@ -371,7 +384,7 @@ def test_irreg_spaced_grid_invalid_not_ascending():
 
 
 def _create_equivalent_grid(
-    grid_type: str, lin_grid: LinSpacedGrid
+    *, grid_type: str, lin_grid: LinSpacedGrid
 ) -> IrregSpacedGrid | PiecewiseLinSpacedGrid:
     """Create a grid equivalent to the given LinSpacedGrid."""
     if grid_type == "IrregSpacedGrid":
@@ -398,11 +411,11 @@ def _create_equivalent_grid(
 )
 @pytest.mark.parametrize("grid_type", ["IrregSpacedGrid", "PiecewiseLinSpacedGrid"])
 def test_linspaced_coordinates_match_other_grid_types(
-    start: float, stop: float, n_points: int, grid_type: str
+    *, start: float, stop: float, n_points: int, grid_type: str
 ):
     """LinSpacedGrid coordinates should match equivalent grids of other types."""
     lin_grid = LinSpacedGrid(start=start, stop=stop, n_points=n_points)
-    other_grid = _create_equivalent_grid(grid_type, lin_grid)
+    other_grid = _create_equivalent_grid(grid_type=grid_type, lin_grid=lin_grid)
 
     # Generate test values: grid points, interpolation, and extrapolation
     gridpoints = [float(x) for x in lin_grid.to_jax()]
@@ -497,7 +510,7 @@ def test_discrete_grid_rejects_batch_size_combined_with_distributed():
     """
     with pytest.raises(GridInitializationError, match="batch_size"):
         DiscreteGrid(
-            _make_dc("_BS", ("a", jnp.int32(0)), ("b", jnp.int32(1))),
+            category_class=_make_dc("_BS", ("a", jnp.int32(0)), ("b", jnp.int32(1))),
             batch_size=1,
             distributed=True,
         )
@@ -510,7 +523,7 @@ def test_discrete_grid_accepts_batch_size_zero_with_distributed():
     at construction via `_fail_if_continuous_grid_distributed`.
     """
     grid = DiscreteGrid(
-        _make_dc("_OK", ("a", jnp.int32(0)), ("b", jnp.int32(1))),
+        category_class=_make_dc("_OK", ("a", jnp.int32(0)), ("b", jnp.int32(1))),
         batch_size=0,
         distributed=True,
     )

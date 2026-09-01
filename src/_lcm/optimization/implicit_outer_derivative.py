@@ -60,6 +60,7 @@ import jax
 import jax.numpy as jnp
 
 from _lcm.optimization.golden_section import maximize_golden_section
+from _lcm.utils.functools import allow_args
 from lcm.typing import BoolND, FloatND
 
 # Below this |Q_ff| the implicit tangent is numerically meaningless: the
@@ -167,6 +168,7 @@ class ImplicitOptimumDiagnostics:
 
 
 def _mesh_and_polish(
+    *,
     objective: Callable[[FloatND], FloatND],
     lower: FloatND,
     upper: FloatND,
@@ -197,7 +199,7 @@ def _mesh_and_polish(
     bracket_lower = jnp.clip(lower + (best - 1) * step, min=lower, max=upper)
     bracket_upper = jnp.clip(lower + (best + 1) * step, min=lower, max=upper)
     polished = maximize_golden_section(
-        objective,
+        objective=objective,
         lower=bracket_lower,
         upper=bracket_upper,
         iterations=polish_iterations,
@@ -211,8 +213,9 @@ def _mesh_and_polish(
     return f_star, value, basin_margin
 
 
+# keyword-only-exempt: library-callback=jax.custom_jvp
 def _continuous_outer_optimum_primal(
-    objective: Callable[[FloatND, FloatND], FloatND],
+    objective: Callable[..., FloatND],
     theta: FloatND,
     bounds: tuple[FloatND, FloatND],
     n_mesh: int = 33,
@@ -233,9 +236,14 @@ def _continuous_outer_optimum_primal(
         `(f_star, value, basin_margin)` — the winning abscissa, the value
         at the winner, and the mesh-stage best-vs-second-best margin.
     """
+    positional_objective = allow_args(objective)
     lower, upper = bounds
     return _mesh_and_polish(
-        lambda f: objective(f, theta), lower, upper, n_mesh, polish_iterations
+        objective=lambda f: positional_objective(f, theta),
+        lower=lower,
+        upper=upper,
+        n_mesh=n_mesh,
+        polish_iterations=polish_iterations,
     )
 
 
@@ -248,15 +256,17 @@ continuous_outer_optimum = jax.custom_jvp(
 )
 
 
+# keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
 @continuous_outer_optimum.defjvp
 def _continuous_outer_optimum_jvp(
-    objective: Callable[[FloatND, FloatND], FloatND],
+    objective: Callable[..., FloatND],
     n_mesh: int,
     polish_iterations: int,
     primals: tuple,
     tangents: tuple,
 ) -> tuple[tuple[FloatND, FloatND, FloatND], tuple[FloatND, FloatND, FloatND]]:
     theta, bounds = primals
+    positional_objective = allow_args(objective)
     theta_dot, _ = tangents
     f_star, value, basin_margin = continuous_outer_optimum(
         objective, theta, bounds, n_mesh, polish_iterations
@@ -269,8 +279,9 @@ def _continuous_outer_optimum_jvp(
     # that reverse-mode AD cannot.
     ones = jnp.ones_like(f_star)
 
+    # keyword-only-exempt: library-callback=jax.jvp
     def q_f(f: FloatND, t: FloatND) -> FloatND:
-        return jax.jvp(lambda g: objective(g, t), (f,), (ones,))[1]
+        return jax.jvp(lambda g: positional_objective(g, t), (f,), (ones,))[1]
 
     _, q_ff = jax.jvp(lambda f: q_f(f, theta), (f_star,), (ones,))
     _, q_ftheta_dot = jax.jvp(lambda t: q_f(f_star, t), (theta,), (theta_dot,))
@@ -285,18 +296,20 @@ def _continuous_outer_optimum_jvp(
     # Envelope theorem for the value: the argmax term vanishes at an
     # interior optimum; at a bound the reported value tangent is still the
     # partial (the bound's own movement is not differentiated here).
-    _, value_dot = jax.jvp(lambda t: objective(f_star, t), (theta,), (theta_dot,))
+    _, value_dot = jax.jvp(
+        lambda t: positional_objective(f_star, t), (theta,), (theta_dot,)
+    )
     margin_dot = jnp.zeros_like(basin_margin)
     return (f_star, value, basin_margin), (f_dot, value_dot, margin_dot)
 
 
-def _cell_bool(value: object, *, like: FloatND) -> BoolND:
+def _cell_bool(*, value: object, like: FloatND) -> BoolND:
     """Broadcast one provenance flag onto the diagnostic cell axes."""
     return jnp.broadcast_to(jnp.asarray(value, dtype=bool), jnp.shape(like))
 
 
 def _same_owner_signature(
-    baseline: object, candidate: object, *, like: FloatND
+    *, baseline: object, candidate: object, like: FloatND
 ) -> tuple[BoolND, bool]:
     """Compare fixed-pytree signature fields without inventing missing fields."""
     baseline_leaves, baseline_tree = jax.tree_util.tree_flatten(baseline)
@@ -317,8 +330,8 @@ def _same_owner_signature(
 
 
 def _owner_certificate_flags(
-    owner_provenance: Callable[[FloatND, FloatND], OwnerProvenance],
     *,
+    owner_provenance: Callable[..., OwnerProvenance],
     f_star: FloatND,
     theta: FloatND,
     action_delta: FloatND,
@@ -346,19 +359,19 @@ def _owner_certificate_flags(
     )
     records = tuple(owner_provenance(f, t) for f, t in points)
     baseline = records[0]
-    owner_incomplete = ~_cell_bool(baseline.complete, like=f_star)
-    owner_unresolved = ~_cell_bool(baseline.decided, like=f_star)
-    owner_primary_tie = ~_cell_bool(baseline.strict_primary, like=f_star)
+    owner_incomplete = ~_cell_bool(value=baseline.complete, like=f_star)
+    owner_unresolved = ~_cell_bool(value=baseline.decided, like=f_star)
+    owner_primary_tie = ~_cell_bool(value=baseline.strict_primary, like=f_star)
     owner_changed = jnp.zeros_like(f_star, dtype=bool)
     baseline_leaves, _ = jax.tree_util.tree_flatten(baseline.signature)
     if not baseline_leaves:
         owner_incomplete |= jnp.ones_like(f_star, dtype=bool)
     for record in records[1:]:
-        owner_incomplete |= ~_cell_bool(record.complete, like=f_star)
-        owner_unresolved |= ~_cell_bool(record.decided, like=f_star)
-        owner_primary_tie |= ~_cell_bool(record.strict_primary, like=f_star)
+        owner_incomplete |= ~_cell_bool(value=record.complete, like=f_star)
+        owner_unresolved |= ~_cell_bool(value=record.decided, like=f_star)
+        owner_primary_tie |= ~_cell_bool(value=record.strict_primary, like=f_star)
         same, structure_complete = _same_owner_signature(
-            baseline.signature, record.signature, like=f_star
+            baseline=baseline.signature, candidate=record.signature, like=f_star
         )
         owner_changed |= ~same
         if not structure_complete:
@@ -376,20 +389,20 @@ def _owner_certificate_flags(
 
 
 def implicit_optimum_diagnostics(
-    objective: Callable[[FloatND, FloatND], FloatND],
     *,
+    objective: Callable[..., FloatND],
     theta: FloatND,
     f_star: FloatND,
     basin_margin: FloatND,
     bounds: tuple[FloatND, FloatND],
     n_mesh: int = 33,
     polish_iterations: int = 32,
-    branch_id: Callable[[FloatND, FloatND], FloatND] | None = None,
-    owner_provenance: Callable[[FloatND, FloatND], OwnerProvenance] | None = None,
+    branch_id: Callable[..., FloatND] | None = None,
+    owner_provenance: Callable[..., OwnerProvenance] | None = None,
     require_owner_certificate: bool = False,
     reoptimized_owner_points: tuple[tuple[FloatND, FloatND], ...] = (),
-    parameter_probe_atol: float = 1e-5,
-    parameter_probe_rtol: float = 1e-6,
+    parameter_probe_atol: float = 1e-05,
+    parameter_probe_rtol: float = 1e-06,
     curvature_floor: float = _CURVATURE_FLOOR,
     tie_margin: float = _TIE_MARGIN,
     stationarity_rtol: float = _STATIONARITY_RTOL,
@@ -412,12 +425,17 @@ def implicit_optimum_diagnostics(
     requests certification automatically, so a legacy label fails closed rather
     than masquerading as a complete certificate.
     """
+    positional_objective, positional_branch_id, positional_owner_provenance = (
+        allow_args(objective),
+        None if branch_id is None else allow_args(branch_id),
+        None if owner_provenance is None else allow_args(owner_provenance),
+    )
     lower, upper = bounds
     width = 2.0 * (upper - lower) / (n_mesh - 1) * (0.618**polish_iterations)
     ones = jnp.ones_like(f_star)
-    q_f = jax.jvp(lambda f: objective(f, theta), (f_star,), (ones,))[1]
+    q_f = jax.jvp(lambda f: positional_objective(f, theta), (f_star,), (ones,))[1]
     _, q_ff = jax.jvp(
-        lambda f: jax.jvp(lambda g: objective(g, theta), (f,), (ones,))[1],
+        lambda f: jax.jvp(lambda g: positional_objective(g, theta), (f,), (ones,))[1],
         (f_star,),
         (ones,),
     )
@@ -432,16 +450,18 @@ def implicit_optimum_diagnostics(
         f_minus = jnp.clip(f_star - radius, min=lower, max=upper)
         step_plus = jnp.where(f_plus > f_star, f_plus - f_star, 1.0)
         step_minus = jnp.where(f_star > f_minus, f_star - f_minus, 1.0)
-        slope_plus = (objective(f_plus, theta) - objective(f_star, theta)) / step_plus
+        slope_plus = (
+            positional_objective(f_plus, theta) - positional_objective(f_star, theta)
+        ) / step_plus
         slope_minus = (
-            objective(f_star, theta) - objective(f_minus, theta)
+            positional_objective(f_star, theta) - positional_objective(f_minus, theta)
         ) / step_minus
         return jnp.abs(slope_plus - slope_minus)
 
     jump_outer = _slope_jump(action_delta)
     jump_inner = _slope_jump(action_delta / kink_contraction_ratio)
     eps = jnp.finfo(jnp.asarray(f_star).dtype).eps
-    value_scale = jnp.abs(objective(f_star, theta))
+    value_scale = jnp.abs(positional_objective(f_star, theta))
     jump_noise = stationarity_atol + _KINK_NOISE_ULPS * eps * value_scale * (
         kink_contraction_ratio / action_delta
     )
@@ -450,16 +470,16 @@ def implicit_optimum_diagnostics(
     )
 
     legacy_branch_unstable = jnp.zeros_like(kinked)
-    if branch_id is not None:
+    if positional_branch_id is not None:
         f_plus = jnp.clip(f_star + action_delta, min=lower, max=upper)
         f_minus = jnp.clip(f_star - action_delta, min=lower, max=upper)
-        b_star = branch_id(f_star, theta)
-        legacy_branch_unstable = (branch_id(f_plus, theta) != b_star) | (
-            branch_id(f_minus, theta) != b_star
+        b_star = positional_branch_id(f_star, theta)
+        legacy_branch_unstable = (positional_branch_id(f_plus, theta) != b_star) | (
+            positional_branch_id(f_minus, theta) != b_star
         )
 
     owner_missing = jnp.full_like(f_star, owner_provenance is None, dtype=bool)
-    if owner_provenance is None:
+    if positional_owner_provenance is None:
         branch_certified = jnp.zeros_like(f_star, dtype=bool)
         owner_incomplete = jnp.zeros_like(f_star, dtype=bool)
         owner_unresolved = jnp.zeros_like(f_star, dtype=bool)
@@ -478,7 +498,7 @@ def implicit_optimum_diagnostics(
             owner_primary_tie,
             owner_changed,
         ) = _owner_certificate_flags(
-            owner_provenance,
+            owner_provenance=positional_owner_provenance,
             f_star=f_star,
             theta=theta,
             action_delta=action_delta,

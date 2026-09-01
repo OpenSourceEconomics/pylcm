@@ -90,10 +90,10 @@ def pilot_report() -> PilotReport:
     if not jax.config.read("jax_enable_x64"):
         pytest.skip("x64 run only")
     problem = capture_pilot_problem()
-    cells = select_pilot_cells(problem, n_cells=_N_CELLS)
+    cells = select_pilot_cells(problem=problem, n_cells=_N_CELLS)
     return run_pilot(
-        problem,
-        cells,
+        problem=problem,
+        cell_indices=cells,
         n_mesh=_N_MESH,
         polish_iterations=_POLISH,
         relative_step=_RELATIVE_STEP,

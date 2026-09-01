@@ -40,7 +40,7 @@ def _witness() -> tuple[int, int, int]:
     return -700, 4, 2044
 
 
-def _decoded_ratio(coefficients: jnp.ndarray, shifts: jnp.ndarray) -> np.longdouble:
+def _decoded_ratio(*, coefficients: jnp.ndarray, shifts: jnp.ndarray) -> np.longdouble:
     """Return the rare node's probability relative to the common one, as stored."""
     per_entry = np.broadcast_to(np.asarray(shifts), np.asarray(coefficients).shape)
     decoded = [
@@ -82,7 +82,7 @@ def test_normalizing_keeps_a_rare_node_at_its_own_probability():
     )
 
     np.testing.assert_allclose(
-        float(_decoded_ratio(normalized, normalized_shifts)),
+        float(_decoded_ratio(coefficients=normalized, shifts=normalized_shifts)),
         float(np.exp2(np.longdouble(true_log2_ratio))),
         rtol=_relative_tolerance(),
     )
@@ -146,7 +146,7 @@ def test_the_linear_mean_reads_a_node_at_the_scale_it_carries():
     large = jnp.asarray(2.0**100, dtype=dtype)
 
     got = zero_safe_average(
-        jnp.asarray([1.0, large], dtype=dtype),
+        a=jnp.asarray([1.0, large], dtype=dtype),
         weights=jnp.ones(2, dtype=dtype),
         shifts=jnp.asarray([0, 300], dtype=jnp.int32),
     )

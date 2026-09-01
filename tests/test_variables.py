@@ -154,7 +154,7 @@ def test_from_regime_orders_discrete_states_continuous_states_actions(
 
     regime = MockRegime(
         states={
-            "a_discrete": DiscreteGrid(binary_category_class),
+            "a_discrete": DiscreteGrid(category_class=binary_category_class),
             "b_continuous": LinSpacedGrid(start=0, stop=1, n_points=5),
         },
         state_transitions={
@@ -162,7 +162,7 @@ def test_from_regime_orders_discrete_states_continuous_states_actions(
             "b_continuous": next_state,
         },
         actions={
-            "c_action": DiscreteGrid(binary_category_class),
+            "c_action": DiscreteGrid(category_class=binary_category_class),
         },
         functions={"utility": lambda c_action: 0},  # noqa: ARG005
     )
@@ -180,16 +180,16 @@ def test_from_regime_within_states_orders_by_batch_size(
 
     regime = MockRegime(
         states={
-            "third": DiscreteGrid(binary_category_class),
-            "first": DiscreteGrid(binary_category_class, batch_size=1),
-            "second": DiscreteGrid(binary_category_class, batch_size=2),
+            "third": DiscreteGrid(category_class=binary_category_class),
+            "first": DiscreteGrid(category_class=binary_category_class, batch_size=1),
+            "second": DiscreteGrid(category_class=binary_category_class, batch_size=2),
         },
         state_transitions={
             "first": next_state,
             "second": next_state,
             "third": next_state,
         },
-        actions={"a": DiscreteGrid(binary_category_class)},
+        actions={"a": DiscreteGrid(category_class=binary_category_class)},
         functions={"utility": lambda a: 0},  # noqa: ARG005
     )
     variables = from_regime(regime)
@@ -211,16 +211,18 @@ def test_from_regime_distributed_discrete_state_sorts_outermost(
 
     regime = MockRegime(
         states={
-            "first_discrete": DiscreteGrid(binary_category_class),
-            "sharded_discrete": DiscreteGrid(binary_category_class, distributed=True),
-            "third_discrete": DiscreteGrid(binary_category_class),
+            "first_discrete": DiscreteGrid(category_class=binary_category_class),
+            "sharded_discrete": DiscreteGrid(
+                category_class=binary_category_class, distributed=True
+            ),
+            "third_discrete": DiscreteGrid(category_class=binary_category_class),
         },
         state_transitions={
             "first_discrete": fixed_transition("first_discrete"),
             "sharded_discrete": fixed_transition("sharded_discrete"),
             "third_discrete": fixed_transition("third_discrete"),
         },
-        actions={"a": DiscreteGrid(binary_category_class)},
+        actions={"a": DiscreteGrid(category_class=binary_category_class)},
         functions={"utility": lambda a: 0},  # noqa: ARG005
     )
     variables = from_regime(regime)

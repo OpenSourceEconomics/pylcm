@@ -35,14 +35,14 @@ class _Invariant:
 INVARIANT: Final[Hashable] = _Invariant()
 
 
-def resolve_node(node: object, age: float) -> object:
+def resolve_node(*, node: object, age: float) -> object:
     """Return the concrete function for `age`, or the node if age-invariant."""
     if isinstance(node, AgeSpecializedFunction):
         return node.build(age)
     return node
 
 
-def node_signature(node: object, age: float) -> Hashable:
+def node_signature(*, node: object, age: float) -> Hashable:
     """Fingerprint `node`'s closure at `age`.
 
     `INVARIANT` for a plain callable; `node.signature(age)` for a specialized node.
@@ -53,9 +53,7 @@ def node_signature(node: object, age: float) -> Hashable:
 
 
 def _tree_signature(
-    tree: Mapping[str, object],
-    *,
-    leaf_signature: Callable[[object], Hashable],
+    *, tree: Mapping[str, object], leaf_signature: Callable[[object], Hashable]
 ) -> Hashable:
     """Fingerprint a (possibly nested) mapping of nodes via `leaf_signature`.
 
@@ -67,7 +65,7 @@ def _tree_signature(
         value = tree[key]
         signature = (
             _tree_signature(
-                cast("Mapping[str, object]", value), leaf_signature=leaf_signature
+                tree=cast("Mapping[str, object]", value), leaf_signature=leaf_signature
             )
             if isinstance(value, Mapping)
             else leaf_signature(value)
@@ -76,13 +74,15 @@ def _tree_signature(
     return tuple(pairs)
 
 
-def tree_signature(tree: Mapping[str, object], age: float) -> Hashable:
+def tree_signature(*, tree: Mapping[str, object], age: float) -> Hashable:
     """Fingerprint a (possibly nested) mapping of nodes at `age`.
 
     Recurse into `Mapping` values and emit sorted `(path, signature)` pairs, so a
     marked node nested under one key cannot collide with one under another.
     """
-    return _tree_signature(tree, leaf_signature=lambda node: node_signature(node, age))
+    return _tree_signature(
+        tree=tree, leaf_signature=lambda node: node_signature(node=node, age=age)
+    )
 
 
 class _GridTraitsError(Exception):
@@ -112,7 +112,7 @@ class _GridTraits:
     weak_type: bool | None
 
 
-def _grid_traits(grid: ContinuousGrid, *, nodes: Float1D | None = None) -> _GridTraits:
+def _grid_traits(*, grid: ContinuousGrid, nodes: Float1D | None = None) -> _GridTraits:
     """Resolve the invariants of one concrete grid; raise if self-inconsistent.
 
     Pass `nodes` when the caller already resolved `grid.to_jax()`, so it is not
@@ -183,7 +183,7 @@ _TRAIT_DESCRIPTIONS: Final = (
 )
 
 
-def _describe_trait_mismatch(first: _GridTraits, other: _GridTraits) -> str:
+def _describe_trait_mismatch(*, first: _GridTraits, other: _GridTraits) -> str:
     """One sentence naming the first trait that differs."""
     for field, label, render in _TRAIT_DESCRIPTIONS:
         if getattr(first, field) != getattr(other, field):

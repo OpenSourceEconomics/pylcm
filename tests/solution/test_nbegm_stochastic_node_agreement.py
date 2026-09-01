@@ -34,7 +34,7 @@ _INVARIANCE_RTOL = 1e-9 if X64_ENABLED else 1e-4
 _INVARIANCE_ATOL = 1e-9 if X64_ENABLED else 1e-4
 
 
-def _solve(variant: str, stochastic_node_batch_size: int = 0):
+def _solve(*, variant: str, stochastic_node_batch_size: int = 0):
     model = toy.build_model(
         variant=variant, stochastic_node_batch_size=stochastic_node_batch_size
     )
@@ -51,8 +51,8 @@ def test_nbegm_stochastic_node_matches_dense_brute_force():
     liquid band, excluding the edge nodes where brute force is unreliable (low) or the
     continuation leaves the bounded grid (high).
     """
-    nbegm_solution = _solve("nbegm")
-    brute_solution = _solve("brute")
+    nbegm_solution = _solve(variant="nbegm")
+    brute_solution = _solve(variant="brute")
     for period in sorted(brute_solution)[:-1]:
         brute_V = np.asarray(brute_solution[period]["alive"])
         nbegm_V = np.asarray(nbegm_solution[period]["alive"])
@@ -79,8 +79,10 @@ def test_nbegm_stochastic_node_batch_size_leaves_value_function_unchanged(
     block size (3) that does not divide the 5-node income mesh, and the boundary size
     equal to the mesh length.
     """
-    reference = _solve("nbegm", stochastic_node_batch_size=0)
-    splayed = _solve("nbegm", stochastic_node_batch_size=stochastic_node_batch_size)
+    reference = _solve(variant="nbegm", stochastic_node_batch_size=0)
+    splayed = _solve(
+        variant="nbegm", stochastic_node_batch_size=stochastic_node_batch_size
+    )
     assert set(reference) == set(splayed)
     for period in sorted(reference):
         assert set(reference[period]) == set(splayed[period])

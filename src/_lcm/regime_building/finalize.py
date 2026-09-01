@@ -87,8 +87,12 @@ def finalize_regimes(
 
     """
     _fail_if_collective_regime_folds(user_regimes=user_regimes)
-    _fail_if_continuation_slot_is_mixed(user_regimes, "koopmans_aggregator")
-    _fail_if_continuation_slot_is_mixed(user_regimes, "certainty_equivalent")
+    _fail_if_continuation_slot_is_mixed(
+        user_regimes=user_regimes, slot="koopmans_aggregator"
+    )
+    _fail_if_continuation_slot_is_mixed(
+        user_regimes=user_regimes, slot="certainty_equivalent"
+    )
     # The published frame is one table over every regime, so the names its
     # collective regimes claim are reserved for all of them.
     reserved_value_columns = frozenset(
@@ -386,8 +390,7 @@ def _merge_derived_categoricals(
 
 
 def _fail_if_continuation_slot_is_mixed(
-    user_regimes: Mapping[RegimeName, UserRegime],
-    slot: str,
+    *, user_regimes: Mapping[RegimeName, UserRegime], slot: str
 ) -> None:
     """Reject a model that declares a continuation slot at both levels.
 

@@ -214,7 +214,7 @@ def _new_vocabulary_regimes() -> dict[str, Regime]:
         active=lambda age: age < 1,
         states={"wage": _WAGE_3},
         state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _u_zero_collective, "m": _u_zero_collective}
@@ -226,7 +226,7 @@ def _new_vocabulary_regimes() -> dict[str, Regime]:
         active=lambda age: (age >= 1) & (age < 2),
         states={"wage": _WAGE_3},
         state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _u_married_ir_f, "m": _u_married_ir_m}
@@ -255,7 +255,7 @@ def _new_vocabulary_regimes() -> dict[str, Regime]:
         transition=None,
         active=lambda age: age >= 2,
         states={"wage": _WAGE_3},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _u_zero_collective, "m": _u_zero_collective}
@@ -267,7 +267,7 @@ def _new_vocabulary_regimes() -> dict[str, Regime]:
         active=lambda age: (age >= 1) & (age < 2),
         states={"wage": _WAGE_3},
         state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _u_single_f_ir},
     )
     single_f_terminal = Regime(
@@ -451,7 +451,7 @@ def test_a_bare_probability_callable_is_wrapped_for_the_lowered_grammar():
         active=lambda age: age < 1,
         states={"wage": _WAGE_3},
         state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _u_zero_collective, "m": _u_zero_collective}

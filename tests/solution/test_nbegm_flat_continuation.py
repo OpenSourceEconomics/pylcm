@@ -47,7 +47,7 @@ _PARAMS = {
 }
 
 
-def _resources(liquid: ContinuousState, base_income: float) -> FloatND:
+def _resources(*, liquid: ContinuousState, base_income: float) -> FloatND:
     """Cash-on-hand: liquid wealth plus base income — affine, no declarations."""
     return liquid + base_income
 
@@ -79,7 +79,7 @@ def test_nbegm_survives_a_zero_marginal_continuation() -> None:
         # is rejected at construction.
         liquid_law=next_liquid_from_savings,
         alive_solver=resolve_solver(
-            "nbegm",
+            variant="nbegm",
             savings_grid=LinSpacedGrid(start=0.0, stop=28.0, n_points=100),
         ),
         # The declared post-decision savings bound already enforces

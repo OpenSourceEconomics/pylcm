@@ -273,7 +273,7 @@ def get_max_Q_over_a(
             fold_state_names=fold_state_names, stakeholders=stakeholders
         )
         mapped = _wrap_with_fold_reduction(
-            cast("Callable[..., FloatND]", mapped),
+            mapped=cast("Callable[..., FloatND]", mapped),
             fold_state_names=fold_state_names,
             fold_weights=fold_weights,
             fold_conditioning=fold_conditioning,
@@ -304,12 +304,12 @@ def get_max_Q_over_a(
             co_mapped_in_axes=MappingProxyType({"next_regime_to_V_arr": v_arr_in_axes}),
             callable_with="only_args",
         )
-    return cast("MaxQOverAFunction", allow_only_kwargs(mapped, enforce=False))
+    return cast("MaxQOverAFunction", allow_only_kwargs(func=mapped, enforce=False))
 
 
 def _wrap_with_fold_reduction(
-    mapped: Callable[..., FloatND],
     *,
+    mapped: Callable[..., FloatND],
     fold_state_names: tuple[StateName, ...],
     fold_weights: Mapping[StateName, FloatND],
     fold_conditioning: Mapping[StateName, StateName],
@@ -376,7 +376,7 @@ def _wrap_with_fold_reduction(
                     fold_axis=axis,
                     shape=V_arr.shape,
                 )
-            V_arr = fold_reducers[name](V_arr, axis=axis, weights=weights)
+            V_arr = fold_reducers[name](a=V_arr, axis=axis, weights=weights)
         return V_arr
 
     return folded
@@ -734,7 +734,7 @@ def get_argmax_and_max_Q_over_a(
                 )
                 V_stacked = jnp.stack([values[name] for name in stakeholders], axis=-1)
                 return argmax_flat, V_stacked
-            return argmax_and_max(Q_arr, where=F_arr, initial=-jnp.inf)
+            return argmax_and_max(a=Q_arr, where=F_arr, initial=-jnp.inf)
 
     return argmax_and_max_Q_over_a
 

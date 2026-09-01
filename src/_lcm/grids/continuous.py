@@ -73,7 +73,7 @@ class UniformContinuousGrid(ContinuousGrid, ABC):
         distributed: bool = False,
     ) -> None:
         _init_uniform_grid(
-            self,
+            grid=self,
             start=start,
             stop=stop,
             n_points=n_points,
@@ -155,7 +155,7 @@ class LogSpacedGrid(UniformContinuousGrid):
         distributed: bool = False,
     ) -> None:
         _init_uniform_grid(
-            self,
+            grid=self,
             start=start,
             stop=stop,
             n_points=n_points,
@@ -181,8 +181,8 @@ class LogSpacedGrid(UniformContinuousGrid):
 
 
 def _init_uniform_grid(
-    grid: UniformContinuousGrid,
     *,
+    grid: UniformContinuousGrid,
     start: float | ScalarFloat,
     stop: float | ScalarFloat,
     n_points: int | ScalarInt,

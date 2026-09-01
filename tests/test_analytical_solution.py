@@ -39,12 +39,12 @@ TEST_CASES = {
 }
 
 
-def mean_square_error(x, y, axis=None):
+def mean_square_error(*, x, y, axis=None):
     return np.mean((x - y) ** 2, axis=axis)
 
 
 @pytest.mark.parametrize(("model_name", "model_and_params"), TEST_CASES.items())
-def test_analytical_solution(model_name, model_and_params):
+def test_analytical_solution(*, model_name, model_and_params):
     """Test that the numerical solution matches the analytical solution.
 
     The analytical solution is from Iskhakov et al (2017) and is generated
@@ -98,7 +98,7 @@ def test_analytical_solution(model_name, model_and_params):
         _numerical = numerical[_type]
 
         # Compare the whole trajectory over time
-        mse = mean_square_error(_analytical, _numerical, axis=0)
+        mse = mean_square_error(x=_analytical, y=_numerical, axis=0)
         # Exclude the first two initial wealth levels from the comparison, because the
         # numerical solution is unstable for very low wealth levels.
         aaae(mse[2:], 0, decimal=1)

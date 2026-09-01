@@ -74,7 +74,7 @@ def test_next_period_arrays_are_read_on_the_next_period_grid(next_nodes):
         next_liquid_grid=next_grid,
         savings_grid=savings_grid,
         discount_factor=_DISCOUNT,
-        preferences=crra_preferences(1.0),
+        preferences=crra_preferences(crra=1.0),
         next_liquid=gross_return * savings_grid + _INCOME,
         marginal_return=jnp.full_like(savings_grid, gross_return),
     )

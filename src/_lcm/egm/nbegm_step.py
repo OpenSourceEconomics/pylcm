@@ -248,7 +248,7 @@ def nbegm_multi_interval_step(
     upper_edges = jnp.concatenate([breakpoints, liquid_grid[-1:]])
     lower_edges = jnp.concatenate([liquid_grid[:1], breakpoints])
     flat_indices = _flat_interval_indices(
-        flat_interval_mask, n_intervals=coh_slopes.shape[0]
+        flat_interval_mask=flat_interval_mask, n_intervals=coh_slopes.shape[0]
     )
     # Pull each flat interval's degenerate interior candidates onto its crossing
     # breakpoint at the floor's own optimum, where they link to the rising interior
@@ -289,7 +289,7 @@ def nbegm_multi_interval_step(
     # A non-concave (convex-kinked) budget can fold the interior path back, so keep
     # its monotone runs apart for the upper envelope.
     interior_segment = segment_ids_from_folds(endog_grid=liquid_endog)
-    next_segment = _next_segment_id(interior_segment)
+    next_segment = _next_segment_id(segment=interior_segment)
 
     endog_parts: list[Float1D] = [liquid_endog]
     value_parts: list[Float1D] = [value_endog]
@@ -403,9 +403,9 @@ def _linear_extension(
     computed in a branch `jnp.where` would only later drop — which would poison
     the reverse-mode gradient through the live branch.
     """
-    tx_head, _, tx_frame = framed_difference(x, x_node)
-    dy_head, _, dy_frame = framed_difference(y_next, y_node)
-    dx_head, _, dx_frame = framed_difference(x_next, x_node)
+    tx_head, _, tx_frame = framed_difference(a=x, b=x_node)
+    dy_head, _, dy_frame = framed_difference(a=y_next, b=y_node)
+    dx_head, _, dx_frame = framed_difference(a=x_next, b=x_node)
 
     degenerate = x_next == x_node
     dx_head = jnp.where(degenerate, jnp.ones_like(dx_head), dx_head)
@@ -843,7 +843,7 @@ def nbegm_multi_interval_step_savings(
     degenerate = _degenerate_inversion(marginal=cont_marginal, consumption=consumption)
     liquid_endog = jnp.where(degenerate, jnp.nan, liquid_endog)
     interior_segment = segment_ids_from_folds(endog_grid=liquid_endog)
-    next_segment = _next_segment_id(interior_segment)
+    next_segment = _next_segment_id(segment=interior_segment)
 
     # Savings-node corner points: for every post-decision node `s_i`, consume
     # `coh - s_i` at each liquid grid point and earn that node's continuation. The
@@ -1090,6 +1090,7 @@ def nbegm_per_interval_continuation_step_savings(
     uppers = jnp.concatenate([breakpoints, edge])
 
     def solve_interval(
+        *,
         interval_index: ScalarInt,
         interval_value: Float1D,
         interval_marginal: Float1D,
@@ -1150,7 +1151,7 @@ def nbegm_per_interval_continuation_step_savings(
             valid=in_case,
         )
         segment = segment_ids_from_folds(endog_grid=interior[0])
-        next_segment = _next_segment_id(segment)
+        next_segment = _next_segment_id(segment=segment)
 
         # Corners use true cash-on-hand when supplied, so lower- and upper-savings
         # actions remain feasible where the affine interval budget extrapolates
@@ -1203,7 +1204,15 @@ def nbegm_per_interval_continuation_step_savings(
 
     def solve_packed(packed: tuple[IntND | FloatND, ...]) -> tuple[FloatND, ...]:
         """Solve the one interval carried by a mapped item."""
-        return solve_interval(*packed)
+        return solve_interval(
+            interval_index=packed[0],
+            interval_value=packed[1],
+            interval_marginal=packed[2],
+            coh_slope=packed[3],
+            coh_intercept=packed[4],
+            lower=packed[5],
+            upper=packed[6],
+        )
 
     (
         int_endog,
@@ -1518,7 +1527,7 @@ def nbegm_unified_step_savings(
             valid=in_case,
         )
         segment = segment_ids_from_folds(endog_grid=interior[0])
-        next_segment = _next_segment_id(segment)
+        next_segment = _next_segment_id(segment=segment)
         endog_parts.append(interior[0])
         value_parts.append(interior[1])
         policy_parts.append(interior[2])
@@ -1584,7 +1593,7 @@ def nbegm_unified_step_savings(
 
 
 def _flat_interval_indices(
-    flat_interval_mask: tuple[bool, ...] | None, *, n_intervals: int
+    *, flat_interval_mask: tuple[bool, ...] | None, n_intervals: int
 ) -> tuple[int, ...]:
     """Return the indices of the hard-constraint (slope-0) floor intervals."""
     if flat_interval_mask is None:
@@ -1828,10 +1837,18 @@ def nbegm_unified_step(
     case_stride = 4 * (savings_grid.shape[0] + liquid_grid.shape[0])
 
     value_next = _jump_aware_interp(
-        next_liquid, next_liquid_grid, next_value, jump_breakpoints, equality_owner
+        query=next_liquid,
+        grid=next_liquid_grid,
+        values=next_value,
+        breakpoints=jump_breakpoints,
+        equality_owner=equality_owner,
     )
     marginal_next = _jump_aware_interp(
-        next_liquid, next_liquid_grid, next_marginal, jump_breakpoints, equality_owner
+        query=next_liquid,
+        grid=next_liquid_grid,
+        values=next_marginal,
+        breakpoints=jump_breakpoints,
+        equality_owner=equality_owner,
     )
     consumption = preferences.inverse_marginal_utility(
         discount_factor * marginal_return * marginal_next
@@ -1875,7 +1892,7 @@ def nbegm_unified_step(
             valid=in_case,
         )
         segment = segment_ids_from_folds(endog_grid=interior[0])
-        next_segment = _next_segment_id(segment)
+        next_segment = _next_segment_id(segment=segment)
         endog_parts.append(interior[0])
         value_parts.append(interior[1])
         policy_parts.append(interior[2])
@@ -2005,8 +2022,8 @@ def _boundary_targeting_coh(
             else jnp.nextafter(limit_at, jnp.asarray(-jnp.inf, dtype=limit_at.dtype))
         )
         value_at_target = _bounded_limit_below(
-            next_liquid_grid,
-            next_value,
+            grid=next_liquid_grid,
+            values=next_value,
             limit=asset_limit,
             prev_limit=prev_limit,
             n=next_liquid_grid.shape[0],
@@ -2019,8 +2036,8 @@ def _boundary_targeting_coh(
             else jnp.nextafter(limit_at, jnp.asarray(jnp.inf, dtype=limit_at.dtype))
         )
         value_at_target = _bounded_limit_above(
-            next_liquid_grid,
-            next_value,
+            grid=next_liquid_grid,
+            values=next_value,
             limit=asset_limit,
             next_limit=next_limit,
             n=next_liquid_grid.shape[0],
@@ -2192,10 +2209,18 @@ def _recurring_jump_case(
     of every cliff and the hard borrowing corner, all over the liquid grid.
     """
     value_next = _jump_aware_interp(
-        next_liquid, next_liquid_grid, next_value, jump_breakpoints, equality_owner
+        query=next_liquid,
+        grid=next_liquid_grid,
+        values=next_value,
+        breakpoints=jump_breakpoints,
+        equality_owner=equality_owner,
     )
     marginal_next = _jump_aware_interp(
-        next_liquid, next_liquid_grid, next_marginal, jump_breakpoints, equality_owner
+        query=next_liquid,
+        grid=next_liquid_grid,
+        values=next_marginal,
+        breakpoints=jump_breakpoints,
+        equality_owner=equality_owner,
     )
     consumption = preferences.inverse_marginal_utility(
         discount_factor * marginal_return * marginal_next
@@ -2208,7 +2233,7 @@ def _recurring_jump_case(
     value_endog = preferences.utility(consumption) + discount_factor * value_next
     marginal_endog = preferences.marginal_utility(consumption)
     interior_segment = segment_ids_from_folds(endog_grid=liquid_endog)
-    next_segment = _next_segment_id(interior_segment)
+    next_segment = _next_segment_id(segment=interior_segment)
 
     endog_parts: list[Float1D] = [liquid_endog]
     value_parts: list[Float1D] = [value_endog]
@@ -2280,6 +2305,7 @@ def _recurring_jump_case(
 
 
 def _jump_aware_interp(
+    *,
     query: FloatND,
     grid: Float1D,
     values: Float1D,
@@ -2308,10 +2334,10 @@ def _jump_aware_interp(
         prev_limit = breakpoints[j - 1] if j > 0 else grid[0] - 1.0
         next_limit = breakpoints[j + 1] if j < n_bp - 1 else grid[-1] + 1.0
         left_at = _bounded_limit_below(
-            grid, values, limit=limit_at, prev_limit=prev_limit, n=n
+            grid=grid, values=values, limit=limit_at, prev_limit=prev_limit, n=n
         )
         right_at = _bounded_limit_above(
-            grid, values, limit=limit_at, next_limit=next_limit, n=n
+            grid=grid, values=values, limit=limit_at, next_limit=next_limit, n=n
         )
         below = jnp.nextafter(limit_at, jnp.asarray(-jnp.inf, dtype=grid.dtype))
         above = jnp.nextafter(limit_at, jnp.asarray(jnp.inf, dtype=grid.dtype))
@@ -2499,10 +2525,18 @@ def _case_step(
     boundary cell reads the equality-owning side rather than a bridged average.
     """
     value_next = _kink_aware_interp(
-        next_liquid, next_liquid_grid, next_value, asset_limit, equality_owner
+        query=next_liquid,
+        grid=next_liquid_grid,
+        values=next_value,
+        limit=asset_limit,
+        equality_owner=equality_owner,
     )
     marginal_next = _kink_aware_interp(
-        next_liquid, next_liquid_grid, next_marginal, asset_limit, equality_owner
+        query=next_liquid,
+        grid=next_liquid_grid,
+        values=next_marginal,
+        limit=asset_limit,
+        equality_owner=equality_owner,
     )
 
     consumption = preferences.inverse_marginal_utility(
@@ -2541,7 +2575,7 @@ def _case_step(
     }
     kink_grid, kink_value, kink_consumption, kink_marginal = boundary_branches["below"]
     kink_segment = jnp.where(
-        jnp.isnan(kink_grid), jnp.nan, _next_segment_id(interior_segment)
+        jnp.isnan(kink_grid), jnp.nan, _next_segment_id(segment=interior_segment)
     )
     (
         above_grid,
@@ -2550,7 +2584,9 @@ def _case_step(
         above_marginal,
     ) = boundary_branches["above"]
     above_segment = jnp.where(
-        jnp.isnan(above_grid), jnp.nan, _next_segment_id(interior_segment, offset=2.0)
+        jnp.isnan(above_grid),
+        jnp.nan,
+        _next_segment_id(segment=interior_segment, offset=2.0),
     )
 
     endog_parts = [liquid_endog, kink_grid, above_grid]
@@ -2567,7 +2603,7 @@ def _case_step(
         discount_factor=discount_factor,
         coh_slope=1.0,
         valid=True,
-        first_segment=_next_segment_id(interior_segment, offset=3.0),
+        first_segment=_next_segment_id(segment=interior_segment, offset=3.0),
         endog_parts=endog_parts,
         value_parts=value_parts,
         policy_parts=policy_parts,
@@ -2632,8 +2668,8 @@ def _boundary_targeting_branch(
             else jnp.nextafter(limit_at, jnp.asarray(-jnp.inf, dtype=limit_at.dtype))
         )
         value_at_target = _bounded_limit_below(
-            next_liquid_grid,
-            next_value,
+            grid=next_liquid_grid,
+            values=next_value,
             limit=asset_limit,
             prev_limit=prev_limit,
             n=next_liquid_grid.shape[0],
@@ -2646,8 +2682,8 @@ def _boundary_targeting_branch(
             else jnp.nextafter(limit_at, jnp.asarray(jnp.inf, dtype=limit_at.dtype))
         )
         value_at_target = _bounded_limit_above(
-            next_liquid_grid,
-            next_value,
+            grid=next_liquid_grid,
+            values=next_value,
             limit=asset_limit,
             next_limit=next_limit,
             n=next_liquid_grid.shape[0],
@@ -2672,6 +2708,7 @@ def _boundary_targeting_branch(
 
 
 def _kink_aware_interp(
+    *,
     query: FloatND,
     grid: Float1D,
     values: Float1D,
@@ -2702,16 +2739,16 @@ def _kink_aware_interp(
     n = grid.shape[0]
     owner_is_when = equality_owner == "when"
     left_at_limit = _bounded_limit_below(
-        grid,
-        values,
+        grid=grid,
+        values=values,
         limit=limit,
         prev_limit=-jnp.inf,
         n=n,
         owns_limit_node=owner_is_when,
     )
     right_at_limit = _bounded_limit_above(
-        grid,
-        values,
+        grid=grid,
+        values=values,
         limit=limit,
         next_limit=jnp.inf,
         n=n,
@@ -2732,6 +2769,7 @@ def _kink_aware_interp(
 
 
 def _extrapolate(
+    *,
     grid: Float1D,
     values: Float1D,
     lower: IntND,
@@ -2746,9 +2784,9 @@ def _extrapolate(
 
 
 def _bounded_limit_below(
+    *,
     grid: Float1D,
     values: Float1D,
-    *,
     limit: ScalarFloat | float,
     prev_limit: ScalarFloat | float,
     n: int,
@@ -2772,13 +2810,17 @@ def _bounded_limit_below(
     hi = jnp.clip(last_below, 0, n - 1).astype(jnp.int32)
     lo = jnp.clip(jnp.maximum(last_below - 1, floor), 0, n - 1).astype(jnp.int32)
     lo = jnp.minimum(lo, hi)
-    return jnp.where(lo == hi, values[hi], _extrapolate(grid, values, lo, hi, limit))
+    return jnp.where(
+        lo == hi,
+        values[hi],
+        _extrapolate(grid=grid, values=values, lower=lo, upper=hi, target=limit),
+    )
 
 
 def _bounded_limit_above(
+    *,
     grid: Float1D,
     values: Float1D,
-    *,
     limit: ScalarFloat | float,
     next_limit: ScalarFloat | float,
     n: int,
@@ -2802,7 +2844,11 @@ def _bounded_limit_above(
     lo = jnp.clip(first_above, 0, n - 1).astype(jnp.int32)
     hi = jnp.clip(jnp.minimum(first_above + 1, ceil), 0, n - 1).astype(jnp.int32)
     hi = jnp.maximum(hi, lo)
-    return jnp.where(lo == hi, values[lo], _extrapolate(grid, values, lo, hi, limit))
+    return jnp.where(
+        lo == hi,
+        values[lo],
+        _extrapolate(grid=grid, values=values, lower=lo, upper=hi, target=limit),
+    )
 
 
 def _degenerate_inversion(*, marginal: Float1D, consumption: Float1D) -> BoolND:
@@ -2828,7 +2874,7 @@ def _degenerate_inversion(*, marginal: Float1D, consumption: Float1D) -> BoolND:
     return (marginal <= 0.0) | ~jnp.isfinite(consumption)
 
 
-def _next_segment_id(segment: Float1D, *, offset: float = 1.0) -> ScalarFloat:
+def _next_segment_id(*, segment: Float1D, offset: float = 1.0) -> ScalarFloat:
     """Return the first free segment id above a candidate block's ids.
 
     A block whose candidates are all dead carries an all-NaN id column, and

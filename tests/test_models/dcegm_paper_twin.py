@@ -91,7 +91,7 @@ class WorkChoice:
     retire: ScalarInt
 
 
-def crra(consumption: FloatND, rho: float) -> FloatND:
+def crra(*, consumption: FloatND, rho: float) -> FloatND:
     return (consumption ** (1.0 - rho) - 1.0) / (1.0 - rho)
 
 
@@ -100,29 +100,30 @@ def is_working(work_choice: DiscreteAction) -> BoolND:
 
 
 def utility_working(
-    consumption: ContinuousAction, is_working: BoolND, rho: float, delta: float
+    *, consumption: ContinuousAction, is_working: BoolND, rho: float, delta: float
 ) -> FloatND:
-    return crra(consumption, rho) - jnp.where(is_working, delta, 0.0)
+    return crra(consumption=consumption, rho=rho) - jnp.where(is_working, delta, 0.0)
 
 
-def utility_retired(consumption: ContinuousAction, rho: float) -> FloatND:
-    return crra(consumption, rho)
+def utility_retired(*, consumption: ContinuousAction, rho: float) -> FloatND:
+    return crra(consumption=consumption, rho=rho)
 
 
 def utility_done_from_working(
-    wealth: ContinuousState, rho: float, delta: float, taste_scale: float
+    *, wealth: ContinuousState, rho: float, delta: float, taste_scale: float
 ) -> FloatND:
     """Smoothed consume-all value incl. the final-period choice taste shock."""
-    return crra(wealth, rho) + taste_scale * jnp.log(
+    return crra(consumption=wealth, rho=rho) + taste_scale * jnp.log(
         1.0 + jnp.exp(-delta / taste_scale)
     )
 
 
-def utility_done_retired(wealth: ContinuousState, rho: float) -> FloatND:
-    return crra(wealth, rho)
+def utility_done_retired(*, wealth: ContinuousState, rho: float) -> FloatND:
+    return crra(consumption=wealth, rho=rho)
 
 
 def labor_income(
+    *,
     is_working: BoolND,
     age: float,
     constant: float,
@@ -136,6 +137,7 @@ def labor_income(
 
 
 def next_wealth(
+    *,
     wealth: ContinuousState,
     consumption: ContinuousAction,
     labor_income: FloatND,
@@ -147,11 +149,12 @@ def next_wealth(
     )
 
 
-def savings(wealth: FloatND, consumption: ContinuousAction) -> FloatND:
+def savings(*, wealth: FloatND, consumption: ContinuousAction) -> FloatND:
     return wealth - consumption
 
 
 def next_wealth_from_savings(
+    *,
     savings: FloatND,
     labor_income: FloatND,
     interest_rate: float,
@@ -160,18 +163,18 @@ def next_wealth_from_savings(
     return jnp.maximum((1.0 + interest_rate) * savings + labor_income, floor)
 
 
-def inverse_marginal_utility(marginal_continuation: FloatND, rho: float) -> FloatND:
+def inverse_marginal_utility(*, marginal_continuation: FloatND, rho: float) -> FloatND:
     """Inverse of `u'(c) = c**(-rho)`."""
     return marginal_continuation ** (-1.0 / rho)
 
 
 def borrowing_constraint(
-    consumption: ContinuousAction, wealth: ContinuousState
+    *, consumption: ContinuousAction, wealth: ContinuousState
 ) -> BoolND:
     return consumption <= wealth
 
 
-def next_regime_from_working(work_choice: DiscreteAction, age: float) -> ScalarInt:
+def next_regime_from_working(*, work_choice: DiscreteAction, age: float) -> ScalarInt:
     last = age >= LAST_ALIVE_AGE
     retire = work_choice == WorkChoice.retire
     return jnp.where(
@@ -212,7 +215,7 @@ def _working_life(
         transition=next_regime_from_working,
         states={"wealth": WEALTH_GRID},
         actions={
-            "work_choice": DiscreteGrid(WorkChoice),
+            "work_choice": DiscreteGrid(category_class=WorkChoice),
             "consumption": CONSUMPTION_GRID,
         },
         taste_shocks=ExtremeValueTasteShocks(),

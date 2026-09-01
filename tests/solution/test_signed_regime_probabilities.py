@@ -56,7 +56,7 @@ def _pays_ten_times(wealth: ScalarFloat) -> ScalarFloat:
     return 10.0 * wealth
 
 
-def _build(probability_a, probability_b, certainty_equivalent=None) -> Model:
+def _build(*, probability_a, probability_b, certainty_equivalent=None) -> Model:
     def _to_a() -> ScalarFloat:
         return jnp.float32(probability_a)
 
@@ -101,7 +101,9 @@ def test_a_negative_regime_probability_is_refused_even_at_unit_mass(
     negative target instead would publish `1.5 * wealth` — precisely the value a
     well-posed model with all its mass on the first target would produce.
     """
-    model = _build(1.5, -0.5, certainty_equivalent=certainty_equivalent)
+    model = _build(
+        probability_a=1.5, probability_b=-0.5, certainty_equivalent=certainty_equivalent
+    )
 
     V = model.solve(
         params=_PARAMS if certainty_equivalent is None else _POWER_MEAN_PARAMS,
@@ -113,7 +115,7 @@ def test_a_negative_regime_probability_is_refused_even_at_unit_mass(
 
 def test_a_well_formed_regime_transition_is_untouched() -> None:
     """`0.25` and `0.75` pay `0.25 * w + 0.75 * 10w = 7.75 * w`."""
-    model = _build(0.25, 0.75)
+    model = _build(probability_a=0.25, probability_b=0.75)
 
     V = model.solve(params=_PARAMS, log_level="off")
 

@@ -58,11 +58,11 @@ def labor_income(labor_supply: DiscreteAction) -> FloatND:
     return jnp.where(labor_supply == Work.work, 5.0, 1.0)
 
 
-def resources(wealth: ContinuousState, labor_income: FloatND) -> FloatND:
+def resources(*, wealth: ContinuousState, labor_income: FloatND) -> FloatND:
     return wealth + labor_income
 
 
-def liquid_savings(resources: FloatND, consumption: ContinuousAction) -> FloatND:
+def liquid_savings(*, resources: FloatND, consumption: ContinuousAction) -> FloatND:
     return resources - consumption
 
 
@@ -75,7 +75,7 @@ def utility(consumption: ContinuousAction) -> FloatND:
 
 
 def utility_with_labor_disutility(
-    consumption: ContinuousAction, labor_income: FloatND
+    *, consumption: ContinuousAction, labor_income: FloatND
 ) -> FloatND:
     """Additively separable in the discrete labor choice and in consumption."""
     return jnp.log(consumption) - 0.1 * labor_income
@@ -97,7 +97,7 @@ def test_nbegm_regime_declaring_taste_shocks_is_rejected():
         state_transitions={"wealth": next_wealth},
         actions={
             "consumption": CONSUMPTION_GRID,
-            "labor_supply": DiscreteGrid(Work),
+            "labor_supply": DiscreteGrid(category_class=Work),
         },
         transition=next_regime,
         taste_shocks=ExtremeValueTasteShocks(),
@@ -144,7 +144,7 @@ def test_nnbegm_regime_declaring_taste_shocks_is_rejected():
         actions={
             "consumption": n_nbegm_toy.CONSUMPTION_GRID,
             "illiquid_investment": n_nbegm_toy.ILLIQUID_INVESTMENT_GRID,
-            "labor_supply": DiscreteGrid(Work),
+            "labor_supply": DiscreteGrid(category_class=Work),
         },
         transition=n_nbegm_toy.next_regime,
         taste_shocks=ExtremeValueTasteShocks(),

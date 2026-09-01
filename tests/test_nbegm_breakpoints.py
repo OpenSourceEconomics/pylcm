@@ -23,7 +23,7 @@ def _medicaid_pool():
     """A one-boundary Medicaid asset-test pool with both subsidy pieces."""
 
     medicaid_eligible = lcm.case_boundary(
-        lcm.ref("assets") < lcm.ref("medicaid_asset_limit"),
+        condition=lcm.ref("assets") < lcm.ref("medicaid_asset_limit"),
         kind="jump",
     )
 
@@ -99,7 +99,9 @@ def test_linear_asset_preimage_inverts_an_increasing_boundary_variable():
     def gross_income(assets):
         return 0.04 * assets + 12_000.0
 
-    asset_value = linear_asset_preimage(gross_income, threshold=jnp.asarray(20_000.0))
+    asset_value = linear_asset_preimage(
+        z_of_liquid=gross_income, threshold=jnp.asarray(20_000.0)
+    )
     np.testing.assert_allclose(asset_value, 200_000.0, atol=1e-3)
 
 
@@ -109,7 +111,9 @@ def test_linear_asset_preimage_inverts_a_decreasing_boundary_variable():
     def countable(assets):
         return -0.5 * assets + 3_000.0
 
-    asset_value = linear_asset_preimage(countable, threshold=jnp.asarray(1_000.0))
+    asset_value = linear_asset_preimage(
+        z_of_liquid=countable, threshold=jnp.asarray(1_000.0)
+    )
     np.testing.assert_allclose(asset_value, 4_000.0, atol=1e-6)
 
 
@@ -120,7 +124,7 @@ def test_decreasing_coordinate_maps_above_equality_to_the_left_liquid_interval()
         return 10.0 - liquid
 
     selection = linear_asset_selection_preimage(
-        debt, threshold=jnp.asarray(5.0), equality_owner="above"
+        z_of_liquid=debt, threshold=jnp.asarray(5.0), equality_owner="above"
     )
     exact = jnp.asarray(5.0)
     next_liquid = jnp.nextafter(exact, jnp.inf)
@@ -139,9 +143,10 @@ def test_linear_asset_preimage_traces_a_runtime_threshold_and_slope():
 
         return gross_income
 
+    # keyword-only-exempt: library-callback=jax.numpy.vectorize
     def preimage(rate_of_return, threshold):
         return linear_asset_preimage(
-            make_gross_income(rate_of_return), threshold=threshold
+            z_of_liquid=make_gross_income(rate_of_return), threshold=threshold
         )
 
     jitted = jnp.vectorize(preimage)

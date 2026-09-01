@@ -29,27 +29,27 @@ from _lcm.regime_building.gated_edges import _reached_target_param_leaves
 from lcm.typing import FloatND
 
 
-def wage(human_capital: FloatND, wage_level: float) -> FloatND:
+def wage(*, human_capital: FloatND, wage_level: float) -> FloatND:
     """Chain head: reads a target state and one target-owned parameter."""
     return human_capital * wage_level
 
 
-def labor_income(wage: FloatND, hours: float) -> FloatND:
+def labor_income(*, wage: FloatND, hours: float) -> FloatND:
     """Chain middle: reads the node above and one more target-owned parameter."""
     return wage * hours
 
 
-def net_income(labor_income: FloatND, tax_rate: float) -> FloatND:
+def net_income(*, labor_income: FloatND, tax_rate: float) -> FloatND:
     """Chain tail, and one arm of the diamond below."""
     return labor_income * (1 - tax_rate)
 
 
-def transfers(wage: FloatND, transfer_rate: float) -> FloatND:
+def transfers(*, wage: FloatND, transfer_rate: float) -> FloatND:
     """The diamond's second arm: rejoins `wage` from the other side."""
     return wage * transfer_rate
 
 
-def resources(net_income: FloatND, transfers: FloatND, wealth: FloatND) -> FloatND:
+def resources(*, net_income: FloatND, transfers: FloatND, wealth: FloatND) -> FloatND:
     """Diamond join: both arms plus a target state."""
     return net_income + transfers + wealth
 
@@ -112,11 +112,14 @@ STATE_NAMES = frozenset({"human_capital", "wealth"})
     ],
 )
 def test_reached_target_param_leaves_returns_the_consumer_s_closure(
+    *,
     seed_args: list[str],
     expected: frozenset[str],
 ) -> None:
     """The walk returns exactly the free parameters of the seeds' ancestor closure."""
-    got = _reached_target_param_leaves(DAG_POOL, seed_args, STATE_NAMES)
+    got = _reached_target_param_leaves(
+        dag_pool=DAG_POOL, seed_args=seed_args, state_names=STATE_NAMES
+    )
     assert got == expected
 
 
@@ -126,7 +129,9 @@ def test_reached_target_param_leaves_excludes_an_unreached_pool_helper() -> None
     Its parameter is in the pool's overall free-argument union, so a walk that
     unioned the whole pool would report it and reject the topology.
     """
-    got = _reached_target_param_leaves(DAG_POOL, ["resources"], STATE_NAMES)
+    got = _reached_target_param_leaves(
+        dag_pool=DAG_POOL, seed_args=["resources"], state_names=STATE_NAMES
+    )
     assert "unreached_param" not in got
 
 
@@ -139,5 +144,7 @@ def test_reached_target_param_leaves_ignores_a_keyword_bound_parameter() -> None
     namespace and must not trip the fence.
     """
     pool = {**DAG_POOL, "wage": functools.partial(wage, wage_level=2.0)}
-    got = _reached_target_param_leaves(pool, ["labor_income"], STATE_NAMES)
+    got = _reached_target_param_leaves(
+        dag_pool=pool, seed_args=["labor_income"], state_names=STATE_NAMES
+    )
     assert got == frozenset({"hours"})

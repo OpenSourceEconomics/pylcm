@@ -90,7 +90,7 @@ dcegm_retirement = ConsumptionSavingsRegime(
 dcegm_working_life = ConsumptionSavingsRegime(
     transition=base.next_regime_from_working,
     actions={
-        "labor_supply": DiscreteGrid(LaborSupply),
+        "labor_supply": DiscreteGrid(category_class=LaborSupply),
         "consumption": CONSUMPTION_GRID,
     },
     states={"wealth": WEALTH_GRID},
@@ -124,7 +124,7 @@ dcegm_retirement_full = ConsumptionSavingsRegime(
 
 @functools.cache
 def get_retirement_only_model(
-    solver: Literal["brute_force", "dcegm"], n_periods: int
+    *, solver: Literal["brute_force", "dcegm"], n_periods: int
 ) -> Model:
     """Build the two-regime retirement model for the requested solver."""
     if solver == "brute_force":
@@ -145,9 +145,9 @@ def get_retirement_only_model(
 
 @functools.cache
 def get_full_model(
+    *,
     solver: Literal["brute_force", "dcegm"],
     n_periods: int,
-    *,
     envelope: Literal["exact", "fues", "rfc", "ltm", "mss"] | None = None,
 ) -> Model:
     """Build the three-regime worker/retirement/dead model for the requested solver.
@@ -181,22 +181,22 @@ def get_full_model(
 
 
 def get_retirement_only_params(
-    n_periods: int,
     *,
+    n_periods: int,
     discount_factor: float = 0.98,
     interest_rate: float = 0.0,
 ) -> dict:
     """Params for the retirement-only pair; valid for both solver variants."""
     return retirement_only.get_params(
-        n_periods,
+        n_periods=n_periods,
         discount_factor=discount_factor,
         interest_rate=interest_rate,
     )
 
 
 def get_full_params(
-    n_periods: int,
     *,
+    n_periods: int,
     discount_factor: float = 0.98,
     disutility_of_work: float = 1.0,
     interest_rate: float = 0.0,

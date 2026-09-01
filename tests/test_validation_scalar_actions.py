@@ -27,6 +27,7 @@ class RegimeId:
 
 
 def _aggregate_with_ids(
+    *,
     consumption: ContinuousAction,
     invariant_array: MappingLeaf,
 ) -> FloatND:
@@ -44,15 +45,19 @@ def _aggregate_with_ids(
 
 
 def _utility(
+    *,
     consumption: ContinuousAction,
     wealth: ContinuousState,
     invariant_array: MappingLeaf,
 ) -> FloatND:
-    aggregated = _aggregate_with_ids(consumption, invariant_array)
+    aggregated = _aggregate_with_ids(
+        consumption=consumption, invariant_array=invariant_array
+    )
     return jnp.log(consumption + 1) + 0.01 * wealth + 0.0 * aggregated
 
 
 def _next_wealth(
+    *,
     wealth: ContinuousState,
     consumption: ContinuousAction,
 ) -> ContinuousState:
@@ -60,6 +65,7 @@ def _next_wealth(
 
 
 def _borrowing_constraint(
+    *,
     consumption: ContinuousAction,
     wealth: ContinuousState,
 ) -> FloatND:

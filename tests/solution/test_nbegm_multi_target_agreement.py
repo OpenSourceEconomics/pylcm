@@ -17,7 +17,7 @@ _LIQUID = np.linspace(0.1, 30.0, 110)
 _INTERIOR = (_LIQUID > 1.5) & (_LIQUID < 27.0)
 
 
-def _solve(variant: str, *, n_consumption: int = 140) -> Mapping[int, Mapping]:
+def _solve(*, variant: str, n_consumption: int = 140) -> Mapping[int, Mapping]:
     """Solve the multi-target tax toy on the shared comparison grids."""
     model = toy.build_model(
         variant=variant,
@@ -32,8 +32,8 @@ def _solve(variant: str, *, n_consumption: int = 140) -> Mapping[int, Mapping]:
 
 def test_nbegm_matches_brute_under_stochastic_multi_target_transition():
     """The schedule solve equals brute in both living regimes and kind slices."""
-    nbegm = _solve("nbegm")
-    brute = _solve("brute", n_consumption=1500)
+    nbegm = _solve(variant="nbegm")
+    brute = _solve(variant="brute", n_consumption=1500)
     for period in brute:
         for regime in ("alive_a", "alive_b"):
             if regime not in brute[period] or regime not in nbegm[period]:

@@ -46,7 +46,7 @@ def from_regime(user_regime: UserRegime) -> Variables:
 
     """
     raw_info = _raw_variable_info(user_regime)
-    ordered_names = _ordered_state_action_names(user_regime, raw_info)
+    ordered_names = _ordered_state_action_names(user_regime=user_regime, info=raw_info)
     return Variables(
         info=MappingProxyType({name: raw_info[name] for name in ordered_names})
     )
@@ -154,8 +154,7 @@ def _raw_variable_info(
 
 
 def _ordered_state_action_names(
-    user_regime: UserRegime,
-    info: dict[StateOrActionName, VariableInfo],
+    *, user_regime: UserRegime, info: dict[StateOrActionName, VariableInfo]
 ) -> list[StateOrActionName]:
     """Order variables: discrete states, continuous states, actions.
 

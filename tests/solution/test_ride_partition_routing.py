@@ -32,7 +32,7 @@ def _identity(row):
     [(nbegm._map_ride_partitioned, 3), (nbegm._map_branch_partitioned, 1)],
 )
 def test_partition_request_reaches_the_shared_dispatcher(
-    monkeypatch: pytest.MonkeyPatch, wrapper, requested: int
+    *, monkeypatch: pytest.MonkeyPatch, wrapper, requested: int
 ) -> None:
     """Ride and branch requests become actual shared-dispatcher batch widths."""
     calls = _record_batches(monkeypatch)

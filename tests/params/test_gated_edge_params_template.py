@@ -227,14 +227,14 @@ def _build_model(
         active=lambda age: age < 1,
         states={"wage": _WAGE},
         state_transitions={"wage": fixed_transition("wage")},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={"utility": _utility_single_f},
     )
     married_terminal = Regime(
         transition=None,
         active=lambda age: age >= 1,
         states={"wage": _WAGE},
-        actions={"work": DiscreteGrid(Work)},
+        actions={"work": DiscreteGrid(category_class=Work)},
         functions={
             "utility": CollectiveUtility(
                 utilities={"f": _utility_married_f, "m": _utility_married_m}
@@ -266,6 +266,7 @@ def _build_model(
 
 
 def _consent_gate(
+    *,
     V_target_f: FloatND,
     V_target_m: FloatND,
     V_single_f_ref: FloatND,
@@ -276,6 +277,7 @@ def _consent_gate(
 
 
 def _consent_gate_with_premium(
+    *,
     V_target_f: FloatND,
     V_target_m: FloatND,
     V_single_f_ref: FloatND,
@@ -294,7 +296,7 @@ def _wage_itself(wage: ContinuousState) -> ContinuousState:
 
 
 def _husband_reference_wage(
-    wage: ContinuousState, husband_reference_weight: float
+    *, wage: ContinuousState, husband_reference_weight: float
 ) -> ContinuousState:
     """Wage at which the husband values single life.
 
@@ -305,7 +307,7 @@ def _husband_reference_wage(
 
 
 def _wife_fallback_wage(
-    wage: ContinuousState, wife_fallback_weight: float
+    *, wage: ContinuousState, wife_fallback_weight: float
 ) -> ContinuousState:
     """Wage at which a refused woman values single life.
 
@@ -315,7 +317,7 @@ def _wife_fallback_wage(
     return wage + wife_fallback_weight * (_WAGE_LOW - wage)
 
 
-def _utility_single_f(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _utility_single_f(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     """A single woman earns her wage when she works and nothing otherwise."""
     return wage * work
 
@@ -330,12 +332,12 @@ def _utility_single_m_terminal(wage: ContinuousState) -> FloatND:
     return jnp.where(wage < 1.5, 0.5, 3.0)
 
 
-def _utility_married_f(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _utility_married_f(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     """The wife's married payoff: twice the wage, whatever the couple does."""
     return 2.0 * wage + 0.0 * work
 
 
-def _utility_married_m(wage: ContinuousState, work: DiscreteAction) -> FloatND:
+def _utility_married_m(*, wage: ContinuousState, work: DiscreteAction) -> FloatND:
     """The husband's married payoff: the wage itself, whatever the couple does."""
     return wage + 0.0 * work
 

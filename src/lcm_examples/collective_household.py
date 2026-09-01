@@ -366,14 +366,14 @@ def _terminal_utility(consumption: ContinuousAction) -> FloatND:
 
 
 def _couple_utility_f(
-    consumption: ContinuousAction, marriage_premium: float
+    *, consumption: ContinuousAction, marriage_premium: float
 ) -> FloatND:
     """Her flow utility: half of the household's consumption, plus the premium."""
     return _log_utility(0.5 * consumption) + marriage_premium
 
 
 def _couple_utility_m(
-    consumption: ContinuousAction, marriage_premium: float
+    *, consumption: ContinuousAction, marriage_premium: float
 ) -> FloatND:
     """His flow utility, symmetric to hers."""
     return _log_utility(0.5 * consumption) + marriage_premium
@@ -384,32 +384,32 @@ def _terminal_utility_collective(consumption: ContinuousAction) -> FloatND:
 
 
 def _next_single_wealth(
-    wealth: ContinuousState, consumption: ContinuousAction, interest_rate: float
+    *, wealth: ContinuousState, consumption: ContinuousAction, interest_rate: float
 ) -> ContinuousState:
     return (1.0 + interest_rate) * (wealth - consumption)
 
 
 def _pooled_wealth(
-    wealth: ContinuousState, consumption: ContinuousAction, interest_rate: float
+    *, wealth: ContinuousState, consumption: ContinuousAction, interest_rate: float
 ) -> ContinuousState:
     """Household wealth on entry: two partners' savings, pooled."""
     return 2.0 * (1.0 + interest_rate) * (wealth - consumption)
 
 
 def _next_couple_wealth(
-    wealth: ContinuousState, consumption: ContinuousAction, interest_rate: float
+    *, wealth: ContinuousState, consumption: ContinuousAction, interest_rate: float
 ) -> ContinuousState:
     return (1.0 + interest_rate) * (wealth - consumption)
 
 
 def _consumption_within_single_wealth(
-    wealth: ContinuousState, consumption: ContinuousAction
+    *, wealth: ContinuousState, consumption: ContinuousAction
 ) -> BoolND:
     return consumption <= wealth
 
 
 def _consumption_within_couple_wealth(
-    wealth: ContinuousState, consumption: ContinuousAction
+    *, wealth: ContinuousState, consumption: ContinuousAction
 ) -> BoolND:
     return consumption <= wealth
 
@@ -419,17 +419,18 @@ def _half_of_couple_wealth(wealth: ContinuousState) -> ContinuousState:
     return 0.5 * wealth
 
 
-def _participation_f(Q_f: FloatND, V_alone_f: FloatND, slack: float) -> BoolND:
+def _participation_f(*, Q_f: FloatND, V_alone_f: FloatND, slack: float) -> BoolND:
     """She stays where the household is worth at least her outside option."""
     return Q_f >= V_alone_f - slack
 
 
-def _participation_m(Q_m: FloatND, V_alone_m: FloatND, slack: float) -> BoolND:
+def _participation_m(*, Q_m: FloatND, V_alone_m: FloatND, slack: float) -> BoolND:
     """He stays on the same terms."""
     return Q_m >= V_alone_m - slack
 
 
 def _mutual_consent(
+    *,
     V_target_f: FloatND,
     V_target_m: FloatND,
     V_alone_f: FloatND,
@@ -475,17 +476,17 @@ def _transition_probabilities(*, last_age: int) -> dict:
 
     """
 
-    def _before_last(age: FloatND, *, probability: float) -> FloatND:
+    def _before_last(*, age: FloatND, probability: float) -> FloatND:
         return jnp.where(age < last_age - 1, probability, 0.0)
 
     def meets_a_partner(age: FloatND) -> FloatND:
-        return _before_last(age, probability=MEETING_PROBABILITY)
+        return _before_last(age=age, probability=MEETING_PROBABILITY)
 
     def meets_nobody(age: FloatND) -> FloatND:
-        return _before_last(age, probability=1.0 - MEETING_PROBABILITY)
+        return _before_last(age=age, probability=1.0 - MEETING_PROBABILITY)
 
     def stays_married(age: FloatND) -> FloatND:
-        return _before_last(age, probability=1.0)
+        return _before_last(age=age, probability=1.0)
 
     def reaches_last_age(age: FloatND) -> FloatND:
         return jnp.where(age < last_age - 1, 0.0, 1.0)

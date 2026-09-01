@@ -65,7 +65,7 @@ class Work:
     retired: ScalarInt
 
 
-def utility(consumption: ContinuousAction, work: DiscreteAction) -> FloatND:
+def utility(*, consumption: ContinuousAction, work: DiscreteAction) -> FloatND:
     return jnp.log(consumption) + 0.0 * work
 
 
@@ -73,7 +73,7 @@ def terminal_utility(wealth: ContinuousState) -> FloatND:
     return jnp.log(jnp.clip(wealth, 1e-8))
 
 
-def savings(wealth: FloatND, consumption: ContinuousAction) -> FloatND:
+def savings(*, wealth: FloatND, consumption: ContinuousAction) -> FloatND:
     return wealth - consumption
 
 
@@ -101,7 +101,10 @@ def _model(
     if opaque_constraint is not None:
         constraints["borrowing_constraint"] = opaque_constraint
     saving_regime = ConsumptionSavingsRegime(
-        actions={"consumption": _ACTION_GRID, "work": DiscreteGrid(Work)},
+        actions={
+            "consumption": _ACTION_GRID,
+            "work": DiscreteGrid(category_class=Work),
+        },
         states={"wealth": _WEALTH_GRID},
         state_transitions={"wealth": {"done": next_wealth}},
         constraints=constraints,
@@ -237,14 +240,14 @@ def _filled_params(model: Model) -> dict:
     """
     template = model.get_params_template()
 
-    def fill(node: object, name: str = "") -> object:
+    def fill(*, node: object, name: str = "") -> object:
         if isinstance(node, dict):
-            return {key: fill(value, key) for key, value in node.items()}
+            return {key: fill(node=value, name=key) for key, value in node.items()}
         if isinstance(node, bool) or not isinstance(node, int | float):
             return 0.0 if name == "_age" else 0.95
         return node
 
-    return fill(template)  # ty: ignore[invalid-return-type]
+    return fill(node=template)  # ty: ignore[invalid-return-type]
 
 
 def test_declaring_the_bound_does_not_change_the_solution() -> None:
@@ -284,7 +287,10 @@ def _grid_search_model(
         }
     )
     saving_regime = Regime(
-        actions={"consumption": _ACTION_GRID, "work": DiscreteGrid(Work)},
+        actions={
+            "consumption": _ACTION_GRID,
+            "work": DiscreteGrid(category_class=Work),
+        },
         states={"wealth": _WEALTH_GRID},
         state_transitions={"wealth": {"done": next_wealth}},
         constraints=constraints,
@@ -340,7 +346,10 @@ def test_grid_search_keeps_the_declaration_as_a_real_constraint() -> None:
 def _replace_constraints(*, constraints: dict) -> Model:
     """Build the grid-search model with an explicitly supplied constraint pool."""
     saving_regime = Regime(
-        actions={"consumption": _ACTION_GRID, "work": DiscreteGrid(Work)},
+        actions={
+            "consumption": _ACTION_GRID,
+            "work": DiscreteGrid(category_class=Work),
+        },
         states={"wealth": _WEALTH_GRID},
         state_transitions={"wealth": {"done": next_wealth}},
         constraints=constraints,

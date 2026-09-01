@@ -35,7 +35,7 @@ _JNP_DTYPES = [jnp.float32, pytest.param(jnp.float64, marks=_NEEDS_X64)]
 _NP_DTYPES = [np.float32, pytest.param(np.float64, marks=_NEEDS_X64)]
 
 
-def _marginal(endog_grid, value, segment_id):
+def _marginal(*, endog_grid, value, segment_id):
     """Per-node segment slope, the marginal a piecewise-linear branch carries."""
     grid = np.asarray(endog_grid)
     val = np.asarray(value)
@@ -71,7 +71,9 @@ def _marginal(endog_grid, value, segment_id):
         ),
     ],
 )
-def test_query_envelope_matches_oracle(endog_grid, policy, value, segment_id, x_query):
+def test_query_envelope_matches_oracle(
+    *, endog_grid, policy, value, segment_id, x_query
+):
     """Value and policy from the query backend equal the exact oracle."""
     endog_grid = jnp.asarray(endog_grid)
     policy = jnp.asarray(policy)
@@ -83,7 +85,7 @@ def test_query_envelope_matches_oracle(endog_grid, policy, value, segment_id, x_
         endog_grid=endog_grid,
         policy=policy,
         value=value,
-        marginal=_marginal(endog_grid, value, segment_id),
+        marginal=_marginal(endog_grid=endog_grid, value=value, segment_id=segment_id),
         segment_id=segment_id,
         x_query=x_query,
     )
@@ -122,7 +124,7 @@ def test_blocked_segment_scan_matches_the_dense_reduction(block_size):
     value = jnp.asarray(np.concatenate(values))
     policy = jnp.asarray(np.concatenate(policies))
     segment_id = jnp.asarray(np.concatenate(segments))
-    marginal = _marginal(endog_grid, value, segment_id)
+    marginal = _marginal(endog_grid=endog_grid, value=value, segment_id=segment_id)
     x_query = jnp.asarray(np.linspace(0.7, 3.3, 41))
 
     dense = envelope_at_query(
@@ -200,7 +202,7 @@ def test_exact_node_tie_selects_the_segment_that_continues_right():
         (jnp.float32, 1.0e6, 0.01),
     ],
 )
-def test_exact_stored_tie_at_a_node_is_right_continuous(dtype, base, gap):
+def test_exact_stored_tie_at_a_node_is_right_continuous(*, dtype, base, gap):
     """Right-continuity applies to an EXACT stored tie — at any magnitude.
 
     A stored node value carries no evaluation error, so only bitwise-equal
@@ -236,7 +238,9 @@ def test_exact_stored_tie_at_a_node_is_right_continuous(dtype, base, gap):
     ],
 )
 @pytest.mark.parametrize("block_size", [0, 1, 2, 3])
-def test_strict_represented_gap_selects_the_higher_branch(dtype, base, gap, block_size):
+def test_strict_represented_gap_selects_the_higher_branch(
+    *, dtype, base, gap, block_size
+):
     """A strict represented gap at a node is decisive — never a tie.
 
     The stored node values are candidate data and are compared exactly. Segment
@@ -296,7 +300,9 @@ def test_common_value_translation_does_not_change_a_strict_winner(block_size):
 
 @pytest.mark.parametrize("order", ["AB", "BA"])
 @pytest.mark.parametrize("block_size", [0, 2, 3])
-def test_node_event_selection_matches_the_exact_oracle_across_scales(order, block_size):
+def test_node_event_selection_matches_the_exact_oracle_across_scales(
+    *, order, block_size
+):
     """Node events resolve by exact comparison across dtypes and scales.
 
     Two branches share the node ``q=1``: the ending branch carries
@@ -365,7 +371,9 @@ def test_node_event_selection_matches_the_exact_oracle_across_scales(order, bloc
 @pytest.mark.parametrize("dtype", _JNP_DTYPES)
 @pytest.mark.parametrize("order", ["AB", "BA"])
 @pytest.mark.parametrize("block_size", [0, 2])
-def test_one_ulp_interior_gap_resolves_to_the_higher_branch(dtype, order, block_size):
+def test_one_ulp_interior_gap_resolves_to_the_higher_branch(
+    *, dtype, order, block_size
+):
     """The compensated interior evaluation certifies even a one-ULP gap.
 
     Branch H sits exactly one ULP above branch L at both stored endpoints of the
@@ -400,7 +408,7 @@ def test_one_ulp_interior_gap_resolves_to_the_higher_branch(dtype, order, block_
 
 @pytest.mark.parametrize("dtype", _JNP_DTYPES)
 @pytest.mark.parametrize("block_size", [0, 1, 2, 3])
-def test_near_equal_slope_tie_picks_the_larger_slope_branch(dtype, block_size):
+def test_near_equal_slope_tie_picks_the_larger_slope_branch(*, dtype, block_size):
     """A value tie between two branches with near-equal slopes must resolve to the
     larger-slope branch in BOTH the dense and blocked paths.
 
@@ -514,7 +522,7 @@ def test_lone_candidate_does_not_displace_a_right_extending_chain():
 @pytest.mark.parametrize("block_size", [0, 1, 2, 3])
 @pytest.mark.parametrize("denominator", [3, 5, 7, 9, 11, 13, 17, 31, 63, 127])
 def test_exact_interior_tie_takes_the_right_continuous_branch(
-    dtype, order, block_size, denominator
+    *, dtype, order, block_size, denominator
 ):
     """A TRUE interior tie must be recognised as a tie, not as a strict win.
 
@@ -554,7 +562,7 @@ def test_exact_interior_tie_takes_the_right_continuous_branch(
     assert float(got_value[0]) == pytest.approx(1.0 / denominator, rel=1e-6), context
 
 
-def _slope_collision_pairs(dtype, *, seed, target=1.0 / 3.0, draws=40_000, want=3):
+def _slope_collision_pairs(*, dtype, seed, target=1.0 / 3.0, draws=40_000, want=3):
     """Segment pairs whose exact slopes differ but whose `fl(rise/run)` keys agree.
 
     Each candidate segment runs from the shared node `(1, 0)` to `(x1, rise)`. The
@@ -597,8 +605,8 @@ def _slope_collision_pairs(dtype, *, seed, target=1.0 / 3.0, draws=40_000, want=
 
 
 _SLOPE_COLLISIONS = {
-    np.float32: _slope_collision_pairs(np.float32, seed=20260728),
-    np.float64: _slope_collision_pairs(np.float64, seed=20260764),
+    np.float32: _slope_collision_pairs(dtype=np.float32, seed=20260728),
+    np.float64: _slope_collision_pairs(dtype=np.float64, seed=20260764),
 }
 
 
@@ -607,7 +615,7 @@ _SLOPE_COLLISIONS = {
 @pytest.mark.parametrize("order", ["AB", "BA"])
 @pytest.mark.parametrize("block_size", [0, 2, 3])
 def test_exact_value_tie_orders_by_exact_slope_not_the_rounded_key(
-    dtype, case, order, block_size
+    *, dtype, case, order, block_size
 ):
     """An exact VALUE tie must be broken by the exact slope, not a rounded key.
 
@@ -653,7 +661,7 @@ def test_exact_value_tie_orders_by_exact_slope_not_the_rounded_key(
 @pytest.mark.parametrize("order", ["AB", "BA"])
 @pytest.mark.parametrize("block_size", [0, 2, 3])
 def test_exactly_equal_slopes_fall_back_to_the_earliest_candidate(
-    dtype, order, block_size
+    *, dtype, order, block_size
 ):
     """Candidate order decides only when the exact slopes are genuinely equal.
 
@@ -685,7 +693,9 @@ def test_exactly_equal_slopes_fall_back_to_the_earliest_candidate(
 @pytest.mark.parametrize("case", [0, 1, 2])
 @pytest.mark.parametrize("order", ["AB", "BA"])
 @pytest.mark.parametrize("block_size", [0, 2, 3])
-def test_interior_exact_tie_also_orders_by_exact_slope(dtype, case, order, block_size):
+def test_interior_exact_tie_also_orders_by_exact_slope(
+    *, dtype, case, order, block_size
+):
     """The colliding-key class at a STRICTLY INTERIOR query, not just at a node.
 
     The audit witness put the tie on a stored node, where the value comparison
@@ -705,13 +715,13 @@ def test_interior_exact_tie_also_orders_by_exact_slope(dtype, case, order, block
     low_run, high_run = dtype(low_node) - one, dtype(high_node) - one
     low_rise, high_rise = dtype(low_rise), dtype(high_rise)
 
-    def native_key(rise, run):
+    def native_key(*, rise, run):
         """Exactly what the selector computes: `fl((v1 - v0) / (x1 - x0))`."""
         return dtype(dtype(rise - -rise) / dtype(run - -run))
 
-    assert native_key(low_rise, low_run) == native_key(high_rise, high_run), (
-        "the two branches must share one rounded slope key"
-    )
+    assert native_key(rise=low_rise, run=low_run) == native_key(
+        rise=high_rise, run=high_run
+    ), "the two branches must share one rounded slope key"
 
     lower = ([-low_run, low_run], [-low_rise, low_rise], 0.0, 10.0)
     higher = ([-high_run, high_run], [-high_rise, high_rise], 1.0, 20.0)
@@ -738,7 +748,7 @@ def test_interior_exact_tie_also_orders_by_exact_slope(dtype, case, order, block
 _SPLIT_OVERFLOW_EXPONENT = {np.float32: 127 - 12, np.float64: 1023 - 27}
 
 
-def _rescaling_exponents(entries, dtype):
+def _rescaling_exponents(*, entries, dtype):
     """Power-of-two exponents keeping every entry finite normal, spanning the range.
 
     Derived from the case's own magnitudes rather than hardcoded, so the ladder
@@ -759,7 +769,7 @@ def _rescaling_exponents(entries, dtype):
 @pytest.mark.parametrize("order", ["AB", "BA"])
 @pytest.mark.parametrize("block_size", [0, 3])
 def test_selection_survives_a_power_of_two_rescaling_of_the_whole_model(
-    dtype, order, block_size
+    *, dtype, order, block_size
 ):
     """Choosing a unit must not choose a policy.
 
@@ -779,7 +789,7 @@ def test_selection_survives_a_power_of_two_rescaling_of_the_whole_model(
     low_rise, high_rise = dtype(low_rise), dtype(high_rise)
     base = [low_run, high_run, low_rise, high_rise]
 
-    exponents = _rescaling_exponents(base, dtype)
+    exponents = _rescaling_exponents(entries=base, dtype=dtype)
     reached = max(int(np.frexp(abs(float(x)))[1]) for x in base) + max(exponents)
     assert reached > _SPLIT_OVERFLOW_EXPONENT[dtype], (
         f"the ladder tops out at 2**{reached}, below the "
@@ -834,7 +844,7 @@ def _far_segment_exponents(dtype):
 @pytest.mark.parametrize("block_size", [0, 3])
 @pytest.mark.parametrize("far_first", [False, True])
 def test_a_non_bracketing_segment_cannot_change_the_local_envelope(
-    dtype, order, block_size, far_first
+    *, dtype, order, block_size, far_first
 ):
     """A candidate that cannot bracket the query is mathematically irrelevant.
 
@@ -915,7 +925,9 @@ def _slope_overflow_cases(dtype):
 
 @pytest.mark.parametrize("dtype", _NP_DTYPES)
 @pytest.mark.parametrize("block_size", [0, 3])
-def test_an_overflowing_slope_screen_defers_to_the_exact_comparison(dtype, block_size):
+def test_an_overflowing_slope_screen_defers_to_the_exact_comparison(
+    *, dtype, block_size
+):
     """An overflowing rounded slope must defer to exact ownership.
 
     A large value gap over a small grid width can overflow the working-format
@@ -999,7 +1011,7 @@ def _smallest_scale_case(dtype):
 @pytest.mark.parametrize("order", ["AB", "BA"])
 @pytest.mark.parametrize("block_size", [0, 2, 3])
 def test_a_segment_at_the_smallest_scale_keeps_its_interpolation_fraction(
-    dtype, order, block_size
+    *, dtype, order, block_size
 ):
     """A subnormal `q - x0` must not be flushed away before it is used.
 
@@ -1066,7 +1078,7 @@ def _smallest_value_scale_case(dtype):
     return lower, upper
 
 
-def _rounded_between(exact, lower, upper, dtype):
+def _rounded_between(*, exact, lower, upper, dtype):
     """Round `exact` (a `Fraction` in `[lower, upper]`) to nearest, ties to even.
 
     `lower` and `upper` are consecutive floats, so they are the only candidates
@@ -1088,7 +1100,7 @@ def _rounded_between(exact, lower, upper, dtype):
 @pytest.mark.parametrize("block_size", [0, 2, 3])
 @pytest.mark.parametrize("fraction", [0.25, 0.5, 0.625, 0.75])
 def test_a_one_ulp_value_gap_at_the_smallest_scale_reaches_the_published_value(
-    dtype, order, block_size, fraction
+    *, dtype, order, block_size, fraction
 ):
     """A one-ULP endpoint gap must survive affine interpolation.
 
@@ -1110,7 +1122,9 @@ def test_a_one_ulp_value_gap_at_the_smallest_scale_reaches_the_published_value(
         Fraction(float(upper)) - Fraction(float(lower))
     )
     assert exact_a > Fraction(float(lower)), "A must be STRICTLY above B at the query"
-    expected_value = _rounded_between(exact_a, lower, upper, dtype)
+    expected_value = _rounded_between(
+        exact=exact_a, lower=lower, upper=upper, dtype=dtype
+    )
 
     rising = ([0.0, 1.0], [lower, upper], (1.0, 1.0), (20.0, 20.0))
     flat = ([0.0, 1.0], [lower, lower], (0.0, 0.0), (10.0, 10.0))
@@ -1143,7 +1157,7 @@ def test_a_one_ulp_value_gap_at_the_smallest_scale_reaches_the_published_value(
 
 @pytest.mark.parametrize("dtype", _NP_DTYPES)
 @pytest.mark.parametrize("block_size", [0, 2])
-def test_a_power_of_two_value_rescaling_cannot_change_the_winner(dtype, block_size):
+def test_a_power_of_two_value_rescaling_cannot_change_the_winner(*, dtype, block_size):
     """Scaling every value by an exact power of two is an ordering isomorphism.
 
     Multiplying all four stored values by `2**k` leaves the exact comparison
@@ -1205,7 +1219,7 @@ def _wide_segment_case(dtype):
 @pytest.mark.parametrize("order", ["AB", "BA"])
 @pytest.mark.parametrize("block_size", [0, 2, 3])
 def test_a_wide_segments_own_range_cannot_erase_its_interpolation_fraction(
-    dtype, order, block_size
+    *, dtype, order, block_size
 ):
     """`q - x0` must survive a segment whose own endpoints span many binades.
 
@@ -1265,7 +1279,7 @@ def test_a_wide_segments_own_range_cannot_erase_its_interpolation_fraction(
 # wide enough that no term can fall out of it.
 
 
-def _cancelling_pair_case(dtype, value_exponent, grid_exponent, ulp_offset):
+def _cancelling_pair_case(*, dtype, value_exponent, grid_exponent, ulp_offset):
     """Branch A cancelling to exactly zero against a finite-normal constant B.
 
     `A` runs from `+a/2` to `-a/2` across the segment, so its exact value at the
@@ -1313,7 +1327,7 @@ def _assemble(rows):
 @pytest.mark.parametrize("order", ["AB", "BA"])
 @pytest.mark.parametrize("ulp_offset", [0, 1, 64])
 def test_a_completely_cancelling_branch_still_outranks_a_lower_constant(
-    dtype, block_size, order, ulp_offset
+    *, dtype, block_size, order, ulp_offset
 ):
     """A strict gap must survive however far the decisive terms sit below the rest.
 
@@ -1326,7 +1340,7 @@ def test_a_completely_cancelling_branch_still_outranks_a_lower_constant(
     fixed-point accumulator removes the frame the terms were falling out of.
     """
     a_row, b_row, midpoint, gap = _cancelling_pair_case(
-        dtype,
+        dtype=dtype,
         value_exponent=0 if ulp_offset else int(np.finfo(dtype).maxexp) - 1,
         grid_exponent=-60,
         ulp_offset=ulp_offset,
@@ -1360,7 +1374,7 @@ def test_a_framed_difference_is_exact_at_the_top_of_the_range(dtype):
     """
     top = dtype(np.ldexp(1.0, int(np.finfo(dtype).maxexp) - 1))
     head, tail, exponent = framed_difference(
-        jnp.asarray(top, dtype=dtype), jnp.asarray(-top, dtype=dtype)
+        a=jnp.asarray(top, dtype=dtype), b=jnp.asarray(-top, dtype=dtype)
     )
     assert np.isfinite(np.asarray(head)), f"framed head is {head}"
     assert np.isfinite(np.asarray(tail)), f"framed tail is {tail}"
@@ -1375,7 +1389,7 @@ def test_a_framed_difference_is_exact_at_the_top_of_the_range(dtype):
 @pytest.mark.parametrize("fraction", [0.25, 0.5, 0.75])
 @pytest.mark.parametrize("order", [0, 1])
 def test_a_top_binade_segment_still_publishes_its_envelope(
-    dtype, axis, fraction, order
+    *, dtype, axis, fraction, order
 ):
     """A finite exact envelope must never be published as three NaNs.
 
@@ -1460,7 +1474,7 @@ def test_a_top_binade_segment_still_publishes_its_envelope(
 @pytest.mark.parametrize("dtype", _NP_DTYPES)
 @pytest.mark.parametrize("family", ["tiny-fraction", "opposite-sign"])
 @pytest.mark.parametrize("block_size", [0, 2, 3])
-def test_every_published_channel_survives_its_own_affine(dtype, family, block_size):
+def test_every_published_channel_survives_its_own_affine(*, dtype, family, block_size):
     """Policy and marginal must be as certified as the value they accompany.
 
     Directly evaluating `left + fraction * (right - left)` can lose finite
