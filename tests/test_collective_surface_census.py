@@ -234,7 +234,15 @@ def _writes_a_decomposed_name(source: str) -> list[str]:
 
 #: Callables that take a decomposed name legitimately: the engine helpers a
 #: unit test drives directly.
-_ENGINE_CONSTRUCTORS = frozenset({"MockRegime", "_MockRegime", "build_pareto_weights"})
+_ENGINE_CONSTRUCTORS = frozenset(
+    {
+        "MockRegime",
+        "_MockRegime",
+        "build_pareto_weights",
+        "get_max_Q_over_a",
+        "get_streaming_max_Q_over_a",
+    }
+)
 
 #: Modules that build the ENGINE's regime rather than the author's, and so
 #: write the engine's own vocabulary on purpose. One replaces `stakeholders` on
