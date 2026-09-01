@@ -86,6 +86,12 @@ def test_age_grid_get_periods_where():
     assert periods == (3, 4)
 
 
+def test_age_grid_get_periods_where_accepts_numpy_ufunc() -> None:
+    ages = AgeGrid(start=0, stop=2, step="Y")
+
+    assert ages.get_periods_where(np.isfinite) == (0, 1, 2)
+
+
 def test_age_grid_no_params_raises():
     with pytest.raises(GridInitializationError):
         AgeGrid()  # ty: ignore[no-matching-overload]

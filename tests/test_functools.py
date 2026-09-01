@@ -168,6 +168,23 @@ def test_allow_args():
     assert allow_args(f)(b=2, a=1) == 3
 
 
+@pytest.mark.parametrize("error_type", [TypeError, ValueError])
+def test_allow_args_returns_callable_when_signature_is_unavailable(
+    *, error_type: type[Exception]
+) -> None:
+    class UninspectableCallable:
+        @property
+        def __signature__(self):
+            raise error_type("signature unavailable")
+
+        def __call__(self, value: int) -> int:
+            return value + 1
+
+    func = UninspectableCallable()
+
+    assert allow_args(func) is func
+
+
 def test_allow_args_honors_defaulted_keyword_only_parameter():
     def active(*, age, final_age=75):
         return age < final_age
