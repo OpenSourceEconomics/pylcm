@@ -63,12 +63,12 @@ else:
 # are built at `Model` construction, before any params are supplied, so a check
 # that must evaluate or differentiate the model's DAG on real schedules, tables,
 # and coefficients cannot run there. A solver publishes such a check with its
-# kernels; the engine calls it as `check(flat_params=...)` on the first solve
-# and never again, so an estimation loop pays for it once. The check reports by
-# raising; its return value is ignored. Defined here rather than in
-# `_lcm.solution.contract` — which re-exports it — for the same reason as
-# `ContinuationPayload`: the engine stays a leaf of the contract, not a peer in
-# a cycle.
+# kernels. The engine calls every published check as `check(flat_params=...)` on
+# every parameter draw; each check owns its evaluation schedule and any cached
+# verdict. The check reports by raising; its return value is ignored. Defined
+# here rather than in `_lcm.solution.contract` — which re-exports it — for the
+# same reason as `ContinuationPayload`: the engine stays a leaf of the contract,
+# not a peer in a cycle.
 type ParamCheck = Callable[..., None]
 
 
@@ -401,8 +401,9 @@ class SolutionPhase:
     param_checks: tuple[ParamCheck, ...] = ()
     """The regime solver's preconditions that need real parameter values.
 
-    Run once, on the first solve, by `check_solver_params`; empty for a solver
-    whose scope is decided by structure alone.
+    `check_solver_params` passes every parameter draw to every published check;
+    each check owns its evaluation schedule and cache. Empty for a solver whose
+    scope is decided by structure alone.
     """
 
     pareto_weights: ParetoWeights | None = None

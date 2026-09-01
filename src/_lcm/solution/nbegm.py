@@ -256,32 +256,34 @@ class NBEGM(OneMarginSolver):
     probe_failure: Literal["reject", "assume_declared"] = "reject"
     """What to do when a derivative probe cannot evaluate the model.
 
-    The affine-budget and interval-constancy probes differentiate the model's DAG
-    functions on each draw selected by `probe_schedule`, reading that draw's
-    parameter values and synthesizing the states and actions they sweep. A DAG
-    that cannot be differentiated that way leaves the precondition unverified:
+    The affine-budget, interval-constancy, and single-power-flow probes
+    differentiate the model's DAG functions on each draw selected by
+    `probe_schedule`, reading that draw's parameter values and synthesizing the
+    states and actions they sweep. A DAG that cannot be differentiated that way
+    leaves the precondition unverified:
 
     - `"reject"` — refuse to solve; the per-interval EGM preconditions must be
       machine-verified.
     - `"assume_declared"` — warn and solve; the model author asserts the budget's
-      within-interval affinity and every liquid-reading law's interval-constancy,
-      to be validated empirically (e.g. full-model brute-agreement gates).
+      within-interval affinity, every liquid-reading law's interval-constancy,
+      and the consumption flow's single-power form, to be validated empirically.
     """
     probe_schedule: Literal["first_solve", "every_solve", "never"] = "every_solve"
     """How often the parameter-dependent preconditions run.
 
-    The affine-budget and interval-constancy probes differentiate the model's DAG
-    against real parameter values, so they run at solve rather than at build. What
-    they cost is therefore charged per solve, which an estimation loop pays on
-    every criterion evaluation:
+    The affine-budget, interval-constancy, and single-power-flow probes
+    differentiate the model's DAG against real parameter values, so they run at
+    solve rather than at build. What they cost is therefore charged per solve,
+    which an estimation loop pays on every criterion evaluation:
 
     - `"every_solve"` — re-check every draw. This is the safe default because a
       parameter can move a budget from affine to curved within an interval, or
-      switch a law from piecewise-constant to smoothly varying.
-    - `"first_solve"` — check once per model and reuse the verdict. Use only when
-      the model author asserts that parameter movement cannot change either
-      precondition over the supported parameter domain.
-    - `"never"` — skip them; the model author asserts both preconditions and
+      switch a law from piecewise-constant to smoothly varying, or turn a
+      single-power flow into another functional form.
+    - `"first_solve"` — check all three once per model and reuse their verdicts.
+      Use only when the model author asserts that parameter movement cannot
+      change any precondition over the supported parameter domain.
+    - `"never"` — skip all three; the model author asserts each precondition and
       validates the solve against an independent reference.
     """
 
@@ -2339,9 +2341,10 @@ class _NBEGMScheduleSpec:
     when the regime carries no discrete action. Excluded from `coh_param_names` —
     the envelope core binds them per branch."""
     param_checks: tuple[ParamCheck, ...] = ()
-    """Preconditions on the composed budget, run on the first solve. Collected
-    here because the budget is composed while the spec is, and checking its
-    affinity in the liquid state needs the schedules' parameter values."""
+    """Preconditions on the composed budget, evaluated as their schedules request.
+
+    Collected here because the budget is composed while the spec is, and checking
+    its affinity in the liquid state needs each draw's schedule parameters."""
 
     @property
     def branch_bindings(self) -> tuple[MappingProxyType[ActionName, int], ...]:
@@ -2985,8 +2988,8 @@ def _fail_if_flow_not_single_power(
     power solves a different first-order condition). The probe evaluates the
     flow, its marginal, and the elasticity `c q'(c)/q(c)` at several
     consumption values, with every declared parameter set to its own value and
-    each integer-coded argument swept over its actual grid codes. Rejected on the
-    first solve:
+    each integer-coded argument swept over its actual grid codes. Rejected on any
+    draw selected by the probe schedule:
 
     - a nonpositive flow or nonpositive marginal at any probed point (the
       recursion takes fractional powers of the flow; `q = -c` carries a
@@ -3203,8 +3206,8 @@ class _ProbeArguments:
     """How the probes build every argument of the DAG they differentiate.
 
     Assembled at model build from the regime's grids and its functions'
-    annotations, then completed with `with_params` on the first solve. Splitting
-    it that way is what lets the probes read the model's real schedules and
+    annotations, then completed with `with_params` for each selected draw.
+    Splitting it that way lets the probes read the model's real schedules and
     tables: the classification is a property of the source, the values are not
     known until the user supplies params.
     """
@@ -3730,7 +3733,7 @@ def _fail_if_liquid_reading_next_state_varies_within_interval(  # noqa: C901
     dependence is piecewise-constant (a level switched at a declared cliff, so its
     derivative in the liquid state is zero between breakpoints). A smooth (affine or
     curved) dependence makes the midpoint-bound row wrong for the interval's other
-    liquid points, so it is rejected on the first solve.
+    liquid points, so it is rejected on any draw selected by the probe schedule.
 
     The probe evaluates each liquid-reading law's first liquid-derivative at a few
     interior points, with every declared parameter set to its own value and the

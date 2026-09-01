@@ -223,10 +223,9 @@ _INVESTMENT = LinSpacedGrid(start=-5.0, stop=5.0, n_points=5)
 def _check_probes(model: Model) -> None:
     """Run the solver's parameter-dependent preconditions, and nothing else.
 
-    Those preconditions run on the first solve, because differentiating a budget
-    or a period flow needs parameter values. The flow probe sweeps consumption
-    and the discrete states, so every declared parameter can take the same
-    stand-in value here.
+    Those preconditions run only after parameter values exist. The flow probe
+    sweeps consumption and the discrete states, so every declared parameter can
+    take the same stand-in value here.
     """
 
     def _fill(node: object) -> object:
