@@ -94,7 +94,7 @@
           },
           {
             "path": "src/_lcm/regime_building/max_Q_over_a.py",
-            "sha256": "511b3af312da2e81f8c2b5b7098b48124410b141d50e8f9666ba02a55c04543c"
+            "sha256": "f9ee588c3c3a87ead9ae760d9772d0f6da15192253b217b905ab9e3b37f391c3"
           },
           {
             "path": "src/_lcm/regime_building/processing.py",
@@ -158,7 +158,7 @@
           },
           {
             "path": "src/_lcm/solution/grid_search.py",
-            "sha256": "20d36ae31f1c026b3d7eb120d120c8da7dd91c7d050d24777a1c1066e141946a"
+            "sha256": "9b38a214d8585eb3bc3d19a651eef23f2906db5b72fa3e31723db91c1a8f4510"
           },
           {
             "path": "src/_lcm/solution/logsumexp_action_reduction.py",
@@ -178,7 +178,7 @@
           },
           {
             "path": "src/_lcm/utils/functools.py",
-            "sha256": "e6707e1f76493a28023a1f1f536414ba6792df063e6cfc161fca2690b8f5bc1c"
+            "sha256": "31f974b4fd42f9ef30f972406209d97fbd5e7e44eaf3f932847aa2ce8a1573cb"
           },
           {
             "path": "src/_lcm/utils/namespace.py",
@@ -202,7 +202,7 @@
           }
         ],
         "source_count": 49,
-        "source_inventory_sha256": "289aa93535297ce576fd91bc4cd8207cc1af99ff387ab73f33fd5b7bf5295a08"
+        "source_inventory_sha256": "a7537d1921e966dfab7a93d546b0d7c7b8cf33aac36f52773a2e6a2b380c8917"
       },
       "fast": {
         "candidate_sources": [
@@ -296,7 +296,7 @@
           },
           {
             "path": "src/_lcm/regime_building/max_Q_over_a.py",
-            "sha256": "511b3af312da2e81f8c2b5b7098b48124410b141d50e8f9666ba02a55c04543c"
+            "sha256": "f9ee588c3c3a87ead9ae760d9772d0f6da15192253b217b905ab9e3b37f391c3"
           },
           {
             "path": "src/_lcm/regime_building/processing.py",
@@ -360,7 +360,7 @@
           },
           {
             "path": "src/_lcm/solution/grid_search.py",
-            "sha256": "20d36ae31f1c026b3d7eb120d120c8da7dd91c7d050d24777a1c1066e141946a"
+            "sha256": "9b38a214d8585eb3bc3d19a651eef23f2906db5b72fa3e31723db91c1a8f4510"
           },
           {
             "path": "src/_lcm/solution/logsumexp_action_reduction.py",
@@ -380,7 +380,7 @@
           },
           {
             "path": "src/_lcm/utils/functools.py",
-            "sha256": "e6707e1f76493a28023a1f1f536414ba6792df063e6cfc161fca2690b8f5bc1c"
+            "sha256": "31f974b4fd42f9ef30f972406209d97fbd5e7e44eaf3f932847aa2ce8a1573cb"
           },
           {
             "path": "src/_lcm/utils/namespace.py",
@@ -404,13 +404,13 @@
           }
         ],
         "source_count": 49,
-        "source_inventory_sha256": "289aa93535297ce576fd91bc4cd8207cc1af99ff387ab73f33fd5b7bf5295a08"
+        "source_inventory_sha256": "a7537d1921e966dfab7a93d546b0d7c7b8cf33aac36f52773a2e6a2b380c8917"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "289aa93535297ce576fd91bc4cd8207cc1af99ff387ab73f33fd5b7bf5295a08",
+  "source_inventory_sha256": "a7537d1921e966dfab7a93d546b0d7c7b8cf33aac36f52773a2e6a2b380c8917",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -502,7 +502,7 @@
     },
     {
       "path": "src/_lcm/regime_building/max_Q_over_a.py",
-      "sha256": "511b3af312da2e81f8c2b5b7098b48124410b141d50e8f9666ba02a55c04543c"
+      "sha256": "f9ee588c3c3a87ead9ae760d9772d0f6da15192253b217b905ab9e3b37f391c3"
     },
     {
       "path": "src/_lcm/regime_building/processing.py",
@@ -566,7 +566,7 @@
     },
     {
       "path": "src/_lcm/solution/grid_search.py",
-      "sha256": "20d36ae31f1c026b3d7eb120d120c8da7dd91c7d050d24777a1c1066e141946a"
+      "sha256": "9b38a214d8585eb3bc3d19a651eef23f2906db5b72fa3e31723db91c1a8f4510"
     },
     {
       "path": "src/_lcm/solution/logsumexp_action_reduction.py",
@@ -586,7 +586,7 @@
     },
     {
       "path": "src/_lcm/utils/functools.py",
-      "sha256": "e6707e1f76493a28023a1f1f536414ba6792df063e6cfc161fca2690b8f5bc1c"
+      "sha256": "31f974b4fd42f9ef30f972406209d97fbd5e7e44eaf3f932847aa2ce8a1573cb"
     },
     {
       "path": "src/_lcm/utils/namespace.py",

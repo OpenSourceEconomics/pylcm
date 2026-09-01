@@ -176,16 +176,16 @@ _SOURCE_SEALS = {
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
     ARGMAX_SOURCE: "0d179a5aa65a6f310f598bdad8f75a9318a24832e31bd529184c2ea90356a72d",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
-    MAX_Q_SOURCE: "511b3af312da2e81f8c2b5b7098b48124410b141d50e8f9666ba02a55c04543c",
+    MAX_Q_SOURCE: "f9ee588c3c3a87ead9ae760d9772d0f6da15192253b217b905ab9e3b37f391c3",
     PROCESSING_SOURCE: "e9fc3dc1b8b703f12867f336ce4439356edc2fbafc919ae2014cd939234a1b56",
-    GRID_SEARCH_SOURCE: "20d36ae31f1c026b3d7eb120d120c8da7dd91c7d050d24777a1c1066e141946a",
+    GRID_SEARCH_SOURCE: "9b38a214d8585eb3bc3d19a651eef23f2906db5b72fa3e31723db91c1a8f4510",
     CORE_PROGRAM_SOURCE: "661af8a35e2eea2e29ebfbe4d4ba9ba15e00972e910d93a98e06a5fa1286d84f",
     OUTPUT_LAYOUT_SOURCE: "d08aab63241c85d14ef8a59b105a9e45effc5cc2e4e3d0beb6d8fb36431fa43e",
     ACTION_STREAMING_SOURCE: "5aeafaa39498845cd7104c57aa811a108594bfc9755a3b2cd93ea592ebbc245e",
     ACTION_REDUCTION_SOURCE: "6cee6ea2dbef0ba710fa4a318a2113377d6513cee508e73004861597f9c220f9",
     COLLECTIVE_ACTION_REDUCTION_SOURCE: "7a80418764fdf9754062a23707c5d39fa7abfcaac9c8e8f7803c4d8f1b461347",
     DISPATCHERS_SOURCE: "ef1d85c4fa7dbfbedc2c4afc36f307b915975c8a4a379aa40380fe8c89ecb663",
-    FUNCTOOLS_SOURCE: "e6707e1f76493a28023a1f1f536414ba6792df063e6cfc161fca2690b8f5bc1c",
+    FUNCTOOLS_SOURCE: "31f974b4fd42f9ef30f972406209d97fbd5e7e44eaf3f932847aa2ce8a1573cb",
     CONTAINERS_SOURCE: "0838079e35ba498009d8af7e6ed717f870a96a2fdc628d25e80310cd630174a9",
     ZERO_SAFE_SOURCE: "6b85bacd7c01fec283fcd309a731ab73d6639975ff34edbcce1a8450fbac5f33",
     LOGSUMEXP_ACTION_REDUCTION_SOURCE: "732fda3ed4058445dedd160e58e3899ba286929413fd533e57113b5f772e7b79",
@@ -224,9 +224,9 @@ _SOURCE_SEALS = {
     MODEL_PROCESSING_SOURCE: "8a159831e37a9582852908c7e213106aa1070500f4e64fa12f1a7ed628854740",
 }
 
-EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 273
+EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 281
 EXPECTED_DIRECT_FLOW_MUTATION_NAMES_SHA256 = (
-    "0c479d1be6b5d707c18f3f95ed4c79a94d42bf2780a4fcf6d598980ac71de1eb"
+    "1ec1c451fcc2d77d17bfb6d7226dafb259542487f51ca60a8dabfb812f06a1d2"
 )
 
 
@@ -1529,9 +1529,28 @@ def _streamed_max_builder_errors(tree: ast.Module) -> list[str]:
         tree=tree,
         label="streamed max-Q builder",
         contracts={
-            "get_streaming_max_Q_over_a": "c900b6ce4111752f253aa395a68fb4ed686937769d1fc4b74543785223e2fa4b",
+            "get_streaming_max_Q_over_a": "c89a0b703992730a4c6c14b13a811ba144cb362343957c86334e815e6ddd9b9f",
             "_fail_if_full_V_streaming_route_is_unsupported": (
-                "f0b883e839ecb385873df428718b60ad53745623fe135726b69d640737a61987"
+                "ac5a7a3a5ddd8d98808afdc2268921fed75712cd8d47d0a19ea6eec414271619"
+            ),
+            "_fail_if_streaming_co_map_layout_is_invalid": (
+                "59c06aedafc8bcbe31d7f2f7f7b7d94e1d8044bf529c6f11a05882c5bf1d7979"
+            ),
+        },
+    )
+
+
+def _functools_adapter_errors(tree: ast.Module) -> list[str]:
+    """Pin positional-origin preservation through nested co-map adapters."""
+    return _exact_callable_errors(
+        tree=tree,
+        label="allow-args positional transport",
+        contracts={
+            "_split_bound_arguments": (
+                "a7350bd29eb79dcb783acfc520638b8e959684ba5be19f3c4e4cac6f895534d8"
+            ),
+            "allow_args": (
+                "b4701afeb55c6320acd6eb3229a663143b8964f135476246c2e12e96d2b484f6"
             ),
         },
     )
@@ -1807,7 +1826,7 @@ def _grid_search_caller_errors(tree: ast.Module) -> list[str]:
             label="solve caller live streamed provider",
             contracts={
                 "GridSearch.build_period_kernels": "9f9021e00e2d709988d00015de23b0ee421bfce81158eb282eb5bd2909ede366",
-                "_supports_action_streaming": "51e15216b7ff2b1e0051a0104bbfbabf5f7a896d1050f7e8fbb67432de77280d",
+                "_supports_action_streaming": "804dff6de5461ff74f3a55dc3e46967a0509e2a80813d229e7e969aa8729eb41",
             },
         )
     )
@@ -2987,6 +3006,12 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> dict[str, Any]:
         errors.extend(new_errors)
         if new_errors:
             offending.add(GRID_SEARCH_SOURCE)
+    functools_tree = parsed.get(FUNCTOOLS_SOURCE)
+    if functools_tree is not None:
+        new_errors = _functools_adapter_errors(functools_tree)
+        errors.extend(new_errors)
+        if new_errors:
+            offending.add(FUNCTOOLS_SOURCE)
     core_program_tree = parsed.get(CORE_PROGRAM_SOURCE)
     if core_program_tree is not None:
         new_errors = _core_program_transport_errors(core_program_tree)
@@ -3817,6 +3842,28 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             new="        and True",
             label="streamed reserved width-keyword collision guard",
         ),
+        "streaming_provider:co_map_route_disabled": replace_once(
+            source=grid_source,
+            old=(
+                "        and not (\n"
+                "            context.co_map_state_names\n"
+                "            and (context.same_period_ref_regimes or context.edge_reference_regimes)\n"
+                "        )"
+            ),
+            new="        and not context.co_map_state_names",
+            label="streamed co-map route eligibility",
+        ),
+        "streaming_provider:co_map_reference_guard_bypassed": replace_once(
+            source=grid_source,
+            old=(
+                "        and not (\n"
+                "            context.co_map_state_names\n"
+                "            and (context.same_period_ref_regimes or context.edge_reference_regimes)\n"
+                "        )"
+            ),
+            new="        and True",
+            label="streamed co-map separate-reference guard",
+        ),
         "streaming_dispatch:bypass_compiled_core": replace_once(
             source=grid_source,
             old='        out = compiled_cores["main"](',
@@ -3895,6 +3942,82 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             old="            collective_result.best_stakeholder_values,",
             new="            collective_result.best_stakeholder_values[..., :-1],",
             label="streamed collective stakeholder output",
+        ),
+    }
+    specs["streaming_co_map:inner_state_reincluded"] = {
+        "path": MAX_Q_SOURCE,
+        "source": _replace_nth(
+            text=max_source,
+            marker=(
+                "    inner_state_names = tuple(\n"
+                "        name for name in state_names if name not in co_map_state_names\n"
+                "    )"
+            ),
+            replacement="    inner_state_names = tuple(state_names)",
+            occurrence=2,
+        ),
+    }
+    specs["streaming_co_map:state_order_reversed"] = {
+        "path": MAX_Q_SOURCE,
+        "source": _replace_nth(
+            text=max_source,
+            marker=(
+                "    for state_name, v_arr_in_axes in zip(\n"
+                "        reversed(co_map_state_names), reversed(co_map_v_arr_in_axes), strict=True\n"
+                "    ):"
+            ),
+            replacement=(
+                "    for state_name, v_arr_in_axes in zip(\n"
+                "        co_map_state_names, co_map_v_arr_in_axes, strict=True\n"
+                "    ):"
+            ),
+            occurrence=2,
+        ),
+    }
+    specs["streaming_co_map:continuation_axes_broadcast"] = {
+        "path": MAX_Q_SOURCE,
+        "source": _replace_nth(
+            text=max_source,
+            marker=(
+                "            co_mapped_in_axes=MappingProxyType("
+                '{"next_regime_to_V_arr": v_arr_in_axes}),'
+            ),
+            replacement=(
+                "            co_mapped_in_axes=MappingProxyType("
+                '{"next_regime_to_V_arr": None}),'
+            ),
+            occurrence=2,
+        ),
+    }
+    specs["streaming_co_map:continuation_axes_forced"] = {
+        "path": MAX_Q_SOURCE,
+        "source": _replace_nth(
+            text=max_source,
+            marker=(
+                "            co_mapped_in_axes=MappingProxyType("
+                '{"next_regime_to_V_arr": v_arr_in_axes}),'
+            ),
+            replacement=(
+                "            co_mapped_in_axes=MappingProxyType("
+                '{"next_regime_to_V_arr": MappingProxyType('
+                "dict.fromkeys(v_arr_in_axes, 0))}),"
+            ),
+            occurrence=2,
+        ),
+    }
+    specs["streaming_co_map:layout_validation_bypassed"] = {
+        "path": MAX_Q_SOURCE,
+        "source": replace_once(
+            source=max_source,
+            old=(
+                "    _fail_if_streaming_co_map_layout_is_invalid(\n"
+                "        state_names=state_names,\n"
+                "        co_map_state_names=co_map_state_names,\n"
+                "        co_map_v_arr_in_axes=co_map_v_arr_in_axes,\n"
+                "    )"
+            ),
+            new="    pass",
+            label="streamed co-map layout validation",
         ),
     }
     specs["streaming_ev1:runtime_scale_constant"] = {
@@ -4611,9 +4734,23 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": FUNCTOOLS_SOURCE,
             "source": replace_once(
                 source=functools_source,
-                old="        for name, value in bound.arguments.items():",
-                new="        for name, value in list(bound.arguments.items())[:-1]:",
+                old="    for name, value in bound.arguments.items():",
+                new="    for name, value in list(bound.arguments.items())[:-1]:",
                 label="allow-args argument drop",
+            ),
+        },
+        "shared_functools:positional_origin_reverted": {
+            "path": FUNCTOOLS_SOURCE,
+            "source": replace_once(
+                source=functools_source,
+                old=(
+                    "        elif kind == inspect.Parameter.POSITIONAL_ONLY or (\n"
+                    "            kind == inspect.Parameter.POSITIONAL_OR_KEYWORD\n"
+                    "            and name in positional_origins\n"
+                    "        ):"
+                ),
+                new="        elif kind == inspect.Parameter.POSITIONAL_ONLY:",
+                label="allow-args positional-origin preservation",
             ),
         },
         "shared_containers:duplicate_threshold": {

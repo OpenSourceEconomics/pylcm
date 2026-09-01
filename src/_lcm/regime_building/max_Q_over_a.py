@@ -337,10 +337,17 @@ def get_streaming_max_Q_over_a(
     canonical C order. A hard-max singleton publishes its best value; an EV1
     singleton first hard-maxes each discrete-prefix branch and then log-sums the
     branch values; a collective regime publishes every stakeholder's value at one
-    shared household winner plus the empty-feasible-set flag. The existing state
-    productmap constructs the complete output arrays. Folded and co-mapped states
-    remain on the dense GridSearch route.
+    shared household winner plus the empty-feasible-set flag. Ordinary states use
+    the existing state productmap. Fixed distributed states instead retain the
+    dense route's co-map access law: each state axis is mapped in lockstep with
+    axis zero of every continuation leaf that carries it. Folded states remain on
+    the dense GridSearch route.
     """
+    _fail_if_streaming_co_map_layout_is_invalid(
+        state_names=state_names,
+        co_map_state_names=co_map_state_names,
+        co_map_v_arr_in_axes=co_map_v_arr_in_axes,
+    )
     _fail_if_full_V_streaming_route_is_unsupported(
         has_taste_shocks=has_taste_shocks,
         stakeholders=stakeholders,
@@ -348,8 +355,6 @@ def get_streaming_max_Q_over_a(
         fold_state_names=fold_state_names,
         fold_weights=fold_weights,
         fold_conditioning=fold_conditioning,
-        co_map_state_names=co_map_state_names,
-        co_map_v_arr_in_axes=co_map_v_arr_in_axes,
     )
     if has_taste_shocks and not 1 <= n_discrete_action_axes <= len(action_names):
         raise ValueError(
@@ -442,14 +447,33 @@ def get_streaming_max_Q_over_a(
             ~collective_result.any_feasible,
         )
 
-    return cast(
-        "MaxQOverAFunction",
-        productmap(
-            func=streamed_max_Q_over_a,
-            variables=state_names,
-            batch_sizes={name: batch_sizes[name] for name in state_names},
-        ),
+    inner_state_names = tuple(
+        name for name in state_names if name not in co_map_state_names
     )
+    mapped = productmap(
+        func=streamed_max_Q_over_a,
+        variables=inner_state_names,
+        batch_sizes={name: batch_sizes[name] for name in inner_state_names},
+    )
+    if not co_map_state_names:
+        return cast("MaxQOverAFunction", mapped)
+
+    # Preserve the dense route's device-local continuation access exactly. Build
+    # the maps from the innermost co-map axis outward: at runtime the outer map
+    # removes the original leading V axis first, leaving the next co-map axis at
+    # position zero for the nested map. Leaves that do not carry a state use
+    # ``None`` and pass through unchanged.
+    mapped = allow_args(mapped)
+    for state_name, v_arr_in_axes in zip(
+        reversed(co_map_state_names), reversed(co_map_v_arr_in_axes), strict=True
+    ):
+        mapped = vmap_1d(
+            func=mapped,
+            variables=(state_name,),
+            co_mapped_in_axes=MappingProxyType({"next_regime_to_V_arr": v_arr_in_axes}),
+            callable_with="only_args",
+        )
+    return cast("MaxQOverAFunction", allow_only_kwargs(func=mapped, enforce=False))
 
 
 def _fail_if_full_V_streaming_route_is_unsupported(
@@ -460,8 +484,6 @@ def _fail_if_full_V_streaming_route_is_unsupported(
     fold_state_names: tuple[StateName, ...],
     fold_weights: Mapping[StateName, FloatND],
     fold_conditioning: Mapping[StateName, StateName],
-    co_map_state_names: tuple[StateName, ...],
-    co_map_v_arr_in_axes: tuple[MappingProxyType[RegimeName, int | None], ...],
 ) -> None:
     """Reject routes unsupported by full-value action streaming."""
     if has_taste_shocks and stakeholders is not None:
@@ -476,9 +498,66 @@ def _fail_if_full_V_streaming_route_is_unsupported(
         raise NotImplementedError(
             "Full-V action streaming does not support fold states."
         )
-    if co_map_state_names or co_map_v_arr_in_axes:
-        raise NotImplementedError(
-            "Full-V action streaming does not support co-map states."
+
+
+def _fail_if_streaming_co_map_layout_is_invalid(
+    *,
+    state_names: tuple[StateName, ...],
+    co_map_state_names: tuple[StateName, ...],
+    co_map_v_arr_in_axes: tuple[MappingProxyType[RegimeName, int | None], ...],
+) -> None:
+    """Validate the complete named-axis contract of the streamed co-map.
+
+    One ``in_axes`` mapping belongs to each leading co-map state. A carrying
+    continuation leaf is sliced only on its current leading axis (``0``); a
+    leaf without that state is passed through (``None``). Refusing every other
+    spelling prevents a malformed internal layout from degrading into an
+    ordinary state productmap or silently slicing a different continuation
+    coordinate.
+    """
+    _fail_if_co_map_states_not_leading(
+        state_names=state_names, co_map_state_names=co_map_state_names
+    )
+    if len(co_map_state_names) != len(co_map_v_arr_in_axes):
+        raise ValueError(
+            "Streaming co-map state names and continuation in_axes must have "
+            "the same length."
+        )
+
+    if not co_map_state_names:
+        return
+
+    target_names = frozenset(co_map_v_arr_in_axes[0])
+    if not target_names:
+        raise ValueError(
+            "Streaming co-map continuation in_axes must name at least one target."
+        )
+    inconsistent_target_names = [
+        (state_name, tuple(target_axes))
+        for state_name, target_axes in zip(
+            co_map_state_names, co_map_v_arr_in_axes, strict=True
+        )
+        if frozenset(target_axes) != target_names
+    ]
+    if inconsistent_target_names:
+        raise ValueError(
+            "Streaming co-map continuation in_axes must name the same target keys "
+            f"for every state; got {inconsistent_target_names}."
+        )
+
+    invalid = [
+        (state_name, target, axis)
+        for state_name, target_axes in zip(
+            co_map_state_names, co_map_v_arr_in_axes, strict=True
+        )
+        for target, axis in target_axes.items()
+        if axis is not None
+        and (not isinstance(axis, int) or isinstance(axis, bool) or axis != 0)
+    ]
+    if invalid:
+        raise ValueError(
+            "Streaming co-map continuation in_axes must contain only 0 or None; "
+            f"got {invalid}."
         )
 
 

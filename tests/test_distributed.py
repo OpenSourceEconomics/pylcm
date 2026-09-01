@@ -425,6 +425,12 @@ def test_planned_solve_rejects_a_replicated_output_injected_after_kernel_call(
 def test_grid_search_aot_output_layout_is_native_local_and_deduplicated(monkeypatch):
     """Real AOT GridSearch outputs are born sharded without repair or collectives."""
     model = _make_correct_distributed_model(distribute_type2=False)
+    working_kernels = model._regimes["working_life"].solution.period_kernels
+    assert working_kernels
+    assert all(
+        getattr(kernel, "streamed_core", None) is not None
+        for kernel in working_kernels.values()
+    )
     single = _make_correct_distributed_model(
         distributed=False, distribute_type2=False
     ).solve(log_level="off", params={"discount_factor": 0.95})
@@ -477,8 +483,18 @@ def test_grid_search_aot_output_layout_is_native_local_and_deduplicated(monkeypa
 
 @_skip_pytest_parallel
 def test_collective_grid_search_value_and_dissolution_have_planned_state_layout():
-    """Collective V keeps its stakeholder axis replicated; D has state rank."""
+    """Collective V keeps its stakeholder axis replicated; D has state rank.
+
+    Values agree across differently fused device topologies to dtype-scale rounding;
+    dissolution and layout remain exact.
+    """
     distributed_model = _make_one_axis_collective_model(distributed=True)
+    working_kernels = distributed_model._regimes["working"].solution.period_kernels
+    assert working_kernels
+    assert all(
+        getattr(kernel, "streamed_core", None) is not None
+        for kernel in working_kernels.values()
+    )
     single_model = _make_one_axis_collective_model(distributed=False)
 
     distributed_values, distributed_flags = distributed_model.solve(
@@ -499,7 +515,9 @@ def test_collective_grid_search_value_and_dissolution_have_planned_state_layout(
             # replicated stakeholder entry is intentionally omitted.
             assert isinstance(value.sharding, NamedSharding)
             assert value.sharding.spec == PartitionSpec("type1", None)
-            np.testing.assert_array_equal(value, single_values[period][regime_name])
+            reference = single_values[period][regime_name]
+            eps = np.finfo(np.asarray(value).dtype).eps
+            np.testing.assert_allclose(value, reference, rtol=2 * eps, atol=2 * eps)
             dissolution = distributed_flags[period][regime_name]
             assert dissolution.shape == (4, 4)
             assert isinstance(dissolution.sharding, NamedSharding)

@@ -72,8 +72,10 @@ max—evaluate bounded C-order action blocks while preserving the complete suppo
 These programs publish only solve-time `VALUE`, or `VALUE` plus `DISSOLUTION_FLAG` for a
 collective route; replay and policy artifacts are not integrated. Same-period value
 references, gated-target continuations, and edge-reference mappings remain unchanged
-inputs to the streamed solve core. Routes with folded or co-mapped states remain dense,
-as does all simulation-policy construction. Runtime and peak-memory effects require
+inputs to the streamed solve core. Ordinary co-mapped state routes also stream while
+preserving device-local continuation reads. Folded routes, co-map intersections with
+separate same-period or edge-reference channels, and all simulation-policy
+construction remain dense. Runtime and peak-memory effects require
 measurement; bounded evaluation alone is not a performance claim.
 
 With EV1 taste shocks, GridSearch first maximizes over the continuous-action axes within

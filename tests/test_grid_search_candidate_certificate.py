@@ -592,6 +592,7 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         "shared_collective:argmax_module_shadow",
         "shared_productmap:drop_last_axis",
         "shared_functools:drop_last_argument",
+        "shared_functools:positional_origin_reverted",
         "shared_containers:duplicate_threshold",
         "shared_zero_safe:ordered_sum_slice",
         "shared_probability:unbalanced_product",
@@ -637,8 +638,15 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         "streaming_provider:action_names_slice",
         "streaming_provider:action_extents_slice",
         "streaming_provider:width_keyword_collision_bypassed",
+        "streaming_provider:co_map_route_disabled",
+        "streaming_provider:co_map_reference_guard_bypassed",
         "streaming_provider:collective_reducer_dropped",
         "streaming_provider:collective_output_role_dropped",
+        "streaming_co_map:inner_state_reincluded",
+        "streaming_co_map:state_order_reversed",
+        "streaming_co_map:continuation_axes_broadcast",
+        "streaming_co_map:continuation_axes_forced",
+        "streaming_co_map:layout_validation_bypassed",
         "streaming_ev1_provider:reducer_dropped",
         "streaming_ev1_provider:discrete_axis_count_changed",
         "streaming_dispatch:bypass_compiled_core",
@@ -714,10 +722,10 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
     assert required <= names
     # Independent literals make both cardinality and family identity part of this
     # certificate, rather than trusting constants supplied by the mutation generator.
-    assert len(names) == 273
+    assert len(names) == 281
     assert (
         hashlib.sha256(("\n".join(sorted(names)) + "\n").encode()).hexdigest()
-        == "0c479d1be6b5d707c18f3f95ed4c79a94d42bf2780a4fcf6d598980ac71de1eb"
+        == "1ec1c451fcc2d77d17bfb6d7226dafb259542487f51ca60a8dabfb812f06a1d2"
     )
 
 
