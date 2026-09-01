@@ -99,8 +99,9 @@ class SimulateSnapshot:
     """Platform string, e.g. `"x86_64-Linux"`."""
 
 
+# keyword-only-exempt: primary-argument=path
 def load_snapshot(
-    *, path: Path, exclude: Sequence[str] = ()
+    path: Path, *, exclude: Sequence[str] = ()
 ) -> SolveSnapshot | SimulateSnapshot:
     """Load a debug snapshot directory from disk.
 

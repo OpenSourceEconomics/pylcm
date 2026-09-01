@@ -140,7 +140,7 @@ def test_solve_debug_persists_snapshot(*, tmp_path, model_and_params):
     dirs = sorted(tmp_path.glob("solve_snapshot_*/"))
     assert len(dirs) == 1
 
-    snapshot = load_snapshot(path=dirs[0])
+    snapshot = load_snapshot(dirs[0])
     assert isinstance(snapshot, SolveSnapshot)
     assert snapshot.period_to_regime_to_V_arr is not None
     for period in period_to_regime_to_V_arr:

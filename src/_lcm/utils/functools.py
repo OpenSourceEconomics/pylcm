@@ -112,7 +112,10 @@ def allow_args(func: Callable[..., ReturnType]) -> Callable[..., ReturnType]:
             to call it with positional arguments).
 
     """
-    signature = inspect.signature(func)
+    try:
+        signature = inspect.signature(func)
+    except TypeError, ValueError:
+        return func
     parameters = signature.parameters
 
     # Create new signature without keyword-only arguments
@@ -148,7 +151,6 @@ def allow_args(func: Callable[..., ReturnType]) -> Callable[..., ReturnType]:
             ):
                 raise ValueError("Too many arguments provided.") from error
             raise ValueError("Not all arguments provided.") from error
-        bound.apply_defaults()
 
         positional_only: list[Any] = []
         forwarded_kwargs: dict[str, Any] = {}

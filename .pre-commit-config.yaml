@@ -154,8 +154,10 @@ repos:
         name: functions with two named arguments are keyword-only
         entry: pixi run -e type-checking python -m tests.ci.keyword_only_convention
         language: system
-        types:
+        types_or:
           - python
+          - jupyter
+          - markdown
       - id: no-hardcoded-user-paths
         name: no hardcoded user-specific absolute paths
         language: pygrep
