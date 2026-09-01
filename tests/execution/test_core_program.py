@@ -1,5 +1,6 @@
 """Tests for planner-owned CoreProgram declarations and resolution."""
 
+import functools
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -116,6 +117,12 @@ def _program(
         ),
         output_roles=VALUE,
     )
+
+
+def _eval_resolved_shape(resolved: ResolvedCoreProgram) -> object:
+    """Evaluate abstract output with the resolver's static choices bound."""
+    bound = functools.partial(resolved.function, **resolved.static_kwargs)
+    return jax.eval_shape(bound, **resolved.arguments)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -274,7 +281,7 @@ def test_ordinary_singleton_grid_search_declares_action_core_program() -> None:
         cast("dict[str, object]", program.arguments)["injected"] = jnp.asarray(0)
 
     resolved = resolve_core_program(program=program, tile_widths={"action": 2})
-    output = jax.eval_shape(resolved.function, **resolved.arguments)
+    output = _eval_resolved_shape(resolved)
 
     assert jax.tree.structure(output) == jax.tree.structure(program.output_roles)
     assert isinstance(output, jax.ShapeDtypeStruct)
@@ -320,7 +327,7 @@ def test_collective_grid_search_declares_household_action_core_program() -> None
     )
 
     resolved = resolve_core_program(program=program, tile_widths={"action": 1})
-    output = jax.eval_shape(resolved.function, **resolved.arguments)
+    output = _eval_resolved_shape(resolved)
 
     assert jax.tree.structure(output) == jax.tree.structure(program.output_roles)
     assert isinstance(output, tuple)
@@ -375,7 +382,7 @@ def test_ev1_grid_search_declares_composite_action_core_program() -> None:
     )
 
     resolved = resolve_core_program(program=program, tile_widths={"action": 5})
-    output = jax.eval_shape(resolved.function, **resolved.arguments)
+    output = _eval_resolved_shape(resolved)
 
     assert jax.tree.structure(output) == jax.tree.structure(program.output_roles)
     assert isinstance(output, jax.ShapeDtypeStruct)
@@ -395,12 +402,24 @@ def test_resolver_binds_width_without_adding_a_dynamic_argument() -> None:
     assert _WIDTH_KEYWORD not in program.arguments
     assert _WIDTH_KEYWORD not in resolved_three.arguments
     assert resolved_three.specialization_key != resolved_four.specialization_key
+    assert resolved_three.function is resolved_four.function
+    assert resolved_three.static_kwargs == {_WIDTH_KEYWORD: 3}
+    assert resolved_four.static_kwargs == {_WIDTH_KEYWORD: 4}
     assert resolved_three.tile_widths == {"action": 3}
     assert resolved_four.tile_widths == {"action": 4}
 
     for resolved in (resolved_three, resolved_four):
-        result = resolved.function(**resolved.arguments)
+        result = resolved.function(**resolved.arguments, **resolved.static_kwargs)
         assert_array_equal(result, 9.0)
+
+    jitted = jax.jit(
+        resolved_three.function,
+        static_argnames=tuple(resolved_three.static_kwargs),
+    )
+    compiled = jitted.lower(
+        **resolved_three.arguments, **resolved_three.static_kwargs
+    ).compile()
+    assert_array_equal(compiled(**resolved_three.arguments), 9.0)
 
 
 def test_resolver_requires_a_planner_width_for_each_streamable_axis() -> None:
@@ -457,11 +476,14 @@ def test_program_and_resolution_snapshot_their_input_mappings() -> None:
 
     assert "injected" not in program.arguments
     assert "injected" not in resolved.arguments
+    assert resolved.static_kwargs == {_WIDTH_KEYWORD: 3}
     assert resolved.tile_widths == {"action": 3}
     with pytest.raises(TypeError):
         cast("dict[str, object]", program.arguments)["new"] = jnp.asarray(0)
     with pytest.raises(TypeError):
         cast("dict[str, object]", resolved.arguments)["new"] = jnp.asarray(0)
+    with pytest.raises(TypeError):
+        cast("dict[str, int]", resolved.static_kwargs)[_WIDTH_KEYWORD] = 4
     with pytest.raises(TypeError):
         cast("dict[str, int]", resolved.tile_widths)["action"] = 4
 

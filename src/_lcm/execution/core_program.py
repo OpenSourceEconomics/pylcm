@@ -6,9 +6,9 @@ before lowering. Kernels without a program for a named core use their dense exec
 path for that unsupported route.
 """
 
-import functools
 import inspect
 import math
+import weakref
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -97,6 +97,7 @@ class ResolvedCoreProgram:
 
     function: Callable[..., object]
     arguments: Mapping[str, object]
+    static_kwargs: Mapping[str, int]
     output_roles: object
     tile_widths: Mapping[str, int]
     specialization_key: Hashable
@@ -105,6 +106,11 @@ class ResolvedCoreProgram:
     def __post_init__(self) -> None:
         """Snapshot the materialized argument and planning containers."""
         object.__setattr__(self, "arguments", MappingProxyType(dict(self.arguments)))
+        object.__setattr__(
+            self,
+            "static_kwargs",
+            MappingProxyType(dict(self.static_kwargs)),
+        )
         object.__setattr__(
             self,
             "tile_widths",
@@ -119,10 +125,11 @@ def resolve_core_program(
 ) -> ResolvedCoreProgram:
     """Validate and bind planner-owned tile widths into program.
 
-    Widths are static compilation choices: they are partially applied to the
-    core rather than appended to its dynamic lowering arguments. A streamable
-    axis requires an explicit planner choice; silently using its full extent
-    would turn a streaming declaration into full materialization.
+    Widths are static compilation choices kept separate from the dynamic lowering
+    arguments. The engine supplies them as JAX static keyword arguments while retaining
+    the raw core's identity, so equivalent solves reuse JAX's trace cache. A streamable
+    axis requires an explicit planner choice; silently using its full extent would turn
+    a streaming declaration into full materialization.
     """
     _validate_core_program(program=program)
     requested_widths = {} if tile_widths is None else dict(tile_widths)
@@ -161,8 +168,9 @@ def resolve_core_program(
         )
 
     return ResolvedCoreProgram(
-        function=functools.partial(program.function, **width_bindings),
+        function=program.function,
         arguments=program.arguments,
+        static_kwargs=width_bindings,
         output_roles=program.output_roles,
         tile_widths=resolved_widths,
         specialization_key=(
@@ -175,6 +183,26 @@ def resolve_core_program(
 
 def _validate_core_program(*, program: CoreProgram) -> None:
     """Validate a complete declaration before planner choices inspect it."""
+    try:
+        weakref.ref(program.function)
+    except TypeError as error:
+        msg = (
+            "CoreProgram function must be weak-referenceable so JAX can retain "
+            "its raw callable identity."
+        )
+        raise TypeError(msg) from error
+
+    function_type = type(program.function)
+    if (
+        function_type.__eq__ is not object.__eq__
+        or function_type.__hash__ is not object.__hash__
+    ):
+        msg = (
+            "CoreProgram function must use identity-based equality and hashing "
+            "so JAX can use its raw callable as a compilation-cache key."
+        )
+        raise TypeError(msg)
+
     axes = program.requirements.streamable_axes
     axis_names = [axis.name for axis in axes]
     if len(axis_names) != len(set(axis_names)):

@@ -32,6 +32,54 @@ def _core(*, choice: jax.Array, _test_action_tile_width: int) -> jax.Array:
     return choice[0] + jnp.asarray(_test_action_tile_width, dtype=choice.dtype)
 
 
+def _alternate_core(*, choice: jax.Array, _test_action_tile_width: int) -> jax.Array:
+    """Provide a route-distinct core with the same dynamic/static signature."""
+    return choice[-1] + jnp.asarray(_test_action_tile_width, dtype=choice.dtype)
+
+
+@dataclass
+class _UnhashableCore:
+    """Weak-referenceable callable JAX cannot use as a cache key."""
+
+    offset: float = 0.0
+
+    def __call__(self, *, choice: jax.Array, _test_action_tile_width: int) -> jax.Array:
+        return (
+            choice[0]
+            + jnp.asarray(_test_action_tile_width, dtype=choice.dtype)
+            + self.offset
+        )
+
+
+@dataclass(frozen=True)
+class _EqualHashableCore:
+    """Callable whose value equality aliases route-distinct JAX cache keys."""
+
+    offset: float
+
+    def __hash__(self) -> int:
+        return 0
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _EqualHashableCore)
+
+    def __call__(self, *, choice: jax.Array, _test_action_tile_width: int) -> jax.Array:
+        return (
+            choice[0]
+            + jnp.asarray(_test_action_tile_width, dtype=choice.dtype)
+            + self.offset
+        )
+
+
+class _NonWeakrefableCore:
+    """Callable that JAX cannot retain as a raw trace-cache key."""
+
+    __slots__ = ()
+
+    def __call__(self, *, choice: jax.Array, _test_action_tile_width: int) -> jax.Array:
+        return choice[0] + jnp.asarray(_test_action_tile_width, dtype=choice.dtype)
+
+
 def _program(
     *,
     arguments: Mapping[str, object] | None = None,
@@ -83,6 +131,67 @@ def test_reduction_semantics_supply_stable_specialization_identity() -> None:
 
     assert first.specialization_key == equivalent.specialization_key
     assert first.specialization_key != changed.specialization_key
+
+
+def test_equivalent_static_resolution_reuses_callable_identity() -> None:
+    """Equivalent programs retain JAX's trace-cache key across solve calls."""
+    first = resolve_core_program(
+        program=_program(),
+        tile_widths={"action": 1},
+    )
+    equivalent = resolve_core_program(
+        program=_program(arguments={"choice": jnp.asarray([3.0, 4.0])}),
+        tile_widths={"action": 1},
+    )
+    changed_width = resolve_core_program(
+        program=_program(),
+        tile_widths={"action": 2},
+    )
+    changed_route = resolve_core_program(
+        program=_program(function=_alternate_core),
+        tile_widths={"action": 1},
+    )
+
+    assert first.function is equivalent.function
+    assert first.function is changed_width.function
+    assert first.static_kwargs != changed_width.static_kwargs
+    assert first.specialization_key != changed_width.specialization_key
+    assert first.function is not changed_route.function
+
+
+def test_core_program_requires_identity_based_callable_semantics() -> None:
+    """Reject value-equal routes that JAX could alias in its trace cache."""
+    first = _EqualHashableCore(offset=1.0)
+    second = _EqualHashableCore(offset=2.0)
+
+    assert first is not second
+    assert first == second
+    assert hash(first) == hash(second)
+
+    for function in (first, second):
+        with pytest.raises(TypeError, match="identity-based equality and hashing"):
+            resolve_core_program(
+                program=_program(function=function),
+                tile_widths={"action": 1},
+            )
+
+
+def test_core_program_rejects_unhashable_raw_callable() -> None:
+    """Reject a callable JAX cannot use as a trace-cache key."""
+    with pytest.raises(TypeError, match="identity-based equality and hashing"):
+        resolve_core_program(
+            program=_program(function=_UnhashableCore()),
+            tile_widths={"action": 1},
+        )
+
+
+def test_core_program_requires_a_weakrefable_raw_callable() -> None:
+    """Reject a route JAX cannot use as a stable raw trace-cache key."""
+    with pytest.raises(TypeError, match="weak-referenceable"):
+        resolve_core_program(
+            program=_program(function=_NonWeakrefableCore()),
+            tile_widths={"action": 1},
+        )
 
 
 @pytest.mark.parametrize(

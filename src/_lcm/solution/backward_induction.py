@@ -1399,6 +1399,7 @@ def _compile_all_functions(
         lowering_keys,
         lowering_functions,
         lowering_arguments,
+        lowering_static_kwargs,
         lowering_output_roles,
     ) = _resolve_output_layouts_and_lowering_keys(
         all_functions=all_functions,
@@ -1446,6 +1447,7 @@ def _compile_all_functions(
     ):
         triple = (regime_name, period, core_key)
         lower_args = lowering_arguments[triple]
+        static_kwargs = lowering_static_kwargs[triple]
         label = f"{regime_name} {core_key} (age {ages.values[period].item()})"
         labels[lowering_key] = label
         log_module_fanout(
@@ -1458,14 +1460,15 @@ def _compile_all_functions(
         start = time.monotonic()
         layout = all_layouts[triple]
         jitted = (
-            jax.jit(func)
+            jax.jit(func, static_argnames=tuple(static_kwargs))
             if layout is UNPLANNED
             else jax.jit(
                 func,
+                static_argnames=tuple(static_kwargs),
                 out_shardings=cast("ResolvedOutputLayout", layout).out_shardings,
             )
         )
-        low = jitted.lower(**lower_args)
+        low = jitted.lower(**lower_args, **static_kwargs)
         _assert_lowered_output_roles(
             lowered=low,
             output_roles=lowering_output_roles[triple],
@@ -1552,6 +1555,7 @@ def _resolve_output_layouts_and_lowering_keys(
     dict[_CoreTriple, Hashable],
     dict[_CoreTriple, Callable],
     dict[_CoreTriple, Mapping[str, object]],
+    dict[_CoreTriple, Mapping[str, int]],
     dict[_CoreTriple, object | None],
 ]:
     """Materialize each core's complete, immutable lowering description."""
@@ -1559,6 +1563,7 @@ def _resolve_output_layouts_and_lowering_keys(
     lowering_keys: dict[_CoreTriple, Hashable] = {}
     lowering_functions: dict[_CoreTriple, Callable] = {}
     lowering_arguments: dict[_CoreTriple, Mapping[str, object]] = {}
+    lowering_static_kwargs: dict[_CoreTriple, Mapping[str, int]] = {}
     lowering_output_roles: dict[_CoreTriple, object | None] = {}
     for (regime_name, period, core_key), func in all_functions.items():
         regime = regimes[regime_name]
@@ -1588,6 +1593,7 @@ def _resolve_output_layouts_and_lowering_keys(
         if program is None:
             lowering_func = func
             lowering_args = arguments
+            static_kwargs = MappingProxyType({})
             output_roles = None
             specialization_key: Hashable | None = None
         else:
@@ -1598,6 +1604,7 @@ def _resolve_output_layouts_and_lowering_keys(
             )
             lowering_func = resolved.function
             lowering_args = resolved.arguments
+            static_kwargs = resolved.static_kwargs
             output_roles = resolved.output_roles
             specialization_key = resolved.specialization_key
 
@@ -1630,6 +1637,7 @@ def _resolve_output_layouts_and_lowering_keys(
             )
         lowering_functions[triple] = lowering_func
         lowering_arguments[triple] = lowering_args
+        lowering_static_kwargs[triple] = static_kwargs
         lowering_output_roles[triple] = output_roles
         layout_key = UNPLANNED if layout is UNPLANNED else layout.compilation_key
         lowering_keys[triple] = _lowering_key(
@@ -1644,6 +1652,7 @@ def _resolve_output_layouts_and_lowering_keys(
         lowering_keys,
         lowering_functions,
         lowering_arguments,
+        lowering_static_kwargs,
         lowering_output_roles,
     )
 
