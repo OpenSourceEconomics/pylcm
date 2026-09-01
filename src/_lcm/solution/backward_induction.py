@@ -41,6 +41,15 @@ from _lcm.solution.diagnostics import (
     _init_diagnostic_accumulators,
     _states_for_period,
 )
+from _lcm.solution.kernel_attribution import (
+    log_executed_kernel,
+    log_module_fanout,
+)
+from _lcm.solution.period_capture import (
+    PeriodCaptureTarget,
+    capture_kernel_inputs,
+    resolve_capture_target,
+)
 from _lcm.solution.v_topology import (
     _build_zero_V_arr,
     _get_regime_V_shapes_and_shardings,
@@ -113,6 +122,8 @@ def solve(  # noqa: C901, PLR0915
         the default path only gains an empty dissolution mapping.
 
     """
+    capture_target = resolve_capture_target()
+
     # The state-action spaces and the fence that reads them depend only on
     # `regimes` and `flat_params`, so a colliding model is rejected before a
     # single kernel is compiled rather than after every regime-period has been
@@ -246,6 +257,7 @@ def solve(  # noqa: C901, PLR0915
                 regime_name=regime_name,
                 period=period,
                 compiled_cores=compiled_functions[(regime_name, period)],
+                capture_target=capture_target,
                 state_action_space=base_state_action_spaces[regime_name],
                 flat_params=flat_params,
                 ages=ages,
@@ -438,6 +450,7 @@ def _run_period_kernel(
     regime_name: RegimeName,
     period: int,
     compiled_cores: MappingProxyType[str, Callable],
+    capture_target: PeriodCaptureTarget | None,
     state_action_space: StateActionSpace,
     flat_params: FlatParams,
     ages: AgeGrid,
@@ -480,6 +493,27 @@ def _run_period_kernel(
     """
     period_kernel = regime.solution.period_kernels[period]
 
+    # Captured before the period-specific state axes are substituted below. Replay
+    # re-enters this funnel with capture explicitly disabled.
+    capture_kernel_inputs(
+        capture_target=capture_target,
+        regime=regime,
+        regime_name=regime_name,
+        period=period,
+        kernel_kwargs={
+            "regime_name": regime_name,
+            "period": period,
+            "state_action_space": state_action_space,
+            "flat_params": flat_params,
+            "ages": ages,
+            "next_regime_to_V_arr": next_regime_to_V_arr,
+            "next_regime_to_continuation": next_regime_to_continuation,
+            "logger": logger,
+            "next_edge_to_V_arr": next_edge_to_V_arr,
+            "period_solution": period_solution,
+        },
+    )
+
     # AGE-SPECIALIZED STATES: tabulate period-t's value function on period-t's grid
     # nodes, not on the representative base axis. This is what keeps the tabulation
     # on the same grid as the continuation, which reads V_{t+1} on period-(t+1)'s
@@ -509,6 +543,15 @@ def _run_period_kernel(
                 )
             )
         ),
+    )
+
+    log_executed_kernel(
+        regime_name=regime_name,
+        period=period,
+        ages=ages,
+        state_action_space=state_action_space,
+        core_keys=tuple(compiled_cores),
+        logger=logger,
     )
 
     same_period_kwargs: dict[str, object] = {}
@@ -1208,6 +1251,8 @@ def _compile_all_functions(
         if func_id not in unique:
             unique[func_id] = (func, regime_name, period, core_key)
 
+    n_triples_per_func = _count_triples_per_func(all_functions=all_functions)
+
     n_workers = _resolve_compilation_workers(
         max_compilation_workers=max_compilation_workers
     )
@@ -1249,6 +1294,11 @@ def _compile_all_functions(
         )
         label = f"{regime_name} {core_key} (age {ages.values[period].item()})"
         labels[func_id] = label
+        log_module_fanout(
+            label=label,
+            n_triples=n_triples_per_func[func_id],
+            logger=logger,
+        )
         logger.info("%d/%d  %s", i, n_unique, label)
         logger.info("  lowering ...")
         start = time.monotonic()
@@ -1291,6 +1341,22 @@ def _compile_all_functions(
             for key, func in all_functions.items()
         }
     )
+
+
+def _count_triples_per_func(
+    *,
+    all_functions: dict[tuple[RegimeName, int, str], Callable],
+) -> dict[Hashable, int]:
+    """Count the (regime, period, core) triples each lowered module will serve.
+
+    Cores are deduplicated by identity before lowering, so a module name in an
+    XLA dump identifies a regime-period only where this count is 1.
+    """
+    counts: dict[Hashable, int] = {}
+    for func in all_functions.values():
+        key = _func_dedup_key(func=func)
+        counts[key] = counts.get(key, 0) + 1
+    return counts
 
 
 def _group_cores_by_regime_period(
