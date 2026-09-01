@@ -16,7 +16,7 @@ the same regime remains executable under `GridSearch`.
 import lcm
 
 eligible = lcm.case_boundary(
-    lcm.ref("liquid") < lcm.ref("asset_limit"),
+    condition=lcm.ref("liquid") < lcm.ref("asset_limit"),
     kind="jump",
 )
 ```

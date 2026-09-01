@@ -245,24 +245,26 @@ the key in the `regimes` dict passed to `Model`:
 ```python
 # Non-terminal regime
 Regime(
-    transition=next_regime_func,                  # Required: regime transition function (None → terminal)
-    active=lambda age: 25 <= age < 65,           # Optional: age-based predicate (default: always True)
-    states={                                     # Pure outcome-space grids
+    transition=next_regime_func,  # Required: regime transition function (None → terminal)
+    active=lambda age: (
+        25 <= age < 65
+    ),  # Optional: age-based predicate (default: always True)
+    states={  # Pure outcome-space grids
         "wealth": LinSpacedGrid(...),
         "education": DiscreteGrid(EduStatus),
     },
-    state_transitions={                          # How states evolve over time
-        "wealth": next_wealth,                   # Deterministic transition
+    state_transitions={  # How states evolve over time
+        "wealth": next_wealth,  # Deterministic transition
         "education": fixed_transition("education"),  # Fixed state (identity law)
     },
-    actions={"action_name": Grid},                # Action grids (can be empty)
-    functions={                                  # Must include "utility"; other functions optional
+    actions={"action_name": Grid},  # Action grids (can be empty)
+    functions={  # Must include "utility"; other functions optional
         "utility": utility_function,
         "name": helper_func,
     },
-    constraints={"name": constraint_func},        # Optional: constraint functions
-    koopmans_aggregator=CESAggregator(),           # Optional: overrides the model-level one
-    certainty_equivalent=PowerMean(),            # Optional: overrides the model-level one
+    constraints={"name": constraint_func},  # Optional: constraint functions
+    koopmans_aggregator=CESAggregator(),  # Optional: overrides the model-level one
+    certainty_equivalent=PowerMean(),  # Optional: overrides the model-level one
 )
 
 # Terminal regime (transition=None, no state_transitions)
@@ -282,7 +284,7 @@ Regime(
             "retired": MarkovTransition(health_probs_retired),
         },
     },
-    ...
+    # Additional configuration may follow.
 )
 ```
 
@@ -497,7 +499,9 @@ from lcm.typing import BoolND, ContinuousState, FloatND
         kind="jump",
     )
 )
-def medicaid_eligible(liquid: ContinuousState, medicaid_asset_limit: float) -> BoolND:
+def medicaid_eligible(
+    *, liquid: ContinuousState, medicaid_asset_limit: float
+) -> BoolND:
     """Medicaid asset test: eligible while liquid wealth is below the limit."""
     return liquid < medicaid_asset_limit
 
@@ -939,7 +943,7 @@ everywhere — engine internals and model functions alike. Readability is not so
 only the public surface earns, and a call reading `f(a, b)` says nothing about which
 value is which.
 
-```python
+```text
 # Good
 def compute_regret(*, published: FloatND, reference: FloatND) -> FloatND: ...
 
@@ -948,7 +952,7 @@ def compute_regret(*, published: FloatND, reference: FloatND) -> FloatND: ...
 def compute_regret(published: FloatND, reference: FloatND) -> FloatND: ...
 ```
 
-There are exactly two exemptions:
+There are exactly three exemptions:
 
 1. **A callback whose caller is a library that passes positionally** — `lax.scan` bodies
    `(carry, x)`, `custom_jvp` rules `(primals, tangents)`, pytree
@@ -968,7 +972,14 @@ There are exactly two exemptions:
    contain *only* operators, so the exemption stays auditable rather than sprinkled per
    function. The declaration is `Keyword-only exemption: arithmetic-only module.`
 
-Functions predating this rule are being converted separately; see issue #421.
+1. **A public loader with one natural primary resource argument** — keep that resource
+   positional while making every option keyword-only. Mark the function with the exact
+   primary parameter so the exception remains auditable:
+
+   ```python
+   # keyword-only-exempt: primary-argument=path
+   def load_snapshot(path: Path, *, exclude: Sequence[str] = ()) -> Snapshot: ...
+   ```
 
 ### Module Layout
 

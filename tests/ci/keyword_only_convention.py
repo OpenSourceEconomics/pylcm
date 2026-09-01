@@ -1,15 +1,24 @@
 """Check the repository's keyword-only function convention."""
 
 import ast
+import io
+import json
 import re
 import sys
+import tokenize
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 _EXEMPTION_PREFIX = "# keyword-only-exempt:"
 _LIBRARY_CALLBACK_EXEMPTION = re.compile(
     rf"{_EXEMPTION_PREFIX} library-callback=[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*"
+)
+_PRIMARY_ARGUMENT_EXEMPTION = re.compile(
+    rf"{_EXEMPTION_PREFIX} primary-argument=(?P<name>[A-Za-z_]\w*)"
+)
+_MARKDOWN_FENCE_START = re.compile(
+    r"^(?P<indent> {0,3})(?P<fence>`{3,}|~{3,})[ \t]*(?:python|py)(?:[ \t]+.*)?$"
 )
 
 
@@ -52,6 +61,7 @@ class KeywordOnlyViolation:
     qualified_name: str
     code: str
     positional_parameters: tuple[str, ...]
+    cell: int | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -59,6 +69,13 @@ class _Definition:
     node: ast.FunctionDef | ast.AsyncFunctionDef
     qualified_name: str
     is_method: bool
+
+
+@dataclass(frozen=True, kw_only=True)
+class _SourceUnit:
+    source: str
+    line_offset: int = 0
+    cell: int | None = None
 
 
 class _DefinitionVisitor(ast.NodeVisitor):
@@ -111,10 +128,24 @@ def _parameter_info(
     return tuple(positional_parameters), parameter_count
 
 
+def _standalone_comments(*, source: str) -> dict[int, str]:
+    source_lines = source.splitlines()
+    comments: dict[int, str] = {}
+    tokens = tokenize.generate_tokens(io.StringIO(source).readline)
+    for token in tokens:
+        if token.type != tokenize.COMMENT:
+            continue
+        line_number, column = token.start
+        if source_lines[line_number - 1][:column].strip():
+            continue
+        comments[line_number] = token.string.strip()
+    return comments
+
+
 def _exemption_for(
     *,
     definition: _Definition,
-    source_lines: list[str],
+    comments: dict[int, str],
 ) -> tuple[str | None, int | None]:
     decorator_lines = [decorator.lineno for decorator in definition.node.decorator_list]
     definition_start = min([definition.node.lineno, *decorator_lines])
@@ -122,11 +153,14 @@ def _exemption_for(
     if marker_line < 1:
         return None, None
 
-    marker = source_lines[marker_line - 1].strip()
+    marker = comments.get(marker_line, "")
     if not marker.startswith(_EXEMPTION_PREFIX):
         return None, None
     if _LIBRARY_CALLBACK_EXEMPTION.fullmatch(marker):
         return "library-callback", marker_line
+    primary_match = _PRIMARY_ARGUMENT_EXEMPTION.fullmatch(marker)
+    if primary_match is not None:
+        return f"primary-argument={primary_match.group('name')}", marker_line
     return "malformed", marker_line
 
 
@@ -143,17 +177,25 @@ def _regular_violation(
     is_noncompliant: bool,
     path: Path,
     positional_parameters: tuple[str, ...],
-    source_lines: list[str],
+    comments: dict[int, str],
 ) -> KeywordOnlyViolation | None:
-    exemption, marker_line = _exemption_for(
-        definition=definition, source_lines=source_lines
-    )
+    exemption, marker_line = _exemption_for(definition=definition, comments=comments)
     violation_line = marker_line if marker_line is not None else definition.node.lineno
     if exemption == "malformed":
         code = "KWO002"
-    elif exemption == "library-callback" and not is_noncompliant:
+    elif exemption == "library-callback":
+        if is_noncompliant:
+            return None
         code = "KWO003"
-    elif exemption == "library-callback" or not is_noncompliant:
+    elif exemption is not None and exemption.startswith("primary-argument="):
+        primary_argument = exemption.removeprefix("primary-argument=")
+        if not is_noncompliant:
+            code = "KWO003"
+        elif positional_parameters != (primary_argument,):
+            code = "KWO002"
+        else:
+            return None
+    elif not is_noncompliant:
         return None
     else:
         code = "KWO001"
@@ -188,25 +230,28 @@ def _orphaned_exemption_violations(
     *,
     definitions: list[_Definition],
     path: Path,
-    source_lines: list[str],
+    comments: dict[int, str],
 ) -> list[KeywordOnlyViolation]:
     attached_marker_lines = {
         marker_line
         for definition in definitions
         for _exemption, marker_line in [
-            _exemption_for(definition=definition, source_lines=source_lines)
+            _exemption_for(definition=definition, comments=comments)
         ]
         if marker_line is not None
     }
     violations = []
-    for line_number, line in enumerate(source_lines, start=1):
-        marker = line.strip()
+    for line_number, marker in comments.items():
         if (
             not marker.startswith(_EXEMPTION_PREFIX)
             or line_number in attached_marker_lines
         ):
             continue
-        code = "KWO003" if _LIBRARY_CALLBACK_EXEMPTION.fullmatch(marker) else "KWO002"
+        is_recognized = bool(
+            _LIBRARY_CALLBACK_EXEMPTION.fullmatch(marker)
+            or _PRIMARY_ARGUMENT_EXEMPTION.fullmatch(marker)
+        )
+        code = "KWO003" if is_recognized else "KWO002"
         violations.append(
             KeywordOnlyViolation(
                 path=path,
@@ -219,9 +264,11 @@ def _orphaned_exemption_violations(
     return violations
 
 
-def _violations_for_path(path: Path) -> list[KeywordOnlyViolation]:
-    source_lines = path.read_text().splitlines()
-    tree = ast.parse("\n".join(source_lines), filename=str(path))
+def _violations_for_source(
+    *, path: Path, source_unit: _SourceUnit
+) -> list[KeywordOnlyViolation]:
+    tree = ast.parse(source_unit.source, filename=str(path))
+    comments = _standalone_comments(source=source_unit.source)
     arithmetic_module = _is_declared_arithmetic_module(path=path, tree=tree)
     used_arithmetic_exemption = False
     violations: list[KeywordOnlyViolation] = []
@@ -231,7 +278,7 @@ def _violations_for_path(path: Path) -> list[KeywordOnlyViolation]:
         _orphaned_exemption_violations(
             definitions=visitor.definitions,
             path=path,
-            source_lines=source_lines,
+            comments=comments,
         )
     )
     for definition in visitor.definitions:
@@ -254,7 +301,7 @@ def _violations_for_path(path: Path) -> list[KeywordOnlyViolation]:
                 is_noncompliant=is_noncompliant,
                 path=path,
                 positional_parameters=positional_parameters,
-                source_lines=source_lines,
+                comments=comments,
             )
         if violation is not None:
             violations.append(violation)
@@ -270,7 +317,74 @@ def _violations_for_path(path: Path) -> list[KeywordOnlyViolation]:
             )
         )
     violations.sort(key=lambda violation: violation.line)
-    return violations
+    return [
+        replace(
+            violation,
+            line=violation.line + source_unit.line_offset,
+            cell=source_unit.cell,
+        )
+        for violation in violations
+    ]
+
+
+def _markdown_source_units(*, source: str) -> tuple[_SourceUnit, ...]:
+    lines = source.splitlines()
+    source_units: list[_SourceUnit] = []
+    line_index = 0
+    while line_index < len(lines):
+        opening_match = _MARKDOWN_FENCE_START.fullmatch(lines[line_index])
+        if opening_match is None:
+            line_index += 1
+            continue
+
+        fence = opening_match.group("fence")
+        indentation = len(opening_match.group("indent"))
+        closing_fence = re.compile(
+            rf"^ {{0,3}}{re.escape(fence[0])}{{{len(fence)},}}[ \t]*$"
+        )
+        line_offset = line_index + 1
+        line_index += 1
+        code_lines: list[str] = []
+        while line_index < len(lines) and not closing_fence.fullmatch(
+            lines[line_index]
+        ):
+            line = lines[line_index]
+            if indentation and line.startswith(" " * indentation):
+                line = line[indentation:]
+            code_lines.append(line)
+            line_index += 1
+        source_units.append(
+            _SourceUnit(source="\n".join(code_lines), line_offset=line_offset)
+        )
+        line_index += 1
+
+    return tuple(source_units)
+
+
+def _notebook_source_units(*, source: str) -> tuple[_SourceUnit, ...]:
+    notebook = json.loads(source)
+    source_units: list[_SourceUnit] = []
+    for cell_number, cell in enumerate(notebook["cells"], start=1):
+        if cell.get("cell_type") != "code":
+            continue
+        cell_source = cell.get("source", "")
+        if isinstance(cell_source, list):
+            code = "".join(cell_source)
+        else:
+            code = str(cell_source)
+        source_units.append(_SourceUnit(source=code, cell=cell_number))
+    return tuple(source_units)
+
+
+def _source_units_for_path(*, path: Path) -> tuple[_SourceUnit, ...]:
+    source = path.read_text()
+    if path.suffix == ".py":
+        return (_SourceUnit(source=source),)
+    if path.suffix == ".md":
+        return _markdown_source_units(source=source)
+    if path.suffix == ".ipynb":
+        return _notebook_source_units(source=source)
+    return ()
 
 
 def find_keyword_only_violations(
@@ -278,7 +392,10 @@ def find_keyword_only_violations(
 ) -> tuple[KeywordOnlyViolation, ...]:
     """Return convention violations in ``paths`` in stable source order."""
     return tuple(
-        violation for path in paths for violation in _violations_for_path(path)
+        violation
+        for path in paths
+        for source_unit in _source_units_for_path(path=path)
+        for violation in _violations_for_source(path=path, source_unit=source_unit)
     )
 
 
@@ -288,15 +405,16 @@ def _render_violation(violation: KeywordOnlyViolation) -> str:
             violation.positional_parameters
         )
     elif violation.code == "KWO002":
-        detail = "malformed or unexplained library-callback exemption"
+        detail = "malformed or invalid keyword-only exemption"
     elif violation.code == "KWO003":
         detail = "stale keyword-only exemption"
     else:
         detail = "non-operator definition in arithmetic-only module"
-    return (
-        f"{violation.path}:{violation.line}: {violation.code} "
-        f"{violation.qualified_name}: {detail}"
-    )
+    if violation.cell is None:
+        location = f"{violation.path}:{violation.line}"
+    else:
+        location = f"{violation.path}:cell {violation.cell}:line {violation.line}"
+    return f"{location}: {violation.code} {violation.qualified_name}: {detail}"
 
 
 def main(*, paths: Iterable[Path]) -> int:

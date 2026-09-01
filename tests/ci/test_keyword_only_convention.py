@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -111,6 +112,33 @@ def test_audits_library_callback_exemptions(tmp_path: Path) -> None:
     ]
 
 
+def test_audits_primary_argument_exemptions(tmp_path: Path) -> None:
+    source = tmp_path / "loaders.py"
+    source.write_text(
+        "# keyword-only-exempt: primary-argument=path\n"
+        "def load(path, *, exclude=()):\n"
+        "    return path, exclude\n"
+        "\n"
+        "# keyword-only-exempt: primary-argument=source\n"
+        "def mismatched(path, *, exclude=()):\n"
+        "    return path, exclude\n"
+        "\n"
+        "# keyword-only-exempt: primary-argument=path\n"
+        "def stale(path):\n"
+        "    return path\n"
+    )
+
+    violations = find_keyword_only_violations(paths=[source])
+
+    assert [
+        (violation.line, violation.qualified_name, violation.code)
+        for violation in violations
+    ] == [
+        (5, "mismatched", "KWO002"),
+        (9, "stale", "KWO003"),
+    ]
+
+
 def test_limits_arithmetic_exemption_to_declared_operators(tmp_path: Path) -> None:
     source = tmp_path / "src" / "_lcm" / "egm" / "upper_envelope" / "double_double.py"
     source.parent.mkdir(parents=True)
@@ -168,6 +196,72 @@ def test_rejects_orphaned_callback_exemption(tmp_path: Path) -> None:
         (violation.line, violation.qualified_name, violation.code)
         for violation in violations
     ] == [(1, "<module>", "KWO003")]
+
+
+def test_ignores_exemption_syntax_in_module_docstring(tmp_path: Path) -> None:
+    source = tmp_path / "documentation.py"
+    source.write_text(
+        '"""Documentation can show the exemption syntax.\n'
+        "\n"
+        "# keyword-only-exempt: library-callback=jax.lax.scan\n"
+        '"""\n'
+        "\n"
+        "def compliant(*, left: int, right: int) -> int:\n"
+        "    return left + right\n"
+    )
+
+    assert find_keyword_only_violations(paths=[source]) == ()
+
+
+def test_reports_markdown_fence_lines_in_document_coordinates(tmp_path: Path) -> None:
+    source = tmp_path / "page.md"
+    source.write_text(
+        "A compliant example:\n"
+        "```python\n"
+        "def compliant(*, left, right):\n"
+        "    return left + right\n"
+        "```\n"
+        "An invalid example:\n"
+        "   ```py\n"
+        "   def noncompliant(left, right):\n"
+        "       return left + right\n"
+        "   ```\n"
+    )
+
+    violations = find_keyword_only_violations(paths=[source])
+
+    assert [
+        (violation.path, violation.line, violation.qualified_name, violation.code)
+        for violation in violations
+    ] == [(source, 8, "noncompliant", "KWO001")]
+
+
+def test_reports_notebook_lines_with_one_based_cell_numbers(tmp_path: Path) -> None:
+    source = tmp_path / "page.ipynb"
+    source.write_text(
+        json.dumps(
+            {
+                "cells": [
+                    {"cell_type": "markdown", "source": ["Introduction"]},
+                    {
+                        "cell_type": "code",
+                        "source": [
+                            "constant = 1\n",
+                            "def noncompliant(left, right):\n",
+                            "    return left + right\n",
+                        ],
+                    },
+                ]
+            }
+        )
+    )
+
+    violations = find_keyword_only_violations(paths=[source])
+
+    assert [
+        (violation.path, violation.cell, violation.line, violation.qualified_name)
+        for violation in violations
+    ] == [(source, 2, 2, "noncompliant")]
 
 
 def test_variadic_forwarders_do_not_trigger_the_named_argument_rule(
