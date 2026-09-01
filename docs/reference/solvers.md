@@ -73,10 +73,11 @@ These programs publish only solve-time `VALUE`, or `VALUE` plus `DISSOLUTION_FLA
 collective route; replay and policy artifacts are not integrated. Same-period value
 references, gated-target continuations, and edge-reference mappings remain unchanged
 inputs to the streamed solve core. Ordinary co-mapped state routes also stream while
-preserving device-local continuation reads. Folded routes, co-map intersections with
-separate same-period or edge-reference channels, and all simulation-policy
-construction remain dense. Runtime and peak-memory effects require
-measurement; bounded evaluation alone is not a performance claim.
+preserving device-local continuation reads. Eligible singleton folded-state routes stream
+the action product at each shock node before applying the unchanged quadrature over the
+full fold-node axis. Co-map intersections with separate same-period or edge-reference
+channels and all simulation-policy construction remain dense. Runtime and peak-memory
+effects require measurement; bounded action evaluation alone is not a performance claim.
 
 With EV1 taste shocks, GridSearch first maximizes over the continuous-action axes within
 each discrete-action combination and then applies the discrete log-sum. Simulation uses

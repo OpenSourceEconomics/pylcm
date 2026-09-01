@@ -638,10 +638,17 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         "streaming_provider:action_names_slice",
         "streaming_provider:action_extents_slice",
         "streaming_provider:width_keyword_collision_bypassed",
+        "streaming_provider:fold_route_disabled",
         "streaming_provider:co_map_route_disabled",
         "streaming_provider:co_map_reference_guard_bypassed",
         "streaming_provider:collective_reducer_dropped",
         "streaming_provider:collective_output_role_dropped",
+        "streaming_fold:rejection_restored",
+        "streaming_fold:productmap_output_filtered",
+        "streaming_fold:reduction_after_co_map",
+        "streaming_fold:signature_positionalized",
+        "streaming_fold:width_signature_dropped",
+        "streaming_fold:width_forwarding_filtered",
         "streaming_co_map:inner_state_reincluded",
         "streaming_co_map:state_order_reversed",
         "streaming_co_map:continuation_axes_broadcast",
@@ -722,10 +729,10 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
     assert required <= names
     # Independent literals make both cardinality and family identity part of this
     # certificate, rather than trusting constants supplied by the mutation generator.
-    assert len(names) == 281
+    assert len(names) == 288
     assert (
         hashlib.sha256(("\n".join(sorted(names)) + "\n").encode()).hexdigest()
-        == "1ec1c451fcc2d77d17bfb6d7226dafb259542487f51ca60a8dabfb812f06a1d2"
+        == "b8c68f46f5d8506702356b7f999bd0ca3803906555479f99b6dc3394e591e06d"
     )
 
 

@@ -25,7 +25,7 @@ The nine corridors are:
 
 * singleton solve -> ``Q_arr.max(where=F_arr, ...)``;
 * singleton streamed solve -> complete C-order blocks -> mergeable hard max ->
-  compiled VALUE core;
+  optional unchanged fold quadrature -> compiled VALUE core;
 * singleton simulate -> ``argmax_and_max(Q_arr, where=F_arr, ...)``;
 * collective solve -> ``collective_readout(..., feasibility=F_arr, ...)``;
 * collective streamed solve -> complete C-order stakeholder blocks -> shared
@@ -176,9 +176,9 @@ _SOURCE_SEALS = {
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
     ARGMAX_SOURCE: "0d179a5aa65a6f310f598bdad8f75a9318a24832e31bd529184c2ea90356a72d",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
-    MAX_Q_SOURCE: "f9ee588c3c3a87ead9ae760d9772d0f6da15192253b217b905ab9e3b37f391c3",
+    MAX_Q_SOURCE: "f32837cd1469fd3723a84b57665598cf6ef2dd255003975d5ba5b5182ea2e37c",
     PROCESSING_SOURCE: "e9fc3dc1b8b703f12867f336ce4439356edc2fbafc919ae2014cd939234a1b56",
-    GRID_SEARCH_SOURCE: "9b38a214d8585eb3bc3d19a651eef23f2906db5b72fa3e31723db91c1a8f4510",
+    GRID_SEARCH_SOURCE: "e31161e187c86c78f1de47e0e2ce3f66c660ef726f0913fe46c6014523ed3e87",
     CORE_PROGRAM_SOURCE: "661af8a35e2eea2e29ebfbe4d4ba9ba15e00972e910d93a98e06a5fa1286d84f",
     OUTPUT_LAYOUT_SOURCE: "d08aab63241c85d14ef8a59b105a9e45effc5cc2e4e3d0beb6d8fb36431fa43e",
     ACTION_STREAMING_SOURCE: "5aeafaa39498845cd7104c57aa811a108594bfc9755a3b2cd93ea592ebbc245e",
@@ -224,9 +224,9 @@ _SOURCE_SEALS = {
     MODEL_PROCESSING_SOURCE: "8a159831e37a9582852908c7e213106aa1070500f4e64fa12f1a7ed628854740",
 }
 
-EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 281
+EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 288
 EXPECTED_DIRECT_FLOW_MUTATION_NAMES_SHA256 = (
-    "1ec1c451fcc2d77d17bfb6d7226dafb259542487f51ca60a8dabfb812f06a1d2"
+    "b8c68f46f5d8506702356b7f999bd0ca3803906555479f99b6dc3394e591e06d"
 )
 
 
@@ -1524,17 +1524,20 @@ Q_and_F = productmap(
 
 
 def _streamed_max_builder_errors(tree: ast.Module) -> list[str]:
-    """Pin the VALUE-producing streamed builder and its fail-closed boundary."""
+    """Pin streamed VALUE production, optional folding, and fail-closed boundaries."""
     return _exact_callable_errors(
         tree=tree,
         label="streamed max-Q builder",
         contracts={
-            "get_streaming_max_Q_over_a": "c89a0b703992730a4c6c14b13a811ba144cb362343957c86334e815e6ddd9b9f",
+            "get_streaming_max_Q_over_a": "c366f3bbd119d308c4b27b43fee23bab45d1b0c752ecf416739c35e00732a383",
             "_fail_if_full_V_streaming_route_is_unsupported": (
-                "ac5a7a3a5ddd8d98808afdc2268921fed75712cd8d47d0a19ea6eec414271619"
+                "cd4c96d572ec7df9dc269f5fa2bfc1ec5c16fe0a78de3be56adc28c15f065d2c"
             ),
             "_fail_if_streaming_co_map_layout_is_invalid": (
                 "59c06aedafc8bcbe31d7f2f7f7b7d94e1d8044bf529c6f11a05882c5bf1d7979"
+            ),
+            "_wrap_with_fold_reduction": (
+                "a586674124f90ff862f64458b40d6a6f8bbf6586e9772d9bdb4d31bf68c9c34c"
             ),
         },
     )
@@ -1826,7 +1829,7 @@ def _grid_search_caller_errors(tree: ast.Module) -> list[str]:
             label="solve caller live streamed provider",
             contracts={
                 "GridSearch.build_period_kernels": "9f9021e00e2d709988d00015de23b0ee421bfce81158eb282eb5bd2909ede366",
-                "_supports_action_streaming": "804dff6de5461ff74f3a55dc3e46967a0509e2a80813d229e7e969aa8729eb41",
+                "_supports_action_streaming": "b19f94ca8da8952f6835b614a12a1098d27d5477e5d60d965cbc73ae9c96d155",
             },
         )
     )
@@ -3098,7 +3101,8 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> dict[str, Any]:
             "singleton_solve": "Q_and_F -> Q_arr.max(where=F_arr)",
             "singleton_streamed_solve": (
                 "Q_and_F -> canonical C-order action blocks -> exact mergeable "
-                "hard max -> VALUE-only compiled core"
+                "hard max -> optional unchanged fold quadrature -> VALUE-only "
+                "compiled core"
             ),
             "singleton_simulate": "Q_and_F -> argmax_and_max(a=Q_arr, where=F_arr)",
             "collective_solve": (
@@ -3842,6 +3846,17 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             new="        and True",
             label="streamed reserved width-keyword collision guard",
         ),
+        "streaming_provider:fold_route_disabled": _insert_before_nth(
+            text=grid_source,
+            marker=(
+                "        and not (\n"
+                "            context.co_map_state_names\n"
+                "            and (context.same_period_ref_regimes or context.edge_reference_regimes)\n"
+                "        )"
+            ),
+            insertion="        and not context.fold_state_names\n",
+            occurrence=1,
+        ),
         "streaming_provider:co_map_route_disabled": replace_once(
             source=grid_source,
             old=(
@@ -3942,6 +3957,107 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             old="            collective_result.best_stakeholder_values,",
             new="            collective_result.best_stakeholder_values[..., :-1],",
             label="streamed collective stakeholder output",
+        ),
+    }
+    streaming_fold_block = (
+        "    if fold_state_names:\n"
+        "        _fail_if_collective(\n"
+        "            fold_state_names=fold_state_names, stakeholders=stakeholders\n"
+        "        )\n"
+        "        mapped = _wrap_with_fold_reduction(\n"
+        '            mapped=cast("Callable[..., FloatND]", mapped),\n'
+        "            fold_state_names=fold_state_names,\n"
+        "            fold_weights=fold_weights,\n"
+        "            fold_conditioning=fold_conditioning,\n"
+        "            inner_state_names=inner_state_names,\n"
+        "            action_names=action_names,\n"
+        "            state_names=state_names,\n"
+        '            extra_param_names=[*extra_param_names, "_lcm_action_block_width"],\n'
+        "        )\n"
+    )
+    streaming_fold_after_co_map = replace_once(
+        source=max_source,
+        old=streaming_fold_block,
+        new="",
+        label="streamed fold block relocation source",
+    )
+    streaming_fold_after_co_map = _insert_before_nth(
+        text=streaming_fold_after_co_map,
+        marker=(
+            '    return cast("MaxQOverAFunction", allow_only_kwargs(func=mapped, enforce=False))'
+        ),
+        insertion=streaming_fold_block,
+        occurrence=2,
+    )
+
+    specs["streaming_fold:rejection_restored"] = {
+        "path": MAX_Q_SOURCE,
+        "source": _insert_before_nth(
+            text=max_source,
+            marker="    if fold_state_names:\n        _fail_if_collective(",
+            insertion=(
+                "    if fold_state_names:\n"
+                '        raise NotImplementedError("Full-V action streaming does not support fold states.")\n'
+            ),
+            occurrence=2,
+        ),
+    }
+    specs["streaming_fold:productmap_output_filtered"] = {
+        "path": MAX_Q_SOURCE,
+        "source": _replace_nth(
+            text=max_source,
+            marker='            mapped=cast("Callable[..., FloatND]", mapped),',
+            replacement=(
+                '            mapped=cast("Callable[..., FloatND]", '
+                "candidate_filter(mapped)),"
+            ),
+            occurrence=2,
+        ),
+    }
+    specs["streaming_fold:reduction_after_co_map"] = {
+        "path": MAX_Q_SOURCE,
+        "source": streaming_fold_after_co_map,
+    }
+    specs["streaming_fold:signature_positionalized"] = {
+        "path": MAX_Q_SOURCE,
+        "source": replace_once(
+            source=max_source,
+            old="    @with_signature(\n        kwargs=[\n",
+            new="    @with_signature(\n        args=[\n",
+            label="streamed fold keyword-only signature",
+        ),
+    }
+    specs["streaming_fold:width_signature_dropped"] = {
+        "path": MAX_Q_SOURCE,
+        "source": replace_once(
+            source=max_source,
+            old=(
+                '            extra_param_names=[*extra_param_names, "_lcm_action_block_width"],'
+            ),
+            new="            extra_param_names=extra_param_names,",
+            label="streamed fold width signature",
+        ),
+    }
+    specs["streaming_fold:width_forwarding_filtered"] = {
+        "path": MAX_Q_SOURCE,
+        "source": replace_once(
+            source=max_source,
+            old=(
+                "        V_arr = mapped(\n"
+                "            next_regime_to_V_arr=next_regime_to_V_arr, **states_actions_params\n"
+                "        )"
+            ),
+            new=(
+                "        V_arr = mapped(\n"
+                "            next_regime_to_V_arr=next_regime_to_V_arr,\n"
+                "            **{\n"
+                "                name: value\n"
+                "                for name, value in states_actions_params.items()\n"
+                '                if name != "_lcm_action_block_width"\n'
+                "            },\n"
+                "        )"
+            ),
+            label="streamed fold width forwarding",
         ),
     }
     specs["streaming_co_map:inner_state_reincluded"] = {

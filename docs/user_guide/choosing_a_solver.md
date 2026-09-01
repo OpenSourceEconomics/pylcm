@@ -86,9 +86,12 @@ GridSearch work still covers the full represented action support. Eligible JIT
 solve-value routes evaluate bounded C-order action blocks. Same-period value references,
 gated-target continuations, and edge-reference mappings remain unchanged inputs to those
 blocks. Ordinary co-mapped state routes also stream while preserving device-local
-continuation reads; folded routes, co-map intersections with separate same-period or
-edge-reference channels, and all simulation-policy construction remain dense. Treat the blockwise route as an execution detail until
-runtime and peak-memory effects have been measured for the model and hardware at hand.
+continuation reads. Eligible singleton folded-state routes stream the action product at
+each shock node and then apply the unchanged quadrature over the full fold-node axis.
+Co-map intersections with separate same-period or edge-reference channels and all
+simulation-policy construction remain dense. Treat the blockwise route as an execution
+detail until runtime and peak-memory effects have been measured for the model and
+hardware at hand.
 
 The EGM routes require named liquid roles. Nested routes add named outer roles.
 Institutional kinks and cliffs must be declared as case pieces or a piecewise-affine

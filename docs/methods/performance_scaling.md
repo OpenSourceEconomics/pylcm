@@ -50,10 +50,12 @@ blocks. Same-period value references, gated-target continuations, and edge-refer
 values and parameters remain unchanged dynamic inputs to those blocks, so a
 value-dependent declaration does not by itself force dense action materialization.
 Ordinary co-mapped state routes preserve device-local continuation reads while streaming
-actions. Folded routes, co-map intersections with separate same-period or edge-reference
-value channels, planner-width namespace collisions, and simulation policy construction
-still use the dense path. Blockwise evaluation preserves the full represented support;
-its runtime and memory effect remains empirical.
+actions. Eligible singleton folded-state routes also stream their action product at each
+shock node and then apply the unchanged quadrature reduction; the fold-node axis itself
+is still evaluated and reduced in full. Co-map intersections with separate same-period
+or edge-reference value channels, planner-width namespace collisions, and simulation
+policy construction still use the dense path. Blockwise action evaluation preserves the
+full represented support; its runtime and memory effect remains empirical.
 
 A large GPU should not be treated as a faster small GPU automatically. Independent
 tests, regimes, branches, subjects, or candidate chunks can improve occupancy, but only

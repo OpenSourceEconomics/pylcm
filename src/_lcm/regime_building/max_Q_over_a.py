@@ -340,8 +340,9 @@ def get_streaming_max_Q_over_a(
     shared household winner plus the empty-feasible-set flag. Ordinary states use
     the existing state productmap. Fixed distributed states instead retain the
     dense route's co-map access law: each state axis is mapped in lockstep with
-    axis zero of every continuation leaf that carries it. Folded states remain on
-    the dense GridSearch route.
+    axis zero of every continuation leaf that carries it. Folded singleton routes
+    stream their action product, then apply the existing quadrature reduction to the
+    still-materialized fold axes before any co-map wrapper.
     """
     _fail_if_streaming_co_map_layout_is_invalid(
         state_names=state_names,
@@ -353,8 +354,6 @@ def get_streaming_max_Q_over_a(
         stakeholders=stakeholders,
         pareto_weights=pareto_weights,
         fold_state_names=fold_state_names,
-        fold_weights=fold_weights,
-        fold_conditioning=fold_conditioning,
     )
     if has_taste_shocks and not 1 <= n_discrete_action_axes <= len(action_names):
         raise ValueError(
@@ -455,6 +454,20 @@ def get_streaming_max_Q_over_a(
         variables=inner_state_names,
         batch_sizes={name: batch_sizes[name] for name in inner_state_names},
     )
+    if fold_state_names:
+        _fail_if_collective(
+            fold_state_names=fold_state_names, stakeholders=stakeholders
+        )
+        mapped = _wrap_with_fold_reduction(
+            mapped=cast("Callable[..., FloatND]", mapped),
+            fold_state_names=fold_state_names,
+            fold_weights=fold_weights,
+            fold_conditioning=fold_conditioning,
+            inner_state_names=inner_state_names,
+            action_names=action_names,
+            state_names=state_names,
+            extra_param_names=[*extra_param_names, "_lcm_action_block_width"],
+        )
     if not co_map_state_names:
         return cast("MaxQOverAFunction", mapped)
 
@@ -482,21 +495,20 @@ def _fail_if_full_V_streaming_route_is_unsupported(
     stakeholders: tuple[str, ...] | None,
     pareto_weights: ParetoWeights | None,
     fold_state_names: tuple[StateName, ...],
-    fold_weights: Mapping[StateName, FloatND],
-    fold_conditioning: Mapping[StateName, StateName],
 ) -> None:
     """Reject routes unsupported by full-value action streaming."""
     if has_taste_shocks and stakeholders is not None:
         raise NotImplementedError(
             "Full-V action streaming does not support collective EV1 regimes."
         )
+    if has_taste_shocks and fold_state_names:
+        raise NotImplementedError(
+            "Full-V action streaming does not support EV1 taste shocks "
+            "with fold states."
+        )
     if (stakeholders is None) != (pareto_weights is None):
         raise ValueError(
             "Collective action streaming requires stakeholders and Pareto weights."
-        )
-    if fold_state_names or fold_weights or fold_conditioning:
-        raise NotImplementedError(
-            "Full-V action streaming does not support fold states."
         )
 
 
@@ -578,10 +590,11 @@ def _wrap_with_fold_reduction(
     `productmap`'s `variables` order) — this runs BEFORE any co-map wrapping,
     so no co-map axis is present yet. Fold axes are reduced from the highest
     inner-position down, so removing one axis never shifts the position of a
-    not-yet-reduced one. The wrapper redeclares EXACTLY `mapped`'s own call
-    signature (`with_signature`, matching `max_Q_over_a`'s pre-productmap
-    signature, which `productmap` preserves) so it composes transparently with
-    the co-map `vmap_1d` wrapping that may follow.
+    not-yet-reduced one. The wrapper redeclares the post-`productmap` keyword-only call
+    interface with `with_signature`, so `allow_args` can adapt it safely for the
+    co-map `vmap_1d` wrapping that may follow. On a streamed route,
+    `extra_param_names` also carries the planner-bound action-width keyword;
+    the wrapper forwards it unchanged to the mapped action reducer.
 
     A folded state named in `fold_conditioning` averages against a different row
     per category of its conditioning state, so its weights are broadcast to the
@@ -610,7 +623,12 @@ def _wrap_with_fold_reduction(
     }
 
     @with_signature(
-        args=["next_regime_to_V_arr", *action_names, *state_names, *extra_param_names],
+        kwargs=[
+            "next_regime_to_V_arr",
+            *action_names,
+            *state_names,
+            *extra_param_names,
+        ],
         return_annotation="FloatND",
         enforce=False,
     )

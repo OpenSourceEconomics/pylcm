@@ -5,8 +5,10 @@ returns one `PeriodKernel` per period. Eligible hard-max, collective, and EV1 so
 kernels declare their canonical action product for blockwise execution, and the engine
 binds the block width before lowering. Value-dependent inputs remain ordinary dynamic
 arguments of the streamed core. Fixed distributed states co-map ordinary continuation
-leaves with the streamed state cell; folded states, and co-map routes with separate
-same-period or edge-reference value channels, retain the dense kernel. The adapter
+leaves with the streamed state cell. Singleton folded-state routes stream actions before
+the unchanged quadrature reduction; the fold axis itself remains materialized. Co-map
+routes with separate same-period or edge-reference value channels retain the dense
+kernel. The adapter
 assembles the resulting `KernelResult` outside JIT.
 
 The kernel-building imports (`jax`, `get_max_Q_over_a`) are function-local so
@@ -255,7 +257,7 @@ def _supports_action_streaming(*, context: SolverBuildContext) -> bool:
                 and bool(context.state_action_space.discrete_actions)
             )
         )
-        and not context.fold_state_names
+        and not (context.has_taste_shocks and context.fold_state_names)
         and not (
             context.co_map_state_names
             and (context.same_period_ref_regimes or context.edge_reference_regimes)

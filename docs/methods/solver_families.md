@@ -43,12 +43,14 @@ support. Eligible JIT solve-value routes—ordinary singleton hard max, collecti
 max, and singleton EV1 expected max—evaluate bounded C-order action blocks. Same-period
 value references, gated-target continuations, and edge-reference mappings are supported
 unchanged inputs to those blocks. Ordinary co-mapped state routes stream while
-preserving device-local continuation reads; folds and co-map intersections with separate
-same-period or edge-reference channels remain dense. The streamed programs publish
-solve-time values (and collective dissolution flags), not replay or policy artifacts;
-all simulation-policy construction remains dense. The blockwise route does not establish
-a runtime or peak-memory improvement without measurement. Grid search is exact relative
-to its action grids, not to the underlying continuous choice set.
+preserving device-local continuation reads. Eligible singleton folded-state routes
+stream the action product at each shock node before the unchanged full-axis quadrature
+reduction. Co-map intersections with separate same-period or edge-reference channels
+remain dense. The streamed programs publish solve-time values (and collective
+dissolution flags), not replay or policy artifacts; all simulation-policy construction
+remains dense. The blockwise route does not establish a runtime or peak-memory
+improvement without measurement. Grid search is exact relative to its action grids, not
+to the underlying continuous choice set.
 
 ## EGM replaces search with inversion
 
