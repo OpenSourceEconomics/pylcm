@@ -178,7 +178,7 @@ _SOURCE_SEALS = {
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
     MAX_Q_SOURCE: "511b3af312da2e81f8c2b5b7098b48124410b141d50e8f9666ba02a55c04543c",
     PROCESSING_SOURCE: "e9fc3dc1b8b703f12867f336ce4439356edc2fbafc919ae2014cd939234a1b56",
-    GRID_SEARCH_SOURCE: "fb3ef13ae71b44e1170e8db274f4e209cc4b1ec4737e075b77deb678b3f1e768",
+    GRID_SEARCH_SOURCE: "20d36ae31f1c026b3d7eb120d120c8da7dd91c7d050d24777a1c1066e141946a",
     CORE_PROGRAM_SOURCE: "661af8a35e2eea2e29ebfbe4d4ba9ba15e00972e910d93a98e06a5fa1286d84f",
     OUTPUT_LAYOUT_SOURCE: "d08aab63241c85d14ef8a59b105a9e45effc5cc2e4e3d0beb6d8fb36431fa43e",
     ACTION_STREAMING_SOURCE: "5aeafaa39498845cd7104c57aa811a108594bfc9755a3b2cd93ea592ebbc245e",
@@ -1807,7 +1807,7 @@ def _grid_search_caller_errors(tree: ast.Module) -> list[str]:
             label="solve caller live streamed provider",
             contracts={
                 "GridSearch.build_period_kernels": "9f9021e00e2d709988d00015de23b0ee421bfce81158eb282eb5bd2909ede366",
-                "_supports_action_streaming": "ac52b0d0bb68308b0a647af918e7773f1b37081ee97bd5952f1e04354d7590e8",
+                "_supports_action_streaming": "51e15216b7ff2b1e0051a0104bbfbabf5f7a896d1050f7e8fbb67432de77280d",
             },
         )
     )

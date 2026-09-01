@@ -83,8 +83,9 @@ constraints, or any problem whose required structure cannot be declared honestly
 also the baseline against which specialized solutions should be checked.
 
 GridSearch work still covers the full represented action support. Eligible JIT
-solve-value routes evaluate bounded C-order action blocks; routes with folded or
-co-mapped states, value references, or gated targets remain dense, as does all
+solve-value routes evaluate bounded C-order action blocks. Same-period value references,
+gated-target continuations, and edge-reference mappings remain unchanged inputs to those
+blocks; routes with folded or co-mapped states remain dense, as does all
 simulation-policy construction. Treat the blockwise route as an execution detail until
 runtime and peak-memory effects have been measured for the model and hardware at hand.
 

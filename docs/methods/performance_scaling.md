@@ -45,6 +45,14 @@ compile reuse, and device occupancy can reverse a simple operation-count ranking
 excellent on a GPU. Conversely, an EGM method with sequential scans or many small shapes
 can lose despite lower arithmetic complexity.
 
+Eligible JIT GridSearch solve kernels evaluate the canonical action product in bounded
+blocks. Same-period value references, gated-target continuations, and edge-reference
+values and parameters remain unchanged dynamic inputs to those blocks, so a
+value-dependent declaration does not by itself force dense action materialization.
+Folded or co-mapped state routes, planner-width namespace collisions, and simulation
+policy construction still use the dense path. Blockwise evaluation preserves the full
+represented support; its runtime and memory effect remains empirical.
+
 A large GPU should not be treated as a faster small GPU automatically. Independent
 tests, regimes, branches, subjects, or candidate chunks can improve occupancy, but only
 if scheduling keeps aggregate device memory bounded. pylcm's current public controls

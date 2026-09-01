@@ -3,9 +3,9 @@
 `GridSearch` runs the max-Q-over-a grid search. Its `build_period_kernels`
 returns one `PeriodKernel` per period. Eligible hard-max, collective, and EV1 solve
 kernels declare their canonical action product for blockwise execution, and the engine
-binds the block width before lowering. Folded or co-mapped states and value-dependent
-edges retain the dense kernel. The adapter assembles the resulting `KernelResult`
-outside JIT.
+binds the block width before lowering. Value-dependent inputs remain ordinary dynamic
+arguments of the streamed core; folded or co-mapped states retain the dense kernel. The
+adapter assembles the resulting `KernelResult` outside JIT.
 
 The kernel-building imports (`jax`, `get_max_Q_over_a`) are function-local so
 the public `lcm.solvers` façade stays a thin re-export that pulls in no
@@ -256,9 +256,6 @@ def _supports_action_streaming(*, context: SolverBuildContext) -> bool:
         and not context.fold_state_names
         and not context.co_map_state_names
         and not context.co_map_v_arr_in_axes
-        and not context.same_period_ref_regimes
-        and not context.edge_reference_regimes
-        and not context.edge_target_regimes
     )
 
 
