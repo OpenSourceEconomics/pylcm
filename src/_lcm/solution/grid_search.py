@@ -78,6 +78,36 @@ from lcm.typing import (
 
 _ACTION_AXIS_NAME = "action"
 _ACTION_WIDTH_KEYWORD = "_lcm_action_block_width"
+_CORE_RUNTIME_ARG_NAMES = frozenset(
+    {
+        "next_regime_to_V_arr",
+        "same_period_regime_to_V_arr",
+        "same_period_regime_to_params",
+        "edge_reference_regime_to_V_arr",
+        "edge_reference_regime_to_params",
+        "period",
+        "age",
+    }
+)
+
+
+def _select_action_width_keyword(*, context: SolverBuildContext) -> str:
+    """Choose a deterministic planner keyword outside the model namespace."""
+    occupied = set(_CORE_RUNTIME_ARG_NAMES)
+    occupied.update(context.flat_param_names)
+    occupied.update(context.state_action_space.action_names)
+    occupied.update(context.state_action_space.state_names)
+    for Q_and_F in context.Q_and_F_functions.values():
+        occupied.update(inspect.signature(Q_and_F).parameters)
+    if context.pareto_weights is not None:
+        occupied.update(context.pareto_weights.param_names)
+
+    candidate = _ACTION_WIDTH_KEYWORD
+    suffix = 0
+    while candidate in occupied:
+        suffix += 1
+        candidate = f"{_ACTION_WIDTH_KEYWORD}_{suffix}"
+    return candidate
 
 
 @beartype(conf=REGIME_CONF)
@@ -172,6 +202,7 @@ class GridSearch(Solver):
                 )
                 fold_conditioning[name] = process.state_conditioned.on
         stream_actions = _supports_action_streaming(context=context)
+        action_width_keyword = _select_action_width_keyword(context=context)
         action_names = context.state_action_space.action_names
         action_extents = context.state_action_space.actions_grid_shapes
         for period, Q_and_F in context.Q_and_F_functions.items():
@@ -221,6 +252,7 @@ class GridSearch(Solver):
                         fold_state_names=context.fold_state_names,
                         fold_weights=MappingProxyType(fold_weights),
                         fold_conditioning=MappingProxyType(fold_conditioning),
+                        action_width_keyword=action_width_keyword,
                     )
             result[period] = _GridSearchPeriodKernel(
                 core=built[q_id],
@@ -228,6 +260,7 @@ class GridSearch(Solver):
                 streamed_core=streamed.get(q_id),
                 action_names=action_names,
                 action_extents=action_extents,
+                action_width_keyword=action_width_keyword,
                 regime_name=context.regime_name,
                 collective=context.stakeholders is not None,
                 same_period_ref_regimes=context.same_period_ref_regimes,
@@ -245,10 +278,6 @@ def _supports_action_streaming(*, context: SolverBuildContext) -> bool:
     return (
         bool(context.state_action_space.action_names)
         and math.prod(action_extents) > 1
-        and all(
-            _ACTION_WIDTH_KEYWORD not in inspect.signature(Q_and_F).parameters
-            for Q_and_F in context.Q_and_F_functions.values()
-        )
         and (
             not context.has_taste_shocks
             or (
@@ -289,6 +318,9 @@ class _GridSearchPeriodKernel:
 
     action_extents: tuple[int, ...] = ()
     """Static coordinate extents aligned with `action_names`."""
+
+    action_width_keyword: str = _ACTION_WIDTH_KEYWORD
+    """Planner-owned static width name, selected outside model arguments."""
 
     regime_name: RegimeName
     """Name of the regime whose flat params this adapter projects."""
@@ -409,7 +441,7 @@ class _GridSearchPeriodKernel:
                             if self.has_taste_shocks
                             else HARD_MAX_REDUCTION
                         ),
-                        width_keyword=_ACTION_WIDTH_KEYWORD,
+                        width_keyword=self.action_width_keyword,
                     ),
                 )
             ),

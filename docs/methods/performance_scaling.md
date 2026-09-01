@@ -53,9 +53,10 @@ Ordinary co-mapped state routes preserve device-local continuation reads while s
 actions. Eligible singleton folded-state routes also stream their action product at each
 shock node and then apply the unchanged quadrature reduction; the fold-node axis itself
 is still evaluated and reduced in full. Co-map intersections with separate same-period
-or edge-reference value channels, planner-width namespace collisions, and simulation
-policy construction still use the dense path. Blockwise action evaluation preserves the
-full represented support; its runtime and memory effect remains empirical.
+or edge-reference value channels and simulation-policy construction still use the dense
+path. The planner selects a private width keyword outside the complete model argument
+namespace, so model names never force a dense fallback. Blockwise action evaluation
+preserves the full represented support; its runtime and memory effect remains empirical.
 
 A large GPU should not be treated as a faster small GPU automatically. Independent
 tests, regimes, branches, subjects, or candidate chunks can improve occupancy, but only

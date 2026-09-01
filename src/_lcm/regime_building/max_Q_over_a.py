@@ -327,21 +327,22 @@ def get_streaming_max_Q_over_a(
     fold_state_names: tuple[StateName, ...] = (),
     fold_weights: Mapping[StateName, FloatND] = MappingProxyType({}),
     fold_conditioning: Mapping[StateName, StateName] = MappingProxyType({}),
+    action_width_keyword: str = "_lcm_action_block_width",
 ) -> MaxQOverAFunction:
     """Build a singleton or collective V kernel that streams the action product.
 
     The returned raw callable has the same dynamic argument layout as
-    get_max_Q_over_a plus one required static keyword,
-    _lcm_action_block_width. The execution planner binds that width before
-    tracing. For each state cell, the fixed-cell reducer evaluates actions in
-    canonical C order. A hard-max singleton publishes its best value; an EV1
-    singleton first hard-maxes each discrete-prefix branch and then log-sums the
-    branch values; a collective regime publishes every stakeholder's value at one
-    shared household winner plus the empty-feasible-set flag. Ordinary states use
-    the existing state productmap. Fixed distributed states instead retain the
-    dense route's co-map access law: each state axis is mapped in lockstep with
-    axis zero of every continuation leaf that carries it. Folded singleton routes
-    stream their action product, then apply the existing quadrature reduction to the
+    `get_max_Q_over_a` plus one required static keyword named by
+    `action_width_keyword`. The execution planner selects a collision-free name and
+    binds that width before tracing. For each state cell, the fixed-cell reducer
+    evaluates actions in canonical C order. A hard-max singleton publishes its best
+    value; an EV1 singleton first hard-maxes each discrete-prefix branch and then
+    log-sums the branch values; a collective regime publishes each stakeholder's
+    value at one shared household winner plus the empty-feasible-set flag. Ordinary
+    states use the existing state productmap. Fixed distributed states retain the
+    dense route co-map access law: each state axis is mapped in lockstep with axis
+    zero of every continuation leaf that carries it. Folded singleton routes stream
+    their action product, then apply the existing quadrature reduction to the
     still-materialized fold axes before any co-map wrapper.
     """
     _fail_if_streaming_co_map_layout_is_invalid(
@@ -374,13 +375,20 @@ def get_streaming_max_Q_over_a(
             dict.fromkeys((*extra_param_names, *pareto_weights.param_names))
         )
 
+    _fail_if_action_width_keyword_collides(
+        action_width_keyword=action_width_keyword,
+        action_names=action_names,
+        state_names=state_names,
+        extra_param_names=extra_param_names,
+    )
+
     @with_signature(
         args=[
             "next_regime_to_V_arr",
             *action_names,
             *state_names,
             *extra_param_names,
-            "_lcm_action_block_width",
+            action_width_keyword,
         ],
         return_annotation=(
             "tuple[FloatND, BoolND]" if stakeholders is not None else "FloatND"
@@ -390,9 +398,9 @@ def get_streaming_max_Q_over_a(
     def streamed_max_Q_over_a(
         *,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
-        _lcm_action_block_width: int,
         **states_actions_params: _ParamsLeaf,
     ) -> FloatND | tuple[FloatND, BoolND]:
+        action_block_width = cast("int", states_actions_params[action_width_keyword])
         q_and_f_params = {
             name: value
             for name, value in states_actions_params.items()
@@ -403,7 +411,7 @@ def get_streaming_max_Q_over_a(
                 Q_and_F=Q_and_F,
                 action_names=action_names,
                 n_discrete_action_axes=n_discrete_action_axes,
-                block_width=_lcm_action_block_width,
+                block_width=action_block_width,
                 scale=cast(
                     "ScalarFloat",
                     states_actions_params[TASTE_SHOCK_SCALE_PARAM],
@@ -419,7 +427,7 @@ def get_streaming_max_Q_over_a(
             fixed_cell = build_streaming_max_Q_over_a(
                 Q_and_F=Q_and_F,
                 action_names=action_names,
-                block_width=_lcm_action_block_width,
+                block_width=action_block_width,
             )
             result = fixed_cell(
                 next_regime_to_V_arr=next_regime_to_V_arr,
@@ -430,7 +438,7 @@ def get_streaming_max_Q_over_a(
         collective_cell = build_streaming_collective_max_Q_over_a(
             Q_and_F=Q_and_F,
             action_names=action_names,
-            block_width=_lcm_action_block_width,
+            block_width=action_block_width,
             stakeholders=stakeholders,
             weights=_evaluate_pareto_weights(
                 pareto_weights=pareto_weights,
@@ -466,7 +474,7 @@ def get_streaming_max_Q_over_a(
             inner_state_names=inner_state_names,
             action_names=action_names,
             state_names=state_names,
-            extra_param_names=[*extra_param_names, "_lcm_action_block_width"],
+            extra_param_names=[*extra_param_names, action_width_keyword],
         )
     if not co_map_state_names:
         return cast("MaxQOverAFunction", mapped)
@@ -487,6 +495,24 @@ def get_streaming_max_Q_over_a(
             callable_with="only_args",
         )
     return cast("MaxQOverAFunction", allow_only_kwargs(func=mapped, enforce=False))
+
+
+def _fail_if_action_width_keyword_collides(
+    *,
+    action_width_keyword: str,
+    action_names: tuple[ActionName, ...],
+    state_names: tuple[StateName, ...],
+    extra_param_names: list[str],
+) -> None:
+    """Keep the planner-owned width outside the model runtime namespace."""
+    runtime_arg_names = frozenset(
+        ("next_regime_to_V_arr", *action_names, *state_names, *extra_param_names)
+    )
+    if action_width_keyword in runtime_arg_names:
+        raise ValueError(
+            f"Action width keyword {action_width_keyword!r} collides with a "
+            "streamed core argument."
+        )
 
 
 def _fail_if_full_V_streaming_route_is_unsupported(

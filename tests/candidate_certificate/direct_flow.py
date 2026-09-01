@@ -176,12 +176,12 @@ _SOURCE_SEALS = {
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
     ARGMAX_SOURCE: "0d179a5aa65a6f310f598bdad8f75a9318a24832e31bd529184c2ea90356a72d",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
-    MAX_Q_SOURCE: "f32837cd1469fd3723a84b57665598cf6ef2dd255003975d5ba5b5182ea2e37c",
+    MAX_Q_SOURCE: "6bed0c5a31bbc1c7fe9e0d9250223888d1271528b01844a398668af038e24844",
     PROCESSING_SOURCE: "e9fc3dc1b8b703f12867f336ce4439356edc2fbafc919ae2014cd939234a1b56",
-    GRID_SEARCH_SOURCE: "e31161e187c86c78f1de47e0e2ce3f66c660ef726f0913fe46c6014523ed3e87",
+    GRID_SEARCH_SOURCE: "0dfc581aacd9c0a0546256e39dd1a27f7c74b810a0adb9b66d3cc56a82e3588a",
     CORE_PROGRAM_SOURCE: "661af8a35e2eea2e29ebfbe4d4ba9ba15e00972e910d93a98e06a5fa1286d84f",
     OUTPUT_LAYOUT_SOURCE: "d08aab63241c85d14ef8a59b105a9e45effc5cc2e4e3d0beb6d8fb36431fa43e",
-    ACTION_STREAMING_SOURCE: "5aeafaa39498845cd7104c57aa811a108594bfc9755a3b2cd93ea592ebbc245e",
+    ACTION_STREAMING_SOURCE: "6bc9a29fffba6e49d634df423d78d0232850fa6c327a82225e73b5ff0f2c384d",
     ACTION_REDUCTION_SOURCE: "6cee6ea2dbef0ba710fa4a318a2113377d6513cee508e73004861597f9c220f9",
     COLLECTIVE_ACTION_REDUCTION_SOURCE: "7a80418764fdf9754062a23707c5d39fa7abfcaac9c8e8f7803c4d8f1b461347",
     DISPATCHERS_SOURCE: "ef1d85c4fa7dbfbedc2c4afc36f307b915975c8a4a379aa40380fe8c89ecb663",
@@ -224,9 +224,9 @@ _SOURCE_SEALS = {
     MODEL_PROCESSING_SOURCE: "8a159831e37a9582852908c7e213106aa1070500f4e64fa12f1a7ed628854740",
 }
 
-EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 288
+EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 297
 EXPECTED_DIRECT_FLOW_MUTATION_NAMES_SHA256 = (
-    "b8c68f46f5d8506702356b7f999bd0ca3803906555479f99b6dc3394e591e06d"
+    "9203b0dbdcadc7f114cd4b6d6b6cb7835e70e1e8d37a402892d532c9f456c996"
 )
 
 
@@ -1503,6 +1503,7 @@ Q_and_F = productmap(
                 "get_argmax_and_max_Q_over_a": 1,
                 "get_max_Q_over_a": 1,
                 "get_streaming_max_Q_over_a": 1,
+                "_fail_if_action_width_keyword_collides": 1,
                 "inspect": 1,
                 "jax": 1,
                 "jnp": 1,
@@ -1529,7 +1530,10 @@ def _streamed_max_builder_errors(tree: ast.Module) -> list[str]:
         tree=tree,
         label="streamed max-Q builder",
         contracts={
-            "get_streaming_max_Q_over_a": "c366f3bbd119d308c4b27b43fee23bab45d1b0c752ecf416739c35e00732a383",
+            "get_streaming_max_Q_over_a": "54999041a3f59036bea35b0250def6a49e69b216163b36aad66f116a2bd45027",
+            "_fail_if_action_width_keyword_collides": (
+                "20d3a1998c95f4decc9c5b5c8971ddc98fd1140c1954f427863409de33d2b2c4"
+            ),
             "_fail_if_full_V_streaming_route_is_unsupported": (
                 "cd4c96d572ec7df9dc269f5fa2bfc1ec5c16fe0a78de3be56adc28c15f065d2c"
             ),
@@ -1828,8 +1832,9 @@ def _grid_search_caller_errors(tree: ast.Module) -> list[str]:
             tree=tree,
             label="solve caller live streamed provider",
             contracts={
-                "GridSearch.build_period_kernels": "9f9021e00e2d709988d00015de23b0ee421bfce81158eb282eb5bd2909ede366",
-                "_supports_action_streaming": "b19f94ca8da8952f6835b614a12a1098d27d5477e5d60d965cbc73ae9c96d155",
+                "_select_action_width_keyword": "d5c0751bf2eb4a98a08b1641e41cfea9f46230af044a1c666e49f6f444cadb68",
+                "GridSearch.build_period_kernels": "b06cef2d560474d97d50834123dafdc7fffbaeb4d12016fbe23457787a1df008",
+                "_supports_action_streaming": "9b56a6294125a8a8ef28bd9e770aabc6aa00dd121050cffdc2ce96c72239eba7",
             },
         )
     )
@@ -1844,6 +1849,7 @@ def _grid_search_caller_errors(tree: ast.Module) -> list[str]:
                 "streamed_core: Callable | None = None",
                 "action_names: tuple[ActionName, ...] = ()",
                 "action_extents: tuple[int, ...] = ()",
+                "action_width_keyword: str = _ACTION_WIDTH_KEYWORD",
                 "regime_name: RegimeName",
                 "collective: bool = False",
                 "has_taste_shocks: bool = False",
@@ -1872,7 +1878,7 @@ def _grid_search_caller_errors(tree: ast.Module) -> list[str]:
             label="solve caller output-layout adapter",
             contracts={
                 "_GridSearchPeriodKernel.cores": "9ee3a0a03870ede4b4361004c34a9b7a50d2074a9e96d7c0c7aa44111efe5c13",
-                "_GridSearchPeriodKernel.build_core_program": "cd7e1aa10a0b1bd80a70550b057764428b489ba734fa4d9da6466c38d70c016f",
+                "_GridSearchPeriodKernel.build_core_program": "8b4ebbf7e18a3cd26cfab061cdae757f779c8bbfe798186a096b937b2c1af080",
                 "_GridSearchPeriodKernel.output_roles": "e48524eea7cd3dce438a9826ca0efd7cc45ddf681da8d7d9b14ad7a03c3a55de",
                 "_GridSearchPeriodKernel.core_for_output_layout": "c06f276c3430fe788227503d0c24602558259a1a076fd76061e613db191b87aa",
                 "_GridSearchPeriodKernel.with_fixed_params": "6432aa32d09899a4b82c17568336be04fac9933c14e81f4e8460d252663b04ac",
@@ -1920,6 +1926,7 @@ def _grid_search_caller_errors(tree: ast.Module) -> list[str]:
                 "CoreProgram": 1,
                 "COLLECTIVE_HARD_MAX_REDUCTION": 1,
                 "GridSearch": 1,
+                "_select_action_width_keyword": 1,
                 "HARD_MAX_REDUCTION": 1,
                 "MappingProxyType": 1,
                 "REGIME_CONF": 1,
@@ -3835,16 +3842,41 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             new="                        coordinate_extents=self.action_extents[:-1],",
             label="streamed provider action extents",
         ),
-        "streaming_provider:width_keyword_collision_bypassed": replace_once(
+        "streaming_width_selector:suffix_search_truncated": replace_once(
             source=grid_source,
-            old=(
-                "        and all(\n"
-                "            _ACTION_WIDTH_KEYWORD not in inspect.signature(Q_and_F).parameters\n"
-                "            for Q_and_F in context.Q_and_F_functions.values()\n"
-                "        )"
-            ),
-            new="        and True",
-            label="streamed reserved width-keyword collision guard",
+            old="    while candidate in occupied:",
+            new="    if candidate in occupied:",
+            label="streamed width-keyword suffix search",
+        ),
+        "streaming_width_selector:flat_params_omitted": replace_once(
+            source=grid_source,
+            old="    occupied.update(context.flat_param_names)",
+            new="    occupied.update(())",
+            label="streamed width-keyword flat-parameter namespace",
+        ),
+        "streaming_width_selector:q_arguments_omitted": replace_once(
+            source=grid_source,
+            old="        occupied.update(inspect.signature(Q_and_F).parameters)",
+            new="        occupied.update(())",
+            label="streamed width-keyword Q argument namespace",
+        ),
+        "streaming_width_selector:pareto_params_omitted": replace_once(
+            source=grid_source,
+            old="        occupied.update(context.pareto_weights.param_names)",
+            new="        occupied.update(())",
+            label="streamed width-keyword Pareto namespace",
+        ),
+        "streaming_width_transport:streamed_function_keyword_desynchronized": _replace_nth(
+            text=grid_source,
+            marker="                        action_width_keyword=action_width_keyword,",
+            replacement="                        action_width_keyword=_ACTION_WIDTH_KEYWORD,",
+            occurrence=1,
+        ),
+        "streaming_width_transport:core_program_keyword_desynchronized": replace_once(
+            source=grid_source,
+            old="                        width_keyword=self.action_width_keyword,",
+            new="                        width_keyword=_ACTION_WIDTH_KEYWORD,",
+            label="streamed CoreProgram width-keyword transport",
         ),
         "streaming_provider:fold_route_disabled": _insert_before_nth(
             text=grid_source,
@@ -3959,6 +3991,62 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             label="streamed collective stakeholder output",
         ),
     }
+    specs["streaming_width_transport:colliding_q_argument_filtered"] = {
+        "path": MAX_Q_SOURCE,
+        "source": replace_once(
+            source=max_source,
+            old="            if name in q_and_f_arg_names",
+            new=(
+                "            if name in q_and_f_arg_names "
+                'and name != "_lcm_action_block_width"'
+            ),
+            label="streamed colliding Q argument preservation",
+        ),
+    }
+    specs["streaming_width_transport:colliding_q_argument_substituted"] = {
+        "path": MAX_Q_SOURCE,
+        "source": _insert_before_nth(
+            text=max_source,
+            marker="        if has_taste_shocks:\n",
+            insertion=(
+                '        if "_lcm_action_block_width" in q_and_f_arg_names:\n'
+                '            q_and_f_params["_lcm_action_block_width"] = action_block_width\n'
+            ),
+            occurrence=1,
+        ),
+    }
+    specs["streaming_width_builder:collision_validation_removed"] = {
+        "path": MAX_Q_SOURCE,
+        "source": replace_once(
+            source=max_source,
+            old=(
+                "    _fail_if_action_width_keyword_collides(\n"
+                "        action_width_keyword=action_width_keyword,\n"
+                "        action_names=action_names,\n"
+                "        state_names=state_names,\n"
+                "        extra_param_names=extra_param_names,\n"
+                "    )"
+            ),
+            new="    pass",
+            label="streamed direct-builder width collision validation",
+        ),
+    }
+    specs["streaming_fold:width_keyword_renamed"] = {
+        "path": MAX_Q_SOURCE,
+        "source": replace_once(
+            source=max_source,
+            old=(
+                "            extra_param_names=[*extra_param_names, action_width_keyword],"
+            ),
+            new=(
+                "            extra_param_names=[\n"
+                '                *extra_param_names, f"{action_width_keyword}_renamed"\n'
+                "            ],"
+            ),
+            label="streamed fold selected-width keyword",
+        ),
+    }
+
     streaming_fold_block = (
         "    if fold_state_names:\n"
         "        _fail_if_collective(\n"
@@ -3972,7 +4060,7 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         "            inner_state_names=inner_state_names,\n"
         "            action_names=action_names,\n"
         "            state_names=state_names,\n"
-        '            extra_param_names=[*extra_param_names, "_lcm_action_block_width"],\n'
+        "            extra_param_names=[*extra_param_names, action_width_keyword],\n"
         "        )\n"
     )
     streaming_fold_after_co_map = replace_once(
@@ -4032,7 +4120,7 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         "source": replace_once(
             source=max_source,
             old=(
-                '            extra_param_names=[*extra_param_names, "_lcm_action_block_width"],'
+                "            extra_param_names=[*extra_param_names, action_width_keyword],"
             ),
             new="            extra_param_names=extra_param_names,",
             label="streamed fold width signature",
@@ -4053,7 +4141,7 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
                 "            **{\n"
                 "                name: value\n"
                 "                for name, value in states_actions_params.items()\n"
-                '                if name != "_lcm_action_block_width"\n'
+                "                if name != extra_param_names[-1]\n"
                 "            },\n"
                 "        )"
             ),

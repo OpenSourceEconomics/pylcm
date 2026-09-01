@@ -695,8 +695,8 @@ def _width_collision_Q_and_F(*, action, _lcm_action_block_width, next_regime_to_
         ),
         pytest.param(
             {"Q_and_F": _width_collision_Q_and_F},
-            False,
-            id="reserved-width-collision",
+            True,
+            id="width-collision-is-remapped",
         ),
         pytest.param(
             {
@@ -766,6 +766,143 @@ def _evaluate_kernel(*, func: Any, arguments: dict[str, Any], execution: str):
     if execution == "jit":
         return jitted(**arguments)
     return jitted.lower(**arguments).compile()(**arguments)
+
+
+def _parameter_width_collision_Q_and_F(
+    *,
+    action,
+    _lcm_action_block_width,
+    next_regime_to_V_arr,
+):
+    del next_regime_to_V_arr
+    return _lcm_action_block_width + action, jnp.ones((), dtype=bool)
+
+
+def test_streaming_width_keyword_collision_fails_closed() -> None:
+    """Direct builders must keep planner width outside Q arguments."""
+    with pytest.raises(ValueError, match="collides with a streamed core argument"):
+        get_streaming_max_Q_over_a(
+            Q_and_F=_parameter_width_collision_Q_and_F,
+            batch_sizes={},
+            action_names=("action",),
+            state_names=(),
+        )
+
+
+@pytest.mark.parametrize("block_width", [1, 3])
+@pytest.mark.parametrize("execution", ["eager", "jit", "aot"])
+def test_streaming_width_keyword_stays_separate_from_Q_parameter(
+    *, block_width: int, execution: str
+) -> None:
+    selected_width_keyword = "_lcm_action_block_width_1"
+    kernel_kwargs = {
+        "Q_and_F": _parameter_width_collision_Q_and_F,
+        "batch_sizes": {},
+        "action_names": ("action",),
+        "state_names": (),
+    }
+    dense = get_max_Q_over_a(**cast("Any", kernel_kwargs))
+    raw_streamed = get_streaming_max_Q_over_a(
+        **cast("Any", kernel_kwargs),
+        action_width_keyword=selected_width_keyword,
+    )
+    signature = inspect.signature(raw_streamed)
+
+    assert "_lcm_action_block_width" in signature.parameters
+    assert selected_width_keyword in signature.parameters
+    assert selected_width_keyword != "_lcm_action_block_width"
+
+    streamed = functools.partial(
+        raw_streamed,
+        **{selected_width_keyword: block_width},
+    )
+    arguments = {
+        "action": jnp.arange(4, dtype=jnp.int32),
+        "_lcm_action_block_width": jnp.float32(7.5),
+        "next_regime_to_V_arr": MappingProxyType({}),
+    }
+
+    expected = _evaluate_kernel(func=dense, arguments=arguments, execution=execution)
+    actual = _evaluate_kernel(
+        func=streamed,
+        arguments=arguments,
+        execution=execution,
+    )
+
+    eps = np.finfo(np.asarray(actual).dtype).eps
+    assert selected_width_keyword not in arguments
+    assert_allclose(actual, expected, rtol=8 * eps, atol=8 * eps)
+    assert_allclose(actual, 10.5, rtol=8 * eps, atol=8 * eps)
+
+
+def _folded_parameter_width_collision_Q_and_F(
+    *,
+    action,
+    shock,
+    _lcm_action_block_width,
+    next_regime_to_V_arr,
+):
+    del next_regime_to_V_arr
+    values = jnp.asarray(
+        [
+            [1.0, 4.0, 2.0, 0.0],
+            [5.0, 2.0, 8.0, 3.0],
+        ]
+    )
+    return (
+        _lcm_action_block_width + values[shock, action],
+        jnp.ones((), dtype=bool),
+    )
+
+
+@pytest.mark.parametrize("block_width", [1, 3])
+@pytest.mark.parametrize("execution", ["eager", "jit", "aot"])
+def test_folded_streaming_width_keyword_stays_separate_from_Q_parameter(
+    *, block_width: int, execution: str
+) -> None:
+    selected_width_keyword = "_lcm_action_block_width_1"
+    fold_weights = jnp.asarray([0.25, 0.75], dtype=jnp.float32)
+    kernel_kwargs = {
+        "Q_and_F": _folded_parameter_width_collision_Q_and_F,
+        "batch_sizes": {"shock": 0},
+        "action_names": ("action",),
+        "state_names": ("shock",),
+        "fold_state_names": ("shock",),
+        "fold_weights": MappingProxyType({"shock": fold_weights}),
+    }
+    dense = get_max_Q_over_a(**cast("Any", kernel_kwargs))
+    raw_streamed = get_streaming_max_Q_over_a(
+        **cast("Any", kernel_kwargs),
+        action_width_keyword=selected_width_keyword,
+    )
+    signature = inspect.signature(raw_streamed)
+
+    assert "_lcm_action_block_width" in signature.parameters
+    assert selected_width_keyword in signature.parameters
+    assert selected_width_keyword != "_lcm_action_block_width"
+
+    streamed = functools.partial(
+        raw_streamed,
+        **{selected_width_keyword: block_width},
+    )
+    arguments = {
+        "action": jnp.arange(4, dtype=jnp.int32),
+        "shock": jnp.arange(2, dtype=jnp.int32),
+        "_lcm_action_block_width": jnp.float32(2.5),
+        "next_regime_to_V_arr": MappingProxyType({}),
+    }
+
+    expected = _evaluate_kernel(func=dense, arguments=arguments, execution=execution)
+    actual = _evaluate_kernel(
+        func=streamed,
+        arguments=arguments,
+        execution=execution,
+    )
+
+    eps = np.finfo(np.asarray(actual).dtype).eps
+    assert selected_width_keyword not in arguments
+    assert_allclose(actual, expected, rtol=8 * eps, atol=8 * eps)
+    assert_allclose(actual, 9.5, rtol=8 * eps, atol=8 * eps)
 
 
 @pytest.mark.parametrize("block_width", [1, 3])
