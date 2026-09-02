@@ -1,7 +1,5 @@
 """Exact stored-value reads declared by GridSearch period kernels."""
 
-from types import SimpleNamespace
-
 from _lcm.execution.value_transfer import (
     ValueArtifactKind,
     ValueInputChannel,
@@ -106,32 +104,20 @@ def test_final_period_processed_kernel_declares_no_next_value_accesses() -> None
 
 
 def test_edge_references_are_filtered_to_this_periods_reachable_targets() -> None:
-    """References owned only by another gated target do not enter the core."""
-    edge_a = SimpleNamespace(
-        gate_refs={"gate_a": SimpleNamespace(regime="gate_ref_a")},
-        legs={
-            "f": SimpleNamespace(solve_fallback=SimpleNamespace(regime="fallback_a"))
-        },
-    )
-    edge_b = SimpleNamespace(
-        gate_refs={"gate_b": SimpleNamespace(regime="gate_ref_b")},
-        legs={
-            "f": SimpleNamespace(solve_fallback=SimpleNamespace(regime="fallback_b"))
-        },
-    )
+    """An edge outside the reachable-target set contributes no references."""
+    model = _make_consent_model(n_subjects=None)
     context = object.__new__(SolverBuildContext)
-    object.__setattr__(context, "regime_name", "source")
-    object.__setattr__(
-        context,
-        "user_regimes",
-        {
-            "source": SimpleNamespace(
-                gated_edges={"target_a": edge_a, "target_b": edge_b}
-            )
-        },
-    )
+    object.__setattr__(context, "regime_name", "single")
+    object.__setattr__(context, "user_regimes", model.user_regimes)
 
+    assert (
+        _edge_reference_regimes_for_targets(
+            context=context,
+            target_regimes=(),
+        )
+        == ()
+    )
     assert _edge_reference_regimes_for_targets(
         context=context,
-        target_regimes=("target_b",),
-    ) == ("gate_ref_b", "fallback_b")
+        target_regimes=("married_terminal",),
+    ) == ("single_terminal",)

@@ -36,6 +36,7 @@ from _lcm.solution.backward_induction import (
     _assert_lowered_output_roles,
     _build_continuation_templates,
     _initial_tile_widths,
+    _resolve_value_input_transfer_plan,
 )
 from lcm.solvers import GridSearch
 from lcm.typing import ContinuousState, FloatND
@@ -280,7 +281,14 @@ def test_ordinary_singleton_grid_search_declares_action_core_program() -> None:
     with pytest.raises(TypeError):
         cast("dict[str, object]", program.arguments)["injected"] = jnp.asarray(0)
 
-    resolved = resolve_core_program(program=program, tile_widths={"action": 2})
+    resolved = resolve_core_program(
+        program=program,
+        tile_widths={"action": 2},
+        input_transfer_plan=_resolve_value_input_transfer_plan(
+            program=program,
+            source_value_template=next_V["alive"],
+        ),
+    )
     output = _eval_resolved_shape(resolved)
 
     assert jax.tree.structure(output) == jax.tree.structure(program.output_roles)
@@ -326,7 +334,14 @@ def test_collective_grid_search_declares_household_action_core_program() -> None
         ),
     )
 
-    resolved = resolve_core_program(program=program, tile_widths={"action": 1})
+    resolved = resolve_core_program(
+        program=program,
+        tile_widths={"action": 1},
+        input_transfer_plan=_resolve_value_input_transfer_plan(
+            program=program,
+            source_value_template=next_V["couple"],
+        ),
+    )
     output = _eval_resolved_shape(resolved)
 
     assert jax.tree.structure(output) == jax.tree.structure(program.output_roles)
@@ -381,7 +396,14 @@ def test_ev1_grid_search_declares_composite_action_core_program() -> None:
         ("logsumexp", 1),
     )
 
-    resolved = resolve_core_program(program=program, tile_widths={"action": 5})
+    resolved = resolve_core_program(
+        program=program,
+        tile_widths={"action": 5},
+        input_transfer_plan=_resolve_value_input_transfer_plan(
+            program=program,
+            source_value_template=next_V["alive"],
+        ),
+    )
     output = _eval_resolved_shape(resolved)
 
     assert jax.tree.structure(output) == jax.tree.structure(program.output_roles)
