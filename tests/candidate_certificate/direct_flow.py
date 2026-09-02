@@ -4993,10 +4993,7 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             source=replace_once(
                 source=action_streaming_source,
                 old="    valid_branches = branch_offsets < remaining_branches",
-                new=(
-                    "    valid_branches = "
-                    "jnp.ones(branches_per_block, dtype=bool)"
-                ),
+                new=("    valid_branches = jnp.ones(branches_per_block, dtype=bool)"),
                 label="streamed EV1 branch-tail validity",
             ),
             old=(
