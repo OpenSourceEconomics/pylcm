@@ -108,7 +108,6 @@ def test_simulation_stores_the_physical_entry_and_its_dependent_state() -> None:
             "regime_id": jnp.array([RegimeId.source]),
             "age": jnp.array([20.0]),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
     df = result.to_dataframe()
@@ -129,7 +128,7 @@ def test_solve_prices_the_state_simulation_stores() -> None:
     that the simulated target row carries — one physical law, one number.
     """
     model = _build_model()
-    solution = model.solve(params=PARAMS, log_level="debug")
+    solution = model.solve(params=PARAMS, log_level="debug").values
     period = max(p for p in solution if "source" in solution[p])
     got = float(np.asarray(solution[period]["source"]).ravel()[0])
 

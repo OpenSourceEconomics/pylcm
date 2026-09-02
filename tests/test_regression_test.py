@@ -46,7 +46,7 @@ def test_regression_test():
 
     got_solve: Mapping[int, Mapping[str, FloatND]] = model.solve(
         log_level="debug", params=params
-    )
+    ).values
     got_simulate = model.simulate(
         log_level="debug",
         params=params,
@@ -55,7 +55,6 @@ def test_regression_test():
             "age": jnp.array([18.0, 18.0, 18.0, 18.0]),
             "regime_id": jnp.array([RegimeId.working_life] * 4),
         },
-        period_to_regime_to_V_arr=None,
     ).to_dataframe(terminal_rows="all")
 
     # Compare solution (iterate over expected regimes — got may have additional ones)
@@ -95,7 +94,6 @@ def test_regression_precautionary_savings():
             "income": jnp.full(n_subjects, 0.0),
             "regime_id": jnp.zeros(n_subjects, dtype=jnp.int32),
         },
-        period_to_regime_to_V_arr=None,
         seed=12345,
         log_level="debug",
     ).to_dataframe(terminal_rows="all")
@@ -126,7 +124,6 @@ def test_regression_mortality():
             "wealth": jnp.full(n_subjects, 100.0),
             "regime_id": jnp.zeros(n_subjects, dtype=jnp.int32),
         },
-        period_to_regime_to_V_arr=None,
         seed=12345,
         log_level="debug",
     ).to_dataframe(terminal_rows="all")
@@ -224,7 +221,6 @@ def test_model_with_different_grid_types(grid_type: str):
             "age": jnp.array([18.0, 18.0, 18.0, 18.0]),
             "regime_id": jnp.array([RegimeId.working_life] * 4),
         },
-        period_to_regime_to_V_arr=None,
     )
     df = result.to_dataframe(terminal_rows="all")
 

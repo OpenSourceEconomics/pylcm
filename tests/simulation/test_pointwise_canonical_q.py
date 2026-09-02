@@ -106,7 +106,7 @@ def test_pointwise_canonical_q_at_the_grid_argmax_action_reproduces_its_value():
     """
     model = _bonus_model()
     params = get_retirement_only_params(n_periods=2, discount_factor=_DISCOUNT_FACTOR)
-    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
+    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug").values
 
     regime = model._regimes["retirement"]
     period = 0
@@ -125,7 +125,7 @@ def test_pointwise_canonical_q_at_the_grid_argmax_action_reproduces_its_value():
             for name in action_names
         }
     )
-    next_regime_to_V_arr = period_to_regime_to_V_arr[period + 1]
+    next_regime_to_V_arr = MappingProxyType(dict(period_to_regime_to_V_arr[period + 1]))
 
     grid_indices, grid_values = regime.simulation.argmax_and_max_Q_over_a[period](
         wealth=wealth,
@@ -195,7 +195,6 @@ def test_off_grid_replacement_never_scores_below_the_grid_pair():
                     n_subjects, retirement_only.RetirementOnlyRegimeId.retirement
                 ),
             },
-            period_to_regime_to_V_arr=None,
             log_level="debug",
         )
     finally:

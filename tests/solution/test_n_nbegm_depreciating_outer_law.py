@@ -40,7 +40,7 @@ def _scaled_law(alpha: float):
 
 def _solve_period0_alive(*, variant: str, alpha: float) -> np.ndarray:
     model = toy.build_model(variant=variant, durable_law=_scaled_law(alpha))
-    solution = model.solve(params=_PARAMS, log_level="debug")
+    solution = model.solve(params=_PARAMS, log_level="debug").values
     return np.asarray(solution[0]["alive"])
 
 

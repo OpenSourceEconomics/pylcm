@@ -90,12 +90,18 @@ def test_age_invariant_specialized_grid_reproduces_the_plain_dcegm_solve():
     tolerance, since any difference here is a defect rather than rounding.
     """
     params = get_params()
-    plain = _dcegm_twin_with_wealth_grid(WEALTH_GRID).solve(
-        params=params, log_level="debug"
+    plain = (
+        _dcegm_twin_with_wealth_grid(WEALTH_GRID)
+        .solve(params=params, log_level="debug")
+        .values
     )
-    specialized = _dcegm_twin_with_wealth_grid(
-        AgeSpecializedGrid(build=lambda _age: WEALTH_GRID, signature=lambda _age: 0)
-    ).solve(params=params, log_level="debug")
+    specialized = (
+        _dcegm_twin_with_wealth_grid(
+            AgeSpecializedGrid(build=lambda _age: WEALTH_GRID, signature=lambda _age: 0)
+        )
+        .solve(params=params, log_level="debug")
+        .values
+    )
 
     for period, regime_to_V in plain.items():
         for regime_name, V_arr in regime_to_V.items():
@@ -133,8 +139,10 @@ def test_dcegm_solves_an_age_varying_euler_state_finitely(shift_per_year):
     grid = AgeSpecializedGrid(
         build=shifted, signature=lambda age: shift_per_year * (age - MIN_AGE)
     )
-    solution = _dcegm_twin_with_wealth_grid(grid).solve(
-        params=get_params(), log_level="debug"
+    solution = (
+        _dcegm_twin_with_wealth_grid(grid)
+        .solve(params=get_params(), log_level="debug")
+        .values
     )
 
     offending = [
@@ -189,11 +197,15 @@ def test_negm_reads_the_durable_grid_of_each_period():
         build=lambda _age: shifted, signature=lambda _age: 4.0
     )
 
-    from_first_age = _negm_toy_with_illiquid_grid(first_age_only_differs).solve(
-        params=_NEGM_PARAMS, log_level="debug"
+    from_first_age = (
+        _negm_toy_with_illiquid_grid(first_age_only_differs)
+        .solve(params=_NEGM_PARAMS, log_level="debug")
+        .values
     )
-    throughout = _negm_toy_with_illiquid_grid(shifted_throughout).solve(
-        params=_NEGM_PARAMS, log_level="debug"
+    throughout = (
+        _negm_toy_with_illiquid_grid(shifted_throughout)
+        .solve(params=_NEGM_PARAMS, log_level="debug")
+        .values
     )
 
     for period in sorted(from_first_age):
@@ -241,11 +253,15 @@ def test_nbegm_reads_the_liquid_grid_of_each_period():
     )
 
     params = nbegm_medicaid_toy.build_params()
-    from_first_age = _nbegm_toy_with_liquid_grid(first_age_only_differs).solve(
-        params=params, log_level="debug"
+    from_first_age = (
+        _nbegm_toy_with_liquid_grid(first_age_only_differs)
+        .solve(params=params, log_level="debug")
+        .values
     )
-    throughout = _nbegm_toy_with_liquid_grid(shifted_throughout).solve(
-        params=params, log_level="debug"
+    throughout = (
+        _nbegm_toy_with_liquid_grid(shifted_throughout)
+        .solve(params=params, log_level="debug")
+        .values
     )
 
     for period in sorted(from_first_age):
@@ -287,10 +303,14 @@ def test_nbegm_reads_its_ride_along_continuation_on_the_next_period_s_grid():
     )
 
     def solve(wage_grid):
-        return nbegm_continuous_ride_along_toy.build_model(
-            variant="nbegm", n_periods=4, n_liquid=60, wage_grid=wage_grid
-        ).solve(
-            params=nbegm_continuous_ride_along_toy.build_params(), log_level="debug"
+        return (
+            nbegm_continuous_ride_along_toy.build_model(
+                variant="nbegm", n_periods=4, n_liquid=60, wage_grid=wage_grid
+            )
+            .solve(
+                params=nbegm_continuous_ride_along_toy.build_params(), log_level="debug"
+            )
+            .values
         )
 
     from_first_age = solve(first_age_only_differs)
@@ -342,12 +362,16 @@ def test_nnbegm_reads_its_durable_continuation_on_the_next_period_s_grid():
     )
 
     def solve(illiquid_grid):
-        return n_nbegm_toy.build_model(
-            variant="n_nbegm",
-            n_periods=4,
-            illiquid_grid=illiquid_grid,
-            outer_search=outer_search,
-        ).solve(params={"discount_factor": 0.95}, log_level="debug")
+        return (
+            n_nbegm_toy.build_model(
+                variant="n_nbegm",
+                n_periods=4,
+                illiquid_grid=illiquid_grid,
+                outer_search=outer_search,
+            )
+            .solve(params={"discount_factor": 0.95}, log_level="debug")
+            .values
+        )
 
     from_first_age = solve(first_age_only_differs)
     throughout = solve(shifted_throughout)

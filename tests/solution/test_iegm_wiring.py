@@ -47,11 +47,15 @@ def test_iegm_numeric_inverse_matches_analytic_value_function():
     """Forcing the numerical inverse reproduces the analytic-inverse value function."""
     n_periods = 3
     params = get_retirement_only_params(n_periods=n_periods)
-    analytic = get_retirement_only_model(solver="dcegm", n_periods=n_periods).solve(
-        params=params, log_level="debug"
+    analytic = (
+        get_retirement_only_model(solver="dcegm", n_periods=n_periods)
+        .solve(params=params, log_level="debug")
+        .values
     )
-    numeric = _numeric_retirement_model(n_periods).solve(
-        params=params, log_level="debug"
+    numeric = (
+        _numeric_retirement_model(n_periods)
+        .solve(params=params, log_level="debug")
+        .values
     )
 
     assert analytic.keys() == numeric.keys()

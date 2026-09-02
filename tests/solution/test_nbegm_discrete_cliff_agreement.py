@@ -38,7 +38,7 @@ def _solve(
     )
     return model.solve(
         params=toy.build_params(mixed_schedule=mixed_schedule), log_level="debug"
-    )
+    ).values
 
 
 def test_nbegm_discrete_envelope_matches_brute_over_a_cliffed_budget() -> None:

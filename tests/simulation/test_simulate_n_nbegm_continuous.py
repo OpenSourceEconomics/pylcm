@@ -62,7 +62,6 @@ def _simulate(
     return model.simulate(
         params=_PARAMS,
         initial_conditions=dict(initial_conditions),
-        period_to_regime_to_V_arr=None,
         log_level="debug",
         seed=seed,
     ).to_dataframe()
@@ -204,7 +203,6 @@ def test_a_legal_narrow_adjuster_mesh_preserves_the_exact_keeper() -> None:
             "age": jnp.asarray([20.0]),
             "regime_id": jnp.asarray([toy.RegimeId.alive], dtype=jnp.int32),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
         seed=42,
     ).to_dataframe()

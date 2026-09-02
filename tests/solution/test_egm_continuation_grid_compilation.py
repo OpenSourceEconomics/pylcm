@@ -12,6 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from _lcm.egm.one_asset_egm_step import egm_one_asset_step
+from _lcm.execution.core_program import core_program_graph
 from lcm import AgeSpecializedGrid, LinSpacedGrid
 from lcm.solvers import EGM, Solver
 from tests.solution._crra_preferences import crra_preferences
@@ -70,10 +71,10 @@ def _lowered_core_identities(model):
     """Number of distinct kernel core objects the model would compile."""
     return len(
         {
-            id(core)
+            id(program.function)
             for regime in model._regimes.values()
             for kernel in regime.solution.period_kernels.values()
-            for core in kernel.cores().values()
+            for program in core_program_graph(kernel=kernel).values()
         }
     )
 
@@ -115,8 +116,8 @@ def test_the_static_model_solves_reproducibly():
         "retired": EGM(savings_grid=_SAVINGS_GRID),
     }
     model = get_model(n_periods=_N_PERIODS, solvers=solvers)
-    first = model.solve(params=get_params(), log_level="debug")
-    second = model.solve(params=get_params(), log_level="debug")
+    first = model.solve(params=get_params(), log_level="debug").values
+    second = model.solve(params=get_params(), log_level="debug").values
     for period, regime_to_V in first.items():
         for regime_name, V_arr in regime_to_V.items():
             np.testing.assert_array_equal(

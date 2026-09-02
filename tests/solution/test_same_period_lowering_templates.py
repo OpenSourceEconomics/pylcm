@@ -20,7 +20,8 @@ import numpy as np
 from numpy.testing import assert_array_almost_equal as aaae
 
 from _lcm.engine import StateActionSpace
-from _lcm.solution.grid_search import _GridSearchPeriodKernel
+from _lcm.execution.core_program import CoreBuildContext
+from _lcm.solution.grid_search import _GridSearchArgumentBuilder
 from _lcm.typing import RegimeName
 from lcm import (
     AgeGrid,
@@ -81,7 +82,7 @@ def test_solve_reads_a_reference_regime_that_is_also_a_gated_edge_target() -> No
     model = _build_model()
     solution = model.solve(
         params={"discount_factor": _DISCOUNT_FACTOR}, log_level="debug"
-    )
+    ).values
     aaae(
         np.asarray(solution[0]["couple"]),
         _EXPECTED_COUPLE_V,
@@ -89,7 +90,7 @@ def test_solve_reads_a_reference_regime_that_is_also_a_gated_edge_target() -> No
     )
 
 
-def test_build_lower_args_templates_the_same_period_slot_with_the_reference_V() -> None:
+def test_program_builder_templates_the_same_period_slot_with_the_reference_V() -> None:
     """The same-period lowering template is the reference regime's V template.
 
     A kernel whose regime both references and gates into the same regime lowers
@@ -97,29 +98,29 @@ def test_build_lower_args_templates_the_same_period_slot_with_the_reference_V() 
     against that regime's own V — two arrays of different rank whenever the source
     is collective.
     """
-    kernel = _GridSearchPeriodKernel(
-        core=lambda **kwargs: kwargs,
+    builder = _GridSearchArgumentBuilder(
         regime_name="couple",
-        collective=True,
         same_period_ref_regimes=("single",),
         edge_target_regimes=("single",),
     )
     reference_V = jnp.zeros(3)
-    lower_args = kernel.build_lower_args(
-        state_action_space=StateActionSpace(
-            states=MappingProxyType({"wage": jnp.zeros(3)}),
-            discrete_actions=MappingProxyType({}),
-            continuous_actions=MappingProxyType({}),
-            state_and_discrete_action_names=("wage",),
-        ),
-        next_regime_to_V_arr=MappingProxyType({"single": reference_V}),
-        next_regime_to_continuation=MappingProxyType({}),
-        flat_params=MappingProxyType(
-            {"couple": MappingProxyType({}), "single": MappingProxyType({})}
-        ),
-        period=0,
-        ages=AgeGrid(start=0, stop=2, step="Y"),
-        edge_regime_to_V_arr=MappingProxyType({"single": jnp.zeros((3, 2))}),
+    lower_args = builder(
+        CoreBuildContext(
+            state_action_space=StateActionSpace(
+                states=MappingProxyType({"wage": jnp.zeros(3)}),
+                discrete_actions=MappingProxyType({}),
+                continuous_actions=MappingProxyType({}),
+                state_and_discrete_action_names=("wage",),
+            ),
+            next_regime_to_V_arr=MappingProxyType({"single": reference_V}),
+            next_regime_to_continuation=MappingProxyType({}),
+            flat_params=MappingProxyType(
+                {"couple": MappingProxyType({}), "single": MappingProxyType({})}
+            ),
+            period=0,
+            ages=AgeGrid(start=0, stop=2, step="Y"),
+            edge_regime_to_V_arr=MappingProxyType({"single": jnp.zeros((3, 2))}),
+        )
     )
     same_period = cast(
         "Mapping[RegimeName, FloatND]", lower_args["same_period_regime_to_V_arr"]

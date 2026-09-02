@@ -13,13 +13,14 @@ an array of the wrong rank broadcasts rather than raising, so nothing
 downstream can recover it.
 """
 
+from dataclasses import replace
 from types import MappingProxyType
 
 import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
-from lcm.exceptions import InvalidValueFunctionError
+from lcm.exceptions import InvalidSimulationInputError
 from tests.collective_fixtures import (
     DISCOUNT_FACTOR,
     FOLD_TERMINAL_PAYOFF,
@@ -47,7 +48,7 @@ def test_supplied_collective_V_passes_shape_validation_at_debug():
     result = model.simulate(
         params=params,
         initial_conditions=make_couple_initial_conditions(n_subjects=2),
-        period_to_regime_to_V_arr=solution,
+        solution=solution,
         log_level="debug",
         seed=0,
     )
@@ -84,7 +85,7 @@ def test_supplied_folded_V_passes_shape_validation_at_debug():
     result = model.simulate(
         params=params,
         initial_conditions=make_folding_singleton_initial_conditions(n_subjects=2),
-        period_to_regime_to_V_arr=solution,
+        solution=solution,
         log_level="debug",
         seed=0,
     )
@@ -119,23 +120,23 @@ def test_supplying_a_value_function_of_the_wrong_rank_is_rejected():
     model, params = make_two_stakeholder_model()
     solution = model.solve(params=params, log_level="off")
 
-    per_period = {period: dict(regimes) for period, regimes in solution.items()}
+    per_period = {period: dict(regimes) for period, regimes in solution.values.items()}
     per_period[0]["couple"] = jnp.zeros((2, 2, 2, 2))
-    corrupted = MappingProxyType(
+    corrupted_values = MappingProxyType(
         {period: MappingProxyType(regimes) for period, regimes in per_period.items()}
     )
+    corrupted = replace(solution, values=corrupted_values)
 
     # The pattern pins the injected array's own line, so the test reports this
     # rank-four entry rather than any other mismatch in the same message.
     with pytest.raises(
-        InvalidValueFunctionError,
-        match=r"period 0, regime 'couple': value function has shape "
-        r"\(2, 2, 2, 2\) \(4 axes\)",
+        InvalidSimulationInputError,
+        match=r"\(0, 'couple'\) shape=\(2, 2, 2, 2\)",
     ):
         model.simulate(
             params=params,
             initial_conditions=make_couple_initial_conditions(n_subjects=2),
-            period_to_regime_to_V_arr=corrupted,
+            solution=corrupted,
             log_level="debug",
             seed=0,
         )

@@ -95,8 +95,10 @@ def test_entered_process_is_priced_at_its_own_law(*, at_construction: bool) -> N
     the law through `fixed_params` must reach the same value as passing it to
     the process constructor.
     """
-    solution = _entered_process_model(at_construction=at_construction).solve(
-        params=_SOLVE_PARAMS, log_level="debug"
+    solution = (
+        _entered_process_model(at_construction=at_construction)
+        .solve(params=_SOLVE_PARAMS, log_level="debug")
+        .values
     )
     np.testing.assert_allclose(np.asarray(solution[0]["source"]), _MU, atol=1e-6)
 
@@ -145,11 +147,15 @@ def test_carried_process_law_from_fixed_params_matches_construction() -> None:
             enable_jit=False,
         )
 
-    from_construction = _build(at_construction=True).solve(
-        params=_SOLVE_PARAMS, log_level="debug"
+    from_construction = (
+        _build(at_construction=True)
+        .solve(params=_SOLVE_PARAMS, log_level="debug")
+        .values
     )
-    from_fixed_params = _build(at_construction=False).solve(
-        params=_SOLVE_PARAMS, log_level="debug"
+    from_fixed_params = (
+        _build(at_construction=False)
+        .solve(params=_SOLVE_PARAMS, log_level="debug")
+        .values
     )
 
     np.testing.assert_allclose(

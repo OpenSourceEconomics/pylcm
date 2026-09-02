@@ -186,7 +186,6 @@ class AcaBaseline:
         self.model.simulate(
             params=self.model_params,
             initial_conditions=self.initial_conditions,
-            period_to_regime_to_V_arr=None,
             log_level=self.log_level,
             log_path=self.log_path,
         )

@@ -248,6 +248,7 @@ extend-ignore = [
   "F722",    # https://docs.kidger.site/jaxtyping/faq/#flake8-or-ruff-are-throwing-an-error
 ]
 per-file-ignores."benchmarks/*" = [
+  "PD011",   # SolutionResult.values is not pandas .values
   "ANN",     # Annotations
   "ARG002",  # Unused method argument (ASV passes params to all methods)
   "BLE001",  # Blind exception
@@ -321,6 +322,7 @@ per-file-ignores."src/lcm_examples/mahler_yum_2024/**" = [
   "PD011", # false positive on `AgeGrid.values`
 ]
 per-file-ignores."tests/*" = [
+  "PD011",   # SolutionResult.values is not pandas .values
   "ANN",     # Annotations
   "D",       # Docstrings
   "INP001",  # Implicit namespace package

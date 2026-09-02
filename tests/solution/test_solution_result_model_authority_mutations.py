@@ -90,7 +90,7 @@ def _must_not_run(**_kwargs: object) -> None:
 
 def _fixture():
     model = toy.build_model(variant="n_nbegm", n_periods=2)
-    solution = model.solve_result(params=_PARAMS, log_level="off")
+    solution = model.solve(params=_PARAMS, log_level="off")
     ref = next(ref for ref in solution.replay_artifacts if ref.key == SIMULATION_POLICY)
     policy = cast("NNBEGMSimPolicy", solution.replay_artifacts[ref])
     return model, solution, ref, policy
@@ -190,7 +190,7 @@ def ordinary_egm_fixture():
         )
     get_full_model.cache_clear()
     params = get_full_params(n_periods=2)
-    solution = model.solve_result(params=params, log_level="off")
+    solution = model.solve(params=params, log_level="off")
     ref = next(
         ref
         for ref in solution.replay_artifacts
@@ -210,7 +210,7 @@ def ordinary_egm_fixture():
 
 def _adaptive_fixture():
     model = _build("adaptive")
-    solution = model.solve_result(params=_ADAPTIVE_PARAMS, log_level="off")
+    solution = model.solve(params=_ADAPTIVE_PARAMS, log_level="off")
     ref = next(ref for ref in solution.replay_artifacts if ref.key == SIMULATION_POLICY)
     policy = cast("NestedEGMSimPolicy", solution.replay_artifacts[ref])
     return model, solution, ref, policy

@@ -35,7 +35,7 @@ def _solve(
     )
     return model.solve(
         params=toy.build_params(jump_schedule=jump_schedule), log_level="debug"
-    )
+    ).values
 
 
 def test_nbegm_ride_along_discrete_envelope_matches_brute() -> None:

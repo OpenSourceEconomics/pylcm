@@ -56,7 +56,7 @@ def test_model_with_process(distribution_type):
             "age": jnp.asarray([0.0, 0.0]),
             "regime_id": jnp.array([RegimeId.alive] * 2),
         },
-        period_to_regime_to_V_arr=got_solve,
+        solution=got_solve,
         seed=42,
     ).to_dataframe()
 
@@ -69,7 +69,11 @@ def test_model_with_process(distribution_type):
     # Compare solution (iterate over expected regimes — got may have additional ones)
     for period in expected_solve:
         for regime in expected_solve[period]:
-            aaae(expected_solve[period][regime], got_solve[period][regime], decimal=5)
+            aaae(
+                expected_solve[period][regime],
+                got_solve.values[period][regime],
+                decimal=5,
+            )
 
     # Compare simulation (use tolerance to match solution comparison precision)
     assert_frame_equal(
@@ -106,7 +110,6 @@ def test_model_with_cross_regime_processes(distribution_type: str) -> None:
             "age": jnp.zeros(2),
             "regime_id": jnp.full(2, MultiRegimeId.work, dtype=jnp.int32),
         },
-        period_to_regime_to_V_arr=None,
         seed=42,
     ).to_dataframe()
     assert set(result["regime_name"]) >= {"work", "retire"}

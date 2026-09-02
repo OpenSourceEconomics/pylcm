@@ -81,11 +81,15 @@ def test_clustered_savings_grid_resolves_excluded_low_wealth_nodes():
     clustered = IrregSpacedGrid(points=(0.0, *map(float, low), *map(float, high)))
     params = dcegm_paper_twin.get_params(taste_shock_scale=SCALE)
 
-    dcegm_V = dcegm_paper_twin.build_dcegm_model(savings_grid=clustered).solve(
-        params=params, log_level="debug"
+    dcegm_V = (
+        dcegm_paper_twin.build_dcegm_model(savings_grid=clustered)
+        .solve(params=params, log_level="debug")
+        .values
     )
-    brute_V = dcegm_paper_twin.get_model("brute_force").solve(
-        params=params, log_level="debug"
+    brute_V = (
+        dcegm_paper_twin.get_model("brute_force")
+        .solve(params=params, log_level="debug")
+        .values
     )
 
     node = _wealth_node_indices(np.array([1.0]))
@@ -121,7 +125,7 @@ def test_twin_smoothed_value_matches_dcegm_reference(*, solver, rtol, atol, refe
     model = dcegm_paper_twin.get_model(solver)
     params = dcegm_paper_twin.get_params(taste_shock_scale=SCALE)
 
-    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
+    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug").values
 
     for (period, lagged_choice), group in reference.groupby(
         ["period", "lagged_choice"]

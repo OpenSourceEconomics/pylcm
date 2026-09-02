@@ -6,7 +6,7 @@ import uuid
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
-from typing import Literal, cast, overload
+from typing import cast
 
 import jax
 import numpy as np
@@ -86,20 +86,17 @@ from _lcm.solution.replay_validation import (
     validate_nested_egm_sim_policy,
     validate_nnbegm_sim_policy,
 )
-from _lcm.solution.v_topology import expected_V_rank
-from _lcm.solution.validate_V import contains_nan, validate_supplied_V_shapes
+from _lcm.solution.validate_V import contains_nan
 from _lcm.transition_checks import validate_transitions
 from _lcm.typing import (
     FlatParams,
     FunctionName,
-    ModelSolveReturn,
     ParamsTemplate,
     PeriodToRegimeToDissolutionFlags,
     PeriodToRegimeToSimulationPolicy,
     PeriodToRegimeToVArr,
     RegimeName,
     RegimeNamesToIds,
-    SimulationPolicy,
 )
 from _lcm.utils.containers import (
     ensure_containers_are_immutable,
@@ -478,178 +475,8 @@ class Model:
 
         return cast("UserFacingParamsTemplate", _readable(mutable))
 
-    @overload
-    def solve(
-        self,
-        *,
-        params: UserParams,
-        log_level: LogLevel,
-        max_compilation_workers: int | None = ...,
-        log_path: str | Path | None = ...,
-        log_keep_n_latest: int = ...,
-        return_simulation_policy: Literal[False] = ...,
-        return_dissolution_flags: Literal[False] = ...,
-    ) -> PeriodToRegimeToVArr: ...
-
-    @overload
-    def solve(
-        self,
-        *,
-        params: UserParams,
-        log_level: LogLevel,
-        max_compilation_workers: int | None = ...,
-        log_path: str | Path | None = ...,
-        log_keep_n_latest: int = ...,
-        return_simulation_policy: Literal[True],
-        return_dissolution_flags: Literal[False] = ...,
-    ) -> tuple[PeriodToRegimeToVArr, PeriodToRegimeToSimulationPolicy]: ...
-
-    @overload
-    def solve(
-        self,
-        *,
-        params: UserParams,
-        log_level: LogLevel,
-        max_compilation_workers: int | None = ...,
-        log_path: str | Path | None = ...,
-        log_keep_n_latest: int = ...,
-        return_simulation_policy: Literal[False] = ...,
-        return_dissolution_flags: Literal[True],
-    ) -> tuple[PeriodToRegimeToVArr, PeriodToRegimeToDissolutionFlags]: ...
-
-    @overload
-    def solve(
-        self,
-        *,
-        params: UserParams,
-        log_level: LogLevel,
-        max_compilation_workers: int | None = ...,
-        log_path: str | Path | None = ...,
-        log_keep_n_latest: int = ...,
-        return_simulation_policy: Literal[True],
-        return_dissolution_flags: Literal[True],
-    ) -> tuple[
-        PeriodToRegimeToVArr,
-        PeriodToRegimeToSimulationPolicy,
-        PeriodToRegimeToDissolutionFlags,
-    ]: ...
-
-    @overload
-    def solve(
-        self,
-        *,
-        params: UserParams,
-        log_level: LogLevel,
-        max_compilation_workers: int | None = ...,
-        log_path: str | Path | None = ...,
-        log_keep_n_latest: int = ...,
-        return_simulation_policy: bool,
-        return_dissolution_flags: bool,
-    ) -> ModelSolveReturn: ...
-
     @beartype(conf=PARAMS_CONF)
     def solve(
-        self,
-        *,
-        params: UserParams,
-        log_level: LogLevel,
-        max_compilation_workers: int | None = None,
-        log_path: str | Path | None = None,
-        log_keep_n_latest: int = 3,
-        return_simulation_policy: bool = False,
-        return_dissolution_flags: bool = False,
-    ) -> ModelSolveReturn:
-        """Solve the model by backward induction, using each regime's solver.
-
-        Args:
-            params: Model parameters compatible with `get_params_template()`.
-                Parameters can be provided at exactly one of three levels:
-                - Model level: {"arg_0": 0.0} - propagates to all functions needing
-                  arg_0
-                - Regime level: {"regime_0": {"arg_0": 0.0}} - propagates within
-                  regime_0
-                - Function level: {"regime_0": {"func": {"arg_0": 0.0}}} - direct
-                  specification
-                Values may be `pd.Series` with labeled indices; they are
-                auto-converted to JAX arrays.
-            log_level: Verbosity, and the runtime-validation policy it implies.
-                Required — pick deliberately for the situation:
-                - `"off"` — silent; transition-probability and NaN checks skipped.
-                - `"warning"` — validation runs, failures logged as warnings,
-                  the run continues.
-                - `"progress"` — as `"warning"`, plus timing.
-                - `"debug"` — validation runs and **raises** on the first
-                  failure; adds value-function stats.
-                Start every project at `"debug"`: fail early and gather maximum
-                diagnostics. Ease to `"warning"` / `"off"` only once the model
-                is trusted and you need the speed or the non-raising behaviour
-                for an estimation loop.
-            max_compilation_workers: Maximum number of threads for parallel XLA
-                compilation. Defaults to the number of physical CPU cores.
-            log_path: Directory for persisting diagnostic snapshots. Optional at
-                every level; snapshots are written only when it is set.
-            log_keep_n_latest: Maximum number of snapshots to retain on disk.
-
-            return_simulation_policy: When `True`, also return the per-period
-                simulation-policy artifacts published by the configured
-                solvers, as `(value_functions, policies)`. A policy is what
-                `simulate` interpolates at a subject's resources where the
-                regime qualifies for the off-grid read; a fresh `simulate`
-                publishes and consumes it internally. Return it to inspect the
-                artifact or to pass the exact `(value_functions, policies)` pair
-                into a separate `simulate` call. Regimes whose solver publishes
-                no policy have no entry in the policy
-                mapping. Defaults to `False` (value functions only).
-            return_dissolution_flags: When `True`, also return the per-period,
-                per-COLLECTIVE-regime dissolution-flag arrays `D` (`True` on state
-                cells whose action mask is empty; empty inner mappings for
-                models without collective regimes). Pass the result back into
-                `simulate(period_to_regime_to_dissolution_flags=...)` so a
-                `ValueDependentTransition` with a dissolution gate that reads
-                `D_target` can be evaluated during forward simulation. Defaults
-                to `False` (value functions only).
-
-        Returns:
-            Immutable mapping of period to a value function array for each
-            regime; combined with the per-period simulation-policy
-            mapping when `return_simulation_policy=True` and/or the
-            per-period dissolution-flag mapping when `return_dissolution_flags=True`
-            (in that order: value functions, then simulation policy, then
-            dissolution flags — either or both may be appended).
-
-        """
-        log = get_logger(log_level=log_level)
-        flat_params = self._process_params(params)
-        validate_transitions(
-            regimes=self._regimes,
-            flat_params=flat_params,
-            ages=self.ages,
-            logger=log,
-        )
-        internal_result = self._solve_compiled(
-            flat_params=flat_params,
-            params=params,
-            log=log,
-            log_path=log_path,
-            log_keep_n_latest=log_keep_n_latest,
-            max_compilation_workers=max_compilation_workers,
-            collect_simulation_policies=return_simulation_policy,
-            retain_dissolution_flags=return_dissolution_flags,
-        )
-        if return_simulation_policy and return_dissolution_flags:
-            return (
-                internal_result.value_functions,
-                internal_result.simulation_policies,
-                internal_result.dissolution_flags,
-            )
-        if return_simulation_policy:
-            return internal_result.value_functions, internal_result.simulation_policies
-        if return_dissolution_flags:
-            return internal_result.value_functions, internal_result.dissolution_flags
-        return internal_result.value_functions
-
-    @beartype(conf=PARAMS_CONF)
-    def solve_result(
         self,
         *,
         params: UserParams,
@@ -659,28 +486,22 @@ class Model:
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
     ) -> SolutionResult:
-        """Solve into a labelled result with explicit artifact retention.
+        """Solve the model into a labelled, model-authoritative result.
 
-        This is the migration-safe result API: ``solve`` keeps its historical
-        mapping-or-tuple return exactly, while this method separates values,
-        replay artifacts, diagnostics, metadata, and reasons for absent
-        artifacts. The default keeps replay data so the result is complete for
-        solvers whose decisions cannot be recovered from values alone.
+        The default keeps replay artifacts so every built-in solver decision can be
+        replayed by ``simulate(solution=result)``. ``retention`` affects only
+        artifacts kept after the solve; continuations required during backward
+        induction are always produced and consumed. Solver diagnostics remain
+        governed solely by ``log_level``.
 
-        ``retention`` affects only artifacts kept after the solve. Continuations
-        required by backward induction are always produced and consumed by the
-        solve graph, even when they are absent from the returned result.
-        Solver diagnostics remain governed solely by ``log_level``.
-
-        The result is bound to this in-memory model instance and to the exact
-        canonical flat parameters used here. That instance identity survives a
-        pickle round trip of the model, but is not a durable model fingerprint.
+        The result is bound to this model instance and the exact canonical parameter
+        values used here. The instance identity survives a pickle round trip of the
+        model but is not a durable model fingerprint.
 
         Args:
-            params: Model parameters compatible with `get_params_template()`.
-            log_level: Verbosity and runtime-validation policy; see `solve`.
-            retention: Post-solve artifacts to keep. It never suppresses
-                continuations required during solution or diagnostics requested by log.
+            params: Model parameters compatible with ``get_params_template()``.
+            log_level: Verbosity and runtime-validation policy.
+            retention: Post-solve artifacts to retain.
             max_compilation_workers: Maximum threads for parallel XLA compilation.
             log_path: Optional directory for diagnostic snapshots.
             log_keep_n_latest: Maximum snapshots to retain on disk.
@@ -688,7 +509,6 @@ class Model:
         Returns:
             An immutable labelled result containing values, metadata, retained replay
             and diagnostic artifacts, plus explicit artifact-omission reasons.
-
         """
         log = get_logger(log_level=log_level)
         flat_params = self._process_params(params)
@@ -698,6 +518,28 @@ class Model:
             ages=self.ages,
             logger=log,
         )
+        return self._solve_from_flat_params(
+            flat_params=flat_params,
+            params=params,
+            log=log,
+            retention=retention,
+            max_compilation_workers=max_compilation_workers,
+            log_path=log_path,
+            log_keep_n_latest=log_keep_n_latest,
+        )
+
+    def _solve_from_flat_params(
+        self,
+        *,
+        flat_params: FlatParams,
+        params: UserParams,
+        log: logging.Logger,
+        retention: ResultRetention,
+        max_compilation_workers: int | None,
+        log_path: str | Path | None,
+        log_keep_n_latest: int,
+    ) -> SolutionResult:
+        """Build the canonical public result from processed parameters."""
         internal_result = self._solve_compiled(
             flat_params=flat_params,
             params=params,
@@ -851,157 +693,19 @@ class Model:
         with self._simulate_compile_lock:
             return self._simulate_compile_cache[compile_batch_size]
 
-    def _check_supplied_V_shapes(
-        self,
-        *,
-        period_to_regime_to_V_arr: PeriodToRegimeToVArr | None,
-        log: logging.Logger,
-    ) -> None:
-        """Validate a caller-supplied solution against the declared state spaces.
-
-        A freshly solved value function is correct by construction, so only a
-        supplied one is checked. It is the one simulate input nothing else
-        validates: a value function of the wrong rank broadcasts rather than
-        raising, so it has to be caught against the produced rank here.
-        """
-        if period_to_regime_to_V_arr is None or not validation_enabled(log):
-            return
-        try:
-            validate_supplied_V_shapes(
-                period_to_regime_to_V_arr=period_to_regime_to_V_arr,
-                # `expected_V_rank` is the same rule the solver sizes V with, so
-                # the rank a solve produces is the rank simulate accepts.
-                regime_to_expected_rank=MappingProxyType(
-                    {
-                        name: expected_V_rank(regime=regime)
-                        for name, regime in self._regimes.items()
-                    }
-                ),
-            )
-        except InvalidValueFunctionError as error:
-            raise_or_warn(logger=log, error=error)
-
-    def _check_supplied_replay_policies(
-        self,
-        *,
-        period_to_regime_to_V_arr: PeriodToRegimeToVArr | None,
-        policies: PeriodToRegimeToSimulationPolicy | None,
-    ) -> None:
-        """Require replay artifacts where values do not determine the decision.
-
-        Which artifact counts as matching follows the regime's configured outer
-        search, because that is what decides the type `solve()` publishes:
-
-        - finite outer grid ⇒ `NNBEGMSimPolicy`, one per solved period and
-          regime. The finite solve always publishes one, so a missing entry is
-          a caller error.
-        - adaptive outer mesh ⇒ `NestedEGMSimPolicy`. The adaptive solve
-          publishes one only where the nested payload is resolved and omits the
-          entry otherwise, so a present entry is type-checked while an absent
-          one is accepted: automatic simulation falls back there too, and
-          rejecting it would make the split workflow stricter than the route it
-          has to reproduce.
-
-        A wholly absent `policies` mapping is refused on both routes — that is
-        the caller who dropped the replay artifacts altogether.
-        """
-        if period_to_regime_to_V_arr is None:
-            return
-
-        nnbegm_reads = {
-            regime_name: policy_read
-            for regime_name, regime in self._regimes.items()
-            if isinstance(
-                (policy_read := regime.simulation.egm_policy_read), NNBEGMPolicyRead
-            )
-        }
-        if not nnbegm_reads:
-            return
-
-        solved_nnbegm_cells = tuple(
-            (period, regime_name)
-            for period, regime_to_V_arr in period_to_regime_to_V_arr.items()
-            for regime_name in regime_to_V_arr
-            if regime_name in nnbegm_reads
-        )
-        if not solved_nnbegm_cells:
-            return
-
-        # No mapping at all is the caller who dropped the replay artifacts, and
-        # is refused on both routes before the per-cell rule (which accepts an
-        # absent adaptive entry) can excuse it.
-        missing_or_mismatched = (
-            solved_nnbegm_cells
-            if policies is None
-            else tuple(
-                (period, regime_name)
-                for period, regime_name in solved_nnbegm_cells
-                if not _replay_policy_matches(
-                    supplied=policies.get(period, {}).get(regime_name),
-                    is_nested=nnbegm_reads[regime_name].replay_policy_is_nested,
-                )
-            )
-        )
-        if missing_or_mismatched:
-            msg = (
-                "NNBEGM simulation with caller-supplied value functions requires "
-                "a matching replay policy for every solved period and regime. "
-                f"Missing or mismatched entries: {missing_or_mismatched}. Supply "
-                "the exact `(values, policies)` returned by "
-                "`solve(return_simulation_policy=True)`, or pass "
-                "`period_to_regime_to_V_arr=None` to solve automatically."
-            )
-            raise InvalidSimulationInputError(msg)
-
-    def _resolve_simulation_solution_inputs(
-        self,
-        *,
-        solution: SolutionResult | None,
-        flat_params: FlatParams | None,
-        period_to_regime_to_V_arr: PeriodToRegimeToVArr | None,
-        policies: PeriodToRegimeToSimulationPolicy | None,
-        period_to_regime_to_dissolution_flags: PeriodToRegimeToDissolutionFlags | None,
+    def _resolve_solution_result(
+        self, *, solution: SolutionResult, flat_params: FlatParams
     ) -> tuple[
-        PeriodToRegimeToVArr | None,
-        PeriodToRegimeToSimulationPolicy | None,
-        PeriodToRegimeToDissolutionFlags | None,
+        PeriodToRegimeToVArr,
+        PeriodToRegimeToSimulationPolicy,
+        PeriodToRegimeToDissolutionFlags,
     ]:
-        """Resolve the labelled result or the legacy parallel inputs, never both."""
-        if solution is None:
-            return (
-                period_to_regime_to_V_arr,
-                policies,
-                period_to_regime_to_dissolution_flags,
-            )
-
-        legacy_inputs = tuple(
-            name
-            for name, value in (
-                ("period_to_regime_to_V_arr", period_to_regime_to_V_arr),
-                ("policies", policies),
-                (
-                    "period_to_regime_to_dissolution_flags",
-                    period_to_regime_to_dissolution_flags,
-                ),
-            )
-            if value is not None
-        )
-        if legacy_inputs:
-            msg = (
-                "`solution` cannot be combined with legacy solution inputs. "
-                f"Also supplied: {legacy_inputs}. Pass one complete SolutionResult "
-                "or the separate legacy values/artifact mappings, not both."
-            )
-            raise InvalidSimulationInputError(msg)
-
-        if flat_params is None:
-            raise AssertionError("SolutionResult preflight requires canonical params.")
+        """Resolve one model-authoritative result into engine replay inputs."""
         authority = self._check_solution_result_structure(
             solution=solution, flat_params=flat_params
         )
         policies, dissolution_flags = self._check_solution_result_artifacts(
-            solution=solution,
-            authority=authority,
+            solution=solution, authority=authority
         )
         return (
             cast("PeriodToRegimeToVArr", solution.values),
@@ -1632,17 +1336,13 @@ class Model:
         raise UnsupportedOperationError(msg)
 
     @beartype(conf=PARAMS_CONF)
-    def simulate(  # noqa: C901
+    def simulate(  # noqa: C901, PLR0912
         self,
         *,
         params: UserParams,
         initial_conditions: UserInitialConditions | pd.DataFrame,
-        period_to_regime_to_V_arr: PeriodToRegimeToVArr | None = None,
-        policies: PeriodToRegimeToSimulationPolicy | None = None,
         solution: SolutionResult | None = None,
         log_level: LogLevel,
-        period_to_regime_to_dissolution_flags: PeriodToRegimeToDissolutionFlags
-        | None = None,
         seed: int | None = None,
         subject_batch_size: int = 0,
         log_path: str | Path | None = None,
@@ -1651,10 +1351,9 @@ class Model:
     ) -> SimulationResult:
         """Simulate the model forward, optionally solving first.
 
-        When neither `solution` nor `period_to_regime_to_V_arr` is supplied, the
-        model is solved before simulating. Pass a complete result from
-        `solve_result()` to replay a separate solve without splitting its values
-        from solver-specific artifacts.
+        When ``solution`` is omitted, the model is solved before simulation. Pass
+        the complete result from ``solve()`` to replay a separate solve without
+        splitting values from solver-specific artifacts.
 
         Args:
             params: Model parameters compatible with `get_params_template()`.
@@ -1678,24 +1377,11 @@ class Model:
                 as an integer code from the model's role vocabulary
                 (`model.stakeholder_names_to_ids`): which partner a row is
                 decides which regime it enters when the household dissolves.
-            period_to_regime_to_V_arr: Value function arrays from `solve()`.
-                When `None`, the model is solved automatically before simulating.
-            policies: Simulation-policy artifacts returned alongside the value
-                functions by `solve(return_simulation_policy=True)`. Supply the
-                exact pair to replay solver decisions that cannot be recovered
-                from value functions alone.
-            solution: Complete labelled result returned by `solve_result()`.
-                It cannot be combined with any of the legacy values, policies,
-                or dissolution-flags arguments. Required replay artifacts are
-                validated before forward simulation starts. Its model-instance
-                identity, canonical parameters, and value schemas are checked
-                even when `log_level="off"`.
-            period_to_regime_to_dissolution_flags: Per-period, per-COLLECTIVE-regime
-                dissolution-flag arrays from `solve(return_dissolution_flags=True)`.
-                Required only for a model with a `ValueDependentTransition`
-                whose dissolution gate reads `D_target`; such a gate raises a
-                clear `NotImplementedError` at simulate time if this is left
-                `None`. `None` (the default) is a no-op for every other model.
+            solution: Complete labelled result returned by ``solve()``. Required
+                replay artifacts are validated before forward simulation starts. Its
+                model-instance identity, canonical parameters, and value schemas are
+                checked even when ``log_level="off"``. When omitted, ``simulate``
+                obtains the same complete result from an automatic solve.
             seed: Random seed.
             subject_batch_size: How to partition the subject axis of the forward
                 simulation. Results are invariant to this knob — per-subject RNG
@@ -1723,8 +1409,8 @@ class Model:
                 every level; snapshots are written only when it is set.
             log_keep_n_latest: Maximum number of snapshots to retain on disk.
             max_compilation_workers: Maximum number of threads for parallel XLA
-                compilation. Only used when `period_to_regime_to_V_arr` is `None`
-                (i.e. when solve runs automatically). Defaults to the number of
+                compilation. Only used when ``solution`` is omitted (i.e. when
+                solve runs automatically). Defaults to the number of
                 physical CPU cores.
         Returns:
             SimulationResult object. Call .to_dataframe() to get a pandas DataFrame,
@@ -1733,26 +1419,21 @@ class Model:
         """
         log = get_logger(log_level=log_level)
         self._fail_if_simulation_is_unsupported()
-        # A labelled result is bound to the canonical solve parameters, so its
-        # preflight needs them before any forward preparation. Keep that exact
-        # tree and reuse it below; legacy inputs retain their historical
-        # processing point after initial-condition canonicalisation.
-        solution_flat_params = (
-            self._process_params(params) if solution is not None else None
-        )
-        (
-            period_to_regime_to_V_arr,
-            policies,
-            period_to_regime_to_dissolution_flags,
-        ) = self._resolve_simulation_solution_inputs(
-            solution=solution,
-            flat_params=solution_flat_params,
-            period_to_regime_to_V_arr=period_to_regime_to_V_arr,
-            policies=policies,
-            period_to_regime_to_dissolution_flags=(
-                period_to_regime_to_dissolution_flags
-            ),
-        )
+        # The canonical parameters bind both the supplied result preflight and an
+        # automatic solve. Process them once and keep one model-authoritative seam.
+        flat_params = self._process_params(params)
+        if solution is not None:
+            (
+                period_to_regime_to_V_arr,
+                period_to_regime_to_sim_policy,
+                period_to_regime_to_dissolution_flags,
+            ) = self._resolve_solution_result(
+                solution=solution, flat_params=flat_params
+            )
+        else:
+            period_to_regime_to_V_arr = None
+            period_to_regime_to_sim_policy = None
+            period_to_regime_to_dissolution_flags = None
         if isinstance(initial_conditions, pd.DataFrame):
             initial_conditions = initial_conditions_from_dataframe(
                 df=initial_conditions,
@@ -1786,21 +1467,9 @@ class Model:
             initial_conditions=initial_conditions,
             multiple=alignment,
         )
-        flat_params = (
-            solution_flat_params
-            if solution_flat_params is not None
-            else self._process_params(params)
-        )
-        # The edge-fold state/source-param collision guard runs on the simulate
-        # entry as well as inside `solve()`. Simulation accepts a precomputed or
-        # cached `period_to_regime_to_V_arr` and then skips `solve()` entirely
-        # (the `period_to_regime_to_V_arr is None` branch below), so a guard
-        # sitting only in `solve()` would let the simulate gate and the
-        # fallback-state projector read a colliding leaf unchecked — a name that
-        # is both a target state of the target regime and a key of
-        # `flat_params[source]`. Running it here, before any simulation
-        # compilation or routing, covers every route to the value arrays.
-        # A cheap no-op when no regime declares gated edges.
+        # The edge-fold state/source-param collision guard runs on simulation as
+        # well as solve because a supplied SolutionResult skips backward induction.
+        # Running it before compilation or routing covers both entry paths.
         if any(regime.gated_edges for regime in self._regimes.values()):
             _reject_edge_fold_state_param_collisions(
                 regimes=self._regimes,
@@ -1839,53 +1508,29 @@ class Model:
             max_compilation_workers=max_compilation_workers,
             log=log,
         )
-        self._check_supplied_V_shapes(
-            period_to_regime_to_V_arr=period_to_regime_to_V_arr, log=log
-        )
-        self._check_supplied_replay_policies(
-            period_to_regime_to_V_arr=period_to_regime_to_V_arr,
-            policies=policies,
-        )
-        period_to_regime_to_sim_policy = policies
-        auto_solved_dissolution_flags: PeriodToRegimeToDissolutionFlags | None = None
-        if period_to_regime_to_V_arr is None:
-            # A fresh solve publishes the off-grid EGM policy consumed by
-            # simulation. Policies paired with caller-supplied values enter
-            # through the public argument above and do not reach this branch.
-            #
-            # The auto-solve also carries each collective regime's dissolution
-            # flag D on the result, so a
-            # dissolution-gated model driven through the auto-solve path
-            # need not re-run `solve(return_dissolution_flags=True)`
-            # separately — the flags are threaded straight into `simulate`
-            # below (still overridable by an explicit caller-supplied
-            # `period_to_regime_to_dissolution_flags`). Nothing is requested
-            # here: a gate reading `D_target` is what makes the flags a
-            # simulate input, and backward induction reads that off the gate
-            # itself, so a model whose gates read only values carries none.
-            #
-            # The canonical `egm_policy_read` marker declares a consuming route.
-            # The solver-side flag separately requests collection for a
-            # self-describing payload in the legacy automatic-solve path; the
-            # labelled SolutionResult adapter retains only cells with a canonical
-            # consumer.
-            collect_simulation_policies = any(
-                regime.simulation.egm_policy_read is not None
-                or self.user_regimes[regime_name].solver.publishes_simulation_policy
-                for regime_name, regime in self._regimes.items()
-            )
-            internal_result = self._solve_compiled(
+        if solution is None:
+            solution = self._solve_from_flat_params(
                 flat_params=flat_params,
                 params=params,
                 log=log,
+                retention=ResultRetention.VALUES_AND_REPLAY,
+                max_compilation_workers=max_compilation_workers,
                 log_path=log_path,
                 log_keep_n_latest=log_keep_n_latest,
-                max_compilation_workers=max_compilation_workers,
-                collect_simulation_policies=collect_simulation_policies,
             )
-            period_to_regime_to_V_arr = internal_result.value_functions
-            period_to_regime_to_sim_policy = internal_result.simulation_policies
-            auto_solved_dissolution_flags = internal_result.dissolution_flags
+            (
+                period_to_regime_to_V_arr,
+                period_to_regime_to_sim_policy,
+                period_to_regime_to_dissolution_flags,
+            ) = self._resolve_solution_result(
+                solution=solution, flat_params=flat_params
+            )
+        if (
+            period_to_regime_to_V_arr is None
+            or period_to_regime_to_sim_policy is None
+            or period_to_regime_to_dissolution_flags is None
+        ):
+            raise AssertionError("Simulation solution inputs were not resolved.")
         simulate_regimes = self._resolve_simulate_regimes(
             actual_n_subjects=actual_n_subjects,
             compile_batch_size=compile_batch_size,
@@ -1900,10 +1545,6 @@ class Model:
             period_to_regime_to_V_arr=period_to_regime_to_V_arr,
             period_to_regime_to_dissolution_flags=(
                 period_to_regime_to_dissolution_flags
-                if period_to_regime_to_dissolution_flags is not None
-                else auto_solved_dissolution_flags
-                if auto_solved_dissolution_flags is not None
-                else MappingProxyType({})
             ),
             period_to_regime_to_sim_policy=period_to_regime_to_sim_policy,
             ages=self.ages,
@@ -2037,19 +1678,3 @@ class Model:
         _validate_param_types(flat_params)
         fail_if_nonpositive_taste_shock_scale(flat_params)
         return flat_params
-
-
-def _replay_policy_matches(
-    *,
-    supplied: SimulationPolicy | None,
-    is_nested: bool,
-) -> bool:
-    """Whether a supplied replay policy matches the configured outer search.
-
-    The adaptive mesh omits the entry for a period whose nested payload is
-    unresolved, and simulation falls back there on both routes, so `None` is
-    accepted for it and refused for the finite grid.
-    """
-    if is_nested:
-        return supplied is None or isinstance(supplied, NestedEGMSimPolicy)
-    return isinstance(supplied, NNBEGMSimPolicy)

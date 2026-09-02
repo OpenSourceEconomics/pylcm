@@ -10,12 +10,12 @@ any block size, including sizes that do not divide the axis.
 """
 
 import functools
+from collections.abc import Mapping
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.typing import PeriodToRegimeToVArr
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -175,8 +175,8 @@ def _params() -> dict:
     return {"discount_factor": 0.95, "final_age_alive": 40 + (N_PERIODS - 2) * 10}
 
 
-def _solve(health_batch_size: int) -> PeriodToRegimeToVArr:
-    return _model(health_batch_size).solve(params=_params(), log_level="debug")
+def _solve(health_batch_size: int) -> Mapping[int, Mapping[str, FloatND]]:
+    return _model(health_batch_size).solve(params=_params(), log_level="debug").values
 
 
 @pytest.mark.parametrize("health_batch_size", [1, 2, 3])
@@ -284,8 +284,10 @@ def test_two_discrete_combo_axes_splayed_together_match_unsplayed(batch_size: in
     unsplayed `batch_size=0` solve exactly, with the combo axes in the same
     canonical order — guarding the flatten-and-transpose path.
     """
-    reference = _two_combo_model(0).solve(params=_params(), log_level="debug")
-    splayed = _two_combo_model(batch_size).solve(params=_params(), log_level="debug")
+    reference = _two_combo_model(0).solve(params=_params(), log_level="debug").values
+    splayed = (
+        _two_combo_model(batch_size).solve(params=_params(), log_level="debug").values
+    )
     assert set(reference) == set(splayed)
     for period in sorted(reference):
         assert set(reference[period]) == set(splayed[period])

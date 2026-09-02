@@ -370,7 +370,7 @@ def test_bridge_refuses_wrong_payload_under_the_expected_continuation_key() -> N
 def test_values_only_result_does_not_suppress_solve_time_continuation() -> None:
     model = _model(solver=EGM(savings_grid=_SAVINGS_GRID))
 
-    result = model.solve_result(
+    result = model.solve(
         params=_params(),
         log_level="off",
         retention=ResultRetention.VALUES,

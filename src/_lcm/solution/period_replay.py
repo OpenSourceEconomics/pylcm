@@ -9,15 +9,33 @@ by the backward-induction loop, and the replay side imports that loop.
 """
 
 import dataclasses
+from collections.abc import Mapping
 from enum import StrEnum
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import Any, cast
 
 import cloudpickle
 import jax
 
-from _lcm.solution.backward_induction import _edge_kwargs, _run_period_kernel
+from _lcm.engine import StateActionSpace
+from _lcm.execution.core_program import (
+    CoreBuildContext,
+    CoreExecutionDisposition,
+    core_program_graph,
+    materialize_core_program,
+)
+from _lcm.execution.output_layout import (
+    UNPLANNED,
+    resolve_output_layout,
+)
+from _lcm.solution.backward_induction import (
+    _assert_lowered_output_roles,
+    _attach_resolved_output_layout,
+    _edge_kwargs,
+    _resolve_program_for_execution,
+    _run_period_kernel,
+)
 from _lcm.solution.contract import KernelResult
 from _lcm.solution.period_capture import _PAYLOAD_NAME
 from _lcm.typing import RegimeName
@@ -253,15 +271,65 @@ def _compile_cores_for_one_period(
     cores this one period calls.
     """
     period_kernel = regime.solution.period_kernels[period]
-    lower_arg_sources = _lower_arg_sources_for_one_period(
+    context = _core_build_context_for_one_period(
         regime=regime, period=period, kernel_kwargs=kernel_kwargs
     )
     compiled = {}
-    for core_key, core in period_kernel.cores().items():
-        lower_args = period_kernel.build_lower_args(
-            core_key=core_key, **lower_arg_sources
+    for core_name, declaration in core_program_graph(kernel=period_kernel).items():
+        materialized = materialize_core_program(program=declaration, context=context)
+        resolved = _resolve_program_for_execution(
+            program=materialized,
+            source_value_template=context.next_regime_to_V_arr[
+                kernel_kwargs["regime_name"]
+            ],
+            source=(kernel_kwargs["regime_name"], period, core_name),
         )
-        compiled[core_key] = jax.jit(core).lower(**lower_args).compile()
+        state_action_space = cast("StateActionSpace", context.state_action_space)
+        state_order = tuple(
+            name
+            for name in state_action_space.states
+            if name not in regime.fold_state_names
+        )
+        layout = (
+            UNPLANNED
+            if resolved.disposition is CoreExecutionDisposition.LEGACY_UNPLANNED
+            else resolve_output_layout(
+                core_key=core_name,
+                value_template=context.next_regime_to_V_arr[
+                    kernel_kwargs["regime_name"]
+                ],
+                state_order=state_order,
+                output_roles=resolved.output_roles,
+            )
+        )
+        jitted = (
+            jax.jit(
+                resolved.function,
+                static_argnames=tuple(resolved.static_kwargs),
+            )
+            if layout is UNPLANNED
+            else jax.jit(
+                resolved.function,
+                static_argnames=tuple(resolved.static_kwargs),
+                out_shardings=layout.out_shardings,
+            )
+        )
+        lowered = jitted.lower(**resolved.arguments, **resolved.static_kwargs)
+        _assert_lowered_output_roles(
+            lowered=lowered,
+            output_roles=resolved.output_roles,
+            value_template=context.next_regime_to_V_arr[kernel_kwargs["regime_name"]],
+            layout=layout,
+            label=(
+                f"{kernel_kwargs['regime_name']} {core_name} (replay period {period})"
+            ),
+        )
+        executable = lowered.compile()
+        compiled[core_name] = _attach_resolved_output_layout(
+            compiled=executable,
+            layout=layout,
+            input_transfer_plan=resolved.input_transfer_plan,
+        )
     return MappingProxyType(compiled)
 
 
@@ -280,22 +348,28 @@ def _compile_fused_nbegm_core_for_one_period(
             f"got {type(period_kernel).__name__}."
         )
         raise TypeError(msg)
-    lower_arg_sources = _lower_arg_sources_for_one_period(
+    context = _core_build_context_for_one_period(
         regime=regime, period=period, kernel_kwargs=kernel_kwargs
     )
-    lower_args = period_kernel.build_lower_args(
-        core_key="continuation", **lower_arg_sources
+    declaration = core_program_graph(kernel=period_kernel)["continuation"]
+    materialized = materialize_core_program(program=declaration, context=context)
+    resolved = _resolve_program_for_execution(
+        program=materialized,
+        source_value_template=context.next_regime_to_V_arr[
+            kernel_kwargs["regime_name"]
+        ],
+        source=(kernel_kwargs["regime_name"], period, "continuation"),
     )
-    return jax.jit(builder()).lower(**lower_args).compile()
+    return jax.jit(builder()).lower(**resolved.arguments).compile()
 
 
-def _lower_arg_sources_for_one_period(
+def _core_build_context_for_one_period(
     *,
     regime: Any,  # noqa: ANN401 - the canonical Regime, circular to import here
     period: int,
     kernel_kwargs: dict[str, Any],
-) -> dict[str, Any]:
-    """Build the solve-loop lowering inputs shared by split and fused replay."""
+) -> CoreBuildContext:
+    """Build the immutable program context shared by split and fused replay."""
     # A source declaring gated edges reads its targets' folded continuation in
     # place of their raw V, so the kernel is compiled against a pytree the raw
     # mapping does not carry. The projection comes from the solve loop's own
@@ -303,16 +377,20 @@ def _lower_arg_sources_for_one_period(
     # tree and logical shapes a replay lowers against match production. Capture
     # serialization does not preserve sharding, so layout fidelity is explicitly
     # reported as default backend placement rather than implied here.
-    return {
-        "state_action_space": kernel_kwargs["state_action_space"],
-        "next_regime_to_V_arr": kernel_kwargs["next_regime_to_V_arr"],
-        "next_regime_to_continuation": kernel_kwargs["next_regime_to_continuation"],
-        "flat_params": kernel_kwargs["flat_params"],
-        "period": period,
-        "ages": kernel_kwargs["ages"],
-        **_edge_kwargs(
-            regime=regime,
-            regime_name=kernel_kwargs["regime_name"],
-            next_edge_to_V_arr=kernel_kwargs["next_edge_to_V_arr"],
+    edge_kwargs = _edge_kwargs(
+        regime=regime,
+        regime_name=kernel_kwargs["regime_name"],
+        next_edge_to_V_arr=kernel_kwargs["next_edge_to_V_arr"],
+    )
+    return CoreBuildContext(
+        state_action_space=kernel_kwargs["state_action_space"],
+        next_regime_to_V_arr=kernel_kwargs["next_regime_to_V_arr"],
+        next_regime_to_continuation=kernel_kwargs["next_regime_to_continuation"],
+        flat_params=kernel_kwargs["flat_params"],
+        period=period,
+        ages=kernel_kwargs["ages"],
+        edge_regime_to_V_arr=cast(
+            "Mapping[str, object] | None",
+            edge_kwargs.get("edge_regime_to_V_arr"),
         ),
-    }
+    )

@@ -101,7 +101,6 @@ def test_fixed_state_keeps_its_value_in_simulation() -> None:
             "wealth": jnp.asarray([50.0, 80.0]),
             "regime_id": jnp.asarray([_RegimeId.work, _RegimeId.work]),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
         seed=42,
     )

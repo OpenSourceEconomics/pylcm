@@ -34,7 +34,9 @@ def _solve(*, variant: str, n_consumption: int) -> Mapping[int, Mapping]:
         action_in_costate=True,
         jump_schedule=True,
     )
-    return model.solve(params=toy.build_params(jump_schedule=True), log_level="debug")
+    return model.solve(
+        params=toy.build_params(jump_schedule=True), log_level="debug"
+    ).values
 
 
 def test_branch_continuation_with_shared_parent_jump_matches_brute() -> None:

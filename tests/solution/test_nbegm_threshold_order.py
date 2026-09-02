@@ -26,7 +26,7 @@ def _solve(*, cliff: float, exemption: float, log_level: LogLevel):
     return model.solve(
         params=toy.build_params(cliff=cliff, exemption=exemption),
         log_level=log_level,
-    )
+    ).values
 
 
 def test_thresholds_in_declared_ascending_order_solve():

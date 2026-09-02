@@ -148,7 +148,7 @@ def _solve_alive(*, liquid_law=None, law_extra=None) -> np.ndarray:
     solution = _build(liquid_law=liquid_law).solve(
         params=_params(law_extra=law_extra), log_level="debug"
     )
-    return np.asarray(solution[0]["alive"])
+    return np.asarray(solution.values[0]["alive"])
 
 
 def test_a_scaled_utility_enters_the_solved_objective():
@@ -157,10 +157,12 @@ def test_a_scaled_utility_enters_the_solved_objective():
     The kernel evaluates the declared felicity, so a scale the regime writes is
     part of the problem solved rather than structure quietly dropped from it.
     """
-    scaled = _build(utility_func=scaled_utility).solve(
-        params=_params(utility_extra={"util_scale": 2.0}), log_level="debug"
+    scaled = (
+        _build(utility_func=scaled_utility)
+        .solve(params=_params(utility_extra={"util_scale": 2.0}), log_level="debug")
+        .values
     )
-    plain = _build().solve(params=_params(), log_level="debug")
+    plain = _build().solve(params=_params(), log_level="debug").values
     assert not np.allclose(
         np.asarray(scaled[0]["alive"]), np.asarray(plain[0]["alive"])
     )
@@ -223,4 +225,4 @@ def test_the_conventional_case_piece_regime_still_builds():
     """The plain CRRA / affine-law regime the kernels solve is still accepted."""
     model = _build()
     solution = model.solve(params=_params(), log_level="debug")
-    assert any("alive" in period for period in solution.values())
+    assert any("alive" in period for period in solution.values.values())

@@ -15,12 +15,12 @@ explicit budget constraint).
 """
 
 import functools
+from collections.abc import Mapping
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.typing import PeriodToRegimeToVArr
 from lcm import (
     AgeGrid,
     IrregSpacedGrid,
@@ -161,7 +161,9 @@ DCEGM_SOLVER = DCEGM(
 
 
 def _assert_working_life_V_matches(
-    *, dcegm_solution: PeriodToRegimeToVArr, brute_solution: PeriodToRegimeToVArr
+    *,
+    dcegm_solution: Mapping[int, Mapping[str, FloatND]],
+    brute_solution: Mapping[int, Mapping[str, FloatND]],
 ) -> None:
     for period in sorted(brute_solution)[:-1]:
         brute_V = np.asarray(brute_solution[period]["working_life"])
@@ -267,11 +269,13 @@ def test_child_resources_reading_param_matches_brute_force():
     must receive it; values agree with the dense-grid brute-force oracle.
     """
     params = _params()
-    dcegm_solution = _resources_param_model("dcegm").solve(
-        params=params, log_level="debug"
+    dcegm_solution = (
+        _resources_param_model("dcegm").solve(params=params, log_level="debug").values
     )
-    brute_solution = _resources_param_model("brute_force").solve(
-        params=params, log_level="debug"
+    brute_solution = (
+        _resources_param_model("brute_force")
+        .solve(params=params, log_level="debug")
+        .values
     )
     _assert_working_life_V_matches(
         dcegm_solution=dcegm_solution, brute_solution=brute_solution
@@ -412,12 +416,18 @@ def test_regime_prob_reading_param_intermediate_matches_brute_force(
     params = _params()
     if rate_is_fixed:
         del params["rate_of_return"]
-    dcegm_solution = _smoothstep_intermediate_model(
-        solver="dcegm", rate_is_fixed=rate_is_fixed
-    ).solve(params=params, log_level="debug")
-    brute_solution = _smoothstep_intermediate_model(
-        solver="brute_force", rate_is_fixed=rate_is_fixed
-    ).solve(params=params, log_level="debug")
+    dcegm_solution = (
+        _smoothstep_intermediate_model(solver="dcegm", rate_is_fixed=rate_is_fixed)
+        .solve(params=params, log_level="debug")
+        .values
+    )
+    brute_solution = (
+        _smoothstep_intermediate_model(
+            solver="brute_force", rate_is_fixed=rate_is_fixed
+        )
+        .solve(params=params, log_level="debug")
+        .values
+    )
     _assert_working_life_V_matches(
         dcegm_solution=dcegm_solution, brute_solution=brute_solution
     )
@@ -542,11 +552,13 @@ def test_imputed_pension_wealth_feeding_resources_matches_brute_force():
     the same imputation.
     """
     params = _params()
-    dcegm_solution = _imputed_pension_model("dcegm").solve(
-        params=params, log_level="debug"
+    dcegm_solution = (
+        _imputed_pension_model("dcegm").solve(params=params, log_level="debug").values
     )
-    brute_solution = _imputed_pension_model("brute_force").solve(
-        params=params, log_level="debug"
+    brute_solution = (
+        _imputed_pension_model("brute_force")
+        .solve(params=params, log_level="debug")
+        .values
     )
     _assert_working_life_V_matches(
         dcegm_solution=dcegm_solution, brute_solution=brute_solution

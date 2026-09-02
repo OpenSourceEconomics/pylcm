@@ -21,17 +21,25 @@ from tests.test_models import nbegm_stochastic_node_toy as toy
 def test_stochastic_fold_is_invariant_to_distributing_a_ride_state():
     """Distributing the fixed `kind` ride state leaves the solved value unchanged."""
     params = toy.build_params(with_kind=True)
-    plain = toy.build_model(
-        variant="nbegm", with_kind=True, n_periods=4, n_liquid=24, n_savings=32
-    ).solve(params=params, log_level="debug")
-    distributed = toy.build_model(
-        variant="nbegm",
-        with_kind=True,
-        distributed_kind=True,
-        n_periods=4,
-        n_liquid=24,
-        n_savings=32,
-    ).solve(params=params, log_level="debug")
+    plain = (
+        toy.build_model(
+            variant="nbegm", with_kind=True, n_periods=4, n_liquid=24, n_savings=32
+        )
+        .solve(params=params, log_level="debug")
+        .values
+    )
+    distributed = (
+        toy.build_model(
+            variant="nbegm",
+            with_kind=True,
+            distributed_kind=True,
+            n_periods=4,
+            n_liquid=24,
+            n_savings=32,
+        )
+        .solve(params=params, log_level="debug")
+        .values
+    )
     for period in plain:
         if "alive" not in plain[period]:
             continue

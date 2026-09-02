@@ -44,7 +44,7 @@ from lcm_examples.collective_regimes import get_params, get_shared_decision_mode
 model = get_shared_decision_model()
 solution = model.solve(params=get_params(), log_level="debug")
 
-solution[0]["couple"]
+solution.values[0]["couple"]
 ```
 
 ```text
@@ -98,12 +98,14 @@ regime publishes a dissolution flag.
 from lcm_examples.collective_regimes import get_dissolution_model
 
 model = get_dissolution_model()
-solution, dissolution_flags = model.solve(
+solution = model.solve(
     params=get_params(),
     log_level="debug",
-    return_dissolution_flags=True,
 )
 
+from lcm.solver_api import DISSOLUTION_FLAG
+
+dissolution_flags = solution.replay_artifacts.project(DISSOLUTION_FLAG)
 dissolution_flags[1]["married_with_participation"]
 # Array([False,  True, False], dtype=bool)
 ```
@@ -164,8 +166,7 @@ initial_conditions = {
 result = model.simulate(
     params=get_params(),
     initial_conditions=initial_conditions,
-    period_to_regime_to_V_arr=solution,
-    period_to_regime_to_dissolution_flags=dissolution_flags,
+    solution=solution,
     log_level="debug",
     seed=0,
 )

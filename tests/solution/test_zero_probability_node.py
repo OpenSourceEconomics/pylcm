@@ -119,7 +119,7 @@ def test_an_impossible_node_may_name_a_value_outside_the_targets_support(
     """
     model = _build(health_probabilities=health_probabilities)
 
-    V = model.solve(params=_PARAMS, log_level="off")
+    V = model.solve(params=_PARAMS, log_level="off").values
 
     np.testing.assert_allclose(np.asarray(V[0]["source"]), np.asarray(expected))
 
@@ -132,7 +132,7 @@ def test_a_reachable_node_outside_the_targets_support_still_fails_loudly() -> No
     """
     model = _build(health_probabilities=(0.5, 0.5, 0.0))
 
-    V = model.solve(params=_PARAMS, log_level="off")
+    V = model.solve(params=_PARAMS, log_level="off").values
 
     assert bool(jnp.isnan(jnp.asarray(V[0]["source"])))
 
@@ -154,7 +154,7 @@ def test_a_nonlinear_certainty_equivalent_omits_the_same_nodes() -> None:
         }
     }
 
-    V = model.solve(params=params, log_level="off")
+    V = model.solve(params=params, log_level="off").values
 
     np.testing.assert_allclose(
         np.asarray(V[0]["source"]), np.asarray(1.0 / (0.5 / 1.0 + 0.5 / 2.0)), rtol=1e-6
@@ -330,6 +330,6 @@ def test_a_user_written_certainty_equivalent_is_handed_no_impossible_nodes() -> 
         health_probabilities=(0.5, 0.0, 0.5), certainty_equivalent=_PlainWeightedMean()
     )
 
-    V = model.solve(params=_PARAMS, log_level="off")
+    V = model.solve(params=_PARAMS, log_level="off").values
 
     np.testing.assert_allclose(np.asarray(V[0]["source"]), np.asarray(1.5), rtol=1e-6)

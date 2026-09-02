@@ -44,7 +44,7 @@ def _solve(
         savings_max=22.0,
         n_consumption=n_consumption,
     )
-    return model.solve(params=params, log_level="debug")
+    return model.solve(params=params, log_level="debug").values
 
 
 def _last_alive_period(solution: Mapping[int, Mapping[str, object]]) -> int:
@@ -54,22 +54,30 @@ def _last_alive_period(solution: Mapping[int, Mapping[str, object]]) -> int:
 def test_grid_search_executes_the_output_declared_by_case_pieces() -> None:
     """Case pieces generate their split output without a second user combiner."""
     params = toy.build_params(final_age_alive=1.0)
-    generated = toy.build_model(
-        variant="brute",
-        n_periods=2,
-        n_liquid=30,
-        liquid_max=15.0,
-        n_consumption=300,
-        include_split_output=False,
-    ).solve(params=params, log_level="debug")
-    explicit = toy.build_model(
-        variant="brute",
-        n_periods=2,
-        n_liquid=30,
-        liquid_max=15.0,
-        n_consumption=300,
-        include_split_output=True,
-    ).solve(params=params, log_level="debug")
+    generated = (
+        toy.build_model(
+            variant="brute",
+            n_periods=2,
+            n_liquid=30,
+            liquid_max=15.0,
+            n_consumption=300,
+            include_split_output=False,
+        )
+        .solve(params=params, log_level="debug")
+        .values
+    )
+    explicit = (
+        toy.build_model(
+            variant="brute",
+            n_periods=2,
+            n_liquid=30,
+            liquid_max=15.0,
+            n_consumption=300,
+            include_split_output=True,
+        )
+        .solve(params=params, log_level="debug")
+        .values
+    )
 
     np.testing.assert_allclose(
         np.asarray(generated[0]["alive"]), np.asarray(explicit[0]["alive"])

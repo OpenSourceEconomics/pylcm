@@ -2,8 +2,8 @@
 
 Solvers declare a core's dynamic arguments, output roles, and static execution
 requirements. The engine validates the declaration and binds planner-owned choices
-before lowering. Kernels without a program for a named core use their dense execution
-path for that unsupported route.
+before lowering. Native dense routes remain explicit programs; unmigrated kernels
+cross one central adapter as ``LEGACY_UNPLANNED`` programs.
 """
 
 import inspect
@@ -11,6 +11,7 @@ import math
 import weakref
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
+from enum import StrEnum
 from types import MappingProxyType
 from typing import Protocol, cast, runtime_checkable
 
@@ -22,8 +23,9 @@ from _lcm.execution.value_transfer import (
 )
 from _lcm.typing import ActionName
 
-_CORE_PROGRAM_VERSION = 2
+_CORE_PROGRAM_VERSION = 3
 _INT32_MAX = 2_147_483_647
+_INITIAL_TILE_WIDTH_CAP = 64
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -91,7 +93,7 @@ class StreamableProductAxis:
 
 @dataclass(frozen=True, kw_only=True)
 class CoreExecutionRequirements:
-    """Static requirements that the AOT planner must resolve for a core."""
+    """Static requirements that the execution planner must resolve for a core."""
 
     streamable_axes: tuple[StreamableProductAxis, ...] = ()
     target_value_accesses: tuple[_TargetValueAccess, ...] = ()
@@ -104,55 +106,375 @@ class CoreExecutionRequirements:
         )
 
 
+class CoreExecutionDisposition(StrEnum):
+    """How the engine must execute one declared core."""
+
+    PLANNED = "planned"
+    DENSE = "dense"
+    LEGACY_UNPLANNED = "legacy-unplanned"
+
+
+@dataclass(frozen=True, kw_only=True)
+class CoreBuildContext:
+    """Immutable inputs from which a core builds its dynamic argument mapping."""
+
+    state_action_space: object
+    next_regime_to_V_arr: Mapping[str, object]
+    next_regime_to_continuation: Mapping[str, object]
+    flat_params: Mapping[str, object]
+    period: int
+    ages: object
+    edge_regime_to_V_arr: Mapping[str, object] | None = None
+    same_period_regime_to_V_arr: Mapping[str, object] | None = None
+
+    def __post_init__(self) -> None:
+        """Snapshot caller-owned mappings and reject ambiguous period values."""
+        if isinstance(self.period, bool) or not isinstance(self.period, int):
+            msg = "A CoreBuildContext period must be an integer."
+            raise TypeError(msg)
+        object.__setattr__(
+            self,
+            "next_regime_to_V_arr",
+            MappingProxyType(dict(self.next_regime_to_V_arr)),
+        )
+        object.__setattr__(
+            self,
+            "next_regime_to_continuation",
+            MappingProxyType(dict(self.next_regime_to_continuation)),
+        )
+        object.__setattr__(
+            self, "flat_params", MappingProxyType(dict(self.flat_params))
+        )
+        if self.edge_regime_to_V_arr is not None:
+            object.__setattr__(
+                self,
+                "edge_regime_to_V_arr",
+                MappingProxyType(dict(self.edge_regime_to_V_arr)),
+            )
+        if self.same_period_regime_to_V_arr is not None:
+            object.__setattr__(
+                self,
+                "same_period_regime_to_V_arr",
+                MappingProxyType(dict(self.same_period_regime_to_V_arr)),
+            )
+
+
+type CoreArgumentBuilder = Callable[[CoreBuildContext], Mapping[str, object]]
+
+
 @dataclass(frozen=True, kw_only=True)
 class CoreProgram:
-    """An unlowered core plus its dynamic arguments and static requirements."""
+    """One authoritative, unmaterialized program in a period kernel's graph."""
 
+    name: str
+    function: Callable[..., object]
+    argument_builder: CoreArgumentBuilder
+    requirements: CoreExecutionRequirements
+    output_roles: object | None
+    disposition: CoreExecutionDisposition
+    disposition_reason: str | None = None
+    donation_candidates: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        """Snapshot caller-owned sequences."""
+        object.__setattr__(self, "donation_candidates", tuple(self.donation_candidates))
+
+
+@dataclass(frozen=True, kw_only=True)
+class MaterializedCoreProgram:
+    """A declared core paired with exact dynamic arguments for one graph node."""
+
+    name: str
     function: Callable[..., object]
     arguments: Mapping[str, object]
     requirements: CoreExecutionRequirements
-    output_roles: object
+    output_roles: object | None
+    disposition: CoreExecutionDisposition
+    donation_candidates: tuple[str, ...]
+    disposition_reason: str | None = None
 
     def __post_init__(self) -> None:
-        """Snapshot the exact dynamic lowering arguments."""
+        """Snapshot the exact dynamic argument tree."""
         object.__setattr__(self, "arguments", MappingProxyType(dict(self.arguments)))
+        object.__setattr__(self, "donation_candidates", tuple(self.donation_candidates))
 
 
 @runtime_checkable
-class _TargetValueAccessAware(Protocol):  # noqa: PYI046
-    """Kernel seam declaring exact value inputs independently of core planning."""
+class CoreProgramGraphAware(Protocol):
+    """Native kernel interface publishing its complete immutable program graph."""
 
-    def target_value_accesses(self, *, core_key: str) -> tuple[_TargetValueAccess, ...]:
-        """Return exact logical target reads for one dense or planned core."""
+    def core_programs(self) -> Mapping[str, CoreProgram]:
+        """Return every named program needed by one period-kernel invocation."""
         ...
 
 
 @runtime_checkable
-class CoreProgramAware(Protocol):
-    """Protocol implemented by kernels that declare core programs."""
+class _LegacyCoreKernel(Protocol):
+    """Old core enumeration and argument-building interface, read only here."""
 
-    def build_core_program(
-        self,
-        *,
-        core_key: str,
-        arguments: Mapping[str, object],
-    ) -> CoreProgram | None:
-        """Build the named core program, or opt out for that core."""
+    def cores(self) -> Mapping[str, Callable[..., object]]:
+        """Return legacy core callables by name."""
         ...
+
+    def build_lower_args(
+        self, *, core_key: str, **kwargs: object
+    ) -> Mapping[str, object]:
+        """Build one legacy core's arguments."""
+        ...
+
+
+@dataclass(frozen=True, kw_only=True)
+class _LegacyArgumentBuilder:
+    """Central adapter from a build context to one legacy argument builder."""
+
+    kernel: _LegacyCoreKernel
+    core_name: str
+
+    def __call__(self, context: CoreBuildContext) -> Mapping[str, object]:
+        """Invoke the old builder without exposing it to an engine caller."""
+        optional_edge = (
+            {}
+            if context.edge_regime_to_V_arr is None
+            else {"edge_regime_to_V_arr": context.edge_regime_to_V_arr}
+        )
+        return self.kernel.build_lower_args(
+            core_key=self.core_name,
+            state_action_space=context.state_action_space,
+            next_regime_to_V_arr=context.next_regime_to_V_arr,
+            next_regime_to_continuation=context.next_regime_to_continuation,
+            flat_params=context.flat_params,
+            period=context.period,
+            ages=context.ages,
+            **optional_edge,
+        )
+
+
+def core_program_graph(*, kernel: object) -> MappingProxyType[str, CoreProgram]:
+    """Return one validated native graph or adapt a legacy kernel exactly once.
+
+    This is the only engine seam permitted to read ``cores()``,
+    ``build_lower_args()``, or retired parallel program, target-access, and
+    output-layout methods. A malformed native declaration fails instead of falling
+    back; only kernels with no native graph cross the legacy adapter.
+    """
+    if isinstance(kernel, CoreProgramGraphAware):
+        _reject_native_duplicate_authorities(kernel=kernel)
+        return _snapshot_and_validate_graph(graph=kernel.core_programs(), native=True)
+    return _legacy_core_program_graph(kernel=kernel)
+
+
+def _reject_native_duplicate_authorities(*, kernel: object) -> None:
+    """Fail when a native graph publisher retains any parallel declaration seam."""
+    duplicate_names = tuple(
+        name
+        for name in (
+            "cores",
+            "core",
+            "unwrapped_core",
+            "streamed_core",
+            "build_lower_args",
+            "build_core_program",
+            "target_value_accesses",
+            "output_roles",
+            "core_for_output_layout",
+        )
+        if callable(getattr(kernel, name, None))
+    )
+    if duplicate_names:
+        msg = (
+            f"Native kernel {type(kernel).__name__} publishes duplicate execution "
+            f"authorities alongside core_programs(): {duplicate_names!r}."
+        )
+        raise TypeError(msg)
+
+
+def _snapshot_and_validate_graph(
+    *, graph: Mapping[str, CoreProgram], native: bool
+) -> MappingProxyType[str, CoreProgram]:
+    """Snapshot a graph and validate its names and ownership declarations."""
+    if not isinstance(graph, Mapping):
+        msg = "A core-program graph must be a mapping from names to CoreProgram."
+        raise TypeError(msg)
+    snapshot = dict(graph)
+    if not snapshot:
+        msg = "A period kernel must declare at least one core program."
+        raise ValueError(msg)
+    for name, program in snapshot.items():
+        if not isinstance(name, str) or not name:
+            msg = f"A core-program graph name must be a non-empty string; got {name!r}."
+            raise TypeError(msg)
+        if not isinstance(program, CoreProgram):
+            msg = f"Core-program graph entry {name!r} is not a CoreProgram."
+            raise TypeError(msg)
+        if program.name != name:
+            msg = (
+                "A core-program graph key must equal the program's declared name: "
+                f"key={name!r}, program.name={program.name!r}."
+            )
+            raise ValueError(msg)
+        _validate_program_declaration(program=program, native=native)
+    return MappingProxyType(snapshot)
+
+
+def _validate_program_declaration(*, program: CoreProgram, native: bool) -> None:
+    """Validate declaration facts that do not depend on dynamic arguments."""
+    if not callable(program.function):
+        msg = f"CoreProgram {program.name!r} function must be callable."
+        raise TypeError(msg)
+    if not callable(program.argument_builder):
+        msg = f"CoreProgram {program.name!r} argument_builder must be callable."
+        raise TypeError(msg)
+    if not isinstance(program.requirements, CoreExecutionRequirements):
+        msg = f"CoreProgram {program.name!r} requirements have the wrong type."
+        raise TypeError(msg)
+    if not isinstance(program.disposition, CoreExecutionDisposition):
+        msg = f"CoreProgram {program.name!r} disposition has the wrong type."
+        raise TypeError(msg)
+    if native and program.disposition is CoreExecutionDisposition.LEGACY_UNPLANNED:
+        msg = "A native CoreProgram cannot declare LEGACY_UNPLANNED."
+        raise ValueError(msg)
+    if (
+        not native
+        and program.disposition is not CoreExecutionDisposition.LEGACY_UNPLANNED
+    ):
+        msg = "The legacy core adapter may emit only LEGACY_UNPLANNED programs."
+        raise ValueError(msg)
+    if native and program.output_roles is None:
+        msg = f"Native CoreProgram {program.name!r} must declare output_roles."
+        raise ValueError(msg)
+    _validate_disposition_reason(program=program)
+    donations = program.donation_candidates
+    if len(donations) != len(set(donations)) or any(
+        not isinstance(name, str) or not name for name in donations
+    ):
+        msg = (
+            f"CoreProgram {program.name!r} donation_candidates must be unique, "
+            "non-empty argument names."
+        )
+        raise ValueError(msg)
+
+
+def _validate_disposition_reason(
+    *, program: CoreProgram | MaterializedCoreProgram
+) -> None:
+    """Require an explicit, stable explanation for every non-planned route."""
+    reason = program.disposition_reason
+    if program.disposition is CoreExecutionDisposition.PLANNED:
+        if reason is not None:
+            msg = f"Planned CoreProgram {program.name!r} cannot declare a reason."
+            raise ValueError(msg)
+        return
+    if program.disposition is CoreExecutionDisposition.DENSE:
+        if not isinstance(reason, str) or not reason.strip():
+            msg = (
+                f"Dense CoreProgram {program.name!r} must declare a non-empty "
+                "disposition_reason."
+            )
+            raise ValueError(msg)
+        return
+    if reason != "legacy_adapter":
+        msg = (
+            f"Legacy CoreProgram {program.name!r} must use the central "
+            "'legacy_adapter' disposition reason."
+        )
+        raise ValueError(msg)
+
+
+def _legacy_core_program_graph(*, kernel: object) -> MappingProxyType[str, CoreProgram]:
+    """Synthesize explicitly unplanned declarations for one unmigrated kernel."""
+    if not isinstance(kernel, _LegacyCoreKernel):
+        msg = (
+            f"{type(kernel).__name__} publishes neither a native core-program graph "
+            "nor the supported legacy core interface."
+        )
+        raise TypeError(msg)
+    if callable(getattr(kernel, "build_core_program", None)):
+        msg = (
+            f"Legacy kernel {type(kernel).__name__} still publishes the duplicate "
+            "build_core_program declaration; migrate it to one native core_programs() "
+            "graph before execution."
+        )
+        raise TypeError(msg)
+    if callable(getattr(kernel, "output_roles", None)) or callable(
+        getattr(kernel, "core_for_output_layout", None)
+    ):
+        msg = (
+            f"Legacy kernel {type(kernel).__name__} still publishes the duplicate "
+            "output-layout declaration; migrate it to one native core_programs() "
+            "graph before execution."
+        )
+        raise TypeError(msg)
+    cores = kernel.cores()
+    if not isinstance(cores, Mapping):
+        msg = "Legacy cores() must return a mapping."
+        raise TypeError(msg)
+    programs: dict[str, CoreProgram] = {}
+    for name, function in cores.items():
+        target_value_accesses = getattr(kernel, "target_value_accesses", None)
+        accesses = (
+            target_value_accesses(core_key=name)
+            if callable(target_value_accesses)
+            else ()
+        )
+        programs[name] = CoreProgram(
+            name=name,
+            function=function,
+            argument_builder=_LegacyArgumentBuilder(kernel=kernel, core_name=name),
+            requirements=CoreExecutionRequirements(target_value_accesses=accesses),
+            output_roles=None,
+            disposition=CoreExecutionDisposition.LEGACY_UNPLANNED,
+            disposition_reason="legacy_adapter",
+        )
+    return _snapshot_and_validate_graph(graph=programs, native=False)
+
+
+def materialize_core_program(
+    *, program: CoreProgram, context: CoreBuildContext
+) -> MaterializedCoreProgram:
+    """Build and validate one program's exact dynamic argument mapping."""
+    arguments = program.argument_builder(context)
+    if not isinstance(arguments, Mapping):
+        msg = f"CoreProgram {program.name!r} argument_builder must return a mapping."
+        raise TypeError(msg)
+    materialized = MaterializedCoreProgram(
+        name=program.name,
+        function=program.function,
+        arguments=arguments,
+        requirements=program.requirements,
+        output_roles=program.output_roles,
+        disposition=program.disposition,
+        donation_candidates=program.donation_candidates,
+        disposition_reason=program.disposition_reason,
+    )
+    missing_donations = set(materialized.donation_candidates) - set(
+        materialized.arguments
+    )
+    if missing_donations:
+        msg = (
+            f"CoreProgram {program.name!r} donation candidates are absent from its "
+            f"arguments: {sorted(missing_donations)!r}."
+        )
+        raise ValueError(msg)
+    return materialized
 
 
 @dataclass(frozen=True, kw_only=True)
 class ResolvedCoreProgram:
     """A core with planner-owned choices bound into its compilation identity."""
 
+    name: str
     function: Callable[..., object]
     arguments: Mapping[str, object]
     static_kwargs: Mapping[str, int]
-    output_roles: object
+    requirements: CoreExecutionRequirements
+    output_roles: object | None
+    disposition: CoreExecutionDisposition
+    donation_candidates: tuple[str, ...]
     tile_widths: Mapping[str, int]
     specialization_key: Hashable
-    input_transfer_plan: tuple[ResolvedValueTransfer, ...]
     """Static program fragment composed into the engine's full lowering key."""
+    input_transfer_plan: tuple[ResolvedValueTransfer, ...]
+    disposition_reason: str | None = None
 
     def __post_init__(self) -> None:
         """Snapshot the materialized argument and planning containers."""
@@ -168,11 +490,12 @@ class ResolvedCoreProgram:
             MappingProxyType(dict(self.tile_widths)),
         )
         object.__setattr__(self, "input_transfer_plan", tuple(self.input_transfer_plan))
+        object.__setattr__(self, "donation_candidates", tuple(self.donation_candidates))
 
 
 def resolve_core_program(
     *,
-    program: CoreProgram,
+    program: MaterializedCoreProgram,
     tile_widths: Mapping[str, object] | None = None,
     input_transfer_plan: tuple[ResolvedValueTransfer, ...] = (),
 ) -> ResolvedCoreProgram:
@@ -186,10 +509,20 @@ def resolve_core_program(
     """
     _validate_core_program(program=program)
     requested_widths = {} if tile_widths is None else dict(tile_widths)
-    (
-        resolved_input_transfer_plan,
-        input_transfer_specialization_key,
-    ) = _resolve_input_transfer_plan(program=program, plan=input_transfer_plan)
+    if program.disposition is CoreExecutionDisposition.PLANNED:
+        (
+            resolved_input_transfer_plan,
+            input_transfer_specialization_key,
+        ) = _resolve_input_transfer_plan(program=program, plan=input_transfer_plan)
+    else:
+        if input_transfer_plan:
+            msg = (
+                f"CoreProgram {program.name!r} with disposition "
+                f"{program.disposition.value!r} cannot carry a resolved input plan."
+            )
+            raise ValueError(msg)
+        resolved_input_transfer_plan = ()
+        input_transfer_specialization_key = ()
     axes = program.requirements.streamable_axes
     axis_names = [axis.name for axis in axes]
 
@@ -225,26 +558,61 @@ def resolve_core_program(
         )
 
     return ResolvedCoreProgram(
+        name=program.name,
         function=program.function,
         arguments=apply_value_transfer_plan(
             arguments=program.arguments,
             plan=resolved_input_transfer_plan,
         ),
         static_kwargs=width_bindings,
+        requirements=program.requirements,
         output_roles=program.output_roles,
+        disposition=program.disposition,
+        donation_candidates=program.donation_candidates,
+        disposition_reason=program.disposition_reason,
         tile_widths=resolved_widths,
         input_transfer_plan=resolved_input_transfer_plan,
         specialization_key=(
             "core-program",
             _CORE_PROGRAM_VERSION,
+            program.disposition.value,
+            program.disposition_reason,
+            program.donation_candidates,
             tuple(compilation_axes),
             input_transfer_specialization_key,
         ),
     )
 
 
-def _validate_core_program(*, program: CoreProgram) -> None:
+def initial_core_tile_widths(
+    *, program: CoreProgram | MaterializedCoreProgram
+) -> MappingProxyType[str, int]:
+    """Choose the shared bounded bootstrap width for every planned product axis."""
+    if program.disposition is not CoreExecutionDisposition.PLANNED:
+        if program.requirements.streamable_axes:
+            msg = (
+                f"CoreProgram {program.name!r} has disposition "
+                f"{program.disposition.value!r} but declares streamable axes."
+            )
+            raise ValueError(msg)
+        return MappingProxyType({})
+    result: dict[str, int] = {}
+    for axis in program.requirements.streamable_axes:
+        _validate_coordinate_declaration(axis=axis)
+        if axis.extent <= 1:
+            msg = (
+                f"Streamable axis {axis.name!r} must have extent greater than one; "
+                "the program must declare a dense disposition otherwise."
+            )
+            raise ValueError(msg)
+        upper_bound = min(_INITIAL_TILE_WIDTH_CAP, axis.extent - 1)
+        result[axis.name] = 1 << (upper_bound.bit_length() - 1)
+    return MappingProxyType(result)
+
+
+def _validate_core_program(*, program: MaterializedCoreProgram) -> None:
     """Validate a complete declaration before planner choices inspect it."""
+    _validate_materialized_declaration(program=program)
     try:
         weakref.ref(program.function)
     except TypeError as error:
@@ -267,6 +635,12 @@ def _validate_core_program(*, program: CoreProgram) -> None:
     _validate_target_value_accesses(program=program)
 
     axes = program.requirements.streamable_axes
+    if program.disposition is not CoreExecutionDisposition.PLANNED and axes:
+        msg = (
+            f"CoreProgram {program.name!r} has disposition "
+            f"{program.disposition.value!r} but declares streamable axes."
+        )
+        raise ValueError(msg)
     axis_names = [axis.name for axis in axes]
     if len(axis_names) != len(set(axis_names)):
         msg = f"Core program has duplicate streamable axis names: {axis_names!r}."
@@ -282,9 +656,42 @@ def _validate_core_program(*, program: CoreProgram) -> None:
         _validate_width_keyword(function=program.function, axis=axis)
 
 
+def _validate_materialized_declaration(*, program: MaterializedCoreProgram) -> None:
+    """Validate resolved authority fields independently of planner choices."""
+    if not isinstance(program.name, str) or not program.name:
+        msg = "A materialized CoreProgram name must be a non-empty string."
+        raise TypeError(msg)
+    if not callable(program.function):
+        msg = f"CoreProgram {program.name!r} function must be callable."
+        raise TypeError(msg)
+    if not isinstance(program.requirements, CoreExecutionRequirements):
+        msg = f"CoreProgram {program.name!r} requirements have the wrong type."
+        raise TypeError(msg)
+    if not isinstance(program.disposition, CoreExecutionDisposition):
+        msg = f"CoreProgram {program.name!r} disposition has the wrong type."
+        raise TypeError(msg)
+    if program.disposition is CoreExecutionDisposition.LEGACY_UNPLANNED:
+        if program.output_roles is not None:
+            msg = "A legacy-unplanned CoreProgram cannot declare output_roles."
+            raise ValueError(msg)
+    elif program.output_roles is None:
+        msg = f"Native CoreProgram {program.name!r} must declare output_roles."
+        raise ValueError(msg)
+    _validate_disposition_reason(program=program)
+    donations = program.donation_candidates
+    if len(donations) != len(set(donations)) or any(
+        not isinstance(name, str) or not name for name in donations
+    ):
+        msg = (
+            f"CoreProgram {program.name!r} donation_candidates must be unique, "
+            "non-empty argument names."
+        )
+        raise ValueError(msg)
+
+
 def _resolve_input_transfer_plan(
     *,
-    program: CoreProgram,
+    program: MaterializedCoreProgram,
     plan: tuple[ResolvedValueTransfer, ...],
 ) -> tuple[tuple[ResolvedValueTransfer, ...], tuple[Hashable, ...]]:
     """Match resolved transfers to declarations and derive lowering-only identity."""
@@ -336,7 +743,7 @@ def _resolve_input_transfer_plan(
     return ordered, tuple(specialization_keys)
 
 
-def _validate_target_value_accesses(*, program: CoreProgram) -> None:
+def _validate_target_value_accesses(*, program: MaterializedCoreProgram) -> None:
     """Validate exact core-input locators without constraining artifact fan-out."""
     locators: set[tuple[object, tuple[str | int, ...]]] = set()
     source_node: tuple[int, str, str] | None = None
@@ -370,7 +777,7 @@ def _validate_target_value_accesses(*, program: CoreProgram) -> None:
 
 
 def _target_value_argument_leaf(
-    *, program: CoreProgram, access: _TargetValueAccess
+    *, program: MaterializedCoreProgram, access: _TargetValueAccess
 ) -> _TransferArgumentLeaf:
     """Resolve one declared consumer path to an array-like lowering leaf."""
     channel = access.source.channel.value
@@ -418,7 +825,7 @@ def _target_value_argument_leaf(
 
 def _validate_transfer_argument_metadata(
     *,
-    program: CoreProgram,
+    program: MaterializedCoreProgram,
     access: _TargetValueAccess,
     transfer: ResolvedValueTransfer,
 ) -> None:

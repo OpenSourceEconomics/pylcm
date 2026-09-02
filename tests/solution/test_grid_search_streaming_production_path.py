@@ -5,10 +5,14 @@ from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
-import numpy as np
 import pytest
-from numpy.testing import assert_allclose, assert_array_equal
+from numpy.testing import assert_array_equal
 
+from _lcm.execution.core_program import (
+    CoreExecutionDisposition,
+    core_program_graph,
+)
+from _lcm.regime_building import max_Q_over_a
 from _lcm.solution import action_streaming
 from lcm import (
     AgeGrid,
@@ -76,7 +80,7 @@ def _terminal_utility() -> FloatND:
     return jnp.asarray(0.0)
 
 
-def _build_model() -> Model:
+def _build_model(*, enable_jit: bool = True) -> Model:
     """Build the ordinary singleton model used by the production tracer."""
     acting = Regime(
         transition=_next_regime,
@@ -99,6 +103,7 @@ def _build_model() -> Model:
         regimes={"acting": acting, "done": done},
         ages=AgeGrid(start=0, stop=1, step="Y"),
         regime_id_class=RegimeId,
+        enable_jit=enable_jit,
     )
 
 
@@ -108,7 +113,7 @@ def _solve_target(*, model: Model, work: float, consumption: float) -> FloatND:
     params["acting"]["only_target"]["target_work"] = work
     params["acting"]["only_target"]["target_consumption"] = consumption
     params["acting"]["koopmans_aggregator"]["discount_factor"] = 0.5
-    return model.solve(params=params, log_level="debug")[0]["acting"]
+    return model.solve(params=params, log_level="debug").values[0]["acting"]
 
 
 def test_public_singleton_solve_uses_streamed_action_blocks(
@@ -146,95 +151,84 @@ def test_public_singleton_solve_uses_streamed_action_blocks(
     assert bool(jnp.all(jnp.isneginf(omitted)))
 
 
-def test_public_collective_solve_uses_one_streamed_household_winner(
+def test_eager_singleton_hard_max_never_builds_the_dense_oracle(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Masking global action one changes every stakeholder at the same winner."""
-    real_evaluate_block = cast(
-        "Callable[..., tuple[jax.Array, jax.Array, jax.Array, jax.Array]]",
-        action_streaming._evaluate_collective_block,
-    )
+    """JIT-disabled production resolves the same streamed native program."""
+    real_get_max_Q_over_a = max_Q_over_a.get_max_Q_over_a
 
-    def omit_work_action(
-        **kwargs: Any,
-    ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
-        objectives, stakeholder_values, feasible, global_ids = real_evaluate_block(
-            **kwargs
-        )
-        return (
-            objectives,
-            stakeholder_values,
-            feasible & (global_ids != 1),
-            global_ids,
-        )
+    def fail_dense_construction(**kwargs: Any) -> Callable[..., Any]:
+        if kwargs["action_names"]:
+            raise AssertionError("eligible eager GridSearch reached its dense oracle")
+        return real_get_max_Q_over_a(**kwargs)
+
+    monkeypatch.setattr(max_Q_over_a, "get_max_Q_over_a", fail_dense_construction)
+    model = _build_model(enable_jit=False)
+    actual = _solve_target(model=model, work=1.0, consumption=3.0)
+
+    program = core_program_graph(
+        kernel=model._regimes["acting"].solution.period_kernels[0]
+    )["main"]
+    assert program.disposition is CoreExecutionDisposition.PLANNED
+    assert program.disposition_reason is None
+    assert_array_equal(actual, jnp.asarray([14.0, 15.0]))
+
+
+def test_public_collective_solve_does_not_call_streamed_household_reduction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The adverse resource route is an explicit dense native program."""
+
+    def fail_streamed_collective(**_kwargs: Any) -> None:
+        raise AssertionError("dense collective route called streamed reduction")
 
     monkeypatch.setattr(
         action_streaming,
         "_evaluate_collective_block",
-        omit_work_action,
+        fail_streamed_collective,
     )
-    solution, dissolution = _build_collective_model().solve(
-        params={"discount_factor": 0.95},
-        log_level="debug",
-        return_dissolution_flags=True,
-    )
+    model = _build_collective_model()
+    program = core_program_graph(
+        kernel=model._regimes["couple"].solution.period_kernels[0]
+    )["main"]
+    solution = model.solve(params={"discount_factor": 0.95}, log_level="debug")
 
-    assert_array_equal(
-        solution[1]["couple_terminal"],
-        jnp.asarray([[-jnp.inf, -jnp.inf], [30.0, 0.0], [30.0, 0.0]]),
+    assert program.disposition is CoreExecutionDisposition.DENSE
+    assert (
+        program.disposition_reason
+        == "deliberately_dense:collective_resource_regression"
     )
-    assert_array_equal(
-        dissolution[1]["couple_terminal"],
-        jnp.asarray([True, False, False]),
-    )
+    assert jax.tree.leaves(solution.values)
 
 
-def test_public_ev1_solve_maximizes_each_discrete_branch_before_logsum(
+def test_public_ev1_solve_does_not_call_streamed_branch_reduction(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Dropping one branch leaves exactly the other branch's continuous maximum."""
-    consumption = np.asarray(taste_shocks_toy.CONSUMPTION_GRID.to_jax())
-    continuous_extent = consumption.size
-    real_evaluate_block = cast(
-        "Callable[..., tuple[jax.Array, jax.Array, jax.Array]]",
-        action_streaming._evaluate_ev1_branch_block,
-    )
-    observed = {"calls": 0}
+    """The noncanonical streamed reduction is excluded from production."""
 
-    def omit_work_on_branch(
-        **kwargs: Any,
-    ) -> tuple[jax.Array, jax.Array, jax.Array]:
-        values, feasible, global_ids = real_evaluate_block(**kwargs)
-        observed["calls"] += 1
-        return values, feasible & (global_ids < continuous_extent), global_ids
+    def fail_streamed_ev1(**_kwargs: Any) -> None:
+        raise AssertionError("dense EV1 route called streamed reduction")
 
     monkeypatch.setattr(
         action_streaming,
         "_evaluate_ev1_branch_block",
-        omit_work_on_branch,
+        fail_streamed_ev1,
     )
 
-    discount_factor = 0.95
-    solution = taste_shocks_toy.get_model().solve(
+    model = taste_shocks_toy.get_model()
+    program = core_program_graph(
+        kernel=model._regimes["alive"].solution.period_kernels[0]
+    )["main"]
+    solution = model.solve(
         params=taste_shocks_toy.get_params(
             scale=0.2,
-            discount_factor=discount_factor,
+            discount_factor=0.95,
         ),
         log_level="debug",
     )
 
-    wealth = np.asarray(taste_shocks_toy.WEALTH_GRID.to_jax())
-    terminal_wealth = np.asarray(taste_shocks_toy.TERMINAL_WEALTH_GRID.to_jax())
-    continuation = np.interp(
-        wealth[:, None] - consumption[None, :],
-        terminal_wealth,
-        np.log(terminal_wealth + 1.0),
+    assert program.disposition is CoreExecutionDisposition.DENSE
+    assert (
+        program.disposition_reason == "deliberately_dense:ev1_canonical_reduction_order"
     )
-    work_off_Q = np.log(consumption)[None, :] + discount_factor * continuation
-    expected = np.max(
-        np.where(consumption[None, :] <= wealth[:, None], work_off_Q, -np.inf),
-        axis=1,
-    )
-
-    assert observed["calls"] > 0
-    assert_allclose(solution[0]["alive"], expected, rtol=1e-5, atol=1e-8)
+    assert jnp.all(jnp.isfinite(solution.values[0]["alive"]))

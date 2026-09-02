@@ -100,7 +100,6 @@ def test_saved_collective_result_lacking_stakeholder_metadata_names_the_field(
     result = model.simulate(
         params=params,
         initial_conditions=make_couple_initial_conditions(n_subjects=2),
-        period_to_regime_to_V_arr=None,
         log_level="off",
     )
     directory = tmp_path / "result"

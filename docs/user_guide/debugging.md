@@ -34,18 +34,17 @@ value function. See [Solving and Simulating](solving_and_simulating.md) for the 
 
 ```python
 # Silent — no console output, no validation
-period_to_regime_to_V_arr = model.solve(params=params, log_level="off")
+solution = model.solve(params=params, log_level="off")
 
 # Warnings only — invalid input is logged, the run continues
-period_to_regime_to_V_arr = model.solve(params=params, log_level="warning")
+solution = model.solve(params=params, log_level="warning")
 
 # Debug — validation raises, full diagnostics
-period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
+solution = model.solve(params=params, log_level="debug")
+value_functions = solution.values
 
 # Debug + snapshot persistence
-period_to_regime_to_V_arr = model.solve(
-    params=params, log_level="debug", log_path="./debug/"
-)
+solution = model.solve(params=params, log_level="debug", log_path="./debug/")
 ```
 
 `log_path` is optional at every level — including `"debug"`.
@@ -78,7 +77,7 @@ with the parameters you intend to use, and the transition check reports the offe
 
 ```python
 # Do this once per model and parameter regime, before trusting any output.
-period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
+solution = model.solve(params=params, log_level="debug")
 ```
 
 After that run passes, `"off"` is a reasonable choice for an estimation loop that
@@ -136,16 +135,14 @@ Each snapshot is a directory (e.g. `solve_snapshot_001/`) containing:
 
 ```python
 # Solve snapshot
-period_to_regime_to_V_arr = model.solve(
-    params=params, log_level="debug", log_path="./debug/"
-)
+solution = model.solve(params=params, log_level="debug", log_path="./debug/")
 # Creates: ./debug/solve_snapshot_001/
 
-# Simulate snapshot (with pre-solved value functions)
+# Simulate snapshot (with a pre-solved complete result)
 result = model.simulate(
     params=params,
     initial_conditions=initial_conditions,
-    period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+    solution=solution,
     log_level="debug",
     log_path="./debug/",
 )
@@ -155,7 +152,6 @@ result = model.simulate(
 result = model.simulate(
     params=params,
     initial_conditions=initial_conditions,
-    period_to_regime_to_V_arr=None,
     log_level="debug",
     log_path="./debug/",
 )
@@ -174,9 +170,7 @@ snapshot.params  # the user parameters
 snapshot.period_to_regime_to_V_arr  # value function arrays (loaded from HDF5)
 
 # Re-run the solve to reproduce the result
-period_to_regime_to_V_arr = snapshot.model.solve(
-    params=snapshot.params, log_level="debug"
-)
+solution = snapshot.model.solve(params=snapshot.params, log_level="debug")
 ```
 
 For large snapshots, skip fields you don't need:
@@ -214,7 +208,7 @@ Snapshots accumulate when running inside an optimization loop. The `log_keep_n_l
 parameter (default 3) limits how many snapshot directories are kept per type:
 
 ```python
-period_to_regime_to_V_arr = model.solve(
+solution = model.solve(
     params=params, log_level="debug", log_path="./debug/", log_keep_n_latest=5
 )
 ```
@@ -269,7 +263,7 @@ model = Model(
 )
 
 # Call solve with the bad parameters --- the traceback will be readable
-period_to_regime_to_V_arr = model.solve(params=bad_params, log_level="debug")
+solution = model.solve(params=bad_params, log_level="debug")
 ```
 
 The traceback now points to the exact line in your user-defined functions where the NaN
@@ -277,7 +271,7 @@ originates.
 
 ## Inspecting value function arrays
 
-The solution `period_to_regime_to_V_arr` is a nested mapping:
+The `values` field of `SolutionResult` is a nested mapping:
 `period -> regime_name -> array`. You can iterate over it to check shapes, look for
 NaN/inf, or plot slices:
 
@@ -286,10 +280,11 @@ import jax.numpy as jnp
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
+solution = model.solve(params=params, log_level="debug")
+value_functions = solution.values
 
 # Check for issues
-for period, regimes in period_to_regime_to_V_arr.items():
+for period, regimes in value_functions.items():
     for regime_name, V_arr in regimes.items():
         n_nan = int(jnp.sum(jnp.isnan(V_arr)))
         n_inf = int(jnp.sum(jnp.isinf(V_arr)))
@@ -302,7 +297,7 @@ for period, regimes in period_to_regime_to_V_arr.items():
 # Plot a 1D slice (e.g. value over wealth grid for first period)
 period = 0
 regime_name = "working"
-V_arr = period_to_regime_to_V_arr[period][regime_name]
+V_arr = value_functions[period][regime_name]
 
 fig = go.Figure()
 fig.add_trace(go.Scatter(y=V_arr.tolist(), mode="lines", name="V(wealth)"))
@@ -321,7 +316,6 @@ mode), a snapshot is saved automatically. This lets you inspect the partial solu
 result = model.simulate(
     params=params,
     initial_conditions=initial_conditions,
-    period_to_regime_to_V_arr=None,
     log_level="debug",
     log_path="./debug/",
 )

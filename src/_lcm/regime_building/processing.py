@@ -48,8 +48,7 @@ from _lcm.engine import (
     StateActionSpace,
     Variables,
 )
-from _lcm.execution.core_program import CoreProgram, CoreProgramAware
-from _lcm.execution.output_layout import OutputLayoutAware
+from _lcm.execution.core_program import CoreProgram, CoreProgramGraphAware
 from _lcm.grids import (
     ContinuousGrid,
     DiscreteGrid,
@@ -2881,10 +2880,10 @@ class _TerminalCarryPeriodKernel:
     array into the continuation a DC-EGM parent interpolates. Publishing a carry
     is a cross-solver concern, so the wrapped solver stays unaware of it.
 
-    `core` and `build_lower_args` delegate to the base adapter: the carry
+    `core_programs` delegates the base adapter's sole native graph: the carry
     producer is a separately built (and jitted) closure invoked inline, not part
-    of the AOT-compiled core, so AOT compilation deduplicates and lowers exactly
-    the base grid-search core.
+    of the AOT-compiled core, so every execution mode resolves exactly the base
+    GridSearch program.
     """
 
     base: PeriodKernel
@@ -2896,41 +2895,12 @@ class _TerminalCarryPeriodKernel:
     regime_name: RegimeName
     """Name of the terminal regime whose flat params the producer reads."""
 
-    @property
-    def core(self) -> Callable:
-        """The base adapter's shared jitted core, for any single-core reader."""
-        return self.base.core
-
-    def cores(self) -> Mapping[str, Callable]:
-        """Delegate to the base adapter's cores (a terminal regime is single-core)."""
-        return self.base.cores()
-
-    def build_core_program(
-        self,
-        *,
-        core_key: str,
-        arguments: Mapping[str, object],
-    ) -> CoreProgram | None:
-        """Delegate the base adapter's optional execution program."""
-        if not isinstance(self.base, CoreProgramAware):
-            return None
-        return self.base.build_core_program(
-            core_key=core_key,
-            arguments=arguments,
-        )
-
-    def output_roles(self, *, core_key: str) -> object:
-        """Delegate the wrapped GridSearch core's logical output roles."""
-        if not isinstance(self.base, OutputLayoutAware):
-            return None
-        return self.base.output_roles(core_key=core_key)
-
-    def core_for_output_layout(self, *, core_key: str) -> Callable:
-        """Delegate the wrapped GridSearch core's planned-lowering callable."""
-        if not isinstance(self.base, OutputLayoutAware):
-            msg = "The wrapped kernel did not opt in to output-layout planning."
+    def core_programs(self) -> Mapping[str, CoreProgram]:
+        """Delegate the wrapped GridSearch kernel's exact native program graph."""
+        if not isinstance(self.base, CoreProgramGraphAware):
+            msg = "A terminal-carry decorator requires a native core-program graph."
             raise TypeError(msg)
-        return self.base.core_for_output_layout(core_key=core_key)
+        return self.base.core_programs()
 
     def with_fixed_params(
         self, *, fixed_flat_params: FlatParams
@@ -2954,39 +2924,6 @@ class _TerminalCarryPeriodKernel:
                 **_filter_kwargs_for_func(func=carry_producer, kwargs=regime_fixed),
             )
         return dataclass_replace(self, base=base, carry_producer=carry_producer)
-
-    def build_lower_args(
-        self,
-        *,
-        core_key: str = "main",
-        state_action_space: StateActionSpace,
-        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-        next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
-        flat_params: FlatParams,
-        period: int,
-        ages: AgeGrid,
-        edge_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
-    ) -> Mapping[str, object]:
-        """Build the base core's lowering arguments (the carry producer is jitted
-        separately at build time, so it is not part of the AOT-compiled core).
-
-        The wrapped regime keeps whatever the base kernel is: a gated-edge
-        source stays one when a carry producer is composed around it, so its
-        `Wbar` templates pass straight through.
-        """
-        return self.base.build_lower_args(
-            core_key=core_key,
-            state_action_space=state_action_space,
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            next_regime_to_continuation=next_regime_to_continuation,
-            flat_params=flat_params,
-            period=period,
-            ages=ages,
-            **_edge_and_same_period_kwargs(
-                edge_regime_to_V_arr=edge_regime_to_V_arr,
-                same_period_regime_to_V_arr=None,
-            ),
-        )
 
     def __call__(
         self,

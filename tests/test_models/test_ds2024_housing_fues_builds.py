@@ -8,12 +8,13 @@ two 1-D envelopes agree), and that the solve bulk-agrees with its grid-search
 (VFI) twin on the liquid interior up to grid resolution.
 """
 
+from collections.abc import Mapping
 from typing import Literal
 
 import numpy as np
 import pytest
 
-from _lcm.typing import PeriodToRegimeToVArr
+from lcm.typing import FloatND
 from tests.test_models.ds2024_housing_fues import build_model, build_params
 
 pytestmark = pytest.mark.slow
@@ -38,7 +39,7 @@ def test_ds2024_housing_fues_builds_and_solves(variant: Literal["dcegm", "brute"
     )
     solution = model.solve(
         params=build_params(variant=variant, delta=0.0), log_level="debug"
-    )
+    ).values
     assert sorted(solution) == [0, 1, 2]
     alive_periods = [p for p in solution if "alive" in solution[p]]
     assert alive_periods
@@ -50,7 +51,7 @@ def _solve(
     *,
     variant: Literal["dcegm", "brute"],
     envelope: Literal["fues", "mss", "ltm", "rfc"],
-) -> PeriodToRegimeToVArr:
+) -> Mapping[int, Mapping[str, FloatND]]:
     model = build_model(
         variant=variant,
         n_grid=N_GRID,
@@ -61,7 +62,7 @@ def _solve(
     )
     return model.solve(
         params=build_params(variant=variant, delta=0.0), log_level="debug"
-    )
+    ).values
 
 
 @pytest.mark.parametrize("envelope", ["rfc", "fues"])

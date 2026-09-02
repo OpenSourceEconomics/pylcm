@@ -721,8 +721,8 @@ def test_brute_force_solver_explicit_equals_default():
     )
     explicit_model = _build_model(explicit)
 
-    got_default = default_model.solve(params=params, log_level="debug")
-    got_explicit = explicit_model.solve(params=params, log_level="debug")
+    got_default = default_model.solve(params=params, log_level="debug").values
+    got_explicit = explicit_model.solve(params=params, log_level="debug").values
 
     for period in got_default:
         for regime in got_default[period]:

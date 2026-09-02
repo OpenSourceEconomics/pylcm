@@ -73,7 +73,6 @@ def test_to_dataframe_orders_stakeholder_columns_by_declared_stakeholders():
     result = model.simulate(
         params=COUPLE_PARAMS,
         initial_conditions=make_couple_initial_conditions(n_subjects=2),
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
     df = result.to_dataframe()
@@ -107,7 +106,6 @@ def test_to_dataframe_places_additional_target_after_states_and_actions():
             "age": jnp.zeros(2),
             "regime_id": jnp.full(2, SoloRegimeId.working, dtype=jnp.int32),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
     df = result.to_dataframe(additional_targets=["value_of_leisure"])

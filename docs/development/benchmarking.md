@@ -96,11 +96,14 @@ repeats and head--base on odd repeats; four repeats are the balanced evidence pr
 Every pair must pass numerical value parity and exact output shape, dtype, and sharding
 parity. The harness also requires non-empty HLO and compiler-memory status for every
 compiled core, host high-water-mark evidence, and measured peak device memory on GPU
-(with an explicit not-applicable record on CPU). It rejects missing streamed target
-kernels and rejects communication collectives in the distributed co-map head. Raw
-timings, compiler and device memory, HLO files and digests, layout manifests, and the
-base/head ratios are retained under the output directory; `summary.json` is the entry
-point for review.
+(with an explicit not-applicable record on CPU). It verifies the native execution
+declaration for every named target: singleton hard max, distributed co-map, and folded
+hard max are planned and streamed; EV1 is deliberately dense to preserve canonical
+reduction order; and collective GridSearch is deliberately dense because streaming is
+resource-adverse. It also rejects communication collectives in the distributed co-map
+head. Raw timings, compiler and device memory, HLO files and digests, layout manifests,
+and the base/head ratios are retained under the output directory; `summary.json` is the
+entry point for review.
 
 ## Benchmark Scenarios
 
@@ -175,7 +178,6 @@ class TimeMyModel:
         self.model.simulate(
             params=self.model_params,
             initial_conditions=self.initial_conditions,
-            period_to_regime_to_V_arr=None,
             log_level="off",
         )
         self._warmup_time = time.perf_counter() - start

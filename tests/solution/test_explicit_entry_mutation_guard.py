@@ -103,7 +103,7 @@ _PARAMS = {
 
 
 def _source_value(model: Model) -> float:
-    solution = model.solve(params=_PARAMS, log_level="debug")
+    solution = model.solve(params=_PARAMS, log_level="debug").values
     last_living = max(period for period in solution if "source" in solution[period])
     return float(np.asarray(solution[last_living]["source"]).ravel()[0])
 

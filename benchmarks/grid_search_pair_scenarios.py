@@ -28,6 +28,8 @@ class ScenarioSpec:
     expected_folded: bool = False
     expected_collective: bool = False
     expected_distributed: bool = False
+    expected_head_disposition: Literal["planned", "dense"] = "planned"
+    expected_head_disposition_reason: str | None = None
 
 
 SCENARIOS = MappingProxyType(
@@ -41,6 +43,10 @@ SCENARIOS = MappingProxyType(
             name="singleton-ev1",
             description="Consumption-retirement singleton EV1 expected maximum.",
             topology="selected-backend",
+            expected_head_disposition="dense",
+            expected_head_disposition_reason=(
+                "deliberately_dense:ev1_canonical_reduction_order"
+            ),
         ),
         "collective-gs-vd": ScenarioSpec(
             name="collective-gs-vd",
@@ -49,6 +55,10 @@ SCENARIOS = MappingProxyType(
             ),
             topology="selected-backend",
             expected_collective=True,
+            expected_head_disposition="dense",
+            expected_head_disposition_reason=(
+                "deliberately_dense:collective_resource_regression"
+            ),
         ),
         "distributed-co-map": ScenarioSpec(
             name="distributed-co-map",

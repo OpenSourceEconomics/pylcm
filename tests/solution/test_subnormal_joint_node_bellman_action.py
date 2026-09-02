@@ -150,9 +150,13 @@ def _model(*, node_is_reachable: bool = True) -> Model:
 
 
 def _solve(*, node_is_reachable: bool) -> FloatND:
-    V = _model(node_is_reachable=node_is_reachable).solve(
-        params={"alive": {"koopmans_aggregator": {"discount_factor": 1.0}}},
-        log_level="off",
+    V = (
+        _model(node_is_reachable=node_is_reachable)
+        .solve(
+            params={"alive": {"koopmans_aggregator": {"discount_factor": 1.0}}},
+            log_level="off",
+        )
+        .values
     )
     return jnp.asarray(V[0]["alive"])
 

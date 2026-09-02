@@ -99,14 +99,14 @@ surfaces remain outside that top-level namespace:
 | [`lcm.params.UserSequenceLeaf`](../user_guide/parameters.md)                      | User sequence parameter leaf    |
 | [`lcm.params.as_leaf`](../user_guide/parameters.md)                               | Explicit parameter-leaf wrapper |
 | [`lcm.koopmans_aggregation.KoopmansAggregator`](../methods/preferences.md)        | Koopmans-form base contract     |
-| [`lcm.solver_api.ResultRetention`](runtime_and_results.md#api-solution-result)    | Experimental result retention   |
+| [`lcm.solver_api.ResultRetention`](runtime_and_results.md#api-solution-result)    | Solution result retention       |
 | [`lcm.solver_api.ArtifactKey`](runtime_and_results.md#api-solution-result)        | Versioned artifact identity     |
 | [`lcm.solver_api.ArtifactRef`](runtime_and_results.md#api-solution-result)        | Period/regime artifact address  |
 | [`lcm.solver_api.ArtifactStore`](runtime_and_results.md#api-solution-result)      | Immutable artifact store        |
 | [`lcm.solver_api.KernelOutput`](custom_solvers.md)                                | Experimental producer envelope  |
 | [`lcm.solver_api.OmissionReason`](runtime_and_results.md#api-solution-result)     | Recorded reason for absence     |
 | [`lcm.solver_api.SolutionMetadata`](runtime_and_results.md#api-solution-result)   | Labelled-solution metadata      |
-| [`lcm.solver_api.SolutionResult`](runtime_and_results.md#api-solution-result)     | Experimental labelled solution  |
+| [`lcm.solver_api.SolutionResult`](runtime_and_results.md#api-solution-result)     | Labelled solution result        |
 | [`lcm.solver_api.ValueArraySchema`](runtime_and_results.md#api-solution-result)   | Named value-array shape/dtype   |
 | [`lcm.solver_api.SIMULATION_POLICY`](runtime_and_results.md#api-solution-result)  | Replay-policy schema key        |
 | [`lcm.solver_api.DISSOLUTION_FLAG`](runtime_and_results.md#api-solution-result)   | Dissolution-flag schema key     |

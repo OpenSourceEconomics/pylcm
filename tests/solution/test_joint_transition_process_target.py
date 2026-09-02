@@ -128,7 +128,9 @@ def test_a_joint_output_naming_process_nodes_reads_those_nodes_alone() -> None:
     Both nodes named are `±3`, where `V1` is `wealth + 9`, so the continuation
     is `wealth + 9` regardless of which one the draw lands on.
     """
-    solution = _model(support=(-3.0, 3.0)).solve(params=_params(), log_level="debug")
+    solution = (
+        _model(support=(-3.0, 3.0)).solve(params=_params(), log_level="debug").values
+    )
 
     np.testing.assert_array_almost_equal(
         np.asarray(solution[0]["working"]),
@@ -145,7 +147,9 @@ def test_an_off_node_joint_output_interpolates_the_targets_node_values() -> None
     the `wealth + 0.01` the physical value would give off-grid. `+0.1` is the
     mirror image, so both draws contribute the same amount.
     """
-    solution = _model(support=(-0.1, 0.1)).solve(params=_params(), log_level="debug")
+    solution = (
+        _model(support=(-0.1, 0.1)).solve(params=_params(), log_level="debug").values
+    )
 
     np.testing.assert_array_almost_equal(
         np.asarray(solution[0]["working"]),
@@ -181,7 +185,6 @@ def test_a_simulated_joint_output_realizes_one_of_its_support_points() -> None:
             "age": jnp.asarray([60.0, 60.0]),
             "regime_id": jnp.asarray([RegimeId.working, RegimeId.working]),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
 

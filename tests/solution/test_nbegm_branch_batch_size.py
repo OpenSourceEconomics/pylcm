@@ -34,7 +34,7 @@ def _solve(*, branch_batch_size: int) -> Mapping[int, Mapping]:
         action_in_regime_transition=True,
         branch_batch_size=branch_batch_size,
     )
-    return model.solve(params=toy.build_params(), log_level="debug")
+    return model.solve(params=toy.build_params(), log_level="debug").values
 
 
 def test_branch_batch_size_one_matches_whole_axis() -> None:

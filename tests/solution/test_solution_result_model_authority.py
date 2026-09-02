@@ -31,7 +31,7 @@ def test_co_mutated_value_and_schema_dtype_is_rejected_before_forward(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     model, params, initial_conditions = _small_grid_search_inputs()
-    solution = model.solve_result(params=params, log_level="off")
+    solution = model.solve(params=params, log_level="off")
     coordinate = next(iter(solution.metadata.value_schemas))
     period, regime_name = coordinate
     original = solution.values[period][regime_name]
@@ -61,7 +61,7 @@ def test_co_mutated_value_and_schema_dtype_is_rejected_before_forward(
 
 def _finite_discrete_solution():
     model = discrete_toy.build_model(variant="n_nbegm", n_periods=2)
-    solution = model.solve_result(params=_PARAMS, log_level="off")
+    solution = model.solve(params=_PARAMS, log_level="off")
     ref = next(ref for ref in solution.replay_artifacts if ref.key == SIMULATION_POLICY)
     policy = cast("NNBEGMSimPolicy", solution.replay_artifacts[ref])
     return model, solution, ref, policy

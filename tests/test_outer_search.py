@@ -141,11 +141,15 @@ _FINITE_GRID_BASELINE_SIZE = 240
 def test_finite_outer_grid_reproduces_the_retired_legacy_pair_values() -> None:
     """`FiniteOuterGrid(grid=g, batch_size=b)` computes what `outer_grid=g,
     outer_batch_size=b` computed."""
-    solution = toy.build_model(
-        variant="n_nbegm",
-        n_periods=2,
-        outer_search=FiniteOuterGrid(grid=toy.OUTER_GRID, batch_size=4),
-    ).solve(params=_TOY_PARAMS, log_level="off")
+    solution = (
+        toy.build_model(
+            variant="n_nbegm",
+            n_periods=2,
+            outer_search=FiniteOuterGrid(grid=toy.OUTER_GRID, batch_size=4),
+        )
+        .solve(params=_TOY_PARAMS, log_level="off")
+        .values
+    )
 
     values = np.concatenate(
         [

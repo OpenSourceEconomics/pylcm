@@ -262,8 +262,12 @@ def test_n_nbegm_epstein_zin_tracks_the_dense_reference() -> None:
     contains the other, so no directional (dominance) ordering exists between
     the two values; agreement is asserted as unsigned gaps.
     """
-    nested = _build_model(variant="n_nbegm").solve(params=_PARAMS, log_level="debug")
-    brute = _build_model(variant="brute").solve(params=_PARAMS, log_level="debug")
+    nested = (
+        _build_model(variant="n_nbegm").solve(params=_PARAMS, log_level="debug").values
+    )
+    brute = (
+        _build_model(variant="brute").solve(params=_PARAMS, log_level="debug").values
+    )
     for period in (0, 1):
         nested_V = np.asarray(nested[period]["alive"])
         brute_V = np.asarray(brute[period]["alive"])

@@ -31,7 +31,6 @@ which dissolves both cells — the separation the mask asserts here.
 """
 
 from functools import cache
-from types import MappingProxyType
 
 import jax.numpy as jnp
 import numpy as np
@@ -50,6 +49,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.regime import ProjectedRegimeValue, Regime
+from lcm.solver_api import DISSOLUTION_FLAG, SolutionResult
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
@@ -89,7 +89,8 @@ EXPECTED_D_COUPLE = (False, True)
 
 def test_participation_mask_uses_the_reference_regime_period_t_grid():
     """Only the couple whose wife's outside option beats her stake dissolves."""
-    _solution, dissolution = _solve(later_ceiling=TIGHTENED_CEILING)
+    result = _solve(later_ceiling=TIGHTENED_CEILING)
+    dissolution = result.replay_artifacts.project(DISSOLUTION_FLAG)
     np.testing.assert_array_equal(
         np.asarray(dissolution[0]["couple"]), np.asarray(EXPECTED_D_COUPLE)
     )
@@ -97,7 +98,7 @@ def test_participation_mask_uses_the_reference_regime_period_t_grid():
 
 def test_participation_masked_couple_publishes_its_household_argmax_value():
     """The sustained cell publishes `(3, 2)`, the dissolved one `(-inf, -inf)`."""
-    solution, _dissolution = _solve(later_ceiling=TIGHTENED_CEILING)
+    solution = _solve(later_ceiling=TIGHTENED_CEILING).values
     aaae(
         np.asarray(solution[0]["couple"]),
         np.asarray(EXPECTED_V_COUPLE),
@@ -107,8 +108,12 @@ def test_participation_masked_couple_publishes_its_household_argmax_value():
 
 def test_participation_mask_ignores_the_reference_regime_later_grid():
     """Whether the reference grid tightens later leaves period 0's mask alone."""
-    _tightening_solution, tightening = _solve(later_ceiling=TIGHTENED_CEILING)
-    _invariant_solution, invariant = _solve(later_ceiling=INITIAL_CEILING)
+    tightening = _solve(later_ceiling=TIGHTENED_CEILING).replay_artifacts.project(
+        DISSOLUTION_FLAG
+    )
+    invariant = _solve(later_ceiling=INITIAL_CEILING).replay_artifacts.project(
+        DISSOLUTION_FLAG
+    )
     np.testing.assert_array_equal(
         np.asarray(tightening[0]["couple"]), np.asarray(invariant[0]["couple"])
     )
@@ -122,7 +127,7 @@ def test_reference_value_function_is_tabulated_on_that_periods_own_nodes(
     *, period, expected
 ):
     """The reference regime pays `2 * wealth` on whichever nodes its age has."""
-    solution, _dissolution = _solve(later_ceiling=TIGHTENED_CEILING)
+    solution = _solve(later_ceiling=TIGHTENED_CEILING).values
     aaae(
         np.asarray(solution[period]["single_f"]),
         np.asarray(expected),
@@ -131,15 +136,14 @@ def test_reference_value_function_is_tabulated_on_that_periods_own_nodes(
 
 
 @cache
-def _solve(*, later_ceiling: float) -> tuple[MappingProxyType, MappingProxyType]:
+def _solve(*, later_ceiling: float) -> SolutionResult:
     """Solve the model whose reference grid ends at `later_ceiling` at age 1.
 
     Args:
         later_ceiling: Upper bound of `single_f`'s wealth grid from age 1 on.
 
     Returns:
-        Tuple of the per-period value functions and the per-period dissolution
-        flags.
+        The complete labelled solution.
 
     """
     return _make_model(later_ceiling=later_ceiling).solve(
@@ -153,7 +157,6 @@ def _solve(*, later_ceiling: float) -> tuple[MappingProxyType, MappingProxyType]
             "couple_terminal": {},
         },
         log_level="debug",
-        return_dissolution_flags=True,
     )
 
 

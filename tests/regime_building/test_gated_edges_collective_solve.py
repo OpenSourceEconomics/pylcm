@@ -837,7 +837,7 @@ def test_full_ekl_topology_via_public_model_api():
     solution = model.solve(
         params={"discount_factor": 0.95, "delta_f": 0.5, "delta_m": 0.2},
         log_level="off",
-    )
+    ).values
     # married period-1: value-constraint IR miniature (continuation zero via the
     # dissolution edge).
     np.testing.assert_allclose(

@@ -1,15 +1,14 @@
 """Logical-output layout planning for distributed solve kernels.
 
 The solver names what each output *means*.  The engine, which owns the regime
-topology and device mesh, resolves those roles to concrete shardings.  This is
-deliberately narrower than an execution configuration: it plans output
-placement for kernels that declare logical output roles.
+topology and device mesh, resolves those roles to concrete shardings before lowering.
+Every planned output layout comes from the owning core program's declared roles.
 """
 
 from collections.abc import Callable, Hashable
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Protocol, cast, runtime_checkable
+from typing import cast
 
 import jax
 
@@ -31,25 +30,9 @@ VALUE = OutputRole.VALUE
 DISSOLUTION_FLAG = OutputRole.DISSOLUTION_FLAG
 
 
-@runtime_checkable
-class OutputLayoutAware(Protocol):
-    """A period kernel that declares the logical tree of a named core's output."""
-
-    def output_roles(self, *, core_key: str) -> object:
-        """Return a pytree of :class:`OutputRole` leaves for ``core_key``."""
-        ...
-
-    def core_for_output_layout(self, *, core_key: str) -> Callable:
-        """Return the callable to lower with the resolved output shardings."""
-        ...
-
-
 class _Unplanned(Enum):
     TOKEN = auto()
 
-
-_ROLES_FROM_KERNEL = object()
-# Sentinel selecting the legacy OutputLayoutAware declaration.
 
 UNPLANNED = _Unplanned.TOKEN
 # No explicit output plan; preserve the backend-selected layout.
@@ -80,31 +63,24 @@ class ResolvedOutputLayout:
 
 def resolve_output_layout(
     *,
-    kernel: object,
     core_key: str,
     value_template: object,
     state_order: tuple[StateName, ...],
-    output_roles: object = _ROLES_FROM_KERNEL,
-) -> ResolvedOutputLayout | _Unplanned:
-    """Resolve an opted-in core's logical output roles on the V-template mesh.
+    output_roles: object,
+) -> ResolvedOutputLayout:
+    """Resolve one program-owned output-role tree on the V-template placement.
 
-    A materialized CoreProgram supplies ``output_roles`` directly and receives a
-    concrete contract even on one device. A distributed collective value has one
-    trailing, replicated stakeholder axis; its dissolution flag is state-valued, so
-    its spec is derived from the canonical state-axis prefix. Legacy kernels continue
-    to declare roles through ``OutputLayoutAware`` only when their value template has
-    a named sharding.
+    Native :class:`CoreProgram` declarations receive a concrete contract even on one
+    device. A distributed collective value has one trailing, replicated stakeholder
+    axis; its dissolution flag is state-valued, so its spec is derived from the
+    canonical state-axis prefix. Legacy programs never enter this resolver: the
+    central core-program adapter marks them ``LEGACY_UNPLANNED`` instead.
     """
-    roles, opted_in = _select_output_roles(
-        kernel=kernel,
-        core_key=core_key,
-        value_template=value_template,
-        output_roles=output_roles,
-    )
-    if not opted_in:
-        return UNPLANNED
+    if output_roles is None:
+        msg = "Explicit CoreProgram output_roles cannot be None."
+        raise ValueError(msg)
     _validate_output_roles(
-        roles=roles,
+        roles=output_roles,
         core_key=core_key,
         value_template=value_template,
         state_order=state_order,
@@ -121,7 +97,7 @@ def resolve_output_layout(
             value_sharding=value_sharding,
             dissolution_sharding=dissolution_sharding,
         ),
-        roles,
+        output_roles,
     )
     tree = jax.tree.structure(out_shardings)
     leaves = tuple(jax.tree.leaves(out_shardings))
@@ -130,7 +106,7 @@ def resolve_output_layout(
         expected_value_dtype,
         expected_dissolution_shape,
         expected_dissolution_dtype,
-    ) = _expected_layout_metadata(value_template=value_template, roles=roles)
+    ) = _expected_layout_metadata(value_template=value_template, roles=output_roles)
     return ResolvedOutputLayout(
         out_shardings=out_shardings,
         compilation_key=(
@@ -148,35 +124,8 @@ def resolve_output_layout(
     )
 
 
-def _select_output_roles(
-    *,
-    kernel: object,
-    core_key: str,
-    value_template: object,
-    output_roles: object,
-) -> tuple[object, bool]:
-    """Select explicit roles or the legacy opt-in without consulting it early."""
-    if output_roles is not _ROLES_FROM_KERNEL:
-        if output_roles is None:
-            msg = "Explicit CoreProgram output_roles cannot be None."
-            raise ValueError(msg)
-        return output_roles, True
-    if not isinstance(kernel, OutputLayoutAware):
-        return UNPLANNED, False
-    value_sharding = getattr(value_template, "sharding", None)
-    if not isinstance(value_sharding, jax.NamedSharding):
-        # Preserve the legacy contract: an unsharded OutputLayoutAware kernel
-        # does not consult its role declaration or acquire a plan.
-        return UNPLANNED, False
-    roles = cast("OutputLayoutAware", kernel).output_roles(core_key=core_key)
-    if roles is None:
-        # A delegating legacy adapter may have no plan for this core.
-        return UNPLANNED, False
-    return roles, True
-
-
 def _require_value_sharding(*, value_template: object) -> jax.sharding.Sharding:
-    """Return the concrete sharding required by an opted-in output contract."""
+    """Return the concrete sharding required by a program-owned output contract."""
     value_sharding = getattr(value_template, "sharding", None)
     if not isinstance(value_sharding, jax.sharding.Sharding):
         msg = (

@@ -39,7 +39,7 @@ def _solve_capturing(*, monkeypatch, tmp_path, target: str | None):
     monkeypatch.setenv("LCM_CAPTURE_DIR", str(tmp_path))
     model = get_model(n_periods=_N_PERIODS)
     params = get_params(n_periods=_N_PERIODS)
-    solution = model.solve(params=params, log_level="off")
+    solution = model.solve(params=params, log_level="off").values
     return model, solution
 
 
@@ -186,7 +186,7 @@ def test_a_gated_edge_source_replays_to_the_value_the_solve_published(
         regime_id_class=EKLRegimeId,
     )
     params = {"discount_factor": 0.95, "delta_f": 0.5, "delta_m": 0.2}
-    solution = model.solve(params=params, log_level="off")
+    solution = model.solve(params=params, log_level="off").values
 
     replay = replay_period(directory=tmp_path / "single_f@0")
 

@@ -1,7 +1,7 @@
 """Tests for logical-output layout planning."""
 
 import functools
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import cast
 
@@ -10,6 +10,12 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.execution.core_program import (
+    CoreExecutionDisposition,
+    CoreExecutionRequirements,
+    CoreProgram,
+    core_program_graph,
+)
 from _lcm.execution.output_layout import (
     DISSOLUTION_FLAG,
     UNPLANNED,
@@ -23,16 +29,28 @@ from _lcm.solution.backward_induction import _lowering_key, _publish_kernel_valu
 
 
 @dataclass(frozen=True)
-class _AwareKernel:
-    roles: object
+class _GraphKernel:
+    program: CoreProgram
 
-    def output_roles(self, *, core_key: str) -> object:
-        assert core_key == "main"
-        return self.roles
+    def core_programs(self):
+        return {"main": self.program}
 
-    def core_for_output_layout(self, *, core_key: str) -> Callable:
+
+def _legacy_core() -> None:
+    """Stand in for an unmigrated solver core."""
+
+
+class _LegacyKernel:
+    """Publish only the interface consumed by the central legacy adapter."""
+
+    def cores(self) -> Mapping[str, Callable[..., object]]:
+        return {"main": _legacy_core}
+
+    def build_lower_args(
+        self, *, core_key: str, **_context: object
+    ) -> Mapping[str, object]:
         assert core_key == "main"
-        return lambda x: x
+        return {}
 
 
 def _mesh() -> jax.sharding.Mesh:
@@ -52,10 +70,10 @@ def test_resolver_maps_singleton_value_to_exact_template_sharding():
     template = _template()
 
     resolved = resolve_output_layout(
-        kernel=_AwareKernel(roles=VALUE),
         core_key="main",
         value_template=template,
         state_order=("kind", "wealth"),
+        output_roles=VALUE,
     )
 
     assert isinstance(resolved, ResolvedOutputLayout)
@@ -70,10 +88,10 @@ def test_resolver_drops_collective_stakeholder_axis_from_dissolution_spec():
     template = _template(collective=True)
 
     resolved = resolve_output_layout(
-        kernel=_AwareKernel(roles=(VALUE, DISSOLUTION_FLAG)),
         core_key="main",
         value_template=template,
         state_order=("kind", "wealth"),
+        output_roles=(VALUE, DISSOLUTION_FLAG),
     )
 
     assert isinstance(resolved, ResolvedOutputLayout)
@@ -96,10 +114,10 @@ def test_collective_template_may_omit_replicated_stakeholder_spec_entry():
     )
 
     resolved = resolve_output_layout(
-        kernel=_AwareKernel(roles=(VALUE, DISSOLUTION_FLAG)),
         core_key="main",
         value_template=template,
         state_order=("kind", "wealth"),
+        output_roles=(VALUE, DISSOLUTION_FLAG),
     )
 
     assert isinstance(resolved, ResolvedOutputLayout)
@@ -110,48 +128,41 @@ def test_collective_template_may_omit_replicated_stakeholder_spec_entry():
     assert dissolution_sharding.spec == jax.P("kind", None)
 
 
-def test_unaware_or_unsharded_kernel_is_unplanned():
-    assert (
-        resolve_output_layout(
-            kernel=object(),
-            core_key="main",
-            value_template=_template(),
-            state_order=("kind", "wealth"),
-        )
-        is UNPLANNED
-    )
-    assert (
-        resolve_output_layout(
-            kernel=_AwareKernel(roles=VALUE),
-            core_key="main",
-            value_template=jnp.zeros((2, 3)),
-            state_order=("kind", "wealth"),
-        )
-        is UNPLANNED
+def test_explicit_roles_resolve_a_single_device_layout():
+    template = jnp.zeros((2, 3))
+
+    resolved = resolve_output_layout(
+        core_key="main",
+        value_template=template,
+        state_order=("kind", "wealth"),
+        output_roles=VALUE,
     )
 
+    assert resolved.out_shardings == template.sharding
 
-def test_terminal_carry_decorator_delegates_grid_search_output_roles():
+
+def test_terminal_carry_decorator_delegates_grid_search_program_roles():
+    program = CoreProgram(
+        name="main",
+        function=lambda x: x,
+        argument_builder=lambda _context: {},
+        requirements=CoreExecutionRequirements(),
+        output_roles=VALUE,
+        disposition=CoreExecutionDisposition.DENSE,
+        disposition_reason="test_dense_terminal_carry_layout",
+    )
     wrapper = object.__new__(_TerminalCarryPeriodKernel)
-    object.__setattr__(wrapper, "base", _AwareKernel(roles=VALUE))
+    object.__setattr__(wrapper, "base", _GraphKernel(program=program))
 
-    assert wrapper.output_roles(core_key="main") is VALUE
-    assert callable(wrapper.core_for_output_layout(core_key="main"))
+    assert wrapper.core_programs()["main"] is program
 
 
-def test_terminal_carry_decorator_keeps_unaware_base_unplanned():
+def test_terminal_carry_decorator_rejects_unaware_base():
     wrapper = object.__new__(_TerminalCarryPeriodKernel)
     object.__setattr__(wrapper, "base", object())
 
-    assert (
-        resolve_output_layout(
-            kernel=wrapper,
-            core_key="main",
-            value_template=_template(),
-            state_order=("kind", "wealth"),
-        )
-        is UNPLANNED
-    )
+    with pytest.raises(TypeError, match="native core-program graph"):
+        wrapper.core_programs()
 
 
 @pytest.mark.parametrize(
@@ -161,41 +172,41 @@ def test_terminal_carry_decorator_keeps_unaware_base_unplanned():
 def test_resolver_rejects_malformed_role_trees(roles):
     with pytest.raises(ValueError, match="exactly VALUE"):
         resolve_output_layout(
-            kernel=_AwareKernel(roles=roles),
             core_key="main",
             value_template=_template(collective=True),
             state_order=("kind", "wealth"),
+            output_roles=roles,
         )
 
 
 def test_resolver_rejects_dissolution_without_one_stakeholder_axis():
     with pytest.raises(ValueError, match="trailing stakeholder axis"):
         resolve_output_layout(
-            kernel=_AwareKernel(roles=(VALUE, DISSOLUTION_FLAG)),
             core_key="main",
             value_template=_template(),
             state_order=("kind", "wealth"),
+            output_roles=(VALUE, DISSOLUTION_FLAG),
         )
 
 
 def test_compilation_key_tracks_layout_tree_and_shardings():
     first = resolve_output_layout(
-        kernel=_AwareKernel(roles=VALUE),
         core_key="main",
         value_template=_template(),
         state_order=("kind", "wealth"),
+        output_roles=VALUE,
     )
     same = resolve_output_layout(
-        kernel=_AwareKernel(roles=VALUE),
         core_key="main",
         value_template=_template(),
         state_order=("kind", "wealth"),
+        output_roles=VALUE,
     )
     different = resolve_output_layout(
-        kernel=_AwareKernel(roles=(VALUE, DISSOLUTION_FLAG)),
         core_key="main",
         value_template=_template(collective=True),
         state_order=("kind", "wealth"),
+        output_roles=(VALUE, DISSOLUTION_FLAG),
     )
 
     assert isinstance(first, ResolvedOutputLayout)
@@ -240,10 +251,10 @@ def test_lowering_key_tracks_positional_partial_bindings() -> None:
 
 def test_role_tree_output_mismatch_fails_during_lowering():
     resolved = resolve_output_layout(
-        kernel=_AwareKernel(roles=(VALUE, DISSOLUTION_FLAG)),
         core_key="main",
         value_template=_template(collective=True),
         state_order=("kind", "wealth"),
+        output_roles=(VALUE, DISSOLUTION_FLAG),
     )
     assert isinstance(resolved, ResolvedOutputLayout)
 
@@ -256,10 +267,10 @@ def test_role_tree_output_mismatch_fails_during_lowering():
 
 def test_assert_output_layout_rejects_post_run_repair_need():
     resolved = resolve_output_layout(
-        kernel=_AwareKernel(roles=VALUE),
         core_key="main",
         value_template=_template(),
         state_order=("kind", "wealth"),
+        output_roles=VALUE,
     )
     assert isinstance(resolved, ResolvedOutputLayout)
     expected = _template()
@@ -276,10 +287,10 @@ def test_assert_output_layout_rejects_post_run_repair_need():
 def test_assert_output_layout_rejects_wrong_absolute_value_shape():
     template = _template()
     resolved = resolve_output_layout(
-        kernel=_AwareKernel(roles=VALUE),
         core_key="main",
         value_template=template,
         state_order=("kind", "wealth"),
+        output_roles=VALUE,
     )
     assert isinstance(resolved, ResolvedOutputLayout)
     wrong_shape = jax.device_put(
@@ -294,10 +305,10 @@ def test_assert_output_layout_rejects_wrong_absolute_value_shape():
 def test_assert_output_layout_rejects_wrong_absolute_value_dtype():
     template = _template()
     resolved = resolve_output_layout(
-        kernel=_AwareKernel(roles=VALUE),
         core_key="main",
         value_template=template,
         state_order=("kind", "wealth"),
+        output_roles=VALUE,
     )
     assert isinstance(resolved, ResolvedOutputLayout)
     wrong_dtype = jax.device_put(
@@ -312,10 +323,10 @@ def test_assert_output_layout_rejects_wrong_absolute_value_dtype():
 def test_assert_output_layout_rejects_coherent_wrong_collective_shape():
     template = _template(collective=True)
     resolved = resolve_output_layout(
-        kernel=_AwareKernel(roles=(VALUE, DISSOLUTION_FLAG)),
         core_key="main",
         value_template=template,
         state_order=("kind", "wealth"),
+        output_roles=(VALUE, DISSOLUTION_FLAG),
     )
     assert isinstance(resolved, ResolvedOutputLayout)
     value_sharding, dissolution_sharding = cast(
@@ -347,10 +358,10 @@ def test_assert_output_layout_rejects_coherent_wrong_collective_shape():
 def test_assert_output_layout_rejects_malformed_dissolution(dissolution):
     template = _template(collective=True)
     resolved = resolve_output_layout(
-        kernel=_AwareKernel(roles=(VALUE, DISSOLUTION_FLAG)),
         core_key="main",
         value_template=template,
         state_order=("kind", "wealth"),
+        output_roles=(VALUE, DISSOLUTION_FLAG),
     )
     assert isinstance(resolved, ResolvedOutputLayout)
 
@@ -365,11 +376,14 @@ def test_unplanned_legacy_kernel_retains_publication_repair():
         jax.NamedSharding(mesh=_mesh(), spec=jax.P()),
     )
 
+    graph = core_program_graph(kernel=_LegacyKernel())
+    assert graph["main"].disposition is CoreExecutionDisposition.LEGACY_UNPLANNED
+
     published = _publish_kernel_value(
         value=replicated,
         dissolution=None,
         template=template,
-        compiled_cores={"main": lambda: None},
+        compiled_cores={"main": graph["main"].function},
     )
 
     assert published.sharding == template.sharding

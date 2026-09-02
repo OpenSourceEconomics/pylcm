@@ -22,7 +22,10 @@ the sweep is sensitive to a dropped grid point wherever it is dropped — in the
 solver, in the product map, or upstream in the state-action space.
 
 The singleton, collective, and taste-shock reductions are separate code paths and
-all are swept. The taste-shock sweep uses candidate-distinct deterministic noise
+all are swept. The native program graph selects streaming only for the ordinary
+hard-max production routes: collective and EV1 production remains deliberately dense,
+while their sealed streaming implementations are non-production references. The
+taste-shock sweep uses candidate-distinct deterministic noise
 at the production draw seam, so it checks the continuous winner, the noisy
 discrete winner, the row-major flat index, and the returned unshocked value.
 `test_dropping_one_candidate_is_visible_to_the_sweep` masks one cell inside the
@@ -39,10 +42,10 @@ proof rejects any extra assignment, branch, slice, index, mask, `where`, rank,
 gap, support-size, shape, or axis transformation. The collective path permits
 only the independently checked split of the trailing stakeholder axis and pins
 the shared scalarization, argmax, and gather implementations exactly. The three
-taste-shock routes additionally pin masking, continuous reduction, the streamed
-branch-hard-max then dynamically bound log-sum-exp composition, per-discrete-cell
-mean-zero Gumbel noise, and flat-index reconstruction, including the deep shared
-helper bodies. The construction and correctness of Q/F values
+taste-shock routes additionally pin masking, continuous reduction, the reference
+streamed branch-hard-max then dynamically bound log-sum-exp composition,
+per-discrete-cell mean-zero Gumbel noise, and flat-index reconstruction, including the
+deep shared helper bodies. The construction and correctness of Q/F values
 and feasibility—including user DAGs, constraints, transitions, interpolation,
 continuation arithmetic, and folded-process weights—is outside this certificate
 and remains owned by its dedicated semantic tests.
@@ -307,29 +310,47 @@ def test_build_period_kernels_passes_the_whole_action_name_tuple():
     """
     tree = _parse("src/_lcm/solution/grid_search.py")
     builder = _definition(tree=tree, qualname="GridSearch.build_period_kernels")
-    calls = [
-        *_calls_named(node=builder, name="get_max_Q_over_a"),
-        *_calls_named(node=builder, name="get_streaming_max_Q_over_a"),
-    ]
-
-    assert {_chain(_keyword(call=call, name="action_names")) for call in calls} == {
-        "context.state_action_space.action_names",
-        "action_names",
+    assignments = {
+        ast.unparse(target): ast.unparse(statement.value)
+        for statement in ast.walk(builder)
+        if isinstance(statement, ast.Assign)
+        for target in statement.targets
+        if isinstance(target, ast.Name)
     }
+    assert assignments["action_names"] == "context.state_action_space.action_names"
+    common_kwargs = next(
+        statement.value
+        for statement in ast.walk(builder)
+        if isinstance(statement, ast.Assign)
+        and any(ast.unparse(target) == "common_kwargs" for target in statement.targets)
+    )
+    assert isinstance(common_kwargs, ast.Dict)
+    entries = {
+        ast.literal_eval(key): ast.unparse(value)
+        for key, value in zip(common_kwargs.keys, common_kwargs.values, strict=True)
+        if isinstance(key, ast.Constant)
+    }
+    assert entries["action_names"] == "action_names"
 
 
-@pytest.mark.parametrize("method", ["build_lower_args", "__call__"])
-def test_period_kernel_splats_the_whole_action_mapping(method: str):
-    """Lowering and the call both splat the state-action space's whole actions.
-
-    The compiled core is lowered against the same mapping it is called with, so
-    a subset in either place would silently compile a smaller search than the
-    one the other announces.
-    """
+def test_native_argument_builder_splats_the_whole_action_mapping():
+    """The sole lowering/runtime builder splats the complete action mapping."""
     tree = _parse("src/_lcm/solution/grid_search.py")
-    kernel = _definition(tree=tree, qualname=f"_GridSearchPeriodKernel.{method}")
+    builder = _definition(tree=tree, qualname="_GridSearchArgumentBuilder.__call__")
 
-    assert "state_action_space.actions" in _splatted_chains(node=kernel)
+    assert "state_action_space.actions" in _splatted_chains(node=builder)
+
+
+def test_period_kernel_runtime_uses_the_declared_argument_builder():
+    """Runtime calls the exact builder stored in the native program declaration."""
+    tree = _parse("src/_lcm/solution/grid_search.py")
+    kernel = _definition(tree=tree, qualname="_GridSearchPeriodKernel.__call__")
+
+    assert any(
+        _chain(call.func) == "program.argument_builder"
+        for call in ast.walk(kernel)
+        if isinstance(call, ast.Call)
+    )
 
 
 def test_actions_are_product_mapped_over_the_whole_action_tuple():
@@ -514,6 +535,7 @@ def test_streamed_reducer_sources_are_literal_certificate_obligations():
     assert isinstance(
         _parse("src/_lcm/solution/logsumexp_action_reduction.py"), ast.Module
     )
+    assert isinstance(_parse("src/_lcm/solution/period_replay.py"), ast.Module)
 
 
 def test_direct_flow_certificate_names_every_supported_route():
@@ -634,8 +656,25 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         "candidate_materialization:negate_cast_runtime_points",
         "candidate_materialization:negate_series_runtime_points",
         "candidate_materialization:negate_fixed_runtime_points",
-        "streaming_provider:dense_function",
-        "streaming_provider:arguments_filtered",
+        "native_graph:function_wrapped",
+        "native_graph:argument_builder_wrapped",
+        "native_graph:requirements_erased",
+        "native_graph:collective_output_role_dropped",
+        "native_graph:planned_disposition_forced_dense",
+        "native_graph:dense_reason_erased",
+        "native_graph:donation_candidates_changed",
+        "native_graph:duplicate_legacy_cores_authority",
+        "native_graph:duplicate_legacy_builder_authority",
+        "native_graph:duplicate_core_authority",
+        "native_graph:duplicate_streamed_core_authority",
+        "native_graph:duplicate_unwrapped_core_authority",
+        "native_graph:program_name_rebound",
+        "native_graph:mapping_key_rebound",
+        "native_graph:published_mapping_filtered",
+        "native_graph:fixed_function_filtered",
+        "native_builder:next_values_filtered",
+        "native_builder:period_shifted",
+        "native_builder:runtime_bypasses_declared_builder",
         "streaming_provider:action_names_slice",
         "streaming_provider:action_extents_slice",
         "streaming_width_selector:suffix_search_truncated",
@@ -651,18 +690,21 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         "streaming_provider:fold_route_disabled",
         "streaming_provider:co_map_route_disabled",
         "streaming_provider:co_map_reference_guard_bypassed",
-        "streaming_provider:collective_reducer_dropped",
-        "streaming_provider:collective_output_role_dropped",
         "streaming_fold:rejection_restored",
         "streaming_fold:productmap_output_filtered",
         "streaming_classifier:collective_ev1_admitted",
         "streaming_classifier:ev1_fold_admitted",
         "streaming_classifier:collective_fold_admitted",
         "streaming_classifier:ev1_without_discrete_action_admitted",
-        "streaming_classifier:jit_disabled_admitted",
+        "streaming_classifier:jit_disabled_gate_reintroduced",
         "streaming_classifier:trivial_product_admitted",
         "streaming_classifier:category_suffix_selected",
-        "streaming_classifier:dense_label_reclassified",
+        "streaming_classifier:ev1_reason_changed",
+        "streaming_classifier:collective_reason_changed",
+        "streaming_classifier:ev1_gate_bypassed",
+        "streaming_classifier:collective_resource_gate_bypassed",
+        "streaming_classifier:ev1_precedes_trivial_product",
+        "streaming_classifier:collective_precedes_co_map",
         "streaming_fold:reduction_after_co_map",
         "streaming_fold:signature_positionalized",
         "streaming_fold:width_signature_dropped",
@@ -672,8 +714,6 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         "streaming_co_map:continuation_axes_broadcast",
         "streaming_co_map:continuation_axes_forced",
         "streaming_co_map:layout_validation_bypassed",
-        "streaming_ev1_provider:reducer_dropped",
-        "streaming_ev1_provider:discrete_axis_count_changed",
         "streaming_dispatch:bypass_compiled_core",
         "streaming_collective:builder_dissolution_inverted",
         "streaming_collective:builder_stakeholder_axis_sliced",
@@ -699,7 +739,9 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         "streaming_logsumexp:scale_dropped_at_finalize",
         "streaming_logsumexp:semantic_key_changed",
         "streaming_logsumexp:bind_negates_scale",
-        "terminal_wrapper:core_program_dropped",
+        "terminal_wrapper:native_graph_dropped",
+        "terminal_wrapper:native_graph_filtered",
+        "terminal_wrapper:duplicate_legacy_authority",
         "streaming_resolver:bypass_static_width_binding",
         "streaming_resolver:arguments_filtered",
         "streaming_resolver:specialization_drops_axes",
@@ -716,18 +758,22 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         "streaming_hard_max:ignore_right_partial",
         "streaming_hard_max:signed_zero_normalization_bypassed",
         "streaming_hard_max:semantic_key_changed",
-        "streaming_aot:provider_ignored",
-        "streaming_aot:validation_before_width_selection_bypassed",
-        "streaming_aot:resolved_function_bypassed",
+        "native_graph:solve_collection_bypasses_central_validator",
+        "native_graph:materialized_program_filtered",
+        "native_graph:initial_widths_bypassed",
+        "native_graph:aot_resolved_function_bypassed",
         "streaming_collective_hard_max:filter_last_identity",
         "streaming_collective_hard_max:ignore_right_partial",
         "streaming_collective_hard_max:signed_zero_normalization_bypassed",
         "streaming_collective_hard_max:semantic_key_changed",
         "streaming_collective_hard_max:stakeholder_gather_decoupled",
         "streaming_collective_hard_max:winner_identity_shifted",
-        "streaming_aot:resolved_arguments_bypassed",
-        "streaming_aot:specialization_dropped",
-        "streaming_aot:lower_dense_function",
+        "native_graph:aot_resolved_arguments_bypassed",
+        "native_graph:specialization_dropped",
+        "native_graph:eager_resolved_function_bypassed",
+        "period_replay:central_graph_validator_bypassed",
+        "period_replay:materialized_program_filtered",
+        "period_replay:shared_resolver_bypassed",
         "value_access:grid_reachable_targets_dropped",
         "value_access:grid_gated_kind_bypassed",
         "value_access:grid_same_period_shifted",
@@ -779,10 +825,10 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
     assert required <= names
     # Independent literals make both cardinality and family identity part of this
     # certificate, rather than trusting constants supplied by the mutation generator.
-    assert len(names) == 337
+    assert len(names) == 354
     assert (
         hashlib.sha256(("\n".join(sorted(names)) + "\n").encode()).hexdigest()
-        == "b8fce8415020a3dc7fb41e3f98ee49c697ac2ce12bbc2144ba5acb310897d828"
+        == "292027e67d3d50cae11661a67779a6efe8e2be4219af95bdf32177116824fb30"
     )
 
 
@@ -1098,7 +1144,6 @@ def _simulate_dedup_model(*, model: Model, params: dict[str, Any]):
                 [DedupRegimeId.left, DedupRegimeId.right], dtype=jnp.int32
             ),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
     frame = result.to_dataframe(use_labels=False)
@@ -1123,7 +1168,7 @@ def _solve_acting(
     params["acting"][function_name]["target_work"] = work
     params["acting"][function_name]["target_consumption"] = consumption
     params["acting"]["koopmans_aggregator"]["discount_factor"] = 0.5
-    return model.solve(params=params, log_level="debug")[0]["acting"]
+    return model.solve(params=params, log_level="debug").values[0]["acting"]
 
 
 @pytest.fixture(scope="module")
@@ -1288,7 +1333,6 @@ def _simulate_acting(
             "wealth": _WEALTH_VALUES,
             "regime_id": jnp.full(len(_WEALTH_VALUES), RegimeId.acting),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
     frame = result.to_dataframe(use_labels=False)
@@ -1375,7 +1419,7 @@ def _solve_mask_case(
 ) -> FloatND:
     """Solve one mask neighborhood and return the acting regime's value."""
     params = _params_for_mask(model=model, mask=mask, ranks=ranks)
-    return model.solve(params=params, log_level="debug")[0]["acting"]
+    return model.solve(params=params, log_level="debug").values[0]["acting"]
 
 
 def _simulate_mask_case(
@@ -1390,7 +1434,6 @@ def _simulate_mask_case(
             "wealth": _WEALTH_VALUES,
             "regime_id": jnp.full(len(_WEALTH_VALUES), RegimeId.acting),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
     frame = result.to_dataframe(use_labels=False)
@@ -1435,7 +1478,6 @@ def _simulate_materialization_case(
             "wealth": _WEALTH_VALUES,
             "regime_id": jnp.full(len(_WEALTH_VALUES), RegimeId.acting),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
     return _period_zero_action_views(result=result, regime_name="acting")
@@ -1601,7 +1643,6 @@ def _simulate_runtime_action_model(
             "wealth": _WEALTH_VALUES,
             "regime_id": jnp.full(len(_WEALTH_VALUES), RegimeId.acting),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
     return _period_zero_action_views(result=result, regime_name="acting")
@@ -1758,7 +1799,6 @@ def _simulate_taste_mask_case(
                 "wealth": _WEALTH_VALUES,
                 "regime_id": jnp.full(len(_WEALTH_VALUES), RegimeId.acting),
             },
-            period_to_regime_to_V_arr=None,
             log_level="debug",
             seed=409,
         )
@@ -1800,7 +1840,7 @@ def test_collapsing_plain_callable_dedup_keys_changes_the_published_candidate(
                 [DedupRegimeId.left, DedupRegimeId.right], dtype=jnp.int32
             ),
         },
-        period_to_regime_to_V_arr=values,
+        solution=values,
         log_level="debug",
     )
     frame = result.to_dataframe(use_labels=False)
@@ -1829,7 +1869,6 @@ def test_padded_heterogeneous_candidates_remain_subject_aligned(
             "wealth": jnp.asarray([1.0, 2.0, 1.0]),
             "regime_id": jnp.full(3, DedupRegimeId.left, dtype=jnp.int32),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
         subject_batch_size=2,
     )
@@ -1862,7 +1901,6 @@ def test_additional_targets_preserve_unbatched_selected_candidates(
             "wealth": jnp.asarray([1.0, 2.0, 1.0]),
             "regime_id": jnp.full(3, DedupRegimeId.left, dtype=jnp.int32),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
 
@@ -1944,7 +1982,6 @@ def _simulate_zero_weight_fold(model: Model) -> tuple[list[int], list[int], list
             "wealth": jnp.zeros(1),
             "regime_id": jnp.asarray([FoldRegimeId.src], dtype=jnp.int32),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
         seed=409,
     )
@@ -2028,7 +2065,6 @@ def _simulate_seeded_taste_routing(
             "wealth": jnp.ones(_RNG_N_SUBJECTS),
             "regime_id": jnp.full(_RNG_N_SUBJECTS, RegimeId.acting),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
         seed=409,
         subject_batch_size=subject_batch_size,

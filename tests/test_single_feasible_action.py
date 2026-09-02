@@ -142,7 +142,7 @@ def test_baseline_no_nan():
         n_periods=3,
     )
     period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
-    for regime_to_V in period_to_regime_to_V_arr.values():
+    for regime_to_V in period_to_regime_to_V_arr.values.values():
         for V_arr in regime_to_V.values():
             assert not jnp.any(jnp.isnan(V_arr))
 
@@ -166,7 +166,7 @@ def test_some_states_have_only_one_feasible_action():
     period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
     # At wealth = 1.0, only consumption = 0.5 is feasible (1.625, 2.75, 3.875,
     # 5.0 all > 1.0).
-    for regime_to_V in period_to_regime_to_V_arr.values():
+    for regime_to_V in period_to_regime_to_V_arr.values.values():
         for V_arr in regime_to_V.values():
             assert not jnp.any(jnp.isnan(V_arr)), (
                 "single-feasible-action state should not produce NaN V"
@@ -191,7 +191,7 @@ def test_some_states_have_no_feasible_action():
     period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
     # At wealth = 0.1, no consumption point is feasible. max returns -inf.
     # The next period interpolates V over the resulting -inf cells.
-    for regime_to_V in period_to_regime_to_V_arr.values():
+    for regime_to_V in period_to_regime_to_V_arr.values.values():
         for V_arr in regime_to_V.values():
             assert not jnp.any(jnp.isnan(V_arr)), (
                 "all-infeasible state should yield -inf, not NaN"
@@ -214,7 +214,7 @@ def test_log_zero_consumption_propagates_nan_via_max_when_unconstrained():
         n_periods=3,
     )
     period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
-    for regime_to_V in period_to_regime_to_V_arr.values():
+    for regime_to_V in period_to_regime_to_V_arr.values.values():
         for V_arr in regime_to_V.values():
             # log(0) = -inf is not NaN, but combined with where-mask edge
             # cases this could in principle leak; check it does not.
@@ -249,7 +249,6 @@ def test_simulate_with_a_single_feasible_action_yields_no_nan():
     result = model.simulate(
         params=params,
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
     df = result.to_dataframe()
@@ -272,7 +271,6 @@ def test_simulate_rejects_a_subject_seeded_where_no_action_is_feasible():
         model.simulate(
             params=params,
             initial_conditions=initial_conditions,
-            period_to_regime_to_V_arr=None,
             log_level="debug",
         )
 
@@ -404,7 +402,7 @@ def test_bequest_gamma_close_to_one_is_safe():
         consumption_weight=(0.68, 0.88),
     )
     period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
-    for regime_to_V in period_to_regime_to_V_arr.values():
+    for regime_to_V in period_to_regime_to_V_arr.values.values():
         for V_arr in regime_to_V.values():
             assert not jnp.any(jnp.isnan(V_arr))
 
@@ -422,7 +420,7 @@ def test_bequest_gamma_exactly_one_for_one_type_only():
         consumption_weight=(0.68, 0.88),
     )
     period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
-    for period, regime_to_V in period_to_regime_to_V_arr.items():
+    for period, regime_to_V in period_to_regime_to_V_arr.values.items():
         for regime, V_arr in regime_to_V.items():
             assert not jnp.any(jnp.isnan(V_arr)), (
                 f"NaN in V[{regime}, period={period}] when one type has gamma=1.0"
@@ -567,7 +565,6 @@ def test_runtime_action_grid_passes_initial_conditions_validation():
     result = model.simulate(
         params=params,
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
     assert result.n_subjects == 3
@@ -579,7 +576,6 @@ def test_runtime_state_grid_passes_initial_conditions_validation():
     result = model.simulate(
         params=params,
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
     assert result.n_subjects == 3

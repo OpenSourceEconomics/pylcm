@@ -176,14 +176,13 @@ def simulate(
             and the trailing pad rows are trimmed from the results before they are
             returned. `None` means no padding was applied.
         period_to_regime_to_dissolution_flags: Immutable mapping of periods to each
-            COLLECTIVE regime's dissolution flag `D`, as returned by
-            `backward_induction.solve`'s third element. Empty (the default)
+            COLLECTIVE regime's dissolution flag `D`, as returned in
+            `BackwardInductionResult.dissolution_flags`. Empty (the default)
             for models without gated edges reading `D_target`, or when the
-            caller does not have it at hand. Surfaced publicly by
-            `Model.solve(return_dissolution_flags=True)` and the
-            `period_to_regime_to_dissolution_flags` argument of
-            `Model.simulate` (and threaded automatically through the
-            auto-solve path when `Model.simulate` solves first).
+            caller does not have it at hand. Public ``Model.solve`` stores each
+            flag as an addressed replay artifact in ``SolutionResult``;
+            ``Model.simulate(solution=...)`` validates and projects those artifacts,
+            and its automatic-solve path threads them through directly.
 
     Returns:
         SimulationResult object. Call .to_dataframe() to get a pandas DataFrame.
@@ -2175,8 +2174,8 @@ def _fail_if_the_published_capability_is_not_replayable(
         "Continuous-outer replay was handed a policy whose published replay "
         "capability reports the declaration as unreplayable: "
         f"{payload.replay_capability}. A solve that honoured its publication "
-        "gate never returns such a policy, so this pair did not come from one. "
-        "Simulate with the `(values, policies)` pair this model's own `solve` "
+        "gate never returns such a policy, so this result did not come from one. "
+        "Simulate with the `SolutionResult` this model's own `solve()` "
         "returned."
     )
     raise InvalidSimulationInputError(msg)
@@ -2200,7 +2199,7 @@ def _replay_function(*, regime: Regime, name: FunctionName) -> Callable[..., Flo
         "this regime does not publish for simulation. The solve certified it "
         "before publishing the replay policy, so the policy and the regime it "
         "is being replayed against do not belong to the same model. Simulate "
-        "with the `(values, policies)` pair this model's own `solve` returned."
+        "with the `SolutionResult` this model's own `solve()` returned."
     )
     raise InvalidSimulationInputError(msg)
 
@@ -2226,8 +2225,8 @@ def _fail_if_the_published_capability_does_not_hold(
         f"Continuous-outer replay could not bind the arguments of {name!r}, "
         "which the published replay capability certified as bindable. The "
         "replay policy and the regime it is being replayed against do not "
-        "belong to the same model. Simulate with the `(values, policies)` pair "
-        "this model's own `solve` returned."
+        "belong to the same model. Simulate with the `SolutionResult` "
+        "this model's own `solve()` returned."
     )
     raise InvalidSimulationInputError(msg)
 

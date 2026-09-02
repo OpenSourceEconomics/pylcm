@@ -96,7 +96,6 @@ def test_simulate_runs_when_a_constraint_reads_a_post_decision(model):
     result = model.simulate(
         params=_PARAMS,
         initial_conditions=_initial_conditions((5.0, 12.0, 20.0)),
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
     consumption = result.to_dataframe().query("regime_name == 'alive'")["consumption"]
@@ -111,7 +110,6 @@ def test_infeasible_subject_is_reported_by_constraint_name(model):
         model.simulate(
             params=_PARAMS,
             initial_conditions=_initial_conditions((0.1,)),
-            period_to_regime_to_V_arr=None,
             log_level="debug",
         )
 
@@ -121,7 +119,6 @@ def test_the_constraint_is_available_as_an_additional_target(model):
     result = model.simulate(
         params=_PARAMS,
         initial_conditions=_initial_conditions((5.0, 12.0)),
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
     df = result.to_dataframe(additional_targets=["savings_stay_above_the_floor"])
@@ -158,7 +155,6 @@ def _infeasibility_message(model: Model) -> str:
         model.simulate(
             params=_PARAMS,
             initial_conditions=_initial_conditions((0.1,)),
-            period_to_regime_to_V_arr=None,
             log_level="debug",
         )
     return str(excinfo.value)

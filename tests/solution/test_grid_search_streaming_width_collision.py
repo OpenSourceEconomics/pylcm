@@ -9,7 +9,7 @@ import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_array_equal
 
-from _lcm.execution.core_program import CoreProgramAware
+from _lcm.execution.core_program import CoreProgramGraphAware
 from _lcm.regime_building import processing
 from _lcm.regime_building.collective import ParetoWeights
 from _lcm.solution.contract import SolverBuildContext
@@ -177,10 +177,9 @@ def test_width_keyword_collision_keeps_grid_search_streamed(
     )
 
     kernel = model._regimes["acting"].solution.period_kernels[0]
-    assert isinstance(kernel, CoreProgramAware)
-    program = kernel.build_core_program(core_key="main", arguments={})
+    assert isinstance(kernel, CoreProgramGraphAware)
+    program = kernel.core_programs()["main"]
 
-    assert program is not None
     assert len(program.requirements.streamable_axes) == 1
     axis = program.requirements.streamable_axes[0]
     assert axis.coordinate_names == tuple(actions)
@@ -191,6 +190,6 @@ def test_width_keyword_collision_keeps_grid_search_streamed(
     solution = model.solve(
         params={"acting": {"discount_factor": 0.5}},
         log_level="debug",
-    )
+    ).values
 
     assert_array_equal(solution[0]["acting"], jnp.asarray(expected_value))

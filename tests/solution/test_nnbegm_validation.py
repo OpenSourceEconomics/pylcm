@@ -37,6 +37,7 @@ from lcm.exceptions import (
     UnrepresentableOuterCandidateError,
 )
 from lcm.regime import Regime
+from lcm.solver_api import SIMULATION_POLICY
 from lcm.solvers import AdaptiveOuterMesh, FiniteOuterGrid
 from lcm.typing import ContinuousAction, ContinuousState, FloatND
 from tests.conftest import DECIMAL_PRECISION
@@ -392,7 +393,6 @@ def test_a_lossy_outer_map_is_refused_before_any_policy_is_published(
         model.solve(
             params={"discount_factor": 0.95},
             log_level="off",
-            return_simulation_policy=True,
         )
 
 
@@ -429,11 +429,11 @@ def test_the_continuous_outer_mesh_publishes_a_policy_for_a_one_for_one_map() ->
     """
     model = n_nbegm_toy.build_model(variant="n_nbegm", n_periods=3, outer_search=_MESH)
 
-    _, policies = model.solve(
+    _solution_result = model.solve(
         params={"discount_factor": 0.95},
         log_level="off",
-        return_simulation_policy=True,
     )
+    policies = _solution_result.replay_artifacts.project(SIMULATION_POLICY)
 
     assert isinstance(policies[0]["alive"], NestedEGMSimPolicy)
 
@@ -453,7 +453,6 @@ def test_the_continuous_outer_mesh_refuses_a_map_its_replay_cannot_invert() -> N
         model.solve(
             params={"discount_factor": 0.95},
             log_level="off",
-            return_simulation_policy=True,
         )
 
 
@@ -470,13 +469,11 @@ def test_the_uninvertible_map_refusal_is_identical_on_both_replay_routes() -> No
         model.solve(
             params={"discount_factor": 0.95},
             log_level="off",
-            return_simulation_policy=True,
         )
     with pytest.raises(RegimeInitializationError) as automatic:
         model.simulate(
             params={"discount_factor": 0.95},
             initial_conditions=dict(_REPLAY_INITIAL),
-            period_to_regime_to_V_arr=None,
             log_level="off",
             seed=42,
         )
@@ -498,7 +495,6 @@ def test_the_finite_outer_grid_recovers_the_action_a_doubled_map_needs() -> None
         one_for_one.simulate(
             params=params,
             initial_conditions=dict(_REPLAY_INITIAL),
-            period_to_regime_to_V_arr=None,
             log_level="off",
             seed=42,
         )
@@ -510,7 +506,6 @@ def test_the_finite_outer_grid_recovers_the_action_a_doubled_map_needs() -> None
         .simulate(
             params=params,
             initial_conditions=dict(_REPLAY_INITIAL),
-            period_to_regime_to_V_arr=None,
             log_level="off",
             seed=42,
         )
@@ -540,7 +535,6 @@ def test_the_continuous_outer_mesh_refuses_a_second_passive_continuous_state() -
         model.solve(
             params={"discount_factor": 0.95},
             log_level="off",
-            return_simulation_policy=True,
         )
 
 
@@ -579,7 +573,6 @@ def test_the_continuous_outer_mesh_refuses_an_outer_map_replay_cannot_bind() -> 
         model.solve(
             params={"discount_factor": 0.95},
             log_level="off",
-            return_simulation_policy=True,
         )
 
 
@@ -591,12 +584,14 @@ def test_both_outer_searches_publish_the_same_certified_outer_inverse() -> None:
     let one route replay a stock the other refused.
     """
     params = {"discount_factor": 0.95}
-    _, finite = n_nbegm_toy.build_model(variant="n_nbegm", n_periods=2).solve(
-        params=params, log_level="off", return_simulation_policy=True
+    finite_solution = n_nbegm_toy.build_model(variant="n_nbegm", n_periods=2).solve(
+        params=params, log_level="off"
     )
-    _, adaptive = n_nbegm_toy.build_model(
+    finite = finite_solution.replay_artifacts.project(SIMULATION_POLICY)
+    adaptive_solution = n_nbegm_toy.build_model(
         variant="n_nbegm", n_periods=2, outer_search=_MESH
-    ).solve(params=params, log_level="off", return_simulation_policy=True)
+    ).solve(params=params, log_level="off")
+    adaptive = adaptive_solution.replay_artifacts.project(SIMULATION_POLICY)
 
     assert (
         _published_capability(finite[0]["alive"]).inverse
@@ -606,11 +601,11 @@ def test_both_outer_searches_publish_the_same_certified_outer_inverse() -> None:
 
 def test_the_published_capability_records_the_outer_state_domain() -> None:
     """The published verdict carries the stock domain the solve admitted."""
-    _, policies = n_nbegm_toy.build_model(variant="n_nbegm", n_periods=2).solve(
+    _solution_result = n_nbegm_toy.build_model(variant="n_nbegm", n_periods=2).solve(
         params={"discount_factor": 0.95},
         log_level="off",
-        return_simulation_policy=True,
     )
+    policies = _solution_result.replay_artifacts.project(SIMULATION_POLICY)
 
     inverse = _published_capability(policies[0]["alive"]).inverse
     assert (inverse.low, inverse.high) == (0.0, 20.0)
@@ -640,21 +635,13 @@ _SOLVE_ARGS = {
 }
 
 _UNSUPPORTED_ROUTES = {
-    "adaptive_solve": lambda model: model.solve(
-        **_SOLVE_ARGS, return_simulation_policy=True
-    ),
+    "adaptive_solve": lambda model: model.solve(**_SOLVE_ARGS),
     "automatic_simulation": lambda model: model.simulate(
         params={"discount_factor": 0.95},
         initial_conditions=dict(_REPLAY_INITIAL),
-        period_to_regime_to_V_arr=None,
         log_level="off",
     ),
-    "finite_solve": lambda model: model.solve(
-        **_SOLVE_ARGS, return_simulation_policy=True
-    ),
-    "split_replay": lambda model: model.solve(
-        **_SOLVE_ARGS, return_simulation_policy=True
-    ),
+    "finite_solve": lambda model: model.solve(**_SOLVE_ARGS),
 }
 
 _ADAPTIVE_ROUTES = frozenset({"adaptive_solve", "automatic_simulation"})
@@ -670,9 +657,8 @@ def test_no_route_returns_a_replay_policy_for_an_uninvertible_map(
     then raised would still have to be trusted never to hand it on. Recording
     every construction shows the refusal lands before any policy exists — on the
     finite grid and the adaptive mesh, whether simulation solves for itself or
-    the caller solves first and supplies the pair. The split route is covered by
-    the solve it must run first: with no policy to supply, nothing can be
-    replayed.
+    the caller requests a standalone result. An explicit replay cannot begin
+    because no valid result can be produced.
     """
     model = n_nbegm_toy.build_model(
         variant="n_nbegm",

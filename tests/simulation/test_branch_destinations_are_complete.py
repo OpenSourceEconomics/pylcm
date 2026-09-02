@@ -153,7 +153,7 @@ def _simulate(*, wage: float):
             "regime_id": jnp.full(2, model.regime_names_to_ids["household"]),
             "own_stakeholder": jnp.asarray([roles["f"], roles["m"]], dtype=jnp.int32),
         },
-        period_to_regime_to_V_arr=solution,
+        solution=solution,
         log_level="off",
         seed=0,
     )

@@ -11,6 +11,12 @@ import pytest
 from jax import numpy as jnp
 from jax.sharding import NamedSharding, PartitionSpec
 
+from _lcm.execution.core_program import (
+    CoreBuildContext,
+    CoreExecutionDisposition,
+    core_program_graph,
+    materialize_core_program,
+)
 from _lcm.execution.value_transfer import (
     ValueArtifactKind,
     ValueInputChannel,
@@ -32,6 +38,7 @@ from lcm.exceptions import PyLCMError, RegimeInitializationError
 from lcm.model import Model
 from lcm.regime import Regime as UserRegime
 from lcm.result import SimulationResult
+from lcm.solver_api import DISSOLUTION_FLAG
 from lcm.typing import ScalarInt
 
 # Run these tests on a four-CPU-device topology. The pin only applies in a
@@ -315,7 +322,7 @@ def test_solution_running_on_multiple_cpus(correct_distributed_model):
         params={"discount_factor": 0.95},
     )
 
-    assert period_to_regime_to_V_arr[0]["working_life"].sharding.num_devices == 4
+    assert period_to_regime_to_V_arr.values[0]["working_life"].sharding.num_devices == 4
 
 
 @_skip_pytest_parallel
@@ -329,11 +336,15 @@ def test_distributed_solve_matches_single_device_per_type():
     local index would corrupt some types' values.
     """
     params = {"discount_factor": 0.95}
-    sharded = _make_correct_distributed_model(distributed=True).solve(
-        log_level="debug", params=params
+    sharded = (
+        _make_correct_distributed_model(distributed=True)
+        .solve(log_level="debug", params=params)
+        .values
     )
-    single = _make_correct_distributed_model(distributed=False).solve(
-        log_level="debug", params=params
+    single = (
+        _make_correct_distributed_model(distributed=False)
+        .solve(log_level="debug", params=params)
+        .values
     )
 
     for period, regime_to_V_arr in sharded.items():
@@ -360,24 +371,38 @@ def _compiled_solve_kernel_hlo(*, model: Model, regime_name: str, period: int) -
     )
     regime = regimes[regime_name]
     period_kernel = regime.solution.period_kernels[period]
-    # Lower every shared core the period kernel carries exactly as backward
-    # induction does (a brute regime carries the single `"main"` core); the
-    # continuation V enters through `build_lower_args`, so the optimized HLO
-    # reflects the real sharded read.
+    # Materialize and resolve every native program exactly as backward induction
+    # does (GridSearch carries the sole `"main"` program), so the optimized HLO
+    # reflects the real sharded continuation read and planner-owned tile width.
     texts: list[str] = []
-    for core_key, core in period_kernel.cores().items():
-        lower_args = period_kernel.build_lower_args(
-            core_key=core_key,
-            state_action_space=regime.solution.state_action_space(
-                regime_params=flat_params[regime_name]
+    for core_key, declaration in core_program_graph(kernel=period_kernel).items():
+        materialized = materialize_core_program(
+            program=declaration,
+            context=CoreBuildContext(
+                state_action_space=regime.solution.state_action_space(
+                    regime_params=flat_params[regime_name]
+                ),
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                next_regime_to_continuation=MappingProxyType({}),
+                flat_params=flat_params,
+                period=period,
+                ages=model.ages,
             ),
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            next_regime_to_continuation=MappingProxyType({}),
-            flat_params=flat_params,
-            period=period,
-            ages=model.ages,
         )
-        text = jax.jit(core).lower(**lower_args).compile().as_text()
+        resolved = backward_induction._resolve_program_for_execution(
+            program=materialized,
+            source_value_template=next_regime_to_V_arr[regime_name],
+            source=(regime_name, period, core_key),
+        )
+        text = (
+            jax.jit(
+                resolved.function,
+                static_argnames=tuple(resolved.static_kwargs),
+            )
+            .lower(**resolved.arguments, **resolved.static_kwargs)
+            .compile()
+            .as_text()
+        )
         assert text is not None
         texts.append(text)
     hlo = "\n".join(texts)
@@ -444,12 +469,19 @@ def test_grid_search_aot_output_layout_is_native_local_and_deduplicated(monkeypa
     working_kernels = model._regimes["working_life"].solution.period_kernels
     assert working_kernels
     assert all(
-        getattr(kernel, "streamed_core", None) is not None
+        core_program_graph(kernel=kernel)["main"].disposition
+        is CoreExecutionDisposition.PLANNED
         for kernel in working_kernels.values()
     )
-    single = _make_correct_distributed_model(
-        distributed=False, distribute_type2=False
-    ).solve(log_level="off", params={"discount_factor": 0.95})
+    assert all(
+        core_program_graph(kernel=kernel)["main"].disposition_reason is None
+        for kernel in working_kernels.values()
+    )
+    single = (
+        _make_correct_distributed_model(distributed=False, distribute_type2=False)
+        .solve(log_level="off", params={"discount_factor": 0.95})
+        .values
+    )
     captured = []
     original_attach = backward_induction._attach_resolved_output_layout
 
@@ -469,7 +501,7 @@ def test_grid_search_aot_output_layout_is_native_local_and_deduplicated(monkeypa
         backward_induction, "_repair_unplanned_kernel_value", fail_repair
     )
 
-    distributed = model.solve(log_level="off", params={"discount_factor": 0.95})
+    distributed = model.solve(log_level="off", params={"discount_factor": 0.95}).values
 
     assert captured
     assert len({id(core.compiled) for core in captured}) < len(captured)
@@ -531,7 +563,7 @@ def test_grid_search_same_mesh_rank_specific_value_input_stays_aligned(monkeypat
         backward_induction, "_attach_resolved_output_layout", capture_planned_core
     )
     params = {"discount_factor": 0.95}
-    distributed = model.solve(log_level="off", params=params)
+    distributed = model.solve(log_level="off", params=params).values
 
     assert model._regimes["working_life"].solution.state_names == (
         "type1",
@@ -562,11 +594,15 @@ def test_grid_search_same_mesh_rank_specific_value_input_stays_aligned(monkeypat
     assert transfer.stored_sharding == target_sharding
     assert transfer.source_sharding == target_sharding
 
-    single = _make_correct_distributed_model(
-        distributed=False,
-        distribute_type2=False,
-        retirement_reads_type2=False,
-    ).solve(log_level="off", params=params)
+    single = (
+        _make_correct_distributed_model(
+            distributed=False,
+            distribute_type2=False,
+            retirement_reads_type2=False,
+        )
+        .solve(log_level="off", params=params)
+        .values
+    )
     for period, regime_to_value in distributed.items():
         for regime_name, value in regime_to_value.items():
             np.testing.assert_array_equal(value, single[period][regime_name])
@@ -615,33 +651,40 @@ def test_collective_grid_search_value_and_dissolution_have_planned_state_layout(
     working_kernels = distributed_model._regimes["working"].solution.period_kernels
     assert working_kernels
     assert all(
-        getattr(kernel, "streamed_core", None) is not None
+        core_program_graph(kernel=kernel)["main"].disposition
+        is CoreExecutionDisposition.DENSE
+        for kernel in working_kernels.values()
+    )
+    assert all(
+        core_program_graph(kernel=kernel)["main"].disposition_reason
+        == "deliberately_dense:collective_resource_regression"
         for kernel in working_kernels.values()
     )
     single_model = _make_one_axis_collective_model(distributed=False)
 
-    distributed_values, distributed_flags = distributed_model.solve(
+    distributed_values = distributed_model.solve(
         log_level="off",
         params={"discount_factor": 0.95},
-        return_dissolution_flags=True,
     )
-    single_values, single_flags = single_model.solve(
+    distributed_flags = distributed_values.replay_artifacts.project(DISSOLUTION_FLAG)
+    single_values = single_model.solve(
         log_level="off",
         params={"discount_factor": 0.95},
-        return_dissolution_flags=True,
     )
+    single_flags = single_values.replay_artifacts.project(DISSOLUTION_FLAG)
 
-    for period, regime_to_value in distributed_values.items():
+    for period, regime_to_value in distributed_values.values.items():
         for regime_name, value in regime_to_value.items():
             assert value.shape == (4, 4, 2)
             # `_RegimeSharding.V_arr_sharding` names only state axes: the
             # replicated stakeholder entry is intentionally omitted.
             assert isinstance(value.sharding, NamedSharding)
             assert value.sharding.spec == PartitionSpec("type1", None)
-            reference = single_values[period][regime_name]
+            reference = single_values.values[period][regime_name]
             eps = np.finfo(np.asarray(value).dtype).eps
             np.testing.assert_allclose(value, reference, rtol=2 * eps, atol=2 * eps)
             dissolution = distributed_flags[period][regime_name]
+            assert isinstance(dissolution, jax.Array)
             assert dissolution.shape == (4, 4)
             assert isinstance(dissolution.sharding, NamedSharding)
             assert dissolution.sharding.spec == PartitionSpec("type1", None)
@@ -662,7 +705,7 @@ def test_solve_returns_eagerly_materialised_V_arrs(correct_distributed_model):
         log_level="debug",
         params={"discount_factor": 0.95},
     )
-    for regime_to_V_arr in period_to_regime_to_V_arr.values():
+    for regime_to_V_arr in period_to_regime_to_V_arr.values.values():
         for V_arr in regime_to_V_arr.values():
             for shard in V_arr.addressable_shards:
                 assert shard.data.is_ready()
@@ -687,7 +730,6 @@ def test_simulate_returns_eagerly_materialised_V_arrs(correct_distributed_model)
             "type2": jnp.full(36, 1),
             "regime_id": jnp.zeros(36, dtype=jnp.int32),
         },
-        period_to_regime_to_V_arr=None,
         seed=12345,
     )
     for regime_period_data in res._raw_results.values():
@@ -710,7 +752,6 @@ def test_simulation_running_on_multiple_cpus(correct_distributed_model):
             "type2": jnp.full(36, 1),
             "regime_id": jnp.zeros(36, dtype=jnp.int32),
         },
-        period_to_regime_to_V_arr=None,
         seed=12345,
     )
 
@@ -742,7 +783,6 @@ def test_save_load_preserves_sharding_and_dataframe(
             "type2": jnp.full(36, 1),
             "regime_id": jnp.zeros(36, dtype=jnp.int32),
         },
-        period_to_regime_to_V_arr=None,
         seed=12345,
     )
 
@@ -786,7 +826,6 @@ def test_aot_compiled_simulation_running_on_multiple_cpus():
             "type2": jnp.full(36, 1),
             "regime_id": jnp.zeros(36, dtype=jnp.int32),
         },
-        period_to_regime_to_V_arr=None,
         seed=12345,
     )
 
@@ -825,7 +864,6 @@ def test_simulation_pads_non_device_multiple_subject_count(correct_distributed_m
             "type2": jnp.full(5, 1),
             "regime_id": jnp.zeros(5, dtype=jnp.int32),
         },
-        period_to_regime_to_V_arr=None,
         seed=12345,
     )
 
@@ -859,14 +897,12 @@ def test_distributed_simulation_with_subject_batching_matches_single_pass(
         log_level="off",
         params={"discount_factor": 0.95},
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=None,
         seed=12345,
     )
     chunked = correct_distributed_model.simulate(
         log_level="off",
         params={"discount_factor": 0.95},
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=None,
         seed=12345,
         subject_batch_size=subject_batch_size,
     )
@@ -895,14 +931,12 @@ def test_distributed_aot_simulation_pads_subjects_to_a_chunk_multiple():
         log_level="off",
         params={"discount_factor": 0.95},
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=None,
         seed=12345,
     )
     chunked = model.simulate(
         log_level="off",
         params={"discount_factor": 0.95},
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=None,
         seed=12345,
         subject_batch_size=8,
     )
@@ -993,7 +1027,7 @@ def test_solve_with_partial_distribution_returns_correct_shardings(
     distributed = partially_distributed_model.solve(
         log_level="debug",
         params=params,
-    )
+    ).values
 
     assert distributed[0]["working_life"].sharding.num_devices == 4
     assert distributed[5]["retirement"].sharding.num_devices == 1
@@ -1024,9 +1058,13 @@ def test_solve_with_partial_distribution_returns_correct_shardings(
     assert transfer.source_sharding.mesh == source_output_sharding.mesh
     assert transfer.source_sharding.spec != source_output_sharding.spec
 
-    single = _make_partially_distributed_model(distributed=False).solve(
-        log_level="debug",
-        params=params,
+    single = (
+        _make_partially_distributed_model(distributed=False)
+        .solve(
+            log_level="debug",
+            params=params,
+        )
+        .values
     )
     for period, regime_to_value in distributed.items():
         for regime_name, value in regime_to_value.items():

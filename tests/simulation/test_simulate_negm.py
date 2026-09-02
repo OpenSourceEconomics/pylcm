@@ -44,7 +44,6 @@ def _alive_dataframe(*, initial_conditions: dict[str, jnp.ndarray]) -> pd.DataFr
     result = model.simulate(
         params=_PARAMS,
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=None,
         log_level="debug",
         seed=7,
     )

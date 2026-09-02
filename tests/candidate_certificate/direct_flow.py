@@ -7,14 +7,17 @@ built-in action-grid object or supplied through the public runtime-points seam r
 the pointwise ``Q_and_F`` call as an action argument. Second, on each GridSearch
 route, the exact arrays bound by ``Q_arr, F_arr = Q_and_F(...)`` must reach the
 full reducer without an intervening candidate-changing expression. The streamed
-solve routes make the equivalent pointwise claim: every canonical global action
-identity is decoded in C order, its exact Q/feasibility pair enters the
-route-appropriate mergeable hard-max reduction, and the resolved streamed program is
-the one lowered, compiled, and dispatched. A collective block is scalarized without
+hard-max production route makes the equivalent pointwise claim: every canonical global
+action identity is decoded in C order, its exact Q/feasibility pair enters the
+mergeable hard-max reduction, and the resolved streamed program is the one lowered,
+compiled, and dispatched. The collective and EV1 streaming implementations remain
+sealed reference algorithms, but the native program graph deliberately selects their
+dense canonical reducers instead. A collective reference block is scalarized without
 changing action support; every stakeholder value is gathered at the one shared
-household winner and published with the empty-feasible-set dissolution flag. An EV1
-stream preserves the discrete-prefix branch order, hard-maxes each branch, then adds
-exactly one branch value to a log-sum-exp reduction bound to the runtime scale. The economic
+household winner and published with the empty-feasible-set dissolution flag. The EV1
+reference stream preserves the discrete-prefix branch order, hard-maxes each branch,
+then adds exactly one branch value to a log-sum-exp reduction bound to the runtime scale.
+The economic
 construction of Q/F values and feasibility—including user DAGs, constraints,
 transitions, continuation values, interpolation, and fold weights—is an explicit
 semantic boundary and is not re-proved here. The proof is strict by design: a new
@@ -28,13 +31,13 @@ The nine corridors are:
   optional unchanged fold quadrature -> compiled VALUE core;
 * singleton simulate -> ``argmax_and_max(Q_arr, where=F_arr, ...)``;
 * collective solve -> ``collective_readout(..., feasibility=F_arr, ...)``;
-* collective streamed solve -> complete C-order stakeholder blocks -> shared
+* collective streamed reference -> complete C-order stakeholder blocks -> shared
   household hard max -> compiled ``(VALUE, DISSOLUTION_FLAG)`` core;
 * collective simulate -> ``collective_argmax_and_readout(...,
   feasibility=F_arr, ...)``;
 * taste-shock dense solve fallback -> exact mask, continuous maximum, then full
   discrete logsum;
-* taste-shock streamed solve -> ordered discrete-prefix branch hard max -> one
+* taste-shock streamed reference -> ordered discrete-prefix branch hard max -> one
   dynamically bound log-sum-exp -> compiled VALUE core;
 * taste-shock simulate -> exact mask, row-major continuous maximum, one
   mean-zero Gumbel draw per discrete cell, and exact flat-index reconstruction.
@@ -89,6 +92,7 @@ SIMULATION_TRANSITIONS_SOURCE = "src/_lcm/simulation/transitions.py"
 SIMULATION_COMPILE_SOURCE = "src/_lcm/simulation/compile.py"
 MODEL_SOURCE = "src/lcm/model.py"
 BACKWARD_INDUCTION_SOURCE = "src/_lcm/solution/backward_induction.py"
+PERIOD_REPLAY_SOURCE = "src/_lcm/solution/period_replay.py"
 INITIAL_CONDITIONS_SOURCE = "src/_lcm/simulation/initial_conditions.py"
 RESULT_SOURCE = "src/lcm/result.py"
 RESULT_DATAFRAME_SOURCE = "src/_lcm/simulation/result_dataframe.py"
@@ -141,6 +145,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
     SIMULATION_COMPILE_SOURCE,
     MODEL_SOURCE,
     BACKWARD_INDUCTION_SOURCE,
+    PERIOD_REPLAY_SOURCE,
     INITIAL_CONDITIONS_SOURCE,
     RESULT_SOURCE,
     RESULT_DATAFRAME_SOURCE,
@@ -177,10 +182,10 @@ _SOURCE_SEALS = {
     ARGMAX_SOURCE: "0d179a5aa65a6f310f598bdad8f75a9318a24832e31bd529184c2ea90356a72d",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
     MAX_Q_SOURCE: "6bed0c5a31bbc1c7fe9e0d9250223888d1271528b01844a398668af038e24844",
-    PROCESSING_SOURCE: "e9fc3dc1b8b703f12867f336ce4439356edc2fbafc919ae2014cd939234a1b56",
-    GRID_SEARCH_SOURCE: "cc4e64adb531b9965ffd645d1714d4948666fead104cd093d23a0dc5002d088b",
-    CORE_PROGRAM_SOURCE: "e9d3e475abaf3f7f17d06f511cd460888a9f5207cf19c16d3577e2c5b055dbf7",
-    OUTPUT_LAYOUT_SOURCE: "20cd6a359ce07f8ef48282196c2bd8b4a7bc1d0f838839e93f4eea684bf5e9bc",
+    PROCESSING_SOURCE: "8a90088e268e0c7bd5a6cf7fb1f4befbec5aa9c1f4c7253bf229c7d287a21d05",
+    GRID_SEARCH_SOURCE: "1c9f20fd8662b4925d29399d2bd404cdbd65818f17bfe2b0c7b3a7b67450d0b4",
+    CORE_PROGRAM_SOURCE: "caf36e62a72dc2bfc5acceb05b48725186eccd68c79f66419f770527c5babe63",
+    OUTPUT_LAYOUT_SOURCE: "09237a7c2b137d3780abc2ff98aa3e38c7671828d7316904052d9572ed8b8e02",
     VALUE_TRANSFER_SOURCE: "44b8629c7b461b6b0216c79ba25101179e1b8cb2edf40630a55c6b9403fbbd2d",
     ACTION_STREAMING_SOURCE: "a34ca428598e37dd68fc3dcaa0c664c56f79afb6042c946246883f250bab681c",
     ACTION_REDUCTION_SOURCE: "6cee6ea2dbef0ba710fa4a318a2113377d6513cee508e73004861597f9c220f9",
@@ -193,11 +198,12 @@ _SOURCE_SEALS = {
     PROBABILITY_SOURCE: "b59d16c16147af2518daaed643c10be43c506c6e3ac751cd52f04fa8fdab20d2",
     ENGINE_SOURCE: "6d3962297eab6d6053619533211fa0e5a79fecf925cad671dc3c4d9d5bcc80e7",
     STATE_ACTION_SPACE_SOURCE: "c7af3ea4c3912efa3d5d7daa0d420168a7545e327f6e4c581b3baf54efc79f11",
-    SIMULATION_SOURCE: "b55ee1a42dea02e46cbf0036ee6ee46cfdbb81ed29b9b45d8cd2d474d93b35bb",
+    SIMULATION_SOURCE: "a0703e3e195f38b3a36962490d8a3602f9ef5c18cf8ef486efa4f6b1bf98bb65",
     SIMULATION_TRANSITIONS_SOURCE: "1c503777887af52d1d5de36cf86acb4d8431fbe3d71203d7da881b4d0742c928",
     SIMULATION_COMPILE_SOURCE: "926feb249828f03cf722f8e517706e6651b0359f93fd29c6f87650773bfcaf04",
-    MODEL_SOURCE: "5045a42535a33d4337700c7161bf31ade717b43a60c3f79ef71cbe3c537347cf",
-    BACKWARD_INDUCTION_SOURCE: "d94c01e087f8a90731f6ba431e3a7b7f3cf92a9f8405821b4d233ba376df7ab5",
+    MODEL_SOURCE: "ddf57deb37663785bfad4d107c6ac263de379420cc50591011d065fdb33aa70d",
+    BACKWARD_INDUCTION_SOURCE: "dfa50cc2b25c5fae25c18baef52f9adafb47167460d64fc4cccc3b79827e35de",
+    PERIOD_REPLAY_SOURCE: "eeb2ce9327c1eb5a9a874a741de68d9f0b377d81759e78d1b5cf6589fb872679",
     INITIAL_CONDITIONS_SOURCE: "cb3663f59d10fa288d3da322b5f154545bb1ac4b9262073a87c405b5e950507f",
     RESULT_SOURCE: "992f8e14d2f47f505f6883e340e89d68dfc41311d4c36f7849a2f79331e4ba01",
     RESULT_DATAFRAME_SOURCE: "025e273c4d3bb9d8f9787189a551b113708c86b1e868d16178aa39555abf49a4",
@@ -205,7 +211,7 @@ _SOURCE_SEALS = {
     ADDITIONAL_TARGETS_SOURCE: "d1c8787e7968b868b4b09a90544050c5da65d2ca6203f2bc52fe6b7b7dd351e4",
     SIMULATION_RANDOM_SOURCE: "0f7d81ab5c36343ab24363dca159451c0a44a399ab150abd2e52fea6715ff20e",
     FOLD_ZERO_SAFE_SOURCE: "0f6c6c3ad1a69ea2ef241f8f0ce924e18c00e6515c7509577c761a8151d57feb",
-    SOLUTION_CONTRACT_SOURCE: "e0ea892e2a146395a9eaa4b084f1a29b5064ce80093ac3ae674445e29475df9a",
+    SOLUTION_CONTRACT_SOURCE: "51e9ecb17edb19f78f8fe801671732b755a0c6dbca2b7311392d8427e349e9e4",
     GRIDS_INIT_SOURCE: "c66aed5ef6cdb56cfa38eebb7f870f12475f7a5f62ca1962c17230f66fd3268a",
     GRID_BASE_SOURCE: "fd1064986abdbe1755383fb08758f74d40cad419c0da312f38b521c7d78ce59c",
     GRID_COORDINATES_SOURCE: "e0f3cffc38e2a854426309b3eacab5783a0a5725cc4e763a06969e03914619e8",
@@ -225,9 +231,9 @@ _SOURCE_SEALS = {
     MODEL_PROCESSING_SOURCE: "8a159831e37a9582852908c7e213106aa1070500f4e64fa12f1a7ed628854740",
 }
 
-EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 337
+EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 354
 EXPECTED_DIRECT_FLOW_MUTATION_NAMES_SHA256 = (
-    "b8fce8415020a3dc7fb41e3f98ee49c697ac2ce12bbc2144ba5acb310897d828"
+    "292027e67d3d50cae11661a67779a6efe8e2be4219af95bdf32177116824fb30"
 )
 
 
@@ -1565,7 +1571,7 @@ def _functools_adapter_errors(tree: ast.Module) -> list[str]:
 
 
 def _core_program_transport_errors(tree: ast.Module) -> list[str]:
-    """Pin provider declarations through static width materialization."""
+    """Pin the sole native program graph through materialization and resolution."""
     errors = _class_surface_errors(
         tree=tree,
         label="core-program target-value access",
@@ -1607,13 +1613,53 @@ def _core_program_transport_errors(tree: ast.Module) -> list[str]:
     errors.extend(
         _class_surface_errors(
             tree=tree,
+            label="core-program build context",
+            class_name="CoreBuildContext",
+            fields=(
+                "state_action_space: object",
+                "next_regime_to_V_arr: Mapping[str, object]",
+                "next_regime_to_continuation: Mapping[str, object]",
+                "flat_params: Mapping[str, object]",
+                "period: int",
+                "ages: object",
+                "edge_regime_to_V_arr: Mapping[str, object] | None = None",
+                "same_period_regime_to_V_arr: Mapping[str, object] | None = None",
+            ),
+            methods=("__post_init__",),
+        )
+    )
+    errors.extend(
+        _class_surface_errors(
+            tree=tree,
             label="core-program declaration",
             class_name="CoreProgram",
             fields=(
+                "name: str",
+                "function: Callable[..., object]",
+                "argument_builder: CoreArgumentBuilder",
+                "requirements: CoreExecutionRequirements",
+                "output_roles: object | None",
+                "disposition: CoreExecutionDisposition",
+                "disposition_reason: str | None = None",
+                "donation_candidates: tuple[str, ...] = ()",
+            ),
+            methods=("__post_init__",),
+        )
+    )
+    errors.extend(
+        _class_surface_errors(
+            tree=tree,
+            label="materialized core-program declaration",
+            class_name="MaterializedCoreProgram",
+            fields=(
+                "name: str",
                 "function: Callable[..., object]",
                 "arguments: Mapping[str, object]",
                 "requirements: CoreExecutionRequirements",
-                "output_roles: object",
+                "output_roles: object | None",
+                "disposition: CoreExecutionDisposition",
+                "donation_candidates: tuple[str, ...]",
+                "disposition_reason: str | None = None",
             ),
             methods=("__post_init__",),
         )
@@ -1624,17 +1670,48 @@ def _core_program_transport_errors(tree: ast.Module) -> list[str]:
             label="resolved core-program declaration",
             class_name="ResolvedCoreProgram",
             fields=(
+                "name: str",
                 "function: Callable[..., object]",
                 "arguments: Mapping[str, object]",
                 "static_kwargs: Mapping[str, int]",
-                "output_roles: object",
+                "requirements: CoreExecutionRequirements",
+                "output_roles: object | None",
+                "disposition: CoreExecutionDisposition",
+                "donation_candidates: tuple[str, ...]",
                 "tile_widths: Mapping[str, int]",
                 "specialization_key: Hashable",
                 "input_transfer_plan: tuple[ResolvedValueTransfer, ...]",
+                "disposition_reason: str | None = None",
             ),
             methods=("__post_init__",),
         )
     )
+    try:
+        disposition = _class_definition(tree=tree, name="CoreExecutionDisposition")
+    except ValueError as error:
+        errors.append(f"core-program disposition: {error}")
+    else:
+        body = list(disposition.body)
+        if (
+            body
+            and isinstance(body[0], ast.Expr)
+            and isinstance(body[0].value, ast.Constant)
+            and isinstance(body[0].value.value, str)
+        ):
+            body.pop(0)
+        if (
+            [ast.unparse(item) for item in disposition.bases] != ["StrEnum"]
+            or disposition.decorator_list
+            or disposition.keywords
+            or not _statements_match(
+                observed=body,
+                expected_source="""PLANNED = "planned"
+DENSE = "dense"
+LEGACY_UNPLANNED = "legacy-unplanned"
+""",
+            )
+        ):
+            errors.append("core-program disposition contract changed")
     errors.extend(
         _exact_callable_errors(
             tree=tree,
@@ -1644,94 +1721,29 @@ def _core_program_transport_errors(tree: ast.Module) -> list[str]:
                 "StreamableProductAxis.__post_init__": "a83a07c71ec8a26d8ad9b8cc71ea65e3df8d000e7efdcc44802bc240a5db95c6",
                 "StreamableProductAxis.extent": "aebdd54708094461d473977783f0588d2491c212629e1f5a40f8cf24c789802a",
                 "CoreExecutionRequirements.__post_init__": "e4d9bc6d57b5394abcfe6b3429292116e691be52fb980604cdb6d2cf0e21a876",
-                "CoreProgram.__post_init__": "909fc04f725fc31d2ea54e87b9fe093ebe642b6b3576bd47b8777da77d80d99a",
-                "ResolvedCoreProgram.__post_init__": "7f6fc7b43749e1c6b17d04e566818c19c6d50fa086ee9a2b5583371dd800bdf8",
-                "resolve_core_program": "d742a3315c0dbbdd3b61d33ef3abb3a8fcf02616e328f8a17467299fec5de05d",
-                "_validate_core_program": "917dd72c951289cc554f71e96249af24f4a4a53cb77194ff2837be51d04852c9",
-                "_resolve_input_transfer_plan": "02bd0dde967ead0fb889fbafdd8a34ab5a5ddf91c76123cc0c3202461cc03581",
-                "_validate_target_value_accesses": "516f9b9f8ad95de09c92e7dddd3c6567d1c3e3312036cb78be27fd53823eba9d",
-                "_target_value_argument_leaf": "3a4d1f74e2180342bbd2c8e26ab2f82791e11c145cee1431739605bc22b0c5d1",
-                "_validate_transfer_argument_metadata": "7faa50cf035f7a19b72dfe7ca60e728c7cd770bad37a47360490cfcfc4cbae47",
+                "CoreBuildContext.__post_init__": "c001bdfea799659c6e0f1d0ee09180940d5176d8a59675dcabef190a12716d7b",
+                "CoreProgram.__post_init__": "46ed17fde1d9fa9aa918112289c57b3f748df8caca8b2a8787c8bc9c093ba1f6",
+                "MaterializedCoreProgram.__post_init__": "59cb5f175f44a50eb4679abd0001c59d0986cff9f3b6e5fa6a9ef7a568e6f648",
+                "ResolvedCoreProgram.__post_init__": "ff3e188e5f5ae8849bc9115b34bc3f4bf2b475f383e6dacf9ca25edfebda79bf",
+                "core_program_graph": "cc6ea72073cacba5168d0aea0023a23769f5e242fbca404b3d3a7d3c2865e9a0",
+                "_reject_native_duplicate_authorities": "718aa10be29ba96de933ccd778200a94dd5d2637b148988b950e5b5e070edcea",
+                "_snapshot_and_validate_graph": "86908fdd8486a84edbbece9be246821176dcad948d8cb06e2074591993ed82aa",
+                "_validate_program_declaration": "9387bb0b9df54f536546f00ce2a2160bb3e582ba4deb03e1aadbd13007cd372f",
+                "_validate_disposition_reason": "ead5c4df5fc7e1dd4fa680fdad02549c67d340d46b2ae3556eb8c83028532c3a",
+                "_legacy_core_program_graph": "a1d0be2bb811ab3ab03d179bde85fe6cdfa7e953e2ee2617ce14be4f7b23e4f2",
+                "materialize_core_program": "95b3e807b02e2ae13f0b4d61ce853d0e287229c0dc2578bb3da810b4eac29f6d",
+                "resolve_core_program": "7a55d0ae17b176491a83f25a8572df9d972c0296d6f532e0179736d194390227",
+                "initial_core_tile_widths": "496cd22a502c9dacdad36884c681cfed6353d840824a1e2dce3df7b1dcbcc3cf",
+                "_validate_core_program": "d55b9b72493f9565e341c20ac15f1041c4f6acd2134e25a923382c7a10304b59",
+                "_validate_materialized_declaration": "ad5f5d6d54ea666a203f8ec188b4f3cc7a496f74ed79da141b6e78b0e5526bc1",
+                "_resolve_input_transfer_plan": "86e49db184adcd67dbcdf9f7accfcc17e7adaac32042bf5233be71121d97b73e",
+                "_validate_target_value_accesses": "9f9c693c334394c0ea05e30b923dba937a2f6979c41b91c3855da1c6d0eac7ae",
+                "_target_value_argument_leaf": "ff8f95f1afe6f2e70d97d261317b158e94b376fda3842977cc88fc07529a9ce2",
+                "_validate_transfer_argument_metadata": "028eddda6b8348555f3f1dc1ce5bd869fdcbbf683f4e40e773d95f125556c95d",
                 "_validate_streamable_axis": "49d750f0fa436a7971480f75485b11dfa08643b1d709cadefbeedea2e0b9dd45",
                 "_validate_tile_width": "15f543450ad5f6b739cfa8aafbf0a4fb34a0c5b677da4866a2afedd1effde831",
                 "_validate_coordinate_argument": "401392c0069102b2983559a9b7c53bba6bd66ccf0b0126f8e6688bff49564b27",
                 "_validate_width_keyword": "57c76f0f7ffbb02e0ab500552522e0d1ec8652173d7b9ba81c842ec558beeaff",
-            },
-        )
-    )
-    errors.extend(
-        _module_contract_errors(
-            tree=tree,
-            label="core-program provider-to-resolver transport",
-            relevant_import_names={
-                "Callable",
-                "Hashable",
-                "Mapping",
-                "MappingProxyType",
-                "Protocol",
-                "ResolvedValueTransfer",
-                "ValueArtifactAddress",
-                "ValueConsumerAddress",
-                "apply_value_transfer_plan",
-                "cast",
-                "dataclass",
-                "inspect",
-                "math",
-                "runtime_checkable",
-                "weakref",
-            },
-            expected_imports=[
-                "import inspect",
-                "import math",
-                "import weakref",
-                "from collections.abc import Callable, Hashable, Mapping",
-                "from dataclasses import dataclass",
-                "from types import MappingProxyType",
-                "from typing import Protocol, cast, runtime_checkable",
-                "from _lcm.execution.value_transfer import ResolvedValueTransfer, ValueArtifactAddress, ValueConsumerAddress, apply_value_transfer_plan",
-            ],
-            expected_binding_counts={
-                "Callable": 1,
-                "CoreExecutionRequirements": 1,
-                "CoreProgram": 1,
-                "CoreProgramAware": 1,
-                "Hashable": 1,
-                "Mapping": 1,
-                "MappingProxyType": 1,
-                "Protocol": 1,
-                "ReductionSemantics": 1,
-                "ResolvedCoreProgram": 1,
-                "ResolvedValueTransfer": 1,
-                "StreamableProductAxis": 1,
-                "ValueArtifactAddress": 1,
-                "ValueConsumerAddress": 1,
-                "_TargetValueAccess": 1,
-                "_TargetValueAccessAware": 1,
-                "_TransferArgumentLeaf": 1,
-                "_resolve_input_transfer_plan": 1,
-                "_target_value_argument_leaf": 1,
-                "_validate_core_program": 1,
-                "_validate_target_value_accesses": 1,
-                "_validate_transfer_argument_metadata": 1,
-                "apply_value_transfer_plan": 1,
-                "cast": 1,
-                "dataclass": 1,
-                "dict": 0,
-                "getattr": 0,
-                "hash": 0,
-                "inspect": 1,
-                "isinstance": 0,
-                "len": 0,
-                "list": 0,
-                "math": 1,
-                "object": 0,
-                "resolve_core_program": 1,
-                "runtime_checkable": 1,
-                "set": 0,
-                "tuple": 0,
-                "type": 0,
-                "weakref": 1,
-                "zip": 0,
             },
         )
     )
@@ -1898,7 +1910,7 @@ def _logsumexp_streaming_reduction_errors(tree: ast.Module) -> list[str]:
 
 
 def _grid_search_caller_errors(tree: ast.Module) -> list[str]:
-    """Pin solve-side action metadata and the exact live core publication."""
+    """Pin GridSearch's sole native program declaration and shared builder."""
     errors: list[str] = []
     try:
         cls, method = _method_definition(
@@ -1947,7 +1959,8 @@ def _grid_search_caller_errors(tree: ast.Module) -> list[str]:
             or not _statements_match(
                 observed=disposition_body,
                 expected_source='''STREAMED = "streamed"
-DENSE_JIT_DISABLED = "deliberately_dense:jit_disabled"
+DENSE_EV1_NONCANONICAL = "deliberately_dense:ev1_canonical_reduction_order"
+DENSE_COLLECTIVE_RESOURCES = "deliberately_dense:collective_resource_regression"
 DENSE_TRIVIAL_ACTION_PRODUCT = "deliberately_dense:trivial_action_product"
 DENSE_CO_MAP_REFERENCE_CHANNEL = "deliberately_dense:co_map_with_separate_reference_channel"
 UNSUPPORTED_COLLECTIVE_EV1 = "unsupported:collective_ev1"
@@ -1969,47 +1982,44 @@ def category(self) -> str:
             label="solve caller live streamed provider",
             contracts={
                 "_select_action_width_keyword": "d5c0751bf2eb4a98a08b1641e41cfea9f46230af044a1c666e49f6f444cadb68",
-                "GridSearch.build_period_kernels": "e68749b3c87e3f381620f324376eca89f1c4b046aa132c7572b6c7231bd03fde",
+                "GridSearch.build_period_kernels": "a7c9cf78c051a97240c8a2ac2836819164b0ae12f86eb345fdfe7501d122a978",
                 "_edge_reference_regimes_for_targets": "fae893f62c5a3eb6e8d4df88dae39fd283a5d86cd1c87a173da15287ea945af0",
-                "_classify_action_streaming": "755aad955b08e5800774cd6eae0b5b4a32236269569de8b6443613ac06f03b45",
+                "_classify_action_streaming": "09d190475ffaf8c269880b7062a4be39e149f27d801e5fb640fa171753337ebf",
                 "_supports_action_streaming": "d93f977fad68ad528beb9d4b9e6d45e5eb95b53c9a0398ff6f6a62ec548bad11",
+                "_target_value_accesses": "542d72d188b29070da8e11b1296b4230054c5fa99783093b3285db387827b460",
+                "_target_value_access": "8d91533907c586084a3efe1b5465bc055e07779d2219c66f9d4515b1ee44dcce",
             },
         )
     )
     errors.extend(
         _class_surface_errors(
             tree=tree,
-            label="solve caller output-layout adapter",
-            class_name="_GridSearchPeriodKernel",
+            label="solve caller shared argument builder",
+            class_name="_GridSearchArgumentBuilder",
             fields=(
-                "core: Callable",
-                "unwrapped_core: Callable | None = None",
-                "streamed_core: Callable | None = None",
-                "action_names: tuple[ActionName, ...] = ()",
-                "action_extents: tuple[int, ...] = ()",
-                "action_width_keyword: str = _ACTION_WIDTH_KEYWORD",
                 "regime_name: RegimeName",
-                "period: int = 0",
-                "target_regimes: tuple[RegimeName, ...] = ()",
-                "collective: bool = False",
-                "has_taste_shocks: bool = False",
-                "n_discrete_action_axes: int = 0",
-                "edge_reference_regimes: tuple[RegimeName, ...] = ()",
                 "same_period_ref_regimes: tuple[RegimeName, ...] = ()",
+                "edge_reference_regimes: tuple[RegimeName, ...] = ()",
                 "edge_target_regimes: tuple[RegimeName, ...] = ()",
             ),
             methods=(
+                "__call__",
                 "_with_edge_substitution",
-                "cores",
-                "target_value_accesses",
-                "_target_value_access",
-                "build_core_program",
-                "output_roles",
-                "core_for_output_layout",
-                "with_fixed_params",
-                "build_lower_args",
                 "_edge_reference_args",
                 "_same_period_params",
+            ),
+        )
+    )
+    errors.extend(
+        _class_surface_errors(
+            tree=tree,
+            label="solve caller native program graph",
+            class_name="_GridSearchPeriodKernel",
+            fields=("_core_programs: Mapping[str, CoreProgram]",),
+            methods=(
+                "__post_init__",
+                "core_programs",
+                "with_fixed_params",
                 "__call__",
             ),
         )
@@ -2017,93 +2027,16 @@ def category(self) -> str:
     errors.extend(
         _exact_callable_errors(
             tree=tree,
-            label="solve caller output-layout adapter",
+            label="solve caller shared builder and native program graph",
             contracts={
-                "_GridSearchPeriodKernel.cores": "9ee3a0a03870ede4b4361004c34a9b7a50d2074a9e96d7c0c7aa44111efe5c13",
-                "_GridSearchPeriodKernel.target_value_accesses": "6bb4264046d9e4eee788dade78da38821da060098d8bea4fcfdc42f5bc867efc",
-                "_GridSearchPeriodKernel._target_value_access": "0d16253ef71c9dd762e39a39755069b36dba6d9342b054d115480b08b0726b1b",
-                "_GridSearchPeriodKernel.build_core_program": "fb88e990d0b82b079d5d296be411dd6b225d96152059f58052e6946424172385",
-                "_GridSearchPeriodKernel.output_roles": "e48524eea7cd3dce438a9826ca0efd7cc45ddf681da8d7d9b14ad7a03c3a55de",
-                "_GridSearchPeriodKernel.core_for_output_layout": "c06f276c3430fe788227503d0c24602558259a1a076fd76061e613db191b87aa",
-                "_GridSearchPeriodKernel.with_fixed_params": "6432aa32d09899a4b82c17568336be04fac9933c14e81f4e8460d252663b04ac",
-                "_GridSearchPeriodKernel.__call__": "2b5e10a6f2282f493d49e912175cf782c7e8ddd42b1bdcca0142f896329df225",
-            },
-        )
-    )
-    errors.extend(
-        _module_contract_errors(
-            tree=tree,
-            label="solve caller",
-            relevant_import_names={
-                "CoreExecutionRequirements",
-                "CoreProgram",
-                "COLLECTIVE_HARD_MAX_REDUCTION",
-                "HARD_MAX_REDUCTION",
-                "MappingProxyType",
-                "REGIME_CONF",
-                "Solver",
-                "StrEnum",
-                "GridSearchEV1ActionReduction",
-                "StreamableProductAxis",
-                "ValueArtifactAddress",
-                "ValueArtifactKind",
-                "ValueConsumerAddress",
-                "ValueInputChannel",
-                "_TargetValueAccess",
-                "beartype",
-                "cast",
-                "dataclass",
-                "inspect",
-                "jax",
-                "math",
-            },
-            expected_imports=[
-                "from dataclasses import dataclass, replace",
-                "from enum import StrEnum",
-                "from types import MappingProxyType",
-                "from typing import cast",
-                "import jax",
-                "import inspect",
-                "import math",
-                "from beartype import beartype",
-                "from _lcm.beartype_conf import REGIME_CONF",
-                "from _lcm.execution.core_program import CoreExecutionRequirements, CoreProgram, StreamableProductAxis, _TargetValueAccess",
-                "from _lcm.execution.value_transfer import ValueArtifactAddress, ValueArtifactKind, ValueConsumerAddress, ValueInputChannel",
-                "from _lcm.solution.action_reduction import COLLECTIVE_HARD_MAX_REDUCTION, HARD_MAX_REDUCTION",
-                "from _lcm.solution.action_streaming import GridSearchEV1ActionReduction",
-                "from _lcm.solution.contract import ConstraintRouteContext, ContinuationPayload, KernelResult, PeriodKernel, SolutionKernels, Solver, SolverBuildContext, simulation_route",
-            ],
-            expected_binding_counts={
-                "CoreExecutionRequirements": 1,
-                "CoreProgram": 1,
-                "COLLECTIVE_HARD_MAX_REDUCTION": 1,
-                "GridSearch": 1,
-                "_GridSearchPeriodKernel": 1,
-                "_ActionStreamingDisposition": 1,
-                "_classify_action_streaming": 1,
-                "_edge_reference_regimes_for_targets": 1,
-                "_select_action_width_keyword": 1,
-                "_supports_action_streaming": 1,
-                "HARD_MAX_REDUCTION": 1,
-                "MappingProxyType": 1,
-                "REGIME_CONF": 1,
-                "Solver": 1,
-                "StrEnum": 1,
-                "StreamableProductAxis": 1,
-                "ValueArtifactAddress": 1,
-                "ValueArtifactKind": 1,
-                "ValueConsumerAddress": 1,
-                "ValueInputChannel": 1,
-                "_TargetValueAccess": 1,
-                "beartype": 1,
-                "cast": 1,
-                "dataclass": 1,
-                "id": 0,
-                "inspect": 1,
-                "jax": 1,
-                "len": 0,
-                "math": 1,
-                "GridSearchEV1ActionReduction": 1,
+                "_GridSearchArgumentBuilder.__call__": "44f395121e063a099adc1c8fea5b7fd377ce5ac8019ea2ec59ffd82a9fb0915e",
+                "_GridSearchArgumentBuilder._with_edge_substitution": "8d253b526755274685f3dbf2e28efe4f35062993bedd017cffddf2d17fe657cc",
+                "_GridSearchArgumentBuilder._edge_reference_args": "dbc3490fe06a35e27546fd6c4a29d185c4e05c3ebc500aa2a1f220615f55c0b9",
+                "_GridSearchArgumentBuilder._same_period_params": "8a9e646c6abededa222865ead1ad7e07c5355626b32a9fb1e631497a4889a58e",
+                "_GridSearchPeriodKernel.__post_init__": "056fa9a213d05cd91edced63b00b0968a0cb34bd4aae6262d429fc46107d6b57",
+                "_GridSearchPeriodKernel.core_programs": "0d96f7bea814e419ef1dbdebbc3257d63c3c0d36d9e6e52e619f8f44ae5a8a56",
+                "_GridSearchPeriodKernel.with_fixed_params": "3ac015a29f87cd287c740773c837852d814c646a3131a9a2aa72ed99954bff1c",
+                "_GridSearchPeriodKernel.__call__": "c2bad5ac3b6f97c385b62455f936e68a467b30e14845ed5dd01612f53bf35c73",
             },
         )
     )
@@ -2147,7 +2080,7 @@ def _output_layout_errors(tree: ast.Module) -> list[str]:
             tree=tree,
             label="output layout",
             contracts={
-                "resolve_output_layout": "17fd47d504f55333c24318d33b756838cac847be84dc737dfdafba85c53ee26e",
+                "resolve_output_layout": "b0cef6ca2f872668725bcc7bb5b65f8fbd30be52e6f12f73654d3d022b92c9ed",
                 "_validate_output_roles": "8bf237a4b6a84fddd8bb2d425c25561498531ff01121c205fcd3be28fca480c7",
                 "assert_output_layout": "78b4040ad158cd8201ce739cfc08ee3e0ddc1d91b0019bbff5689e5b2bebd0f3",
                 "_assert_output_metadata": "8612094c85183f9c7cfa568bb0aad875ce729c79c60b31126efd8d04785644ca",
@@ -2175,53 +2108,6 @@ UNPLANNED = _Unplanned.TOKEN
 """,
     ):
         errors.append("output layout: logical output-role bindings changed")
-    errors.extend(
-        _module_contract_errors(
-            tree=tree,
-            label="output layout",
-            relevant_import_names={
-                "Callable",
-                "Hashable",
-                "Protocol",
-                "ResolvedValueTransfer",
-                "apply_value_transfer_plan",
-                "cast",
-                "dataclass",
-                "jax",
-                "runtime_checkable",
-            },
-            expected_imports=[
-                "from collections.abc import Callable, Hashable",
-                "from dataclasses import dataclass",
-                "from typing import Protocol, cast, runtime_checkable",
-                "import jax",
-                "from _lcm.execution.value_transfer import ResolvedValueTransfer, apply_value_transfer_plan",
-            ],
-            expected_binding_counts={
-                "Callable": 1,
-                "DISSOLUTION_FLAG": 1,
-                "Hashable": 1,
-                "OutputRole": 1,
-                "PlannedCore": 1,
-                "Protocol": 1,
-                "ResolvedOutputLayout": 1,
-                "ResolvedValueTransfer": 1,
-                "UNPLANNED": 1,
-                "VALUE": 1,
-                "_assert_output_metadata": 1,
-                "_validate_output_roles": 1,
-                "assert_output_layout": 1,
-                "apply_value_transfer_plan": 1,
-                "cast": 1,
-                "dataclass": 1,
-                "jax": 1,
-                "planned_output_layout": 1,
-                "planned_input_transfer_plan": 1,
-                "resolve_output_layout": 1,
-                "runtime_checkable": 1,
-            },
-        )
-    )
     return errors
 
 
@@ -2619,28 +2505,26 @@ def _initial_tile_width_validation_errors(tree: ast.Module) -> list[str]:
 
 
 def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
-    """Pin planned lowering and V/D publication through backward induction."""
+    """Pin native graph resolution and V/D publication through solve execution."""
     errors = _exact_callable_errors(
         tree=tree,
         label="backward output-layout transport",
         contracts={
-            "_compile_all_functions": "f5895d9db8595cc8c856a68543f4066bd0034963381f6c4e95deeeb6cba8cead",
-            "_resolve_output_layouts_and_lowering_keys": "3aac9854bc0b2f88f81149760722eb17982c1755f35c8e9dc655fc3804d55d9b",
-            "_resolve_value_input_transfer_plan": "34108f07dc0e0a5f9758e1c8772e6a976728f7eec8c9b8641e61c1d79315abf3",
+            "_compile_all_functions": "65525fe74b88547323c65c9305f7d80369fb6aee97bf7f1b910ab3deb2d6afc2",
+            "_resolve_output_layouts_and_lowering_keys": "c30038ac72611373fecdf3a3423bb71be92e2c62a20d702c5b83159d2eee44b4",
+            "_resolve_program_for_execution": "247155a79a8cdc2c16845aeb9d222b2c6aeea7129c90d9a733ecc66cf793f5d0",
+            "_resolve_value_input_transfer_plan": "40e46250dd373f2ea17e38c911e0c2df7ad01192dd82fcb1d7a7ddbf641f91bb",
             "_resolve_value_transfer_layout": "6cd863aaa64c0f558c797b47667479b595c77d5f3ee5c8b3dcfae188f1d05edd",
-            "_initial_tile_widths": "f6a820999afacbccc0b4c2544cc6501dc50d856b372a2630efa2602292144a40",
-            "_assert_core_program_arguments": "0ac8d8bacbaeff579daba66defdbd5258beae61d806ec8eddb4faff4575bb32d",
             "_lowering_key": "68e82c0372400e4577a6e38d4f5c64bdff88f5f732b86b15383a5e3157973b56",
             "_abstract_arguments_key": "becd5c3e94366bc4e3e0afa31ea20886002228f7064c9a9ea0e7d0e681630dfa",
             "_abstract_value_key": "b79bdd528ed264be0093eb5d04a0341e7376606d478ba0770aa5cb14f813638b",
             "_abstract_leaf_key": "94afc53d035e8ad9812025f72adcbf76d8966430ef259d339977e9cf90262b66",
             "_output_roles_key": "c73436e6abaec7f0388386d353675200d7bf3d5d3544654f8d47f37ad0e5e8da",
             "_assert_lowered_output_roles": "46823cef80ae0bd1c5294a63472a23c4f8ade153fe8eae8327403fe637f59df8",
-            "_attach_resolved_output_layout": "dbe0edb4c2722b36e6894c79bef1f34ca3cb2f6e3c155e0a5522f5d2923a6b8b",
+            "_attach_resolved_output_layout": "0b0e805ac307e87e1376de47086898c140a3cf00e5e81eefd8faab26ff972942",
             "_publish_kernel_value": "5547b40f26e1fc86303ada9503f65c4210cbb4bb0b4fe6e715b9d99a58f78901",
         },
     )
-    errors.extend(_initial_tile_width_validation_errors(tree))
     try:
         solve = _definition(tree=tree, name="solve")
     except ValueError as error:
@@ -2686,88 +2570,11 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             errors.append(
                 "backward output-layout transport: solve publication corridor changed"
             )
-    errors.extend(
-        _module_contract_errors(
-            tree=tree,
-            label="backward output-layout transport",
-            relevant_import_names={
-                "CoreProgram",
-                "CoreProgramAware",
-                "ResolvedValueTransfer",
-                "DISSOLUTION_FLAG",
-                "OutputLayoutAware",
-                "PlannedCore",
-                "ResolvedOutputLayout",
-                "UNPLANNED",
-                "VALUE",
-                "assert_output_layout",
-                "cast",
-                "jax",
-                "planned_input_transfer_plan",
-                "planned_output_layout",
-                "ValueArtifactAddress",
-                "ValueArtifactKind",
-                "ValueTransferKind",
-                "_target_value_argument_leaf",
-                "_TargetValueAccessAware",
-                "_validate_core_program",
-                "resolve_core_program",
-                "resolve_output_layout",
-                "resolve_value_transfer",
-            },
-            expected_imports=[
-                "from typing import cast",
-                "import jax",
-                "from _lcm.execution.core_program import CoreProgram, CoreProgramAware, _target_value_argument_leaf, _TargetValueAccessAware, _validate_core_program, resolve_core_program",
-                "from _lcm.execution.output_layout import DISSOLUTION_FLAG, UNPLANNED, VALUE, OutputLayoutAware, PlannedCore, ResolvedOutputLayout, assert_output_layout, planned_input_transfer_plan, planned_output_layout, resolve_output_layout",
-                "from _lcm.execution.value_transfer import ResolvedValueTransfer, ValueArtifactAddress, ValueArtifactKind, ValueTransferKind, resolve_value_transfer",
-            ],
-            expected_binding_counts={
-                "CoreProgram": 1,
-                "CoreProgramAware": 1,
-                "ResolvedValueTransfer": 1,
-                "DISSOLUTION_FLAG": 1,
-                "OutputLayoutAware": 1,
-                "PlannedCore": 1,
-                "ResolvedOutputLayout": 1,
-                "UNPLANNED": 1,
-                "VALUE": 1,
-                "ValueArtifactAddress": 1,
-                "ValueArtifactKind": 1,
-                "ValueTransferKind": 1,
-                "_attach_resolved_output_layout": 1,
-                "_abstract_arguments_key": 1,
-                "_abstract_leaf_key": 1,
-                "_abstract_value_key": 1,
-                "_assert_core_program_arguments": 1,
-                "_assert_lowered_output_roles": 1,
-                "_compile_all_functions": 1,
-                "_initial_tile_widths": 1,
-                "_lowering_key": 1,
-                "_output_roles_key": 1,
-                "_publish_kernel_value": 1,
-                "_resolve_output_layouts_and_lowering_keys": 1,
-                "_resolve_value_input_transfer_plan": 1,
-                "_resolve_value_transfer_layout": 1,
-                "_target_value_argument_leaf": 1,
-                "_TargetValueAccessAware": 1,
-                "_validate_core_program": 1,
-                "assert_output_layout": 1,
-                "cast": 1,
-                "jax": 1,
-                "planned_input_transfer_plan": 1,
-                "planned_output_layout": 1,
-                "resolve_core_program": 1,
-                "resolve_output_layout": 1,
-                "resolve_value_transfer": 1,
-            },
-        )
-    )
     return errors
 
 
 def _terminal_output_wrapper_errors(tree: ast.Module) -> list[str]:
-    """Pin terminal decoration as identity on the certified V/D channels."""
+    """Pin terminal decoration and its sole native graph delegation."""
     errors = _class_surface_errors(
         tree=tree,
         label="terminal output-layout wrapper",
@@ -2778,13 +2585,8 @@ def _terminal_output_wrapper_errors(tree: ast.Module) -> list[str]:
             "regime_name: RegimeName",
         ),
         methods=(
-            "core",
-            "cores",
-            "build_core_program",
-            "output_roles",
-            "core_for_output_layout",
+            "core_programs",
             "with_fixed_params",
-            "build_lower_args",
             "__call__",
         ),
     )
@@ -2793,54 +2595,26 @@ def _terminal_output_wrapper_errors(tree: ast.Module) -> list[str]:
             tree=tree,
             label="terminal output-layout wrapper",
             contracts={
-                "_TerminalCarryPeriodKernel.cores": "690929f62b4052a0aaeab9620cf05e98bfbf7ada392d666324cadaf74e1e3d6c",
-                "_TerminalCarryPeriodKernel.build_core_program": "7fb2bd594d69687b1ed37b0584f6c115a5fd0c3f2469449d73dd4d5b32d14df2",
-                "_TerminalCarryPeriodKernel.output_roles": "45247a9d3be2b2696dc75097a8c3bfd97c9b40db39b87c505300903dcd4cdc55",
-                "_TerminalCarryPeriodKernel.core_for_output_layout": "83978827554d2070cf6934f43151bc9af8e2b0da7ec542838d7038c49b9bce5a",
+                "_TerminalCarryPeriodKernel.core_programs": "842c31af0bea766bfd410783881770152246a825505be327096c117f60ee65fa",
                 "_TerminalCarryPeriodKernel.with_fixed_params": "c9069b5fcc41d4b7b42a2ec21be12004fa57379216fbd7e4fc624473b4d89cc6",
                 "_TerminalCarryPeriodKernel.__call__": "77f27cca4b3d5da43fc3911cb736cf124829edeb7644ccabd14f0fa5607c2edc",
             },
         )
     )
-    errors.extend(
-        _module_contract_errors(
-            tree=tree,
-            label="terminal output-layout wrapper",
-            relevant_import_names={
-                "CoreProgram",
-                "CoreProgramAware",
-                "KernelResult",
-                "OutputLayoutAware",
-                "PeriodKernel",
-                "dataclass",
-                "dataclass_replace",
-                "functools",
-                "require_legacy_kernel_result",
-            },
-            expected_imports=[
-                "import functools",
-                "from dataclasses import dataclass",
-                "from dataclasses import replace as dataclass_replace",
-                "from _lcm.execution.core_program import CoreProgram, CoreProgramAware",
-                "from _lcm.execution.output_layout import OutputLayoutAware",
-                "from _lcm.solution.contract import ConstraintRouteContext, ContinuationPayload, KernelResult, PeriodKernel, SolverBuildContext, SolverModelContext",
-                "from _lcm.solution.kernel_output import require_legacy_kernel_result",
-            ],
-            expected_binding_counts={
-                "CoreProgram": 1,
-                "CoreProgramAware": 1,
-                "KernelResult": 1,
-                "OutputLayoutAware": 1,
-                "PeriodKernel": 1,
-                "_TerminalCarryPeriodKernel": 1,
-                "dataclass": 1,
-                "dataclass_replace": 1,
-                "functools": 1,
-                "require_legacy_kernel_result": 1,
-            },
-        )
-    )
     return errors
+
+
+def _period_replay_errors(tree: ast.Module) -> list[str]:
+    """Pin replay to the same graph, builder, resolver, and output-role checks."""
+    return _exact_callable_errors(
+        tree=tree,
+        label="period replay native-program transport",
+        contracts={
+            "replay_period": "919baec005808465b365523da329d9b2931a6f88dcb1d1470a0d5dbb79047b8e",
+            "_compile_cores_for_one_period": "0287dc3d7c1bf0aa9b6d5b5ec32674c5984aae764a5c67c91dc46c7261e16048",
+            "_core_build_context_for_one_period": "8d11e28bebf0c0df6bce4872e25a56e577592db26901d47d8cd5cf431a55b473",
+        },
+    )
 
 
 def _corridor_errors(
@@ -3473,6 +3247,12 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> dict[str, Any]:
         errors.extend(new_errors)
         if new_errors:
             offending.add(BACKWARD_INDUCTION_SOURCE)
+    replay_tree = parsed.get(PERIOD_REPLAY_SOURCE)
+    if replay_tree is not None:
+        new_errors = _period_replay_errors(replay_tree)
+        errors.extend(new_errors)
+        if new_errors:
+            offending.add(PERIOD_REPLAY_SOURCE)
     grid_base_tree = parsed.get(GRID_BASE_SOURCE)
     if grid_base_tree is not None:
         new_errors = _grid_base_errors(grid_base_tree)
@@ -3515,7 +3295,8 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> dict[str, Any]:
                 "collective_readout(feasibility=F_arr)"
             ),
             "collective_streamed_solve": (
-                "Q_and_F -> weighted C-order stakeholder blocks -> one shared "
+                "non-production reference: Q_and_F -> weighted C-order stakeholder "
+                "blocks -> one shared "
                 "household hard max -> exact stakeholder gather -> compiled "
                 "(VALUE, DISSOLUTION_FLAG) core"
             ),
@@ -3528,7 +3309,8 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> dict[str, Any]:
                 "full discrete logsum"
             ),
             "taste_shock_streamed_solve": (
-                "Q_and_F -> ordered discrete-prefix hard maxima -> dynamically "
+                "non-production reference: Q_and_F -> ordered discrete-prefix hard "
+                "maxima -> dynamically "
                 "bound log-sum-exp -> VALUE-only compiled core"
             ),
             "taste_shock_simulate": (
@@ -4101,6 +3883,7 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
     backward_induction_source = (root / BACKWARD_INDUCTION_SOURCE).read_text(
         encoding="utf-8"
     )
+    period_replay_source = (root / PERIOD_REPLAY_SOURCE).read_text(encoding="utf-8")
     initial_conditions_source = (root / INITIAL_CONDITIONS_SOURCE).read_text(
         encoding="utf-8"
     )
@@ -4159,25 +3942,29 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
     grid_cases = {
         "caller_solve:action_names_slice": replace_once(
             source=grid_source,
-            old="                    action_names=context.state_action_space.action_names,",
-            new="                    action_names=context.state_action_space.action_names[:-1],",
+            old='                    "action_names": action_names,',
+            new='                    "action_names": action_names[:-1],',
             label="solve caller action names",
         ),
         "caller_solve:wrong_discrete_axis_count": replace_once(
             source=grid_source,
-            old="                    n_discrete_action_axes=len(\n"
-            "                        context.state_action_space.discrete_actions\n"
-            "                    ),",
-            new="                    n_discrete_action_axes=max(\n"
-            "                        0, len(context.state_action_space.discrete_actions) - 1\n"
-            "                    ),",
+            old=(
+                '                    "n_discrete_action_axes": len(\n'
+                "                        context.state_action_space.discrete_actions\n"
+                "                    ),"
+            ),
+            new=(
+                '                    "n_discrete_action_axes": max(\n'
+                "                        0, len(context.state_action_space.discrete_actions) - 1\n"
+                "                    ),"
+            ),
             label="solve caller axis count",
         ),
-        "caller_solve:taste_flag_disabled": _replace_nth(
-            text=grid_source,
-            marker="                    has_taste_shocks=context.has_taste_shocks,",
-            replacement="                    has_taste_shocks=False,",
-            occurrence=1,
+        "caller_solve:taste_flag_disabled": replace_once(
+            source=grid_source,
+            old='                    "has_taste_shocks": context.has_taste_shocks,',
+            new='                    "has_taste_shocks": False,',
+            label="solve caller taste flag",
         ),
         "caller_solve:published_empty_mapping": replace_once(
             source=grid_source,
@@ -4185,31 +3972,166 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             new="        return SolutionKernels(period_kernels=MappingProxyType({}))",
             label="solve caller publication",
         ),
-        "caller_solve:raw_core_uses_wrapped_core": replace_once(
+        "native_graph:function_wrapped": replace_once(
             source=grid_source,
-            old="                unwrapped[q_id] = func",
-            new="                unwrapped[q_id] = built[q_id]",
-            label="solve caller raw core identity",
+            old="                function=program_functions[q_id],",
+            new=(
+                "                function=lambda **kwargs: "
+                "program_functions[q_id](**kwargs),"
+            ),
+            label="native graph function authority",
         ),
-        "caller_solve:layout_delegates_wrapped_core": replace_once(
+        "native_graph:argument_builder_wrapped": replace_once(
             source=grid_source,
-            old="        return self.unwrapped_core",
-            new="        return self.core",
-            label="solve caller layout core delegation",
+            old="                argument_builder=argument_builder,",
+            new="                argument_builder=lambda context: argument_builder(context),",
+            label="native graph argument-builder authority",
         ),
-        "caller_solve:collective_output_role_dropped": replace_once(
+        "native_graph:requirements_erased": replace_once(
             source=grid_source,
-            old="        return (VALUE, DISSOLUTION_FLAG) if self.collective else VALUE",
-            new="        return VALUE",
-            label="solve caller output roles",
+            old="                requirements=requirements,",
+            new="                requirements=CoreExecutionRequirements(),",
+            label="native graph requirements authority",
         ),
-        "caller_solve:fixed_raw_core_filtered": replace_once(
+        "native_graph:collective_output_role_dropped": replace_once(
             source=grid_source,
-            old="                else functools.partial(self.unwrapped_core, **regime_fixed)",
-            new="                else candidate_filter(\n"
-            "                    functools.partial(self.unwrapped_core, **regime_fixed)\n"
-            "                )",
-            label="solve caller fixed raw core",
+            old=(
+                "                    if context.stakeholders is not None\n"
+                "                    else VALUE"
+            ),
+            new="                    if False\n                    else VALUE",
+            label="native graph output-role authority",
+        ),
+        "native_graph:planned_disposition_forced_dense": replace_once(
+            source=grid_source,
+            old=(
+                "                    CoreExecutionDisposition.PLANNED\n"
+                "                    if stream_actions"
+            ),
+            new=(
+                "                    CoreExecutionDisposition.DENSE\n"
+                "                    if stream_actions"
+            ),
+            label="native graph disposition authority",
+        ),
+        "native_graph:dense_reason_erased": replace_once(
+            source=grid_source,
+            old=(
+                "                disposition_reason=(None if stream_actions else "
+                "action_streaming.value),"
+            ),
+            new="                disposition_reason=None,",
+            label="native graph disposition-reason authority",
+        ),
+        "native_graph:donation_candidates_changed": replace_once(
+            source=grid_source,
+            old="                donation_candidates=(),",
+            new='                donation_candidates=("next_regime_to_V_arr",),',
+            label="native graph donation authority",
+        ),
+        "native_graph:duplicate_legacy_cores_authority": _insert_before_nth(
+            text=grid_source,
+            marker="    def core_programs(self) -> Mapping[str, CoreProgram]:",
+            insertion=(
+                "    def cores(self) -> Mapping[str, Callable]:\n"
+                '        return MappingProxyType({"main": '
+                'self._core_programs["main"].function})\n\n'
+            ),
+            occurrence=1,
+        ),
+        "native_graph:duplicate_legacy_builder_authority": _insert_before_nth(
+            text=grid_source,
+            marker="    def core_programs(self) -> Mapping[str, CoreProgram]:",
+            insertion=(
+                "    def build_lower_args(self, *, core_key: str, **kwargs: object) "
+                "-> Mapping[str, object]:\n"
+                "        return kwargs\n\n"
+            ),
+            occurrence=1,
+        ),
+        "native_graph:duplicate_core_authority": _insert_before_nth(
+            text=grid_source,
+            marker="    def core_programs(self) -> Mapping[str, CoreProgram]:",
+            insertion=(
+                "    @property\n"
+                "    def core(self) -> Callable:\n"
+                '        return self._core_programs["main"].function\n\n'
+            ),
+            occurrence=1,
+        ),
+        "native_graph:duplicate_unwrapped_core_authority": _insert_before_nth(
+            text=grid_source,
+            marker="    def core_programs(self) -> Mapping[str, CoreProgram]:",
+            insertion=(
+                "    @property\n"
+                "    def unwrapped_core(self) -> Callable:\n"
+                '        return self._core_programs["main"].function\n\n'
+            ),
+            occurrence=1,
+        ),
+        "native_graph:duplicate_streamed_core_authority": _insert_before_nth(
+            text=grid_source,
+            marker="    def core_programs(self) -> Mapping[str, CoreProgram]:",
+            insertion=(
+                "    @property\n"
+                "    def streamed_core(self) -> Callable:\n"
+                '        return self._core_programs["main"].function\n\n'
+            ),
+            occurrence=1,
+        ),
+        "native_graph:program_name_rebound": replace_once(
+            source=grid_source,
+            old='                name="main",',
+            new='                name="alternate",',
+            label="native graph program name",
+        ),
+        "native_graph:mapping_key_rebound": replace_once(
+            source=grid_source,
+            old='_core_programs=MappingProxyType({"main": program})',
+            new='_core_programs=MappingProxyType({"alternate": program})',
+            label="native graph mapping key",
+        ),
+        "native_graph:published_mapping_filtered": replace_once(
+            source=grid_source,
+            old="        return self._core_programs",
+            new="        return candidate_filter(self._core_programs)",
+            label="native graph publication",
+        ),
+        "native_builder:next_values_filtered": replace_once(
+            source=grid_source,
+            old="        raw_next_regime_to_V_arr = next_regime_to_V_arr",
+            new=(
+                "        raw_next_regime_to_V_arr = "
+                "candidate_filter(next_regime_to_V_arr)"
+            ),
+            label="shared builder next-value identity",
+        ),
+        "native_builder:period_shifted": replace_once(
+            source=grid_source,
+            old='            "period": jnp.int32(context.period),',
+            new='            "period": jnp.int32(context.period + 1),',
+            label="shared builder period",
+        ),
+        "native_builder:runtime_bypasses_declared_builder": replace_once(
+            source=grid_source,
+            old="        arguments = program.argument_builder(",
+            new="        arguments = candidate_filter(program.argument_builder)(",
+            label="runtime shared builder",
+        ),
+        "native_graph:fixed_function_filtered": replace_once(
+            source=grid_source,
+            old="            function=functools.partial(program.function, **regime_fixed),",
+            new=(
+                "            function=candidate_filter("
+                "functools.partial(program.function, **regime_fixed)),"
+            ),
+            label="fixed native function identity",
+        ),
+        "streaming_dispatch:bypass_compiled_core": replace_once(
+            source=grid_source,
+            old='        out = compiled_cores["main"](**arguments)',
+            new="        out = program.function(**arguments)",
+            label="native compiled dispatch",
         ),
         "caller_solve:published_value_filtered": replace_once(
             source=grid_source,
@@ -4217,28 +4139,16 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             new="        return KernelResult(V_arr=candidate_filter(out))",
             label="solve caller value publication",
         ),
-        "streaming_provider:dense_function": replace_once(
-            source=grid_source,
-            old="            function=self.streamed_core,",
-            new="            function=self.unwrapped_core,",
-            label="streamed provider function",
-        ),
-        "streaming_provider:arguments_filtered": replace_once(
-            source=grid_source,
-            old="            arguments=arguments,",
-            new="            arguments=dict(tuple(arguments.items())[:-1]),",
-            label="streamed provider arguments",
-        ),
         "streaming_provider:action_names_slice": replace_once(
             source=grid_source,
-            old="                        coordinate_names=self.action_names,",
-            new="                        coordinate_names=self.action_names[:-1],",
+            old="                            coordinate_names=action_names,",
+            new="                            coordinate_names=action_names[:-1],",
             label="streamed provider action names",
         ),
         "streaming_provider:action_extents_slice": replace_once(
             source=grid_source,
-            old="                        coordinate_extents=self.action_extents,",
-            new="                        coordinate_extents=self.action_extents[:-1],",
+            old="                            coordinate_extents=action_extents,",
+            new="                            coordinate_extents=action_extents[:-1],",
             label="streamed provider action extents",
         ),
         "streaming_width_selector:suffix_search_truncated": replace_once(
@@ -4273,7 +4183,7 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         ),
         "streaming_width_transport:core_program_keyword_desynchronized": replace_once(
             source=grid_source,
-            old="                        width_keyword=self.action_width_keyword,",
+            old="                            width_keyword=action_width_keyword,",
             new="                        width_keyword=_ACTION_WIDTH_KEYWORD,",
             label="streamed CoreProgram width-keyword transport",
         ),
@@ -4357,11 +4267,16 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             new="        disposition = _ActionStreamingDisposition.STREAMED",
             label="EV1-without-discrete-action disposition",
         ),
-        "streaming_classifier:jit_disabled_admitted": replace_once(
+        "streaming_classifier:jit_disabled_gate_reintroduced": replace_once(
             source=grid_source,
-            old="        disposition = _ActionStreamingDisposition.DENSE_JIT_DISABLED",
-            new="        disposition = _ActionStreamingDisposition.STREAMED",
-            label="JIT-disabled disposition",
+            old="    if context.has_taste_shocks and context.stakeholders is not None:",
+            new=(
+                "    if not context.enable_jit:\n"
+                "        disposition = "
+                "_ActionStreamingDisposition.DENSE_TRIVIAL_ACTION_PRODUCT\n"
+                "    elif context.has_taste_shocks and context.stakeholders is not None:"
+            ),
+            label="JIT-independent disposition",
         ),
         "streaming_classifier:trivial_product_admitted": replace_once(
             source=grid_source,
@@ -4375,59 +4290,69 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             new='        return self.value.partition(":")[2]',
             label="disposition category projection",
         ),
-        "streaming_classifier:dense_label_reclassified": replace_once(
-            source=grid_source,
-            old='    DENSE_JIT_DISABLED = "deliberately_dense:jit_disabled"',
-            new='    DENSE_JIT_DISABLED = "unsupported:jit_disabled"',
-            label="deliberately-dense disposition label",
-        ),
-        "streaming_dispatch:bypass_compiled_core": replace_once(
-            source=grid_source,
-            old='        out = compiled_cores["main"](',
-            new="        out = self.core(",
-            label="streamed compiled dispatch",
-        ),
-        "streaming_provider:collective_reducer_dropped": replace_once(
+        "streaming_classifier:ev1_reason_changed": replace_once(
             source=grid_source,
             old=(
-                "                            COLLECTIVE_HARD_MAX_REDUCTION\n"
-                "                            if self.collective"
+                "    DENSE_EV1_NONCANONICAL = "
+                '"deliberately_dense:ev1_canonical_reduction_order"'
             ),
-            new=(
-                "                            HARD_MAX_REDUCTION\n"
-                "                            if self.collective"
-            ),
-            label="streamed collective reduction contract",
+            new=('    DENSE_EV1_NONCANONICAL = "deliberately_dense:ev1_noncanonical"'),
+            label="EV1 dense reason",
         ),
-        "streaming_ev1_provider:reducer_dropped": replace_once(
+        "streaming_classifier:collective_reason_changed": replace_once(
             source=grid_source,
             old=(
-                "                            else GridSearchEV1ActionReduction(\n"
-                "                                n_discrete_action_axes=self.n_discrete_action_axes\n"
-                "                            )\n"
-                "                            if self.has_taste_shocks"
+                "    DENSE_COLLECTIVE_RESOURCES = "
+                '"deliberately_dense:collective_resource_regression"'
             ),
             new=(
-                "                            else HARD_MAX_REDUCTION\n"
-                "                            if self.has_taste_shocks"
+                '    DENSE_COLLECTIVE_RESOURCES = "deliberately_dense:collective_slow"'
             ),
-            label="streamed EV1 composite reduction contract",
+            label="collective dense reason",
         ),
-        "streaming_ev1_provider:discrete_axis_count_changed": replace_once(
+        "streaming_classifier:ev1_gate_bypassed": replace_once(
             source=grid_source,
-            old="                                n_discrete_action_axes=self.n_discrete_action_axes",
+            old="        disposition = _ActionStreamingDisposition.DENSE_EV1_NONCANONICAL",
+            new="        disposition = _ActionStreamingDisposition.STREAMED",
+            label="EV1 canonical-order gate",
+        ),
+        "streaming_classifier:collective_resource_gate_bypassed": replace_once(
+            source=grid_source,
+            old="        disposition = _ActionStreamingDisposition.DENSE_COLLECTIVE_RESOURCES",
+            new="        disposition = _ActionStreamingDisposition.STREAMED",
+            label="collective resource gate",
+        ),
+        "streaming_classifier:ev1_precedes_trivial_product": replace_once(
+            source=grid_source,
+            old=(
+                "    elif not context.state_action_space.action_names or "
+                "math.prod(action_extents) <= 1:"
+            ),
             new=(
-                "                                n_discrete_action_axes=max(\n"
-                "                                    1, self.n_discrete_action_axes - 1\n"
-                "                                )"
+                "    elif context.has_taste_shocks:\n"
+                "        disposition = "
+                "_ActionStreamingDisposition.DENSE_EV1_NONCANONICAL\n"
+                "    elif not context.state_action_space.action_names or "
+                "math.prod(action_extents) <= 1:"
             ),
-            label="streamed EV1 discrete-prefix width",
+            label="EV1/trivial precedence",
         ),
-        "streaming_provider:collective_output_role_dropped": replace_once(
+        "streaming_classifier:collective_precedes_co_map": replace_once(
             source=grid_source,
-            old="            output_roles=((VALUE, DISSOLUTION_FLAG) if self.collective else VALUE),",
-            new="            output_roles=VALUE,",
-            label="streamed collective program output roles",
+            old=(
+                "    elif context.co_map_state_names and (\n"
+                "        context.same_period_ref_regimes or context.edge_reference_regimes\n"
+                "    ):"
+            ),
+            new=(
+                "    elif context.stakeholders is not None:\n"
+                "        disposition = "
+                "_ActionStreamingDisposition.DENSE_COLLECTIVE_RESOURCES\n"
+                "    elif context.co_map_state_names and (\n"
+                "        context.same_period_ref_regimes or context.edge_reference_regimes\n"
+                "    ):"
+            ),
+            label="collective/co-map precedence",
         ),
         "streaming_collective:published_dissolution_inverted": replace_once(
             source=grid_source,
@@ -4439,45 +4364,51 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             text=grid_source,
             marker="                target_regimes=target_regimes,",
             replacement="                target_regimes=target_regimes[:-1],",
-            occurrence=2,
+            occurrence=1,
         ),
         "value_access:grid_gated_kind_bypassed": replace_once(
             source=grid_source,
-            old="                if target_regime in self.edge_target_regimes",
+            old="            if target_regime in edge_target_regimes",
             new="                if False",
             label="GridSearch gated-continuation artifact kind",
         ),
         "value_access:grid_same_period_shifted": replace_once(
             source=grid_source,
             old=(
-                "                    period=self.period,\n"
-                "                    regime=regime_name,"
+                "                period=period,\n"
+                "                regime=reference_regime,"
             ),
             new=(
-                "                    period=self.period + 1,\n"
-                "                    regime=regime_name,"
+                "                period=period + 1,\n"
+                "                regime=reference_regime,"
             ),
             label="GridSearch same-period artifact coordinate",
         ),
         "value_access:grid_edge_reference_omitted": _replace_nth(
             text=grid_source,
-            marker="            for regime_name in self.edge_reference_regimes",
-            replacement="            for regime_name in self.edge_reference_regimes[:-1]",
+            marker="        for reference_regime in edge_reference_regimes",
+            replacement="        for reference_regime in edge_reference_regimes[:-1]",
             occurrence=1,
         ),
         "value_access:grid_program_declarations_dropped": replace_once(
             source=grid_source,
             old=(
-                "                target_value_accesses="
-                "self.target_value_accesses(core_key=core_key),"
+                "                target_value_accesses=_target_value_accesses(\n"
+                "                    regime_name=context.regime_name,\n"
+                "                    period=period,\n"
+                "                    target_regimes=target_regimes,\n"
+                "                    same_period_ref_regimes=context.same_period_ref_regimes,\n"
+                "                    edge_reference_regimes=edge_reference_regimes,\n"
+                "                    edge_target_regimes=context.edge_target_regimes,\n"
+                "                ),"
             ),
             new="                target_value_accesses=(),",
             label="GridSearch CoreProgram target-value declarations",
         ),
         "value_access:grid_consumer_path_rebound": replace_once(
             source=grid_source,
-            old="                path=path,",
-            new="                path=(path[0], path[0]),",
+            old="            path=path,",
+            new="            path=(path[0], path[0]),",
             label="GridSearch exact consumer path",
         ),
         "value_access:grid_edge_refs_widened": replace_once(
@@ -4816,11 +4747,11 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             new="            (),",
             label="streamed resolver specialization",
         ),
-        "streaming_resolver:output_roles_dropped": replace_once(
-            source=core_program_source,
-            old="        output_roles=program.output_roles,",
-            new="        output_roles=None,",
-            label="streamed resolver output roles",
+        "streaming_resolver:output_roles_dropped": _replace_nth(
+            text=core_program_source,
+            marker="        output_roles=program.output_roles,",
+            replacement="        output_roles=None,",
+            occurrence=2,
         ),
         "value_access:core_requirements_erased": replace_once(
             source=core_program_source,
@@ -4865,11 +4796,11 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             new="        arguments=program.arguments,",
             label="core-program lowering input transfer application",
         ),
-        "value_access:core_specialization_dropped": replace_once(
-            source=core_program_source,
-            old="            input_transfer_specialization_key,",
-            new="            (),",
-            label="core-program transfer specialization identity",
+        "value_access:core_specialization_dropped": _replace_nth(
+            text=core_program_source,
+            marker="            input_transfer_specialization_key,",
+            replacement="            (),",
+            occurrence=2,
         ),
         "value_access:core_consumer_channel_rebound": replace_once(
             source=core_program_source,
@@ -5439,28 +5370,27 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             new="    return candidate_filter.SimulationPhase(",
             label="simulate caller publication callee",
         ),
-        "terminal_wrapper:core_program_dropped": replace_once(
+        "terminal_wrapper:native_graph_dropped": replace_once(
             source=processing_source,
-            old=(
-                "        return self.base.build_core_program(\n"
-                "            core_key=core_key,\n"
-                "            arguments=arguments,\n"
-                "        )"
+            old="        return self.base.core_programs()",
+            new="        return MappingProxyType({})",
+            label="terminal wrapper native-graph delegation",
+        ),
+        "terminal_wrapper:native_graph_filtered": replace_once(
+            source=processing_source,
+            old="        return self.base.core_programs()",
+            new="        return candidate_filter(self.base.core_programs())",
+            label="terminal wrapper native-graph identity",
+        ),
+        "terminal_wrapper:duplicate_legacy_authority": _insert_before_nth(
+            text=processing_source,
+            marker="    def core_programs(self) -> Mapping[str, CoreProgram]:",
+            insertion=(
+                "    def cores(self) -> Mapping[str, Callable]:\n"
+                '        return MappingProxyType({"main": '
+                'self.base.core_programs()["main"].function})\n\n'
             ),
-            new="        return None",
-            label="terminal wrapper core-program delegation",
-        ),
-        "terminal_wrapper:output_roles_dropped": replace_once(
-            source=processing_source,
-            old="        return self.base.output_roles(core_key=core_key)",
-            new="        return None",
-            label="terminal wrapper output roles",
-        ),
-        "terminal_wrapper:layout_uses_wrapped_core": replace_once(
-            source=processing_source,
-            old="        return self.base.core_for_output_layout(core_key=core_key)",
-            new='        return self.base.cores()["main"]',
-            label="terminal wrapper layout delegation",
+            occurrence=1,
         ),
         "terminal_wrapper:published_value_filtered": replace_once(
             source=processing_source,
@@ -5826,13 +5756,16 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
                 label="public Model AOT regime selection",
             ),
         },
-        "backward_layout:planned_uses_wrapped_core": {
+        "native_graph:solve_collection_bypasses_central_validator": {
             "path": BACKWARD_INDUCTION_SOURCE,
             "source": replace_once(
                 source=backward_induction_source,
-                old="        if program is None and layout is not UNPLANNED:",
-                new="        if layout is not UNPLANNED:",
-                label="planned raw lowering callable",
+                old=(
+                    "            graph = core_program_graph("
+                    "kernel=regime.solution.period_kernels[period])"
+                ),
+                new="            graph = regime.solution.period_kernels[period].core_programs()",
+                label="solve central graph validation",
             ),
         },
         "value_transfer:backward_source_coordinate_check_bypassed": {
@@ -5848,31 +5781,34 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": BACKWARD_INDUCTION_SOURCE,
             "source": replace_once(
                 source=backward_induction_source,
-                old="                source=(regime_name, period, core_key),",
+                old="            source=(regime_name, period, core_key),",
                 new=(
-                    "                source=(\n"
-                    "                    program.requirements.target_value_accesses[0].source.source_regime,\n"
-                    "                    program.requirements.target_value_accesses[0].source.source_period,\n"
-                    "                    program.requirements.target_value_accesses[0].source.core_key,\n"
-                    "                ),"
+                    "            source=(\n"
+                    "                materialized.requirements.target_value_accesses[0].source.source_regime,\n"
+                    "                materialized.requirements.target_value_accesses[0].source.source_period,\n"
+                    "                materialized.requirements.target_value_accesses[0].source.core_key,\n"
+                    "            ),"
                 ),
                 label="backward actual source-coordinate authority",
             ),
         },
         "value_transfer:backward_resolver_plan_omitted": {
             "path": BACKWARD_INDUCTION_SOURCE,
-            "source": replace_once(
-                source=backward_induction_source,
-                old="                input_transfer_plan=input_transfer_plan,",
-                new="                input_transfer_plan=(),",
-                label="backward resolved-program transfer plan",
+            "source": _replace_nth(
+                text=backward_induction_source,
+                marker="        input_transfer_plan=input_transfer_plan,",
+                replacement="        input_transfer_plan=(),",
+                occurrence=1,
             ),
         },
         "value_transfer:backward_node_plan_dropped": {
             "path": BACKWARD_INDUCTION_SOURCE,
             "source": replace_once(
                 source=backward_induction_source,
-                old="                input_transfer_plan=input_transfer_plans[triple],",
+                old=(
+                    "                input_transfer_plan="
+                    "resolved_programs[triple].input_transfer_plan,"
+                ),
                 new="                input_transfer_plan=(),",
                 label="backward absolute-node transfer-plan attachment",
             ),
@@ -5911,58 +5847,78 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
                 label="backward fail-closed unsupported layout conversion",
             ),
         },
-        "streaming_aot:provider_ignored": {
+        "native_graph:materialized_program_filtered": {
             "path": BACKWARD_INDUCTION_SOURCE,
             "source": replace_once(
                 source=backward_induction_source,
-                old="            if isinstance(kernel, CoreProgramAware)",
-                new="            if False and isinstance(kernel, CoreProgramAware)",
-                label="streamed program provider dispatch",
+                old=(
+                    "        materialized = materialize_core_program("
+                    "program=declaration, context=context)"
+                ),
+                new=(
+                    "        materialized = candidate_filter(materialize_core_program("
+                    "program=declaration, context=context))"
+                ),
+                label="solve materialized native program",
             ),
         },
-        "streaming_aot:validation_before_width_selection_bypassed": {
+        "native_graph:initial_widths_bypassed": {
             "path": BACKWARD_INDUCTION_SOURCE,
             "source": replace_once(
                 source=backward_induction_source,
-                old="    _validate_core_program(program=program)",
-                new="    program = program",
-                label="streamed validation before initial width selection",
+                old="        tile_widths=initial_core_tile_widths(program=program),",
+                new="        tile_widths={},",
+                label="native program initial widths",
             ),
         },
-        "streaming_aot:resolved_function_bypassed": {
+        "native_graph:aot_resolved_function_bypassed": {
             "path": BACKWARD_INDUCTION_SOURCE,
             "source": replace_once(
                 source=backward_induction_source,
-                old="            lowering_func = resolved.function",
-                new="            lowering_func = func",
-                label="streamed resolved lowering function",
+                old=(
+                    "            unique[lowering_key] = (\n"
+                    "                program.function,"
+                ),
+                new=(
+                    "            unique[lowering_key] = (\n"
+                    "                all_programs[triple].function,"
+                ),
+                label="AOT resolved function",
             ),
         },
-        "streaming_aot:resolved_arguments_bypassed": {
+        "native_graph:aot_resolved_arguments_bypassed": {
             "path": BACKWARD_INDUCTION_SOURCE,
             "source": replace_once(
                 source=backward_induction_source,
-                old="            lowering_args = resolved.arguments",
-                new="            lowering_args = arguments",
-                label="streamed resolved lowering arguments",
+                old="        lower_args = resolved.arguments",
+                new="        lower_args = {},",
+                label="AOT resolved arguments",
             ),
         },
-        "streaming_aot:specialization_dropped": {
+        "native_graph:specialization_dropped": {
             "path": BACKWARD_INDUCTION_SOURCE,
             "source": replace_once(
                 source=backward_induction_source,
-                old="            specialization_key = resolved.specialization_key",
-                new="            specialization_key = None",
-                label="streamed lowering specialization",
+                old="            specialization_key=resolved.specialization_key,",
+                new="            specialization_key=None,",
+                label="native lowering specialization",
             ),
         },
-        "streaming_aot:lower_dense_function": {
+        "native_graph:eager_resolved_function_bypassed": {
             "path": BACKWARD_INDUCTION_SOURCE,
             "source": replace_once(
                 source=backward_induction_source,
-                old="    for triple, func in lowering_functions.items():",
-                new="    for triple, func in all_functions.items():",
-                label="streamed function selected for lowering",
+                old=(
+                    "                    else program.function\n"
+                    "                ),\n"
+                    "                layout=all_layouts[triple],"
+                ),
+                new=(
+                    "                    else all_programs[triple].function\n"
+                    "                ),\n"
+                    "                layout=all_layouts[triple],"
+                ),
+                label="eager resolved function",
             ),
         },
         "backward_layout:out_shardings_disabled": {
@@ -6250,6 +6206,45 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
     }
     specs.update(dependency_cases)
 
+    specs["period_replay:central_graph_validator_bypassed"] = {
+        "path": PERIOD_REPLAY_SOURCE,
+        "source": replace_once(
+            source=period_replay_source,
+            old=(
+                "    for core_name, declaration in "
+                "core_program_graph(kernel=period_kernel).items():"
+            ),
+            new="    for core_name, declaration in period_kernel.core_programs().items():",
+            label="replay central graph validation",
+        ),
+    }
+    specs["period_replay:materialized_program_filtered"] = {
+        "path": PERIOD_REPLAY_SOURCE,
+        "source": _replace_nth(
+            text=period_replay_source,
+            marker=(
+                "        materialized = materialize_core_program("
+                "program=declaration, context=context)"
+            ),
+            replacement=(
+                "        materialized = candidate_filter(materialize_core_program("
+                "program=declaration, context=context))"
+            ),
+            occurrence=1,
+        ),
+    }
+    specs["period_replay:shared_resolver_bypassed"] = {
+        "path": PERIOD_REPLAY_SOURCE,
+        "source": _replace_nth(
+            text=period_replay_source,
+            marker="        resolved = _resolve_program_for_execution(",
+            replacement=(
+                "        resolved = candidate_filter(_resolve_program_for_execution)("
+            ),
+            occurrence=1,
+        ),
+    }
+
     originals = {
         MAX_Q_SOURCE: max_source,
         ARGMAX_SOURCE: argmax_source,
@@ -6276,6 +6271,7 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         SIMULATION_COMPILE_SOURCE: simulation_compile_source,
         MODEL_SOURCE: model_source,
         BACKWARD_INDUCTION_SOURCE: backward_induction_source,
+        PERIOD_REPLAY_SOURCE: period_replay_source,
         INITIAL_CONDITIONS_SOURCE: initial_conditions_source,
         RESULT_SOURCE: result_source,
         RESULT_DATAFRAME_SOURCE: result_dataframe_source,

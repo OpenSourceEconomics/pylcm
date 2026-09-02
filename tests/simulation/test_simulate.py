@@ -8,7 +8,7 @@ import pytest
 from numpy.testing import assert_array_almost_equal, assert_array_equal
 from pandas.testing import assert_frame_equal
 
-from _lcm.execution.core_program import CoreProgramAware
+from _lcm.execution.core_program import CoreProgramGraphAware
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
 from _lcm.simulation.result_metadata import _get_output_dtypes
@@ -174,7 +174,7 @@ def test_simulate_using_model_methods(
     result = model.simulate(
         log_level="debug",
         params=params,
-        period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+        solution=period_to_regime_to_V_arr,
         initial_conditions={
             "wealth": jnp.array([20.0, 150, 250, 320]),
             "age": jnp.array([18.0, 18.0, 18.0, 18.0]),
@@ -233,15 +233,15 @@ def test_grid_search_simulation_with_supplied_values_keeps_dense_policy_construc
     )
     regime = model._regimes["working_life"]
 
-    assert isinstance(regime.solution.period_kernels[0], CoreProgramAware)
+    assert isinstance(regime.solution.period_kernels[0], CoreProgramGraphAware)
     assert not isinstance(
-        regime.simulation.argmax_and_max_Q_over_a[0], CoreProgramAware
+        regime.simulation.argmax_and_max_Q_over_a[0], CoreProgramGraphAware
     )
 
     result = model.simulate(
         log_level="debug",
         params=params,
-        period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+        solution=period_to_regime_to_V_arr,
         initial_conditions={
             "wealth": jnp.array([20.0]),
             "age": jnp.array([18.0]),
@@ -272,7 +272,6 @@ def test_simulate_with_only_discrete_actions():
             "age": jnp.array([50.0, 50.0]),
             "regime_id": jnp.array([DiscreteRegimeId.working_life] * 2),
         },
-        period_to_regime_to_V_arr=None,
     )
     got = result.to_dataframe().query('regime_name == "working_life"')
 
@@ -335,7 +334,6 @@ def test_effect_of_discount_factor_on_last_period():
                 "age": jnp.array([18.0, 18.0, 18.0]),
                 "regime_id": jnp.array([RegimeId.working_life] * 3),
             },
-            period_to_regime_to_V_arr=None,
         )
         .to_dataframe()
         .query('regime_name == "working_life"')
@@ -350,7 +348,6 @@ def test_effect_of_discount_factor_on_last_period():
                 "age": jnp.array([18.0, 18.0, 18.0]),
                 "regime_id": jnp.array([RegimeId.working_life] * 3),
             },
-            period_to_regime_to_V_arr=None,
         )
         .to_dataframe()
         .query('regime_name == "working_life"')
@@ -400,7 +397,6 @@ def test_effect_of_disutility_of_work():
                 "age": jnp.array([18.0, 18.0, 18.0]),
                 "regime_id": jnp.array([RegimeId.working_life] * 3),
             },
-            period_to_regime_to_V_arr=None,
         )
         .to_dataframe()
         .query('regime_name == "working_life"')
@@ -415,7 +411,6 @@ def test_effect_of_disutility_of_work():
                 "age": jnp.array([18.0, 18.0, 18.0]),
                 "regime_id": jnp.array([RegimeId.working_life] * 3),
             },
-            period_to_regime_to_V_arr=None,
         )
         .to_dataframe()
         .query('regime_name == "working_life"')
@@ -449,7 +444,6 @@ def test_to_dataframe_use_labels_parameter():
             "age": jnp.array([18.0, 18.0]),
             "regime_id": jnp.array([RegimeId.working_life] * 2),
         },
-        period_to_regime_to_V_arr=None,
     )
 
     # use_labels=True (default): discrete columns are Categorical with string labels
@@ -478,7 +472,6 @@ def regression_simulation_result():
             "age": jnp.array([18.0, 18.0]),
             "regime_id": jnp.array([RegimeId.working_life] * 2),
         },
-        period_to_regime_to_V_arr=None,
     )
 
 
@@ -523,7 +516,6 @@ def test_additional_targets_all_with_stochastic_transitions():
             "age": jnp.array([40.0, 40.0]),
             "regime_id": jnp.array([StochasticRegimeId.working_life] * 2),
         },
-        period_to_regime_to_V_arr=None,
     )
 
     # Stochastic weight functions should NOT be in available_targets
@@ -566,7 +558,6 @@ def test_simulation_result_save_load_roundtrip(tmp_path: Path):
             "age": jnp.array([18.0, 18.0]),
             "regime_id": jnp.array([RegimeId.working_life] * 2),
         },
-        period_to_regime_to_V_arr=None,
     )
 
     # `save` releases device-pinned state including `self._regimes`, so any
@@ -606,7 +597,6 @@ def test_load_solution_reads_value_arrays_without_the_per_subject_artifacts(
             "age": jnp.array([18.0, 18.0]),
             "regime_id": jnp.array([RegimeId.working_life] * 2),
         },
-        period_to_regime_to_V_arr=None,
     )
     # `save` releases the in-memory solution, so snapshot it beforehand.
     expected = {
@@ -646,7 +636,6 @@ def test_loaded_result_computes_additional_targets_matching_original(tmp_path: P
             "age": jnp.array([18.0, 18.0]),
             "regime_id": jnp.array([RegimeId.working_life] * 2),
         },
-        period_to_regime_to_V_arr=None,
     )
     expected_df = result.to_dataframe(additional_targets=["utility"])
 
@@ -678,7 +667,6 @@ def test_save_overwrites_existing_output_directory(tmp_path: Path):
         log_level="debug",
         params=params,
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=None,
     )
     first.save(directory=save_dir)
 
@@ -689,7 +677,6 @@ def test_save_overwrites_existing_output_directory(tmp_path: Path):
         log_level="debug",
         params=params,
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=None,
     )
     expected_df = second.to_dataframe()
     second.save(directory=save_dir)
@@ -717,7 +704,6 @@ def test_save_writes_simulated_data_arrow_matching_to_dataframe(tmp_path: Path):
             "age": jnp.array([18.0, 18.0]),
             "regime_id": jnp.array([RegimeId.working_life] * 2),
         },
-        period_to_regime_to_V_arr=None,
     )
 
     # Capture the expected frame before save; `save` releases device-pinned
@@ -762,7 +748,6 @@ def test_save_clears_regimes_to_release_compiled_program_workspaces(tmp_path: Pa
             "age": jnp.array([18.0, 18.0]),
             "regime_id": jnp.array([RegimeId.working_life] * 2),
         },
-        period_to_regime_to_V_arr=None,
     )
     assert len(result._regimes) > 0
 
@@ -791,7 +776,6 @@ def test_save_clears_period_to_regime_to_V_arr_to_free_device_memory(tmp_path: P
             "age": jnp.array([18.0, 18.0]),
             "regime_id": jnp.array([RegimeId.working_life] * 2),
         },
-        period_to_regime_to_V_arr=None,
     )
     assert len(result.period_to_regime_to_V_arr) > 0
 

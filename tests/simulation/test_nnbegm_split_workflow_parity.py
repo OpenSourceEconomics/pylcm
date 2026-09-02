@@ -1,16 +1,10 @@
-"""Solving and simulating separately must match solving inside `simulate()`.
+"""A retained SolutionResult must replay exactly like automatic simulation.
 
-`solve(return_simulation_policy=True)` publishes the replay artifacts that
-simulation needs where the value functions alone do not determine the decision.
-Feeding that exact `(values, policies)` pair back into `simulate()` is the
-documented split workflow, and it must reproduce what the automatic
-solve-and-simulate route produces — for the finite outer search and for the
-adaptive continuous-outer mesh alike.
-
-Which artifact counts as matching follows the configured outer search, so the
-guards below also pin that the check still refuses a dropped mapping and a
-policy published by the other route.
+The addressed replay store is model-authoritative: dropping it or substituting a policy
+from another outer-search route fails before forward execution.
 """
+
+from dataclasses import replace
 
 import jax.numpy as jnp
 import pandas as pd
@@ -18,16 +12,13 @@ import pytest
 from pandas.testing import assert_frame_equal
 
 from _lcm.egm import outer_affine_structure, outer_inversion
-from _lcm.typing import (
-    PeriodToRegimeToSimulationPolicy,
-    PeriodToRegimeToVArr,
-)
 from lcm import LinSpacedGrid
 from lcm.exceptions import (
     InvalidSimulationInputError,
     UnrepresentableOuterCandidateError,
 )
 from lcm.model import Model
+from lcm.solver_api import ArtifactStore, SolutionResult
 from lcm.solvers import AdaptiveOuterMesh, FiniteOuterGrid
 from tests.test_models import n_nbegm_toy as toy
 
@@ -75,17 +66,11 @@ def _build(route: str) -> Model:
     )
 
 
-def _simulate(
-    *,
-    model: Model,
-    period_to_regime_to_V_arr: PeriodToRegimeToVArr | None,
-    policies: PeriodToRegimeToSimulationPolicy | None = None,
-) -> pd.DataFrame:
+def _simulate(*, model: Model, solution: SolutionResult | None) -> pd.DataFrame:
     return model.simulate(
         params=_PARAMS,
         initial_conditions=dict(_INITIAL),
-        period_to_regime_to_V_arr=period_to_regime_to_V_arr,
-        policies=policies,
+        solution=solution,
         log_level="debug",
         seed=_SEED,
     ).to_dataframe()
@@ -97,77 +82,64 @@ def route(request: pytest.FixtureRequest) -> str:
 
 
 @pytest.fixture(scope="module")
-def solved(
-    route: str,
-) -> tuple[Model, PeriodToRegimeToVArr, PeriodToRegimeToSimulationPolicy]:
-    """The model plus the `(values, policies)` pair its own `solve()` returned."""
+def solved(route: str) -> tuple[Model, SolutionResult]:
+    """Return the model and its complete labelled solution."""
     model = _build(route)
-    values, policies = model.solve(
-        params=_PARAMS,
-        log_level="debug",
-        return_simulation_policy=True,
-    )
-    return model, values, policies
+    return model, model.solve(params=_PARAMS, log_level="debug")
 
 
 def test_separate_solve_and_simulate_matches_the_automatic_route(
-    solved: tuple[Model, PeriodToRegimeToVArr, PeriodToRegimeToSimulationPolicy],
+    solved: tuple[Model, SolutionResult],
 ) -> None:
     """The documented split workflow reproduces automatic solve-and-simulate."""
-    model, values, policies = solved
+    model, solution = solved
     assert_frame_equal(
-        _simulate(model=model, period_to_regime_to_V_arr=values, policies=policies),
-        _simulate(model=model, period_to_regime_to_V_arr=None),
+        _simulate(model=model, solution=solution),
+        _simulate(model=model, solution=None),
     )
 
 
-def test_supplied_values_without_any_replay_policies_are_refused(
-    solved: tuple[Model, PeriodToRegimeToVArr, PeriodToRegimeToSimulationPolicy],
+def test_result_without_replay_policies_is_refused(
+    solved: tuple[Model, SolutionResult],
 ) -> None:
-    """Dropping the replay mapping is refused rather than silently re-optimized."""
-    model, values, _ = solved
-    with pytest.raises(InvalidSimulationInputError, match="replay policy"):
-        _simulate(model=model, period_to_regime_to_V_arr=values, policies=None)
+    """Dropping replay artifacts is refused rather than silently re-optimized."""
+    model, solution = solved
+    without_replay = replace(solution, replay_artifacts=ArtifactStore())
+    with pytest.raises(InvalidSimulationInputError, match="unrecorded"):
+        _simulate(model=model, solution=without_replay)
 
 
 def test_replay_policies_published_by_the_other_outer_search_are_refused() -> None:
     """A replay policy of the wrong route cannot stand in for this one's."""
-    finite_model = _build("finite")
-    _, finite_policies = finite_model.solve(
-        params=_PARAMS,
-        log_level="debug",
-        return_simulation_policy=True,
-    )
+    finite_solution = _build("finite").solve(params=_PARAMS, log_level="debug")
     adaptive_model = _build("adaptive")
-    adaptive_values = adaptive_model.solve(params=_PARAMS, log_level="debug")
+    adaptive_solution = adaptive_model.solve(params=_PARAMS, log_level="debug")
+    wrong_route = replace(
+        adaptive_solution, replay_artifacts=finite_solution.replay_artifacts
+    )
 
-    with pytest.raises(InvalidSimulationInputError, match="replay policy"):
-        _simulate(
-            model=adaptive_model,
-            period_to_regime_to_V_arr=adaptive_values,
-            policies=finite_policies,
-        )
+    with pytest.raises(InvalidSimulationInputError, match="mismatched_payload"):
+        _simulate(model=adaptive_model, solution=wrong_route)
 
 
 def test_a_solve_time_refusal_reaches_both_routes_identically() -> None:
     """A solve that refuses to publish refuses the same way through either route.
 
     Both workflows funnel through the same solve: the split one calls it
-    directly, the automatic one calls it from `simulate()` when no value arrays
-    are supplied. A refusal must therefore surface identically, rather than one
+    directly, and the automatic one calls it from `simulate()` when no solution is
+    supplied. A refusal must therefore surface identically, rather than one
     route reporting it and the other proceeding on a bank the solve declined to
     publish.
     """
     model = _build_refusing_model()
 
     with pytest.raises(UnrepresentableOuterCandidateError) as split:
-        model.solve(params=_PARAMS, log_level="off", return_simulation_policy=True)
+        model.solve(params=_PARAMS, log_level="off")
 
     with pytest.raises(UnrepresentableOuterCandidateError) as automatic:
         model.simulate(
             params=_PARAMS,
             initial_conditions=dict(_REFUSING_INITIAL),
-            period_to_regime_to_V_arr=None,
             log_level="off",
             seed=_SEED,
         )
@@ -195,12 +167,8 @@ def test_split_replay_does_not_certify_the_declared_outer_map_itself() -> None:
     is reached — and the replay it produces is unchanged.
     """
     model = _build("finite")
-    values, policies = model.solve(
-        params=_PARAMS, log_level="debug", return_simulation_policy=True
-    )
-    expected = _simulate(
-        model=model, period_to_regime_to_V_arr=values, policies=policies
-    )
+    solution = model.solve(params=_PARAMS, log_level="debug")
+    expected = _simulate(model=model, solution=solution)
 
     def refuse(**_kwargs):
         raise AssertionError("split replay re-certified the declared outer map")
@@ -208,8 +176,6 @@ def test_split_replay_does_not_certify_the_declared_outer_map_itself() -> None:
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(outer_affine_structure, "certify_outer_coefficient", refuse)
         patch.setattr(outer_inversion, "certify_declared_outer_inverse", refuse)
-        got = _simulate(
-            model=model, period_to_regime_to_V_arr=values, policies=policies
-        )
+        got = _simulate(model=model, solution=solution)
 
     assert_frame_equal(got, expected)

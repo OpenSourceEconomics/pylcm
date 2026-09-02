@@ -127,11 +127,9 @@ The regime's mask is the AND of the ordinary constraints and the value-dependent
 cell whose mask is empty publishes the regime's **dissolution flag** and the `-inf`
 sentinel: there is no viable household there.
 
-`solve(return_dissolution_flags=True)` hands those flags back, and `simulate` takes them
-as `period_to_regime_to_dissolution_flags=` — see
-[Solving and simulating](solving_and_simulating.md) for the call shape. A gate that
-reads `D_target` needs them; let `simulate` solve for you and they are threaded
-automatically.
+`solve()` stores those flags as addressed replay artifacts in `SolutionResult`. Pass the
+complete result to `simulate(solution=...)`; a gate reading `D_target` consumes the flag
+from there. Letting `simulate` solve automatically retains and threads it directly.
 
 ## Marrying and dissolving: a transition with a gate
 

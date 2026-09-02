@@ -3,6 +3,7 @@
 import ast
 import hashlib
 import inspect
+from collections.abc import Mapping
 from dataclasses import replace
 from types import MappingProxyType
 from typing import cast
@@ -22,12 +23,9 @@ from _lcm.solution import backward_induction
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from _lcm.typing import (
     FlatParams,
-    PeriodToRegimeToDissolutionFlags,
-    PeriodToRegimeToSimulationPolicy,
-    PeriodToRegimeToVArr,
 )
 from lcm import LinSpacedGrid, Model
-from lcm.exceptions import InvalidSimulationInputError
+from lcm.exceptions import InvalidParamsError, InvalidSimulationInputError
 from lcm.solver_api import (
     DISSOLUTION_FLAG,
     EGM_CONTINUATION,
@@ -148,20 +146,20 @@ def test_solution_result_keeps_values_explicit_and_immutable() -> None:
 
     np.testing.assert_array_equal(result.value(period=0, regime="alive"), [1.0, 2.0])
     assert isinstance(result.values, MappingProxyType)
-    assert isinstance(result.values[0], MappingProxyType)  # noqa: PD011
+    assert isinstance(result.values[0], MappingProxyType)
     assert isinstance(result.omissions, MappingProxyType)
     with pytest.raises(TypeError):
-        result.values[0]["alive"] = jnp.asarray([9.0])  # noqa: PD011  # ty: ignore[invalid-assignment]
+        result.values[0]["alive"] = jnp.asarray([9.0])  # ty: ignore[invalid-assignment]
 
 
-def test_solve_result_records_instance_params_and_value_array_schemas() -> None:
+def test_solve_records_instance_params_and_value_array_schemas() -> None:
     model, params, _ = _small_grid_search_inputs()
 
-    result = model.solve_result(params=params, log_level="off")
+    result = model.solve(params=params, log_level="off")
 
     assert result.metadata.model_instance_id
     assert len(result.metadata.params_fingerprint) == 64
-    value_store = result.values  # noqa: PD011
+    value_store = result.values
     assert set(result.metadata.value_schemas) == {
         (period, regime_name)
         for period, regime_to_value in value_store.items()
@@ -209,11 +207,11 @@ def test_flat_param_fingerprint_frames_marker_like_path_components() -> None:
     assert actual != ambiguous_legacy_encoding
 
 
-def test_model_solve_result_omits_policy_without_replay_route() -> None:
+def test_model_solve_omits_policy_without_replay_route() -> None:
     model = _two_period_bequest_model()
     params = get_retirement_only_params(n_periods=2, discount_factor=0.98)
 
-    result = model.solve_result(params=params, log_level="off")
+    result = model.solve(params=params, log_level="off")
 
     assert result.metadata.retention is ResultRetention.VALUES_AND_REPLAY
     assert not result.replay_artifacts.project(SIMULATION_POLICY)
@@ -233,7 +231,7 @@ def test_model_solve_result_omits_policy_without_replay_route() -> None:
     assert not result.diagnostics
 
 
-def test_solve_result_does_not_host_copy_policy_without_replay_route(
+def test_solve_does_not_host_copy_policy_without_replay_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     original_device_put = backward_induction.jax.device_put
@@ -249,7 +247,7 @@ def test_solve_result_does_not_host_copy_policy_without_replay_route(
     model = _two_period_bequest_model()
     params = get_retirement_only_params(n_periods=2, discount_factor=0.98)
 
-    result = model.solve_result(params=params, log_level="off")
+    result = model.solve(params=params, log_level="off")
 
     assert not result.replay_artifacts.project(SIMULATION_POLICY)
 
@@ -258,7 +256,7 @@ def test_values_only_result_drops_replay_with_an_explicit_reason() -> None:
     model = _two_period_bequest_model()
     params = get_retirement_only_params(n_periods=2, discount_factor=0.98)
 
-    result = model.solve_result(
+    result = model.solve(
         params=params,
         log_level="off",
         retention=ResultRetention.VALUES,
@@ -277,7 +275,7 @@ def test_all_persistable_marks_unretained_continuation_unsupported() -> None:
     model = _two_period_bequest_model()
     params = get_retirement_only_params(n_periods=2, discount_factor=0.98)
 
-    result = model.solve_result(
+    result = model.solve(
         params=params,
         log_level="off",
         retention=ResultRetention.ALL_PERSISTABLE_ARTIFACTS,
@@ -291,7 +289,7 @@ def test_all_persistable_marks_unretained_continuation_unsupported() -> None:
     assert result.omissions[continuation_ref] is OmissionReason.UNSUPPORTED
 
 
-def test_solve_result_retains_kernel_diagnostics_only_when_log_level_enables_them(
+def test_solve_retains_kernel_diagnostics_only_when_log_level_enables_them(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     original = backward_induction._run_period_kernel
@@ -318,8 +316,8 @@ def test_solve_result_retains_kernel_diagnostics_only_when_log_level_enables_the
     model = _two_period_bequest_model()
     params = get_retirement_only_params(n_periods=2, discount_factor=0.98)
 
-    enabled = model.solve_result(params=params, log_level="warning")
-    disabled = model.solve_result(params=params, log_level="off")
+    enabled = model.solve(params=params, log_level="warning")
+    disabled = model.solve(params=params, log_level="off")
 
     retained = enabled.diagnostics.project(SOLVER_DIAGNOSTICS)
     assert retained
@@ -332,44 +330,6 @@ def test_solve_result_retains_kernel_diagnostics_only_when_log_level_enables_the
             "SolverDiagnostics", diagnostics
         ).max_outer_interpolation_error.devices()
     )
-
-
-def test_legacy_solve_does_not_retain_solver_diagnostics(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    original = backward_induction._run_period_kernel
-
-    def _with_diagnostics(**kwargs: object):
-        kernel_result = original(**kwargs)  # ty: ignore[invalid-argument-type]
-        scalar = jnp.asarray(0.0)
-        flag = jnp.zeros((), dtype=jnp.bool_)
-        return replace(
-            kernel_result,
-            diagnostics=SolverDiagnostics(
-                max_outer_interpolation_error=scalar,
-                max_outer_bracket_width=scalar,
-                outer_nodes_used=jnp.asarray(1, dtype=jnp.int32),
-                outer_at_lower_bound=flag,
-                outer_at_upper_bound=flag,
-                keeper_adjuster_margin=scalar,
-                best_second_best_margin=scalar,
-                policy_fallback_mask=flag,
-                unresolved_mask=flag,
-                n_outer_all_invalid_cells=jnp.asarray(0, dtype=jnp.int32),
-            ),
-        )
-
-    def _must_not_copy(**_kwargs: object) -> SolverDiagnostics:
-        raise AssertionError("legacy solve retained a solver diagnostic")
-
-    monkeypatch.setattr(backward_induction, "_run_period_kernel", _with_diagnostics)
-    monkeypatch.setattr(
-        backward_induction, "_copy_solver_diagnostics_to_host", _must_not_copy
-    )
-    model = _two_period_bequest_model()
-    params = get_retirement_only_params(n_periods=2, discount_factor=0.98)
-
-    model.solve(params=params, log_level="warning")
 
 
 def test_builtin_artifact_keys_are_stably_versioned() -> None:
@@ -396,9 +356,9 @@ def test_private_artifact_key_aliases_are_the_public_singletons() -> None:
     assert private_artifacts.SOLVER_DIAGNOSTICS is SOLVER_DIAGNOSTICS
 
 
-def test_grid_search_solution_result_drives_simulation_directly() -> None:
+def test_grid_search_result_replay_matches_automatic_solve() -> None:
     model, params, initial_conditions = _small_grid_search_inputs()
-    solution = model.solve_result(
+    solution = model.solve(
         params=params,
         log_level="off",
         retention=ResultRetention.VALUES,
@@ -411,22 +371,21 @@ def test_grid_search_solution_result_drives_simulation_directly() -> None:
         log_level="off",
         seed=0,
     )
-    legacy = model.simulate(
+    automatic = model.simulate(
         params=params,
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=cast("PeriodToRegimeToVArr", solution.values),
         log_level="off",
         seed=0,
     )
 
-    assert_frame_equal(direct.to_dataframe(), legacy.to_dataframe())
+    assert_frame_equal(direct.to_dataframe(), automatic.to_dataframe())
 
 
 def test_direct_solution_simulation_processes_params_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     model, params, initial_conditions = _small_grid_search_inputs()
-    solution = model.solve_result(params=params, log_level="off")
+    solution = model.solve(params=params, log_level="off")
     original = model._process_params
     call_count = 0
 
@@ -449,7 +408,7 @@ def test_direct_solution_simulation_processes_params_once(
 
 def test_model_instance_id_survives_pickle_for_result_replay() -> None:
     model, params, initial_conditions = _small_grid_search_inputs()
-    solution = model.solve_result(params=params, log_level="off")
+    solution = model.solve(params=params, log_level="off")
     restored = cloudpickle.loads(cloudpickle.dumps(model))
 
     result = restored.simulate(
@@ -468,15 +427,15 @@ def test_legacy_model_pickle_backfills_solution_instance_id() -> None:
     del model._solution_model_instance_id
 
     restored = cloudpickle.loads(cloudpickle.dumps(model))
-    solution = restored.solve_result(params=params, log_level="off")
+    solution = restored.solve(params=params, log_level="off")
 
     assert restored._solution_model_instance_id
     assert solution.metadata.model_instance_id == restored._solution_model_instance_id
 
 
-def test_retained_finite_nnbegm_result_replays_the_same_policy_as_legacy() -> None:
+def test_retained_finite_nnbegm_result_replay_matches_automatic_solve() -> None:
     model = _build("finite")
-    solution = model.solve_result(params=_PARAMS, log_level="off")
+    solution = model.solve(params=_PARAMS, log_level="off")
 
     direct = model.simulate(
         params=_PARAMS,
@@ -485,24 +444,19 @@ def test_retained_finite_nnbegm_result_replays_the_same_policy_as_legacy() -> No
         log_level="off",
         seed=42,
     )
-    legacy = model.simulate(
+    automatic = model.simulate(
         params=_PARAMS,
         initial_conditions=dict(_INITIAL),
-        period_to_regime_to_V_arr=cast("PeriodToRegimeToVArr", solution.values),
-        policies=cast(
-            "PeriodToRegimeToSimulationPolicy",
-            solution.replay_artifacts.project(SIMULATION_POLICY),
-        ),
         log_level="off",
         seed=42,
     )
 
-    assert_frame_equal(direct.to_dataframe(), legacy.to_dataframe())
+    assert_frame_equal(direct.to_dataframe(), automatic.to_dataframe())
 
 
-def test_retained_adaptive_nnbegm_result_replays_the_same_policy_as_legacy() -> None:
+def test_retained_adaptive_nnbegm_result_replay_matches_automatic_solve() -> None:
     model = _build("adaptive")
-    solution = model.solve_result(params=_PARAMS, log_level="off")
+    solution = model.solve(params=_PARAMS, log_level="off")
 
     direct = model.simulate(
         params=_PARAMS,
@@ -511,24 +465,19 @@ def test_retained_adaptive_nnbegm_result_replays_the_same_policy_as_legacy() -> 
         log_level="off",
         seed=42,
     )
-    legacy = model.simulate(
+    automatic = model.simulate(
         params=_PARAMS,
         initial_conditions=dict(_INITIAL),
-        period_to_regime_to_V_arr=cast("PeriodToRegimeToVArr", solution.values),
-        policies=cast(
-            "PeriodToRegimeToSimulationPolicy",
-            solution.replay_artifacts.project(SIMULATION_POLICY),
-        ),
         log_level="off",
         seed=42,
     )
 
-    assert_frame_equal(direct.to_dataframe(), legacy.to_dataframe())
+    assert_frame_equal(direct.to_dataframe(), automatic.to_dataframe())
 
 
 def test_adaptive_authority_and_result_survive_pickle_for_valid_replay() -> None:
     model = _build("adaptive")
-    solution = model.solve_result(params=_PARAMS, log_level="off")
+    solution = model.solve(params=_PARAMS, log_level="off")
     fingerprint = solution.metadata.params_fingerprint
     before = {
         ref: descriptor.adaptive_outer_nodes
@@ -565,9 +514,9 @@ def test_adaptive_authority_and_result_survive_pickle_for_valid_replay() -> None
     assert replay.n_subjects == len(_INITIAL["wealth"])
 
 
-def test_retained_dissolution_result_replays_the_same_flags_as_legacy() -> None:
+def test_retained_dissolution_result_replay_matches_automatic_solve() -> None:
     model = _make_dissolution_model()
-    solution = model.solve_result(params=_DISSOLUTION_PARAMS, log_level="off")
+    solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="off")
     initial_conditions = {
         "wage": jnp.asarray([1.0, 2.0, 3.0]),
         "age": jnp.zeros(3),
@@ -584,56 +533,53 @@ def test_retained_dissolution_result_replays_the_same_flags_as_legacy() -> None:
         log_level="off",
         seed=0,
     )
-    legacy = model.simulate(
+    automatic = model.simulate(
         params=_DISSOLUTION_PARAMS,
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=cast("PeriodToRegimeToVArr", solution.values),
-        period_to_regime_to_dissolution_flags=cast(
-            "PeriodToRegimeToDissolutionFlags",
-            solution.replay_artifacts.project(DISSOLUTION_FLAG),
-        ),
         log_level="off",
         seed=0,
     )
 
-    assert_frame_equal(direct.to_dataframe(), legacy.to_dataframe())
+    assert_frame_equal(direct.to_dataframe(), automatic.to_dataframe())
 
 
-@pytest.mark.parametrize(
-    "legacy_kwargs",
-    [
-        {"period_to_regime_to_V_arr": MappingProxyType({})},
-        {"policies": MappingProxyType({})},
-        {"period_to_regime_to_dissolution_flags": MappingProxyType({})},
-    ],
-)
-def test_solution_result_cannot_be_mixed_with_legacy_solution_inputs(
-    legacy_kwargs: dict[str, object],
-) -> None:
+def test_obsolete_solve_and_simulate_interfaces_are_absent() -> None:
+    solve_parameters = inspect.signature(Model.solve).parameters
+    simulate_parameters = inspect.signature(Model.simulate).parameters
+
+    assert not hasattr(Model, "solve_result")
+    assert "return_simulation_policy" not in solve_parameters
+    assert "return_dissolution_flags" not in solve_parameters
+    assert "period_to_regime_to_V_arr" not in simulate_parameters
+    assert "policies" not in simulate_parameters
+    assert "period_to_regime_to_dissolution_flags" not in simulate_parameters
+
+
+def test_solution_result_has_no_mapping_compatibility_bridge() -> None:
     model, params, initial_conditions = _small_grid_search_inputs()
-    solution = model.solve_result(params=params, log_level="off")
+    solution = model.solve(params=params, log_level="off")
 
-    with pytest.raises(InvalidSimulationInputError, match=r"solution.*legacy"):
+    assert not isinstance(solution, Mapping)
+    with pytest.raises(InvalidParamsError):
         model.simulate(
             params=params,
             initial_conditions=initial_conditions,
-            solution=solution,
+            solution=solution.values,  # ty: ignore[invalid-argument-type]
             log_level="off",
-            **legacy_kwargs,  # ty: ignore[invalid-argument-type]
         )
 
 
 @pytest.mark.parametrize("defect", ["metadata", "coverage"])
 def test_solution_result_structure_is_checked_before_simulation(defect: str) -> None:
     model, params, initial_conditions = _small_grid_search_inputs()
-    solution = model.solve_result(params=params, log_level="off")
+    solution = model.solve(params=params, log_level="off")
     if defect == "metadata":
         malformed = replace(
             solution,
             metadata=replace(solution.metadata, n_periods=model.n_periods + 1),
         )
     else:
-        value_store = solution.values  # noqa: PD011
+        value_store = solution.values
         first_period = min(value_store)
         malformed = replace(
             solution,
@@ -658,7 +604,7 @@ def test_solution_result_from_another_model_instance_is_refused_at_log_off(
 ) -> None:
     source, params, _ = _small_grid_search_inputs()
     target, _, initial_conditions = _small_grid_search_inputs()
-    solution = source.solve_result(params=params, log_level="off")
+    solution = source.solve(params=params, log_level="off")
 
     def _forward_loop_must_not_run(**_kwargs: object) -> None:
         raise AssertionError("forward simulation ran before identity preflight")
@@ -677,7 +623,7 @@ def test_solution_result_with_changed_canonical_params_is_refused_before_forward
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     model, params, initial_conditions = _small_grid_search_inputs()
-    solution = model.solve_result(params=params, log_level="off")
+    solution = model.solve(params=params, log_level="off")
     changed_params = get_params(n_periods=2, discount_factor=0.9)
 
     def _forward_loop_must_not_run(**_kwargs: object) -> None:
@@ -698,14 +644,14 @@ def test_solution_result_value_schema_is_checked_before_forward(
     *, defect: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     model, params, initial_conditions = _small_grid_search_inputs()
-    solution = model.solve_result(params=params, log_level="off")
+    solution = model.solve(params=params, log_level="off")
     coordinate = next(
         coordinate
         for coordinate, schema in solution.metadata.value_schemas.items()
         if schema.axis_names
     )
     period, regime_name = coordinate
-    value_store = solution.values  # noqa: PD011
+    value_store = solution.values
     value = value_store[period][regime_name]
 
     if defect == "axis_names":
@@ -748,10 +694,10 @@ def test_solution_result_rejects_an_unexpected_empty_value_period_before_forward
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     model, params, initial_conditions = _small_grid_search_inputs()
-    solution = model.solve_result(params=params, log_level="off")
+    solution = model.solve(params=params, log_level="off")
     values = {
         period: dict(regime_to_value)
-        for period, regime_to_value in solution.values.items()  # noqa: PD011
+        for period, regime_to_value in solution.values.items()
     }
     values[model.n_periods] = {}
     malformed = replace(solution, values=values)
@@ -783,7 +729,7 @@ def test_solution_result_rejects_unexpected_artifact_coordinates_before_forward(
     *, channel: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     model, params, initial_conditions = _small_grid_search_inputs()
-    solution = model.solve_result(params=params, log_level="off")
+    solution = model.solve(params=params, log_level="off")
     unexpected_ref = ArtifactRef(
         period=model.n_periods,
         regime=solution.metadata.regime_names[0],
@@ -828,7 +774,7 @@ def test_solution_result_rejects_present_and_omitted_artifacts_before_forward(
     *, channel: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     model, params, initial_conditions = _small_grid_search_inputs()
-    solution = model.solve_result(params=params, log_level="off")
+    solution = model.solve(params=params, log_level="off")
     period, regime_name = next(iter(solution.metadata.value_schemas))
     ref = ArtifactRef(
         period=period,
@@ -858,7 +804,7 @@ def test_solution_result_rejects_one_ref_in_multiple_artifact_stores_before_forw
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     model, params, initial_conditions = _small_grid_search_inputs()
-    solution = model.solve_result(params=params, log_level="off")
+    solution = model.solve(params=params, log_level="off")
     period, regime_name = next(iter(solution.metadata.value_schemas))
     ref = ArtifactRef(
         period=period,
@@ -892,7 +838,7 @@ def test_values_only_finite_nnbegm_result_is_refused_before_forward_simulation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     model = _build("finite")
-    solution = model.solve_result(
+    solution = model.solve(
         params=_PARAMS,
         log_level="off",
         retention=ResultRetention.VALUES,
@@ -930,7 +876,7 @@ def test_malformed_finite_nnbegm_payload_is_refused_before_forward(
     *, defect: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     model = _build("finite")
-    solution = model.solve_result(params=_PARAMS, log_level="off")
+    solution = model.solve(params=_PARAMS, log_level="off")
     policy_ref = next(
         ref for ref in solution.replay_artifacts if ref.key == SIMULATION_POLICY
     )
@@ -1009,7 +955,7 @@ def test_declared_egm_policy_read_requires_a_valid_egm_payload_before_forward(
             [deterministic_base.RegimeId.working_life], dtype=jnp.int32
         ),
     }
-    solution = model.solve_result(params=params, log_level="off")
+    solution = model.solve(params=params, log_level="off")
     regime_name = "working_life"
     ref = next(
         ref
@@ -1045,7 +991,7 @@ def test_adaptive_policy_omission_is_derived_from_model_authority(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     model = _build("adaptive")
-    published_then_dropped = model.solve_result(
+    published_then_dropped = model.solve(
         params=_PARAMS,
         log_level="off",
         retention=ResultRetention.VALUES,
@@ -1066,7 +1012,7 @@ def test_adaptive_policy_omission_is_derived_from_model_authority(
         )
 
     monkeypatch.setattr(backward_induction, "_run_period_kernel", _without_policy)
-    never_published = model.solve_result(
+    never_published = model.solve(
         params=_PARAMS,
         log_level="off",
         retention=ResultRetention.VALUES,
@@ -1079,7 +1025,7 @@ def test_nested_egm_payload_is_validated_recursively_before_forward(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     model = _build("adaptive")
-    solution = model.solve_result(params=_PARAMS, log_level="off")
+    solution = model.solve(params=_PARAMS, log_level="off")
     policy_ref = next(
         ref for ref in solution.replay_artifacts if ref.key == SIMULATION_POLICY
     )
@@ -1112,7 +1058,7 @@ def test_policy_without_a_declared_replay_route_is_refused_before_forward(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source_model = _build("adaptive")
-    source_solution = source_model.solve_result(params=_PARAMS, log_level="off")
+    source_solution = source_model.solve(params=_PARAMS, log_level="off")
     nested_policy = next(
         source_solution.replay_artifacts[ref]
         for ref in source_solution.replay_artifacts
@@ -1121,7 +1067,7 @@ def test_policy_without_a_declared_replay_route_is_refused_before_forward(
     assert isinstance(nested_policy, NestedEGMSimPolicy)
 
     model, params, initial_conditions = _small_grid_search_inputs()
-    solution = model.solve_result(params=params, log_level="off")
+    solution = model.solve(params=params, log_level="off")
     policy_ref = ArtifactRef(
         period=0,
         regime="working_life",
@@ -1151,7 +1097,7 @@ def test_values_only_dissolution_result_is_refused_before_forward_simulation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     model = _make_dissolution_model()
-    solution = model.solve_result(
+    solution = model.solve(
         params=_DISSOLUTION_PARAMS,
         log_level="off",
         retention=ResultRetention.VALUES,
@@ -1178,7 +1124,7 @@ def test_malformed_dissolution_flag_is_refused_before_forward(
     *, defect: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     model = _make_dissolution_model()
-    solution = model.solve_result(params=_DISSOLUTION_PARAMS, log_level="off")
+    solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="off")
     flag_ref = next(
         ref for ref in solution.replay_artifacts if ref.key == DISSOLUTION_FLAG
     )
@@ -1210,7 +1156,7 @@ def test_dissolution_flag_is_refused_from_the_wrong_artifact_channel(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     model = _make_dissolution_model()
-    solution = model.solve_result(params=_DISSOLUTION_PARAMS, log_level="off")
+    solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="off")
     flag_ref = next(
         ref for ref in solution.replay_artifacts if ref.key == DISSOLUTION_FLAG
     )

@@ -17,6 +17,7 @@ from _lcm.egm.interp import interp_on_padded_grid
 from _lcm.egm.published_policy import EGMSimPolicy
 from lcm import AgeGrid, LogSpacedGrid, Model
 from lcm.regime import Regime as UserRegime
+from lcm.solver_api import SIMULATION_POLICY
 from lcm.typing import ContinuousState, FloatND
 from lcm_examples.iskhakov_et_al_2017 import WEALTH_GRID
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
@@ -61,9 +62,8 @@ def test_solve_publishes_policy_matching_closed_form_consumption():
     discount_factor = 0.98
     params = get_retirement_only_params(n_periods=2, discount_factor=discount_factor)
 
-    _v, sim_policy = _two_period_bequest_model().solve(
-        params=params, log_level="debug", return_simulation_policy=True
-    )
+    _v = _two_period_bequest_model().solve(params=params, log_level="debug")
+    sim_policy = _v.replay_artifacts.project(SIMULATION_POLICY)
 
     pol = sim_policy[0]["retirement"]
     assert isinstance(pol, EGMSimPolicy)
@@ -87,9 +87,8 @@ def test_published_policies_are_host_resident():
     induction. So the returned policy arrays live on the host (CPU) device.
     """
     params = get_retirement_only_params(n_periods=2, discount_factor=0.98)
-    _v, sim_policy = _two_period_bequest_model().solve(
-        params=params, log_level="debug", return_simulation_policy=True
-    )
+    _v = _two_period_bequest_model().solve(params=params, log_level="debug")
+    sim_policy = _v.replay_artifacts.project(SIMULATION_POLICY)
 
     pol = sim_policy[0]["retirement"]
     assert isinstance(pol, EGMSimPolicy)

@@ -18,6 +18,7 @@ from _lcm.simulation.simulate import _replay_nnbegm_candidates
 from _lcm.utils.logging import get_logger
 from lcm import LinSpacedGrid
 from lcm.exceptions import RegimeInitializationError
+from lcm.solver_api import SIMULATION_POLICY
 from lcm.typing import ContinuousAction, ContinuousState
 from tests.test_models import n_nbegm_toy as toy
 from tests.test_models.n_nbegm_toy import RegimeId
@@ -46,7 +47,6 @@ def _simulate_rows(
             "age": jnp.full(n_subjects, 20.0),
             "regime_id": jnp.full(n_subjects, RegimeId.alive, dtype=jnp.int32),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
         seed=17,
         subject_batch_size=subject_batch_size,
@@ -111,7 +111,7 @@ def test_a_state_dependent_outer_slope_is_refused_where_it_is_declared(
     model = toy.build_model(variant="n_nbegm", n_periods=2)
 
     with pytest.raises(RegimeInitializationError) as refusal:
-        model.solve(params=_PARAMS, log_level="debug", return_simulation_policy=True)
+        model.solve(params=_PARAMS, log_level="debug")
 
     message = str(refusal.value)
     assert "illiquid_investment" in message
@@ -407,11 +407,11 @@ def _literal_bilinear(
 def _public_bank_data():
     """Solve once and expose immutable arrays as data to the independent oracle."""
     model = toy.build_model(variant="n_nbegm", n_periods=2)
-    values, policies = model.solve(
+    values = model.solve(
         params=_PARAMS,
         log_level="debug",
-        return_simulation_policy=True,
     )
+    policies = values.replay_artifacts.project(SIMULATION_POLICY)
     policy = policies[0]["alive"]
     assert isinstance(policy, NNBEGMSimPolicy)
     assert policy.state_names == ("wealth", "illiquid")
@@ -419,7 +419,7 @@ def _public_bank_data():
         np.asarray(policy.candidate_inner_action),
         np.asarray(policy.candidate_outer_target),
         np.asarray(policy.candidate_value),
-        np.asarray(values[1]["dead"]),
+        np.asarray(values.values[1]["dead"]),
         np.asarray(toy.WEALTH_GRID.to_jax()),
         np.asarray(toy.ILLIQUID_GRID.to_jax()),
     )

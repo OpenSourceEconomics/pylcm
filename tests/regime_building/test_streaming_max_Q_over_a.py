@@ -732,7 +732,7 @@ def _width_collision_Q_and_F(*, action, _lcm_action_block_width, next_regime_to_
                 "stakeholders": ("f", "m"),
                 "same_period_ref_regimes": ("reference",),
             },
-            _ActionStreamingDisposition.STREAMED,
+            _ActionStreamingDisposition.DENSE_COLLECTIVE_RESOURCES,
             id="collective-same-period-reference-without-co-map",
         ),
         pytest.param(
@@ -742,7 +742,7 @@ def _width_collision_Q_and_F(*, action, _lcm_action_block_width, next_regime_to_
         ),
         pytest.param(
             {"stakeholders": ("f", "m")},
-            _ActionStreamingDisposition.STREAMED,
+            _ActionStreamingDisposition.DENSE_COLLECTIVE_RESOURCES,
             id="collective-hard-max",
         ),
         pytest.param(
@@ -750,7 +750,7 @@ def _width_collision_Q_and_F(*, action, _lcm_action_block_width, next_regime_to_
                 "stakeholders": ("f", "m"),
                 "co_map_state_names": ("kind", "region"),
             },
-            _ActionStreamingDisposition.STREAMED,
+            _ActionStreamingDisposition.DENSE_COLLECTIVE_RESOURCES,
             id="collective-hard-max-plus-ordinary-co-map",
         ),
         pytest.param(
@@ -758,7 +758,7 @@ def _width_collision_Q_and_F(*, action, _lcm_action_block_width, next_regime_to_
                 "has_taste_shocks": True,
                 "discrete_actions": ("action",),
             },
-            _ActionStreamingDisposition.STREAMED,
+            _ActionStreamingDisposition.DENSE_EV1_NONCANONICAL,
             id="singleton-ev1",
         ),
         pytest.param(
@@ -767,7 +767,7 @@ def _width_collision_Q_and_F(*, action, _lcm_action_block_width, next_regime_to_
                 "discrete_actions": ("action",),
                 "co_map_state_names": ("kind", "region"),
             },
-            _ActionStreamingDisposition.STREAMED,
+            _ActionStreamingDisposition.DENSE_EV1_NONCANONICAL,
             id="singleton-ev1-plus-ordinary-co-map",
         ),
         pytest.param(
@@ -776,17 +776,17 @@ def _width_collision_Q_and_F(*, action, _lcm_action_block_width, next_regime_to_
                 "discrete_actions": ("action",),
                 "edge_reference_regimes": ("reference",),
             },
-            _ActionStreamingDisposition.STREAMED,
+            _ActionStreamingDisposition.DENSE_EV1_NONCANONICAL,
             id="singleton-ev1-edge-reference-without-co-map",
         ),
         pytest.param(
             {"enable_jit": False},
-            _ActionStreamingDisposition.DENSE_JIT_DISABLED,
+            _ActionStreamingDisposition.STREAMED,
             id="singleton-hard-max-jit-disabled",
         ),
         pytest.param(
             {"stakeholders": ("f", "m"), "enable_jit": False},
-            _ActionStreamingDisposition.DENSE_JIT_DISABLED,
+            _ActionStreamingDisposition.DENSE_COLLECTIVE_RESOURCES,
             id="collective-hard-max-jit-disabled",
         ),
         pytest.param(
@@ -795,7 +795,7 @@ def _width_collision_Q_and_F(*, action, _lcm_action_block_width, next_regime_to_
                 "discrete_actions": ("action",),
                 "enable_jit": False,
             },
-            _ActionStreamingDisposition.DENSE_JIT_DISABLED,
+            _ActionStreamingDisposition.DENSE_EV1_NONCANONICAL,
             id="singleton-ev1-jit-disabled",
         ),
         pytest.param(
@@ -807,6 +807,23 @@ def _width_collision_Q_and_F(*, action, _lcm_action_block_width, next_regime_to_
             {"actions_grid_shapes": (1,)},
             _ActionStreamingDisposition.DENSE_TRIVIAL_ACTION_PRODUCT,
             id="unit-action-product",
+        ),
+        pytest.param(
+            {
+                "has_taste_shocks": True,
+                "discrete_actions": ("action",),
+                "actions_grid_shapes": (1,),
+            },
+            _ActionStreamingDisposition.DENSE_TRIVIAL_ACTION_PRODUCT,
+            id="unit-action-product-precedes-ev1-gate",
+        ),
+        pytest.param(
+            {
+                "stakeholders": ("f", "m"),
+                "actions_grid_shapes": (1,),
+            },
+            _ActionStreamingDisposition.DENSE_TRIVIAL_ACTION_PRODUCT,
+            id="unit-action-product-precedes-collective-gate",
         ),
         pytest.param(
             {
@@ -841,9 +858,12 @@ def _width_collision_Q_and_F(*, action, _lcm_action_block_width, next_regime_to_
                 "has_taste_shocks": True,
                 "stakeholders": ("f", "m"),
                 "discrete_actions": ("action",),
+                "actions_grid_shapes": (1,),
+                "co_map_state_names": ("kind", "region"),
+                "edge_reference_regimes": ("reference",),
             },
             _ActionStreamingDisposition.UNSUPPORTED_COLLECTIVE_EV1,
-            id="collective-ev1",
+            id="unsupported-collective-ev1-precedes-dense-topology-gates",
         ),
         pytest.param(
             {

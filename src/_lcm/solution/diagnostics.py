@@ -14,6 +14,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 
+import jax
 import jax.numpy as jnp
 
 from _lcm.engine import Regime, StateActionSpace
@@ -107,9 +108,15 @@ def _fold_period_diagnostics(
     if not diagnostics_enabled:
         return running_any_nan, running_any_inf
     if stats_enabled:
-        diagnostic_min.append(jnp.min(V_arr))
-        diagnostic_max.append(jnp.max(V_arr))
-        diagnostic_mean.append(jnp.mean(V_arr))
+        diagnostic_min.append(
+            _place_like(scalar=jnp.min(V_arr), running=running_any_nan)
+        )
+        diagnostic_max.append(
+            _place_like(scalar=jnp.max(V_arr), running=running_any_nan)
+        )
+        diagnostic_mean.append(
+            _place_like(scalar=jnp.mean(V_arr), running=running_any_nan)
+        )
     diagnostic_rows.append(
         _DiagnosticRow(
             regime_name=regime_name,
@@ -118,9 +125,33 @@ def _fold_period_diagnostics(
         )
     )
     return (
-        running_any_nan | v_array_has_nan(V_arr),
-        running_any_inf | v_array_has_inf(V_arr),
+        _fold_flag(running=running_any_nan, observed=v_array_has_nan(V_arr)),
+        _fold_flag(running=running_any_inf, observed=v_array_has_inf(V_arr)),
     )
+
+
+def _fold_flag(*, running: BoolND, observed: BoolND) -> BoolND:
+    """OR one observed flag into the running flag regardless of placement.
+
+    A value array is born wherever its program's planned output layout puts it: a
+    terminal regime's value on one committed device, a distributed regime's value
+    sharded across the mesh. Two scalars committed to different device sets cannot
+    be combined directly, so the observed flag is moved onto the running flag's
+    placement first. That is one scalar transfer per (regime, period); the
+    reduction over the value array itself stays partitioned across its devices.
+    """
+    return running | _place_like(scalar=observed, running=running)
+
+
+def _place_like(*, scalar: FloatND | BoolND, running: BoolND) -> FloatND | BoolND:
+    """Move one reduced scalar onto the running-flag placement.
+
+    Every per-period scalar the diagnostics keep — the NaN/Inf flags and the
+    min/max/mean stats — is later combined across regimes and periods, so all of
+    them share the running flag's placement rather than the placement of the
+    value array they were reduced from.
+    """
+    return jax.device_put(scalar, running.sharding)
 
 
 def _emit_post_loop_diagnostics(

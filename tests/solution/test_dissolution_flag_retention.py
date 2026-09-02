@@ -1,22 +1,18 @@
 """Backward induction keeps a collective regime's flag `D` only where it is read.
 
 A collective regime's kernel publishes a boolean dissolution flag `D` on its
-state axes alongside `V`, one array per period. Two things can consume the
-accumulated per-period mapping: a gated edge whose gate declares the `D_target`
-operand (forward simulation recomputes such a gate from the flag), and a caller
-that asks for the flags with `Model.solve(return_dissolution_flags=True)`.
+state axes alongside `V`, one array per period. A gated edge whose gate declares
+the `D_target` operand consumes it during replay. The default public
+`SolutionResult` also retains it as an addressed replay artifact; a values-only
+result omits it deliberately.
 
-When neither holds, the arrays are retained for the whole backward induction and
-nobody reads them. Whether a gate declares `D_target` is decided by the gate's
-own signature, so backward induction settles it before the first kernel runs and
-drops the accumulation for the models where it is dead. The flags a reader does
-ask for, and every value function, are unaffected.
+Inside backward induction, a flag-reading gate keeps these arrays even when the
+caller does not request replay retention. Without such a gate, retaining the
+arrays is a post-solve choice. That choice never affects any value function.
 
 The two models here differ in exactly one respect — whether the source's gate
 declares `D_target` — so a difference between them is attributable to that.
 """
-
-from types import MappingProxyType
 
 import jax.numpy as jnp
 import numpy as np
@@ -37,6 +33,7 @@ from lcm import (
     categorical,
     fixed_transition,
 )
+from lcm.solver_api import DISSOLUTION_FLAG, ResultRetention
 from lcm.transition import MarkovTransition
 from lcm.typing import (
     BoolND,
@@ -399,17 +396,16 @@ def test_solve_retains_flags_when_a_gate_reads_the_dissolution_flag():
     assert _retained_flag_arrays(result.dissolution_flags) != []
 
 
-def test_opting_in_retains_flags_even_without_a_flag_reading_gate():
-    """`return_dissolution_flags=True` surfaces `D` for any collective model.
+def test_default_public_result_retains_flags_without_a_flag_reading_gate():
+    """Default replay retention surfaces `D` for any collective model.
 
-    The request stands on its own: a caller inspecting a collective regime's
-    empty-mask cells gets them even though no gate in the model reads them.
+    A caller inspecting a collective regime's empty-mask cells gets them even
+    though no gate in the model reads them.
     """
     model, params = _make_consent_model()
 
-    _value_functions, dissolution_flags = model.solve(
-        params=params, log_level="off", return_dissolution_flags=True
-    )
+    solution = model.solve(params=params, log_level="off")
+    dissolution_flags = solution.replay_artifacts.project(DISSOLUTION_FLAG)
 
     assert any(len(regime_map) > 0 for regime_map in dissolution_flags.values())
 
@@ -440,12 +436,12 @@ def test_value_functions_do_not_depend_on_whether_flags_are_retained(make_model)
             )
 
 
-def test_simulate_is_unchanged_when_the_solve_drops_unread_flags():
+def test_simulate_is_unchanged_when_a_result_drops_unread_flags():
     """A gated edge whose gate reads no flag simulates the same without them.
 
     The consent gate's operands are value components and gate refs, so the
     simulated path is identical whether the collective target's flags are
-    threaded into `simulate` or absent entirely.
+    retained in the result or deliberately omitted.
     """
     model, params = _make_consent_model()
     initial_conditions = {
@@ -453,25 +449,26 @@ def test_simulate_is_unchanged_when_the_solve_drops_unread_flags():
         "age": jnp.zeros(3),
         "regime_id": jnp.full(3, ConsentRegimeId.single_f, dtype=jnp.int32),
     }
-    value_functions, flags = model.solve(
-        params=params, log_level="off", return_dissolution_flags=True
+    with_flags = model.solve(params=params, log_level="off")
+    without_flags = model.solve(
+        params=params,
+        log_level="off",
+        retention=ResultRetention.VALUES,
     )
 
-    with_flags = model.simulate(
+    with_flags_frame = model.simulate(
         params=params,
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=value_functions,
-        period_to_regime_to_dissolution_flags=flags,
+        solution=with_flags,
         log_level="off",
         seed=0,
     ).to_dataframe()
-    without_flags = model.simulate(
+    without_flags_frame = model.simulate(
         params=params,
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=value_functions,
-        period_to_regime_to_dissolution_flags=MappingProxyType({}),
+        solution=without_flags,
         log_level="off",
         seed=0,
     ).to_dataframe()
 
-    assert with_flags.equals(without_flags)
+    assert with_flags_frame.equals(without_flags_frame)

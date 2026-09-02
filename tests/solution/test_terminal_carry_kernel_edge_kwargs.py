@@ -103,7 +103,7 @@ def test_gated_edge_source_solves_beside_an_endogenous_grid_regime():
     )
     solution = model.solve(
         params={"discount_factor": DISCOUNT_FACTOR}, log_level="debug"
-    )
+    ).values
     np.testing.assert_allclose(
         np.asarray(solution[0]["mover"]),
         np.array(MOVER_V_PERIOD_0),
@@ -124,7 +124,7 @@ def test_gated_edge_source_solves_on_its_own():
     )
     solution = model.solve(
         params={"discount_factor": DISCOUNT_FACTOR}, log_level="debug"
-    )
+    ).values
     np.testing.assert_allclose(
         np.asarray(solution[0]["mover"]),
         np.array(MOVER_V_PERIOD_0),

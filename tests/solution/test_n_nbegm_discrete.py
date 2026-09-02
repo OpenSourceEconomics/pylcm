@@ -33,11 +33,15 @@ def _interior_gaps(
     constrained-region and extrapolation conventions rather than the quantity
     under test, so they are excluded.
     """
-    nested = build(variant="n_nbegm", n_periods=n_periods).solve(
-        params=params, log_level="off"
+    nested = (
+        build(variant="n_nbegm", n_periods=n_periods)
+        .solve(params=params, log_level="off")
+        .values
     )
-    brute = build(variant="brute", n_periods=n_periods).solve(
-        params=params, log_level="off"
+    brute = (
+        build(variant="brute", n_periods=n_periods)
+        .solve(params=params, log_level="off")
+        .values
     )
     return {
         period: float(
@@ -70,11 +74,15 @@ def test_the_discrete_branch_binds_somewhere_on_the_grid() -> None:
     branch is never taken and the comparison would degenerate to the smooth
     toy's.
     """
-    priced = toy.build_model(variant="brute", n_periods=2).solve(
-        params=_PARAMS, log_level="off"
+    priced = (
+        toy.build_model(variant="brute", n_periods=2)
+        .solve(params=_PARAMS, log_level="off")
+        .values
     )
-    never = toy.build_model(variant="brute", n_periods=2).solve(
-        params=_NO_INSURANCE_PARAMS, log_level="off"
+    never = (
+        toy.build_model(variant="brute", n_periods=2)
+        .solve(params=_NO_INSURANCE_PARAMS, log_level="off")
+        .values
     )
     assert np.any(np.asarray(priced[0]["alive"]) > np.asarray(never[0]["alive"]) + 1e-8)
 

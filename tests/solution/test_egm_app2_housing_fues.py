@@ -95,10 +95,10 @@ def test_app2_fues_matches_vfi_on_liquid_interior(
     )
     dcegm_solution = dcegm_model.solve(
         params=build_params(variant="dcegm"), log_level="debug"
-    )
+    ).values
     brute_solution = brute_model.solve(
         params=build_params(variant="brute"), log_level="debug"
-    )
+    ).values
 
     interior = slice(N_LOW_NODES, N_LIQUID - N_HIGH_NODES)
     scored_periods = [

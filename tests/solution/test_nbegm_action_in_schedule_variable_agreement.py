@@ -32,7 +32,7 @@ def _solve(*, variant: str, n_consumption: int) -> Mapping[int, Mapping]:
     )
     return model.solve(
         params=toy.build_params(action_in_schedule_variable=True), log_level="debug"
-    )
+    ).values
 
 
 def test_nbegm_action_in_schedule_variable_matches_brute() -> None:

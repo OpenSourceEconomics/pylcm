@@ -9,7 +9,19 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.execution.core_program import CoreProgram, resolve_core_program
+from _lcm.execution.core_program import (
+    CoreBuildContext,
+    CoreExecutionDisposition,
+    CoreExecutionRequirements,
+    CoreProgram,
+    MaterializedCoreProgram,
+    StreamableProductAxis,
+    core_program_graph,
+    initial_core_tile_widths,
+    materialize_core_program,
+    resolve_core_program,
+)
+from _lcm.execution.output_layout import VALUE
 from _lcm.execution.value_transfer import (
     ResolvedValueTransfer,
     ValueTransferKind,
@@ -19,11 +31,16 @@ from _lcm.regime_building.max_Q_over_a import (
     get_max_Q_over_a,
     get_streaming_max_Q_over_a,
 )
+from _lcm.solution.action_reduction import HARD_MAX_REDUCTION
 from _lcm.solution.backward_induction import (
     _build_continuation_templates,
     _edge_kwargs,
 )
-from _lcm.solution.grid_search import _GridSearchPeriodKernel
+from _lcm.solution.grid_search import (
+    _GridSearchArgumentBuilder,
+    _GridSearchPeriodKernel,
+    _target_value_accesses,
+)
 from lcm import Model
 from tests.simulation.test_aot_collective_and_gated import _make_consent_model
 from tests.simulation.test_aot_same_period_refs import _make_participation_model
@@ -34,7 +51,7 @@ def _materialize_program(
     model: Model,
     regime_name: str,
     params: Mapping[str, Any],
-) -> tuple[_GridSearchPeriodKernel, Mapping[str, object], CoreProgram]:
+) -> tuple[_GridSearchArgumentBuilder, MaterializedCoreProgram]:
     """Build exactly the program arguments used by backward induction."""
     flat_params = model._process_params(params)
     next_V, next_continuation, next_edges = _build_continuation_templates(
@@ -52,8 +69,8 @@ def _materialize_program(
     )
     kernel = regime.solution.period_kernels[0]
     assert isinstance(kernel, _GridSearchPeriodKernel)
-    arguments = kernel.build_lower_args(
-        core_key="main",
+    program = core_program_graph(kernel=kernel)["main"]
+    context = CoreBuildContext(
         state_action_space=regime.solution.state_action_space(
             regime_params=flat_params[regime_name]
         ),
@@ -62,11 +79,10 @@ def _materialize_program(
         flat_params=flat_params,
         period=0,
         ages=model.ages,
-        **edge_kwargs,
+        edge_regime_to_V_arr=edge_kwargs.get("edge_regime_to_V_arr"),
     )
-    program = kernel.build_core_program(core_key="main", arguments=arguments)
-    assert program is not None
-    return kernel, arguments, program
+    builder = cast("_GridSearchArgumentBuilder", program.argument_builder)
+    return builder, materialize_core_program(program=program, context=context)
 
 
 def _assert_tree_equal(*, actual: object, expected: object) -> None:
@@ -79,7 +95,7 @@ def _assert_tree_equal(*, actual: object, expected: object) -> None:
 
 
 def _aligned_transfer_plan(
-    *, program: CoreProgram
+    *, program: MaterializedCoreProgram
 ) -> tuple[ResolvedValueTransfer, ...]:
     """Resolve identity adapters for this test's already local JAX arrays."""
     result: list[ResolvedValueTransfer] = []
@@ -112,7 +128,14 @@ def _consent_case() -> Model:
 
 
 @pytest.mark.parametrize(
-    ("model_factory", "regime_name", "params", "expected_channels"),
+    (
+        "model_factory",
+        "regime_name",
+        "params",
+        "expected_channels",
+        "expected_disposition",
+        "expected_reason",
+    ),
     [
         pytest.param(
             _participation_case,
@@ -128,6 +151,8 @@ def _consent_case() -> Model:
                 "single_f_terminal": {},
             },
             (("single_f",), (), ()),
+            CoreExecutionDisposition.DENSE,
+            "deliberately_dense:collective_resource_regression",
             id="same-period-reference",
         ),
         pytest.param(
@@ -135,38 +160,54 @@ def _consent_case() -> Model:
             "single",
             {"discount_factor": 0.95},
             ((), ("single_terminal",), ("married_terminal",)),
+            CoreExecutionDisposition.PLANNED,
+            None,
             id="edge-reference-and-gated-target",
         ),
     ],
 )
-def test_value_dependent_model_declares_a_dense_equivalent_streamed_program(
+def test_value_dependent_model_declares_its_required_program_disposition(
     *,
     model_factory: Callable[[], Model],
     regime_name: str,
     params: Mapping[str, Any],
     expected_channels: tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]],
+    expected_disposition: CoreExecutionDisposition,
+    expected_reason: str | None,
 ) -> None:
-    """Processed same-period and edge routes opt into the planned core."""
-    kernel, arguments, program = _materialize_program(
+    """Processed reference routes retain channels on their one native program."""
+    builder, program = _materialize_program(
         model=model_factory(),
         regime_name=regime_name,
         params=params,
     )
 
     assert (
-        kernel.same_period_ref_regimes,
-        kernel.edge_reference_regimes,
-        kernel.edge_target_regimes,
+        builder.same_period_ref_regimes,
+        builder.edge_reference_regimes,
+        builder.edge_target_regimes,
     ) == expected_channels
-    assert kernel.unwrapped_core is not None
-    dense = kernel.unwrapped_core(**arguments)
+    assert program.disposition is expected_disposition
+    assert program.disposition_reason == expected_reason
+    assert bool(program.requirements.streamable_axes) is (
+        expected_disposition is CoreExecutionDisposition.PLANNED
+    )
+    transfer_plan = (
+        _aligned_transfer_plan(program=program)
+        if expected_disposition is CoreExecutionDisposition.PLANNED
+        else ()
+    )
     resolved = resolve_core_program(
         program=program,
-        tile_widths={"action": 1},
-        input_transfer_plan=_aligned_transfer_plan(program=program),
+        tile_widths=initial_core_tile_widths(program=program),
+        input_transfer_plan=transfer_plan,
     )
-    streamed = resolved.function(**resolved.arguments, **resolved.static_kwargs)
-    _assert_tree_equal(actual=streamed, expected=dense)
+    actual = resolved.function(**resolved.arguments, **resolved.static_kwargs)
+    if expected_disposition is CoreExecutionDisposition.DENSE:
+        expected = program.function(**program.arguments)
+        _assert_tree_equal(actual=actual, expected=expected)
+    else:
+        assert jax.tree.leaves(actual)
 
 
 def _observable_Q_and_F(
@@ -190,10 +231,8 @@ def _observable_Q_and_F(
     return value, choice != 1.0
 
 
-def _observable_route() -> tuple[
-    _GridSearchPeriodKernel, Mapping[str, object], CoreProgram
-]:
-    """Build a three-action route whose final width-two block is partial."""
+def _observable_route() -> tuple[Callable[..., object], MaterializedCoreProgram]:
+    """Build a dense oracle and a non-production streamed reference program."""
     dense = get_max_Q_over_a(
         Q_and_F=_observable_Q_and_F,
         batch_sizes={},
@@ -205,19 +244,6 @@ def _observable_route() -> tuple[
         batch_sizes={},
         action_names=("choice",),
         state_names=(),
-    )
-    kernel = _GridSearchPeriodKernel(
-        core=dense,
-        unwrapped_core=dense,
-        streamed_core=streamed,
-        action_names=("choice",),
-        action_extents=(3,),
-        regime_name="source",
-        period=0,
-        target_regimes=("target",),
-        same_period_ref_regimes=("reference",),
-        edge_reference_regimes=("outside",),
-        edge_target_regimes=("target",),
     )
     arguments: Mapping[str, object] = MappingProxyType(
         {
@@ -233,17 +259,52 @@ def _observable_route() -> tuple[
             },
         }
     )
-    program = kernel.build_core_program(core_key="main", arguments=arguments)
-    assert program is not None
-    return kernel, arguments, program
+    declaration = CoreProgram(
+        name="main",
+        function=streamed,
+        argument_builder=lambda _context: arguments,
+        requirements=CoreExecutionRequirements(
+            streamable_axes=(
+                StreamableProductAxis(
+                    name="action",
+                    coordinate_names=("choice",),
+                    coordinate_extents=(3,),
+                    canonical_order="c",
+                    reduction=HARD_MAX_REDUCTION,
+                    width_keyword="_lcm_action_block_width",
+                ),
+            ),
+            target_value_accesses=_target_value_accesses(
+                regime_name="source",
+                period=0,
+                target_regimes=("target",),
+                same_period_ref_regimes=("reference",),
+                edge_reference_regimes=("outside",),
+                edge_target_regimes=("target",),
+            ),
+        ),
+        output_roles=VALUE,
+        disposition=CoreExecutionDisposition.PLANNED,
+    )
+    program = materialize_core_program(
+        program=declaration,
+        context=CoreBuildContext(
+            state_action_space=object(),
+            next_regime_to_V_arr={},
+            next_regime_to_continuation={},
+            flat_params={},
+            period=0,
+            ages=object(),
+        ),
+    )
+    return dense, program
 
 
 @pytest.mark.parametrize("width", [1, 2], ids=["unit", "partial-tail"])
-def test_value_dependent_program_matches_dense_eager_jit_and_aot(width: int) -> None:
-    """Block width cannot alter support or any value-dependent input."""
-    kernel, arguments, program = _observable_route()
-    assert kernel.unwrapped_core is not None
-    dense = kernel.unwrapped_core(**arguments)
+def test_value_dependent_reference_matches_dense_eager_jit_and_aot(width: int) -> None:
+    """The reference stream preserves support and every value-dependent input."""
+    dense_function, program = _observable_route()
+    dense = dense_function(**program.arguments)
     resolved = resolve_core_program(
         program=program,
         tile_widths={"action": width},

@@ -192,11 +192,15 @@ def test_egm_matches_dense_grid_search_across_a_renamed_terminal_state(period):
     beyond this bound.
     """
     params = _params()
-    egm = _model(solver=EGM(savings_grid=_SAVINGS_GRID)).solve(
-        params=params, log_level="debug"
+    egm = (
+        _model(solver=EGM(savings_grid=_SAVINGS_GRID))
+        .solve(params=params, log_level="debug")
+        .values
     )
-    brute = _model(solver=GridSearch(), n_consumption=600).solve(
-        params=params, log_level="debug"
+    brute = (
+        _model(solver=GridSearch(), n_consumption=600)
+        .solve(params=params, log_level="debug")
+        .values
     )
     got = np.asarray(egm[period]["alive"])[_UNCONSTRAINED]
     expected = np.asarray(brute[period]["alive"])[_UNCONSTRAINED]

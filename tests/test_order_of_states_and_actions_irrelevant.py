@@ -36,7 +36,7 @@ def _solve(**overrides):
     model = get_model(
         n_periods=_N_PERIODS, n_liquid=_N_BOTH, n_pension=_N_BOTH, **overrides
     )
-    return model.solve(params=get_params(), log_level="off")
+    return model.solve(params=get_params(), log_level="off").values
 
 
 def _periods_with(*, solution, regime):

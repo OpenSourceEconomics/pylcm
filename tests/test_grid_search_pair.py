@@ -13,7 +13,7 @@ import pytest
 
 from benchmarks.grid_search_pair import (
     _assert_pair_identity,
-    _assert_scenario_streaming_target,
+    _assert_scenario_execution_target,
     _compare_array_manifests,
     _compare_measurement_identity,
     _compare_value_artifacts,
@@ -53,7 +53,8 @@ def _run_git(checkout: Path, *arguments: str) -> str:
 def _kernel(
     *,
     regime: str,
-    streamed: bool = False,
+    execution_disposition: str = "legacy-unplanned",
+    disposition_reason: str | None = "legacy_adapter",
     collective: bool = False,
     has_taste_shocks: bool = False,
     fold_state_names: tuple[str, ...] = (),
@@ -63,11 +64,21 @@ def _kernel(
         "period": 0,
         "action_names": ["consumption"],
         "action_extents": [10],
-        "streamed": streamed,
+        "streamed": execution_disposition == "planned",
+        "execution_disposition": execution_disposition,
+        "disposition_reason": disposition_reason,
         "collective": collective,
         "has_taste_shocks": has_taste_shocks,
         "fold_state_names": list(fold_state_names),
     }
+
+
+def _set_execution(
+    *, row: dict[str, Any], disposition: str, reason: str | None
+) -> None:
+    row["streamed"] = disposition == "planned"
+    row["execution_disposition"] = disposition
+    row["disposition_reason"] = reason
 
 
 def _routes(
@@ -199,6 +210,19 @@ def test_scenario_registry_is_the_five_row_closure_matrix() -> None:
     assert SCENARIOS["distributed-co-map"].expected_distributed
     assert SCENARIOS["folded-hard-max"].expected_folded
     assert SCENARIOS["collective-gs-vd"].expected_collective
+    assert SCENARIOS["singleton-hard-max"].expected_head_disposition == "planned"
+    assert SCENARIOS["distributed-co-map"].expected_head_disposition == "planned"
+    assert SCENARIOS["folded-hard-max"].expected_head_disposition == "planned"
+    assert SCENARIOS["singleton-ev1"].expected_head_disposition == "dense"
+    assert (
+        SCENARIOS["singleton-ev1"].expected_head_disposition_reason
+        == "deliberately_dense:ev1_canonical_reduction_order"
+    )
+    assert SCENARIOS["collective-gs-vd"].expected_head_disposition == "dense"
+    assert (
+        SCENARIOS["collective-gs-vd"].expected_head_disposition_reason
+        == "deliberately_dense:collective_resource_regression"
+    )
 
 
 @pytest.mark.parametrize(
@@ -239,7 +263,7 @@ def test_scenario_registry_is_the_five_row_closure_matrix() -> None:
         ),
     ],
 )
-def test_streaming_must_cover_every_named_nontrivial_target_kernel(
+def test_execution_disposition_must_cover_every_named_nontrivial_target_kernel(
     *,
     scenario: str,
     target: dict[str, Any],
@@ -253,28 +277,37 @@ def test_streaming_must_cover_every_named_nontrivial_target_kernel(
         **route_kwargs,
     )
     head = deepcopy(base)
-    head["kernels"][2]["streamed"] = True
-    head["streamed_kernel_count"] = 1
+    _set_execution(row=head["kernels"][2], disposition="planned", reason=None)
+    head["streamed_kernel_count"] = sum(row["streamed"] for row in head["kernels"])
 
-    with pytest.raises(RuntimeError, match="left named target kernels dense"):
-        _assert_scenario_streaming_target(
+    with pytest.raises(RuntimeError, match="required execution disposition"):
+        _assert_scenario_execution_target(
             scenario=scenario,
             base_routes=base,
             head_routes=head,
         )
 
-    head["kernels"][0]["streamed"] = True
-    head["streamed_kernel_count"] = 2
-    with pytest.raises(RuntimeError, match="left named target kernels dense"):
-        _assert_scenario_streaming_target(
+    spec = SCENARIOS[scenario]
+    _set_execution(
+        row=head["kernels"][0],
+        disposition=spec.expected_head_disposition,
+        reason=spec.expected_head_disposition_reason,
+    )
+    head["streamed_kernel_count"] = sum(row["streamed"] for row in head["kernels"])
+    with pytest.raises(RuntimeError, match="required execution disposition"):
+        _assert_scenario_execution_target(
             scenario=scenario,
             base_routes=base,
             head_routes=head,
         )
 
-    head["kernels"][1]["streamed"] = True
-    head["streamed_kernel_count"] = 3
-    _assert_scenario_streaming_target(
+    _set_execution(
+        row=head["kernels"][1],
+        disposition=spec.expected_head_disposition,
+        reason=spec.expected_head_disposition_reason,
+    )
+    head["streamed_kernel_count"] = sum(row["streamed"] for row in head["kernels"])
+    _assert_scenario_execution_target(
         scenario=scenario,
         base_routes=base,
         head_routes=head,
@@ -286,7 +319,7 @@ def test_measurement_identity_allows_only_streaming_and_cache_path_differences()
 ):
     base_routes = _routes(kernels=[_kernel(regime="working")])
     head_routes = deepcopy(base_routes)
-    head_routes["kernels"][0]["streamed"] = True
+    _set_execution(row=head_routes["kernels"][0], disposition="planned", reason=None)
     head_routes["streamed_kernel_count"] = 1
     base = _measurement_identity_fixture(routes=base_routes)
     head = _measurement_identity_fixture(routes=head_routes)
@@ -347,11 +380,39 @@ def test_block_result_descends_mapping_proxy_trees() -> None:
     assert dissolution.calls == 1
 
 
+def test_block_result_projects_solution_result_dissolution_artifacts() -> None:
+    class PendingLeaf:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def block_until_ready(self) -> None:
+            self.calls += 1
+
+    class ArtifactKey:
+        type_id = "pylcm.collective.dissolution_flag"
+
+    class ArtifactRef:
+        key = ArtifactKey()
+        period = 0
+        regime = "working"
+
+    class SolutionResult:
+        values = MappingProxyType({0: MappingProxyType({"working": PendingLeaf()})})
+        replay_artifacts = MappingProxyType({ArtifactRef(): PendingLeaf()})
+
+    result = SolutionResult()
+    _block_result(result)
+
+    assert result.values[0]["working"].calls == 1
+    assert next(iter(result.replay_artifacts.values())).calls == 1
+
+
 def test_all_five_scenarios_construct_with_their_declared_topology(
     tmp_path: Path,
 ) -> None:
     code = """
 import sys
+from math import prod
 from pathlib import Path
 
 import jax
@@ -378,7 +439,16 @@ for name, spec in SCENARIOS.items():
     assert isinstance(params, dict)
     routes = _route_metadata(model)
     _assert_scenario_identity(spec=spec, routes=routes)
-    assert routes["streamed_kernel_count"] > 0, (name, routes)
+    nontrivial = [
+        row
+        for row in routes["kernels"]
+        if row["action_names"] and prod(row["action_extents"]) > 1
+    ]
+    assert any(
+        row["execution_disposition"] == spec.expected_head_disposition
+        and row["disposition_reason"] == spec.expected_head_disposition_reason
+        for row in nontrivial
+    ), (name, routes)
     dimensions = _scenario_dimensions(model)
     assert dimensions["n_periods"] > 1
     assert dimensions["regimes"]
@@ -841,7 +911,7 @@ def test_metric_summary_preserves_raw_samples_and_uses_per_core_maxima() -> None
     assert result["communication_collective_count"] == 1
 
 
-def test_pair_summary_requires_dense_base_and_streamed_head() -> None:
+def test_pair_summary_requires_dense_base_and_allows_deliberately_dense_head() -> None:
     common = {
         "cold_solve_ns": 100,
         "cold_aot_compile_ns": 80,
@@ -859,14 +929,14 @@ def test_pair_summary_requires_dense_base_and_streamed_head() -> None:
     )
     assert result["head_over_base"]["cold_solve_ns"] == 1.0
     assert result["head_over_base"]["device_peak_bytes"] is None
+    dense_result = _pair_summary(
+        base={**common, "streamed_kernel_count": 0},
+        head={**common, "streamed_kernel_count": 0},
+    )
+    assert dense_result["head_over_base"]["cold_solve_ns"] == 1.0
 
     with pytest.raises(RuntimeError, match="base unexpectedly"):
         _pair_summary(
             base={**common, "streamed_kernel_count": 1},
             head={**common, "streamed_kernel_count": 1},
-        )
-    with pytest.raises(RuntimeError, match="head contains no"):
-        _pair_summary(
-            base={**common, "streamed_kernel_count": 0},
-            head={**common, "streamed_kernel_count": 0},
         )

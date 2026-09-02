@@ -12,19 +12,24 @@ import pytest
 from numpy.testing import assert_array_equal
 
 from _lcm.execution.core_program import (
+    CoreBuildContext,
+    CoreExecutionDisposition,
     CoreExecutionRequirements,
     CoreProgram,
-    CoreProgramAware,
+    CoreProgramGraphAware,
+    MaterializedCoreProgram,
     ReductionSemantics,
     ResolvedCoreProgram,
     StreamableProductAxis,
     _TargetValueAccess,
+    core_program_graph,
+    initial_core_tile_widths,
+    materialize_core_program,
     resolve_core_program,
 )
 from _lcm.execution.output_layout import (
     DISSOLUTION_FLAG,
     VALUE,
-    resolve_output_layout,
 )
 from _lcm.execution.value_transfer import (
     ValueArtifactAddress,
@@ -32,17 +37,10 @@ from _lcm.execution.value_transfer import (
     ValueConsumerAddress,
     ValueInputChannel,
 )
-from _lcm.solution.action_reduction import (
-    COLLECTIVE_HARD_MAX_REDUCTION,
-    HARD_MAX_REDUCTION,
-)
-from _lcm.solution.action_streaming import (
-    GridSearchEV1ActionReduction,
-)
+from _lcm.solution.action_reduction import HARD_MAX_REDUCTION
 from _lcm.solution.backward_induction import (
     _assert_lowered_output_roles,
     _build_continuation_templates,
-    _initial_tile_widths,
     _resolve_value_input_transfer_plan,
 )
 from lcm.solvers import GridSearch
@@ -113,19 +111,22 @@ def _program(
     *,
     axis: StreamableProductAxis | None = None,
     arguments: Mapping[str, object] | None = None,
-) -> CoreProgram:
+) -> MaterializedCoreProgram:
     if arguments is None:
         arguments = {
             "first": jnp.asarray([0, 1]),
             "second": jnp.asarray([10, 20, 30]),
         }
-    return CoreProgram(
+    return MaterializedCoreProgram(
+        name="main",
         function=_hard_max_core,
         arguments=arguments,
         requirements=CoreExecutionRequirements(
             streamable_axes=(_axis() if axis is None else axis,)
         ),
         output_roles=VALUE,
+        disposition=CoreExecutionDisposition.PLANNED,
+        donation_candidates=(),
     )
 
 
@@ -173,13 +174,16 @@ def _value_consumer_program(
     *,
     accesses: tuple[_TargetValueAccess, ...],
     arguments: Mapping[str, object],
-) -> CoreProgram:
+) -> MaterializedCoreProgram:
     """Build a synthetic program around exact value-consumer declarations."""
-    return CoreProgram(
+    return MaterializedCoreProgram(
+        name="main",
         function=_unused_value_consumer_core,
         arguments=arguments,
         requirements=CoreExecutionRequirements(target_value_accesses=accesses),
         output_roles=VALUE,
+        disposition=CoreExecutionDisposition.PLANNED,
+        donation_candidates=(),
     )
 
 
@@ -343,45 +347,42 @@ def test_value_input_planning_accepts_core_without_value_consumers() -> None:
 class _Provider:
     program: CoreProgram
 
-    def build_core_program(
-        self,
-        *,
-        core_key: str,
-        arguments: Mapping[str, object],
-    ) -> CoreProgram | None:
-        assert core_key == "main"
-        assert arguments is self.program.arguments
-        return self.program
+    def core_programs(self) -> Mapping[str, CoreProgram]:
+        return MappingProxyType({"main": self.program})
 
 
-def test_core_program_aware_is_an_optional_structural_seam() -> None:
-    program = _program()
+def test_core_program_graph_is_the_native_structural_seam() -> None:
+    program = CoreProgram(
+        name="main",
+        function=_hard_max_core,
+        argument_builder=lambda _context: {
+            "first": jnp.asarray([0, 1]),
+            "second": jnp.asarray([10, 20, 30]),
+        },
+        requirements=CoreExecutionRequirements(streamable_axes=(_axis(),)),
+        output_roles=VALUE,
+        disposition=CoreExecutionDisposition.PLANNED,
+    )
     provider = _Provider(program=program)
 
-    assert isinstance(provider, CoreProgramAware)
-    assert (
-        provider.build_core_program(core_key="main", arguments=program.arguments)
-        is program
-    )
+    assert isinstance(provider, CoreProgramGraphAware)
+    assert core_program_graph(kernel=provider)["main"] is program
 
 
 def test_explicit_core_program_cannot_omit_output_roles_on_unsharded_template() -> None:
     template = jnp.zeros((2,), dtype=jnp.float32)
     program = CoreProgram(
+        name="main",
         function=lambda *, value: value,
-        arguments={"value": template},
+        argument_builder=lambda _context: {"value": template},
         requirements=CoreExecutionRequirements(),
         output_roles=None,
+        disposition=CoreExecutionDisposition.DENSE,
+        disposition_reason="test_dense_route",
     )
 
     with pytest.raises(ValueError, match=r"output.?roles"):
-        resolve_output_layout(
-            kernel=object(),
-            core_key="main",
-            value_template=template,
-            state_order=("state",),
-            output_roles=program.output_roles,
-        )
+        core_program_graph(kernel=_Provider(program=program))
 
 
 def _wrong_shape_value_core(*, value: jax.Array) -> jax.Array:
@@ -404,11 +405,15 @@ def test_explicit_value_program_rejects_wrong_lowered_metadata_before_compile(
     *, function: Callable[..., object], message: str
 ) -> None:
     template = jnp.zeros((2,), dtype=jnp.float32)
-    program = CoreProgram(
+    program = MaterializedCoreProgram(
+        name="main",
         function=function,
         arguments={"value": template},
         requirements=CoreExecutionRequirements(),
         output_roles=VALUE,
+        disposition=CoreExecutionDisposition.DENSE,
+        donation_candidates=(),
+        disposition_reason="test_dense_route",
     )
     resolved = resolve_core_program(program=program, tile_widths={})
     lowered = jax.jit(resolved.function).lower(**resolved.arguments)
@@ -461,8 +466,7 @@ def test_ordinary_singleton_grid_search_declares_action_core_program() -> None:
     )
     regime = model._regimes["alive"]
     kernel = regime.solution.period_kernels[0]
-    arguments = kernel.build_lower_args(
-        core_key="main",
+    context = CoreBuildContext(
         state_action_space=regime.solution.state_action_space(
             regime_params=flat_params["alive"]
         ),
@@ -473,13 +477,21 @@ def test_ordinary_singleton_grid_search_declares_action_core_program() -> None:
         ages=model.ages,
     )
 
-    assert isinstance(kernel, CoreProgramAware)
-    program = kernel.build_core_program(core_key="main", arguments=arguments)
+    assert isinstance(kernel, CoreProgramGraphAware)
+    program = core_program_graph(kernel=kernel)["main"]
+    materialized = materialize_core_program(program=program, context=context)
 
-    assert program is not None
-    assert isinstance(program.arguments, MappingProxyType)
-    assert tuple(program.arguments) == tuple(arguments)
-    assert all(program.arguments[name] is value for name, value in arguments.items())
+    assert program.disposition is CoreExecutionDisposition.PLANNED
+    assert program.disposition_reason is None
+    assert isinstance(materialized.arguments, MappingProxyType)
+    assert tuple(materialized.arguments) == (
+        "liquid",
+        "consumption",
+        "next_regime_to_V_arr",
+        *flat_params["alive"],
+        "period",
+        "age",
+    )
     assert program.output_roles is VALUE
     assert program.requirements.streamable_axes == (
         StreamableProductAxis(
@@ -492,13 +504,26 @@ def test_ordinary_singleton_grid_search_declares_action_core_program() -> None:
         ),
     )
     with pytest.raises(TypeError):
-        cast("dict[str, object]", program.arguments)["injected"] = jnp.asarray(0)
+        cast("dict[str, object]", materialized.arguments)["injected"] = jnp.asarray(0)
+
+    for legacy_name in (
+        "cores",
+        "core",
+        "unwrapped_core",
+        "streamed_core",
+        "build_lower_args",
+        "build_core_program",
+        "target_value_accesses",
+        "output_roles",
+        "core_for_output_layout",
+    ):
+        assert not hasattr(kernel, legacy_name)
 
     resolved = resolve_core_program(
-        program=program,
+        program=materialized,
         tile_widths={"action": 2},
         input_transfer_plan=_resolve_value_input_transfer_plan(
-            program=program,
+            program=materialized,
             source_value_template=next_V["alive"],
             source=("alive", 0, "main"),
         ),
@@ -510,8 +535,8 @@ def test_ordinary_singleton_grid_search_declares_action_core_program() -> None:
     assert output.shape == next_V["alive"].shape
 
 
-def test_collective_grid_search_declares_household_action_core_program() -> None:
-    """An eligible collective core declares its shared reduction and output tree."""
+def test_collective_grid_search_declares_explicit_dense_core_program() -> None:
+    """Collective execution stays dense after adverse paired resource evidence."""
     model = _build_collective_model()
     flat_params = model._process_params({"discount_factor": 0.95})
     next_V, next_continuation, _next_edges = _build_continuation_templates(
@@ -520,8 +545,7 @@ def test_collective_grid_search_declares_household_action_core_program() -> None
     )
     regime = model._regimes["couple"]
     kernel = regime.solution.period_kernels[0]
-    arguments = kernel.build_lower_args(
-        core_key="main",
+    context = CoreBuildContext(
         state_action_space=regime.solution.state_action_space(
             regime_params=flat_params["couple"]
         ),
@@ -532,30 +556,21 @@ def test_collective_grid_search_declares_household_action_core_program() -> None
         ages=model.ages,
     )
 
-    assert isinstance(kernel, CoreProgramAware)
-    program = kernel.build_core_program(core_key="main", arguments=arguments)
+    assert isinstance(kernel, CoreProgramGraphAware)
+    program = core_program_graph(kernel=kernel)["main"]
+    materialized = materialize_core_program(program=program, context=context)
 
-    assert program is not None
-    assert program.output_roles == (VALUE, DISSOLUTION_FLAG)
-    assert program.requirements.streamable_axes == (
-        StreamableProductAxis(
-            name="action",
-            coordinate_names=("work",),
-            coordinate_extents=(2,),
-            canonical_order="c",
-            reduction=COLLECTIVE_HARD_MAX_REDUCTION,
-            width_keyword=_WIDTH_KEYWORD,
-        ),
+    assert program.disposition is CoreExecutionDisposition.DENSE
+    assert (
+        program.disposition_reason
+        == "deliberately_dense:collective_resource_regression"
     )
+    assert program.output_roles == (VALUE, DISSOLUTION_FLAG)
+    assert program.requirements.streamable_axes == ()
 
     resolved = resolve_core_program(
-        program=program,
-        tile_widths={"action": 1},
-        input_transfer_plan=_resolve_value_input_transfer_plan(
-            program=program,
-            source_value_template=next_V["couple"],
-            source=("couple", 0, "main"),
-        ),
+        program=materialized,
+        tile_widths={},
     )
     output = _eval_resolved_shape(resolved)
 
@@ -568,8 +583,8 @@ def test_collective_grid_search_declares_household_action_core_program() -> None
     assert output[1].dtype == jnp.bool_
 
 
-def test_ev1_grid_search_declares_composite_action_core_program() -> None:
-    """An EV1 core declares one flat axis with branch-max/logsum semantics."""
+def test_ev1_grid_search_declares_explicit_dense_core_program() -> None:
+    """EV1 execution stays dense after the streamed winner-reversal witness."""
     model = taste_shocks_toy.get_model()
     flat_params = model._process_params(
         taste_shocks_toy.get_params(scale=0.2, discount_factor=0.95)
@@ -580,8 +595,7 @@ def test_ev1_grid_search_declares_composite_action_core_program() -> None:
     )
     regime = model._regimes["alive"]
     kernel = regime.solution.period_kernels[0]
-    arguments = kernel.build_lower_args(
-        core_key="main",
+    context = CoreBuildContext(
         state_action_space=regime.solution.state_action_space(
             regime_params=flat_params["alive"]
         ),
@@ -592,33 +606,20 @@ def test_ev1_grid_search_declares_composite_action_core_program() -> None:
         ages=model.ages,
     )
 
-    assert isinstance(kernel, CoreProgramAware)
-    program = kernel.build_core_program(core_key="main", arguments=arguments)
+    assert isinstance(kernel, CoreProgramGraphAware)
+    program = core_program_graph(kernel=kernel)["main"]
+    materialized = materialize_core_program(program=program, context=context)
 
-    assert program is not None
-    assert program.output_roles is VALUE
-    assert len(program.requirements.streamable_axes) == 1
-    axis = program.requirements.streamable_axes[0]
-    assert axis.coordinate_names == ("work", "consumption")
-    assert axis.coordinate_extents == (2, 8)
-    assert axis.canonical_order == "c"
-    assert isinstance(axis.reduction, GridSearchEV1ActionReduction)
-    assert axis.reduction.semantic_key == (
-        "grid-search-ev1-action-reduction",
-        1,
-        1,
-        ("hard-max", 1),
-        ("logsumexp", 1),
+    assert program.disposition is CoreExecutionDisposition.DENSE
+    assert (
+        program.disposition_reason == "deliberately_dense:ev1_canonical_reduction_order"
     )
+    assert program.output_roles is VALUE
+    assert program.requirements.streamable_axes == ()
 
     resolved = resolve_core_program(
-        program=program,
-        tile_widths={"action": 5},
-        input_transfer_plan=_resolve_value_input_transfer_plan(
-            program=program,
-            source_value_template=next_V["alive"],
-            source=("alive", 0, "main"),
-        ),
+        program=materialized,
+        tile_widths={},
     )
     output = _eval_resolved_shape(resolved)
 
@@ -690,11 +691,11 @@ def test_initial_tile_widths_rejects_invalid_coordinate_extents_fail_closed(
     )
 
     with pytest.raises(error, match=message):
-        _initial_tile_widths(program=program)
+        initial_core_tile_widths(program=program)
 
 
 def test_initial_tile_widths_preserves_bounded_power_of_two_policy() -> None:
-    assert _initial_tile_widths(program=_program()) == {"action": 4}
+    assert initial_core_tile_widths(program=_program()) == {"action": 4}
 
 
 def test_program_and_resolution_snapshot_their_input_mappings() -> None:

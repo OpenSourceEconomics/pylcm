@@ -113,7 +113,6 @@ def test_granular_transition_solves_and_simulates() -> None:
             "wealth": jnp.full(40, 50.0),
             "regime_id": jnp.full(40, _RegimeId.work),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
         seed=7,
     )

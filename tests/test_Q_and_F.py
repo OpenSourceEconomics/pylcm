@@ -432,10 +432,10 @@ def test_partial_state_laws_solve_with_declared_targets():
     }
     for period, expected in expected_alive.items():
         for regime_name in ("work", "retire"):
-            V_arr = period_to_regime_to_V_arr[period][regime_name]
+            V_arr = period_to_regime_to_V_arr.values[period][regime_name]
             assert V_arr.shape == (2, 3)
             assert_allclose(V_arr, expected, atol=1e-5)
-    for regime_to_V_arr in period_to_regime_to_V_arr.values():
+    for regime_to_V_arr in period_to_regime_to_V_arr.values.values():
         dead_V = regime_to_V_arr["dead"]
         assert dead_V.shape == ()
         assert_allclose(dead_V, 0.0, atol=1e-6)
@@ -937,7 +937,9 @@ def _solve_alive_without_validation(
     model = _model_emitting_total_regime_mass(
         total_mass=total_mass, certainty_equivalent=certainty_equivalent
     )
-    return model.solve(params={"alive": alive_params}, log_level="off")[0]["alive"]
+    return model.solve(params={"alive": alive_params}, log_level="off").values[0][
+        "alive"
+    ]
 
 
 @pytest.mark.parametrize(
@@ -1054,7 +1056,7 @@ def test_solve_poisons_a_non_terminal_regime_with_no_reachable_target(
     period_to_regime_to_V_arr = model.solve(
         params={"alive": alive_params}, log_level="off"
     )
-    V_arr = period_to_regime_to_V_arr[model.n_periods - 1]["alive"]
+    V_arr = period_to_regime_to_V_arr.values[model.n_periods - 1]["alive"]
     assert bool(jnp.all(jnp.isnan(V_arr)))
 
 

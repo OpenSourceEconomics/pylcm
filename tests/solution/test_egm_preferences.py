@@ -35,14 +35,20 @@ def test_numeric_inverse_reproduces_the_analytic_euler_inversion():
     `c` by a bracketed Newton iteration on the regime's own `utility`, which
     reaches the same root the closed form gives.
     """
-    analytic = get_model(n_periods=_N_PERIODS, solvers=_solvers()).solve(
-        params=get_params(), log_level="debug"
+    analytic = (
+        get_model(n_periods=_N_PERIODS, solvers=_solvers())
+        .solve(params=get_params(), log_level="debug")
+        .values
     )
-    numeric = get_model(
-        n_periods=_N_PERIODS,
-        solvers=_solvers(),
-        analytic_inverse_marginal_utility=False,
-    ).solve(params=get_params(), log_level="debug")
+    numeric = (
+        get_model(
+            n_periods=_N_PERIODS,
+            solvers=_solvers(),
+            analytic_inverse_marginal_utility=False,
+        )
+        .solve(params=get_params(), log_level="debug")
+        .values
+    )
 
     for period, regime_to_V in analytic.items():
         for regime, V_arr in regime_to_V.items():

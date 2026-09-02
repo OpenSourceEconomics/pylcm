@@ -506,7 +506,6 @@ def test_phased_law_simulation_evolves_state_under_simulate_law() -> None:
     result = model.simulate(
         log_level="debug",
         params=params,
-        period_to_regime_to_V_arr=None,
         initial_conditions={
             "wealth": jnp.asarray([50.0]),
             "age": jnp.asarray([60.0]),
@@ -531,13 +530,21 @@ def test_phased_law_simulation_evolves_state_under_simulate_law() -> None:
 def test_phased_law_solution_matches_bare_solve_law() -> None:
     """The value function only sees the solve law: a `Phased` law's simulate
     variant leaves V identical to the bare solve-law model."""
-    phased_solution = _build_phased_law_model(phased_law=True).solve(
-        params=_solve_params(_build_phased_law_model(phased_law=True)),
-        log_level="debug",
+    phased_solution = (
+        _build_phased_law_model(phased_law=True)
+        .solve(
+            params=_solve_params(_build_phased_law_model(phased_law=True)),
+            log_level="debug",
+        )
+        .values
     )
-    bare_solution = _build_phased_law_model(phased_law=False).solve(
-        params=_solve_params(_build_phased_law_model(phased_law=False)),
-        log_level="debug",
+    bare_solution = (
+        _build_phased_law_model(phased_law=False)
+        .solve(
+            params=_solve_params(_build_phased_law_model(phased_law=False)),
+            log_level="debug",
+        )
+        .values
     )
     for period, regime_to_V in bare_solution.items():
         for regime_name, expected_V in regime_to_V.items():
@@ -618,7 +625,6 @@ def _simulate_income_panel(
                 },
             },
         },
-        period_to_regime_to_V_arr=None,
         initial_conditions={
             "age": jnp.array([60.0, 60.0]),
             "income": jnp.array([2.0, 4.0]),
@@ -804,7 +810,6 @@ def test_phased_regime_transition_realized_draw_follows_simulate_variant() -> No
     result = model.simulate(
         log_level="debug",
         params=params,
-        period_to_regime_to_V_arr=None,
         initial_conditions={
             "wealth": jnp.asarray([50.0]),
             "age": jnp.asarray([60.0]),
@@ -818,13 +823,25 @@ def test_phased_regime_transition_realized_draw_follows_simulate_variant() -> No
 
 def test_phased_regime_transition_solution_matches_bare_solve_variant() -> None:
     """V only sees the solve variant of a `Phased` regime transition."""
-    phased_solution = _build_phased_transition_model(phased_transition=True).solve(
-        params=_solve_params(_build_phased_transition_model(phased_transition=True)),
-        log_level="debug",
+    phased_solution = (
+        _build_phased_transition_model(phased_transition=True)
+        .solve(
+            params=_solve_params(
+                _build_phased_transition_model(phased_transition=True)
+            ),
+            log_level="debug",
+        )
+        .values
     )
-    bare_solution = _build_phased_transition_model(phased_transition=False).solve(
-        params=_solve_params(_build_phased_transition_model(phased_transition=False)),
-        log_level="debug",
+    bare_solution = (
+        _build_phased_transition_model(phased_transition=False)
+        .solve(
+            params=_solve_params(
+                _build_phased_transition_model(phased_transition=False)
+            ),
+            log_level="debug",
+        )
+        .values
     )
     for period, regime_to_V in bare_solution.items():
         for regime_name, expected_V in regime_to_V.items():
@@ -874,7 +891,6 @@ def test_regime_draw_reads_carried_value() -> None:
     result = model.simulate(
         log_level="debug",
         params=params,
-        period_to_regime_to_V_arr=None,
         initial_conditions={
             "wealth": jnp.full(2, 50.0),
             "aime": jnp.full(2, 20.0),  # imputation = 2.0 for both subjects

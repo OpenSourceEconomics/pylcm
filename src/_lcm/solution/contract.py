@@ -469,8 +469,8 @@ class KernelResult:
 class BackwardInductionResult:
     """The generic outputs of one backward-induction run.
 
-    Internal to the engine: the public `Model.solve` unpacks it into its
-    documented mapping-or-tuple return shape.
+    Internal to the engine: the public `Model.solve` packages its values and
+    addressed artifacts into a `SolutionResult`.
     """
 
     value_functions: PeriodToRegimeToVArr
@@ -526,38 +526,12 @@ class BackwardInductionResult:
 class PeriodKernel(Protocol):
     """One regime's per-period solve adapter — the loop's uniform call target.
 
-    A single non-jitted closure per regime-period that wraps the solver's shared
-    jitted core(s) (deduped across periods by core identity), calls them with the
-    solver's own argument layout, and assembles a `KernelResult` outside JIT.
-    Plain closures satisfy this structurally; the loop never inspects the solver
-    type. `cores()` exposes the shared jitted function(s) keyed by a stable
-    per-kernel name so AOT compilation can deduplicate and lower each;
-    `build_lower_args` builds a named core's lowering kwargs.
-
-    Most kernels carry exactly one core (`{"main": ...}`); a multi-core kernel
-    carries several under its own keys, one per distinct traced program it must
-    lower (for example a passive keeper alongside an adjuster sweep). The AOT
-    contract lowers, compiles, and dispatches each core by its key, so a
-    multi-core kernel never collapses into one program.
+    The runtime interface is intentionally smaller than the execution declaration.
+    A kernel invokes the named executable mapping and assembles a result outside JIT.
+    Native and legacy execution declarations both cross
+    :func:`_lcm.execution.core_program.core_program_graph`; the solve loop never reads
+    their distinct declaration methods through this protocol.
     """
-
-    def cores(self) -> Mapping[str, Callable]:
-        """Return the shared jitted core(s), keyed by stable per-kernel name.
-
-        Each value is a distinct traced program AOT compilation lowers and
-        deduplicates independently; `build_lower_args(core_key=...)` builds the
-        matching lowering kwargs and `__call__` reads the compiled cores back by
-        the same key.
-        """
-        ...
-
-    @property
-    def core(self) -> Callable:
-        """The kernel's `"main"` core, for any single-core reader.
-
-        Defaults to `cores()["main"]`; multi-core kernels override or omit it.
-        """
-        ...
 
     def with_fixed_params(self, *, fixed_flat_params: FlatParams) -> PeriodKernel:
         """Return a copy with the regime's fixed params bound into the core(s).
@@ -565,24 +539,6 @@ class PeriodKernel(Protocol):
         The adapter owns its solver's binding rule — which fixed params reach
         the core (and any inline closure it wraps) — so the engine binds fixed
         params without a solver-type switch.
-        """
-        ...
-
-    def build_lower_args(
-        self,
-        *,
-        core_key: str,
-        state_action_space: StateActionSpace,
-        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-        next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
-        flat_params: FlatParams,
-        period: int,
-        ages: AgeGrid,
-    ) -> Mapping[str, object]:
-        """Build the named core's lowering arguments for this period.
-
-        Single-core kernels ignore `core_key`; a multi-core kernel dispatches
-        its per-core lowering off it.
         """
         ...
 

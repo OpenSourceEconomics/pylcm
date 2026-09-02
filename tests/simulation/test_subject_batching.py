@@ -57,7 +57,6 @@ def _simulate_df(
         log_level="debug",
         params=params,
         initial_conditions=_INITIAL_CONDITIONS,
-        period_to_regime_to_V_arr=None,
         seed=42,
         subject_batch_size=subject_batch_size,
     )
@@ -147,7 +146,6 @@ def test_raw_results_are_host_resident_jax_arrays_when_batched() -> None:
         log_level="debug",
         params=params,
         initial_conditions=_INITIAL_CONDITIONS,
-        period_to_regime_to_V_arr=None,
         seed=42,
         subject_batch_size=2,
     )

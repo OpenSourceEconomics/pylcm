@@ -6,32 +6,31 @@ title: Runtime, results, and persistence
 
 ## Solving
 
-`model.solve(params=..., log_level=...)` returns an immutable
-`period -> regime -> value array` mapping.
+`model.solve(params=..., log_level=...)` returns one immutable `SolutionResult` for
+every built-in solver. Its `values` mapping is indexed as
+`period -> regime -> value array`; replay and collective-dissolution data stay in the
+addressed artifact stores instead of changing the return type.
 
 Optional arguments:
 
 - `max_compilation_workers` caps parallel XLA compilation;
 - `log_path` and `log_keep_n_latest` control diagnostic snapshots;
-- `return_simulation_policy=True` also returns published off-grid policy artifacts;
-- `return_dissolution_flags=True` also returns collective dissolution masks.
+- `retention` selects which post-solve artifacts remain available.
 
-The existing `solve()` contract is unchanged: depending on those two flags, it returns
-either the value mapping or the historical tuple of parallel mappings.
+There are no flag-selected tuple returns. Pass the complete result to
+`model.simulate(solution=...)`; omitting `solution` asks simulation to solve first.
 
 (api-solution-result)=
 
-### Labelled solution results (experimental)
+### Solution results
 
-`model.solve_result(...)` keeps values, metadata, replay artifacts, diagnostics, and
-explicit omission reasons in one `SolutionResult`. This interface remains experimental
-while persistence and the complete out-of-tree solver contract are still being
-implemented:
+`model.solve(...)` keeps values, metadata, replay artifacts, diagnostics, and explicit
+omission reasons in one `SolutionResult`:
 
 ```python
 from lcm.solver_api import ResultRetention
 
-solution = model.solve_result(
+solution = model.solve(
     params=params,
     log_level="debug",
     retention=ResultRetention.VALUES_AND_REPLAY,
@@ -70,17 +69,17 @@ artifacts used during backward induction are not currently retainable: their abs
 recorded as `NOT_REQUESTED`, or as `UNSUPPORTED` when `ALL_PERSISTABLE_ARTIFACTS`
 requests everything the boundary can describe.
 
-`SolutionResult` persistence is not implemented yet. `save_solution()` persists only the
-legacy value-function mapping; it does not serialize the labelled metadata or artifact
-stores. This boundary is also not yet a stable contract for out-of-tree solver
+`SolutionResult` persistence is not implemented yet. `save_solution()` persists only a
+standalone value-function mapping; it does not serialize the labelled metadata or
+artifact stores. This boundary is also not yet a stable contract for out-of-tree solver
 implementations.
 
 ## Simulation
 
-`model.simulate(...)` accepts parameters, initial conditions, a value-function mapping
-or `None`, and a required `log_level`. Passing `None` solves first. Alternatively, pass
-the complete labelled result as `solution=solution`; do not combine it with the legacy
-value, policy, or dissolution-flag arguments.
+`model.simulate(...)` accepts parameters, initial conditions, an optional complete
+`SolutionResult` as `solution=...`, and a required `log_level`. Omitting `solution`
+solves first. Bare value mappings and separate policy or dissolution-flag inputs are not
+accepted.
 
 Before consuming a `SolutionResult`, simulation checks its in-memory model identity,
 canonical-parameter digest, schema versions, period count, regime order, solver types,
@@ -99,7 +98,7 @@ Use the default `ResultRetention.VALUES_AND_REPLAY` when the model may require s
 artifacts.
 
 `subject_batch_size` streams subjects without changing results. `seed` controls random
-draws. A collective model may require `period_to_regime_to_dissolution_flags` and
+draws. A collective model may require an addressed dissolution replay artifact and
 `own_stakeholder`; see [Collective regimes](collective_regimes.md).
 
 Initial conditions are a mapping of state names plus `regime_id` to equal-length arrays,
@@ -145,8 +144,8 @@ metadata, and a Feather table. `SimulationResult.load(directory=...)` restores i
 
 ## Standalone persistence
 
-- `save_solution(period_to_regime_to_V_arr=..., path=...)` and `load_solution(path=...)`
-  persist value functions.
+- `save_solution(period_to_regime_to_V_arr=solution.values, path=...)` and
+  `load_solution(path=...)` persist value functions only.
 - `SolveSnapshot` and `SimulateSnapshot` describe diagnostic snapshots.
 - `load_snapshot(path, exclude=...)` loads a snapshot, with optional components omitted.
 

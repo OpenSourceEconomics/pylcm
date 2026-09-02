@@ -166,16 +166,22 @@ def test_the_last_active_age_uses_that_ages_own_outer_helper(helper_name):
     is the concrete function `build(age)` returns at that age.
     """
     build = _HELPERS[helper_name]
-    specialized = _build_model(
-        helper_name=helper_name, override=_specialized(helper_name)
-    ).solve(params=_PARAMS, log_level="debug")
+    specialized = (
+        _build_model(helper_name=helper_name, override=_specialized(helper_name))
+        .solve(params=_PARAMS, log_level="debug")
+        .values
+    )
     last_active = max(
         period for period, regimes in specialized.items() if "alive" in regimes
     )
-    pinned = _build_model(
-        helper_name=helper_name,
-        override=build(_MIN_AGE + last_active * _AGE_STEP),
-    ).solve(params=_PARAMS, log_level="debug")
+    pinned = (
+        _build_model(
+            helper_name=helper_name,
+            override=build(_MIN_AGE + last_active * _AGE_STEP),
+        )
+        .solve(params=_PARAMS, log_level="debug")
+        .values
+    )
 
     expected = np.asarray(pinned[last_active]["alive"])
     got = np.asarray(specialized[last_active]["alive"])
@@ -193,11 +199,15 @@ def test_an_age_specialized_outer_helper_moves_the_negm_solution(helper_name):
     Without this, the agreement test above would still pass if the specialization
     were ignored in both solves in the same way.
     """
-    drifting = _build_model(
-        helper_name=helper_name, override=_specialized(helper_name)
-    ).solve(params=_PARAMS, log_level="debug")
-    flat = _build_model(helper_name=helper_name, override=None).solve(
-        params=_PARAMS, log_level="debug"
+    drifting = (
+        _build_model(helper_name=helper_name, override=_specialized(helper_name))
+        .solve(params=_PARAMS, log_level="debug")
+        .values
+    )
+    flat = (
+        _build_model(helper_name=helper_name, override=None)
+        .solve(params=_PARAMS, log_level="debug")
+        .values
     )
 
     moved = [
@@ -228,12 +238,18 @@ def test_ages_sharing_one_signature_resolve_to_one_concrete_helper(helper_name):
     shared rather than silently re-resolved per period.
     """
     build = _HELPERS[helper_name]
-    constant_signature = _build_model(
-        helper_name=helper_name,
-        override=AgeSpecializedFunction(build=build, signature=lambda _age: 0),
-    ).solve(params=_PARAMS, log_level="debug")
-    pinned = _build_model(helper_name=helper_name, override=build(_MIN_AGE)).solve(
-        params=_PARAMS, log_level="debug"
+    constant_signature = (
+        _build_model(
+            helper_name=helper_name,
+            override=AgeSpecializedFunction(build=build, signature=lambda _age: 0),
+        )
+        .solve(params=_PARAMS, log_level="debug")
+        .values
+    )
+    pinned = (
+        _build_model(helper_name=helper_name, override=build(_MIN_AGE))
+        .solve(params=_PARAMS, log_level="debug")
+        .values
     )
 
     for period, regimes in pinned.items():

@@ -1,4 +1,4 @@
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 
 import jax.numpy as jnp
 import pandas as pd
@@ -15,6 +15,7 @@ from lcm import (
 )
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.regime import Regime as UserRegime
+from lcm.solver_api import SolutionResult
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -52,7 +53,6 @@ def test_model_simulate_with_stochastic_model():
             "age": jnp.array([40.0, 40.0, 40.0, 40.0]),
             "regime_id": jnp.array([RegimeId.working_life] * 4),
         },
-        period_to_regime_to_V_arr=None,
     )
     df = result.to_dataframe().query('regime_name == "working_life"')
 
@@ -174,17 +174,17 @@ def test_compare_deterministic_and_stochastic_results_value_function(
     """Test that the deterministic and stochastic models produce the same results."""
     model_deterministic, model_stochastic, params = models_and_params
 
-    solution_deterministic: Mapping[int, Mapping[str, FloatND]] = (
-        model_deterministic.solve(log_level="debug", params=params)
+    solution_deterministic: SolutionResult = model_deterministic.solve(
+        log_level="debug", params=params
     )
-    solution_stochastic: Mapping[int, Mapping[str, FloatND]] = model_stochastic.solve(
+    solution_stochastic: SolutionResult = model_stochastic.solve(
         log_level="debug", params=params
     )
 
     for period in range(model_deterministic.n_periods - 1):
         assert_array_almost_equal(
-            solution_deterministic[period]["working_life"],
-            solution_stochastic[period]["working_life"],
+            solution_deterministic.values[period]["working_life"],
+            solution_stochastic.values[period]["working_life"],
             decimal=14,
         )
 
@@ -199,13 +199,13 @@ def test_compare_deterministic_and_stochastic_results_value_function(
     simulation_deterministic = model_deterministic.simulate(
         log_level="debug",
         params=params,
-        period_to_regime_to_V_arr=solution_deterministic,
+        solution=solution_deterministic,
         initial_conditions=initial_conditions,
     )
     simulation_stochastic = model_stochastic.simulate(
         log_level="debug",
         params=params,
-        period_to_regime_to_V_arr=solution_stochastic,
+        solution=solution_stochastic,
         initial_conditions=initial_conditions,
     )
     df_deterministic = simulation_deterministic.to_dataframe().query(
@@ -308,11 +308,15 @@ def test_stochastic_zero_arg_weight_adds_discounted_expected_bonus() -> None:
     def next_draw_5050() -> FloatND:
         return jnp.array([0.5, 0.5])
 
-    V_stochastic = _make_minimal_stochastic_model(next_draw=next_draw_5050).solve(
-        log_level="debug", params=params
+    V_stochastic = (
+        _make_minimal_stochastic_model(next_draw=next_draw_5050)
+        .solve(log_level="debug", params=params)
+        .values
     )
-    V_degenerate = _make_minimal_stochastic_model(next_draw=_always_bad_draw).solve(
-        log_level="debug", params=params
+    V_degenerate = (
+        _make_minimal_stochastic_model(next_draw=_always_bad_draw)
+        .solve(log_level="debug", params=params)
+        .values
     )
 
     extra_continuation_value = (
@@ -339,11 +343,15 @@ def test_stochastic_weight_on_continuous_state_varies_continuation_by_wealth() -
         p_good = jnp.clip(wealth / 10.0, 0.1, 0.9)
         return jnp.array([1.0 - p_good, p_good])
 
-    V_stochastic = _make_minimal_stochastic_model(
-        next_draw=next_draw_wealth_dependent
-    ).solve(log_level="debug", params=params)
-    V_degenerate = _make_minimal_stochastic_model(next_draw=_always_bad_draw).solve(
-        log_level="debug", params=params
+    V_stochastic = (
+        _make_minimal_stochastic_model(next_draw=next_draw_wealth_dependent)
+        .solve(log_level="debug", params=params)
+        .values
+    )
+    V_degenerate = (
+        _make_minimal_stochastic_model(next_draw=_always_bad_draw)
+        .solve(log_level="debug", params=params)
+        .values
     )
 
     extra_continuation_value = (
@@ -373,12 +381,16 @@ def test_stochastic_state_batch_size_is_value_equivalent_to_no_splay() -> None:
     def next_draw_5050() -> FloatND:
         return jnp.array([0.5, 0.5])
 
-    V_unsplayed = _make_minimal_stochastic_model(next_draw=next_draw_5050).solve(
-        log_level="debug", params=params
+    V_unsplayed = (
+        _make_minimal_stochastic_model(next_draw=next_draw_5050)
+        .solve(log_level="debug", params=params)
+        .values
     )
-    V_splayed = _make_minimal_stochastic_model(
-        next_draw=next_draw_5050, draw_batch_size=1
-    ).solve(log_level="debug", params=params)
+    V_splayed = (
+        _make_minimal_stochastic_model(next_draw=next_draw_5050, draw_batch_size=1)
+        .solve(log_level="debug", params=params)
+        .values
+    )
 
     assert_allclose(
         V_splayed[0]["working_life"], V_unsplayed[0]["working_life"], atol=_SPLAY_ATOL

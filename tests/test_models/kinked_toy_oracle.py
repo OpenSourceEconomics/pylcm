@@ -267,7 +267,7 @@ def _recompute_corner_maximizer(v_next_alive: FloatND) -> dict[str, float]:
 
 def main() -> None:
     """Solve the oracle, print its pinned values and the provenance block."""
-    solution = build_model().solve(params=PARAMS, log_level="debug")
+    solution = build_model().solve(params=PARAMS, log_level="debug").values
     v0 = solution[0]["alive"]
     v1 = solution[1]["alive"]
 

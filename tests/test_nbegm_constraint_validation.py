@@ -189,7 +189,7 @@ def test_nbegm_masks_a_compiled_parameter_interval_in_the_solved_value() -> None
     )
     model = _build_smooth_model(constraints={"asset_test": declaration})
 
-    solution = model.solve(params=_smooth_params(), log_level="off")
+    solution = model.solve(params=_smooth_params(), log_level="off").values
     liquid = cast(
         "PiecewiseLinSpacedGrid", model.user_regimes["alive"].states["liquid"]
     ).to_jax()
@@ -226,9 +226,11 @@ def test_nbegm_matches_grid_search_on_a_breakpoint_aligned_grid() -> None:
     for target in ("alive", "dead"):
         params["alive"][target]["next_regime"]["final_age_alive"] = 1.0
 
-    nbegm_value = np.asarray(nbegm.solve(params=params, log_level="off")[0]["alive"])
+    nbegm_value = np.asarray(
+        nbegm.solve(params=params, log_level="off").values[0]["alive"]
+    )
     brute_value = np.asarray(
-        grid_search.solve(params=params, log_level="off")[0]["alive"]
+        grid_search.solve(params=params, log_level="off").values[0]["alive"]
     )
     liquid = cast(
         "PiecewiseLinSpacedGrid", nbegm.user_regimes["alive"].states["liquid"]
@@ -268,7 +270,9 @@ def test_nbegm_enforces_full_empty_and_intersected_feasible_domains(
         constraints={"asset_test": cast("Callable[..., object]", declaration)}
     )
 
-    solution = model.solve(params=_smooth_params(asset_limit=None), log_level="off")
+    solution = model.solve(
+        params=_smooth_params(asset_limit=None), log_level="off"
+    ).values
     liquid = cast(
         "PiecewiseLinSpacedGrid", model.user_regimes["alive"].states["liquid"]
     ).to_jax()
@@ -315,7 +319,7 @@ def test_nbegm_composes_feasibility_with_kinks_and_flat_budget_floors(
     params = _smooth_params(asset_limit=None)
     params["alive"].update(budget_params)
 
-    solution = model.solve(params=params, log_level="off")
+    solution = model.solve(params=params, log_level="off").values
     liquid = cast(
         "PiecewiseLinSpacedGrid", model.user_regimes["alive"].states["liquid"]
     ).to_jax()
@@ -630,7 +634,7 @@ def test_nnbegm_enforces_a_compiled_wealth_boundary() -> None:
         constraints={"wealth_floor": declaration},
     )
 
-    solution = model.solve(params={"discount_factor": 0.95}, log_level="off")
+    solution = model.solve(params={"discount_factor": 0.95}, log_level="off").values
     value = np.asarray(solution[0]["alive"])
 
     assert np.all(np.isneginf(value[wealth < threshold]))
@@ -651,7 +655,7 @@ def test_nnbegm_carries_a_compiled_wealth_boundary_between_periods() -> None:
         constraints={"wealth_floor": declaration},
     )
 
-    solution = model.solve(params={"discount_factor": 0.95}, log_level="off")
+    solution = model.solve(params={"discount_factor": 0.95}, log_level="off").values
     first_period_value = np.asarray(solution[0]["alive"])
 
     assert np.all(np.isneginf(first_period_value[wealth < threshold]))
@@ -761,8 +765,8 @@ def test_declaring_the_bound_leaves_the_nbegm_solution_unchanged():
     )
     bare = _build_model(variant="nbegm", constraints={})
 
-    with_declaration = declared.solve(params=params, log_level="off")
-    without = bare.solve(params=params, log_level="off")
+    with_declaration = declared.solve(params=params, log_level="off").values
+    without = bare.solve(params=params, log_level="off").values
 
     for period, regime_to_V in without.items():
         for regime_name, V_arr in regime_to_V.items():

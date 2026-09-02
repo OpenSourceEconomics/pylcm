@@ -139,7 +139,7 @@ def test_per_target_params_solve_and_bind_per_target() -> None:
         },
         "retired": {"discount_factor": 0.95},
     }
-    regime_to_v = model.solve(params=params, log_level="debug")
+    regime_to_v = model.solve(params=params, log_level="debug").values
     assert set(regime_to_v[0]) >= {"work", "retired"}
 
 
@@ -188,7 +188,6 @@ def test_broadcast_state_law_params_bind_granular_in_canonical_params() -> None:
     result = model.simulate(
         params=params,
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
     flat_work = result.flat_params["work"]
@@ -221,7 +220,6 @@ def test_coarse_value_for_granular_template_slots_shares_one_leaf() -> None:
     result = model.simulate(
         params=params,
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
     flat_work = result.flat_params["work"]

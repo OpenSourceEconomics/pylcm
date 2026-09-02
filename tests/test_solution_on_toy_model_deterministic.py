@@ -245,7 +245,7 @@ def test_deterministic_solve(*, discount_factor, n_wealth_points):
     got = model.solve(
         log_level="debug",
         params={"discount_factor": discount_factor, "alive": params_alive},
-    )
+    ).values
 
     wealth_grid_class = cast("LinSpacedGrid", new_states["wealth"])
     wealth_grid = np.linspace(
@@ -300,7 +300,6 @@ def test_deterministic_simulate(*, discount_factor, n_wealth_points):
             "age": jnp.array([0.0, 0.0, 0.0, 0.0]),
             "regime_id": jnp.array([RegimeId.alive] * 4),
         },
-        period_to_regime_to_V_arr=None,
     )
     # Filter to alive regime only (dead regime has trivial values)
     got = (

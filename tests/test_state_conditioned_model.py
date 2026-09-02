@@ -136,8 +136,10 @@ def _params():
 
 
 def _solve(*, sigma_low, sigma_high):
-    return _get_model(sigma_low=sigma_low, sigma_high=sigma_high).solve(
-        params=_params(), log_level="debug"
+    return (
+        _get_model(sigma_low=sigma_low, sigma_high=sigma_high)
+        .solve(params=_params(), log_level="debug")
+        .values
     )
 
 
@@ -195,7 +197,6 @@ def _simulate_income_by_uncertainty(
             "age": jnp.full(n, 20.0),
             "regime_id": jnp.array([RegimeId.alive] * n),
         },
-        period_to_regime_to_V_arr=None,
         seed=1234,
     ).to_dataframe()
     # Age 20 income is the initial condition, and dead-regime rows are NaN; keep only
@@ -297,7 +298,6 @@ def test_ar1_simulated_innovation_std_follows_the_conditioned_sigma():
                 "age": jnp.full(n, 20.0),
                 "regime_id": jnp.array([RegimeId.alive] * n),
             },
-            period_to_regime_to_V_arr=None,
             seed=7,
         )
         .to_dataframe()
@@ -390,7 +390,6 @@ def test_simulated_sigma_tracks_the_conditioning_state_THROUGH_TIME():
                 "age": jnp.full(n, 20.0),
                 "regime_id": jnp.array([RegimeId.alive] * n),
             },
-            period_to_regime_to_V_arr=None,
             seed=20260717,
         )
         .to_dataframe()
@@ -820,7 +819,7 @@ def test_cross_regime_regime_local_conditioner_builds_and_solves():
         ages=AgeGrid(start=20, stop=70, step="10Y"),
         fixed_params={},
     )
-    V = model.solve(params=_cross_params(), log_level="debug")
+    V = model.solve(params=_cross_params(), log_level="debug").values
     for leaf in jax.tree_util.tree_leaves(V):
         assert np.all(np.isfinite(np.asarray(leaf)))
 
@@ -858,7 +857,7 @@ def test_cross_regime_model_level_conditioner_survives_pruning():
     assert "uncertainty" not in model.pruned_variables["young"]  # source: reaches old
     assert "uncertainty" not in model.pruned_variables["old"]  # carries the process
     assert "uncertainty" in model.pruned_variables["gone"]  # terminal: reaches nothing
-    V = model.solve(params=_cross_params(), log_level="debug")
+    V = model.solve(params=_cross_params(), log_level="debug").values
     for leaf in jax.tree_util.tree_leaves(V):
         assert np.all(np.isfinite(np.asarray(leaf)))
 
@@ -908,7 +907,6 @@ def test_cross_regime_draw_uses_the_target_spec_at_the_time_t_state():
             "age": jnp.full(n, 20.0),
             "regime_id": jnp.array([Phase.young] * n),
         },
-        period_to_regime_to_V_arr=None,
         seed=11,
     ).to_dataframe()
     drawn = result[(result["regime_name"] == "old") & result["income"].notna()]
@@ -1001,6 +999,6 @@ def test_conditioned_process_may_be_entered_with_an_explicit_law():
         ages=AgeGrid(start=20, stop=70, step="10Y"),
         fixed_params={},
     )
-    V = model.solve(params=_cross_params(), log_level="debug")
+    V = model.solve(params=_cross_params(), log_level="debug").values
     for leaf in jax.tree_util.tree_leaves(V):
         assert np.all(np.isfinite(np.asarray(leaf)))

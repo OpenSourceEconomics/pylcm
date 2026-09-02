@@ -132,7 +132,7 @@ def _solve_coarse_into_process_only_target(
         },
         "gone": {"utility": {}, "shock": _process_params(process)},
     }
-    return model.solve(params=params, log_level="debug")
+    return model.solve(params=params, log_level="debug").values
 
 
 def test_a_coarse_transition_into_an_iid_target_is_priced_at_its_own_law():
@@ -217,7 +217,7 @@ def _solve_with_entry_law(level: float):
         },
         "gone": {"utility": {}},
     }
-    return model.solve(params=params, log_level="debug")
+    return model.solve(params=params, log_level="debug").values
 
 
 def test_an_entered_process_only_target_reaches_its_parent():
@@ -320,7 +320,7 @@ def _solve_tiny_certainty_equivalent(*, risk_aversion: float = _RISK_AVERSION):
         },
         "dead": {"utility": {}},
     }
-    return model.solve(params=params, log_level="debug")
+    return model.solve(params=params, log_level="debug").values
 
 
 def test_a_tiny_continuation_survives_the_power_mean():

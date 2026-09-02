@@ -101,7 +101,7 @@ def test_a_broadcast_law_resolves_on_each_target_s_own_nodes() -> None:
     """
     model = _build({"wealth": _next_wealth_from_draw})
 
-    V = model.solve(params=_PARAMS, log_level="off")
+    V = model.solve(params=_PARAMS, log_level="off").values
 
     np.testing.assert_allclose(
         np.asarray(V[0]["source"]).ravel(), np.array([6.0]), atol=1e-5
@@ -114,7 +114,11 @@ def test_a_broadcast_law_and_the_same_law_written_per_target_agree() -> None:
     per_target = _build({"wealth": dict.fromkeys(("a", "b"), _next_wealth_from_draw)})
 
     np.testing.assert_allclose(
-        np.asarray(broadcast.solve(params=_PARAMS, log_level="off")[0]["source"]),
-        np.asarray(per_target.solve(params=_PARAMS, log_level="off")[0]["source"]),
+        np.asarray(
+            broadcast.solve(params=_PARAMS, log_level="off").values[0]["source"]
+        ),
+        np.asarray(
+            per_target.solve(params=_PARAMS, log_level="off").values[0]["source"]
+        ),
         atol=1e-6,
     )

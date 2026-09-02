@@ -175,6 +175,6 @@ def test_the_edge_gate_parameter_is_solvable() -> None:
         "bystander": {},
     }
 
-    solution = model.solve(params=params, log_level="debug")
+    solution = model.solve(params=params, log_level="debug").values
 
     assert set(solution[1]) == {"target", "fallback", "bystander"}

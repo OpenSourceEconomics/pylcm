@@ -35,6 +35,8 @@ _KERNEL_ROUTE_FIELDS = (
     "action_names",
     "action_extents",
     "streamed",
+    "execution_disposition",
+    "disposition_reason",
     "collective",
     "has_taste_shocks",
     "fold_state_names",
@@ -414,8 +416,17 @@ def _route_identity(routes: Mapping[str, Any]) -> dict[str, Any]:
             extent < 1 for extent in row["action_extents"]
         ):
             raise RuntimeError("Kernel action names/extents are inconsistent.")
+        execution_fields = {
+            "streamed",
+            "execution_disposition",
+            "disposition_reason",
+        }
         kernels.append(
-            {field: row[field] for field in _KERNEL_ROUTE_FIELDS if field != "streamed"}
+            {
+                field: row[field]
+                for field in _KERNEL_ROUTE_FIELDS
+                if field not in execution_fields
+            }
         )
     return {
         "kernels": kernels,
@@ -499,13 +510,33 @@ def _is_scenario_target(
     raise RuntimeError(f"Unknown paired scenario: {scenario!r}.")
 
 
-def _assert_scenario_streaming_target(
+def _validate_route_execution_metadata(*, side: str, routes: Mapping[str, Any]) -> None:
+    """Require internally consistent execution evidence from one checkout."""
+    observed = sum(bool(row["streamed"]) for row in routes["kernels"])
+    if routes["streamed_kernel_count"] != observed:
+        raise RuntimeError(f"{side} streamed-kernel count is inconsistent.")
+    for row in routes["kernels"]:
+        disposition = row["execution_disposition"]
+        reason = row["disposition_reason"]
+        if disposition not in {"planned", "dense", "legacy-unplanned"}:
+            raise RuntimeError(
+                f"{side} kernel has unknown execution disposition {disposition!r}."
+            )
+        if bool(row["streamed"]) != (disposition == "planned"):
+            raise RuntimeError(
+                f"{side} kernel streamed flag disagrees with its disposition."
+            )
+        if disposition == "planned" and reason is not None:
+            raise RuntimeError(f"{side} planned kernel has a disposition reason.")
+        if disposition != "planned" and not reason:
+            raise RuntimeError(f"{side} dense kernel has no disposition reason.")
+
+
+def _assert_scenario_execution_target(
     *, scenario: str, base_routes: Mapping[str, Any], head_routes: Mapping[str, Any]
 ) -> None:
     for side, routes in (("base", base_routes), ("head", head_routes)):
-        observed = sum(bool(row["streamed"]) for row in routes["kernels"])
-        if routes["streamed_kernel_count"] != observed:
-            raise RuntimeError(f"{side} streamed-kernel count is inconsistent.")
+        _validate_route_execution_metadata(side=side, routes=routes)
     if base_routes["streamed_kernel_count"] != 0:
         raise RuntimeError("The F base unexpectedly contains streamed kernels.")
 
@@ -520,12 +551,22 @@ def _assert_scenario_streaming_target(
         raise RuntimeError(
             f"Scenario {scenario!r} has no nontrivial named target kernel."
         )
-    unstreamed = [
-        (row["regime"], row["period"]) for row in eligible if not row["streamed"]
+    spec = SCENARIOS[scenario]
+    mismatched = [
+        (
+            row["regime"],
+            row["period"],
+            row["execution_disposition"],
+            row["disposition_reason"],
+        )
+        for row in eligible
+        if row["execution_disposition"] != spec.expected_head_disposition
+        or row["disposition_reason"] != spec.expected_head_disposition_reason
     ]
-    if unstreamed:
+    if mismatched:
         raise RuntimeError(
-            f"Scenario {scenario!r} left named target kernels dense: {unstreamed!r}."
+            f"Scenario {scenario!r} does not declare its required execution "
+            f"disposition: {mismatched!r}."
         )
 
 
@@ -748,8 +789,6 @@ def _pair_summary(
         raise RuntimeError(
             "The F base unexpectedly contains streamed GridSearch kernels."
         )
-    if head["streamed_kernel_count"] <= 0:
-        raise RuntimeError("The F head contains no streamed GridSearch kernel.")
     keys = (
         "cold_solve_ns",
         "cold_aot_compile_ns",
@@ -836,7 +875,7 @@ def main(argv: list[str] | None = None) -> None:
                 base=raw[(scenario, repeat, "base")],
                 head=raw[(scenario, repeat, "head")],
             )
-            _assert_scenario_streaming_target(
+            _assert_scenario_execution_target(
                 scenario=scenario,
                 base_routes=raw[(scenario, repeat, "base")]["routes"],
                 head_routes=raw[(scenario, repeat, "head")]["routes"],

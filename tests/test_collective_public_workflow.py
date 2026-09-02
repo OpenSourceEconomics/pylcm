@@ -149,11 +149,13 @@ def test_a_branch_that_binds_no_parameter_is_an_empty_container():
 def test_the_filled_template_solves_to_the_same_values_as_a_flat_params_dict():
     """Following the documented route publishes the same solution, bit for bit."""
     model = _make_model(n_subjects=None)
-    from_template = model.solve(params=_filled_template(model), log_level="debug")
+    from_template = model.solve(
+        params=_filled_template(model), log_level="debug"
+    ).values
     from_flat = model.solve(
         params={"discount_factor": _BETA, "delta_f": 0.5, "delta_m": 0.2},
         log_level="debug",
-    )
+    ).values
 
     for period, regime_to_V in from_template.items():
         for regime_name, V_arr in regime_to_V.items():
@@ -168,14 +170,11 @@ def test_the_documented_workflow_produces_a_frame(n_subjects: int | None):
     """Template → solve → simulate → dataframe runs at `log_level="debug"`."""
     model = _make_model(n_subjects=n_subjects)
     params = _filled_template(model)
-    solution, dissolution_flags = model.solve(
-        params=params, log_level="debug", return_dissolution_flags=True
-    )
+    solution = model.solve(params=params, log_level="debug")
     result = model.simulate(
         params=params,
         initial_conditions=_initial_conditions(model),
-        period_to_regime_to_V_arr=solution,
-        period_to_regime_to_dissolution_flags=dissolution_flags,
+        solution=solution,
         log_level="debug",
         seed=0,
     )
@@ -195,14 +194,11 @@ def test_the_ahead_of_time_path_routes_the_same_subjects_as_the_ordinary_one():
     for n_subjects in (None, _N_SUBJECTS):
         model = _make_model(n_subjects=n_subjects)
         params = _filled_template(model)
-        solution, dissolution_flags = model.solve(
-            params=params, log_level="debug", return_dissolution_flags=True
-        )
+        solution = model.solve(params=params, log_level="debug")
         result = model.simulate(
             params=params,
             initial_conditions=_initial_conditions(model),
-            period_to_regime_to_V_arr=solution,
-            period_to_regime_to_dissolution_flags=dissolution_flags,
+            solution=solution,
             log_level="debug",
             seed=0,
         )

@@ -135,7 +135,6 @@ def test_age_specialized_next_state_matches_runtime_age_baseline():
         result = _make_next_state_model(policy_bonus).simulate(
             params=params,
             initial_conditions=initial_conditions,
-            period_to_regime_to_V_arr=None,
             log_level="debug",
         )
         return result.to_dataframe()["wealth"].to_numpy()
@@ -155,10 +154,16 @@ def test_age_specialized_bonus_matches_runtime_age_baseline():
     functions must agree at every period and regime.
     """
     params = {"discount_factor": 0.95}
-    baseline = _make_model(lambda age: age).solve(params=params, log_level="debug")
-    specialized = _make_model(
-        AgeSpecializedFunction(build=_bonus_of_age, signature=lambda age: age)
-    ).solve(params=params, log_level="debug")
+    baseline = (
+        _make_model(lambda age: age).solve(params=params, log_level="debug").values
+    )
+    specialized = (
+        _make_model(
+            AgeSpecializedFunction(build=_bonus_of_age, signature=lambda age: age)
+        )
+        .solve(params=params, log_level="debug")
+        .values
+    )
 
     assert baseline.keys() == specialized.keys()
     for period in baseline:
@@ -188,7 +193,6 @@ def test_additional_target_depending_on_age_specialized_function_is_rejected():
             "wealth": jnp.array([0.0, 100.0, 500.0]),
             "regime_id": jnp.full(3, RegimeId.working_life),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
 
@@ -277,7 +281,6 @@ def test_simulation_continuation_resolves_age_specialized_helper_per_age():
                 "capital": jnp.array([0]),
                 "regime_id": jnp.array([RegimeId.working_life]),
             },
-            period_to_regime_to_V_arr=None,
             log_level="debug",
         )
         return str(result.to_dataframe()["invest"].to_numpy()[0])
@@ -352,7 +355,6 @@ def _simulate_specialized_constraint_model():
             "wealth": jnp.array([10.0, 50.0, 100.0]),
             "regime_id": jnp.full(3, RegimeId.working_life),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
 
@@ -405,7 +407,6 @@ def test_initial_conditions_feasibility_check_rejects_age_specialized_constraint
                 "wealth": jnp.array([10.0, 50.0, 100.0]),
                 "regime_id": jnp.full(3, RegimeId.working_life),
             },
-            period_to_regime_to_V_arr=None,
             log_level="debug",
         )
 
@@ -427,7 +428,7 @@ def _cap_binding_at_age(age: float) -> Callable[..., bool]:
 
 def _solve_with_cap(wealth_cap: UserFunction):
     model = _make_specialized_constraint_model(wealth_cap)
-    return model.solve(params={"discount_factor": 0.95}, log_level="off")
+    return model.solve(params={"discount_factor": 0.95}, log_level="off").values
 
 
 def _solve_specialized():

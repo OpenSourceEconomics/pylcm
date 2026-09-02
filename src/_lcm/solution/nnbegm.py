@@ -63,6 +63,11 @@ from _lcm.egm.published_policy import (
     NNBEGMSimPolicy,
 )
 from _lcm.engine import ParamCheck, StateActionSpace
+from _lcm.execution.core_program import (
+    CoreBuildContext,
+    core_program_graph,
+    materialize_core_program,
+)
 from _lcm.grids import ContinuousGrid, DiscreteGrid, Grid
 from _lcm.solution.contract import (
     ConstraintRouteContext,
@@ -882,11 +887,6 @@ class _NNBEGMPeriodKernel:
     """The fixed cost's scale function, arguments restricted to
     `period`/`age`/flat params (resolved per period at call time)."""
 
-    @property
-    def core(self) -> Callable:
-        """The adjuster's primary core, exposed for any single-core reader."""
-        return self.adjuster_kernel.core
-
     def cores(self) -> Mapping[str, Callable]:
         """Return every inner core under a `keeper:`/`adjuster:` prefix.
 
@@ -898,12 +898,16 @@ class _NNBEGMPeriodKernel:
         return MappingProxyType(
             {
                 **{
-                    f"keeper:{name}": core
-                    for name, core in self.keeper_kernel.cores().items()
+                    f"keeper:{name}": program.function
+                    for name, program in core_program_graph(
+                        kernel=self.keeper_kernel
+                    ).items()
                 },
                 **{
-                    f"adjuster:{name}": core
-                    for name, core in self.adjuster_kernel.cores().items()
+                    f"adjuster:{name}": program.function
+                    for name, program in core_program_graph(
+                        kernel=self.adjuster_kernel
+                    ).items()
                 },
             }
         )
@@ -942,29 +946,28 @@ class _NNBEGMPeriodKernel:
         """
         role, inner_key = core_key.split(sep=":", maxsplit=1)
         if role == "keeper":
-            return self.keeper_kernel.build_lower_args(
-                core_key=inner_key,
-                state_action_space=state_action_space,
-                next_regime_to_V_arr=next_regime_to_V_arr,
-                next_regime_to_continuation=next_regime_to_continuation,
-                flat_params=flat_params,
-                period=period,
-                ages=ages,
-            )
-        return self.adjuster_kernel.build_lower_args(
-            core_key=inner_key,
-            state_action_space=state_action_space,
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            next_regime_to_continuation=next_regime_to_continuation,
-            flat_params=_with_outer_post_decision(
+            kernel = self.keeper_kernel
+            program_flat_params = flat_params
+        else:
+            kernel = self.adjuster_kernel
+            program_flat_params = _with_outer_post_decision(
                 flat_params=flat_params,
                 regime_name=self.regime_name,
                 outer_post_decision=self.outer_post_decision,
                 value=self.outer_grid_values[0],
+            )
+        declaration = core_program_graph(kernel=kernel)[inner_key]
+        return materialize_core_program(
+            program=declaration,
+            context=CoreBuildContext(
+                state_action_space=state_action_space,
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                next_regime_to_continuation=next_regime_to_continuation,
+                flat_params=program_flat_params,
+                period=period,
+                ages=ages,
             ),
-            period=period,
-            ages=ages,
-        )
+        ).arguments
 
     def __call__(
         self,

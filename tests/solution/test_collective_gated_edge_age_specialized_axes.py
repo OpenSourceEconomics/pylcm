@@ -131,7 +131,7 @@ def test_collective_source_gate_ref_is_read_at_its_own_period_axes() -> None:
         params={"discount_factor": _DISCOUNT_FACTOR}, log_level="debug"
     )
     aaae(
-        np.asarray(solution[1]["couple"]),
+        np.asarray(solution.values[1]["couple"]),
         _EXPECTED_COUPLE_V_AT_AGE_1,
         decimal=DECIMAL_PRECISION,
     )
@@ -196,13 +196,12 @@ def test_collective_dissolution_fold_reads_the_flag_at_its_own_period() -> None:
     routing alone rather than about a continuation that moved with it.
     """
     model = _build_dissolution_model()
-    solution, _flags = model.solve(
+    solution = model.solve(
         params={"discount_factor": _DISCOUNT_FACTOR, "floor_f": _FLOOR_F},
         log_level="debug",
-        return_dissolution_flags=True,
     )
     aaae(
-        np.asarray(solution[1]["couple"]),
+        np.asarray(solution.values[1]["couple"]),
         _EXPECTED_COUPLE_V_AT_AGE_1,
         decimal=DECIMAL_PRECISION,
     )
@@ -440,7 +439,7 @@ def _simulate_gate_ref(model: Model):
         initial_conditions=_initial_conditions(
             n_subjects=2, regime_id=_GateRefRegimeId.couple, model=model
         ),
-        period_to_regime_to_V_arr=solution,
+        solution=solution,
         log_level="debug",
     )
 
@@ -448,16 +447,13 @@ def _simulate_gate_ref(model: Model):
 def _simulate_dissolution(model: Model):
     """Solve for values and flags, then simulate two couples from age 0."""
     params = {"discount_factor": _DISCOUNT_FACTOR, "floor_f": _FLOOR_F}
-    solution, flags = model.solve(
-        params=params, log_level="off", return_dissolution_flags=True
-    )
+    solution = model.solve(params=params, log_level="off")
     return model.simulate(
         params=params,
         initial_conditions=_initial_conditions(
             n_subjects=2, regime_id=_DissolutionRegimeId.couple, model=model
         ),
-        period_to_regime_to_V_arr=solution,
-        period_to_regime_to_dissolution_flags=flags,
+        solution=solution,
         log_level="debug",
     )
 

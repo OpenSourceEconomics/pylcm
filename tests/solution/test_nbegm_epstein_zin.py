@@ -132,13 +132,21 @@ _PARAMS = {
 
 def test_nbegm_epstein_zin_matches_brute_force() -> None:
     """NBEGM reproduces the dense grid-search value under Epstein-Zin preferences."""
-    nbegm = _build_model(
-        solver=NBEGM(
-            savings_grid=_SAVINGS_GRID,
-            envelope_arithmetic="ordinary",
+    nbegm = (
+        _build_model(
+            solver=NBEGM(
+                savings_grid=_SAVINGS_GRID,
+                envelope_arithmetic="ordinary",
+            )
         )
-    ).solve(params=_PARAMS, log_level="debug")
-    brute = _build_model(solver=GridSearch()).solve(params=_PARAMS, log_level="debug")
+        .solve(params=_PARAMS, log_level="debug")
+        .values
+    )
+    brute = (
+        _build_model(solver=GridSearch())
+        .solve(params=_PARAMS, log_level="debug")
+        .values
+    )
     for period in (0, 1):
         nbegm_V = np.asarray(nbegm[period]["alive"])
         brute_V = np.asarray(brute[period]["alive"])

@@ -83,7 +83,7 @@ def test_kinked_tax_example_runs_nbegm_on_both_sides_of_the_bracket() -> None:
     result = model.simulate(
         params=params,
         initial_conditions=examples.kinked_tax_initial_conditions(),
-        period_to_regime_to_V_arr=solution,
+        solution=solution,
         log_level="debug",
     )
     working = result.to_dataframe(additional_targets=["tax"]).query(
@@ -143,7 +143,7 @@ def test_specialized_authoring_examples_solve_and_simulate() -> None:
         result = model.simulate(
             params=params,
             initial_conditions=examples.example_initial_conditions(nested=nested),
-            period_to_regime_to_V_arr=solution,
+            solution=solution,
             log_level="debug",
         )
         frame = result.to_dataframe().sort_values(["subject_id", "period"])
@@ -167,7 +167,7 @@ def test_nested_example_demonstrates_adjustment_and_no_adjustment() -> None:
     result = model.simulate(
         params=params,
         initial_conditions=examples.example_initial_conditions(nested=True),
-        period_to_regime_to_V_arr=solution,
+        solution=solution,
         log_level="debug",
     )
     working = result.to_dataframe().query("regime_name == 'working'")

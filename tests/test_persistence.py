@@ -101,7 +101,7 @@ def model_and_params():
 @pytest.fixture
 def solved(model_and_params):
     model, params = model_and_params
-    return model.solve(params=params, log_level="debug")
+    return model.solve(params=params, log_level="debug").values
 
 
 # -- save_solution / load_solution ---------------------------------------------------
@@ -143,11 +143,11 @@ def test_solve_debug_persists_snapshot(*, tmp_path, model_and_params):
     snapshot = load_snapshot(dirs[0])
     assert isinstance(snapshot, SolveSnapshot)
     assert snapshot.period_to_regime_to_V_arr is not None
-    for period in period_to_regime_to_V_arr:
-        for regime_name in period_to_regime_to_V_arr[period]:
+    for period in period_to_regime_to_V_arr.values:
+        for regime_name in period_to_regime_to_V_arr.values[period]:
             assert jnp.allclose(
                 snapshot.period_to_regime_to_V_arr[period][regime_name],
-                period_to_regime_to_V_arr[period][regime_name],
+                period_to_regime_to_V_arr.values[period][regime_name],
             )
 
 
@@ -158,7 +158,7 @@ def test_simulate_debug_persists_snapshot(*, tmp_path, model_and_params):
     model.simulate(
         params=params,
         initial_conditions=_initial_conditions(),
-        period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+        solution=period_to_regime_to_V_arr,
         log_level="debug",
         log_path=tmp_path,
     )
@@ -176,7 +176,6 @@ def test_simulate_with_solve_debug_persists_snapshot(*, tmp_path, model_and_para
     model.simulate(
         params=params,
         initial_conditions=_initial_conditions(),
-        period_to_regime_to_V_arr=None,
         log_level="debug",
         log_path=tmp_path,
     )
@@ -202,7 +201,6 @@ def test_simulate_debug_persists_snapshot_with_aot_compiled_regimes(tmp_path):
     model.simulate(
         params=params,
         initial_conditions=_initial_conditions(),
-        period_to_regime_to_V_arr=None,
         log_level="debug",
         log_path=tmp_path,
     )
@@ -228,7 +226,7 @@ def test_simulate_no_persistence_when_not_debug(*, tmp_path, model_and_params):
     model.simulate(
         params=params,
         initial_conditions=_initial_conditions(),
-        period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+        solution=period_to_regime_to_V_arr,
         log_level="warning",
         log_path=tmp_path,
     )
@@ -340,10 +338,10 @@ def test_solve_snapshot_round_trip(*, tmp_path, model_and_params):
     assert snapshot.params is not None
     period_to_regime_to_V_arr_2 = snapshot.model.solve(
         params=snapshot.params, log_level="debug"
-    )
-    for period in period_to_regime_to_V_arr:
-        for regime_name in period_to_regime_to_V_arr[period]:
+    ).values
+    for period in period_to_regime_to_V_arr.values:
+        for regime_name in period_to_regime_to_V_arr.values[period]:
             assert jnp.allclose(
                 period_to_regime_to_V_arr_2[period][regime_name],
-                period_to_regime_to_V_arr[period][regime_name],
+                period_to_regime_to_V_arr.values[period][regime_name],
             )

@@ -156,9 +156,9 @@ class ArtifactRef:
 class ArtifactStore(Mapping[ArtifactRef, object]):
     """Immutable store of explicitly addressed solution artifacts.
 
-    The mapping interface keeps artifacts solver-extensible. ``project`` is the
-    compatibility adapter for consumers that need pylcm's existing nested
-    ``period -> regime -> payload`` representation for one known artifact key.
+    The mapping interface keeps artifacts solver-extensible. ``project`` gives engine
+    consumers the nested ``period -> regime -> payload`` view for one known artifact
+    key.
     """
 
     _entries: Mapping[ArtifactRef, object] = field(default_factory=dict, repr=False)

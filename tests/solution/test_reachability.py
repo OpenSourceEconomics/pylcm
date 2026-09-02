@@ -82,11 +82,11 @@ def test_runtime_zero_probability_keeps_static_continuation_targets() -> None:
     low_solution = model.solve(
         params={"discount_factor": 1.0, "probability_high": 0.0},
         log_level="debug",
-    )
+    ).values
     high_solution = model.solve(
         params={"discount_factor": 1.0, "probability_high": 1.0},
         log_level="debug",
-    )
+    ).values
 
     assert graph_targets == ("high", "low")
     assert (

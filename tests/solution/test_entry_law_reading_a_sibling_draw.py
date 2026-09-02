@@ -110,7 +110,7 @@ def test_the_entry_is_evaluated_at_each_node_of_the_draw(model: Model) -> None:
     every node, and the expectation is two for any weights that make the symmetric
     node set average to one.
     """
-    V = model.solve(params=_DISCOUNT, log_level="off")
+    V = model.solve(params=_DISCOUNT, log_level="off").values
 
     np.testing.assert_allclose(
         np.asarray(V[0]["source"]).ravel(), np.array([2.0]), atol=1e-5
@@ -176,7 +176,7 @@ def test_an_unread_runtime_process_does_not_block_a_fixed_draw() -> None:
             "target": {"noise": _RUNTIME_PARAMS},
         },
         log_level="off",
-    )
+    ).values
 
     # `wealth = 2 eps` and the target pays `wealth + shock = 3 eps`, mean three —
     # at each of the source's own noise nodes, which change nothing.
@@ -240,7 +240,7 @@ def test_a_dependent_entry_is_contracted_as_a_value_not_averaged_as_a_lottery() 
             }
         },
         log_level="off",
-    )
+    ).values
 
     # Utility is linear in income, so linear interpolation is exact: the target
     # pays `eps_j + 0.5` at node j, and only the draw is averaged over.

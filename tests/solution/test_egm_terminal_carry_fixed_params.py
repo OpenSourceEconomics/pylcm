@@ -236,12 +236,16 @@ def test_dcegm_terminal_bequest_fixed_param_matches_brute_force(
     period agrees with the dense-grid brute-force oracle.
     """
     params = _base_params() if scale_is_fixed else _free_scale_params()
-    dcegm_solution = _get_model(solver="dcegm", scale_is_fixed=scale_is_fixed).solve(
-        params=params, log_level="debug"
+    dcegm_solution = (
+        _get_model(solver="dcegm", scale_is_fixed=scale_is_fixed)
+        .solve(params=params, log_level="debug")
+        .values
     )
-    brute_solution = _get_model(
-        solver="brute_force", scale_is_fixed=scale_is_fixed
-    ).solve(params=params, log_level="debug")
+    brute_solution = (
+        _get_model(solver="brute_force", scale_is_fixed=scale_is_fixed)
+        .solve(params=params, log_level="debug")
+        .values
+    )
 
     for period in sorted(brute_solution)[:-1]:
         brute_V = np.asarray(brute_solution[period]["retirement"])

@@ -86,7 +86,7 @@ def test_gated_edge_gate_ref_is_read_at_its_own_period_axes() -> None:
         params={"discount_factor": _DISCOUNT_FACTOR}, log_level="debug"
     )
     aaae(
-        np.asarray(solution[1]["saver"]),
+        np.asarray(solution.values[1]["saver"]),
         _EXPECTED_SAVER_V_AT_AGE_1,
         decimal=DECIMAL_PRECISION,
     )
@@ -106,7 +106,7 @@ def test_simulated_gated_edge_gate_ref_is_read_at_its_own_period_axes() -> None:
     result = model.simulate(
         params={"discount_factor": _DISCOUNT_FACTOR},
         initial_conditions=_initial_conditions(n_subjects=2),
-        period_to_regime_to_V_arr=solution,
+        solution=solution,
         log_level="debug",
     )
     simulated = result.to_dataframe().query("regime_name == 'saver' and period == 1")
@@ -134,7 +134,7 @@ def test_simulated_gate_routes_the_saver_by_its_own_period_gate() -> None:
     result = model.simulate(
         params={"discount_factor": _DISCOUNT_FACTOR},
         initial_conditions=_initial_conditions(n_subjects=2),
-        period_to_regime_to_V_arr=solution,
+        solution=solution,
         log_level="debug",
     )
     routed = result.to_dataframe().query("period == 2")

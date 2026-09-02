@@ -97,7 +97,6 @@ def test_dcegm_simulated_consumption_is_off_grid_closed_form():
     result = model.simulate(
         params=params,
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
     df = result.to_dataframe()
@@ -145,7 +144,6 @@ def test_discrete_action_regime_consumption_can_leave_the_action_grid():
     result = model.simulate(
         params=params,
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
     period_0 = (
@@ -242,7 +240,6 @@ def test_passive_state_regime_keeps_the_grid_consumption_path():
     result = model.simulate(
         params=params,
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
     period_0 = result.to_dataframe().query("period == 0")
@@ -307,7 +304,6 @@ def test_phase_variant_utility_keeps_the_grid_consumption_path():
     result = model.simulate(
         params=params,
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
     consumption = result.to_dataframe().query("period == 0")["consumption"].to_numpy()

@@ -62,11 +62,15 @@ def test_identity_sentinel_solves_to_the_named_identity_function() -> None:
     """The sentinel and a regime function returning the outer state agree."""
     # `keep_illiquid` is `illiquid -> illiquid`, so the two declarations name the
     # same map and any difference in the solved value is a defect, not rounding.
-    declared = _model(no_adjustment=outer_unchanged).solve(
-        params=_PARAMS, log_level="debug"
+    declared = (
+        _model(no_adjustment=outer_unchanged)
+        .solve(params=_PARAMS, log_level="debug")
+        .values
     )
-    named = _model(no_adjustment="keep_illiquid").solve(
-        params=_PARAMS, log_level="debug"
+    named = (
+        _model(no_adjustment="keep_illiquid")
+        .solve(params=_PARAMS, log_level="debug")
+        .values
     )
 
     for period in named:

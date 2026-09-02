@@ -102,7 +102,7 @@ def _simulate(law: Any) -> pd.DataFrame:
         model.simulate(
             params=PARAMS,
             initial_conditions=IC,
-            period_to_regime_to_V_arr=V,
+            solution=V,
             log_level="debug",
             seed=1,
         )

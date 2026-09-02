@@ -81,7 +81,6 @@ def _simulate_with_bequest(bequest: float):
             "wealth": jnp.array([5.0]),
             "regime_id": jnp.array([RegimeId.alive]),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
     return result.to_dataframe()

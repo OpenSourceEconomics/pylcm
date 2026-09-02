@@ -122,7 +122,6 @@ def _simulate(*, fold: bool) -> pd.DataFrame:
         .simulate(
             params=_params(),
             initial_conditions=_initial_conditions(),
-            period_to_regime_to_V_arr=None,
             log_level="debug",
             seed=SEED,
         )
@@ -136,8 +135,10 @@ def test_a_shock_redrawn_every_period_loses_its_axis_in_every_period() -> None:
     The saving is per period, so the shape is asserted in each period the regime
     is active rather than only in the one that declares the shock.
     """
-    unfolded = _build_model(fold=False).solve(params=_params(), log_level="debug")
-    folded = _build_model(fold=True).solve(params=_params(), log_level="debug")
+    unfolded = (
+        _build_model(fold=False).solve(params=_params(), log_level="debug").values
+    )
+    folded = _build_model(fold=True).solve(params=_params(), log_level="debug").values
 
     alive_periods = [period for period, arrays in folded.items() if "alive" in arrays]
 
@@ -155,8 +156,10 @@ def test_the_folded_value_is_the_unfolded_value_averaged_over_the_nodes() -> Non
     active — not only in the last one, where there is no continuation to get
     wrong.
     """
-    unfolded = _build_model(fold=False).solve(params=_params(), log_level="debug")
-    folded = _build_model(fold=True).solve(params=_params(), log_level="debug")
+    unfolded = (
+        _build_model(fold=False).solve(params=_params(), log_level="debug").values
+    )
+    folded = _build_model(fold=True).solve(params=_params(), log_level="debug").values
     weights = np.asarray(
         NormalIIDProcess(
             n_points=N_POINTS, gauss_hermite=False, mu=0.0, n_std=3.0, sigma=1.0

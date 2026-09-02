@@ -59,7 +59,7 @@ def test_simulating_a_regime_with_no_active_target_names_the_regime_and_period()
         model.simulate(
             params={"discount_factor": 0.9},
             initial_conditions=_initial_conditions(),
-            period_to_regime_to_V_arr=solution,
+            solution=solution,
             log_level="off",
         )
 

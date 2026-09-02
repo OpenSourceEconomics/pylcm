@@ -212,11 +212,11 @@ def test_means_tested_transfer_matches_dense_brute_force():
     comparison runs on the full grid.
     """
     params = _get_params(pension=10.0)
-    dcegm_solution = _get_means_tested_model("dcegm").solve(
-        params=params, log_level="debug"
+    dcegm_solution = (
+        _get_means_tested_model("dcegm").solve(params=params, log_level="debug").values
     )
-    brute_solution = _get_means_tested_model("brute").solve(
-        params=params, log_level="debug"
+    brute_solution = (
+        _get_means_tested_model("brute").solve(params=params, log_level="debug").values
     )
 
     for period in sorted(brute_solution)[:-1]:
@@ -242,7 +242,7 @@ def test_all_child_mass_in_flat_region_yields_consume_everything():
     candidate up to the float residue of the geometric candidate spacing.
     """
     params = _get_params(pension=0.0)
-    solution = _get_corner_model().solve(params=params, log_level="debug")
+    solution = _get_corner_model().solve(params=params, log_level="debug").values
 
     discount_factor = 0.95
     decision_periods = sorted(solution)[:-1]

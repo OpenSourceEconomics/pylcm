@@ -63,10 +63,10 @@ def test_app3_dcegm_matches_vfi_on_wealth_interior(
     )
     dcegm_solution = dcegm_model.solve(
         params=build_params(variant="dcegm", n_periods=N_PERIODS), log_level="debug"
-    )
+    ).values
     brute_solution = brute_model.solve(
         params=build_params(variant="brute", n_periods=N_PERIODS), log_level="debug"
-    )
+    ).values
 
     interior = slice(N_LOW_NODES, N_ASSETS - N_HIGH_NODES)
     for period in sorted(brute_solution)[:-1]:

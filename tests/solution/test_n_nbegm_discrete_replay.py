@@ -18,6 +18,7 @@ from jax.typing import DTypeLike
 from _lcm.egm.published_policy import NNBEGMSimPolicy
 from lcm import IrregSpacedGrid, LinSpacedGrid
 from lcm.exceptions import InvalidSimulationInputError
+from lcm.solver_api import SIMULATION_POLICY, ResultRetention
 from lcm.typing import UserParams
 from tests.test_models import n_nbegm_discrete_toy as toy
 from tests.test_models import n_nbegm_toy as smooth
@@ -181,7 +182,6 @@ def _simulate(*, points: tuple[float, ...], dtype: DTypeLike):
         model.simulate(
             params=_PARAMS,
             initial_conditions=initial_conditions,
-            period_to_regime_to_V_arr=None,
             log_level="off",
             seed=41,
         )
@@ -193,9 +193,10 @@ def _simulate(*, points: tuple[float, ...], dtype: DTypeLike):
 
 def test_policy_bank_is_the_declared_outer_times_discrete_product() -> None:
     """The published bank retains exact product order and categorical metadata."""
-    _values, policies = toy.build_model(variant="n_nbegm", n_periods=2).solve(
-        params=_PARAMS, log_level="off", return_simulation_policy=True
+    _values = toy.build_model(variant="n_nbegm", n_periods=2).solve(
+        params=_PARAMS, log_level="off"
     )
+    policies = _values.replay_artifacts.project(SIMULATION_POLICY)
     policy = policies[0]["alive"]
     assert isinstance(policy, NNBEGMSimPolicy)
     n_outer = 1 + smooth.N_OUTER
@@ -231,20 +232,17 @@ def test_separate_solve_and_simulate_replays_the_exact_nnbegm_policy() -> None:
     automatic = model.simulate(
         params=_PARAMS,
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=None,
         log_level="off",
         seed=41,
     ).to_dataframe()
-    values, policies = model.solve(
+    values = model.solve(
         params=_PARAMS,
         log_level="off",
-        return_simulation_policy=True,
     )
     separate = model.simulate(
         params=_PARAMS,
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=values,
-        policies=policies,
+        solution=values,
         log_level="off",
         seed=41,
     ).to_dataframe()
@@ -265,7 +263,11 @@ def test_separate_nnbegm_simulation_requires_the_returned_policy() -> None:
         "age": jnp.asarray([20.0]),
         "regime_id": jnp.asarray([RegimeId.alive], dtype=jnp.int32),
     }
-    values = model.solve(params=_PARAMS, log_level="off")
+    values = model.solve(
+        params=_PARAMS,
+        log_level="off",
+        retention=ResultRetention.VALUES,
+    )
 
     with pytest.raises(
         InvalidSimulationInputError,
@@ -274,7 +276,7 @@ def test_separate_nnbegm_simulation_requires_the_returned_policy() -> None:
         model.simulate(
             params=_PARAMS,
             initial_conditions=initial_conditions,
-            period_to_regime_to_V_arr=values,
+            solution=values,
             log_level="off",
             seed=41,
         )

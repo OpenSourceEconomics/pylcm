@@ -163,10 +163,10 @@ stochastic-node workspace.
 
 :::{important} Solved and simulated continuous actions
 A solve can expose an off-grid
-DCEGM policy for inspection when `return_simulation_policy=True`. No envelope shipped
+DCEGM policy as an addressed replay artifact in `SolutionResult`. No envelope shipped
 with pylcm currently passes the conservative off-grid policy-read gate, so ordinary
 simulation recomputes the action argmax on the regime's declared action grid. Simulation
-also uses that gridded argmax when supplied value arrays carry no policy.
+uses that gridded argmax whenever the model declares no off-grid policy-read route.
 
 The simulated continuous action can therefore differ from the off-grid solve policy.
 With taste shocks, simulated choice frequencies follow the grid-restricted

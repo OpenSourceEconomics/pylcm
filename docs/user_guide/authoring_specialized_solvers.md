@@ -75,7 +75,7 @@ solution = model.solve(params=params, log_level="debug")
 result = model.simulate(
     params=params,
     initial_conditions=example_initial_conditions(),
-    period_to_regime_to_V_arr=solution,
+    solution=solution,
     log_level="debug",
 )
 df = result.to_dataframe(additional_targets=["savings"])
@@ -221,7 +221,7 @@ solution = model.solve(params=params, log_level="debug")
 result = model.simulate(
     params=params,
     initial_conditions=initial_conditions,
-    period_to_regime_to_V_arr=solution,
+    solution=solution,
     log_level="debug",
 )
 df = result.to_dataframe(additional_targets=["tax", "resources", "savings"])
@@ -324,7 +324,7 @@ solution = model.solve(params=params, log_level="debug")
 result = model.simulate(
     params=params,
     initial_conditions=example_initial_conditions(nested=True),
-    period_to_regime_to_V_arr=solution,
+    solution=solution,
     log_level="debug",
 )
 df = result.to_dataframe(additional_targets=["liquid_savings"])

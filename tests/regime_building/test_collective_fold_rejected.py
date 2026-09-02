@@ -99,7 +99,7 @@ def test_singleton_regime_may_still_declare_a_folded_state() -> None:
     """
     model, params = make_folding_singleton_model()
 
-    solution = model.solve(params=params, log_level="debug")
+    solution = model.solve(params=params, log_level="debug").values
 
     aaae(
         solution[0]["shocked"],

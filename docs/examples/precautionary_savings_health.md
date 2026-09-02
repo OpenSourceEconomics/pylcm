@@ -36,7 +36,6 @@ result = model.simulate(
         "health": jnp.full(1_000, 1.0),
         "regime_id": jnp.full(1_000, model.regime_names_to_ids["working_life"]),
     },
-    period_to_regime_to_V_arr=None,
     log_level="debug",
 )
 

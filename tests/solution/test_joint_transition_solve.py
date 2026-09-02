@@ -159,7 +159,7 @@ def test_joint_transition_prices_shared_nodes_without_a_cartesian_product(
     solution = model.solve(params=_params(), log_level="debug")
 
     np.testing.assert_array_almost_equal(
-        np.asarray(solution[0]["source"]), 1.5, decimal=DECIMAL_PRECISION
+        np.asarray(solution.values[0]["source"]), 1.5, decimal=DECIMAL_PRECISION
     )
 
 
@@ -220,7 +220,6 @@ def test_simulation_shares_one_realization_and_hides_the_joint_node() -> None:
             "age": jnp.full(n_subjects, 20.0),
             "regime_id": jnp.full(n_subjects, RegimeId.source),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
     frame = result.to_dataframe(terminal_rows="all")
@@ -483,11 +482,11 @@ def test_bdy_joint_match_matches_scalar_oracle_without_a_stored_match_axis(
         oracle, _BDY_EXPECTED, decimal=DECIMAL_PRECISION
     )
     np.testing.assert_array_almost_equal(
-        np.asarray(solution[0]["single"]),
+        np.asarray(solution.values[0]["single"]),
         0.95 * _BDY_EXPECTED,
         decimal=DECIMAL_PRECISION,
     )
-    assert np.asarray(solution[1]["couple"]).shape == (2, 6, 2, 2)
+    assert np.asarray(solution.values[1]["couple"]).shape == (2, 6, 2, 2)
     assert "partner_match" not in model._regimes["couple"].solution.state_names
 
 
@@ -497,10 +496,10 @@ def test_bdy_target_storage_is_independent_of_match_support_size() -> None:
     for support_size in (5, 45, 225):
         model = _bdy_model(enable_jit=False, support_size=support_size)
         solution = model.solve(params=_bdy_params(), log_level="debug")
-        target = solution[1]["couple"]
+        target = solution.values[1]["couple"]
         total_entries = sum(
             np.asarray(array).size
-            for regimes in solution.values()
+            for regimes in solution.values.values()
             for array in regimes.values()
         )
         storage_signatures.append(
@@ -509,7 +508,7 @@ def test_bdy_target_storage_is_independent_of_match_support_size() -> None:
 
     assert (
         storage_signatures
-        == [(4, (2, 6, 2, 2), type(solution[1]["couple"].sharding), 58)] * 3
+        == [(4, (2, 6, 2, 2), type(solution.values[1]["couple"].sharding), 58)] * 3
     )
 
 
@@ -526,7 +525,7 @@ def test_bdy_simulation_samples_one_shared_match_and_agrees_with_solve() -> None
             "wealth": jnp.full(n_subjects, 2.0),
             "regime_id": jnp.full(n_subjects, BDYRegimeId.single),
         },
-        period_to_regime_to_V_arr=solution,
+        solution=solution,
         log_level="debug",
     )
     frame = result.to_dataframe(use_labels=False, terminal_rows="all")
@@ -538,7 +537,7 @@ def test_bdy_simulation_samples_one_shared_match_and_agrees_with_solve() -> None
     np.testing.assert_array_equal(couple["wealth"], expected_wealth)
 
     folded_node_values = np.where(expected_wealth == 2.25, 9.375, 12.625)
-    solved_continuation = float(np.asarray(solution[0]["single"])[2] / 0.95)
+    solved_continuation = float(np.asarray(solution.values[0]["single"])[2] / 0.95)
     assert abs(folded_node_values.mean() - solved_continuation) < 0.08
     assert "partner_match" not in frame.columns
     assert "partner_match" not in result.state_names

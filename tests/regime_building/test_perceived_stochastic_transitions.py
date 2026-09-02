@@ -107,7 +107,7 @@ def _simulate(law: Any) -> pd.DataFrame:
     res = model.simulate(
         params=PARAMS,
         initial_conditions=IC,
-        period_to_regime_to_V_arr=V,
+        solution=V,
         log_level="debug",
         seed=1,
     )
@@ -240,7 +240,7 @@ def test_markov_and_process_states_coexist():
         model.simulate(
             params=params,
             initial_conditions=initial_conditions,
-            period_to_regime_to_V_arr=V,
+            solution=V,
             log_level="debug",
             seed=1,
         )
@@ -301,7 +301,7 @@ def test_continuation_helper_resolves_from_the_solve_phase():
         model.simulate(
             params=PARAMS,
             initial_conditions=IC,
-            period_to_regime_to_V_arr=V,
+            solution=V,
             log_level="debug",
             seed=1,
         )

@@ -78,7 +78,7 @@ def test_collective_continuation_divides_by_represented_mass():
     collective_V = collective.solve(
         params=_single_target_params(mass=INFLATED_MASS),
         log_level="off",
-    )[0]["couple"]
+    ).values[0]["couple"]
 
     twin_values = []
     for stakeholder in STAKEHOLDERS:
@@ -87,7 +87,7 @@ def test_collective_continuation_divides_by_represented_mass():
             twin.solve(
                 params=_single_target_params(mass=INFLATED_MASS),
                 log_level="off",
-            )[0]["couple"]
+            ).values[0]["couple"]
         )
     expected_V = jnp.stack(twin_values, axis=-1)
 
@@ -120,10 +120,10 @@ def test_collective_continuation_poisons_a_negative_probability():
     solution = collective.solve(
         params=_two_target_params(),
         log_level="off",
-    )
+    ).values
 
     twin = _build_two_target_model(household=None, stakeholder="f")
-    twin_solution = twin.solve(params=_two_target_params(), log_level="off")
+    twin_solution = twin.solve(params=_two_target_params(), log_level="off").values
     # The singleton contract the collective regime states as well.
     assert bool(jnp.isnan(twin_solution[0]["couple"]).all())
     # The source regime's last period reaches its terminal target with

@@ -87,7 +87,7 @@ def test_nbegm_survives_a_zero_marginal_continuation() -> None:
         constraints={},
         dead_functions={"utility": _flat_utility},
     )
-    solution = model.solve(params=_PARAMS, log_level="debug")
+    solution = model.solve(params=_PARAMS, log_level="debug").values
     v = np.asarray(solution[0]["alive"])
     assert np.all(np.isfinite(v)), "flat continuation produced non-finite values"
     liquid = np.linspace(0.1, 30.0, _N_LIQUID)

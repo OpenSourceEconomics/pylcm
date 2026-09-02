@@ -12,11 +12,17 @@ from collections.abc import Callable, Mapping
 from types import MappingProxyType
 
 import jax.numpy as jnp
+import pytest
 
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.published_policy import EGMSimPolicy
 from _lcm.engine import StateActionSpace
-from _lcm.execution.core_program import CoreExecutionRequirements, CoreProgram
+from _lcm.execution.core_program import (
+    CoreExecutionDisposition,
+    CoreExecutionRequirements,
+    CoreProgram,
+)
+from _lcm.execution.output_layout import VALUE
 from _lcm.regime_building.processing import _TerminalCarryPeriodKernel
 from _lcm.solution.contract import KernelResult
 from _lcm.utils.logging import get_logger
@@ -65,42 +71,38 @@ class _CoreProgramProvider:
     def __init__(self, *, program: CoreProgram) -> None:
         self.program = program
 
-    def build_core_program(
-        self,
-        *,
-        core_key: str,
-        arguments: Mapping[str, object],
-    ) -> CoreProgram:
-        assert core_key == "main"
-        assert arguments is self.program.arguments
-        return self.program
+    def core_programs(self) -> Mapping[str, CoreProgram]:
+        return MappingProxyType({"main": self.program})
 
 
-def test_terminal_carry_decorator_delegates_exact_core_program_arguments():
-    """A wrapped planner-aware kernel keeps its exact program declaration."""
+def test_terminal_carry_decorator_delegates_exact_core_program_graph():
+    """A wrapped native kernel keeps its exact program declaration."""
     program = CoreProgram(
+        name="main",
         function=lambda *, value: value,
-        arguments={"value": jnp.asarray([1.0, 2.0])},
+        argument_builder=lambda _context: MappingProxyType(
+            {"value": jnp.asarray([1.0, 2.0])}
+        ),
         requirements=CoreExecutionRequirements(),
-        output_roles=object(),
+        output_roles=VALUE,
+        disposition=CoreExecutionDisposition.DENSE,
+        disposition_reason="test_dense_terminal_carry",
     )
     wrapper = object.__new__(_TerminalCarryPeriodKernel)
     object.__setattr__(wrapper, "base", _CoreProgramProvider(program=program))
 
-    actual = wrapper.build_core_program(
-        core_key="main",
-        arguments=program.arguments,
-    )
+    actual = wrapper.core_programs()
 
-    assert actual is program
+    assert actual["main"] is program
 
 
-def test_terminal_carry_decorator_keeps_program_unaware_base_dense():
-    """A wrapped kernel without a program provider continues to opt out."""
+def test_terminal_carry_decorator_rejects_program_unaware_base():
+    """The decorator cannot recreate a second legacy declaration authority."""
     wrapper = object.__new__(_TerminalCarryPeriodKernel)
     object.__setattr__(wrapper, "base", object())
 
-    assert wrapper.build_core_program(core_key="main", arguments={}) is None
+    with pytest.raises(TypeError, match="native core-program graph"):
+        wrapper.core_programs()
 
 
 def test_wrapped_simulation_policy_survives_the_terminal_carry_decorator():

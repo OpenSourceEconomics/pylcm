@@ -255,8 +255,10 @@ def test_declaring_the_bound_does_not_change_the_solution() -> None:
     declared = _model(savings_grid_start=-2.0, declared_lower_bound=-2.0)
     bare = _model(savings_grid_start=-2.0, declared_lower_bound=None)
 
-    with_declaration = declared.solve(params=_filled_params(declared), log_level="off")
-    without = bare.solve(params=_filled_params(bare), log_level="off")
+    with_declaration = declared.solve(
+        params=_filled_params(declared), log_level="off"
+    ).values
+    without = bare.solve(params=_filled_params(bare), log_level="off").values
 
     for period, regime_to_V in without.items():
         for regime_name, V_arr in regime_to_V.items():
@@ -329,8 +331,10 @@ def test_grid_search_keeps_the_declaration_as_a_real_constraint() -> None:
     declared = _grid_search_model(declared_lower_bound=1.0)
     bare = _grid_search_model(declared_lower_bound=None)
 
-    with_declaration = declared.solve(params=_filled_params(declared), log_level="off")
-    without = bare.solve(params=_filled_params(bare), log_level="off")
+    with_declaration = declared.solve(
+        params=_filled_params(declared), log_level="off"
+    ).values
+    without = bare.solve(params=_filled_params(bare), log_level="off").values
 
     # A binding constraint shrinks the feasible set, so the value it yields can
     # only fall. Asserting merely that the two differ would also accept a
@@ -388,8 +392,10 @@ def test_a_hand_written_condition_matches_the_declared_bound() -> None:
     sugared = _grid_search_model(declared_lower_bound=1.0)
     hand_written = _grid_search_model(declared_lower_bound=1.0, hand_written=True)
 
-    from_sugar = sugared.solve(params=_filled_params(sugared), log_level="off")
-    from_hand = hand_written.solve(params=_filled_params(hand_written), log_level="off")
+    from_sugar = sugared.solve(params=_filled_params(sugared), log_level="off").values
+    from_hand = hand_written.solve(
+        params=_filled_params(hand_written), log_level="off"
+    ).values
 
     for period, regime_to_V in from_sugar.items():
         for regime_name, V_arr in regime_to_V.items():

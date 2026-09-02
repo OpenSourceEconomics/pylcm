@@ -189,7 +189,6 @@ def test_simulate_model_with_nan_value_function_array_raises_error(
             log_level="debug",
             params=params,
             initial_conditions=initial_conditions,
-            period_to_regime_to_V_arr=None,
         )
 
 
@@ -210,7 +209,6 @@ def test_simulate_model_with_inf_value_function_array_does_not_raise_error(
         log_level="debug",
         params=params,
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=None,
     )
 
 

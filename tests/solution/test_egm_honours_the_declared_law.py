@@ -119,11 +119,15 @@ def _params():
 def test_a_fixed_cost_in_the_law_reaches_the_egm_value(period):
     """`EGM` and a dense `GridSearch` agree on a law carrying a fixed cost."""
     params = _params()
-    egm = _model(solver=EGM(savings_grid=_SAVINGS_GRID)).solve(
-        params=params, log_level="debug"
+    egm = (
+        _model(solver=EGM(savings_grid=_SAVINGS_GRID))
+        .solve(params=params, log_level="debug")
+        .values
     )
-    brute = _model(solver=GridSearch(), n_consumption=1200).solve(
-        params=params, log_level="debug"
+    brute = (
+        _model(solver=GridSearch(), n_consumption=1200)
+        .solve(params=params, log_level="debug")
+        .values
     )
 
     got = np.asarray(egm[period]["saving"])[_UNCONSTRAINED]

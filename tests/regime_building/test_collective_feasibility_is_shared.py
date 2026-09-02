@@ -51,6 +51,7 @@ from lcm import (
     Regime,
     categorical,
 )
+from lcm.solver_api import DISSOLUTION_FLAG, SolutionResult
 from lcm.typing import BoolND, ContinuousState, DiscreteAction, FloatND, ScalarInt
 
 
@@ -138,32 +139,30 @@ def _make_model() -> Model:
 
 
 @pytest.fixture(scope="module")
-def solved() -> tuple[dict, dict]:
-    """Solve the two-regime model once, returning values and dissolution flags."""
-    solution, dissolution_flags = _make_model().solve(
+def solved() -> SolutionResult:
+    """Solve the two-regime model once into a complete result."""
+    return _make_model().solve(
         params={"discount_factor": _BETA},
         log_level="debug",
-        return_dissolution_flags=True,
     )
-    return dict(solution), dict(dissolution_flags)
 
 
 def test_terminal_collective_values_come_from_the_wife_s_participation_mask(
-    solved: tuple[dict, dict],
+    solved: SolutionResult,
 ) -> None:
     """Both partners' terminal values are read at the argmax over `u_f >= 25`."""
-    solution, _flags = solved
+    solution = solved
 
     np.testing.assert_array_equal(
-        np.asarray(solution[1]["couple_terminal"]), _EXPECTED_V_TERMINAL
+        np.asarray(solution.values[1]["couple_terminal"]), _EXPECTED_V_TERMINAL
     )
 
 
 def test_terminal_collective_dissolution_flags_come_from_the_shared_mask(
-    solved: tuple[dict, dict],
+    solved: SolutionResult,
 ) -> None:
     """The terminal regime dissolves exactly where the household mask is empty."""
-    _solution, flags = solved
+    flags = solved.replay_artifacts.project(DISSOLUTION_FLAG)
 
     np.testing.assert_array_equal(
         np.asarray(flags[1]["couple_terminal"]), _EXPECTED_D_TERMINAL
@@ -171,37 +170,37 @@ def test_terminal_collective_dissolution_flags_come_from_the_shared_mask(
 
 
 def test_nonterminal_collective_values_come_from_the_wife_s_participation_mask(
-    solved: tuple[dict, dict],
+    solved: SolutionResult,
 ) -> None:
     """Both partners' period-0 values are read at the argmax over `u_f >= 25`."""
-    solution, _flags = solved
+    solution = solved
 
     np.testing.assert_allclose(
-        np.asarray(solution[0]["couple"]), _EXPECTED_V_PERIOD_0, rtol=1e-6
+        np.asarray(solution.values[0]["couple"]), _EXPECTED_V_PERIOD_0, rtol=1e-6
     )
 
 
 def test_nonterminal_collective_dissolution_flags_come_from_the_shared_mask(
-    solved: tuple[dict, dict],
+    solved: SolutionResult,
 ) -> None:
     """No period-0 cell dissolves: leisure clears the wife's floor at every wage."""
-    _solution, flags = solved
+    flags = solved.replay_artifacts.project(DISSOLUTION_FLAG)
 
     np.testing.assert_array_equal(np.asarray(flags[0]["couple"]), _EXPECTED_D_PERIOD_0)
 
 
 def test_the_two_stakeholders_action_values_genuinely_differ(
-    solved: tuple[dict, dict],
+    solved: SolutionResult,
 ) -> None:
     """`Q^f` and `Q^m` differ, so a mask taken from one partner would be visible."""
-    solution, _flags = solved
-    V_0 = np.asarray(solution[0]["couple"])
+    solution = solved
+    V_0 = np.asarray(solution.values[0]["couple"])
 
     assert not np.allclose(V_0[:, 0], V_0[:, 1])
 
 
 def test_the_husband_is_bound_by_the_wife_s_participation_constraint(
-    solved: tuple[dict, dict],
+    solved: SolutionResult,
 ) -> None:
     """At wage 24 the husband's own optimum (work, 48) is ruled out for him too.
 
@@ -209,8 +208,8 @@ def test_the_husband_is_bound_by_the_wife_s_participation_constraint(
     feasible and leisure infeasible there, publishing `(24, 48)` in the terminal
     period instead of the wife-masked `(30, 0)`.
     """
-    solution, _flags = solved
-    V_terminal_at_middle_wage = np.asarray(solution[1]["couple_terminal"])[1]
+    solution = solved
+    V_terminal_at_middle_wage = np.asarray(solution.values[1]["couple_terminal"])[1]
 
     np.testing.assert_array_equal(V_terminal_at_middle_wage, [30.0, 0.0])
     assert not np.allclose(V_terminal_at_middle_wage, [24.0, 48.0])

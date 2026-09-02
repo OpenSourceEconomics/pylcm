@@ -11,6 +11,7 @@ Solver diagnostics must arrive on every alive period's kernel result with a
 converged mesh.
 """
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, cast
 
 import jax.numpy as jnp
@@ -21,11 +22,11 @@ from jax import config as jax_config
 import _lcm.solution.nnbegm as solvers_mod
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from lcm.solvers import AdaptiveOuterMesh
+from lcm.typing import FloatND
 from tests.test_models import n_nbegm_toy as toy
 
 if TYPE_CHECKING:
     from _lcm.solution.contract import KernelResult
-    from _lcm.typing import PeriodToRegimeToVArr
 
 _PARAMS = {"discount_factor": 0.95}
 _N_PERIODS = 3
@@ -47,7 +48,7 @@ def _solve(
     *,
     outer_search: AdaptiveOuterMesh | None,
     monkeypatch: pytest.MonkeyPatch,
-) -> tuple[PeriodToRegimeToVArr, dict[int, KernelResult]]:
+) -> tuple[Mapping[int, Mapping[str, FloatND]], dict[int, KernelResult]]:
     recorded: dict[int, KernelResult] = {}
     original_call = solvers_mod._NNBEGMPeriodKernel.__call__
 
@@ -60,11 +61,15 @@ def _solve(
         return result
 
     monkeypatch.setattr(solvers_mod._NNBEGMPeriodKernel, "__call__", recording_call)
-    solution = toy.build_model(
-        variant="n_nbegm",
-        n_periods=_N_PERIODS,
-        outer_search=outer_search,
-    ).solve(params=_PARAMS, log_level="debug")
+    solution = (
+        toy.build_model(
+            variant="n_nbegm",
+            n_periods=_N_PERIODS,
+            outer_search=outer_search,
+        )
+        .solve(params=_PARAMS, log_level="debug")
+        .values
+    )
     return solution, recorded
 
 

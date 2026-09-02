@@ -141,7 +141,7 @@ def _build_model(
 
 
 def _source_value(*, model: Model, params: dict) -> float:
-    solution = model.solve(params=params, log_level="debug")
+    solution = model.solve(params=params, log_level="debug").values
     last_living = max(period for period in solution if "source" in solution[period])
     return float(np.asarray(solution[last_living]["source"]).ravel()[0])
 
@@ -433,7 +433,6 @@ def test_entry_draws_come_from_the_process_law_not_from_its_solver_nodes() -> No
             "regime_id": jnp.full(n_subjects, RegimeId.source, dtype=jnp.int32),
             "age": jnp.full(n_subjects, 20.0),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
     df = result.to_dataframe()
@@ -587,7 +586,6 @@ def test_explicit_entry_puts_every_subject_at_the_declared_value(
             "regime_id": jnp.full(n_subjects, RegimeId.source, dtype=jnp.int32),
             "age": jnp.full(n_subjects, 20.0),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
     entered = result.to_dataframe().query("regime_name == 'target'")["shock"]

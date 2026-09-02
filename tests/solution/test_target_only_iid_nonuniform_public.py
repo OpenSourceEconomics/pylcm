@@ -84,6 +84,6 @@ def test_target_only_lognormal_iid_uses_quadrature_weights(*, coarse, enable_jit
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
     )
-    solution = model.solve(params={"discount_factor": 1.0}, log_level="debug")
+    solution = model.solve(params={"discount_factor": 1.0}, log_level="debug").values
     got = float(np.asarray(solution[0]["source"]))
     np.testing.assert_allclose(got, _oracle(), rtol=2e-6)

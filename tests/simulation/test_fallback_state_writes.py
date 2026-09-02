@@ -227,9 +227,7 @@ def _simulate_three_households():
         regime_id_class=RegimeId,
     )
     params = {"discount_factor": _BETA}
-    solution, dissolution_flags = model.solve(
-        params=params, log_level="off", return_dissolution_flags=True
-    )
+    solution = model.solve(params=params, log_level="off")
     n_households = len(_HOUSEHOLD_WAGES)
     initial_conditions = MappingProxyType(
         {
@@ -247,8 +245,7 @@ def _simulate_three_households():
     return model.simulate(
         params=params,
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=solution,
-        period_to_regime_to_dissolution_flags=dissolution_flags,
+        solution=solution,
         log_level="off",
         seed=0,
     )

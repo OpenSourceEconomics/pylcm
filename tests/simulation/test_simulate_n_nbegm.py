@@ -11,8 +11,8 @@ import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 
-from _lcm.typing import PeriodToRegimeToVArr
 from lcm import IrregSpacedGrid
+from lcm.solver_api import SIMULATION_POLICY, SolutionResult
 from tests.test_models import n_nbegm_toy as toy
 from tests.test_models.n_nbegm_toy import RegimeId
 
@@ -35,7 +35,6 @@ def _alive_dataframe() -> pd.DataFrame:
     result = toy.build_model(variant="n_nbegm", n_periods=3).simulate(
         params=_PARAMS,
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=None,
         log_level="debug",
         seed=7,
     )
@@ -81,18 +80,18 @@ def test_simulated_consumption_is_strictly_positive() -> None:
 
 def _solve_and_simulate_with_outer_action_points(
     points: tuple[float, ...],
-) -> tuple[PeriodToRegimeToVArr, pd.DataFrame]:
+) -> tuple[SolutionResult, pd.DataFrame]:
     """Return the solved policy-bearing model and its alive simulation rows."""
     model = toy.build_model(
         variant="n_nbegm",
         n_periods=2,
         illiquid_investment_grid=IrregSpacedGrid(points=points),
     )
-    values, policies = model.solve(
+    solution = model.solve(
         params=_PARAMS,
         log_level="debug",
-        return_simulation_policy=True,
     )
+    policies = solution.replay_artifacts.project(SIMULATION_POLICY)
     assert "alive" in policies[0], (
         "NNBEGM did not publish the keeper-plus-adjuster replay payload; "
         "simulation would re-optimize a foreign action-grid candidate set."
@@ -106,17 +105,17 @@ def _solve_and_simulate_with_outer_action_points(
     result = model.simulate(
         params=_PARAMS,
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=None,
+        solution=solution,
         log_level="debug",
         seed=19,
     )
-    return values, result.to_dataframe().query(
+    return solution, result.to_dataframe().query(
         "regime_name == 'alive' and period == 0"
     ).sort_index()
 
 
 def test_simulation_replays_the_nnbegm_candidate_when_the_action_grid_changes() -> None:
-    """A simulate-only outer-grid refinement cannot change the solved pair.
+    """A simulate-only outer-grid refinement cannot change the solved candidates.
 
     The narrow grid contains the review witness's 0.01 point; the refined grid
     inserts the foreign 5.0 point that baseline simulation can select. Neither
@@ -124,16 +123,16 @@ def test_simulation_replays_the_nnbegm_candidate_when_the_action_grid_changes() 
     ``OUTER_GRID``. The replay must therefore be identical under both grids, and
     every emitted post-decision durable stock must be one of those solve candidates.
     """
-    narrow_values, narrow = _solve_and_simulate_with_outer_action_points(
+    narrow_solution, narrow = _solve_and_simulate_with_outer_action_points(
         (-20.0, 0.01, 20.0)
     )
-    wide_values, wide = _solve_and_simulate_with_outer_action_points(
+    wide_solution, wide = _solve_and_simulate_with_outer_action_points(
         (-20.0, 0.01, 5.0, 20.0)
     )
 
     np.testing.assert_array_equal(
-        np.asarray(narrow_values[0]["alive"]),
-        np.asarray(wide_values[0]["alive"]),
+        np.asarray(narrow_solution.values[0]["alive"]),
+        np.asarray(wide_solution.values[0]["alive"]),
     )
     for column in ("illiquid_investment", "consumption", "value"):
         np.testing.assert_allclose(

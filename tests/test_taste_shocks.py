@@ -131,7 +131,7 @@ def test_brute_force_solve_matches_reference_logsum_value_function():
     model = taste_shocks_toy.get_model()
     params = taste_shocks_toy.get_params(scale=scale, discount_factor=discount_factor)
 
-    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
+    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug").values
 
     got = np.asarray(period_to_regime_to_V_arr[0]["alive"])
     expected = _reference_alive_V(scale=scale, discount_factor=discount_factor)
@@ -148,10 +148,10 @@ def test_smoothed_value_weakly_exceeds_hard_max_value():
     model = taste_shocks_toy.get_model()
     smoothed = model.solve(
         params=taste_shocks_toy.get_params(scale=0.5), log_level="debug"
-    )
+    ).values
     hard = model.solve(
         params=taste_shocks_toy.get_params(scale=1e-8), log_level="debug"
-    )
+    ).values
 
     assert bool(jnp.all(smoothed[0]["alive"] >= hard[0]["alive"] - 1e-12))
 

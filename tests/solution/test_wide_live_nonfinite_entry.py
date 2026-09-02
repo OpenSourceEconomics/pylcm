@@ -223,7 +223,7 @@ def _build_model(
 
 
 def _source_value(model: Model) -> FloatND:
-    return jnp.asarray(model.solve(params=_PARAMS, log_level="off")[0]["source"])
+    return jnp.asarray(model.solve(params=_PARAMS, log_level="off").values[0]["source"])
 
 
 @pytest.mark.parametrize("enable_jit", [False, True], ids=["eager", "jit"])

@@ -153,7 +153,7 @@ def test_solve_grid_excludes_carried_state() -> None:
 def _solve_pension_model(model: Model) -> Mapping[int, Mapping[str, FloatND]]:
     params = cast("dict[str, Any]", model.get_params_template())
     params["working"]["koopmans_aggregator"]["discount_factor"] = 0.95
-    return model.solve(params=params, log_level="debug")
+    return model.solve(params=params, log_level="debug").values
 
 
 def test_carried_state_solves_like_plain_function() -> None:
@@ -174,7 +174,6 @@ def _simulate_pension(*, model: Model, pension_seed: list[float]) -> pd.DataFram
     result = model.simulate(
         log_level="debug",
         params=params,
-        period_to_regime_to_V_arr=None,
         initial_conditions={
             "wealth": jnp.full(n, 50.0),
             "aime": jnp.full(n, 20.0),
@@ -232,7 +231,6 @@ def test_simulate_aot_compiled_carries_carried_state() -> None:
     result = model.simulate(
         log_level="debug",
         params=params,
-        period_to_regime_to_V_arr=None,
         initial_conditions={
             "wealth": jnp.full(2, 50.0),
             "aime": jnp.full(2, 20.0),
@@ -336,7 +334,6 @@ def test_simulate_evolves_carried_state_across_carried_only_handover() -> None:
     result = model.simulate(
         log_level="debug",
         params=params,
-        period_to_regime_to_V_arr=None,
         initial_conditions={
             "wealth": jnp.full(1, 50.0),
             "aime": jnp.full(1, 20.0),
@@ -394,7 +391,6 @@ def test_additional_targets_read_carried_value() -> None:
     result = model.simulate(
         log_level="debug",
         params=params,
-        period_to_regime_to_V_arr=None,
         initial_conditions={
             "wealth": jnp.full(1, 50.0),
             "aime": jnp.full(1, 20.0),
@@ -442,7 +438,6 @@ def test_initial_feasibility_checks_seeded_carried_value() -> None:
         model.simulate(
             log_level="debug",
             params=params,
-            period_to_regime_to_V_arr=None,
             initial_conditions={
                 "wealth": jnp.full(1, 50.0),
                 "aime": jnp.full(1, 20.0),
@@ -510,7 +505,7 @@ def test_solved_V_is_accepted_back_by_simulate() -> None:
     result = model.simulate(
         log_level="debug",
         params=params,
-        period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+        solution=period_to_regime_to_V_arr,
         initial_conditions={
             "wealth": jnp.full(1, 50.0),
             "aime": jnp.full(1, 20.0),

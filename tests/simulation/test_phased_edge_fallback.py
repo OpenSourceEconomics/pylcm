@@ -160,7 +160,7 @@ def _simulate(*, model: Model, solution):
             "age": jnp.zeros(2),
             "regime_id": jnp.full(2, model.regime_names_to_ids["worker"]),
         },
-        period_to_regime_to_V_arr=solution,
+        solution=solution,
         log_level="off",
         seed=0,
     )
@@ -180,7 +180,7 @@ def test_the_solved_value_is_priced_under_the_solve_leg() -> None:
     solution = model.solve(params=_PARAMS, log_level="off")
 
     np.testing.assert_array_almost_equal(
-        np.asarray(solution[0]["worker"]),
+        np.asarray(solution.values[0]["worker"]),
         np.array([0.0, 1.0, 20.0]),
         decimal=DECIMAL_PRECISION,
     )

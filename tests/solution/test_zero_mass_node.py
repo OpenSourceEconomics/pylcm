@@ -90,7 +90,7 @@ def test_unreachable_node_does_not_destroy_the_reachable_ones(model: Model) -> N
     frail health, so that node's value is `-inf`. The hale continuation is
     therefore `1.0`, and `V(hale) = 1 + 0.9 · 1`.
     """
-    V = model.solve(params={"discount_factor": 0.9}, log_level="off")
+    V = model.solve(params={"discount_factor": 0.9}, log_level="off").values
 
     got = np.asarray(V[0]["alive"]).ravel()
 

@@ -31,7 +31,7 @@ def _solve(*, variant: str, n_consumption: int = 120) -> Mapping[int, Mapping]:
     )
     return model.solve(
         params=toy.build_params(budget_name="cash_on_hand"), log_level="debug"
-    )
+    ).values
 
 
 def test_nbegm_with_regime_owned_renamed_budget_matches_brute_every_age():

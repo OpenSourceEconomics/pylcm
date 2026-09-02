@@ -117,7 +117,6 @@ def test_validation_vmaps_over_action_combos():
             "age": jnp.array([0.0, 0.0]),
             "regime_id": jnp.array([RegimeId.alive] * 2),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
 

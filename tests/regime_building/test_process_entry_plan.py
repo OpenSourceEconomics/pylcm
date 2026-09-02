@@ -76,7 +76,7 @@ def test_a_process_declared_as_an_action_is_not_entered(*, enable_jit: bool) -> 
     V = model.solve(
         params={"source": {"koopmans_aggregator": {"discount_factor": 1.0}}},
         log_level="debug",
-    )
+    ).values
 
     largest_node = float(
         NormalIIDProcess(n_points=3, gauss_hermite=True, mu=0.5, sigma=1.0)

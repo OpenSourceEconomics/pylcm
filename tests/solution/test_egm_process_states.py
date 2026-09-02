@@ -293,11 +293,15 @@ def test_rouwenhorst_process_matches_dense_brute_force():
     unreliable.
     """
     params = _get_params("rouwenhorst")
-    dcegm_solution = _get_model(solver="dcegm", shock_type="rouwenhorst").solve(
-        params=params, log_level="debug"
+    dcegm_solution = (
+        _get_model(solver="dcegm", shock_type="rouwenhorst")
+        .solve(params=params, log_level="debug")
+        .values
     )
-    brute_solution = _get_model(solver="brute", shock_type="rouwenhorst").solve(
-        params=params, log_level="debug"
+    brute_solution = (
+        _get_model(solver="brute", shock_type="rouwenhorst")
+        .solve(params=params, log_level="debug")
+        .values
     )
 
     for period in sorted(brute_solution)[:-1]:
@@ -320,11 +324,15 @@ def test_iid_process_matches_dense_brute_force():
     the child read is averaged over the quadrature nodes with those weights.
     """
     params = _get_params("iid")
-    dcegm_solution = _get_model(solver="dcegm", shock_type="iid").solve(
-        params=params, log_level="debug"
+    dcegm_solution = (
+        _get_model(solver="dcegm", shock_type="iid")
+        .solve(params=params, log_level="debug")
+        .values
     )
-    brute_solution = _get_model(solver="brute", shock_type="iid").solve(
-        params=params, log_level="debug"
+    brute_solution = (
+        _get_model(solver="brute", shock_type="iid")
+        .solve(params=params, log_level="debug")
+        .values
     )
 
     for period in sorted(brute_solution)[:-1]:

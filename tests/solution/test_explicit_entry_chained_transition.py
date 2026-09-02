@@ -119,7 +119,7 @@ def test_explicit_process_entry_can_feed_another_explicit_entry(
     """
     model = _build_model(enable_jit=enable_jit)
 
-    solution = model.solve(params=PARAMS, log_level="debug")
+    solution = model.solve(params=PARAMS, log_level="debug").values
     last_source_period = max(
         period for period in solution if "source" in solution[period]
     )

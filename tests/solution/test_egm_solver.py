@@ -188,8 +188,10 @@ def _closed_form(*, wealth, periods_of_consumption):
 @pytest.mark.parametrize("period", [0, 1, 2])
 def test_egm_value_matches_the_analytical_solution(period):
     """Each period's solved value equals the closed form on the unconstrained set."""
-    solution = _model(solver=EGM(savings_grid=_SAVINGS_GRID)).solve(
-        params=_params(), log_level="debug"
+    solution = (
+        _model(solver=EGM(savings_grid=_SAVINGS_GRID))
+        .solve(params=_params(), log_level="debug")
+        .values
     )
     wealth = np.asarray(_WEALTH_GRID.to_jax())[_UNCONSTRAINED]
     _, expected = _closed_form(
@@ -206,11 +208,15 @@ def test_egm_agrees_with_dense_grid_search():
     equation, so it cannot share a mistake in the inversion.
     """
     params = _params()
-    egm = _model(solver=EGM(savings_grid=_SAVINGS_GRID)).solve(
-        params=params, log_level="debug"
+    egm = (
+        _model(solver=EGM(savings_grid=_SAVINGS_GRID))
+        .solve(params=params, log_level="debug")
+        .values
     )
-    brute = _model(solver=GridSearch(), n_consumption=1200).solve(
-        params=params, log_level="debug"
+    brute = (
+        _model(solver=GridSearch(), n_consumption=1200)
+        .solve(params=params, log_level="debug")
+        .values
     )
     for period in (0, 1, 2):
         got = np.asarray(egm[period]["saving"])[_UNCONSTRAINED]

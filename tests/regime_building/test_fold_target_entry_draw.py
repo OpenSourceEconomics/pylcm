@@ -122,7 +122,6 @@ def _simulate(*, fold: bool) -> pd.DataFrame:
         .simulate(
             params=_params(),
             initial_conditions=_initial_conditions(),
-            period_to_regime_to_V_arr=None,
             log_level="debug",
             seed=SEED,
         )
@@ -136,8 +135,10 @@ def test_folding_removes_the_axis_from_the_stored_value() -> None:
     This is the control for the panel comparison below: without it, two identical
     panels would also be consistent with `fold=True` doing nothing at all.
     """
-    unfolded = _build_model(fold=False).solve(params=_params(), log_level="debug")
-    folded = _build_model(fold=True).solve(params=_params(), log_level="debug")
+    unfolded = (
+        _build_model(fold=False).solve(params=_params(), log_level="debug").values
+    )
+    folded = _build_model(fold=True).solve(params=_params(), log_level="debug").values
 
     assert unfolded[1]["bonus"].shape == (N_POINTS,)
     assert folded[1]["bonus"].shape == ()

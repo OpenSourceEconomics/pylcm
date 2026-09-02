@@ -5,6 +5,7 @@ import hashlib
 import importlib
 import importlib.abc
 import importlib.util
+import inspect
 import json
 import os
 import re
@@ -308,6 +309,32 @@ def _safe_stem(label: str) -> str:
     return stem[:100] or "core"
 
 
+def _kernel_execution_metadata(kernel: Any) -> dict[str, Any]:
+    """Describe one kernel through its native graph or the historical declaration."""
+    graph_provider = getattr(kernel, "core_programs", None)
+    if callable(graph_provider):
+        programs = graph_provider()
+        if tuple(programs) != ("main",):
+            raise RuntimeError(
+                "GridSearch benchmark expected exactly one native 'main' program."
+            )
+        program = programs["main"]
+        raw_disposition = program.disposition
+        disposition = getattr(raw_disposition, "value", raw_disposition)
+        return {
+            "streamed": disposition == "planned",
+            "execution_disposition": disposition,
+            "disposition_reason": program.disposition_reason,
+        }
+
+    streamed = getattr(kernel, "streamed_core", None) is not None
+    return {
+        "streamed": streamed,
+        "execution_disposition": "planned" if streamed else "legacy-unplanned",
+        "disposition_reason": None if streamed else "legacy_adapter",
+    }
+
+
 def _route_metadata(model: Any) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
     folded_regimes: list[str] = []
@@ -337,13 +364,14 @@ def _route_metadata(model: Any) -> dict[str, Any]:
         ):
             distributed_regimes.append(regime_name)
         for period, kernel in sorted(regime.solution.period_kernels.items()):
+            execution = _kernel_execution_metadata(kernel)
             rows.append(
                 {
                     "regime": regime_name,
                     "period": int(period),
                     "action_names": list(action_names),
                     "action_extents": list(action_extents),
-                    "streamed": getattr(kernel, "streamed_core", None) is not None,
+                    **execution,
                     "collective": collective,
                     "has_taste_shocks": has_taste_shocks,
                     "fold_state_names": list(fold_names),
@@ -407,7 +435,14 @@ def _assert_scenario_identity(*, spec: Any, routes: Mapping[str, Any]) -> None:
 
 
 def _flatten_arrays(*, result: Any) -> dict[str, Any]:
-    values, dissolution_flags = result
+    if isinstance(result, tuple):
+        values, dissolution_flags = result
+    else:
+        values = result.values
+        dissolution_flags: dict[int, dict[str, Any]] = {}
+        for ref, payload in result.replay_artifacts.items():
+            if ref.key.type_id == "pylcm.collective.dissolution_flag":
+                dissolution_flags.setdefault(ref.period, {})[ref.regime] = payload
     flattened: dict[str, Any] = {}
     for prefix, tree in (("value", values), ("dissolution", dissolution_flags)):
         for period, by_regime in sorted(tree.items()):
@@ -680,8 +715,9 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0912, PLR0915
     solve_kwargs = {
         "params": params,
         "log_level": "off",
-        "return_dissolution_flags": True,
     }
+    if "return_dissolution_flags" in inspect.signature(model.solve).parameters:
+        solve_kwargs["return_dissolution_flags"] = True
     memory_before_solve = _read_proc_memory()
     with ExitStack() as stack:
         backward_induction._compile_all_functions = timed_compile_all  # noqa: SLF001

@@ -83,7 +83,7 @@ def test_gated_edge_fold_reads_the_target_at_its_own_period_axes() -> None:
         params={"discount_factor": _DISCOUNT_FACTOR}, log_level="debug"
     )
     aaae(
-        np.asarray(solution[1]["saver"]),
+        np.asarray(solution.values[1]["saver"]),
         _EXPECTED_SAVER_V_AT_AGE_1,
         decimal=DECIMAL_PRECISION,
     )
@@ -104,7 +104,7 @@ def test_simulated_gated_continuation_reads_the_target_at_its_own_period_axes() 
     result = model.simulate(
         params={"discount_factor": _DISCOUNT_FACTOR},
         initial_conditions=_initial_conditions(n_subjects=2),
-        period_to_regime_to_V_arr=solution,
+        solution=solution,
         log_level="debug",
     )
     simulated = result.to_dataframe().query("regime_name == 'saver' and period == 1")

@@ -349,12 +349,10 @@ def test_solve_raises_for_invalid_regime_transition_probs():
 def test_simulate_raises_for_invalid_regime_transition_probs():
     """model.simulate() raises for out-of-bounds regime transition probabilities."""
     model = get_model(N_PERIODS)
-    good_params = get_params(n_periods=N_PERIODS)
-    period_to_regime_to_V_arr = model.solve(log_level="debug", params=good_params)
-
     bad_params = get_params(
         n_periods=N_PERIODS, survival_probs=_invalid_survival_probs(N_PERIODS)
     )
+    solution = model.solve(log_level="off", params=bad_params)
     initial_conditions = {
         "age": jnp.array([40.0]),
         "wealth": jnp.array([10.0]),
@@ -365,12 +363,12 @@ def test_simulate_raises_for_invalid_regime_transition_probs():
             log_level="debug",
             params=bad_params,
             initial_conditions=initial_conditions,
-            period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+            solution=solution,
         )
 
 
 def test_simulate_with_solve_raises_for_invalid_regime_transition_probs():
-    """model.simulate(period_to_regime_to_V_arr=None) raises for out-of-bounds probs."""
+    """model.simulate() raises for out-of-bounds probs."""
     model = get_model(N_PERIODS)
     params = get_params(
         n_periods=N_PERIODS, survival_probs=_invalid_survival_probs(N_PERIODS)
@@ -385,7 +383,6 @@ def test_simulate_with_solve_raises_for_invalid_regime_transition_probs():
             log_level="debug",
             params=params,
             initial_conditions=initial_conditions,
-            period_to_regime_to_V_arr=None,
         )
 
 

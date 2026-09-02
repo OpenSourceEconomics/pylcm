@@ -15,11 +15,16 @@ import jax.numpy as jnp
 
 from _lcm.engine import Regime, StateActionSpace, _build_regime_sharding
 from _lcm.execution.core_program import (
+    CoreBuildContext,
+    CoreExecutionDisposition,
+    CoreExecutionRequirements,
     CoreProgram,
-    CoreProgramAware,
+    MaterializedCoreProgram,
+    ResolvedCoreProgram,
     _target_value_argument_leaf,
-    _TargetValueAccessAware,
-    _validate_core_program,
+    core_program_graph,
+    initial_core_tile_widths,
+    materialize_core_program,
     resolve_core_program,
 )
 from _lcm.execution.liveness import PlannedInputLiveness
@@ -27,11 +32,9 @@ from _lcm.execution.output_layout import (
     DISSOLUTION_FLAG,
     UNPLANNED,
     VALUE,
-    OutputLayoutAware,
     PlannedCore,
     ResolvedOutputLayout,
     assert_output_layout,
-    planned_input_transfer_plan,
     planned_output_layout,
     resolve_output_layout,
 )
@@ -138,11 +141,11 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             alongside their other outputs, but a value-only solve drops it at the
             period boundary instead of retaining one device-sized artifact per period.
         simulation_policy_regimes: Optional canonical-regime allowlist for policy
-            collection. ``None`` preserves the legacy all-publishers behavior.
+            collection. ``None`` permits every publisher.
         collect_solver_diagnostics: Whether to retain a kernel's numerical
-            self-report. Existing ``solve`` and automatic-simulation paths leave
-            this false; ``solve_result`` opts in, with ``log_level`` still deciding
-            whether diagnostics are calculated and retained.
+            self-report. Public ``Model.solve()`` and automatic simulation request
+            it; ``log_level`` still decides whether diagnostics are calculated and
+            retained. Internal callers may disable collection.
         track_artifact_publication: Whether to retain the tiny set of cells whose
             kernels produced a simulation policy. Used to write truthful omission
             records without retaining values-only replay arrays.
@@ -185,8 +188,8 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         _build_continuation_templates(regimes=regimes, flat_params=flat_params)
     )
 
-    # AOT-compile all unique solve kernels in parallel.
-    compiled_functions = _compile_all_functions(
+    # Resolve every solve program, then compile unique lowerings when enabled.
+    compiled_programs = _compile_all_functions(
         regimes=regimes,
         flat_params=flat_params,
         ages=ages,
@@ -197,9 +200,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         max_compilation_workers=max_compilation_workers,
         logger=logger,
     )
+    compiled_functions = compiled_programs.executables
     input_liveness = _build_planned_input_liveness(
-        regimes=regimes,
-        compiled_functions=compiled_functions,
+        regimes=regimes, program_metadata=compiled_programs.metadata
     )
 
     solution: dict[int, MappingProxyType[RegimeName, FloatND]] = {}
@@ -1359,26 +1362,48 @@ def _drain_V_arr_shards(
 
 
 type _InputDispatch = tuple[int, RegimeName]
+type _CoreTriple = tuple[RegimeName, int, str]
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _ProgramExecutionMetadata:
+    """Resolved declaration facts retained without pinning argument templates."""
+
+    requirements: CoreExecutionRequirements
+    disposition: CoreExecutionDisposition
+    input_transfer_plan: tuple[ResolvedValueTransfer, ...]
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _CompiledPrograms:
+    """Executable graph plus the metadata liveness reads through the same seam."""
+
+    executables: dict[
+        tuple[RegimeName, int], MappingProxyType[str, Callable[..., object]]
+    ]
+    metadata: MappingProxyType[_CoreTriple, _ProgramExecutionMetadata]
 
 
 def _build_planned_input_liveness(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
-    compiled_functions: Mapping[
-        tuple[RegimeName, int], MappingProxyType[str, Callable]
-    ],
+    program_metadata: Mapping[_CoreTriple, _ProgramExecutionMetadata],
 ) -> PlannedInputLiveness[_InputDispatch, ValueArtifactAddress]:
     """Build one exact-dispatch ledger without authorizing physical release."""
     dispatch_accesses: dict[_InputDispatch, tuple[ValueArtifactAddress, ...]] = {}
     pinned_artifacts = set(_retained_solution_value_artifacts(regimes=regimes))
     pinned_artifacts.update(_gated_fold_raw_value_artifacts(regimes=regimes))
 
-    for (regime_name, period), compiled_cores in compiled_functions.items():
+    metadata_by_dispatch: dict[
+        tuple[RegimeName, int], dict[str, _ProgramExecutionMetadata]
+    ] = {}
+    for (regime_name, period, core_name), metadata in program_metadata.items():
+        metadata_by_dispatch.setdefault((regime_name, period), {})[core_name] = metadata
+
+    for (regime_name, period), programs in metadata_by_dispatch.items():
         regime = regimes[regime_name]
-        kernel = regime.solution.period_kernels[period]
         planned, unplanned_exact, has_unknown = _classify_dispatch_value_artifacts(
-            kernel=kernel,
-            compiled_cores=compiled_cores,
+            programs=programs,
         )
         dispatch_accesses[(period, regime_name)] = planned
         pinned_artifacts.update(unplanned_exact)
@@ -1399,8 +1424,7 @@ def _build_planned_input_liveness(
 
 def _classify_dispatch_value_artifacts(
     *,
-    kernel: object,
-    compiled_cores: Mapping[str, Callable],
+    programs: Mapping[str, _ProgramExecutionMetadata],
 ) -> tuple[
     tuple[ValueArtifactAddress, ...],
     tuple[ValueArtifactAddress, ...],
@@ -1411,37 +1435,29 @@ def _classify_dispatch_value_artifacts(
     unplanned_exact: list[ValueArtifactAddress] = []
     has_unknown = False
 
-    for core_key, core in compiled_cores.items():
-        declared_targets = (
-            tuple(
-                access.target
-                for access in kernel.target_value_accesses(core_key=core_key)
-            )
-            if isinstance(kernel, _TargetValueAccessAware)
-            else None
+    for core_name, metadata in programs.items():
+        declared_targets = tuple(
+            access.target for access in metadata.requirements.target_value_accesses
         )
-        plan_or_unplanned = planned_input_transfer_plan(core)
-        if plan_or_unplanned is UNPLANNED:
-            if declared_targets is None:
+        if metadata.disposition is CoreExecutionDisposition.LEGACY_UNPLANNED:
+            if not declared_targets:
                 has_unknown = True
             else:
                 unplanned_exact.extend(declared_targets)
             continue
-
-        plan = plan_or_unplanned
-        planned_targets = tuple(transfer.target for transfer in plan)
-        if declared_targets is None:
-            if not planned_targets:
-                has_unknown = True
-        elif planned_targets != declared_targets:
-            if planned_targets:
-                msg = (
-                    "A compiled input plan disagrees with the kernel declaration for "
-                    f"core {core_key!r}: planned={planned_targets!r}, "
-                    f"declared={declared_targets!r}."
-                )
-                raise RuntimeError(msg)
+        if metadata.disposition is CoreExecutionDisposition.DENSE:
             unplanned_exact.extend(declared_targets)
+            continue
+
+        plan = metadata.input_transfer_plan
+        planned_targets = tuple(transfer.target for transfer in plan)
+        if planned_targets != declared_targets:
+            msg = (
+                "A resolved input plan disagrees with its CoreProgram declaration for "
+                f"core {core_name!r}: planned={planned_targets!r}, "
+                f"declared={declared_targets!r}."
+            )
+            raise RuntimeError(msg)
         planned.extend(planned_targets)
 
     return (
@@ -1557,19 +1573,19 @@ def _compile_all_functions(
     enable_jit: bool,
     max_compilation_workers: int | None,
     logger: logging.Logger,
-) -> dict[tuple[RegimeName, int], MappingProxyType[str, Callable]]:
-    """AOT-compile all unique solve cores in parallel.
+) -> _CompiledPrograms:
+    """Resolve every solve program and optionally compile unique lowerings.
 
     Each regime exposes named cores through its period adapter. For every core, the
-    engine first materializes the adapter's exact arguments and optional
-    `CoreProgram`; a program supplies the planner-resolved callable, static choices,
-    and output roles. The complete callable, abstract arguments, specialization, and
+    engine first materializes the adapter's exact `CoreProgram`. The program supplies
+    the planner-resolved callable, static choices, and output roles. The complete
+    callable, abstract arguments, specialization, and
     output layout form the lowering key. Each unique program is lowered once
     (sequentially, because tracing is single-threaded), then the XLA programs compile
     in parallel via a thread pool. The loop stays free of solver-type forks.
 
-    When JIT is disabled (`enable_jit=False`), returns the raw cores without
-    compilation.
+    When JIT is disabled (`enable_jit=False`), executes the same resolved programs
+    without the lowering and compilation steps.
 
     Args:
         regimes: The internal regimes containing the period adapters.
@@ -1588,37 +1604,28 @@ def _compile_all_functions(
         logger: Logger for compilation progress.
 
     Returns:
-        Dict of (regime_name, period) to the immutable mapping of core key to
-        compiled (or raw) core.
+        Executable mappings by regime-period plus the resolved metadata used by
+        input liveness. Eager entries call the resolved functions directly; AOT
+        entries call compiled executables carrying the same plans.
 
     """
-    # Collect all (regime, period, core_key) -> shared jitted core mappings off
-    # the period adapters.
-    all_functions: dict[tuple[RegimeName, int, str], Callable] = {}
+    # Collect the authoritative native graphs or their centralized legacy adapters.
+    all_programs: dict[_CoreTriple, CoreProgram] = {}
     for regime_name, regime in regimes.items():
         for period in regime.active_periods:
-            cores = regime.solution.period_kernels[period].cores()
-            for core_key, core in cores.items():
-                all_functions[(regime_name, period, core_key)] = core
+            graph = core_program_graph(kernel=regime.solution.period_kernels[period])
+            for core_name, program in graph.items():
+                all_programs[(regime_name, period, core_name)] = program
 
-    # If JIT is disabled, return the raw cores keyed by core_key per (regime,
-    # period).
-    if not enable_jit:
-        return _group_cores_by_regime_period(all_functions)
-
-    # Materialize each named core's exact arguments and optional CoreProgram
-    # before representative selection. The resulting function, arguments, roles,
-    # specialization, and layout form one lowering source of truth.
+    # Materialize each named core's exact program before representative selection.
+    # The resulting function, arguments, roles, specialization, and layout form
+    # one lowering source of truth.
     (
         all_layouts,
         lowering_keys,
-        lowering_functions,
-        lowering_arguments,
-        lowering_static_kwargs,
-        lowering_output_roles,
-        input_transfer_plans,
+        resolved_programs,
     ) = _resolve_output_layouts_and_lowering_keys(
-        all_functions=all_functions,
+        all_programs=all_programs,
         regimes=regimes,
         flat_params=flat_params,
         ages=ages,
@@ -1627,14 +1634,50 @@ def _compile_all_functions(
         next_edge_to_V_arr=next_edge_to_V_arr,
     )
 
+    metadata = MappingProxyType(
+        {
+            triple: _ProgramExecutionMetadata(
+                requirements=program.requirements,
+                disposition=program.disposition,
+                input_transfer_plan=program.input_transfer_plan,
+            )
+            for triple, program in resolved_programs.items()
+        }
+    )
+
+    # Eager execution uses the same resolved function, arguments, requirements,
+    # roles, static widths, and transfers as AOT. Only the final JAX compilation
+    # step is omitted.
+    if not enable_jit:
+        eager = {
+            triple: _attach_resolved_output_layout(
+                compiled=(
+                    functools.partial(program.function, **program.static_kwargs)
+                    if program.static_kwargs
+                    else program.function
+                ),
+                layout=all_layouts[triple],
+                input_transfer_plan=program.input_transfer_plan,
+            )
+            for triple, program in resolved_programs.items()
+        }
+        return _CompiledPrograms(
+            executables=_group_cores_by_regime_period(eager), metadata=metadata
+        )
+
     # Keep one representative per lowering key so its adapter can build the
     # matching arguments.  Selection happens only after layout resolution.
     unique: dict[Hashable, tuple[Callable, RegimeName, int, str]] = {}
-    for triple, func in lowering_functions.items():
+    for triple, program in resolved_programs.items():
         lowering_key = lowering_keys[triple]
         if lowering_key not in unique:
             regime_name, period, core_key = triple
-            unique[lowering_key] = (func, regime_name, period, core_key)
+            unique[lowering_key] = (
+                program.function,
+                regime_name,
+                period,
+                core_key,
+            )
 
     n_triples_per_lowering = _count_triples_per_lowering_key(
         lowering_keys=lowering_keys
@@ -1649,7 +1692,7 @@ def _compile_all_functions(
         "AOT compilation: %d unique functions (%d regime-period-core triples, "
         "%d workers)",
         n_unique,
-        len(all_functions),
+        len(all_programs),
         n_workers,
     )
 
@@ -1662,8 +1705,9 @@ def _compile_all_functions(
         unique.items(), 1
     ):
         triple = (regime_name, period, core_key)
-        lower_args = lowering_arguments[triple]
-        static_kwargs = lowering_static_kwargs[triple]
+        resolved = resolved_programs[triple]
+        lower_args = resolved.arguments
+        static_kwargs = resolved.static_kwargs
         label = f"{regime_name} {core_key} (age {ages.values[period].item()})"
         labels[lowering_key] = label
         log_module_fanout(
@@ -1687,7 +1731,7 @@ def _compile_all_functions(
         low = jitted.lower(**lower_args, **static_kwargs)
         _assert_lowered_output_roles(
             lowered=low,
-            output_roles=lowering_output_roles[triple],
+            output_roles=resolved.output_roles,
             value_template=next_regime_to_V_arr[regime_name],
             layout=layout,
             label=label,
@@ -1728,16 +1772,17 @@ def _compile_all_functions(
             compiled[lowering_key] = comp
 
     # Map back to (regime, period) keys, grouping the compiled cores by core key.
-    return _group_cores_by_regime_period(
+    executables = _group_cores_by_regime_period(
         {
             triple: _attach_resolved_output_layout(
                 compiled=compiled[lowering_keys[triple]],
                 layout=all_layouts[triple],
-                input_transfer_plan=input_transfer_plans[triple],
+                input_transfer_plan=resolved_programs[triple].input_transfer_plan,
             )
-            for triple in all_functions
+            for triple in all_programs
         }
     )
+    return _CompiledPrograms(executables=executables, metadata=metadata)
 
 
 def _count_triples_per_lowering_key(
@@ -1755,12 +1800,9 @@ def _count_triples_per_lowering_key(
     return counts
 
 
-_CoreTriple = tuple[RegimeName, int, str]
-
-
 def _resolve_output_layouts_and_lowering_keys(
     *,
-    all_functions: Mapping[_CoreTriple, Callable],
+    all_programs: Mapping[_CoreTriple, CoreProgram],
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
     ages: AgeGrid,
@@ -1770,69 +1812,40 @@ def _resolve_output_layouts_and_lowering_keys(
 ) -> tuple[
     dict[_CoreTriple, ResolvedOutputLayout | object],
     dict[_CoreTriple, Hashable],
-    dict[_CoreTriple, Callable],
-    dict[_CoreTriple, Mapping[str, object]],
-    dict[_CoreTriple, Mapping[str, int]],
-    dict[_CoreTriple, object | None],
-    dict[_CoreTriple, tuple[ResolvedValueTransfer, ...]],
+    dict[_CoreTriple, ResolvedCoreProgram],
 ]:
     """Materialize each core's complete, immutable lowering description."""
     layouts: dict[_CoreTriple, ResolvedOutputLayout | object] = {}
     lowering_keys: dict[_CoreTriple, Hashable] = {}
-    lowering_functions: dict[_CoreTriple, Callable] = {}
-    lowering_arguments: dict[_CoreTriple, Mapping[str, object]] = {}
-    lowering_static_kwargs: dict[_CoreTriple, Mapping[str, int]] = {}
-    lowering_output_roles: dict[_CoreTriple, object | None] = {}
-    input_transfer_plans: dict[_CoreTriple, tuple[ResolvedValueTransfer, ...]] = {}
-    for (regime_name, period, core_key), func in all_functions.items():
+    resolved_programs: dict[_CoreTriple, ResolvedCoreProgram] = {}
+    for (regime_name, period, core_key), declaration in all_programs.items():
         regime = regimes[regime_name]
-        kernel = regime.solution.period_kernels[period]
         state_action_space = regime.solution.state_action_space(
             regime_params=flat_params[regime_name]
         )
-        arguments = kernel.build_lower_args(
-            core_key=core_key,
+        edge_kwargs = _edge_kwargs(
+            regime=regime,
+            regime_name=regime_name,
+            next_edge_to_V_arr=next_edge_to_V_arr,
+        )
+        context = CoreBuildContext(
             state_action_space=state_action_space,
             next_regime_to_V_arr=next_regime_to_V_arr,
             next_regime_to_continuation=next_regime_to_continuation,
             flat_params=flat_params,
             period=period,
             ages=ages,
-            **_edge_kwargs(
-                regime=regime,
-                regime_name=regime_name,
-                next_edge_to_V_arr=next_edge_to_V_arr,
+            edge_regime_to_V_arr=cast(
+                "Mapping[str, object] | None",
+                edge_kwargs.get("edge_regime_to_V_arr"),
             ),
         )
-        program = (
-            kernel.build_core_program(core_key=core_key, arguments=arguments)
-            if isinstance(kernel, CoreProgramAware)
-            else None
+        materialized = materialize_core_program(program=declaration, context=context)
+        resolved = _resolve_program_for_execution(
+            program=materialized,
+            source_value_template=next_regime_to_V_arr[regime_name],
+            source=(regime_name, period, core_key),
         )
-        if program is None:
-            lowering_func = func
-            lowering_args = arguments
-            static_kwargs = MappingProxyType({})
-            output_roles = None
-            specialization_key: Hashable | None = None
-            input_transfer_plan: tuple[ResolvedValueTransfer, ...] = ()
-        else:
-            _assert_core_program_arguments(program=program, arguments=arguments)
-            input_transfer_plan = _resolve_value_input_transfer_plan(
-                program=program,
-                source_value_template=next_regime_to_V_arr[regime_name],
-                source=(regime_name, period, core_key),
-            )
-            resolved = resolve_core_program(
-                program=program,
-                tile_widths=_initial_tile_widths(program=program),
-                input_transfer_plan=input_transfer_plan,
-            )
-            lowering_func = resolved.function
-            lowering_args = resolved.arguments
-            static_kwargs = resolved.static_kwargs
-            output_roles = resolved.output_roles
-            specialization_key = resolved.specialization_key
 
         state_order = tuple(
             name
@@ -1840,54 +1853,55 @@ def _resolve_output_layouts_and_lowering_keys(
             if name not in regime.fold_state_names
         )
         layout = (
-            resolve_output_layout(
-                kernel=kernel,
-                core_key=core_key,
-                value_template=next_regime_to_V_arr[regime_name],
-                state_order=state_order,
-            )
-            if program is None
+            UNPLANNED
+            if resolved.disposition is CoreExecutionDisposition.LEGACY_UNPLANNED
             else resolve_output_layout(
-                kernel=kernel,
                 core_key=core_key,
                 value_template=next_regime_to_V_arr[regime_name],
                 state_order=state_order,
-                output_roles=output_roles,
+                output_roles=resolved.output_roles,
             )
         )
         triple = (regime_name, period, core_key)
         layouts[triple] = layout
-        if program is None and layout is not UNPLANNED:
-            lowering_func = cast("OutputLayoutAware", kernel).core_for_output_layout(
-                core_key=core_key
-            )
-        lowering_functions[triple] = lowering_func
-        lowering_arguments[triple] = lowering_args
-        lowering_static_kwargs[triple] = static_kwargs
-        lowering_output_roles[triple] = output_roles
-        input_transfer_plans[triple] = input_transfer_plan
+        resolved_programs[triple] = resolved
         layout_key = UNPLANNED if layout is UNPLANNED else layout.compilation_key
         lowering_keys[triple] = _lowering_key(
-            func=lowering_func,
+            func=resolved.function,
             layout_key=layout_key,
-            arguments=lowering_args,
-            specialization_key=specialization_key,
-            output_roles=output_roles,
+            arguments=resolved.arguments,
+            specialization_key=resolved.specialization_key,
+            output_roles=resolved.output_roles,
         )
-    return (
-        layouts,
-        lowering_keys,
-        lowering_functions,
-        lowering_arguments,
-        lowering_static_kwargs,
-        lowering_output_roles,
-        input_transfer_plans,
+    return layouts, lowering_keys, resolved_programs
+
+
+def _resolve_program_for_execution(
+    *,
+    program: MaterializedCoreProgram,
+    source_value_template: object,
+    source: _CoreTriple,
+) -> ResolvedCoreProgram:
+    """Resolve the one program contract shared by eager, AOT, and replay."""
+    input_transfer_plan = (
+        _resolve_value_input_transfer_plan(
+            program=program,
+            source_value_template=source_value_template,
+            source=source,
+        )
+        if program.disposition is CoreExecutionDisposition.PLANNED
+        else ()
+    )
+    return resolve_core_program(
+        program=program,
+        tile_widths=initial_core_tile_widths(program=program),
+        input_transfer_plan=input_transfer_plan,
     )
 
 
 def _resolve_value_input_transfer_plan(
     *,
-    program: CoreProgram,
+    program: MaterializedCoreProgram,
     source_value_template: object,
     source: _CoreTriple,
 ) -> tuple[ResolvedValueTransfer, ...]:
@@ -1980,48 +1994,6 @@ def _resolve_value_transfer_layout(
         "are supported."
     )
     raise ValueError(msg)
-
-
-_INITIAL_TILE_WIDTH_CAP = 64
-
-
-def _initial_tile_widths(*, program: CoreProgram) -> dict[str, int]:
-    """Choose a bounded, strictly streaming width for every declared axis."""
-    _validate_core_program(program=program)
-    result: dict[str, int] = {}
-    for axis in program.requirements.streamable_axes:
-        if axis.extent <= 1:
-            msg = (
-                f"Streamable axis {axis.name!r} must have extent greater than one; "
-                "the kernel should opt out when no partial block exists."
-            )
-            raise ValueError(msg)
-        upper_bound = min(_INITIAL_TILE_WIDTH_CAP, axis.extent - 1)
-        result[axis.name] = 1 << (upper_bound.bit_length() - 1)
-    return result
-
-
-def _assert_core_program_arguments(
-    *,
-    program: CoreProgram,
-    arguments: Mapping[str, object],
-) -> None:
-    """Require the provider to preserve the exact lowering argument mapping."""
-    if tuple(program.arguments) != tuple(arguments):
-        msg = (
-            "CoreProgram arguments must preserve every build_lower_args key in "
-            "the same order."
-        )
-        raise ValueError(msg)
-    replaced = [
-        name for name in arguments if program.arguments[name] is not arguments[name]
-    ]
-    if replaced:
-        msg = (
-            "CoreProgram arguments must preserve the exact build_lower_args "
-            f"values; replaced keys: {replaced!r}."
-        )
-        raise ValueError(msg)
 
 
 def _lowering_key(
@@ -2225,7 +2197,7 @@ def _assert_lowered_output_leaf(
 
 def _attach_resolved_output_layout(
     *,
-    compiled: jax.stages.Compiled,
+    compiled: Callable[..., object],
     layout: ResolvedOutputLayout | object,
     input_transfer_plan: tuple[ResolvedValueTransfer, ...] = (),
 ) -> Callable:

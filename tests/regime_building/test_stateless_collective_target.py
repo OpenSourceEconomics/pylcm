@@ -29,7 +29,7 @@ def test_stateless_collective_target_enters_the_continuation():
     """
     model, params = make_stateless_collective_target_model()
 
-    solution = model.solve(params=params, log_level="debug")
+    solution = model.solve(params=params, log_level="debug").values
 
     np.testing.assert_array_almost_equal(
         solution[0]["couple"],

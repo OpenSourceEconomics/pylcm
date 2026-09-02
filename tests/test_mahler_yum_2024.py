@@ -234,7 +234,6 @@ def test_model_solves_and_simulates():
     result = MAHLER_YUM_MODEL.simulate(
         params=model_params,
         initial_conditions=ic_df,
-        period_to_regime_to_V_arr=None,
         seed=12345,
         log_level="debug",
     )
@@ -254,7 +253,6 @@ def simulation_result():
     result = MAHLER_YUM_MODEL.simulate(
         params=model_params,
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=None,
         seed=42,
         log_level="debug",
     )

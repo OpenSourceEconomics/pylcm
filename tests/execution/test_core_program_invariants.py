@@ -10,12 +10,12 @@ import numpy as np
 import pytest
 
 from _lcm.execution.core_program import (
+    CoreExecutionDisposition,
     CoreExecutionRequirements,
-    CoreProgram,
+    MaterializedCoreProgram,
     ReductionSemantics,
     StreamableProductAxis,
     _TargetValueAccess,
-    _TargetValueAccessAware,
     resolve_core_program,
 )
 from _lcm.execution.output_layout import (
@@ -105,11 +105,12 @@ def _program(
     coordinate_extent: int = 2,
     reduction: ReductionSemantics = HARD_MAX_REDUCTION,
     function: Callable[..., object] = _core,
-) -> CoreProgram:
+) -> MaterializedCoreProgram:
     """Build one canonical action-product declaration for resolver tests."""
     if arguments is None:
         arguments = {"choice": jnp.asarray([1.0, 2.0])}
-    return CoreProgram(
+    return MaterializedCoreProgram(
+        name="main",
         function=function,
         arguments=arguments,
         requirements=CoreExecutionRequirements(
@@ -125,6 +126,8 @@ def _program(
             )
         ),
         output_roles=VALUE,
+        disposition=CoreExecutionDisposition.PLANNED,
+        donation_candidates=(),
     )
 
 
@@ -145,9 +148,10 @@ def _value_program(
     *,
     arguments: Mapping[str, object],
     accesses: tuple[_TargetValueAccess, ...],
-) -> CoreProgram:
+) -> MaterializedCoreProgram:
     """Build a program with one canonical axis and exact target-value reads."""
-    return CoreProgram(
+    return MaterializedCoreProgram(
+        name="main",
         function=_core_with_values,
         arguments=arguments,
         requirements=CoreExecutionRequirements(
@@ -164,6 +168,8 @@ def _value_program(
             target_value_accesses=accesses,
         ),
         output_roles=VALUE,
+        disposition=CoreExecutionDisposition.PLANNED,
+        donation_candidates=(),
     )
 
 
@@ -207,16 +213,7 @@ def _access_and_transfer(
     return access, transfer
 
 
-@dataclass(frozen=True, kw_only=True)
-class _AccessProvider:
-    accesses: tuple[_TargetValueAccess, ...]
-
-    def target_value_accesses(self, *, core_key: str) -> tuple[_TargetValueAccess, ...]:
-        assert core_key == "main"
-        return self.accesses
-
-
-def test_exact_target_value_accesses_are_structural_and_allow_artifact_fan_out() -> (
+def test_exact_target_value_accesses_belong_to_program_and_allow_artifact_fan_out() -> (
     None
 ):
     value = jnp.asarray([3.0, 4.0])
@@ -226,7 +223,6 @@ def test_exact_target_value_accesses_are_structural_and_allow_artifact_fan_out()
         channel=ValueInputChannel.EDGE_REFERENCE_VALUE,
     )
     accesses = (next_access, edge_access)
-    provider = _AccessProvider(accesses=accesses)
     program = _value_program(
         arguments={
             "choice": jnp.asarray([1.0, 2.0]),
@@ -236,8 +232,6 @@ def test_exact_target_value_accesses_are_structural_and_allow_artifact_fan_out()
         accesses=accesses,
     )
 
-    assert isinstance(provider, _TargetValueAccessAware)
-    assert provider.target_value_accesses(core_key="main") == accesses
     resolved = resolve_core_program(
         program=program,
         tile_widths={"action": 1},
