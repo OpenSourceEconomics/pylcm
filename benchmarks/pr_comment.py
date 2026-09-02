@@ -19,14 +19,18 @@ both files gets a filled before/ratio cell; benchmarks present only in HEAD
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any, NamedTuple
+from urllib.parse import quote, urlsplit
+from urllib.request import Request, urlopen
 
 _REPO_URL = "https://github.com/OpenSourceEconomics/pylcm"
-_SITE_REPO = "https://github.com/OpenSourceEconomics/OpenSourceEconomics.github.io.git"
+_SITE_CONTENTS_API = (
+    "https://api.github.com/repos/OpenSourceEconomics/"
+    "OpenSourceEconomics.github.io/contents"
+)
 _SITE_RESULTS_SUBDIR = "pylcm-benchmarks/results"
 
 _MARKER = "<!-- benchmark-check -->"
@@ -55,6 +59,32 @@ _CLASS_DISPLAY = {
     "PrecautionarySavingsSimulateWithSolveIrregGpuPeakMem": (
         "Precautionary Savings - Solve & Simulate (irreg)"
     ),
+    "IskhakovEtAl2017Solve": "Iskhakov et al. (2017) - GridSearch Solve",
+    "IskhakovEtAl2017SolveGpuPeakMem": ("Iskhakov et al. (2017) - GridSearch Solve"),
+    "IskhakovEtAl2017DCEGMSolve": "Iskhakov et al. (2017) - DC-EGM Solve",
+    "IskhakovEtAl2017DCEGMSolveGpuPeakMem": ("Iskhakov et al. (2017) - DC-EGM Solve"),
+    "IskhakovEtAl2017Simulate": "Iskhakov et al. (2017) - GridSearch Simulate",
+    "IskhakovEtAl2017SimulateGpuPeakMem": (
+        "Iskhakov et al. (2017) - GridSearch Simulate"
+    ),
+    "IskhakovEtAl2017DCEGMSimulate": "Iskhakov et al. (2017) - DC-EGM Simulate",
+    "IskhakovEtAl2017DCEGMSimulateGpuPeakMem": (
+        "Iskhakov et al. (2017) - DC-EGM Simulate"
+    ),
+    "CollectiveHouseholdConstruct": "Collective Household - Construct",
+    "CollectiveHouseholdSolve": "Collective Household - Solve",
+    "CollectiveHouseholdSolveGpuPeakMem": "Collective Household - Solve",
+    "CollectiveHouseholdSimulate": "Collective Household - Simulate",
+    "CollectiveHouseholdSimulateGpuPeakMem": "Collective Household - Simulate",
+    "ReferenceChainSolve": "Reference Chain - Solve",
+    "ReferenceChainSolveGpuPeakMem": "Reference Chain - Solve",
+}
+
+# GPU wrappers have no ASV parameter axis. Record the concrete largest case
+# selected by their benchmark class so their statistic joins the matching row.
+_CLASS_FIXED_PARAMS = {
+    "CollectiveHouseholdSimulateGpuPeakMem": "100000",
+    "ReferenceChainSolveGpuPeakMem": "8",
 }
 
 _METHOD_DISPLAY = {
@@ -83,6 +113,8 @@ _DISPLAY_SORT = {
 _ALERT_RATIO = 1.10
 
 _BENCH_NAME_RE = re.compile(r"(?:\w+\.)*(\w+)\.(\w+)(?:\(([^)]*)\))?$")
+_NATURAL_SORT_RE = re.compile(r"(\d+(?:\.\d+)?)")
+_BASELINE_FETCH_ATTEMPTS = 3
 
 
 class _BenchmarkRow(NamedTuple):
@@ -92,6 +124,15 @@ class _BenchmarkRow(NamedTuple):
     before_value: str
     after_value: str
     ratio: float | None
+
+
+class _BaselineLookup(NamedTuple):
+    path: Path | None
+    note: str | None
+
+
+class _BaselineFetchError(RuntimeError):
+    """Published benchmark results could not be retrieved."""
 
 
 def post_pr_comment() -> None:
@@ -107,7 +148,8 @@ def post_pr_comment() -> None:
     head_result_file = _ensure_head_result(
         machine_dir=machine_dir, head_sha=head_sha, head_sha_full=head_sha_full
     )
-    base_file = _find_baseline_file(machine_dir)
+    baseline = _find_baseline_file(machine_dir)
+    base_file = baseline.path
 
     if base_file is not None:
         rows = _build_comparison_rows(base_file=base_file, head_file=head_result_file)
@@ -127,13 +169,14 @@ def post_pr_comment() -> None:
         body = _format_raw_comment(
             head_sha=head_sha,
             raw_md=_format_raw_results(result_file=head_result_file, head_sha=head_sha),
+            baseline_note=baseline.note,
         )
 
     _upsert_pr_comment(body)
     print(f"Benchmark comment posted for {head_sha}.")
 
 
-def _find_baseline_file(machine_dir: Path) -> Path | None:
+def _find_baseline_file(machine_dir: Path) -> _BaselineLookup:
     """Return the merge-base result file, fetching from the published site if needed."""
     try:
         base_sha_full = subprocess.run(
@@ -143,17 +186,37 @@ def _find_baseline_file(machine_dir: Path) -> Path | None:
             check=True,
         ).stdout.strip()
     except subprocess.CalledProcessError:
-        return None
+        return _BaselineLookup(
+            path=None,
+            note="Could not determine the merge-base; see the job log.",
+        )
 
     base_sha = base_sha_full[:8]
     base_file = _find_result_file(machine_dir=machine_dir, short_hash=base_sha)
     if base_file is None:
-        base_file = _fetch_baseline_from_site(
-            machine_dir=machine_dir, base_sha=base_sha
-        )
+        try:
+            base_file = _fetch_baseline_from_site(
+                machine_dir=machine_dir, base_sha=base_sha
+            )
+        except _BaselineFetchError as error:
+            print(error)
+            return _BaselineLookup(
+                path=None,
+                note=(
+                    f"Baseline retrieval failed for merge-base `{base_sha}`; "
+                    "see the job log."
+                ),
+            )
     if base_file is None:
         print(f"No results for merge-base {base_sha} — posting raw numbers instead.")
-    return base_file
+        return _BaselineLookup(
+            path=None,
+            note=(
+                f"No published benchmark results found for merge-base `{base_sha}`. "
+                "Run benchmarks on main first for a comparison."
+            ),
+        )
+    return _BaselineLookup(path=base_file, note=None)
 
 
 def _build_comparison_rows(
@@ -223,7 +286,10 @@ def _build_grouped_table(rows: list[_BenchmarkRow]) -> str:
     """Build a grouped markdown table from benchmark rows."""
     groups: dict[tuple[str, str], list[_BenchmarkRow]] = {}
     for row in rows:
-        key = (_CLASS_DISPLAY.get(row.class_name, row.class_name), row.params)
+        key = (
+            _CLASS_DISPLAY.get(row.class_name, row.class_name),
+            _CLASS_FIXED_PARAMS.get(row.class_name, row.params),
+        )
         groups.setdefault(key, []).append(row)
 
     for group_rows in groups.values():
@@ -231,13 +297,7 @@ def _build_grouped_table(rows: list[_BenchmarkRow]) -> str:
             key=lambda r: _METHOD_SORT.get(r.method_name, len(_METHOD_SORT))
         )
 
-    sorted_keys = sorted(
-        groups,
-        key=lambda k: (
-            _DISPLAY_SORT.get(k[0], len(_DISPLAY_SORT)),
-            k[1],
-        ),
-    )
+    sorted_keys = sorted(groups, key=_group_sort_key)
 
     lines = [
         "| Benchmark | Statistic | before | after | Ratio | Alert |",
@@ -275,18 +335,13 @@ def _format_raw_results(*, result_file: Path, head_sha: str) -> str:
     groups: dict[tuple[str, str], list[tuple[str, str]]] = {}
     for class_name, method_name, params, value in entries:
         display = _CLASS_DISPLAY.get(class_name, class_name)
-        groups.setdefault((display, params), []).append((method_name, value))
+        effective_params = _CLASS_FIXED_PARAMS.get(class_name, params)
+        groups.setdefault((display, effective_params), []).append((method_name, value))
 
     for group in groups.values():
         group.sort(key=lambda x: _METHOD_SORT.get(x[0], len(_METHOD_SORT)))
 
-    sorted_keys = sorted(
-        groups,
-        key=lambda k: (
-            _DISPLAY_SORT.get(k[0], len(_DISPLAY_SORT)),
-            k[1],
-        ),
-    )
+    sorted_keys = sorted(groups, key=_group_sort_key)
 
     lines = [
         f"| Benchmark ({head_sha}) | Statistic | Value |",
@@ -302,6 +357,25 @@ def _format_raw_results(*, result_file: Path, head_sha: str) -> str:
             lines.append(f"| {bench_col} | {stat_col} | {value} |")
 
     return "\n".join(lines)
+
+
+def _group_sort_key(group: tuple[str, str]) -> tuple[Any, ...]:
+    """Sort known families canonically and parameters by their numeric value."""
+    display_name, params = group
+    return (
+        _DISPLAY_SORT.get(display_name, len(_DISPLAY_SORT)),
+        display_name.casefold(),
+        _natural_sort_key(params),
+    )
+
+
+def _natural_sort_key(value: str) -> tuple[Any, ...]:
+    """Return a key that orders embedded numbers numerically, not lexically."""
+    return tuple(
+        (0, float(part)) if _NATURAL_SORT_RE.fullmatch(part) else (1, part.casefold())
+        for part in _NATURAL_SORT_RE.split(value)
+        if part
+    )
 
 
 def _parse_raw_entries(
@@ -391,21 +465,33 @@ def _format_value(*, bench_name: str, value: float) -> str:
     return f"{value * 1e6:.1f} \u00b5s"
 
 
-def _format_raw_comment(*, head_sha: str, raw_md: str) -> str:
+def _format_raw_comment(
+    *,
+    head_sha: str,
+    raw_md: str,
+    baseline_note: str | None = None,
+) -> str:
     """Format the full PR comment body for raw results (no baseline)."""
+    retrieval_failed = baseline_note is not None and "retrieval failed" in baseline_note
+    heading = (
+        "### Benchmark results (HEAD only — baseline retrieval failed)"
+        if retrieval_failed
+        else "### Benchmark results (HEAD only — no baseline comparison available)"
+    )
+    note = baseline_note or (
+        "No merge-base results found locally. "
+        "Run benchmarks on main first for a comparison."
+    )
     return "\n".join(
         [
             _MARKER,
             f"<!-- head-sha:{head_sha} -->",
             "",
-            "### Benchmark results (HEAD only \u2014 no baseline comparison available)",
+            heading,
             "",
             raw_md,
             "",
-            (
-                "*No merge-base results found locally. "
-                "Run benchmarks on main first for a comparison.*"
-            ),
+            f"*{note}*",
         ]
     )
 
@@ -606,8 +692,9 @@ def _fetch_baseline_from_site(
     """Download merge-base results from the published benchmark site.
 
     The main-branch workflow publishes ASV results to the github.io repo.
-    This function clones that repo (shallow) and copies the matching result
-    file into the local ``.asv/results/`` directory.
+    This function discovers the matching file through GitHub's public contents
+    API and downloads it into the local ``.asv/results/`` directory. Public
+    HTTP avoids coupling this read to cross-repository Git credentials.
 
     Args:
         machine_dir: Local ASV machine results directory.
@@ -617,58 +704,82 @@ def _fetch_baseline_from_site(
         Path to the copied result file, or None if not found.
 
     """
-    import tempfile
-
     machine_name = machine_dir.name
     print(f"Fetching baseline results for {base_sha} from published benchmarks...")
+    machine_url = (
+        f"{_SITE_CONTENTS_API}/{_SITE_RESULTS_SUBDIR}/{quote(machine_name, safe='')}"
+    )
+    listing_bytes = _fetch_public_url(url=machine_url, description="result listing")
+    try:
+        listing: Any = json.loads(listing_bytes)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise _BaselineFetchError(
+            f"Published benchmark result listing was not valid JSON: {error}"
+        ) from error
 
-    with tempfile.TemporaryDirectory() as tmp:
+    if not isinstance(listing, list):
+        raise _BaselineFetchError(
+            "Published benchmark result listing had an unexpected response shape."
+        )
+
+    matches = sorted(
+        (
+            entry
+            for entry in listing
+            if isinstance(entry, dict)
+            and isinstance(entry.get("name"), str)
+            and entry["name"].startswith(base_sha)
+            and entry["name"].endswith(".json")
+            and "-compare" not in entry["name"]
+            and isinstance(entry.get("download_url"), str)
+        ),
+        key=lambda entry: entry["name"],
+    )
+    if not matches:
+        print(f"No result file for {base_sha} on published site.")
+        return None
+
+    match = matches[0]
+    result_bytes = _fetch_public_url(
+        url=match["download_url"],
+        description=f"result file {match['name']}",
+    )
+    dst = machine_dir / match["name"]
+    dst.write_bytes(result_bytes)
+    print(f"Downloaded baseline {match['name']} to {machine_dir}")
+    return dst
+
+
+def _fetch_public_url(*, url: str, description: str) -> bytes:
+    """Fetch a public benchmark-site URL, retrying with observable errors."""
+    if urlsplit(url).scheme != "https":
+        raise _BaselineFetchError(f"Refusing non-HTTPS published benchmark URL: {url}")
+
+    last_error = ""
+    request = Request(  # noqa: S310 - scheme is restricted to HTTPS above.
+        url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "pylcm-benchmark-comment",
+        },
+    )
+    for attempt in range(1, _BASELINE_FETCH_ATTEMPTS + 1):
         try:
-            subprocess.run(
-                [
-                    "git",
-                    "clone",
-                    "--depth",
-                    "1",
-                    "--filter=blob:none",
-                    "--sparse",
-                    _SITE_REPO,
-                    tmp,
-                ],
-                capture_output=True,
-                text=True,
-                check=True,
+            with urlopen(  # noqa: S310 - request URL is validated above.
+                request, timeout=30
+            ) as response:
+                return response.read()
+        except OSError as error:
+            last_error = str(error)
+            print(
+                f"Published-baseline {description} attempt "
+                f"{attempt}/{_BASELINE_FETCH_ATTEMPTS} failed: {last_error}"
             )
-            subprocess.run(
-                ["git", "sparse-checkout", "set", _SITE_RESULTS_SUBDIR],
-                cwd=tmp,
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-        except subprocess.CalledProcessError:
-            print("Could not clone benchmark site repo.")
-            return None
 
-        site_machine_dir = Path(tmp) / _SITE_RESULTS_SUBDIR / machine_name
-        if not site_machine_dir.is_dir():
-            print(f"No results directory for machine '{machine_name}' on site.")
-            return None
-
-        matches = [
-            p
-            for p in site_machine_dir.glob(f"{base_sha}*.json")
-            if "-compare" not in p.name
-        ]
-        if not matches:
-            print(f"No result file for {base_sha} on published site.")
-            return None
-
-        src = matches[0]
-        dst = machine_dir / src.name
-        shutil.copy2(src, dst)
-        print(f"Copied baseline {src.name} to {machine_dir}")
-        return dst
+    raise _BaselineFetchError(
+        f"Could not retrieve published benchmark {description} after "
+        f"{_BASELINE_FETCH_ATTEMPTS} attempts: {last_error}"
+    )
 
 
 if __name__ == "__main__":
