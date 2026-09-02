@@ -37,7 +37,7 @@ from benchmarks.grid_search_pair_worker import (
 )
 
 
-def _write_npz(path: Path, **arrays: np.ndarray) -> None:
+def _write_npz(path: Path, **arrays: Any) -> None:
     np.savez(path, **arrays)
 
 
@@ -620,7 +620,7 @@ def test_required_evidence_distinguishes_cpu_na_from_gpu_peak() -> None:
         "status": "not_applicable",
         "reason": "Device peak memory is only defined for GPU rows.",
     }
-    metrics = {
+    metrics: dict[str, Any] = {
         "compiled_cores": [core],
         "devices": [cpu_device],
         "memory": {
@@ -658,7 +658,7 @@ def test_required_evidence_distinguishes_cpu_na_from_gpu_peak() -> None:
 
 def test_worker_environment_requires_its_exact_fresh_cache(tmp_path: Path) -> None:
     cache = tmp_path / "fresh-cache"
-    metrics = {
+    metrics: dict[str, Any] = {
         "environment": {
             "JAX_COMPILATION_CACHE_DIR": str(cache),
             "XLA_PYTHON_CLIENT_PREALLOCATE": "false",

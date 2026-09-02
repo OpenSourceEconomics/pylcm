@@ -277,6 +277,13 @@ per-file-ignores."tests/candidate_certificate/**" = [
   "TRY300",  # Consider else block
   "TRY301",  # Abstract raise to an inner function
 ]
+per-file-ignores."tests/test_grid_search_pair.py" = [
+  # The harness test deliberately starts only fixed executables (`git` and the
+  # active Python interpreter) with argument vectors; no shell or user command
+  # string is involved.
+  "S603", # subprocess call without shell=True check
+  "S607", # Partial executable path
+]
 per-file-ignores."tests/solution/_fused_continuation_envelope_oracle.py" = [
   "PLR0915", # Too many statements — kept structurally verbatim as an independent reference
 ]
