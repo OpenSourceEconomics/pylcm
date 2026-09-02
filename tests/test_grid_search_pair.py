@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from copy import deepcopy
@@ -498,7 +499,7 @@ def test_worker_environment_selects_external_harness_and_fresh_cache(
         cache_dir=cache,
     )
 
-    assert env["PYTHONPATH"].split(":") == [
+    assert env["PYTHONPATH"].split(os.pathsep) == [
         str(harness),
         str(checkout / "src"),
         "/already/there",
