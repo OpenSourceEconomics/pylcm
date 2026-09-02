@@ -51,8 +51,6 @@ logsum and taste-noise helpers are pinned too.
 # Exact production and mutation snippets intentionally preserve long source lines.
 # ruff: noqa: E501
 
-from __future__ import annotations
-
 import ast
 import hashlib
 import json

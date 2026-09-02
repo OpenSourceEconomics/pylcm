@@ -1,7 +1,5 @@
 """Fresh-process worker for one side of a paired GridSearch measurement."""
 
-from __future__ import annotations
-
 import argparse
 import hashlib
 import importlib

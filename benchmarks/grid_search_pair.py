@@ -1,7 +1,5 @@
 """Run one immutable harness against exact base and head GridSearch checkouts."""
 
-from __future__ import annotations
-
 import argparse
 import hashlib
 import json
