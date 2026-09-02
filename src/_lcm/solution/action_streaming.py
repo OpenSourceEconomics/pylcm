@@ -48,11 +48,11 @@ _EV1ScanCarry = tuple["_EV1ActionAccumulator", jax.Array]
 
 
 class _EV1ActionAccumulator(NamedTuple):
-    """Open discrete branch plus the exponential mass of completed branches."""
+    """Open discrete-branch group plus completed groups' exponential mass."""
 
-    active_branch_id: jax.Array
-    branch: HardMaxAccumulator
-    completed_branches: LogSumExpAccumulator
+    active_branch_group_id: jax.Array
+    branch_group: HardMaxAccumulator
+    completed_branch_groups: LogSumExpAccumulator
 
 
 @dataclass(frozen=True)
@@ -248,10 +248,19 @@ class _StreamingEV1ExpectedMax:
             kwargs=kwargs,
         )
         continuous_extent = math.prod(action_sizes[self.n_discrete_action_axes :])
-        block_width = min(self.block_width, continuous_extent)
-        blocks_per_branch = (continuous_extent + block_width - 1) // block_width
+        continuous_block_width = min(self.block_width, continuous_extent)
         n_discrete_branches = n_actions // continuous_extent
-        n_blocks = n_discrete_branches * blocks_per_branch
+        branches_per_block = min(
+            n_discrete_branches,
+            max(1, self.block_width // continuous_block_width),
+        )
+        blocks_per_branch_group = (
+            continuous_extent + continuous_block_width - 1
+        ) // continuous_block_width
+        n_branch_groups = (
+            n_discrete_branches + branches_per_block - 1
+        ) // branches_per_block
+        n_blocks = n_branch_groups * blocks_per_branch_group
         reduction = LOGSUMEXP_REDUCTION.bind(scale=jnp.asarray(self.scale))
         evaluate_block = partial(
             _evaluate_ev1_branch_block,
@@ -260,36 +269,45 @@ class _StreamingEV1ExpectedMax:
             action_grids=action_grids,
             action_sizes=action_sizes,
             fixed_kwargs=fixed_kwargs,
+            n_discrete_branches=n_discrete_branches,
             continuous_extent=continuous_extent,
-            blocks_per_branch=blocks_per_branch,
-            block_width=block_width,
-            block_offsets=jnp.arange(block_width, dtype=jnp.int32),
+            branches_per_block=branches_per_block,
+            blocks_per_branch_group=blocks_per_branch_group,
+            continuous_block_width=continuous_block_width,
+            branch_offsets=jnp.arange(branches_per_block, dtype=jnp.int32),
+            continuous_offsets=jnp.arange(
+                continuous_block_width,
+                dtype=jnp.int32,
+            ),
         )
         first_block_index = jnp.asarray(0, dtype=jnp.int32)
         first_block = evaluate_block(block_index=first_block_index)
         accumulator = _initialize_ev1_reduction(
-            value_template=jnp.zeros_like(first_block[0][0]),
+            branch_value_template=jnp.zeros_like(first_block[0][..., 0]),
+            completed_value_template=jnp.zeros_like(first_block[0][0, 0]),
             reduction=reduction,
         )
         accumulator = _add_ev1_block(
             accumulator=accumulator,
             block=first_block,
             block_index=first_block_index,
-            blocks_per_branch=blocks_per_branch,
+            blocks_per_branch_group=blocks_per_branch_group,
             reduction=reduction,
         )
         accumulator = _scan_remaining_ev1_blocks(
             accumulator=accumulator,
             evaluate_block=evaluate_block,
             n_remaining=n_blocks - 1,
-            blocks_per_branch=blocks_per_branch,
+            blocks_per_branch_group=blocks_per_branch_group,
             reduction=reduction,
         )
-        accumulator = _flush_ev1_branch(
+        accumulator = _flush_ev1_branch_group(
             accumulator=accumulator,
             reduction=reduction,
         )
-        return reduction.finalize(accumulator=accumulator.completed_branches)
+        return reduction.finalize(
+            accumulator=accumulator.completed_branch_groups
+        )
 
 
 @dataclass(frozen=True)
@@ -409,19 +427,33 @@ def _evaluate_ev1_branch_block(
     action_grids: tuple[jax.Array, ...],
     action_sizes: tuple[int, ...],
     fixed_kwargs: dict[str, Any],
+    n_discrete_branches: int,
     continuous_extent: int,
-    blocks_per_branch: int,
-    block_width: int,
-    block_offsets: jax.Array,
+    branches_per_block: int,
+    blocks_per_branch_group: int,
+    continuous_block_width: int,
+    branch_offsets: jax.Array,
+    continuous_offsets: jax.Array,
 ) -> _Block:
-    """Evaluate one padded block contained within one discrete EV1 branch."""
-    branch_id = block_index // blocks_per_branch
-    block_within_branch = block_index % blocks_per_branch
-    local_start = block_within_branch * block_width
+    """Evaluate one bounded block over complete or chunked EV1 branches."""
+    branch_group_id = block_index // blocks_per_branch_group
+    block_within_branch_group = block_index % blocks_per_branch_group
+
+    branch_ids = branch_group_id * branches_per_block + branch_offsets
+    valid_branches = branch_ids < n_discrete_branches
+    safe_branch_ids = jnp.minimum(branch_ids, n_discrete_branches - 1)
+
+    local_start = block_within_branch_group * continuous_block_width
     remaining = continuous_extent - local_start
-    valid = block_offsets < remaining
-    safe_offsets = jnp.minimum(block_offsets, remaining - 1)
-    global_ids = branch_id * continuous_extent + local_start + safe_offsets
+    valid_continuous = continuous_offsets < remaining
+    safe_continuous_offsets = jnp.minimum(continuous_offsets, remaining - 1)
+
+    global_ids = (
+        safe_branch_ids[:, jnp.newaxis] * continuous_extent
+        + local_start
+        + safe_continuous_offsets[jnp.newaxis, :]
+    )
+    valid = valid_branches[:, jnp.newaxis] & valid_continuous[jnp.newaxis, :]
 
     def evaluate_one(global_id: jax.Array) -> tuple[Any, Any]:
         action_kwargs = _decode_action(
@@ -432,10 +464,13 @@ def _evaluate_ev1_branch_block(
         )
         return Q_and_F(**fixed_kwargs, **action_kwargs)
 
-    values, feasible = jax.vmap(evaluate_one)(global_ids)
+    values, feasible = jax.vmap(jax.vmap(evaluate_one))(global_ids)
     values = jnp.asarray(values)
     feasible = jnp.asarray(feasible)
-    _validate_block_Q_and_F(values=values, feasible=feasible)
+    _validate_block_Q_and_F(
+        values=values.reshape(-1),
+        feasible=feasible.reshape(-1),
+    )
     return values, feasible & valid, global_ids
 
 
@@ -538,14 +573,19 @@ def _add_block(*, accumulator: HardMaxAccumulator, block: _Block) -> HardMaxAccu
 
 def _initialize_ev1_reduction(
     *,
-    value_template: jax.Array,
+    branch_value_template: jax.Array,
+    completed_value_template: jax.Array,
     reduction: BoundLogSumExpReduction,
 ) -> _EV1ActionAccumulator:
-    """Create an empty open branch and an empty completed-branch mass."""
+    """Create an empty branch group and empty completed-group mass."""
     return _EV1ActionAccumulator(
-        active_branch_id=jnp.asarray(-1, dtype=jnp.int32),
-        branch=HARD_MAX_REDUCTION.initialize(value_template=value_template),
-        completed_branches=reduction.initialize(value_template=value_template),
+        active_branch_group_id=jnp.asarray(-1, dtype=jnp.int32),
+        branch_group=HARD_MAX_REDUCTION.initialize(
+            value_template=branch_value_template
+        ),
+        completed_branch_groups=reduction.initialize(
+            value_template=completed_value_template
+        ),
     )
 
 
@@ -554,54 +594,56 @@ def _add_ev1_block(
     accumulator: _EV1ActionAccumulator,
     block: _Block,
     block_index: jax.Array,
-    blocks_per_branch: int,
+    blocks_per_branch_group: int,
     reduction: BoundLogSumExpReduction,
 ) -> _EV1ActionAccumulator:
-    """Merge one branch-local vector block, closing the preceding branch."""
+    """Merge one vector block, closing the preceding branch group."""
     values, feasible, global_ids = block
-    branch_id = block_index // blocks_per_branch
-    branch_changed = (accumulator.active_branch_id >= 0) & (
-        accumulator.active_branch_id != branch_id
+    branch_group_id = block_index // blocks_per_branch_group
+    branch_group_changed = (accumulator.active_branch_group_id >= 0) & (
+        accumulator.active_branch_group_id != branch_group_id
     )
     accumulator = jax.lax.cond(
-        branch_changed,
-        lambda current: _finalize_open_ev1_branch(
+        branch_group_changed,
+        lambda current: _finalize_open_ev1_branch_group(
             accumulator=current,
             reduction=reduction,
         ),
         lambda current: current,
         accumulator,
     )
-    branch = HARD_MAX_REDUCTION.add(
-        accumulator=accumulator.branch,
+    branch_group = HARD_MAX_REDUCTION.add(
+        accumulator=accumulator.branch_group,
         values=values,
         feasible=feasible,
         action_ids=global_ids,
     )
     return _EV1ActionAccumulator(
-        active_branch_id=branch_id,
-        branch=branch,
-        completed_branches=accumulator.completed_branches,
+        active_branch_group_id=branch_group_id,
+        branch_group=branch_group,
+        completed_branch_groups=accumulator.completed_branch_groups,
     )
 
 
-def _finalize_open_ev1_branch(
+def _finalize_open_ev1_branch_group(
     *,
     accumulator: _EV1ActionAccumulator,
     reduction: BoundLogSumExpReduction,
 ) -> _EV1ActionAccumulator:
-    """Move exactly one finalized continuous-branch value into log-sum-exp."""
-    branch = HARD_MAX_REDUCTION.finalize(accumulator=accumulator.branch)
-    completed_branches = reduction.add(
-        accumulator=accumulator.completed_branches,
-        values=branch.best_value[jnp.newaxis],
+    """Move one vector of finalized branch values into log-sum-exp."""
+    branch_group = HARD_MAX_REDUCTION.finalize(
+        accumulator=accumulator.branch_group
+    )
+    completed_branch_groups = reduction.add(
+        accumulator=accumulator.completed_branch_groups,
+        values=branch_group.best_value,
     )
     return _EV1ActionAccumulator(
-        active_branch_id=jnp.asarray(-1, dtype=jnp.int32),
-        branch=HARD_MAX_REDUCTION.initialize(
-            value_template=jnp.zeros_like(branch.best_value)
+        active_branch_group_id=jnp.asarray(-1, dtype=jnp.int32),
+        branch_group=HARD_MAX_REDUCTION.initialize(
+            value_template=jnp.zeros_like(branch_group.best_value)
         ),
-        completed_branches=completed_branches,
+        completed_branch_groups=completed_branch_groups,
     )
 
 
@@ -610,10 +652,10 @@ def _scan_remaining_ev1_blocks(
     accumulator: _EV1ActionAccumulator,
     evaluate_block: Callable[..., _Block],
     n_remaining: int,
-    blocks_per_branch: int,
+    blocks_per_branch_group: int,
     reduction: BoundLogSumExpReduction,
 ) -> _EV1ActionAccumulator:
-    """Scan later branch-local blocks while keeping one branch accumulator open."""
+    """Scan later vector blocks while keeping one branch group open."""
 
     # keyword-only-exempt: library-callback=jax.lax.scan
     def scan_one_block(
@@ -626,7 +668,7 @@ def _scan_remaining_ev1_blocks(
             accumulator=partial,
             block=block,
             block_index=block_index,
-            blocks_per_branch=blocks_per_branch,
+            blocks_per_branch_group=blocks_per_branch_group,
             reduction=reduction,
         )
         return (partial, block_index + 1), None
@@ -640,15 +682,15 @@ def _scan_remaining_ev1_blocks(
     return accumulator
 
 
-def _flush_ev1_branch(
+def _flush_ev1_branch_group(
     *,
     accumulator: _EV1ActionAccumulator,
     reduction: BoundLogSumExpReduction,
 ) -> _EV1ActionAccumulator:
-    """Finalize the last non-padding branch after the complete ordered scan."""
+    """Finalize the last non-padding branch group after the ordered scan."""
     return jax.lax.cond(
-        accumulator.active_branch_id >= 0,
-        lambda current: _finalize_open_ev1_branch(
+        accumulator.active_branch_group_id >= 0,
+        lambda current: _finalize_open_ev1_branch_group(
             accumulator=current,
             reduction=reduction,
         ),
