@@ -644,15 +644,20 @@ def _referenced_value_kwargs(
         kwargs[SAME_PERIOD_PARAMS_ARG] = MappingProxyType(
             {ref: flat_params[ref] for ref in regime.same_period_ref_regimes}
         )
-    # The same set the AOT lowering consults, so a compiled program's pytree
-    # and this call's arguments name the same channels.
-    if period in regime.simulation.edge_reference_periods:
+    # The same per-period set the AOT lowering consults, so a compiled
+    # program's pytree and this call's arguments name the same channels — and
+    # only the regimes this period's edges land in, since an edge whose target
+    # is inactive at `period + 1` reads nothing there.
+    edge_reference_regimes = regime.simulation.edge_reference_regimes_by_period.get(
+        period
+    )
+    if edge_reference_regimes is not None:
         landing_V = period_to_regime_to_V_arr.get(period + 1, MappingProxyType({}))
         kwargs[EDGE_REF_V_ARG] = MappingProxyType(
-            {ref: landing_V[ref] for ref in regime.edge_reference_regimes}
+            {ref: landing_V[ref] for ref in edge_reference_regimes}
         )
         kwargs[EDGE_REF_PARAMS_ARG] = MappingProxyType(
-            {ref: flat_params[ref] for ref in regime.edge_reference_regimes}
+            {ref: flat_params[ref] for ref in edge_reference_regimes}
         )
     return kwargs
 

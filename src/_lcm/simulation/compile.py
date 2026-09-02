@@ -664,15 +664,18 @@ def _build_argmax_args(
     # A gated edge's projected operands, where this period's decision program
     # declares them. Zero templates suffice: lowering captures the abstract
     # value, and the runtime call supplies the solved arrays.
-    if period in regime.simulation.edge_reference_periods:
+    edge_reference_regimes = regime.simulation.edge_reference_regimes_by_period.get(
+        period
+    )
+    if edge_reference_regimes is not None:
         same_period_args[EDGE_REF_V_ARG] = MappingProxyType(
             {
                 ref: _build_zero_V_arr(topology=regime_V_topology[ref])
-                for ref in regime.edge_reference_regimes
+                for ref in edge_reference_regimes
             }
         )
         same_period_args[EDGE_REF_PARAMS_ARG] = MappingProxyType(
-            {ref: flat_params[ref] for ref in regime.edge_reference_regimes}
+            {ref: flat_params[ref] for ref in edge_reference_regimes}
         )
     taste_shock_kwargs = {}
     if regime.has_taste_shocks:

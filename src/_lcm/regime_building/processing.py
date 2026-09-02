@@ -2,7 +2,7 @@ import functools
 import inspect
 import logging
 from collections import defaultdict
-from collections.abc import Callable, Hashable, Mapping
+from collections.abc import Callable, Collection, Hashable, Mapping
 from dataclasses import dataclass
 from dataclasses import replace as dataclass_replace
 from itertools import product
@@ -673,7 +673,7 @@ def process_regimes(  # noqa: PLR0915
             # induction has already solved that period, so these regimes need
             # no ordering constraint, only their own grid params threaded to
             # the kernel beside the rolled V arrays.
-            edge_reference_regimes = _edge_reference_regimes(user_regime)
+            edge_reference_regimes = _edge_reference_regimes(user_regime=user_regime)
             # One resolution, both phases: the value-aware feasibility mask the
             # solved value function applied is the mask the simulated argmax
             # chooses under, so the two phases share the object rather than each
@@ -1304,7 +1304,9 @@ def _resolve_gated_edge(
     )
 
 
-def _edge_reference_regimes(user_regime: UserRegime) -> tuple[RegimeName, ...]:
+def _edge_reference_regimes(
+    *, user_regime: UserRegime, targets: Collection[RegimeName] | None = None
+) -> tuple[RegimeName, ...]:
     """Return the regimes one regime's gated edges read a projected value from.
 
     Both a gate reference and a leg fallback name another regime's CURRENT
@@ -1314,13 +1316,18 @@ def _edge_reference_regimes(user_regime: UserRegime) -> tuple[RegimeName, ...]:
 
     Args:
         user_regime: The finalized user regime whose edges are inspected.
+        targets: The edge targets to inspect, or `None` for every declared
+            edge. A period reads only the edges landing in a target solved at
+            that period, so its reference set is the union over those edges.
 
     Returns:
         Tuple of referenced regime names, deduplicated, in declaration order.
 
     """
     names: list[RegimeName] = []
-    for edge in user_regime.gated_edges.values():
+    for target, edge in user_regime.gated_edges.items():
+        if targets is not None and target not in targets:
+            continue
         names.extend(ref.regime for ref in edge.gate_refs.values())
         for leg in edge.legs.values():
             fallback = leg.fallback
@@ -3817,10 +3824,22 @@ def _build_simulation_phase(  # noqa: PLR0912, PLR0915
         transition_plans=core.transition_plans,
         compute_regime_transition_probs=compute_regime_transition_probs,
         argmax_and_max_Q_over_a=argmax_and_max_Q_over_a,
-        edge_reference_periods=frozenset(
-            period
-            for period, func in argmax_and_max_Q_over_a.items()
-            if EDGE_REF_V_ARG in get_union_of_args([func])
+        # A source standing at `period` reads the edges folding at `period + 1`,
+        # the same selection the period's Q_and_F was built from, so the channel
+        # names exactly the regimes that period's readers interpolate.
+        edge_reference_regimes_by_period=MappingProxyType(
+            {
+                period: _edge_reference_regimes(
+                    user_regime=user_regime,
+                    targets=tuple(
+                        target
+                        for target, schedule in gated_continuations.items()
+                        if period + 1 in schedule.by_period
+                    ),
+                )
+                for period, func in argmax_and_max_Q_over_a.items()
+                if EDGE_REF_V_ARG in get_union_of_args([func])
+            }
         ),
         Q_and_F=pointwise_Q_and_F,
         next_state=next_state,
