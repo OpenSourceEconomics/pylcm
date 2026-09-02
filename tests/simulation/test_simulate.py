@@ -8,6 +8,7 @@ import pytest
 from numpy.testing import assert_array_almost_equal, assert_array_equal
 from pandas.testing import assert_frame_equal
 
+from _lcm.execution.core_program import CoreProgramAware
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.processing import process_regimes
 from _lcm.simulation.result_metadata import _get_output_dtypes
@@ -216,6 +217,39 @@ def test_simulate_using_model_methods(
         assert is_monotonic.all(), (
             f"{col} should increase with wealth within each period"
         )
+
+
+def test_grid_search_simulation_with_supplied_values_keeps_dense_policy_construction(
+    iskhakov_et_al_2017_stripped_down_model_solution,
+):
+    """GridSearch plans solve values but recomputes simulation policy densely.
+
+    The same processed regime has a planner-visible solve kernel and a plain
+    simulate-phase argmax. Supplying values from an earlier public ``solve`` call
+    must not silently route policy construction through the solve ``CoreProgram``.
+    """
+    period_to_regime_to_V_arr, params, model = (
+        iskhakov_et_al_2017_stripped_down_model_solution(n_periods=2)
+    )
+    regime = model._regimes["working_life"]
+
+    assert isinstance(regime.solution.period_kernels[0], CoreProgramAware)
+    assert not isinstance(
+        regime.simulation.argmax_and_max_Q_over_a[0], CoreProgramAware
+    )
+
+    result = model.simulate(
+        log_level="debug",
+        params=params,
+        period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+        initial_conditions={
+            "wealth": jnp.array([20.0]),
+            "age": jnp.array([18.0]),
+            "regime_id": jnp.array([RegimeId.working_life]),
+        },
+    )
+
+    assert result.n_subjects == 1
 
 
 def test_simulate_with_only_discrete_actions():

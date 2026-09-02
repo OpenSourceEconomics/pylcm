@@ -90,6 +90,11 @@ This matrix uses exactly three disposition labels:
 | EV1 without a discrete action | unsupported | The GridSearch EV1 reduction requires a discrete-choice axis. |
 | Any simulation-policy construction | deliberately dense | Simulation lies outside this solve-route classifier and continues to recompute policies on the dense action product. |
 
+The streamed rows assume JIT execution, a nontrivial action product, and no applicable
+unsupported composition. When several rows describe one route, an unsupported
+composition takes precedence, followed by a deliberately dense condition; only the
+remaining eligible route is streamed.
+
 Here, **unsupported** is a disposition of the action-streamed solve program, not a new
 public solver capability verdict. Model validation may reject the corresponding
 declaration; where the declaration is otherwise valid, the existing dense GridSearch

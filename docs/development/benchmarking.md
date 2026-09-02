@@ -64,6 +64,44 @@ The `asv-run` and `asv-quick` tasks set `XLA_PYTHON_CLIENT_PREALLOCATE=false`
 automatically so JAX allocates GPU memory on demand rather than grabbing it all up
 front.
 
+### Exact paired GridSearch measurements
+
+Use the separate paired harness when a GridSearch execution change needs evidence
+against one exact base revision. Run it from a clean checkout of the head revision and
+provide separate, clean checkouts of both revisions:
+
+```bash
+pixi run -e benchmarks-cuda12 grid-search-pair \
+    --base-checkout /path/to/base \
+    --base-revision <full-base-commit> \
+    --head-checkout /path/to/head \
+    --head-revision <full-head-commit> \
+    --output /path/outside/both/checkouts/grid-search-pair \
+    --precision 32 \
+    --backend gpu \
+    --repeats 4
+```
+
+Both revisions must be full 40-character commit hashes. The head checkout supplies the
+harness, and all three checkouts must agree on the lock file and scenario-owned sources.
+The output directory must not already exist and must lie outside the harness, base, and
+head checkouts.
+
+The harness measures five named routes: singleton hard max, singleton EV1, collective
+GridSearch with value-dependent inputs, distributed co-map, and folded singleton hard
+max. The distributed row always uses exactly four CPU devices; the other rows use the
+requested backend. Use at least two repeats so execution alternates base--head on even
+repeats and head--base on odd repeats; four repeats are the balanced evidence profile.
+
+Every pair must pass numerical value parity and exact output shape, dtype, and sharding
+parity. The harness also requires non-empty HLO and compiler-memory status for every
+compiled core, host high-water-mark evidence, and measured peak device memory on GPU
+(with an explicit not-applicable record on CPU). It rejects missing streamed target
+kernels and rejects communication collectives in the distributed co-map head. Raw
+timings, compiler and device memory, HLO files and digests, layout manifests, and the
+base/head ratios are retained under the output directory; `summary.json` is the entry
+point for review.
+
 ## Benchmark Scenarios
 
 | File                             | What it benchmarks                                                                                    |
