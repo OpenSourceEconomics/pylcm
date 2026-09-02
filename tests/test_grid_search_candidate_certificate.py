@@ -744,6 +744,8 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         "value_transfer:runtime_plan_bypassed",
         "value_transfer:runtime_plan_truncated",
         "value_transfer:planned_core_plan_erased",
+        "value_transfer:backward_source_coordinate_check_bypassed",
+        "value_transfer:backward_actual_source_rebound",
         "value_transfer:backward_resolver_plan_omitted",
         "value_transfer:backward_node_plan_dropped",
         "value_transfer:backward_copy_uses_output_spec",
@@ -777,10 +779,10 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
     assert required <= names
     # Independent literals make both cardinality and family identity part of this
     # certificate, rather than trusting constants supplied by the mutation generator.
-    assert len(names) == 335
+    assert len(names) == 337
     assert (
         hashlib.sha256(("\n".join(sorted(names)) + "\n").encode()).hexdigest()
-        == "46dc3327e6f80e54f1f730abfdc2de7b5f7a2e18dbea2b43a1eff52597a29a6c"
+        == "b8fce8415020a3dc7fb41e3f98ee49c697ac2ce12bbc2144ba5acb310897d828"
     )
 
 

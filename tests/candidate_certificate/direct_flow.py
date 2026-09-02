@@ -199,7 +199,7 @@ _SOURCE_SEALS = {
     SIMULATION_TRANSITIONS_SOURCE: "1c503777887af52d1d5de36cf86acb4d8431fbe3d71203d7da881b4d0742c928",
     SIMULATION_COMPILE_SOURCE: "926feb249828f03cf722f8e517706e6651b0359f93fd29c6f87650773bfcaf04",
     MODEL_SOURCE: "5045a42535a33d4337700c7161bf31ade717b43a60c3f79ef71cbe3c537347cf",
-    BACKWARD_INDUCTION_SOURCE: "c3658b932d4d4b43757c915d837b29171a10b1391f9d40e4454efdedf3283161",
+    BACKWARD_INDUCTION_SOURCE: "d94c01e087f8a90731f6ba431e3a7b7f3cf92a9f8405821b4d233ba376df7ab5",
     INITIAL_CONDITIONS_SOURCE: "cb3663f59d10fa288d3da322b5f154545bb1ac4b9262073a87c405b5e950507f",
     RESULT_SOURCE: "992f8e14d2f47f505f6883e340e89d68dfc41311d4c36f7849a2f79331e4ba01",
     RESULT_DATAFRAME_SOURCE: "025e273c4d3bb9d8f9787189a551b113708c86b1e868d16178aa39555abf49a4",
@@ -227,9 +227,9 @@ _SOURCE_SEALS = {
     MODEL_PROCESSING_SOURCE: "8a159831e37a9582852908c7e213106aa1070500f4e64fa12f1a7ed628854740",
 }
 
-EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 335
+EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 337
 EXPECTED_DIRECT_FLOW_MUTATION_NAMES_SHA256 = (
-    "46dc3327e6f80e54f1f730abfdc2de7b5f7a2e18dbea2b43a1eff52597a29a6c"
+    "b8fce8415020a3dc7fb41e3f98ee49c697ac2ce12bbc2144ba5acb310897d828"
 )
 
 
@@ -2627,8 +2627,8 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
         label="backward output-layout transport",
         contracts={
             "_compile_all_functions": "f5895d9db8595cc8c856a68543f4066bd0034963381f6c4e95deeeb6cba8cead",
-            "_resolve_output_layouts_and_lowering_keys": "fef2365f03edfd6d3ef36efa3b405da9d926adc956d1df24c4a4b1b1bc7ebb4c",
-            "_resolve_value_input_transfer_plan": "7e6b8b9cdbebcb643a0cfd5e0fcea099973a1a829516fd5a2e6935e489e01465",
+            "_resolve_output_layouts_and_lowering_keys": "3aac9854bc0b2f88f81149760722eb17982c1755f35c8e9dc655fc3804d55d9b",
+            "_resolve_value_input_transfer_plan": "34108f07dc0e0a5f9758e1c8772e6a976728f7eec8c9b8641e61c1d79315abf3",
             "_resolve_value_transfer_layout": "6cd863aaa64c0f558c797b47667479b595c77d5f3ee5c8b3dcfae188f1d05edd",
             "_initial_tile_widths": "f6a820999afacbccc0b4c2544cc6501dc50d856b372a2630efa2602292144a40",
             "_assert_core_program_arguments": "0ac8d8bacbaeff579daba66defdbd5258beae61d806ec8eddb4faff4575bb32d",
@@ -5835,6 +5835,30 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
                 old="        if program is None and layout is not UNPLANNED:",
                 new="        if layout is not UNPLANNED:",
                 label="planned raw lowering callable",
+            ),
+        },
+        "value_transfer:backward_source_coordinate_check_bypassed": {
+            "path": BACKWARD_INDUCTION_SOURCE,
+            "source": replace_once(
+                source=backward_induction_source,
+                old="        if declared_source != source:",
+                new="        if False:",
+                label="backward declared-to-actual source-coordinate rejection",
+            ),
+        },
+        "value_transfer:backward_actual_source_rebound": {
+            "path": BACKWARD_INDUCTION_SOURCE,
+            "source": replace_once(
+                source=backward_induction_source,
+                old="                source=(regime_name, period, core_key),",
+                new=(
+                    "                source=(\n"
+                    "                    program.requirements.target_value_accesses[0].source.source_regime,\n"
+                    "                    program.requirements.target_value_accesses[0].source.source_period,\n"
+                    "                    program.requirements.target_value_accesses[0].source.core_key,\n"
+                    "                ),"
+                ),
+                label="backward actual source-coordinate authority",
             ),
         },
         "value_transfer:backward_resolver_plan_omitted": {
