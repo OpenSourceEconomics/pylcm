@@ -468,8 +468,8 @@ def _evaluate_ev1_branch_block(
     values = jnp.asarray(values)
     feasible = jnp.asarray(feasible)
     _validate_block_Q_and_F(
-        values=values.reshape(-1),
-        feasible=feasible.reshape(-1),
+        values=values[0],
+        feasible=feasible[0],
     )
     return values, feasible & valid, global_ids
 
