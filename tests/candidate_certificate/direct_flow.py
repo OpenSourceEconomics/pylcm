@@ -184,7 +184,7 @@ _SOURCE_SEALS = {
     CORE_PROGRAM_SOURCE: "e9d3e475abaf3f7f17d06f511cd460888a9f5207cf19c16d3577e2c5b055dbf7",
     OUTPUT_LAYOUT_SOURCE: "20cd6a359ce07f8ef48282196c2bd8b4a7bc1d0f838839e93f4eea684bf5e9bc",
     VALUE_TRANSFER_SOURCE: "44b8629c7b461b6b0216c79ba25101179e1b8cb2edf40630a55c6b9403fbbd2d",
-    ACTION_STREAMING_SOURCE: "d120c1c80558ac45be94c7c28923e1a014fb43d3686f01da02683230538521e7",
+    ACTION_STREAMING_SOURCE: "a34ca428598e37dd68fc3dcaa0c664c56f79afb6042c946246883f250bab681c",
     ACTION_REDUCTION_SOURCE: "6cee6ea2dbef0ba710fa4a318a2113377d6513cee508e73004861597f9c220f9",
     COLLECTIVE_ACTION_REDUCTION_SOURCE: "7a80418764fdf9754062a23707c5d39fa7abfcaac9c8e8f7803c4d8f1b461347",
     DISPATCHERS_SOURCE: "ef1d85c4fa7dbfbedc2c4afc36f307b915975c8a4a379aa40380fe8c89ecb663",
@@ -227,9 +227,9 @@ _SOURCE_SEALS = {
     MODEL_PROCESSING_SOURCE: "8a159831e37a9582852908c7e213106aa1070500f4e64fa12f1a7ed628854740",
 }
 
-EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 334
+EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 335
 EXPECTED_DIRECT_FLOW_MUTATION_NAMES_SHA256 = (
-    "39a183075a18e11f078005ad75a2e5ccb67eface33c3a8bacec47091fe561dc2"
+    "46dc3327e6f80e54f1f730abfdc2de7b5f7a2e18dbea2b43a1eff52597a29a6c"
 )
 
 
@@ -1810,7 +1810,7 @@ def _action_streaming_errors(tree: ast.Module) -> list[str]:
                 "_StreamingEV1ExpectedMax.__call__": "9ad46e41de04ab0efb45f873459340f6933d984939f51d120afa6e53e2ad9510",
                 "_prepare_action_call": "290fd810472aeb3336fdd437ccba50159e9d28c6822d6b8122fa4bdec8c71159",
                 "_evaluate_block": "ee4a59644e10e1f5ebb8aaa917967a74eab852bd1bf1d5e824310bc2a26ab63f",
-                "_evaluate_ev1_branch_block": "29c982150ddadf355c01818855211b294a48cb8e5c65607554e55379a8a97bf9",
+                "_evaluate_ev1_branch_block": "4c4cb2e7de9cf3a732f4ee528f526f83e9bdeb7424ea4ce8acc74f10f041e467",
                 "_evaluate_collective_block": "8030607cabf36d76d766c5e8eea3ec1e8d9bbd8f41214c3490691f8dbe718d89",
                 "_start_reduction": "034b3966dd04c0e0d66e085e8e2c4e16b127e1d8a9869ecfa039c3b5e7928b04",
                 "_scan_remaining_blocks": "ccfb2af321657915e360867fd57bfec3e26eae86a031380fba94cd73a7384bc7",
@@ -4988,6 +4988,23 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             ),
             new="    safe_continuous_offsets = continuous_offsets",
             label="streamed EV1 continuous-tail identities",
+        ),
+        "streaming_ev1:admit_padded_branch_tail": replace_once(
+            source=replace_once(
+                source=action_streaming_source,
+                old="    valid_branches = branch_offsets < remaining_branches",
+                new=(
+                    "    valid_branches = "
+                    "jnp.ones(branches_per_block, dtype=bool)"
+                ),
+                label="streamed EV1 branch-tail validity",
+            ),
+            old=(
+                "    safe_branch_offsets = "
+                "jnp.minimum(branch_offsets, remaining_branches - 1)"
+            ),
+            new="    safe_branch_offsets = branch_offsets",
+            label="streamed EV1 branch-tail identities",
         ),
         "streaming_ev1:branch_identity_shifted": _replace_nth(
             text=action_streaming_source,

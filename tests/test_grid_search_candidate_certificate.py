@@ -688,6 +688,7 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         "streaming_ev1:continuous_extent_changed",
         "streaming_ev1:skip_last_block",
         "streaming_ev1:admit_padded_tail",
+        "streaming_ev1:admit_padded_branch_tail",
         "streaming_ev1:branch_identity_shifted",
         "streaming_ev1:branch_transition_ignored",
         "streaming_ev1:branch_value_negated",
@@ -776,10 +777,10 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
     assert required <= names
     # Independent literals make both cardinality and family identity part of this
     # certificate, rather than trusting constants supplied by the mutation generator.
-    assert len(names) == 334
+    assert len(names) == 335
     assert (
         hashlib.sha256(("\n".join(sorted(names)) + "\n").encode()).hexdigest()
-        == "39a183075a18e11f078005ad75a2e5ccb67eface33c3a8bacec47091fe561dc2"
+        == "46dc3327e6f80e54f1f730abfdc2de7b5f7a2e18dbea2b43a1eff52597a29a6c"
     )
 
 
