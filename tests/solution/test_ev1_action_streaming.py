@@ -10,7 +10,10 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose, assert_array_equal
 
-from _lcm.solution.action_streaming import build_streaming_ev1_max_Q_over_a
+from _lcm.solution.action_streaming import (
+    _evaluate_ev1_branch_block,
+    build_streaming_ev1_max_Q_over_a,
+)
 
 
 def _numpy_ev1_oracle(
@@ -205,6 +208,41 @@ def test_ev1_vector_chunks_match_oracle_with_multiple_discrete_axes(
 
     assert math.prod(len(grid) for grid in grids.values()) % block_width != 0
     assert_allclose(result.smoothed_value, expected, rtol=1e-5, atol=1e-6)
+
+
+def test_ev1_padded_branch_ids_do_not_overflow_int32() -> None:
+    """Invalid tail lanes repeat the final safe ID at the declared size bound."""
+
+    def Q_and_F(*, branch: jax.Array):
+        return branch, jnp.ones((), dtype=bool)
+
+    int32_max = int(np.iinfo(np.int32).max)
+    branches_per_block = 3
+    final_branch_group = math.ceil(int32_max / branches_per_block) - 1
+    _values, feasible, global_ids = _evaluate_ev1_branch_block(
+        block_index=jnp.asarray(final_branch_group, dtype=jnp.int32),
+        Q_and_F=Q_and_F,
+        action_names=("branch",),
+        action_grids=(jnp.asarray([0], dtype=jnp.int32),),
+        action_sizes=(1,),
+        fixed_kwargs={},
+        n_discrete_branches=int32_max,
+        continuous_extent=1,
+        branches_per_block=branches_per_block,
+        blocks_per_branch_group=1,
+        continuous_block_width=1,
+        branch_offsets=jnp.arange(branches_per_block, dtype=jnp.int32),
+        continuous_offsets=jnp.arange(1, dtype=jnp.int32),
+    )
+
+    assert_array_equal(
+        global_ids,
+        jnp.full((branches_per_block, 1), int32_max - 1, dtype=jnp.int32),
+    )
+    assert_array_equal(
+        feasible,
+        jnp.asarray([[True], [False], [False]]),
+    )
 
 
 def test_ev1_packed_branches_still_require_scalar_q() -> None:
