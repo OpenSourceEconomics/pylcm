@@ -118,10 +118,12 @@ def build_streaming_ev1_max_Q_over_a(
 ) -> Callable[..., LogSumExpResult]:
     """Build the fixed-state EV1 expected-maximum callable.
 
-    The action product stays one flat C-order stream. Its leading discrete
-    coordinates define contiguous branches; the trailing continuous coordinates
-    are hard-maxed within each branch. Exactly one finalized value per branch then
-    enters a log-sum-exp reduction bound to ``scale`` for its complete lifetime.
+    The leading discrete coordinates define contiguous branches in the canonical
+    C-order product. Each branch is evaluated in fixed-width blocks over its trailing
+    continuous coordinates, and padded cells never cross into the next branch.
+    ``block_width`` is an upper bound: a shorter continuous branch uses its own extent.
+    Exactly one finalized value per branch then enters a log-sum-exp reduction bound
+    to ``scale`` for its complete lifetime.
     """
     _validate_streaming_configuration(
         action_names=action_names, block_width=block_width
@@ -246,18 +248,22 @@ class _StreamingEV1ExpectedMax:
             kwargs=kwargs,
         )
         continuous_extent = math.prod(action_sizes[self.n_discrete_action_axes :])
-        n_blocks = (n_actions + self.block_width - 1) // self.block_width
+        block_width = min(self.block_width, continuous_extent)
+        blocks_per_branch = (continuous_extent + block_width - 1) // block_width
+        n_discrete_branches = n_actions // continuous_extent
+        n_blocks = n_discrete_branches * blocks_per_branch
         reduction = LOGSUMEXP_REDUCTION.bind(scale=jnp.asarray(self.scale))
         evaluate_block = partial(
-            _evaluate_block,
+            _evaluate_ev1_branch_block,
             Q_and_F=self.Q_and_F,
             action_names=self.action_names,
             action_grids=action_grids,
             action_sizes=action_sizes,
             fixed_kwargs=fixed_kwargs,
-            n_actions=n_actions,
-            block_width=self.block_width,
-            block_offsets=jnp.arange(self.block_width, dtype=jnp.int32),
+            continuous_extent=continuous_extent,
+            blocks_per_branch=blocks_per_branch,
+            block_width=block_width,
+            block_offsets=jnp.arange(block_width, dtype=jnp.int32),
         )
         first_block_index = jnp.asarray(0, dtype=jnp.int32)
         first_block = evaluate_block(block_index=first_block_index)
@@ -269,18 +275,14 @@ class _StreamingEV1ExpectedMax:
             accumulator=accumulator,
             block=first_block,
             block_index=first_block_index,
-            n_actions=n_actions,
-            block_width=self.block_width,
-            continuous_extent=continuous_extent,
+            blocks_per_branch=blocks_per_branch,
             reduction=reduction,
         )
         accumulator = _scan_remaining_ev1_blocks(
             accumulator=accumulator,
             evaluate_block=evaluate_block,
             n_remaining=n_blocks - 1,
-            n_actions=n_actions,
-            block_width=self.block_width,
-            continuous_extent=continuous_extent,
+            blocks_per_branch=blocks_per_branch,
             reduction=reduction,
         )
         accumulator = _flush_ev1_branch(
@@ -382,6 +384,44 @@ def _evaluate_block(
     valid = block_offsets < remaining
     safe_offsets = jnp.minimum(block_offsets, remaining - 1)
     global_ids = block_start + safe_offsets
+
+    def evaluate_one(global_id: jax.Array) -> tuple[Any, Any]:
+        action_kwargs = _decode_action(
+            global_id=global_id,
+            action_names=action_names,
+            action_grids=action_grids,
+            action_sizes=action_sizes,
+        )
+        return Q_and_F(**fixed_kwargs, **action_kwargs)
+
+    values, feasible = jax.vmap(evaluate_one)(global_ids)
+    values = jnp.asarray(values)
+    feasible = jnp.asarray(feasible)
+    _validate_block_Q_and_F(values=values, feasible=feasible)
+    return values, feasible & valid, global_ids
+
+
+def _evaluate_ev1_branch_block(
+    *,
+    block_index: jax.Array,
+    Q_and_F: Callable[..., tuple[Any, Any]],
+    action_names: tuple[str, ...],
+    action_grids: tuple[jax.Array, ...],
+    action_sizes: tuple[int, ...],
+    fixed_kwargs: dict[str, Any],
+    continuous_extent: int,
+    blocks_per_branch: int,
+    block_width: int,
+    block_offsets: jax.Array,
+) -> _Block:
+    """Evaluate one padded block contained within one discrete EV1 branch."""
+    branch_id = block_index // blocks_per_branch
+    block_within_branch = block_index % blocks_per_branch
+    local_start = block_within_branch * block_width
+    remaining = continuous_extent - local_start
+    valid = block_offsets < remaining
+    safe_offsets = jnp.minimum(block_offsets, remaining - 1)
+    global_ids = branch_id * continuous_extent + local_start + safe_offsets
 
     def evaluate_one(global_id: jax.Array) -> tuple[Any, Any]:
         action_kwargs = _decode_action(
@@ -514,56 +554,12 @@ def _add_ev1_block(
     accumulator: _EV1ActionAccumulator,
     block: _Block,
     block_index: jax.Array,
-    n_actions: int,
-    block_width: int,
-    continuous_extent: int,
+    blocks_per_branch: int,
     reduction: BoundLogSumExpReduction,
 ) -> _EV1ActionAccumulator:
-    """Consume valid cells in one block in canonical global-ID order."""
+    """Merge one branch-local vector block, closing the preceding branch."""
     values, feasible, global_ids = block
-    remaining = n_actions - block_index * block_width
-    valid = jnp.arange(block_width, dtype=jnp.int32) < remaining
-
-    # keyword-only-exempt: library-callback=jax.lax.scan
-    def scan_one_candidate(
-        partial: _EV1ActionAccumulator,
-        candidate: tuple[jax.Array, jax.Array, jax.Array, jax.Array],
-    ) -> tuple[_EV1ActionAccumulator, None]:
-        value, is_feasible, global_id, is_valid = candidate
-        partial = jax.lax.cond(
-            is_valid,
-            lambda current: _add_valid_ev1_candidate(
-                accumulator=current,
-                value=value,
-                feasible=is_feasible,
-                global_id=global_id,
-                continuous_extent=continuous_extent,
-                reduction=reduction,
-            ),
-            lambda current: current,
-            partial,
-        )
-        return partial, None
-
-    accumulator, _history = jax.lax.scan(
-        scan_one_candidate,
-        accumulator,
-        (values, feasible, global_ids, valid),
-    )
-    return accumulator
-
-
-def _add_valid_ev1_candidate(
-    *,
-    accumulator: _EV1ActionAccumulator,
-    value: jax.Array,
-    feasible: jax.Array,
-    global_id: jax.Array,
-    continuous_extent: int,
-    reduction: BoundLogSumExpReduction,
-) -> _EV1ActionAccumulator:
-    """Add one valid cell, closing the preceding branch when necessary."""
-    branch_id = global_id // continuous_extent
+    branch_id = block_index // blocks_per_branch
     branch_changed = (accumulator.active_branch_id >= 0) & (
         accumulator.active_branch_id != branch_id
     )
@@ -578,9 +574,9 @@ def _add_valid_ev1_candidate(
     )
     branch = HARD_MAX_REDUCTION.add(
         accumulator=accumulator.branch,
-        values=value[jnp.newaxis],
-        feasible=feasible[jnp.newaxis],
-        action_ids=global_id[jnp.newaxis],
+        values=values,
+        feasible=feasible,
+        action_ids=global_ids,
     )
     return _EV1ActionAccumulator(
         active_branch_id=branch_id,
@@ -614,12 +610,10 @@ def _scan_remaining_ev1_blocks(
     accumulator: _EV1ActionAccumulator,
     evaluate_block: Callable[..., _Block],
     n_remaining: int,
-    n_actions: int,
-    block_width: int,
-    continuous_extent: int,
+    blocks_per_branch: int,
     reduction: BoundLogSumExpReduction,
 ) -> _EV1ActionAccumulator:
-    """Scan later blocks while preserving the branch open at each boundary."""
+    """Scan later branch-local blocks while keeping one branch accumulator open."""
 
     # keyword-only-exempt: library-callback=jax.lax.scan
     def scan_one_block(
@@ -632,9 +626,7 @@ def _scan_remaining_ev1_blocks(
             accumulator=partial,
             block=block,
             block_index=block_index,
-            n_actions=n_actions,
-            block_width=block_width,
-            continuous_extent=continuous_extent,
+            blocks_per_branch=blocks_per_branch,
             reduction=reduction,
         )
         return (partial, block_index + 1), None

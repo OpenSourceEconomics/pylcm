@@ -197,7 +197,7 @@ def test_public_ev1_solve_maximizes_each_discrete_branch_before_logsum(
     continuous_extent = consumption.size
     real_evaluate_block = cast(
         "Callable[..., tuple[jax.Array, jax.Array, jax.Array]]",
-        action_streaming._evaluate_block,
+        action_streaming._evaluate_ev1_branch_block,
     )
     observed = {"calls": 0}
 
@@ -208,7 +208,11 @@ def test_public_ev1_solve_maximizes_each_discrete_branch_before_logsum(
         observed["calls"] += 1
         return values, feasible & (global_ids < continuous_extent), global_ids
 
-    monkeypatch.setattr(action_streaming, "_evaluate_block", omit_work_on_branch)
+    monkeypatch.setattr(
+        action_streaming,
+        "_evaluate_ev1_branch_block",
+        omit_work_on_branch,
+    )
 
     discount_factor = 0.95
     solution = taste_shocks_toy.get_model().solve(

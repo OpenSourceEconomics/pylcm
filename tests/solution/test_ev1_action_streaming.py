@@ -92,7 +92,7 @@ def _nested_scan_lengths(closed_jaxpr: object) -> list[int]:  # noqa: C901
 def test_ev1_lowering_has_no_block_width_candidate_scan() -> None:
     """A chunk may be scanned, but its candidates must reduce as a vector.
 
-    The action product has five chunks, so an outer scan of length four is legal.
+    The two branches have three chunks each, so an outer scan of length five is legal.
     A scan of length eight is the block-local candidate loop that serializes the
     reducer on GPU and turns this 34-cell product into one step per padded cell.
     """
@@ -124,7 +124,7 @@ def test_ev1_lowering_has_no_block_width_candidate_scan() -> None:
 def test_ev1_vector_chunks_match_oracle_with_multiple_discrete_axes(
     block_width: int,
 ) -> None:
-    """Chunks may end within a branch, cross branches, and have padded tails."""
+    """Branch-local chunks and their padded tails match direct enumeration."""
 
     def Q_and_F(*, sector, status, saving, hours, shift):
         value = (
