@@ -124,10 +124,12 @@ asv-run-and-pr-comment = { depends-on = [ "asv-run", "asv-pr-comment" ] }
 asv-run-and-publish-main = { depends-on = [ "asv-run", "asv-publish" ] }
 grid-search-pair = "python -m benchmarks.grid_search_pair"
 [tool.pixi.feature.benchmarks.pypi-dependencies]
-# Pinned to an aca-model main that carries both the keyword-only case-piece
-# call sites this branch's API requires and the DC-EGM solver path; flip back
-# to `branch = "main"` once this branch merges.
-aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "328e3710cfafb19c28ebcd46a27090238415fdd6" }
+# Pinned to the aca-model revision that carries the keyword-only case-piece
+# call sites this branch's API requires, the DC-EGM solver path, and the
+# `ACA_JAX_ENABLE_X64` switch the paired GridSearch harness sets per requested
+# precision (an older revision forces x64 on import); flip back to
+# `branch = "main"` once this branch merges.
+aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "5d1d4797474946dafc9509f9d83907f31dcb6dc6" }
 [tool.pixi.feature.cuda12]
 platforms = [ "linux-64-cuda12" ]
 [tool.pixi.feature.cuda12.target.linux-64.dependencies]
