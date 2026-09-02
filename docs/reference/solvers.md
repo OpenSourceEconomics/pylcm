@@ -104,8 +104,10 @@ core consumes it. Planning resolves each read either as a local pass-through tha
 the value's stored partitioning on the shared source mesh, or as an explicit copy into a
 supported layout on the source core's mesh. The resolved plan is applied identically to
 lowering and runtime arguments, and unsupported layout conversions or mismatched array
-metadata are errors. Remaining-consumer counts are committed only after successful
-dispatch. A zero count records eligibility for future memory
+metadata are errors. Each declaration's `(source_regime, source_period, core_key)` must
+also match the actual compiled core before its channel and argument-tree path are
+resolved. Remaining-consumer counts are committed only after successful dispatch. A
+zero count records eligibility for future memory
 planning; it does not release, donate, or offload an array. Dense compatibility and
 unplanned legacy consumers remain pinned.
 

@@ -73,6 +73,11 @@ supported layout on the source core's mesh. The exact same resolved plan transfo
 lowering arguments and the runtime arguments; unexpected shape, dtype, sharding,
 address, or conversion combinations fail closed.
 
+Each planned read also authenticates its declared
+`(source_regime, source_period, core_key)` against the actual compiled core before its
+channel and argument-tree path are resolved. Agreement among declarations cannot make a
+different source node authoritative.
+
 The exact declarations also support conservative remaining-consumer accounting. A
 logical artifact is counted once per planned dispatch and its count is committed only
 after that dispatch returns successfully. Reaching zero means only that an unpinned
