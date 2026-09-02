@@ -168,9 +168,10 @@ class NBEGM(OneMarginSolver):
     - Piecewise-affine schedule (`lcm.piecewise_affine`): the breakpoint
       kinds pick the step — kinks/floors only, jumps only, or mixed —
       solved by `coh` inversion per continuous run and masked across the jumps.
-    - Schedule with ride-along co-states: two independently-jitted cores per
-      period (transition-aware continuation read, then the per-cell envelope
-      solve in savings space), batched over the ride-along cells.
+    - Schedule with ride-along co-states: one tile-local core per period that
+      reads each cell block's transition-aware continuation and runs the block's
+      envelope solve in savings space before the next block, so the expected
+      continuation over every cell never exists as one array.
     - Discrete action over a smooth budget: one continuous subproblem per
       discrete-action value, merged by the discrete upper envelope.
     """
@@ -743,8 +744,10 @@ class NBEGM(OneMarginSolver):
 
         The continuation is read through the transition-aware reader, so each
         period's plan depends on its reachable carry/scalar target split; cores
-        are deduplicated by that split. The 1-D liquid solve runs once per
-        ride-along cell, batched.
+        are deduplicated by that split. Production solves each period in one
+        tile-local core that reads a cell block's continuation and runs its 1-D
+        liquid solve before the next block; the split continuation and envelope
+        cores are built beside it as its independent oracle.
         """
         bound = cast("_BoundNBEGM", self)
 
@@ -762,6 +765,7 @@ class NBEGM(OneMarginSolver):
         # stochastic multi-target lifecycle transition. Enumerate the regime's
         # active periods directly rather than resolving a single target per period.
         active_periods = sorted(context.regimes_to_active_periods[context.regime_name])
+        tiled_cores: dict[_RideAlongGroupKey, Callable] = {}
         continuation_cores: dict[_RideAlongGroupKey, Callable] = {}
         envelope_cores: dict[_RideAlongGroupKey, Callable] = {}
         statics_by_key: dict[_RideAlongGroupKey, _NBEGMRideAlongStatics] = {}
@@ -903,7 +907,7 @@ class NBEGM(OneMarginSolver):
                     cliff_candidates=cliff_candidates,
                     schedule_spec=group_spec,
                 )
-                envelope_core = _build_nbegm_envelope_core(
+                envelope_build = _build_nbegm_envelope_core(
                     savings_grid=savings_grid,
                     schedule_spec=group_spec,
                     statics=statics,
@@ -912,17 +916,32 @@ class NBEGM(OneMarginSolver):
                     ),
                     feasibility_constraints=group_constraints,
                 )
+                tiled_core = _build_nbegm_tiled_core(
+                    savings_grid=savings_grid,
+                    continuation_plan=plan,
+                    statics=statics,
+                    regime_name=context.regime_name,
+                    cliff_candidates=cliff_candidates,
+                    schedule_spec=group_spec,
+                    envelope_build=envelope_build,
+                )
+                tiled_cores[key] = (
+                    jax.jit(tiled_core) if context.enable_jit else tiled_core
+                )
                 continuation_cores[key] = (
                     jax.jit(continuation_core)
                     if context.enable_jit
                     else continuation_core
                 )
                 envelope_cores[key] = (
-                    jax.jit(envelope_core) if context.enable_jit else envelope_core
+                    jax.jit(envelope_build.core)
+                    if context.enable_jit
+                    else envelope_build.core
                 )
                 statics_by_key[key] = statics
                 cliff_candidates_by_key[key] = cliff_candidates
             period_kernels[period] = _RideAlongNBEGMPeriodKernel(
+                tiled_core=tiled_cores[key],
                 continuation_core=continuation_cores[key],
                 envelope_core=envelope_cores[key],
                 statics=statics_by_key[key],
@@ -1337,28 +1356,30 @@ def proved_post_decision_of(*, solver: NBEGM) -> FunctionName | None:
 class _RideAlongNBEGMPeriodKernel:
     """The case-piece EGM adapter for a regime carrying a ride-along co-state.
 
-    The solve splits into two independently-jitted cores so neither XLA program
-    carries the other's instruction graph:
+    Production runs one tile-local core, `main`: per cell block it reads
+    `next_regime_to_continuation` through the transition-aware reader —
+    the probability-weighted expected value and marginal over the savings grid —
+    and solves the block's 1-D liquid step against those rows inside the same
+    compiled body, returning the value array and the ride-along-axis-leading
+    continuation carry a parent interpolates.
 
-    - `continuation`: reads `next_regime_to_continuation` and binds one continuation per
-      ride-along cell through the transition-aware reader, returning the
-      probability-weighted expected value and marginal over the savings grid.
-    - `envelope`: re-derives each cell's budget and utility and solves the 1-D liquid
-      step against the continuation core's stacks, returning the value array and the
-      ride-along-axis-leading continuation carry a parent interpolates.
-
-    Calling the adapter runs `continuation` then `envelope` unjitted and assembles the
-    `KernelResult`; no JIT spans the two calls.
+    The same calculation split into two independently-jitted cores stays on the
+    adapter as its oracle (`split_cores`): `continuation` materializes the complete
+    expected-continuation stacks over every cell, and `envelope` consumes them.
+    Calling the adapter runs `main` and assembles the `KernelResult`.
     """
 
+    tiled_core: Callable
+    """The jitted tile-local production core (`id`-deduped across periods)."""
+
     continuation_core: Callable
-    """The jitted continuation half (`id`-deduped across periods)."""
+    """The jitted continuation half of the split oracle."""
 
     envelope_core: Callable
-    """The jitted EGM/envelope half (`id`-deduped across periods)."""
+    """The jitted EGM/envelope half of the split oracle."""
 
     statics: _NBEGMRideAlongStatics
-    """Build-time config — supplies the envelope core's placeholder stack shapes."""
+    """Build-time config: the cell block width and the oracle placeholder shapes."""
 
     cliff_candidates: bool
     """Whether this period's cores exchange save-to-cliff candidate columns.
@@ -1378,11 +1399,15 @@ class _RideAlongNBEGMPeriodKernel:
 
     @property
     def core(self) -> Callable:
-        """The continuation core, exposed for any single-core reader."""
-        return self.continuation_core
+        """The tile-local production core, exposed for any single-core reader."""
+        return self.tiled_core
 
     def cores(self) -> Mapping[str, Callable]:
-        """Return the continuation and envelope cores under their own keys."""
+        """Return the production core graph: the one tile-local core."""
+        return MappingProxyType({"main": self.tiled_core})
+
+    def split_cores(self) -> Mapping[str, Callable]:
+        """Return the split oracle's continuation and envelope cores."""
         return MappingProxyType(
             {
                 "continuation": self.continuation_core,
@@ -1390,57 +1415,10 @@ class _RideAlongNBEGMPeriodKernel:
             }
         )
 
-    def build_fused_replay_core(self) -> Callable:
-        """Build a replay-only core spanning continuation through envelope.
-
-        Production deliberately keeps the two cores separate. This narrow diagnostic
-        wrapper puts their existing full-stack mathematics inside one JIT boundary. It
-        asks only whether that boundary changes the continuation stacks'
-        compiler-visible lifetime relative to the split cores. It is not a tile-local
-        architecture and makes no production-layout or production-memory claim. The
-        continuation stacks are local values: callers supply captured states, target
-        artifacts, params, period, and age, never a materialized cross-core stack.
-
-        Returns:
-            A callable returning exactly the envelope core's raw output pytree.
-
-        """
-        continuation_core = self.continuation_core
-        envelope_core = self.envelope_core
-        cliff_candidates = self.cliff_candidates
-
-        def fused_replay_core(
-            *,
-            next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
-            next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-            **kwargs: Any,  # noqa: ANN401 - state grids + params + period/age
-        ) -> object:
-            continuation_stacks = continuation_core(
-                next_regime_to_continuation=next_regime_to_continuation,
-                next_regime_to_V_arr=next_regime_to_V_arr,
-                **kwargs,
-            )
-            if cliff_candidates:
-                cont_value_stack, cont_marginal_stack, cliff_savings_stack = (
-                    continuation_stacks
-                )
-                cliff_kwargs = {"cliff_savings_stack": cliff_savings_stack}
-            else:
-                cont_value_stack, cont_marginal_stack = continuation_stacks
-                cliff_kwargs = {}
-            return envelope_core(
-                cont_value_stack=cont_value_stack,
-                cont_marginal_stack=cont_marginal_stack,
-                **cliff_kwargs,
-                **kwargs,
-            )
-
-        return fused_replay_core
-
     def with_fixed_params(
         self, *, fixed_flat_params: FlatParams
     ) -> _RideAlongNBEGMPeriodKernel:
-        """Bind the regime's and its carry targets' fixed params into both cores."""
+        """Bind the regime's and its carry targets' fixed params into every core."""
         bound = _union_fixed_params(
             fixed_flat_params=fixed_flat_params,
             regime_name=self.regime_name,
@@ -1450,6 +1428,7 @@ class _RideAlongNBEGMPeriodKernel:
             return self
         return replace(
             self,
+            tiled_core=functools.partial(self.tiled_core, **bound),
             continuation_core=functools.partial(self.continuation_core, **bound),
             envelope_core=functools.partial(self.envelope_core, **bound),
         )
@@ -1457,7 +1436,7 @@ class _RideAlongNBEGMPeriodKernel:
     def build_lower_args(
         self,
         *,
-        core_key: str = "continuation",
+        core_key: str = "main",
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
@@ -1467,11 +1446,12 @@ class _RideAlongNBEGMPeriodKernel:
     ) -> Mapping[str, object]:
         """Build the named core's lowering arguments.
 
-        The continuation core takes the state grids, the filtered carries, and the
-        regime's flat params. The envelope core takes the same state and param args
-        minus the carries, plus correctly-shaped zero placeholders for the two
-        continuation stacks (statically derivable from the ride-along grid sizes, the
-        savings grid, and the interval count).
+        The production core and the oracle's continuation core take the state
+        grids, the filtered carries, the target values, and the regime's flat
+        params. The oracle's envelope core takes the same state and param args
+        minus the carries, plus correctly-shaped zero placeholders for the
+        continuation stacks (statically derivable from the ride-along grid sizes,
+        the savings grid, and the interval count).
         """
         states = dict(state_action_space.states)
         params = self._kernel_params(flat_params=flat_params)
@@ -1485,9 +1465,8 @@ class _RideAlongNBEGMPeriodKernel:
             }
         return {
             **states,
-            "next_regime_to_continuation": _carry_subset(
-                next_regime_to_continuation=next_regime_to_continuation,
-                stateful_targets=self.stateful_targets,
+            "next_regime_to_continuation": self._co_map_carry(
+                states=states, next_regime_to_continuation=next_regime_to_continuation
             ),
             "next_regime_to_V_arr": next_regime_to_V_arr,
             **params,
@@ -1507,31 +1486,15 @@ class _RideAlongNBEGMPeriodKernel:
         ages: AgeGrid,
         logger: logging.Logger,  # noqa: ARG002
     ) -> KernelResult:
-        """Run the continuation then envelope core and assemble the `KernelResult`."""
+        """Run the tile-local core and assemble the `KernelResult`."""
         states = dict(state_action_space.states)
         params = self._kernel_params(flat_params=flat_params)
-        continuation_stacks = compiled_cores["continuation"](
+        envelope_result = compiled_cores["main"](
             **states,
-            next_regime_to_continuation=_carry_subset(
-                next_regime_to_continuation=next_regime_to_continuation,
-                stateful_targets=self.stateful_targets,
+            next_regime_to_continuation=self._co_map_carry(
+                states=states, next_regime_to_continuation=next_regime_to_continuation
             ),
             next_regime_to_V_arr=next_regime_to_V_arr,
-            **params,
-            period=jnp.int32(period),
-            age=ages.values[period],
-        )
-        if self.cliff_candidates:
-            cont_value_stack, cont_marginal_stack, cliff_stack = continuation_stacks
-            cliff_kwargs = {"cliff_savings_stack": cliff_stack}
-        else:
-            cont_value_stack, cont_marginal_stack = continuation_stacks
-            cliff_kwargs = {}
-        envelope_result = compiled_cores["envelope"](
-            **states,
-            cont_value_stack=cont_value_stack,
-            cont_marginal_stack=cont_marginal_stack,
-            **cliff_kwargs,
             **params,
             period=jnp.int32(period),
             age=ages.values[period],
@@ -1562,7 +1525,7 @@ class _RideAlongNBEGMPeriodKernel:
         )
 
     def _stack_placeholders(self, *, states: Mapping[str, object]) -> dict[str, object]:
-        """Zero placeholders for the envelope core's continuation stacks.
+        """Zero placeholders for the oracle envelope core's continuation stacks.
 
         The interval regime reads one continuation row per declared interval, so the
         stacks carry an interval axis between the ride-cell and savings axes; the
@@ -1606,10 +1569,47 @@ class _RideAlongNBEGMPeriodKernel:
             )
         return placeholders
 
+    def _co_map_carry(
+        self,
+        *,
+        states: Mapping[str, object],
+        next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
+    ) -> Mapping[RegimeName, ContinuationPayload]:
+        """Filter the carry to this period's targets and place it on the co-map mesh.
+
+        With a distributed ride state the cores run on the co-map mesh, and every
+        committed argument has to live there. A target whose carry lacks the
+        co-mapped axis — a terminal carry that does not depend on the distributed
+        state — is produced on a single device, so it is replicated onto the mesh
+        (lowering template and runtime value alike, so the compiled-for input
+        sharding and the argument agree). Leaves already on the mesh, sharded per
+        slice or replicated, pass through; without a distributed ride state the
+        filtered carry is returned as is.
+        """
+        carry = _carry_subset(
+            next_regime_to_continuation=next_regime_to_continuation,
+            stateful_targets=self.stateful_targets,
+        )
+        co_map_sharding = self._co_map_stack_sharding(states=states)
+        if co_map_sharding is None:
+            return carry
+        replicated = jax.NamedSharding(mesh=co_map_sharding.mesh, spec=jax.P())
+
+        def place(leaf: object) -> object:
+            leaf_sharding = getattr(leaf, "sharding", None)
+            if (
+                isinstance(leaf_sharding, jax.NamedSharding)
+                and leaf_sharding.mesh == co_map_sharding.mesh
+            ):
+                return leaf
+            return jax.device_put(leaf, replicated)
+
+        return jax.tree.map(place, carry)
+
     def _co_map_stack_sharding(
         self, *, states: Mapping[str, object]
     ) -> jax.NamedSharding | None:
-        """Sharding for the envelope core's continuation-stack placeholders.
+        """Sharding for the oracle envelope core's continuation-stack placeholders.
 
         The co-mapped ride states are a leading prefix of the ride axes, so the
         runtime stacks arrive sharded along the flattened leading ride-cell axis
@@ -2591,8 +2591,8 @@ def _branch_bindings(
     carries a single empty binding, so the branch axis is never degenerate and
     callers need no separate no-action case.
 
-    The order is the contract between the two independently-jitted cores: the
-    continuation core stacks one slice per branch and the envelope core reads
+    The order is the contract between the continuation read and the envelope
+    solve: the continuation stacks one slice per branch and the envelope reads
     slice `pos` for branch `pos`. Both derive it from the same `discrete_actions`
     tuple through this function, so position means the same thing on both sides
     as long as neither builds the product itself.
@@ -5240,7 +5240,7 @@ def _carry_comap_in_axes(
     return MappingProxyType(result)
 
 
-def _build_nbegm_continuation_core(  # noqa: C901, PLR0915
+def _build_nbegm_continuation_core(
     *,
     savings_grid: Float1D,
     continuation_plan: Any,  # noqa: ANN401  # `ContinuationPlan`; import-cycle-safe
@@ -5249,7 +5249,7 @@ def _build_nbegm_continuation_core(  # noqa: C901, PLR0915
     cliff_candidates: bool,
     schedule_spec: _NBEGMScheduleSpec,
 ) -> Callable:
-    """Build the continuation half of the ride-along solve, jitted in isolation.
+    """Build the continuation half of the ride-along split oracle.
 
     Per ride-along cell the continuation is read through `bind_continuation` —
     integrating the next-period regime transition, stochastic shocks, the ride-along
@@ -5257,10 +5257,268 @@ def _build_nbegm_continuation_core(  # noqa: C901, PLR0915
     savings grid. The interval regime binds the liquid state to each interval's node
     and returns one continuation row per interval; the non-interval regime returns one
     row over the savings grid. The cells stack into `(n_ride_cells, [n_intervals,]
-    n_savings)` expected-value and expected-marginal arrays the envelope core consumes.
+    n_savings)` expected-value and expected-marginal arrays the envelope half consumes.
 
-    The heavy fan-out lives only here: this core builds no utility, cash-on-hand, or
-    discount closure, so its compiled program never carries the EGM/envelope math.
+    Production solves through `_build_nbegm_tiled_core`, which consumes each cell
+    block's rows inside the same compiled body; this core materializes the complete
+    stacks and exists as that core's independent oracle.
+    """
+    co_map_names = statics.co_map_state_names
+
+    def continuation_core(
+        *,
+        next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],  # noqa: ARG001
+        **kwargs: Any,  # noqa: ANN401  # state grids + flat params (mixed dtypes)
+    ) -> tuple[FloatND, ...]:
+        def solve_inner(
+            *,
+            carry: MappingProxyType[RegimeName, EGMCarry],
+            comap_bindings: dict[str, Any],
+        ) -> tuple[FloatND, ...]:
+            cell_continuation = _bind_nbegm_cell_continuation(
+                kwargs=kwargs,
+                carry=carry,
+                comap_bindings=comap_bindings,
+                savings_grid=savings_grid,
+                continuation_plan=continuation_plan,
+                statics=statics,
+                regime_name=regime_name,
+                cliff_candidates=cliff_candidates,
+                schedule_spec=schedule_spec,
+            )
+            inner_cells = _nbegm_inner_ride_cells(kwargs=kwargs, statics=statics)
+            if inner_cells is None:
+                # Every ride axis is co-mapped: a single inner cell per co-map slice.
+                # Add a leading singleton so the co-map merge sees one inner cell.
+                rows = cell_continuation(())
+                return tuple(leaf[jnp.newaxis] for leaf in rows)
+            return _map_ride_partitioned(
+                func=cell_continuation,
+                xs=inner_cells,
+                requested_block_size=statics.cell_block_size,
+            )
+
+        return _solve_nbegm_over_co_map(
+            kwargs=kwargs,
+            carry=next_regime_to_continuation,
+            continuation_plan=continuation_plan,
+            co_map_names=co_map_names,
+            solve_inner=solve_inner,
+        )
+
+    return continuation_core
+
+
+def _build_nbegm_tiled_core(
+    *,
+    savings_grid: Float1D,
+    continuation_plan: Any,  # noqa: ANN401  # `ContinuationPlan`; import-cycle-safe
+    statics: _NBEGMRideAlongStatics,
+    regime_name: RegimeName,
+    cliff_candidates: bool,
+    schedule_spec: _NBEGMScheduleSpec,
+    envelope_build: _NBEGMEnvelopeBuild,
+) -> Callable:
+    """Build the tile-local production core of the ride-along solve.
+
+    One compiled body walks the ride cells in blocks of `statics.cell_block_size`.
+    For each block it reads the continuation rows — the complete expectation over
+    every reachable target and stochastic node, on the savings grid — and solves
+    the block's envelope step against them before the next block starts, so the
+    expected-continuation stacks over every cell are never a complete array, let
+    alone an argument. The core takes what the continuation read takes (states,
+    filtered carries, target values, params) and returns what the envelope solve
+    returns (value array, carry, policy, optional branch banks).
+
+    Co-mapped ride states stay outermost: each co-map slice reads only its slice of
+    the child carry, exactly as the split continuation core does, and the inner
+    mesh solves inside that slice.
+    """
+    co_map_names = statics.co_map_state_names
+    ride_names = statics.ride_names
+    liquid_name = statics.liquid_name
+
+    def tiled_core(
+        *,
+        next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],  # noqa: ARG001
+        **kwargs: Any,  # noqa: ANN401  # state grids + flat params (mixed dtypes)
+    ) -> (
+        tuple[FloatND, EGMCarry, FloatND]
+        | tuple[FloatND, EGMCarry, FloatND, FloatND, FloatND]
+    ):
+        dtype = canonical_float_dtype()
+        liquid = jnp.asarray(kwargs[liquid_name], dtype=dtype)
+        solve_one_cell = envelope_build.bind_cell(kwargs)
+
+        def solve_inner(
+            *,
+            carry: MappingProxyType[RegimeName, EGMCarry],
+            comap_bindings: dict[str, Any],
+        ) -> tuple[FloatND, ...]:
+            cell_continuation = _bind_nbegm_cell_continuation(
+                kwargs=kwargs,
+                carry=carry,
+                comap_bindings=comap_bindings,
+                savings_grid=savings_grid,
+                continuation_plan=continuation_plan,
+                statics=statics,
+                regime_name=regime_name,
+                cliff_candidates=cliff_candidates,
+                schedule_spec=schedule_spec,
+            )
+            comap_values = tuple(comap_bindings[name] for name in co_map_names)
+
+            def solve_cell(inner_values: tuple[Any, ...]) -> tuple[FloatND, ...]:
+                rows = cell_continuation(inner_values)
+                return solve_one_cell(
+                    ride_values=(*comap_values, *inner_values),
+                    **_nbegm_continuation_channels(
+                        rows=rows, cliff_candidates=cliff_candidates
+                    ),
+                )
+
+            inner_cells = _nbegm_inner_ride_cells(kwargs=kwargs, statics=statics)
+            if inner_cells is None:
+                stacks = solve_cell(())
+                return tuple(leaf[jnp.newaxis] for leaf in stacks)
+            return _map_ride_partitioned(
+                func=solve_cell,
+                xs=inner_cells,
+                requested_block_size=statics.cell_block_size,
+            )
+
+        stacks = _solve_nbegm_over_co_map(
+            kwargs=kwargs,
+            carry=next_regime_to_continuation,
+            continuation_plan=continuation_plan,
+            co_map_names=co_map_names,
+            solve_inner=solve_inner,
+        )
+        ride_shape = tuple(
+            int(jnp.asarray(kwargs[name]).shape[0]) for name in ride_names
+        )
+        return _assemble_ride_carry(
+            stacks=stacks,
+            n_jumps=envelope_build.n_published_boundaries,
+            n_action_branches=statics.n_action_branches,
+            liquid=liquid,
+            ride_shape=ride_shape,
+            liquid_axis_pos=schedule_spec.liquid_axis_pos,
+            dtype=dtype,
+        )
+
+    return tiled_core
+
+
+def _nbegm_continuation_channels(
+    *, rows: tuple[FloatND, ...], cliff_candidates: bool
+) -> dict[str, FloatND]:
+    """Name one cell's continuation rows as the envelope solve's channels."""
+    if cliff_candidates:
+        cont_value, cont_marginal, cliff_savings = rows
+        return {
+            "cont_value": cont_value,
+            "cont_marginal": cont_marginal,
+            "cliff_savings": cliff_savings,
+        }
+    cont_value, cont_marginal = rows
+    return {"cont_value": cont_value, "cont_marginal": cont_marginal}
+
+
+def _nbegm_inner_ride_cells(
+    *, kwargs: Mapping[str, Any], statics: _NBEGMRideAlongStatics
+) -> tuple[FloatND | IntND, ...] | None:
+    """Flatten the mesh over the ride states that are not co-mapped.
+
+    Returns `None` when every ride axis is co-mapped, so the caller solves a
+    single inner cell per co-map slice.
+    """
+    inner_ride_names = statics.ride_names[len(statics.co_map_state_names) :]
+    if not inner_ride_names:
+        return None
+    ride_grids = tuple(jnp.asarray(kwargs[name]) for name in inner_ride_names)
+    mesh = jnp.meshgrid(*ride_grids, indexing="ij")
+    return tuple(grid.ravel() for grid in mesh)
+
+
+def _solve_nbegm_over_co_map(
+    *,
+    kwargs: Mapping[str, Any],
+    carry: MappingProxyType[RegimeName, EGMCarry],
+    continuation_plan: Any,  # noqa: ANN401  # `ContinuationPlan`; import-cycle-safe
+    co_map_names: tuple[str, ...],
+    solve_inner: Callable[..., tuple[FloatND, ...]],
+) -> tuple[FloatND, ...]:
+    """Run an inner-mesh solve once per co-map slice and merge the cell axes.
+
+    A distributed, never-transitioning ride state is co-mapped: its axis is the
+    leading ride axis, so the inner mesh solves inside an outer `vmap` that
+    co-slices the child carry — each device reads only its slice, no all-gather.
+    The leading co-map axes are merged into the flat inner-cell axis, keeping
+    co-map states outermost — the meshgrid-`ij` order over every ride state.
+    """
+
+    def solve_with_co_map(
+        *,
+        carry: MappingProxyType[RegimeName, EGMCarry],
+        remaining: tuple[str, ...],
+        comap_bindings: dict[str, Any],
+    ) -> tuple[FloatND, ...]:
+        if not remaining:
+            return solve_inner(carry=carry, comap_bindings=comap_bindings)
+        head, *tail = remaining
+        head_grid = jnp.asarray(kwargs[head])
+        # Only slice targets whose carry actually carries this co-mapped state as
+        # a discrete axis; a target that does not (e.g. a kind-independent terminal
+        # carry) is read whole for every slice.
+        slice_targets = frozenset(
+            target
+            for target in continuation_plan.stateful_targets
+            if head in continuation_plan.child_reads[target].discrete_state_names
+        )
+        in_axes = _carry_comap_in_axes(carry=carry, slice_targets=slice_targets)
+
+        def slice_solve(
+            *,
+            head_value: Any,  # noqa: ANN401
+            sliced_carry: MappingProxyType[RegimeName, EGMCarry],
+        ) -> tuple[FloatND, ...]:
+            return solve_with_co_map(
+                carry=sliced_carry,
+                remaining=tuple(tail),
+                comap_bindings={**comap_bindings, head: head_value},
+            )
+
+        stacked = jax.vmap(allow_args(slice_solve), in_axes=(0, in_axes))(
+            head_grid, carry
+        )
+        return tuple(leaf.reshape(-1, *leaf.shape[2:]) for leaf in stacked)
+
+    return solve_with_co_map(carry=carry, remaining=co_map_names, comap_bindings={})
+
+
+def _bind_nbegm_cell_continuation(  # noqa: C901
+    *,
+    kwargs: dict[str, Any],
+    carry: MappingProxyType[RegimeName, EGMCarry],
+    comap_bindings: Mapping[str, Any],
+    savings_grid: Float1D,
+    continuation_plan: Any,  # noqa: ANN401  # `ContinuationPlan`; import-cycle-safe
+    statics: _NBEGMRideAlongStatics,
+    regime_name: RegimeName,
+    cliff_candidates: bool,
+    schedule_spec: _NBEGMScheduleSpec,
+) -> Callable[[tuple[Any, ...]], tuple[FloatND, ...]]:
+    """Bind one period's inputs into the per-cell continuation read.
+
+    The returned callable takes one inner ride cell's coordinates (the ride states
+    that are not co-mapped, in `ride_names` order) and returns the cell's
+    continuation rows: expected value and expected marginal over the savings grid,
+    each with a leading branch axis when the regime carries a discrete action and an
+    interval axis when the continuation reads the liquid state, plus the
+    save-to-cliff savings targets when the one-sided read publishes jump topology.
     """
     from _lcm.egm.continuation import bind_continuation  # noqa: PLC0415
     from _lcm.egm.nbegm_breakpoints import interval_midpoints  # noqa: PLC0415
@@ -5270,235 +5528,149 @@ def _build_nbegm_continuation_core(  # noqa: C901, PLR0915
     state_names = statics.state_names
     action_names = tuple(name for name, _ in schedule_spec.discrete_actions)
     branch_bindings = schedule_spec.branch_bindings
-    # A distributed, never-transitioning ride state is co-mapped: its axis is the
-    # leading ride axis, so the mesh over the *remaining* ride states solves inside
-    # an outer `vmap` that co-slices the child carry — each device reads only its
-    # slice, no all-gather. Empty co-map leaves `inner_ride_names == ride_names`.
     co_map_names = statics.co_map_state_names
     inner_ride_names = ride_names[len(co_map_names) :]
+    dtype = canonical_float_dtype()
+    liquid = jnp.asarray(kwargs[liquid_name], dtype=dtype)
+    param_pool = {key: v for key, v in kwargs.items() if key not in state_names}
 
-    def continuation_core(  # noqa: C901
-        *,
-        next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
-        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],  # noqa: ARG001
-        **kwargs: Any,  # noqa: ANN401  # state grids + flat params (mixed dtypes)
-    ) -> tuple[FloatND, ...]:
-        dtype = canonical_float_dtype()
-        liquid = jnp.asarray(kwargs[liquid_name], dtype=dtype)
-        param_pool = {key: v for key, v in kwargs.items() if key not in state_names}
+    def cell_continuation(ride_values: tuple[Any, ...]) -> tuple[FloatND, ...]:
+        cell = dict(zip(inner_ride_names, ride_values, strict=True))
 
-        def _solve_inner_mesh(  # noqa: C901
-            *,
-            carry: MappingProxyType[RegimeName, EGMCarry],
-            comap_bindings: dict[str, Any],
-        ) -> tuple[FloatND, ...]:
-            def cell_continuation(
-                ride_values: tuple[Any, ...],
-            ) -> tuple[FloatND, ...]:
-                cell = dict(zip(inner_ride_names, ride_values, strict=True))
+        def rows_for_pool(combo_pool: dict[str, Any]) -> tuple[FloatND, ...]:
+            return _cell_rows_for_pool(combo_pool)
 
-                def rows_for_pool(combo_pool: dict[str, Any]) -> tuple[FloatND, ...]:
-                    return _cell_rows_for_pool(combo_pool)
+        base_pool = {**param_pool, **comap_bindings, **cell}
+        if not action_names:
+            return rows_for_pool(base_pool)
 
-                base_pool = {**param_pool, **comap_bindings, **cell}
-                if not action_names:
-                    return rows_for_pool(base_pool)
+        # A discrete action that feeds the continuation reads a different
+        # next-state per branch, so the continuation is evaluated per branch
+        # (the actions ride into `combo_pool` → `next_state_func`). A leading
+        # branch axis is added over the product of the declared grids; when
+        # the actions do not feed the continuation the branch rows are
+        # identical, matching the shared-continuation case. The branch body
+        # compiles once and runs at a fixed vector width, so per-branch
+        # intermediates never all sit in flight whatever the partition.
+        def rows_for_codes(codes_row: IntND) -> tuple[FloatND, ...]:
+            binding = {
+                name: codes_row[position] for position, name in enumerate(action_names)
+            }
+            return rows_for_pool({**base_pool, **binding})
 
-                # A discrete action that feeds the continuation reads a different
-                # next-state per branch, so the continuation is evaluated per branch
-                # (the actions ride into `combo_pool` → `next_state_func`). A leading
-                # branch axis is added over the product of the declared grids; when
-                # the actions do not feed the continuation the branch rows are
-                # identical, matching the shared-continuation case. The branch body
-                # compiles once and runs at a fixed vector width, so per-branch
-                # intermediates never all sit in flight whatever the partition.
-                def rows_for_codes(codes_row: IntND) -> tuple[FloatND, ...]:
-                    binding = {
-                        name: codes_row[position]
-                        for position, name in enumerate(action_names)
-                    }
-                    return rows_for_pool({**base_pool, **binding})
+        codes = _stacked_branch_codes(
+            branch_bindings=branch_bindings, action_names=action_names
+        )
+        return _map_branch_partitioned(
+            func=rows_for_codes,
+            xs=codes,
+            requested_block_size=statics.branch_batch_size,
+        )
 
-                codes = _stacked_branch_codes(
-                    branch_bindings=branch_bindings, action_names=action_names
-                )
-                return _map_branch_partitioned(
-                    func=rows_for_codes,
-                    xs=codes,
-                    requested_block_size=statics.branch_batch_size,
-                )
+    def _cell_rows_for_pool(combo_pool: dict[str, Any]) -> tuple[FloatND, ...]:
+        cell = {name: combo_pool[name] for name in ride_names}
 
-            def _cell_rows_for_pool(combo_pool: dict[str, Any]) -> tuple[FloatND, ...]:
-                cell = {name: combo_pool[name] for name in ride_names}
+        def cliff_targets_for(midpoints: Float1D | None) -> FloatND:
+            # Under the one-sided read, the cell also evaluates the blended
+            # continuation at each self-read cliff's one-sided savings
+            # targets; the extra columns ride at the end of the savings
+            # axis and the envelope solve adds them as point candidates.
+            return _cliff_savings_targets(
+                continuation_plan=continuation_plan,
+                regime_name=regime_name,
+                statics=statics,
+                kwargs=kwargs,
+                cell=cell,
+                combo_pool=combo_pool,
+                liquid_grid=liquid,
+                savings_grid=savings_grid,
+                dtype=dtype,
+                midpoints=midpoints,
+            )
 
-                def cliff_targets_for(midpoints: Float1D | None) -> FloatND:
-                    # Under the one-sided read, the cell also evaluates the blended
-                    # continuation at each self-read cliff's one-sided savings
-                    # targets; the extra columns ride at the end of the savings
-                    # axis and the envelope core adds them as point candidates.
-                    return _cliff_savings_targets(
-                        continuation_plan=continuation_plan,
-                        regime_name=regime_name,
-                        statics=statics,
-                        kwargs=kwargs,
-                        cell=cell,
-                        combo_pool=combo_pool,
-                        liquid_grid=liquid,
-                        savings_grid=savings_grid,
-                        dtype=dtype,
-                        midpoints=midpoints,
-                    )
+        def query_with(targets: FloatND) -> Float1D:
+            return jnp.concatenate(
+                [
+                    savings_grid,
+                    jnp.where(jnp.isnan(targets), savings_grid[0], targets),
+                ]
+            )
 
-                def query_with(targets: FloatND) -> Float1D:
-                    return jnp.concatenate(
-                        [
-                            savings_grid,
-                            jnp.where(jnp.isnan(targets), savings_grid[0], targets),
-                        ]
-                    )
+        if statics.continuation_reads_liquid:
+            # The next-period state law carries a current-asset boundary, so
+            # the continuation is constant only within each declared interval.
+            # Bind the liquid (Euler) state to each interval's representative
+            # node, building one continuation row per interval. `lax.map`
+            # compiles the continuation DAG once and XLA iterates, rather than a
+            # Python unroll that bakes one copy of the per-cell DAG into the
+            # graph per interval. The interval partition follows the action when
+            # it feeds the schedule variable — the branch rides in `combo_pool`,
+            # so its per-branch breakpoints match the envelope's.
+            cell_action_binding = {
+                name: combo_pool[name] for name in action_names if name in combo_pool
+            }
+            breakpoints, _ = _nbegm_cell_breakpoints(
+                statics=statics,
+                kwargs=kwargs,
+                cell=cell,
+                liquid_grid=liquid,
+                dtype=dtype,
+                action_binding=cell_action_binding,
+            )
+            midpoints = interval_midpoints(liquid_grid=liquid, breakpoints=breakpoints)
+            cliff_targets = cliff_targets_for(midpoints) if cliff_candidates else None
 
-                if statics.continuation_reads_liquid:
-                    # The next-period state law carries a current-asset boundary, so
-                    # the continuation is constant only within each declared interval.
-                    # Bind the liquid (Euler) state to each interval's representative
-                    # node, building one continuation row per interval. `lax.map`
-                    # compiles the continuation DAG once and XLA iterates, rather than a
-                    # Python unroll that bakes one copy of the per-cell DAG into the
-                    # graph per interval. The interval partition follows the action when
-                    # it feeds the schedule variable — the branch rides in `combo_pool`,
-                    # so its per-branch breakpoints match the envelope's.
-                    cell_action_binding = {
-                        name: combo_pool[name]
-                        for name in action_names
-                        if name in combo_pool
-                    }
-                    breakpoints, _ = _nbegm_cell_breakpoints(
-                        statics=statics,
-                        kwargs=kwargs,
-                        cell=cell,
-                        liquid_grid=liquid,
-                        dtype=dtype,
-                        action_binding=cell_action_binding,
-                    )
-                    midpoints = interval_midpoints(
-                        liquid_grid=liquid, breakpoints=breakpoints
-                    )
-                    cliff_targets = (
-                        cliff_targets_for(midpoints) if cliff_candidates else None
-                    )
-
-                    def interval_rows(
-                        *,
-                        interval_inputs: tuple[FloatND, ...],
-                        combo_pool: dict[str, Any] = combo_pool,
-                    ) -> tuple[Float1D, Float1D]:
-                        midpoint, *interval_targets = interval_inputs
-                        interval_pool = {**combo_pool, liquid_name: midpoint}
-                        interval_continuation = bind_continuation(
-                            plan=continuation_plan,
-                            combo_pool=interval_pool,
-                            next_regime_to_continuation=carry,
-                            dtype=dtype,
-                            co_map_state_names=co_map_names,
-                        )
-                        query = (
-                            savings_grid
-                            if not interval_targets
-                            else query_with(interval_targets[0])
-                        )
-                        return jax.vmap(interval_continuation)(query)
-
-                    interval_inputs = (
-                        (midpoints,)
-                        if cliff_targets is None
-                        else (midpoints, cliff_targets)
-                    )
-                    rows = _map_ride_partitioned(
-                        func=lambda interval_inputs: interval_rows(
-                            interval_inputs=interval_inputs
-                        ),
-                        xs=interval_inputs,
-                        requested_block_size=statics.interval_batch_size,
-                    )
-                    if cliff_targets is None:
-                        return rows
-                    return (*rows, cliff_targets)
-
-                continuation = bind_continuation(
+            def interval_rows(
+                *,
+                interval_inputs: tuple[FloatND, ...],
+                combo_pool: dict[str, Any] = combo_pool,
+            ) -> tuple[Float1D, Float1D]:
+                midpoint, *interval_targets = interval_inputs
+                interval_pool = {**combo_pool, liquid_name: midpoint}
+                interval_continuation = bind_continuation(
                     plan=continuation_plan,
-                    combo_pool=combo_pool,
+                    combo_pool=interval_pool,
                     next_regime_to_continuation=carry,
                     dtype=dtype,
                     co_map_state_names=co_map_names,
                 )
-                cliff_targets = cliff_targets_for(None) if cliff_candidates else None
-                rows = jax.vmap(continuation)(
-                    savings_grid if cliff_targets is None else query_with(cliff_targets)
+                query = (
+                    savings_grid
+                    if not interval_targets
+                    else query_with(interval_targets[0])
                 )
-                if cliff_targets is None:
-                    return rows
-                return (*rows, cliff_targets)
+                return jax.vmap(interval_continuation)(query)
 
-            if not inner_ride_names:
-                # Every ride axis is co-mapped: a single inner cell per co-map slice.
-                # Add a leading singleton so the co-map merge sees one inner cell.
-                rows = cell_continuation(())
-                return tuple(leaf[jnp.newaxis] for leaf in rows)
-
-            ride_grids = tuple(jnp.asarray(kwargs[name]) for name in inner_ride_names)
-            mesh = jnp.meshgrid(*ride_grids, indexing="ij")
-            flat_cells = tuple(grid.ravel() for grid in mesh)
-            return _map_ride_partitioned(
-                func=cell_continuation,
-                xs=flat_cells,
-                requested_block_size=statics.cell_block_size,
+            interval_inputs = (
+                (midpoints,) if cliff_targets is None else (midpoints, cliff_targets)
             )
-
-        def _solve_with_co_map(
-            *,
-            carry: MappingProxyType[RegimeName, EGMCarry],
-            remaining: tuple[str, ...],
-            comap_bindings: dict[str, Any],
-        ) -> tuple[FloatND, ...]:
-            if not remaining:
-                return _solve_inner_mesh(carry=carry, comap_bindings=comap_bindings)
-            head, *tail = remaining
-            head_grid = jnp.asarray(kwargs[head])
-            # Only slice targets whose carry actually carries this co-mapped state as
-            # a discrete axis; a target that does not (e.g. a kind-independent terminal
-            # carry) is read whole for every slice.
-            slice_targets = frozenset(
-                target
-                for target in continuation_plan.stateful_targets
-                if head in continuation_plan.child_reads[target].discrete_state_names
+            rows = _map_ride_partitioned(
+                func=lambda interval_inputs: interval_rows(
+                    interval_inputs=interval_inputs
+                ),
+                xs=interval_inputs,
+                requested_block_size=statics.interval_batch_size,
             )
-            in_axes = _carry_comap_in_axes(carry=carry, slice_targets=slice_targets)
+            if cliff_targets is None:
+                return rows
+            return (*rows, cliff_targets)
 
-            def slice_solve(
-                *,
-                head_value: Any,  # noqa: ANN401
-                sliced_carry: MappingProxyType[RegimeName, EGMCarry],
-            ) -> tuple[FloatND, ...]:
-                return _solve_with_co_map(
-                    carry=sliced_carry,
-                    remaining=tuple(tail),
-                    comap_bindings={**comap_bindings, head: head_value},
-                )
-
-            stacked = jax.vmap(allow_args(slice_solve), in_axes=(0, in_axes))(
-                head_grid, carry
-            )
-            # Merge the new leading co-map axis into the flat inner-cell axis, keeping
-            # co-map states outermost — the meshgrid-`ij` order the envelope expects.
-            return tuple(leaf.reshape(-1, *leaf.shape[2:]) for leaf in stacked)
-
-        return _solve_with_co_map(
-            carry=next_regime_to_continuation,
-            remaining=co_map_names,
-            comap_bindings={},
+        continuation = bind_continuation(
+            plan=continuation_plan,
+            combo_pool=combo_pool,
+            next_regime_to_continuation=carry,
+            dtype=dtype,
+            co_map_state_names=co_map_names,
         )
+        cliff_targets = cliff_targets_for(None) if cliff_candidates else None
+        rows = jax.vmap(continuation)(
+            savings_grid if cliff_targets is None else query_with(cliff_targets)
+        )
+        if cliff_targets is None:
+            return rows
+        return (*rows, cliff_targets)
 
-    return continuation_core
+    return cell_continuation
 
 
 def _split_cliff_columns(
@@ -5559,6 +5731,24 @@ def _cell_solver(
     )
 
 
+@dataclass(frozen=True, kw_only=True)
+class _NBEGMEnvelopeBuild:
+    """The envelope half of a ride-along solve, as an oracle core and a cell binder."""
+
+    core: Callable
+    """The split oracle's envelope core: consumes complete continuation stacks."""
+
+    bind_cell: Callable[[Mapping[str, Any]], Callable[..., tuple[FloatND, ...]]]
+    """Bind one period's states and params into the per-cell envelope solve.
+
+    The bound callable takes `ride_values` (every ride state's coordinate, co-mapped
+    states first), `cont_value`, `cont_marginal`, and optionally `cliff_savings` for
+    one cell, and returns that cell's packaged result rows."""
+
+    n_published_boundaries: int
+    """Jump preimages plus feasibility boundaries each carry row publishes."""
+
+
 def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
     *,
     savings_grid: Float1D,
@@ -5566,19 +5756,20 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
     statics: _NBEGMRideAlongStatics,
     is_epstein_zin: bool = False,
     feasibility_constraints: tuple[_NBEGMFeasibilityConstraint, ...] = (),
-) -> Callable:
-    """Build the EGM/envelope half of the ride-along solve, jitted in isolation.
+) -> _NBEGMEnvelopeBuild:
+    """Build the EGM/envelope half of the ride-along solve.
 
     Per ride-along cell this re-derives the budget schedule, discount factor, and
     utility from the same (states, params), then solves the 1-D continuous-budget step
-    against the cell's continuation row supplied by the continuation core. The interval
-    regime runs the per-interval continuation step; the non-interval regime runs the
-    multi-interval or unified jump step. The cells stack into the value array and carry
-    with the ride-along axes leading the liquid axis, matching the canonical layout.
+    against the cell's continuation rows. The interval regime runs the per-interval
+    continuation step; the non-interval regime runs the multi-interval or unified jump
+    step. The cells stack into the value array and carry with the ride-along axes
+    leading the liquid axis, matching the canonical layout.
 
-    Re-deriving the breakpoints, cash-on-hand coefficients, and discount factor here is
-    cheap closed-form work; this core calls no continuation reader, so the heavy
-    transition fan-out never enters its compiled program.
+    The per-cell solve is published twice: as `bind_cell`, which the tile-local
+    production core (`_build_nbegm_tiled_core`) runs per cell block right after that
+    block's continuation read, and as the split oracle's `core`, which consumes the
+    complete continuation stacks the split continuation core materializes.
     """
     from _lcm.egm.nbegm_breakpoints import (  # noqa: PLC0415
         interval_midpoints,
@@ -5616,16 +5807,9 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
     n_published_boundaries = statics.n_published_jumps + n_feasibility_boundaries
     schedule_kinds = tuple(source.kind for source in statics.sources)
 
-    def envelope_core(  # noqa: PLR0915
-        *,
-        cont_value_stack: FloatND,
-        cont_marginal_stack: FloatND,
-        cliff_savings_stack: FloatND | None = None,
-        **kwargs: Any,  # noqa: ANN401  # state grids + flat params (mixed dtypes)
-    ) -> (
-        tuple[FloatND, EGMCarry, FloatND]
-        | tuple[FloatND, EGMCarry, FloatND, FloatND, FloatND]
-    ):
+    def bind_cell(  # noqa: PLR0915
+        kwargs: Mapping[str, Any],
+    ) -> Callable[..., tuple[FloatND, ...]]:
         dtype = canonical_float_dtype()
         liquid = jnp.asarray(kwargs[liquid_name], dtype=dtype)
         coh_params = {name: kwargs[name] for name in schedule_spec.coh_param_names}
@@ -5914,6 +6098,21 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
                 published_boundaries=published_boundaries,
             )
 
+        return solve_one_cell
+
+    def envelope_core(
+        *,
+        cont_value_stack: FloatND,
+        cont_marginal_stack: FloatND,
+        cliff_savings_stack: FloatND | None = None,
+        **kwargs: Any,  # noqa: ANN401  # state grids + flat params (mixed dtypes)
+    ) -> (
+        tuple[FloatND, EGMCarry, FloatND]
+        | tuple[FloatND, EGMCarry, FloatND, FloatND, FloatND]
+    ):
+        dtype = canonical_float_dtype()
+        liquid = jnp.asarray(kwargs[liquid_name], dtype=dtype)
+        solve_one_cell = bind_cell(kwargs)
         ride_grids = tuple(jnp.asarray(kwargs[name]) for name in ride_names)
         ride_shape = tuple(int(grid.shape[0]) for grid in ride_grids)
         mesh = jnp.meshgrid(*ride_grids, indexing="ij")
@@ -5940,7 +6139,11 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
             dtype=dtype,
         )
 
-    return envelope_core
+    return _NBEGMEnvelopeBuild(
+        core=envelope_core,
+        bind_cell=bind_cell,
+        n_published_boundaries=n_published_boundaries,
+    )
 
 
 def _package_nbegm_cell_result(

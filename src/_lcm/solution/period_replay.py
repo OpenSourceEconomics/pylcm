@@ -10,7 +10,6 @@ by the backward-induction loop, and the replay side imports that loop.
 
 import dataclasses
 from collections.abc import Mapping
-from enum import StrEnum
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, cast
@@ -22,6 +21,7 @@ from _lcm.engine import StateActionSpace
 from _lcm.execution.core_program import (
     CoreBuildContext,
     CoreExecutionDisposition,
+    _LegacyArgumentBuilder,
     core_program_graph,
     materialize_core_program,
 )
@@ -75,27 +75,9 @@ class CompilerMemoryBytes:
     host_temp_size_in_bytes: int | None
 
 
-class FusedNBEGMExperimentScope(StrEnum):
-    """Architectural question the compile-only fused replay can answer."""
-
-    EXISTING_FULL_STACK_ONE_JIT_LIFETIME = "existing_full_stack_one_jit_lifetime"
-
-
-class ReplayInputShapeProvenance(StrEnum):
-    """Origin of the logical array shapes supplied to replay lowering."""
-
-    CAPTURED_PRODUCTION_SHAPES = "captured_production_shapes"
-
-
-class ReplayInputLayoutFidelity(StrEnum):
-    """Placement fidelity of arrays restored from a period capture."""
-
-    DEFAULT_BACKEND_AFTER_CAPTURE_ROUNDTRIP = "default_backend_after_capture_roundtrip"
-
-
 @dataclasses.dataclass(frozen=True)
-class FusedNBEGMMemoryAnalysis:
-    """Compiler memory for fused and split cores at capture-roundtrip placement.
+class PeriodCoreMemoryAnalysis:
+    """Compiler memory of one captured period's cores at capture-roundtrip placement.
 
     The capture preserves the period's logical pytrees and array shapes. Its pickle
     round trip does not preserve production sharding, so these byte counts describe
@@ -112,23 +94,20 @@ class FusedNBEGMMemoryAnalysis:
     age: float
     """Age the captured period sits at, for reading against a solve log."""
 
-    experiment_scope: FusedNBEGMExperimentScope
-    """The one narrow compiler-lifetime question represented by this report."""
-
-    input_shape_provenance: ReplayInputShapeProvenance
-    """Where the replay lowering's logical array shapes came from."""
-
-    input_layout_fidelity: ReplayInputLayoutFidelity
-    """How faithfully replay lowering represents the captured run's placement."""
-
     preserves_production_sharding: bool
     """Always false: period capture does not serialize production sharding."""
 
-    fused_memory_bytes: CompilerMemoryBytes | None
-    """Byte counts for one continuation-to-envelope executable, if supported."""
+    core_memory_bytes: MappingProxyType[str, CompilerMemoryBytes | None]
+    """Byte counts per production core, keyed as the kernel publishes them."""
 
-    split_memory_bytes: MappingProxyType[str, CompilerMemoryBytes | None]
-    """Byte counts for split cores lowered from the same restored capture."""
+    split_oracle_memory_bytes: MappingProxyType[str, CompilerMemoryBytes | None]
+    """Byte counts per split oracle core, for a kernel that keeps one.
+
+    A ride-along NB-EGM kernel keeps its continuation and envelope halves as an
+    oracle of the tile-local production core; the envelope half's argument bytes
+    are the complete continuation stacks the production core never materializes.
+    Empty for every other kernel.
+    """
 
 
 def replay_period(*, directory: Path) -> PeriodReplay:
@@ -167,26 +146,22 @@ def replay_period(*, directory: Path) -> PeriodReplay:
     )
 
 
-def analyze_fused_nbegm_memory(*, directory: Path) -> FusedNBEGMMemoryAnalysis:
-    """Compile, but never execute, a captured ride-along NB-EGM fused experiment.
+def analyze_period_core_memory(*, directory: Path) -> PeriodCoreMemoryAnalysis:
+    """Compile, but never execute, one captured period's cores and read their memory.
 
-    The current split cores and a diagnostic continuation-to-envelope wrapper are
-    lowered against the capture's logical pytrees and production shapes. The capture
-    round trip loses device sharding; both forms therefore use the restored arrays'
-    default backend placement. Calling `memory_analysis()` on the resulting executables
-    is safe even when their estimated runtime allocation exceeds the available device
-    budget because this function deliberately has no execution path.
-
-    The experiment asks only whether keeping the existing full continuation stacks
-    inside one JIT changes their compiler-visible lifetime relative to the current split
-    cores. It is not a tile-local implementation and does not establish a completed
-    production memory architecture.
+    The production cores are lowered against the capture's logical pytrees and
+    production shapes; a kernel keeping a split oracle has those cores lowered
+    beside them. The capture round trip loses device sharding, so every executable
+    uses the restored arrays' default backend placement. Calling `memory_analysis()`
+    on the resulting executables is safe even when their estimated runtime
+    allocation exceeds the available device budget because this function
+    deliberately has no execution path.
 
     Args:
-        directory: A ride-along NB-EGM capture directory.
+        directory: A capture directory written during a solve.
 
     Returns:
-        The captured identity and compiler memory analyses for fused and split forms.
+        The captured identity and compiler memory per core.
 
     """
     payload = _load_capture_payload(directory=directory)
@@ -194,29 +169,27 @@ def analyze_fused_nbegm_memory(*, directory: Path) -> FusedNBEGMMemoryAnalysis:
     period = payload["period"]
     kernel_kwargs = payload["kernel_kwargs"]
 
-    split_cores = _compile_cores_for_one_period(
+    production = _compile_cores_for_one_period(
         regime=regime, period=period, kernel_kwargs=kernel_kwargs
     )
-    fused_core = _compile_fused_nbegm_core_for_one_period(
+    split_oracle = _compile_split_oracle_cores_for_one_period(
         regime=regime, period=period, kernel_kwargs=kernel_kwargs
     )
-    return FusedNBEGMMemoryAnalysis(
+    return PeriodCoreMemoryAnalysis(
         regime_name=kernel_kwargs["regime_name"],
         period=period,
         age=float(kernel_kwargs["ages"].values[period]),
-        experiment_scope=(
-            FusedNBEGMExperimentScope.EXISTING_FULL_STACK_ONE_JIT_LIFETIME
-        ),
-        input_shape_provenance=(ReplayInputShapeProvenance.CAPTURED_PRODUCTION_SHAPES),
-        input_layout_fidelity=(
-            ReplayInputLayoutFidelity.DEFAULT_BACKEND_AFTER_CAPTURE_ROUNDTRIP
-        ),
         preserves_production_sharding=False,
-        fused_memory_bytes=_compiler_memory_bytes(compiled=fused_core),
-        split_memory_bytes=MappingProxyType(
+        core_memory_bytes=MappingProxyType(
             {
                 key: _compiler_memory_bytes(compiled=core)
-                for key, core in split_cores.items()
+                for key, core in production.items()
+            }
+        ),
+        split_oracle_memory_bytes=MappingProxyType(
+            {
+                key: _compiler_memory_bytes(compiled=core)
+                for key, core in split_oracle.items()
             }
         ),
     )
@@ -333,34 +306,31 @@ def _compile_cores_for_one_period(
     return MappingProxyType(compiled)
 
 
-def _compile_fused_nbegm_core_for_one_period(
+def _compile_split_oracle_cores_for_one_period(
     *,
     regime: Any,  # noqa: ANN401 - the canonical Regime, circular to import here
     period: int,
     kernel_kwargs: dict[str, Any],
-) -> Any:  # noqa: ANN401 - a backend-specific JAX compiled executable
-    """Lower one replay-only fused core against restored capture inputs."""
+) -> MappingProxyType[str, Any]:
+    """Lower and compile a kernel's split oracle cores, if it keeps any.
+
+    The oracle cores are not part of the production graph, so they are lowered
+    through the kernel's own legacy argument builder rather than the resolver.
+    """
     period_kernel = regime.solution.period_kernels[period]
-    builder = getattr(period_kernel, "build_fused_replay_core", None)
-    if builder is None:
-        msg = (
-            "Fused memory analysis requires a ride-along NB-EGM period capture; "
-            f"got {type(period_kernel).__name__}."
-        )
-        raise TypeError(msg)
+    split_cores = getattr(period_kernel, "split_cores", None)
+    if split_cores is None:
+        return MappingProxyType({})
     context = _core_build_context_for_one_period(
         regime=regime, period=period, kernel_kwargs=kernel_kwargs
     )
-    declaration = core_program_graph(kernel=period_kernel)["continuation"]
-    materialized = materialize_core_program(program=declaration, context=context)
-    resolved = _resolve_program_for_execution(
-        program=materialized,
-        source_value_template=context.next_regime_to_V_arr[
-            kernel_kwargs["regime_name"]
-        ],
-        source=(kernel_kwargs["regime_name"], period, "continuation"),
-    )
-    return jax.jit(builder()).lower(**resolved.arguments).compile()
+    compiled = {}
+    for core_name, core in split_cores().items():
+        arguments = _LegacyArgumentBuilder(kernel=period_kernel, core_name=core_name)(
+            context
+        )
+        compiled[core_name] = jax.jit(core).lower(**arguments).compile()
+    return MappingProxyType(compiled)
 
 
 def _core_build_context_for_one_period(
@@ -369,7 +339,7 @@ def _core_build_context_for_one_period(
     period: int,
     kernel_kwargs: dict[str, Any],
 ) -> CoreBuildContext:
-    """Build the immutable program context shared by split and fused replay."""
+    """Build the immutable program context shared by replay and memory analysis."""
     # A source declaring gated edges reads its targets' folded continuation in
     # place of their raw V, so the kernel is compiled against a pytree the raw
     # mapping does not carry. The projection comes from the solve loop's own

@@ -1,8 +1,9 @@
-"""The ride-along NBEGM solve splits into two independently-compiled cores.
+"""The ride-along NBEGM kernel keeps a split two-core oracle beside its core.
 
 The continuation fan-out (regime transition, child reads, stochastic integration,
 interpolation) and the EGM/envelope math compile as two separate XLA programs, so
-neither core ever sees the other's instruction graph.
+each half can be lowered and measured on its own; production solves through the
+tile-local core that fuses them per cell block.
 """
 
 from collections.abc import Callable, Mapping
@@ -61,12 +62,12 @@ def _hlo_instruction_count(*, core: Callable, lower_args: Mapping[str, object]) 
     return sum(1 for line in hlo_text.splitlines() if " = " in line)
 
 
-def test_ride_along_kernel_exposes_continuation_and_envelope_cores():
-    """The ride-along kernel splits its solve into a `continuation` and an
-    `envelope` core, each a distinct compiled program."""
+def test_ride_along_kernel_exposes_continuation_and_envelope_oracle_cores():
+    """The ride-along kernel keeps a `continuation` and an `envelope` oracle core,
+    each a distinct compiled program, beside its one production core."""
     model = _build_ride_model(variant="nbegm")
     kernel, _ = _ride_along_kernel(model=model, params=ride_toy.build_params())
-    assert set(kernel.cores()) == {"continuation", "envelope"}
+    assert set(kernel.split_cores()) == {"continuation", "envelope"}
 
 
 def test_split_partitions_the_solve_into_two_asymmetric_cores():
@@ -82,7 +83,7 @@ def test_split_partitions_the_solve_into_two_asymmetric_cores():
     """
     model = _build_ride_model(variant="nbegm")
     kernel, ctx = _ride_along_kernel(model=model, params=ride_toy.build_params())
-    cores = kernel.cores()
+    cores = kernel.split_cores()
     cont_args = kernel.build_lower_args(core_key="continuation", **ctx)
     env_args = kernel.build_lower_args(core_key="envelope", **ctx)
     cont_ops = _hlo_instruction_count(core=cores["continuation"], lower_args=cont_args)

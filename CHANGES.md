@@ -7,6 +7,18 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Tile-local NB-EGM ride-along execution
+
+- A regime carrying ride-along co-states solves each period in one tile-local
+  `NBEGM` core: every cell block's transition-aware continuation read (the
+  complete expectation over reachable targets and stochastic nodes, on the savings
+  grid) is consumed by that block's envelope solve inside the same compiled body,
+  so the expected-continuation stacks over every cell are never a complete array
+  and never a core argument. The previous split continuation and envelope cores
+  stay on the period kernel as its independent oracle (`split_cores`), and the
+  compile-only fused replay experiment is replaced by a per-period core memory
+  analyzer that lowers the production cores and the oracle beside them.
+
 ### Gated edges into targets with disjoint activity windows
 
 - Simulation reads a gated edge's gate references and leg fallbacks only in the

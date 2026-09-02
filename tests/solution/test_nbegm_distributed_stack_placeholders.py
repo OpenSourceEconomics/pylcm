@@ -1,13 +1,19 @@
-"""The envelope core's continuation-stack placeholders carry the co-map sharding.
+"""Co-mapped ride states place every lowering argument on the co-map mesh.
 
-The ride-along envelope core is AOT-lowered against zero placeholders standing in
-for the continuation stacks the continuation core emits at runtime. With a
-distributed ride state, those runtime stacks arrive sharded along the flattened
-ride-cell axis (one block per device). The placeholders must be committed to that
-same sharding: an uncommitted placeholder leaves the compiled-for input sharding
-to backend-specific propagation, which may compile the core for replicated stacks
-and reject every runtime call. The check runs in a subprocess with two forced
-host devices so a genuinely sharded mesh exists on CPU.
+With a distributed ride state the ride-along cores run on that state's mesh. Two
+arguments do not arrive there on their own and are committed explicitly:
+
+- the production core's child carry for a target that does not depend on the
+  distributed state (a terminal carry), produced on a single device and
+  replicated onto the mesh for lowering and at runtime alike;
+- the oracle envelope core's zero placeholders for the continuation stacks, which
+  stand in for stacks the oracle continuation core emits sharded along the
+  flattened ride-cell axis (one block per device).
+
+An uncommitted argument leaves the compiled-for input sharding to backend-specific
+propagation, which can compile a core for a sharding the runtime argument does not
+have and reject every call. The check runs in a subprocess with two forced host
+devices so a genuinely sharded mesh exists on CPU.
 """
 
 import os
@@ -30,15 +36,16 @@ _SCRIPT = textwrap.dedent(
     captured = []
     original_build_lower_args = solvers._RideAlongNBEGMPeriodKernel.build_lower_args
 
-    def capture_envelope_lower_args(self, **kwargs):
+    def capture_lower_args(self, **kwargs):
         lower_args = original_build_lower_args(self, **kwargs)
-        if kwargs.get("core_key") == "envelope":
-            captured.append(lower_args)
+        if kwargs.get("core_key", "main") == "main":
+            envelope_args = original_build_lower_args(
+                self, **{**kwargs, "core_key": "envelope"}
+            )
+            captured.append((lower_args, envelope_args))
         return lower_args
 
-    solvers._RideAlongNBEGMPeriodKernel.build_lower_args = (
-        capture_envelope_lower_args
-    )
+    solvers._RideAlongNBEGMPeriodKernel.build_lower_args = capture_lower_args
 
     model = toy.build_model(
         variant="nbegm", n_periods=4, n_liquid=24, n_savings=32,
@@ -46,12 +53,15 @@ _SCRIPT = textwrap.dedent(
     )
     model.solve(params=toy.build_params(), log_level="debug")
 
-    assert captured, "no envelope core was lowered"
-    for lower_args in captured:
-        mesh = lower_args["kind"].sharding.mesh
+    assert captured, "no production core was lowered"
+    for main_args, envelope_args in captured:
+        mesh = main_args["kind"].sharding.mesh
+        for leaf in jax.tree.leaves(main_args["next_regime_to_continuation"]):
+            assert isinstance(leaf.sharding, jax.NamedSharding), leaf.sharding
+            assert leaf.sharding.mesh == mesh, f"{leaf.sharding} not on {mesh}"
         expected = jax.NamedSharding(mesh=mesh, spec=jax.P("kind"))
-        value_sharding = lower_args["cont_value_stack"].sharding
-        marginal_sharding = lower_args["cont_marginal_stack"].sharding
+        value_sharding = envelope_args["cont_value_stack"].sharding
+        marginal_sharding = envelope_args["cont_marginal_stack"].sharding
         assert value_sharding == expected, (
             f"cont_value_stack placeholder sharding {value_sharding} != {expected}"
         )
@@ -59,15 +69,17 @@ _SCRIPT = textwrap.dedent(
             f"cont_marginal_stack placeholder sharding {marginal_sharding} "
             f"!= {expected}"
         )
-    print("PLACEHOLDER-SHARDING-OK")
+    print("CO-MAP-SHARDING-OK")
     """
 )
 
 
-def test_envelope_stack_placeholders_carry_the_co_map_sharding() -> None:
-    """With a distributed ride state, the envelope core's lowering placeholders
-    for `cont_value_stack` / `cont_marginal_stack` are committed to the same
-    ride-cell sharding the continuation core's runtime stacks arrive with."""
+def test_co_map_lowering_arguments_live_on_the_co_map_mesh() -> None:
+    """With a distributed ride state, the production core's child carry is
+    committed to the co-map mesh at every period — including the terminal carry
+    that does not depend on the distributed state — and the oracle envelope core's
+    stack placeholders carry the ride-cell sharding of the oracle's runtime
+    stacks; the distributed solve runs to completion."""
     env = {
         **os.environ,
         "XLA_FLAGS": "--xla_force_host_platform_device_count=2",
@@ -83,4 +95,4 @@ def test_envelope_stack_placeholders_carry_the_co_map_sharding() -> None:
         timeout=600,
     )
     assert result.returncode == 0, result.stderr[-4000:]
-    assert "PLACEHOLDER-SHARDING-OK" in result.stdout
+    assert "CO-MAP-SHARDING-OK" in result.stdout

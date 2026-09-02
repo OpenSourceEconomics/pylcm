@@ -162,7 +162,12 @@ def pytest_configure(config):
 
 
 def assert_agrees_to_ulp(
-    *, got: ArrayLike, expected: ArrayLike, n_ulp: int, err_msg: str = ""
+    *,
+    got: ArrayLike,
+    expected: ArrayLike,
+    n_ulp: int,
+    err_msg: str = "",
+    operand_magnitude: float | None = None,
 ) -> None:
     """Assert two arrays name the same real number to within `n_ulp` of the format.
 
@@ -174,12 +179,23 @@ def assert_agrees_to_ulp(
     precisions: a partition-dependent *reduction*, the defect this guards against,
     moves a value by orders of magnitude more than a few ULP.
 
+    The spacing is taken at each compared element's own magnitude unless
+    `operand_magnitude` names the magnitude of the operands the value is formed
+    from. A value born by cancellation — a flow utility plus a discounted
+    continuation of opposite sign, say — carries the rounding of those operands,
+    so no implementation locates it to within its own spacing; measuring the gap at
+    the operands' spacing keeps the bound about code generation rather than about
+    the cancellation.
+
     Args:
         got: Result under the partitioned computation.
         expected: Result under the unpartitioned one.
         n_ulp: Largest tolerated gap, in units of the spacing at the compared
             magnitude.
         err_msg: Context appended to the failure message.
+        operand_magnitude: Magnitude whose spacing is the unit for every element,
+            when the compared values are formed from operands of that magnitude;
+            `None` measures each element at its own magnitude.
 
     """
     got_arr = np.asarray(got)
@@ -197,7 +213,10 @@ def assert_agrees_to_ulp(
         np.isfinite(got_arr), finite, err_msg=f"finiteness differs. {err_msg}"
     )
     gap = np.where(finite, np.abs(got_arr - expected_arr), 0.0)
-    spacing = np.spacing(np.maximum(np.abs(got_arr), np.abs(expected_arr)))
+    magnitude = np.maximum(np.abs(got_arr), np.abs(expected_arr))
+    if operand_magnitude is not None:
+        magnitude = np.maximum(magnitude, np.asarray(operand_magnitude))
+    spacing = np.spacing(magnitude)
     in_ulp = np.divide(
         gap, spacing, out=np.zeros(gap.shape, dtype=float), where=gap > 0.0
     )
