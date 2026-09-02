@@ -1807,10 +1807,10 @@ def _action_streaming_errors(tree: ast.Module) -> list[str]:
                 "GridSearchEV1ActionReduction.semantic_key": "94630b954057476990e5872b65ba67a691852e9a1555267a2bd5dc3041915454",
                 "_StreamingHardMax.__call__": "98e334a19ebeaa5e3aab9f87205166256a7cad545eba2bc2e7c1bc758d334b5b",
                 "_StreamingCollectiveHardMax.__call__": "9674dcfc6fd7026209d97cb30018f96088595a132bd88124b35e65c97bd7b3af",
-                "_StreamingEV1ExpectedMax.__call__": "60a5bc017a9e9dac169d5c14ea96ee2e4fc0fe97129d56b50ead05e52035b6ca",
+                "_StreamingEV1ExpectedMax.__call__": "9ad46e41de04ab0efb45f873459340f6933d984939f51d120afa6e53e2ad9510",
                 "_prepare_action_call": "290fd810472aeb3336fdd437ccba50159e9d28c6822d6b8122fa4bdec8c71159",
                 "_evaluate_block": "ee4a59644e10e1f5ebb8aaa917967a74eab852bd1bf1d5e824310bc2a26ab63f",
-                "_evaluate_ev1_branch_block": "11959594b0c7d1f20703f8d7f1685a5ac2892ca9beba0ddb26f1407b1b13d9c5",
+                "_evaluate_ev1_branch_block": "29c982150ddadf355c01818855211b294a48cb8e5c65607554e55379a8a97bf9",
                 "_evaluate_collective_block": "8030607cabf36d76d766c5e8eea3ec1e8d9bbd8f41214c3490691f8dbe718d89",
                 "_start_reduction": "034b3966dd04c0e0d66e085e8e2c4e16b127e1d8a9869ecfa039c3b5e7928b04",
                 "_scan_remaining_blocks": "ccfb2af321657915e360867fd57bfec3e26eae86a031380fba94cd73a7384bc7",
@@ -1825,11 +1825,11 @@ def _action_streaming_errors(tree: ast.Module) -> list[str]:
                 "_validate_block_Q_and_F": "7f00abbccfe23768df403596eb22c715eb3542b4e43dd67593f7bd3e487fdeef",
                 "_validate_collective_scalar_Q_and_F": "600332c08d2ed5aa6a4ffaeee07a878c8a713a674f54456c8a9d05dbe9eddd35",
                 "_validate_collective_block_Q_and_F": "1e12615fa5fa04137cebb137387bc1c2ad98b31f1978dd47f209d00207036bef",
-                "_initialize_ev1_reduction": "8f832560dbfc9f1106332f4add12870ce8b27d9e42294697927e685002a39773",
-                "_add_ev1_block": "b9a2395bb583d5807243e1a3bf8e6c8201bcfdcb1a2700d0c3b3cf2fd35cab44",
-                "_finalize_open_ev1_branch": "7e2a8e044b042f1feb5b529c5a4dce226271aa3d7c95f0d2c306285f11fdcd09",
-                "_scan_remaining_ev1_blocks": "b2eba811a29933dd178c8179fbd0d57a9e9d91600a02f31a7da281849b6815f3",
-                "_flush_ev1_branch": "06b30206a5a2d0d265dd0153e1d8f695b162ddf6af0174d2449c5b21a87d7c86",
+                "_initialize_ev1_reduction": "41728c9433880bdb06c0ab5d3c0821a7f100f238fa1faec90dc5ca967c627650",
+                "_add_ev1_block": "92fb55ab8e7ae853357ff9987d7f2f2a922141bf7222dc41436a0e0b2d84644f",
+                "_finalize_open_ev1_branch_group": "f1eea36aa27ec48e7e79557c8928ed62d5e6cf01d0cc100a8e558ebdb31196fd",
+                "_scan_remaining_ev1_blocks": "8914c1d83aa24460dbba72c0984b4ed3af8a67e82dfb6749423a131002f9c2a6",
+                "_flush_ev1_branch_group": "cda5422b10b274dcd2b7b2db8a15b56a6688e5d6ed64a112a6ce212a4dd314e3",
             },
         )
     )
@@ -4972,60 +4972,72 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             new="        continuous_extent = 1",
             label="streamed EV1 discrete-prefix branch extent",
         ),
-        "streaming_ev1:admit_padded_tail": _replace_nth(
-            text=_replace_nth(
-                text=action_streaming_source,
-                marker="    valid = block_offsets < remaining",
-                replacement="    valid = jnp.ones(block_width, dtype=bool)",
-                occurrence=2,
+        "streaming_ev1:admit_padded_tail": replace_once(
+            source=replace_once(
+                source=action_streaming_source,
+                old="    valid_continuous = continuous_offsets < remaining",
+                new=(
+                    "    valid_continuous = "
+                    "jnp.ones(continuous_block_width, dtype=bool)"
+                ),
+                label="streamed EV1 continuous-tail validity",
             ),
-            marker="    safe_offsets = jnp.minimum(block_offsets, remaining - 1)",
-            replacement="    safe_offsets = block_offsets",
-            occurrence=2,
+            old=(
+                "    safe_continuous_offsets = "
+                "jnp.minimum(continuous_offsets, remaining - 1)"
+            ),
+            new="    safe_continuous_offsets = continuous_offsets",
+            label="streamed EV1 continuous-tail identities",
         ),
         "streaming_ev1:branch_identity_shifted": _replace_nth(
             text=action_streaming_source,
-            marker="    branch_id = block_index // blocks_per_branch",
+            marker=(
+                "    branch_group_id = block_index "
+                "// blocks_per_branch_group"
+            ),
             replacement=(
-                "    branch_id = (block_index + blocks_per_branch) "
-                "// blocks_per_branch"
+                "    branch_group_id = (block_index + "
+                "blocks_per_branch_group) // blocks_per_branch_group"
             ),
             occurrence=1,
         ),
         "streaming_ev1:branch_transition_ignored": replace_once(
             source=action_streaming_source,
-            old="    branch_changed = (accumulator.active_branch_id >= 0) & (",
-            new="    branch_changed = jnp.asarray(False) & (",
-            label="streamed EV1 branch transition",
+            old=(
+                "    branch_group_changed = "
+                "(accumulator.active_branch_group_id >= 0) & ("
+            ),
+            new="    branch_group_changed = jnp.asarray(False) & (",
+            label="streamed EV1 branch-group transition",
         ),
         "streaming_ev1:branch_value_negated": replace_once(
             source=action_streaming_source,
-            old="        values=branch.best_value[jnp.newaxis],",
-            new="        values=(-branch.best_value)[jnp.newaxis],",
-            label="streamed EV1 finalized branch value",
+            old="        values=branch_group.best_value,",
+            new="        values=-branch_group.best_value,",
+            label="streamed EV1 finalized branch-group values",
         ),
         "streaming_ev1:last_branch_not_flushed": replace_once(
             source=action_streaming_source,
             old=(
-                "        accumulator = _flush_ev1_branch(\n"
+                "        accumulator = _flush_ev1_branch_group(\n"
                 "            accumulator=accumulator,\n"
                 "            reduction=reduction,\n"
                 "        )"
             ),
             new="        accumulator = accumulator",
-            label="streamed EV1 final branch flush",
+            label="streamed EV1 final branch-group flush",
         ),
         "streaming_ev1:reverse_block_order": replace_once(
             source=action_streaming_source,
             old=(
-                "        accumulator=accumulator.branch,\n"
+                "        accumulator=accumulator.branch_group,\n"
                 "        values=values,\n"
                 "        feasible=feasible,\n"
                 "        action_ids=global_ids,"
             ),
             new=(
-                "        accumulator=accumulator.branch,\n"
-                "        values=values[::-1],\n"
+                "        accumulator=accumulator.branch_group,\n"
+                "        values=values[..., ::-1],\n"
                 "        feasible=feasible,\n"
                 "        action_ids=global_ids,"
             ),
