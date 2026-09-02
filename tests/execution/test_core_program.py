@@ -18,12 +18,19 @@ from _lcm.execution.core_program import (
     ReductionSemantics,
     ResolvedCoreProgram,
     StreamableProductAxis,
+    _TargetValueAccess,
     resolve_core_program,
 )
 from _lcm.execution.output_layout import (
     DISSOLUTION_FLAG,
     VALUE,
     resolve_output_layout,
+)
+from _lcm.execution.value_transfer import (
+    ValueArtifactAddress,
+    ValueArtifactKind,
+    ValueConsumerAddress,
+    ValueInputChannel,
 )
 from _lcm.solution.action_reduction import (
     COLLECTIVE_HARD_MAX_REDUCTION,
@@ -52,6 +59,8 @@ from tests.test_models.nbegm_common import (
 )
 
 _WIDTH_KEYWORD = "_lcm_action_block_width"
+
+_SCHEDULED_SOURCE = ("source", 0, "main")
 
 
 def _hard_max_core(
@@ -124,6 +133,210 @@ def _eval_resolved_shape(resolved: ResolvedCoreProgram) -> object:
     """Evaluate abstract output with the resolver's static choices bound."""
     bound = functools.partial(resolved.function, **resolved.static_kwargs)
     return jax.eval_shape(bound, **resolved.arguments)
+
+
+def _unused_value_consumer_core(**_arguments: object) -> object:
+    """Provide a stable callable for consumer-address planning tests."""
+    return jnp.asarray(0.0)
+
+
+def _value_access(
+    *,
+    source: tuple[str, int, str],
+    target_regime: str = "target",
+    channel: ValueInputChannel = ValueInputChannel.NEXT_REGIME_VALUE,
+) -> _TargetValueAccess:
+    """Build one internally valid target/source value address pair."""
+    source_regime, source_period, core_key = source
+    target_period = (
+        source_period
+        if channel is ValueInputChannel.SAME_PERIOD_VALUE
+        else source_period + 1
+    )
+    return _TargetValueAccess(
+        target=ValueArtifactAddress(
+            kind=ValueArtifactKind.REGIME_VALUE,
+            period=target_period,
+            regime=target_regime,
+        ),
+        source=ValueConsumerAddress(
+            source_regime=source_regime,
+            source_period=source_period,
+            core_key=core_key,
+            channel=channel,
+            path=(target_regime,),
+        ),
+    )
+
+
+def _value_consumer_program(
+    *,
+    accesses: tuple[_TargetValueAccess, ...],
+    arguments: Mapping[str, object],
+) -> CoreProgram:
+    """Build a synthetic program around exact value-consumer declarations."""
+    return CoreProgram(
+        function=_unused_value_consumer_core,
+        arguments=arguments,
+        requirements=CoreExecutionRequirements(target_value_accesses=accesses),
+        output_roles=VALUE,
+    )
+
+
+@pytest.mark.parametrize(
+    "declared_source",
+    [
+        pytest.param(("other-source", 0, "main"), id="regime"),
+        pytest.param(("source", 1, "main"), id="period"),
+        pytest.param(("source", 0, "alternate"), id="core-key"),
+    ],
+)
+def test_value_input_planning_rejects_coordinates_outside_scheduled_core(
+    declared_source: tuple[str, int, str],
+) -> None:
+    """Every declared coordinate must equal the actual compiled core triple."""
+    value = jnp.asarray([3.0, 4.0])
+    access = _value_access(source=declared_source)
+    program = _value_consumer_program(
+        accesses=(access,),
+        arguments={
+            ValueInputChannel.NEXT_REGIME_VALUE.value: {"target": value},
+        },
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="must match the actual compiled core",
+    ) as exc_info:
+        _resolve_value_input_transfer_plan(
+            program=program,
+            source_value_template=value,
+            source=_SCHEDULED_SOURCE,
+        )
+
+    message = str(exc_info.value)
+    assert f"declared={declared_source!r}" in message
+    assert f"actual={_SCHEDULED_SOURCE!r}" in message
+
+
+def test_value_input_planning_rejects_consistently_wrong_consumer_node() -> None:
+    """Internal agreement between accesses cannot authenticate a false source node."""
+    value = jnp.asarray([3.0, 4.0])
+    declared_source = ("other-source", 0, "main")
+    next_access = _value_access(
+        source=declared_source,
+        target_regime="first",
+    )
+    edge_access = _value_access(
+        source=declared_source,
+        target_regime="second",
+        channel=ValueInputChannel.EDGE_REFERENCE_VALUE,
+    )
+    program = _value_consumer_program(
+        accesses=(next_access, edge_access),
+        arguments={
+            ValueInputChannel.NEXT_REGIME_VALUE.value: {"first": value},
+            ValueInputChannel.EDGE_REFERENCE_VALUE.value: {"second": value},
+        },
+    )
+
+    with pytest.raises(ValueError, match="must match the actual compiled core"):
+        _resolve_value_input_transfer_plan(
+            program=program,
+            source_value_template=value,
+            source=_SCHEDULED_SOURCE,
+        )
+
+
+@pytest.mark.parametrize(
+    ("defect", "error", "message"),
+    [
+        pytest.param(
+            "missing-channel",
+            ValueError,
+            "input channel.*missing",
+            id="missing-channel",
+        ),
+        pytest.param(
+            "missing-path",
+            ValueError,
+            "argument path.*missing",
+            id="missing-path",
+        ),
+        pytest.param(
+            "non-array-leaf",
+            TypeError,
+            "array-like leaf",
+            id="non-array-leaf",
+        ),
+    ],
+)
+def test_value_input_planning_independently_resolves_argument_leaf(
+    *,
+    defect: str,
+    error: type[Exception],
+    message: str,
+) -> None:
+    """A matching source triple does not bypass channel/path leaf validation."""
+    value = jnp.asarray([3.0, 4.0])
+    access = _value_access(source=_SCHEDULED_SOURCE)
+    argument_variants: dict[str, Mapping[str, object]] = {
+        "missing-channel": {},
+        "missing-path": {
+            ValueInputChannel.NEXT_REGIME_VALUE.value: {"other": value},
+        },
+        "non-array-leaf": {
+            ValueInputChannel.NEXT_REGIME_VALUE.value: {"target": object()},
+        },
+    }
+    program = _value_consumer_program(
+        accesses=(access,),
+        arguments=argument_variants[defect],
+    )
+
+    with pytest.raises(error, match=message):
+        _resolve_value_input_transfer_plan(
+            program=program,
+            source_value_template=value,
+            source=_SCHEDULED_SOURCE,
+        )
+
+
+def test_value_input_planning_accepts_exact_scheduled_consumer() -> None:
+    """An exact source coordinate and argument leaf produce one transfer."""
+    value = jnp.asarray([3.0, 4.0])
+    access = _value_access(source=_SCHEDULED_SOURCE)
+    program = _value_consumer_program(
+        accesses=(access,),
+        arguments={
+            ValueInputChannel.NEXT_REGIME_VALUE.value: {"target": value},
+        },
+    )
+
+    plan = _resolve_value_input_transfer_plan(
+        program=program,
+        source_value_template=value,
+        source=_SCHEDULED_SOURCE,
+    )
+
+    assert len(plan) == 1
+    assert plan[0].target == access.target
+    assert plan[0].source == access.source
+
+
+def test_value_input_planning_accepts_core_without_value_consumers() -> None:
+    """A scheduled core with no declared value reads needs no transfer."""
+    value = jnp.asarray([3.0, 4.0])
+    program = _value_consumer_program(accesses=(), arguments={})
+
+    assert (
+        _resolve_value_input_transfer_plan(
+            program=program,
+            source_value_template=value,
+            source=_SCHEDULED_SOURCE,
+        )
+        == ()
+    )
 
 
 @dataclass(frozen=True, kw_only=True)
