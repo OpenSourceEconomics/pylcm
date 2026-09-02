@@ -500,6 +500,7 @@ def test_ordinary_singleton_grid_search_declares_action_core_program() -> None:
         input_transfer_plan=_resolve_value_input_transfer_plan(
             program=program,
             source_value_template=next_V["alive"],
+            source=("alive", 0, "main"),
         ),
     )
     output = _eval_resolved_shape(resolved)
@@ -553,6 +554,7 @@ def test_collective_grid_search_declares_household_action_core_program() -> None
         input_transfer_plan=_resolve_value_input_transfer_plan(
             program=program,
             source_value_template=next_V["couple"],
+            source=("couple", 0, "main"),
         ),
     )
     output = _eval_resolved_shape(resolved)
@@ -615,6 +617,7 @@ def test_ev1_grid_search_declares_composite_action_core_program() -> None:
         input_transfer_plan=_resolve_value_input_transfer_plan(
             program=program,
             source_value_template=next_V["alive"],
+            source=("alive", 0, "main"),
         ),
     )
     output = _eval_resolved_shape(resolved)

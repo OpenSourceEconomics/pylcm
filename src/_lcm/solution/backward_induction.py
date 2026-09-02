@@ -1821,6 +1821,7 @@ def _resolve_output_layouts_and_lowering_keys(
             input_transfer_plan = _resolve_value_input_transfer_plan(
                 program=program,
                 source_value_template=next_regime_to_V_arr[regime_name],
+                source=(regime_name, period, core_key),
             )
             resolved = resolve_core_program(
                 program=program,
@@ -1888,6 +1889,7 @@ def _resolve_value_input_transfer_plan(
     *,
     program: CoreProgram,
     source_value_template: object,
+    source: _CoreTriple,
 ) -> tuple[ResolvedValueTransfer, ...]:
     """Resolve every declared value read against its source core's placement.
 
@@ -1903,6 +1905,17 @@ def _resolve_value_input_transfer_plan(
 
     result: list[ResolvedValueTransfer] = []
     for access in program.requirements.target_value_accesses:
+        declared_source = (
+            access.source.source_regime,
+            access.source.source_period,
+            access.source.core_key,
+        )
+        if declared_source != source:
+            msg = (
+                "A target-value access source must match the actual compiled core: "
+                f"declared={declared_source!r}, actual={source!r}."
+            )
+            raise ValueError(msg)
         stored_template = _target_value_argument_leaf(program=program, access=access)
         stored_sharding = getattr(stored_template, "sharding", None)
         kind, source_sharding = _resolve_value_transfer_layout(
