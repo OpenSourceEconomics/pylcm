@@ -1807,9 +1807,10 @@ def _action_streaming_errors(tree: ast.Module) -> list[str]:
                 "GridSearchEV1ActionReduction.semantic_key": "94630b954057476990e5872b65ba67a691852e9a1555267a2bd5dc3041915454",
                 "_StreamingHardMax.__call__": "98e334a19ebeaa5e3aab9f87205166256a7cad545eba2bc2e7c1bc758d334b5b",
                 "_StreamingCollectiveHardMax.__call__": "9674dcfc6fd7026209d97cb30018f96088595a132bd88124b35e65c97bd7b3af",
-                "_StreamingEV1ExpectedMax.__call__": "ab1943585e65116b905bee383216c8dc7f9fe62840f550943a46fc9d85677d2e",
+                "_StreamingEV1ExpectedMax.__call__": "60a5bc017a9e9dac169d5c14ea96ee2e4fc0fe97129d56b50ead05e52035b6ca",
                 "_prepare_action_call": "290fd810472aeb3336fdd437ccba50159e9d28c6822d6b8122fa4bdec8c71159",
                 "_evaluate_block": "ee4a59644e10e1f5ebb8aaa917967a74eab852bd1bf1d5e824310bc2a26ab63f",
+                "_evaluate_ev1_branch_block": "11959594b0c7d1f20703f8d7f1685a5ac2892ca9beba0ddb26f1407b1b13d9c5",
                 "_evaluate_collective_block": "8030607cabf36d76d766c5e8eea3ec1e8d9bbd8f41214c3490691f8dbe718d89",
                 "_start_reduction": "034b3966dd04c0e0d66e085e8e2c4e16b127e1d8a9869ecfa039c3b5e7928b04",
                 "_scan_remaining_blocks": "ccfb2af321657915e360867fd57bfec3e26eae86a031380fba94cd73a7384bc7",
@@ -1825,10 +1826,9 @@ def _action_streaming_errors(tree: ast.Module) -> list[str]:
                 "_validate_collective_scalar_Q_and_F": "600332c08d2ed5aa6a4ffaeee07a878c8a713a674f54456c8a9d05dbe9eddd35",
                 "_validate_collective_block_Q_and_F": "1e12615fa5fa04137cebb137387bc1c2ad98b31f1978dd47f209d00207036bef",
                 "_initialize_ev1_reduction": "8f832560dbfc9f1106332f4add12870ce8b27d9e42294697927e685002a39773",
-                "_add_ev1_block": "5b95419379b0bc2ae1b8cfe9e8d8dd825350d79b0a816ddb7ecf22c0e50295f4",
-                "_add_valid_ev1_candidate": "a629858dcdb86fc359a7364b152543827de929b5b72d5c5b32e0a6341588dd24",
+                "_add_ev1_block": "b9a2395bb583d5807243e1a3bf8e6c8201bcfdcb1a2700d0c3b3cf2fd35cab44",
                 "_finalize_open_ev1_branch": "7e2a8e044b042f1feb5b529c5a4dce226271aa3d7c95f0d2c306285f11fdcd09",
-                "_scan_remaining_ev1_blocks": "1ffbb0552e114c84c38f3879fe8bf5152fc7091c0576c101935209089ad3d3cd",
+                "_scan_remaining_ev1_blocks": "b2eba811a29933dd178c8179fbd0d57a9e9d91600a02f31a7da281849b6815f3",
                 "_flush_ev1_branch": "06b30206a5a2d0d265dd0153e1d8f695b162ddf6af0174d2449c5b21a87d7c86",
             },
         )
@@ -4894,11 +4894,11 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             replacement="            n_remaining=n_blocks - 2,",
             occurrence=1,
         ),
-        "streaming_blocks:admit_padded_tail": replace_once(
-            source=action_streaming_source,
-            old="    return values, feasible & valid, global_ids",
-            new="    return values, feasible, global_ids",
-            label="streamed padded-tail mask",
+        "streaming_blocks:admit_padded_tail": _replace_nth(
+            text=action_streaming_source,
+            marker="    return values, feasible & valid, global_ids",
+            replacement="    return values, feasible, global_ids",
+            occurrence=1,
         ),
         "streaming_blocks:block_local_action_ids": _replace_nth(
             text=action_streaming_source,
@@ -4972,17 +4972,25 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             new="        continuous_extent = 1",
             label="streamed EV1 discrete-prefix branch extent",
         ),
-        "streaming_ev1:admit_padded_tail": replace_once(
-            source=action_streaming_source,
-            old="    valid = jnp.arange(block_width, dtype=jnp.int32) < remaining",
-            new="    valid = jnp.ones(block_width, dtype=bool)",
-            label="streamed EV1 padded tail",
+        "streaming_ev1:admit_padded_tail": _replace_nth(
+            text=_replace_nth(
+                text=action_streaming_source,
+                marker="    valid = block_offsets < remaining",
+                replacement="    valid = jnp.ones(block_width, dtype=bool)",
+                occurrence=2,
+            ),
+            marker="    safe_offsets = jnp.minimum(block_offsets, remaining - 1)",
+            replacement="    safe_offsets = block_offsets",
+            occurrence=2,
         ),
-        "streaming_ev1:branch_identity_shifted": replace_once(
-            source=action_streaming_source,
-            old="    branch_id = global_id // continuous_extent",
-            new="    branch_id = (global_id + 1) // continuous_extent",
-            label="streamed EV1 ordered branch identity",
+        "streaming_ev1:branch_identity_shifted": _replace_nth(
+            text=action_streaming_source,
+            marker="    branch_id = block_index // blocks_per_branch",
+            replacement=(
+                "    branch_id = (block_index + blocks_per_branch) "
+                "// blocks_per_branch"
+            ),
+            occurrence=1,
         ),
         "streaming_ev1:branch_transition_ignored": replace_once(
             source=action_streaming_source,
@@ -5009,9 +5017,19 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         ),
         "streaming_ev1:reverse_block_order": replace_once(
             source=action_streaming_source,
-            old="        (values, feasible, global_ids, valid),",
-            new="        (values[::-1], feasible[::-1], global_ids[::-1], valid[::-1]),",
-            label="streamed EV1 within-block order",
+            old=(
+                "        accumulator=accumulator.branch,\n"
+                "        values=values,\n"
+                "        feasible=feasible,\n"
+                "        action_ids=global_ids,"
+            ),
+            new=(
+                "        accumulator=accumulator.branch,\n"
+                "        values=values[::-1],\n"
+                "        feasible=feasible,\n"
+                "        action_ids=global_ids,"
+            ),
+            label="streamed EV1 value-to-candidate alignment",
         ),
         "streaming_collective_blocks:objective_uses_first_stakeholder": replace_once(
             source=action_streaming_source,
@@ -5030,21 +5048,26 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
     }
     for index in range(6):
         action_streaming_cases[f"streaming_blocks:candidate_index_{index}"] = (
-            replace_once(
-                source=action_streaming_source,
-                old="    return values, feasible & valid, global_ids",
-                new=(
+            _replace_nth(
+                text=action_streaming_source,
+                marker="    return values, feasible & valid, global_ids",
+                replacement=(
                     "    feasible = feasible & (global_ids != "
                     f"{index})\n    return values, feasible & valid, global_ids"
                 ),
-                label=f"streamed candidate identity {index}",
+                occurrence=1,
             )
         )
-        action_streaming_cases[f"streaming_ev1:candidate_index_{index}"] = replace_once(
-            source=action_streaming_source,
-            old="            is_valid,",
-            new=f"            is_valid & (global_id != {index}),",
-            label=f"streamed EV1 candidate identity {index}",
+        action_streaming_cases[f"streaming_ev1:candidate_index_{index}"] = (
+            _replace_nth(
+                text=action_streaming_source,
+                marker="    return values, feasible & valid, global_ids",
+                replacement=(
+                    "    feasible = feasible & (global_ids != "
+                    f"{index})\n    return values, feasible & valid, global_ids"
+                ),
+                occurrence=2,
+            )
         )
         action_streaming_cases[
             f"streaming_collective_blocks:candidate_index_{index}"
