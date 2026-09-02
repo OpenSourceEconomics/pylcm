@@ -9,7 +9,7 @@ from _lcm.engine import Regime, StateActionSpace
 from _lcm.grids import Grid
 from _lcm.regime_building.max_Q_over_a import get_max_Q_over_a
 from _lcm.regime_building.ndimage import map_coordinates
-from _lcm.solution.backward_induction import solve
+from _lcm.solution.backward_induction import _drain_V_arr_shards, solve
 from _lcm.solution.contract import PeriodKernel
 from _lcm.solution.grid_search import _GridSearchPeriodKernel
 from _lcm.typing import MaxQOverAFunction, StateOrActionName
@@ -71,6 +71,39 @@ class MockRegime(Regime):
     ) -> None:
         object.__setattr__(self, "solution", solution)
         object.__setattr__(self, "active_periods", active_periods)
+
+
+def test_drain_V_arr_shards_flattens_immutable_return_mappings(monkeypatch):
+    """The solve barrier presents every immutable mapping leaf to JAX."""
+    V_0 = jnp.asarray([1.0, 2.0])
+    V_1 = jnp.asarray([3.0])
+    dissolution = jnp.asarray([True, False])
+    drained = []
+
+    def _record_drained_arrays(arrays):
+        drained.extend(arrays)
+
+    monkeypatch.setattr(
+        "_lcm.solution.backward_induction.jax.block_until_ready",
+        _record_drained_arrays,
+    )
+
+    _drain_V_arr_shards(
+        solution={
+            0: MappingProxyType({"working": V_0}),
+            1: MappingProxyType({"retired": V_1}),
+        },
+        dissolution_flags={
+            0: MappingProxyType({"working": dissolution}),
+            1: MappingProxyType({}),
+        },
+    )
+
+    assert [id(array) for array in drained] == [
+        id(V_0),
+        id(V_1),
+        id(dissolution),
+    ]
 
 
 def test_backward_induction():

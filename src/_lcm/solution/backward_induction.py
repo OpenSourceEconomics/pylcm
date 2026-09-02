@@ -1339,13 +1339,23 @@ def _drain_V_arr_shards(
 
     Solve → simulate barrier: backward induction returns sharded V_arrs,
     but the simulate phase must consume materialised arrays rather than
-    in-flight kernels. `jax.block_until_ready` walks the pytree of V_arrs
-    and blocks per-shard (no host transfer, no cross-device collective);
-    free when kernels are already done, the minimum necessary sync when
-    they are not. V stays sharded across devices. The collective dissolution
-    flags ride along in the same barrier.
+    in-flight kernels. Explicitly traverse the period → regime return schema
+    before handing its array leaves to JAX: the immutable inner mappings are a
+    public return boundary, not a synchronization mechanism whose correctness
+    should depend on global pytree registration. The batched barrier blocks
+    per-shard (no host transfer, no cross-device collective); free when kernels
+    are already done, the minimum necessary sync when they are not. V stays
+    sharded across devices. The collective dissolution flags ride along in the
+    same barrier.
     """
-    jax.block_until_ready((solution, dissolution_flags))
+    array_leaves = tuple(
+        array
+        for period_mapping in (solution, dissolution_flags)
+        if period_mapping is not None
+        for regime_mapping in period_mapping.values()
+        for array in regime_mapping.values()
+    )
+    jax.block_until_ready(array_leaves)
 
 
 type _InputDispatch = tuple[int, RegimeName]
