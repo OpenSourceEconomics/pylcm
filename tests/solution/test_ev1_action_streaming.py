@@ -207,6 +207,27 @@ def test_ev1_vector_chunks_match_oracle_with_multiple_discrete_axes(
     assert_allclose(result.smoothed_value, expected, rtol=1e-5, atol=1e-6)
 
 
+def test_ev1_packed_branches_still_require_scalar_q() -> None:
+    """The extra branch-block dimension must not hide a vector-valued Q."""
+
+    def Q_and_F(*, sector: jax.Array, status: jax.Array):
+        return jnp.stack((sector, status)), jnp.ones((), dtype=bool)
+
+    streamed = build_streaming_ev1_max_Q_over_a(
+        Q_and_F=Q_and_F,
+        action_names=("sector", "status"),
+        n_discrete_action_axes=2,
+        block_width=8,
+        scale=jnp.asarray(0.3),
+    )
+
+    with pytest.raises(ValueError, match="requires scalar Q"):
+        streamed(
+            sector=jnp.arange(3, dtype=jnp.float32),
+            status=jnp.arange(5, dtype=jnp.float32),
+        )
+
+
 def test_ev1_vector_chunks_keep_all_infeasible_distinct_from_nan() -> None:
     """Padding and empty branch maxima contribute zero EV1 mass."""
 
