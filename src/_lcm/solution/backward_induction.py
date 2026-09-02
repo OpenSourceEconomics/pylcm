@@ -5,7 +5,7 @@ import inspect
 import logging
 import os
 import time
-from collections.abc import Callable, Hashable, Iterator, Mapping
+from collections.abc import Callable, Hashable, Iterable, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from types import MappingProxyType
 from typing import cast
@@ -17,9 +17,12 @@ from _lcm.engine import Regime, StateActionSpace, _build_regime_sharding
 from _lcm.execution.core_program import (
     CoreProgram,
     CoreProgramAware,
+    _target_value_argument_leaf,
+    _TargetValueAccessAware,
     _validate_core_program,
     resolve_core_program,
 )
+from _lcm.execution.liveness import PlannedInputLiveness
 from _lcm.execution.output_layout import (
     DISSOLUTION_FLAG,
     UNPLANNED,
@@ -28,8 +31,16 @@ from _lcm.execution.output_layout import (
     PlannedCore,
     ResolvedOutputLayout,
     assert_output_layout,
+    planned_input_transfer_plan,
     planned_output_layout,
     resolve_output_layout,
+)
+from _lcm.execution.value_transfer import (
+    ResolvedValueTransfer,
+    ValueArtifactAddress,
+    ValueArtifactKind,
+    ValueTransferKind,
+    resolve_value_transfer,
 )
 from _lcm.regime_building.gated_edges import (
     EDGE_PERIOD_CONTEXT_ARGS,
@@ -186,6 +197,10 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         max_compilation_workers=max_compilation_workers,
         logger=logger,
     )
+    input_liveness = _build_planned_input_liveness(
+        regimes=regimes,
+        compiled_functions=compiled_functions,
+    )
 
     solution: dict[int, MappingProxyType[RegimeName, FloatND]] = {}
     simulation_policies: dict[int, MappingProxyType[RegimeName, SimulationPolicy]] = {}
@@ -314,6 +329,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 next_edge_to_V_arr=next_edge_to_V_arr,
                 period_solution=period_solution,
             )
+            input_liveness.commit_successful_dispatch(dispatch=(period, regime_name))
             V_arr = result.V_arr
             # The published V mapping is the calling convention for every
             # downstream consumer — the parents' cores and the AOT-lowered
@@ -501,6 +517,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             raise_or_warn(logger=logger, error=error)
 
     _drain_V_arr_shards(solution=solution, dissolution_flags=dissolution_flags)
+    input_liveness.assert_solve_complete()
 
     total_elapsed = time.monotonic() - total_start
     logger.info("Solution complete  (%s)", format_duration(seconds=total_elapsed))
@@ -1331,6 +1348,194 @@ def _drain_V_arr_shards(
     jax.block_until_ready((solution, dissolution_flags))
 
 
+type _InputDispatch = tuple[int, RegimeName]
+
+
+def _build_planned_input_liveness(
+    *,
+    regimes: MappingProxyType[RegimeName, Regime],
+    compiled_functions: Mapping[
+        tuple[RegimeName, int], MappingProxyType[str, Callable]
+    ],
+) -> PlannedInputLiveness[_InputDispatch, ValueArtifactAddress]:
+    """Build one exact-dispatch ledger without authorizing physical release."""
+    dispatch_accesses: dict[_InputDispatch, tuple[ValueArtifactAddress, ...]] = {}
+    pinned_artifacts = set(_retained_solution_value_artifacts(regimes=regimes))
+    pinned_artifacts.update(_gated_fold_raw_value_artifacts(regimes=regimes))
+
+    for (regime_name, period), compiled_cores in compiled_functions.items():
+        regime = regimes[regime_name]
+        kernel = regime.solution.period_kernels[period]
+        planned, unplanned_exact, has_unknown = _classify_dispatch_value_artifacts(
+            kernel=kernel,
+            compiled_cores=compiled_cores,
+        )
+        dispatch_accesses[(period, regime_name)] = planned
+        pinned_artifacts.update(unplanned_exact)
+        if has_unknown:
+            pinned_artifacts.update(
+                _conservative_legacy_value_artifacts(
+                    regime=regime,
+                    regime_name=regime_name,
+                    period=period,
+                )
+            )
+
+    return PlannedInputLiveness(
+        dispatch_accesses=MappingProxyType(dispatch_accesses),
+        pinned_artifacts=pinned_artifacts,
+    )
+
+
+def _classify_dispatch_value_artifacts(
+    *,
+    kernel: object,
+    compiled_cores: Mapping[str, Callable],
+) -> tuple[
+    tuple[ValueArtifactAddress, ...],
+    tuple[ValueArtifactAddress, ...],
+    bool,
+]:
+    """Separate finite planned reads from pinned dense or unknown reads."""
+    planned: list[ValueArtifactAddress] = []
+    unplanned_exact: list[ValueArtifactAddress] = []
+    has_unknown = False
+
+    for core_key, core in compiled_cores.items():
+        declared_targets = (
+            tuple(
+                access.target
+                for access in kernel.target_value_accesses(core_key=core_key)
+            )
+            if isinstance(kernel, _TargetValueAccessAware)
+            else None
+        )
+        plan_or_unplanned = planned_input_transfer_plan(core)
+        if plan_or_unplanned is UNPLANNED:
+            if declared_targets is None:
+                has_unknown = True
+            else:
+                unplanned_exact.extend(declared_targets)
+            continue
+
+        plan = plan_or_unplanned
+        planned_targets = tuple(transfer.target for transfer in plan)
+        if declared_targets is None:
+            if not planned_targets:
+                has_unknown = True
+        elif planned_targets != declared_targets:
+            if planned_targets:
+                msg = (
+                    "A compiled input plan disagrees with the kernel declaration for "
+                    f"core {core_key!r}: planned={planned_targets!r}, "
+                    f"declared={declared_targets!r}."
+                )
+                raise RuntimeError(msg)
+            unplanned_exact.extend(declared_targets)
+        planned.extend(planned_targets)
+
+    return (
+        _unique_value_artifacts(planned),
+        _unique_value_artifacts(unplanned_exact),
+        has_unknown,
+    )
+
+
+def _unique_value_artifacts(
+    artifacts: Iterable[ValueArtifactAddress],
+) -> tuple[ValueArtifactAddress, ...]:
+    """Deduplicate one dispatch in declaration order."""
+    return tuple(dict.fromkeys(artifacts))
+
+
+def _retained_solution_value_artifacts(
+    *,
+    regimes: Mapping[RegimeName, Regime],
+) -> tuple[ValueArtifactAddress, ...]:
+    """Pin every value retained in the public backward-induction result."""
+    return tuple(
+        ValueArtifactAddress(
+            kind=ValueArtifactKind.REGIME_VALUE,
+            period=period,
+            regime=regime_name,
+        )
+        for regime_name, regime in regimes.items()
+        for period in regime.active_periods
+    )
+
+
+def _gated_fold_raw_value_artifacts(
+    *,
+    regimes: Mapping[RegimeName, Regime],
+) -> tuple[ValueArtifactAddress, ...]:
+    """Pin raw same-period values read by the engine-owned gated-edge fold."""
+    artifacts: list[ValueArtifactAddress] = []
+    for source in regimes.values():
+        for edge in source.gated_edges.values():
+            readers = (edge.target, *edge.reference_regimes)
+            for period in range(source.solution.reachability.n_periods):
+                if not all(period in regimes[name].active_periods for name in readers):
+                    continue
+                artifacts.extend(
+                    ValueArtifactAddress(
+                        kind=ValueArtifactKind.REGIME_VALUE,
+                        period=period,
+                        regime=name,
+                    )
+                    for name in readers
+                )
+    return _unique_value_artifacts(artifacts)
+
+
+def _conservative_legacy_value_artifacts(
+    *,
+    regime: Regime,
+    regime_name: RegimeName,
+    period: int,
+) -> tuple[ValueArtifactAddress, ...]:
+    """Pin graph-declared values when a core has no complete input plan."""
+    artifacts: list[ValueArtifactAddress] = [
+        ValueArtifactAddress(
+            kind=ValueArtifactKind.REGIME_VALUE,
+            period=period,
+            regime=reference,
+        )
+        for reference in regime.same_period_ref_regimes
+    ]
+    reachability = regime.solution.reachability
+    if period == reachability.n_periods - 1:
+        return _unique_value_artifacts(artifacts)
+
+    for target in reachability.targets(period=period, source=regime_name):
+        edge = regime.gated_edges.get(target)
+        if edge is None:
+            artifacts.append(
+                ValueArtifactAddress(
+                    kind=ValueArtifactKind.REGIME_VALUE,
+                    period=period + 1,
+                    regime=target,
+                )
+            )
+            continue
+        artifacts.append(
+            ValueArtifactAddress(
+                kind=ValueArtifactKind.GATED_CONTINUATION,
+                period=period + 1,
+                regime=regime_name,
+                target_regime=target,
+            )
+        )
+        artifacts.extend(
+            ValueArtifactAddress(
+                kind=ValueArtifactKind.REGIME_VALUE,
+                period=period + 1,
+                regime=reference,
+            )
+            for reference in edge.reference_regimes
+        )
+    return _unique_value_artifacts(artifacts)
+
+
 def _compile_all_functions(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
@@ -1401,6 +1606,7 @@ def _compile_all_functions(
         lowering_arguments,
         lowering_static_kwargs,
         lowering_output_roles,
+        input_transfer_plans,
     ) = _resolve_output_layouts_and_lowering_keys(
         all_functions=all_functions,
         regimes=regimes,
@@ -1517,6 +1723,7 @@ def _compile_all_functions(
             triple: _attach_resolved_output_layout(
                 compiled=compiled[lowering_keys[triple]],
                 layout=all_layouts[triple],
+                input_transfer_plan=input_transfer_plans[triple],
             )
             for triple in all_functions
         }
@@ -1557,6 +1764,7 @@ def _resolve_output_layouts_and_lowering_keys(
     dict[_CoreTriple, Mapping[str, object]],
     dict[_CoreTriple, Mapping[str, int]],
     dict[_CoreTriple, object | None],
+    dict[_CoreTriple, tuple[ResolvedValueTransfer, ...]],
 ]:
     """Materialize each core's complete, immutable lowering description."""
     layouts: dict[_CoreTriple, ResolvedOutputLayout | object] = {}
@@ -1565,6 +1773,7 @@ def _resolve_output_layouts_and_lowering_keys(
     lowering_arguments: dict[_CoreTriple, Mapping[str, object]] = {}
     lowering_static_kwargs: dict[_CoreTriple, Mapping[str, int]] = {}
     lowering_output_roles: dict[_CoreTriple, object | None] = {}
+    input_transfer_plans: dict[_CoreTriple, tuple[ResolvedValueTransfer, ...]] = {}
     for (regime_name, period, core_key), func in all_functions.items():
         regime = regimes[regime_name]
         kernel = regime.solution.period_kernels[period]
@@ -1596,11 +1805,17 @@ def _resolve_output_layouts_and_lowering_keys(
             static_kwargs = MappingProxyType({})
             output_roles = None
             specialization_key: Hashable | None = None
+            input_transfer_plan: tuple[ResolvedValueTransfer, ...] = ()
         else:
             _assert_core_program_arguments(program=program, arguments=arguments)
+            input_transfer_plan = _resolve_value_input_transfer_plan(
+                program=program,
+                source_value_template=next_regime_to_V_arr[regime_name],
+            )
             resolved = resolve_core_program(
                 program=program,
                 tile_widths=_initial_tile_widths(program=program),
+                input_transfer_plan=input_transfer_plan,
             )
             lowering_func = resolved.function
             lowering_args = resolved.arguments
@@ -1639,6 +1854,7 @@ def _resolve_output_layouts_and_lowering_keys(
         lowering_arguments[triple] = lowering_args
         lowering_static_kwargs[triple] = static_kwargs
         lowering_output_roles[triple] = output_roles
+        input_transfer_plans[triple] = input_transfer_plan
         layout_key = UNPLANNED if layout is UNPLANNED else layout.compilation_key
         lowering_keys[triple] = _lowering_key(
             func=lowering_func,
@@ -1654,7 +1870,93 @@ def _resolve_output_layouts_and_lowering_keys(
         lowering_arguments,
         lowering_static_kwargs,
         lowering_output_roles,
+        input_transfer_plans,
     )
+
+
+def _resolve_value_input_transfer_plan(
+    *,
+    program: CoreProgram,
+    source_value_template: object,
+) -> tuple[ResolvedValueTransfer, ...]:
+    """Resolve every declared value read against its source core's placement.
+
+    Absolute artifact and consumer addresses remain on each transfer for dispatch and
+    liveness. The specialization key omits absolute periods and source-node
+    coordinates, while retaining the argument-tree path, so equivalent period nodes
+    can still share a compiled executable without conflating different tree roles.
+    """
+    source_execution_sharding = getattr(source_value_template, "sharding", None)
+    if not isinstance(source_execution_sharding, jax.sharding.Sharding):
+        msg = "A source core's value template must expose a concrete JAX sharding."
+        raise TypeError(msg)
+
+    result: list[ResolvedValueTransfer] = []
+    for access in program.requirements.target_value_accesses:
+        stored_template = _target_value_argument_leaf(program=program, access=access)
+        stored_sharding = getattr(stored_template, "sharding", None)
+        kind, source_sharding = _resolve_value_transfer_layout(
+            stored_sharding=stored_sharding,
+            source_execution_sharding=source_execution_sharding,
+        )
+        result.append(
+            resolve_value_transfer(
+                target=access.target,
+                source=access.source,
+                kind=kind,
+                stored_template=stored_template,
+                source_sharding=source_sharding,
+            )
+        )
+    return tuple(result)
+
+
+def _resolve_value_transfer_layout(
+    *,
+    stored_sharding: object,
+    source_execution_sharding: jax.sharding.Sharding,
+) -> tuple[ValueTransferKind, jax.sharding.Sharding]:
+    """Choose one of the two supported value-input representation adapters."""
+    if not isinstance(stored_sharding, jax.sharding.Sharding):
+        msg = "A stored target value must expose a concrete JAX sharding."
+        raise TypeError(msg)
+
+    if stored_sharding == source_execution_sharding or (
+        isinstance(stored_sharding, jax.NamedSharding)
+        and isinstance(source_execution_sharding, jax.NamedSharding)
+        and stored_sharding.mesh == source_execution_sharding.mesh
+    ):
+        # A value already resident on the source mesh remains in its stored
+        # representation. Its rank-specific partition spec need not equal the source
+        # core's own output spec.
+        return ValueTransferKind.ALIGNED_LOCAL, stored_sharding
+
+    if isinstance(stored_sharding, jax.sharding.SingleDeviceSharding) and isinstance(
+        source_execution_sharding, jax.NamedSharding
+    ):
+        # A partially distributed model moves the unsharded target onto the source
+        # mesh as a replicated input. Reusing the source output's rank-specific spec
+        # would give an unrelated target value the wrong axis interpretation.
+        source_sharding = jax.NamedSharding(
+            mesh=source_execution_sharding.mesh,
+            spec=jax.P(),
+            memory_kind=source_execution_sharding.memory_kind,
+        )
+        return ValueTransferKind.COPY_TO_SOURCE_LAYOUT, source_sharding
+
+    # The reverse NamedSharding -> SingleDeviceSharding route is unreachable for a
+    # valid value-consuming source: distributed states are model-level, and model
+    # construction refuses to prune one from a nonterminal regime. Keep it
+    # unsupported here so a broken construction invariant fails closed.
+    msg = (
+        "Unsupported target-value layout conversion: "
+        f"{type(stored_sharding).__name__} -> "
+        f"{type(source_execution_sharding).__name__}. "
+        "Only values already aligned with the source execution placement and "
+        "single-device values copied as replicated inputs onto a named source mesh "
+        "are supported."
+    )
+    raise ValueError(msg)
 
 
 _INITIAL_TILE_WIDTH_CAP = 64
@@ -1902,13 +2204,18 @@ def _attach_resolved_output_layout(
     *,
     compiled: jax.stages.Compiled,
     layout: ResolvedOutputLayout | object,
+    input_transfer_plan: tuple[ResolvedValueTransfer, ...] = (),
 ) -> Callable:
-    """Carry a planned layout to dispatch; leave legacy cores byte-for-byte raw."""
+    """Carry one node's resolved output and input plans to runtime dispatch."""
     if layout is UNPLANNED:
+        if input_transfer_plan:
+            msg = "An unplanned core cannot carry a resolved input transfer plan."
+            raise ValueError(msg)
         return compiled
     return PlannedCore(
         compiled=compiled,
         layout=cast("ResolvedOutputLayout", layout),
+        input_transfer_plan=input_transfer_plan,
     )
 
 

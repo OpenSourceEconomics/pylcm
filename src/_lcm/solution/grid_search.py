@@ -3,9 +3,10 @@
 `GridSearch` runs the max-Q-over-a grid search. Its `build_period_kernels`
 returns one `PeriodKernel` per period. Eligible hard-max, collective, and EV1 solve
 kernels declare their canonical action product for blockwise execution, and the engine
-binds the block width before lowering. Value-dependent inputs remain ordinary dynamic
-arguments of the streamed core. Fixed distributed states co-map ordinary continuation
-leaves with the streamed state cell. Singleton folded-state routes stream actions before
+binds the block width before lowering. Each streamed period program also names its exact
+value-input artifacts and argument paths so the engine can resolve their transfers.
+Fixed distributed states co-map ordinary continuation leaves with the streamed state
+cell. Singleton folded-state routes stream actions before
 the unchanged quadrature reduction; the fold axis itself remains materialized. Co-map
 routes with separate same-period or edge-reference value channels retain the dense
 kernel. The adapter
@@ -42,10 +43,17 @@ from _lcm.execution.core_program import (
     CoreExecutionRequirements,
     CoreProgram,
     StreamableProductAxis,
+    _TargetValueAccess,
 )
 from _lcm.execution.output_layout import (
     DISSOLUTION_FLAG,
     VALUE,
+)
+from _lcm.execution.value_transfer import (
+    ValueArtifactAddress,
+    ValueArtifactKind,
+    ValueConsumerAddress,
+    ValueInputChannel,
 )
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.solution.action_reduction import (
@@ -276,6 +284,18 @@ class GridSearch(Solver):
                         fold_conditioning=MappingProxyType(fold_conditioning),
                         action_width_keyword=action_width_keyword,
                     )
+            target_regimes = (
+                ()
+                if period == context.solution_reachability.n_periods - 1
+                else context.solution_reachability.targets(
+                    period=period,
+                    source=context.regime_name,
+                )
+            )
+            edge_reference_regimes = _edge_reference_regimes_for_targets(
+                context=context,
+                target_regimes=target_regimes,
+            )
             result[period] = _GridSearchPeriodKernel(
                 core=built[q_id],
                 unwrapped_core=unwrapped[q_id],
@@ -284,11 +304,13 @@ class GridSearch(Solver):
                 action_extents=action_extents,
                 action_width_keyword=action_width_keyword,
                 regime_name=context.regime_name,
+                period=period,
+                target_regimes=target_regimes,
                 collective=context.stakeholders is not None,
                 same_period_ref_regimes=context.same_period_ref_regimes,
                 has_taste_shocks=context.has_taste_shocks,
                 n_discrete_action_axes=len(context.state_action_space.discrete_actions),
-                edge_reference_regimes=context.edge_reference_regimes,
+                edge_reference_regimes=edge_reference_regimes,
                 edge_target_regimes=context.edge_target_regimes,
             )
         return SolutionKernels(period_kernels=MappingProxyType(result))
@@ -330,6 +352,23 @@ def _supports_action_streaming(*, context: SolverBuildContext) -> bool:
     )
 
 
+def _edge_reference_regimes_for_targets(
+    *,
+    context: SolverBuildContext,
+    target_regimes: tuple[RegimeName, ...],
+) -> tuple[RegimeName, ...]:
+    """Return only edge references read by targets reachable this period."""
+    source = context.user_regimes[context.regime_name]
+    references: list[RegimeName] = []
+    for target in target_regimes:
+        edge = source.gated_edges.get(target)
+        if edge is None:
+            continue
+        references.extend(ref.regime for ref in edge.gate_refs.values())
+        references.extend(route.solve_fallback.regime for route in edge.legs.values())
+    return tuple(dict.fromkeys(references))
+
+
 @dataclass(frozen=True, kw_only=True)
 class _GridSearchPeriodKernel:
     """The grid-search period adapter — wraps one max-Q-over-a core.
@@ -360,6 +399,12 @@ class _GridSearchPeriodKernel:
 
     regime_name: RegimeName
     """Name of the regime whose flat params this adapter projects."""
+
+    period: int = 0
+    """Source solve period this adapter represents."""
+
+    target_regimes: tuple[RegimeName, ...] = ()
+    """Exact continuation targets reachable from this source-period node."""
 
     collective: bool = False
     """Whether the core is a collective (stakeholder-valued) reduction.
@@ -441,6 +486,84 @@ class _GridSearchPeriodKernel:
         """Return the single max-Q-over-a core under the `"main"` key."""
         return MappingProxyType({"main": self.core})
 
+    def target_value_accesses(self, *, core_key: str) -> tuple[_TargetValueAccess, ...]:
+        """Declare every stored value leaf read by this period's core."""
+        if core_key != "main":
+            msg = f"GridSearch has no core named {core_key!r}."
+            raise KeyError(msg)
+
+        accesses: list[_TargetValueAccess] = []
+        for target_regime in self.target_regimes:
+            target = (
+                ValueArtifactAddress(
+                    kind=ValueArtifactKind.GATED_CONTINUATION,
+                    period=self.period + 1,
+                    regime=self.regime_name,
+                    target_regime=target_regime,
+                )
+                if target_regime in self.edge_target_regimes
+                else ValueArtifactAddress(
+                    kind=ValueArtifactKind.REGIME_VALUE,
+                    period=self.period + 1,
+                    regime=target_regime,
+                )
+            )
+            accesses.append(
+                self._target_value_access(
+                    core_key=core_key,
+                    target=target,
+                    channel=ValueInputChannel.NEXT_REGIME_VALUE,
+                    path=(target_regime,),
+                )
+            )
+        accesses.extend(
+            self._target_value_access(
+                core_key=core_key,
+                target=ValueArtifactAddress(
+                    kind=ValueArtifactKind.REGIME_VALUE,
+                    period=self.period,
+                    regime=regime_name,
+                ),
+                channel=ValueInputChannel.SAME_PERIOD_VALUE,
+                path=(regime_name,),
+            )
+            for regime_name in self.same_period_ref_regimes
+        )
+        accesses.extend(
+            self._target_value_access(
+                core_key=core_key,
+                target=ValueArtifactAddress(
+                    kind=ValueArtifactKind.REGIME_VALUE,
+                    period=self.period + 1,
+                    regime=regime_name,
+                ),
+                channel=ValueInputChannel.EDGE_REFERENCE_VALUE,
+                path=(regime_name,),
+            )
+            for regime_name in self.edge_reference_regimes
+        )
+        return tuple(accesses)
+
+    def _target_value_access(
+        self,
+        *,
+        core_key: str,
+        target: ValueArtifactAddress,
+        channel: ValueInputChannel,
+        path: tuple[str | int, ...],
+    ) -> _TargetValueAccess:
+        """Pair one logical target artifact with its exact argument leaf."""
+        return _TargetValueAccess(
+            target=target,
+            source=ValueConsumerAddress(
+                source_period=self.period,
+                source_regime=self.regime_name,
+                core_key=core_key,
+                channel=channel,
+                path=path,
+            ),
+        )
+
     def build_core_program(
         self,
         *,
@@ -479,7 +602,8 @@ class _GridSearchPeriodKernel:
                         ),
                         width_keyword=self.action_width_keyword,
                     ),
-                )
+                ),
+                target_value_accesses=self.target_value_accesses(core_key=core_key),
             ),
             output_roles=((VALUE, DISSOLUTION_FLAG) if self.collective else VALUE),
         )

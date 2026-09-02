@@ -78,7 +78,7 @@ This matrix uses exactly three disposition labels:
 | Singleton hard max | streamed | Action blocks feed the hard-max reduction. |
 | Collective hard max | streamed | Action blocks feed the collective scalarization, hard max, stakeholder readout, and dissolution-flag reduction. |
 | Singleton EV1 with at least one discrete action | streamed | Each block reduces its continuous-action axes; the discrete expected maximum combines the resulting complete discrete support. |
-| Same-period references, edge references, or gated targets without a co-mapped state | streamed | Reference arrays and parameters remain unchanged dynamic inputs to the streamed solve core. |
+| Same-period references, edge references, or gated targets without a co-mapped state | streamed | Each target artifact and its exact source argument path is declared; the resolved transfer supplies it as a dynamic input to the streamed solve core. |
 | Ordinary co-mapped state route without a separate reference channel | streamed | Continuation leaves co-map with the state cell while actions stream. |
 | Singleton hard max with folded states, including an ordinary co-map | streamed | Actions stream at each fold node; the unchanged quadrature still evaluates and reduces the full fold-node axis. |
 | Co-mapped state plus a separate same-period or edge-reference channel | deliberately dense | The two data transports are not yet represented together by the streamed program. |
@@ -97,6 +97,17 @@ core remains the compatibility path. Streamed programs publish only solve-time `
 or `VALUE` plus `DISSOLUTION_FLAG` for a collective route; replay and policy artifacts
 are not integrated. Runtime and peak-memory effects require measurement; bounded action
 evaluation alone is not a performance claim.
+
+For planned GridSearch solve cores, a continuation or reference declaration identifies
+both the stored target artifact and the exact channel and tree path at which the source
+core consumes it. Planning resolves each read either as a local pass-through that keeps
+the value's stored partitioning on the shared source mesh, or as an explicit copy into a
+supported layout on the source core's mesh. The resolved plan is applied identically to
+lowering and runtime arguments, and unsupported layout conversions or mismatched array
+metadata are errors. Remaining-consumer counts are committed only after successful
+dispatch. A zero count records eligibility for future memory
+planning; it does not release, donate, or offload an array. Dense compatibility and
+unplanned legacy consumers remain pinned.
 
 With EV1 taste shocks, GridSearch first maximizes over the continuous-action axes within
 each discrete-action combination and then applies the discrete log-sum. Simulation uses

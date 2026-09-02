@@ -10,6 +10,11 @@ import numpy as np
 import pytest
 
 from _lcm.execution.core_program import CoreProgram, resolve_core_program
+from _lcm.execution.value_transfer import (
+    ResolvedValueTransfer,
+    ValueTransferKind,
+    resolve_value_transfer,
+)
 from _lcm.regime_building.max_Q_over_a import (
     get_max_Q_over_a,
     get_streaming_max_Q_over_a,
@@ -73,6 +78,29 @@ def _assert_tree_equal(*, actual: object, expected: object) -> None:
         np.testing.assert_array_equal(actual_leaf, expected_leaf)
 
 
+def _aligned_transfer_plan(
+    *, program: CoreProgram
+) -> tuple[ResolvedValueTransfer, ...]:
+    """Resolve identity adapters for this test's already local JAX arrays."""
+    result: list[ResolvedValueTransfer] = []
+    for access in program.requirements.target_value_accesses:
+        leaf: object = program.arguments[access.source.channel.value]
+        for segment in access.source.path:
+            assert isinstance(leaf, Mapping)
+            leaf = leaf[segment]
+        assert isinstance(leaf, jax.Array)
+        result.append(
+            resolve_value_transfer(
+                target=access.target,
+                source=access.source,
+                kind=ValueTransferKind.ALIGNED_LOCAL,
+                stored_template=leaf,
+                source_sharding=leaf.sharding,
+            )
+        )
+    return tuple(result)
+
+
 def _participation_case() -> Model:
     """Build the same-period participation fixture."""
     return _make_participation_model(n_subjects=None)
@@ -132,7 +160,11 @@ def test_value_dependent_model_declares_a_dense_equivalent_streamed_program(
     ) == expected_channels
     assert kernel.unwrapped_core is not None
     dense = kernel.unwrapped_core(**arguments)
-    resolved = resolve_core_program(program=program, tile_widths={"action": 1})
+    resolved = resolve_core_program(
+        program=program,
+        tile_widths={"action": 1},
+        input_transfer_plan=_aligned_transfer_plan(program=program),
+    )
     streamed = resolved.function(**resolved.arguments, **resolved.static_kwargs)
     _assert_tree_equal(actual=streamed, expected=dense)
 
@@ -181,6 +213,8 @@ def _observable_route() -> tuple[
         action_names=("choice",),
         action_extents=(3,),
         regime_name="source",
+        period=0,
+        target_regimes=("target",),
         same_period_ref_regimes=("reference",),
         edge_reference_regimes=("outside",),
         edge_target_regimes=("target",),
@@ -210,7 +244,11 @@ def test_value_dependent_program_matches_dense_eager_jit_and_aot(width: int) -> 
     kernel, arguments, program = _observable_route()
     assert kernel.unwrapped_core is not None
     dense = kernel.unwrapped_core(**arguments)
-    resolved = resolve_core_program(program=program, tile_widths={"action": width})
+    resolved = resolve_core_program(
+        program=program,
+        tile_widths={"action": width},
+        input_transfer_plan=_aligned_transfer_plan(program=program),
+    )
     eager = resolved.function(**resolved.arguments, **resolved.static_kwargs)
     jitted_function = jax.jit(
         resolved.function, static_argnames=tuple(resolved.static_kwargs)

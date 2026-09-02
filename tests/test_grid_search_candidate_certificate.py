@@ -505,6 +505,7 @@ def test_q_and_f_arrays_reach_full_reducers_without_candidate_transformation():
 def test_streamed_reducer_sources_are_literal_certificate_obligations():
     """The generated inventory owns every live streamed transport helper."""
     assert isinstance(_parse("src/_lcm/execution/core_program.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/execution/value_transfer.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/solution/action_streaming.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/solution/action_reduction.py"), ast.Module)
     assert isinstance(
@@ -726,6 +727,35 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         "streaming_aot:resolved_arguments_bypassed",
         "streaming_aot:specialization_dropped",
         "streaming_aot:lower_dense_function",
+        "value_access:grid_reachable_targets_dropped",
+        "value_access:grid_gated_kind_bypassed",
+        "value_access:grid_same_period_shifted",
+        "value_access:grid_edge_reference_omitted",
+        "value_access:grid_program_declarations_dropped",
+        "value_access:grid_consumer_path_rebound",
+        "value_access:grid_edge_refs_widened",
+        "value_access:core_requirements_erased",
+        "value_access:core_plan_match_bypassed",
+        "value_access:core_metadata_check_bypassed",
+        "value_access:core_lowering_plan_bypassed",
+        "value_access:core_specialization_dropped",
+        "value_access:core_consumer_channel_rebound",
+        "value_transfer:runtime_plan_bypassed",
+        "value_transfer:runtime_plan_truncated",
+        "value_transfer:planned_core_plan_erased",
+        "value_transfer:backward_resolver_plan_omitted",
+        "value_transfer:backward_node_plan_dropped",
+        "value_transfer:backward_copy_uses_output_spec",
+        "value_transfer:backward_cross_mesh_admitted",
+        "value_transfer:backward_unsupported_conversion_admitted",
+        "value_transfer:aligned_value_sliced",
+        "value_transfer:copy_value_sliced",
+        "value_transfer:stored_metadata_check_bypassed",
+        "value_transfer:plan_skips_last",
+        "value_transfer:consumer_channel_ignored",
+        "value_transfer:edge_identity_check_bypassed",
+        "value_transfer:copy_destination_ignored",
+        "value_transfer:duplicate_consumer_admitted",
     }
     required.update(
         f"{route}:candidate_index_{index}"
@@ -746,10 +776,10 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
     assert required <= names
     # Independent literals make both cardinality and family identity part of this
     # certificate, rather than trusting constants supplied by the mutation generator.
-    assert len(names) == 305
+    assert len(names) == 334
     assert (
         hashlib.sha256(("\n".join(sorted(names)) + "\n").encode()).hexdigest()
-        == "fb69a202161592c6441dfb6f6d300d73bb813646c28f467982a01062598fbb13"
+        == "39a183075a18e11f078005ad75a2e5ccb67eface33c3a8bacec47091fe561dc2"
     )
 
 

@@ -14,11 +14,15 @@
           },
           {
             "path": "src/_lcm/execution/core_program.py",
-            "sha256": "661af8a35e2eea2e29ebfbe4d4ba9ba15e00972e910d93a98e06a5fa1286d84f"
+            "sha256": "e9d3e475abaf3f7f17d06f511cd460888a9f5207cf19c16d3577e2c5b055dbf7"
           },
           {
             "path": "src/_lcm/execution/output_layout.py",
-            "sha256": "d08aab63241c85d14ef8a59b105a9e45effc5cc2e4e3d0beb6d8fb36431fa43e"
+            "sha256": "20cd6a359ce07f8ef48282196c2bd8b4a7bc1d0f838839e93f4eea684bf5e9bc"
+          },
+          {
+            "path": "src/_lcm/execution/value_transfer.py",
+            "sha256": "44b8629c7b461b6b0216c79ba25101179e1b8cb2edf40630a55c6b9403fbbd2d"
           },
           {
             "path": "src/_lcm/grids/__init__.py",
@@ -146,7 +150,7 @@
           },
           {
             "path": "src/_lcm/solution/backward_induction.py",
-            "sha256": "a0ae203d1388130d5ab017a40d19eb86d0653edd5c6bbd11b5507487afc7d83b"
+            "sha256": "12b6de847959c8ed347c958a27275c059b17dedf196392cfbd78b3ec24f8ca5c"
           },
           {
             "path": "src/_lcm/solution/collective_action_reduction.py",
@@ -158,7 +162,7 @@
           },
           {
             "path": "src/_lcm/solution/grid_search.py",
-            "sha256": "31faee7389be0cb9d992c28959f2328902c36277abcd92150af6c619e46a15dd"
+            "sha256": "cc4e64adb531b9965ffd645d1714d4948666fead104cd093d23a0dc5002d088b"
           },
           {
             "path": "src/_lcm/solution/logsumexp_action_reduction.py",
@@ -201,8 +205,8 @@
             "sha256": "992f8e14d2f47f505f6883e340e89d68dfc41311d4c36f7849a2f79331e4ba01"
           }
         ],
-        "source_count": 49,
-        "source_inventory_sha256": "842c2d45af5c3b6bb10cd4db06a9f76a540401e7839243330aa84c75eafadc72"
+        "source_count": 50,
+        "source_inventory_sha256": "d5d94b1166c2abcbcd5300a6ea92854e930a5c32250eb8fc53898ec9451d607a"
       },
       "fast": {
         "candidate_sources": [
@@ -216,11 +220,15 @@
           },
           {
             "path": "src/_lcm/execution/core_program.py",
-            "sha256": "661af8a35e2eea2e29ebfbe4d4ba9ba15e00972e910d93a98e06a5fa1286d84f"
+            "sha256": "e9d3e475abaf3f7f17d06f511cd460888a9f5207cf19c16d3577e2c5b055dbf7"
           },
           {
             "path": "src/_lcm/execution/output_layout.py",
-            "sha256": "d08aab63241c85d14ef8a59b105a9e45effc5cc2e4e3d0beb6d8fb36431fa43e"
+            "sha256": "20cd6a359ce07f8ef48282196c2bd8b4a7bc1d0f838839e93f4eea684bf5e9bc"
+          },
+          {
+            "path": "src/_lcm/execution/value_transfer.py",
+            "sha256": "44b8629c7b461b6b0216c79ba25101179e1b8cb2edf40630a55c6b9403fbbd2d"
           },
           {
             "path": "src/_lcm/grids/__init__.py",
@@ -348,7 +356,7 @@
           },
           {
             "path": "src/_lcm/solution/backward_induction.py",
-            "sha256": "a0ae203d1388130d5ab017a40d19eb86d0653edd5c6bbd11b5507487afc7d83b"
+            "sha256": "12b6de847959c8ed347c958a27275c059b17dedf196392cfbd78b3ec24f8ca5c"
           },
           {
             "path": "src/_lcm/solution/collective_action_reduction.py",
@@ -360,7 +368,7 @@
           },
           {
             "path": "src/_lcm/solution/grid_search.py",
-            "sha256": "31faee7389be0cb9d992c28959f2328902c36277abcd92150af6c619e46a15dd"
+            "sha256": "cc4e64adb531b9965ffd645d1714d4948666fead104cd093d23a0dc5002d088b"
           },
           {
             "path": "src/_lcm/solution/logsumexp_action_reduction.py",
@@ -403,14 +411,14 @@
             "sha256": "992f8e14d2f47f505f6883e340e89d68dfc41311d4c36f7849a2f79331e4ba01"
           }
         ],
-        "source_count": 49,
-        "source_inventory_sha256": "842c2d45af5c3b6bb10cd4db06a9f76a540401e7839243330aa84c75eafadc72"
+        "source_count": 50,
+        "source_inventory_sha256": "d5d94b1166c2abcbcd5300a6ea92854e930a5c32250eb8fc53898ec9451d607a"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "842c2d45af5c3b6bb10cd4db06a9f76a540401e7839243330aa84c75eafadc72",
+  "source_inventory_sha256": "d5d94b1166c2abcbcd5300a6ea92854e930a5c32250eb8fc53898ec9451d607a",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -422,11 +430,15 @@
     },
     {
       "path": "src/_lcm/execution/core_program.py",
-      "sha256": "661af8a35e2eea2e29ebfbe4d4ba9ba15e00972e910d93a98e06a5fa1286d84f"
+      "sha256": "e9d3e475abaf3f7f17d06f511cd460888a9f5207cf19c16d3577e2c5b055dbf7"
     },
     {
       "path": "src/_lcm/execution/output_layout.py",
-      "sha256": "d08aab63241c85d14ef8a59b105a9e45effc5cc2e4e3d0beb6d8fb36431fa43e"
+      "sha256": "20cd6a359ce07f8ef48282196c2bd8b4a7bc1d0f838839e93f4eea684bf5e9bc"
+    },
+    {
+      "path": "src/_lcm/execution/value_transfer.py",
+      "sha256": "44b8629c7b461b6b0216c79ba25101179e1b8cb2edf40630a55c6b9403fbbd2d"
     },
     {
       "path": "src/_lcm/grids/__init__.py",
@@ -554,7 +566,7 @@
     },
     {
       "path": "src/_lcm/solution/backward_induction.py",
-      "sha256": "a0ae203d1388130d5ab017a40d19eb86d0653edd5c6bbd11b5507487afc7d83b"
+      "sha256": "12b6de847959c8ed347c958a27275c059b17dedf196392cfbd78b3ec24f8ca5c"
     },
     {
       "path": "src/_lcm/solution/collective_action_reduction.py",
@@ -566,7 +578,7 @@
     },
     {
       "path": "src/_lcm/solution/grid_search.py",
-      "sha256": "31faee7389be0cb9d992c28959f2328902c36277abcd92150af6c619e46a15dd"
+      "sha256": "cc4e64adb531b9965ffd645d1714d4948666fead104cd093d23a0dc5002d088b"
     },
     {
       "path": "src/_lcm/solution/logsumexp_action_reduction.py",

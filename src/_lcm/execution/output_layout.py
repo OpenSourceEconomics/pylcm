@@ -13,6 +13,10 @@ from typing import Protocol, cast, runtime_checkable
 
 import jax
 
+from _lcm.execution.value_transfer import (
+    ResolvedValueTransfer,
+    apply_value_transfer_plan,
+)
 from _lcm.typing import StateName
 
 
@@ -365,14 +369,34 @@ def _assert_output_metadata(
 
 @dataclass(frozen=True, kw_only=True)
 class PlannedCore:
-    """Callable compiled core carrying the output plan used to lower it."""
+    """Callable compiled core carrying the output and input plans used to lower it."""
 
     compiled: Callable
     layout: ResolvedOutputLayout
+    input_transfer_plan: tuple[ResolvedValueTransfer, ...] = ()
+
+    def __post_init__(self) -> None:
+        """Snapshot and validate the resolved input transfer plan."""
+        plan = tuple(self.input_transfer_plan)
+        if any(not isinstance(item, ResolvedValueTransfer) for item in plan):
+            msg = "PlannedCore input_transfer_plan must contain resolved transfers."
+            raise TypeError(msg)
+        object.__setattr__(self, "input_transfer_plan", plan)
 
     def __call__(self, *args: object, **kwargs: object) -> object:
         """Execute and enforce the layout contract at the compiled-core seam."""
-        output = self.compiled(*args, **kwargs)
+        if self.input_transfer_plan and args:
+            msg = (
+                "A PlannedCore with input transfers accepts dynamic arguments "
+                "only by keyword."
+            )
+            raise TypeError(msg)
+        planned_kwargs = (
+            apply_value_transfer_plan(arguments=kwargs, plan=self.input_transfer_plan)
+            if self.input_transfer_plan
+            else kwargs
+        )
+        output = self.compiled(*args, **planned_kwargs)
         assert_output_layout(output=output, layout=self.layout)
         return output
 
@@ -380,3 +404,10 @@ class PlannedCore:
 def planned_output_layout(core: object) -> ResolvedOutputLayout | _Unplanned:
     """Return the plan attached to a compiled core, if any."""
     return core.layout if isinstance(core, PlannedCore) else UNPLANNED
+
+
+def planned_input_transfer_plan(
+    core: object,
+) -> tuple[ResolvedValueTransfer, ...] | _Unplanned:
+    """Return the absolute input transfer plan attached to a compiled core."""
+    return core.input_transfer_plan if isinstance(core, PlannedCore) else UNPLANNED

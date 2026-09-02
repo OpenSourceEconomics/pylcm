@@ -84,15 +84,19 @@ also the baseline against which specialized solutions should be checked.
 
 GridSearch work still covers the full represented action support. Eligible JIT
 solve-value routes evaluate bounded C-order action blocks. Same-period value references,
-gated-target continuations, and edge-reference mappings remain unchanged inputs to those
-blocks. Ordinary co-mapped state routes also stream while preserving device-local
-continuation reads. Eligible singleton folded-state routes stream the action product at
-each shock node and then apply the unchanged quadrature over the full fold-node axis.
-The classifier deliberately keeps co-map intersections with separate same-period or
-edge-reference channels, trivial action products, JIT-disabled and raw execution, and
-all simulation-policy construction dense. Collective EV1, EV1 with a fold, collective
-hard max with a fold, and EV1 without a discrete action are unsupported by the streamed
-program. See the canonical
+gated-target continuations, and edge-reference mappings are declared as exact target
+artifacts and source argument paths. The engine either preserves an already aligned
+layout or explicitly copies a supported input onto the source core's mesh, using the
+same plan during lowering and runtime. Ordinary co-mapped state routes also stream while
+preserving device-local continuation reads. Eligible singleton folded-state routes
+stream the action product at each shock node and then apply the unchanged quadrature
+over the full fold-node axis. The classifier deliberately keeps co-map intersections
+with separate same-period or edge-reference channels, trivial action products,
+JIT-disabled and raw execution, and all simulation-policy construction dense. Those
+dense or otherwise unplanned consumers stay conservatively pinned; current liveness
+bookkeeping does not release, donate, or offload their arrays. Collective EV1, EV1 with
+a fold, collective hard max with a fold, and EV1 without a discrete action are
+unsupported by the streamed program. See the canonical
 [GridSearch route matrix](../reference/solvers.md#gridsearch-jit-route-matrix). Treat the
 blockwise route as an execution detail until runtime and peak-memory effects have been
 measured for the model and hardware at hand.

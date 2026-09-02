@@ -73,6 +73,7 @@ LOGSUM_SOURCE = "src/_lcm/logsum.py"
 GRID_SEARCH_SOURCE = "src/_lcm/solution/grid_search.py"
 CORE_PROGRAM_SOURCE = "src/_lcm/execution/core_program.py"
 OUTPUT_LAYOUT_SOURCE = "src/_lcm/execution/output_layout.py"
+VALUE_TRANSFER_SOURCE = "src/_lcm/execution/value_transfer.py"
 ACTION_STREAMING_SOURCE = "src/_lcm/solution/action_streaming.py"
 ACTION_REDUCTION_SOURCE = "src/_lcm/solution/action_reduction.py"
 COLLECTIVE_ACTION_REDUCTION_SOURCE = "src/_lcm/solution/collective_action_reduction.py"
@@ -124,6 +125,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
     GRID_SEARCH_SOURCE,
     CORE_PROGRAM_SOURCE,
     OUTPUT_LAYOUT_SOURCE,
+    VALUE_TRANSFER_SOURCE,
     ACTION_STREAMING_SOURCE,
     ACTION_REDUCTION_SOURCE,
     COLLECTIVE_ACTION_REDUCTION_SOURCE,
@@ -178,9 +180,10 @@ _SOURCE_SEALS = {
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
     MAX_Q_SOURCE: "6bed0c5a31bbc1c7fe9e0d9250223888d1271528b01844a398668af038e24844",
     PROCESSING_SOURCE: "e9fc3dc1b8b703f12867f336ce4439356edc2fbafc919ae2014cd939234a1b56",
-    GRID_SEARCH_SOURCE: "31faee7389be0cb9d992c28959f2328902c36277abcd92150af6c619e46a15dd",
-    CORE_PROGRAM_SOURCE: "661af8a35e2eea2e29ebfbe4d4ba9ba15e00972e910d93a98e06a5fa1286d84f",
-    OUTPUT_LAYOUT_SOURCE: "d08aab63241c85d14ef8a59b105a9e45effc5cc2e4e3d0beb6d8fb36431fa43e",
+    GRID_SEARCH_SOURCE: "cc4e64adb531b9965ffd645d1714d4948666fead104cd093d23a0dc5002d088b",
+    CORE_PROGRAM_SOURCE: "e9d3e475abaf3f7f17d06f511cd460888a9f5207cf19c16d3577e2c5b055dbf7",
+    OUTPUT_LAYOUT_SOURCE: "20cd6a359ce07f8ef48282196c2bd8b4a7bc1d0f838839e93f4eea684bf5e9bc",
+    VALUE_TRANSFER_SOURCE: "44b8629c7b461b6b0216c79ba25101179e1b8cb2edf40630a55c6b9403fbbd2d",
     ACTION_STREAMING_SOURCE: "6bc9a29fffba6e49d634df423d78d0232850fa6c327a82225e73b5ff0f2c384d",
     ACTION_REDUCTION_SOURCE: "6cee6ea2dbef0ba710fa4a318a2113377d6513cee508e73004861597f9c220f9",
     COLLECTIVE_ACTION_REDUCTION_SOURCE: "7a80418764fdf9754062a23707c5d39fa7abfcaac9c8e8f7803c4d8f1b461347",
@@ -196,7 +199,7 @@ _SOURCE_SEALS = {
     SIMULATION_TRANSITIONS_SOURCE: "1c503777887af52d1d5de36cf86acb4d8431fbe3d71203d7da881b4d0742c928",
     SIMULATION_COMPILE_SOURCE: "926feb249828f03cf722f8e517706e6651b0359f93fd29c6f87650773bfcaf04",
     MODEL_SOURCE: "5045a42535a33d4337700c7161bf31ade717b43a60c3f79ef71cbe3c537347cf",
-    BACKWARD_INDUCTION_SOURCE: "a0ae203d1388130d5ab017a40d19eb86d0653edd5c6bbd11b5507487afc7d83b",
+    BACKWARD_INDUCTION_SOURCE: "12b6de847959c8ed347c958a27275c059b17dedf196392cfbd78b3ec24f8ca5c",
     INITIAL_CONDITIONS_SOURCE: "cb3663f59d10fa288d3da322b5f154545bb1ac4b9262073a87c405b5e950507f",
     RESULT_SOURCE: "992f8e14d2f47f505f6883e340e89d68dfc41311d4c36f7849a2f79331e4ba01",
     RESULT_DATAFRAME_SOURCE: "025e273c4d3bb9d8f9787189a551b113708c86b1e868d16178aa39555abf49a4",
@@ -224,9 +227,9 @@ _SOURCE_SEALS = {
     MODEL_PROCESSING_SOURCE: "8a159831e37a9582852908c7e213106aa1070500f4e64fa12f1a7ed628854740",
 }
 
-EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 305
+EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 334
 EXPECTED_DIRECT_FLOW_MUTATION_NAMES_SHA256 = (
-    "fb69a202161592c6441dfb6f6d300d73bb813646c28f467982a01062598fbb13"
+    "39a183075a18e11f078005ad75a2e5ccb67eface33c3a8bacec47091fe561dc2"
 )
 
 
@@ -1567,24 +1570,39 @@ def _core_program_transport_errors(tree: ast.Module) -> list[str]:
     """Pin provider declarations through static width materialization."""
     errors = _class_surface_errors(
         tree=tree,
-        label="core-program action axis",
-        class_name="StreamableProductAxis",
+        label="core-program target-value access",
+        class_name="_TargetValueAccess",
         fields=(
-            "name: str",
-            "coordinate_names: tuple[ActionName, ...]",
-            "coordinate_extents: tuple[int, ...]",
-            "canonical_order: str",
-            "reduction: ReductionSemantics",
-            "width_keyword: str",
+            "target: ValueArtifactAddress",
+            "source: ValueConsumerAddress",
         ),
-        methods=("__post_init__", "extent"),
+        methods=("__post_init__",),
+    )
+    errors.extend(
+        _class_surface_errors(
+            tree=tree,
+            label="core-program action axis",
+            class_name="StreamableProductAxis",
+            fields=(
+                "name: str",
+                "coordinate_names: tuple[ActionName, ...]",
+                "coordinate_extents: tuple[int, ...]",
+                "canonical_order: str",
+                "reduction: ReductionSemantics",
+                "width_keyword: str",
+            ),
+            methods=("__post_init__", "extent"),
+        )
     )
     errors.extend(
         _class_surface_errors(
             tree=tree,
             label="core-program execution requirements",
             class_name="CoreExecutionRequirements",
-            fields=("streamable_axes: tuple[StreamableProductAxis, ...] = ()",),
+            fields=(
+                "streamable_axes: tuple[StreamableProductAxis, ...] = ()",
+                "target_value_accesses: tuple[_TargetValueAccess, ...] = ()",
+            ),
             methods=("__post_init__",),
         )
     )
@@ -1614,6 +1632,7 @@ def _core_program_transport_errors(tree: ast.Module) -> list[str]:
                 "output_roles: object",
                 "tile_widths: Mapping[str, int]",
                 "specialization_key: Hashable",
+                "input_transfer_plan: tuple[ResolvedValueTransfer, ...]",
             ),
             methods=("__post_init__",),
         )
@@ -1623,17 +1642,98 @@ def _core_program_transport_errors(tree: ast.Module) -> list[str]:
             tree=tree,
             label="core-program provider-to-resolver transport",
             contracts={
+                "_TargetValueAccess.__post_init__": "087df21f9a729fb78e784cd8a1ed466c97473cce55b4835aec7530b6c3608f73",
                 "StreamableProductAxis.__post_init__": "a83a07c71ec8a26d8ad9b8cc71ea65e3df8d000e7efdcc44802bc240a5db95c6",
                 "StreamableProductAxis.extent": "aebdd54708094461d473977783f0588d2491c212629e1f5a40f8cf24c789802a",
-                "CoreExecutionRequirements.__post_init__": "af2a5d55e0053f39dc21f2487f2ed4fc227b3e9f963d5df6f0395b112163b203",
+                "CoreExecutionRequirements.__post_init__": "e4d9bc6d57b5394abcfe6b3429292116e691be52fb980604cdb6d2cf0e21a876",
                 "CoreProgram.__post_init__": "909fc04f725fc31d2ea54e87b9fe093ebe642b6b3576bd47b8777da77d80d99a",
-                "ResolvedCoreProgram.__post_init__": "b380cc2a415554b9a546f6b80c7608d4b6636271ba53ba01dc6ecfb7fbe443ee",
-                "resolve_core_program": "d729e28465dcc3bd8718d3c7207e9f744de5eca41e53307b0c3b782b61e5e70c",
-                "_validate_core_program": "5878fa720a522b99c150093d5342bdbf3e321217278be102ac0d606df3b7d07e",
+                "ResolvedCoreProgram.__post_init__": "7f6fc7b43749e1c6b17d04e566818c19c6d50fa086ee9a2b5583371dd800bdf8",
+                "resolve_core_program": "d742a3315c0dbbdd3b61d33ef3abb3a8fcf02616e328f8a17467299fec5de05d",
+                "_validate_core_program": "917dd72c951289cc554f71e96249af24f4a4a53cb77194ff2837be51d04852c9",
+                "_resolve_input_transfer_plan": "02bd0dde967ead0fb889fbafdd8a34ab5a5ddf91c76123cc0c3202461cc03581",
+                "_validate_target_value_accesses": "516f9b9f8ad95de09c92e7dddd3c6567d1c3e3312036cb78be27fd53823eba9d",
+                "_target_value_argument_leaf": "3a4d1f74e2180342bbd2c8e26ab2f82791e11c145cee1431739605bc22b0c5d1",
+                "_validate_transfer_argument_metadata": "7faa50cf035f7a19b72dfe7ca60e728c7cd770bad37a47360490cfcfc4cbae47",
                 "_validate_streamable_axis": "49d750f0fa436a7971480f75485b11dfa08643b1d709cadefbeedea2e0b9dd45",
                 "_validate_tile_width": "15f543450ad5f6b739cfa8aafbf0a4fb34a0c5b677da4866a2afedd1effde831",
                 "_validate_coordinate_argument": "401392c0069102b2983559a9b7c53bba6bd66ccf0b0126f8e6688bff49564b27",
                 "_validate_width_keyword": "57c76f0f7ffbb02e0ab500552522e0d1ec8652173d7b9ba81c842ec558beeaff",
+            },
+        )
+    )
+    errors.extend(
+        _module_contract_errors(
+            tree=tree,
+            label="core-program provider-to-resolver transport",
+            relevant_import_names={
+                "Callable",
+                "Hashable",
+                "Mapping",
+                "MappingProxyType",
+                "Protocol",
+                "ResolvedValueTransfer",
+                "ValueArtifactAddress",
+                "ValueConsumerAddress",
+                "apply_value_transfer_plan",
+                "cast",
+                "dataclass",
+                "inspect",
+                "math",
+                "runtime_checkable",
+                "weakref",
+            },
+            expected_imports=[
+                "import inspect",
+                "import math",
+                "import weakref",
+                "from collections.abc import Callable, Hashable, Mapping",
+                "from dataclasses import dataclass",
+                "from types import MappingProxyType",
+                "from typing import Protocol, cast, runtime_checkable",
+                "from _lcm.execution.value_transfer import ResolvedValueTransfer, ValueArtifactAddress, ValueConsumerAddress, apply_value_transfer_plan",
+            ],
+            expected_binding_counts={
+                "Callable": 1,
+                "CoreExecutionRequirements": 1,
+                "CoreProgram": 1,
+                "CoreProgramAware": 1,
+                "Hashable": 1,
+                "Mapping": 1,
+                "MappingProxyType": 1,
+                "Protocol": 1,
+                "ReductionSemantics": 1,
+                "ResolvedCoreProgram": 1,
+                "ResolvedValueTransfer": 1,
+                "StreamableProductAxis": 1,
+                "ValueArtifactAddress": 1,
+                "ValueConsumerAddress": 1,
+                "_TargetValueAccess": 1,
+                "_TargetValueAccessAware": 1,
+                "_TransferArgumentLeaf": 1,
+                "_resolve_input_transfer_plan": 1,
+                "_target_value_argument_leaf": 1,
+                "_validate_core_program": 1,
+                "_validate_target_value_accesses": 1,
+                "_validate_transfer_argument_metadata": 1,
+                "apply_value_transfer_plan": 1,
+                "cast": 1,
+                "dataclass": 1,
+                "dict": 0,
+                "getattr": 0,
+                "hash": 0,
+                "inspect": 1,
+                "isinstance": 0,
+                "len": 0,
+                "list": 0,
+                "math": 1,
+                "object": 0,
+                "resolve_core_program": 1,
+                "runtime_checkable": 1,
+                "set": 0,
+                "tuple": 0,
+                "type": 0,
+                "weakref": 1,
+                "zip": 0,
             },
         )
     )
@@ -1871,7 +1971,8 @@ def category(self) -> str:
             label="solve caller live streamed provider",
             contracts={
                 "_select_action_width_keyword": "d5c0751bf2eb4a98a08b1641e41cfea9f46230af044a1c666e49f6f444cadb68",
-                "GridSearch.build_period_kernels": "d249f60fd57592ad8ccd1ea163cbd41e0b8f63e8a043c8c3e6c02a015abf5fdc",
+                "GridSearch.build_period_kernels": "e68749b3c87e3f381620f324376eca89f1c4b046aa132c7572b6c7231bd03fde",
+                "_edge_reference_regimes_for_targets": "fae893f62c5a3eb6e8d4df88dae39fd283a5d86cd1c87a173da15287ea945af0",
                 "_classify_action_streaming": "755aad955b08e5800774cd6eae0b5b4a32236269569de8b6443613ac06f03b45",
                 "_supports_action_streaming": "d93f977fad68ad528beb9d4b9e6d45e5eb95b53c9a0398ff6f6a62ec548bad11",
             },
@@ -1890,6 +1991,8 @@ def category(self) -> str:
                 "action_extents: tuple[int, ...] = ()",
                 "action_width_keyword: str = _ACTION_WIDTH_KEYWORD",
                 "regime_name: RegimeName",
+                "period: int = 0",
+                "target_regimes: tuple[RegimeName, ...] = ()",
                 "collective: bool = False",
                 "has_taste_shocks: bool = False",
                 "n_discrete_action_axes: int = 0",
@@ -1900,6 +2003,8 @@ def category(self) -> str:
             methods=(
                 "_with_edge_substitution",
                 "cores",
+                "target_value_accesses",
+                "_target_value_access",
                 "build_core_program",
                 "output_roles",
                 "core_for_output_layout",
@@ -1917,7 +2022,9 @@ def category(self) -> str:
             label="solve caller output-layout adapter",
             contracts={
                 "_GridSearchPeriodKernel.cores": "9ee3a0a03870ede4b4361004c34a9b7a50d2074a9e96d7c0c7aa44111efe5c13",
-                "_GridSearchPeriodKernel.build_core_program": "8b4ebbf7e18a3cd26cfab061cdae757f779c8bbfe798186a096b937b2c1af080",
+                "_GridSearchPeriodKernel.target_value_accesses": "6bb4264046d9e4eee788dade78da38821da060098d8bea4fcfdc42f5bc867efc",
+                "_GridSearchPeriodKernel._target_value_access": "0d16253ef71c9dd762e39a39755069b36dba6d9342b054d115480b08b0726b1b",
+                "_GridSearchPeriodKernel.build_core_program": "fb88e990d0b82b079d5d296be411dd6b225d96152059f58052e6946424172385",
                 "_GridSearchPeriodKernel.output_roles": "e48524eea7cd3dce438a9826ca0efd7cc45ddf681da8d7d9b14ad7a03c3a55de",
                 "_GridSearchPeriodKernel.core_for_output_layout": "c06f276c3430fe788227503d0c24602558259a1a076fd76061e613db191b87aa",
                 "_GridSearchPeriodKernel.with_fixed_params": "6432aa32d09899a4b82c17568336be04fac9933c14e81f4e8460d252663b04ac",
@@ -1940,6 +2047,11 @@ def category(self) -> str:
                 "StrEnum",
                 "GridSearchEV1ActionReduction",
                 "StreamableProductAxis",
+                "ValueArtifactAddress",
+                "ValueArtifactKind",
+                "ValueConsumerAddress",
+                "ValueInputChannel",
+                "_TargetValueAccess",
                 "beartype",
                 "cast",
                 "dataclass",
@@ -1957,7 +2069,8 @@ def category(self) -> str:
                 "import math",
                 "from beartype import beartype",
                 "from _lcm.beartype_conf import REGIME_CONF",
-                "from _lcm.execution.core_program import CoreExecutionRequirements, CoreProgram, StreamableProductAxis",
+                "from _lcm.execution.core_program import CoreExecutionRequirements, CoreProgram, StreamableProductAxis, _TargetValueAccess",
+                "from _lcm.execution.value_transfer import ValueArtifactAddress, ValueArtifactKind, ValueConsumerAddress, ValueInputChannel",
                 "from _lcm.solution.action_reduction import COLLECTIVE_HARD_MAX_REDUCTION, HARD_MAX_REDUCTION",
                 "from _lcm.solution.action_streaming import GridSearchEV1ActionReduction",
                 "from _lcm.solution.contract import ConstraintRouteContext, ContinuationPayload, KernelResult, PeriodKernel, SolutionKernels, Solver, SolverBuildContext, simulation_route",
@@ -1967,8 +2080,10 @@ def category(self) -> str:
                 "CoreProgram": 1,
                 "COLLECTIVE_HARD_MAX_REDUCTION": 1,
                 "GridSearch": 1,
+                "_GridSearchPeriodKernel": 1,
                 "_ActionStreamingDisposition": 1,
                 "_classify_action_streaming": 1,
+                "_edge_reference_regimes_for_targets": 1,
                 "_select_action_width_keyword": 1,
                 "_supports_action_streaming": 1,
                 "HARD_MAX_REDUCTION": 1,
@@ -1977,6 +2092,11 @@ def category(self) -> str:
                 "Solver": 1,
                 "StrEnum": 1,
                 "StreamableProductAxis": 1,
+                "ValueArtifactAddress": 1,
+                "ValueArtifactKind": 1,
+                "ValueConsumerAddress": 1,
+                "ValueInputChannel": 1,
+                "_TargetValueAccess": 1,
                 "beartype": 1,
                 "cast": 1,
                 "dataclass": 1,
@@ -2016,8 +2136,12 @@ def _output_layout_errors(tree: ast.Module) -> list[str]:
             tree=tree,
             label="output layout",
             class_name="PlannedCore",
-            fields=("compiled: Callable", "layout: ResolvedOutputLayout"),
-            methods=("__call__",),
+            fields=(
+                "compiled: Callable",
+                "layout: ResolvedOutputLayout",
+                "input_transfer_plan: tuple[ResolvedValueTransfer, ...] = ()",
+            ),
+            methods=("__post_init__", "__call__"),
         )
     )
     errors.extend(
@@ -2029,8 +2153,10 @@ def _output_layout_errors(tree: ast.Module) -> list[str]:
                 "_validate_output_roles": "8bf237a4b6a84fddd8bb2d425c25561498531ff01121c205fcd3be28fca480c7",
                 "assert_output_layout": "78b4040ad158cd8201ce739cfc08ee3e0ddc1d91b0019bbff5689e5b2bebd0f3",
                 "_assert_output_metadata": "8612094c85183f9c7cfa568bb0aad875ce729c79c60b31126efd8d04785644ca",
-                "PlannedCore.__call__": "05bb94fd00a52947741192747b970a1ef45b8a01c8dcb814c4099ab50b9c4707",
+                "PlannedCore.__post_init__": "c62b7dc586d1bc5e57a4ef9b72208b6cf5d125c73befd7dbf7a72e4f09982ad6",
+                "PlannedCore.__call__": "f41f3d370e5237e949f541b1b7f538fe3b30d70994602bb933acc51170207e07",
                 "planned_output_layout": "0518c706a7de02411a990d4cfa9c40f426cc83f825791c735aeb19c4603e5e1e",
+                "planned_input_transfer_plan": "8a36aa2054fb5706e97ee14324e56517c3069443e10785f919c8a0ce2e602679",
             },
         )
     )
@@ -2059,6 +2185,8 @@ UNPLANNED = _Unplanned.TOKEN
                 "Callable",
                 "Hashable",
                 "Protocol",
+                "ResolvedValueTransfer",
+                "apply_value_transfer_plan",
                 "cast",
                 "dataclass",
                 "jax",
@@ -2069,6 +2197,7 @@ UNPLANNED = _Unplanned.TOKEN
                 "from dataclasses import dataclass",
                 "from typing import Protocol, cast, runtime_checkable",
                 "import jax",
+                "from _lcm.execution.value_transfer import ResolvedValueTransfer, apply_value_transfer_plan",
             ],
             expected_binding_counts={
                 "Callable": 1,
@@ -2078,17 +2207,216 @@ UNPLANNED = _Unplanned.TOKEN
                 "PlannedCore": 1,
                 "Protocol": 1,
                 "ResolvedOutputLayout": 1,
+                "ResolvedValueTransfer": 1,
                 "UNPLANNED": 1,
                 "VALUE": 1,
                 "_assert_output_metadata": 1,
                 "_validate_output_roles": 1,
                 "assert_output_layout": 1,
+                "apply_value_transfer_plan": 1,
                 "cast": 1,
                 "dataclass": 1,
                 "jax": 1,
                 "planned_output_layout": 1,
+                "planned_input_transfer_plan": 1,
                 "resolve_output_layout": 1,
                 "runtime_checkable": 1,
+            },
+        )
+    )
+    return errors
+
+
+def _value_transfer_errors(tree: ast.Module) -> list[str]:
+    """Pin exact target artifacts through immutable source-core input adapters."""
+    errors = _class_surface_errors(
+        tree=tree,
+        label="value transfer artifact address",
+        class_name="ValueArtifactAddress",
+        fields=(
+            "kind: ValueArtifactKind",
+            "period: int",
+            "regime: RegimeName",
+            "target_regime: RegimeName | None = None",
+        ),
+        methods=("__post_init__",),
+    )
+    errors.extend(
+        _class_surface_errors(
+            tree=tree,
+            label="value transfer consumer address",
+            class_name="ValueConsumerAddress",
+            fields=(
+                "source_period: int",
+                "source_regime: RegimeName",
+                "core_key: str",
+                "channel: ValueInputChannel",
+                "path: tuple[str | int, ...]",
+            ),
+            methods=("__post_init__",),
+        )
+    )
+    errors.extend(
+        _class_surface_errors(
+            tree=tree,
+            label="resolved value transfer",
+            class_name="ResolvedValueTransfer",
+            fields=(
+                "target: ValueArtifactAddress",
+                "source: ValueConsumerAddress",
+                "kind: ValueTransferKind",
+                "stored_sharding: jax.sharding.Sharding",
+                "source_sharding: jax.sharding.Sharding",
+                "expected_shape: tuple[int, ...]",
+                "expected_dtype: object",
+                "specialization_key: Hashable = field(init=False)",
+            ),
+            methods=("__post_init__",),
+        )
+    )
+    enum_contracts = {
+        "ValueArtifactKind": """REGIME_VALUE = "regime_value"
+GATED_CONTINUATION = "gated_continuation"
+""",
+        "ValueInputChannel": """NEXT_REGIME_VALUE = "next_regime_to_V_arr"
+SAME_PERIOD_VALUE = "same_period_regime_to_V_arr"
+EDGE_REFERENCE_VALUE = "edge_reference_regime_to_V_arr"
+""",
+        "ValueTransferKind": """ALIGNED_LOCAL = "aligned_local"
+COPY_TO_SOURCE_LAYOUT = "copy_to_source_layout"
+""",
+    }
+    for class_name, expected_source in enum_contracts.items():
+        try:
+            cls = _class_definition(tree=tree, name=class_name)
+        except ValueError as error:
+            errors.append(f"value transfer: {error}")
+            continue
+        body = list(cls.body)
+        if (
+            body
+            and isinstance(body[0], ast.Expr)
+            and isinstance(body[0].value, ast.Constant)
+            and isinstance(body[0].value.value, str)
+        ):
+            body.pop(0)
+        if (
+            [ast.unparse(item) for item in cls.bases] != ["StrEnum"]
+            or cls.decorator_list
+            or cls.keywords
+            or not _statements_match(
+                observed=body,
+                expected_source=expected_source,
+            )
+        ):
+            errors.append(f"value transfer: {class_name} enum contract changed")
+
+    version_assignments = [
+        statement
+        for statement in tree.body
+        if isinstance(statement, ast.Assign)
+        and any(
+            _target_names(target) == ("_VALUE_TRANSFER_VERSION",)
+            for target in statement.targets
+        )
+    ]
+    if not _statements_match(
+        observed=version_assignments,
+        expected_source="_VALUE_TRANSFER_VERSION = 1",
+    ):
+        errors.append("value transfer: specialization version binding changed")
+
+    errors.extend(
+        _exact_callable_errors(
+            tree=tree,
+            label="value transfer",
+            contracts={
+                "ValueArtifactAddress.__post_init__": "f7308877e3094c499f628aea48b5e6496bba83bcbf7a47b2bfe6b8b9cf00516f",
+                "ValueConsumerAddress.__post_init__": "95839f87e475d04b156cd5a9a91635c481e87f5efff2e7ddc92aba50b7291cbc",
+                "ResolvedValueTransfer.__post_init__": "044b3d79ca212c88473b4140302a53d339114f2f0816446b0c54bcce479ec1f3",
+                "resolve_value_transfer": "232ec967f8b1c8c9055ae513e5afce130d808e8afe7f90271fc19f111db0cc1e",
+                "apply_value_transfer": "9b300e2118558fefb5027a39bfdac5acbfd933cc3c9f26ffa92237c2cad471c2",
+                "apply_value_transfer_plan": "5b29e5ee7a81f92bafeaf8316ce68a8b24df89a5c88b34a30272858719b860e4",
+                "_replace_transfer_leaf": "5c963af02fdc3b6b6db3d47738fcb5a88bc563abd3e084e7e2aa34dec65ee477",
+                "_validate_edge_identity": "e5dc95f73258f513d41f76d249422cfe0d8943cb2e4a128a45cc2a98c5e74ea5",
+                "_assert_value_metadata": "7ebe6eb927b678ae88ed2a12d8f7571bdd8a86d5a4bf3dc55cd24f92da6e389d",
+                "_normalize_shape": "346ecb8fac04e0e000005dbc613e197e374b60cd9b08d1a53bba790e04c3621a",
+                "_require_period": "31f344bbdf23177b3a5bd9d2561bcbe4c9398814c1e7cbd6920afdbc0c013d68",
+                "_require_name": "af49e5c3217919d353aa787908d9d0764ff17792b1d64aaeb08afa1f0a983628",
+                "_require_enum": "4294ec9593c985870368a5d21f476900ddfffe66f42d275dbc02bec9708aba0d",
+                "_validate_path_segment": "1c985002819fb5feb6148fede65bb43334852e7ac653e75322aa79fb15209787",
+                "_require_sharding": "f3f13469e2413f320cc998e10097b00fca815669d417189e7689366b9baf67df",
+                "_check_sharding_shape": "dba09ca24339aa961d7d8bc46a685c3f04c0c8b4669cc27482e0df08217c26aa",
+            },
+        )
+    )
+    errors.extend(
+        _module_contract_errors(
+            tree=tree,
+            label="value transfer",
+            relevant_import_names={
+                "Hashable",
+                "Iterable",
+                "Mapping",
+                "MappingProxyType",
+                "RegimeName",
+                "StrEnum",
+                "dataclass",
+                "field",
+                "jax",
+                "jnp",
+            },
+            expected_imports=[
+                "from collections.abc import Hashable, Iterable, Mapping",
+                "from dataclasses import dataclass, field",
+                "from enum import StrEnum",
+                "from types import MappingProxyType",
+                "import jax",
+                "import jax.numpy as jnp",
+                "from _lcm.typing import RegimeName",
+            ],
+            expected_binding_counts={
+                "Hashable": 1,
+                "Iterable": 1,
+                "Mapping": 1,
+                "MappingProxyType": 1,
+                "RegimeName": 1,
+                "ResolvedValueTransfer": 1,
+                "StrEnum": 1,
+                "ValueArtifactAddress": 1,
+                "ValueArtifactKind": 1,
+                "ValueConsumerAddress": 1,
+                "ValueInputChannel": 1,
+                "ValueTransferKind": 1,
+                "_VALUE_TRANSFER_VERSION": 1,
+                "_assert_value_metadata": 1,
+                "_check_sharding_shape": 1,
+                "_normalize_shape": 1,
+                "_replace_transfer_leaf": 1,
+                "_require_enum": 1,
+                "_require_name": 1,
+                "_require_period": 1,
+                "_require_sharding": 1,
+                "_validate_edge_identity": 1,
+                "_validate_path_segment": 1,
+                "any": 0,
+                "apply_value_transfer": 1,
+                "apply_value_transfer_plan": 1,
+                "callable": 0,
+                "dataclass": 1,
+                "dict": 0,
+                "field": 1,
+                "getattr": 0,
+                "isinstance": 0,
+                "jax": 1,
+                "jnp": 1,
+                "len": 0,
+                "list": 0,
+                "object": 0,
+                "resolve_value_transfer": 1,
+                "set": 0,
+                "tuple": 0,
+                "type": 0,
             },
         )
     )
@@ -2298,8 +2626,10 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
         tree=tree,
         label="backward output-layout transport",
         contracts={
-            "_compile_all_functions": "ca5da41341db893a8b01283cc98c03402dfa4138980b5ba1f092c2acee766838",
-            "_resolve_output_layouts_and_lowering_keys": "8b33f8a0bdc7071cea8cea8efe07355f46f0032b4683147bf729dfa71ff4c4ae",
+            "_compile_all_functions": "f5895d9db8595cc8c856a68543f4066bd0034963381f6c4e95deeeb6cba8cead",
+            "_resolve_output_layouts_and_lowering_keys": "fef2365f03edfd6d3ef36efa3b405da9d926adc956d1df24c4a4b1b1bc7ebb4c",
+            "_resolve_value_input_transfer_plan": "7e6b8b9cdbebcb643a0cfd5e0fcea099973a1a829516fd5a2e6935e489e01465",
+            "_resolve_value_transfer_layout": "6cd863aaa64c0f558c797b47667479b595c77d5f3ee5c8b3dcfae188f1d05edd",
             "_initial_tile_widths": "f6a820999afacbccc0b4c2544cc6501dc50d856b372a2630efa2602292144a40",
             "_assert_core_program_arguments": "0ac8d8bacbaeff579daba66defdbd5258beae61d806ec8eddb4faff4575bb32d",
             "_lowering_key": "68e82c0372400e4577a6e38d4f5c64bdff88f5f732b86b15383a5e3157973b56",
@@ -2308,7 +2638,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             "_abstract_leaf_key": "94afc53d035e8ad9812025f72adcbf76d8966430ef259d339977e9cf90262b66",
             "_output_roles_key": "c73436e6abaec7f0388386d353675200d7bf3d5d3544654f8d47f37ad0e5e8da",
             "_assert_lowered_output_roles": "46823cef80ae0bd1c5294a63472a23c4f8ade153fe8eae8327403fe637f59df8",
-            "_attach_resolved_output_layout": "c85a1d4825deca8b1af859536fad9b68f25ffb434072346b3bce826de74c9342",
+            "_attach_resolved_output_layout": "dbe0edb4c2722b36e6894c79bef1f34ca3cb2f6e3c155e0a5522f5d2923a6b8b",
             "_publish_kernel_value": "5547b40f26e1fc86303ada9503f65c4210cbb4bb0b4fe6e715b9d99a58f78901",
         },
     )
@@ -2353,7 +2683,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             ]
             if len(starts) == len(ends) == 1 and starts[0] <= ends[0]:
                 corridors.append(loop.body[starts[0] : ends[0] + 1])
-        expected = "bbbc89a518b5e5f8e334ceb7c38ae9472f52c8e52215a55d89a1eafab16b6bda"
+        expected = "2af421ea176139a27f12a196bc04dcd98c52bc62eef383612f03cbebacdfd35b"
         if len(corridors) != 1 or _statements_ast_sha256(corridors[0]) != expected:
             errors.append(
                 "backward output-layout transport: solve publication corridor changed"
@@ -2365,6 +2695,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             relevant_import_names={
                 "CoreProgram",
                 "CoreProgramAware",
+                "ResolvedValueTransfer",
                 "DISSOLUTION_FLAG",
                 "OutputLayoutAware",
                 "PlannedCore",
@@ -2374,26 +2705,38 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
                 "assert_output_layout",
                 "cast",
                 "jax",
+                "planned_input_transfer_plan",
                 "planned_output_layout",
+                "ValueArtifactAddress",
+                "ValueArtifactKind",
+                "ValueTransferKind",
+                "_target_value_argument_leaf",
+                "_TargetValueAccessAware",
                 "_validate_core_program",
                 "resolve_core_program",
                 "resolve_output_layout",
+                "resolve_value_transfer",
             },
             expected_imports=[
                 "from typing import cast",
                 "import jax",
-                "from _lcm.execution.core_program import CoreProgram, CoreProgramAware, _validate_core_program, resolve_core_program",
-                "from _lcm.execution.output_layout import DISSOLUTION_FLAG, UNPLANNED, VALUE, OutputLayoutAware, PlannedCore, ResolvedOutputLayout, assert_output_layout, planned_output_layout, resolve_output_layout",
+                "from _lcm.execution.core_program import CoreProgram, CoreProgramAware, _target_value_argument_leaf, _TargetValueAccessAware, _validate_core_program, resolve_core_program",
+                "from _lcm.execution.output_layout import DISSOLUTION_FLAG, UNPLANNED, VALUE, OutputLayoutAware, PlannedCore, ResolvedOutputLayout, assert_output_layout, planned_input_transfer_plan, planned_output_layout, resolve_output_layout",
+                "from _lcm.execution.value_transfer import ResolvedValueTransfer, ValueArtifactAddress, ValueArtifactKind, ValueTransferKind, resolve_value_transfer",
             ],
             expected_binding_counts={
                 "CoreProgram": 1,
                 "CoreProgramAware": 1,
+                "ResolvedValueTransfer": 1,
                 "DISSOLUTION_FLAG": 1,
                 "OutputLayoutAware": 1,
                 "PlannedCore": 1,
                 "ResolvedOutputLayout": 1,
                 "UNPLANNED": 1,
                 "VALUE": 1,
+                "ValueArtifactAddress": 1,
+                "ValueArtifactKind": 1,
+                "ValueTransferKind": 1,
                 "_attach_resolved_output_layout": 1,
                 "_abstract_arguments_key": 1,
                 "_abstract_leaf_key": 1,
@@ -2406,13 +2749,19 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
                 "_output_roles_key": 1,
                 "_publish_kernel_value": 1,
                 "_resolve_output_layouts_and_lowering_keys": 1,
+                "_resolve_value_input_transfer_plan": 1,
+                "_resolve_value_transfer_layout": 1,
+                "_target_value_argument_leaf": 1,
+                "_TargetValueAccessAware": 1,
                 "_validate_core_program": 1,
                 "assert_output_layout": 1,
                 "cast": 1,
                 "jax": 1,
+                "planned_input_transfer_plan": 1,
                 "planned_output_layout": 1,
                 "resolve_core_program": 1,
                 "resolve_output_layout": 1,
+                "resolve_value_transfer": 1,
             },
         )
     )
@@ -3107,6 +3456,12 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> dict[str, Any]:
         errors.extend(new_errors)
         if new_errors:
             offending.add(OUTPUT_LAYOUT_SOURCE)
+    value_transfer_tree = parsed.get(VALUE_TRANSFER_SOURCE)
+    if value_transfer_tree is not None:
+        new_errors = _value_transfer_errors(value_transfer_tree)
+        errors.extend(new_errors)
+        if new_errors:
+            offending.add(VALUE_TRANSFER_SOURCE)
     processing_tree = parsed.get(PROCESSING_SOURCE)
     if processing_tree is not None:
         new_errors = _processing_caller_errors(processing_tree)
@@ -3714,6 +4069,7 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
     grid_source = (root / GRID_SEARCH_SOURCE).read_text(encoding="utf-8")
     core_program_source = (root / CORE_PROGRAM_SOURCE).read_text(encoding="utf-8")
     output_layout_source = (root / OUTPUT_LAYOUT_SOURCE).read_text(encoding="utf-8")
+    value_transfer_source = (root / VALUE_TRANSFER_SOURCE).read_text(encoding="utf-8")
     action_streaming_source = (root / ACTION_STREAMING_SOURCE).read_text(
         encoding="utf-8"
     )
@@ -4081,6 +4437,57 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             new="            return KernelResult(V_arr=V_arr, dissolution=~dissolution)",
             label="streamed collective result publication",
         ),
+        "value_access:grid_reachable_targets_dropped": _replace_nth(
+            text=grid_source,
+            marker="                target_regimes=target_regimes,",
+            replacement="                target_regimes=target_regimes[:-1],",
+            occurrence=2,
+        ),
+        "value_access:grid_gated_kind_bypassed": replace_once(
+            source=grid_source,
+            old="                if target_regime in self.edge_target_regimes",
+            new="                if False",
+            label="GridSearch gated-continuation artifact kind",
+        ),
+        "value_access:grid_same_period_shifted": replace_once(
+            source=grid_source,
+            old=(
+                "                    period=self.period,\n"
+                "                    regime=regime_name,"
+            ),
+            new=(
+                "                    period=self.period + 1,\n"
+                "                    regime=regime_name,"
+            ),
+            label="GridSearch same-period artifact coordinate",
+        ),
+        "value_access:grid_edge_reference_omitted": _replace_nth(
+            text=grid_source,
+            marker="            for regime_name in self.edge_reference_regimes",
+            replacement="            for regime_name in self.edge_reference_regimes[:-1]",
+            occurrence=1,
+        ),
+        "value_access:grid_program_declarations_dropped": replace_once(
+            source=grid_source,
+            old=(
+                "                target_value_accesses="
+                "self.target_value_accesses(core_key=core_key),"
+            ),
+            new="                target_value_accesses=(),",
+            label="GridSearch CoreProgram target-value declarations",
+        ),
+        "value_access:grid_consumer_path_rebound": replace_once(
+            source=grid_source,
+            old="                path=path,",
+            new="                path=(path[0], path[0]),",
+            label="GridSearch exact consumer path",
+        ),
+        "value_access:grid_edge_refs_widened": replace_once(
+            source=grid_source,
+            old="    for target in target_regimes:",
+            new="    for target in source.gated_edges:",
+            label="GridSearch reachable edge-reference census",
+        ),
     }
     specs.update(
         {
@@ -4387,8 +4794,22 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         ),
         "streaming_resolver:arguments_filtered": replace_once(
             source=core_program_source,
-            old="        arguments=program.arguments,",
-            new="        arguments=dict(tuple(program.arguments.items())[:-1]),",
+            old=(
+                "        arguments=apply_value_transfer_plan(\n"
+                "            arguments=program.arguments,\n"
+                "            plan=resolved_input_transfer_plan,\n"
+                "        ),"
+            ),
+            new=(
+                "        arguments=dict(\n"
+                "            tuple(\n"
+                "                apply_value_transfer_plan(\n"
+                "                    arguments=program.arguments,\n"
+                "                    plan=resolved_input_transfer_plan,\n"
+                "                ).items()\n"
+                "            )[:-1]\n"
+                "        ),"
+            ),
             label="streamed resolver arguments",
         ),
         "streaming_resolver:specialization_drops_axes": replace_once(
@@ -4402,6 +4823,61 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             old="        output_roles=program.output_roles,",
             new="        output_roles=None,",
             label="streamed resolver output roles",
+        ),
+        "value_access:core_requirements_erased": replace_once(
+            source=core_program_source,
+            old=(
+                "        object.__setattr__(\n"
+                '            self, "target_value_accesses", '
+                "tuple(self.target_value_accesses)\n"
+                "        )"
+            ),
+            new='        object.__setattr__(self, "target_value_accesses", ())',
+            label="core-program target-value requirements snapshot",
+        ),
+        "value_access:core_plan_match_bypassed": replace_once(
+            source=core_program_source,
+            old="    if declared != planned:",
+            new="    if False:",
+            label="core-program declared-to-resolved transfer match",
+        ),
+        "value_access:core_metadata_check_bypassed": replace_once(
+            source=core_program_source,
+            old=(
+                "        _validate_transfer_argument_metadata(\n"
+                "            program=program, access=access, transfer=transfer\n"
+                "        )"
+            ),
+            new=(
+                "        if False:\n"
+                "            _validate_transfer_argument_metadata(\n"
+                "                program=program, access=access, transfer=transfer\n"
+                "            )"
+            ),
+            label="core-program transfer argument metadata validation",
+        ),
+        "value_access:core_lowering_plan_bypassed": replace_once(
+            source=core_program_source,
+            old=(
+                "        arguments=apply_value_transfer_plan(\n"
+                "            arguments=program.arguments,\n"
+                "            plan=resolved_input_transfer_plan,\n"
+                "        ),"
+            ),
+            new="        arguments=program.arguments,",
+            label="core-program lowering input transfer application",
+        ),
+        "value_access:core_specialization_dropped": replace_once(
+            source=core_program_source,
+            old="            input_transfer_specialization_key,",
+            new="            (),",
+            label="core-program transfer specialization identity",
+        ),
+        "value_access:core_consumer_channel_rebound": replace_once(
+            source=core_program_source,
+            old="    channel = access.source.channel.value",
+            new='    channel = "next_regime_to_V_arr"',
+            label="core-program exact consumer channel",
         ),
     }
     specs.update(
@@ -4752,8 +5228,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         ),
         "output_layout:filter_before_assert": replace_once(
             source=output_layout_source,
-            old="        output = self.compiled(*args, **kwargs)",
-            new="        output = candidate_filter(self.compiled(*args, **kwargs))",
+            old="        output = self.compiled(*args, **planned_kwargs)",
+            new="        output = candidate_filter(self.compiled(*args, **planned_kwargs))",
             label="planned core pre-assert identity",
         ),
         "output_layout:sharding_check_disabled": replace_once(
@@ -4768,11 +5244,114 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             new="    expected_value_shape = tuple(int(size) for size in value_shape)[1:]",
             label="planned absolute value shape",
         ),
+        "value_transfer:runtime_plan_bypassed": replace_once(
+            source=output_layout_source,
+            old=(
+                "        planned_kwargs = (\n"
+                "            apply_value_transfer_plan("
+                "arguments=kwargs, plan=self.input_transfer_plan)\n"
+                "            if self.input_transfer_plan\n"
+                "            else kwargs\n"
+                "        )"
+            ),
+            new="        planned_kwargs = kwargs",
+            label="PlannedCore runtime transfer application",
+        ),
+        "value_transfer:runtime_plan_truncated": replace_once(
+            source=output_layout_source,
+            old="plan=self.input_transfer_plan)",
+            new="plan=self.input_transfer_plan[:-1])",
+            label="PlannedCore complete runtime transfer plan",
+        ),
+        "value_transfer:planned_core_plan_erased": replace_once(
+            source=output_layout_source,
+            old="        plan = tuple(self.input_transfer_plan)",
+            new="        plan = ()",
+            label="PlannedCore resolved transfer-plan snapshot",
+        ),
     }
     specs.update(
         {
             name: {"path": OUTPUT_LAYOUT_SOURCE, "source": mutated}
             for name, mutated in output_layout_cases.items()
+        }
+    )
+
+    value_transfer_cases = {
+        "value_transfer:aligned_value_sliced": replace_once(
+            source=value_transfer_source,
+            old="        return stored",
+            new="        return stored[1:]",
+            label="aligned-local value identity",
+        ),
+        "value_transfer:copy_value_sliced": replace_once(
+            source=value_transfer_source,
+            old="        copied = jax.device_put(stored, transfer.source_sharding)",
+            new="        copied = jax.device_put(stored[1:], transfer.source_sharding)",
+            label="copied value candidate preservation",
+        ),
+        "value_transfer:stored_metadata_check_bypassed": replace_once(
+            source=value_transfer_source,
+            old=(
+                "    stored = _assert_value_metadata(\n"
+                "        value=value,\n"
+                "        expected_shape=transfer.expected_shape,\n"
+                "        expected_dtype=transfer.expected_dtype,\n"
+                "        expected_sharding=transfer.stored_sharding,\n"
+                '        label="stored",\n'
+                "    )"
+            ),
+            new="    stored = value",
+            label="stored transfer metadata validation",
+        ),
+        "value_transfer:plan_skips_last": replace_once(
+            source=value_transfer_source,
+            old="    for transfer in transfers:",
+            new="    for transfer in transfers[:-1]:",
+            label="complete input transfer plan",
+        ),
+        "value_transfer:consumer_channel_ignored": replace_once(
+            source=value_transfer_source,
+            old=(
+                "        locator = ("
+                "transfer.source.channel.value, transfer.source.path)"
+            ),
+            new=(
+                "        locator = (ValueInputChannel.NEXT_REGIME_VALUE.value, "
+                "transfer.source.path)"
+            ),
+            label="exact transfer consumer channel",
+        ),
+        "value_transfer:edge_identity_check_bypassed": replace_once(
+            source=value_transfer_source,
+            old=(
+                "        _validate_edge_identity("
+                "target=self.target, source=self.source)"
+            ),
+            new=(
+                "        if False:\n"
+                "            _validate_edge_identity("
+                "target=self.target, source=self.source)"
+            ),
+            label="transfer artifact-to-consumer identity",
+        ),
+        "value_transfer:copy_destination_ignored": replace_once(
+            source=value_transfer_source,
+            old="        copied = jax.device_put(stored, transfer.source_sharding)",
+            new="        copied = jax.device_put(stored, transfer.stored_sharding)",
+            label="copy-to-source destination layout",
+        ),
+        "value_transfer:duplicate_consumer_admitted": replace_once(
+            source=value_transfer_source,
+            old="        if locator in seen:",
+            new="        if False:",
+            label="duplicate transfer consumer rejection",
+        ),
+    }
+    specs.update(
+        {
+            name: {"path": VALUE_TRANSFER_SOURCE, "source": mutated}
+            for name, mutated in value_transfer_cases.items()
         }
     )
 
@@ -5214,6 +5793,58 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
                 label="planned raw lowering callable",
             ),
         },
+        "value_transfer:backward_resolver_plan_omitted": {
+            "path": BACKWARD_INDUCTION_SOURCE,
+            "source": replace_once(
+                source=backward_induction_source,
+                old="                input_transfer_plan=input_transfer_plan,",
+                new="                input_transfer_plan=(),",
+                label="backward resolved-program transfer plan",
+            ),
+        },
+        "value_transfer:backward_node_plan_dropped": {
+            "path": BACKWARD_INDUCTION_SOURCE,
+            "source": replace_once(
+                source=backward_induction_source,
+                old="                input_transfer_plan=input_transfer_plans[triple],",
+                new="                input_transfer_plan=(),",
+                label="backward absolute-node transfer-plan attachment",
+            ),
+        },
+        "value_transfer:backward_copy_uses_output_spec": {
+            "path": BACKWARD_INDUCTION_SOURCE,
+            "source": replace_once(
+                source=backward_induction_source,
+                old="            spec=jax.P(),",
+                new="            spec=source_execution_sharding.spec,",
+                label="backward replicated copy destination",
+            ),
+        },
+        "value_transfer:backward_cross_mesh_admitted": {
+            "path": BACKWARD_INDUCTION_SOURCE,
+            "source": replace_once(
+                source=backward_induction_source,
+                old="        and stored_sharding.mesh == source_execution_sharding.mesh",
+                new="        and True",
+                label="backward aligned-local mesh identity",
+            ),
+        },
+        "value_transfer:backward_unsupported_conversion_admitted": {
+            "path": BACKWARD_INDUCTION_SOURCE,
+            "source": replace_once(
+                source=backward_induction_source,
+                old=(
+                    "    msg = (\n"
+                    '        "Unsupported target-value layout conversion: "'
+                ),
+                new=(
+                    "    return ValueTransferKind.ALIGNED_LOCAL, stored_sharding\n"
+                    "    msg = (\n"
+                    '        "Unsupported target-value layout conversion: "'
+                ),
+                label="backward fail-closed unsupported layout conversion",
+            ),
+        },
         "streaming_aot:provider_ignored": {
             "path": BACKWARD_INDUCTION_SOURCE,
             "source": replace_once(
@@ -5284,6 +5915,7 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
                 old="    return PlannedCore(\n"
                 "        compiled=compiled,\n"
                 '        layout=cast("ResolvedOutputLayout", layout),\n'
+                "        input_transfer_plan=input_transfer_plan,\n"
                 "    )",
                 new="    return compiled",
                 label="planned core attachment",
@@ -5560,6 +6192,7 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         GRID_SEARCH_SOURCE: grid_source,
         CORE_PROGRAM_SOURCE: core_program_source,
         OUTPUT_LAYOUT_SOURCE: output_layout_source,
+        VALUE_TRANSFER_SOURCE: value_transfer_source,
         ACTION_STREAMING_SOURCE: action_streaming_source,
         ACTION_REDUCTION_SOURCE: action_reduction_source,
         COLLECTIVE_ACTION_REDUCTION_SOURCE: collective_action_reduction_source,

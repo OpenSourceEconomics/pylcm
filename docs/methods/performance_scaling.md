@@ -46,8 +46,10 @@ excellent on a GPU. Conversely, an EGM method with sequential scans or many smal
 can lose despite lower arithmetic complexity.
 
 Eligible JIT GridSearch solve kernels evaluate the canonical action product in bounded
-blocks. Same-period value references, gated-target continuations, and edge-reference
-values and parameters remain unchanged dynamic inputs to those blocks, so a
+blocks. Each period kernel names every continuation and reference value it reads as an
+exact logical target artifact paired with the source core's argument channel and tree
+path. Same-period value references, gated-target continuations, and edge-reference
+values and parameters therefore remain ordinary dynamic inputs to those blocks, so a
 value-dependent declaration does not by itself force dense action materialization.
 Ordinary co-mapped state routes preserve device-local continuation reads while streaming
 actions. Eligible singleton folded-state routes also stream their action product at each
@@ -62,6 +64,22 @@ the streamed program. See the canonical
 planner selects a private width keyword outside the complete model argument namespace,
 so model names never force a dense fallback. Blockwise action evaluation preserves the
 full represented support; its runtime and memory effect remains empirical.
+
+Before lowering a planned GridSearch core, the engine resolves every declared value read
+to one of two private transfer operations. `ALIGNED_LOCAL` passes an array through when
+it is already resident on the source core's mesh, retaining the value's own
+rank-specific partitioning. `COPY_TO_SOURCE_LAYOUT` makes an explicit copy into the
+supported layout on the source core's mesh. The exact same resolved plan transforms the
+lowering arguments and the runtime arguments; unexpected shape, dtype, sharding,
+address, or conversion combinations fail closed.
+
+The exact declarations also support conservative remaining-consumer accounting. A
+logical artifact is counted once per planned dispatch and its count is committed only
+after that dispatch returns successfully. Reaching zero means only that an unpinned
+artifact is eligible for a later scheduler decision. The current planner does not
+physically release, donate, or offload arrays. Dense compatibility routes and consumers
+without a complete plan remain pinned, so this bookkeeping is not a graph-wide
+peak-memory claim.
 
 A large GPU should not be treated as a faster small GPU automatically. Independent
 tests, regimes, branches, subjects, or candidate chunks can improve occupancy, but only
