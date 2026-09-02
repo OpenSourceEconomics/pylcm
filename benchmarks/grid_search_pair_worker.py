@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib
+import importlib.abc
+import importlib.util
 import json
 import os
 import re
@@ -11,9 +14,10 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from contextlib import ExitStack
 from pathlib import Path
+from types import ModuleType
 from typing import Any, cast
 
 from benchmarks.grid_search_pair_scenarios import EXTERNAL_HARNESS_SOURCES
@@ -54,6 +58,127 @@ _COLLECTIVE_OPS = (
     "ragged-all-to-all",
     "reduce-scatter",
 )
+
+_VERSION_SHIM_MODULE = "_lcm.version"
+_VERSION_SHIM_VERSION = "0+gridsearchpair"
+_VERSION_SHIM_ORIGIN = "<pylcm-grid-search-pair-version-shim>"
+_VERSION_SHIM_EXPORTS = (
+    "__version__",
+    "__version_tuple__",
+    "version",
+    "version_tuple",
+    "__commit_id__",
+    "commit_id",
+)
+
+
+def _version_shim_identity() -> dict[str, Any]:
+    identity = {
+        "module": _VERSION_SHIM_MODULE,
+        "origin": _VERSION_SHIM_ORIGIN,
+        "exports": list(_VERSION_SHIM_EXPORTS),
+        "version": _VERSION_SHIM_VERSION,
+        "version_tuple": [0, "gridsearchpair"],
+        "commit_id": None,
+    }
+    identity["sha256"] = hashlib.sha256(
+        json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return identity
+
+
+class _VersionShimFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
+    """Load exactly ``_lcm.version`` from immutable harness metadata."""
+
+    # keyword-only-exempt: library-callback=importlib.abc.MetaPathFinder.find_spec
+    def find_spec(
+        self,
+        fullname: str,
+        path: Sequence[str] | None,
+        target: ModuleType | None = None,
+    ) -> Any:
+        del path, target
+        if fullname != _VERSION_SHIM_MODULE:
+            return None
+        return importlib.util.spec_from_loader(
+            fullname,
+            self,
+            origin=_VERSION_SHIM_ORIGIN,
+        )
+
+    def create_module(self, spec: Any) -> None:
+        del spec
+
+    def exec_module(self, module: ModuleType) -> None:
+        version_tuple = (0, "gridsearchpair")
+        module.__file__ = _VERSION_SHIM_ORIGIN
+        module.__all__ = list(_VERSION_SHIM_EXPORTS)
+        module.__version__ = _VERSION_SHIM_VERSION
+        module.version = _VERSION_SHIM_VERSION
+        module.__version_tuple__ = version_tuple
+        module.version_tuple = version_tuple
+        module.__commit_id__ = None
+        module.commit_id = None
+
+
+def _import_lcm_with_version_shim(
+    *, target_src: Path
+) -> tuple[ModuleType, dict[str, Any]]:
+    """Import target ``lcm`` with identical build metadata for both revisions.
+
+    Hatch's VCS hook generates ``src/_lcm/version.py`` while building the package,
+    and the generated file is intentionally ignored by git.  An exact source
+    checkout therefore need not contain it.  ``lcm.__init__`` only imports its
+    ``__version__`` metadata; no measured kernel reads it.  A temporary exact-name
+    finder makes source imports reliable and prevents an ignored local generation from
+    distinguishing the base and head workers.
+    """
+    preloaded = sorted(
+        name
+        for name in sys.modules
+        if name in {"lcm", "_lcm"} or name.startswith(("lcm.", "_lcm."))
+    )
+    if preloaded:
+        raise RuntimeError(
+            f"Target packages were imported before their shim: {preloaded!r}."
+        )
+    if not sys.path or Path(sys.path[0]).resolve() != target_src.resolve():
+        raise RuntimeError("The target source root must be first on sys.path.")
+
+    finder = _VersionShimFinder()
+    sys.meta_path.insert(0, finder)
+    try:
+        lcm_module = importlib.import_module("lcm")
+    finally:
+        try:
+            sys.meta_path.remove(finder)
+        except ValueError as error:
+            raise RuntimeError(
+                "The version-shim finder disappeared during import."
+            ) from error
+
+    private_module = sys.modules.get("_lcm")
+    version_module = sys.modules.get(_VERSION_SHIM_MODULE)
+    if not isinstance(private_module, ModuleType) or not isinstance(
+        version_module, ModuleType
+    ):
+        raise TypeError("Target lcm did not import the version shim.")
+    for name, module in (("lcm", lcm_module), ("_lcm", private_module)):
+        module_file = getattr(module, "__file__", None)
+        if module_file is None or not Path(module_file).resolve().is_relative_to(
+            target_src.resolve()
+        ):
+            raise RuntimeError(
+                f"Imported {name} from {module_file!r}, outside target source "
+                f"{target_src}."
+            )
+    if getattr(private_module, "version", None) is not version_module:
+        raise RuntimeError("The version shim is not bound as _lcm.version.")
+    if getattr(lcm_module, "__version__", None) != _VERSION_SHIM_VERSION:
+        raise RuntimeError(
+            "Target lcm did not consume the revision-neutral version shim."
+        )
+    return lcm_module, _version_shim_identity()
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -500,7 +625,7 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0912, PLR0915
     elif args.backend != "auto":
         jax.config.update("jax_platform_name", args.backend)
 
-    import lcm
+    lcm, version_shim = _import_lcm_with_version_shim(target_src=target_src)
     from _lcm.solution import backward_induction
 
     imported_lcm = Path(lcm.__file__).resolve()
@@ -660,6 +785,7 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0912, PLR0915
         "scenario_digest": args.expected_scenario_digest,
         "lock_digest": args.expected_lock_digest,
         "target_lcm_file": str(imported_lcm),
+        "version_shim": version_shim,
         "precision": int(args.precision),
         "pixi": {
             "environment_name": args.expected_pixi_environment,

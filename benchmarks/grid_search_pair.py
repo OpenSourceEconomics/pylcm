@@ -443,7 +443,13 @@ def _compare_measurement_identity(
         "routes": _route_identity(base["routes"]),
         "runtime": {
             field: base[field]
-            for field in ("python", "jax_version", "jaxlib_version", "jax_enable_x64")
+            for field in (
+                "python",
+                "jax_version",
+                "jaxlib_version",
+                "jax_enable_x64",
+                "version_shim",
+            )
         },
         "devices": base["devices"],
         "behavioral_environment": _behavioral_environment(base["environment"]),
@@ -453,7 +459,13 @@ def _compare_measurement_identity(
         "routes": _route_identity(head["routes"]),
         "runtime": {
             field: head[field]
-            for field in ("python", "jax_version", "jaxlib_version", "jax_enable_x64")
+            for field in (
+                "python",
+                "jax_version",
+                "jaxlib_version",
+                "jax_enable_x64",
+                "version_shim",
+            )
         },
         "devices": head["devices"],
         "behavioral_environment": _behavioral_environment(head["environment"]),

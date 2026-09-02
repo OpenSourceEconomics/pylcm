@@ -30,7 +30,11 @@ from benchmarks.grid_search_pair import (
     _worker_env,
 )
 from benchmarks.grid_search_pair_scenarios import SCENARIOS, TARGET_SCENARIO_SOURCES
-from benchmarks.grid_search_pair_worker import _block_result, _hlo_census
+from benchmarks.grid_search_pair_worker import (
+    _VERSION_SHIM_VERSION,
+    _block_result,
+    _hlo_census,
+)
 
 
 def _write_npz(path: Path, **arrays: np.ndarray) -> None:
@@ -103,6 +107,22 @@ def _measurement_identity_fixture(*, routes: dict[str, Any]) -> dict[str, Any]:
         "jax_version": "0.9.0",
         "jaxlib_version": "0.9.0",
         "jax_enable_x64": False,
+        "version_shim": {
+            "module": "_lcm.version",
+            "origin": "<pylcm-grid-search-pair-version-shim>",
+            "exports": [
+                "__version__",
+                "__version_tuple__",
+                "version",
+                "version_tuple",
+                "__commit_id__",
+                "commit_id",
+            ],
+            "version": _VERSION_SHIM_VERSION,
+            "version_tuple": [0, "gridsearchpair"],
+            "commit_id": None,
+            "sha256": "stable-shim-digest",
+        },
         "devices": [{"id": 0, "platform": "cpu", "kind": "cpu"}],
         "environment": {
             "JAX_COMPILATION_CACHE_DIR": "/cache/base",
@@ -292,6 +312,11 @@ def test_measurement_identity_allows_only_streaming_and_cache_path_differences()
         _compare_measurement_identity(base=base, head=drift)
 
     drift = deepcopy(head)
+    drift["version_shim"]["sha256"] = "different"
+    with pytest.raises(RuntimeError, match="runtime differs"):
+        _compare_measurement_identity(base=base, head=drift)
+
+    drift = deepcopy(head)
     drift["devices"][0]["kind"] = "different"
     with pytest.raises(RuntimeError, match="devices differs"):
         _compare_measurement_identity(base=base, head=drift)
@@ -327,6 +352,9 @@ def test_all_five_scenarios_construct_with_their_declared_topology(
     tmp_path: Path,
 ) -> None:
     code = """
+import sys
+from pathlib import Path
+
 import jax
 
 jax.config.update("jax_enable_x64", False)
@@ -336,9 +364,15 @@ jax.config.update("jax_platform_name", "cpu")
 from benchmarks.grid_search_pair_scenarios import SCENARIOS, build_scenario
 from benchmarks.grid_search_pair_worker import (
     _assert_scenario_identity,
+    _import_lcm_with_version_shim,
     _route_metadata,
     _scenario_dimensions,
 )
+
+target_src = (Path.cwd() / "src").resolve()
+sys.path.insert(0, str(target_src))
+lcm, version_shim = _import_lcm_with_version_shim(target_src=target_src)
+assert lcm.__version__ == version_shim["version"]
 
 for name, spec in SCENARIOS.items():
     model, params = build_scenario(name=name)
@@ -376,6 +410,68 @@ assert {device.platform for device in jax.devices()} == {"cpu"}
         cwd=repo_root,
         env=env,
         timeout=180,
+    )
+
+    assert completed.returncode == 0, (
+        f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+    )
+
+
+@pytest.mark.parametrize("generated_version", [False, True])
+def test_version_shim_handles_missing_or_generated_metadata(
+    *, tmp_path: Path, generated_version: bool
+) -> None:
+    target_src = tmp_path / "target" / "src"
+    (target_src / "lcm").mkdir(parents=True)
+    (target_src / "_lcm").mkdir()
+    (target_src / "lcm" / "__init__.py").write_text(
+        "from _lcm.version import __version__\n"
+    )
+    (target_src / "_lcm" / "__init__.py").write_text("")
+    if generated_version:
+        (target_src / "_lcm" / "version.py").write_text(
+            'raise AssertionError("generated target metadata was imported")\n'
+        )
+    code = """\
+import sys
+from pathlib import Path
+
+from benchmarks.grid_search_pair_worker import (
+    _VERSION_SHIM_VERSION,
+    _import_lcm_with_version_shim,
+)
+
+target_src = Path(sys.argv[1]).resolve()
+sys.path.insert(0, str(target_src))
+lcm, identity = _import_lcm_with_version_shim(target_src=target_src)
+import _lcm.version as version_module
+import _lcm
+
+assert lcm.__version__ == _VERSION_SHIM_VERSION
+assert version_module.__version__ == _VERSION_SHIM_VERSION
+assert version_module.version == _VERSION_SHIM_VERSION
+assert version_module.__version_tuple__ == (0, "gridsearchpair")
+assert version_module.version_tuple == (0, "gridsearchpair")
+assert version_module.__commit_id__ is None
+assert version_module.commit_id is None
+assert version_module.__file__ == "<pylcm-grid-search-pair-version-shim>"
+assert _lcm.version is version_module
+assert identity["version"] == _VERSION_SHIM_VERSION
+assert len(identity["sha256"]) == 64
+"""
+    repo_root = Path(__file__).resolve().parent.parent
+    completed = subprocess.run(
+        [sys.executable, "-c", code, str(target_src)],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=repo_root,
+        env=_worker_env(
+            harness_root=repo_root,
+            checkout=repo_root,
+            cache_dir=tmp_path / "cache",
+        ),
+        timeout=60,
     )
 
     assert completed.returncode == 0, (
