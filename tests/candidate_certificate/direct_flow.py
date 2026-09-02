@@ -178,7 +178,7 @@ _SOURCE_SEALS = {
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
     MAX_Q_SOURCE: "6bed0c5a31bbc1c7fe9e0d9250223888d1271528b01844a398668af038e24844",
     PROCESSING_SOURCE: "e9fc3dc1b8b703f12867f336ce4439356edc2fbafc919ae2014cd939234a1b56",
-    GRID_SEARCH_SOURCE: "0dfc581aacd9c0a0546256e39dd1a27f7c74b810a0adb9b66d3cc56a82e3588a",
+    GRID_SEARCH_SOURCE: "31faee7389be0cb9d992c28959f2328902c36277abcd92150af6c619e46a15dd",
     CORE_PROGRAM_SOURCE: "661af8a35e2eea2e29ebfbe4d4ba9ba15e00972e910d93a98e06a5fa1286d84f",
     OUTPUT_LAYOUT_SOURCE: "d08aab63241c85d14ef8a59b105a9e45effc5cc2e4e3d0beb6d8fb36431fa43e",
     ACTION_STREAMING_SOURCE: "6bc9a29fffba6e49d634df423d78d0232850fa6c327a82225e73b5ff0f2c384d",
@@ -224,9 +224,9 @@ _SOURCE_SEALS = {
     MODEL_PROCESSING_SOURCE: "8a159831e37a9582852908c7e213106aa1070500f4e64fa12f1a7ed628854740",
 }
 
-EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 297
+EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 305
 EXPECTED_DIRECT_FLOW_MUTATION_NAMES_SHA256 = (
-    "9203b0dbdcadc7f114cd4b6d6b6cb7835e70e1e8d37a402892d532c9f456c996"
+    "fb69a202161592c6441dfb6f6d300d73bb813646c28f467982a01062598fbb13"
 )
 
 
@@ -1827,14 +1827,53 @@ def _grid_search_caller_errors(tree: ast.Module) -> list[str]:
         and not method.decorator_list
     ):
         errors.append("solve caller: build_period_kernels signature changed")
+    try:
+        disposition_cls = _class_definition(
+            tree=tree, name="_ActionStreamingDisposition"
+        )
+    except ValueError as error:
+        errors.append(f"solve caller: {error}")
+    else:
+        disposition_body = list(disposition_cls.body)
+        if (
+            disposition_body
+            and isinstance(disposition_body[0], ast.Expr)
+            and isinstance(disposition_body[0].value, ast.Constant)
+            and isinstance(disposition_body[0].value.value, str)
+        ):
+            disposition_body.pop(0)
+        if (
+            [ast.unparse(item) for item in disposition_cls.bases] != ["StrEnum"]
+            or disposition_cls.decorator_list
+            or disposition_cls.keywords
+            or not _statements_match(
+                observed=disposition_body,
+                expected_source='''STREAMED = "streamed"
+DENSE_JIT_DISABLED = "deliberately_dense:jit_disabled"
+DENSE_TRIVIAL_ACTION_PRODUCT = "deliberately_dense:trivial_action_product"
+DENSE_CO_MAP_REFERENCE_CHANNEL = "deliberately_dense:co_map_with_separate_reference_channel"
+UNSUPPORTED_COLLECTIVE_EV1 = "unsupported:collective_ev1"
+UNSUPPORTED_EV1_FOLD = "unsupported:ev1_fold"
+UNSUPPORTED_COLLECTIVE_FOLD = "unsupported:collective_fold"
+UNSUPPORTED_EV1_WITHOUT_DISCRETE_ACTION = "unsupported:ev1_without_discrete_action"
+
+@property
+def category(self) -> str:
+    """Return the stable streamed/deliberately-dense/unsupported category."""
+    return self.value.partition(":")[0]
+''',
+            )
+        ):
+            errors.append("solve caller: action-streaming disposition contract changed")
     errors.extend(
         _exact_callable_errors(
             tree=tree,
             label="solve caller live streamed provider",
             contracts={
                 "_select_action_width_keyword": "d5c0751bf2eb4a98a08b1641e41cfea9f46230af044a1c666e49f6f444cadb68",
-                "GridSearch.build_period_kernels": "b06cef2d560474d97d50834123dafdc7fffbaeb4d12016fbe23457787a1df008",
-                "_supports_action_streaming": "9b56a6294125a8a8ef28bd9e770aabc6aa00dd121050cffdc2ce96c72239eba7",
+                "GridSearch.build_period_kernels": "d249f60fd57592ad8ccd1ea163cbd41e0b8f63e8a043c8c3e6c02a015abf5fdc",
+                "_classify_action_streaming": "755aad955b08e5800774cd6eae0b5b4a32236269569de8b6443613ac06f03b45",
+                "_supports_action_streaming": "d93f977fad68ad528beb9d4b9e6d45e5eb95b53c9a0398ff6f6a62ec548bad11",
             },
         )
     )
@@ -1898,6 +1937,7 @@ def _grid_search_caller_errors(tree: ast.Module) -> list[str]:
                 "MappingProxyType",
                 "REGIME_CONF",
                 "Solver",
+                "StrEnum",
                 "GridSearchEV1ActionReduction",
                 "StreamableProductAxis",
                 "beartype",
@@ -1909,6 +1949,7 @@ def _grid_search_caller_errors(tree: ast.Module) -> list[str]:
             },
             expected_imports=[
                 "from dataclasses import dataclass, replace",
+                "from enum import StrEnum",
                 "from types import MappingProxyType",
                 "from typing import cast",
                 "import jax",
@@ -1926,11 +1967,15 @@ def _grid_search_caller_errors(tree: ast.Module) -> list[str]:
                 "CoreProgram": 1,
                 "COLLECTIVE_HARD_MAX_REDUCTION": 1,
                 "GridSearch": 1,
+                "_ActionStreamingDisposition": 1,
+                "_classify_action_streaming": 1,
                 "_select_action_width_keyword": 1,
+                "_supports_action_streaming": 1,
                 "HARD_MAX_REDUCTION": 1,
                 "MappingProxyType": 1,
                 "REGIME_CONF": 1,
                 "Solver": 1,
+                "StrEnum": 1,
                 "StreamableProductAxis": 1,
                 "beartype": 1,
                 "cast": 1,
@@ -3878,38 +3923,109 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             new="                        width_keyword=_ACTION_WIDTH_KEYWORD,",
             label="streamed CoreProgram width-keyword transport",
         ),
-        "streaming_provider:fold_route_disabled": _insert_before_nth(
-            text=grid_source,
-            marker=(
-                "        and not (\n"
-                "            context.co_map_state_names\n"
-                "            and (context.same_period_ref_regimes or context.edge_reference_regimes)\n"
-                "        )"
+        "streaming_provider:fold_route_disabled": replace_once(
+            source=grid_source,
+            old=(
+                "    else:\n"
+                "        disposition = _ActionStreamingDisposition.STREAMED\n"
+                "    return disposition"
             ),
-            insertion="        and not context.fold_state_names\n",
-            occurrence=1,
+            new=(
+                "    elif context.fold_state_names:\n"
+                "        disposition = "
+                "_ActionStreamingDisposition.DENSE_TRIVIAL_ACTION_PRODUCT\n"
+                "    else:\n"
+                "        disposition = _ActionStreamingDisposition.STREAMED\n"
+                "    return disposition"
+            ),
+            label="streamed singleton fold eligibility",
         ),
         "streaming_provider:co_map_route_disabled": replace_once(
             source=grid_source,
             old=(
-                "        and not (\n"
-                "            context.co_map_state_names\n"
-                "            and (context.same_period_ref_regimes or context.edge_reference_regimes)\n"
-                "        )"
+                "    elif context.co_map_state_names and (\n"
+                "        context.same_period_ref_regimes or context.edge_reference_regimes\n"
+                "    ):\n"
+                "        disposition = "
+                "_ActionStreamingDisposition.DENSE_CO_MAP_REFERENCE_CHANNEL"
             ),
-            new="        and not context.co_map_state_names",
+            new=(
+                "    elif context.co_map_state_names:\n"
+                "        disposition = "
+                "_ActionStreamingDisposition.DENSE_CO_MAP_REFERENCE_CHANNEL"
+            ),
             label="streamed co-map route eligibility",
         ),
         "streaming_provider:co_map_reference_guard_bypassed": replace_once(
             source=grid_source,
             old=(
-                "        and not (\n"
-                "            context.co_map_state_names\n"
-                "            and (context.same_period_ref_regimes or context.edge_reference_regimes)\n"
+                "    elif context.co_map_state_names and (\n"
+                "        context.same_period_ref_regimes or context.edge_reference_regimes\n"
+                "    ):\n"
+                "        disposition = "
+                "_ActionStreamingDisposition.DENSE_CO_MAP_REFERENCE_CHANNEL"
+            ),
+            new=(
+                "    elif False and context.co_map_state_names and (\n"
+                "        context.same_period_ref_regimes or context.edge_reference_regimes\n"
+                "    ):\n"
+                "        disposition = "
+                "_ActionStreamingDisposition.DENSE_CO_MAP_REFERENCE_CHANNEL"
+            ),
+            label="streamed co-map separate-reference guard",
+        ),
+        "streaming_classifier:collective_ev1_admitted": replace_once(
+            source=grid_source,
+            old="        disposition = _ActionStreamingDisposition.UNSUPPORTED_COLLECTIVE_EV1",
+            new="        disposition = _ActionStreamingDisposition.STREAMED",
+            label="collective EV1 disposition",
+        ),
+        "streaming_classifier:ev1_fold_admitted": replace_once(
+            source=grid_source,
+            old="        disposition = _ActionStreamingDisposition.UNSUPPORTED_EV1_FOLD",
+            new="        disposition = _ActionStreamingDisposition.STREAMED",
+            label="EV1 fold disposition",
+        ),
+        "streaming_classifier:collective_fold_admitted": replace_once(
+            source=grid_source,
+            old="        disposition = _ActionStreamingDisposition.UNSUPPORTED_COLLECTIVE_FOLD",
+            new="        disposition = _ActionStreamingDisposition.STREAMED",
+            label="collective fold disposition",
+        ),
+        "streaming_classifier:ev1_without_discrete_action_admitted": replace_once(
+            source=grid_source,
+            old=(
+                "        disposition = (\n"
+                "            _ActionStreamingDisposition."
+                "UNSUPPORTED_EV1_WITHOUT_DISCRETE_ACTION\n"
                 "        )"
             ),
-            new="        and True",
-            label="streamed co-map separate-reference guard",
+            new="        disposition = _ActionStreamingDisposition.STREAMED",
+            label="EV1-without-discrete-action disposition",
+        ),
+        "streaming_classifier:jit_disabled_admitted": replace_once(
+            source=grid_source,
+            old="        disposition = _ActionStreamingDisposition.DENSE_JIT_DISABLED",
+            new="        disposition = _ActionStreamingDisposition.STREAMED",
+            label="JIT-disabled disposition",
+        ),
+        "streaming_classifier:trivial_product_admitted": replace_once(
+            source=grid_source,
+            old="        disposition = _ActionStreamingDisposition.DENSE_TRIVIAL_ACTION_PRODUCT",
+            new="        disposition = _ActionStreamingDisposition.STREAMED",
+            label="trivial-action-product disposition",
+        ),
+        "streaming_classifier:category_suffix_selected": replace_once(
+            source=grid_source,
+            old='        return self.value.partition(":")[0]',
+            new='        return self.value.partition(":")[2]',
+            label="disposition category projection",
+        ),
+        "streaming_classifier:dense_label_reclassified": replace_once(
+            source=grid_source,
+            old='    DENSE_JIT_DISABLED = "deliberately_dense:jit_disabled"',
+            new='    DENSE_JIT_DISABLED = "unsupported:jit_disabled"',
+            label="deliberately-dense disposition label",
         ),
         "streaming_dispatch:bypass_compiled_core": replace_once(
             source=grid_source,

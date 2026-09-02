@@ -22,6 +22,7 @@ import logging
 import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
+from enum import StrEnum
 from types import MappingProxyType
 from typing import cast
 
@@ -89,6 +90,26 @@ _CORE_RUNTIME_ARG_NAMES = frozenset(
         "age",
     }
 )
+
+
+class _ActionStreamingDisposition(StrEnum):
+    """Why one GridSearch solve route streams actions or keeps the dense core."""
+
+    STREAMED = "streamed"
+    DENSE_JIT_DISABLED = "deliberately_dense:jit_disabled"
+    DENSE_TRIVIAL_ACTION_PRODUCT = "deliberately_dense:trivial_action_product"
+    DENSE_CO_MAP_REFERENCE_CHANNEL = (
+        "deliberately_dense:co_map_with_separate_reference_channel"
+    )
+    UNSUPPORTED_COLLECTIVE_EV1 = "unsupported:collective_ev1"
+    UNSUPPORTED_EV1_FOLD = "unsupported:ev1_fold"
+    UNSUPPORTED_COLLECTIVE_FOLD = "unsupported:collective_fold"
+    UNSUPPORTED_EV1_WITHOUT_DISCRETE_ACTION = "unsupported:ev1_without_discrete_action"
+
+    @property
+    def category(self) -> str:
+        """Return the stable streamed/deliberately-dense/unsupported category."""
+        return self.value.partition(":")[0]
 
 
 def _select_action_width_keyword(*, context: SolverBuildContext) -> str:
@@ -201,7 +222,8 @@ class GridSearch(Solver):
                     name=name, grid=process, grids=context.grids
                 )
                 fold_conditioning[name] = process.state_conditioned.on
-        stream_actions = _supports_action_streaming(context=context)
+        action_streaming = _classify_action_streaming(context=context)
+        stream_actions = action_streaming is _ActionStreamingDisposition.STREAMED
         action_width_keyword = _select_action_width_keyword(context=context)
         action_names = context.state_action_space.action_names
         action_extents = context.state_action_space.actions_grid_shapes
@@ -272,25 +294,39 @@ class GridSearch(Solver):
         return SolutionKernels(period_kernels=MappingProxyType(result))
 
 
-def _supports_action_streaming(*, context: SolverBuildContext) -> bool:
-    """Return whether this regime supports the streamed solve route."""
+def _classify_action_streaming(
+    *, context: SolverBuildContext
+) -> _ActionStreamingDisposition:
+    """Classify one solve route without conflating dense and unsupported cases."""
     action_extents = context.state_action_space.actions_grid_shapes
+    if context.has_taste_shocks and context.stakeholders is not None:
+        disposition = _ActionStreamingDisposition.UNSUPPORTED_COLLECTIVE_EV1
+    elif context.has_taste_shocks and context.fold_state_names:
+        disposition = _ActionStreamingDisposition.UNSUPPORTED_EV1_FOLD
+    elif context.stakeholders is not None and context.fold_state_names:
+        disposition = _ActionStreamingDisposition.UNSUPPORTED_COLLECTIVE_FOLD
+    elif context.has_taste_shocks and not context.state_action_space.discrete_actions:
+        disposition = (
+            _ActionStreamingDisposition.UNSUPPORTED_EV1_WITHOUT_DISCRETE_ACTION
+        )
+    elif not context.enable_jit:
+        disposition = _ActionStreamingDisposition.DENSE_JIT_DISABLED
+    elif not context.state_action_space.action_names or math.prod(action_extents) <= 1:
+        disposition = _ActionStreamingDisposition.DENSE_TRIVIAL_ACTION_PRODUCT
+    elif context.co_map_state_names and (
+        context.same_period_ref_regimes or context.edge_reference_regimes
+    ):
+        disposition = _ActionStreamingDisposition.DENSE_CO_MAP_REFERENCE_CHANNEL
+    else:
+        disposition = _ActionStreamingDisposition.STREAMED
+    return disposition
+
+
+def _supports_action_streaming(*, context: SolverBuildContext) -> bool:
+    """Return whether the classified route has a streamed solve program."""
     return (
-        bool(context.state_action_space.action_names)
-        and math.prod(action_extents) > 1
-        and (
-            not context.has_taste_shocks
-            or (
-                context.enable_jit
-                and context.stakeholders is None
-                and bool(context.state_action_space.discrete_actions)
-            )
-        )
-        and not (context.has_taste_shocks and context.fold_state_names)
-        and not (
-            context.co_map_state_names
-            and (context.same_period_ref_regimes or context.edge_reference_regimes)
-        )
+        _classify_action_streaming(context=context)
+        is _ActionStreamingDisposition.STREAMED
     )
 
 
@@ -311,7 +347,7 @@ class _GridSearchPeriodKernel:
     """The same dense core before GridSearch's JIT wrapper."""
 
     streamed_core: Callable | None = None
-    """Action-streaming core, or `None` for an unsupported route."""
+    """Action-streaming core, or `None` for any non-streamed route."""
 
     action_names: tuple[ActionName, ...] = ()
     """Canonical C-order action-coordinate names for the streamed core."""
@@ -413,9 +449,9 @@ class _GridSearchPeriodKernel:
     ) -> CoreProgram | None:
         """Declare the eligible GridSearch action product for engine planning.
 
-        Unsupported numerical routes keep using the dense core. The program
-        snapshots exactly the arguments built by this adapter; the planner owns
-        only the static block width and binds it before lowering.
+        Deliberately dense and unsupported routes keep using the dense core. The
+        program snapshots exactly the arguments built by this adapter. The planner
+        owns only the static block width and binds it before lowering.
         """
         if core_key != "main":
             msg = f"GridSearch has no core named {core_key!r}."

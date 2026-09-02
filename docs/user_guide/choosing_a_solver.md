@@ -88,10 +88,14 @@ gated-target continuations, and edge-reference mappings remain unchanged inputs 
 blocks. Ordinary co-mapped state routes also stream while preserving device-local
 continuation reads. Eligible singleton folded-state routes stream the action product at
 each shock node and then apply the unchanged quadrature over the full fold-node axis.
-Co-map intersections with separate same-period or edge-reference channels and all
-simulation-policy construction remain dense. Treat the blockwise route as an execution
-detail until runtime and peak-memory effects have been measured for the model and
-hardware at hand.
+The classifier deliberately keeps co-map intersections with separate same-period or
+edge-reference channels, trivial action products, JIT-disabled and raw execution, and
+all simulation-policy construction dense. Collective EV1, EV1 with a fold, collective
+hard max with a fold, and EV1 without a discrete action are unsupported by the streamed
+program. See the canonical
+[GridSearch route matrix](../reference/solvers.md#gridsearch-jit-route-matrix). Treat the
+blockwise route as an execution detail until runtime and peak-memory effects have been
+measured for the model and hardware at hand.
 
 The EGM routes require named liquid roles. Nested routes add named outer roles.
 Institutional kinks and cliffs must be declared as case pieces or a piecewise-affine

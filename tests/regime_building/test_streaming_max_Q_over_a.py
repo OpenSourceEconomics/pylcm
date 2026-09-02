@@ -2,7 +2,7 @@
 
 import functools
 import inspect
-from types import MappingProxyType, SimpleNamespace
+from types import MappingProxyType
 from typing import Any, cast
 
 import jax
@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose, assert_array_equal
 
+from _lcm.engine import StateActionSpace
 from _lcm.logsum import logsum_and_softmax
 from _lcm.regime_building.collective import ParetoWeights
 from _lcm.regime_building.max_Q_over_a import (
@@ -20,7 +21,12 @@ from _lcm.regime_building.max_Q_over_a import (
 from _lcm.solution.action_streaming import (
     GridSearchEV1ActionReduction,
 )
-from _lcm.solution.grid_search import _supports_action_streaming
+from _lcm.solution.contract import SolverBuildContext
+from _lcm.solution.grid_search import (
+    _ActionStreamingDisposition,
+    _classify_action_streaming,
+    _supports_action_streaming,
+)
 
 
 def _Q_and_F(
@@ -616,7 +622,7 @@ def test_streaming_co_map_layout_fails_closed(
         )
 
 
-def _co_map_route_context(
+def _action_streaming_route_context(
     *,
     action_names=("action",),
     actions_grid_shapes=(5,),
@@ -625,30 +631,61 @@ def _co_map_route_context(
     has_taste_shocks=False,
     stakeholders=None,
     fold_state_names=(),
-    co_map_state_names=("kind", "region"),
+    co_map_state_names=(),
     same_period_ref_regimes=(),
     edge_reference_regimes=(),
     edge_target_regimes=(),
-):
-    return SimpleNamespace(
-        state_action_space=SimpleNamespace(
-            action_names=action_names,
-            actions_grid_shapes=actions_grid_shapes,
-            discrete_actions=discrete_actions,
+    enable_jit=True,
+) -> SolverBuildContext:
+    action_nodes = {
+        name: jnp.arange(extent, dtype=jnp.int32)
+        for name, extent in zip(action_names, actions_grid_shapes, strict=True)
+    }
+    discrete_action_names = frozenset(discrete_actions)
+    state_action_space = StateActionSpace(
+        states=MappingProxyType({}),
+        discrete_actions=MappingProxyType(
+            {
+                name: nodes
+                for name, nodes in action_nodes.items()
+                if name in discrete_action_names
+            }
         ),
-        Q_and_F_functions=MappingProxyType({0: Q_and_F}),
-        has_taste_shocks=has_taste_shocks,
-        enable_jit=True,
-        stakeholders=stakeholders,
-        fold_state_names=fold_state_names,
-        co_map_state_names=co_map_state_names,
-        co_map_v_arr_in_axes=tuple(
+        continuous_actions=MappingProxyType(
+            {
+                name: nodes
+                for name, nodes in action_nodes.items()
+                if name not in discrete_action_names
+            }
+        ),
+        state_and_discrete_action_names=tuple(
+            name for name in action_names if name in discrete_action_names
+        ),
+    )
+
+    # The classifier owns only these route facts. Use a real context instance so
+    # its runtime type boundary remains exercised without fabricating unrelated
+    # model-processing inputs.
+    context = object.__new__(SolverBuildContext)
+    attributes = {
+        "state_action_space": state_action_space,
+        "Q_and_F_functions": MappingProxyType({0: Q_and_F}),
+        "has_taste_shocks": has_taste_shocks,
+        "enable_jit": enable_jit,
+        "stakeholders": stakeholders,
+        "pareto_weights": _PARETO_WEIGHTS if stakeholders is not None else None,
+        "fold_state_names": fold_state_names,
+        "co_map_state_names": co_map_state_names,
+        "co_map_v_arr_in_axes": tuple(
             MappingProxyType({"target": 0}) for _ in co_map_state_names
         ),
-        same_period_ref_regimes=same_period_ref_regimes,
-        edge_reference_regimes=edge_reference_regimes,
-        edge_target_regimes=edge_target_regimes,
-    )
+        "same_period_ref_regimes": same_period_ref_regimes,
+        "edge_reference_regimes": edge_reference_regimes,
+        "edge_target_regimes": edge_target_regimes,
+    }
+    for name, value in attributes.items():
+        object.__setattr__(context, name, value)
+    return context
 
 
 def _width_collision_Q_and_F(*, action, _lcm_action_block_width, next_regime_to_V_arr):
@@ -659,44 +696,145 @@ def _width_collision_Q_and_F(*, action, _lcm_action_block_width, next_regime_to_
 @pytest.mark.parametrize(
     ("overrides", "expected"),
     [
-        pytest.param({}, True, id="ordinary-co-map"),
         pytest.param(
-            {"edge_target_regimes": ("target",)},
-            True,
-            id="gated-target-substitution",
+            {},
+            _ActionStreamingDisposition.STREAMED,
+            id="singleton-hard-max",
+        ),
+        pytest.param(
+            {"co_map_state_names": ("kind", "region")},
+            _ActionStreamingDisposition.STREAMED,
+            id="singleton-hard-max-plus-ordinary-co-map",
+        ),
+        pytest.param(
+            {
+                "edge_target_regimes": ("target",),
+                "edge_reference_regimes": ("fallback",),
+            },
+            _ActionStreamingDisposition.STREAMED,
+            id="gated-target-and-reference-without-co-map",
+        ),
+        pytest.param(
+            {"fold_state_names": ("shock",)},
+            _ActionStreamingDisposition.STREAMED,
+            id="singleton-fold",
         ),
         pytest.param(
             {
                 "fold_state_names": ("shock",),
-                "co_map_state_names": (),
+                "co_map_state_names": ("kind", "region"),
             },
-            True,
-            id="singleton-fold",
-        ),
-        pytest.param(
-            {"fold_state_names": ("shock",)},
-            True,
+            _ActionStreamingDisposition.STREAMED,
             id="singleton-fold-plus-ordinary-co-map",
         ),
         pytest.param(
-            {"same_period_ref_regimes": ("reference",)},
-            False,
-            id="co-map-plus-same-period-reference",
-        ),
-        pytest.param(
-            {"edge_reference_regimes": ("reference",)},
-            False,
-            id="co-map-plus-edge-reference",
-        ),
-        pytest.param(
-            {"actions_grid_shapes": (1,)},
-            False,
-            id="trivial-action-product",
+            {
+                "stakeholders": ("f", "m"),
+                "same_period_ref_regimes": ("reference",),
+            },
+            _ActionStreamingDisposition.STREAMED,
+            id="collective-same-period-reference-without-co-map",
         ),
         pytest.param(
             {"Q_and_F": _width_collision_Q_and_F},
-            True,
+            _ActionStreamingDisposition.STREAMED,
             id="width-collision-is-remapped",
+        ),
+        pytest.param(
+            {"stakeholders": ("f", "m")},
+            _ActionStreamingDisposition.STREAMED,
+            id="collective-hard-max",
+        ),
+        pytest.param(
+            {
+                "stakeholders": ("f", "m"),
+                "co_map_state_names": ("kind", "region"),
+            },
+            _ActionStreamingDisposition.STREAMED,
+            id="collective-hard-max-plus-ordinary-co-map",
+        ),
+        pytest.param(
+            {
+                "has_taste_shocks": True,
+                "discrete_actions": ("action",),
+            },
+            _ActionStreamingDisposition.STREAMED,
+            id="singleton-ev1",
+        ),
+        pytest.param(
+            {
+                "has_taste_shocks": True,
+                "discrete_actions": ("action",),
+                "co_map_state_names": ("kind", "region"),
+            },
+            _ActionStreamingDisposition.STREAMED,
+            id="singleton-ev1-plus-ordinary-co-map",
+        ),
+        pytest.param(
+            {
+                "has_taste_shocks": True,
+                "discrete_actions": ("action",),
+                "edge_reference_regimes": ("reference",),
+            },
+            _ActionStreamingDisposition.STREAMED,
+            id="singleton-ev1-edge-reference-without-co-map",
+        ),
+        pytest.param(
+            {"enable_jit": False},
+            _ActionStreamingDisposition.DENSE_JIT_DISABLED,
+            id="singleton-hard-max-jit-disabled",
+        ),
+        pytest.param(
+            {"stakeholders": ("f", "m"), "enable_jit": False},
+            _ActionStreamingDisposition.DENSE_JIT_DISABLED,
+            id="collective-hard-max-jit-disabled",
+        ),
+        pytest.param(
+            {
+                "has_taste_shocks": True,
+                "discrete_actions": ("action",),
+                "enable_jit": False,
+            },
+            _ActionStreamingDisposition.DENSE_JIT_DISABLED,
+            id="singleton-ev1-jit-disabled",
+        ),
+        pytest.param(
+            {"action_names": (), "actions_grid_shapes": ()},
+            _ActionStreamingDisposition.DENSE_TRIVIAL_ACTION_PRODUCT,
+            id="no-actions",
+        ),
+        pytest.param(
+            {"actions_grid_shapes": (1,)},
+            _ActionStreamingDisposition.DENSE_TRIVIAL_ACTION_PRODUCT,
+            id="unit-action-product",
+        ),
+        pytest.param(
+            {
+                "co_map_state_names": ("kind", "region"),
+                "edge_target_regimes": ("target",),
+                "edge_reference_regimes": ("fallback",),
+            },
+            _ActionStreamingDisposition.DENSE_CO_MAP_REFERENCE_CHANNEL,
+            id="co-map-plus-gated-edge-reference",
+        ),
+        pytest.param(
+            {
+                "stakeholders": ("f", "m"),
+                "co_map_state_names": ("kind", "region"),
+                "same_period_ref_regimes": ("reference",),
+            },
+            _ActionStreamingDisposition.DENSE_CO_MAP_REFERENCE_CHANNEL,
+            id="collective-co-map-plus-same-period-reference",
+        ),
+        pytest.param(
+            {
+                "has_taste_shocks": True,
+                "discrete_actions": ("action",),
+                "co_map_state_names": ("kind", "region"),
+                "edge_reference_regimes": ("reference",),
+            },
+            _ActionStreamingDisposition.DENSE_CO_MAP_REFERENCE_CHANNEL,
+            id="singleton-ev1-co-map-plus-edge-reference",
         ),
         pytest.param(
             {
@@ -704,7 +842,7 @@ def _width_collision_Q_and_F(*, action, _lcm_action_block_width, next_regime_to_
                 "stakeholders": ("f", "m"),
                 "discrete_actions": ("action",),
             },
-            False,
+            _ActionStreamingDisposition.UNSUPPORTED_COLLECTIVE_EV1,
             id="collective-ev1",
         ),
         pytest.param(
@@ -712,19 +850,35 @@ def _width_collision_Q_and_F(*, action, _lcm_action_block_width, next_regime_to_
                 "has_taste_shocks": True,
                 "discrete_actions": ("action",),
                 "fold_state_names": ("shock",),
-                "co_map_state_names": (),
             },
-            False,
+            _ActionStreamingDisposition.UNSUPPORTED_EV1_FOLD,
             id="singleton-ev1-fold",
+        ),
+        pytest.param(
+            {
+                "stakeholders": ("f", "m"),
+                "fold_state_names": ("shock",),
+            },
+            _ActionStreamingDisposition.UNSUPPORTED_COLLECTIVE_FOLD,
+            id="collective-fold",
+        ),
+        pytest.param(
+            {"has_taste_shocks": True, "discrete_actions": ()},
+            _ActionStreamingDisposition.UNSUPPORTED_EV1_WITHOUT_DISCRETE_ACTION,
+            id="singleton-ev1-without-discrete-action",
         ),
     ],
 )
-def test_action_streaming_route_eligibility_matrix(
-    *, overrides: dict[str, Any], expected: bool
+def test_action_streaming_route_classification_matrix(
+    *, overrides: dict[str, Any], expected: _ActionStreamingDisposition
 ) -> None:
-    context = _co_map_route_context(**overrides)
+    context = _action_streaming_route_context(**overrides)
 
-    assert inspect.unwrap(_supports_action_streaming)(context=context) is expected
+    actual = inspect.unwrap(_classify_action_streaming)(context=context)
+    supported = inspect.unwrap(_supports_action_streaming)(context=context)
+
+    assert actual is expected
+    assert supported is (expected is _ActionStreamingDisposition.STREAMED)
 
 
 def _fold_Q_and_F(
@@ -766,6 +920,66 @@ def _evaluate_kernel(*, func: Any, arguments: dict[str, Any], execution: str):
     if execution == "jit":
         return jitted(**arguments)
     return jitted.lower(**arguments).compile()(**arguments)
+
+
+def _multi_fold_Q_and_F(
+    *,
+    action,
+    row,
+    shock_outer,
+    shock_inner,
+    next_regime_to_V_arr,
+):
+    del next_regime_to_V_arr
+    target = (row + shock_outer + shock_inner) % 4
+    best_value = 10.0 * row + 3.0 * shock_outer + 2.0 * shock_inner
+    return best_value - jnp.square(action - target), jnp.ones((), dtype=bool)
+
+
+@pytest.mark.parametrize("block_width", [1, 3])
+@pytest.mark.parametrize("execution", ["eager", "jit", "aot"])
+def test_multi_fold_singleton_hard_max_streaming_matches_dense(
+    *, block_width: int, execution: str
+) -> None:
+    fold_weights = MappingProxyType(
+        {
+            "shock_outer": jnp.asarray([0.25, 0.75], dtype=jnp.float32),
+            "shock_inner": jnp.asarray([0.2, 0.3, 0.5], dtype=jnp.float32),
+        }
+    )
+    kernel_kwargs = {
+        "Q_and_F": _multi_fold_Q_and_F,
+        "batch_sizes": {"row": 0, "shock_outer": 0, "shock_inner": 0},
+        "action_names": ("action",),
+        "state_names": ("row", "shock_outer", "shock_inner"),
+        "fold_state_names": ("shock_outer", "shock_inner"),
+        "fold_weights": fold_weights,
+    }
+    dense = get_max_Q_over_a(**cast("Any", kernel_kwargs))
+    streamed = functools.partial(
+        get_streaming_max_Q_over_a(**cast("Any", kernel_kwargs)),
+        _lcm_action_block_width=block_width,
+    )
+    arguments = {
+        "action": jnp.arange(4, dtype=jnp.int32),
+        "row": jnp.arange(2, dtype=jnp.int32),
+        "shock_outer": jnp.arange(2, dtype=jnp.int32),
+        "shock_inner": jnp.arange(3, dtype=jnp.int32),
+        "next_regime_to_V_arr": MappingProxyType({}),
+    }
+
+    expected = _evaluate_kernel(func=dense, arguments=arguments, execution=execution)
+    actual = _evaluate_kernel(
+        func=streamed,
+        arguments=arguments,
+        execution=execution,
+    )
+
+    output_eps = np.finfo(np.asarray(actual).dtype).eps
+    weight_eps = np.finfo(np.asarray(fold_weights["shock_outer"]).dtype).eps
+    oracle = np.asarray([4.85, 14.85], dtype=np.asarray(actual).dtype)
+    assert_allclose(actual, expected, rtol=8 * output_eps, atol=8 * output_eps)
+    assert_allclose(actual, oracle, rtol=8 * weight_eps, atol=8 * weight_eps)
 
 
 def _parameter_width_collision_Q_and_F(

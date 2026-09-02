@@ -67,17 +67,36 @@ GridSearch()
 
 Covers the complete represented state-action product and applies constraints directly.
 It is the broadest route and the default solver on `Regime`. Eligible JIT solve-value
-routes—ordinary singleton hard max, collective hard max, and singleton EV1 expected
-max—evaluate bounded C-order action blocks while preserving the complete support.
-These programs publish only solve-time `VALUE`, or `VALUE` plus `DISSOLUTION_FLAG` for a
-collective route; replay and policy artifacts are not integrated. Same-period value
-references, gated-target continuations, and edge-reference mappings remain unchanged
-inputs to the streamed solve core. Ordinary co-mapped state routes also stream while
-preserving device-local continuation reads. Eligible singleton folded-state routes stream
-the action product at each shock node before applying the unchanged quadrature over the
-full fold-node axis. Co-map intersections with separate same-period or edge-reference
-channels and all simulation-policy construction remain dense. Runtime and peak-memory
-effects require measurement; bounded action evaluation alone is not a performance claim.
+routes evaluate bounded C-order action blocks while preserving the complete support.
+This matrix uses exactly three disposition labels:
+
+(gridsearch-jit-route-matrix)=
+#### JIT solve route matrix
+
+| Route shape | Disposition | Meaning |
+| --- | --- | --- |
+| Singleton hard max | streamed | Action blocks feed the hard-max reduction. |
+| Collective hard max | streamed | Action blocks feed the collective scalarization, hard max, stakeholder readout, and dissolution-flag reduction. |
+| Singleton EV1 with at least one discrete action | streamed | Each block reduces its continuous-action axes; the discrete expected maximum combines the resulting complete discrete support. |
+| Same-period references, edge references, or gated targets without a co-mapped state | streamed | Reference arrays and parameters remain unchanged dynamic inputs to the streamed solve core. |
+| Ordinary co-mapped state route without a separate reference channel | streamed | Continuation leaves co-map with the state cell while actions stream. |
+| Singleton hard max with folded states, including an ordinary co-map | streamed | Actions stream at each fold node; the unchanged quadrature still evaluates and reduces the full fold-node axis. |
+| Co-mapped state plus a separate same-period or edge-reference channel | deliberately dense | The two data transports are not yet represented together by the streamed program. |
+| No action, or an action product containing at most one candidate | deliberately dense | Blocking a trivial product adds no useful execution choice. |
+| JIT disabled, including the raw execution path | deliberately dense | The action-streamed program is a JIT lowering route. |
+| Collective EV1 | unsupported | The action-streamed solve program has no collective EV1 reduction. |
+| EV1 plus a folded state | unsupported | The action-streamed solve program does not compose EV1 and fold reductions. |
+| Collective hard max plus a folded state | unsupported | The action-streamed solve program does not compose collective and fold reductions. |
+| EV1 without a discrete action | unsupported | The GridSearch EV1 reduction requires a discrete-choice axis. |
+| Any simulation-policy construction | deliberately dense | Simulation lies outside this solve-route classifier and continues to recompute policies on the dense action product. |
+
+Here, **unsupported** is a disposition of the action-streamed solve program, not a new
+public solver capability verdict. Model validation may reject the corresponding
+declaration; where the declaration is otherwise valid, the existing dense GridSearch
+core remains the compatibility path. Streamed programs publish only solve-time `VALUE`,
+or `VALUE` plus `DISSOLUTION_FLAG` for a collective route; replay and policy artifacts
+are not integrated. Runtime and peak-memory effects require measurement; bounded action
+evaluation alone is not a performance claim.
 
 With EV1 taste shocks, GridSearch first maximizes over the continuous-action axes within
 each discrete-action combination and then applies the discrete log-sum. Simulation uses
