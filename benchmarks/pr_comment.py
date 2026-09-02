@@ -87,6 +87,17 @@ _CLASS_FIXED_PARAMS = {
     "ReferenceChainSolveGpuPeakMem": "8",
 }
 
+_CLASS_ALIASES = {
+    "AcaBaselineGpuPeakMem": "AcaBaseline",
+    "AcaBaselineDebugLogGpuPeakMem": "AcaBaselineDebugLog",
+}
+
+_METHOD_ALIASES = {
+    "track_execution_time": "time_execution",
+    "track_peak_cpu_mem": "peakmem_execution",
+    "track_peak_gpu_mem": "track_gpu_peak_mem",
+}
+
 _METHOD_DISPLAY = {
     "time_execution": "execution time",
     "track_gpu_peak_mem": "peak GPU mem",
@@ -413,6 +424,8 @@ def _parse_raw_values(
             continue
 
         class_name, method_name, _ = name_match.groups()
+        class_name = _CLASS_ALIASES.get(class_name, class_name)
+        method_name = _METHOD_ALIASES.get(method_name, method_name)
         raw_values = values[0]
         params_list = values[1] if len(values) > 1 else []
 

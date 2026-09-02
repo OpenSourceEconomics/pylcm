@@ -25,11 +25,20 @@ subprocess.  Subclass it and set ``bench_module`` / ``bench_class``::
 The subprocess calls ``setup_for_gpu_measurement()`` (model + params only, no
 warm-up) followed by ``time_execution()`` (cold = compile + run), then prints
 ``peak_bytes_in_use``.
+
+ACA's long-running benchmarks also use ``measure_combined``. Its subprocess
+performs one cold execution, captures cold elapsed time plus CPU/GPU peak
+memory, then performs and times one warm execution. ASV's shared
+``setup_cache`` makes those four values available to four cheap tracker
+methods without four separate compilations.
 """
 
+import json
 import os
+import resource
 import subprocess
 import sys
+import time
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -42,6 +51,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 # lcm, whose beartype claw can emit diagnostics to stdout, so the parent locates
 # this line instead of parsing stdout wholesale.
 _PEAK_MARKER = "__PEAK_BYTES_IN_USE__"
+_COMBINED_MARKER = "__COMBINED_MEASUREMENTS__"
 
 
 def _subprocess_env(base_env: Mapping[str, str]) -> dict[str, str]:
@@ -99,6 +109,77 @@ def measure_gpu_peak(*, bench_module: str, bench_class: str) -> int:
     raise RuntimeError(msg)
 
 
+def measure_combined(*, bench_module: str, bench_class: str) -> dict[str, float]:
+    """Collect cold/warm timing and peak memory in one isolated process."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "benchmarks.asv._gpu_mem",
+            "--combined",
+            bench_module,
+            bench_class,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=_PROJECT_ROOT,
+        env=_subprocess_env(os.environ),
+    )
+    if result.returncode != 0:
+        msg = (
+            f"Combined measurement subprocess failed (exit {result.returncode}).\n"
+            f"stdout: {result.stdout!r}\n"
+            f"stderr: {result.stderr!r}"
+        )
+        raise RuntimeError(msg)
+    for line in result.stdout.splitlines():
+        if line.startswith(_COMBINED_MARKER):
+            measurements = json.loads(line.removeprefix(_COMBINED_MARKER).strip())
+            return {key: float(value) for key, value in measurements.items()}
+    msg = (
+        "Combined measurement subprocess produced no result line.\n"
+        f"stdout: {result.stdout!r}\n"
+        f"stderr: {result.stderr!r}"
+    )
+    raise RuntimeError(msg)
+
+
+def _collect_combined_measurements(instance) -> dict[str, float]:
+    """Measure one cold execution and one immediately following warm execution."""
+    instance.setup_for_gpu_measurement()
+
+    start = time.perf_counter()
+    instance.execute_for_measurement()
+    compilation_time = time.perf_counter() - start
+    peak_cpu_mem = _get_cpu_peak_bytes()
+    peak_gpu_mem = _get_gpu_peak_bytes()
+
+    start = time.perf_counter()
+    instance.execute_for_measurement()
+    execution_time = time.perf_counter() - start
+
+    return {
+        "compilation_time": compilation_time,
+        "execution_time": execution_time,
+        "peak_cpu_mem": peak_cpu_mem,
+        "peak_gpu_mem": peak_gpu_mem,
+    }
+
+
+def _get_cpu_peak_bytes() -> int:
+    """Return this process's peak resident set size in bytes on Linux."""
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024
+
+
+def _get_gpu_peak_bytes() -> int:
+    """Return the local GPU allocator's peak bytes in use."""
+    import jax
+
+    stats = jax.local_devices()[0].memory_stats()
+    return int(stats["peak_bytes_in_use"])
+
+
 def _track_gpu_peak_mem(self):
     return measure_gpu_peak(
         bench_module=self.bench_module, bench_class=self.bench_class
@@ -137,14 +218,16 @@ class GpuPeakMem:
 if __name__ == "__main__":
     import importlib
 
-    module = importlib.import_module(sys.argv[1])
-    cls = getattr(module, sys.argv[2])
+    combined = sys.argv[1] == "--combined"
+    offset = 2 if combined else 1
+    module = importlib.import_module(sys.argv[offset])
+    cls = getattr(module, sys.argv[offset + 1])
 
     instance = cls()
-    instance.setup_for_gpu_measurement()
-    instance.time_execution()
-
-    import jax
-
-    stats = jax.local_devices()[0].memory_stats()
-    print(f"{_PEAK_MARKER} {stats['peak_bytes_in_use']}")
+    if combined:
+        measurements = _collect_combined_measurements(instance)
+        print(f"{_COMBINED_MARKER} {json.dumps(measurements, sort_keys=True)}")
+    else:
+        instance.setup_for_gpu_measurement()
+        instance.time_execution()
+        print(f"{_PEAK_MARKER} {_get_gpu_peak_bytes()}")

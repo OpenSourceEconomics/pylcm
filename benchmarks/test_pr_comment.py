@@ -208,3 +208,69 @@ def test_raw_comment_distinguishes_retrieval_failure_from_missing_results():
     assert "HEAD only — baseline retrieval failed" in body
     assert "Baseline retrieval failed for merge-base `98be11fb`" in body
     assert "Run benchmarks on main" not in body
+
+
+def test_comparison_matches_combined_aca_metrics_to_legacy_names(tmp_path: Path):
+    """The combined measurement retains comparison continuity with main."""
+    base_file = tmp_path / "base.json"
+    head_file = tmp_path / "head.json"
+    base_file.write_text(
+        json.dumps(
+            {
+                "results": {
+                    "bench_aca_baseline.AcaBaseline.time_execution": [[2.0], []],
+                    "bench_aca_baseline.AcaBaseline.peakmem_execution": [
+                        [200.0],
+                        [],
+                    ],
+                    "bench_aca_baseline.AcaBaseline.track_compilation_time": [
+                        [6.0],
+                        [],
+                    ],
+                    ("bench_aca_baseline.AcaBaselineGpuPeakMem.track_gpu_peak_mem"): [
+                        [400.0],
+                        [],
+                    ],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    head_file.write_text(
+        json.dumps(
+            {
+                "results": {
+                    "bench_aca_baseline.AcaBaseline.track_execution_time": [
+                        [1.0],
+                        [],
+                    ],
+                    "bench_aca_baseline.AcaBaseline.track_peak_cpu_mem": [
+                        [100.0],
+                        [],
+                    ],
+                    "bench_aca_baseline.AcaBaseline.track_compilation_time": [
+                        [3.0],
+                        [],
+                    ],
+                    "bench_aca_baseline.AcaBaseline.track_peak_gpu_mem": [
+                        [200.0],
+                        [],
+                    ],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rows = pr_comment._build_comparison_rows(
+        base_file=base_file,
+        head_file=head_file,
+    )
+
+    assert {row.method_name for row in rows} == {
+        "time_execution",
+        "peakmem_execution",
+        "track_compilation_time",
+        "track_gpu_peak_mem",
+    }
+    assert {row.ratio for row in rows} == {0.5}
