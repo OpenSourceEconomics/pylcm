@@ -437,9 +437,11 @@ def _evaluate_ev1_branch_block(
     branch_group_id = block_index // blocks_per_branch_group
     block_within_branch_group = block_index % blocks_per_branch_group
 
-    branch_ids = branch_group_id * branches_per_block + branch_offsets
-    valid_branches = branch_ids < n_discrete_branches
-    safe_branch_ids = jnp.minimum(branch_ids, n_discrete_branches - 1)
+    branch_group_start = branch_group_id * branches_per_block
+    remaining_branches = n_discrete_branches - branch_group_start
+    valid_branches = branch_offsets < remaining_branches
+    safe_branch_offsets = jnp.minimum(branch_offsets, remaining_branches - 1)
+    safe_branch_ids = branch_group_start + safe_branch_offsets
 
     local_start = block_within_branch_group * continuous_block_width
     remaining = continuous_extent - local_start
