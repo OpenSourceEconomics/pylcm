@@ -120,6 +120,48 @@ def test_ev1_lowering_has_no_block_width_candidate_scan() -> None:
     )
 
 
+def test_ev1_packs_pure_discrete_branches_into_vector_blocks() -> None:
+    """Whole one-cell branches share blocks instead of becoming a scalar scan."""
+
+    def Q_and_F(*, sector: jax.Array, status: jax.Array):
+        return 3.0 * sector - status, jnp.ones((), dtype=bool)
+
+    block_width = 8
+    sectors = np.arange(3, dtype=np.float32)
+    statuses = np.arange(5, dtype=np.float32)
+    scale = 0.3
+    streamed = build_streaming_ev1_max_Q_over_a(
+        Q_and_F=Q_and_F,
+        action_names=("sector", "status"),
+        n_discrete_action_axes=2,
+        block_width=block_width,
+        scale=jnp.asarray(scale),
+    )
+
+    closed_jaxpr = jax.make_jaxpr(streamed)(
+        sector=jnp.asarray(sectors),
+        status=jnp.asarray(statuses),
+    )
+    scan_lengths = _nested_scan_lengths(closed_jaxpr)
+    n_branches = sectors.size * statuses.size
+    n_vector_blocks = math.ceil(n_branches / block_width)
+    assert scan_lengths == [n_vector_blocks - 1]
+
+    expected = _numpy_ev1_oracle(
+        Q_and_F=Q_and_F,
+        action_names=("sector", "status"),
+        n_discrete_action_axes=2,
+        action_grids={"sector": sectors, "status": statuses},
+        fixed_kwargs={},
+        scale=scale,
+    )
+    result = streamed(
+        sector=jnp.asarray(sectors),
+        status=jnp.asarray(statuses),
+    )
+    assert_allclose(result.smoothed_value, expected, rtol=1e-6, atol=1e-6)
+
+
 @pytest.mark.parametrize("block_width", [5, 7, 11])
 def test_ev1_vector_chunks_match_oracle_with_multiple_discrete_axes(
     block_width: int,
