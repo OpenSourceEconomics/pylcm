@@ -815,7 +815,7 @@ def test_value_masked_simulate_reports_the_solved_masked_value():
         _solve_dissolution()
     )
     np.testing.assert_allclose(
-        np.asarray(solution.values[1]["married_ir"])[1], [-np.inf, -np.inf]
+        np.asarray(solution[1]["married_ir"])[1], [-np.inf, -np.inf]
     )
 
     initial_conditions = MappingProxyType(

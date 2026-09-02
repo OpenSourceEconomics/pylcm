@@ -1926,6 +1926,34 @@ def _get_compute_CE(
         )
         for target_regime_name in period_targets
     }
+    # A gated target carrying no state has no landing coordinate to interpolate
+    # at, but its leaf is still the fold's channel stack rather than a rank-zero
+    # value: the gate and the leg fallbacks are applied to that stack before it
+    # enters the mixture, so the source pays the branch the gate selects.
+    gated_scalar_readers = {
+        target_regime_name: _get_pointwise_gated_interpolator(
+            base_interpolator=get_V_interpolator(
+                v_interpolation_info=regime_to_v_interpolation_info[target_regime_name],
+                state_prefix="next_",
+                V_arr_name="next_V_arr",
+            ),
+            V_arr_name="next_V_arr",
+            n_channels=spec.n_channels,
+            combine=spec.combine,
+            gate_state_names=spec.gate_state_names,
+            projected_readers=spec.projected_readers,
+            target_ages=spec.target_ages,
+            co_map_state_names=co_map_state_names,
+        )
+        for target_regime_name in scalar_targets
+        if (spec := gated_continuations.get(target_regime_name)) is not None
+    }
+    gated_scalar_arg_names = {
+        target_regime_name: tuple(
+            arg for arg in get_union_of_args([reader]) if arg != "next_V_arr"
+        )
+        for target_regime_name, reader in gated_scalar_readers.items()
+    }
 
     # The plain expectation reduces each target on its own; every other
     # certainty equivalent needs the whole joint lottery in one piece, because
@@ -2030,7 +2058,21 @@ def _get_compute_CE(
             has_negative_probability,
         ) = _scalar_target_contribution(
             scalar_targets=scalar_targets,
-            next_regime_to_V_arr=next_regime_to_V_arr,
+            next_regime_to_V_arr=MappingProxyType(
+                {
+                    **next_regime_to_V_arr,
+                    **{
+                        target_regime_name: reader(
+                            next_V_arr=next_regime_to_V_arr[target_regime_name],
+                            **{
+                                arg: states_actions_params[arg]
+                                for arg in gated_scalar_arg_names[target_regime_name]
+                            },
+                        )
+                        for target_regime_name, reader in gated_scalar_readers.items()
+                    },
+                }
+            ),
             active_regime_probs=active_regime_probs,
             as_lottery=not reduces_per_target,
             zero=zero,
@@ -2190,6 +2232,8 @@ def _get_compute_CE(
         name
         for continuation in continuations.values()
         for name in continuation.extra_param_names
+    ) | frozenset(
+        arg for arg_names in gated_scalar_arg_names.values() for arg in arg_names
     )
     return compute_CE, deps, continuation_arg_names
 

@@ -271,7 +271,7 @@ def test_separate_nnbegm_simulation_requires_the_returned_policy() -> None:
 
     with pytest.raises(
         InvalidSimulationInputError,
-        match=r"NNBEGM.*policy",
+        match=r"pylcm\.simulation\.policy.*not_requested",
     ):
         model.simulate(
             params=_PARAMS,

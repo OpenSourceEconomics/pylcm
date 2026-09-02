@@ -37,6 +37,11 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   arrays with different device placements: a planned single-device layout is
   committed, and a mesh-sharded neighbour is moved onto the running flag's placement
   before it is combined.
+- A gated edge into a stateless target is gated in solve: the source's continuation
+  applies the gate and the leg fallbacks to the target's folded channel stack, so a
+  closed gate pays the projected fallback. Previously the dense action reduction
+  silently reduced over the channel axis and the source always paid the target's own
+  value.
 
 ### PR #390 maintainer-review follow-up
 

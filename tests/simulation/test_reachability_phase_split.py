@@ -27,15 +27,15 @@ class _RegimeId:
 
 
 def _zero_utility() -> ScalarFloat:
-    return jnp.float32(0)
+    return jnp.asarray(0.0)
 
 
 def _low_utility() -> ScalarFloat:
-    return jnp.float32(0)
+    return jnp.asarray(0.0)
 
 
 def _high_utility() -> ScalarFloat:
-    return jnp.float32(10)
+    return jnp.asarray(10.0)
 
 
 def _probability_high(probability_high: ScalarFloat) -> ScalarFloat:
