@@ -4991,10 +4991,7 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         ),
         "streaming_ev1:branch_identity_shifted": _replace_nth(
             text=action_streaming_source,
-            marker=(
-                "    branch_group_id = block_index "
-                "// blocks_per_branch_group"
-            ),
+            marker=("    branch_group_id = block_index // blocks_per_branch_group"),
             replacement=(
                 "    branch_group_id = (block_index + "
                 "blocks_per_branch_group) // blocks_per_branch_group"
@@ -5070,16 +5067,14 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
                 occurrence=1,
             )
         )
-        action_streaming_cases[f"streaming_ev1:candidate_index_{index}"] = (
-            _replace_nth(
-                text=action_streaming_source,
-                marker="    return values, feasible & valid, global_ids",
-                replacement=(
-                    "    feasible = feasible & (global_ids != "
-                    f"{index})\n    return values, feasible & valid, global_ids"
-                ),
-                occurrence=2,
-            )
+        action_streaming_cases[f"streaming_ev1:candidate_index_{index}"] = _replace_nth(
+            text=action_streaming_source,
+            marker="    return values, feasible & valid, global_ids",
+            replacement=(
+                "    feasible = feasible & (global_ids != "
+                f"{index})\n    return values, feasible & valid, global_ids"
+            ),
+            occurrence=2,
         )
         action_streaming_cases[
             f"streaming_collective_blocks:candidate_index_{index}"

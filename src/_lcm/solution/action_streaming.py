@@ -305,9 +305,7 @@ class _StreamingEV1ExpectedMax:
             accumulator=accumulator,
             reduction=reduction,
         )
-        return reduction.finalize(
-            accumulator=accumulator.completed_branch_groups
-        )
+        return reduction.finalize(accumulator=accumulator.completed_branch_groups)
 
 
 @dataclass(frozen=True)
@@ -631,9 +629,7 @@ def _finalize_open_ev1_branch_group(
     reduction: BoundLogSumExpReduction,
 ) -> _EV1ActionAccumulator:
     """Move one vector of finalized branch values into log-sum-exp."""
-    branch_group = HARD_MAX_REDUCTION.finalize(
-        accumulator=accumulator.branch_group
-    )
+    branch_group = HARD_MAX_REDUCTION.finalize(accumulator=accumulator.branch_group)
     completed_branch_groups = reduction.add(
         accumulator=accumulator.completed_branch_groups,
         values=branch_group.best_value,
