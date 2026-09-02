@@ -20,6 +20,7 @@ from benchmarks.grid_search_pair import (
     _max_ulp_distance,
     _metric_summary,
     _pair_summary,
+    _parser,
     _pixi_context,
     _sha256_files,
     _validate_checkout,
@@ -32,6 +33,8 @@ from benchmarks.grid_search_pair_scenarios import SCENARIOS, TARGET_SCENARIO_SOU
 from benchmarks.grid_search_pair_worker import (
     _VERSION_SHIM_VERSION,
     _block_result,
+    _executed_float_dtype,
+    _grid_extent,
     _hlo_census,
 )
 
@@ -58,12 +61,13 @@ def _kernel(
     collective: bool = False,
     has_taste_shocks: bool = False,
     fold_state_names: tuple[str, ...] = (),
+    action_extent: int = 10,
 ) -> dict[str, Any]:
     return {
         "regime": regime,
         "period": 0,
         "action_names": ["consumption"],
-        "action_extents": [10],
+        "action_extents": [action_extent],
         "streamed": execution_disposition == "planned",
         "execution_disposition": execution_disposition,
         "disposition_reason": disposition_reason,
@@ -198,13 +202,47 @@ def test_checkout_identity_rejects_revision_drift_and_dirty_sources(
         _validate_checkout(checkout=checkout, expected_revision=revision)
 
 
-def test_scenario_registry_is_the_five_row_closure_matrix() -> None:
+def test_parser_pins_external_harness_and_selects_requested_rows(
+    tmp_path: Path,
+) -> None:
+    args = _parser().parse_args(
+        [
+            "--base-checkout",
+            str(tmp_path / "base"),
+            "--base-revision",
+            "0" * 40,
+            "--head-checkout",
+            str(tmp_path / "head"),
+            "--head-revision",
+            "1" * 40,
+            "--harness-revision",
+            "2" * 40,
+            "--scenario",
+            "aca-a3-c16",
+            "--scenario",
+            "aca-a6-c256",
+            "--output",
+            str(tmp_path / "output"),
+        ]
+    )
+
+    assert args.harness_revision == "2" * 40
+    assert args.scenarios == ["aca-a3-c16", "aca-a6-c256"]
+
+
+def test_scenario_registry_contains_closure_and_aca_frontier_rows() -> None:
     assert tuple(SCENARIOS) == (
         "singleton-hard-max",
         "singleton-ev1",
         "collective-gs-vd",
         "distributed-co-map",
         "folded-hard-max",
+        "aca-a3-c16",
+        "aca-a3-c64",
+        "aca-a3-c256",
+        "aca-a6-c16",
+        "aca-a6-c64",
+        "aca-a6-c256",
     )
     assert SCENARIOS["distributed-co-map"].topology == "cpu-4"
     assert SCENARIOS["distributed-co-map"].expected_distributed
@@ -223,6 +261,18 @@ def test_scenario_registry_is_the_five_row_closure_matrix() -> None:
         SCENARIOS["collective-gs-vd"].expected_head_disposition_reason
         == "deliberately_dense:collective_resource_regression"
     )
+    assert {
+        name: (spec.aca_assets_n_points, spec.aca_consumption_n_points)
+        for name, spec in SCENARIOS.items()
+        if name.startswith("aca-")
+    } == {
+        "aca-a3-c16": (3, 16),
+        "aca-a3-c64": (3, 64),
+        "aca-a3-c256": (3, 256),
+        "aca-a6-c16": (6, 16),
+        "aca-a6-c64": (6, 64),
+        "aca-a6-c256": (6, 256),
+    }
 
 
 @pytest.mark.parametrize(
@@ -260,6 +310,12 @@ def test_scenario_registry_is_the_five_row_closure_matrix() -> None:
             _kernel(regime="folded", fold_state_names=("shock",)),
             _kernel(regime="ordinary"),
             {"folded_regimes": ("folded",)},
+        ),
+        (
+            "aca-a3-c16",
+            _kernel(regime="retiree"),
+            _kernel(regime="terminal", action_extent=1),
+            {},
         ),
     ],
 )
@@ -359,6 +415,62 @@ def test_measurement_identity_allows_only_streaming_and_cache_path_differences()
         _compare_measurement_identity(base=base, head=drift)
 
 
+def test_grid_extent_reads_declared_width_without_materializing_points() -> None:
+    class RuntimeGrid:
+        n_points = 16
+
+        def to_jax(self) -> None:
+            raise AssertionError("runtime points must not be materialized")
+
+    assert _grid_extent(RuntimeGrid()) == 16
+
+
+class _FakeJaxConfig:
+    def __init__(self, *, enable_x64: bool) -> None:
+        self._enable_x64 = enable_x64
+
+    def read(self, name: str) -> bool:
+        assert name == "jax_enable_x64"
+        return self._enable_x64
+
+
+class _FakeJax:
+    def __init__(self, *, enable_x64: bool) -> None:
+        self.config = _FakeJaxConfig(enable_x64=enable_x64)
+
+
+@pytest.mark.parametrize(
+    ("precision", "enable_x64", "expected"),
+    [("32", False, "float32"), ("64", True, "float64")],
+)
+def test_executed_float_dtype_reports_the_dtype_the_run_used(
+    *, precision: str, enable_x64: bool, expected: str
+) -> None:
+    arrays = {
+        "value/0/working": np.zeros(2, dtype=expected),
+        "dissolution/0/couple": np.zeros(2, dtype=np.int32),
+    }
+    assert (
+        _executed_float_dtype(
+            precision=precision, jax=_FakeJax(enable_x64=enable_x64), arrays=arrays
+        )
+        == expected
+    )
+
+
+def test_executed_float_dtype_rejects_a_workload_that_reconfigured_x64() -> None:
+    with pytest.raises(RuntimeError, match="jax_enable_x64=True"):
+        _executed_float_dtype(precision="32", jax=_FakeJax(enable_x64=True), arrays={})
+
+
+def test_executed_float_dtype_rejects_published_arrays_of_another_precision() -> None:
+    arrays = {"value/0/working": np.zeros(2, dtype=np.float64)}
+    with pytest.raises(RuntimeError, match="float64"):
+        _executed_float_dtype(
+            precision="32", jax=_FakeJax(enable_x64=False), arrays=arrays
+        )
+
+
 def test_block_result_descends_mapping_proxy_trees() -> None:
     class PendingLeaf:
         def __init__(self) -> None:
@@ -407,7 +519,7 @@ def test_block_result_projects_solution_result_dissolution_artifacts() -> None:
     assert next(iter(result.replay_artifacts.values())).calls == 1
 
 
-def test_all_five_scenarios_construct_with_their_declared_topology(
+def test_closure_scenarios_construct_with_their_declared_topology(
     tmp_path: Path,
 ) -> None:
     code = """
@@ -435,6 +547,8 @@ lcm, version_shim = _import_lcm_with_version_shim(target_src=target_src)
 assert lcm.__version__ == version_shim["version"]
 
 for name, spec in SCENARIOS.items():
+    if name.startswith("aca-"):
+        continue
     model, params = build_scenario(name=name)
     assert isinstance(params, dict)
     routes = _route_metadata(model)
