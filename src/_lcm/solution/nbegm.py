@@ -650,44 +650,23 @@ class NBEGM(OneMarginSolver):
 
         The ride-along discrete envelope solves the continuous subproblem per
         discrete branch — with the action bound into the budget, period utility,
-        continuation (co-state laws, off-budget liquid law, regime transition),
-        and the breakpoint partition — and takes the upper envelope. Outside that
-        contract, model build refuses:
-
-        - an action entering the discount factor (evaluated per cell, not per
-          branch),
-        - an action entering a *jumped* schedule variable under the one-sided
-          cliff read (branches would not share the published parent query grid).
+        discount factor, continuation (co-state laws, off-budget liquid law,
+        regime transition), and the breakpoint partition — and takes the upper
+        envelope. Outside that contract, model build refuses an action entering
+        a *jumped* schedule variable under the one-sided cliff read (branches
+        would not share the published parent query grid).
 
         Several discrete actions are supported: the branch axis is the product of
         their grids, and every branch binds a code for each. A jump breakpoint is
         likewise supported — each branch publishes its one-sided cliff limits and
         the envelope takes the max over branches.
         """
-        import inspect  # noqa: PLC0415
-
         bound = cast("_BoundNBEGM", self)
         action_names = tuple(context.state_action_space.discrete_actions)
-        # The discount factor is evaluated once per cell in the envelope core, not
-        # once per branch, so an action-dependent discount factor would silently
-        # use one branch's weight for all branches — refuse it.
-        discount_factor_dag = schedule_spec.discount_factor_dag
-        discount_args = (
-            frozenset(inspect.signature(discount_factor_dag).parameters)
-            if discount_factor_dag is not None
-            else frozenset()
-        )
         for action_name in action_names:
-            if action_name in discount_args:
-                msg = (
-                    "NBEGM's schedule+ride-along discrete envelope evaluates the "
-                    "discount factor per cell, not per discrete branch, so the "
-                    f"action {action_name!r} must not enter the discount factor; "
-                    f"regime {context.regime_name!r} reads it there."
-                )
-                raise RegimeInitializationError(msg)
-            # The envelope binds each action into every branch's period utility, so
-            # an action the utility reads is supported (a leisure/effort-like term).
+            # The envelope binds each action into every branch's period utility and
+            # discount factor, so an action either reads is supported (a
+            # leisure/effort-like term, a branch-specific patience).
             _fail_if_discrete_action_feeds_continuation(
                 context=context,
                 action_name=action_name,
@@ -2498,6 +2477,7 @@ def _continuation_action_names(
     *,
     regime_transition: Callable[..., Any],
     target_laws: Mapping[RegimeName, Callable[..., Any]],
+    target_weight_laws: Mapping[RegimeName, Callable[..., Any] | None],
     target_resources_arg_names: Mapping[RegimeName, frozenset[str]],
     discount_factor_dag: Callable[..., Any] | None,
     interval_schedule_dags: tuple[Callable[..., Any] | None, ...],
@@ -2512,6 +2492,9 @@ def _continuation_action_names(
     - `regime_transition`: the regime transition probabilities;
     - `target_laws`: each stateful target's next-state function, including the
       regime's own law that the save-to-cliff targets invert;
+    - `target_weight_laws`: each stateful target's intrinsic stochastic-state
+      weights, which may depend on the source branch even though a Markov state's
+      support function is branch-independent;
     - `target_resources_arg_names`: each stateful target's resources leaves;
     - `discount_factor_dag`: the per-cell discount factor, when the regime
       composes one;
@@ -2536,6 +2519,7 @@ def _continuation_action_names(
         consumed |= _parameters(dag)
     for target, law in target_laws.items():
         consumed |= _parameters(law)
+        consumed |= _parameters(target_weight_laws[target])
         consumed |= set(target_resources_arg_names[target])
     return tuple(name for name in action_names if name in consumed)
 
@@ -4867,6 +4851,8 @@ class _NBEGMRideAlongStatics:
     """Qualified params the discount-factor DAG reads, or empty for flat discount."""
     discount_state_names: tuple[str, ...]
     """Ride-along states the discount-factor DAG reads, or empty for flat discount."""
+    discount_action_names: tuple[str, ...]
+    """Discrete actions the discount-factor DAG reads, bound per branch."""
     n_intervals: int
     """Number of liquid intervals the breakpoints split each cell into (N + 1)."""
     n_savings: int
@@ -5017,31 +5003,41 @@ def _nbegm_ride_along_statics(
     # (e.g. a preference type the budget ignores) are not forwarded to the DAG.
     coh_arg_names = tuple(inspect.signature(schedule_spec.coh_of_liquid_dag).parameters)
     coh_state_names = tuple(name for name in ride_names if name in coh_arg_names)
+    discrete_action_names = tuple(
+        name for name, _codes in schedule_spec.discrete_actions
+    )
     # The discount factor is either pylcm's flat
-    # `koopmans_aggregator__discount_factor` param or, when
-    # the regime supplies a `discount_factor` DAG function (e.g. a per-preference-type
-    # beta read off a ride-along state), resolved per cell from that function's
-    # qualified params and ride-along state arguments.
+    # `koopmans_aggregator__discount_factor` param or, when the regime supplies a
+    # `discount_factor` DAG function (e.g. a per-preference-type beta read off a
+    # ride-along state, or a branch-specific patience read off a discrete
+    # action), resolved per branch from that function's qualified params,
+    # ride-along state arguments, and the branch's action codes.
     discount_factor_dag = schedule_spec.discount_factor_dag
     if discount_factor_dag is None:
         discount_param_names: tuple[str, ...] = ()
         discount_state_names: tuple[str, ...] = ()
+        discount_action_names: tuple[str, ...] = ()
     else:
         discount_arg_names = tuple(inspect.signature(discount_factor_dag).parameters)
         discount_param_names = tuple(
-            name for name in discount_arg_names if name not in state_names
+            name
+            for name in discount_arg_names
+            if name not in state_names and name not in discrete_action_names
         )
         discount_state_names = tuple(
             name for name in ride_names if name in discount_arg_names
         )
-
-    discrete_action_names = tuple(
-        name for name, _codes in schedule_spec.discrete_actions
-    )
+        discount_action_names = tuple(
+            name for name in discrete_action_names if name in discount_arg_names
+        )
     continuation_action_names = _continuation_action_names(
         regime_transition=continuation_plan.compute_regime_transition_probs,
         target_laws={
             target: continuation_plan.child_reads[target].next_state_func
+            for target in continuation_plan.stateful_targets
+        },
+        target_weight_laws={
+            target: continuation_plan.child_reads[target].weights_func
             for target in continuation_plan.stateful_targets
         },
         target_resources_arg_names={
@@ -5082,6 +5078,7 @@ def _nbegm_ride_along_statics(
         utility_state_names=utility_state_names,
         coh_state_names=coh_state_names,
         discount_param_names=discount_param_names,
+        discount_action_names=discount_action_names,
         discount_state_names=discount_state_names,
         n_intervals=len(sources) + 1,
         n_savings=int(savings_grid.shape[0]),
@@ -5919,14 +5916,6 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
                 has_cliff_columns=cliff_savings is not None,
             )
             cell = dict(zip(ride_names, ride_values, strict=True))
-            cell_discount_factor = (
-                kwargs["koopmans_aggregator__discount_factor"]
-                if discount_factor_dag is None
-                else discount_factor_dag(
-                    **{name: cell[name] for name in statics.discount_state_names},
-                    **discount_params,
-                )
-            )
 
             # With published jump breakpoints, the cell publishes each jump's preimage
             # and its exact one-sided value limits: the liquid query grid is augmented
@@ -5989,14 +5978,28 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
             ) -> tuple[Float1D, Float1D, Float1D]:
                 """Solve the cell's continuous subproblem for one discrete branch.
 
-                `action_binding` binds the discrete action into cash-on-hand (empty
-                when the regime carries no discrete action). `branch_cont_value` /
-                `branch_cont_marginal` are this branch's continuation rows — a branch
-                reads its own next-state continuation when the action feeds a co-state's
-                law of motion, and identical rows when it feeds only the budget. The
-                breakpoint partition, utility, and jump augmentation are
-                continuation-independent and computed once in the enclosing scope.
+                `action_binding` binds the discrete action into cash-on-hand, and
+                into the period utility and the discount factor where their
+                declarations read it (empty when the regime carries no discrete
+                action). `branch_cont_value` / `branch_cont_marginal` are this
+                branch's continuation rows — a branch reads its own next-state
+                continuation when the action feeds a co-state's law of motion, and
+                identical rows when it feeds only the budget. The jump augmentation
+                is continuation-independent and computed once in the enclosing
+                scope.
                 """
+                branch_discount_factor = (
+                    kwargs["koopmans_aggregator__discount_factor"]
+                    if discount_factor_dag is None
+                    else discount_factor_dag(
+                        **{name: cell[name] for name in statics.discount_state_names},
+                        **discount_params,
+                        **{
+                            name: action_binding[name]
+                            for name in statics.discount_action_names
+                        },
+                    )
+                )
 
                 def coh_of_liquid(scalar_liquid: FloatND) -> FloatND:
                     return schedule_spec.coh_of_liquid_dag(
@@ -6058,7 +6061,7 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
                         cont_marginal=branch_cont_marginal,
                         liquid_grid=query_grid,
                         savings_grid=savings_grid,
-                        discount_factor=cell_discount_factor,
+                        discount_factor=branch_discount_factor,
                         preferences=preferences,
                         coh_slopes=coh_slopes,
                         coh_intercepts=coh_intercepts,
@@ -6080,7 +6083,7 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
                     cont_marginal=branch_cont_marginal,
                     liquid_grid=query_grid,
                     savings_grid=savings_grid,
-                    discount_factor=cell_discount_factor,
+                    discount_factor=branch_discount_factor,
                     preferences=preferences,
                     coh_slopes=coh_slopes,
                     coh_intercepts=coh_intercepts,

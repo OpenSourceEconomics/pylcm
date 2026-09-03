@@ -3,9 +3,10 @@
 A discrete action's branches share a continuation whenever the action reaches
 nothing the continuation read consumes. The channels that can make the read
 branch-dependent are the regime transition, a stateful target's law of motion
-(including the regime's own law the save-to-cliff targets invert), a child's
-resources, the discount factor, and, on a per-interval read, a schedule variable
-the breakpoints are derived from. Branches that agree on every action reaching
+(including the regime's own law the save-to-cliff targets invert), a stochastic
+state's transition weights, a child's resources, the discount factor, and, on a
+per-interval read, a schedule variable the breakpoints are derived from. Branches
+that agree on every action reaching
 one of those channels form one class; the core evaluates the continuation once
 per class and gathers it per branch, so an action that only shifts the current
 budget and utility costs one continuation read however many branches it
@@ -22,11 +23,12 @@ import inspect
 from collections.abc import Callable
 from typing import Any
 
+import numpy as np
 import pytest
 
 from _lcm.solution import nbegm as nbegm_module
 from _lcm.solution.nbegm import _RideAlongNBEGMPeriodKernel
-from tests.solution._nbegm_direct_oracle import ride_along_kernel
+from tests.solution._nbegm_direct_oracle import ride_along_kernel, run_production_kernel
 from tests.solution.test_nbegm_direct_oracle import (
     _assert_kernel_agrees_with_oracle,
 )
@@ -38,7 +40,12 @@ _PERIOD = 0
 _Route = tuple[Callable[[], Any], Callable[[], Any]]
 
 _PARAMS_FLAGS = frozenset(
-    {"jump_schedule", "action_in_liquid_law", "action_in_schedule_variable"}
+    {
+        "jump_schedule",
+        "action_in_liquid_law",
+        "action_in_schedule_variable",
+        "action_in_discount",
+    }
 )
 
 
@@ -70,6 +77,8 @@ _CONTINUATION_FEEDING: dict[str, _Route] = {
     "action_in_regime_transition": _ride_discrete(action_in_regime_transition=True),
     "action_in_costate": _ride_discrete(action_in_costate=True),
     "action_in_liquid_law": _ride_discrete(action_in_liquid_law=True),
+    "action_in_stochastic_weight": _ride_discrete(action_in_health_transition=True),
+    "action_in_discount": _ride_discrete(action_in_discount=True),
     "action_in_interval_schedule_variable": _ride_discrete(
         action_in_schedule_variable=True, costate_reads_liquid=True
     ),
@@ -127,6 +136,7 @@ def _reads(*names: str) -> Callable[..., Any]:
 _QUIET: dict[str, Any] = {
     "regime_transition": _reads("age"),
     "target_laws": {"alive": _reads("savings", "kind"), "dead": _reads("savings")},
+    "target_weight_laws": {"alive": _reads("age"), "dead": None},
     "target_resources_arg_names": {
         "alive": frozenset({"liquid", "income"}),
         "dead": frozenset({"liquid"}),
@@ -147,6 +157,12 @@ _CHANNEL_CASES: dict[str, dict[str, Any]] = {
         "target_laws": {
             **_QUIET["target_laws"],
             "alive": _reads("savings", "kind", "work"),
+        },
+    },
+    "stochastic_state_weight": {
+        "target_weight_laws": {
+            **_QUIET["target_weight_laws"],
+            "alive": _reads("age", "work"),
         },
     },
     "child_resources": {
@@ -181,6 +197,7 @@ _PAYOFF_BEARING_ROUTES = (
     "action_in_regime_transition",
     "action_in_costate",
     "action_in_liquid_law",
+    "action_in_stochastic_weight",
 )
 
 
@@ -195,7 +212,11 @@ def test_ignoring_the_channels_makes_the_core_disagree_with_the_oracle(
     level both branches' interval midpoints sit on the same side of, so the rows
     the two branches read coincide and sharing them is not observable. The
     routes here carry the action into the payoff: the survival probability, the
-    streak the utility pays on, and the next liquid the terminal value reads.
+    streak the utility pays on, the health lottery the child utility pays on, and
+    the next liquid the terminal value reads. The discount route is not here:
+    the discount factor multiplies a branch's rows after they are gathered, so
+    sharing the undiscounted rows is not observable on it; its own control is
+    below.
     """
     monkeypatch.setattr(
         nbegm_module, "_continuation_action_names", lambda **_kwargs: ()
@@ -205,6 +226,32 @@ def test_ignoring_the_channels_makes_the_core_disagree_with_the_oracle(
 
     with pytest.raises(AssertionError):
         _assert_kernel_agrees_with_oracle(kernel=kernel, context=context)
+
+
+def test_the_discount_factor_binds_per_branch_not_per_cell():
+    """Positive control: a beta evaluated once per cell would be observable.
+
+    A discount factor reading the discrete action gives each branch its own
+    beta. Evaluating it once per cell with the first branch's code would make
+    every branch discount at that branch's beta, which is exactly the model
+    whose discount factor is that constant; the branch-bound solve must differ
+    from it and agree with the oracle.
+    """
+    kernel, context = _kernel(_CONTINUATION_FEEDING["action_in_discount"])
+    shared_kernel, shared_context = _kernel(
+        (
+            lambda: nbegm_ride_discrete_toy.build_model(
+                variant="nbegm", n_periods=3, **_SMALL
+            ),
+            lambda: nbegm_ride_discrete_toy.build_params(discount_factor=0.90),
+        )
+    )
+    branch_bound = run_production_kernel(kernel=kernel, context=context)
+    cell_shared = run_production_kernel(kernel=shared_kernel, context=shared_context)
+
+    assert kernel.statics.discount_action_names == ("buy_private",)
+    assert not np.allclose(np.asarray(branch_bound[0]), np.asarray(cell_shared[0]))
+    _assert_kernel_agrees_with_oracle(kernel=kernel, context=context)
 
 
 @pytest.mark.parametrize("route", [*_BUDGET_ONLY, *_CONTINUATION_FEEDING])

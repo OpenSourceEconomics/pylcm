@@ -1309,17 +1309,24 @@ def _cell_budget(
 ) -> _CellBudget:
     """Bind the compiled declarations and the discount factor to one cell branch.
 
-    The discrete action binds into cash-on-hand always and into the period utility
-    only when the utility declaration names it.
+    The discrete action binds into cash-on-hand always, and into the period
+    utility and the discount factor only when their declarations name it.
     """
-    discount_params = {name: kwargs[name] for name in statics.discount_param_names}
     if spec.discount_factor_dag is None:
         discount_factor = _scalar(kwargs["koopmans_aggregator__discount_factor"])
     else:
+        discount_arg_names = frozenset(
+            inspect.signature(spec.discount_factor_dag).parameters
+        )
         discount_factor = _scalar(
             spec.discount_factor_dag(
                 **{name: cell[name] for name in statics.discount_state_names},
-                **discount_params,
+                **{name: kwargs[name] for name in statics.discount_param_names},
+                **{
+                    name: value
+                    for name, value in action_binding.items()
+                    if name in discount_arg_names
+                },
             )
         )
     cell = dict(cell)

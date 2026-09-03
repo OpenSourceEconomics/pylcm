@@ -9,8 +9,9 @@ route the test models exercise.
 import importlib
 import inspect
 import pkgutil
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -22,6 +23,7 @@ from _lcm.egm.upper_envelope import query as query_module
 from _lcm.solution.nbegm import _RideAlongNBEGMPeriodKernel
 from lcm.solvers import NBEGM
 from tests.conftest import DECIMAL_PRECISION
+from tests.solution import _nbegm_oracle_routes as routes
 from tests.solution import test_nbegm_epstein_zin as epstein_zin_model
 from tests.solution._nbegm_direct_oracle import (
     direct_oracle_period,
@@ -244,6 +246,98 @@ _ROUTES = (
             variant="nbegm", n_periods=3, jump_schedule=True, **_SMALL
         ),
         build_params=lambda: nbegm_ride_discrete_toy.build_params(jump_schedule=True),
+    ),
+    _Route(
+        name="ride_discrete_action_in_liquid_law",
+        build_model=lambda: nbegm_ride_discrete_toy.build_model(
+            variant="nbegm", n_periods=3, action_in_liquid_law=True, **_SMALL
+        ),
+        build_params=lambda: nbegm_ride_discrete_toy.build_params(
+            action_in_liquid_law=True
+        ),
+    ),
+    _Route(
+        name="ride_discrete_action_in_schedule_variable",
+        build_model=lambda: nbegm_ride_discrete_toy.build_model(
+            variant="nbegm", n_periods=3, action_in_schedule_variable=True, **_SMALL
+        ),
+        build_params=lambda: nbegm_ride_discrete_toy.build_params(
+            action_in_schedule_variable=True
+        ),
+    ),
+    _Route(
+        name="ride_discrete_costate_reads_liquid_piecewise",
+        build_model=lambda: nbegm_ride_discrete_toy.build_model(
+            variant="nbegm",
+            n_periods=3,
+            costate_reads_liquid=True,
+            costate_smooth=False,
+            **_SMALL,
+        ),
+        build_params=nbegm_ride_discrete_toy.build_params,
+    ),
+    _Route(
+        name="ride_discrete_transition_reads_liquid",
+        build_model=lambda: nbegm_ride_discrete_toy.build_model(
+            variant="nbegm", n_periods=3, transition_reads_liquid=True, **_SMALL
+        ),
+        build_params=nbegm_ride_discrete_toy.build_params,
+    ),
+    _Route(
+        name="ride_discrete_schedule_variable_with_interval_continuation",
+        build_model=lambda: nbegm_ride_discrete_toy.build_model(
+            variant="nbegm",
+            n_periods=3,
+            action_in_schedule_variable=True,
+            costate_reads_liquid=True,
+            **_SMALL,
+        ),
+        build_params=lambda: nbegm_ride_discrete_toy.build_params(
+            action_in_schedule_variable=True
+        ),
+    ),
+    _Route(
+        name="ride_discrete_action_in_costate_with_jump_schedule",
+        build_model=lambda: nbegm_ride_discrete_toy.build_model(
+            variant="nbegm",
+            n_periods=3,
+            action_in_costate=True,
+            jump_schedule=True,
+            **_SMALL,
+        ),
+        build_params=lambda: nbegm_ride_discrete_toy.build_params(jump_schedule=True),
+    ),
+    _Route(
+        name="ride_discrete_action_in_health_transition",
+        build_model=lambda: nbegm_ride_discrete_toy.build_model(
+            variant="nbegm", n_periods=3, action_in_health_transition=True, **_SMALL
+        ),
+        build_params=nbegm_ride_discrete_toy.build_params,
+        period=0,
+    ),
+    _Route(
+        name="ride_discrete_action_in_discount",
+        build_model=lambda: nbegm_ride_discrete_toy.build_model(
+            variant="nbegm", n_periods=3, action_in_discount=True, **_SMALL
+        ),
+        build_params=lambda: nbegm_ride_discrete_toy.build_params(
+            action_in_discount=True
+        ),
+        period=0,
+    ),
+    _Route(
+        name="ride_discrete_action_in_all_channels",
+        build_model=lambda: nbegm_ride_discrete_toy.build_model(
+            variant="nbegm",
+            n_periods=3,
+            action_in_costate=True,
+            action_in_liquid_law=True,
+            action_in_utility=True,
+            **_SMALL,
+        ),
+        build_params=lambda: nbegm_ride_discrete_toy.build_params(
+            action_in_liquid_law=True
+        ),
     ),
     _Route(
         name="multi_discrete",
@@ -492,47 +586,193 @@ def test_direct_oracle_detects_a_dropped_target_and_a_dropped_stochastic_node(
         _assert_agrees(got=value, expected=oracle.value, label="value")
 
 
-def test_every_ride_along_kernel_in_the_test_models_has_an_oracle_route() -> None:
-    """Every ride-along NB-EGM route among the shared test models is checked here.
+_SOURCE = Path(__file__).read_text()
+_TABLES = _SOURCE[_SOURCE.index("_ROUTES = (") : _SOURCE.index("def _tolerance")]
 
-    A new toy that reaches the ride-along kernel must be added to the oracle's
-    route table, so the census below fails until it is.
-    """
-    covered_modules = {
-        name
-        for route in _ROUTES
-        for name in inspect.getclosurevars(route.build_model).globals
-        if name.startswith("nbegm_")
+
+def _declared_routes(*, source: str = _SOURCE) -> dict[str, routes.RouteIdentity]:
+    return {
+        **routes.declared_route_identities(
+            source=source, table_name="_ROUTES", context=routes.RIDE_ALONG
+        ),
+        **routes.declared_route_identities(
+            source=source, table_name="_NNBEGM_ROUTES", context=routes.NNBEGM_INNER
+        ),
     }
-    ride_along_modules = set()
-    for module_info in pkgutil.iter_modules(test_models_package.__path__):
-        if not module_info.name.startswith("nbegm_"):
-            continue
-        module = importlib.import_module(f"tests.test_models.{module_info.name}")
-        build_model = getattr(module, "build_model", None)
-        if build_model is None:
-            continue
-        if _builds_a_ride_along_kernel(build_model):
-            ride_along_modules.add(module_info.name)
-    assert ride_along_modules <= covered_modules, sorted(
-        ride_along_modules - covered_modules
+
+
+def test_the_route_tables_declare_exactly_the_supported_route_identities() -> None:
+    """Every supported route is declared once, at its identity, and nothing else.
+
+    A route's identity is its test-model module, semantic model and parameter
+    keywords, regime, period, and context; grid sizes are not part of it. A
+    missing, extra, drifted, or duplicated route is a census failure.
+    """
+    discrepancies = routes.census_discrepancies(
+        declared=_declared_routes(), supported=routes.SUPPORTED_ROUTES
+    )
+
+    assert discrepancies == ()
+
+
+def test_the_declared_route_names_are_the_route_tables_names() -> None:
+    """The identities are read from the same tables the oracle parametrizes over."""
+    declared = _declared_routes()
+
+    assert set(declared) == {route.name for route in (*_ROUTES, *_NNBEGM_ROUTES)}
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_kind"),
+    [
+        (
+            (
+                """    _Route(
+        name="ride_discrete_action_in_costate",
+        build_model=lambda: nbegm_ride_discrete_toy.build_model(
+            variant="nbegm", n_periods=3, action_in_costate=True, **_SMALL
+        ),
+        build_params=nbegm_ride_discrete_toy.build_params,
+    ),
+""",
+                "",
+            ),
+            "missing route 'ride_discrete_action_in_costate'",
+        ),
+        (
+            (
+                "n_periods=3, action_in_costate=True, **_SMALL",
+                "n_periods=3, action_in_utility=True, **_SMALL",
+            ),
+            "drifted route 'ride_discrete_action_in_costate'",
+        ),
+        (
+            (
+                "n_periods=3, action_in_costate=True, **_SMALL",
+                "n_periods=3, action_in_utility=True, **_SMALL",
+            ),
+            "duplicate identity",
+        ),
+        (
+            (
+                '        regime_name="alive_a",\n        period=1,\n',
+                '        regime_name="alive_a",\n        period=2,\n',
+            ),
+            "drifted route 'multi_target'",
+        ),
+        (
+            (
+                'name="ride_discrete_jump_schedule",',
+                'name="ride_discrete_jump_schedule_renamed",',
+            ),
+            "unsupported route 'ride_discrete_jump_schedule_renamed'",
+        ),
+    ],
+    ids=["deleted", "reflagged", "duplicated", "reperioded", "renamed"],
+)
+def test_the_route_census_detects_a_mutated_route_table(
+    *, mutation: tuple[str, str], expected_kind: str
+) -> None:
+    """Deleting, re-flagging, duplicating, re-perioding, or renaming a route fails.
+
+    The census must notice a deleted route even while another route of the same
+    module remains, and a changed semantic flag even when the name is unchanged.
+    """
+    old, new = mutation
+    assert _TABLES.count(old) == 1, "the mutation must hit exactly one table site"
+    mutated = _SOURCE.replace(_TABLES, _TABLES.replace(old, new))
+
+    discrepancies = routes.census_discrepancies(
+        declared=_declared_routes(source=mutated), supported=routes.SUPPORTED_ROUTES
+    )
+
+    assert any(expected_kind in item for item in discrepancies), discrepancies
+
+
+def test_an_unreadable_route_table_is_a_census_failure_not_an_empty_census() -> None:
+    """A route whose builder is hidden from the census fails loudly."""
+    old = (
+        "build_model=lambda: nbegm_ride_discrete_toy.build_model(\n"
+        '            variant="nbegm", n_periods=3, action_in_costate=True, **_SMALL\n'
+        "        ),"
+    )
+    assert _TABLES.count(old) == 1
+    mutated = _SOURCE.replace(
+        _TABLES, _TABLES.replace(old, "build_model=_hidden_builder,")
+    )
+
+    with pytest.raises(TypeError, match="statically visible builder"):
+        _declared_routes(source=mutated)
+
+
+@pytest.mark.parametrize(
+    ("relpath", "function", "flags"),
+    routes.POSITIVE_WITNESSES,
+    ids=[relpath.rsplit("/", 1)[-1] for relpath, _, _ in routes.POSITIVE_WITNESSES],
+)
+def test_every_positive_ride_discrete_witness_has_a_route_with_its_flags(
+    *, relpath: str, function: str, flags: Mapping[str, object]
+) -> None:
+    """A production-path test of the ride-discrete toy is covered by the oracle.
+
+    The witness test's builder call must pass exactly the flags recorded for it,
+    and a supported ride-along route of the ride-discrete toy must carry exactly
+    those flags beyond the variant and period.
+    """
+    source = (Path(__file__).parents[2] / relpath).read_text()
+    built = {
+        key: value
+        for key, value in routes.witness_flags(source=source, function=function).items()
+        if key not in {"variant", "n_periods"}
+    }
+    supported_flag_sets = {
+        frozenset(
+            (key, value)
+            for key, value in identity.model_kwargs
+            if key not in {"variant", "n_periods"}
+        )
+        for identity in routes.SUPPORTED_ROUTES.values()
+        if identity.module == "nbegm_ride_discrete_toy"
+    }
+
+    assert built == dict(flags)
+    assert frozenset(flags.items()) in supported_flag_sets
+
+
+def test_every_test_model_module_that_builds_a_ride_along_kernel_is_routed() -> None:
+    """A new toy that reaches the ride-along kernel must be given an oracle route.
+
+    Every `nbegm_*` test-model module is built at the oracle's grid sizes; a
+    build error propagates rather than reading as "no route needed".
+    """
+    routed_modules = {identity.module for identity in routes.SUPPORTED_ROUTES.values()}
+    ride_along_modules = {
+        module_info.name
+        for module_info in pkgutil.iter_modules(test_models_package.__path__)
+        if module_info.name.startswith("nbegm_")
+        and _builds_a_ride_along_kernel(
+            importlib.import_module(f"tests.test_models.{module_info.name}")
+        )
+    }
+
+    assert ride_along_modules <= routed_modules, sorted(
+        ride_along_modules - routed_modules
     )
 
 
-def _builds_a_ride_along_kernel(build_model: Callable) -> bool:
-    signature = inspect.signature(build_model)
-    kwargs: dict[str, Any] = {}
-    if "variant" in signature.parameters:
-        kwargs["variant"] = "nbegm"
-    if "young_variant" in signature.parameters:
-        kwargs["young_variant"] = "nbegm"
-    for name in ("n_liquid", "n_savings", "n_consumption"):
-        if name in signature.parameters:
-            kwargs[name] = _SMALL[name]
-    try:
-        model = build_model(**kwargs)
-    except Exception:  # noqa: BLE001 - a toy that refuses this variant is not a route
+def _builds_a_ride_along_kernel(module: Any) -> bool:
+    build_model = getattr(module, "build_model", None)
+    if build_model is None:
         return False
+    parameters = inspect.signature(build_model).parameters
+    kwargs: dict[str, Any] = {
+        name: size for name, size in _SMALL.items() if name in parameters
+    }
+    if "variant" in parameters:
+        kwargs["variant"] = "nbegm"
+    if "young_variant" in parameters:
+        kwargs["young_variant"] = "nbegm"
+    model = build_model(**kwargs)
     return any(
         isinstance(kernel, _RideAlongNBEGMPeriodKernel)
         for regime in model._regimes.values()

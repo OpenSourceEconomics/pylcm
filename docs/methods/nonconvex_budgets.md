@@ -51,9 +51,10 @@ next-period law that reads the current liquid state through declared cliffs make
 continuation piecewise-constant across the cliff intervals; the read is then bound per
 interval and each interval is solved as its own case. A discrete action that only shifts
 the budget and utility shares one continuation read across its branches; an action that
-reaches the continuation (through the regime transition, a law of motion, a child's
-resources, the discount factor, or a schedule variable on a per-interval read) is read
-once per class of branches agreeing on it.
+reaches the continuation (through the regime transition, a law of motion,
+stochastic-state transition weights, a child's resources, the discount factor, or a
+schedule variable on a per-interval read) is read once per class of branches agreeing on
+it.
 
 The structural declaration does not make an unsupported model supported. The solver
 still checks its scope: margin count, action structure, budget form, differentiability,

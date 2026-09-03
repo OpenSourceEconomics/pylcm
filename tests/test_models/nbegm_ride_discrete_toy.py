@@ -23,6 +23,7 @@ from lcm.typing import (
     ContinuousAction,
     ContinuousState,
     DiscreteAction,
+    DiscreteState,
     FloatND,
     ScalarInt,
 )
@@ -39,12 +40,19 @@ N_INCOME_NODES = 5
 INCOME_SCALE = 0.5
 LEISURE_UTILITY = 0.3
 STREAK_UTILITY = 0.05
+HEALTH_UTILITY = 4.0
 
 
 @categorical(ordered=False)
 class BuyPrivate:
     no: ScalarInt
     yes: ScalarInt
+
+
+@categorical(ordered=False)
+class Health:
+    bad: ScalarInt
+    good: ScalarInt
 
 
 @lcm.piecewise_affine(
@@ -325,13 +333,27 @@ def prob_die_liquid_smooth(
     )
 
 
-def discount_factor_action(buy_private: DiscreteAction) -> FloatND:
-    """Discount factor reading the discrete action — an unsupported branch channel.
+def prob_health_action(*, buy_private: DiscreteAction) -> FloatND:
+    """Health probabilities whose mass follows the current insurance branch."""
+    return jnp.stack((1.0 - buy_private, buy_private))
 
-    The envelope evaluates the discount factor once per cell, not per branch, so an
-    action-dependent discount factor is rejected at model build.
+
+def utility_with_health(
+    *, consumption: ContinuousAction, crra: float, health: DiscreteState
+) -> FloatND:
+    """CRRA utility plus a payoff that makes the health lottery load-bearing."""
+    return crra_utility(consumption=consumption, crra=crra) + HEALTH_UTILITY * health
+
+
+def discount_factor_action(buy_private: DiscreteAction) -> FloatND:
+    """Discount factor reading the discrete action, a branch-continuation channel.
+
+    The envelope evaluates the discount factor once per discrete branch with that
+    branch's action code bound. The insured branch weighs the (negative CRRA)
+    continuation much less, which trades against the premium it pays today, so
+    the winning branch changes with wealth.
     """
-    return 0.90 + 0.05 * buy_private
+    return 0.90 - 0.25 * buy_private
 
 
 def utility_with_action(
@@ -374,6 +396,7 @@ def build_model(  # noqa: C901, PLR0912
     action_in_liquid_law: bool = False,
     action_in_utility: bool = False,
     action_in_regime_transition: bool = False,
+    action_in_health_transition: bool = False,
     action_in_schedule_variable: bool = False,
     jump_schedule: bool = False,
     derived_kink_alongside_jump: bool = False,
@@ -416,7 +439,11 @@ def build_model(  # noqa: C901, PLR0912
     utility_func = (
         utility_with_action
         if action_in_utility
-        else (utility_with_streak if action_in_costate else utility)
+        else (
+            utility_with_streak
+            if action_in_costate
+            else (utility_with_health if action_in_health_transition else utility)
+        )
     )
     resources_func = (
         resources_nonlinear_above_ten if nonlinear_budget_above_ten else resources
@@ -452,6 +479,11 @@ def build_model(  # noqa: C901, PLR0912
         }
     extra_states: dict[str, Grid] = {"income": income_grid} if include_income else {}
     extra_state_transitions: dict[str, object] = {}
+    if action_in_health_transition:
+        extra_states["health"] = DiscreteGrid(category_class=Health)
+        extra_state_transitions["health"] = {
+            "alive": MarkovTransition(prob_health_action),
+        }
     if action_in_costate:
         extra_states["streak"] = LinSpacedGrid(start=0.0, stop=4.0, n_points=5)
         extra_state_transitions["streak"] = {
@@ -545,8 +577,13 @@ def build_params(
     surcharge_start: float = 8.0,
     nonlinear_budget_above_ten: bool = False,
     curvature: float = 0.05,
+    action_in_discount: bool = False,
 ) -> dict:
-    """Get parameters for the ride-along discrete-choice toy."""
+    """Get parameters for the ride-along discrete-choice toy.
+
+    With `action_in_discount` the regime declares its own `discount_factor`
+    function, so the Koopmans aggregator's discount factor is not a parameter.
+    """
     alive_budget = {"return_liquid": return_liquid}
     tax_params = (
         {"tax_lump": tax_lump, "tax_exemption": tax_exemption}
@@ -573,7 +610,11 @@ def build_params(
     )
     alive = {
         "utility": {"crra": crra},
-        "koopmans_aggregator": {"discount_factor": discount_factor},
+        **(
+            {}
+            if action_in_discount
+            else {"koopmans_aggregator": {"discount_factor": discount_factor}}
+        ),
         "resources": {
             "base_income": base_income,
             "premium": premium,
