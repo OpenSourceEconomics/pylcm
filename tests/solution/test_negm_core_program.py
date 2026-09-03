@@ -38,7 +38,13 @@ from _lcm.execution.core_program import (
 )
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from _lcm.solution import backward_induction, negm, period_replay
-from _lcm.solution.negm import _with_outer_post_decision
+from _lcm.solution.negm import (
+    _COH_SHIFTS,
+    _KEEPER_CARRY,
+    _KEEPER_VALUE,
+    _OUTER_NODES,
+    _with_outer_post_decision,
+)
 from _lcm.solution.period_replay import replay_period
 from _lcm.typing import FlatParams
 from lcm.solver_api import EGM_CONTINUATION, KernelOutput
@@ -227,26 +233,39 @@ def test_the_sweep_builder_binds_the_first_node_and_keeper_shaped_placeholders(
     keeper_value, keeper_carry, _ = jax.jit(keeper.function)(**keeper.arguments)
 
     assert "next_regime_to_V_arr" not in arguments
-    np.testing.assert_array_equal(arguments["outer_nodes"], kernel.outer_grid_values)
+    np.testing.assert_array_equal(arguments[_OUTER_NODES], kernel.outer_grid_values)
     assert arguments[kernel.outer_post_decision] == kernel.outer_grid_values[0]
-    assert arguments["coh_shifts"].shape == (
+    assert arguments[_COH_SHIFTS].shape == (
         kernel.durable_grid_values.shape[0],
         _N_OUTER,
     )
-    assert (arguments["keeper_value"].shape, arguments["keeper_value"].dtype) == (
+    assert (arguments[_KEEPER_VALUE].shape, arguments[_KEEPER_VALUE].dtype) == (
         keeper_value.shape,
         keeper_value.dtype,
     )
-    assert jax.tree.structure(arguments["keeper_carry"]) == jax.tree.structure(
+    assert jax.tree.structure(arguments[_KEEPER_CARRY]) == jax.tree.structure(
         keeper_carry
     )
     assert jax.tree.map(
         lambda placeholder, leaf: (
             placeholder.shape == leaf.shape and placeholder.dtype == leaf.dtype
         ),
-        arguments["keeper_carry"],
+        arguments[_KEEPER_CARRY],
         keeper_carry,
     ) == jax.tree.map(lambda _leaf: True, keeper_carry)
+
+
+def test_the_sweep_transport_keys_live_in_an_engine_only_namespace():
+    """No name a model can declare is reserved for the sweep's own inputs.
+
+    Public regime, function, state, and action names cannot contain the `__`
+    qualified-name separator, so a key that starts with it is unreachable
+    from any supported model.
+    """
+    keys = {_KEEPER_VALUE, _KEEPER_CARRY, _OUTER_NODES, _COH_SHIFTS}
+
+    assert all(key.startswith("__lcm_negm_") for key in keys)
+    assert len(keys) == 4
 
 
 def test_the_kernel_returns_a_public_output_with_the_stacked_continuation(*, captured):
@@ -267,7 +286,10 @@ def _carry_leaves_with_paths(carry: EGMCarry) -> list[tuple[str, Any]]:
     return list(zip(paths, jax.tree.leaves(carry), strict=True))
 
 
-@pytest.mark.parametrize("outer_batch_size", [0, 1, 3, _N_OUTER])
+_WIDTHS = [0, 1, 2, 3, 5, _N_OUTER]
+
+
+@pytest.mark.parametrize("outer_batch_size", _WIDTHS)
 def test_the_compiled_sweep_value_agrees_with_the_per_node_loop(
     *, captured, outer_batch_size: int
 ):
@@ -290,22 +312,24 @@ def test_the_compiled_sweep_value_agrees_with_the_per_node_loop(
     )
 
 
-@pytest.mark.parametrize("outer_batch_size", [0, 1, 3, _N_OUTER])
+@pytest.mark.parametrize("outer_batch_size", _WIDTHS)
 def test_the_compiled_sweep_carry_rows_agree_with_the_per_node_loop(
     *, captured, outer_batch_size: int
 ):
-    """Every carry row agrees with the loop's to a few ULP at the row bank's scale.
+    """Under x64, block width preserves every carry row's support exactly.
 
-    A row is formed from operands at the bank's own scale: the savings nodes,
-    the consumption the Euler inversion returns, and the credited-cost lift
-    that adds shifts of the grid's magnitude, so the spacing at that scale is
-    the unit the rows are compared in. Dead cells must coincide exactly. At
-    float32 a row lands on adjacent neighbours across block widths and a dead-
-    cell decision at a near tie follows it, so the row bank is compared under
-    float64 only; the value test above covers both precisions.
+    NaN and infinity placement is representation-level support metadata: a
+    parent continuation read turns the non-NaN prefix into its valid length.
+    Under float64 it agrees exactly with the keeper-then-per-node reference at
+    every width, and the finite rows agree to a few ULP at the row bank's
+    operand scale. At float32 the row support is a rounded structural decision
+    of the compiled inner adjuster: the per-node jit and a sequential scan of
+    the same program already differ on a handful of near-tie cells, so no
+    compiled sweep can reproduce that reference exactly, and what float32 owes
+    is the value-level statement checked end to end below.
     """
     if not X64_ENABLED:
-        pytest.skip("x64 run only")
+        pytest.skip("x64 run only; float32 support is checked end to end")
     kernel, context = captured
     _, expected_carry = _keeper_then_per_node_loop(kernel=kernel, context=context)
     output = _call(
@@ -319,14 +343,60 @@ def test_the_compiled_sweep_carry_rows_agree_with_the_per_node_loop(
         _carry_leaves_with_paths(got_carry),
         strict=True,
     ):
-        finite = np.asarray(expected)[np.isfinite(np.asarray(expected))]
+        got_arr = np.asarray(got)
+        expected_arr = np.asarray(expected)
+        for label, predicate in (
+            ("NaN", np.isnan),
+            ("positive-infinity", np.isposinf),
+            ("negative-infinity", np.isneginf),
+        ):
+            np.testing.assert_array_equal(
+                predicate(got_arr),
+                predicate(expected_arr),
+                err_msg=f"{path}: {label} support differs by outer_batch_size",
+            )
+        finite = expected_arr[np.isfinite(expected_arr)]
         assert_agrees_to_ulp(
-            got=got,
-            expected=expected,
+            got=got_arr,
+            expected=expected_arr,
             n_ulp=_INVARIANCE_ULP,
             err_msg=path,
             operand_magnitude=float(np.max(np.abs(finite))) if finite.size else None,
         )
+
+
+@pytest.mark.parametrize("outer_batch_size", [1, 2, 3, 5, 7, _N_OUTER])
+def test_block_width_leaves_every_periods_solved_values_within_ulp(
+    *, outer_batch_size: int
+):
+    """The parent-read differential: block width is not observable in any period.
+
+    Every earlier period reads the sweep's carry through its valid prefix, so a
+    width-dependent support decision would surface as a value change upstream.
+    Solving the kinked toy at each width and comparing every period's value
+    array with the one-block solve bounds that effect at both precisions; the
+    finiteness pattern of the values must agree exactly.
+    """
+    reference = negm_kinked_toy.build_model().solve(params=_PARAMS, log_level="off")
+    solution = negm_kinked_toy.build_model(outer_batch_size=outer_batch_size).solve(
+        params=_PARAMS, log_level="off"
+    )
+
+    assert solution.values.keys() == reference.values.keys()
+    for period, regime_to_value in reference.values.items():
+        for regime, expected in regime_to_value.items():
+            got = solution.values[period][regime]
+            np.testing.assert_array_equal(
+                np.isfinite(np.asarray(got)),
+                np.isfinite(np.asarray(expected)),
+                err_msg=f"period {period}, regime {regime}: finiteness differs",
+            )
+            assert_agrees_to_ulp(
+                got=got,
+                expected=expected,
+                n_ulp=_INVARIANCE_ULP,
+                err_msg=f"period {period}, regime {regime}",
+            )
 
 
 def _fixed_flat_params() -> FlatParams:

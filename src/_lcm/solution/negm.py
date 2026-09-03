@@ -86,12 +86,17 @@ from lcm.typing import (
 _NEGM_SWEEP_DENSE_REASON = (
     "deliberately_dense:negm_outer_candidates_retained_not_reduced"
 )
-# The keeper's outputs and the sweep's own inputs enter the compiled sweep under
-# these names, next to the inner adjuster's arguments.
-_KEEPER_VALUE = "keeper_value"
-_KEEPER_CARRY = "keeper_carry"
-_OUTER_NODES = "outer_nodes"
-_COH_SHIFTS = "coh_shifts"
+# The keeper's outputs and the sweep's own inputs enter the compiled sweep next
+# to the inner adjuster's arguments, under engine-only names. A public regime,
+# function, state, or action name cannot contain the ``__`` qualified-name
+# separator, and a generated qualified parameter name always has a non-empty
+# component before its separator, so a key that starts with the separator can
+# never be produced by a supported model.
+_TRANSPORT_PREFIX = "__lcm_negm_"
+_KEEPER_VALUE = f"{_TRANSPORT_PREFIX}keeper_value"
+_KEEPER_CARRY = f"{_TRANSPORT_PREFIX}keeper_carry"
+_OUTER_NODES = f"{_TRANSPORT_PREFIX}outer_nodes"
+_COH_SHIFTS = f"{_TRANSPORT_PREFIX}coh_shifts"
 
 
 @beartype(conf=REGIME_CONF)
@@ -883,11 +888,7 @@ def _outer_sweep_program(
     outer_post_decision: FunctionName,
     durable_axis: int,
     outer_batch_size: int,
-    keeper_value: FloatND,
-    keeper_carry: EGMCarry,
-    outer_nodes: Float1D,
-    coh_shifts: FloatND,
-    **adjuster_arguments: object,
+    **arguments: object,
 ) -> tuple[FloatND, EGMCarry]:
     """Solve the adjuster at every outer node and stack it with the keeper.
 
@@ -896,7 +897,16 @@ def _outer_sweep_program(
     nodes (`0`: one block). The value is the exact maximum of the keeper value
     and every node value; the continuation is the keeper carry followed by
     every node carry lifted into common cash on hand on the candidate axis.
+
+    The keeper's value and carry, the outer nodes, and the cash-on-hand shifts
+    arrive among `arguments` under the engine-only transport keys; everything
+    else is the inner adjuster's own argument tree.
     """
+    adjuster_arguments = dict(arguments)
+    keeper_value = cast("FloatND", adjuster_arguments.pop(_KEEPER_VALUE))
+    keeper_carry = cast("EGMCarry", adjuster_arguments.pop(_KEEPER_CARRY))
+    outer_nodes = cast("Float1D", adjuster_arguments.pop(_OUTER_NODES))
+    coh_shifts = cast("FloatND", adjuster_arguments.pop(_COH_SHIFTS))
     n_nodes = outer_nodes.shape[0]
 
     def solve_node(node: ScalarFloat) -> tuple[FloatND, EGMCarry]:
@@ -930,8 +940,9 @@ def _fail_if_sweep_inputs_collide_with_the_adjusters(
     collisions = sorted(set(arguments) & set(own))
     if collisions:
         msg = (
-            f"Regime '{regime_name}' declares {collisions}, which the NEGM outer "
-            "sweep reserves for its own inputs; rename them."
+            f"Regime '{regime_name}' produced arguments {collisions} that collide "
+            "with the NEGM outer sweep's engine-only transport keys. No supported "
+            "model can produce these names; this is an internal namespace error."
         )
         raise RegimeInitializationError(msg)
 
