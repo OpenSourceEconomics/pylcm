@@ -13,6 +13,7 @@ from _lcm.execution.core_program import (
 )
 from _lcm.execution.output_layout import VALUE
 from _lcm.grids import Grid
+from _lcm.reachability import EdgeStatus, PhaseReachability
 from _lcm.regime_building.max_Q_over_a import get_max_Q_over_a
 from _lcm.regime_building.ndimage import map_coordinates
 from _lcm.solution.backward_induction import _drain_V_arr_shards, solve
@@ -46,9 +47,32 @@ class MockSolutionPhase:
     period_state_axes: (
         MappingProxyType[int, MappingProxyType[StateOrActionName, object]] | None
     ) = None
+    reachability: PhaseReachability = dataclasses.field(
+        default_factory=lambda: _single_regime_reachability(n_periods=2)
+    )
+    """The solve-phase regime graph; one regime, reachable from itself."""
 
     def state_action_space(self, regime_params):  # noqa: ARG002
         return self._base_state_action_space
+
+
+def _single_regime_reachability(*, n_periods: int) -> PhaseReachability:
+    """The regime graph of a model whose only regime is `default`."""
+    return PhaseReachability(
+        n_periods=n_periods,
+        active_regimes_by_period=tuple(
+            frozenset({"default"}) for _period in range(n_periods)
+        ),
+        candidate_targets_by_source=MappingProxyType({"default": ("default",)}),
+        targets_by_period=tuple(
+            MappingProxyType({"default": ("default",)})
+            for _period in range(n_periods - 1)
+        ),
+        edge_status_by_period=tuple(
+            MappingProxyType({("default", "default"): EdgeStatus.CONDITIONAL})
+            for _period in range(n_periods - 1)
+        ),
+    )
 
 
 def _grid_search_period_kernels(
