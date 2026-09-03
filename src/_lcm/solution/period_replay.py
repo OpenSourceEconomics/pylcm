@@ -20,15 +20,11 @@ import jax
 from _lcm.engine import StateActionSpace
 from _lcm.execution.core_program import (
     CoreBuildContext,
-    CoreExecutionDisposition,
     core_program_graph,
     materialize_core_program,
     select_programs,
 )
-from _lcm.execution.output_layout import (
-    UNPLANNED,
-    resolve_output_layout,
-)
+from _lcm.execution.output_layout import resolve_output_layout
 from _lcm.solution.backward_induction import (
     _assert_lowered_output_roles,
     _attach_resolved_output_layout,
@@ -248,29 +244,16 @@ def _compile_cores_for_one_period(
             for name in state_action_space.states
             if name not in regime.fold_state_names
         )
-        layout = (
-            UNPLANNED
-            if resolved.disposition is CoreExecutionDisposition.LEGACY_UNPLANNED
-            else resolve_output_layout(
-                core_key=core_name,
-                value_template=context.next_regime_to_V_arr[
-                    kernel_kwargs["regime_name"]
-                ],
-                state_order=state_order,
-                output_roles=resolved.output_roles,
-            )
+        layout = resolve_output_layout(
+            core_key=core_name,
+            value_template=context.next_regime_to_V_arr[kernel_kwargs["regime_name"]],
+            state_order=state_order,
+            output_roles=resolved.output_roles,
         )
-        jitted = (
-            jax.jit(
-                resolved.function,
-                static_argnames=tuple(resolved.static_kwargs),
-            )
-            if layout is UNPLANNED
-            else jax.jit(
-                resolved.function,
-                static_argnames=tuple(resolved.static_kwargs),
-                out_shardings=layout.out_shardings,
-            )
+        jitted = jax.jit(
+            resolved.function,
+            static_argnames=tuple(resolved.static_kwargs),
+            out_shardings=layout.out_shardings,
         )
         lowered = jitted.lower(**resolved.arguments, **resolved.static_kwargs)
         _assert_lowered_output_roles(

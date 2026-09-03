@@ -28,7 +28,7 @@ from _lcm.execution.core_program import (
     materialize_core_program,
 )
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
-from _lcm.solution import backward_induction, period_replay
+from _lcm.solution import period_replay
 from _lcm.solution.period_replay import replay_period
 from lcm.exceptions import RegimeInitializationError
 from lcm.solvers import EGM
@@ -175,20 +175,6 @@ def test_with_fixed_params_rebinds_the_program_and_its_builder():
     ).arguments
     assert "crra" not in free_arguments
     assert kernel.with_fixed_params(fixed_flat_params=MappingProxyType({})) is kernel
-
-
-def test_an_egm_model_solves_without_any_value_repair(monkeypatch):
-    """Every period publishes planned outputs, so nothing is repaired after the call."""
-
-    def refuse(**_kwargs: object) -> object:
-        msg = "an unplanned value reached the repair path"
-        raise AssertionError(msg)
-
-    monkeypatch.setattr(backward_induction, "_repair_unplanned_kernel_value", refuse)
-
-    _model(solver=EGM(savings_grid=_SAVINGS_GRID)).solve(
-        params=_params(), log_level="off"
-    )
 
 
 def test_a_replay_lowers_the_dense_program_the_solve_ran(*, monkeypatch, tmp_path):

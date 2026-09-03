@@ -25,7 +25,6 @@ from _lcm.execution.core_program import (
     materialize_core_program,
 )
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
-from _lcm.solution import backward_induction
 from tests.solution._nbegm_direct_oracle import ride_along_kernel
 from tests.test_models import (
     nbegm_jump_ride_along_toy,
@@ -229,16 +228,3 @@ def test_main_and_replay_publish_the_same_value_and_carry():
         jax.tree.leaves(main_carry), jax.tree.leaves(replay_carry), strict=True
     ):
         np.testing.assert_array_equal(np.asarray(main_leaf), np.asarray(replay_leaf))
-
-
-def test_a_ride_along_model_solves_without_any_value_repair(monkeypatch):
-    """Every regime of the toy publishes planned outputs, so nothing is repaired."""
-
-    def refuse(**_kwargs: object) -> object:
-        msg = "an unplanned value reached the repair path"
-        raise AssertionError(msg)
-
-    monkeypatch.setattr(backward_induction, "_repair_unplanned_kernel_value", refuse)
-    model = nbegm_ride_along_toy.build_model(variant="nbegm", n_periods=3, **_SMALL)
-
-    model.solve(params=nbegm_ride_along_toy.build_params(), log_level="off")

@@ -29,12 +29,10 @@ from _lcm.execution.core_program import (
 )
 from _lcm.execution.liveness import PlannedInputLiveness
 from _lcm.execution.output_layout import (
-    UNPLANNED,
     ExpectedOutputLeaf,
     PlannedCore,
     ResolvedOutputLayout,
     assert_value_leaf_layout,
-    planned_output_layout,
     resolve_output_layout,
 )
 from _lcm.execution.value_transfer import (
@@ -349,12 +347,10 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             # The published V mapping is the calling convention for every
             # downstream consumer — the parents' cores and the AOT-lowered
             # simulate programs are both compiled against the per-regime V
-            # topology — so a kernel output arriving with a different
-            # sharding (the compiled program's output sharding is the
-            # backend's choice) is placed back on the template's mesh here.
+            # topology — so a kernel value must leave its compiled program on
+            # the template's placement; it is asserted here, never re-placed.
             V_arr = _publish_kernel_value(
                 value=V_arr,
-                template=next_regime_to_V_arr[regime_name],
                 compiled_cores=compiled_functions[(regime_name, period)],
             )
             _fail_if_continuation_publisher_returned_none(
@@ -1101,32 +1097,39 @@ def _match_continuation_template_sharding(
 def _publish_kernel_value(
     *,
     value: FloatND,
-    template: FloatND,
     compiled_cores: Mapping[str, Callable],
 ) -> FloatND:
-    """Publish a period value in the engine-owned layout.
+    """Publish a period value after asserting its planned placement.
 
-    An output-layout-aware core has already asserted its complete runtime
-    output tree against the layout used to lower it at the compiled-core seam;
-    here only the value leaf the loop publishes is checked again, since the
-    kernel may have unpacked the rest of its tree into channels. The check reads
-    the first planned core the period dispatched, whatever its name, since a
+    Every compiled core has already asserted its complete runtime output tree
+    against the layout used to lower it at the compiled-core seam; here only the
+    value leaf the loop publishes is checked again, since the kernel may have
+    unpacked the rest of its tree into channels. The check reads the first
+    compiled core the period dispatched, whatever its name, since a
     retention-scoped graph compiles one program under one name and another under
-    another. Legacy kernels retain the existing repair at this boundary.
-    Continuation rolling deliberately keeps its independent repair: it is a
-    different producer/consumer boundary.
+    another. A core without a resolved layout cannot publish a value: nothing is
+    re-placed here. Continuation rolling keeps its independent placement repair,
+    which is a different producer/consumer boundary.
     """
-    for core in compiled_cores.values():
-        layout = planned_output_layout(core)
-        if layout is not UNPLANNED:
-            assert_value_leaf_layout(value=value, layout=layout)
-            return value
-    return _repair_unplanned_kernel_value(value=value, template=template)
-
-
-def _repair_unplanned_kernel_value(*, value: FloatND, template: FloatND) -> FloatND:
-    """Place a legacy kernel output onto the published value template."""
-    return _match_leaf_template_sharding(leaf=value, template_leaf=template)
+    planned = tuple(
+        core for core in compiled_cores.values() if isinstance(core, PlannedCore)
+    )
+    if len(planned) != len(compiled_cores):
+        unplanned = tuple(
+            name
+            for name, core in compiled_cores.items()
+            if not isinstance(core, PlannedCore)
+        )
+        msg = (
+            "A period value can be published only through a PlannedCore; "
+            f"{unplanned!r} carry no resolved layout."
+        )
+        raise TypeError(msg)
+    if not planned:
+        msg = "A period dispatched no compiled core, so it publishes no value."
+        raise ValueError(msg)
+    assert_value_leaf_layout(value=value, layout=planned[0].layout)
+    return value
 
 
 def _match_leaf_template_sharding(*, leaf: FloatND, template_leaf: FloatND) -> FloatND:
@@ -1396,7 +1399,7 @@ def _build_planned_input_liveness(
         pinned_artifacts.update(unplanned_exact)
         if has_unknown:
             pinned_artifacts.update(
-                _conservative_legacy_value_artifacts(
+                _conservative_dense_value_artifacts(
                     regime=regime,
                     regime_name=regime_name,
                     period=period,
@@ -1417,7 +1420,12 @@ def _classify_dispatch_value_artifacts(
     tuple[ValueArtifactAddress, ...],
     bool,
 ]:
-    """Separate finite planned reads from pinned dense or unknown reads."""
+    """Separate finite planned reads from pinned dense or undeclared reads.
+
+    A dense program pins exactly the value reads it declares; one that declares
+    none may still read any reachable value through its builder, so it is
+    reported as unknown and pinned conservatively.
+    """
     planned: list[ValueArtifactAddress] = []
     unplanned_exact: list[ValueArtifactAddress] = []
     has_unknown = False
@@ -1426,14 +1434,11 @@ def _classify_dispatch_value_artifacts(
         declared_targets = tuple(
             access.target for access in metadata.requirements.target_value_accesses
         )
-        if metadata.disposition is CoreExecutionDisposition.LEGACY_UNPLANNED:
+        if metadata.disposition is CoreExecutionDisposition.DENSE:
             if not declared_targets:
                 has_unknown = True
             else:
                 unplanned_exact.extend(declared_targets)
-            continue
-        if metadata.disposition is CoreExecutionDisposition.DENSE:
-            unplanned_exact.extend(declared_targets)
             continue
 
         plan = metadata.input_transfer_plan
@@ -1500,13 +1505,13 @@ def _gated_fold_raw_value_artifacts(
     return _unique_value_artifacts(artifacts)
 
 
-def _conservative_legacy_value_artifacts(
+def _conservative_dense_value_artifacts(
     *,
     regime: Regime,
     regime_name: RegimeName,
     period: int,
 ) -> tuple[ValueArtifactAddress, ...]:
-    """Pin graph-declared values when a core has no complete input plan."""
+    """Pin every graph-reachable value for a dense core declaring no reads."""
     artifacts: list[ValueArtifactAddress] = [
         ValueArtifactAddress(
             kind=ValueArtifactKind.REGIME_VALUE,
@@ -1612,7 +1617,7 @@ def _compile_all_functions(
         entries call compiled executables carrying the same plans.
 
     """
-    # Collect the authoritative native graphs or their centralized legacy adapters.
+    # Collect every kernel's native graph, narrowed to the retention's scope.
     all_programs: dict[_CoreTriple, CoreProgram] = {}
     for regime_name, regime in regimes.items():
         regime_retains_replay = _regime_retains_replay(
@@ -1728,14 +1733,10 @@ def _compile_all_functions(
         logger.info("  lowering ...")
         start = time.monotonic()
         layout = all_layouts[triple]
-        jitted = (
-            jax.jit(func, static_argnames=tuple(static_kwargs))
-            if layout is UNPLANNED
-            else jax.jit(
-                func,
-                static_argnames=tuple(static_kwargs),
-                out_shardings=cast("ResolvedOutputLayout", layout).out_shardings,
-            )
+        jitted = jax.jit(
+            func,
+            static_argnames=tuple(static_kwargs),
+            out_shardings=layout.out_shardings,
         )
         low = jitted.lower(**lower_args, **static_kwargs)
         _assert_lowered_output_roles(
@@ -1818,12 +1819,12 @@ def _resolve_output_layouts_and_lowering_keys(
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
     next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
 ) -> tuple[
-    dict[_CoreTriple, ResolvedOutputLayout | object],
+    dict[_CoreTriple, ResolvedOutputLayout],
     dict[_CoreTriple, Hashable],
     dict[_CoreTriple, ResolvedCoreProgram],
 ]:
     """Materialize each core's complete, immutable lowering description."""
-    layouts: dict[_CoreTriple, ResolvedOutputLayout | object] = {}
+    layouts: dict[_CoreTriple, ResolvedOutputLayout] = {}
     lowering_keys: dict[_CoreTriple, Hashable] = {}
     resolved_programs: dict[_CoreTriple, ResolvedCoreProgram] = {}
     for (regime_name, period, core_key), declaration in all_programs.items():
@@ -1860,23 +1861,18 @@ def _resolve_output_layouts_and_lowering_keys(
             for name in state_action_space.states
             if name not in regime.fold_state_names
         )
-        layout = (
-            UNPLANNED
-            if resolved.disposition is CoreExecutionDisposition.LEGACY_UNPLANNED
-            else resolve_output_layout(
-                core_key=core_key,
-                value_template=next_regime_to_V_arr[regime_name],
-                state_order=state_order,
-                output_roles=resolved.output_roles,
-            )
+        layout = resolve_output_layout(
+            core_key=core_key,
+            value_template=next_regime_to_V_arr[regime_name],
+            state_order=state_order,
+            output_roles=resolved.output_roles,
         )
         triple = (regime_name, period, core_key)
         layouts[triple] = layout
         resolved_programs[triple] = resolved
-        layout_key = UNPLANNED if layout is UNPLANNED else layout.compilation_key
         lowering_keys[triple] = _lowering_key(
             func=resolved.function,
-            layout_key=layout_key,
+            layout_key=layout.compilation_key,
             arguments=resolved.arguments,
             specialization_key=resolved.specialization_key,
             output_roles=resolved.output_roles,
@@ -2079,16 +2075,11 @@ def _output_roles_key(*, output_roles: object | None) -> Hashable:
 def _assert_lowered_output_roles(
     *,
     lowered: jax.stages.Lowered,
-    output_roles: object | None,
-    layout: ResolvedOutputLayout | object,
+    output_roles: object,
+    layout: ResolvedOutputLayout,
     label: str,
 ) -> None:
     """Reject lowered output that violates the declared role contract."""
-    if output_roles is None:
-        return
-    if not isinstance(layout, ResolvedOutputLayout):
-        msg = f"{label} declares output roles but has no resolved output layout."
-        raise TypeError(msg)
     _assert_lowered_output_tree(
         output_roles=output_roles,
         output_info=lowered.out_info,
@@ -2154,24 +2145,19 @@ def _assert_lowered_output_leaf(
 def _attach_resolved_output_layout(
     *,
     compiled: Callable[..., object],
-    layout: ResolvedOutputLayout | object,
+    layout: ResolvedOutputLayout,
     input_transfer_plan: tuple[ResolvedValueTransfer, ...] = (),
-) -> Callable:
+) -> PlannedCore:
     """Carry one node's resolved output and input plans to runtime dispatch."""
-    if layout is UNPLANNED:
-        if input_transfer_plan:
-            msg = "An unplanned core cannot carry a resolved input transfer plan."
-            raise ValueError(msg)
-        return compiled
     return PlannedCore(
         compiled=compiled,
-        layout=cast("ResolvedOutputLayout", layout),
+        layout=layout,
         input_transfer_plan=input_transfer_plan,
     )
 
 
 def _group_cores_by_regime_period(
-    cores_by_triple: dict[tuple[RegimeName, int, str], Callable],
+    cores_by_triple: Mapping[tuple[RegimeName, int, str], Callable],
 ) -> dict[tuple[RegimeName, int], MappingProxyType[str, Callable]]:
     """Group (regime, period, core_key) -> core into (regime, period) -> {key: core}.
 

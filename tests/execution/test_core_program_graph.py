@@ -1,4 +1,4 @@
-"""The native graph and centralized legacy adapter are the only core authority."""
+"""A period kernel's native core-program graph is its only execution authority."""
 
 import ast
 import inspect
@@ -53,21 +53,6 @@ class _NativeKernel:
 
     def core_programs(self) -> Mapping[str, CoreProgram]:
         return self.graph
-
-
-class _LegacyKernel:
-    def __init__(self, cores: Mapping[str, Callable[..., object]]) -> None:
-        self._cores = cores
-        self.built: list[str] = []
-
-    def cores(self) -> Mapping[str, Callable[..., object]]:
-        return self._cores
-
-    def build_lower_args(
-        self, *, core_key: str, **_context: object
-    ) -> Mapping[str, object]:
-        self.built.append(core_key)
-        return MappingProxyType({"value": jnp.asarray(1.0)})
 
 
 def _native_program(
@@ -281,48 +266,28 @@ def test_native_graph_rejects_incoherent_disposition_reason(
         core_program_graph(kernel=_NativeKernel({"main": program}))
 
 
-@pytest.mark.parametrize(
-    "cores",
-    [
-        pytest.param({"main": _identity}, id="single"),
-        pytest.param({"first": _identity, "second": _double}, id="multi"),
-    ],
-)
-def test_legacy_adapter_synthesizes_one_explicit_unplanned_graph(
-    cores: Mapping[str, Callable[..., object]],
-) -> None:
-    kernel = _LegacyKernel(cores)
-    graph = core_program_graph(kernel=kernel)
+class _CoresOnlyKernel:
+    """Publish only the retired core-enumeration interface, never a graph."""
 
-    assert tuple(graph) == tuple(cores)
-    assert all(
-        program.disposition is CoreExecutionDisposition.LEGACY_UNPLANNED
-        for program in graph.values()
-    )
-    assert all(program.output_roles is None for program in graph.values())
-    assert all(
-        program.disposition_reason == "legacy_adapter" for program in graph.values()
-    )
+    def cores(self) -> Mapping[str, Callable[..., object]]:
+        return {"main": _identity}
 
-    for name, program in graph.items():
-        materialized = materialize_core_program(program=program, context=_context())
-        resolved = resolve_core_program(program=materialized, tile_widths={})
-        assert resolved.function is cores[name]
-    assert kernel.built == list(cores)
+    def build_lower_args(self, **_context: object) -> Mapping[str, object]:
+        return {}
 
 
-@pytest.mark.parametrize(
-    "method_name",
-    ["build_core_program", "output_roles", "core_for_output_layout"],
-)
-def test_legacy_adapter_rejects_a_surviving_duplicate_authority(
-    method_name: str,
-) -> None:
-    kernel = _LegacyKernel({"main": _identity})
-    setattr(kernel, method_name, lambda **_kwargs: None)
+def test_core_program_graph_rejects_a_kernel_without_a_native_graph() -> None:
+    """A kernel is executable only through its own native core-program graph."""
+    with pytest.raises(TypeError, match="native core-program graph"):
+        core_program_graph(kernel=_CoresOnlyKernel())
 
-    with pytest.raises(TypeError, match="duplicate"):
-        core_program_graph(kernel=kernel)
+
+def test_every_disposition_is_planned_or_dense() -> None:
+    """The engine plans a program or runs it deliberately dense; nothing else."""
+    assert {member.value for member in CoreExecutionDisposition} == {
+        "planned",
+        "dense",
+    }
 
 
 def test_materialization_rejects_unknown_donation_candidate() -> None:

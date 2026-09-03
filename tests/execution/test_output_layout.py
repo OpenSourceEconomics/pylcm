@@ -1,7 +1,6 @@
 """Tests for logical-output layout planning."""
 
 import functools
-from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import cast
 
@@ -11,16 +10,16 @@ import numpy as np
 import pytest
 
 from _lcm.egm.carry import EGMCarry
+from _lcm.execution import output_layout
 from _lcm.execution.core_program import (
     CoreExecutionDisposition,
     CoreExecutionRequirements,
     CoreProgram,
-    core_program_graph,
 )
 from _lcm.execution.output_layout import (
     DISSOLUTION_FLAG,
-    UNPLANNED,
     VALUE,
+    PlannedCore,
     ResolvedOutputLayout,
     StateAxesLeading,
     assert_output_layout,
@@ -28,6 +27,7 @@ from _lcm.execution.output_layout import (
     resolve_output_layout,
 )
 from _lcm.regime_building.processing import _TerminalCarryPeriodKernel
+from _lcm.solution import backward_induction
 from _lcm.solution.backward_induction import (
     _assert_lowered_output_roles,
     _lowering_key,
@@ -41,23 +41,6 @@ class _GraphKernel:
 
     def core_programs(self):
         return {"main": self.program}
-
-
-def _legacy_core() -> None:
-    """Stand in for an unmigrated solver core."""
-
-
-class _LegacyKernel:
-    """Publish only the interface consumed by the central legacy adapter."""
-
-    def cores(self) -> Mapping[str, Callable[..., object]]:
-        return {"main": _legacy_core}
-
-    def build_lower_args(
-        self, *, core_key: str, **_context: object
-    ) -> Mapping[str, object]:
-        assert core_key == "main"
-        return {}
 
 
 def _mesh() -> jax.sharding.Mesh:
@@ -248,9 +231,9 @@ def test_lowering_key_tracks_positional_partial_bindings() -> None:
     equivalent = functools.partial(core, policy)
     different = functools.partial(core, object())
 
-    first_key = _lowering_key(func=first, layout_key=UNPLANNED)
-    equivalent_key = _lowering_key(func=equivalent, layout_key=UNPLANNED)
-    different_key = _lowering_key(func=different, layout_key=UNPLANNED)
+    first_key = _lowering_key(func=first, layout_key=("layout",))
+    equivalent_key = _lowering_key(func=equivalent, layout_key=("layout",))
+    different_key = _lowering_key(func=different, layout_key=("layout",))
 
     assert first_key == equivalent_key
     assert first_key != different_key
@@ -376,23 +359,43 @@ def test_assert_output_layout_rejects_malformed_dissolution(dissolution):
         assert_output_layout(output=(template, dissolution), layout=resolved)
 
 
-def test_unplanned_legacy_kernel_retains_publication_repair():
+def test_published_value_placement_is_asserted_not_repaired():
+    """A value leaving a compiled core off its planned placement is refused."""
     template = _template()
     replicated = jax.device_put(
         jnp.zeros(template.shape),
         jax.NamedSharding(mesh=_mesh(), spec=jax.P()),
     )
-
-    graph = core_program_graph(kernel=_LegacyKernel())
-    assert graph["main"].disposition is CoreExecutionDisposition.LEGACY_UNPLANNED
-
-    published = _publish_kernel_value(
-        value=replicated,
-        template=template,
-        compiled_cores={"main": graph["main"].function},
+    layout = resolve_output_layout(
+        core_key="main",
+        value_template=template,
+        state_order=("kind", "wealth"),
+        output_roles=VALUE,
     )
+    core = PlannedCore(compiled=lambda **_kwargs: replicated, layout=layout)
 
-    assert published.sharding == template.sharding
+    with pytest.raises(AssertionError, match="sharding"):
+        _publish_kernel_value(value=replicated, compiled_cores={"main": core})
+
+
+def test_the_loop_has_no_value_repair_path():
+    """No engine seam re-places a published value on its template."""
+    assert not hasattr(backward_induction, "_repair_unplanned_kernel_value")
+
+
+def test_the_loop_publishes_values_only_through_planned_cores():
+    """A compiled core without a resolved layout cannot publish a value."""
+    template = _template()
+
+    with pytest.raises(TypeError, match="PlannedCore"):
+        _publish_kernel_value(
+            value=template, compiled_cores={"main": lambda **_kwargs: template}
+        )
+
+
+def test_no_unplanned_layout_token_exists():
+    """Every compiled core carries a resolved output layout."""
+    assert not hasattr(output_layout, "UNPLANNED")
 
 
 def _state_axes_roles():

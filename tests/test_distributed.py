@@ -491,14 +491,8 @@ def test_grid_search_aot_output_layout_is_native_local_and_deduplicated(monkeypa
             captured.append(core)
         return core
 
-    def fail_repair(**kwargs):
-        raise AssertionError(f"planned output reached repair: {kwargs}")
-
     monkeypatch.setattr(
         backward_induction, "_attach_resolved_output_layout", capture_planned_core
-    )
-    monkeypatch.setattr(
-        backward_induction, "_repair_unplanned_kernel_value", fail_repair
     )
 
     distributed = model.solve(log_level="off", params={"discount_factor": 0.95}).values

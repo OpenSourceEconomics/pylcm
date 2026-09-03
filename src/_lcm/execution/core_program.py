@@ -2,8 +2,8 @@
 
 Solvers declare a core's dynamic arguments, output roles, and static execution
 requirements. The engine validates the declaration and binds planner-owned choices
-before lowering. Native dense routes remain explicit programs; unmigrated kernels
-cross one central adapter as ``LEGACY_UNPLANNED`` programs.
+before lowering. Every kernel publishes its own graph: the engine plans a program
+or runs it deliberately dense, and refuses a kernel that publishes no graph.
 """
 
 import inspect
@@ -111,7 +111,6 @@ class CoreExecutionDisposition(StrEnum):
 
     PLANNED = "planned"
     DENSE = "dense"
-    LEGACY_UNPLANNED = "legacy-unplanned"
 
 
 class ProgramScope(StrEnum):
@@ -186,7 +185,7 @@ class CoreProgram:
     function: Callable[..., object]
     argument_builder: CoreArgumentBuilder
     requirements: CoreExecutionRequirements
-    output_roles: object | None
+    output_roles: object
     disposition: CoreExecutionDisposition
     disposition_reason: str | None = None
     donation_candidates: tuple[str, ...] = ()
@@ -205,7 +204,7 @@ class MaterializedCoreProgram:
     function: Callable[..., object]
     arguments: Mapping[str, object]
     requirements: CoreExecutionRequirements
-    output_roles: object | None
+    output_roles: object
     disposition: CoreExecutionDisposition
     donation_candidates: tuple[str, ...]
     disposition_reason: str | None = None
@@ -226,59 +225,21 @@ class CoreProgramGraphAware(Protocol):
         ...
 
 
-@runtime_checkable
-class _LegacyCoreKernel(Protocol):
-    """Old core enumeration and argument-building interface, read only here."""
-
-    def cores(self) -> Mapping[str, Callable[..., object]]:
-        """Return legacy core callables by name."""
-        ...
-
-    def build_lower_args(
-        self, *, core_key: str, **kwargs: object
-    ) -> Mapping[str, object]:
-        """Build one legacy core's arguments."""
-        ...
-
-
-@dataclass(frozen=True, kw_only=True)
-class _LegacyArgumentBuilder:
-    """Central adapter from a build context to one legacy argument builder."""
-
-    kernel: _LegacyCoreKernel
-    core_name: str
-
-    def __call__(self, context: CoreBuildContext) -> Mapping[str, object]:
-        """Invoke the old builder without exposing it to an engine caller."""
-        optional_edge = (
-            {}
-            if context.edge_regime_to_V_arr is None
-            else {"edge_regime_to_V_arr": context.edge_regime_to_V_arr}
-        )
-        return self.kernel.build_lower_args(
-            core_key=self.core_name,
-            state_action_space=context.state_action_space,
-            next_regime_to_V_arr=context.next_regime_to_V_arr,
-            next_regime_to_continuation=context.next_regime_to_continuation,
-            flat_params=context.flat_params,
-            period=context.period,
-            ages=context.ages,
-            **optional_edge,
-        )
-
-
 def core_program_graph(*, kernel: object) -> MappingProxyType[str, CoreProgram]:
-    """Return one validated native graph or adapt a legacy kernel exactly once.
+    """Return one kernel's validated native graph.
 
-    This is the only engine seam permitted to read ``cores()``,
-    ``build_lower_args()``, or retired parallel program, target-access, and
-    output-layout methods. A malformed native declaration fails instead of falling
-    back; only kernels with no native graph cross the legacy adapter.
+    This is the only engine seam that reads ``core_programs()``. A kernel without a
+    native graph is refused, as is one that also publishes a retired parallel
+    declaration; a malformed declaration fails instead of falling back.
     """
-    if isinstance(kernel, CoreProgramGraphAware):
-        _reject_native_duplicate_authorities(kernel=kernel)
-        return _snapshot_and_validate_graph(graph=kernel.core_programs(), native=True)
-    return _legacy_core_program_graph(kernel=kernel)
+    if not isinstance(kernel, CoreProgramGraphAware):
+        msg = (
+            f"{type(kernel).__name__} publishes no native core-program graph; a "
+            "period kernel must implement core_programs()."
+        )
+        raise TypeError(msg)
+    _reject_native_duplicate_authorities(kernel=kernel)
+    return _snapshot_and_validate_graph(graph=kernel.core_programs())
 
 
 def select_programs(
@@ -334,7 +295,7 @@ def _reject_native_duplicate_authorities(*, kernel: object) -> None:
 
 
 def _snapshot_and_validate_graph(
-    *, graph: Mapping[str, CoreProgram], native: bool
+    *, graph: Mapping[str, CoreProgram]
 ) -> MappingProxyType[str, CoreProgram]:
     """Snapshot a graph and validate its names and ownership declarations."""
     if not isinstance(graph, Mapping):
@@ -357,11 +318,11 @@ def _snapshot_and_validate_graph(
                 f"key={name!r}, program.name={program.name!r}."
             )
             raise ValueError(msg)
-        _validate_program_declaration(program=program, native=native)
+        _validate_program_declaration(program=program)
     return MappingProxyType(snapshot)
 
 
-def _validate_program_declaration(*, program: CoreProgram, native: bool) -> None:
+def _validate_program_declaration(*, program: CoreProgram) -> None:
     """Validate declaration facts that do not depend on dynamic arguments."""
     if not callable(program.function):
         msg = f"CoreProgram {program.name!r} function must be callable."
@@ -378,17 +339,8 @@ def _validate_program_declaration(*, program: CoreProgram, native: bool) -> None
     if not isinstance(program.scope, ProgramScope):
         msg = f"CoreProgram {program.name!r} scope has the wrong type."
         raise TypeError(msg)
-    if native and program.disposition is CoreExecutionDisposition.LEGACY_UNPLANNED:
-        msg = "A native CoreProgram cannot declare LEGACY_UNPLANNED."
-        raise ValueError(msg)
-    if (
-        not native
-        and program.disposition is not CoreExecutionDisposition.LEGACY_UNPLANNED
-    ):
-        msg = "The legacy core adapter may emit only LEGACY_UNPLANNED programs."
-        raise ValueError(msg)
-    if native and program.output_roles is None:
-        msg = f"Native CoreProgram {program.name!r} must declare output_roles."
+    if program.output_roles is None:
+        msg = f"CoreProgram {program.name!r} must declare output_roles."
         raise ValueError(msg)
     _validate_disposition_reason(program=program)
     donations = program.donation_candidates
@@ -405,75 +357,19 @@ def _validate_program_declaration(*, program: CoreProgram, native: bool) -> None
 def _validate_disposition_reason(
     *, program: CoreProgram | MaterializedCoreProgram
 ) -> None:
-    """Require an explicit, stable explanation for every non-planned route."""
+    """Require an explicit, stable explanation for every dense route."""
     reason = program.disposition_reason
     if program.disposition is CoreExecutionDisposition.PLANNED:
         if reason is not None:
             msg = f"Planned CoreProgram {program.name!r} cannot declare a reason."
             raise ValueError(msg)
         return
-    if program.disposition is CoreExecutionDisposition.DENSE:
-        if not isinstance(reason, str) or not reason.strip():
-            msg = (
-                f"Dense CoreProgram {program.name!r} must declare a non-empty "
-                "disposition_reason."
-            )
-            raise ValueError(msg)
-        return
-    if reason != "legacy_adapter":
+    if not isinstance(reason, str) or not reason.strip():
         msg = (
-            f"Legacy CoreProgram {program.name!r} must use the central "
-            "'legacy_adapter' disposition reason."
+            f"Dense CoreProgram {program.name!r} must declare a non-empty "
+            "disposition_reason."
         )
         raise ValueError(msg)
-
-
-def _legacy_core_program_graph(*, kernel: object) -> MappingProxyType[str, CoreProgram]:
-    """Synthesize explicitly unplanned declarations for one unmigrated kernel."""
-    if not isinstance(kernel, _LegacyCoreKernel):
-        msg = (
-            f"{type(kernel).__name__} publishes neither a native core-program graph "
-            "nor the supported legacy core interface."
-        )
-        raise TypeError(msg)
-    if callable(getattr(kernel, "build_core_program", None)):
-        msg = (
-            f"Legacy kernel {type(kernel).__name__} still publishes the duplicate "
-            "build_core_program declaration; migrate it to one native core_programs() "
-            "graph before execution."
-        )
-        raise TypeError(msg)
-    if callable(getattr(kernel, "output_roles", None)) or callable(
-        getattr(kernel, "core_for_output_layout", None)
-    ):
-        msg = (
-            f"Legacy kernel {type(kernel).__name__} still publishes the duplicate "
-            "output-layout declaration; migrate it to one native core_programs() "
-            "graph before execution."
-        )
-        raise TypeError(msg)
-    cores = kernel.cores()
-    if not isinstance(cores, Mapping):
-        msg = "Legacy cores() must return a mapping."
-        raise TypeError(msg)
-    programs: dict[str, CoreProgram] = {}
-    for name, function in cores.items():
-        target_value_accesses = getattr(kernel, "target_value_accesses", None)
-        accesses = (
-            target_value_accesses(core_key=name)
-            if callable(target_value_accesses)
-            else ()
-        )
-        programs[name] = CoreProgram(
-            name=name,
-            function=function,
-            argument_builder=_LegacyArgumentBuilder(kernel=kernel, core_name=name),
-            requirements=CoreExecutionRequirements(target_value_accesses=accesses),
-            output_roles=None,
-            disposition=CoreExecutionDisposition.LEGACY_UNPLANNED,
-            disposition_reason="legacy_adapter",
-        )
-    return _snapshot_and_validate_graph(graph=programs, native=False)
 
 
 def materialize_core_program(
@@ -516,7 +412,7 @@ class ResolvedCoreProgram:
     arguments: Mapping[str, object]
     static_kwargs: Mapping[str, int]
     requirements: CoreExecutionRequirements
-    output_roles: object | None
+    output_roles: object
     disposition: CoreExecutionDisposition
     donation_candidates: tuple[str, ...]
     tile_widths: Mapping[str, int]
@@ -722,12 +618,8 @@ def _validate_materialized_declaration(*, program: MaterializedCoreProgram) -> N
     if not isinstance(program.disposition, CoreExecutionDisposition):
         msg = f"CoreProgram {program.name!r} disposition has the wrong type."
         raise TypeError(msg)
-    if program.disposition is CoreExecutionDisposition.LEGACY_UNPLANNED:
-        if program.output_roles is not None:
-            msg = "A legacy-unplanned CoreProgram cannot declare output_roles."
-            raise ValueError(msg)
-    elif program.output_roles is None:
-        msg = f"Native CoreProgram {program.name!r} must declare output_roles."
+    if program.output_roles is None:
+        msg = f"CoreProgram {program.name!r} must declare output_roles."
         raise ValueError(msg)
     _validate_disposition_reason(program=program)
     donations = program.donation_candidates

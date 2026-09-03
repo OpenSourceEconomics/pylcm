@@ -19,10 +19,8 @@ from _lcm.execution.core_program import (
     resolve_core_program,
 )
 from _lcm.execution.output_layout import (
-    UNPLANNED,
     VALUE,
     PlannedCore,
-    planned_input_transfer_plan,
     resolve_output_layout,
 )
 from _lcm.execution.value_transfer import (
@@ -438,8 +436,6 @@ def test_planned_core_applies_and_retains_its_absolute_input_transfer_plan() -> 
     )
 
     assert planned.input_transfer_plan == (transfer,)
-    assert planned_input_transfer_plan(planned) == (transfer,)
-    assert planned_input_transfer_plan(object()) is UNPLANNED
     assert output.sharding == source_sharding
     assert np.array_equal(output, value)
 

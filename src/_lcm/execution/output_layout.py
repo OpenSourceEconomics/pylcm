@@ -82,14 +82,6 @@ class StateAxesLeading:
 type OutputRoleLeaf = OutputRole | StateAxesLeading
 
 
-class _Unplanned(Enum):
-    TOKEN = auto()
-
-
-UNPLANNED = _Unplanned.TOKEN
-# No explicit output plan; preserve the backend-selected layout.
-
-
 @dataclass(frozen=True, kw_only=True)
 class ExpectedOutputLeaf:
     """Absolute contract one resolved output leaf must satisfy."""
@@ -140,8 +132,7 @@ def resolve_output_layout(
     device. The value leaf takes the template's own placement. A dissolution flag is
     state-valued, so it is placed on the canonical state-axis prefix. A
     :class:`StateAxesLeading` leaf is placed on the template's placement of the
-    states it names. Legacy programs never enter this resolver: the central
-    core-program adapter marks them ``LEGACY_UNPLANNED`` instead.
+    states it names. Every program the engine lowers enters this resolver.
     """
     if output_roles is None:
         msg = "Explicit CoreProgram output_roles cannot be None."
@@ -453,15 +444,3 @@ class PlannedCore:
         output = self.compiled(*args, **planned_kwargs)
         assert_output_layout(output=output, layout=self.layout)
         return output
-
-
-def planned_output_layout(core: object) -> ResolvedOutputLayout | _Unplanned:
-    """Return the plan attached to a compiled core, if any."""
-    return core.layout if isinstance(core, PlannedCore) else UNPLANNED
-
-
-def planned_input_transfer_plan(
-    core: object,
-) -> tuple[ResolvedValueTransfer, ...] | _Unplanned:
-    """Return the absolute input transfer plan attached to a compiled core."""
-    return core.input_transfer_plan if isinstance(core, PlannedCore) else UNPLANNED

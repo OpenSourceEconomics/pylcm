@@ -44,7 +44,7 @@ from _lcm.typing import FlatParams
 from lcm.solver_api import EGM_CONTINUATION, KernelOutput
 from tests.conftest import X64_ENABLED, assert_agrees_to_ulp
 from tests.solution._nbegm_direct_oracle import ride_along_kernel
-from tests.test_models import negm_bequest_toy, negm_kinked_toy
+from tests.test_models import negm_kinked_toy
 
 _REGIME = "alive"
 _PERIOD = 1
@@ -365,16 +365,6 @@ def test_periods_sharing_one_inner_core_share_one_sweep_lowering_key():
     assert key(first.with_fixed_params(fixed_flat_params=fixed)) == key(
         second.with_fixed_params(fixed_flat_params=fixed)
     )
-
-
-def test_the_loop_never_repairs_the_negm_value(*, monkeypatch):
-    def refuse(**_kwargs: object) -> None:
-        msg = "the NEGM value must be born in its planned layout"
-        raise AssertionError(msg)
-
-    monkeypatch.setattr(backward_induction, "_repair_unplanned_kernel_value", refuse)
-
-    negm_bequest_toy.build_negm_model().solve(params=_PARAMS, log_level="off")
 
 
 def test_a_replay_lowers_the_dense_programs_the_solve_ran(*, monkeypatch, tmp_path):

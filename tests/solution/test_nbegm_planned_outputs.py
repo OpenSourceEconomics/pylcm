@@ -2,8 +2,8 @@
 
 With a distributed ride state, the value array, every carry row, and the policy
 leave the compiled program on the placement the engine lowered it for, so the
-solve loop publishes them without re-placing anything: the value never reaches the
-legacy repair, and the continuation roll places every carry leaf on a template
+solve loop publishes them without re-placing anything: the value's placement is
+asserted, and the continuation roll places every carry leaf on a template
 sharding it already has. The check runs on two forced host devices.
 """
 
@@ -25,9 +25,6 @@ _SCRIPT = textwrap.dedent(
     from _lcm.solution import nbegm as solvers
     from tests.test_models import nbegm_ride_along_toy as toy
 
-    def refuse_repair(**_kwargs):
-        raise AssertionError("an unplanned value reached the repair path")
-
     original_match = backward_induction._match_continuation_template_sharding
 
     def match_is_identity(*, continuation, template):
@@ -46,7 +43,6 @@ _SCRIPT = textwrap.dedent(
         recorded.append(arguments)
         return arguments
 
-    backward_induction._repair_unplanned_kernel_value = refuse_repair
     backward_induction._match_continuation_template_sharding = match_is_identity
     solvers._RideAlongArgumentBuilder.__call__ = record_arguments
 

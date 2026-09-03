@@ -31,7 +31,6 @@ from _lcm.execution.core_program import (
     core_program_graph,
     materialize_core_program,
 )
-from _lcm.solution import backward_induction
 from _lcm.solution import nnbegm as nnbegm_module
 from _lcm.solution.negm import _with_outer_post_decision
 from tests.simulation.test_nnbegm_split_workflow_parity import _MESH, _PARAMS
@@ -197,19 +196,3 @@ def test_with_fixed_params_rebinds_both_roles():
         assert isinstance(function, functools.partial)
         assert _innermost(function) is _innermost(program.function)
         assert function.keywords["discount_factor"] == 0.9
-
-
-@pytest.mark.parametrize("route", ["finite", "adaptive"])
-def test_a_nested_model_solves_without_any_value_repair(
-    *, route: str, monkeypatch: pytest.MonkeyPatch
-):
-    """Every regime of the toy publishes planned outputs, so nothing is repaired."""
-
-    def refuse(**_kwargs: object) -> object:
-        msg = "an unplanned value reached the repair path"
-        raise AssertionError(msg)
-
-    monkeypatch.setattr(backward_induction, "_repair_unplanned_kernel_value", refuse)
-    model = toy.build_model(variant="n_nbegm", n_periods=3, outer_search=_ROUTES[route])
-
-    model.solve(params=_PARAMS, log_level="off")

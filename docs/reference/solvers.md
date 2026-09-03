@@ -113,8 +113,8 @@ metadata are errors. Each declaration's `(source_regime, source_period, core_key
 also match the actual compiled core before its channel and argument-tree path are
 resolved. Remaining-consumer counts are committed only after successful dispatch. A
 zero count records eligibility for future memory
-planning; it does not release, donate, or offload an array. Dense compatibility and
-unplanned legacy consumers remain pinned.
+planning; it does not release, donate, or offload an array. Dense programs without
+declared value reads and other unplanned consumers remain pinned.
 
 With EV1 taste shocks, GridSearch first maximizes over the continuous-action axes within
 each discrete-action combination and then applies the discrete log-sum. Simulation uses

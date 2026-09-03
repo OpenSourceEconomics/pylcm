@@ -186,8 +186,8 @@ _SOURCE_SEALS = {
     MAX_Q_SOURCE: "6bed0c5a31bbc1c7fe9e0d9250223888d1271528b01844a398668af038e24844",
     PROCESSING_SOURCE: "6bd922c48b30059d4a34e23595731c64a4e752312f29199a5e085ba634b4159b",
     GRID_SEARCH_SOURCE: "6a6f6fb6df90d727ecde2071395d0844da2d049827dfe154ace7854855726ec9",
-    CORE_PROGRAM_SOURCE: "b6d7991eeb99fbbe0d9bcef71d42c3be28fc88f63c2262aeecce3e18a3dcf5f1",
-    OUTPUT_LAYOUT_SOURCE: "c0f7025459e33f8b08aac9f9a6f2368396ed73d030b39c3da41eed007aa2988f",
+    CORE_PROGRAM_SOURCE: "0df3096812dc92df96bf73f587ab3016fc23294d7b8d9166ead7f2f2cd906673",
+    OUTPUT_LAYOUT_SOURCE: "50ddea50e75fca1e295f895ed97d33236675e0cd984391be83fc54f4f55b32e1",
     VALUE_TRANSFER_SOURCE: "44b8629c7b461b6b0216c79ba25101179e1b8cb2edf40630a55c6b9403fbbd2d",
     ACTION_STREAMING_SOURCE: "a34ca428598e37dd68fc3dcaa0c664c56f79afb6042c946246883f250bab681c",
     ACTION_REDUCTION_SOURCE: "6cee6ea2dbef0ba710fa4a318a2113377d6513cee508e73004861597f9c220f9",
@@ -205,8 +205,8 @@ _SOURCE_SEALS = {
     SIMULATION_COMPILE_SOURCE: "bc59e06917ca26caa51bf6dee79f4f20b8f9c6dd652cf5648a17f02935d9a482",
     MODEL_SOURCE: "61c1ea16e7a33861ed99bf661eb1e6bcd83636f5386f0b53f4b74b6a9c0c0ae0",
     SOLVER_API_SOURCE: "100f1ed92d7804339741ac2c91692f94c5465f5fc0aada7e24cbb2b812010dbb",
-    BACKWARD_INDUCTION_SOURCE: "cf2f5721627edaf6725afebe722a60e27129b08153355e722f55bbc77d933ec7",
-    PERIOD_REPLAY_SOURCE: "34205ad57359c5c640a929f7a4c96db98ab26f3aec614bf32d69a0c83211c3f6",
+    BACKWARD_INDUCTION_SOURCE: "4d3544920b6981375565024a46059e3848d423a36690320e97e07114215eba55",
+    PERIOD_REPLAY_SOURCE: "590c46d46ebab603a59846f01918d15f88a83dba0b051e4f3e8c4cf40f2fa6e3",
     INITIAL_CONDITIONS_SOURCE: "cb3663f59d10fa288d3da322b5f154545bb1ac4b9262073a87c405b5e950507f",
     RESULT_SOURCE: "992f8e14d2f47f505f6883e340e89d68dfc41311d4c36f7849a2f79331e4ba01",
     RESULT_DATAFRAME_SOURCE: "025e273c4d3bb9d8f9787189a551b113708c86b1e868d16178aa39555abf49a4",
@@ -1641,7 +1641,7 @@ def _core_program_transport_errors(tree: ast.Module) -> list[str]:
                 "function: Callable[..., object]",
                 "argument_builder: CoreArgumentBuilder",
                 "requirements: CoreExecutionRequirements",
-                "output_roles: object | None",
+                "output_roles: object",
                 "disposition: CoreExecutionDisposition",
                 "disposition_reason: str | None = None",
                 "donation_candidates: tuple[str, ...] = ()",
@@ -1660,7 +1660,7 @@ def _core_program_transport_errors(tree: ast.Module) -> list[str]:
                 "function: Callable[..., object]",
                 "arguments: Mapping[str, object]",
                 "requirements: CoreExecutionRequirements",
-                "output_roles: object | None",
+                "output_roles: object",
                 "disposition: CoreExecutionDisposition",
                 "donation_candidates: tuple[str, ...]",
                 "disposition_reason: str | None = None",
@@ -1680,7 +1680,7 @@ def _core_program_transport_errors(tree: ast.Module) -> list[str]:
                 "arguments: Mapping[str, object]",
                 "static_kwargs: Mapping[str, int]",
                 "requirements: CoreExecutionRequirements",
-                "output_roles: object | None",
+                "output_roles: object",
                 "disposition: CoreExecutionDisposition",
                 "donation_candidates: tuple[str, ...]",
                 "tile_widths: Mapping[str, int]",
@@ -1713,7 +1713,6 @@ def _core_program_transport_errors(tree: ast.Module) -> list[str]:
                 observed=body,
                 expected_source="""PLANNED = "planned"
 DENSE = "dense"
-LEGACY_UNPLANNED = "legacy-unplanned"
 """,
             )
         ):
@@ -1731,18 +1730,17 @@ LEGACY_UNPLANNED = "legacy-unplanned"
                 "CoreProgram.__post_init__": "46ed17fde1d9fa9aa918112289c57b3f748df8caca8b2a8787c8bc9c093ba1f6",
                 "MaterializedCoreProgram.__post_init__": "59cb5f175f44a50eb4679abd0001c59d0986cff9f3b6e5fa6a9ef7a568e6f648",
                 "ResolvedCoreProgram.__post_init__": "ff3e188e5f5ae8849bc9115b34bc3f4bf2b475f383e6dacf9ca25edfebda79bf",
-                "core_program_graph": "cc6ea72073cacba5168d0aea0023a23769f5e242fbca404b3d3a7d3c2865e9a0",
+                "core_program_graph": "0fb65d36c8408bfcec4b084cb304e3085037c266e932524d411654efac5c47f7",
                 "_reject_native_duplicate_authorities": "718aa10be29ba96de933ccd778200a94dd5d2637b148988b950e5b5e070edcea",
-                "_snapshot_and_validate_graph": "86908fdd8486a84edbbece9be246821176dcad948d8cb06e2074591993ed82aa",
-                "_validate_program_declaration": "7604ce7eb5e9df15f0a8615a8e232b1402934b1cf7a8fbc9727cda2739f91fd1",
-                "_validate_disposition_reason": "ead5c4df5fc7e1dd4fa680fdad02549c67d340d46b2ae3556eb8c83028532c3a",
-                "_legacy_core_program_graph": "a1d0be2bb811ab3ab03d179bde85fe6cdfa7e953e2ee2617ce14be4f7b23e4f2",
+                "_snapshot_and_validate_graph": "17cfd23f0460d4861f85f57eb7f3c2cd5e198b5386c4cea7dd77a9cfc82c2d30",
+                "_validate_program_declaration": "4428608faac231833b1dc45390dbe8872136e31fa88ab0b243cab866f0b383a3",
+                "_validate_disposition_reason": "1f72fd946d5b104131e2ca84095a5242c76fb78417a87f9668ff9ecb7c792644",
                 "materialize_core_program": "c50687b26506170c5d14b259527c5a24256f8df0f16ce5aca30129b685340616",
                 "resolve_core_program": "f965ef1a3b818caf84891420dcbad743984722153bd6d07a051045dc99a3852f",
                 "select_programs": "2a1968cbee59cf61bf5dc93ae2f168839caaa47b3de508863e4b0cbd769f79d0",
                 "initial_core_tile_widths": "496cd22a502c9dacdad36884c681cfed6353d840824a1e2dce3df7b1dcbcc3cf",
                 "_validate_core_program": "d55b9b72493f9565e341c20ac15f1041c4f6acd2134e25a923382c7a10304b59",
-                "_validate_materialized_declaration": "ad5f5d6d54ea666a203f8ec188b4f3cc7a496f74ed79da141b6e78b0e5526bc1",
+                "_validate_materialized_declaration": "d26ec6c4301eba536847832fee263a0cf2af75eff9b8a624747e9282346c26fa",
                 "_resolve_input_transfer_plan": "86e49db184adcd67dbcdf9f7accfcc17e7adaac32042bf5233be71121d97b73e",
                 "_validate_target_value_accesses": "9f9c693c334394c0ea05e30b923dba937a2f6979c41b91c3855da1c6d0eac7ae",
                 "_target_value_argument_leaf": "ff8f95f1afe6f2e70d97d261317b158e94b376fda3842977cc88fc07529a9ce2",
@@ -2120,8 +2118,6 @@ def _output_layout_errors(tree: ast.Module) -> list[str]:
                 "_assert_output_metadata": "4fdb1d8439ec600990e801f0da9197759f71dc01661a1d0cf14d332be05b1209",
                 "PlannedCore.__post_init__": "c62b7dc586d1bc5e57a4ef9b72208b6cf5d125c73befd7dbf7a72e4f09982ad6",
                 "PlannedCore.__call__": "f41f3d370e5237e949f541b1b7f538fe3b30d70994602bb933acc51170207e07",
-                "planned_output_layout": "0518c706a7de02411a990d4cfa9c40f426cc83f825791c735aeb19c4603e5e1e",
-                "planned_input_transfer_plan": "8a36aa2054fb5706e97ee14324e56517c3069443e10785f919c8a0ce2e602679",
                 "assert_value_leaf_layout": "9362aaf98344976ae13de7ac67e05d23fe983f12e34eac9f2ad439762a5d159d",
                 "_assert_output_leaf": "8a75af878a85e6cc997e5d823b55ba0545ff3f147a30a7ddbfd2666db07d70fd",
                 "_resolve_output_leaf": "b321849f4ff64dbab550be131a31a74157e9749a396958917b8e587fdffe5fa4",
@@ -2136,7 +2132,7 @@ def _output_layout_errors(tree: ast.Module) -> list[str]:
         for statement in tree.body
         if isinstance(statement, ast.Assign)
         and any(
-            _target_names(target) in {("VALUE",), ("DISSOLUTION_FLAG",), ("UNPLANNED",)}
+            _target_names(target) in {("VALUE",), ("DISSOLUTION_FLAG",)}
             for target in statement.targets
         )
     ]
@@ -2144,7 +2140,6 @@ def _output_layout_errors(tree: ast.Module) -> list[str]:
         observed=assignments,
         expected_source="""VALUE = OutputRole.VALUE
 DISSOLUTION_FLAG = OutputRole.DISSOLUTION_FLAG
-UNPLANNED = _Unplanned.TOKEN
 """,
     ):
         errors.append("output layout: logical output-role bindings changed")
@@ -2550,8 +2545,8 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
         tree=tree,
         label="backward output-layout transport",
         contracts={
-            "_compile_all_functions": "a3f318071dddf2e03c1da7b3d16c0b81bbe7fd9221b5fe7999eb67b48441ad42",
-            "_resolve_output_layouts_and_lowering_keys": "c30038ac72611373fecdf3a3423bb71be92e2c62a20d702c5b83159d2eee44b4",
+            "_compile_all_functions": "577d7fb83a9c7d397bb99fd2ea9c3421caec45c869172e3f4eef74be03495cb3",
+            "_resolve_output_layouts_and_lowering_keys": "e7a68f078e0937fe7fa276a534f902f3957508ebcfa612c5d173f1320c069ee1",
             "_resolve_program_for_execution": "247155a79a8cdc2c16845aeb9d222b2c6aeea7129c90d9a733ecc66cf793f5d0",
             "_resolve_value_input_transfer_plan": "40e46250dd373f2ea17e38c911e0c2df7ad01192dd82fcb1d7a7ddbf641f91bb",
             "_resolve_value_transfer_layout": "6cd863aaa64c0f558c797b47667479b595c77d5f3ee5c8b3dcfae188f1d05edd",
@@ -2560,9 +2555,9 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             "_abstract_value_key": "b79bdd528ed264be0093eb5d04a0341e7376606d478ba0770aa5cb14f813638b",
             "_abstract_leaf_key": "94afc53d035e8ad9812025f72adcbf76d8966430ef259d339977e9cf90262b66",
             "_output_roles_key": "c73436e6abaec7f0388386d353675200d7bf3d5d3544654f8d47f37ad0e5e8da",
-            "_assert_lowered_output_roles": "784fee32cdba67f3f635f7e66a036b6e949193eb131b3dcb3e484d57a9f244e0",
-            "_attach_resolved_output_layout": "0b0e805ac307e87e1376de47086898c140a3cf00e5e81eefd8faab26ff972942",
-            "_publish_kernel_value": "93f0124f9608a8a04c9079795ec375bb4dc8fb1d01b636679794ad2825be6d9b",
+            "_assert_lowered_output_roles": "62fcff4b0e2d8566017c980c72046445639aba034da0be42480dd52a9e499871",
+            "_attach_resolved_output_layout": "63e5fb772ba5efb257930a9ae350a50470049b93a19e02ab0b57c29be5ccbcf9",
+            "_publish_kernel_value": "df201c75574aab5280bc841d51cfb143c6a2939a65cc5e8bdee8884760d3e2d2",
         },
     )
     try:
@@ -2605,7 +2600,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             ]
             if len(starts) == len(ends) == 1 and starts[0] <= ends[0]:
                 corridors.append(loop.body[starts[0] : ends[0] + 1])
-        expected = "63bdde903f96cbd0f57fc9db183f623718f307947fc45cbf53a81e50d15ac850"
+        expected = "17287984833fe761f26094cc1a986a9c977e8291b37a842be86f05c9efbb073d"
         if len(corridors) != 1 or _statements_ast_sha256(corridors[0]) != expected:
             errors.append(
                 "backward output-layout transport: solve publication corridor changed"
@@ -2651,7 +2646,7 @@ def _period_replay_errors(tree: ast.Module) -> list[str]:
         label="period replay native-program transport",
         contracts={
             "replay_period": "bdaa7a9381889dc2dbbc84763861da30a4ccd8c279f1e2b01eefcc39d9b0a709",
-            "_compile_cores_for_one_period": "36b7fdcd0cbbfbffb96056e9bc2eaf510823ff4f6da479cdad9ac83dead31536",
+            "_compile_cores_for_one_period": "f3c7465b02e66815c6cc3277e472d292f792fa00c68320f55335b184e0cb50a1",
             "_core_build_context_for_one_period": "8d11e28bebf0c0df6bce4872e25a56e577592db26901d47d8cd5cf431a55b473",
         },
     )
@@ -5978,8 +5973,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": BACKWARD_INDUCTION_SOURCE,
             "source": replace_once(
                 source=backward_induction_source,
-                old='                out_shardings=cast("ResolvedOutputLayout", layout).out_shardings,',
-                new="                out_shardings=None,",
+                old="            out_shardings=layout.out_shardings,",
+                new="            out_shardings=None,",
                 label="planned JIT output sharding",
             ),
         },
@@ -5989,7 +5984,7 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
                 source=backward_induction_source,
                 old="    return PlannedCore(\n"
                 "        compiled=compiled,\n"
-                '        layout=cast("ResolvedOutputLayout", layout),\n'
+                "        layout=layout,\n"
                 "        input_transfer_plan=input_transfer_plan,\n"
                 "    )",
                 new="    return compiled",
@@ -6000,10 +5995,10 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": BACKWARD_INDUCTION_SOURCE,
             "source": replace_once(
                 source=backward_induction_source,
-                old="            assert_value_leaf_layout(value=value, layout=layout)\n"
-                "            return value",
-                new="            assert_value_leaf_layout(value=value, layout=layout)\n"
-                "            return candidate_filter(value)",
+                old="    assert_value_leaf_layout(value=value, layout=planned[0].layout)\n"
+                "    return value",
+                new="    assert_value_leaf_layout(value=value, layout=planned[0].layout)\n"
+                "    return candidate_filter(value)",
                 label="planned publication identity",
             ),
         },
