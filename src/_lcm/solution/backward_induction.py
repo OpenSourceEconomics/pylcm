@@ -64,7 +64,6 @@ from _lcm.solution.contract import (
     BackwardInductionResult,
     ContinuationPayload,
     GeneratedReplayAuthority,
-    KernelResult,
     SimulationPolicy,
 )
 from _lcm.solution.diagnostics import (
@@ -77,7 +76,10 @@ from _lcm.solution.kernel_attribution import (
     log_executed_kernel,
     log_module_fanout,
 )
-from _lcm.solution.kernel_output import normalize_kernel_output
+from _lcm.solution.kernel_output import (
+    ConsumedKernelOutput,
+    consume_kernel_output,
+)
 from _lcm.solution.period_capture import (
     PeriodCaptureTarget,
     capture_kernel_inputs,
@@ -100,6 +102,7 @@ from _lcm.utils.logging import (
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidValueFunctionError, ModelInitializationError
+from lcm.solver_api import KernelOutput
 from lcm.typing import BoolND, ContinuousState, DiscreteState, FloatND
 
 # Stands in for a period's flag mapping when the model retains no dissolution
@@ -115,10 +118,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     regimes: MappingProxyType[RegimeName, Regime],
     logger: logging.Logger,
     enable_jit: bool,
-    collect_simulation_policies: bool = False,
-    simulation_policy_regimes: frozenset[RegimeName] | None = None,
     collect_solver_diagnostics: bool = False,
-    track_artifact_publication: bool = False,
     max_compilation_workers: int | None = None,
     retain_dissolution_flags: bool = True,
     retain_replay: bool = True,
@@ -136,19 +136,10 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             to completion and log a warning, so `solve` returns a complete
             (NaN-bearing) solution; `"off"` skips the NaN check.
         enable_jit: Whether to JIT-compile the functions of the internal regimes.
-        collect_simulation_policies: Whether to retain and copy published off-grid
-            policies to the host. The solve kernels may publish an internal policy
-            alongside their other outputs, but a value-only solve drops it at the
-            period boundary instead of retaining one device-sized artifact per period.
-        simulation_policy_regimes: Optional canonical-regime allowlist for policy
-            collection. ``None`` permits every publisher.
         collect_solver_diagnostics: Whether to retain a kernel's numerical
             self-report. Public ``Model.solve()`` and automatic simulation request
             it; ``log_level`` still decides whether diagnostics are calculated and
             retained. Internal callers may disable collection.
-        track_artifact_publication: Whether to retain the tiny set of cells whose
-            kernels produced a simulation policy. Used to write truthful omission
-            records without retaining values-only replay arrays.
         max_compilation_workers: Maximum number of threads for parallel XLA compilation.
             Defaults to `os.cpu_count()`.
         retain_dissolution_flags: Whether a caller wants the per-period
@@ -156,16 +147,20 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             gates read `D_target` retains them regardless — the flags are a
             simulate-side input there, not an inspection artifact.
         retain_replay: Whether replay artifacts are retained. Selects, per
-            period kernel, the scoped programs that are dispatched: a kernel may
-            publish a values-only and a replay variant of one body.
+            period kernel, the scoped programs that are dispatched (a kernel may
+            publish a values-only and a replay variant of one body) and whether
+            a published simulation policy is copied to the host and kept. A
+            policy is kept only for a regime whose declared simulation route
+            reads it; a values-only solve drops every policy at the period
+            boundary instead of retaining one device-sized artifact per period.
 
     Returns:
         The named backward-induction outputs: the immutable mapping of periods
         to regime value-function arrays, the immutable mapping of periods to each
         regime's published simulation policy (the off-grid policy artifact
-        simulation can interpolate; regimes whose kernels publish none have no
-        entry, and the whole mapping is empty when
-        `collect_simulation_policies` is false), and the immutable mapping of
+        simulation can interpolate; regimes whose kernels publish none, or whose
+        simulation route does not read one, have no entry, and the whole
+        mapping is empty when `retain_replay` is false), and the immutable mapping of
         periods to each COLLECTIVE regime's dissolution flag `D` — `True` on the
         state cells whose action mask is empty, distinct from a numeric `-inf`
         value; empty inner mappings for models without collective regimes, so
@@ -216,7 +211,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     ] = {}
     dissolution_flags: dict[int, MappingProxyType[RegimeName, BoolND]] = {}
     solver_diagnostics: dict[int, MappingProxyType[RegimeName, SolverDiagnostics]] = {}
-    published_simulation_policy_cells: set[tuple[int, RegimeName]] = set()
 
     # Every collective kernel publishes `D`, but only two things read the
     # ACCUMULATED per-period mapping: forward simulation, for a gate that
@@ -284,8 +278,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     # re-materializes on device.
     host_device = (
         jax.devices("cpu")[0]
-        if collect_simulation_policies
-        or (collect_solver_diagnostics and diagnostics_enabled)
+        if retain_replay or (collect_solver_diagnostics and diagnostics_enabled)
         else None
     )
 
@@ -321,7 +314,10 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             active_regimes=active_regimes
         ):
             regime = active_regimes[regime_name]
-            result = _run_period_kernel(
+            regime_retains_replay = _regime_retains_replay(
+                regime=regime, retain_replay=retain_replay
+            )
+            output = _run_period_kernel(
                 regime=regime,
                 regime_name=regime_name,
                 period=period,
@@ -335,12 +331,21 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 logger=logger,
                 next_edge_to_V_arr=next_edge_to_V_arr,
                 period_solution=period_solution,
-                retain_replay=_regime_retains_replay(
-                    regime=regime, retain_replay=retain_replay
-                ),
+                retain_replay=regime_retains_replay,
             )
             input_liveness.commit_successful_dispatch(dispatch=(period, regime_name))
-            V_arr = result.V_arr
+            continuation_spec = regime.solution.continuation_spec
+            result = consume_kernel_output(
+                output=output,
+                continuation_key=(
+                    None
+                    if continuation_spec is None
+                    else continuation_spec.artifact_key
+                ),
+                regime_name=regime_name,
+                period=period,
+            )
+            V_arr = result.value
             # The published V mapping is the calling convention for every
             # downstream consumer — the parents' cores and the AOT-lowered
             # simulate programs are both compiled against the per-regime V
@@ -360,25 +365,11 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             )
             if result.continuation is not None:
                 period_continuations[regime_name] = result.continuation
-            if result.simulation_policy is not None:
-                if collect_simulation_policies and (
-                    simulation_policy_regimes is None
-                    or regime_name in simulation_policy_regimes
-                ):
-                    period_simulation_policies[regime_name] = result.simulation_policy
-                if track_artifact_publication:
-                    published_simulation_policy_cells.add((period, regime_name))
-            if result.generated_replay_authority is not None:
-                if result.simulation_policy is None:
-                    msg = (
-                        "A generated replay authority has no matching simulation "
-                        f"policy at ({period}, {regime_name!r})."
-                    )
-                    raise TypeError(msg)
-                if collect_simulation_policies and (
-                    simulation_policy_regimes is None
-                    or regime_name in simulation_policy_regimes
-                ):
+            # A policy is kept only where the regime's declared simulation route
+            # reads it; the replay authority travels with the policy it describes.
+            if result.simulation_policy is not None and regime_retains_replay:
+                period_simulation_policies[regime_name] = result.simulation_policy
+                if result.generated_replay_authority is not None:
                     period_generated_replay_authorities[regime_name] = (
                         result.generated_replay_authority
                     )
@@ -461,7 +452,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             if publish_dissolution_flags
             else _NO_DISSOLUTION_FLAGS
         )
-        if collect_simulation_policies:
+        if retain_replay:
             assert host_device is not None  # noqa: S101
             simulation_policies[period] = MappingProxyType(
                 {
@@ -537,7 +528,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         generated_replay_authorities=MappingProxyType(generated_replay_authorities),
         dissolution_flags=MappingProxyType(dissolution_flags),
         diagnostics=MappingProxyType(solver_diagnostics),
-        published_simulation_policy_cells=frozenset(published_simulation_policy_cells),
     )
 
 
@@ -596,17 +586,15 @@ def _run_period_kernel(
     next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
     period_solution: Mapping[RegimeName, FloatND],
     retain_replay: bool,
-) -> KernelResult:
+) -> KernelOutput:
     """Invoke one regime's period adapter for one period.
 
     Every regime exposes the same kind of adapter; the loop never branches on
-    solver type. The adapter wraps the regime's shared jitted core(s) (passed in
+    solver type. The adapter wraps the regime's compiled programs (passed in
     AOT-compiled as `compiled_cores`), calls them with the solver's own argument
-    layout, and returns either the public `KernelOutput` envelope or a legacy
-    `KernelResult`. The fail-closed bridge below normalizes both to the latter —
-    the value-function array plus the optional generic outputs (`continuation`,
-    `simulation_policy`, and the collective `dissolution` flag D), which the
-    backward-induction loop accumulates.
+    layout, and returns the public `KernelOutput`: the value-function array plus
+    the artifacts it publishes on its keyed channels, which the loop reads through
+    `consume_kernel_output` and accumulates where something consumes them.
 
     A regime declaring `same_period_refs` additionally
     receives the referenced regimes' V arrays of THIS period, read off
@@ -626,7 +614,7 @@ def _run_period_kernel(
     own core keys.
 
     Returns:
-        The kernel's result for this regime-period.
+        The kernel's output for this regime-period, exactly as returned.
 
     """
     period_kernel = regime.solution.period_kernels[period]
@@ -708,7 +696,7 @@ def _run_period_kernel(
             next_edge_to_V_arr=next_edge_to_V_arr,
         )
     )
-    output = period_kernel(
+    return period_kernel(
         compiled_cores=compiled_cores,
         state_action_space=state_action_space,
         next_regime_to_V_arr=next_regime_to_V_arr,
@@ -718,15 +706,6 @@ def _run_period_kernel(
         ages=ages,
         logger=logger,
         **same_period_kwargs,
-    )
-    continuation_spec = regime.solution.continuation_spec
-    return normalize_kernel_output(
-        output=output,
-        continuation_key=(
-            None if continuation_spec is None else continuation_spec.artifact_key
-        ),
-        regime_name=regime_name,
-        period=period,
     )
 
 
@@ -1166,7 +1145,7 @@ def _match_leaf_template_sharding(*, leaf: FloatND, template_leaf: FloatND) -> F
 
 def _fail_if_continuation_publisher_returned_none(
     *,
-    result: KernelResult,
+    result: ConsumedKernelOutput,
     regime_name: RegimeName,
     period: int,
     continuation_publishers: Mapping[RegimeName, ContinuationPayload],

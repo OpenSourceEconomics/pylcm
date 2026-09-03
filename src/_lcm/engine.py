@@ -370,10 +370,11 @@ class SolutionPhase:
     """Immutable mapping of period to the regime's uniform period adapter.
 
     Every regime — grid search or DC-EGM — exposes one adapter per period; the
-    solve loop invokes them the same way and reads each `KernelResult` without
-    branching on solver type. A grid-search adapter for a terminal regime in a
-    model with a DC-EGM regime is wrapped by an engine-owned output decorator so
-    it additionally publishes the regime's closed-form continuation carry.
+    solve loop invokes them the same way and reads each `KernelOutput` by its
+    artifact keys without branching on solver type. A grid-search adapter for a
+    terminal regime in a model with a DC-EGM regime is wrapped by an engine-owned
+    output decorator so it additionally publishes the regime's closed-form
+    continuation carry.
     """
 
     continuation_spec: EGMContinuationSpec | None = None

@@ -6,7 +6,7 @@ affine-in-liquid intervals, each case piece is solved by EGM, and the pieces
 are merged by the MSS upper envelope. `build_period_kernels` returns one
 `PeriodKernel` per period — a non-jitted adapter that wraps the solver's
 shared jitted core (deduped by function identity, so periods sharing a core
-reuse one compiled program) and assembles a `KernelResult` (value array,
+reuse one compiled program) and assembles a `KernelOutput` (value array,
 continuation carry, published simulation policy) outside JIT.
 
 The kernel-building imports are function-local so the public `lcm.solvers`
@@ -81,7 +81,6 @@ from _lcm.solution.continuation_target import (
 from _lcm.solution.contract import (
     ConstraintRouteContext,
     ContinuationPayload,
-    KernelResult,
     OneMarginSolver,
     ParamCheck,
     PeriodKernel,
@@ -111,6 +110,7 @@ from lcm.ages import AgeGrid
 from lcm.case_piece import CaseBoundary, EqualityOwner
 from lcm.exceptions import RegimeInitializationError
 from lcm.fixed_forms import cash_on_hand_with_subsidy
+from lcm.solver_api import EGM_CONTINUATION, SIMULATION_POLICY, KernelOutput
 from lcm.typing import (
     ActionName,
     BoolND,
@@ -1563,8 +1563,8 @@ class _RideAlongNBEGMPeriodKernel:
         period: int,
         ages: AgeGrid,
         logger: logging.Logger,  # noqa: ARG002
-    ) -> KernelResult:
-        """Run the compiled program the retention selected and assemble the result.
+    ) -> KernelOutput:
+        """Run the compiled program the retention selected and assemble the output.
 
         `replay` is run whenever it was compiled; a values-only solve compiles
         `main` alone and publishes no simulation policy.
@@ -1584,7 +1584,7 @@ class _RideAlongNBEGMPeriodKernel:
         outputs = compiled_cores[name](**arguments)
         if name == "main":
             V_arr, carry = outputs
-            return KernelResult(V_arr=V_arr, continuation=carry)
+            return KernelOutput(value=V_arr, continuations={EGM_CONTINUATION: carry})
         if self.statics.n_action_branches:
             V_arr, carry, inner_action, branch_value, branch_inner_action = outputs
             branch_discrete_actions = jnp.asarray(
@@ -1595,17 +1595,19 @@ class _RideAlongNBEGMPeriodKernel:
             branch_value = None
             branch_inner_action = None
             branch_discrete_actions = None
-        return KernelResult(
-            V_arr=V_arr,
-            continuation=carry,
-            simulation_policy=NBEGMGridPolicy(
-                action=inner_action,
-                state_names=tuple(state_action_space.states),
-                branch_inner_action=branch_inner_action,
-                branch_value=branch_value,
-                branch_discrete_actions=branch_discrete_actions,
-                discrete_action_names=self.statics.discrete_action_names,
-            ),
+        return KernelOutput(
+            value=V_arr,
+            continuations={EGM_CONTINUATION: carry},
+            replay={
+                SIMULATION_POLICY: NBEGMGridPolicy(
+                    action=inner_action,
+                    state_names=tuple(state_action_space.states),
+                    branch_inner_action=branch_inner_action,
+                    branch_value=branch_value,
+                    branch_discrete_actions=branch_discrete_actions,
+                    discrete_action_names=self.statics.discrete_action_names,
+                )
+            },
         )
 
 

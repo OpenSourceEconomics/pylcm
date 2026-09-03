@@ -22,8 +22,14 @@ import pytest
 from _lcm.solution import backward_induction
 from _lcm.solution import nbegm as nbegm_module
 from _lcm.solution import nnbegm as nnbegm_module
+from _lcm.solution.contract import GENERATED_REPLAY_AUTHORITY
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
-from lcm.solver_api import SIMULATION_POLICY, SOLVER_DIAGNOSTICS, OmissionReason
+from lcm.solver_api import (
+    EGM_CONTINUATION,
+    SIMULATION_POLICY,
+    SOLVER_DIAGNOSTICS,
+    OmissionReason,
+)
 from lcm.solver_api import ResultRetention as Retention
 from tests.conftest import assert_agrees_to_ulp
 from tests.simulation.test_nnbegm_split_workflow_parity import _MESH, _PARAMS
@@ -178,9 +184,9 @@ def test_a_values_only_adaptive_nested_solve_publishes_no_policy_or_authority(
     model.solve(params=params, log_level="off", retention=Retention.VALUES)
 
     assert results
-    assert all(result.simulation_policy is None for result in results)
-    assert all(result.generated_replay_authority is None for result in results)
-    assert all(result.continuation is not None for result in results[:-1])
+    assert all(SIMULATION_POLICY not in result.replay for result in results)
+    assert all(GENERATED_REPLAY_AUTHORITY not in result.auxiliary for result in results)
+    assert all(EGM_CONTINUATION in result.continuations for result in results[:-1])
 
 
 @pytest.mark.parametrize(

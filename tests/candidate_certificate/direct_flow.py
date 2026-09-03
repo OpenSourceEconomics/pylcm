@@ -91,6 +91,7 @@ SIMULATION_SOURCE = "src/_lcm/simulation/simulate.py"
 SIMULATION_TRANSITIONS_SOURCE = "src/_lcm/simulation/transitions.py"
 SIMULATION_COMPILE_SOURCE = "src/_lcm/simulation/compile.py"
 MODEL_SOURCE = "src/lcm/model.py"
+SOLVER_API_SOURCE = "src/lcm/solver_api.py"
 BACKWARD_INDUCTION_SOURCE = "src/_lcm/solution/backward_induction.py"
 PERIOD_REPLAY_SOURCE = "src/_lcm/solution/period_replay.py"
 INITIAL_CONDITIONS_SOURCE = "src/_lcm/simulation/initial_conditions.py"
@@ -144,6 +145,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
     SIMULATION_TRANSITIONS_SOURCE,
     SIMULATION_COMPILE_SOURCE,
     MODEL_SOURCE,
+    SOLVER_API_SOURCE,
     BACKWARD_INDUCTION_SOURCE,
     PERIOD_REPLAY_SOURCE,
     INITIAL_CONDITIONS_SOURCE,
@@ -182,8 +184,8 @@ _SOURCE_SEALS = {
     ARGMAX_SOURCE: "0d179a5aa65a6f310f598bdad8f75a9318a24832e31bd529184c2ea90356a72d",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
     MAX_Q_SOURCE: "6bed0c5a31bbc1c7fe9e0d9250223888d1271528b01844a398668af038e24844",
-    PROCESSING_SOURCE: "bfd5dba23c774ac38a621c8408d06a20503696829b143157fe724cdeb3cfaca8",
-    GRID_SEARCH_SOURCE: "1c9f20fd8662b4925d29399d2bd404cdbd65818f17bfe2b0c7b3a7b67450d0b4",
+    PROCESSING_SOURCE: "6bd922c48b30059d4a34e23595731c64a4e752312f29199a5e085ba634b4159b",
+    GRID_SEARCH_SOURCE: "6a6f6fb6df90d727ecde2071395d0844da2d049827dfe154ace7854855726ec9",
     CORE_PROGRAM_SOURCE: "b6d7991eeb99fbbe0d9bcef71d42c3be28fc88f63c2262aeecce3e18a3dcf5f1",
     OUTPUT_LAYOUT_SOURCE: "c0f7025459e33f8b08aac9f9a6f2368396ed73d030b39c3da41eed007aa2988f",
     VALUE_TRANSFER_SOURCE: "44b8629c7b461b6b0216c79ba25101179e1b8cb2edf40630a55c6b9403fbbd2d",
@@ -196,14 +198,15 @@ _SOURCE_SEALS = {
     ZERO_SAFE_SOURCE: "6b85bacd7c01fec283fcd309a731ab73d6639975ff34edbcce1a8450fbac5f33",
     LOGSUMEXP_ACTION_REDUCTION_SOURCE: "732fda3ed4058445dedd160e58e3899ba286929413fd533e57113b5f772e7b79",
     PROBABILITY_SOURCE: "b59d16c16147af2518daaed643c10be43c506c6e3ac751cd52f04fa8fdab20d2",
-    ENGINE_SOURCE: "1f9ab6290cb5c14b52da1d4eaa3b8f20b072f40f59d17ddae227be0e76c34875",
+    ENGINE_SOURCE: "977240dc9b64c48687d131564c0d9971f61f41e4305a46750c0fc44e417dbc55",
     STATE_ACTION_SPACE_SOURCE: "c7af3ea4c3912efa3d5d7daa0d420168a7545e327f6e4c581b3baf54efc79f11",
     SIMULATION_SOURCE: "ca5c44cf477341bbabfedda4f7932ebe99c68dab0253a3310ba66bd18a9e86e4",
     SIMULATION_TRANSITIONS_SOURCE: "1c503777887af52d1d5de36cf86acb4d8431fbe3d71203d7da881b4d0742c928",
     SIMULATION_COMPILE_SOURCE: "bc59e06917ca26caa51bf6dee79f4f20b8f9c6dd652cf5648a17f02935d9a482",
-    MODEL_SOURCE: "982195a75c9f5ca501c6c34657663d2c2cbda60135d586ede2cd92711b91a7ed",
-    BACKWARD_INDUCTION_SOURCE: "b2e48e31506b5d01e7713ee8e47452d9ceef9ca5f3df98677bbc6e90ded046c6",
-    PERIOD_REPLAY_SOURCE: "8581f1541f865d0773c842f34fdadf63163c9c79330b846916a8f90e2af969b0",
+    MODEL_SOURCE: "61c1ea16e7a33861ed99bf661eb1e6bcd83636f5386f0b53f4b74b6a9c0c0ae0",
+    SOLVER_API_SOURCE: "100f1ed92d7804339741ac2c91692f94c5465f5fc0aada7e24cbb2b812010dbb",
+    BACKWARD_INDUCTION_SOURCE: "cf2f5721627edaf6725afebe722a60e27129b08153355e722f55bbc77d933ec7",
+    PERIOD_REPLAY_SOURCE: "34205ad57359c5c640a929f7a4c96db98ab26f3aec614bf32d69a0c83211c3f6",
     INITIAL_CONDITIONS_SOURCE: "cb3663f59d10fa288d3da322b5f154545bb1ac4b9262073a87c405b5e950507f",
     RESULT_SOURCE: "992f8e14d2f47f505f6883e340e89d68dfc41311d4c36f7849a2f79331e4ba01",
     RESULT_DATAFRAME_SOURCE: "025e273c4d3bb9d8f9787189a551b113708c86b1e868d16178aa39555abf49a4",
@@ -211,7 +214,7 @@ _SOURCE_SEALS = {
     ADDITIONAL_TARGETS_SOURCE: "d1c8787e7968b868b4b09a90544050c5da65d2ca6203f2bc52fe6b7b7dd351e4",
     SIMULATION_RANDOM_SOURCE: "0f7d81ab5c36343ab24363dca159451c0a44a399ab150abd2e52fea6715ff20e",
     FOLD_ZERO_SAFE_SOURCE: "0f6c6c3ad1a69ea2ef241f8f0ce924e18c00e6515c7509577c761a8151d57feb",
-    SOLUTION_CONTRACT_SOURCE: "51e9ecb17edb19f78f8fe801671732b755a0c6dbca2b7311392d8427e349e9e4",
+    SOLUTION_CONTRACT_SOURCE: "4ee59ebb659d944bd0478cb2af260b9974a1b501076aec306276988f6071b383",
     GRIDS_INIT_SOURCE: "c66aed5ef6cdb56cfa38eebb7f870f12475f7a5f62ca1962c17230f66fd3268a",
     GRID_BASE_SOURCE: "fd1064986abdbe1755383fb08758f74d40cad419c0da312f38b521c7d78ce59c",
     GRID_COORDINATES_SOURCE: "e0f3cffc38e2a854426309b3eacab5783a0a5725cc4e763a06969e03914619e8",
@@ -231,9 +234,9 @@ _SOURCE_SEALS = {
     MODEL_PROCESSING_SOURCE: "8a159831e37a9582852908c7e213106aa1070500f4e64fa12f1a7ed628854740",
 }
 
-EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 354
+EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 355
 EXPECTED_DIRECT_FLOW_MUTATION_NAMES_SHA256 = (
-    "292027e67d3d50cae11661a67779a6efe8e2be4219af95bdf32177116824fb30"
+    "f5627cb8d4e6928c03c1707ef5ca396f5c16fd17d182c3668531f11f12802c91"
 )
 
 
@@ -2040,7 +2043,7 @@ def category(self) -> str:
                 "_GridSearchPeriodKernel.__post_init__": "056fa9a213d05cd91edced63b00b0968a0cb34bd4aae6262d429fc46107d6b57",
                 "_GridSearchPeriodKernel.core_programs": "0d96f7bea814e419ef1dbdebbc3257d63c3c0d36d9e6e52e619f8f44ae5a8a56",
                 "_GridSearchPeriodKernel.with_fixed_params": "3ac015a29f87cd287c740773c837852d814c646a3131a9a2aa72ed99954bff1c",
-                "_GridSearchPeriodKernel.__call__": "c2bad5ac3b6f97c385b62455f936e68a467b30e14845ed5dd01612f53bf35c73",
+                "_GridSearchPeriodKernel.__call__": "060901593efed23b0252a251f1a720e96769a7fa116ef3dfe4f2a41749304252",
             },
         )
     )
@@ -2568,11 +2571,11 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
         errors.append(f"backward output-layout transport: {error}")
     else:
 
-        def _is_kernel_result(statement: ast.stmt) -> bool:
+        def _is_kernel_output(statement: ast.stmt) -> bool:
             return (
                 isinstance(statement, ast.Assign)
                 and any(
-                    _target_names(target) == ("result",) for target in statement.targets
+                    _target_names(target) == ("output",) for target in statement.targets
                 )
                 and isinstance(statement.value, ast.Call)
                 and _call_name(statement.value) == "_run_period_kernel"
@@ -2582,14 +2585,14 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             node
             for node in ast.walk(solve)
             if isinstance(node, ast.For)
-            and any(_is_kernel_result(statement) for statement in node.body)
+            and any(_is_kernel_output(statement) for statement in node.body)
         ]
         corridors: list[list[ast.stmt]] = []
         for loop in loops:
             starts = [
                 index
                 for index, statement in enumerate(loop.body)
-                if _is_kernel_result(statement)
+                if _is_kernel_output(statement)
             ]
             ends = [
                 index
@@ -2602,7 +2605,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             ]
             if len(starts) == len(ends) == 1 and starts[0] <= ends[0]:
                 corridors.append(loop.body[starts[0] : ends[0] + 1])
-        expected = "7b19dc2eaa3f27c95e57fd43a5f526dfca835e38e0d6d53731cfeb060935c287"
+        expected = "63bdde903f96cbd0f57fc9db183f623718f307947fc45cbf53a81e50d15ac850"
         if len(corridors) != 1 or _statements_ast_sha256(corridors[0]) != expected:
             errors.append(
                 "backward output-layout transport: solve publication corridor changed"
@@ -2634,7 +2637,7 @@ def _terminal_output_wrapper_errors(tree: ast.Module) -> list[str]:
             contracts={
                 "_TerminalCarryPeriodKernel.core_programs": "842c31af0bea766bfd410783881770152246a825505be327096c117f60ee65fa",
                 "_TerminalCarryPeriodKernel.with_fixed_params": "c9069b5fcc41d4b7b42a2ec21be12004fa57379216fbd7e4fc624473b4d89cc6",
-                "_TerminalCarryPeriodKernel.__call__": "77f27cca4b3d5da43fc3911cb736cf124829edeb7644ccabd14f0fa5607c2edc",
+                "_TerminalCarryPeriodKernel.__call__": "2b8b83c8c997c5020409c2e11fccb7ed6427093c1f758c7b579206fae9188646",
             },
         )
     )
@@ -2647,7 +2650,7 @@ def _period_replay_errors(tree: ast.Module) -> list[str]:
         tree=tree,
         label="period replay native-program transport",
         contracts={
-            "replay_period": "919baec005808465b365523da329d9b2931a6f88dcb1d1470a0d5dbb79047b8e",
+            "replay_period": "bdaa7a9381889dc2dbbc84763861da30a4ccd8c279f1e2b01eefcc39d9b0a709",
             "_compile_cores_for_one_period": "36b7fdcd0cbbfbffb96056e9bc2eaf510823ff4f6da479cdad9ac83dead31536",
             "_core_build_context_for_one_period": "8d11e28bebf0c0df6bce4872e25a56e577592db26901d47d8cd5cf431a55b473",
         },
@@ -3917,6 +3920,7 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         encoding="utf-8"
     )
     model_source = (root / MODEL_SOURCE).read_text(encoding="utf-8")
+    solver_api_source = (root / SOLVER_API_SOURCE).read_text(encoding="utf-8")
     backward_induction_source = (root / BACKWARD_INDUCTION_SOURCE).read_text(
         encoding="utf-8"
     )
@@ -4172,8 +4176,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         ),
         "caller_solve:published_value_filtered": replace_once(
             source=grid_source,
-            old="        return KernelResult(V_arr=out)",
-            new="        return KernelResult(V_arr=candidate_filter(out))",
+            old="        return KernelOutput(value=out)",
+            new="        return KernelOutput(value=candidate_filter(out))",
             label="solve caller value publication",
         ),
         "streaming_provider:action_names_slice": replace_once(
@@ -4393,8 +4397,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         ),
         "streaming_collective:published_dissolution_inverted": replace_once(
             source=grid_source,
-            old="            return KernelResult(V_arr=V_arr, dissolution=dissolution)",
-            new="            return KernelResult(V_arr=V_arr, dissolution=~dissolution)",
+            old="                solve_time_artifacts={DISSOLUTION_FLAG_ARTIFACT: dissolution},",
+            new="                solve_time_artifacts={DISSOLUTION_FLAG_ARTIFACT: ~dissolution},",
             label="streamed collective result publication",
         ),
         "value_access:grid_reachable_targets_dropped": _replace_nth(
@@ -5431,8 +5435,17 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         ),
         "terminal_wrapper:published_value_filtered": replace_once(
             source=processing_source,
-            old="            V_arr=result.V_arr,\n            continuation=carry,",
-            new="            V_arr=candidate_filter(result.V_arr),\n            continuation=carry,",
+            old=(
+                "        return dataclass_replace(\n"
+                "            output,\n"
+                "            continuations={**output.continuations, EGM_CONTINUATION: carry},"
+            ),
+            new=(
+                "        return dataclass_replace(\n"
+                "            output,\n"
+                "            value=candidate_filter(output.value),\n"
+                "            continuations={**output.continuations, EGM_CONTINUATION: carry},"
+            ),
             label="terminal wrapper value publication",
         ),
     }
@@ -6084,13 +6097,37 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
                 label="folded zero-safe average negation",
             ),
         },
-        "solution_contract:negate_kernel_result": {
+        "solution_contract:negate_backward_induction_values": {
             "path": SOLUTION_CONTRACT_SOURCE,
             "source": replace_once(
                 source=solution_contract_source,
-                old="    diagnostics: SolverDiagnostics | None = None",
-                new='    diagnostics: SolverDiagnostics | None = None\n\n    def __post_init__(self) -> None:\n        object.__setattr__(self, "V_arr", -self.V_arr)',
-                label="KernelResult value transport negation",
+                old='    it at the period boundary.\n    """\n',
+                new=(
+                    '    it at the period boundary.\n    """\n\n'
+                    "    def __post_init__(self) -> None:\n"
+                    "        object.__setattr__(\n"
+                    "            self,\n"
+                    '            "value_functions",\n'
+                    "            MappingProxyType(\n"
+                    "                {\n"
+                    "                    period: MappingProxyType(\n"
+                    "                        {name: -value for name, value in values.items()}\n"
+                    "                    )\n"
+                    "                    for period, values in self.value_functions.items()\n"
+                    "                }\n"
+                    "            ),\n"
+                    "        )\n"
+                ),
+                label="backward-induction value transport negation",
+            ),
+        },
+        "solver_api:negate_kernel_output_value": {
+            "path": SOLVER_API_SOURCE,
+            "source": replace_once(
+                source=solver_api_source,
+                old="        if not np.issubdtype(value_dtype, np.floating):",
+                new='        object.__setattr__(self, "value", -self.value)\n        if not np.issubdtype(value_dtype, np.floating):',
+                label="KernelOutput value transport negation",
             ),
         },
         "candidate_materialization:rebind_continuous_grid": {
@@ -6301,6 +6338,7 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         SIMULATION_TRANSITIONS_SOURCE: simulation_transitions_source,
         SIMULATION_COMPILE_SOURCE: simulation_compile_source,
         MODEL_SOURCE: model_source,
+        SOLVER_API_SOURCE: solver_api_source,
         BACKWARD_INDUCTION_SOURCE: backward_induction_source,
         PERIOD_REPLAY_SOURCE: period_replay_source,
         INITIAL_CONDITIONS_SOURCE: initial_conditions_source,

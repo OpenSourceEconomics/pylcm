@@ -20,6 +20,7 @@ from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
 from _lcm.regime_building import processing as regime_processing
 from _lcm.solution import artifacts as private_artifacts
 from _lcm.solution import backward_induction
+from _lcm.solution.contract import GENERATED_REPLAY_AUTHORITY
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from _lcm.typing import (
     FlatParams,
@@ -295,7 +296,7 @@ def test_solve_retains_kernel_diagnostics_only_when_log_level_enables_them(
     original = backward_induction._run_period_kernel
 
     def _with_diagnostics(**kwargs: object):
-        kernel_result = original(**kwargs)  # ty: ignore[invalid-argument-type]
+        output = original(**kwargs)  # ty: ignore[invalid-argument-type]
         scalar = jnp.asarray(0.0)
         flag = jnp.zeros((), dtype=jnp.bool_)
         diagnostics = SolverDiagnostics(
@@ -310,7 +311,10 @@ def test_solve_retains_kernel_diagnostics_only_when_log_level_enables_them(
             unresolved_mask=flag,
             n_outer_all_invalid_cells=jnp.asarray(0, dtype=jnp.int32),
         )
-        return replace(kernel_result, diagnostics=diagnostics)
+        return replace(
+            output,
+            auxiliary={**output.auxiliary, SOLVER_DIAGNOSTICS: diagnostics},
+        )
 
     monkeypatch.setattr(backward_induction, "_run_period_kernel", _with_diagnostics)
     model = _two_period_bequest_model()
@@ -1005,10 +1009,19 @@ def test_adaptive_policy_omission_is_derived_from_model_authority(
     original = backward_induction._run_period_kernel
 
     def _without_policy(**kwargs: object):
+        output = original(**kwargs)  # ty: ignore[invalid-argument-type]
         return replace(
-            original(**kwargs),  # ty: ignore[invalid-argument-type]
-            simulation_policy=None,
-            generated_replay_authority=None,
+            output,
+            replay={
+                key: payload
+                for key, payload in output.replay.items()
+                if key != SIMULATION_POLICY
+            },
+            auxiliary={
+                key: payload
+                for key, payload in output.auxiliary.items()
+                if key != GENERATED_REPLAY_AUTHORITY
+            },
         )
 
     monkeypatch.setattr(backward_induction, "_run_period_kernel", _without_policy)

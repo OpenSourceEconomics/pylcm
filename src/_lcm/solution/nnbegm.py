@@ -72,10 +72,10 @@ from _lcm.execution.core_program import (
 )
 from _lcm.grids import ContinuousGrid, DiscreteGrid, Grid
 from _lcm.solution.contract import (
+    GENERATED_REPLAY_AUTHORITY,
     ConstraintRouteContext,
     ContinuationPayload,
     GeneratedReplayAuthority,
-    KernelResult,
     PeriodKernel,
     SimulationPolicy,
     SolutionKernels,
@@ -117,6 +117,13 @@ from lcm.exceptions import (
     ModelInitializationError,
     RegimeInitializationError,
     UnrepresentableOuterCandidateError,
+)
+from lcm.solver_api import (
+    EGM_CONTINUATION,
+    SIMULATION_POLICY,
+    SOLVER_DIAGNOSTICS,
+    ArtifactKey,
+    KernelOutput,
 )
 from lcm.typing import (
     ActionName,
@@ -1016,7 +1023,7 @@ class _NNBEGMPeriodKernel:
         period: int,
         ages: AgeGrid,
         logger: logging.Logger,
-    ) -> KernelResult:
+    ) -> KernelOutput:
         """Solve the keeper, settle the replay capability, run the outer search.
 
         The retention shows in the compiled programs: the inner `replay`
@@ -1067,7 +1074,7 @@ class _NNBEGMPeriodKernel:
         self,
         *,
         replay_capability: OuterReplayCapability,
-        keeper_result: KernelResult,
+        keeper_result: KernelOutput,
         retain_replay: bool,
         compiled_cores: Mapping[str, Callable],
         state_action_space: StateActionSpace,
@@ -1077,7 +1084,7 @@ class _NNBEGMPeriodKernel:
         period: int,
         ages: AgeGrid,
         logger: logging.Logger,
-    ) -> KernelResult:
+    ) -> KernelOutput:
         """Run the outer search against the solved keeper; concrete per subclass."""
         raise NotImplementedError
 
@@ -1092,7 +1099,7 @@ class _NNBEGMPeriodKernel:
         period: int,
         ages: AgeGrid,
         logger: logging.Logger,
-    ) -> KernelResult:
+    ) -> KernelOutput:
         """Run the keeper inner solve — the state-dependent no-adjustment branch."""
         return self.keeper_kernel(
             compiled_cores=_subcores(compiled_cores=compiled_cores, role="keeper"),
@@ -1134,17 +1141,14 @@ class _NNBEGMPeriodKernel:
             ages=ages,
             logger=logger,
         )
+        policy = result.replay.get(SIMULATION_POLICY)
         return OuterCandidateResult(
             outer_node=node,
-            V_arr=result.V_arr,
-            carry=cast("EGMCarry", result.continuation),
+            V_arr=jnp.asarray(result.value),
+            carry=cast("EGMCarry", result.continuations[EGM_CONTINUATION]),
             # An inner 1-D kernel publishes a flat policy or nothing; the
             # isinstance narrows the widened payload union for the bank.
-            sim_policy=(
-                result.simulation_policy
-                if isinstance(result.simulation_policy, EGMSimPolicy)
-                else None
-            ),
+            sim_policy=policy if isinstance(policy, EGMSimPolicy) else None,
         )
 
     def _certify_outer_inverse(
@@ -1371,7 +1375,7 @@ class _FiniteNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
         self,
         *,
         replay_capability: OuterReplayCapability,
-        keeper_result: KernelResult,
+        keeper_result: KernelOutput,
         retain_replay: bool,
         compiled_cores: Mapping[str, Callable],
         state_action_space: StateActionSpace,
@@ -1381,11 +1385,11 @@ class _FiniteNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
         period: int,
         ages: AgeGrid,
         logger: logging.Logger,
-    ) -> KernelResult:
+    ) -> KernelOutput:
         """Fold finite candidates and, retaining replay, their complete identities."""
-        V_arr = keeper_result.V_arr
-        keeper_carry = cast("EGMCarry", keeper_result.continuation)
-        adjuster_results: list[KernelResult] = []
+        V_arr = keeper_result.value
+        keeper_carry = cast("EGMCarry", keeper_result.continuations[EGM_CONTINUATION])
+        adjuster_results: list[KernelOutput] = []
         adjuster_carries: list[EGMCarry] = []
         adjuster_cores = _subcores(compiled_cores=compiled_cores, role="adjuster")
         nodes = list(self.outer_grid_values)
@@ -1410,8 +1414,10 @@ class _FiniteNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
                 for node in nodes[chunk_start : chunk_start + chunk_size]
             ]
             for adjuster_result in chunk_results:
-                V_arr = jnp.fmax(V_arr, adjuster_result.V_arr)
-                adjuster_carries.append(cast("EGMCarry", adjuster_result.continuation))
+                V_arr = jnp.fmax(V_arr, adjuster_result.value)
+                adjuster_carries.append(
+                    cast("EGMCarry", adjuster_result.continuations[EGM_CONTINUATION])
+                )
                 adjuster_results.append(adjuster_result)
             V_arr, _ = jax.block_until_ready((V_arr, adjuster_carries[chunk_start:]))
 
@@ -1422,28 +1428,30 @@ class _FiniteNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
             nan_is_infeasible=True,
         )
         if not retain_replay:
-            return KernelResult(V_arr=V_arr, continuation=carry)
-        return KernelResult(
-            V_arr=V_arr,
-            continuation=carry,
-            simulation_policy=self._finite_replay_policy(
-                replay_capability=replay_capability,
-                keeper_result=keeper_result,
-                adjuster_results=adjuster_results,
-                state_action_space=state_action_space,
-                flat_params=flat_params,
-                period=period,
-                ages=ages,
-                logger=logger,
-            ),
+            return KernelOutput(value=V_arr, continuations={EGM_CONTINUATION: carry})
+        return KernelOutput(
+            value=V_arr,
+            continuations={EGM_CONTINUATION: carry},
+            replay={
+                SIMULATION_POLICY: self._finite_replay_policy(
+                    replay_capability=replay_capability,
+                    keeper_result=keeper_result,
+                    adjuster_results=adjuster_results,
+                    state_action_space=state_action_space,
+                    flat_params=flat_params,
+                    period=period,
+                    ages=ages,
+                    logger=logger,
+                )
+            },
         )
 
     def _finite_replay_policy(
         self,
         *,
         replay_capability: OuterReplayCapability,
-        keeper_result: KernelResult,
-        adjuster_results: list[KernelResult],
+        keeper_result: KernelOutput,
+        adjuster_results: list[KernelOutput],
         state_action_space: StateActionSpace,
         flat_params: FlatParams,
         period: int,
@@ -1451,12 +1459,14 @@ class _FiniteNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
         logger: logging.Logger,
     ) -> NNBEGMSimPolicy:
         """Assemble the finite candidate banks the nested replay ranks."""
-        keeper_policy = cast("NBEGMGridPolicy", keeper_result.simulation_policy)
+        keeper_policy = cast(
+            "NBEGMGridPolicy", keeper_result.replay.get(SIMULATION_POLICY)
+        )
         discrete_action_names = keeper_policy.discrete_action_names
         branch_codes = keeper_policy.branch_discrete_actions
         keeper_inner, keeper_values = _conditional_nnbegm_banks(
             policy=keeper_policy,
-            collapsed_value=keeper_result.V_arr,
+            collapsed_value=jnp.asarray(keeper_result.value),
             state_names=keeper_policy.state_names,
             discrete_action_names=discrete_action_names,
             branch_codes=branch_codes,
@@ -1464,10 +1474,12 @@ class _FiniteNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
         candidate_inner_by_outer = [keeper_inner]
         candidate_value_by_outer = [keeper_values]
         for adjuster_result in adjuster_results:
-            adjuster_policy = cast("NBEGMGridPolicy", adjuster_result.simulation_policy)
+            adjuster_policy = cast(
+                "NBEGMGridPolicy", adjuster_result.replay.get(SIMULATION_POLICY)
+            )
             adjuster_inner, adjuster_values = _conditional_nnbegm_banks(
                 policy=adjuster_policy,
-                collapsed_value=adjuster_result.V_arr,
+                collapsed_value=jnp.asarray(adjuster_result.value),
                 state_names=keeper_policy.state_names,
                 discrete_action_names=discrete_action_names,
                 branch_codes=branch_codes,
@@ -1528,7 +1540,7 @@ class _AdaptiveNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
         self,
         *,
         replay_capability: OuterReplayCapability,
-        keeper_result: KernelResult,
+        keeper_result: KernelOutput,
         retain_replay: bool,
         compiled_cores: Mapping[str, Callable],
         state_action_space: StateActionSpace,
@@ -1538,7 +1550,7 @@ class _AdaptiveNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
         period: int,
         ages: AgeGrid,
         logger: logging.Logger,
-    ) -> KernelResult:
+    ) -> KernelOutput:
         """Adaptively refine the shared outer mesh, then collapse continuously.
 
         The mesh driver's exact-solve callback runs the adjuster's inner
@@ -1607,9 +1619,10 @@ class _AdaptiveNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
                 self.branch_fixed_cost.lower,
                 self.branch_fixed_cost.upper,
             )
+        keeper_carry = cast("EGMCarry", keeper_result.continuations[EGM_CONTINUATION])
         collapse = collapse_continuous_candidate_bank(
-            keeper_v_arr=keeper_result.V_arr,
-            keeper_carry=cast("EGMCarry", keeper_result.continuation),
+            keeper_v_arr=jnp.asarray(keeper_result.value),
+            keeper_carry=keeper_carry,
             bank=bank,
             config=config,
             fixed_cost_scale=fixed_cost_scale,
@@ -1625,11 +1638,12 @@ class _AdaptiveNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
         keeper_policy = None
         adjuster_policies = None
         if retain_replay:
+            keeper_published = keeper_result.replay.get(SIMULATION_POLICY)
             keeper_policy = (
-                keeper_result.simulation_policy
-                if isinstance(keeper_result.simulation_policy, EGMSimPolicy)
+                keeper_published
+                if isinstance(keeper_published, EGMSimPolicy)
                 else derive_inner_sim_policy(
-                    carry=cast("EGMCarry", keeper_result.continuation),
+                    carry=keeper_carry,
                     state_grid_values=self.liquid_grid_values,
                     row_discrete_state_names=self.row_discrete_state_names,
                     row_passive_state_names=self.row_passive_state_names,
@@ -1708,18 +1722,18 @@ class _AdaptiveNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
                 value_atol=config.value_atol,
                 value_rtol=config.value_rtol,
             )
-        return KernelResult(
-            V_arr=collapse.V_arr,
-            continuation=collapse.carry,
-            simulation_policy=sim_policy,
-            generated_replay_authority=(
-                GeneratedReplayAuthority(
-                    adaptive_outer_nodes=tuple(float(node) for node in mesh_nodes_host)
-                )
-                if nested_published
-                else None
-            ),
-            diagnostics=diagnostics,
+        auxiliary: dict[ArtifactKey, object] = {SOLVER_DIAGNOSTICS: diagnostics}
+        replay: dict[ArtifactKey, object] = {}
+        if sim_policy is not None:
+            replay[SIMULATION_POLICY] = sim_policy
+            auxiliary[GENERATED_REPLAY_AUTHORITY] = GeneratedReplayAuthority(
+                adaptive_outer_nodes=tuple(float(node) for node in mesh_nodes_host)
+            )
+        return KernelOutput(
+            value=collapse.V_arr,
+            continuations={EGM_CONTINUATION: collapse.carry},
+            replay=replay,
+            auxiliary=auxiliary,
         )
 
 

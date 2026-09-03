@@ -87,7 +87,7 @@ def test_replay_reproduces_the_value_function_of_the_full_solve(
     replay = replay_period(directory=tmp_path / "working_life@1")
 
     np.testing.assert_array_equal(
-        np.asarray(replay.result.V_arr),
+        np.asarray(replay.output.value),
         np.asarray(solution[1]["working_life"]),
     )
 
@@ -107,7 +107,7 @@ def test_replay_does_not_recapture_when_the_selector_remains_set(
         capture.chmod(0o755)
 
     np.testing.assert_array_equal(
-        np.asarray(replay.result.V_arr),
+        np.asarray(replay.output.value),
         np.asarray(solution[1]["working_life"]),
     )
 
@@ -192,7 +192,7 @@ def test_a_gated_edge_source_replays_to_the_value_the_solve_published(
     replay = replay_period(directory=tmp_path / "single_f@0")
 
     np.testing.assert_array_equal(
-        np.asarray(replay.result.V_arr),
+        np.asarray(replay.output.value),
         np.asarray(solution[0]["single_f"]),
     )
 

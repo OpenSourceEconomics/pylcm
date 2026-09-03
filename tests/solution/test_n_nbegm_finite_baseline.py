@@ -25,11 +25,12 @@ import pytest
 from jax import config as jax_config
 
 import _lcm.solution.nnbegm as solvers_mod
+from lcm.solver_api import EGM_CONTINUATION
 from lcm.typing import FloatND
 from tests.test_models import n_nbegm_toy as toy
 
 if TYPE_CHECKING:
-    from _lcm.solution.contract import KernelResult
+    from lcm.solver_api import KernelOutput
 
 _PARAMS = {"discount_factor": 0.95}
 _BASELINE = Path(__file__).parent.parent / "data" / "n_nbegm_finite_baseline.npz"
@@ -46,15 +47,15 @@ _CARRY_LEAVES = {
 
 def _solve_recording_kernel_results(
     *, outer_batch_size: int, monkeypatch: pytest.MonkeyPatch
-) -> tuple[Mapping[int, Mapping[str, FloatND]], dict[int, KernelResult]]:
-    """Solve the toy, recording each period's raw `KernelResult`."""
-    recorded: dict[int, KernelResult] = {}
+) -> tuple[Mapping[int, Mapping[str, FloatND]], dict[int, KernelOutput]]:
+    """Solve the toy, recording each period's raw `KernelOutput`."""
+    recorded: dict[int, KernelOutput] = {}
     original_call = solvers_mod._NNBEGMPeriodKernel.__call__
 
     def recording_call(
         self: solvers_mod._NNBEGMPeriodKernel,
         **kwargs: object,
-    ) -> KernelResult:
+    ) -> KernelOutput:
         result = original_call(self, **kwargs)  # ty: ignore[invalid-argument-type]
         recorded[cast("int", kwargs["period"])] = result
         return result
@@ -99,13 +100,13 @@ def test_finite_streaming_fold_matches_frozen_corrected_baseline(
     for period in _ALIVE_PERIODS:
         result = recorded[period]
         np.testing.assert_allclose(
-            np.asarray(result.V_arr),
+            np.asarray(result.value),
             baseline[f"{tag}:p{period}:V_arr"],
             rtol=1e-12,
             atol=1e-12,
             err_msg=f"V_arr at period {period}, batch {outer_batch_size}",
         )
-        leaves = jax.tree_util.tree_leaves(result.continuation)
+        leaves = jax.tree_util.tree_leaves(result.continuations[EGM_CONTINUATION])
         assert len(leaves) == len(_CARRY_LEAVES)
         for index, leaf in enumerate(leaves):
             name, rtol, atol = _CARRY_LEAVES[index]

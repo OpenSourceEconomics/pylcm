@@ -159,12 +159,10 @@ from _lcm.regime_building.V import VInterpolationInfo, create_v_interpolation_in
 from _lcm.solution.contract import (
     ConstraintRouteContext,
     ContinuationPayload,
-    KernelResult,
     PeriodKernel,
     SolverBuildContext,
     SolverModelContext,
 )
-from _lcm.solution.kernel_output import require_legacy_kernel_result
 from _lcm.solution.shipped_solvers import fail_if_solver_is_not_shipped
 from _lcm.state_action_space import create_state_action_space
 from _lcm.transition_plans import (
@@ -220,6 +218,7 @@ from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.phased import Phased
 from lcm.regime import ProjectedRegimeValue
 from lcm.regime import Regime as UserRegime
+from lcm.solver_api import EGM_CONTINUATION, KernelOutput
 from lcm.solvers import (
     DCEGM,
     NNBEGM,
@@ -2945,40 +2944,51 @@ class _TerminalCarryPeriodKernel:
         logger: logging.Logger,
         same_period_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
         edge_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
-    ) -> KernelResult:
-        """Run the base kernel, then publish the regime's continuation carry."""
-        result = require_legacy_kernel_result(
-            output=self.base(
-                compiled_cores=compiled_cores,
-                state_action_space=state_action_space,
-                next_regime_to_V_arr=next_regime_to_V_arr,
-                next_regime_to_continuation=next_regime_to_continuation,
-                flat_params=flat_params,
-                period=period,
-                ages=ages,
-                logger=logger,
-                **_edge_and_same_period_kwargs(
-                    edge_regime_to_V_arr=edge_regime_to_V_arr,
-                    same_period_regime_to_V_arr=same_period_regime_to_V_arr,
-                ),
+    ) -> KernelOutput:
+        """Run the base kernel, then add the regime's carry to its continuations.
+
+        Every artifact the base publishes stays on its channel; the carry joins
+        the continuation channel under the EGM continuation key. A base that
+        already publishes that key is refused rather than overwritten.
+        """
+        output = self.base(
+            compiled_cores=compiled_cores,
+            state_action_space=state_action_space,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            next_regime_to_continuation=next_regime_to_continuation,
+            flat_params=flat_params,
+            period=period,
+            ages=ages,
+            logger=logger,
+            **_edge_and_same_period_kwargs(
+                edge_regime_to_V_arr=edge_regime_to_V_arr,
+                same_period_regime_to_V_arr=same_period_regime_to_V_arr,
             ),
-            consumer="terminal carry wrapper",
         )
+        if not isinstance(output, KernelOutput):
+            msg = (
+                f"The terminal-carry decorator around regime '{self.regime_name}' "
+                f"received {type(output).__name__} from its base kernel; a period "
+                "kernel returns KernelOutput."
+            )
+            raise TypeError(msg)
+        if EGM_CONTINUATION in output.continuations:
+            msg = (
+                f"Regime '{self.regime_name}' already publishes "
+                f"'{EGM_CONTINUATION.type_id}'; the terminal-carry decorator adds "
+                "that continuation and cannot overwrite it."
+            )
+            raise RuntimeError(msg)
         carry = self.carry_producer(
-            V_arr=result.V_arr,
+            V_arr=jnp.asarray(output.value),
             **state_action_space.states,
             **flat_params[self.regime_name],
             period=jnp.int32(period),
             age=ages.values[period],
         )
-        # `dissolution` rides through unchanged — unreachable today (collective
-        # terminals carry actions, so no closed-form carry producer wraps them),
-        # but the decorator must not silently drop a base kernel's output.
-        return KernelResult(
-            V_arr=result.V_arr,
-            continuation=carry,
-            simulation_policy=result.simulation_policy,
-            dissolution=result.dissolution,
+        return dataclass_replace(
+            output,
+            continuations={**output.continuations, EGM_CONTINUATION: carry},
         )
 
 

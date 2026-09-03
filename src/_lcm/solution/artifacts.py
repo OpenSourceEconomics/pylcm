@@ -123,14 +123,9 @@ def build_solution_result(  # noqa: C901, PLR0912
                 key=SIMULATION_POLICY,
             )
             policy_descriptor = authority.replay[policy_ref]
-            did_publish_policy = (
-                period,
-                regime_name,
-            ) in internal_result.published_simulation_policy_cells
             policy_read = regime.simulation.egm_policy_read
             can_publish_policy = (
-                did_publish_policy
-                or policy_read is not None
+                policy_read is not None
                 or user_regime.solver.publishes_simulation_policy
                 or _graph_publishes_replay(regime=regime, period=period)
             )

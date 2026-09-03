@@ -768,18 +768,15 @@ class _NEGMPeriodKernel:
         the published continuation so the parent read can take the exact
         `max_j V_j(q)` at its own query.
         """
-        keeper_output = cast(
-            "KernelOutput",
-            self.keeper_kernel(
-                compiled_cores={"main": compiled_cores["keeper"]},
-                state_action_space=state_action_space,
-                next_regime_to_V_arr=next_regime_to_V_arr,
-                next_regime_to_continuation=next_regime_to_continuation,
-                flat_params=flat_params,
-                period=period,
-                ages=ages,
-                logger=logger,
-            ),
+        keeper_output = self.keeper_kernel(
+            compiled_cores={"main": compiled_cores["keeper"]},
+            state_action_space=state_action_space,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            next_regime_to_continuation=next_regime_to_continuation,
+            flat_params=flat_params,
+            period=period,
+            ages=ages,
+            logger=logger,
         )
         keeper_value = jnp.asarray(keeper_output.value)
         keeper_carry = cast("EGMCarry", keeper_output.continuations[EGM_CONTINUATION])

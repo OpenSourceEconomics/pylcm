@@ -10,20 +10,23 @@ action-grid nodes (where a grid argmax cannot land).
 """
 
 from collections.abc import Mapping
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from _lcm.egm.interp import interp_on_padded_grid
-from _lcm.egm.published_policy import EGMSimPolicy
-from _lcm.solution.backward_induction import solve as backward_induction_solve
+from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
+from _lcm.solution import backward_induction
 from _lcm.utils.logging import get_logger
 from lcm import AgeGrid, LogSpacedGrid, Model
 from lcm.regime import Regime as UserRegime
+from lcm.solver_api import SIMULATION_POLICY
 from lcm.typing import ContinuousState, FloatND, RegimeName, UserParams
 from lcm_examples.iskhakov_et_al_2017 import WEALTH_GRID
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
+from tests.test_models import n_nbegm_toy
 from tests.test_models.deterministic import retirement_only
 from tests.test_models.deterministic.dcegm_variants import (
     dcegm_retirement,
@@ -55,26 +58,39 @@ def _two_period_bequest_model() -> Model:
 
 
 def _kernel_published_policies(
-    *, model: Model, params: UserParams
+    *, model: Model, params: UserParams, monkeypatch: pytest.MonkeyPatch
 ) -> Mapping[int, Mapping[RegimeName, object]]:
     """Return every simulation policy the model's kernels publish, by period.
 
-    The public result keeps a policy only where forward simulation consumes it;
-    the kernel's own publication is read through the backward-induction result.
+    The solve retains a policy only where the regime's declared simulation
+    route reads it; the kernel's own publication is read off its output.
     """
-    result = backward_induction_solve(
+    published: dict[int, dict[RegimeName, object]] = {}
+    original = backward_induction._run_period_kernel
+
+    def recording(**kwargs: Any) -> Any:
+        output = original(**kwargs)
+        if SIMULATION_POLICY in output.replay:
+            published.setdefault(kwargs["period"], {})[kwargs["regime_name"]] = (
+                output.replay[SIMULATION_POLICY]
+            )
+        return output
+
+    monkeypatch.setattr(backward_induction, "_run_period_kernel", recording)
+    backward_induction.solve(
         flat_params=model._process_params(params),
         ages=model.ages,
         regimes=model._regimes,
         logger=get_logger(log_level="off"),
         enable_jit=model.enable_jit,
-        collect_simulation_policies=True,
-        simulation_policy_regimes=None,
+        retain_replay=True,
     )
-    return result.simulation_policies
+    return published
 
 
-def test_solve_publishes_policy_matching_closed_form_consumption():
+def test_solve_publishes_policy_matching_closed_form_consumption(
+    monkeypatch: pytest.MonkeyPatch,
+):
     """Interpolating the published policy reproduces `c* = wealth / (1 + beta)`.
 
     With log utility, zero interest, a two-period horizon, and a terminal
@@ -86,7 +102,7 @@ def test_solve_publishes_policy_matching_closed_form_consumption():
     params = get_retirement_only_params(n_periods=2, discount_factor=discount_factor)
 
     sim_policy = _kernel_published_policies(
-        model=_two_period_bequest_model(), params=params
+        model=_two_period_bequest_model(), params=params, monkeypatch=monkeypatch
     )
 
     pol = sim_policy[0]["retirement"]
@@ -103,22 +119,29 @@ def test_solve_publishes_policy_matching_closed_form_consumption():
     np.testing.assert_allclose(np.asarray(consumption), expected, rtol=2e-2)
 
 
-def test_published_policies_are_host_resident():
-    """Solve evicts simulation policies to host, not device.
+def test_retained_policies_are_host_resident():
+    """Solve evicts retained simulation policies to host, not device.
 
     The policies are a solve output no backward step reads; keeping them on the
     accelerator would pin one carry-sized buffer per period for the whole
-    induction. So the returned policy arrays live on the host (CPU) device.
+    induction. So the returned policy arrays live on the host (CPU) device. A
+    policy is retained only through a declared simulation route, so the witness
+    is a nested solver regime whose route reads one.
     """
-    params = get_retirement_only_params(n_periods=2, discount_factor=0.98)
-    sim_policy = _kernel_published_policies(
-        model=_two_period_bequest_model(), params=params
+    model = n_nbegm_toy.build_model(variant="n_nbegm", n_periods=2)
+    result = backward_induction.solve(
+        flat_params=model._process_params({"discount_factor": 0.95}),
+        ages=model.ages,
+        regimes=model._regimes,
+        logger=get_logger(log_level="off"),
+        enable_jit=model.enable_jit,
+        retain_replay=True,
     )
 
-    pol = sim_policy[0]["retirement"]
-    assert isinstance(pol, EGMSimPolicy)
+    pol = result.simulation_policies[0]["alive"]
+    assert isinstance(pol, NNBEGMSimPolicy)
     assert all(
         device.platform == "cpu"
-        for array in (pol.endog_grid, pol.policy)
+        for array in (pol.candidate_inner_action, pol.candidate_value)
         for device in array.devices()
     )

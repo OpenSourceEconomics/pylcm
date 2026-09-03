@@ -36,9 +36,9 @@ from _lcm.solution.backward_induction import (
     _resolve_program_for_execution,
     _run_period_kernel,
 )
-from _lcm.solution.contract import KernelResult
 from _lcm.solution.period_capture import _PAYLOAD_NAME
 from _lcm.typing import RegimeName
+from lcm.solver_api import KernelOutput
 
 
 @dataclasses.dataclass(frozen=True)
@@ -54,8 +54,8 @@ class PeriodReplay:
     age: float
     """Age the captured period sits at, for reading against a solve log."""
 
-    result: KernelResult
-    """What the kernel returned — the value array and the optional payloads."""
+    output: KernelOutput
+    """What the kernel returned: the value array and its artifact channels."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -121,7 +121,7 @@ def replay_period(*, directory: Path) -> PeriodReplay:
     period = payload["period"]
     kernel_kwargs = payload["kernel_kwargs"]
 
-    result = _run_period_kernel(
+    output = _run_period_kernel(
         regime=regime,
         capture_target=None,
         compiled_cores=_compile_cores_for_one_period(
@@ -133,7 +133,7 @@ def replay_period(*, directory: Path) -> PeriodReplay:
         regime_name=kernel_kwargs["regime_name"],
         period=period,
         age=float(kernel_kwargs["ages"].values[period]),
-        result=result,
+        output=output,
     )
 
 

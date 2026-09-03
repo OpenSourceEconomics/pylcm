@@ -210,7 +210,7 @@ def test_a_replay_lowers_the_dense_program_the_solve_ran(*, monkeypatch, tmp_pat
 
     assert dispositions == [CoreExecutionDisposition.DENSE]
     assert_agrees_to_ulp(
-        got=np.asarray(replay.result.V_arr),
+        got=np.asarray(replay.output.value),
         expected=np.asarray(solution.values[_PERIOD][_REGIME]),
         n_ulp=1,
     )

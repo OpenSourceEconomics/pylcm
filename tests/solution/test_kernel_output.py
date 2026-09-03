@@ -1,10 +1,20 @@
-"""The public kernel-output envelope and its legacy bridge."""
+"""The public kernel-output envelope and the solve loop's consumer of it.
+
+Every period kernel returns a `KernelOutput`: a value plus four keyed artifact
+channels. The solve loop reads each channel by the artifact's declared key
+through one consumer, and refuses, naming the regime and period, anything it
+has no reader for: an unknown key, a known key with a payload of another type,
+a missing required continuation, or a continuation published under another
+schema version. No second result type exists between a kernel and the loop.
+"""
 
 import ast
+import dataclasses
 import inspect
 import itertools
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
-from typing import get_args, get_type_hints
+from typing import Any, get_args, get_type_hints
 
 import jax
 import jax.numpy as jnp
@@ -15,13 +25,18 @@ from jaxtyping import Float
 from _lcm.continuation import EGMContinuationSpec
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.published_policy import EGMSimPolicy
+from _lcm.solution import backward_induction, contract, period_replay
 from _lcm.solution import egm as egm_module
-from _lcm.solution.contract import KernelResult
-from _lcm.solution.kernel_output import (
-    normalize_kernel_output,
-    require_legacy_kernel_result,
+from _lcm.solution import kernel_output as kernel_output_module
+from _lcm.solution.contract import (
+    GENERATED_REPLAY_AUTHORITY,
+    BackwardInductionResult,
+    GeneratedReplayAuthority,
+    PeriodKernel,
 )
+from _lcm.solution.kernel_output import ConsumedKernelOutput, consume_kernel_output
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
+from _lcm.typing import RegimeName
 from lcm.solver_api import (
     DISSOLUTION_FLAG,
     EGM_CONTINUATION,
@@ -33,7 +48,10 @@ from lcm.solver_api import (
 )
 from lcm.solvers import EGM
 from lcm.typing import FloatND
+from tests.solution.test_dissolution_flag_retention import _make_dissolution_model
 from tests.solution.test_egm_solver import _SAVINGS_GRID, _model, _params
+from tests.solution.test_n_nbegm_fixed_cost import _MESH
+from tests.test_models import n_nbegm_toy, nbegm_ride_along_toy
 
 
 def _carry() -> EGMCarry:
@@ -60,6 +78,26 @@ def _diagnostics() -> SolverDiagnostics:
         policy_fallback_mask=flag,
         unresolved_mask=flag,
         n_outer_all_invalid_cells=jnp.asarray(0, dtype=jnp.int32),
+    )
+
+
+def _policy() -> EGMSimPolicy:
+    return EGMSimPolicy(
+        endog_grid=jnp.asarray([[0.0, 1.0]]),
+        policy=jnp.asarray([[0.5, 0.5]]),
+        value=jnp.asarray([[0.0, 1.0]]),
+        marginal_utility=jnp.asarray([[1.0, 1.0]]),
+    )
+
+
+def _consume(
+    *, output: object, continuation_key: ArtifactKey | None = EGM_CONTINUATION
+) -> ConsumedKernelOutput:
+    return consume_kernel_output(
+        output=output,
+        continuation_key=continuation_key,
+        regime_name="saving",
+        period=2,
     )
 
 
@@ -210,42 +248,33 @@ def test_raw_egm_kernel_publishes_the_exact_public_continuation_key(
     assert all(not output.replay for output in seen)
 
 
-def test_bridge_extracts_the_declared_continuation() -> None:
+def test_the_consumer_reads_the_declared_continuation() -> None:
     carry = _carry()
     output = KernelOutput(
         value=jnp.asarray([3.0]),
         continuations={EGM_CONTINUATION: carry},
     )
 
-    result = normalize_kernel_output(
-        output=output,
-        continuation_key=EGM_CONTINUATION,
-        regime_name="saving",
-        period=2,
-    )
+    consumed = _consume(output=output)
 
-    assert result.V_arr is output.value
-    assert result.continuation is carry
-    assert result.simulation_policy is None
-    assert result.dissolution is None
-    assert result.diagnostics is None
+    assert consumed.value is output.value
+    assert consumed.continuation is carry
+    assert consumed.simulation_policy is None
+    assert consumed.generated_replay_authority is None
+    assert consumed.dissolution is None
+    assert consumed.diagnostics is None
 
 
-def test_bridge_normalizes_an_accepted_numpy_value_to_jax() -> None:
+def test_the_consumer_normalizes_an_accepted_numpy_value_to_jax() -> None:
     output = KernelOutput(
         value=np.asarray([3.0], dtype=np.float32),
         continuations={EGM_CONTINUATION: _carry()},
     )
 
-    result = normalize_kernel_output(
-        output=output,
-        continuation_key=EGM_CONTINUATION,
-        regime_name="saving",
-        period=2,
-    )
+    consumed = _consume(output=output)
 
-    assert isinstance(result.V_arr, jax.Array)
-    np.testing.assert_array_equal(result.V_arr, output.value)
+    assert isinstance(consumed.value, jax.Array)
+    np.testing.assert_array_equal(consumed.value, output.value)
 
 
 @pytest.mark.parametrize(
@@ -277,83 +306,35 @@ def test_bridge_normalizes_an_accepted_numpy_value_to_jax() -> None:
             "Regime 'saving'.*period 2.*version.*2.*expected.*1",
         ),
     ],
+    ids=["missing", "unknown-key", "other-version"],
 )
-def test_bridge_fails_closed_before_roll_with_cell_coordinates(
+def test_the_consumer_fails_closed_before_the_roll_with_cell_coordinates(
     *, output: KernelOutput, match: str
 ) -> None:
     with pytest.raises(RuntimeError, match=match):
-        normalize_kernel_output(
-            output=output,
-            continuation_key=EGM_CONTINUATION,
-            regime_name="saving",
-            period=2,
-        )
+        _consume(output=output)
 
 
 @pytest.mark.parametrize(
-    "field",
+    "channel",
     ["solve_time_artifacts", "replay", "auxiliary"],
 )
-def test_bridge_rejects_every_unconsumed_artifact_channel(field: str) -> None:
-    key = ArtifactKey(type_id=f"example.{field}")
+def test_the_consumer_refuses_every_unconsumed_artifact_channel(channel: str) -> None:
+    key = ArtifactKey(type_id=f"example.{channel}")
     output = KernelOutput(
         value=jnp.asarray([1.0]),
         continuations={EGM_CONTINUATION: _carry()},
-        **{field: {key: object()}},
+        **{channel: {key: object()}},
     )
 
     with pytest.raises(
         RuntimeError,
-        match=f"Regime 'saving'.*period 2.*unconsumed.*example.{field}",
+        match=f"Regime 'saving'.*period 2.*unconsumed.*example.{channel}",
     ):
-        normalize_kernel_output(
-            output=output,
-            continuation_key=EGM_CONTINUATION,
-            regime_name="saving",
-            period=2,
-        )
+        _consume(output=output)
 
 
-def test_bridge_passes_legacy_result_and_diagnostics_through_by_identity() -> None:
-    diagnostics = _diagnostics()
-    legacy = KernelResult(V_arr=jnp.asarray([1.0]), diagnostics=diagnostics)
-
-    result = normalize_kernel_output(
-        output=legacy,
-        continuation_key=None,
-        regime_name="legacy",
-        period=0,
-    )
-
-    assert result is legacy
-    assert result.diagnostics is diagnostics
-
-
-def test_legacy_composite_bridge_passes_kernel_result_through_by_identity() -> None:
-    legacy = KernelResult(V_arr=jnp.asarray([1.0]))
-
-    result = require_legacy_kernel_result(
-        output=legacy,
-        consumer="test composite",
-    )
-
-    assert result is legacy
-
-
-def test_legacy_composite_bridge_refuses_a_migrated_child() -> None:
-    output = KernelOutput(value=jnp.asarray([1.0]))
-
-    with pytest.raises(
-        RuntimeError,
-        match=r"test composite cannot yet consume KernelOutput.*migrate this composite",
-    ):
-        require_legacy_kernel_result(
-            output=output,
-            consumer="test composite",
-        )
-
-
-def test_bridge_refuses_wrong_payload_under_the_expected_continuation_key() -> None:
+def test_the_consumer_refuses_a_wrong_payload_under_the_continuation_key() -> None:
     output = KernelOutput(
         value=jnp.asarray([1.0]),
         continuations={EGM_CONTINUATION: object()},
@@ -363,12 +344,106 @@ def test_bridge_refuses_wrong_payload_under_the_expected_continuation_key() -> N
         RuntimeError,
         match=r"pylcm.egm.continuation.*unsupported payload type object.*EGMCarry",
     ):
-        normalize_kernel_output(
-            output=output,
-            continuation_key=EGM_CONTINUATION,
-            regime_name="saving",
-            period=2,
-        )
+        _consume(output=output)
+
+
+def test_the_consumer_reads_the_policy_flag_diagnostics_and_generated_authority() -> (
+    None
+):
+    policy = _policy()
+    flag = jnp.asarray([True, False])
+    diagnostics = _diagnostics()
+    authority = GeneratedReplayAuthority(adaptive_outer_nodes=(0.0, 1.0))
+    output = KernelOutput(
+        value=jnp.asarray([1.0, 2.0]),
+        solve_time_artifacts={DISSOLUTION_FLAG: flag},
+        replay={SIMULATION_POLICY: policy},
+        auxiliary={
+            SOLVER_DIAGNOSTICS: diagnostics,
+            GENERATED_REPLAY_AUTHORITY: authority,
+        },
+    )
+
+    consumed = _consume(output=output, continuation_key=None)
+
+    assert consumed.simulation_policy is policy
+    assert consumed.dissolution is flag
+    assert consumed.diagnostics is diagnostics
+    assert consumed.generated_replay_authority is authority
+
+
+def test_the_consumer_requires_a_bool_dissolution_flag() -> None:
+    output = KernelOutput(
+        value=jnp.asarray([1.0, 2.0]),
+        solve_time_artifacts={DISSOLUTION_FLAG: jnp.asarray([1.0, 0.0])},
+    )
+
+    with pytest.raises(RuntimeError, match=r"dissolution_flag.*dtype.*expected bool"):
+        _consume(output=output, continuation_key=None)
+
+
+def test_the_consumer_refuses_a_generated_authority_without_a_policy() -> None:
+    output = KernelOutput(
+        value=jnp.asarray([1.0]),
+        auxiliary={
+            GENERATED_REPLAY_AUTHORITY: GeneratedReplayAuthority(
+                adaptive_outer_nodes=(0.0,)
+            )
+        },
+    )
+
+    with pytest.raises(RuntimeError, match=r"'saving'.*period 2.*no matching.*policy"):
+        _consume(output=output, continuation_key=None)
+
+
+@pytest.mark.parametrize(
+    ("channel", "key"),
+    [
+        ("replay", SIMULATION_POLICY),
+        ("solve_time_artifacts", DISSOLUTION_FLAG),
+        ("auxiliary", SOLVER_DIAGNOSTICS),
+        ("auxiliary", GENERATED_REPLAY_AUTHORITY),
+    ],
+    ids=["policy", "flag", "diagnostics", "generated-authority"],
+)
+def test_the_consumer_refuses_a_known_key_with_the_wrong_payload_type(
+    *, channel: str, key: ArtifactKey
+) -> None:
+    output = KernelOutput(value=jnp.asarray([1.0]), **{channel: {key: object()}})
+
+    with pytest.raises(RuntimeError, match=f"'saving'.*period 2.*{key.type_id}"):
+        _consume(output=output, continuation_key=None)
+
+
+def test_the_consumer_refuses_anything_but_a_kernel_output() -> None:
+    with pytest.raises(TypeError, match=r"'saving'.*period 2.*unsupported.*object"):
+        _consume(output=object(), continuation_key=None)
+
+
+def test_no_second_result_type_stands_between_a_kernel_and_the_loop() -> None:
+    """The producer contract is `KernelOutput`; nothing normalizes to another type."""
+    assert not hasattr(contract, "KernelResult")
+    assert not hasattr(kernel_output_module, "normalize_kernel_output")
+    assert not hasattr(kernel_output_module, "require_legacy_kernel_result")
+    assert get_type_hints(PeriodKernel.__call__)["return"] is KernelOutput
+    assert "output" in period_replay.PeriodReplay.__dataclass_fields__
+    assert "result" not in period_replay.PeriodReplay.__dataclass_fields__
+
+
+def test_the_loop_retains_policies_by_declared_route_not_by_caller_flags() -> None:
+    """Replay retention has one switch; publication is read off the declarations."""
+    parameters = inspect.signature(backward_induction.solve).parameters
+
+    assert "retain_replay" in parameters
+    assert not {
+        "collect_simulation_policies",
+        "simulation_policy_regimes",
+        "track_artifact_publication",
+    } & set(parameters)
+    assert (
+        "published_simulation_policy_cells"
+        not in BackwardInductionResult.__dataclass_fields__
+    )
 
 
 def test_values_only_result_does_not_suppress_solve_time_continuation() -> None:
@@ -385,71 +460,142 @@ def test_values_only_result_does_not_suppress_solve_time_continuation() -> None:
     assert not result.retained_continuations
 
 
-def test_bridge_consumes_a_published_simulation_policy() -> None:
-    policy = EGMSimPolicy(
-        endog_grid=jnp.asarray([[0.0, 1.0]]),
-        policy=jnp.asarray([[0.5, 0.5]]),
-        value=jnp.asarray([[0.0, 1.0]]),
-        marginal_utility=jnp.asarray([[1.0, 1.0]]),
-    )
-    output = KernelOutput(
-        value=jnp.asarray([1.0]),
-        continuations={EGM_CONTINUATION: _carry()},
-        replay={SIMULATION_POLICY: policy},
-    )
+def _record_kernel_outputs(
+    *, solve: Callable[[], object], monkeypatch: pytest.MonkeyPatch
+) -> dict[tuple[int, RegimeName], object]:
+    """Run one solve and return what every period kernel returned, by cell."""
+    recorded: dict[tuple[int, RegimeName], object] = {}
+    original = backward_induction._run_period_kernel
 
-    result = normalize_kernel_output(
-        output=output,
-        continuation_key=EGM_CONTINUATION,
-        regime_name="saving",
-        period=2,
-    )
+    def recording(**kwargs: Any) -> Any:
+        output = original(**kwargs)
+        recorded[(kwargs["period"], kwargs["regime_name"])] = output
+        return output
 
-    assert result.simulation_policy is policy
+    monkeypatch.setattr(backward_induction, "_run_period_kernel", recording)
+    solve()
+    assert recorded, "no period kernel ran; the sweep is inert"
+    return recorded
 
 
-def test_bridge_consumes_a_published_dissolution_flag() -> None:
-    flag = jnp.asarray([True, False])
-    output = KernelOutput(
-        value=jnp.asarray([1.0, 2.0]),
-        solve_time_artifacts={DISSOLUTION_FLAG: flag},
-    )
-
-    result = normalize_kernel_output(
-        output=output, continuation_key=None, regime_name="couple", period=0
-    )
-
-    assert result.dissolution is flag
+def _channel_keys(output: KernelOutput) -> dict[str, frozenset[ArtifactKey]]:
+    return {
+        channel: frozenset(getattr(output, channel))
+        for channel in ("continuations", "solve_time_artifacts", "replay", "auxiliary")
+    }
 
 
-def test_bridge_consumes_published_solver_diagnostics() -> None:
-    diagnostics = _diagnostics()
-    output = KernelOutput(
-        value=jnp.asarray([1.0]),
-        auxiliary={SOLVER_DIAGNOSTICS: diagnostics},
+def _solve_collective() -> None:
+    model, params = _make_dissolution_model()
+    model.solve(params=params, log_level="off")
+
+
+def _solve_egm() -> None:
+    _model(solver=EGM(savings_grid=_SAVINGS_GRID)).solve(
+        params=_params(), log_level="off"
     )
 
-    result = normalize_kernel_output(
-        output=output, continuation_key=None, regime_name="nested", period=0
+
+def _solve_nbegm() -> None:
+    nbegm_ride_along_toy.build_model(variant="nbegm", n_periods=2).solve(
+        params=nbegm_ride_along_toy.build_params(), log_level="off"
     )
 
-    assert result.diagnostics is diagnostics
+
+def _solve_nnbegm(*, outer_search: object = None) -> None:
+    n_nbegm_toy.build_model(
+        variant="n_nbegm",
+        n_periods=2,
+        outer_search=outer_search,  # ty: ignore[invalid-argument-type]
+    ).solve(params={"discount_factor": 0.95}, log_level="off")
 
 
-@pytest.mark.parametrize(
-    ("channel", "key", "payload"),
-    [
-        ("replay", SIMULATION_POLICY, object()),
-        ("solve_time_artifacts", DISSOLUTION_FLAG, object()),
-        ("auxiliary", SOLVER_DIAGNOSTICS, object()),
-    ],
-)
-def test_bridge_refuses_a_known_key_with_the_wrong_payload_type(
-    *, channel: str, key: ArtifactKey, payload: object
+_SHIPPED_KERNELS: dict[str, tuple[Callable[[], None], RegimeName, dict[str, set]]] = {
+    "grid_search_singleton": (
+        _solve_collective,
+        "single_f",
+        {"continuations": set(), "solve_time_artifacts": set(), "replay": set()},
+    ),
+    "grid_search_collective": (
+        _solve_collective,
+        "married",
+        {"continuations": set(), "solve_time_artifacts": {DISSOLUTION_FLAG}},
+    ),
+    "egm": (
+        _solve_egm,
+        "saving",
+        {"continuations": {EGM_CONTINUATION}, "replay": set()},
+    ),
+    "terminal_carry": (
+        _solve_egm,
+        "done",
+        {"continuations": {EGM_CONTINUATION}, "replay": set()},
+    ),
+    "nbegm": (
+        _solve_nbegm,
+        "alive",
+        {"continuations": {EGM_CONTINUATION}},
+    ),
+    "nnbegm_finite": (
+        _solve_nnbegm,
+        "alive",
+        {"continuations": {EGM_CONTINUATION}, "replay": {SIMULATION_POLICY}},
+    ),
+    "nnbegm_adaptive": (
+        lambda: _solve_nnbegm(outer_search=_MESH),
+        "alive",
+        {
+            "continuations": {EGM_CONTINUATION},
+            "replay": {SIMULATION_POLICY},
+            "auxiliary": {SOLVER_DIAGNOSTICS, GENERATED_REPLAY_AUTHORITY},
+        },
+    ),
+}
+
+
+@pytest.mark.parametrize("case", list(_SHIPPED_KERNELS))
+def test_every_shipped_kernel_returns_a_kernel_output_on_the_declared_channels(
+    *, case: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    output = KernelOutput(value=jnp.asarray([1.0]), **{channel: {key: payload}})
+    """Each built-in kernel publishes on the channels its artifacts belong to."""
+    solve, regime_name, expected_channels = _SHIPPED_KERNELS[case]
+    recorded = _record_kernel_outputs(solve=solve, monkeypatch=monkeypatch)
+    outputs = [output for (_, name), output in recorded.items() if name == regime_name]
 
-    with pytest.raises(RuntimeError, match=f"'saving'.*period 2.*{key.type_id}"):
-        normalize_kernel_output(
-            output=output, continuation_key=None, regime_name="saving", period=2
-        )
+    assert outputs, f"regime {regime_name!r} never ran"
+    assert all(isinstance(output, KernelOutput) for output in outputs)
+    for output in outputs:
+        keys = _channel_keys(output)  # ty: ignore[invalid-argument-type]
+        for channel, expected in expected_channels.items():
+            assert keys[channel] == frozenset(expected), (case, channel)
+
+
+def test_a_values_only_solve_publishes_no_replay_artifact(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recorded = _record_kernel_outputs(
+        solve=lambda: n_nbegm_toy.build_model(variant="n_nbegm", n_periods=2).solve(
+            params={"discount_factor": 0.95},
+            log_level="off",
+            retention=ResultRetention.VALUES,
+        ),
+        monkeypatch=monkeypatch,
+    )
+
+    assert all(
+        not output.replay  # ty: ignore[unresolved-attribute]
+        for output in recorded.values()
+    )
+
+
+def test_a_kernel_output_survives_a_dataclass_replace_of_its_value() -> None:
+    """The loop's placement seam may re-place the value without touching channels."""
+    carry = _carry()
+    output = KernelOutput(
+        value=jnp.asarray([1.0]), continuations={EGM_CONTINUATION: carry}
+    )
+
+    replaced = dataclasses.replace(output, value=jnp.asarray([2.0]))
+
+    assert replaced.continuations[EGM_CONTINUATION] is carry
+    assert isinstance(replaced.continuations, Mapping)

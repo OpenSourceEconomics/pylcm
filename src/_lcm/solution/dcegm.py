@@ -190,9 +190,11 @@ class DCEGM(OneMarginSolver):
     utility with an expanding bracket. Structural and per-period applicability
     checks run during `Model(...)` through the solver's staged validation hooks.
 
-    A solve retains the off-grid EGM policy in its labelled replay artifacts when
-    the model declares a policy-read consumer. Collection and host transfer are
-    skipped for regimes without that replay route.
+    The period kernel publishes the off-grid EGM policy on the replay channel
+    of every active period. A solve retains it in its labelled replay artifacts
+    only when the model declares a policy-read consumer; without that route the
+    loop drops it at the period boundary and the result records the omission as
+    not applicable.
     No shipped envelope currently satisfies the conservative off-grid read gate,
     so ordinary simulation recomputes the action on its grid.
 
@@ -206,6 +208,16 @@ class DCEGM(OneMarginSolver):
     as a feasibility mask during simulation.
 
     """
+
+    @property
+    def publishes_simulation_policy(self) -> bool:
+        """The kernel publishes an off-grid EGM policy on every active period.
+
+        Whether a solve retains it follows the declared policy-read route; this
+        declaration lets the result ledger record a dropped policy as not
+        applicable rather than treating the cell as one that never publishes.
+        """
+        return True
 
     savings_grid: ContinuousGrid
     """Exogenous end-of-period grid; its lower bound is the borrowing limit.

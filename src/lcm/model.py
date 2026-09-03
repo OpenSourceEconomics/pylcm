@@ -539,7 +539,17 @@ class Model:
         log_path: str | Path | None,
         log_keep_n_latest: int,
     ) -> SolutionResult:
-        """Build the canonical public result from processed parameters."""
+        """Build the canonical public result from processed parameters.
+
+        The solution authority is derived from the model and the canonical
+        parameters before the solve; the solve's generated replay facts are
+        bound into it afterwards.
+        """
+        declared_authority = build_solution_authority(
+            regimes=self._regimes,
+            flat_params=flat_params,
+            ages=self.ages,
+        )
         internal_result = self._solve_compiled(
             flat_params=flat_params,
             params=params,
@@ -547,24 +557,13 @@ class Model:
             log_path=log_path,
             log_keep_n_latest=log_keep_n_latest,
             max_compilation_workers=max_compilation_workers,
-            collect_simulation_policies=retention.retains_replay,
-            simulation_policy_regimes=frozenset(
-                regime_name
-                for regime_name, regime in self._regimes.items()
-                if regime.simulation.egm_policy_read is not None
-            ),
             retain_dissolution_flags=retention.retains_replay,
             retain_replay=retention.retains_replay,
             collect_solver_diagnostics=True,
-            track_artifact_publication=True,
         )
         params_fingerprint = fingerprint_flat_params(flat_params)
         authority = bind_generated_solution_authority(
-            authority=build_solution_authority(
-                regimes=self._regimes,
-                flat_params=flat_params,
-                ages=self.ages,
-            ),
+            authority=declared_authority,
             internal_result=internal_result,
         )
         if retention.retains_replay and any(
@@ -592,19 +591,17 @@ class Model:
         log_path: str | Path | None,
         log_keep_n_latest: int,
         max_compilation_workers: int | None,
-        collect_simulation_policies: bool,
-        simulation_policy_regimes: frozenset[RegimeName] | None = None,
         retain_dissolution_flags: bool = False,
         retain_replay: bool = True,
         collect_solver_diagnostics: bool = False,
-        track_artifact_publication: bool = False,
     ) -> BackwardInductionResult:
         """Run backward induction, persisting a diagnostic snapshot when warranted.
 
         Returns the named backward-induction outputs: value-function arrays,
         each regime's published per-period simulation policy, and the
         per-period, per-COLLECTIVE-regime dissolution-flag arrays. Simulation
-        policies are retained only when `collect_simulation_policies` is true.
+        policies are retained only when `retain_replay` is true, and only for
+        regimes whose declared simulation route reads one.
         The dissolution flags are empty for models without collective regimes,
         and for a collective model whose gates never read `D_target` unless
         `retain_dissolution_flags` asks for them. With `log_path` set, a
@@ -624,10 +621,7 @@ class Model:
                 regimes=self._regimes,
                 logger=log,
                 enable_jit=self.enable_jit,
-                collect_simulation_policies=collect_simulation_policies,
-                simulation_policy_regimes=simulation_policy_regimes,
                 collect_solver_diagnostics=collect_solver_diagnostics,
-                track_artifact_publication=track_artifact_publication,
                 max_compilation_workers=max_compilation_workers,
                 retain_dissolution_flags=retain_dissolution_flags,
                 retain_replay=retain_replay,
