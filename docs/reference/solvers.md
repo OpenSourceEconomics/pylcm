@@ -254,12 +254,14 @@ use a bridged carry compatible with the outer fold. See
 [Outer search and branch aggregation](outer_search.md).
 
 The nested period kernel publishes no traced body of its own: its core-program graph
-republishes the inner NB-EGM replay programs as `keeper:replay` and `adjuster:replay`,
-each with the inner program's output roles and planned disposition. The keeper program
-is built from the period's own inputs; the adjuster program binds the outer
-post-decision at the first outer node, the same shape every per-node call rebinds. Both
-are dispatched under every retention, because the nested collapse reads the inner
-policy banks whether or not a replay artifact is kept.
+republishes the inner NB-EGM programs as `keeper:main`, `keeper:replay`,
+`adjuster:main`, and `adjuster:replay`, each with the inner program's output roles,
+scope, and planned disposition. The keeper programs are built from the period's own
+inputs; the adjuster programs bind the outer post-decision at the first outer node, the
+same shape every per-node call rebinds. A values-only solve dispatches the inner `main`
+programs and the nested collapse publishes the value and the carry alone; a
+replay-retaining solve dispatches the inner `replay` programs and assembles the nested
+policy from their banks.
 
 How the keeper and adjuster branches combine is an economic declaration, not a solver
 setting: it lives on [`OuterContinuousMargin.adjustment_cost`](consumption_savings.md).

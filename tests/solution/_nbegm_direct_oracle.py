@@ -280,13 +280,17 @@ def direct_oracle_period(  # noqa: PLR0915
                 statics.ride_names, ride_grids, index, strict=True
             )
         }
+        # The published geometry is shared across the branches: a published
+        # jump's schedule variable never reads the action, and a schedule
+        # variable the action enters publishes no jump, so any branch's binding
+        # yields the cell's query grid.
         geometry = _cell_geometry(
             statics=statics,
             kwargs=kwargs,
             cell=cell,
             liquid_grid=liquid_grid,
             dtype=dtype,
-            action_binding={},
+            action_binding=bindings[0] if bindings else {},
         )
         branch_rows = []
         for binding in bindings:

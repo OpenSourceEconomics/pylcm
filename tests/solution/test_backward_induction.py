@@ -1,5 +1,5 @@
 import dataclasses
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
 
 import jax.numpy as jnp
 import numpy as np
@@ -85,6 +85,8 @@ class MockRegime(Regime):
     - `solution`: a `MockSolutionPhase` with max_Q_over_a, grids, and the
       state-action space
     - `active_periods`: list of periods the regime is active
+    - `simulation`: a namespace declaring no replay route, so the solve
+      dispatches the values-only programs
     """
 
     def __init__(
@@ -95,6 +97,7 @@ class MockRegime(Regime):
     ) -> None:
         object.__setattr__(self, "solution", solution)
         object.__setattr__(self, "active_periods", active_periods)
+        object.__setattr__(self, "simulation", SimpleNamespace(egm_policy_read=None))
 
 
 def test_drain_V_arr_shards_flattens_immutable_return_mappings(monkeypatch):

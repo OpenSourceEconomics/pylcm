@@ -69,6 +69,17 @@ artifacts used during backward induction are not currently retainable: their abs
 recorded as `NOT_REQUESTED`, or as `UNSUPPORTED` when `ALL_PERSISTABLE_ARTIFACTS`
 requests everything the boundary can describe.
 
+A retention also selects what a solve computes. Every built-in kernel publishes its
+programs with a scope, and the solve compiles and runs only the programs its retention
+dispatches: `VALUES` runs the values-only programs everywhere, so an NB-EGM period
+publishes its value and carry without assembling the consumption policy or the branch
+banks, and a nested NNBEGM solve folds its candidates without building the replay banks
+or the adaptive nested policy. A replay-retaining solve runs the replay programs only
+where a declared replay route consumes them; a standalone case-piece NB-EGM regime has
+none, so it runs its values-only program under every retention and its policy is
+recorded as `NOT_APPLICABLE`. Values and carries agree across retentions to the working
+format's spacing.
+
 `ALL_PERSISTABLE_ARTIFACTS` keeps only artifacts the result carries on its own. The
 `NNBEGM` replay policy of an `AdaptiveOuterMesh` search is replayed against the exact
 mesh the solve generated, a fact the solving model instance holds privately beside the

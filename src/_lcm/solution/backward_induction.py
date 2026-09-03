@@ -335,7 +335,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 logger=logger,
                 next_edge_to_V_arr=next_edge_to_V_arr,
                 period_solution=period_solution,
-                retain_replay=retain_replay,
+                retain_replay=_regime_retains_replay(
+                    regime=regime, retain_replay=retain_replay
+                ),
             )
             input_liveness.commit_successful_dispatch(dispatch=(period, regime_name))
             V_arr = result.V_arr
@@ -1568,6 +1570,18 @@ def _conservative_legacy_value_artifacts(
     return _unique_value_artifacts(artifacts)
 
 
+def _regime_retains_replay(*, regime: Regime, retain_replay: bool) -> bool:
+    """Whether one regime's solve dispatches its replay-scoped programs.
+
+    A simulation policy is consumed only through the regime's declared replay
+    route. A regime without one (a standalone case-piece NB-EGM regime, whose
+    simulation reads the grid argmax) dispatches its values-only programs under
+    every retention, so a replay output is never assembled only to be discarded.
+    Programs scoped `ANY` are unaffected.
+    """
+    return retain_replay and regime.simulation.egm_policy_read is not None
+
+
 def _compile_all_functions(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
@@ -1606,8 +1620,9 @@ def _compile_all_functions(
             for constructing a source kernel's gated-edge lowering arguments;
             empty for models without gated edges.
         enable_jit: Whether to JIT-compile the functions of the internal regimes.
-        retain_replay: Whether the solve retains replay artifacts; selects which
-            scoped programs of each kernel's graph are dispatched.
+        retain_replay: Whether the solve retains replay artifacts; with the
+            regime's declared replay route it selects which scoped programs of
+            each kernel's graph are dispatched.
         max_compilation_workers: Maximum threads for parallel compilation.
             Defaults to `os.cpu_count()`.
         logger: Logger for compilation progress.
@@ -1621,10 +1636,13 @@ def _compile_all_functions(
     # Collect the authoritative native graphs or their centralized legacy adapters.
     all_programs: dict[_CoreTriple, CoreProgram] = {}
     for regime_name, regime in regimes.items():
+        regime_retains_replay = _regime_retains_replay(
+            regime=regime, retain_replay=retain_replay
+        )
         for period in regime.active_periods:
             graph = select_programs(
                 graph=core_program_graph(kernel=regime.solution.period_kernels[period]),
-                retain_replay=retain_replay,
+                retain_replay=regime_retains_replay,
             )
             for core_name, program in graph.items():
                 all_programs[(regime_name, period, core_name)] = program

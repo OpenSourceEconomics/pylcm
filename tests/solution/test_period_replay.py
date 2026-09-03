@@ -207,12 +207,21 @@ def test_a_gated_edge_source_replays_to_the_value_the_solve_published(
 def test_replay_lowers_the_scope_the_solve_dispatched(
     *, monkeypatch, tmp_path, retention, retain_replay
 ):
-    """A replay selects the programs the captured solve's retention dispatched."""
+    """A replay selects the programs the captured solve dispatched for the regime.
+
+    The solve dispatches a regime's replay-scoped programs only when the retention
+    keeps replay artifacts and the regime declares a route that consumes them; the
+    capture records that decision and the replay lowers exactly that scope.
+    """
     monkeypatch.setenv("LCM_CAPTURE_PERIOD", "working_life@1")
     monkeypatch.setenv("LCM_CAPTURE_DIR", str(tmp_path))
     model = get_model(n_periods=_N_PERIODS)
     params = get_params(n_periods=_N_PERIODS)
     model.solve(params=params, log_level="off", retention=retention)
+    regime_retains_replay = (
+        retain_replay
+        and model._regimes["working_life"].simulation.egm_policy_read is not None
+    )
 
     observed: list[bool] = []
     real_select = period_replay.select_programs
@@ -224,4 +233,4 @@ def test_replay_lowers_the_scope_the_solve_dispatched(
     monkeypatch.setattr(period_replay, "select_programs", record_select)
     replay_period(directory=tmp_path / "working_life@1")
 
-    assert observed == [retain_replay]
+    assert observed == [regime_retains_replay]

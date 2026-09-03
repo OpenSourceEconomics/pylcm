@@ -1,12 +1,11 @@
 """An NNBEGM period publishes one native composite core-program graph.
 
-The composite owns no traced body of its own: it republishes the two inner NB-EGM
-replay programs under `keeper:` and `adjuster:` prefixes, with the inner roles and
-requirements, and hands each its own context. The keeper sees the period's inputs
+The composite owns no traced body of its own: it republishes every inner NB-EGM
+program under `keeper:` and `adjuster:` prefixes, with the inner roles, requirements,
+and scope, and hands each its own context. The keeper sees the period's inputs
 unchanged; the adjuster sees the outer post-decision bound at the first outer node, the
-value every per-node call later rebinds. Both republished programs carry scope `ANY`:
-the nested solve reads the inner policy banks under every retention, so a values-only
-solve dispatches the same programs as a replay-retaining one.
+value every per-node call later rebinds. A values-only solve dispatches the inner
+`main` programs, a replay-retaining solve the inner `replay` programs.
 
 The kernel class follows the outer search: a finite grid collapses the exact candidate
 set, an adaptive mesh refines and collapses continuously. The two share one base that
@@ -58,6 +57,13 @@ def _build_context(context: Mapping[str, Any]) -> CoreBuildContext:
     )
 
 
+def _innermost(function: Any) -> Any:
+    """The callable under every layer of bound keywords."""
+    while isinstance(function, functools.partial):
+        function = function.func
+    return function
+
+
 def _assert_same_arguments(
     *, actual: Mapping[str, object], expected: Mapping[str, object]
 ) -> None:
@@ -85,24 +91,31 @@ def test_the_kernel_class_follows_the_outer_search(
     assert isinstance(kernel, nnbegm_module._NNBEGMPeriodKernel)
 
 
-def test_the_graph_republishes_the_inner_replay_programs_under_role_prefixes():
+def test_the_graph_republishes_every_inner_program_under_role_prefixes():
     kernel, _ = _kernel("finite")
     graph = core_program_graph(kernel=kernel)
 
-    assert tuple(graph) == ("keeper:replay", "adjuster:replay")
+    assert tuple(graph) == (
+        "keeper:main",
+        "keeper:replay",
+        "adjuster:main",
+        "adjuster:replay",
+    )
     for role, inner_kernel in (
         ("keeper", kernel.keeper_kernel),
         ("adjuster", kernel.adjuster_kernel),
     ):
-        inner = core_program_graph(kernel=inner_kernel)["replay"]
-        program = graph[f"{role}:replay"]
-        assert program.scope is ProgramScope.ANY
-        assert program.disposition is CoreExecutionDisposition.PLANNED
-        assert program.disposition_reason is None
-        assert program.function is inner.function
-        assert program.requirements == inner.requirements
-        assert program.output_roles == inner.output_roles
-        assert program.donation_candidates == inner.donation_candidates
+        for name, inner in core_program_graph(kernel=inner_kernel).items():
+            program = graph[f"{role}:{name}"]
+            assert program.scope is inner.scope
+            assert program.disposition is CoreExecutionDisposition.PLANNED
+            assert program.disposition_reason is None
+            assert program.function is inner.function
+            assert program.requirements == inner.requirements
+            assert program.output_roles == inner.output_roles
+            assert program.donation_candidates == inner.donation_candidates
+    assert graph["keeper:main"].scope is ProgramScope.VALUES_ONLY
+    assert graph["keeper:replay"].scope is ProgramScope.REPLAY
 
 
 def test_the_keeper_builder_hands_the_inner_keeper_the_period_context():
@@ -182,7 +195,7 @@ def test_with_fixed_params_rebinds_both_roles():
     for name, program in graph.items():
         function = cast("functools.partial", bound_graph[name].function)
         assert isinstance(function, functools.partial)
-        assert function.func is program.function
+        assert _innermost(function) is _innermost(program.function)
         assert function.keywords["discount_factor"] == 0.9
 
 

@@ -114,7 +114,7 @@
           },
           {
             "path": "src/_lcm/simulation/compile.py",
-            "sha256": "6cf4f6ef4d5dd5bb959c354caf4670caf0db364592b7ab01ee4f4c92abff334a"
+            "sha256": "bc59e06917ca26caa51bf6dee79f4f20b8f9c6dd652cf5648a17f02935d9a482"
           },
           {
             "path": "src/_lcm/simulation/initial_conditions.py",
@@ -150,7 +150,7 @@
           },
           {
             "path": "src/_lcm/solution/backward_induction.py",
-            "sha256": "a87cc2921489b0de19d88fefa23fa455a8786ed3f637e715308f78fe7620887e"
+            "sha256": "b2e48e31506b5d01e7713ee8e47452d9ceef9ca5f3df98677bbc6e90ded046c6"
           },
           {
             "path": "src/_lcm/solution/collective_action_reduction.py",
@@ -210,7 +210,7 @@
           }
         ],
         "source_count": 51,
-        "source_inventory_sha256": "054c96795a00a9c4626346cefb7b995fdf08ea24bab20f48d7bf8e7fc7e747d4"
+        "source_inventory_sha256": "689bf4ccbb1a6caa9f938de1c16be056d8bace5c6173a2df44e66dcd51547e87"
       },
       "fast": {
         "candidate_sources": [
@@ -324,7 +324,7 @@
           },
           {
             "path": "src/_lcm/simulation/compile.py",
-            "sha256": "6cf4f6ef4d5dd5bb959c354caf4670caf0db364592b7ab01ee4f4c92abff334a"
+            "sha256": "bc59e06917ca26caa51bf6dee79f4f20b8f9c6dd652cf5648a17f02935d9a482"
           },
           {
             "path": "src/_lcm/simulation/initial_conditions.py",
@@ -360,7 +360,7 @@
           },
           {
             "path": "src/_lcm/solution/backward_induction.py",
-            "sha256": "a87cc2921489b0de19d88fefa23fa455a8786ed3f637e715308f78fe7620887e"
+            "sha256": "b2e48e31506b5d01e7713ee8e47452d9ceef9ca5f3df98677bbc6e90ded046c6"
           },
           {
             "path": "src/_lcm/solution/collective_action_reduction.py",
@@ -420,13 +420,13 @@
           }
         ],
         "source_count": 51,
-        "source_inventory_sha256": "054c96795a00a9c4626346cefb7b995fdf08ea24bab20f48d7bf8e7fc7e747d4"
+        "source_inventory_sha256": "689bf4ccbb1a6caa9f938de1c16be056d8bace5c6173a2df44e66dcd51547e87"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "054c96795a00a9c4626346cefb7b995fdf08ea24bab20f48d7bf8e7fc7e747d4",
+  "source_inventory_sha256": "689bf4ccbb1a6caa9f938de1c16be056d8bace5c6173a2df44e66dcd51547e87",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -538,7 +538,7 @@
     },
     {
       "path": "src/_lcm/simulation/compile.py",
-      "sha256": "6cf4f6ef4d5dd5bb959c354caf4670caf0db364592b7ab01ee4f4c92abff334a"
+      "sha256": "bc59e06917ca26caa51bf6dee79f4f20b8f9c6dd652cf5648a17f02935d9a482"
     },
     {
       "path": "src/_lcm/simulation/initial_conditions.py",
@@ -574,7 +574,7 @@
     },
     {
       "path": "src/_lcm/solution/backward_induction.py",
-      "sha256": "a87cc2921489b0de19d88fefa23fa455a8786ed3f637e715308f78fe7620887e"
+      "sha256": "b2e48e31506b5d01e7713ee8e47452d9ceef9ca5f3df98677bbc6e90ded046c6"
     },
     {
       "path": "src/_lcm/solution/collective_action_reduction.py",
