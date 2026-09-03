@@ -387,9 +387,22 @@ def _collect_edge_gate_evaluators(
     An evaluator is shared across the periods that group onto it, and its
     period and age enter as traced scalars rather than as static arguments,
     so those periods share one program.
+
+    Only the fold periods the edge carries an evaluator for are lowered. An
+    edge whose target is active over a narrower window than its source has no
+    evaluator for the source's other landing periods, and the router never asks
+    for one there: it skips an edge whose target is not folded at the period it
+    routes against. Lowering what the router never calls would demand a program
+    the edge has no value to build.
     """
     for target_name, edge in regime.gated_edges.items():
+        by_period = edge.simulate_gate_evaluators_by_period
         for fold_period in _edge_fold_periods(regime=regime, ages=ages):
+            # An empty mapping is a staging mistake, not a narrow window, and
+            # the lookup below reports it as such; only a populated mapping
+            # decides which periods to skip.
+            if by_period and fold_period not in by_period:
+                continue
             evaluator = edge.simulate_gate_evaluator_at(period=fold_period)
             key = ("gate", regime_name, target_name, _func_dedup_key(func=evaluator))
             if key in gate_calls:
@@ -664,15 +677,18 @@ def _build_argmax_args(
     # A gated edge's projected operands, where this period's decision program
     # declares them. Zero templates suffice: lowering captures the abstract
     # value, and the runtime call supplies the solved arrays.
-    if period in regime.simulation.edge_reference_periods:
+    edge_reference_regimes = regime.simulation.edge_reference_regimes_by_period.get(
+        period
+    )
+    if edge_reference_regimes is not None:
         same_period_args[EDGE_REF_V_ARG] = MappingProxyType(
             {
                 ref: _build_zero_V_arr(topology=regime_V_topology[ref])
-                for ref in regime.edge_reference_regimes
+                for ref in edge_reference_regimes
             }
         )
         same_period_args[EDGE_REF_PARAMS_ARG] = MappingProxyType(
-            {ref: flat_params[ref] for ref in regime.edge_reference_regimes}
+            {ref: flat_params[ref] for ref in edge_reference_regimes}
         )
     taste_shock_kwargs = {}
     if regime.has_taste_shocks:

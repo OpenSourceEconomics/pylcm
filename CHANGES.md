@@ -7,6 +7,15 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Gated edges into targets with disjoint activity windows
+
+- Simulation reads a gated edge's gate references and leg fallbacks only in the
+  periods where that edge's target is active. A regime declaring two edges whose
+  targets are active over disjoint age windows no longer fails with a `KeyError`
+  for a fallback regime the landing period never solved (#434). The per-period
+  reference set is recorded on the canonical regime's simulation phase, and both
+  the ahead-of-time lowering and the runtime call consult it.
+
 ### PR #433 execution planning and result convergence
 
 - `Model.solve()` returns a `SolutionResult` and is the only public solve entry
