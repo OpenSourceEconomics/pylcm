@@ -38,6 +38,7 @@ from tests.test_models.nbegm_common import (
 N_INCOME_NODES = 5
 INCOME_SCALE = 0.5
 LEISURE_UTILITY = 0.3
+STREAK_UTILITY = 0.05
 
 
 @categorical(ordered=False)
@@ -347,6 +348,19 @@ def utility_with_action(
     )
 
 
+def utility_with_streak(
+    *, consumption: ContinuousAction, crra: float, streak: ContinuousState
+) -> FloatND:
+    """CRRA consumption utility plus a payoff on the coverage streak.
+
+    The streak co-state enters period utility, so the branch that grows it and
+    the branch that resets it read different next-period continuations — a
+    branch-specific continuation the shared-continuation envelope cannot
+    represent.
+    """
+    return crra_utility(consumption=consumption, crra=crra) + STREAK_UTILITY * streak
+
+
 def build_model(  # noqa: C901, PLR0912
     *,
     variant: str = "brute",
@@ -378,8 +392,9 @@ def build_model(  # noqa: C901, PLR0912
     """Create the (alive, dead) ride-along toy with a discrete insurance choice.
 
     With `action_in_costate`, a `streak` co-state carries a law of motion that
-    reads `buy_private` — so the discrete action shifts the continuation, not just
-    the current budget, which the shared-continuation envelope cannot represent.
+    reads `buy_private` and pays off in period utility — so the discrete action
+    shifts the continuation, not just the current budget, which the
+    shared-continuation envelope cannot represent.
 
     With `jump_schedule`, the budget carries a jump cliff (not a kink), so the
     discrete envelope must take the discrete choice over each branch's published
@@ -398,7 +413,11 @@ def build_model(  # noqa: C901, PLR0912
     """
     income_grid = NormalIIDProcess(n_points=N_INCOME_NODES, gauss_hermite=True)
     tax_func = tax_jump if jump_schedule else tax
-    utility_func = utility_with_action if action_in_utility else utility
+    utility_func = (
+        utility_with_action
+        if action_in_utility
+        else (utility_with_streak if action_in_costate else utility)
+    )
     resources_func = (
         resources_nonlinear_above_ten if nonlinear_budget_above_ten else resources
     )

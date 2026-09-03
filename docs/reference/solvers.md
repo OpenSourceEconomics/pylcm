@@ -236,7 +236,11 @@ The memory controls do not all mean “compiled batch width”:
   intermediate axes;
 - `interval_batch_size`, `cell_block_size`, and `branch_batch_size` are compiled
   `lax.map` batch widths for their respective interval, ride-cell, and discrete-branch
-  axes;
+  axes; the continuation read behind the branch axis runs once per class of branches
+  that agree on every discrete action reaching the continuation (the regime
+  transition, a law of motion, a child's resources, the discount factor, or, on a
+  per-interval read, a schedule variable), so a budget-only action costs one read
+  per cell however many branches it declares;
 - lower positive values can bound how many entries that mapped core evaluates together,
   while `0` or a value covering the axis selects one vectorized pass.
 

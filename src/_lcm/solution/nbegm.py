@@ -2491,6 +2491,73 @@ def _state_laws(
                 yield state_name, func
 
 
+def _continuation_action_names(
+    *,
+    regime_transition: Callable[..., Any],
+    target_laws: Mapping[RegimeName, Callable[..., Any]],
+    target_resources_arg_names: Mapping[RegimeName, frozenset[str]],
+    discount_factor_dag: Callable[..., Any] | None,
+    interval_schedule_dags: tuple[Callable[..., Any] | None, ...],
+    action_names: tuple[ActionName, ...],
+) -> tuple[ActionName, ...]:
+    """Name the discrete actions the per-cell continuation read consumes.
+
+    The ride-along continuation is evaluated from a combo pool the branch's action
+    codes ride in, so one branch's rows differ from another's only when an action
+    is an argument of a channel the read consumes:
+
+    - `regime_transition`: the regime transition probabilities;
+    - `target_laws`: each stateful target's next-state function, including the
+      regime's own law that the save-to-cliff targets invert;
+    - `target_resources_arg_names`: each stateful target's resources leaves;
+    - `discount_factor_dag`: the per-cell discount factor, when the regime
+      composes one;
+    - `interval_schedule_dags`: the derived schedule variables whose breakpoints
+      partition a per-interval read — empty when the continuation does not read
+      the liquid state, since the breakpoints then never enter the read.
+
+    Actions reaching none of them leave every branch's rows identical, so the core
+    reads the continuation once per class of branches agreeing on the named
+    actions. Returned in declared order.
+    """
+    import inspect  # noqa: PLC0415
+
+    def _parameters(func: Callable[..., Any] | None) -> frozenset[str]:
+        if func is None:
+            return frozenset()
+        return frozenset(inspect.signature(func).parameters)
+
+    consumed: set[str] = set(_parameters(regime_transition))
+    consumed |= _parameters(discount_factor_dag)
+    for dag in interval_schedule_dags:
+        consumed |= _parameters(dag)
+    for target, law in target_laws.items():
+        consumed |= _parameters(law)
+        consumed |= set(target_resources_arg_names[target])
+    return tuple(name for name in action_names if name in consumed)
+
+
+def _continuation_branch_classes(
+    *,
+    branch_bindings: tuple[MappingProxyType[ActionName, int], ...],
+    continuation_action_names: tuple[ActionName, ...],
+) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    """Partition the envelope branches by their continuation actions' codes.
+
+    Returns the class index of every branch and, per class, the first branch
+    carrying it — the branch whose continuation rows the class reads. Branches
+    keyed on no action at all form one class.
+    """
+    keys = [
+        tuple(binding[name] for name in continuation_action_names)
+        for binding in branch_bindings
+    ]
+    distinct = list(dict.fromkeys(keys))
+    class_of_branch = tuple(distinct.index(key) for key in keys)
+    representatives = tuple(keys.index(key) for key in distinct)
+    return class_of_branch, representatives
+
+
 def _ride_discrete_actions(*, context: SolverBuildContext) -> DiscreteActionCodes:
     """Collect every budget-shifting discrete action with its grid codes.
 
@@ -4818,6 +4885,15 @@ class _NBEGMRideAlongStatics:
     """Declared discrete actions in the branch product's column order."""
     discrete_action_codes: tuple[tuple[int, ...], ...]
     """Exact branch-code rows in the inner envelope's product order."""
+    continuation_action_names: tuple[ActionName, ...] = ()
+    """Declared discrete actions the continuation read consumes, in declared
+    order; the branch classes key on their codes alone."""
+    continuation_class_of_branch: tuple[int, ...] = ()
+    """Continuation class index per envelope branch, empty without discrete
+    actions."""
+    continuation_representatives: tuple[int, ...] = ()
+    """Per continuation class, the first branch carrying it: the branch whose
+    rows the class reads. Empty without discrete actions."""
     co_map_state_names: tuple[str, ...] = ()
     """Fixed, distributed ride-along states co-mapped with the child carry.
 
@@ -4831,6 +4907,11 @@ class _NBEGMRideAlongStatics:
     def n_published_jumps(self) -> int:
         """Number of jump preimages the carry publishes per row."""
         return self.n_jumps if self.publish_jump_topology else 0
+
+    @property
+    def n_continuation_classes(self) -> int:
+        """Number of continuation reads per ride cell across the branches."""
+        return len(self.continuation_representatives)
 
     def n_ride_cells(self, *, states: Mapping[str, object]) -> int:
         """Number of flattened ride-along cells for the given state grids."""
@@ -4951,6 +5032,36 @@ def _nbegm_ride_along_statics(
             name for name in ride_names if name in discount_arg_names
         )
 
+    discrete_action_names = tuple(
+        name for name, _codes in schedule_spec.discrete_actions
+    )
+    continuation_action_names = _continuation_action_names(
+        regime_transition=continuation_plan.compute_regime_transition_probs,
+        target_laws={
+            target: continuation_plan.child_reads[target].next_state_func
+            for target in continuation_plan.stateful_targets
+        },
+        target_resources_arg_names={
+            target: frozenset(continuation_plan.child_reads[target].resources_arg_names)
+            for target in continuation_plan.stateful_targets
+        },
+        discount_factor_dag=schedule_spec.discount_factor_dag,
+        interval_schedule_dags=(
+            tuple(source.derived_of_liquid_dag for source in sources)
+            if continuation_reads_liquid
+            else ()
+        ),
+        action_names=discrete_action_names,
+    )
+    continuation_class_of_branch: tuple[int, ...] = ()
+    continuation_representatives: tuple[int, ...] = ()
+    if schedule_spec.discrete_actions:
+        continuation_class_of_branch, continuation_representatives = (
+            _continuation_branch_classes(
+                branch_bindings=schedule_spec.branch_bindings,
+                continuation_action_names=continuation_action_names,
+            )
+        )
     return _NBEGMRideAlongStatics(
         sources=sources,
         jump_flags_arr=jump_flags_arr,
@@ -4981,13 +5092,14 @@ def _nbegm_ride_along_statics(
             if not schedule_spec.discrete_actions
             else len(schedule_spec.branch_bindings)
         ),
-        discrete_action_names=tuple(
-            name for name, _codes in schedule_spec.discrete_actions
-        ),
+        discrete_action_names=discrete_action_names,
         discrete_action_codes=tuple(
-            tuple(binding[name] for name, _codes in schedule_spec.discrete_actions)
+            tuple(binding[name] for name in discrete_action_names)
             for binding in schedule_spec.branch_bindings
         ),
+        continuation_action_names=continuation_action_names,
+        continuation_class_of_branch=continuation_class_of_branch,
+        continuation_representatives=continuation_representatives,
         co_map_state_names=co_map_ride_names,
     )
 
@@ -5539,27 +5651,36 @@ def _bind_nbegm_cell_continuation(  # noqa: C901
             return rows_for_pool(base_pool)
 
         # A discrete action that feeds the continuation reads a different
-        # next-state per branch, so the continuation is evaluated per branch
-        # (the actions ride into `combo_pool` → `next_state_func`). A leading
-        # branch axis is added over the product of the declared grids; when
-        # the actions do not feed the continuation the branch rows are
-        # identical, matching the shared-continuation case. The branch body
-        # compiles once and runs at a fixed vector width, so per-branch
-        # intermediates never all sit in flight whatever the partition.
+        # next-state per branch (the actions ride into `combo_pool` →
+        # `next_state_func`), so the continuation is evaluated once per class of
+        # branches agreeing on the actions the read consumes and gathered onto a
+        # leading branch axis over the product of the declared grids. A
+        # budget-only action leaves one class, so its branches share one read.
+        # The class body compiles once and runs at a fixed vector width, so
+        # per-class intermediates never all sit in flight whatever the partition.
         def rows_for_codes(codes_row: IntND) -> tuple[FloatND, ...]:
             binding = {
                 name: codes_row[position] for position, name in enumerate(action_names)
             }
             return rows_for_pool({**base_pool, **binding})
 
-        codes = _stacked_branch_codes(
-            branch_bindings=branch_bindings, action_names=action_names
-        )
-        return _map_branch_partitioned(
+        representatives = statics.continuation_representatives
+        class_rows = _map_branch_partitioned(
             func=rows_for_codes,
-            xs=codes,
+            xs=_stacked_branch_codes(
+                branch_bindings=tuple(
+                    branch_bindings[branch] for branch in representatives
+                ),
+                action_names=action_names,
+            ),
             requested_block_size=statics.branch_batch_size,
         )
+        if len(representatives) == len(branch_bindings):
+            return class_rows
+        class_of_branch = jnp.asarray(
+            statics.continuation_class_of_branch, dtype=jnp.int32
+        )
+        return jax.tree.map(lambda leaf: leaf[class_of_branch], class_rows)
 
     def _cell_rows_for_pool(combo_pool: dict[str, Any]) -> tuple[FloatND, ...]:
         cell = {name: combo_pool[name] for name in ride_names}
