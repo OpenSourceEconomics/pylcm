@@ -65,8 +65,10 @@ from _lcm.egm.published_policy import (
 from _lcm.engine import ParamCheck, StateActionSpace
 from _lcm.execution.core_program import (
     CoreBuildContext,
+    CoreProgram,
     core_program_graph,
     materialize_core_program,
+    select_programs,
 )
 from _lcm.grids import ContinuousGrid, DiscreteGrid, Grid
 from _lcm.solution.contract import (
@@ -893,21 +895,25 @@ class _NNBEGMPeriodKernel:
         The keeper and adjuster are distinct traced programs built from
         different contexts, and each inner adapter may expose several cores of
         its own; prefixing keeps every (role, inner-core) pair under its own
-        AOT compilation key.
+        AOT compilation key. The nested solve reads the inner policy banks, so
+        of a retention-scoped inner graph only the programs a replay-retaining
+        solve dispatches are republished.
         """
+
+        def inner_programs(kernel: object) -> Mapping[str, CoreProgram]:
+            return select_programs(
+                graph=core_program_graph(kernel=kernel), retain_replay=True
+            )
+
         return MappingProxyType(
             {
                 **{
                     f"keeper:{name}": program.function
-                    for name, program in core_program_graph(
-                        kernel=self.keeper_kernel
-                    ).items()
+                    for name, program in inner_programs(self.keeper_kernel).items()
                 },
                 **{
                     f"adjuster:{name}": program.function
-                    for name, program in core_program_graph(
-                        kernel=self.adjuster_kernel
-                    ).items()
+                    for name, program in inner_programs(self.adjuster_kernel).items()
                 },
             }
         )

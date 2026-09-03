@@ -1,9 +1,8 @@
 """A captured period's cores can be compiled for their memory without running them.
 
-The analyzer lowers the production cores, and a ride-along NB-EGM kernel's split
-oracle cores beside them, against the capture's logical shapes and reads each
-executable's compiler memory analysis. Nothing is executed, so a core whose
-estimated allocation exceeds the device can still be measured.
+The analyzer lowers the production cores against the capture's logical shapes and
+reads each executable's compiler memory analysis. Nothing is executed, so a core
+whose estimated allocation exceeds the device can still be measured.
 """
 
 from collections.abc import Mapping
@@ -58,11 +57,10 @@ def _reports(
 def test_core_memory_analyzer_compiles_but_never_executes(
     *, monkeypatch, tmp_path: Path
 ) -> None:
-    """Production and split oracle cores are reported per name; none is called."""
-    production = {"main": _CompileOnlyExecutable(offset=100)}
-    split_oracle = {
-        "continuation": _CompileOnlyExecutable(offset=200),
-        "envelope": _CompileOnlyExecutable(offset=300),
+    """Production cores are reported per name; none is called."""
+    production = {
+        "main": _CompileOnlyExecutable(offset=100),
+        "replay": _CompileOnlyExecutable(offset=200),
     }
     calls = []
 
@@ -70,17 +68,8 @@ def test_core_memory_analyzer_compiles_but_never_executes(
         calls.append(("production", regime, period))
         return production
 
-    def fake_split_compile(*, regime, period, **_unused):
-        calls.append(("split", regime, period))
-        return split_oracle
-
     monkeypatch.setattr(
         period_replay, "_compile_cores_for_one_period", fake_production_compile
-    )
-    monkeypatch.setattr(
-        period_replay,
-        "_compile_split_oracle_cores_for_one_period",
-        fake_split_compile,
     )
     payload = {
         "regime": object(),
@@ -95,18 +84,13 @@ def test_core_memory_analyzer_compiles_but_never_executes(
 
     analysis = period_replay.analyze_period_core_memory(directory=tmp_path)
 
-    assert [call[0] for call in calls] == ["production", "split"]
+    assert [call[0] for call in calls] == ["production"]
     assert _reports(analysis.core_memory_bytes) == {
         name: vars(core.stats) for name, core in production.items()
     }
-    assert _reports(analysis.split_oracle_memory_bytes) == {
-        name: vars(core.stats) for name, core in split_oracle.items()
-    }
     assert (analysis.regime_name, analysis.period, analysis.age) == ("parent", 1, 41.0)
     assert analysis.preserves_production_sharding is False
-    assert not any(
-        core.executed for core in (*production.values(), *split_oracle.values())
-    )
+    assert not any(core.executed for core in production.values())
 
 
 def test_compiler_memory_bytes_normalizes_real_and_unsupported_backends() -> None:

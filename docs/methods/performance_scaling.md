@@ -115,10 +115,8 @@ practical in estimation or CI.
 The private period capture can be lowered without being executed. The analyzer compiles
 every production core of the captured regime-period and reads the compiler's memory
 analysis for each executable: argument, output, temporary, and peak bytes. For a
-ride-along NB-EGM period it also lowers the split oracle cores kept beside the
-tile-local production core, so the complete expected-continuation stacks the production
-core never materializes appear as the oracle envelope core's argument bytes and can be
-compared against the production core's peak.
+ride-along NB-EGM period the report covers both retention-scoped programs, so the
+values-only program's peak can be compared against the replay program's.
 
 A period capture preserves logical pytrees, values, and production array shapes, but its
 pickle round trip does not preserve device sharding. The analyzer therefore lowers every

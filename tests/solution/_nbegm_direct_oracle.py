@@ -42,13 +42,19 @@ import tempfile
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
 from _lcm.egm.carry import EGMCarry
+from _lcm.execution.core_program import (
+    CoreBuildContext,
+    MaterializedCoreProgram,
+    core_program_graph,
+    materialize_core_program,
+)
 from _lcm.solution.negm import _with_outer_post_decision
 from _lcm.solution.period_replay import _load_capture_payload
 from lcm import Model
@@ -193,9 +199,19 @@ def _environment(variables: Mapping[str, str]) -> Iterator[None]:
 
 
 def run_production_kernel(*, kernel: Any, context: Mapping[str, Any]) -> tuple:
-    """Run the kernel's production core on the context and return its raw outputs."""
-    args = kernel.build_lower_args(core_key="main", **context)
-    return tuple(jax.jit(kernel.cores()["main"])(**args))
+    """Run the kernel's replay program on the context and return its raw outputs."""
+    materialized = _materialize_replay(kernel=kernel, context=context)
+    return tuple(jax.jit(materialized.function)(**materialized.arguments))
+
+
+def _materialize_replay(
+    *, kernel: Any, context: Mapping[str, Any]
+) -> MaterializedCoreProgram:
+    """Bind the context into the kernel's replay program, the one publishing policy."""
+    return materialize_core_program(
+        program=core_program_graph(kernel=kernel)["replay"],
+        context=CoreBuildContext(**context),
+    )
 
 
 def direct_oracle_period(  # noqa: PLR0915
@@ -211,11 +227,16 @@ def direct_oracle_period(  # noqa: PLR0915
     spec = kernel.schedule_spec
     plan = kernel.continuation_plan
 
-    kwargs = dict(kernel.build_lower_args(core_key="main", **context))
-    kwargs.update(getattr(kernel.tiled_core, "keywords", None) or {})
+    kwargs = dict(_materialize_replay(kernel=kernel, context=context).arguments)
+    kwargs.update(
+        getattr(core_program_graph(kernel=kernel)["replay"].function, "keywords", None)
+        or {}
+    )
     carries = {
         name: _numpy_carry(carry)
-        for name, carry in kwargs["next_regime_to_continuation"].items()
+        for name, carry in cast(
+            "Mapping[str, Any]", kwargs["next_regime_to_continuation"]
+        ).items()
     }
     dtype = np.asarray(kwargs[statics.liquid_name]).dtype
     liquid_grid = np.asarray(kwargs[statics.liquid_name], dtype=np.float64)
@@ -226,7 +247,6 @@ def direct_oracle_period(  # noqa: PLR0915
         key: value for key, value in kwargs.items() if key not in statics.state_names
     }
     del param_pool["next_regime_to_continuation"]
-    del param_pool["next_regime_to_V_arr"]
     inverse_eis = (
         1.0
         / _scalar(

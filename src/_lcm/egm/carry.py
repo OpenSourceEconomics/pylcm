@@ -131,6 +131,24 @@ jax.tree_util.register_pytree_with_keys(
 )
 
 
+def egm_carry_role_tree(
+    *,
+    row: object,
+    scalar: object,
+    breakpoints: object | None,
+    policy: object | None,
+) -> EGMCarry:
+    """Build an `EGMCarry`-shaped tree of output roles.
+
+    A kernel declares its carry outputs with the same pytree structure as the
+    carry it publishes: one role for each of the three grid rows, one for the
+    0-d taste-shock scale, and `None` for a row it does not publish. The leaves
+    are role declarations rather than arrays, so the tree is assembled through
+    the pytree unflatten rather than the runtime-checked constructor.
+    """
+    return _unflatten_egm_carry(None, (row, row, row, scalar, breakpoints, policy))
+
+
 def build_template_egm_carry(
     *,
     n_rows: int,

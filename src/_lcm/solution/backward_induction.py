@@ -1128,16 +1128,18 @@ def _publish_kernel_value(
     An output-layout-aware core has already asserted its complete runtime
     output tree against the layout used to lower it at the compiled-core seam;
     here only the value leaf the loop publishes is checked again, since the
-    kernel may have unpacked the rest of its tree into channels. Legacy kernels
-    retain the existing repair at this boundary. Continuation rolling
-    deliberately keeps its independent repair: it is a different
-    producer/consumer boundary.
+    kernel may have unpacked the rest of its tree into channels. The check reads
+    the first planned core the period dispatched, whatever its name, since a
+    retention-scoped graph compiles one program under one name and another under
+    another. Legacy kernels retain the existing repair at this boundary.
+    Continuation rolling deliberately keeps its independent repair: it is a
+    different producer/consumer boundary.
     """
-    main = compiled_cores.get("main")
-    layout = None if main is None else planned_output_layout(main)
-    if layout is not None and layout is not UNPLANNED:
-        assert_value_leaf_layout(value=value, layout=layout)
-        return value
+    for core in compiled_cores.values():
+        layout = planned_output_layout(core)
+        if layout is not UNPLANNED:
+            assert_value_leaf_layout(value=value, layout=layout)
+            return value
     return _repair_unplanned_kernel_value(value=value, template=template)
 
 

@@ -202,8 +202,8 @@ _SOURCE_SEALS = {
     SIMULATION_TRANSITIONS_SOURCE: "1c503777887af52d1d5de36cf86acb4d8431fbe3d71203d7da881b4d0742c928",
     SIMULATION_COMPILE_SOURCE: "6cf4f6ef4d5dd5bb959c354caf4670caf0db364592b7ab01ee4f4c92abff334a",
     MODEL_SOURCE: "42cba4bc0ef37f4ee65468a36c53c00b63e63a4b94fa5eb398c0d5ff5ef6b499",
-    BACKWARD_INDUCTION_SOURCE: "2f262ca7fad98b3249229d48a0a053dce5ed966ee1541266b6a036c668c6dfc9",
-    PERIOD_REPLAY_SOURCE: "0ede8cd27050d76fdcc8a07e60381caff26572f5f2c1c1a25c3e5bf85c5b6c69",
+    BACKWARD_INDUCTION_SOURCE: "a87cc2921489b0de19d88fefa23fa455a8786ed3f637e715308f78fe7620887e",
+    PERIOD_REPLAY_SOURCE: "8581f1541f865d0773c842f34fdadf63163c9c79330b846916a8f90e2af969b0",
     INITIAL_CONDITIONS_SOURCE: "cb3663f59d10fa288d3da322b5f154545bb1ac4b9262073a87c405b5e950507f",
     RESULT_SOURCE: "992f8e14d2f47f505f6883e340e89d68dfc41311d4c36f7849a2f79331e4ba01",
     RESULT_DATAFRAME_SOURCE: "025e273c4d3bb9d8f9787189a551b113708c86b1e868d16178aa39555abf49a4",
@@ -2559,7 +2559,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             "_output_roles_key": "c73436e6abaec7f0388386d353675200d7bf3d5d3544654f8d47f37ad0e5e8da",
             "_assert_lowered_output_roles": "784fee32cdba67f3f635f7e66a036b6e949193eb131b3dcb3e484d57a9f244e0",
             "_attach_resolved_output_layout": "0b0e805ac307e87e1376de47086898c140a3cf00e5e81eefd8faab26ff972942",
-            "_publish_kernel_value": "8f750c264e89f39a66642b155d6d81d2ba8adfe661bbeb63e813f0bfbed870be",
+            "_publish_kernel_value": "93f0124f9608a8a04c9079795ec375bb4dc8fb1d01b636679794ad2825be6d9b",
         },
     )
     try:
@@ -5987,10 +5987,10 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": BACKWARD_INDUCTION_SOURCE,
             "source": replace_once(
                 source=backward_induction_source,
-                old="        assert_value_leaf_layout(value=value, layout=layout)\n"
-                "        return value",
-                new="        assert_value_leaf_layout(value=value, layout=layout)\n"
-                "        return candidate_filter(value)",
+                old="            assert_value_leaf_layout(value=value, layout=layout)\n"
+                "            return value",
+                new="            assert_value_leaf_layout(value=value, layout=layout)\n"
+                "            return candidate_filter(value)",
                 label="planned publication identity",
             ),
         },

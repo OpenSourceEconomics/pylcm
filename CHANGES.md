@@ -14,10 +14,14 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   complete expectation over reachable targets and stochastic nodes, on the savings
   grid) is consumed by that block's envelope solve inside the same compiled body,
   so the expected-continuation stacks over every cell are never a complete array
-  and never a core argument. The previous split continuation and envelope cores
-  stay on the period kernel as its independent oracle (`split_cores`), and the
-  compile-only fused replay experiment is replaced by a per-period core memory
-  analyzer that lowers the production cores and the oracle beside them.
+  and never a core argument. The period kernel publishes a native two-program
+  graph with planned outputs: `main` for a values-only solve (the value array and
+  the carry) and `replay` for a solve retaining replay artifacts (adding the
+  consumption policy and the conditional branch banks). A direct scalar oracle in
+  the test suite, independent of the production expectation and envelope code,
+  replaces the split continuation and envelope cores; the compile-only fused
+  replay experiment is replaced by a per-period core memory analyzer that lowers
+  the production programs.
 
 ### Gated edges into targets with disjoint activity windows
 

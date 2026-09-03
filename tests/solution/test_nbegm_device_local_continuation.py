@@ -3,17 +3,17 @@
 A fixed, distributed ride-along state (a permanent `kind` sharded one block per
 device) never transitions, so a ride cell's continuation depends only on its own
 `kind` slice of the next-period child carry. Sharded on that axis, the
-continuation read must run device-locally: the optimized `tiled_core` module
-performs no collective the envelope step alone does not — in particular no
-`all-gather` assembling every `kind` slice of the child carry onto every device.
-The envelope step's own collectives (it assembles the published arrays over the
-ride cells) are the reference: the oracle envelope core, lowered against the same
-period's arguments in the same process, sets the multiset of collectives the
-tile-local core may contain.
+continuation read must run device-locally: the optimized tile-local program
+performs no collective beyond those it performs when the same carry arrives
+replicated on every device — in particular no `all-gather` assembling every
+`kind` slice of the child carry onto every device. The replicated-carry compile
+is the reference: it cannot contain a carry gather, and every collective it does
+contain belongs to the program's own output assembly over the ride cells.
 
 The check solves the distributed ride-along toy under NBEGM on two forced host
-devices and inspects the XLA dumps of the compiled tile-local core and of the
-oracle envelope core.
+devices, records the live arguments the engine hands the ride-along programs,
+and compares the optimized HLO of the program lowered against those arguments
+with the HLO of the same program lowered against a replicated copy of the carry.
 """
 
 import os
@@ -27,91 +27,109 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SCRIPT = textwrap.dedent(
     """
     import collections
-    import glob
-    import os
     import re
 
     import jax
 
     assert jax.device_count() == 2, jax.devices()
 
+    from _lcm.execution.core_program import core_program_graph
     from _lcm.solution import nbegm as solvers
     from tests.test_models import nbegm_ride_along_toy as toy
 
-    captured = []
-    original_build_lower_args = solvers._RideAlongNBEGMPeriodKernel.build_lower_args
+    recorded = []
+    original_call = solvers._RideAlongArgumentBuilder.__call__
 
-    def capture_lower_args(self, **kwargs):
-        lower_args = original_build_lower_args(self, **kwargs)
-        if kwargs.get("core_key", "main") == "main":
-            envelope_args = original_build_lower_args(
-                self, **{**kwargs, "core_key": "envelope"}
-            )
-            captured.append((self, envelope_args))
-        return lower_args
+    def record_arguments(self, context):
+        arguments = original_call(self, context)
+        recorded.append((self, arguments))
+        return arguments
 
-    solvers._RideAlongNBEGMPeriodKernel.build_lower_args = capture_lower_args
+    solvers._RideAlongArgumentBuilder.__call__ = record_arguments
 
     model = toy.build_model(
         variant="nbegm", n_periods=4, n_liquid=24, n_savings=32, distributed_kind=True
     )
     model.solve(params=toy.build_params(), log_level="debug")
-    assert captured, "no production core was lowered"
-    for kernel, envelope_args in captured:
-        jax.jit(kernel.split_cores()["envelope"]).lower(**envelope_args).compile()
+    assert recorded, "no ride-along program was lowered"
 
-    dump_dir = os.environ["XLA_DUMP_DIR"]
+    programs_by_builder = {}
+    for kernel in model._regimes["alive"].solution.period_kernels.values():
+        for program in core_program_graph(kernel=kernel).values():
+            programs_by_builder.setdefault(id(program.argument_builder), []).append(
+                program
+            )
+
     collective = re.compile(
         r"= (\\S+) (all-gather|all-reduce|all-to-all|collective-permute"
         r"|reduce-scatter)\\("
     )
 
-    def collectives(pattern):
-        paths = glob.glob(os.path.join(dump_dir, pattern))
+    def collectives(*, function, arguments):
+        text = jax.jit(function).lower(**arguments).compile().as_text()
         found = collections.Counter()
-        for path in paths:
-            with open(path) as handle:
-                for match in collective.finditer(handle.read()):
-                    found[(match.group(2), match.group(1))] += 1
-        return paths, found
+        for match in collective.finditer(text):
+            found[(match.group(2), match.group(1))] += 1
+        return found
 
-    tiled_paths, tiled = collectives("*tiled_core*after_optimizations.txt")
-    envelope_paths, envelope = collectives("*envelope_core*after_optimizations.txt")
-    assert tiled_paths, f"no tiled_core dump in {dump_dir}"
-    assert len(tiled_paths) == len(envelope_paths), (tiled_paths, envelope_paths)
-    # The instrument has to be shown firing in this run: the envelope step's own
-    # output assembly is where the reference collectives come from.
-    assert envelope, "no collective found in the oracle envelope core dumps"
-    extra = tiled - envelope
-    if extra:
-        print("EXTRA-COLLECTIVES", sorted(extra.items()))
-    else:
-        print("DEVICE-LOCAL-OK", sorted(tiled.items()))
+    def replicated_carry(arguments):
+        carry = arguments["next_regime_to_continuation"]
+        mesh = next(
+            leaf.sharding.mesh
+            for leaf in jax.tree.leaves(carry)
+            if isinstance(leaf.sharding, jax.NamedSharding)
+        )
+        replicated = jax.NamedSharding(mesh, jax.P())
+        return {
+            **arguments,
+            "next_regime_to_continuation": jax.tree.map(
+                lambda leaf: jax.device_put(leaf, replicated), carry
+            ),
+        }
+
+    compared = 0
+    sharded_total = collections.Counter()
+    for builder, arguments in recorded:
+        carry = arguments["next_regime_to_continuation"]
+        carry_shardings = {leaf.sharding for leaf in jax.tree.leaves(carry)}
+        if not any(
+            isinstance(s, jax.NamedSharding) and s.spec != jax.P()
+            for s in carry_shardings
+        ):
+            continue
+        for program in programs_by_builder[id(builder)]:
+            sharded = collectives(function=program.function, arguments=arguments)
+            replicated = collectives(
+                function=program.function, arguments=replicated_carry(arguments)
+            )
+            extra = sharded - replicated
+            if extra:
+                print("EXTRA-COLLECTIVES", program.name, sorted(extra.items()))
+                raise SystemExit(1)
+            sharded_total.update(sharded)
+            compared += 1
+    assert compared, "no program was lowered against a kind-sharded carry"
+    # The instrument has to be shown firing in this run: the program's own output
+    # assembly over the ride cells is where the reference collectives come from.
+    assert sharded_total, "no collective found in any sharded-carry compile"
+    print("DEVICE-LOCAL-OK", compared, sorted(sharded_total.items()))
     """
 )
 
 
-def test_nbegm_tile_local_core_does_not_all_gather_child_carry(
-    tmp_path: Path,
-) -> None:
+def test_nbegm_tile_local_core_does_not_all_gather_child_carry() -> None:
     """The compiled NBEGM tile-local core reads only its device-local carry.
 
     With `kind` a fixed distributed ride state, the continuation interpolation
-    slices the child carry per device: the optimized `tiled_core` module contains
-    no collective beyond those of the oracle envelope core lowered against the
-    same arguments, so no `all-gather` of the full carry onto every device.
+    slices the child carry per device: each ride-along program lowered against the
+    kind-sharded carry contains no collective beyond those of the same program
+    lowered against a replicated copy of that carry, so no `all-gather` of the
+    full carry onto every device.
     """
-    dump_dir = tmp_path / "xla-dump"
-    dump_dir.mkdir()
     env = {
         **os.environ,
-        "XLA_FLAGS": (
-            "--xla_force_host_platform_device_count=2 "
-            f"--xla_dump_to={dump_dir} --xla_dump_hlo_as_text "
-            "--xla_gpu_autotune_level=0"
-        ),
+        "XLA_FLAGS": "--xla_force_host_platform_device_count=2",
         "JAX_PLATFORMS": "cpu",
-        "XLA_DUMP_DIR": str(dump_dir),
     }
     result = subprocess.run(  # noqa: S603
         [sys.executable, "-c", _SCRIPT],
@@ -122,5 +140,5 @@ def test_nbegm_tile_local_core_does_not_all_gather_child_carry(
         check=False,
         timeout=600,
     )
-    assert result.returncode == 0, result.stderr[-4000:]
+    assert result.returncode == 0, result.stderr[-4000:] + result.stdout[-2000:]
     assert "DEVICE-LOCAL-OK" in result.stdout, result.stdout[-2000:]

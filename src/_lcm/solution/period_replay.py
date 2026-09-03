@@ -21,7 +21,6 @@ from _lcm.engine import StateActionSpace
 from _lcm.execution.core_program import (
     CoreBuildContext,
     CoreExecutionDisposition,
-    _LegacyArgumentBuilder,
     core_program_graph,
     materialize_core_program,
     select_programs,
@@ -101,15 +100,6 @@ class PeriodCoreMemoryAnalysis:
     core_memory_bytes: MappingProxyType[str, CompilerMemoryBytes | None]
     """Byte counts per production core, keyed as the kernel publishes them."""
 
-    split_oracle_memory_bytes: MappingProxyType[str, CompilerMemoryBytes | None]
-    """Byte counts per split oracle core, for a kernel that keeps one.
-
-    A ride-along NB-EGM kernel keeps its continuation and envelope halves as an
-    oracle of the tile-local production core; the envelope half's argument bytes
-    are the complete continuation stacks the production core never materializes.
-    Empty for every other kernel.
-    """
-
 
 def replay_period(*, directory: Path) -> PeriodReplay:
     """Re-run the regime-period captured in `directory`.
@@ -151,8 +141,7 @@ def analyze_period_core_memory(*, directory: Path) -> PeriodCoreMemoryAnalysis:
     """Compile, but never execute, one captured period's cores and read their memory.
 
     The production cores are lowered against the capture's logical pytrees and
-    production shapes; a kernel keeping a split oracle has those cores lowered
-    beside them. The capture round trip loses device sharding, so every executable
+    production shapes. The capture round trip loses device sharding, so every executable
     uses the restored arrays' default backend placement. Calling `memory_analysis()`
     on the resulting executables is safe even when their estimated runtime
     allocation exceeds the available device budget because this function
@@ -173,9 +162,6 @@ def analyze_period_core_memory(*, directory: Path) -> PeriodCoreMemoryAnalysis:
     production = _compile_cores_for_one_period(
         regime=regime, period=period, kernel_kwargs=kernel_kwargs
     )
-    split_oracle = _compile_split_oracle_cores_for_one_period(
-        regime=regime, period=period, kernel_kwargs=kernel_kwargs
-    )
     return PeriodCoreMemoryAnalysis(
         regime_name=kernel_kwargs["regime_name"],
         period=period,
@@ -185,12 +171,6 @@ def analyze_period_core_memory(*, directory: Path) -> PeriodCoreMemoryAnalysis:
             {
                 key: _compiler_memory_bytes(compiled=core)
                 for key, core in production.items()
-            }
-        ),
-        split_oracle_memory_bytes=MappingProxyType(
-            {
-                key: _compiler_memory_bytes(compiled=core)
-                for key, core in split_oracle.items()
             }
         ),
     )
@@ -307,33 +287,6 @@ def _compile_cores_for_one_period(
             layout=layout,
             input_transfer_plan=resolved.input_transfer_plan,
         )
-    return MappingProxyType(compiled)
-
-
-def _compile_split_oracle_cores_for_one_period(
-    *,
-    regime: Any,  # noqa: ANN401 - the canonical Regime, circular to import here
-    period: int,
-    kernel_kwargs: dict[str, Any],
-) -> MappingProxyType[str, Any]:
-    """Lower and compile a kernel's split oracle cores, if it keeps any.
-
-    The oracle cores are not part of the production graph, so they are lowered
-    through the kernel's own legacy argument builder rather than the resolver.
-    """
-    period_kernel = regime.solution.period_kernels[period]
-    split_cores = getattr(period_kernel, "split_cores", None)
-    if split_cores is None:
-        return MappingProxyType({})
-    context = _core_build_context_for_one_period(
-        regime=regime, period=period, kernel_kwargs=kernel_kwargs
-    )
-    compiled = {}
-    for core_name, core in split_cores().items():
-        arguments = _LegacyArgumentBuilder(kernel=period_kernel, core_name=core_name)(
-            context
-        )
-        compiled[core_name] = jax.jit(core).lower(**arguments).compile()
     return MappingProxyType(compiled)
 
 
