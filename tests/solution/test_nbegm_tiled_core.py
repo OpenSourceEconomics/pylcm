@@ -17,7 +17,7 @@ import pytest
 
 from _lcm.solution.period_replay import _compiler_memory_bytes
 from tests.conftest import invariance_tolerances
-from tests.solution.test_nbegm_ride_along_split_compile import _ride_along_kernel
+from tests.solution._nbegm_direct_oracle import ride_along_kernel as _ride_along_kernel
 from tests.test_models import nbegm_jump_ride_along_toy, nbegm_ride_along_toy
 
 

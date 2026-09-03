@@ -7,12 +7,11 @@ tile-local core that fuses them per cell block.
 """
 
 from collections.abc import Callable, Mapping
-from typing import Any
 
 import jax
 
-from _lcm.solution.backward_induction import _build_continuation_templates
 from lcm import Model
+from tests.solution._nbegm_direct_oracle import ride_along_kernel as _ride_along_kernel
 from tests.test_models import nbegm_ride_along_toy as ride_toy
 
 
@@ -25,33 +24,6 @@ def _build_ride_model(*, variant: str, n_consumption: int = 120) -> Model:
         savings_max=28.0,
         n_consumption=n_consumption,
     )
-
-
-def _ride_along_kernel(
-    *, model: Model, params: Mapping[str, Any]
-) -> tuple[Any, dict[str, Any]]:
-    """Return a representative ride-along period kernel and its lowering context."""
-    flat_params = model._process_params(params)
-    # `_build_continuation_templates` returns a third element (the gated-edge Wbar
-    # templates, E3') on the collective-regimes scaffold; this edge-free NBEGM
-    # model has no gated edges, so it is empty and unused here.
-    next_regime_to_V_arr, next_regime_to_continuation, _next_edge_to_V_arr = (
-        _build_continuation_templates(regimes=model._regimes, flat_params=flat_params)
-    )
-    regime = model._regimes["alive"]
-    period = regime.active_periods[len(regime.active_periods) // 2]
-    kernel = regime.solution.period_kernels[period]
-    state_action_space = regime.solution.state_action_space(
-        regime_params=flat_params["alive"],
-    )
-    return kernel, {
-        "state_action_space": state_action_space,
-        "next_regime_to_V_arr": next_regime_to_V_arr,
-        "next_regime_to_continuation": next_regime_to_continuation,
-        "flat_params": flat_params,
-        "period": period,
-        "ages": model.ages,
-    }
 
 
 def _hlo_instruction_count(*, core: Callable, lower_args: Mapping[str, object]) -> int:

@@ -949,6 +949,9 @@ class NBEGM(OneMarginSolver):
                 regime_name=context.regime_name,
                 stateful_targets=frozenset(plan.stateful_targets),
                 transition_target_names=transition_target_names,
+                schedule_spec=group_spec,
+                continuation_plan=plan,
+                savings_grid=savings_grid,
             )
         return SolutionKernels(
             period_kernels=MappingProxyType(period_kernels),
@@ -1396,6 +1399,17 @@ class _RideAlongNBEGMPeriodKernel:
 
     transition_target_names: tuple[RegimeName, ...]
     """Names of the regime's transition targets, whose params are unioned in."""
+
+    schedule_spec: _NBEGMScheduleSpec
+    """The composed budget, utility, and discount declarations the cores bind per
+    cell, published so an independent reader can evaluate the same declarations."""
+
+    continuation_plan: Any
+    """The `ContinuationPlan` (regime transition, child reads, stochastic weights)
+    the cores read the continuation through, published for the same reason."""
+
+    savings_grid: Float1D
+    """The post-decision savings grid the cores close over."""
 
     @property
     def core(self) -> Callable:
