@@ -35,7 +35,6 @@ methods without four separate compilations.
 
 import json
 import os
-import resource
 import subprocess
 import sys
 import time
@@ -167,8 +166,19 @@ def _collect_combined_measurements(instance) -> dict[str, float]:
     }
 
 
-def _get_cpu_peak_bytes() -> int:
-    """Return this process's peak resident set size in bytes on Linux."""
+def _get_cpu_peak_bytes() -> float:
+    """Return this process's peak resident set size in bytes on Linux.
+
+    The reading is `ru_maxrss` from `resource.getrusage`, which Linux reports
+    in kibibytes. Where the `resource` module is unavailable (Windows) the peak
+    is unknown and reported as NaN rather than a fabricated number; ASV treats
+    a NaN sample as absent, and the value survives the JSON round trip through
+    `measure_combined`.
+    """
+    try:
+        import resource
+    except ImportError:
+        return float("nan")
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024
 
 
