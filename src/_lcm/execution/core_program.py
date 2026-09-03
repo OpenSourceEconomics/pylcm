@@ -23,7 +23,7 @@ from _lcm.execution.value_transfer import (
 )
 from _lcm.typing import ActionName
 
-_CORE_PROGRAM_VERSION = 3
+_CORE_PROGRAM_VERSION = 4
 _INT32_MAX = 2_147_483_647
 _INITIAL_TILE_WIDTH_CAP = 64
 
@@ -114,6 +114,22 @@ class CoreExecutionDisposition(StrEnum):
     LEGACY_UNPLANNED = "legacy-unplanned"
 
 
+class ProgramScope(StrEnum):
+    """Which result retentions dispatch one declared core.
+
+    - `ANY`: dispatched under every retention.
+    - `VALUES_ONLY`: dispatched only when the solve retains no replay artifacts.
+    - `REPLAY`: dispatched only when the solve retains replay artifacts.
+
+    A kernel publishing both scoped variants of one body lets a values-only solve
+    skip the replay outputs' assembly instead of computing and discarding them.
+    """
+
+    ANY = "any"
+    VALUES_ONLY = "values-only"
+    REPLAY = "replay"
+
+
 @dataclass(frozen=True, kw_only=True)
 class CoreBuildContext:
     """Immutable inputs from which a core builds its dynamic argument mapping."""
@@ -174,6 +190,7 @@ class CoreProgram:
     disposition: CoreExecutionDisposition
     disposition_reason: str | None = None
     donation_candidates: tuple[str, ...] = ()
+    scope: ProgramScope = ProgramScope.ANY
 
     def __post_init__(self) -> None:
         """Snapshot caller-owned sequences."""
@@ -192,6 +209,7 @@ class MaterializedCoreProgram:
     disposition: CoreExecutionDisposition
     donation_candidates: tuple[str, ...]
     disposition_reason: str | None = None
+    scope: ProgramScope = ProgramScope.ANY
 
     def __post_init__(self) -> None:
         """Snapshot the exact dynamic argument tree."""
@@ -263,6 +281,33 @@ def core_program_graph(*, kernel: object) -> MappingProxyType[str, CoreProgram]:
     return _legacy_core_program_graph(kernel=kernel)
 
 
+def select_programs(
+    *, graph: Mapping[str, CoreProgram], retain_replay: bool
+) -> MappingProxyType[str, CoreProgram]:
+    """Keep the programs one solve dispatches under its result retention.
+
+    Every `ANY` program is kept, plus exactly the programs of the one scope the
+    retention selects. A graph that leaves nothing to dispatch is refused: a period
+    without a program would publish no value.
+    """
+    dispatched_scope = (
+        ProgramScope.REPLAY if retain_replay else ProgramScope.VALUES_ONLY
+    )
+    selected = {
+        name: program
+        for name, program in graph.items()
+        if program.scope in (ProgramScope.ANY, dispatched_scope)
+    }
+    if not selected:
+        msg = (
+            f"No core program is dispatched with retain_replay={retain_replay!r}: "
+            "the graph declares scopes "
+            f"{ {name: program.scope.value for name, program in graph.items()}!r}."
+        )
+        raise ValueError(msg)
+    return MappingProxyType(selected)
+
+
 def _reject_native_duplicate_authorities(*, kernel: object) -> None:
     """Fail when a native graph publisher retains any parallel declaration seam."""
     duplicate_names = tuple(
@@ -329,6 +374,9 @@ def _validate_program_declaration(*, program: CoreProgram, native: bool) -> None
         raise TypeError(msg)
     if not isinstance(program.disposition, CoreExecutionDisposition):
         msg = f"CoreProgram {program.name!r} disposition has the wrong type."
+        raise TypeError(msg)
+    if not isinstance(program.scope, ProgramScope):
+        msg = f"CoreProgram {program.name!r} scope has the wrong type."
         raise TypeError(msg)
     if native and program.disposition is CoreExecutionDisposition.LEGACY_UNPLANNED:
         msg = "A native CoreProgram cannot declare LEGACY_UNPLANNED."
@@ -445,6 +493,7 @@ def materialize_core_program(
         disposition=program.disposition,
         donation_candidates=program.donation_candidates,
         disposition_reason=program.disposition_reason,
+        scope=program.scope,
     )
     missing_donations = set(materialized.donation_candidates) - set(
         materialized.arguments
@@ -475,6 +524,7 @@ class ResolvedCoreProgram:
     """Static program fragment composed into the engine's full lowering key."""
     input_transfer_plan: tuple[ResolvedValueTransfer, ...]
     disposition_reason: str | None = None
+    scope: ProgramScope = ProgramScope.ANY
 
     def __post_init__(self) -> None:
         """Snapshot the materialized argument and planning containers."""
@@ -570,6 +620,7 @@ def resolve_core_program(
         disposition=program.disposition,
         donation_candidates=program.donation_candidates,
         disposition_reason=program.disposition_reason,
+        scope=program.scope,
         tile_widths=resolved_widths,
         input_transfer_plan=resolved_input_transfer_plan,
         specialization_key=(
@@ -577,6 +628,7 @@ def resolve_core_program(
             _CORE_PROGRAM_VERSION,
             program.disposition.value,
             program.disposition_reason,
+            program.scope.value,
             program.donation_candidates,
             tuple(compilation_axes),
             input_transfer_specialization_key,

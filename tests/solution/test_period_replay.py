@@ -15,9 +15,10 @@ import re
 import numpy as np
 import pytest
 
-from _lcm.solution import backward_induction
+from _lcm.solution import backward_induction, period_replay
 from lcm import AgeGrid, Model
 from lcm.persistence import replay_period
+from lcm.solver_api import ResultRetention
 from tests.regime_building.test_gated_edges_collective_solve import (
     EKLRegimeId,
     _make_full_topology_regimes,
@@ -194,3 +195,33 @@ def test_a_gated_edge_source_replays_to_the_value_the_solve_published(
         np.asarray(replay.result.V_arr),
         np.asarray(solution[0]["single_f"]),
     )
+
+
+@pytest.mark.parametrize(
+    ("retention", "retain_replay"),
+    [
+        pytest.param(ResultRetention.VALUES, False, id="values"),
+        pytest.param(ResultRetention.VALUES_AND_REPLAY, True, id="values-and-replay"),
+    ],
+)
+def test_replay_lowers_the_scope_the_solve_dispatched(
+    *, monkeypatch, tmp_path, retention, retain_replay
+):
+    """A replay selects the programs the captured solve's retention dispatched."""
+    monkeypatch.setenv("LCM_CAPTURE_PERIOD", "working_life@1")
+    monkeypatch.setenv("LCM_CAPTURE_DIR", str(tmp_path))
+    model = get_model(n_periods=_N_PERIODS)
+    params = get_params(n_periods=_N_PERIODS)
+    model.solve(params=params, log_level="off", retention=retention)
+
+    observed: list[bool] = []
+    real_select = period_replay.select_programs
+
+    def record_select(**kwargs):
+        observed.append(kwargs["retain_replay"])
+        return real_select(**kwargs)
+
+    monkeypatch.setattr(period_replay, "select_programs", record_select)
+    replay_period(directory=tmp_path / "working_life@1")
+
+    assert observed == [retain_replay]

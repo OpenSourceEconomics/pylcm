@@ -24,6 +24,7 @@ from _lcm.execution.core_program import (
     _LegacyArgumentBuilder,
     core_program_graph,
     materialize_core_program,
+    select_programs,
 )
 from _lcm.execution.output_layout import (
     UNPLANNED,
@@ -248,7 +249,11 @@ def _compile_cores_for_one_period(
         regime=regime, period=period, kernel_kwargs=kernel_kwargs
     )
     compiled = {}
-    for core_name, declaration in core_program_graph(kernel=period_kernel).items():
+    graph = select_programs(
+        graph=core_program_graph(kernel=period_kernel),
+        retain_replay=kernel_kwargs["retain_replay"],
+    )
+    for core_name, declaration in graph.items():
         materialized = materialize_core_program(program=declaration, context=context)
         resolved = _resolve_program_for_execution(
             program=materialized,
@@ -291,7 +296,6 @@ def _compile_cores_for_one_period(
         _assert_lowered_output_roles(
             lowered=lowered,
             output_roles=resolved.output_roles,
-            value_template=context.next_regime_to_V_arr[kernel_kwargs["regime_name"]],
             layout=layout,
             label=(
                 f"{kernel_kwargs['regime_name']} {core_name} (replay period {period})"

@@ -17,9 +17,11 @@ from _lcm.execution.core_program import (
     CoreExecutionRequirements,
     CoreProgram,
     CoreProgramGraphAware,
+    ProgramScope,
     core_program_graph,
     materialize_core_program,
     resolve_core_program,
+    select_programs,
 )
 from _lcm.execution.output_layout import VALUE
 from _lcm.solution import backward_induction, period_replay
@@ -337,3 +339,85 @@ def test_materialization_rejects_unknown_donation_candidate() -> None:
 
     with pytest.raises(ValueError, match="absent"):
         materialize_core_program(program=declaration, context=_context())
+
+
+def _scoped_program(*, name: str, scope: ProgramScope) -> CoreProgram:
+    return CoreProgram(
+        name=name,
+        function=_identity,
+        argument_builder=lambda _context: MappingProxyType({"value": jnp.asarray(1.0)}),
+        requirements=CoreExecutionRequirements(),
+        output_roles=VALUE,
+        disposition=CoreExecutionDisposition.DENSE,
+        disposition_reason="test_dense_route",
+        scope=scope,
+    )
+
+
+def test_native_program_scope_defaults_to_any() -> None:
+    assert _native_program().scope is ProgramScope.ANY
+
+
+def test_program_scope_is_part_of_resolved_specialization_identity() -> None:
+    context = _context()
+    resolved = {
+        scope: _resolve_program_for_execution(
+            program=materialize_core_program(
+                program=_scoped_program(name="main", scope=scope), context=context
+            ),
+            source_value_template=jnp.asarray(0.0),
+            source=("source", 0, "main"),
+        )
+        for scope in ProgramScope
+    }
+
+    assert all(program.scope is scope for scope, program in resolved.items())
+    keys = [program.specialization_key for program in resolved.values()]
+    assert len(set(keys)) == len(keys)
+
+
+@pytest.mark.parametrize(
+    ("retain_replay", "expected"),
+    [
+        pytest.param(False, ("main", "values"), id="values-only"),
+        pytest.param(True, ("main", "replay"), id="replay"),
+    ],
+)
+def test_select_programs_keeps_any_plus_exactly_the_dispatched_scope(
+    *, retain_replay: bool, expected: tuple[str, ...]
+) -> None:
+    graph = core_program_graph(
+        kernel=_NativeKernel(
+            {
+                "main": _scoped_program(name="main", scope=ProgramScope.ANY),
+                "values": _scoped_program(
+                    name="values", scope=ProgramScope.VALUES_ONLY
+                ),
+                "replay": _scoped_program(name="replay", scope=ProgramScope.REPLAY),
+            }
+        )
+    )
+
+    selected = select_programs(graph=graph, retain_replay=retain_replay)
+
+    assert tuple(selected) == expected
+    assert all(selected[name] is graph[name] for name in expected)
+
+
+def test_select_programs_fails_closed_when_nothing_is_dispatched() -> None:
+    graph = core_program_graph(
+        kernel=_NativeKernel(
+            {"replay": _scoped_program(name="replay", scope=ProgramScope.REPLAY)}
+        )
+    )
+
+    with pytest.raises(ValueError, match="No core program"):
+        select_programs(graph=graph, retain_replay=False)
+
+
+def test_native_graph_rejects_a_scope_outside_the_enumeration() -> None:
+    program = _native_program()
+    object.__setattr__(program, "scope", "replay")
+
+    with pytest.raises(TypeError, match="scope"):
+        core_program_graph(kernel=_NativeKernel({"main": program}))

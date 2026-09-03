@@ -11,7 +11,6 @@ from types import MappingProxyType
 from typing import cast
 
 import jax
-import jax.numpy as jnp
 
 from _lcm.engine import Regime, StateActionSpace, _build_regime_sharding
 from _lcm.execution.core_program import (
@@ -26,15 +25,15 @@ from _lcm.execution.core_program import (
     initial_core_tile_widths,
     materialize_core_program,
     resolve_core_program,
+    select_programs,
 )
 from _lcm.execution.liveness import PlannedInputLiveness
 from _lcm.execution.output_layout import (
-    DISSOLUTION_FLAG,
     UNPLANNED,
-    VALUE,
+    ExpectedOutputLeaf,
     PlannedCore,
     ResolvedOutputLayout,
-    assert_output_layout,
+    assert_value_leaf_layout,
     planned_output_layout,
     resolve_output_layout,
 )
@@ -122,6 +121,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     track_artifact_publication: bool = False,
     max_compilation_workers: int | None = None,
     retain_dissolution_flags: bool = True,
+    retain_replay: bool = True,
 ) -> BackwardInductionResult:
     """Solve a model by backward induction, whatever solver each regime declares.
 
@@ -155,6 +155,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             dissolution flags on the result for their own sake. A model whose
             gates read `D_target` retains them regardless — the flags are a
             simulate-side input there, not an inspection artifact.
+        retain_replay: Whether replay artifacts are retained. Selects, per
+            period kernel, the scoped programs that are dispatched: a kernel may
+            publish a values-only and a replay variant of one body.
 
     Returns:
         The named backward-induction outputs: the immutable mapping of periods
@@ -197,6 +200,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         next_regime_to_continuation=next_regime_to_continuation,
         next_edge_to_V_arr=next_edge_to_V_arr,
         enable_jit=enable_jit,
+        retain_replay=retain_replay,
         max_compilation_workers=max_compilation_workers,
         logger=logger,
     )
@@ -331,6 +335,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 logger=logger,
                 next_edge_to_V_arr=next_edge_to_V_arr,
                 period_solution=period_solution,
+                retain_replay=retain_replay,
             )
             input_liveness.commit_successful_dispatch(dispatch=(period, regime_name))
             V_arr = result.V_arr
@@ -342,7 +347,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             # backend's choice) is placed back on the template's mesh here.
             V_arr = _publish_kernel_value(
                 value=V_arr,
-                dissolution=result.dissolution,
                 template=next_regime_to_V_arr[regime_name],
                 compiled_cores=compiled_functions[(regime_name, period)],
             )
@@ -589,6 +593,7 @@ def _run_period_kernel(
     logger: logging.Logger,
     next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
     period_solution: Mapping[RegimeName, FloatND],
+    retain_replay: bool,
 ) -> KernelResult:
     """Invoke one regime's period adapter for one period.
 
@@ -642,6 +647,7 @@ def _run_period_kernel(
             "logger": logger,
             "next_edge_to_V_arr": next_edge_to_V_arr,
             "period_solution": period_solution,
+            "retain_replay": retain_replay,
         },
     )
 
@@ -1114,25 +1120,23 @@ def _match_continuation_template_sharding(
 def _publish_kernel_value(
     *,
     value: FloatND,
-    dissolution: BoolND | None,
     template: FloatND,
     compiled_cores: Mapping[str, Callable],
 ) -> FloatND:
     """Publish a period value in the engine-owned layout.
 
-    An output-layout-aware core has already asserted the complete runtime
-    output tree against the layout used to lower it, so its value leaf is born
-    in the template layout.  Legacy kernels retain the existing repair at this
-    boundary.  Continuation rolling deliberately keeps its independent repair:
-    it is a different producer/consumer boundary.
+    An output-layout-aware core has already asserted its complete runtime
+    output tree against the layout used to lower it at the compiled-core seam;
+    here only the value leaf the loop publishes is checked again, since the
+    kernel may have unpacked the rest of its tree into channels. Legacy kernels
+    retain the existing repair at this boundary. Continuation rolling
+    deliberately keeps its independent repair: it is a different
+    producer/consumer boundary.
     """
     main = compiled_cores.get("main")
     layout = None if main is None else planned_output_layout(main)
     if layout is not None and layout is not UNPLANNED:
-        assert_output_layout(
-            output=(value, dissolution) if dissolution is not None else value,
-            layout=layout,
-        )
+        assert_value_leaf_layout(value=value, layout=layout)
         return value
     return _repair_unplanned_kernel_value(value=value, template=template)
 
@@ -1571,6 +1575,7 @@ def _compile_all_functions(
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
     next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
     enable_jit: bool,
+    retain_replay: bool,
     max_compilation_workers: int | None,
     logger: logging.Logger,
 ) -> _CompiledPrograms:
@@ -1599,6 +1604,8 @@ def _compile_all_functions(
             for constructing a source kernel's gated-edge lowering arguments;
             empty for models without gated edges.
         enable_jit: Whether to JIT-compile the functions of the internal regimes.
+        retain_replay: Whether the solve retains replay artifacts; selects which
+            scoped programs of each kernel's graph are dispatched.
         max_compilation_workers: Maximum threads for parallel compilation.
             Defaults to `os.cpu_count()`.
         logger: Logger for compilation progress.
@@ -1613,7 +1620,10 @@ def _compile_all_functions(
     all_programs: dict[_CoreTriple, CoreProgram] = {}
     for regime_name, regime in regimes.items():
         for period in regime.active_periods:
-            graph = core_program_graph(kernel=regime.solution.period_kernels[period])
+            graph = select_programs(
+                graph=core_program_graph(kernel=regime.solution.period_kernels[period]),
+                retain_replay=retain_replay,
+            )
             for core_name, program in graph.items():
                 all_programs[(regime_name, period, core_name)] = program
 
@@ -1732,7 +1742,6 @@ def _compile_all_functions(
         _assert_lowered_output_roles(
             lowered=low,
             output_roles=resolved.output_roles,
-            value_template=next_regime_to_V_arr[regime_name],
             layout=layout,
             label=label,
         )
@@ -2068,55 +2077,32 @@ def _output_roles_key(*, output_roles: object | None) -> Hashable:
     )
 
 
-_NO_EXPECTED_SHARDING = object()
-
-
 def _assert_lowered_output_roles(
     *,
     lowered: jax.stages.Lowered,
     output_roles: object | None,
-    value_template: object,
+    layout: ResolvedOutputLayout | object,
     label: str,
-    layout: ResolvedOutputLayout | object = UNPLANNED,
 ) -> None:
     """Reject lowered output that violates the declared role contract."""
     if output_roles is None:
         return
+    if not isinstance(layout, ResolvedOutputLayout):
+        msg = f"{label} declares output roles but has no resolved output layout."
+        raise TypeError(msg)
     _assert_lowered_output_tree(
         output_roles=output_roles,
         output_info=lowered.out_info,
         label=label,
     )
-    expected_value_shape, expected_value_dtype = _expected_value_metadata(
-        value_template=value_template,
-        label=label,
-    )
-    role_leaves = jax.tree.leaves(output_roles)
     output_leaves = jax.tree.leaves(lowered.out_info)
-    expected_shardings = (
-        jax.tree.leaves(layout.out_shardings)
-        if isinstance(layout, ResolvedOutputLayout)
-        else None
-    )
-    for index, (role, output_info) in enumerate(
-        zip(role_leaves, output_leaves, strict=True)
+    for output_info, expected in zip(
+        output_leaves, layout.expected_leaves, strict=True
     ):
-        expected_metadata = _expected_role_metadata(
-            role=role,
-            value_shape=expected_value_shape,
-            value_dtype=expected_value_dtype,
-            label=label,
-        )
-        expected_sharding = (
-            _NO_EXPECTED_SHARDING
-            if expected_shardings is None
-            else expected_shardings[index]
-        )
         _assert_lowered_output_leaf(
             output_info=output_info,
             label=label,
-            expected_metadata=expected_metadata,
-            expected_sharding=expected_sharding,
+            expected=expected,
         )
 
 
@@ -2134,65 +2120,36 @@ def _assert_lowered_output_tree(
         raise TypeError(msg)
 
 
-def _expected_value_metadata(
-    *, value_template: object, label: str
-) -> tuple[tuple[int, ...], object]:
-    """Read the absolute value metadata used by every declared role."""
-    value_shape = getattr(value_template, "shape", None)
-    value_dtype = getattr(value_template, "dtype", None)
-    if value_shape is None or value_dtype is None:
-        msg = f"{label} value template must expose an absolute shape and dtype."
-        raise TypeError(msg)
-    return tuple(int(size) for size in value_shape), value_dtype
-
-
-def _expected_role_metadata(
-    *,
-    role: object,
-    value_shape: tuple[int, ...],
-    value_dtype: object,
-    label: str,
-) -> tuple[str, tuple[int, ...], object]:
-    """Derive one lowered leaf's metadata from its logical role."""
-    if role is VALUE:
-        return "value", value_shape, value_dtype
-    if role is DISSOLUTION_FLAG:
-        return "dissolution", value_shape[:-1], jnp.dtype(bool)
-    msg = f"{label} declared unsupported output role {role!r}."
-    raise TypeError(msg)
-
-
 def _assert_lowered_output_leaf(
     *,
     output_info: object,
     label: str,
-    expected_metadata: tuple[str, tuple[int, ...], object],
-    expected_sharding: object,
+    expected: ExpectedOutputLeaf,
 ) -> None:
-    """Check one lowered leaf's shape, dtype, and optional placement."""
-    role_label, expected_shape, expected_dtype = expected_metadata
-    actual_shape = getattr(output_info, "shape", None)
-    if actual_shape != expected_shape:
-        msg = (
-            f"{label} {role_label} output shape mismatch: "
-            f"expected {expected_shape}, got {actual_shape}."
-        )
-        raise TypeError(msg)
-    actual_dtype = getattr(output_info, "dtype", None)
-    if actual_dtype != expected_dtype:
-        msg = (
-            f"{label} {role_label} output dtype mismatch: "
-            f"expected {expected_dtype}, got {actual_dtype}."
-        )
-        raise TypeError(msg)
-    if expected_sharding is not _NO_EXPECTED_SHARDING:
-        actual_sharding = getattr(output_info, "sharding", None)
-        if actual_sharding != expected_sharding:
+    """Check one lowered leaf's declared shape and dtype, and its placement."""
+    if expected.shape is not None:
+        actual_shape = getattr(output_info, "shape", None)
+        if actual_shape != expected.shape:
             msg = (
-                f"{label} {role_label} output sharding mismatch: "
-                f"expected {expected_sharding}, got {actual_sharding}."
+                f"{label} {expected.label} output shape mismatch: "
+                f"expected {expected.shape}, got {actual_shape}."
             )
             raise TypeError(msg)
+    if expected.dtype is not None:
+        actual_dtype = getattr(output_info, "dtype", None)
+        if actual_dtype != expected.dtype:
+            msg = (
+                f"{label} {expected.label} output dtype mismatch: "
+                f"expected {expected.dtype}, got {actual_dtype}."
+            )
+            raise TypeError(msg)
+    actual_sharding = getattr(output_info, "sharding", None)
+    if actual_sharding != expected.sharding:
+        msg = (
+            f"{label} {expected.label} output sharding mismatch: "
+            f"expected {expected.sharding}, got {actual_sharding}."
+        )
+        raise TypeError(msg)
 
 
 def _attach_resolved_output_layout(

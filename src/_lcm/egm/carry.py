@@ -9,7 +9,7 @@ entry per carry-producing regime (DC-EGM regimes and terminal regimes a
 DC-EGM regime can target).
 """
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
@@ -102,15 +102,33 @@ def _flatten_egm_carry(carry: EGMCarry) -> tuple[tuple[Any, ...], None]:
     return tuple(getattr(carry, name) for name in _EGM_CARRY_FIELDS), None
 
 
-# keyword-only-exempt: library-callback=jax.tree_util.register_pytree_node
-def _unflatten_egm_carry(_aux: None, children: Sequence[Any]) -> EGMCarry:
+def _flatten_egm_carry_with_keys(
+    carry: EGMCarry,
+) -> tuple[tuple[tuple[jax.tree_util.GetAttrKey, Any], ...], None]:
+    """Flatten with field-named keys so a leaf path reads `.endog_grid`."""
+    return (
+        tuple(
+            (jax.tree_util.GetAttrKey(name), getattr(carry, name))
+            for name in _EGM_CARRY_FIELDS
+        ),
+        None,
+    )
+
+
+# keyword-only-exempt: library-callback=jax.tree_util.register_pytree_with_keys
+def _unflatten_egm_carry(_aux: None, children: Iterable[Any]) -> EGMCarry:
     carry = object.__new__(EGMCarry)
     for name, child in zip(_EGM_CARRY_FIELDS, children, strict=True):
         object.__setattr__(carry, name, child)
     return carry
 
 
-jax.tree_util.register_pytree_node(EGMCarry, _flatten_egm_carry, _unflatten_egm_carry)
+jax.tree_util.register_pytree_with_keys(
+    EGMCarry,
+    _flatten_egm_carry_with_keys,
+    _unflatten_egm_carry,
+    _flatten_egm_carry,
+)
 
 
 def build_template_egm_carry(

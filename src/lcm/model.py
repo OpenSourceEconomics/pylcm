@@ -554,6 +554,7 @@ class Model:
                 if regime.simulation.egm_policy_read is not None
             ),
             retain_dissolution_flags=retention.retains_replay,
+            retain_replay=retention.retains_replay,
             collect_solver_diagnostics=True,
             track_artifact_publication=True,
         )
@@ -594,6 +595,7 @@ class Model:
         collect_simulation_policies: bool,
         simulation_policy_regimes: frozenset[RegimeName] | None = None,
         retain_dissolution_flags: bool = False,
+        retain_replay: bool = True,
         collect_solver_diagnostics: bool = False,
         track_artifact_publication: bool = False,
     ) -> BackwardInductionResult:
@@ -628,6 +630,7 @@ class Model:
                 track_artifact_publication=track_artifact_publication,
                 max_compilation_workers=max_compilation_workers,
                 retain_dissolution_flags=retain_dissolution_flags,
+                retain_replay=retain_replay,
             )
         except InvalidValueFunctionError as exc:
             if log_path is not None and exc.partial_solution is not None:

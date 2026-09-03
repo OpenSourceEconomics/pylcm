@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from _lcm.engine import Regime
+from _lcm.execution.core_program import ProgramScope, core_program_graph
 from _lcm.params.mapping_leaf import MappingLeaf
 from _lcm.params.sequence_leaf import SequenceLeaf
 from _lcm.regime_building.finalize import FinalizedUserRegime
@@ -119,6 +120,7 @@ def build_solution_result(  # noqa: C901, PLR0912
                 did_publish_policy
                 or policy_read is not None
                 or user_regime.solver.publishes_simulation_policy
+                or _graph_publishes_replay(regime=regime, period=period)
             )
             if can_publish_policy and policy_ref not in replay:
                 if not policy_descriptor.applicable:
@@ -250,6 +252,12 @@ def _canonical_value_axis_names(*, regime: Regime) -> tuple[str, ...]:
     return (
         (*state_axes, "stakeholder") if regime.stakeholders is not None else state_axes
     )
+
+
+def _graph_publishes_replay(*, regime: Regime, period: int) -> bool:
+    """Return whether the period's kernel declares a replay-scoped program."""
+    graph = core_program_graph(kernel=regime.solution.period_kernels[period])
+    return any(program.scope is ProgramScope.REPLAY for program in graph.values())
 
 
 def _add_nested_artifacts(

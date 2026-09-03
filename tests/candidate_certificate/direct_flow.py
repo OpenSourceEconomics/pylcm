@@ -184,8 +184,8 @@ _SOURCE_SEALS = {
     MAX_Q_SOURCE: "6bed0c5a31bbc1c7fe9e0d9250223888d1271528b01844a398668af038e24844",
     PROCESSING_SOURCE: "bfd5dba23c774ac38a621c8408d06a20503696829b143157fe724cdeb3cfaca8",
     GRID_SEARCH_SOURCE: "1c9f20fd8662b4925d29399d2bd404cdbd65818f17bfe2b0c7b3a7b67450d0b4",
-    CORE_PROGRAM_SOURCE: "caf36e62a72dc2bfc5acceb05b48725186eccd68c79f66419f770527c5babe63",
-    OUTPUT_LAYOUT_SOURCE: "09237a7c2b137d3780abc2ff98aa3e38c7671828d7316904052d9572ed8b8e02",
+    CORE_PROGRAM_SOURCE: "b6d7991eeb99fbbe0d9bcef71d42c3be28fc88f63c2262aeecce3e18a3dcf5f1",
+    OUTPUT_LAYOUT_SOURCE: "c0f7025459e33f8b08aac9f9a6f2368396ed73d030b39c3da41eed007aa2988f",
     VALUE_TRANSFER_SOURCE: "44b8629c7b461b6b0216c79ba25101179e1b8cb2edf40630a55c6b9403fbbd2d",
     ACTION_STREAMING_SOURCE: "a34ca428598e37dd68fc3dcaa0c664c56f79afb6042c946246883f250bab681c",
     ACTION_REDUCTION_SOURCE: "6cee6ea2dbef0ba710fa4a318a2113377d6513cee508e73004861597f9c220f9",
@@ -201,9 +201,9 @@ _SOURCE_SEALS = {
     SIMULATION_SOURCE: "ca5c44cf477341bbabfedda4f7932ebe99c68dab0253a3310ba66bd18a9e86e4",
     SIMULATION_TRANSITIONS_SOURCE: "1c503777887af52d1d5de36cf86acb4d8431fbe3d71203d7da881b4d0742c928",
     SIMULATION_COMPILE_SOURCE: "6cf4f6ef4d5dd5bb959c354caf4670caf0db364592b7ab01ee4f4c92abff334a",
-    MODEL_SOURCE: "ddf57deb37663785bfad4d107c6ac263de379420cc50591011d065fdb33aa70d",
-    BACKWARD_INDUCTION_SOURCE: "dfa50cc2b25c5fae25c18baef52f9adafb47167460d64fc4cccc3b79827e35de",
-    PERIOD_REPLAY_SOURCE: "3fecb4eae21e40867a5813bacf34226d60de1ce58d4cf13eca6f7e541848cc4f",
+    MODEL_SOURCE: "42cba4bc0ef37f4ee65468a36c53c00b63e63a4b94fa5eb398c0d5ff5ef6b499",
+    BACKWARD_INDUCTION_SOURCE: "2f262ca7fad98b3249229d48a0a053dce5ed966ee1541266b6a036c668c6dfc9",
+    PERIOD_REPLAY_SOURCE: "0ede8cd27050d76fdcc8a07e60381caff26572f5f2c1c1a25c3e5bf85c5b6c69",
     INITIAL_CONDITIONS_SOURCE: "cb3663f59d10fa288d3da322b5f154545bb1ac4b9262073a87c405b5e950507f",
     RESULT_SOURCE: "992f8e14d2f47f505f6883e340e89d68dfc41311d4c36f7849a2f79331e4ba01",
     RESULT_DATAFRAME_SOURCE: "025e273c4d3bb9d8f9787189a551b113708c86b1e868d16178aa39555abf49a4",
@@ -1642,6 +1642,7 @@ def _core_program_transport_errors(tree: ast.Module) -> list[str]:
                 "disposition: CoreExecutionDisposition",
                 "disposition_reason: str | None = None",
                 "donation_candidates: tuple[str, ...] = ()",
+                "scope: ProgramScope = ProgramScope.ANY",
             ),
             methods=("__post_init__",),
         )
@@ -1660,6 +1661,7 @@ def _core_program_transport_errors(tree: ast.Module) -> list[str]:
                 "disposition: CoreExecutionDisposition",
                 "donation_candidates: tuple[str, ...]",
                 "disposition_reason: str | None = None",
+                "scope: ProgramScope = ProgramScope.ANY",
             ),
             methods=("__post_init__",),
         )
@@ -1682,6 +1684,7 @@ def _core_program_transport_errors(tree: ast.Module) -> list[str]:
                 "specialization_key: Hashable",
                 "input_transfer_plan: tuple[ResolvedValueTransfer, ...]",
                 "disposition_reason: str | None = None",
+                "scope: ProgramScope = ProgramScope.ANY",
             ),
             methods=("__post_init__",),
         )
@@ -1728,11 +1731,12 @@ LEGACY_UNPLANNED = "legacy-unplanned"
                 "core_program_graph": "cc6ea72073cacba5168d0aea0023a23769f5e242fbca404b3d3a7d3c2865e9a0",
                 "_reject_native_duplicate_authorities": "718aa10be29ba96de933ccd778200a94dd5d2637b148988b950e5b5e070edcea",
                 "_snapshot_and_validate_graph": "86908fdd8486a84edbbece9be246821176dcad948d8cb06e2074591993ed82aa",
-                "_validate_program_declaration": "9387bb0b9df54f536546f00ce2a2160bb3e582ba4deb03e1aadbd13007cd372f",
+                "_validate_program_declaration": "7604ce7eb5e9df15f0a8615a8e232b1402934b1cf7a8fbc9727cda2739f91fd1",
                 "_validate_disposition_reason": "ead5c4df5fc7e1dd4fa680fdad02549c67d340d46b2ae3556eb8c83028532c3a",
                 "_legacy_core_program_graph": "a1d0be2bb811ab3ab03d179bde85fe6cdfa7e953e2ee2617ce14be4f7b23e4f2",
-                "materialize_core_program": "95b3e807b02e2ae13f0b4d61ce853d0e287229c0dc2578bb3da810b4eac29f6d",
-                "resolve_core_program": "7a55d0ae17b176491a83f25a8572df9d972c0296d6f532e0179736d194390227",
+                "materialize_core_program": "c50687b26506170c5d14b259527c5a24256f8df0f16ce5aca30129b685340616",
+                "resolve_core_program": "f965ef1a3b818caf84891420dcbad743984722153bd6d07a051045dc99a3852f",
+                "select_programs": "2a1968cbee59cf61bf5dc93ae2f168839caaa47b3de508863e4b0cbd769f79d0",
                 "initial_core_tile_widths": "496cd22a502c9dacdad36884c681cfed6353d840824a1e2dce3df7b1dcbcc3cf",
                 "_validate_core_program": "d55b9b72493f9565e341c20ac15f1041c4f6acd2134e25a923382c7a10304b59",
                 "_validate_materialized_declaration": "ad5f5d6d54ea666a203f8ec188b4f3cc7a496f74ed79da141b6e78b0e5526bc1",
@@ -2056,8 +2060,7 @@ def _output_layout_errors(tree: ast.Module) -> list[str]:
                 "compilation_key: Hashable",
                 "expected_value_shape: tuple[int, ...]",
                 "expected_value_dtype: object",
-                "expected_dissolution_shape: tuple[int, ...] | None",
-                "expected_dissolution_dtype: object | None",
+                "expected_leaves: tuple[ExpectedOutputLeaf, ...]",
             ),
             methods=(),
         )
@@ -2076,18 +2079,52 @@ def _output_layout_errors(tree: ast.Module) -> list[str]:
         )
     )
     errors.extend(
+        _class_surface_errors(
+            tree=tree,
+            label="output layout",
+            class_name="StateAxesLeading",
+            fields=(
+                "state_names: tuple[StateName, ...]",
+                "n_free_leading_axes: int = 0",
+                "dtype: object | None = None",
+                "shape: tuple[int, ...] | None = None",
+            ),
+            methods=("__post_init__",),
+        )
+    )
+    errors.extend(
+        _class_surface_errors(
+            tree=tree,
+            label="output layout",
+            class_name="ExpectedOutputLeaf",
+            fields=(
+                "label: str",
+                "shape: tuple[int, ...] | None",
+                "dtype: object | None",
+                "sharding: jax.sharding.Sharding",
+            ),
+            methods=(),
+        )
+    )
+    errors.extend(
         _exact_callable_errors(
             tree=tree,
             label="output layout",
             contracts={
-                "resolve_output_layout": "b0cef6ca2f872668725bcc7bb5b65f8fbd30be52e6f12f73654d3d022b92c9ed",
-                "_validate_output_roles": "8bf237a4b6a84fddd8bb2d425c25561498531ff01121c205fcd3be28fca480c7",
-                "assert_output_layout": "78b4040ad158cd8201ce739cfc08ee3e0ddc1d91b0019bbff5689e5b2bebd0f3",
-                "_assert_output_metadata": "8612094c85183f9c7cfa568bb0aad875ce729c79c60b31126efd8d04785644ca",
+                "resolve_output_layout": "b22b19e7669e657b6b0e37190f52c4b8a4f8e39cb4101a3d7b2fc5c522c25fee",
+                "_validate_output_roles": "7cbf07ffbcb4becaabdb34d86ea44caca2bb8561b14f6768970ebccea79e4b08",
+                "assert_output_layout": "daad2a8d5013f547b1004e7f51d7c71d6051b57badf5d3933c866774f862c2a8",
+                "_assert_output_metadata": "4fdb1d8439ec600990e801f0da9197759f71dc01661a1d0cf14d332be05b1209",
                 "PlannedCore.__post_init__": "c62b7dc586d1bc5e57a4ef9b72208b6cf5d125c73befd7dbf7a72e4f09982ad6",
                 "PlannedCore.__call__": "f41f3d370e5237e949f541b1b7f538fe3b30d70994602bb933acc51170207e07",
                 "planned_output_layout": "0518c706a7de02411a990d4cfa9c40f426cc83f825791c735aeb19c4603e5e1e",
                 "planned_input_transfer_plan": "8a36aa2054fb5706e97ee14324e56517c3069443e10785f919c8a0ce2e602679",
+                "assert_value_leaf_layout": "9362aaf98344976ae13de7ac67e05d23fe983f12e34eac9f2ad439762a5d159d",
+                "_assert_output_leaf": "8a75af878a85e6cc997e5d823b55ba0545ff3f147a30a7ddbfd2666db07d70fd",
+                "_resolve_output_leaf": "b321849f4ff64dbab550be131a31a74157e9749a396958917b8e587fdffe5fa4",
+                "_state_axes_leading_sharding": "275366296965e4160350df8a1ca9482d4985be24f394afd4a441bbf0fbd8404e",
+                "_state_axis_spec": "49e002ddc32f703b089ecc147a6bb5296157f2c4f6313335c308e82f06ddd18d",
+                "StateAxesLeading.__post_init__": "0bd0d18d5a0caff060ce3a860622a537a26aa061a164e9bdab4423b2ea4d2698",
             },
         )
     )
@@ -2510,7 +2547,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
         tree=tree,
         label="backward output-layout transport",
         contracts={
-            "_compile_all_functions": "65525fe74b88547323c65c9305f7d80369fb6aee97bf7f1b910ab3deb2d6afc2",
+            "_compile_all_functions": "4323dba5ca824c781ef443092b148a14124d7930dc8504f6e3abdfc2540938d9",
             "_resolve_output_layouts_and_lowering_keys": "c30038ac72611373fecdf3a3423bb71be92e2c62a20d702c5b83159d2eee44b4",
             "_resolve_program_for_execution": "247155a79a8cdc2c16845aeb9d222b2c6aeea7129c90d9a733ecc66cf793f5d0",
             "_resolve_value_input_transfer_plan": "40e46250dd373f2ea17e38c911e0c2df7ad01192dd82fcb1d7a7ddbf641f91bb",
@@ -2520,9 +2557,9 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             "_abstract_value_key": "b79bdd528ed264be0093eb5d04a0341e7376606d478ba0770aa5cb14f813638b",
             "_abstract_leaf_key": "94afc53d035e8ad9812025f72adcbf76d8966430ef259d339977e9cf90262b66",
             "_output_roles_key": "c73436e6abaec7f0388386d353675200d7bf3d5d3544654f8d47f37ad0e5e8da",
-            "_assert_lowered_output_roles": "46823cef80ae0bd1c5294a63472a23c4f8ade153fe8eae8327403fe637f59df8",
+            "_assert_lowered_output_roles": "784fee32cdba67f3f635f7e66a036b6e949193eb131b3dcb3e484d57a9f244e0",
             "_attach_resolved_output_layout": "0b0e805ac307e87e1376de47086898c140a3cf00e5e81eefd8faab26ff972942",
-            "_publish_kernel_value": "5547b40f26e1fc86303ada9503f65c4210cbb4bb0b4fe6e715b9d99a58f78901",
+            "_publish_kernel_value": "8f750c264e89f39a66642b155d6d81d2ba8adfe661bbeb63e813f0bfbed870be",
         },
     )
     try:
@@ -2565,7 +2602,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             ]
             if len(starts) == len(ends) == 1 and starts[0] <= ends[0]:
                 corridors.append(loop.body[starts[0] : ends[0] + 1])
-        expected = "2af421ea176139a27f12a196bc04dcd98c52bc62eef383612f03cbebacdfd35b"
+        expected = "ead4755efff5724d80859ffb3823041723a1f006e1b6925771293bd0388c9d96"
         if len(corridors) != 1 or _statements_ast_sha256(corridors[0]) != expected:
             errors.append(
                 "backward output-layout transport: solve publication corridor changed"
@@ -2611,7 +2648,7 @@ def _period_replay_errors(tree: ast.Module) -> list[str]:
         label="period replay native-program transport",
         contracts={
             "replay_period": "919baec005808465b365523da329d9b2931a6f88dcb1d1470a0d5dbb79047b8e",
-            "_compile_cores_for_one_period": "0287dc3d7c1bf0aa9b6d5b5ec32674c5984aae764a5c67c91dc46c7261e16048",
+            "_compile_cores_for_one_period": "36b7fdcd0cbbfbffb96056e9bc2eaf510823ff4f6da479cdad9ac83dead31536",
             "_core_build_context_for_one_period": "8d11e28bebf0c0df6bce4872e25a56e577592db26901d47d8cd5cf431a55b473",
         },
     )
@@ -5207,8 +5244,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         ),
         "output_layout:sharding_check_disabled": replace_once(
             source=output_layout_source,
-            old="        if actual != expected:",
-            new="        if False and actual != expected:",
+            old="    if actual != expected.sharding:",
+            new="    if False and actual != expected.sharding:",
             label="planned output sharding assertion",
         ),
         "output_layout:expected_value_shape_sliced": replace_once(
@@ -5761,10 +5798,13 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "source": replace_once(
                 source=backward_induction_source,
                 old=(
-                    "            graph = core_program_graph("
-                    "kernel=regime.solution.period_kernels[period])"
+                    "                graph=core_program_graph("
+                    "kernel=regime.solution.period_kernels[period]),"
                 ),
-                new="            graph = regime.solution.period_kernels[period].core_programs()",
+                new=(
+                    "                graph=regime.solution.period_kernels[period]"
+                    ".core_programs(),"
+                ),
                 label="solve central graph validation",
             ),
         },
@@ -5947,15 +5987,9 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": BACKWARD_INDUCTION_SOURCE,
             "source": replace_once(
                 source=backward_induction_source,
-                old="        assert_output_layout(\n"
-                "            output=(value, dissolution) if dissolution is not None else value,\n"
-                "            layout=layout,\n"
-                "        )\n"
+                old="        assert_value_leaf_layout(value=value, layout=layout)\n"
                 "        return value",
-                new="        assert_output_layout(\n"
-                "            output=(value, dissolution) if dissolution is not None else value,\n"
-                "            layout=layout,\n"
-                "        )\n"
+                new="        assert_value_leaf_layout(value=value, layout=layout)\n"
                 "        return candidate_filter(value)",
                 label="planned publication identity",
             ),
@@ -6210,11 +6244,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         "path": PERIOD_REPLAY_SOURCE,
         "source": replace_once(
             source=period_replay_source,
-            old=(
-                "    for core_name, declaration in "
-                "core_program_graph(kernel=period_kernel).items():"
-            ),
-            new="    for core_name, declaration in period_kernel.core_programs().items():",
+            old="        graph=core_program_graph(kernel=period_kernel),",
+            new="        graph=period_kernel.core_programs(),",
             label="replay central graph validation",
         ),
     }

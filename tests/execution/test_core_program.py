@@ -30,6 +30,7 @@ from _lcm.execution.core_program import (
 from _lcm.execution.output_layout import (
     DISSOLUTION_FLAG,
     VALUE,
+    resolve_output_layout,
 )
 from _lcm.execution.value_transfer import (
     ValueArtifactAddress,
@@ -422,7 +423,12 @@ def test_explicit_value_program_rejects_wrong_lowered_metadata_before_compile(
         _assert_lowered_output_roles(
             lowered=lowered,
             output_roles=program.output_roles,
-            value_template=template,
+            layout=resolve_output_layout(
+                core_key="main",
+                value_template=template,
+                state_order=("x",),
+                output_roles=VALUE,
+            ),
             label="test core",
         )
 
