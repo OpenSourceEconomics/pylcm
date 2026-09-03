@@ -1252,13 +1252,11 @@ class Model:
                         )
                     )
         if missing_or_mismatched_policies:
-            msg = (
-                f"Required artifact {SIMULATION_POLICY.type_id!r} is absent or "
-                "invalid at (period, regime, reason): "
-                f"{tuple(missing_or_mismatched_policies)}. Re-solve with "
-                "retention=ResultRetention.VALUES_AND_REPLAY."
+            raise InvalidSimulationInputError(
+                _missing_policy_message(
+                    missing_or_mismatched_policies=tuple(missing_or_mismatched_policies)
+                )
             )
-            raise InvalidSimulationInputError(msg)
 
     def _check_solution_result_dissolution_flags(
         self,
@@ -1681,3 +1679,26 @@ class Model:
         _validate_param_types(flat_params)
         fail_if_nonpositive_taste_shock_scale(flat_params)
         return flat_params
+
+
+def _missing_policy_message(
+    *, missing_or_mismatched_policies: tuple[tuple[int, RegimeName, str], ...]
+) -> str:
+    """Explain which replay policies are absent or invalid and how to obtain them."""
+    msg = (
+        f"Required artifact {SIMULATION_POLICY.type_id!r} is absent or "
+        "invalid at (period, regime, reason): "
+        f"{missing_or_mismatched_policies}. Re-solve with "
+        "retention=ResultRetention.VALUES_AND_REPLAY."
+    )
+    if any(
+        reason == OmissionReason.NOT_PERSISTED.value
+        for _period, _regime_name, reason in missing_or_mismatched_policies
+    ):
+        msg += (
+            " A policy omitted as 'not_persisted' is the NNBEGM replay policy of "
+            "an AdaptiveOuterMesh search: it is read against the solve-generated "
+            "mesh this model instance holds beside the result, so no persistable "
+            "retention keeps it; only VALUES_AND_REPLAY retains it."
+        )
+    return msg

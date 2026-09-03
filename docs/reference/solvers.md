@@ -253,12 +253,24 @@ Nests an `NBEGM` liquid solve inside a configurable outer search. The inner solv
 use a bridged carry compatible with the outer fold. See
 [Outer search and branch aggregation](outer_search.md).
 
+The nested period kernel publishes no traced body of its own: its core-program graph
+republishes the inner NB-EGM replay programs as `keeper:replay` and `adjuster:replay`,
+each with the inner program's output roles and planned disposition. The keeper program
+is built from the period's own inputs; the adjuster program binds the outer
+post-decision at the first outer node, the same shape every per-node call rebinds. Both
+are dispatched under every retention, because the nested collapse reads the inner
+policy banks whether or not a replay artifact is kept.
+
 How the keeper and adjuster branches combine is an economic declaration, not a solver
 setting: it lives on [`OuterContinuousMargin.adjustment_cost`](consumption_savings.md).
 
 With `FiniteOuterGrid`, NNBEGM replays the keeper-plus-outer-grid candidates ranked
 during the solve; with `AdaptiveOuterMesh` it republishes the mesh policies and the
-search settings, and re-refines per subject at that subject's own resources. Every
+search settings, and re-refines per subject at that subject's own resources. The
+adaptive replay reads the exact generated mesh, which the solving model instance holds
+beside the result, so that policy is retained under `ResultRetention.VALUES_AND_REPLAY`
+and omitted as `NOT_PERSISTED` under `ALL_PERSISTABLE_ARTIFACTS`; the finite candidate
+bank is self-contained and persists under both. Every
 declaration that can affect that replay must therefore be phase-invariant by object
 identity: a bare declaration and `Phased(solve=f, simulate=f)` are accepted, while
 distinct solve/simulate functions, state or regime transitions, Koopmans aggregators,

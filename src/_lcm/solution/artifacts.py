@@ -81,6 +81,18 @@ def build_solution_result(  # noqa: C901, PLR0912
             key=DISSOLUTION_FLAG,
         )
 
+    if retention is ResultRetention.ALL_PERSISTABLE_ARTIFACTS:
+        # A policy replayed against solve-generated adaptive axes is read through
+        # facts the solving model instance holds beside the result, not inside
+        # it; nothing persistable carries them, so the policy is not kept.
+        for policy_ref in tuple(replay):
+            if (
+                policy_ref.key == SIMULATION_POLICY
+                and authority.replay[policy_ref].adaptive_outer_nodes is not None
+            ):
+                del replay[policy_ref]
+                omissions[policy_ref] = OmissionReason.NOT_PERSISTED
+
     _add_nested_artifacts(
         target=diagnostics,
         nested=internal_result.diagnostics,
@@ -122,7 +134,11 @@ def build_solution_result(  # noqa: C901, PLR0912
                 or user_regime.solver.publishes_simulation_policy
                 or _graph_publishes_replay(regime=regime, period=period)
             )
-            if can_publish_policy and policy_ref not in replay:
+            if (
+                can_publish_policy
+                and policy_ref not in replay
+                and policy_ref not in omissions
+            ):
                 if not policy_descriptor.applicable:
                     omissions[policy_ref] = OmissionReason.NOT_APPLICABLE
                 elif not retention.retains_replay:

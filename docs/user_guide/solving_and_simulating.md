@@ -47,8 +47,11 @@ result = model.simulate(
 
 `VALUES` drops replay artifacts and works only when every simulated decision can be
 recovered from values and no applicable collective gate needs a dissolution flag.
-`ALL_PERSISTABLE_ARTIFACTS` currently retains the same replay set; continuation
-artifacts are not yet retainable. Diagnostics follow `log_level`, not retention.
+`ALL_PERSISTABLE_ARTIFACTS` keeps only what the result carries on its own: continuation
+artifacts are not yet retainable, and the `NNBEGM` replay policy of an
+`AdaptiveOuterMesh` search, which is replayed against a solve-generated mesh the model
+instance holds privately, is omitted as `NOT_PERSISTED`. Diagnostics follow `log_level`,
+not retention.
 
 Simulation validates the originating model instance, exact canonical parameters, result
 versions, value coverage and schemas, and every required replay artifact before forward

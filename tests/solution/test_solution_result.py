@@ -1208,3 +1208,88 @@ def _with_artifact(
         solution,
         **{channel: replacement},
     )
+
+
+def _policy_refs(solution: SolutionResult) -> set[ArtifactRef]:
+    """Every simulation-policy coordinate the result accounts for."""
+    return {
+        ref
+        for ref in (*solution.replay_artifacts, *solution.omissions)
+        if ref.key == SIMULATION_POLICY
+    }
+
+
+def test_all_persistable_omits_the_adaptive_nnbegm_policy_as_not_persisted() -> None:
+    """The adaptive replay policy reads solve-generated mesh facts held only by
+    the solving model instance, so no persistable retention keeps it."""
+    model = _build("adaptive")
+    solution = model.solve(
+        params=_PARAMS,
+        log_level="off",
+        retention=ResultRetention.ALL_PERSISTABLE_ARTIFACTS,
+    )
+
+    refs = _policy_refs(solution)
+    assert refs
+    assert not any(ref in solution.replay_artifacts for ref in refs)
+    assert {solution.omissions[ref] for ref in refs} == {OmissionReason.NOT_PERSISTED}
+
+
+def test_all_persistable_retains_the_finite_nnbegm_policy() -> None:
+    """The finite candidate bank is self-contained, so it persists."""
+    model = _build("finite")
+    solution = model.solve(
+        params=_PARAMS,
+        log_level="off",
+        retention=ResultRetention.ALL_PERSISTABLE_ARTIFACTS,
+    )
+
+    refs = _policy_refs(solution)
+    assert refs
+    assert all(
+        isinstance(solution.replay_artifacts[ref], NNBEGMSimPolicy) for ref in refs
+    )
+
+
+def test_values_and_replay_retains_the_adaptive_nnbegm_policy() -> None:
+    model = _build("adaptive")
+    solution = model.solve(
+        params=_PARAMS,
+        log_level="off",
+        retention=ResultRetention.VALUES_AND_REPLAY,
+    )
+
+    refs = _policy_refs(solution)
+    assert refs
+    assert all(
+        isinstance(solution.replay_artifacts[ref], NestedEGMSimPolicy) for ref in refs
+    )
+
+
+def test_not_persisted_adaptive_policy_is_refused_before_forward_simulation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = _build("adaptive")
+    solution = model.solve(
+        params=_PARAMS,
+        log_level="off",
+        retention=ResultRetention.ALL_PERSISTABLE_ARTIFACTS,
+    )
+
+    def _forward_loop_must_not_run(**_kwargs: object) -> None:
+        raise AssertionError("forward simulation ran before replay preflight")
+
+    monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
+    with pytest.raises(
+        InvalidSimulationInputError,
+        match=(
+            r"pylcm\.simulation\.policy.*not_persisted"
+            r"(.|\n)*AdaptiveOuterMesh(.|\n)*VALUES_AND_REPLAY"
+        ),
+    ):
+        model.simulate(
+            params=_PARAMS,
+            initial_conditions=dict(_INITIAL),
+            solution=solution,
+            log_level="off",
+        )

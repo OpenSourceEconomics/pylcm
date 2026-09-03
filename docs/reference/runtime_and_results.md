@@ -46,7 +46,7 @@ they are not re-exported from the top-level `lcm` namespace. The retention modes
 | --------------------------- | ---------------------------------------------------------------------------- |
 | `VALUES`                    | Values; no replay artifacts                                                  |
 | `VALUES_AND_REPLAY`         | Values plus applicable simulation-policy and dissolution artifacts (default) |
-| `ALL_PERSISTABLE_ARTIFACTS` | All currently persistable artifacts; presently the same replay set           |
+| `ALL_PERSISTABLE_ARTIFACTS` | Every replay artifact a result can carry on its own, without this instance   |
 
 Artifacts are addressed by an `ArtifactRef(period=..., regime=..., key=...)` and kept in
 immutable `ArtifactStore` instances. Built-in key identities include
@@ -68,6 +68,15 @@ Solver diagnostics follow `log_level`, independently of retention. Continuation
 artifacts used during backward induction are not currently retainable: their absence is
 recorded as `NOT_REQUESTED`, or as `UNSUPPORTED` when `ALL_PERSISTABLE_ARTIFACTS`
 requests everything the boundary can describe.
+
+`ALL_PERSISTABLE_ARTIFACTS` keeps only artifacts the result carries on its own. The
+`NNBEGM` replay policy of an `AdaptiveOuterMesh` search is replayed against the exact
+mesh the solve generated, a fact the solving model instance holds privately beside the
+result rather than inside it; that policy is retained under `VALUES_AND_REPLAY` and
+omitted as `NOT_PERSISTED` under `ALL_PERSISTABLE_ARTIFACTS`. Simulating from such a
+result is refused before forward execution with the omission reason named. The finite
+candidate bank of a `FiniteOuterGrid` search is self-contained and persists under both
+modes.
 
 `SolutionResult` persistence is not implemented yet. `save_solution()` persists only a
 standalone value-function mapping; it does not serialize the labelled metadata or
