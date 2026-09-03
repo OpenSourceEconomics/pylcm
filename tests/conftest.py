@@ -215,7 +215,11 @@ def assert_agrees_to_ulp(
     gap = np.where(finite, np.abs(got_arr - expected_arr), 0.0)
     magnitude = np.maximum(np.abs(got_arr), np.abs(expected_arr))
     if operand_magnitude is not None:
-        magnitude = np.maximum(magnitude, np.asarray(operand_magnitude))
+        # Measure the spacing in the compared arrays' own format: promoting the
+        # magnitude to a wider float would report the wider format's spacing.
+        magnitude = np.maximum(
+            magnitude, np.asarray(operand_magnitude, dtype=magnitude.dtype)
+        )
     spacing = np.spacing(magnitude)
     in_ulp = np.divide(
         gap, spacing, out=np.zeros(gap.shape, dtype=float), where=gap > 0.0

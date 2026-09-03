@@ -10,7 +10,14 @@ given size — and the merged value function must not depend on the choice.
 import numpy as np
 import pytest
 
+from tests.conftest import assert_agrees_to_ulp
 from tests.test_models import nbegm_next_asset_cliff_toy as toy
+
+# Chunking the interval axis leaves every operation and its operand order
+# untouched; the two solves differ only by the vectorized kernel XLA emits per
+# chunk width, a gap of a few spacings of the operands, orders of magnitude below
+# a chunk-dependent reduction.
+_PARTITION_ULP = 64
 
 _ALIVE = "alive"
 
@@ -32,11 +39,18 @@ def _solve_v(interval_batch_size: int) -> dict[int, np.ndarray]:
 def test_interval_batch_size_leaves_the_value_function_unchanged(
     interval_batch_size: int,
 ) -> None:
-    """`V` is identical whether intervals solve vectorized or in chunks."""
+    """`V` names the same values whether intervals solve vectorized or in chunks."""
     vectorized = _solve_v(0)
     chunked = _solve_v(interval_batch_size)
     assert vectorized.keys() == chunked.keys()
     for period in vectorized:
-        np.testing.assert_allclose(
-            chunked[period], vectorized[period], rtol=1e-12, atol=1e-12
+        # Every entry of `V` is a flow utility plus a discounted continuation of
+        # the array's own magnitude, so an entry near zero is a cancellation
+        # whose rounding is that of its operands.
+        assert_agrees_to_ulp(
+            got=chunked[period],
+            expected=vectorized[period],
+            n_ulp=_PARTITION_ULP,
+            err_msg=f"period={period}",
+            operand_magnitude=float(np.abs(vectorized[period]).max()),
         )
