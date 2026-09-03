@@ -17,11 +17,18 @@ A useful first inventory is:
 | State-grid product   | Number of value-function cells                            |
 | Action-grid product  | Grid-search candidates per state cell                     |
 | Discrete branches    | Separate candidate surfaces and envelope work             |
+| Continuation classes | Continuation reads per cell in a branch-carrying NB-EGM   |
 | Stochastic nodes     | Continuation evaluations before expectation               |
 | Outer candidates     | Complete inner solves in a nested method                  |
 | Refinement budget    | Adaptive outer search, where node count is data-dependent |
 | Period/regime shapes | Number of distinct programs JAX may compile               |
 | Subjects             | Simulation batch size and compiled shape                  |
+
+A discrete branch inside `NBEGM` costs a candidate surface and its share of the
+envelope, but not necessarily a continuation read: branches that agree on every action
+reaching the continuation (the regime transition, a law of motion, a child's resources,
+the discount factor, or, on a per-interval read, a schedule variable) share one read, so
+a budget-only action adds branches without adding continuation classes.
 
 For grid search, continuous action grids multiply. For a nested solver, outer candidates
 multiply the inner solve — a declared count under a finite outer grid, and a

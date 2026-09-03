@@ -44,6 +44,17 @@ then augments candidates at declared boundaries, applies exact side ownership, a
 a branch-aware upper envelope. A parent can read a jump one-sidedly or use a faster
 bridged finite-grid representation according to `jump_read`.
 
+The period is solved tile-locally: each block of ride-along cells reads its
+transition-aware continuation and runs its envelope solve in savings space before the
+next block, so the expected continuation over every cell never exists as one array. A
+next-period law that reads the current liquid state through declared cliffs makes the
+continuation piecewise-constant across the cliff intervals; the read is then bound per
+interval and each interval is solved as its own case. A discrete action that only shifts
+the budget and utility shares one continuation read across its branches; an action that
+reaches the continuation (through the regime transition, a law of motion, a child's
+resources, the discount factor, or a schedule variable on a per-interval read) is read
+once per class of branches agreeing on it.
+
 The structural declaration does not make an unsupported model supported. The solver
 still checks its scope: margin count, action structure, budget form, differentiability,
 and which names are available at each candidate stage. A retained `Condition` has the

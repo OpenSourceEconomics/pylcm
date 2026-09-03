@@ -80,6 +80,25 @@ none, so it runs its values-only program under every retention and its policy is
 recorded as `NOT_APPLICABLE`. Values and carries agree across retentions to the working
 format's spacing.
 
+A values-only solve is the cheap way to obtain value functions from a case-piece or
+piecewise-affine budget model, for example to compare solvers or to sweep parameters:
+
+```python
+from lcm.solver_api import ResultRetention
+
+values_only = model.solve(
+    params=params,
+    log_level="warning",
+    retention=ResultRetention.VALUES,
+)
+
+V_alive = values_only.value(period=0, regime="alive")
+```
+
+Such a result simulates only where every decision is recoverable from values; a model
+whose simulation reads an NB-EGM or NNBEGM policy needs the default retention before it
+can be simulated.
+
 `ALL_PERSISTABLE_ARTIFACTS` keeps only artifacts the result carries on its own. The
 `NNBEGM` replay policy of an `AdaptiveOuterMesh` search is replayed against the exact
 mesh the solve generated, a fact the solving model instance holds privately beside the
