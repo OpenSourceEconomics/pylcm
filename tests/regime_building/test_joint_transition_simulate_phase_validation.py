@@ -141,7 +141,6 @@ def test_simulate_rejects_a_joint_law_that_is_not_a_distribution() -> None:
         model.simulate(
             params=_params(),
             initial_conditions=initial_conditions,
-            period_to_regime_to_V_arr=None,
             log_level="debug",
         )
 
@@ -168,7 +167,6 @@ def test_a_carried_state_dependent_simulate_law_that_is_a_distribution_runs() ->
             "experience": jnp.array([1.0, 2.0]),
             "regime_id": jnp.array([RegimeId.working, RegimeId.working]),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
 

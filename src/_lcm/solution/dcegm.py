@@ -180,14 +180,13 @@ class DCEGM(OneMarginSolver):
     utility with an expanding bracket. Structural and per-period applicability
     checks run during `Model(...)` through the solver's staged validation hooks.
 
-    A solve can publish the off-grid EGM policy as an inspection artifact when
-    `return_simulation_policy=True`. Collection and host transfer are skipped
-    otherwise, except when fresh simulation has an internal policy-read consumer.
+    A solve retains the off-grid EGM policy in its labelled replay artifacts when
+    the model declares a policy-read consumer. Collection and host transfer are
+    skipped for regimes without that replay route.
     No shipped envelope currently satisfies the conservative off-grid read gate,
     so ordinary simulation recomputes the action on its grid.
 
-    Otherwise — and whenever `simulate` is handed user-supplied value arrays,
-    which carry no policy — `simulate` recomputes the argmax over the regime's
+    Otherwise, `simulate` recomputes the argmax over the regime's
     gridded continuous action against the stored value function. Simulated
     continuous actions then live on the action grid, and with taste shocks the
     simulated choice frequencies follow the grid-restricted choice-specific

@@ -43,7 +43,7 @@ def _solve(
     )
     return model.solve(
         params=toy.build_params(discount_factor=discount_factor), log_level="debug"
-    )
+    ).values
 
 
 def test_nbegm_matches_brute_with_a_next_asset_cliff_terminal_adjacent():

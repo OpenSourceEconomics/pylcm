@@ -193,7 +193,7 @@ def test_nonterminal_collective_full_model_solve_matches_kernel_level():
         regime_id_class=RegimeId,
     )
 
-    solution = model.solve(params={"discount_factor": 0.95}, log_level="off")
+    solution = model.solve(params={"discount_factor": 0.95}, log_level="off").values
 
     V_terminal = solution[1]["couple_terminal"]
     V_0 = solution[0]["couple"]
@@ -354,7 +354,6 @@ def test_collective_model_simulates_end_to_end_via_public_model_api():
             "age": jnp.array([0.0, 0.0]),
             "regime_id": jnp.array([0, 0], dtype=jnp.int32),
         },
-        period_to_regime_to_V_arr=None,
         log_level="off",
         seed=0,
     )

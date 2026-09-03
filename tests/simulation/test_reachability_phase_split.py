@@ -3,17 +3,19 @@
 Promoted from the Pro-review reachability audit: forward simulation's
 decision/Q evaluation reads continuation value-function arrays for every
 target the *solution* graph names for the current `(period, source)` edge.
-A caller-supplied `period_to_regime_to_V_arr` missing one of those targets
-must raise a descriptive `InvalidSimulationInputError`, not a bare `KeyError`
-and not a silent zero/empty fallback.
+A caller-supplied `SolutionResult` missing one of those target values must raise a
+descriptive `InvalidSimulationInputError`, not a bare `KeyError` and not a silent
+zero/empty fallback.
 """
 
+from dataclasses import replace
 from types import MappingProxyType
 
 import jax.numpy as jnp
 import pytest
 
 from lcm import AgeGrid, MarkovTransition, Model, Regime, categorical
+from lcm.exceptions import InvalidSimulationInputError
 from lcm.typing import ScalarFloat, ScalarInt
 
 
@@ -25,15 +27,15 @@ class _RegimeId:
 
 
 def _zero_utility() -> ScalarFloat:
-    return jnp.float32(0)
+    return jnp.asarray(0.0)
 
 
 def _low_utility() -> ScalarFloat:
-    return jnp.float32(0)
+    return jnp.asarray(0.0)
 
 
 def _high_utility() -> ScalarFloat:
-    return jnp.float32(10)
+    return jnp.asarray(10.0)
 
 
 def _probability_high(probability_high: ScalarFloat) -> ScalarFloat:
@@ -83,7 +85,7 @@ def _build_model() -> Model:
 def test_missing_solution_graph_value_raises_descriptive_simulation_input_error() -> (
     None
 ):
-    """A `period_to_regime_to_V_arr` missing a solution-graph target fails closed."""
+    """A result missing a solution-graph target value fails closed."""
     model = _build_model()
     params = {"discount_factor": 1.0, "probability_high": 0.5}
     solution = model.solve(params=params, log_level="debug")
@@ -97,8 +99,10 @@ def test_missing_solution_graph_value_raises_descriptive_simulation_input_error(
     # "source" needs to compute its continuation value.
     incomplete_solution = MappingProxyType(
         {
-            **solution,
-            1: MappingProxyType({k: v for k, v in solution[1].items() if k != "high"}),
+            **solution.values,
+            1: MappingProxyType(
+                {k: v for k, v in solution.values[1].items() if k != "high"}
+            ),
         }
     )
 
@@ -107,18 +111,15 @@ def test_missing_solution_graph_value_raises_descriptive_simulation_input_error(
         "regime_id": jnp.array([model.regime_names_to_ids["source"]]),
     }
 
-    with pytest.raises(Exception) as excinfo:  # noqa: PT011
+    incomplete_result = replace(solution, values=incomplete_solution)
+
+    with pytest.raises(
+        InvalidSimulationInputError,
+        match=r"coverage.*missing=.*high",
+    ):
         model.simulate(
             params=params,
             initial_conditions=initial_conditions,
-            period_to_regime_to_V_arr=incomplete_solution,
+            solution=incomplete_result,
             log_level="debug",
         )
-
-    assert not isinstance(excinfo.value, KeyError), (
-        "A missing solution-graph continuation value must raise a descriptive "
-        "InvalidSimulationInputError, not a bare KeyError."
-    )
-    message = str(excinfo.value)
-    assert "source" in message
-    assert "high" in message

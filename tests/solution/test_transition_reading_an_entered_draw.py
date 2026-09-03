@@ -110,7 +110,7 @@ def test_the_continuation_is_the_expectation_over_the_draw(model: Model) -> None
     integrand is `3 * eps` on every node. Its expectation is three for any weights
     that make the symmetric node set average to one.
     """
-    V = model.solve(params=_PARAMS, log_level="off")
+    V = model.solve(params=_PARAMS, log_level="off").values
 
     np.testing.assert_allclose(
         np.asarray(V[0]["source"]).ravel(), np.array([3.0]), atol=1e-5

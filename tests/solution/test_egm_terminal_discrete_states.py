@@ -243,8 +243,8 @@ def test_dcegm_terminal_bequest_by_pref_type_matches_brute_force():
     so the parent reads the terminal bequest carry at its own type.
     """
     params = _get_params()
-    dcegm_solution = _get_dcegm_model().solve(params=params, log_level="debug")
-    brute_solution = _get_brute_model().solve(params=params, log_level="debug")
+    dcegm_solution = _get_dcegm_model().solve(params=params, log_level="debug").values
+    brute_solution = _get_brute_model().solve(params=params, log_level="debug").values
 
     for period in sorted(brute_solution)[:-1]:
         brute_V = np.asarray(brute_solution[period]["retirement"])
@@ -268,7 +268,7 @@ def test_dcegm_terminal_bequest_differs_by_pref_type():
     in the terminal period far above the impatient-bequest type.
     """
     params = _get_params()
-    dcegm_solution = _get_dcegm_model().solve(params=params, log_level="debug")
+    dcegm_solution = _get_dcegm_model().solve(params=params, log_level="debug").values
 
     decision_period = min(dcegm_solution)
     V = np.asarray(dcegm_solution[decision_period]["retirement"])

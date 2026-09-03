@@ -59,7 +59,14 @@ from lcm import (
     fixed_transition,
 )
 from lcm.ages import AgeGrid
+from lcm.exceptions import InvalidSimulationInputError
 from lcm.koopmans_aggregation import LinearAggregator
+from lcm.solver_api import (
+    DISSOLUTION_FLAG,
+    SIMULATION_POLICY,
+    ResultRetention,
+    SolutionResult,
+)
 from lcm.transition import MarkovTransition
 from lcm.typing import (
     BoolND,
@@ -1099,13 +1106,10 @@ def test_consent_routing_simulate_with_discrete_target_axis_routes_correctly():
 
 
 # Test 7: public `Model.solve`/`Model.simulate` API — the flags Test 5 pins at
-# the INTERNAL `simulate()` level travel through the public one too.
-# `Model.solve(return_dissolution_flags=True)` must surface the dissolution-flag
-# mapping `backward_induction.solve` computes, and `Model.simulate(...)` must
-# accept it via `period_to_regime_to_dissolution_flags` and thread it down to the
-# same dissolution routing exercised by Test 3 (`_make_dissolution_regimes`),
-# reusing that fixture through the public API instead of the internal
-# `process_regimes` harness.
+# the INTERNAL `simulate()` level travel through the addressed public result too.
+# The default `Model.solve()` result carries the dissolution artifact computed by
+# `backward_induction.solve`, and `Model.simulate(solution=...)` threads it down to
+# the same dissolution routing exercised by Test 3 (`_make_dissolution_regimes`).
 
 
 @categorical(ordered=False)
@@ -1135,47 +1139,47 @@ _DISSOLUTION_PARAMS = {
 }
 
 
-def test_public_model_solve_return_dissolution_flags_matches_internal_solve():
-    """`Model.solve(return_dissolution_flags=True)` surfaces the same `D` array.
+def test_public_model_solve_dissolution_artifact_matches_internal_solve():
+    """The default `SolutionResult` surfaces the same addressed `D` array.
 
     Same hand-computed cell as the internal-harness test
     (`test_dissolution_edge_routes_the_row_to_its_own_roles_single_regime`):
     D=True only at wage=2 for `married_ir` in period 1.
     """
     model = _make_dissolution_model()
-    solution, dissolution_flags = model.solve(
-        params=_DISSOLUTION_PARAMS, log_level="debug", return_dissolution_flags=True
-    )
+    solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="debug")
+    dissolution_flags = solution.replay_artifacts.project(DISSOLUTION_FLAG)
     np.testing.assert_array_equal(
         np.asarray(dissolution_flags[1]["married_ir"]), [False, True, False]
     )
     np.testing.assert_allclose(
-        np.asarray(solution[1]["married_ir"])[1], [-np.inf, -np.inf]
+        np.asarray(solution.values[1]["married_ir"])[1], [-np.inf, -np.inf]
     )
 
 
-def test_public_model_solve_return_both_returns_three_tuple():
-    """`return_simulation_policy=True` and `return_dissolution_flags=True` combine."""
+def test_public_model_solve_retains_both_replay_artifact_kinds():
+    """The default result retains policy and dissolution replay artifacts together."""
     model = _make_dissolution_model()
-    solution, sim_policy, dissolution_flags = model.solve(
+    solution = model.solve(
         params=_DISSOLUTION_PARAMS,
         log_level="debug",
-        return_simulation_policy=True,
-        return_dissolution_flags=True,
     )
-    assert isinstance(solution, MappingProxyType)
+    sim_policy = solution.replay_artifacts.project(SIMULATION_POLICY)
+    dissolution_flags = solution.replay_artifacts.project(DISSOLUTION_FLAG)
+    assert isinstance(solution, SolutionResult)
     assert isinstance(sim_policy, MappingProxyType)
     np.testing.assert_array_equal(
         np.asarray(dissolution_flags[1]["married_ir"]), [False, True, False]
     )
 
 
-def test_public_model_solve_default_return_shape_is_byte_identical():
-    """Without either flag, `solve` still returns the bare value-function mapping."""
+def test_public_model_solve_returns_labelled_values_for_every_period():
+    """The public solve result labels the same value-function periods."""
     model = _make_dissolution_model()
     solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="debug")
-    assert isinstance(solution, MappingProxyType)
-    assert set(solution) == {0, 1, 2, 3}
+    assert isinstance(solution, SolutionResult)
+    assert isinstance(solution.values, MappingProxyType)
+    assert set(solution.values) == {0, 1, 2, 3}
 
 
 def test_public_model_simulate_routes_dissolution_edge_when_flags_supplied():
@@ -1187,9 +1191,7 @@ def test_public_model_simulate_routes_dissolution_edge_when_flags_supplied():
     wage=1 and wage=3 (D=False) stay married.
     """
     model = _make_dissolution_model()
-    solution, dissolution_flags = model.solve(
-        params=_DISSOLUTION_PARAMS, log_level="debug", return_dissolution_flags=True
-    )
+    solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="debug")
     initial_conditions = MappingProxyType(
         {
             "wage": jnp.array([1.0, 2.0, 3.0]),
@@ -1205,8 +1207,7 @@ def test_public_model_simulate_routes_dissolution_edge_when_flags_supplied():
     result = model.simulate(
         params=_DISSOLUTION_PARAMS,
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=solution,
-        period_to_regime_to_dissolution_flags=dissolution_flags,
+        solution=solution,
         log_level="debug",
         seed=0,
     )
@@ -1225,25 +1226,22 @@ def test_public_model_simulate_routes_dissolution_edge_when_flags_supplied():
     assert np.all(np.isfinite(np.asarray(married_ir.V_arr)[[0, 2]]))
 
 
-def test_public_model_simulate_runs_edge_fold_collision_guard_on_precomputed_values(
+def test_public_model_simulate_runs_edge_fold_collision_guard_on_supplied_result(
     monkeypatch,
 ):
     """The edge-fold state/source-param collision guard runs on the SIMULATE
     entry, not only in `solve()`.
 
-    The public `Model.simulate` accepts a precomputed / cached
-    `period_to_regime_to_V_arr` and skips `solve()` entirely, so a guard installed
-    only in `solve()` would let the simulate gate and fallback-state projector
-    read a colliding leaf unchecked. This asserts the guard is invoked on exactly
-    that precomputed-value path — for a gated model, even though `solve()` never
-    runs. Correctness of the guard itself (that it rejects a genuine collision)
+    The public `Model.simulate` accepts a previously computed `SolutionResult` and
+    skips `solve()` entirely, so a guard installed only in `solve()` would let the
+    simulate gate and fallback-state projector read a colliding leaf unchecked. This
+    asserts the guard is invoked on exactly that supplied-result path — for a gated
+    model, even though `solve()` never runs. Correctness of the guard itself (that it
+    rejects a genuine collision)
     is pinned in `test_gated_edge_arg_provenance.py`; this pins its PLACEMENT.
     """
     model = _make_dissolution_model()
-    solution, dissolution_flags = model.solve(
-        params=_DISSOLUTION_PARAMS, log_level="debug", return_dissolution_flags=True
-    )
-
+    solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="debug")
     calls: list[frozenset[str]] = []
     real = model_module._reject_edge_fold_state_param_collisions
 
@@ -1271,27 +1269,24 @@ def test_public_model_simulate_runs_edge_fold_collision_guard_on_precomputed_val
     model.simulate(
         params=_DISSOLUTION_PARAMS,
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=solution,  # precomputed -> solve() is skipped
-        period_to_regime_to_dissolution_flags=dissolution_flags,
+        solution=solution,  # precomputed -> solve() is skipped
         log_level="debug",
         seed=0,
     )
     assert calls, (
-        "the edge-fold collision guard was not invoked on the precomputed-value "
+        "the edge-fold collision guard was not invoked on the supplied-result "
         "simulate path (it would run only inside the skipped solve())"
     )
 
 
-def test_public_model_simulate_without_dissolution_flags_raises_clearly():
-    """Omitting `period_to_regime_to_dissolution_flags` for a dissolution-gated model.
-
-    `period_to_regime_to_dissolution_flags` defaults to `None`; the public
-    `Model.simulate()` must surface the SAME clear `NotImplementedError` the
-    internal `simulate()` raises (Test 5 above), not a bare `None`-arithmetic
-    crash — confirming the default path change is opt-in only.
-    """
+def test_public_model_simulate_without_required_dissolution_artifact_fails_closed():
+    """A values-only result cannot replay a dissolution-gated model."""
     model = _make_dissolution_model()
-    solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="debug")
+    solution = model.solve(
+        params=_DISSOLUTION_PARAMS,
+        log_level="debug",
+        retention=ResultRetention.VALUES,
+    )
     initial_conditions = MappingProxyType(
         {
             "wage": jnp.array([2.0]),
@@ -1304,12 +1299,14 @@ def test_public_model_simulate_without_dissolution_flags_raises_clearly():
             ),
         }
     )
-    with pytest.raises(NotImplementedError, match="D_target"):
+    with pytest.raises(
+        InvalidSimulationInputError,
+        match=r"pylcm\.collective\.dissolution_flag.*not_requested",
+    ):
         model.simulate(
             params=_DISSOLUTION_PARAMS,
             initial_conditions=initial_conditions,
-            period_to_regime_to_V_arr=solution,
-            # period_to_regime_to_dissolution_flags omitted (defaults to None).
+            solution=solution,
             log_level="debug",
             seed=0,
         )

@@ -402,13 +402,12 @@ def _build(route: str):
     )
 
 
-def _simulate(*, model, period_to_regime_to_V_arr=None, policies=None):
+def _simulate(*, model, solution=None):
     """Simulate the toy from the shared initial conditions."""
     return model.simulate(
         params=_PARAMS,
         initial_conditions=dict(_INITIAL),
-        period_to_regime_to_V_arr=period_to_regime_to_V_arr,
-        policies=policies,
+        solution=solution,
         log_level="debug",
         seed=_SEED,
     ).to_dataframe()
@@ -421,21 +420,19 @@ def route(request: pytest.FixtureRequest) -> str:
 
 @pytest.fixture(scope="module")
 def solved(route: str):
-    """The model plus the `(values, policies)` pair its own `solve()` returned."""
+    """The model plus the complete result its own `solve()` returned."""
     model = _build(route)
-    values, policies = model.solve(
-        params=_PARAMS, log_level="debug", return_simulation_policy=True
-    )
-    return model, values, policies
+    solution = model.solve(params=_PARAMS, log_level="debug")
+    return model, solution
 
 
 def test_both_workflows_publish_the_same_endpoint_admissions(solved) -> None:
     """Automatic and split solve-and-simulate admit the same candidates."""
-    model, values, policies = solved
+    model, solution = solved
 
     assert_frame_equal(
-        _simulate(model=model, period_to_regime_to_V_arr=values, policies=policies),
-        _simulate(model=model, period_to_regime_to_V_arr=None),
+        _simulate(model=model, solution=solution),
+        _simulate(model=model),
     )
 
 
@@ -465,7 +462,7 @@ def test_a_simulated_nonnegative_model_admits_every_realized_subject(
         return verdict
 
     monkeypatch.setattr(simulation_module, "outer_candidate_is_admissible", record)
-    frame = _simulate(model=_build("adaptive"), period_to_regime_to_V_arr=None)
+    frame = _simulate(model=_build("adaptive"))
 
     # An empty recording would mean the predicate under test was never the rule
     # consulted, which the assertions below must not read as agreement.

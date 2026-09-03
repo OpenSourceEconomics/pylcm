@@ -7,6 +7,8 @@ The solver-level setting selects between them, so an ordinary solve must avoid t
 native call and reproduce the certified value where crossings are well separated.
 """
 
+from collections.abc import Mapping
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -14,7 +16,7 @@ import pytest
 
 from _lcm.egm.nbegm_step import nbegm_per_interval_continuation_step_savings
 from _lcm.egm.upper_envelope.query import ComparisonArithmetic
-from _lcm.typing import PeriodToRegimeToVArr
+from lcm.typing import FloatND
 from tests.conftest import DECIMAL_PRECISION, EXACT_KERNEL_SKIP_REASON
 from tests.solution._crra_preferences import crra_preferences
 from tests.test_models import nbegm_ride_along_toy as toy
@@ -24,10 +26,10 @@ _N_SAVINGS = 40
 _N_LIQUID = 30
 
 
-def _solve(**overrides: object) -> PeriodToRegimeToVArr:
+def _solve(**overrides: object) -> Mapping[int, Mapping[str, FloatND]]:
     """Solve the ride-along tax toy with the given NBEGM overrides."""
     model = toy.build_model(variant="nbegm", nbegm_overrides=overrides)
-    return model.solve(params=toy.build_params(), log_level="debug")
+    return model.solve(params=toy.build_params(), log_level="debug").values
 
 
 def _utility_of_action(consumption):

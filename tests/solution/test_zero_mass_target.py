@@ -104,7 +104,7 @@ def test_zero_mass_target_does_not_contaminate_the_value_function(model: Model) 
     V = model.solve(
         params={"source": {"koopmans_aggregator": {"discount_factor": 1.0}}},
         log_level="off",
-    )
+    ).values
 
     np.testing.assert_allclose(
         np.asarray(V[0]["source"]).ravel(),

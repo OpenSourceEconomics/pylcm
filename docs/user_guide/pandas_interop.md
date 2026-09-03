@@ -27,7 +27,6 @@ df = pd.DataFrame(
 result = model.simulate(
     params=params,
     initial_conditions=df,
-    period_to_regime_to_V_arr=None,
     log_level="debug",
 )
 ```
@@ -63,7 +62,6 @@ params = {
 result = model.simulate(
     params=params,
     initial_conditions=df,
-    period_to_regime_to_V_arr=None,
     log_level="debug",
 )
 ```

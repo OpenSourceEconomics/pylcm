@@ -18,6 +18,11 @@ from _lcm.regime_building.collective import (
     collective_readout,
 )
 from _lcm.regime_building.zero_safe import zero_safe_average
+from _lcm.solution.action_streaming import (
+    build_streaming_collective_max_Q_over_a,
+    build_streaming_ev1_max_Q_over_a,
+    build_streaming_max_Q_over_a,
+)
 from _lcm.typing import (
     ActionName,
     ArgmaxQOverAFunction,
@@ -307,6 +312,293 @@ def get_max_Q_over_a(
     return cast("MaxQOverAFunction", allow_only_kwargs(func=mapped, enforce=False))
 
 
+def get_streaming_max_Q_over_a(
+    *,
+    Q_and_F: Callable[..., tuple[FloatND, BoolND]],
+    batch_sizes: dict[StateName, int],
+    action_names: tuple[ActionName, ...],
+    state_names: tuple[StateName, ...],
+    n_discrete_action_axes: int = 0,
+    has_taste_shocks: bool = False,
+    co_map_state_names: tuple[StateName, ...] = (),
+    co_map_v_arr_in_axes: tuple[MappingProxyType[RegimeName, int | None], ...] = (),
+    stakeholders: tuple[str, ...] | None = None,
+    pareto_weights: ParetoWeights | None = None,
+    fold_state_names: tuple[StateName, ...] = (),
+    fold_weights: Mapping[StateName, FloatND] = MappingProxyType({}),
+    fold_conditioning: Mapping[StateName, StateName] = MappingProxyType({}),
+    action_width_keyword: str = "_lcm_action_block_width",
+) -> MaxQOverAFunction:
+    """Build a singleton or collective V kernel that streams the action product.
+
+    The returned raw callable has the same dynamic argument layout as
+    `get_max_Q_over_a` plus one required static keyword named by
+    `action_width_keyword`. The execution planner selects a collision-free name and
+    binds that width before tracing. For each state cell, the fixed-cell reducer
+    evaluates actions in canonical C order. A hard-max singleton publishes its best
+    value; an EV1 singleton first hard-maxes each discrete-prefix branch and then
+    log-sums the branch values; a collective regime publishes each stakeholder's
+    value at one shared household winner plus the empty-feasible-set flag. Ordinary
+    states use the existing state productmap. Fixed distributed states retain the
+    dense route co-map access law: each state axis is mapped in lockstep with axis
+    zero of every continuation leaf that carries it. Folded singleton routes stream
+    their action product, then apply the existing quadrature reduction to the
+    still-materialized fold axes before any co-map wrapper.
+    """
+    _fail_if_streaming_co_map_layout_is_invalid(
+        state_names=state_names,
+        co_map_state_names=co_map_state_names,
+        co_map_v_arr_in_axes=co_map_v_arr_in_axes,
+    )
+    _fail_if_full_V_streaming_route_is_unsupported(
+        has_taste_shocks=has_taste_shocks,
+        stakeholders=stakeholders,
+        pareto_weights=pareto_weights,
+        fold_state_names=fold_state_names,
+    )
+    if has_taste_shocks and not 1 <= n_discrete_action_axes <= len(action_names):
+        raise ValueError(
+            "EV1 action streaming requires a non-empty leading discrete-action prefix"
+        )
+
+    extra_param_names = _get_extra_param_names(
+        Q_and_F=Q_and_F,
+        action_names=action_names,
+        state_names=state_names,
+    )
+    if has_taste_shocks and TASTE_SHOCK_SCALE_PARAM not in extra_param_names:
+        extra_param_names.append(TASTE_SHOCK_SCALE_PARAM)
+    q_and_f_arg_names = frozenset(inspect.signature(Q_and_F).parameters)
+
+    if pareto_weights is not None:
+        extra_param_names = list(
+            dict.fromkeys((*extra_param_names, *pareto_weights.param_names))
+        )
+
+    _fail_if_action_width_keyword_collides(
+        action_width_keyword=action_width_keyword,
+        action_names=action_names,
+        state_names=state_names,
+        extra_param_names=extra_param_names,
+    )
+
+    @with_signature(
+        args=[
+            "next_regime_to_V_arr",
+            *action_names,
+            *state_names,
+            *extra_param_names,
+            action_width_keyword,
+        ],
+        return_annotation=(
+            "tuple[FloatND, BoolND]" if stakeholders is not None else "FloatND"
+        ),
+        enforce=False,
+    )
+    def streamed_max_Q_over_a(
+        *,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+        **states_actions_params: _ParamsLeaf,
+    ) -> FloatND | tuple[FloatND, BoolND]:
+        action_block_width = cast("int", states_actions_params[action_width_keyword])
+        q_and_f_params = {
+            name: value
+            for name, value in states_actions_params.items()
+            if name in q_and_f_arg_names
+        }
+        if has_taste_shocks:
+            ev1_cell = build_streaming_ev1_max_Q_over_a(
+                Q_and_F=Q_and_F,
+                action_names=action_names,
+                n_discrete_action_axes=n_discrete_action_axes,
+                block_width=action_block_width,
+                scale=cast(
+                    "ScalarFloat",
+                    states_actions_params[TASTE_SHOCK_SCALE_PARAM],
+                ),
+            )
+            ev1_result = ev1_cell(
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                **q_and_f_params,
+            )
+            return ev1_result.smoothed_value
+
+        if stakeholders is None:
+            fixed_cell = build_streaming_max_Q_over_a(
+                Q_and_F=Q_and_F,
+                action_names=action_names,
+                block_width=action_block_width,
+            )
+            result = fixed_cell(
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                **q_and_f_params,
+            )
+            return result.best_value
+
+        collective_cell = build_streaming_collective_max_Q_over_a(
+            Q_and_F=Q_and_F,
+            action_names=action_names,
+            block_width=action_block_width,
+            stakeholders=stakeholders,
+            weights=_evaluate_pareto_weights(
+                pareto_weights=pareto_weights,
+                states_actions_params=states_actions_params,
+            ),
+        )
+        collective_result = collective_cell(
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            **q_and_f_params,
+        )
+        return (
+            collective_result.best_stakeholder_values,
+            ~collective_result.any_feasible,
+        )
+
+    inner_state_names = tuple(
+        name for name in state_names if name not in co_map_state_names
+    )
+    mapped = productmap(
+        func=streamed_max_Q_over_a,
+        variables=inner_state_names,
+        batch_sizes={name: batch_sizes[name] for name in inner_state_names},
+    )
+    if fold_state_names:
+        _fail_if_collective(
+            fold_state_names=fold_state_names, stakeholders=stakeholders
+        )
+        mapped = _wrap_with_fold_reduction(
+            mapped=cast("Callable[..., FloatND]", mapped),
+            fold_state_names=fold_state_names,
+            fold_weights=fold_weights,
+            fold_conditioning=fold_conditioning,
+            inner_state_names=inner_state_names,
+            action_names=action_names,
+            state_names=state_names,
+            extra_param_names=[*extra_param_names, action_width_keyword],
+        )
+    if not co_map_state_names:
+        return cast("MaxQOverAFunction", mapped)
+
+    # Preserve the dense route's device-local continuation access exactly. Build
+    # the maps from the innermost co-map axis outward: at runtime the outer map
+    # removes the original leading V axis first, leaving the next co-map axis at
+    # position zero for the nested map. Leaves that do not carry a state use
+    # ``None`` and pass through unchanged.
+    mapped = allow_args(mapped)
+    for state_name, v_arr_in_axes in zip(
+        reversed(co_map_state_names), reversed(co_map_v_arr_in_axes), strict=True
+    ):
+        mapped = vmap_1d(
+            func=mapped,
+            variables=(state_name,),
+            co_mapped_in_axes=MappingProxyType({"next_regime_to_V_arr": v_arr_in_axes}),
+            callable_with="only_args",
+        )
+    return cast("MaxQOverAFunction", allow_only_kwargs(func=mapped, enforce=False))
+
+
+def _fail_if_action_width_keyword_collides(
+    *,
+    action_width_keyword: str,
+    action_names: tuple[ActionName, ...],
+    state_names: tuple[StateName, ...],
+    extra_param_names: list[str],
+) -> None:
+    """Keep the planner-owned width outside the model runtime namespace."""
+    runtime_arg_names = frozenset(
+        ("next_regime_to_V_arr", *action_names, *state_names, *extra_param_names)
+    )
+    if action_width_keyword in runtime_arg_names:
+        raise ValueError(
+            f"Action width keyword {action_width_keyword!r} collides with a "
+            "streamed core argument."
+        )
+
+
+def _fail_if_full_V_streaming_route_is_unsupported(
+    *,
+    has_taste_shocks: bool,
+    stakeholders: tuple[str, ...] | None,
+    pareto_weights: ParetoWeights | None,
+    fold_state_names: tuple[StateName, ...],
+) -> None:
+    """Reject routes unsupported by full-value action streaming."""
+    if has_taste_shocks and stakeholders is not None:
+        raise NotImplementedError(
+            "Full-V action streaming does not support collective EV1 regimes."
+        )
+    if has_taste_shocks and fold_state_names:
+        raise NotImplementedError(
+            "Full-V action streaming does not support EV1 taste shocks "
+            "with fold states."
+        )
+    if (stakeholders is None) != (pareto_weights is None):
+        raise ValueError(
+            "Collective action streaming requires stakeholders and Pareto weights."
+        )
+
+
+def _fail_if_streaming_co_map_layout_is_invalid(
+    *,
+    state_names: tuple[StateName, ...],
+    co_map_state_names: tuple[StateName, ...],
+    co_map_v_arr_in_axes: tuple[MappingProxyType[RegimeName, int | None], ...],
+) -> None:
+    """Validate the complete named-axis contract of the streamed co-map.
+
+    One ``in_axes`` mapping belongs to each leading co-map state. A carrying
+    continuation leaf is sliced only on its current leading axis (``0``); a
+    leaf without that state is passed through (``None``). Refusing every other
+    spelling prevents a malformed internal layout from degrading into an
+    ordinary state productmap or silently slicing a different continuation
+    coordinate.
+    """
+    _fail_if_co_map_states_not_leading(
+        state_names=state_names, co_map_state_names=co_map_state_names
+    )
+    if len(co_map_state_names) != len(co_map_v_arr_in_axes):
+        raise ValueError(
+            "Streaming co-map state names and continuation in_axes must have "
+            "the same length."
+        )
+
+    if not co_map_state_names:
+        return
+
+    target_names = frozenset(co_map_v_arr_in_axes[0])
+    if not target_names:
+        raise ValueError(
+            "Streaming co-map continuation in_axes must name at least one target."
+        )
+    inconsistent_target_names = [
+        (state_name, tuple(target_axes))
+        for state_name, target_axes in zip(
+            co_map_state_names, co_map_v_arr_in_axes, strict=True
+        )
+        if frozenset(target_axes) != target_names
+    ]
+    if inconsistent_target_names:
+        raise ValueError(
+            "Streaming co-map continuation in_axes must name the same target keys "
+            f"for every state; got {inconsistent_target_names}."
+        )
+
+    invalid = [
+        (state_name, target, axis)
+        for state_name, target_axes in zip(
+            co_map_state_names, co_map_v_arr_in_axes, strict=True
+        )
+        for target, axis in target_axes.items()
+        if axis is not None
+        and (not isinstance(axis, int) or isinstance(axis, bool) or axis != 0)
+    ]
+    if invalid:
+        raise ValueError(
+            "Streaming co-map continuation in_axes must contain only 0 or None; "
+            f"got {invalid}."
+        )
+
+
 def _wrap_with_fold_reduction(
     *,
     mapped: Callable[..., FloatND],
@@ -324,10 +616,11 @@ def _wrap_with_fold_reduction(
     `productmap`'s `variables` order) — this runs BEFORE any co-map wrapping,
     so no co-map axis is present yet. Fold axes are reduced from the highest
     inner-position down, so removing one axis never shifts the position of a
-    not-yet-reduced one. The wrapper redeclares EXACTLY `mapped`'s own call
-    signature (`with_signature`, matching `max_Q_over_a`'s pre-productmap
-    signature, which `productmap` preserves) so it composes transparently with
-    the co-map `vmap_1d` wrapping that may follow.
+    not-yet-reduced one. The wrapper redeclares the post-`productmap` keyword-only call
+    interface with `with_signature`, so `allow_args` can adapt it safely for the
+    co-map `vmap_1d` wrapping that may follow. On a streamed route,
+    `extra_param_names` also carries the planner-bound action-width keyword;
+    the wrapper forwards it unchanged to the mapped action reducer.
 
     A folded state named in `fold_conditioning` averages against a different row
     per category of its conditioning state, so its weights are broadcast to the
@@ -356,7 +649,12 @@ def _wrap_with_fold_reduction(
     }
 
     @with_signature(
-        args=["next_regime_to_V_arr", *action_names, *state_names, *extra_param_names],
+        kwargs=[
+            "next_regime_to_V_arr",
+            *action_names,
+            *state_names,
+            *extra_param_names,
+        ],
         return_annotation="FloatND",
         enforce=False,
     )

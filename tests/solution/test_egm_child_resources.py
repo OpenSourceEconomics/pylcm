@@ -321,8 +321,12 @@ def test_action_dependent_resources_match_dense_brute_force():
     coarse consumption grid makes brute force itself unreliable.
     """
     params = _get_params()
-    dcegm_solution = _get_model("dcegm_bonus").solve(params=params, log_level="debug")
-    brute_solution = _get_model("brute_bonus").solve(params=params, log_level="debug")
+    dcegm_solution = (
+        _get_model("dcegm_bonus").solve(params=params, log_level="debug").values
+    )
+    brute_solution = (
+        _get_model("brute_bonus").solve(params=params, log_level="debug").values
+    )
 
     for period in sorted(brute_solution)[:-1]:
         brute_V = np.asarray(brute_solution[period]["working_life"])
@@ -346,11 +350,11 @@ def test_action_and_passive_dependent_resources_match_dense_brute_force():
     happens across rows evaluated in their own node's resources space.
     """
     params = _get_params()
-    dcegm_solution = _get_model("dcegm_bonus_pension").solve(
-        params=params, log_level="debug"
+    dcegm_solution = (
+        _get_model("dcegm_bonus_pension").solve(params=params, log_level="debug").values
     )
-    brute_solution = _get_model("brute_bonus_pension").solve(
-        params=params, log_level="debug"
+    brute_solution = (
+        _get_model("brute_bonus_pension").solve(params=params, log_level="debug").values
     )
 
     for period in sorted(brute_solution)[:-1]:

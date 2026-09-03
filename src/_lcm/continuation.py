@@ -8,6 +8,7 @@ layout property needed by a reading parent in one immutable object.
 from dataclasses import dataclass
 
 from _lcm.egm.carry import EGMCarry
+from lcm.solver_api import EGM_CONTINUATION, ArtifactKey
 
 # Backward induction stores and forwards this channel without reading its fields.
 # A future non-EGM representation should introduce an operation protocol rather
@@ -35,6 +36,9 @@ class EGMContinuationSpec:
 
     template: EGMCarry
     """All-finite payload with the exact shapes used for rolling and lowering."""
+
+    artifact_key: ArtifactKey = EGM_CONTINUATION
+    """Versioned identity under which an EGM kernel publishes this payload."""
 
     layout: EGMContinuationLayout = EGMContinuationLayout()
     """How a reading parent interprets the template and produced payloads."""

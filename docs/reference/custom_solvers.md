@@ -12,6 +12,12 @@ them, but parts of a complete custom implementation still depend on private type
 helpers, and concrete dispatch. Treat these names as contributor-facing contracts, not
 as a supported plugin API.
 
+`lcm.solver_api.KernelOutput` is the dependency-safe producer envelope used by plain
+EGM. It defines the transport side of the planned solver seam; the solver build,
+continuation, layout, and replay contracts and the conformance suite are not yet public.
+The interface therefore remains experimental and is not a supported out-of-tree plugin
+API.
+
 Use a shipped solver from `lcm.solvers`. If none represents the economic problem, use
 `GridSearch` where feasible or discuss the missing solver class with the maintainers. Do
 not copy the old internal “Adding a Solver” guide into application code: it described

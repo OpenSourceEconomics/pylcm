@@ -93,7 +93,7 @@ def test_solve_with_chained_transitions_returns_finite_value_function() -> None:
     model = _build_model()
     params = {"discount_factor": 0.9, "final_age_alive": 1.0}
 
-    period_to_regime_to_V_arr = model.solve(log_level="debug", params=params)
+    period_to_regime_to_V_arr = model.solve(log_level="debug", params=params).values
 
     V_active = period_to_regime_to_V_arr[0]["active"]
     assert jnp.all(jnp.isfinite(V_active))
@@ -123,7 +123,6 @@ def test_simulate_with_chained_transitions_yields_expected_next_wealth() -> None
             log_level="debug",
             params=params,
             initial_conditions=initial_conditions,
-            period_to_regime_to_V_arr=None,
         )
         .to_dataframe()
         .query('regime_name == "active"')
@@ -233,7 +232,7 @@ def test_stochastic_weight_reading_deterministic_next_state_solves() -> None:
     not just `functions`, for such a read to resolve.
     """
     model = _f2_build_model()
-    V = model.solve(params={"discount_factor": 0.95}, log_level="debug")
+    V = model.solve(params={"discount_factor": 0.95}, log_level="debug").values
 
     v_live = V[0]["live"]
     # Analytical value: from period 0, investing (or already being at high capital)

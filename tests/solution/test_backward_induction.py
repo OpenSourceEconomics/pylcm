@@ -6,12 +6,21 @@ import numpy as np
 from numpy.testing import assert_array_almost_equal as aaae
 
 from _lcm.engine import Regime, StateActionSpace
+from _lcm.execution.core_program import (
+    CoreExecutionDisposition,
+    CoreExecutionRequirements,
+    CoreProgram,
+)
+from _lcm.execution.output_layout import VALUE
 from _lcm.grids import Grid
 from _lcm.regime_building.max_Q_over_a import get_max_Q_over_a
 from _lcm.regime_building.ndimage import map_coordinates
-from _lcm.solution.backward_induction import solve
+from _lcm.solution.backward_induction import _drain_V_arr_shards, solve
 from _lcm.solution.contract import PeriodKernel
-from _lcm.solution.grid_search import _GridSearchPeriodKernel
+from _lcm.solution.grid_search import (
+    _GridSearchArgumentBuilder,
+    _GridSearchPeriodKernel,
+)
 from _lcm.typing import MaxQOverAFunction, StateOrActionName
 from _lcm.utils.logging import get_logger
 from lcm.ages import AgeGrid
@@ -33,6 +42,7 @@ class MockSolutionPhase:
     """
     compute_intermediates: dict = dataclasses.field(default_factory=dict)
     continuation_template: None = None
+    continuation_spec: None = None
     period_state_axes: (
         MappingProxyType[int, MappingProxyType[StateOrActionName, object]] | None
     ) = None
@@ -44,9 +54,24 @@ class MockSolutionPhase:
 def _grid_search_period_kernels(
     *, max_Q_over_a: dict[int, MaxQOverAFunction], regime_name: str
 ) -> dict[int, PeriodKernel]:
-    """Wrap per-period grid-search cores in their uniform period adapters."""
+    """Wrap hand-written dense cores in native GridSearch program graphs."""
+    argument_builder = _GridSearchArgumentBuilder(regime_name=regime_name)
     return {
-        period: _GridSearchPeriodKernel(core=core, regime_name=regime_name)
+        period: _GridSearchPeriodKernel(
+            _core_programs=MappingProxyType(
+                {
+                    "main": CoreProgram(
+                        name="main",
+                        function=core,
+                        argument_builder=argument_builder,
+                        requirements=CoreExecutionRequirements(),
+                        output_roles=VALUE,
+                        disposition=CoreExecutionDisposition.DENSE,
+                        disposition_reason="test_dense_fixture",
+                    )
+                }
+            )
+        )
         for period, core in max_Q_over_a.items()
     }
 
@@ -70,6 +95,39 @@ class MockRegime(Regime):
     ) -> None:
         object.__setattr__(self, "solution", solution)
         object.__setattr__(self, "active_periods", active_periods)
+
+
+def test_drain_V_arr_shards_flattens_immutable_return_mappings(monkeypatch):
+    """The solve barrier presents every immutable mapping leaf to JAX."""
+    V_0 = jnp.asarray([1.0, 2.0])
+    V_1 = jnp.asarray([3.0])
+    dissolution = jnp.asarray([True, False])
+    drained = []
+
+    def _record_drained_arrays(arrays):
+        drained.extend(arrays)
+
+    monkeypatch.setattr(
+        "_lcm.solution.backward_induction.jax.block_until_ready",
+        _record_drained_arrays,
+    )
+
+    _drain_V_arr_shards(
+        solution={
+            0: MappingProxyType({"working": V_0}),
+            1: MappingProxyType({"retired": V_1}),
+        },
+        dissolution_flags={
+            0: MappingProxyType({"working": dissolution}),
+            1: MappingProxyType({}),
+        },
+    )
+
+    assert [id(array) for array in drained] == [
+        id(V_0),
+        id(V_1),
+        id(dissolution),
+    ]
 
 
 def test_backward_induction():
@@ -170,19 +228,19 @@ def test_backward_induction():
 
 def test_backward_induction_single_period_Qc_arr():
     state_action_space = StateActionSpace(
-        discrete_actions=MappingProxyType(
+        discrete_actions=MappingProxyType({}),
+        continuous_actions=MappingProxyType(
+            {
+                "d": jnp.arange(12.0),
+            }
+        ),
+        states=MappingProxyType(
             {
                 "a": jnp.array([0, 1.0]),
                 "b": jnp.array([2, 3.0]),
                 "c": jnp.array([4, 5, 6]),
             }
         ),
-        continuous_actions=MappingProxyType(
-            {
-                "d": jnp.arange(12.0),
-            }
-        ),
-        states=MappingProxyType({}),
         state_and_discrete_action_names=("a", "b", "c"),
     )
 
@@ -212,7 +270,7 @@ def test_backward_induction_single_period_Qc_arr():
             ),
             _base_state_action_space=state_action_space,
             grids=MappingProxyType({}),
-            state_names=(),
+            state_names=("a", "b", "c"),
         ),
         active_periods=[0, 1],
     )

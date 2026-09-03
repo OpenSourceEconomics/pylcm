@@ -223,7 +223,7 @@ def test_a_phased_stakeholder_utility_solves_and_simulates_its_own_variant():
             "couple_terminal": {},
         },
         log_level="off",
-    )
+    ).values
 
     # Stakeholder m's period-0 value is her solve utility plus the discounted
     # terminal one, at wealth held fixed: 0.5*log(w) + 0.9*0.5*log(w).

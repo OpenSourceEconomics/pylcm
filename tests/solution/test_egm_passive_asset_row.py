@@ -16,12 +16,12 @@ budget constraint).
 """
 
 import functools
+from collections.abc import Mapping
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.typing import PeriodToRegimeToVArr
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -34,6 +34,7 @@ from lcm import (
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
+from lcm.solver_api import SolutionResult
 from lcm.solvers import DCEGM, GridSearch
 from lcm.typing import (
     BoolND,
@@ -269,11 +270,11 @@ def test_passive_aime_through_asset_row_matches_brute_force():
     brute-force oracle across the full wealth-by-AIME-by-income grid.
     """
     params = _params()
-    dcegm_solution: PeriodToRegimeToVArr = _model("dcegm").solve(
-        params=params, log_level="debug"
+    dcegm_solution: Mapping[int, Mapping[str, FloatND]] = (
+        _model("dcegm").solve(params=params, log_level="debug").values
     )
-    brute_solution: PeriodToRegimeToVArr = _model("brute_force").solve(
-        params=params, log_level="debug"
+    brute_solution: Mapping[int, Mapping[str, FloatND]] = (
+        _model("brute_force").solve(params=params, log_level="debug").values
     )
     for period in sorted(brute_solution)[:-1]:
         brute_V = np.asarray(brute_solution[period]["working_life"])
@@ -479,12 +480,16 @@ def test_means_tested_prob_through_param_intermediate_matches_brute_force(
     wealth-by-AIME-by-income grid.
     """
     params = _means_test_params(rate_is_fixed=rate_is_fixed)
-    dcegm_solution: PeriodToRegimeToVArr = _means_tested_prob_model(
-        solver="dcegm", rate_is_fixed=rate_is_fixed
-    ).solve(params=params, log_level="debug")
-    brute_solution: PeriodToRegimeToVArr = _means_tested_prob_model(
-        solver="brute_force", rate_is_fixed=rate_is_fixed
-    ).solve(params=params, log_level="debug")
+    dcegm_solution: Mapping[int, Mapping[str, FloatND]] = (
+        _means_tested_prob_model(solver="dcegm", rate_is_fixed=rate_is_fixed)
+        .solve(params=params, log_level="debug")
+        .values
+    )
+    brute_solution: Mapping[int, Mapping[str, FloatND]] = (
+        _means_tested_prob_model(solver="brute_force", rate_is_fixed=rate_is_fixed)
+        .solve(params=params, log_level="debug")
+        .values
+    )
     for period in sorted(brute_solution)[:-1]:
         brute_V = np.asarray(brute_solution[period]["working_life"])
         dcegm_V = np.asarray(dcegm_solution[period]["working_life"])
@@ -582,7 +587,7 @@ def _invariance_tolerances(reference: np.ndarray) -> tuple[float, float]:
     return rtol, rtol * float(np.max(np.abs(reference[np.isfinite(reference)])))
 
 
-def _simulated_choices(*, model: Model, solution: PeriodToRegimeToVArr):
+def _simulated_choices(*, model: Model, solution: SolutionResult):
     """Simulate a fixed subject panel and return it keyed by subject and period.
 
     The seed is pinned so the regime lottery draws the same shocks on both
@@ -601,7 +606,7 @@ def _simulated_choices(*, model: Model, solution: PeriodToRegimeToVArr):
     simulated = model.simulate(
         params=_params(),
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=solution,
+        solution=solution,
         seed=20260806,
         log_level="debug",
     ).to_dataframe(use_labels=False)
@@ -620,9 +625,11 @@ def test_passive_aime_batch_size_leaves_value_function_unchanged(aime_batch_size
     unchanged, and the surviving values agree to the working precision at every
     period, including a block size that does not divide the AIME grid.
     """
-    reference = _model("dcegm").solve(params=_params(), log_level="debug")
-    splayed = _model_with_aime_batch(aime_batch_size).solve(
-        params=_params(), log_level="debug"
+    reference = _model("dcegm").solve(params=_params(), log_level="debug").values
+    splayed = (
+        _model_with_aime_batch(aime_batch_size)
+        .solve(params=_params(), log_level="debug")
+        .values
     )
     # `working_life` is the asset-row regime carrying the splayed AIME axis;
     # it is inactive in the terminal period, so exclude that period.

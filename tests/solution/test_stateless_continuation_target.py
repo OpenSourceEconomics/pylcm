@@ -90,7 +90,7 @@ def _solve_with_bequest(bequest: float):
         },
         "gone": {"utility": {}},
     }
-    return model.solve(params=params, log_level="debug")
+    return model.solve(params=params, log_level="debug").values
 
 
 def test_a_stateless_regime_carries_its_own_value():
@@ -179,7 +179,7 @@ def _solve_with_an_unreachable_stateless_regime(limbo_bequest: float):
         "gone": {"utility": {}},
         "limbo": {"utility": {}},
     }
-    return model.solve(params=params, log_level="debug")
+    return model.solve(params=params, log_level="debug").values
 
 
 def test_an_unreachable_stateless_regime_stays_out_of_the_continuation():
@@ -241,7 +241,7 @@ def _solve_with_process_only_target(level: float):
         },
         "gone": {"utility": {}},
     }
-    return model.solve(params=params, log_level="debug")
+    return model.solve(params=params, log_level="debug").values
 
 
 def test_a_process_only_regime_carries_its_own_value():

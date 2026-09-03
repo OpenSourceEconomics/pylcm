@@ -13,12 +13,12 @@ spec.
 """
 
 import functools
+from collections.abc import Mapping
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.typing import PeriodToRegimeToVArr
 from lcm import (
     AgeGrid,
     IrregSpacedGrid,
@@ -325,7 +325,9 @@ def _cross_regime_model(*, solver: str, factor_is_fixed: bool) -> Model:
 
 
 def _assert_young_V_matches(
-    *, dcegm_solution: PeriodToRegimeToVArr, brute_solution: PeriodToRegimeToVArr
+    *,
+    dcegm_solution: Mapping[int, Mapping[str, FloatND]],
+    brute_solution: Mapping[int, Mapping[str, FloatND]],
 ) -> None:
     # The young regime is active in the first period only; compare its V.
     period = min(brute_solution)
@@ -357,12 +359,16 @@ def test_cross_regime_target_resources_param_matches_brute_force(
     the dense-grid brute-force oracle.
     """
     params = _params(factor_is_fixed=factor_is_fixed)
-    dcegm_solution = _cross_regime_model(
-        solver="dcegm", factor_is_fixed=factor_is_fixed
-    ).solve(params=params, log_level="debug")
-    brute_solution = _cross_regime_model(
-        solver="brute_force", factor_is_fixed=factor_is_fixed
-    ).solve(params=params, log_level="debug")
+    dcegm_solution = (
+        _cross_regime_model(solver="dcegm", factor_is_fixed=factor_is_fixed)
+        .solve(params=params, log_level="debug")
+        .values
+    )
+    brute_solution = (
+        _cross_regime_model(solver="brute_force", factor_is_fixed=factor_is_fixed)
+        .solve(params=params, log_level="debug")
+        .values
+    )
     _assert_young_V_matches(
         dcegm_solution=dcegm_solution, brute_solution=brute_solution
     )

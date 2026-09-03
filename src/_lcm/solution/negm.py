@@ -32,6 +32,11 @@ from _lcm.constraints.routes import (
 from _lcm.continuation import EGMContinuationLayout, EGMContinuationSpec
 from _lcm.egm.carry import EGMCarry
 from _lcm.engine import StateActionSpace
+from _lcm.execution.core_program import (
+    CoreBuildContext,
+    core_program_graph,
+    materialize_core_program,
+)
 from _lcm.grids import ContinuousGrid
 from _lcm.processes.base import _ContinuousStochasticProcess
 from _lcm.solution.contract import (
@@ -50,6 +55,7 @@ from _lcm.solution.contract import (
     simulation_route,
 )
 from _lcm.solution.dcegm import DCEGM, _BoundDCEGM, _combination_inputs
+from _lcm.solution.kernel_output import require_legacy_kernel_result
 from _lcm.typing import (
     EconFunction,
     EconFunctionsMapping,
@@ -622,11 +628,6 @@ class _NEGMPeriodKernel:
     memory-vs-parallelism knob only — value-invariant.
     """
 
-    @property
-    def core(self) -> Callable:
-        """The shared jitted adjuster core, exposed for any single-core reader."""
-        return self.adjuster_kernel.core
-
     def cores(self) -> Mapping[str, Callable]:
         """Return the keeper and adjuster inner cores, keyed independently.
 
@@ -638,8 +639,12 @@ class _NEGMPeriodKernel:
         """
         return MappingProxyType(
             {
-                "keeper": self.keeper_kernel.core,
-                "adjuster": self.adjuster_kernel.core,
+                "keeper": core_program_graph(kernel=self.keeper_kernel)[
+                    "main"
+                ].function,
+                "adjuster": core_program_graph(kernel=self.adjuster_kernel)[
+                    "main"
+                ].function,
             }
         )
 
@@ -689,29 +694,28 @@ class _NEGMPeriodKernel:
         the `__call__` sweep.
         """
         if core_key == "keeper":
-            return self.keeper_kernel.build_lower_args(
-                core_key="main",
-                state_action_space=state_action_space,
-                next_regime_to_V_arr=next_regime_to_V_arr,
-                next_regime_to_continuation=next_regime_to_continuation,
-                flat_params=flat_params,
-                period=period,
-                ages=ages,
-            )
-        return self.adjuster_kernel.build_lower_args(
-            core_key="main",
-            state_action_space=state_action_space,
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            next_regime_to_continuation=next_regime_to_continuation,
-            flat_params=_with_outer_post_decision(
+            kernel = self.keeper_kernel
+            program_flat_params = flat_params
+        else:
+            kernel = self.adjuster_kernel
+            program_flat_params = _with_outer_post_decision(
                 flat_params=flat_params,
                 regime_name=self.regime_name,
                 outer_post_decision=self.outer_post_decision,
                 value=self.outer_grid_values[0],
+            )
+        declaration = core_program_graph(kernel=kernel)["main"]
+        return materialize_core_program(
+            program=declaration,
+            context=CoreBuildContext(
+                state_action_space=state_action_space,
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                next_regime_to_continuation=next_regime_to_continuation,
+                flat_params=program_flat_params,
+                period=period,
+                ages=ages,
             ),
-            period=period,
-            ages=ages,
-        )
+        ).arguments
 
     def __call__(
         self,
@@ -739,15 +743,18 @@ class _NEGMPeriodKernel:
         keeper's off-grid inner consumption function; the outer durable choice is
         re-optimized by grid argmax at simulate time, not carried on this axis.
         """
-        keeper_result = self.keeper_kernel(
-            compiled_cores={"main": compiled_cores["keeper"]},
-            state_action_space=state_action_space,
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            next_regime_to_continuation=next_regime_to_continuation,
-            flat_params=flat_params,
-            period=period,
-            ages=ages,
-            logger=logger,
+        keeper_result = require_legacy_kernel_result(
+            output=self.keeper_kernel(
+                compiled_cores={"main": compiled_cores["keeper"]},
+                state_action_space=state_action_space,
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                next_regime_to_continuation=next_regime_to_continuation,
+                flat_params=flat_params,
+                period=period,
+                ages=ages,
+                logger=logger,
+            ),
+            consumer="NEGM keeper wrapper",
         )
         # The published continuation retains every outer candidate: the keeper
         # and each adjuster carry, lifted into a common cash-on-hand axis and
@@ -775,20 +782,23 @@ class _NEGMPeriodKernel:
         chunk_size = self.outer_batch_size or len(nodes)
         for chunk_start in range(0, len(nodes), chunk_size):
             chunk_results = [
-                self.adjuster_kernel(
-                    compiled_cores={"main": compiled_cores["adjuster"]},
-                    state_action_space=state_action_space,
-                    next_regime_to_V_arr=next_regime_to_V_arr,
-                    next_regime_to_continuation=next_regime_to_continuation,
-                    flat_params=_with_outer_post_decision(
-                        flat_params=flat_params,
-                        regime_name=self.regime_name,
-                        outer_post_decision=self.outer_post_decision,
-                        value=node,
+                require_legacy_kernel_result(
+                    output=self.adjuster_kernel(
+                        compiled_cores={"main": compiled_cores["adjuster"]},
+                        state_action_space=state_action_space,
+                        next_regime_to_V_arr=next_regime_to_V_arr,
+                        next_regime_to_continuation=next_regime_to_continuation,
+                        flat_params=_with_outer_post_decision(
+                            flat_params=flat_params,
+                            regime_name=self.regime_name,
+                            outer_post_decision=self.outer_post_decision,
+                            value=node,
+                        ),
+                        period=period,
+                        ages=ages,
+                        logger=logger,
                     ),
-                    period=period,
-                    ages=ages,
-                    logger=logger,
+                    consumer="NEGM adjuster wrapper",
                 )
                 for node in nodes[chunk_start : chunk_start + chunk_size]
             ]

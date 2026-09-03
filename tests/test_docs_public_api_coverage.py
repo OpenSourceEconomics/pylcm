@@ -7,6 +7,7 @@ from urllib.parse import urlsplit
 import lcm
 import lcm.koopmans_aggregation
 import lcm.params
+import lcm.solver_api
 import lcm.solvers
 
 _API_INDEX = Path(__file__).parents[1] / "docs" / "reference" / "public_api.md"
@@ -14,10 +15,11 @@ _API_INDEX = Path(__file__).parents[1] / "docs" / "reference" / "public_api.md"
 _LCM_ENTRY = re.compile(r"\[`lcm\.([A-Za-z_][A-Za-z0-9_]*)`\]")
 _SOLVER_ENTRY = re.compile(r"\[`lcm\.solvers\.([A-Za-z_][A-Za-z0-9_]*)`\]")
 _ALL_ENTRY = re.compile(r"\[`(lcm(?:\.[A-Za-z_][A-Za-z0-9_]*)+)`\]")
-_LOCAL_DESTINATION = re.compile(r"\[`lcm(?:\.solvers)?\.[^`]+`\]\(([^)]+)\)")
+_LOCAL_DESTINATION = re.compile(r"\[`lcm(?:\.[A-Za-z_][A-Za-z0-9_]*)+`\]\(([^)]+)\)")
 _EXPLICIT_LABEL = re.compile(r"^\(([^)]+)\)=$", re.MULTILINE)
 _SUBMODULE_ENTRY = re.compile(
-    r"\[`(lcm\.(?:params|koopmans_aggregation))\.([A-Za-z_][A-Za-z0-9_]*)`\]"
+    r"\[`(lcm\.(?:params|koopmans_aggregation|solver_api))\."
+    r"([A-Za-z_][A-Za-z0-9_]*)`\]"
 )
 
 
@@ -81,6 +83,7 @@ def test_public_api_index_covers_allowlisted_submodule_surfaces():
     documented = set(_SUBMODULE_ENTRY.findall(text))
     expected = {
         *{("lcm.params", name) for name in lcm.params.__all__},
+        *{("lcm.solver_api", name) for name in lcm.solver_api.__all__},
         (
             "lcm.koopmans_aggregation",
             "KoopmansAggregator",

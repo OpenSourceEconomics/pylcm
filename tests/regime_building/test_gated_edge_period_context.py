@@ -260,7 +260,7 @@ def _solve_and_simulate(
     simulation = model.simulate(
         params=params,
         initial_conditions=_initial_conditions(model),
-        period_to_regime_to_V_arr=solution,
+        solution=solution,
         log_level="off",
         seed=0,
     )
@@ -291,7 +291,7 @@ def test_gate_and_gate_reference_use_target_period_context():
     solution, simulation = _solve_and_simulate(gate_open=True, n_subjects=_N_SUBJECTS)
 
     aaae(
-        solution[0]["source"],
+        solution.values[0]["source"],
         [5.0, 5.0],
         decimal=DECIMAL_PRECISION,
     )
@@ -307,7 +307,7 @@ def test_period_only_gate_and_age_only_projections_receive_context():
     )
 
     aaae(
-        solution[0]["source"],
+        solution.values[0]["source"],
         [5.0, 5.0],
         decimal=DECIMAL_PRECISION,
     )
@@ -319,7 +319,7 @@ def test_fallback_projection_uses_target_period_context():
     solution, simulation = _solve_and_simulate(gate_open=False, n_subjects=None)
 
     aaae(
-        solution[0]["source"],
+        solution.values[0]["source"],
         [51.0, 51.0],
         decimal=DECIMAL_PRECISION,
     )
@@ -341,7 +341,7 @@ def test_simulation_prices_source_actions_with_target_period_context():
     )
 
     aaae(
-        solution[0]["source"],
+        solution.values[0]["source"],
         [1.0, 1.0],
         decimal=DECIMAL_PRECISION,
     )

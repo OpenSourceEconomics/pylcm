@@ -79,7 +79,7 @@ def test_warning_level_solves_without_per_row_materialisation():
     entering the failure-path localisation."""
     model = _make_model()
     period_to_regime_to_V_arr = model.solve(params=_HEALTHY_PARAMS, log_level="warning")
-    for regime_to_V in period_to_regime_to_V_arr.values():
+    for regime_to_V in period_to_regime_to_V_arr.values.values():
         for V_arr in regime_to_V.values():
             assert not jnp.any(jnp.isnan(V_arr))
             assert not jnp.any(jnp.isinf(V_arr))

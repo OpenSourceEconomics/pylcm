@@ -2557,12 +2557,10 @@ def build_same_period_mapping_for_fold(
         msg = (
             f"The gated edge into '{edge.target}' has a gate reading 'D_target', "
             "but no dissolution-flag array was supplied for that regime at this "
-            "period. Forward simulation needs "
-            "`period_to_regime_to_dissolution_flags` (the `dissolution_flags` "
-            "field of `solve`'s result). Either let `Model.simulate` solve first "
-            "(auto-solve threads them), or pass "
-            "`Model.solve(return_dissolution_flags=True)`'s flags to "
-            "`Model.simulate(period_to_regime_to_dissolution_flags=...)`."
+            "period. Forward simulation needs the addressed "
+            "`pylcm.collective.dissolution_flag` replay artifact. Either let "
+            "`Model.simulate` solve automatically, or pass the complete "
+            "`SolutionResult` from `Model.solve` as `solution=...`."
         )
         raise NotImplementedError(msg)
     mapping: dict[RegimeName, FloatND] = {

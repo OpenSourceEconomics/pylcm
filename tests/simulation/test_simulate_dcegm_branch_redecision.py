@@ -115,7 +115,6 @@ def _simulate_period_0(*, model: Model, off_grid_wealth: np.ndarray):
     result = model.simulate(
         params=params,
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
     return result.to_dataframe(use_labels=False).query("period == 0")

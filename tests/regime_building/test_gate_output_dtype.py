@@ -139,6 +139,6 @@ def test_solve_accepts_a_boolean_gate() -> None:
     """The check is specific to the dtype: an ordinary Boolean gate still solves."""
     model = _make_model(gate=_boolean_gate)
 
-    solution = model.solve(params=_params(), log_level="debug")
+    solution = model.solve(params=_params(), log_level="debug").values
 
     assert set(solution[1]) == {"target", "fallback"}

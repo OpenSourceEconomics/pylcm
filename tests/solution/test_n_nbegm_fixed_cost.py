@@ -167,7 +167,6 @@ def test_fixed_cost_simulation_fails_before_an_automatic_solve() -> None:
         model.simulate(
             params=_PARAMS,
             initial_conditions=initial_conditions,
-            period_to_regime_to_V_arr=None,
             log_level="debug",
             seed=0,
         )
@@ -234,5 +233,5 @@ def test_nonnegative_finite_scale_from_a_param_solves() -> None:
     solution = model.solve(
         params={**_PARAMS, "adjustment_scale_level": 0.4},
         log_level="debug",
-    )
+    ).values
     assert np.any(np.isfinite(np.asarray(solution[0]["alive"])))

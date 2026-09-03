@@ -90,7 +90,7 @@ def test_target_state_read_only_by_an_incoming_projection_counts_as_used():
             "worker": {"koopmans_aggregator": {"discount_factor": _DISCOUNT_FACTOR}}
         },
         log_level="debug",
-    )
+    ).values
 
     aaae(
         solution[0]["worker"],

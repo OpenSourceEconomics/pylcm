@@ -82,6 +82,25 @@ Use `GridSearch` for genuinely coupled multi-dimensional choices, unsupported
 constraints, or any problem whose required structure cannot be declared honestly. It is
 also the baseline against which specialized solutions should be checked.
 
+GridSearch work still covers the full represented action support. Eligible JIT
+solve-value routes evaluate bounded C-order action blocks. Same-period value references,
+gated-target continuations, and edge-reference mappings are declared as exact target
+artifacts and source argument paths. The engine either preserves an already aligned
+layout or explicitly copies a supported input onto the source core's mesh, using the
+same plan during lowering and runtime. Ordinary co-mapped state routes also stream while
+preserving device-local continuation reads. Eligible singleton folded-state routes
+stream the action product at each shock node and then apply the unchanged quadrature
+over the full fold-node axis. The classifier deliberately keeps co-map intersections
+with separate same-period or edge-reference channels, trivial action products,
+JIT-disabled and raw execution, and all simulation-policy construction dense. Those
+dense or otherwise unplanned consumers stay conservatively pinned; current liveness
+bookkeeping does not release, donate, or offload their arrays. Collective EV1, EV1 with
+a fold, collective hard max with a fold, and EV1 without a discrete action are
+unsupported by the streamed program. See the canonical
+[GridSearch route matrix](../reference/solvers.md#gridsearch-jit-route-matrix). Treat the
+blockwise route as an execution detail until runtime and peak-memory effects have been
+measured for the model and hardware at hand.
+
 The EGM routes require named liquid roles. Nested routes add named outer roles.
 Institutional kinks and cliffs must be declared as case pieces or a piecewise-affine
 schedule from the outset.
@@ -107,7 +126,12 @@ Among correct representations, compare:
 
 - **candidate growth:** action products for grid search; savings nodes, branches,
   stochastic nodes, and outer candidates for EGM-family methods;
-- **peak memory:** dense candidates versus streamed envelope/outer batches;
+- **source-level execution shape:** bounded action blocks on eligible singleton and
+  collective hard-max and singleton EV1 JIT solve-value GridSearch routes; dense
+  GridSearch fallbacks and simulation-policy construction; streamed envelope/outer
+  batches in structural solvers;
+- **measured peak memory:** bounded source-level blocks do not establish device peak;
+  measure compiler and runtime memory for the exact model and profile;
 - **compilation:** number and size of distinct JAX programs;
 - **hardware:** dense static work often favors GPUs; sequential topology scans often
   favor CPUs;

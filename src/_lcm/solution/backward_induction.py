@@ -5,14 +5,46 @@ import inspect
 import logging
 import os
 import time
-from collections.abc import Callable, Hashable, Iterator, Mapping
+from collections.abc import Callable, Hashable, Iterable, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from types import MappingProxyType
 from typing import cast
 
 import jax
+import jax.numpy as jnp
 
 from _lcm.engine import Regime, StateActionSpace, _build_regime_sharding
+from _lcm.execution.core_program import (
+    CoreBuildContext,
+    CoreExecutionDisposition,
+    CoreExecutionRequirements,
+    CoreProgram,
+    MaterializedCoreProgram,
+    ResolvedCoreProgram,
+    _target_value_argument_leaf,
+    core_program_graph,
+    initial_core_tile_widths,
+    materialize_core_program,
+    resolve_core_program,
+)
+from _lcm.execution.liveness import PlannedInputLiveness
+from _lcm.execution.output_layout import (
+    DISSOLUTION_FLAG,
+    UNPLANNED,
+    VALUE,
+    PlannedCore,
+    ResolvedOutputLayout,
+    assert_output_layout,
+    planned_output_layout,
+    resolve_output_layout,
+)
+from _lcm.execution.value_transfer import (
+    ResolvedValueTransfer,
+    ValueArtifactAddress,
+    ValueArtifactKind,
+    ValueTransferKind,
+    resolve_value_transfer,
+)
 from _lcm.regime_building.gated_edges import (
     EDGE_PERIOD_CONTEXT_ARGS,
     CompiledEdgeFold,
@@ -32,6 +64,7 @@ from _lcm.regime_building.Q_and_F import (
 from _lcm.solution.contract import (
     BackwardInductionResult,
     ContinuationPayload,
+    GeneratedReplayAuthority,
     KernelResult,
     SimulationPolicy,
 )
@@ -45,11 +78,13 @@ from _lcm.solution.kernel_attribution import (
     log_executed_kernel,
     log_module_fanout,
 )
+from _lcm.solution.kernel_output import normalize_kernel_output
 from _lcm.solution.period_capture import (
     PeriodCaptureTarget,
     capture_kernel_inputs,
     resolve_capture_target,
 )
+from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from _lcm.solution.v_topology import (
     _build_zero_V_arr,
     _get_regime_V_shapes_and_shardings,
@@ -74,7 +109,7 @@ from lcm.typing import BoolND, ContinuousState, DiscreteState, FloatND
 _NO_DISSOLUTION_FLAGS: MappingProxyType[RegimeName, BoolND] = MappingProxyType({})
 
 
-def solve(  # noqa: C901, PLR0915
+def solve(  # noqa: C901, PLR0912, PLR0915
     *,
     flat_params: FlatParams,
     ages: AgeGrid,
@@ -82,6 +117,9 @@ def solve(  # noqa: C901, PLR0915
     logger: logging.Logger,
     enable_jit: bool,
     collect_simulation_policies: bool = False,
+    simulation_policy_regimes: frozenset[RegimeName] | None = None,
+    collect_solver_diagnostics: bool = False,
+    track_artifact_publication: bool = False,
     max_compilation_workers: int | None = None,
     retain_dissolution_flags: bool = True,
 ) -> BackwardInductionResult:
@@ -102,6 +140,15 @@ def solve(  # noqa: C901, PLR0915
             policies to the host. The solve kernels may publish an internal policy
             alongside their other outputs, but a value-only solve drops it at the
             period boundary instead of retaining one device-sized artifact per period.
+        simulation_policy_regimes: Optional canonical-regime allowlist for policy
+            collection. ``None`` permits every publisher.
+        collect_solver_diagnostics: Whether to retain a kernel's numerical
+            self-report. Public ``Model.solve()`` and automatic simulation request
+            it; ``log_level`` still decides whether diagnostics are calculated and
+            retained. Internal callers may disable collection.
+        track_artifact_publication: Whether to retain the tiny set of cells whose
+            kernels produced a simulation policy. Used to write truthful omission
+            records without retaining values-only replay arrays.
         max_compilation_workers: Maximum number of threads for parallel XLA compilation.
             Defaults to `os.cpu_count()`.
         retain_dissolution_flags: Whether a caller wants the per-period
@@ -141,8 +188,8 @@ def solve(  # noqa: C901, PLR0915
         _build_continuation_templates(regimes=regimes, flat_params=flat_params)
     )
 
-    # AOT-compile all unique solve kernels in parallel.
-    compiled_functions = _compile_all_functions(
+    # Resolve every solve program, then compile unique lowerings when enabled.
+    compiled_programs = _compile_all_functions(
         regimes=regimes,
         flat_params=flat_params,
         ages=ages,
@@ -153,10 +200,19 @@ def solve(  # noqa: C901, PLR0915
         max_compilation_workers=max_compilation_workers,
         logger=logger,
     )
+    compiled_functions = compiled_programs.executables
+    input_liveness = _build_planned_input_liveness(
+        regimes=regimes, program_metadata=compiled_programs.metadata
+    )
 
     solution: dict[int, MappingProxyType[RegimeName, FloatND]] = {}
     simulation_policies: dict[int, MappingProxyType[RegimeName, SimulationPolicy]] = {}
+    generated_replay_authorities: dict[
+        int, MappingProxyType[RegimeName, GeneratedReplayAuthority]
+    ] = {}
     dissolution_flags: dict[int, MappingProxyType[RegimeName, BoolND]] = {}
+    solver_diagnostics: dict[int, MappingProxyType[RegimeName, SolverDiagnostics]] = {}
+    published_simulation_policy_cells: set[tuple[int, RegimeName]] = set()
 
     # Every collective kernel publishes `D`, but only two things read the
     # ACCUMULATED per-period mapping: forward simulation, for a gate that
@@ -222,14 +278,23 @@ def solve(  # noqa: C901, PLR0915
     # whole induction. Value-only solves therefore discard it at the period
     # boundary; a requesting consumer receives host copies, which simulation
     # re-materializes on device.
-    host_device = jax.devices("cpu")[0] if collect_simulation_policies else None
+    host_device = (
+        jax.devices("cpu")[0]
+        if collect_simulation_policies
+        or (collect_solver_diagnostics and diagnostics_enabled)
+        else None
+    )
 
     for period in reversed(range(ages.n_periods)):
         period_start = time.monotonic()
         period_solution: dict[RegimeName, FloatND] = {}
         period_continuations: dict[RegimeName, ContinuationPayload] = {}
         period_simulation_policies: dict[RegimeName, SimulationPolicy] = {}
+        period_generated_replay_authorities: dict[
+            RegimeName, GeneratedReplayAuthority
+        ] = {}
         period_dissolution_flags: dict[RegimeName, BoolND] = {}
+        period_solver_diagnostics: dict[RegimeName, SolverDiagnostics] = {}
 
         active_regimes = {
             regime_name: regime
@@ -267,6 +332,7 @@ def solve(  # noqa: C901, PLR0915
                 next_edge_to_V_arr=next_edge_to_V_arr,
                 period_solution=period_solution,
             )
+            input_liveness.commit_successful_dispatch(dispatch=(period, regime_name))
             V_arr = result.V_arr
             # The published V mapping is the calling convention for every
             # downstream consumer — the parents' cores and the AOT-lowered
@@ -274,9 +340,11 @@ def solve(  # noqa: C901, PLR0915
             # topology — so a kernel output arriving with a different
             # sharding (the compiled program's output sharding is the
             # backend's choice) is placed back on the template's mesh here.
-            V_arr = _match_leaf_template_sharding(
-                leaf=V_arr,
-                template_leaf=next_regime_to_V_arr[regime_name],
+            V_arr = _publish_kernel_value(
+                value=V_arr,
+                dissolution=result.dissolution,
+                template=next_regime_to_V_arr[regime_name],
+                compiled_cores=compiled_functions[(regime_name, period)],
             )
             _fail_if_continuation_publisher_returned_none(
                 result=result,
@@ -286,13 +354,39 @@ def solve(  # noqa: C901, PLR0915
             )
             if result.continuation is not None:
                 period_continuations[regime_name] = result.continuation
-            if collect_simulation_policies and result.simulation_policy is not None:
-                period_simulation_policies[regime_name] = result.simulation_policy
+            if result.simulation_policy is not None:
+                if collect_simulation_policies and (
+                    simulation_policy_regimes is None
+                    or regime_name in simulation_policy_regimes
+                ):
+                    period_simulation_policies[regime_name] = result.simulation_policy
+                if track_artifact_publication:
+                    published_simulation_policy_cells.add((period, regime_name))
+            if result.generated_replay_authority is not None:
+                if result.simulation_policy is None:
+                    msg = (
+                        "A generated replay authority has no matching simulation "
+                        f"policy at ({period}, {regime_name!r})."
+                    )
+                    raise TypeError(msg)
+                if collect_simulation_policies and (
+                    simulation_policy_regimes is None
+                    or regime_name in simulation_policy_regimes
+                ):
+                    period_generated_replay_authorities[regime_name] = (
+                        result.generated_replay_authority
+                    )
             # A collective regime publishes its
             # empty-mask dissolution flag D alongside V; singleton regimes
             # leave it None and never touch this mapping.
             if result.dissolution is not None:
                 period_dissolution_flags[regime_name] = result.dissolution
+            if (
+                collect_solver_diagnostics
+                and diagnostics_enabled
+                and result.diagnostics is not None
+            ):
+                period_solver_diagnostics[regime_name] = result.diagnostics
             running_any_nan, running_any_inf = _fold_period_diagnostics(
                 V_arr=V_arr,
                 regime_name=regime_name,
@@ -373,6 +467,21 @@ def solve(  # noqa: C901, PLR0915
                     )
                 }
             )
+        if period_generated_replay_authorities:
+            generated_replay_authorities[period] = MappingProxyType(
+                period_generated_replay_authorities
+            )
+        if period_solver_diagnostics:
+            assert host_device is not None  # noqa: S101
+            solver_diagnostics[period] = MappingProxyType(
+                {
+                    regime_name: _copy_solver_diagnostics_to_host(
+                        diagnostics=diagnostics,
+                        host_device=host_device,
+                    )
+                    for regime_name, diagnostics in period_solver_diagnostics.items()
+                }
+            )
 
         elapsed = time.monotonic() - period_start
         log_period_timing(logger=logger, elapsed=elapsed)
@@ -411,6 +520,7 @@ def solve(  # noqa: C901, PLR0915
             raise_or_warn(logger=logger, error=error)
 
     _drain_V_arr_shards(solution=solution, dissolution_flags=dissolution_flags)
+    input_liveness.assert_solve_complete()
 
     total_elapsed = time.monotonic() - total_start
     logger.info("Solution complete  (%s)", format_duration(seconds=total_elapsed))
@@ -418,7 +528,27 @@ def solve(  # noqa: C901, PLR0915
     return BackwardInductionResult(
         value_functions=MappingProxyType(solution),
         simulation_policies=MappingProxyType(simulation_policies),
+        generated_replay_authorities=MappingProxyType(generated_replay_authorities),
         dissolution_flags=MappingProxyType(dissolution_flags),
+        diagnostics=MappingProxyType(solver_diagnostics),
+        published_simulation_policy_cells=frozenset(published_simulation_policy_cells),
+    )
+
+
+def _copy_solver_diagnostics_to_host(
+    *, diagnostics: SolverDiagnostics, host_device: jax.Device
+) -> SolverDiagnostics:
+    """Copy one retained diagnostic payload off the accelerator."""
+    return dataclasses.replace(
+        diagnostics,
+        **{
+            field.name: (
+                None
+                if (value := getattr(diagnostics, field.name)) is None
+                else jax.block_until_ready(jax.device_put(value, host_device))
+            )
+            for field in dataclasses.fields(diagnostics)
+        },
     )
 
 
@@ -465,10 +595,11 @@ def _run_period_kernel(
     Every regime exposes the same kind of adapter; the loop never branches on
     solver type. The adapter wraps the regime's shared jitted core(s) (passed in
     AOT-compiled as `compiled_cores`), calls them with the solver's own argument
-    layout, and returns a `KernelResult` — the value-function array plus the
-    optional generic outputs (`continuation`, `simulation_policy`, and the
-    collective `dissolution` flag D), which the backward-induction loop
-    accumulates.
+    layout, and returns either the public `KernelOutput` envelope or a legacy
+    `KernelResult`. The fail-closed bridge below normalizes both to the latter —
+    the value-function array plus the optional generic outputs (`continuation`,
+    `simulation_policy`, and the collective `dissolution` flag D), which the
+    backward-induction loop accumulates.
 
     A regime declaring `same_period_refs` additionally
     receives the referenced regimes' V arrays of THIS period, read off
@@ -569,7 +700,7 @@ def _run_period_kernel(
             next_edge_to_V_arr=next_edge_to_V_arr,
         )
     )
-    return period_kernel(
+    output = period_kernel(
         compiled_cores=compiled_cores,
         state_action_space=state_action_space,
         next_regime_to_V_arr=next_regime_to_V_arr,
@@ -579,6 +710,15 @@ def _run_period_kernel(
         ages=ages,
         logger=logger,
         **same_period_kwargs,
+    )
+    continuation_spec = regime.solution.continuation_spec
+    return normalize_kernel_output(
+        output=output,
+        continuation_key=(
+            None if continuation_spec is None else continuation_spec.artifact_key
+        ),
+        regime_name=regime_name,
+        period=period,
     )
 
 
@@ -971,6 +1111,37 @@ def _match_continuation_template_sharding(
     )
 
 
+def _publish_kernel_value(
+    *,
+    value: FloatND,
+    dissolution: BoolND | None,
+    template: FloatND,
+    compiled_cores: Mapping[str, Callable],
+) -> FloatND:
+    """Publish a period value in the engine-owned layout.
+
+    An output-layout-aware core has already asserted the complete runtime
+    output tree against the layout used to lower it, so its value leaf is born
+    in the template layout.  Legacy kernels retain the existing repair at this
+    boundary.  Continuation rolling deliberately keeps its independent repair:
+    it is a different producer/consumer boundary.
+    """
+    main = compiled_cores.get("main")
+    layout = None if main is None else planned_output_layout(main)
+    if layout is not None and layout is not UNPLANNED:
+        assert_output_layout(
+            output=(value, dissolution) if dissolution is not None else value,
+            layout=layout,
+        )
+        return value
+    return _repair_unplanned_kernel_value(value=value, template=template)
+
+
+def _repair_unplanned_kernel_value(*, value: FloatND, template: FloatND) -> FloatND:
+    """Place a legacy kernel output onto the published value template."""
+    return _match_leaf_template_sharding(leaf=value, template_leaf=template)
+
+
 def _match_leaf_template_sharding(*, leaf: FloatND, template_leaf: FloatND) -> FloatND:
     """Place one solved array on its template's device sharding (no-op on match).
 
@@ -1171,13 +1342,224 @@ def _drain_V_arr_shards(
 
     Solve → simulate barrier: backward induction returns sharded V_arrs,
     but the simulate phase must consume materialised arrays rather than
-    in-flight kernels. `jax.block_until_ready` walks the pytree of V_arrs
-    and blocks per-shard (no host transfer, no cross-device collective);
-    free when kernels are already done, the minimum necessary sync when
-    they are not. V stays sharded across devices. The collective dissolution
-    flags ride along in the same barrier.
+    in-flight kernels. Explicitly traverse the period → regime return schema
+    before handing its array leaves to JAX: the immutable inner mappings are a
+    public return boundary, not a synchronization mechanism whose correctness
+    should depend on global pytree registration. The batched barrier blocks
+    per-shard (no host transfer, no cross-device collective); free when kernels
+    are already done, the minimum necessary sync when they are not. V stays
+    sharded across devices. The collective dissolution flags ride along in the
+    same barrier.
     """
-    jax.block_until_ready((solution, dissolution_flags))
+    array_leaves = tuple(
+        array
+        for period_mapping in (solution, dissolution_flags)
+        if period_mapping is not None
+        for regime_mapping in period_mapping.values()
+        for array in regime_mapping.values()
+    )
+    jax.block_until_ready(array_leaves)
+
+
+type _InputDispatch = tuple[int, RegimeName]
+type _CoreTriple = tuple[RegimeName, int, str]
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _ProgramExecutionMetadata:
+    """Resolved declaration facts retained without pinning argument templates."""
+
+    requirements: CoreExecutionRequirements
+    disposition: CoreExecutionDisposition
+    input_transfer_plan: tuple[ResolvedValueTransfer, ...]
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _CompiledPrograms:
+    """Executable graph plus the metadata liveness reads through the same seam."""
+
+    executables: dict[
+        tuple[RegimeName, int], MappingProxyType[str, Callable[..., object]]
+    ]
+    metadata: MappingProxyType[_CoreTriple, _ProgramExecutionMetadata]
+
+
+def _build_planned_input_liveness(
+    *,
+    regimes: MappingProxyType[RegimeName, Regime],
+    program_metadata: Mapping[_CoreTriple, _ProgramExecutionMetadata],
+) -> PlannedInputLiveness[_InputDispatch, ValueArtifactAddress]:
+    """Build one exact-dispatch ledger without authorizing physical release."""
+    dispatch_accesses: dict[_InputDispatch, tuple[ValueArtifactAddress, ...]] = {}
+    pinned_artifacts = set(_retained_solution_value_artifacts(regimes=regimes))
+    pinned_artifacts.update(_gated_fold_raw_value_artifacts(regimes=regimes))
+
+    metadata_by_dispatch: dict[
+        tuple[RegimeName, int], dict[str, _ProgramExecutionMetadata]
+    ] = {}
+    for (regime_name, period, core_name), metadata in program_metadata.items():
+        metadata_by_dispatch.setdefault((regime_name, period), {})[core_name] = metadata
+
+    for (regime_name, period), programs in metadata_by_dispatch.items():
+        regime = regimes[regime_name]
+        planned, unplanned_exact, has_unknown = _classify_dispatch_value_artifacts(
+            programs=programs,
+        )
+        dispatch_accesses[(period, regime_name)] = planned
+        pinned_artifacts.update(unplanned_exact)
+        if has_unknown:
+            pinned_artifacts.update(
+                _conservative_legacy_value_artifacts(
+                    regime=regime,
+                    regime_name=regime_name,
+                    period=period,
+                )
+            )
+
+    return PlannedInputLiveness(
+        dispatch_accesses=MappingProxyType(dispatch_accesses),
+        pinned_artifacts=pinned_artifacts,
+    )
+
+
+def _classify_dispatch_value_artifacts(
+    *,
+    programs: Mapping[str, _ProgramExecutionMetadata],
+) -> tuple[
+    tuple[ValueArtifactAddress, ...],
+    tuple[ValueArtifactAddress, ...],
+    bool,
+]:
+    """Separate finite planned reads from pinned dense or unknown reads."""
+    planned: list[ValueArtifactAddress] = []
+    unplanned_exact: list[ValueArtifactAddress] = []
+    has_unknown = False
+
+    for core_name, metadata in programs.items():
+        declared_targets = tuple(
+            access.target for access in metadata.requirements.target_value_accesses
+        )
+        if metadata.disposition is CoreExecutionDisposition.LEGACY_UNPLANNED:
+            if not declared_targets:
+                has_unknown = True
+            else:
+                unplanned_exact.extend(declared_targets)
+            continue
+        if metadata.disposition is CoreExecutionDisposition.DENSE:
+            unplanned_exact.extend(declared_targets)
+            continue
+
+        plan = metadata.input_transfer_plan
+        planned_targets = tuple(transfer.target for transfer in plan)
+        if planned_targets != declared_targets:
+            msg = (
+                "A resolved input plan disagrees with its CoreProgram declaration for "
+                f"core {core_name!r}: planned={planned_targets!r}, "
+                f"declared={declared_targets!r}."
+            )
+            raise RuntimeError(msg)
+        planned.extend(planned_targets)
+
+    return (
+        _unique_value_artifacts(planned),
+        _unique_value_artifacts(unplanned_exact),
+        has_unknown,
+    )
+
+
+def _unique_value_artifacts(
+    artifacts: Iterable[ValueArtifactAddress],
+) -> tuple[ValueArtifactAddress, ...]:
+    """Deduplicate one dispatch in declaration order."""
+    return tuple(dict.fromkeys(artifacts))
+
+
+def _retained_solution_value_artifacts(
+    *,
+    regimes: Mapping[RegimeName, Regime],
+) -> tuple[ValueArtifactAddress, ...]:
+    """Pin every value retained in the public backward-induction result."""
+    return tuple(
+        ValueArtifactAddress(
+            kind=ValueArtifactKind.REGIME_VALUE,
+            period=period,
+            regime=regime_name,
+        )
+        for regime_name, regime in regimes.items()
+        for period in regime.active_periods
+    )
+
+
+def _gated_fold_raw_value_artifacts(
+    *,
+    regimes: Mapping[RegimeName, Regime],
+) -> tuple[ValueArtifactAddress, ...]:
+    """Pin raw same-period values read by the engine-owned gated-edge fold."""
+    artifacts: list[ValueArtifactAddress] = []
+    for source in regimes.values():
+        for edge in source.gated_edges.values():
+            readers = (edge.target, *edge.reference_regimes)
+            for period in range(source.solution.reachability.n_periods):
+                if not all(period in regimes[name].active_periods for name in readers):
+                    continue
+                artifacts.extend(
+                    ValueArtifactAddress(
+                        kind=ValueArtifactKind.REGIME_VALUE,
+                        period=period,
+                        regime=name,
+                    )
+                    for name in readers
+                )
+    return _unique_value_artifacts(artifacts)
+
+
+def _conservative_legacy_value_artifacts(
+    *,
+    regime: Regime,
+    regime_name: RegimeName,
+    period: int,
+) -> tuple[ValueArtifactAddress, ...]:
+    """Pin graph-declared values when a core has no complete input plan."""
+    artifacts: list[ValueArtifactAddress] = [
+        ValueArtifactAddress(
+            kind=ValueArtifactKind.REGIME_VALUE,
+            period=period,
+            regime=reference,
+        )
+        for reference in regime.same_period_ref_regimes
+    ]
+    reachability = regime.solution.reachability
+    if period == reachability.n_periods - 1:
+        return _unique_value_artifacts(artifacts)
+
+    for target in reachability.targets(period=period, source=regime_name):
+        edge = regime.gated_edges.get(target)
+        if edge is None:
+            artifacts.append(
+                ValueArtifactAddress(
+                    kind=ValueArtifactKind.REGIME_VALUE,
+                    period=period + 1,
+                    regime=target,
+                )
+            )
+            continue
+        artifacts.append(
+            ValueArtifactAddress(
+                kind=ValueArtifactKind.GATED_CONTINUATION,
+                period=period + 1,
+                regime=regime_name,
+                target_regime=target,
+            )
+        )
+        artifacts.extend(
+            ValueArtifactAddress(
+                kind=ValueArtifactKind.REGIME_VALUE,
+                period=period + 1,
+                regime=reference,
+            )
+            for reference in edge.reference_regimes
+        )
+    return _unique_value_artifacts(artifacts)
 
 
 def _compile_all_functions(
@@ -1191,21 +1573,19 @@ def _compile_all_functions(
     enable_jit: bool,
     max_compilation_workers: int | None,
     logger: logging.Logger,
-) -> dict[tuple[RegimeName, int], MappingProxyType[str, Callable]]:
-    """AOT-compile all unique solve cores in parallel.
+) -> _CompiledPrograms:
+    """Resolve every solve program and optionally compile unique lowerings.
 
-    Each regime exposes one period adapter per period; the adapter wraps one or
-    more shared jitted cores, keyed by a stable per-kernel name (`cores()`).
-    Most kernels carry a single `"main"` core; a multi-core kernel carries
-    several named cores, each a distinct traced program. Many
-    periods share the same core object, so this deduplicates the cores by
-    identity, lowers each unique core once (sequential — tracing is
-    single-threaded) with the adapter's per-key lowering arguments, then compiles
-    the XLA programs in parallel via a thread pool (XLA releases the GIL during
-    compilation). The loop stays free of any solver-type fork.
+    Each regime exposes named cores through its period adapter. For every core, the
+    engine first materializes the adapter's exact `CoreProgram`. The program supplies
+    the planner-resolved callable, static choices, and output roles. The complete
+    callable, abstract arguments, specialization, and
+    output layout form the lowering key. Each unique program is lowered once
+    (sequentially, because tracing is single-threaded), then the XLA programs compile
+    in parallel via a thread pool. The loop stays free of solver-type forks.
 
-    When JIT is disabled (`enable_jit=False`), returns the raw cores without
-    compilation.
+    When JIT is disabled (`enable_jit=False`), executes the same resolved programs
+    without the lowering and compilation steps.
 
     Args:
         regimes: The internal regimes containing the period adapters.
@@ -1224,34 +1604,84 @@ def _compile_all_functions(
         logger: Logger for compilation progress.
 
     Returns:
-        Dict of (regime_name, period) to the immutable mapping of core key to
-        compiled (or raw) core.
+        Executable mappings by regime-period plus the resolved metadata used by
+        input liveness. Eager entries call the resolved functions directly; AOT
+        entries call compiled executables carrying the same plans.
 
     """
-    # Collect all (regime, period, core_key) -> shared jitted core mappings off
-    # the period adapters.
-    all_functions: dict[tuple[RegimeName, int, str], Callable] = {}
+    # Collect the authoritative native graphs or their centralized legacy adapters.
+    all_programs: dict[_CoreTriple, CoreProgram] = {}
     for regime_name, regime in regimes.items():
         for period in regime.active_periods:
-            cores = regime.solution.period_kernels[period].cores()
-            for core_key, core in cores.items():
-                all_functions[(regime_name, period, core_key)] = core
+            graph = core_program_graph(kernel=regime.solution.period_kernels[period])
+            for core_name, program in graph.items():
+                all_programs[(regime_name, period, core_name)] = program
 
-    # If JIT is disabled, return the raw cores keyed by core_key per (regime,
-    # period).
+    # Materialize each named core's exact program before representative selection.
+    # The resulting function, arguments, roles, specialization, and layout form
+    # one lowering source of truth.
+    (
+        all_layouts,
+        lowering_keys,
+        resolved_programs,
+    ) = _resolve_output_layouts_and_lowering_keys(
+        all_programs=all_programs,
+        regimes=regimes,
+        flat_params=flat_params,
+        ages=ages,
+        next_regime_to_V_arr=next_regime_to_V_arr,
+        next_regime_to_continuation=next_regime_to_continuation,
+        next_edge_to_V_arr=next_edge_to_V_arr,
+    )
+
+    metadata = MappingProxyType(
+        {
+            triple: _ProgramExecutionMetadata(
+                requirements=program.requirements,
+                disposition=program.disposition,
+                input_transfer_plan=program.input_transfer_plan,
+            )
+            for triple, program in resolved_programs.items()
+        }
+    )
+
+    # Eager execution uses the same resolved function, arguments, requirements,
+    # roles, static widths, and transfers as AOT. Only the final JAX compilation
+    # step is omitted.
     if not enable_jit:
-        return _group_cores_by_regime_period(all_functions)
+        eager = {
+            triple: _attach_resolved_output_layout(
+                compiled=(
+                    functools.partial(program.function, **program.static_kwargs)
+                    if program.static_kwargs
+                    else program.function
+                ),
+                layout=all_layouts[triple],
+                input_transfer_plan=program.input_transfer_plan,
+            )
+            for triple, program in resolved_programs.items()
+        }
+        return _CompiledPrograms(
+            executables=_group_cores_by_regime_period(eager), metadata=metadata
+        )
 
-    # Deduplicate by identity (or by underlying function for partials), keeping
-    # one representative (regime, period, core_key) per unique core so its
-    # adapter can build the lowering arguments for that key.
+    # Keep one representative per lowering key so its adapter can build the
+    # matching arguments.  Selection happens only after layout resolution.
     unique: dict[Hashable, tuple[Callable, RegimeName, int, str]] = {}
-    for (regime_name, period, core_key), func in all_functions.items():
-        func_id = _func_dedup_key(func=func)
-        if func_id not in unique:
-            unique[func_id] = (func, regime_name, period, core_key)
+    for triple, program in resolved_programs.items():
+        lowering_key = lowering_keys[triple]
+        if lowering_key not in unique:
+            regime_name, period, core_key = triple
+            unique[lowering_key] = (
+                program.function,
+                regime_name,
+                period,
+                core_key,
+            )
 
-    n_triples_per_func = _count_triples_per_func(all_functions=all_functions)
+    n_triples_per_lowering = _count_triples_per_lowering_key(
+        lowering_keys=lowering_keys
+    )
 
     n_workers = _resolve_compilation_workers(
         max_compilation_workers=max_compilation_workers
@@ -1262,47 +1692,51 @@ def _compile_all_functions(
         "AOT compilation: %d unique functions (%d regime-period-core triples, "
         "%d workers)",
         n_unique,
-        len(all_functions),
+        len(all_programs),
         n_workers,
     )
 
     # Phase 1: Lower all unique cores (sequential — tracing is not thread-safe
-    # and must happen on the main thread). Each adapter builds the named core's
-    # lowering arguments off a fresh, params-completed state-action space.
+    # and must happen on the main thread). Arguments were materialized before
+    # representative selection and are reused verbatim here.
     lowered: dict[Hashable, jax.stages.Lowered] = {}
     labels: dict[Hashable, str] = {}
-    for i, (func_id, (func, regime_name, period, core_key)) in enumerate(
+    for i, (lowering_key, (func, regime_name, period, core_key)) in enumerate(
         unique.items(), 1
     ):
-        regime = regimes[regime_name]
-        edge_kwargs = _edge_kwargs(
-            regime=regime,
-            regime_name=regime_name,
-            next_edge_to_V_arr=next_edge_to_V_arr,
-        )
-        lower_args = regime.solution.period_kernels[period].build_lower_args(
-            core_key=core_key,
-            state_action_space=regime.solution.state_action_space(
-                regime_params=flat_params[regime_name],
-            ),
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            next_regime_to_continuation=next_regime_to_continuation,
-            flat_params=flat_params,
-            period=period,
-            ages=ages,
-            **edge_kwargs,
-        )
+        triple = (regime_name, period, core_key)
+        resolved = resolved_programs[triple]
+        lower_args = resolved.arguments
+        static_kwargs = resolved.static_kwargs
         label = f"{regime_name} {core_key} (age {ages.values[period].item()})"
-        labels[func_id] = label
+        labels[lowering_key] = label
         log_module_fanout(
             label=label,
-            n_triples=n_triples_per_func[func_id],
+            n_triples=n_triples_per_lowering[lowering_key],
             logger=logger,
         )
         logger.info("%d/%d  %s", i, n_unique, label)
         logger.info("  lowering ...")
         start = time.monotonic()
-        lowered[func_id] = jax.jit(func).lower(**lower_args)
+        layout = all_layouts[triple]
+        jitted = (
+            jax.jit(func, static_argnames=tuple(static_kwargs))
+            if layout is UNPLANNED
+            else jax.jit(
+                func,
+                static_argnames=tuple(static_kwargs),
+                out_shardings=cast("ResolvedOutputLayout", layout).out_shardings,
+            )
+        )
+        low = jitted.lower(**lower_args, **static_kwargs)
+        _assert_lowered_output_roles(
+            lowered=low,
+            output_roles=resolved.output_roles,
+            value_template=next_regime_to_V_arr[regime_name],
+            layout=layout,
+            label=label,
+        )
+        lowered[lowering_key] = low
         elapsed = time.monotonic() - start
         logger.info("  lowered in %s", format_duration(seconds=elapsed))
 
@@ -1311,7 +1745,7 @@ def _compile_all_functions(
 
     def _compile_and_log(
         *,
-        func_id: Hashable,
+        lowering_key: Hashable,
         low: jax.stages.Lowered,
         label: str,
     ) -> tuple[Hashable, jax.stages.Compiled]:
@@ -1321,42 +1755,463 @@ def _compile_all_functions(
         elapsed = time.monotonic() - start
         logger.info("  compiled  %s  %s", label, format_duration(seconds=elapsed))
         _log_kernel_memory(compiled=result, label=label, logger=logger)
-        return func_id, result
+        return lowering_key, result
 
     with ThreadPoolExecutor(max_workers=n_workers) as pool:
         futures = [
             pool.submit(
-                _compile_and_log, func_id=func_id, low=low, label=labels[func_id]
+                _compile_and_log,
+                lowering_key=lowering_key,
+                low=low,
+                label=labels[lowering_key],
             )
-            for func_id, low in lowered.items()
+            for lowering_key, low in lowered.items()
         ]
         for future in as_completed(futures):
-            func_id, comp = future.result()
-            compiled[func_id] = comp
+            lowering_key, comp = future.result()
+            compiled[lowering_key] = comp
 
     # Map back to (regime, period) keys, grouping the compiled cores by core key.
-    return _group_cores_by_regime_period(
+    executables = _group_cores_by_regime_period(
         {
-            key: compiled[_func_dedup_key(func=func)]
-            for key, func in all_functions.items()
+            triple: _attach_resolved_output_layout(
+                compiled=compiled[lowering_keys[triple]],
+                layout=all_layouts[triple],
+                input_transfer_plan=resolved_programs[triple].input_transfer_plan,
+            )
+            for triple in all_programs
         }
+    )
+    return _CompiledPrograms(executables=executables, metadata=metadata)
+
+
+def _count_triples_per_lowering_key(
+    *,
+    lowering_keys: Mapping[tuple[RegimeName, int, str], Hashable],
+) -> dict[Hashable, int]:
+    """Count the triples each callable-and-output-layout module will serve.
+
+    A shared callable with distinct output layouts is deliberately counted as
+    distinct lowered modules.
+    """
+    counts: dict[Hashable, int] = {}
+    for key in lowering_keys.values():
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def _resolve_output_layouts_and_lowering_keys(
+    *,
+    all_programs: Mapping[_CoreTriple, CoreProgram],
+    regimes: MappingProxyType[RegimeName, Regime],
+    flat_params: FlatParams,
+    ages: AgeGrid,
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+    next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
+    next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
+) -> tuple[
+    dict[_CoreTriple, ResolvedOutputLayout | object],
+    dict[_CoreTriple, Hashable],
+    dict[_CoreTriple, ResolvedCoreProgram],
+]:
+    """Materialize each core's complete, immutable lowering description."""
+    layouts: dict[_CoreTriple, ResolvedOutputLayout | object] = {}
+    lowering_keys: dict[_CoreTriple, Hashable] = {}
+    resolved_programs: dict[_CoreTriple, ResolvedCoreProgram] = {}
+    for (regime_name, period, core_key), declaration in all_programs.items():
+        regime = regimes[regime_name]
+        state_action_space = regime.solution.state_action_space(
+            regime_params=flat_params[regime_name]
+        )
+        edge_kwargs = _edge_kwargs(
+            regime=regime,
+            regime_name=regime_name,
+            next_edge_to_V_arr=next_edge_to_V_arr,
+        )
+        context = CoreBuildContext(
+            state_action_space=state_action_space,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            next_regime_to_continuation=next_regime_to_continuation,
+            flat_params=flat_params,
+            period=period,
+            ages=ages,
+            edge_regime_to_V_arr=cast(
+                "Mapping[str, object] | None",
+                edge_kwargs.get("edge_regime_to_V_arr"),
+            ),
+        )
+        materialized = materialize_core_program(program=declaration, context=context)
+        resolved = _resolve_program_for_execution(
+            program=materialized,
+            source_value_template=next_regime_to_V_arr[regime_name],
+            source=(regime_name, period, core_key),
+        )
+
+        state_order = tuple(
+            name
+            for name in state_action_space.states
+            if name not in regime.fold_state_names
+        )
+        layout = (
+            UNPLANNED
+            if resolved.disposition is CoreExecutionDisposition.LEGACY_UNPLANNED
+            else resolve_output_layout(
+                core_key=core_key,
+                value_template=next_regime_to_V_arr[regime_name],
+                state_order=state_order,
+                output_roles=resolved.output_roles,
+            )
+        )
+        triple = (regime_name, period, core_key)
+        layouts[triple] = layout
+        resolved_programs[triple] = resolved
+        layout_key = UNPLANNED if layout is UNPLANNED else layout.compilation_key
+        lowering_keys[triple] = _lowering_key(
+            func=resolved.function,
+            layout_key=layout_key,
+            arguments=resolved.arguments,
+            specialization_key=resolved.specialization_key,
+            output_roles=resolved.output_roles,
+        )
+    return layouts, lowering_keys, resolved_programs
+
+
+def _resolve_program_for_execution(
+    *,
+    program: MaterializedCoreProgram,
+    source_value_template: object,
+    source: _CoreTriple,
+) -> ResolvedCoreProgram:
+    """Resolve the one program contract shared by eager, AOT, and replay."""
+    input_transfer_plan = (
+        _resolve_value_input_transfer_plan(
+            program=program,
+            source_value_template=source_value_template,
+            source=source,
+        )
+        if program.disposition is CoreExecutionDisposition.PLANNED
+        else ()
+    )
+    return resolve_core_program(
+        program=program,
+        tile_widths=initial_core_tile_widths(program=program),
+        input_transfer_plan=input_transfer_plan,
     )
 
 
-def _count_triples_per_func(
+def _resolve_value_input_transfer_plan(
     *,
-    all_functions: dict[tuple[RegimeName, int, str], Callable],
-) -> dict[Hashable, int]:
-    """Count the (regime, period, core) triples each lowered module will serve.
+    program: MaterializedCoreProgram,
+    source_value_template: object,
+    source: _CoreTriple,
+) -> tuple[ResolvedValueTransfer, ...]:
+    """Resolve every declared value read against its source core's placement.
 
-    Cores are deduplicated by identity before lowering, so a module name in an
-    XLA dump identifies a regime-period only where this count is 1.
+    Absolute artifact and consumer addresses remain on each transfer for dispatch and
+    liveness. The specialization key omits absolute periods and source-node
+    coordinates, while retaining the argument-tree path, so equivalent period nodes
+    can still share a compiled executable without conflating different tree roles.
     """
-    counts: dict[Hashable, int] = {}
-    for func in all_functions.values():
-        key = _func_dedup_key(func=func)
-        counts[key] = counts.get(key, 0) + 1
-    return counts
+    source_execution_sharding = getattr(source_value_template, "sharding", None)
+    if not isinstance(source_execution_sharding, jax.sharding.Sharding):
+        msg = "A source core's value template must expose a concrete JAX sharding."
+        raise TypeError(msg)
+
+    result: list[ResolvedValueTransfer] = []
+    for access in program.requirements.target_value_accesses:
+        declared_source = (
+            access.source.source_regime,
+            access.source.source_period,
+            access.source.core_key,
+        )
+        if declared_source != source:
+            msg = (
+                "A target-value access source must match the actual compiled core: "
+                f"declared={declared_source!r}, actual={source!r}."
+            )
+            raise ValueError(msg)
+        stored_template = _target_value_argument_leaf(program=program, access=access)
+        stored_sharding = getattr(stored_template, "sharding", None)
+        kind, source_sharding = _resolve_value_transfer_layout(
+            stored_sharding=stored_sharding,
+            source_execution_sharding=source_execution_sharding,
+        )
+        result.append(
+            resolve_value_transfer(
+                target=access.target,
+                source=access.source,
+                kind=kind,
+                stored_template=stored_template,
+                source_sharding=source_sharding,
+            )
+        )
+    return tuple(result)
+
+
+def _resolve_value_transfer_layout(
+    *,
+    stored_sharding: object,
+    source_execution_sharding: jax.sharding.Sharding,
+) -> tuple[ValueTransferKind, jax.sharding.Sharding]:
+    """Choose one of the two supported value-input representation adapters."""
+    if not isinstance(stored_sharding, jax.sharding.Sharding):
+        msg = "A stored target value must expose a concrete JAX sharding."
+        raise TypeError(msg)
+
+    if stored_sharding == source_execution_sharding or (
+        isinstance(stored_sharding, jax.NamedSharding)
+        and isinstance(source_execution_sharding, jax.NamedSharding)
+        and stored_sharding.mesh == source_execution_sharding.mesh
+    ):
+        # A value already resident on the source mesh remains in its stored
+        # representation. Its rank-specific partition spec need not equal the source
+        # core's own output spec.
+        return ValueTransferKind.ALIGNED_LOCAL, stored_sharding
+
+    if isinstance(stored_sharding, jax.sharding.SingleDeviceSharding) and isinstance(
+        source_execution_sharding, jax.NamedSharding
+    ):
+        # A partially distributed model moves the unsharded target onto the source
+        # mesh as a replicated input. Reusing the source output's rank-specific spec
+        # would give an unrelated target value the wrong axis interpretation.
+        source_sharding = jax.NamedSharding(
+            mesh=source_execution_sharding.mesh,
+            spec=jax.P(),
+            memory_kind=source_execution_sharding.memory_kind,
+        )
+        return ValueTransferKind.COPY_TO_SOURCE_LAYOUT, source_sharding
+
+    # The reverse NamedSharding -> SingleDeviceSharding route is unreachable for a
+    # valid value-consuming source: distributed states are model-level, and model
+    # construction refuses to prune one from a nonterminal regime. Keep it
+    # unsupported here so a broken construction invariant fails closed.
+    msg = (
+        "Unsupported target-value layout conversion: "
+        f"{type(stored_sharding).__name__} -> "
+        f"{type(source_execution_sharding).__name__}. "
+        "Only values already aligned with the source execution placement and "
+        "single-device values copied as replicated inputs onto a named source mesh "
+        "are supported."
+    )
+    raise ValueError(msg)
+
+
+def _lowering_key(
+    *,
+    func: Callable,
+    layout_key: Hashable,
+    arguments: Mapping[str, object] | None = None,
+    specialization_key: Hashable | None = None,
+    output_roles: object | None = None,
+) -> Hashable:
+    """Identify one callable, abstract input tree, specialization, and layout."""
+    return (
+        _func_dedup_key(func=func),
+        (None if arguments is None else _abstract_arguments_key(arguments=arguments)),
+        specialization_key,
+        _output_roles_key(output_roles=output_roles),
+        layout_key,
+    )
+
+
+def _abstract_arguments_key(
+    *,
+    arguments: Mapping[str, object],
+) -> Hashable:
+    """Describe dynamic kwargs by pytree and abstract leaf metadata."""
+    return tuple(
+        (name, _abstract_value_key(value=value)) for name, value in arguments.items()
+    )
+
+
+def _abstract_value_key(*, value: object) -> Hashable:
+    """Describe one dynamic argument without retaining its concrete value."""
+    tree = jax.tree.structure(value)
+    leaves = jax.tree.leaves(value)
+    return (
+        _hashable_metadata(tree),
+        tuple(_abstract_leaf_key(leaf=leaf) for leaf in leaves),
+    )
+
+
+def _abstract_leaf_key(*, leaf: object) -> Hashable:
+    """Return the tracing-relevant metadata for one dynamic leaf."""
+    raw_shape = getattr(leaf, "shape", None)
+    shape = (
+        None if raw_shape is None else tuple(int(dimension) for dimension in raw_shape)
+    )
+    return (
+        type(leaf),
+        shape,
+        _hashable_metadata(getattr(leaf, "dtype", None)),
+        getattr(leaf, "weak_type", None),
+        _hashable_metadata(getattr(leaf, "sharding", None)),
+    )
+
+
+def _hashable_metadata(value: object) -> Hashable:
+    """Return metadata directly when hashable and a stable spelling otherwise."""
+    try:
+        hash(value)
+    except TypeError:
+        return (type(value), repr(value))
+    return cast("Hashable", value)
+
+
+def _output_roles_key(*, output_roles: object | None) -> Hashable:
+    """Encode a declared logical output tree in the lowering identity."""
+    if output_roles is None:
+        return None
+    return (
+        _hashable_metadata(jax.tree.structure(output_roles)),
+        tuple(_hashable_metadata(leaf) for leaf in jax.tree.leaves(output_roles)),
+    )
+
+
+_NO_EXPECTED_SHARDING = object()
+
+
+def _assert_lowered_output_roles(
+    *,
+    lowered: jax.stages.Lowered,
+    output_roles: object | None,
+    value_template: object,
+    label: str,
+    layout: ResolvedOutputLayout | object = UNPLANNED,
+) -> None:
+    """Reject lowered output that violates the declared role contract."""
+    if output_roles is None:
+        return
+    _assert_lowered_output_tree(
+        output_roles=output_roles,
+        output_info=lowered.out_info,
+        label=label,
+    )
+    expected_value_shape, expected_value_dtype = _expected_value_metadata(
+        value_template=value_template,
+        label=label,
+    )
+    role_leaves = jax.tree.leaves(output_roles)
+    output_leaves = jax.tree.leaves(lowered.out_info)
+    expected_shardings = (
+        jax.tree.leaves(layout.out_shardings)
+        if isinstance(layout, ResolvedOutputLayout)
+        else None
+    )
+    for index, (role, output_info) in enumerate(
+        zip(role_leaves, output_leaves, strict=True)
+    ):
+        expected_metadata = _expected_role_metadata(
+            role=role,
+            value_shape=expected_value_shape,
+            value_dtype=expected_value_dtype,
+            label=label,
+        )
+        expected_sharding = (
+            _NO_EXPECTED_SHARDING
+            if expected_shardings is None
+            else expected_shardings[index]
+        )
+        _assert_lowered_output_leaf(
+            output_info=output_info,
+            label=label,
+            expected_metadata=expected_metadata,
+            expected_sharding=expected_sharding,
+        )
+
+
+def _assert_lowered_output_tree(
+    *, output_roles: object, output_info: object, label: str
+) -> None:
+    """Require the lowered pytree to match the solver's declared role tree."""
+    expected = jax.tree.structure(output_roles)
+    actual = jax.tree.structure(output_info)
+    if actual != expected:
+        msg = (
+            f"{label} lowered output tree {actual} does not match declared "
+            f"output roles {expected}."
+        )
+        raise TypeError(msg)
+
+
+def _expected_value_metadata(
+    *, value_template: object, label: str
+) -> tuple[tuple[int, ...], object]:
+    """Read the absolute value metadata used by every declared role."""
+    value_shape = getattr(value_template, "shape", None)
+    value_dtype = getattr(value_template, "dtype", None)
+    if value_shape is None or value_dtype is None:
+        msg = f"{label} value template must expose an absolute shape and dtype."
+        raise TypeError(msg)
+    return tuple(int(size) for size in value_shape), value_dtype
+
+
+def _expected_role_metadata(
+    *,
+    role: object,
+    value_shape: tuple[int, ...],
+    value_dtype: object,
+    label: str,
+) -> tuple[str, tuple[int, ...], object]:
+    """Derive one lowered leaf's metadata from its logical role."""
+    if role is VALUE:
+        return "value", value_shape, value_dtype
+    if role is DISSOLUTION_FLAG:
+        return "dissolution", value_shape[:-1], jnp.dtype(bool)
+    msg = f"{label} declared unsupported output role {role!r}."
+    raise TypeError(msg)
+
+
+def _assert_lowered_output_leaf(
+    *,
+    output_info: object,
+    label: str,
+    expected_metadata: tuple[str, tuple[int, ...], object],
+    expected_sharding: object,
+) -> None:
+    """Check one lowered leaf's shape, dtype, and optional placement."""
+    role_label, expected_shape, expected_dtype = expected_metadata
+    actual_shape = getattr(output_info, "shape", None)
+    if actual_shape != expected_shape:
+        msg = (
+            f"{label} {role_label} output shape mismatch: "
+            f"expected {expected_shape}, got {actual_shape}."
+        )
+        raise TypeError(msg)
+    actual_dtype = getattr(output_info, "dtype", None)
+    if actual_dtype != expected_dtype:
+        msg = (
+            f"{label} {role_label} output dtype mismatch: "
+            f"expected {expected_dtype}, got {actual_dtype}."
+        )
+        raise TypeError(msg)
+    if expected_sharding is not _NO_EXPECTED_SHARDING:
+        actual_sharding = getattr(output_info, "sharding", None)
+        if actual_sharding != expected_sharding:
+            msg = (
+                f"{label} {role_label} output sharding mismatch: "
+                f"expected {expected_sharding}, got {actual_sharding}."
+            )
+            raise TypeError(msg)
+
+
+def _attach_resolved_output_layout(
+    *,
+    compiled: Callable[..., object],
+    layout: ResolvedOutputLayout | object,
+    input_transfer_plan: tuple[ResolvedValueTransfer, ...] = (),
+) -> Callable:
+    """Carry one node's resolved output and input plans to runtime dispatch."""
+    if layout is UNPLANNED:
+        if input_transfer_plan:
+            msg = "An unplanned core cannot carry a resolved input transfer plan."
+            raise ValueError(msg)
+        return compiled
+    return PlannedCore(
+        compiled=compiled,
+        layout=cast("ResolvedOutputLayout", layout),
+        input_transfer_plan=input_transfer_plan,
+    )
 
 
 def _group_cores_by_regime_period(
@@ -1435,9 +2290,9 @@ def _func_dedup_key(*, func: Callable) -> Hashable:
 
     For `functools.partial` objects wrapping shared JIT functions, deduplicate
     by the underlying function's identity together with the `id()` of every
-    keyword-argument value. This is correct even when different partials
-    bind different value objects — two partials share a compiled program
-    only when every keyword value is the same object.
+    positional- and keyword-argument value. This is correct even when different
+    partials bind different value objects — two partials share a compiled
+    program only when every bound value is the same object.
 
     For plain callables, use object identity.
 
@@ -1446,5 +2301,6 @@ def _func_dedup_key(*, func: Callable) -> Hashable:
         return (
             id(func.func),
             tuple((k, id(v)) for k, v in sorted(func.keywords.items())),
+            tuple(id(value) for value in func.args),
         )
     return id(func)

@@ -10,12 +10,12 @@ the block size, including block sizes that do not divide the grid.
 """
 
 import functools
+from collections.abc import Mapping
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.typing import PeriodToRegimeToVArr
 from lcm import (
     AgeGrid,
     IrregSpacedGrid,
@@ -148,8 +148,8 @@ def _params() -> dict:
     return {"discount_factor": 0.95, "final_age_alive": 40 + (N_PERIODS - 2) * 10}
 
 
-def _solve(batch_size: int) -> PeriodToRegimeToVArr:
-    return _model(batch_size).solve(params=_params(), log_level="debug")
+def _solve(batch_size: int) -> Mapping[int, Mapping[str, FloatND]]:
+    return _model(batch_size).solve(params=_params(), log_level="debug").values
 
 
 @pytest.mark.parametrize("batch_size", [1, 4, N_WEALTH])

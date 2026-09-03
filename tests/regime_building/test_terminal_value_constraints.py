@@ -29,6 +29,7 @@ from lcm import (
     categorical,
     fixed_transition,
 )
+from lcm.solver_api import DISSOLUTION_FLAG
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, ContinuousState, FloatND, ScalarInt
 
@@ -139,9 +140,8 @@ def test_a_terminal_participation_constraint_flags_the_cells_it_empties() -> Non
     """
     model = _make_model(participation=True)
 
-    _solution, flags = model.solve(
-        params=_params(), log_level="off", return_dissolution_flags=True
-    )
+    _solution = model.solve(params=_params(), log_level="off")
+    flags = _solution.replay_artifacts.project(DISSOLUTION_FLAG)
 
     np.testing.assert_array_equal(
         np.asarray(flags[1]["couple_terminal"]), [True, True, False]
@@ -159,12 +159,10 @@ def test_an_infeasible_terminal_cell_publishes_the_sentinel_value() -> None:
     """
     model = _make_model(participation=True)
 
-    solution, _flags = model.solve(
-        params=_params(), log_level="off", return_dissolution_flags=True
-    )
+    solution = model.solve(params=_params(), log_level="off")
 
     np.testing.assert_array_equal(
-        np.asarray(solution[1]["couple_terminal"]),
+        np.asarray(solution.values[1]["couple_terminal"]),
         np.array([[-np.inf, -np.inf], [-np.inf, -np.inf], [3.0, 6.0]]),
     )
 
@@ -177,15 +175,14 @@ def test_the_same_terminal_regime_without_the_constraint_keeps_every_cell() -> N
     """
     model = _make_model(participation=False)
 
-    solution, flags = model.solve(
-        params=_params(), log_level="off", return_dissolution_flags=True
-    )
+    solution = model.solve(params=_params(), log_level="off")
+    flags = solution.replay_artifacts.project(DISSOLUTION_FLAG)
 
     np.testing.assert_array_equal(
         np.asarray(flags[1]["couple_terminal"]), [False, False, False]
     )
     np.testing.assert_array_equal(
-        np.asarray(solution[1]["couple_terminal"]),
+        np.asarray(solution.values[1]["couple_terminal"]),
         np.array([[1.0, 2.0], [2.0, 4.0], [3.0, 6.0]]),
     )
 
@@ -199,11 +196,11 @@ def test_a_terminal_reference_is_read_at_the_referenced_regimes_own_value() -> N
     """
     model = _make_model(participation=True)
 
-    _solution, flags = model.solve(
+    _solution = model.solve(
         params=_params(outside_option=4.0),
         log_level="off",
-        return_dissolution_flags=True,
     )
+    flags = _solution.replay_artifacts.project(DISSOLUTION_FLAG)
 
     np.testing.assert_array_equal(
         np.asarray(flags[1]["couple_terminal"]), [True, True, True]

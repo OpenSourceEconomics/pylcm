@@ -56,7 +56,7 @@ def _simulate_period0_alive_consumption(*, model, regime_id) -> np.ndarray:
     result = model.simulate(
         params=_PARAMS,
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=solution,
+        solution=solution,
         log_level="debug",
     )
     df = result.to_dataframe()

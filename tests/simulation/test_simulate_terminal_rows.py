@@ -29,7 +29,6 @@ def result() -> SimulationResult:
             "health": jnp.full(N_SUBJECTS, HealthStatus.good, dtype=jnp.int32),
             "regime_id": jnp.full(N_SUBJECTS, EZRegimeId.alive, dtype=jnp.int32),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
         seed=42,
     )

@@ -100,7 +100,7 @@ def test_the_model_builds_and_solves(model: Model) -> None:
     V = model.solve(
         params={"source": {"koopmans_aggregator": {"discount_factor": 1.0}}},
         log_level="off",
-    )
+    ).values
 
     assert not np.isnan(np.asarray(V[0]["source"])).any()
 
@@ -115,7 +115,6 @@ def test_simulated_wealth_follows_the_realized_draw(model: Model) -> None:
             "health": jnp.array([Health.bad, Health.bad]),
             "regime_id": jnp.array([RegimeId.source, RegimeId.source]),
         },
-        period_to_regime_to_V_arr=None,
         log_level="off",
     )
     df = result.to_dataframe(use_labels=False).reset_index()

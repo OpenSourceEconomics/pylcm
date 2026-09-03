@@ -116,7 +116,7 @@ def _simulate(model: Model):
     return model.simulate(
         params={"discount_factor": _DISCOUNT_FACTOR},
         initial_conditions=_initial_conditions(n_subjects=2),
-        period_to_regime_to_V_arr=solution,
+        solution=solution,
         log_level="debug",
     )
 

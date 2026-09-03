@@ -150,7 +150,7 @@ def test_activity_compatible_target_only_iid_is_entered_at_its_own_law() -> None
     solution = model.solve(
         params={"source": {"koopmans_aggregator": {"discount_factor": 1.0}}},
         log_level="debug",
-    )
+    ).values
     np.testing.assert_allclose(np.asarray(solution[0]["source"]), 1.0, atol=1e-6)
 
 
@@ -184,7 +184,7 @@ def test_process_carried_by_source_and_target_is_accepted() -> None:
 
     assert model.reachability.solution.targets(period=0, source="source") == ("target",)
 
-    solution = model.solve(params=_PROCESS_SOLVE_PARAMS, log_level="debug")
+    solution = model.solve(params=_PROCESS_SOLVE_PARAMS, log_level="debug").values
 
     source_v = solution[0]["source"]
     assert bool(jnp.all(jnp.isfinite(source_v)))
@@ -271,10 +271,10 @@ def test_process_only_target_matches_equivalent_target_with_inert_nonprocess_law
     ) == ("target",)
 
     solve_params = {"discount_factor": 1.0}
-    v_process_only = process_only.solve(params=solve_params, log_level="debug")
+    v_process_only = process_only.solve(params=solve_params, log_level="debug").values
     v_process_and_inert_law = process_and_inert_law.solve(
         params=solve_params, log_level="debug"
-    )
+    ).values
 
     np.testing.assert_allclose(
         np.asarray(v_process_only[0]["source"]),
@@ -325,7 +325,7 @@ def test_explicit_entry_law_for_target_only_process_is_accepted() -> None:
     solution = model.solve(
         params={"source": {"koopmans_aggregator": {"discount_factor": 1.0}}},
         log_level="debug",
-    )
+    ).values
     np.testing.assert_allclose(np.asarray(solution[0]["source"]), 0.0, atol=1e-6)
 
 
@@ -513,7 +513,7 @@ def test_target_only_nonprocess_state_with_entry_law_solves() -> None:
         enable_jit=False,
     )
 
-    solution = model.solve(params={"discount_factor": 1.0}, log_level="debug")
+    solution = model.solve(params={"discount_factor": 1.0}, log_level="debug").values
     np.testing.assert_allclose(np.asarray(solution[0]["source"]), 0.5, atol=1e-6)
 
 
@@ -555,7 +555,7 @@ def test_markov_entry_law_spreads_the_source_over_the_target_lottery() -> None:
         enable_jit=False,
     )
 
-    solution = model.solve(params={"discount_factor": 1.0}, log_level="debug")
+    solution = model.solve(params={"discount_factor": 1.0}, log_level="debug").values
 
     np.testing.assert_allclose(
         np.asarray(solution[0]["source"]), 0.25 * 2.0 + 0.75 * 12.0, atol=1e-6
@@ -614,7 +614,7 @@ def test_markov_entry_law_reads_the_source_age_and_its_own_params(
             },
         },
         log_level="debug",
-    )
+    ).values
 
     np.testing.assert_allclose(
         np.asarray(solution[period]["source"]), expected, atol=1e-6

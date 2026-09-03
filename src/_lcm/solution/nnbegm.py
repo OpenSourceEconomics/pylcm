@@ -63,10 +63,16 @@ from _lcm.egm.published_policy import (
     NNBEGMSimPolicy,
 )
 from _lcm.engine import ParamCheck, StateActionSpace
+from _lcm.execution.core_program import (
+    CoreBuildContext,
+    core_program_graph,
+    materialize_core_program,
+)
 from _lcm.grids import ContinuousGrid, DiscreteGrid, Grid
 from _lcm.solution.contract import (
     ConstraintRouteContext,
     ContinuationPayload,
+    GeneratedReplayAuthority,
     KernelResult,
     PeriodKernel,
     SimulationPolicy,
@@ -78,6 +84,7 @@ from _lcm.solution.contract import (
     _BoundLiquidMargin,
     _BoundOuterContinuousMargin,
 )
+from _lcm.solution.kernel_output import require_legacy_kernel_result
 from _lcm.solution.nbegm import (
     NBEGM,
     _BoundNBEGM,
@@ -236,13 +243,13 @@ class NNBEGM(TwoMarginSolver):
 
     @property
     def publishes_simulation_policy(self) -> bool:
-        """The nested payload is self-describing, so no regime read qualifies it.
+        """Request collection of the self-describing nested replay payload.
 
-        `NestedEGMSimPolicy` names both actions, the liquid state and the search
-        settings, which is why an N-NB-EGM regime never sets
-        `SimulationPhase.egm_policy_read`. Without this declaration the solve's
-        policy-collection gate — which tests that regime-level field — would drop
-        the payload, and simulation would silently fall back to the grid argmax.
+        Canonical processing also installs `NNBEGMPolicyRead` as the consuming-route
+        marker used by labelled-result preflight. This solver-side declaration keeps
+        policy collection explicit for legacy automatic solve/simulate paths; the
+        payload itself still names the actions, state, and search settings its reader
+        needs.
         """
         return True
 
@@ -880,11 +887,6 @@ class _NNBEGMPeriodKernel:
     """The fixed cost's scale function, arguments restricted to
     `period`/`age`/flat params (resolved per period at call time)."""
 
-    @property
-    def core(self) -> Callable:
-        """The adjuster's primary core, exposed for any single-core reader."""
-        return self.adjuster_kernel.core
-
     def cores(self) -> Mapping[str, Callable]:
         """Return every inner core under a `keeper:`/`adjuster:` prefix.
 
@@ -896,12 +898,16 @@ class _NNBEGMPeriodKernel:
         return MappingProxyType(
             {
                 **{
-                    f"keeper:{name}": core
-                    for name, core in self.keeper_kernel.cores().items()
+                    f"keeper:{name}": program.function
+                    for name, program in core_program_graph(
+                        kernel=self.keeper_kernel
+                    ).items()
                 },
                 **{
-                    f"adjuster:{name}": core
-                    for name, core in self.adjuster_kernel.cores().items()
+                    f"adjuster:{name}": program.function
+                    for name, program in core_program_graph(
+                        kernel=self.adjuster_kernel
+                    ).items()
                 },
             }
         )
@@ -940,29 +946,28 @@ class _NNBEGMPeriodKernel:
         """
         role, inner_key = core_key.split(sep=":", maxsplit=1)
         if role == "keeper":
-            return self.keeper_kernel.build_lower_args(
-                core_key=inner_key,
-                state_action_space=state_action_space,
-                next_regime_to_V_arr=next_regime_to_V_arr,
-                next_regime_to_continuation=next_regime_to_continuation,
-                flat_params=flat_params,
-                period=period,
-                ages=ages,
-            )
-        return self.adjuster_kernel.build_lower_args(
-            core_key=inner_key,
-            state_action_space=state_action_space,
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            next_regime_to_continuation=next_regime_to_continuation,
-            flat_params=_with_outer_post_decision(
+            kernel = self.keeper_kernel
+            program_flat_params = flat_params
+        else:
+            kernel = self.adjuster_kernel
+            program_flat_params = _with_outer_post_decision(
                 flat_params=flat_params,
                 regime_name=self.regime_name,
                 outer_post_decision=self.outer_post_decision,
                 value=self.outer_grid_values[0],
+            )
+        declaration = core_program_graph(kernel=kernel)[inner_key]
+        return materialize_core_program(
+            program=declaration,
+            context=CoreBuildContext(
+                state_action_space=state_action_space,
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                next_regime_to_continuation=next_regime_to_continuation,
+                flat_params=program_flat_params,
+                period=period,
+                ages=ages,
             ),
-            period=period,
-            ages=ages,
-        )
+        ).arguments
 
     def __call__(
         self,
@@ -998,18 +1003,13 @@ class _NNBEGMPeriodKernel:
         # It reads the declared map's structure, which is what both searches
         # depend on and neither owns; certifying inside one of them leaves the
         # other free to publish a replay policy for a map nothing can invert.
-        outer_inverse = self._certify_outer_inverse(
+        replay_capability = derive_nnbegm_replay_capability(
+            period_kernel=self,
             state_action_space=state_action_space,
             flat_params=flat_params,
             period=period,
             ages=ages,
         )
-        # One capability per period, settled before either outer search runs and
-        # carried by whichever policy is published. It answers what a replay may
-        # assume — the map's coefficient, the stock domain, the arguments a
-        # replay can bind, the row axes it can address — so neither search
-        # decides that for itself and no reader re-derives it.
-        replay_capability = self._resolve_replay_capability(inverse=outer_inverse)
         if isinstance(self.outer_search, AdaptiveOuterMesh):
             return self._solve_continuous(
                 replay_capability=replay_capability,
@@ -1072,20 +1072,23 @@ class _NNBEGMPeriodKernel:
         chunk_size = self.outer_batch_size or len(nodes)
         for chunk_start in range(0, len(nodes), chunk_size):
             chunk_results = [
-                self.adjuster_kernel(
-                    compiled_cores=adjuster_cores,
-                    state_action_space=state_action_space,
-                    next_regime_to_V_arr=next_regime_to_V_arr,
-                    next_regime_to_continuation=next_regime_to_continuation,
-                    flat_params=_with_outer_post_decision(
-                        flat_params=flat_params,
-                        regime_name=self.regime_name,
-                        outer_post_decision=self.outer_post_decision,
-                        value=node,
+                require_legacy_kernel_result(
+                    output=self.adjuster_kernel(
+                        compiled_cores=adjuster_cores,
+                        state_action_space=state_action_space,
+                        next_regime_to_V_arr=next_regime_to_V_arr,
+                        next_regime_to_continuation=next_regime_to_continuation,
+                        flat_params=_with_outer_post_decision(
+                            flat_params=flat_params,
+                            regime_name=self.regime_name,
+                            outer_post_decision=self.outer_post_decision,
+                            value=node,
+                        ),
+                        period=period,
+                        ages=ages,
+                        logger=logger,
                     ),
-                    period=period,
-                    ages=ages,
-                    logger=logger,
+                    consumer="NNBEGM adjuster wrapper",
                 )
                 for node in nodes[chunk_start : chunk_start + chunk_size]
             ]
@@ -1221,9 +1224,10 @@ class _NNBEGMPeriodKernel:
             config=config,
             fail_closed=config.fail_closed,
         )
+        mesh_nodes_host = np.asarray(mesh.nodes)
         bank = build_outer_candidate_bank(
             outer_nodes=mesh.nodes,
-            results=[cache[float(node)] for node in np.asarray(mesh.nodes)],
+            results=[cache[float(node)] for node in mesh_nodes_host],
         )
         if self.branch_fixed_cost is None:
             fixed_cost_scale = None
@@ -1339,6 +1343,13 @@ class _NNBEGMPeriodKernel:
             V_arr=collapse.V_arr,
             continuation=collapse.carry,
             simulation_policy=sim_policy,
+            generated_replay_authority=(
+                GeneratedReplayAuthority(
+                    adaptive_outer_nodes=tuple(float(node) for node in mesh_nodes_host)
+                )
+                if nested_published
+                else None
+            ),
             diagnostics=diagnostics,
         )
 
@@ -1355,15 +1366,18 @@ class _NNBEGMPeriodKernel:
         logger: logging.Logger,
     ) -> KernelResult:
         """Run the keeper inner solve — the state-dependent no-adjustment branch."""
-        return self.keeper_kernel(
-            compiled_cores=_subcores(compiled_cores=compiled_cores, role="keeper"),
-            state_action_space=state_action_space,
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            next_regime_to_continuation=next_regime_to_continuation,
-            flat_params=flat_params,
-            period=period,
-            ages=ages,
-            logger=logger,
+        return require_legacy_kernel_result(
+            output=self.keeper_kernel(
+                compiled_cores=_subcores(compiled_cores=compiled_cores, role="keeper"),
+                state_action_space=state_action_space,
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                next_regime_to_continuation=next_regime_to_continuation,
+                flat_params=flat_params,
+                period=period,
+                ages=ages,
+                logger=logger,
+            ),
+            consumer="NNBEGM keeper wrapper",
         )
 
     def _solve_adjuster_node(
@@ -1380,20 +1394,23 @@ class _NNBEGMPeriodKernel:
         logger: logging.Logger,
     ) -> OuterCandidateResult:
         """Run one adjuster node's exact conditional inner solve."""
-        result = self.adjuster_kernel(
-            compiled_cores=adjuster_cores,
-            state_action_space=state_action_space,
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            next_regime_to_continuation=next_regime_to_continuation,
-            flat_params=_with_outer_post_decision(
-                flat_params=flat_params,
-                regime_name=self.regime_name,
-                outer_post_decision=self.outer_post_decision,
-                value=node,
+        result = require_legacy_kernel_result(
+            output=self.adjuster_kernel(
+                compiled_cores=adjuster_cores,
+                state_action_space=state_action_space,
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                next_regime_to_continuation=next_regime_to_continuation,
+                flat_params=_with_outer_post_decision(
+                    flat_params=flat_params,
+                    regime_name=self.regime_name,
+                    outer_post_decision=self.outer_post_decision,
+                    value=node,
+                ),
+                period=period,
+                ages=ages,
+                logger=logger,
             ),
-            period=period,
-            ages=ages,
-            logger=logger,
+            consumer="NNBEGM adjuster node wrapper",
         )
         return OuterCandidateResult(
             outer_node=node,
@@ -1619,6 +1636,38 @@ class _NNBEGMPeriodKernel:
             period=period,
         )
         return jnp.where(represented, candidate_targets, jnp.nan)
+
+
+def derive_nnbegm_replay_capability(
+    *,
+    period_kernel: PeriodKernel,
+    state_action_space: StateActionSpace,
+    flat_params: FlatParams,
+    period: int,
+    ages: AgeGrid,
+) -> OuterReplayCapability:
+    """Derive one period's replay capability from canonical model inputs.
+
+    The solve calls this before publishing a policy, and labelled-result preflight
+    calls it again without consulting that policy. Keeping the structural
+    certificate behind one model-owned seam prevents a returned capability from
+    authenticating its own inverse coefficient or route diagnostics.
+    """
+    if not isinstance(period_kernel, _NNBEGMPeriodKernel):
+        msg = (
+            "NNBEGM replay authority requires the canonical NNBEGM period kernel, "
+            f"got {type(period_kernel).__name__}."
+        )
+        raise TypeError(msg)
+    inverse = period_kernel._certify_outer_inverse(  # noqa: SLF001
+        state_action_space=state_action_space,
+        flat_params=flat_params,
+        period=period,
+        ages=ages,
+    )
+    return period_kernel._resolve_replay_capability(  # noqa: SLF001
+        inverse=inverse
+    )
 
 
 def _fail_if_the_solve_grid_cannot_reconstruct_a_candidate(

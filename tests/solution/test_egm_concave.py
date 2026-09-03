@@ -55,7 +55,7 @@ def test_dcegm_matches_analytical_on_full_wealth_grid(*, case, n_periods):
     model = get_retirement_only_model(solver="dcegm", n_periods=n_periods)
     params = get_retirement_only_params(n_periods=n_periods)
 
-    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
+    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug").values
 
     numerical = stack_retirement_V(period_to_regime_to_V_arr)
     analytical = load_analytical_values_retired(case)
@@ -79,7 +79,7 @@ def test_dcegm_error_not_much_worse_than_brute_force(*, case, n_periods):
     errors = {}
     for solver in ["brute_force", "dcegm"]:
         model = get_retirement_only_model(solver=solver, n_periods=n_periods)
-        got = model.solve(params=params, log_level="debug")
+        got = model.solve(params=params, log_level="debug").values
         numerical = stack_retirement_V(got)
         # Exclude the brute-force-unstable low-wealth nodes from the head-to-head
         # so the comparison is on territory where both solvers are well-defined.
@@ -103,7 +103,7 @@ def test_discount_factor_zero_yields_consume_everything_values():
     model = get_retirement_only_model(solver="dcegm", n_periods=n_periods)
     params = get_retirement_only_params(n_periods=n_periods, discount_factor=0.0)
 
-    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
+    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug").values
 
     wealth = np.asarray(WEALTH_GRID.to_jax())
     for period in range(n_periods - 1):
@@ -151,7 +151,7 @@ def test_age_dependent_terminal_utility_solves_to_closed_form():
         n_periods=n_periods, discount_factor=discount_factor
     )
 
-    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
+    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug").values
 
     wealth = np.asarray(WEALTH_GRID.to_jax())
     consumption = wealth / (1.0 + discount_factor)
@@ -275,7 +275,7 @@ def test_dcegm_with_interest_matches_closed_form_on_dense_wealth_grid():
         "final_age_alive": 40 + n_periods - 2,
     }
 
-    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
+    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug").values
 
     wealth = np.linspace(1.0, 400.0, 1000)
     for period in range(n_periods - 1):
@@ -308,11 +308,15 @@ def test_dcegm_solution_has_standard_v_array_layout():
     n_periods = 4
     params = get_retirement_only_params(n_periods=n_periods)
 
-    brute = get_retirement_only_model(solver="brute_force", n_periods=n_periods).solve(
-        params=params, log_level="debug"
+    brute = (
+        get_retirement_only_model(solver="brute_force", n_periods=n_periods)
+        .solve(params=params, log_level="debug")
+        .values
     )
-    dcegm = get_retirement_only_model(solver="dcegm", n_periods=n_periods).solve(
-        params=params, log_level="debug"
+    dcegm = (
+        get_retirement_only_model(solver="dcegm", n_periods=n_periods)
+        .solve(params=params, log_level="debug")
+        .values
     )
 
     assert sorted(brute) == sorted(dcegm)
@@ -351,7 +355,7 @@ def test_neg_inf_bequest_node_does_not_wipe_the_continuation():
         n_periods=n_periods, discount_factor=discount_factor
     )
 
-    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
+    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug").values
 
     wealth = np.asarray(WEALTH_GRID.to_jax())
     consumption = wealth / (1.0 + discount_factor)

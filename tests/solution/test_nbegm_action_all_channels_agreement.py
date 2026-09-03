@@ -35,7 +35,7 @@ def _solve(*, variant: str, n_consumption: int) -> Mapping[int, Mapping]:
     )
     return model.solve(
         params=toy.build_params(action_in_liquid_law=True), log_level="debug"
-    )
+    ).values
 
 
 def test_nbegm_action_all_channels_matches_brute() -> None:

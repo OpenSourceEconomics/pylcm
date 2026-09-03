@@ -351,6 +351,9 @@ class SolutionPhase:
     constraints: ConstraintFunctionsMapping
     """Immutable mapping of constraint names to feasibility predicates."""
 
+    has_compiled_constraint_boundaries: bool = False
+    """Whether the solve route compiles any constraint boundary into its kernel."""
+
     transitions: TransitionFunctionsMapping
     """Immutable mapping of transition names to transition functions."""
 
@@ -584,6 +587,21 @@ class EGMPolicyRead:
     """Lower bound of the solver's savings grid — the borrowing limit the
     post-read feasibility check enforces (`action <= resources - bound`)."""
 
+    row_discrete_state_names: tuple[StateName, ...]
+    """Exact producer-owned discrete-state row axes, in storage order."""
+
+    row_passive_state_names: tuple[StateName, ...]
+    """Exact producer-owned passive-state row axes, after discrete states."""
+
+    row_discrete_action_names: tuple[ActionName, ...]
+    """Exact producer-owned discrete-action row axes, after state axes."""
+
+    row_axis_lengths_by_period: MappingProxyType[int, tuple[int, ...]]
+    """Exact lengths of the ordered row axes in every active period."""
+
+    float_dtype: str
+    """Canonical dtype of every numeric array leaf in the payload."""
+
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class NNBEGMPolicyRead:
@@ -602,6 +620,80 @@ class NNBEGMPolicyRead:
 
     outer_state_name: StateName
     """State whose realized value is the default keeper target."""
+
+    inner_action_name: ActionName
+    """Exact continuous inner-action role published by the solver."""
+
+    outer_action_name: ActionName
+    """Exact continuous outer-action role published by the solver."""
+
+    state_names: tuple[StateName, ...]
+    """Exact producer-owned state axes of a finite replay bank."""
+
+    state_axis_lengths_by_period: MappingProxyType[int, tuple[int, ...]]
+    """Exact lengths of the ordered finite-bank state axes by period."""
+
+    row_discrete_state_names: tuple[StateName, ...]
+    """Exact discrete-state row axes of each nested inner policy."""
+
+    row_passive_state_names: tuple[StateName, ...]
+    """Exact passive-state row axes of each nested inner policy."""
+
+    row_axis_lengths_by_period: MappingProxyType[int, tuple[int, ...]]
+    """Exact lengths of the ordered nested-policy row axes by period."""
+
+    discrete_action_names: tuple[ActionName, ...]
+    """Exact finite-bank categorical columns, in producer order."""
+
+    discrete_action_code_domains: MappingProxyType[ActionName, tuple[int, ...]]
+    """Exact allowed categorical codes for every finite-bank column."""
+
+    candidate_discrete_action_codes: tuple[tuple[int, ...], ...]
+    """Exact outer-tiled categorical rows of a finite candidate bank."""
+
+    candidate_count: int | None
+    """Exact finite-bank candidate count, or ``None`` for a nested route."""
+
+    float_dtype: str
+    """Canonical dtype of every floating array leaf in the payload."""
+
+    integer_dtype: str
+    """Canonical dtype of categorical-code leaves in the payload."""
+
+    outer_grid_values: tuple[float, ...] | None = None
+    """Exact finite outer search nodes, or ``None`` for a nested route."""
+
+    n_keeper_candidates: int | None = None
+    """Exact finite-bank keeper count, or ``None`` for a nested route."""
+
+    liquid_state_name: StateName | None = None
+    """Nested route's inner Euler-state role, if applicable."""
+
+    resources_target: FunctionName | None = None
+    """Nested route's intrinsic-budget resources target, if applicable."""
+
+    savings_lower_bound: float | None = None
+    """Nested route's model-owned intrinsic borrowing limit, if applicable."""
+
+    golden_iterations: int | None = None
+    """Nested route's exact outer-refinement iteration budget."""
+
+    value_atol: float | None = None
+    """Nested route's exact canonical-Q absolute agreement band."""
+
+    value_rtol: float | None = None
+    """Nested route's exact canonical-Q relative agreement band."""
+
+    outer_state_domain_by_period: MappingProxyType[int, tuple[float, float]] = (
+        MappingProxyType({})
+    )
+    """Exact outer-state domain endpoints in every active period."""
+
+    policy_applicable: bool = True
+    """Whether this route structurally publishes a simulation policy."""
+
+    policy_required: bool = True
+    """Whether every successful solve must retain a payload for this route."""
 
     fixed_cost_simulation_unsupported: bool = False
     """Whether solution analytically integrates an observed fixed cost whose

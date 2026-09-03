@@ -50,8 +50,9 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
+          persist-credentials: false
       - name: Ensure main ref exists
-        run: git fetch origin main:main || true
+        run: git branch --force main origin/main
       - name: Regenerate version.py
         run: >-
           echo "__version__ = '$(git describe --tags --always)'"

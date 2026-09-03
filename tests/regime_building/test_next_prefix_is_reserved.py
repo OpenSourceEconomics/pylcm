@@ -238,7 +238,7 @@ def test_a_transition_law_may_still_read_a_next_name() -> None:
     V = model.solve(
         params={"source": {"koopmans_aggregator": {"discount_factor": 1.0}}},
         log_level="off",
-    )
+    ).values
 
     np.testing.assert_allclose(
         np.asarray(V[0]["source"]).max(), np.array(5.0 + 2.8), atol=1e-5

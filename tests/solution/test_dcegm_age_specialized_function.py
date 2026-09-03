@@ -25,6 +25,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.execution.core_program import core_program_graph
 from lcm import AgeGrid, AgeSpecializedFunction, Model
 from lcm.typing import BoolND, ContinuousAction, FloatND
 from tests.conftest import DECIMAL_PRECISION, EXACT_KERNEL_SKIP_REASON
@@ -105,17 +106,23 @@ def test_the_last_working_age_uses_that_ages_own_utility():
     instrument — no tolerance can hide the defect without also hiding real error.
     """
     params = get_params()
-    specialized = _twin(solver_kind="dcegm", age_specialized=True).solve(
-        params=params, log_level="debug"
+    specialized = (
+        _twin(solver_kind="dcegm", age_specialized=True)
+        .solve(params=params, log_level="debug")
+        .values
     )
     last_working = max(
         period for period, regimes in specialized.items() if "working_life" in regimes
     )
-    pinned = _twin(
-        solver_kind="dcegm",
-        age_specialized=False,
-        utility=_make_scaled_utility(MIN_AGE + last_working),
-    ).solve(params=params, log_level="debug")
+    pinned = (
+        _twin(
+            solver_kind="dcegm",
+            age_specialized=False,
+            utility=_make_scaled_utility(MIN_AGE + last_working),
+        )
+        .solve(params=params, log_level="debug")
+        .values
+    )
 
     expected = np.asarray(pinned[last_working]["working_life"])
     got = np.asarray(specialized[last_working]["working_life"])
@@ -134,11 +141,15 @@ def test_age_specialized_utility_actually_moves_the_dcegm_solution():
     ignored the age specialization in the same way.
     """
     params = get_params()
-    drifting = _twin(solver_kind="dcegm", age_specialized=True).solve(
-        params=params, log_level="debug"
+    drifting = (
+        _twin(solver_kind="dcegm", age_specialized=True)
+        .solve(params=params, log_level="debug")
+        .values
     )
-    flat = _twin(solver_kind="dcegm", age_specialized=False).solve(
-        params=params, log_level="debug"
+    flat = (
+        _twin(solver_kind="dcegm", age_specialized=False)
+        .solve(params=params, log_level="debug")
+        .values
     )
 
     moved = [
@@ -158,9 +169,9 @@ def _compiled_cores(*, model: Model, regime_name: str) -> list[int]:
     """Identity of each period's compiled core — the object periods actually share."""
     kernels = model._regimes[regime_name].solution.period_kernels
     return [
-        id(core)
+        id(program.function)
         for _, kernel in sorted(kernels.items())
-        for core in kernel.cores().values()
+        for program in core_program_graph(kernel=kernel).values()
     ]
 
 

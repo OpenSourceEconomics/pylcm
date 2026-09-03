@@ -15,34 +15,48 @@ dissolution routing are specified exactly in
 ## Solving
 
 ```python
-period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
+solution = model.solve(params=params, log_level="debug")
+value_functions = solution.values
 ```
 
-Performs backward induction using dynamic programming. Returns an immutable mapping of
-`period -> regime_name -> value_function_array`.
+Backward induction returns one immutable `SolutionResult`. Its `values` mapping is
+indexed by `period -> regime_name -> value_function_array`; replay policies, collective
+dissolution flags, diagnostics, metadata, and omission reasons remain in their labelled
+fields and addressed artifact stores.
 
-### Optional solve artifacts
+### Retention and replay
 
-Most users need only value functions. Request additional artifacts explicitly:
+The default `VALUES_AND_REPLAY` retention is the safe choice for later simulation:
 
 ```python
-value_functions, policies = model.solve(
+from lcm.solver_api import ResultRetention
+
+solution = model.solve(
     params=params,
     log_level="debug",
-    return_simulation_policy=True,
+    retention=ResultRetention.VALUES_AND_REPLAY,
 )
 
-value_functions, dissolution_flags = collective_model.solve(
+result = model.simulate(
     params=params,
+    initial_conditions=initial_conditions,
+    solution=solution,
     log_level="debug",
-    return_dissolution_flags=True,
 )
 ```
 
-Simulation policies are for inspection; a fresh simulation obtains supported policy
-artifacts internally. Dissolution flags are required when a collective regime's
-`ValueDependentTransition` has a gate that reads `D_target` — the dissolution flag of a
-collective target — during simulation.
+`VALUES` drops replay artifacts and works only when every simulated decision can be
+recovered from values and no applicable collective gate needs a dissolution flag.
+`ALL_PERSISTABLE_ARTIFACTS` currently retains the same replay set; continuation
+artifacts are not yet retainable. Diagnostics follow `log_level`, not retention.
+
+Simulation validates the originating model instance, exact canonical parameters, result
+versions, value coverage and schemas, and every required replay artifact before forward
+execution. The checks remain active at `log_level="off"`. Omit `solution` to solve
+automatically; there are no separate value, policy, or dissolution inputs. Persistence
+and durable cross-process model identity remain future capabilities. See
+[Runtime, results, and persistence](../reference/runtime_and_results.md#api-solution-result)
+for the artifact stores and current limits.
 
 ### Log levels and runtime validation
 
@@ -71,18 +85,16 @@ optimal action. Only the validation that `"off"` skips tells you what is wrong. 
 
 ```python
 # Debug — validation runs and raises on the first failure
-period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
+solution = model.solve(params=params, log_level="debug")
 
 # Silent — no logging, no validation
-period_to_regime_to_V_arr = model.solve(params=params, log_level="off")
+solution = model.solve(params=params, log_level="off")
 
 # Validation runs but only warns; the run continues
-period_to_regime_to_V_arr = model.solve(params=params, log_level="warning")
+solution = model.solve(params=params, log_level="warning")
 
 # Diagnostics + disk snapshots
-period_to_regime_to_V_arr = model.solve(
-    params=params, log_level="debug", log_path="./debug/"
-)
+solution = model.solve(params=params, log_level="debug", log_path="./debug/")
 ```
 
 The full behaviour of every `log_level` × `log_path` combination:
@@ -110,25 +122,25 @@ See [Debugging](debugging.md) for details on snapshots.
 result = model.simulate(
     params=params,
     initial_conditions=initial_conditions,
-    period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+    solution=solution,
     log_level="debug",
 )
 ```
 
 Forward simulation using solved value functions. Each agent starts from the given
 initial conditions and makes optimal decisions at each period. Returns a
-`SimulationResult` object.
+`SimulationResult` object. The complete `SolutionResult` is supplied through
+`solution=...`.
 
 ## Simulate without pre-solving
 
-When `period_to_regime_to_V_arr=None`, `simulate()` solves the model automatically
-before simulating. Use this when you don't need the raw value function arrays:
+When `solution` is omitted, `simulate()` solves the model automatically before
+simulating. Use this when you don't need the raw value function arrays:
 
 ```python
 result = model.simulate(
     params=params,
     initial_conditions=initial_conditions,
-    period_to_regime_to_V_arr=None,
     log_level="debug",
 )
 ```
@@ -155,7 +167,6 @@ df = pd.DataFrame(
 result = model.simulate(
     params=params,
     initial_conditions=df,
-    period_to_regime_to_V_arr=None,
     log_level="debug",
 )
 ```
@@ -251,10 +262,9 @@ for the full rules.
 - `log_level`: Required. Console verbosity and runtime-validation policy (same options
   and table as `solve()`); start at `"debug"`. Initial-condition validation (states
   on-grid, regimes valid) follows this policy too — `"off"` skips it.
-- `seed=None`: Random seed for stochastic simulations (int).
-- `period_to_regime_to_dissolution_flags=None`: The flags returned by
-  `solve(return_dissolution_flags=True)`. Required only for a model whose gate reads
-  `D_target`; a no-op for every other model.
+- `seed=None`: Random seed for stochastic simulations (int). Collective dissolution
+  gates consume their addressed replay artifacts from `solution`; the automatic-solve
+  path retains and threads them itself.
 - `log_path=None`: Directory for diagnostic snapshots; optional at every level.
 - `log_keep_n_latest=3`: Maximum snapshot directories to retain.
 
@@ -406,11 +416,10 @@ initial_df = pd.DataFrame(
     }
 )
 
-# 4. Simulate (solves automatically when period_to_regime_to_V_arr=None)
+# 4. Simulate (solves automatically when solution is omitted)
 result = model.simulate(
     params=params,
     initial_conditions=initial_df,
-    period_to_regime_to_V_arr=None,
     log_level="debug",
 )
 

@@ -130,10 +130,12 @@ def test_under_specified_signature_merging_distinct_grids_is_rejected():
 def test_age_invariant_grid_reproduces_plain_solve():
     """An age-invariant `AgeSpecializedGrid` equals the plain fixed-grid solve."""
     grid = LinSpacedGrid(start=0.5, stop=25.0, n_points=15)
-    v_plain = _model(grid).solve(params=_PARAMS, log_level="debug")
-    v_asg = _model(
-        AgeSpecializedGrid(build=lambda _age: grid, signature=lambda _age: 0)
-    ).solve(params=_PARAMS, log_level="debug")
+    v_plain = _model(grid).solve(params=_PARAMS, log_level="debug").values
+    v_asg = (
+        _model(AgeSpecializedGrid(build=lambda _age: grid, signature=lambda _age: 0))
+        .solve(params=_PARAMS, log_level="debug")
+        .values
+    )
     for period in range(_N):
         if "alive" not in v_plain[period]:
             continue
@@ -170,9 +172,9 @@ def test_moving_floor_no_nan_poisoning():
     """
     v = _model(_moving_floor_grid()).solve(params=_PARAMS, log_level="debug")
     for period in range(_N):
-        if "alive" not in v[period]:
+        if "alive" not in v.values[period]:
             continue
-        arr = np.asarray(v[period]["alive"])
+        arr = np.asarray(v.values[period]["alive"])
         assert not np.isnan(arr).any(), f"period {period} has NaN (poisoning): {arr}"
         assert np.isfinite(arr).any(), f"period {period} has no finite V at all"
 
@@ -197,11 +199,11 @@ def test_moving_floor_solves_on_each_periods_own_nodes():
     grid = _moving_floor_grid()
     v = _model(grid).solve(params=_PARAMS, log_level="debug")
     for period in range(_N):
-        if "alive" not in v[period]:
+        if "alive" not in v.values[period]:
             continue
         nodes = np.asarray(grid.build(_AGES.period_to_age(period)).to_jax())
         expected_infeasible = nodes < _CGRID.start
-        got_infeasible = np.isneginf(np.asarray(v[period]["alive"]))
+        got_infeasible = np.isneginf(np.asarray(v.values[period]["alive"]))
         np.testing.assert_array_equal(
             got_infeasible,
             expected_infeasible,
@@ -216,11 +218,11 @@ def test_moving_floor_value_monotone_in_wealth():
     """V is nondecreasing in wealth at every working age (economic sanity)."""
     v = _model(_moving_floor_grid()).solve(params=_PARAMS, log_level="debug")
     for period in range(_N):
-        if "alive" not in v[period]:
+        if "alive" not in v.values[period]:
             continue
         # Replace legitimate `-inf` (infeasible low-wealth cells) with a finite sentinel
         # so `-inf - -inf = NaN` does not spuriously fail the monotonicity diff.
-        arr = np.nan_to_num(np.asarray(v[period]["alive"]), neginf=-1e30)
+        arr = np.nan_to_num(np.asarray(v.values[period]["alive"]), neginf=-1e30)
         diffs = np.diff(arr, axis=0)  # axis 0 is the wealth grid
         assert (diffs >= -1e-6).all(), (
             f"V not nondecreasing in wealth at period {period}"
@@ -234,7 +236,7 @@ def test_moving_floor_simulates_positive_consumption():
     n = 200
     result = model.simulate(
         params=_PARAMS,
-        period_to_regime_to_V_arr=v,
+        solution=v,
         log_level="debug",
         seed=1,
         initial_conditions={
@@ -292,7 +294,7 @@ def test_last_working_age_value_is_tabulated_on_that_ages_own_nodes(grid_factory
             for w in wealth
         ]
     )
-    got = np.asarray(v[last_working]["alive"])
+    got = np.asarray(v.values[last_working]["alive"])
 
     np.testing.assert_array_equal(np.isneginf(got), np.isneginf(expected))
     finite = np.isfinite(expected)
@@ -513,4 +515,4 @@ def test_builder_undefined_outside_active_ages_still_solves():
 
     grid = AgeSpecializedGrid(build=build, signature=lambda _age: 0)
     v = _model(grid).solve(params=_PARAMS, log_level="debug")
-    assert any("alive" in v[period] for period in range(_N))
+    assert any("alive" in v.values[period] for period in range(_N))

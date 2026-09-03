@@ -35,7 +35,7 @@ def _solve(
     return model.solve(
         params=toy.build_params(old_discrete_action=old_discrete_action),
         log_level="debug",
-    )
+    ).values
 
 
 def test_nbegm_young_matches_brute_reading_a_brute_child():

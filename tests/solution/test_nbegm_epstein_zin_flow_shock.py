@@ -169,12 +169,16 @@ def test_constrained_corner_wins_at_the_bottom_of_the_liquid_grid() -> None:
         ]
     )
     sigma = _PARAMS["alive"]["health"]["sigma"]
-    nbegm = _build_model(
-        solver=NBEGM(
-            savings_grid=_SAVINGS_GRID,
-            envelope_arithmetic="ordinary",
+    nbegm = (
+        _build_model(
+            solver=NBEGM(
+                savings_grid=_SAVINGS_GRID,
+                envelope_arithmetic="ordinary",
+            )
         )
-    ).solve(params=_PARAMS, log_level="debug")
+        .solve(params=_PARAMS, log_level="debug")
+        .values
+    )
     values = np.asarray(nbegm[1]["alive"])[:, 0]
     nodes, _ = np.polynomial.hermite_e.hermegauss(5)
     health_nodes = nodes * sigma
@@ -189,13 +193,21 @@ def test_constrained_corner_wins_at_the_bottom_of_the_liquid_grid() -> None:
 
 def test_nbegm_epstein_zin_flow_shock_matches_brute_force() -> None:
     """The joint CE over a flow-scaling IID node matches the dense grid search."""
-    nbegm = _build_model(
-        solver=NBEGM(
-            savings_grid=_SAVINGS_GRID,
-            envelope_arithmetic="ordinary",
+    nbegm = (
+        _build_model(
+            solver=NBEGM(
+                savings_grid=_SAVINGS_GRID,
+                envelope_arithmetic="ordinary",
+            )
         )
-    ).solve(params=_PARAMS, log_level="debug")
-    brute = _build_model(solver=GridSearch()).solve(params=_PARAMS, log_level="debug")
+        .solve(params=_PARAMS, log_level="debug")
+        .values
+    )
+    brute = (
+        _build_model(solver=GridSearch())
+        .solve(params=_PARAMS, log_level="debug")
+        .values
+    )
     for period in (0, 1):
         nbegm_V = np.asarray(nbegm[period]["alive"])
         brute_V = np.asarray(brute[period]["alive"])
@@ -212,19 +224,27 @@ def test_stochastic_node_batching_matches_the_fused_expectation() -> None:
     the block-scan accumulation equals the single fused reduction up to
     floating-point reassociation.
     """
-    fused = _build_model(
-        solver=NBEGM(
-            savings_grid=_SAVINGS_GRID,
-            envelope_arithmetic="ordinary",
+    fused = (
+        _build_model(
+            solver=NBEGM(
+                savings_grid=_SAVINGS_GRID,
+                envelope_arithmetic="ordinary",
+            )
         )
-    ).solve(params=_PARAMS, log_level="debug")
-    batched = _build_model(
-        solver=NBEGM(
-            savings_grid=_SAVINGS_GRID,
-            envelope_arithmetic="ordinary",
-            stochastic_node_batch_size=2,
+        .solve(params=_PARAMS, log_level="debug")
+        .values
+    )
+    batched = (
+        _build_model(
+            solver=NBEGM(
+                savings_grid=_SAVINGS_GRID,
+                envelope_arithmetic="ordinary",
+                stochastic_node_batch_size=2,
+            )
         )
-    ).solve(params=_PARAMS, log_level="debug")
+        .solve(params=_PARAMS, log_level="debug")
+        .values
+    )
     for period in (0, 1):
         batched_arr = np.asarray(batched[period]["alive"])
         fused_arr = np.asarray(fused[period]["alive"])

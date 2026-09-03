@@ -15,6 +15,7 @@ the explicit candidate carry bank required for exact policy replay by
 `V` and carry value/grid agree within 1e-12; carry marginals agree within 1e-11.
 """
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -24,11 +25,11 @@ import pytest
 from jax import config as jax_config
 
 import _lcm.solution.nnbegm as solvers_mod
+from lcm.typing import FloatND
 from tests.test_models import n_nbegm_toy as toy
 
 if TYPE_CHECKING:
     from _lcm.solution.contract import KernelResult
-    from _lcm.typing import PeriodToRegimeToVArr
 
 _PARAMS = {"discount_factor": 0.95}
 _BASELINE = Path(__file__).parent.parent / "data" / "n_nbegm_finite_baseline.npz"
@@ -45,7 +46,7 @@ _CARRY_LEAVES = {
 
 def _solve_recording_kernel_results(
     *, outer_batch_size: int, monkeypatch: pytest.MonkeyPatch
-) -> tuple[PeriodToRegimeToVArr, dict[int, KernelResult]]:
+) -> tuple[Mapping[int, Mapping[str, FloatND]], dict[int, KernelResult]]:
     """Solve the toy, recording each period's raw `KernelResult`."""
     recorded: dict[int, KernelResult] = {}
     original_call = solvers_mod._NNBEGMPeriodKernel.__call__
@@ -63,11 +64,15 @@ def _solve_recording_kernel_results(
         "__call__",
         recording_call,
     )
-    solution = toy.build_model(
-        variant="n_nbegm",
-        outer_batch_size=outer_batch_size,
-        n_periods=_N_PERIODS,
-    ).solve(params=_PARAMS, log_level="debug")
+    solution = (
+        toy.build_model(
+            variant="n_nbegm",
+            outer_batch_size=outer_batch_size,
+            n_periods=_N_PERIODS,
+        )
+        .solve(params=_PARAMS, log_level="debug")
+        .values
+    )
     return solution, recorded
 
 

@@ -98,6 +98,48 @@ def allow_only_kwargs(
     return cast("Callable[..., ReturnType]", func_with_only_kwargs)
 
 
+def _split_bound_arguments(
+    *,
+    bound: inspect.BoundArguments,
+    n_positional: int,
+    original_signature: inspect.Signature,
+    adapted_signature: inspect.Signature,
+) -> tuple[list[Any], dict[str, Any]]:
+    """Preserve how positional-or-keyword values reached the adapter."""
+    positional_origins: set[str] = set()
+    remaining_positional = n_positional
+    for parameter in adapted_signature.parameters.values():
+        if remaining_positional == 0:
+            break
+        if parameter.kind in {
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        }:
+            positional_origins.add(parameter.name)
+            remaining_positional -= 1
+        elif parameter.kind == inspect.Parameter.VAR_POSITIONAL:
+            positional_origins.add(parameter.name)
+            break
+
+    forwarded_args: list[Any] = []
+    forwarded_kwargs: dict[str, Any] = {}
+    for name, value in bound.arguments.items():
+        kind = original_signature.parameters[name].kind
+        if kind == inspect.Parameter.VAR_POSITIONAL:
+            forwarded_args.extend(value)
+        elif kind == inspect.Parameter.VAR_KEYWORD:
+            forwarded_kwargs.update(value)
+        elif kind == inspect.Parameter.POSITIONAL_ONLY or (
+            kind == inspect.Parameter.POSITIONAL_OR_KEYWORD
+            and name in positional_origins
+        ):
+            forwarded_args.append(value)
+        else:
+            forwarded_kwargs[name] = value
+
+    return forwarded_args, forwarded_kwargs
+
+
 def allow_args(func: Callable[..., ReturnType]) -> Callable[..., ReturnType]:
     """Allow a function to be called with positional arguments.
 
@@ -152,20 +194,14 @@ def allow_args(func: Callable[..., ReturnType]) -> Callable[..., ReturnType]:
                 raise ValueError("Too many arguments provided.") from error
             raise ValueError("Not all arguments provided.") from error
 
-        positional_only: list[Any] = []
-        forwarded_kwargs: dict[str, Any] = {}
-        for name, value in bound.arguments.items():
-            kind = parameters[name].kind
-            if kind == inspect.Parameter.POSITIONAL_ONLY:
-                positional_only.append(value)
-            elif kind == inspect.Parameter.VAR_POSITIONAL:
-                positional_only.extend(value)
-            elif kind == inspect.Parameter.VAR_KEYWORD:
-                forwarded_kwargs.update(value)
-            else:
-                forwarded_kwargs[name] = value
+        forwarded_args, forwarded_kwargs = _split_bound_arguments(
+            bound=bound,
+            n_positional=len(args),
+            original_signature=signature,
+            adapted_signature=new_signature,
+        )
 
-        return func(*positional_only, **forwarded_kwargs)
+        return func(*forwarded_args, **forwarded_kwargs)
 
     # Callables do not necessarily have a __signature__ attribute.
     allow_args_wrapper.__signature__ = new_signature  # ty: ignore[unresolved-attribute]

@@ -13,12 +13,12 @@ explicit budget constraint).
 """
 
 import functools
+from collections.abc import Mapping
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.typing import PeriodToRegimeToVArr
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -245,7 +245,9 @@ def _params() -> dict:
 
 
 def _assert_working_life_V_matches(
-    *, dcegm_solution: PeriodToRegimeToVArr, brute_solution: PeriodToRegimeToVArr
+    *,
+    dcegm_solution: Mapping[int, Mapping[str, FloatND]],
+    brute_solution: Mapping[int, Mapping[str, FloatND]],
 ) -> None:
     for period in sorted(brute_solution)[:-1]:
         brute_V = np.asarray(brute_solution[period]["working_life"])
@@ -327,11 +329,13 @@ def test_discrete_state_and_action_law_term_matches_brute_force():
     dense-grid brute-force oracle up to its consumption-grid resolution.
     """
     params = _params()
-    dcegm_solution = _health_insurance_model("dcegm").solve(
-        params=params, log_level="debug"
+    dcegm_solution = (
+        _health_insurance_model("dcegm").solve(params=params, log_level="debug").values
     )
-    brute_solution = _health_insurance_model("brute_force").solve(
-        params=params, log_level="debug"
+    brute_solution = (
+        _health_insurance_model("brute_force")
+        .solve(params=params, log_level="debug")
+        .values
     )
     _assert_working_life_V_matches(
         dcegm_solution=dcegm_solution, brute_solution=brute_solution
@@ -404,9 +408,11 @@ def test_euler_state_law_term_with_means_test_matches_brute_force():
     brute solver's consumption-grid resolution.
     """
     params = _params()
-    dcegm_solution = _means_test_model("dcegm").solve(params=params, log_level="debug")
-    brute_solution = _means_test_model("brute_force").solve(
-        params=params, log_level="debug"
+    dcegm_solution = (
+        _means_test_model("dcegm").solve(params=params, log_level="debug").values
+    )
+    brute_solution = (
+        _means_test_model("brute_force").solve(params=params, log_level="debug").values
     )
     _assert_working_life_V_matches(
         dcegm_solution=dcegm_solution, brute_solution=brute_solution
@@ -507,9 +513,11 @@ def test_per_target_law_term_asymmetry_matches_brute_force():
     oracle solving the same per-target laws.
     """
     params = {**_params(), "survival_rate": SURVIVAL_RATE}
-    dcegm_solution = _per_target_model("dcegm").solve(params=params, log_level="debug")
-    brute_solution = _per_target_model("brute_force").solve(
-        params=params, log_level="debug"
+    dcegm_solution = (
+        _per_target_model("dcegm").solve(params=params, log_level="debug").values
+    )
+    brute_solution = (
+        _per_target_model("brute_force").solve(params=params, log_level="debug").values
     )
     _assert_working_life_V_matches(
         dcegm_solution=dcegm_solution, brute_solution=brute_solution
@@ -589,9 +597,11 @@ def test_phase_variant_law_term_solves_and_simulates_with_its_phase():
     exists, in `tests/simulation/test_simulate_dcegm.py`.)
     """
     params = _params()
-    dcegm_solution = _phased_law_model("dcegm").solve(params=params, log_level="debug")
-    brute_solution = _phased_law_model("brute_force").solve(
-        params=params, log_level="debug"
+    dcegm_solution = (
+        _phased_law_model("dcegm").solve(params=params, log_level="debug").values
+    )
+    brute_solution = (
+        _phased_law_model("brute_force").solve(params=params, log_level="debug").values
     )
     _assert_working_life_V_matches(
         dcegm_solution=dcegm_solution, brute_solution=brute_solution
@@ -664,9 +674,11 @@ def test_chained_transition_law_term_matches_brute_force():
     query shifts by a per-combo value computed inside the transition DAG.
     """
     params = _params()
-    dcegm_solution = _chained_law_model("dcegm").solve(params=params, log_level="debug")
-    brute_solution = _chained_law_model("brute_force").solve(
-        params=params, log_level="debug"
+    dcegm_solution = (
+        _chained_law_model("dcegm").solve(params=params, log_level="debug").values
+    )
+    brute_solution = (
+        _chained_law_model("brute_force").solve(params=params, log_level="debug").values
     )
     for period in sorted(brute_solution)[:-1]:
         brute_V = np.asarray(brute_solution[period]["working_life"])

@@ -176,7 +176,6 @@ def test_simulate_state_pool_dtype_stable_across_periods(x64_disabled: None):
     result = model.simulate(
         log_level="debug",
         params=params,
-        period_to_regime_to_V_arr=None,
         initial_conditions=initial,
     )
 
@@ -194,7 +193,7 @@ def test_solve_V_arrays_at_canonical_float_dtype(x64_disabled: None):
     model = get_model(n_periods=3)
     period_to_regime_to_V_arr = model.solve(
         log_level="debug", params=get_params(n_periods=3)
-    )
+    ).values
     target = canonical_float_dtype()
     wrong = {
         (period, regime_name): V_arr.dtype

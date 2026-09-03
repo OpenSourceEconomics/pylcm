@@ -4,6 +4,7 @@ import jax.numpy as jnp
 import numpy as np
 from numpy.testing import assert_array_almost_equal as aaae
 
+from lcm.solver_api import DISSOLUTION_FLAG
 from lcm_examples.collective_regimes import (
     get_dissolution_model,
     get_params,
@@ -19,7 +20,7 @@ def test_shared_decision_values_are_the_stakeholders_values_at_one_argmax():
     solution = model.solve(params=get_params(), log_level="debug")
 
     aaae(
-        solution[0]["couple"],
+        solution.values[0]["couple"],
         np.array([[46.0, 92.0], [78.0, 156.0]]),
         decimal=DECIMAL_PRECISION,
     )
@@ -29,11 +30,11 @@ def test_participation_constraints_dissolve_only_the_middle_wage_cell():
     """Only wage two leaves the couple without a jointly feasible action."""
     model = get_dissolution_model()
 
-    _, dissolution_flags = model.solve(
+    _solution_result = model.solve(
         params=get_params(),
         log_level="debug",
-        return_dissolution_flags=True,
     )
+    dissolution_flags = _solution_result.replay_artifacts.project(DISSOLUTION_FLAG)
 
     np.testing.assert_array_equal(
         dissolution_flags[1]["married_with_participation"],
@@ -44,10 +45,9 @@ def test_participation_constraints_dissolve_only_the_middle_wage_cell():
 def test_dissolution_routes_the_simulated_person_to_their_single_regime():
     """The female cohort follows its own fallback route when participation fails."""
     model = get_dissolution_model()
-    solution, dissolution_flags = model.solve(
+    solution = model.solve(
         params=get_params(),
         log_level="debug",
-        return_dissolution_flags=True,
     )
     initial_conditions = {
         "wage": jnp.array([1.0, 2.0, 3.0]),
@@ -70,8 +70,7 @@ def test_dissolution_routes_the_simulated_person_to_their_single_regime():
     result = model.simulate(
         params=get_params(),
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=solution,
-        period_to_regime_to_dissolution_flags=dissolution_flags,
+        solution=solution,
         log_level="debug",
         seed=0,
     )

@@ -17,12 +17,12 @@ explicit budget constraint).
 """
 
 import functools
+from collections.abc import Mapping
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from _lcm.typing import PeriodToRegimeToVArr
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -233,7 +233,9 @@ def _params() -> dict:
 
 
 def _assert_working_life_V_matches(
-    *, dcegm_solution: PeriodToRegimeToVArr, brute_solution: PeriodToRegimeToVArr
+    *,
+    dcegm_solution: Mapping[int, Mapping[str, FloatND]],
+    brute_solution: Mapping[int, Mapping[str, FloatND]],
 ) -> None:
     for period in sorted(brute_solution)[:-1]:
         brute_V = np.asarray(brute_solution[period]["working_life"])
@@ -299,11 +301,13 @@ def test_smoothstep_survival_probability_matches_brute_force():
     band and fails the multi-period value comparison.
     """
     params = _params()
-    dcegm_solution = _survival_prob_model("dcegm").solve(
-        params=params, log_level="debug"
+    dcegm_solution = (
+        _survival_prob_model("dcegm").solve(params=params, log_level="debug").values
     )
-    brute_solution = _survival_prob_model("brute_force").solve(
-        params=params, log_level="debug"
+    brute_solution = (
+        _survival_prob_model("brute_force")
+        .solve(params=params, log_level="debug")
+        .values
     )
     _assert_working_life_V_matches(
         dcegm_solution=dcegm_solution, brute_solution=brute_solution
@@ -362,11 +366,13 @@ def test_markov_weights_reading_wealth_match_brute_force():
     it. Values agree across the full wealth-by-health grid.
     """
     params = _params()
-    dcegm_solution = _markov_health_model("dcegm").solve(
-        params=params, log_level="debug"
+    dcegm_solution = (
+        _markov_health_model("dcegm").solve(params=params, log_level="debug").values
     )
-    brute_solution = _markov_health_model("brute_force").solve(
-        params=params, log_level="debug"
+    brute_solution = (
+        _markov_health_model("brute_force")
+        .solve(params=params, log_level="debug")
+        .values
     )
     for period in sorted(brute_solution)[:-1]:
         brute_V = np.asarray(brute_solution[period]["working_life"])
@@ -432,11 +438,13 @@ def test_passive_skill_law_reading_wealth_matches_brute_force():
     dense-grid brute-force oracle on the full wealth-by-skill grid.
     """
     params = _params()
-    dcegm_solution = _passive_skill_model("dcegm").solve(
-        params=params, log_level="debug"
+    dcegm_solution = (
+        _passive_skill_model("dcegm").solve(params=params, log_level="debug").values
     )
-    brute_solution = _passive_skill_model("brute_force").solve(
-        params=params, log_level="debug"
+    brute_solution = (
+        _passive_skill_model("brute_force")
+        .solve(params=params, log_level="debug")
+        .values
     )
     _assert_working_life_V_matches(
         dcegm_solution=dcegm_solution, brute_solution=brute_solution

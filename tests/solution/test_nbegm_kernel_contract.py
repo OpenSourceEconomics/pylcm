@@ -99,14 +99,22 @@ def test_a_utility_naming_its_coefficient_gamma_solves_the_same_problem() -> Non
         "gamma": crra_params["alive"]["utility"]["crra"]
     }
 
-    named_gamma = _build(
-        alive_functions={"utility": utility_with_gamma, **_PIECES},
-        liquid_law=next_liquid_from_savings,
-    ).solve(params=gamma_params, log_level="debug")
-    named_crra = _build(
-        alive_functions={"utility": utility, **_PIECES},
-        liquid_law=next_liquid_from_savings,
-    ).solve(params=crra_params, log_level="debug")
+    named_gamma = (
+        _build(
+            alive_functions={"utility": utility_with_gamma, **_PIECES},
+            liquid_law=next_liquid_from_savings,
+        )
+        .solve(params=gamma_params, log_level="debug")
+        .values
+    )
+    named_crra = (
+        _build(
+            alive_functions={"utility": utility, **_PIECES},
+            liquid_law=next_liquid_from_savings,
+        )
+        .solve(params=crra_params, log_level="debug")
+        .values
+    )
 
     np.testing.assert_allclose(
         np.asarray(named_gamma[0]["alive"]), np.asarray(named_crra[0]["alive"])
@@ -136,7 +144,7 @@ def test_a_budget_node_named_for_its_own_domain_still_satisfies_the_contract() -
         )
         return model.solve(
             params=tax_toy.build_params(budget_name=budget_name), log_level="debug"
-        )
+        ).values
 
     renamed = solve("cash_on_hand")
     default = solve("resources")
@@ -159,14 +167,22 @@ def test_a_hand_written_liquid_law_solves_the_same_problem() -> None:
     The kernels read the law the regime declares, so a law is accepted for the
     landing points it produces rather than for being the object pylcm supplies.
     """
-    hand_written = _build(
-        alive_functions={"utility": utility, **_PIECES},
-        liquid_law=_hand_written_liquid_law,
-    ).solve(params=copy.deepcopy(_TOY_PARAMS), log_level="debug")
-    supplied = _build(
-        alive_functions={"utility": utility, **_PIECES},
-        liquid_law=next_liquid_from_savings,
-    ).solve(params=copy.deepcopy(_TOY_PARAMS), log_level="debug")
+    hand_written = (
+        _build(
+            alive_functions={"utility": utility, **_PIECES},
+            liquid_law=_hand_written_liquid_law,
+        )
+        .solve(params=copy.deepcopy(_TOY_PARAMS), log_level="debug")
+        .values
+    )
+    supplied = (
+        _build(
+            alive_functions={"utility": utility, **_PIECES},
+            liquid_law=next_liquid_from_savings,
+        )
+        .solve(params=copy.deepcopy(_TOY_PARAMS), log_level="debug")
+        .values
+    )
 
     np.testing.assert_allclose(
         np.asarray(hand_written[0]["alive"]), np.asarray(supplied[0]["alive"])
@@ -284,14 +300,22 @@ def test_a_liquid_law_naming_its_return_interest_solves_the_same_problem() -> No
     for target in ("alive", "dead"):
         interest_params["alive"][target]["next_liquid"] = renamed_budget
 
-    named_interest = _build(
-        alive_functions={"utility": utility, **_PIECES},
-        liquid_law=next_liquid_with_interest,
-    ).solve(params=interest_params, log_level="debug")
-    named_return_liquid = _build(
-        alive_functions={"utility": utility, **_PIECES},
-        liquid_law=next_liquid_from_savings,
-    ).solve(params=return_liquid_params, log_level="debug")
+    named_interest = (
+        _build(
+            alive_functions={"utility": utility, **_PIECES},
+            liquid_law=next_liquid_with_interest,
+        )
+        .solve(params=interest_params, log_level="debug")
+        .values
+    )
+    named_return_liquid = (
+        _build(
+            alive_functions={"utility": utility, **_PIECES},
+            liquid_law=next_liquid_from_savings,
+        )
+        .solve(params=return_liquid_params, log_level="debug")
+        .values
+    )
 
     np.testing.assert_allclose(
         np.asarray(named_interest[0]["alive"]),

@@ -65,7 +65,6 @@ def test_simulated_work_frequency_converges_to_softmax_probability():
                 N_SUBJECTS, taste_shocks_toy.ToyRegimeId.alive, dtype=jnp.int32
             ),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
         seed=5471,
     )
@@ -100,7 +99,6 @@ def test_taste_shock_draws_are_invariant_to_subject_chunking():
         batch_size: model.simulate(
             params=params,
             initial_conditions=initial_conditions,
-            period_to_regime_to_V_arr=None,
             log_level="debug",
             seed=5471,
             subject_batch_size=batch_size,
@@ -126,18 +124,20 @@ def test_aot_and_lazy_simulation_draw_identical_taste_shock_choices():
     }
 
     lazy_model = taste_shocks_toy.get_model()
-    period_to_regime_to_V_arr = lazy_model.solve(params=params, log_level="debug")
+    lazy_solution = lazy_model.solve(params=params, log_level="debug")
     lazy_result = lazy_model.simulate(
         params=params,
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+        solution=lazy_solution,
         log_level="debug",
         seed=5471,
     )
-    aot_result = taste_shocks_toy.get_model(n_subjects=n_subjects).simulate(
+    aot_model = taste_shocks_toy.get_model(n_subjects=n_subjects)
+    aot_solution = aot_model.solve(params=params, log_level="debug")
+    aot_result = aot_model.simulate(
         params=params,
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+        solution=aot_solution,
         log_level="debug",
         seed=5471,
         max_compilation_workers=1,

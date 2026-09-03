@@ -326,6 +326,19 @@ def test_vmap_1d_callable_with_only_args():
         vmapped(a=1)
 
 
+def test_nested_vmap_1d_callable_with_only_args_preserves_positional_origin():
+    def func(*, a, b):
+        return 10 * a + b
+
+    positional_func = allow_args(func)
+    inner = vmap_1d(func=positional_func, variables=("b",), callable_with="only_args")
+    outer = vmap_1d(func=inner, variables=("a",), callable_with="only_args")
+
+    got = outer(jnp.array([1, 2]), jnp.array([3, 4]))
+
+    aaae(got, jnp.array([[13, 14], [23, 24]]))
+
+
 def test_vmap_1d_callable_with_only_kwargs():
     def func(a):
         return a

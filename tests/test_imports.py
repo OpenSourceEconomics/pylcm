@@ -12,6 +12,7 @@ import sys
 import lcm
 import lcm.consumption_savings_regime
 import lcm.regime
+import lcm.solver_api
 import lcm.solvers
 from lcm.consumption_savings_regime import (
     ConsumptionSavingsRegime,
@@ -43,6 +44,15 @@ def test_every_public_name_is_bound():
     casualty rather than the list.
     """
     unbound = [name for name in lcm.__all__ if not hasattr(lcm, name)]
+    assert unbound == []
+
+
+def test_every_solver_api_public_name_is_bound() -> None:
+    """Every name advertised by the public solver boundary resolves."""
+    unbound = [
+        name for name in lcm.solver_api.__all__ if not hasattr(lcm.solver_api, name)
+    ]
+
     assert unbound == []
 
 

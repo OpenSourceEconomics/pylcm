@@ -16,6 +16,7 @@ properties anchor this:
   resolution wherever the two solves' V arrays agree.
 """
 
+from dataclasses import replace
 from types import MappingProxyType
 
 import jax.numpy as jnp
@@ -91,7 +92,6 @@ def test_dcegm_simulated_consumption_matches_brute_force():
         result = model.simulate(
             params=params,
             initial_conditions=initial_conditions,
-            period_to_regime_to_V_arr=None,
             log_level="debug",
             seed=42,
         )
@@ -148,7 +148,6 @@ def test_dcegm_simulate_enforces_intrinsic_budget_constraint():
                 3, RetirementOnlyRegimeId.retirement, dtype=jnp.int32
             ),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
         seed=7,
     )
@@ -185,7 +184,6 @@ def test_dcegm_simulate_with_taste_shocks_work_share_decreases_in_wealth():
     result = model.simulate(
         params=params,
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=None,
         log_level="debug",
         seed=123,
     )
@@ -224,7 +222,6 @@ def test_dcegm_full_model_simulates_end_to_end():
                 n_subjects, FullRegimeId.working_life, dtype=jnp.int32
             ),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
         seed=99,
     )
@@ -264,19 +261,20 @@ def test_dcegm_simulate_consumes_the_provided_solution():
         solver="dcegm", n_periods=n_periods
     )
     params = dcegm_variants.get_retirement_only_params(n_periods=n_periods)
-    solved = model.solve(params=params, log_level="debug")
-    zeroed = MappingProxyType(
+    solution = model.solve(params=params, log_level="debug")
+    zeroed_values = MappingProxyType(
         {
             period: MappingProxyType(
                 {name: jnp.zeros_like(arr) for name, arr in regime_to_V.items()}
             )
-            for period, regime_to_V in solved.items()
+            for period, regime_to_V in solution.values.items()
         }
     )
+    zeroed = replace(solution, values=zeroed_values)
 
     consumption = {}
-    for label, period_to_regime_to_V_arr in {
-        "solved": solved,
+    for label, candidate_solution in {
+        "solved": solution,
         "zeroed": zeroed,
     }.items():
         result = model.simulate(
@@ -288,7 +286,7 @@ def test_dcegm_simulate_consumes_the_provided_solution():
                     [RetirementOnlyRegimeId.retirement], dtype=jnp.int32
                 ),
             },
-            period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+            solution=candidate_solution,
             log_level="debug",
             seed=1,
         )
@@ -340,15 +338,16 @@ def test_dcegm_simulation_evaluates_a_phase_resolved_savings_bound() -> None:
     initial_wealth = 10.0
     model = _phase_variant_savings_model(n_periods)
     params = dcegm_variants.get_retirement_only_params(n_periods=n_periods)
-    solved = model.solve(params=params, log_level="off")
-    zeroed = MappingProxyType(
+    solution = model.solve(params=params, log_level="off")
+    zeroed_values = MappingProxyType(
         {
             period: MappingProxyType(
                 {name: jnp.zeros_like(arr) for name, arr in regime_to_V.items()}
             )
-            for period, regime_to_V in solved.items()
+            for period, regime_to_V in solution.values.items()
         }
     )
+    zeroed = replace(solution, values=zeroed_values)
 
     result = model.simulate(
         params=params,
@@ -359,7 +358,7 @@ def test_dcegm_simulation_evaluates_a_phase_resolved_savings_bound() -> None:
                 [RetirementOnlyRegimeId.retirement], dtype=jnp.int32
             ),
         },
-        period_to_regime_to_V_arr=zeroed,
+        solution=zeroed,
         log_level="off",
         seed=1,
     )
@@ -398,7 +397,6 @@ def test_dcegm_solver_machinery_is_not_a_result_target():
                 [RetirementOnlyRegimeId.retirement], dtype=jnp.int32
             ),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
         seed=1,
     )
@@ -430,7 +428,6 @@ def test_phase_variant_law_term_simulates_with_the_simulate_variant():
             "age": jnp.array([40.0, 40.0]),
             "regime_id": jnp.full(2, LawTermRegimeId.working_life, dtype=jnp.int32),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
         seed=7,
     )
@@ -485,7 +482,6 @@ def test_dcegm_simulated_markov_health_path_matches_brute_force():
         result = _same_grid_markov_model(solver).simulate(
             params=params,
             initial_conditions=initial_conditions,
-            period_to_regime_to_V_arr=None,
             log_level="debug",
             seed=7,
         )

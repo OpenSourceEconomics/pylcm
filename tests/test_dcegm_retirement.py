@@ -10,12 +10,13 @@ envelope) and compared against:
   arrays agree up to the consumption-grid resolution of the brute solution.
 """
 
+from collections.abc import Mapping
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from _lcm.config import TEST_DATA
-from _lcm.typing import PeriodToRegimeToVArr
 from lcm import AgeGrid, MarkovTransition, Model
 from lcm.taste_shocks import ExtremeValueTasteShocks
 from lcm.typing import FloatND
@@ -45,7 +46,7 @@ def _load_analytical(*, case: str, kind: str) -> np.ndarray:
 
 
 def _stack_regime_V(
-    *, period_to_regime_to_V_arr: PeriodToRegimeToVArr, regime: str
+    *, period_to_regime_to_V_arr: Mapping[int, Mapping[str, FloatND]], regime: str
 ) -> np.ndarray:
     periods = sorted(period_to_regime_to_V_arr)[:-1]
     return np.stack([np.asarray(period_to_regime_to_V_arr[p][regime]) for p in periods])
@@ -67,7 +68,7 @@ def test_dcegm_matches_analytical_solution(*, case, spec):
         wage=20.0,
     )
 
-    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
+    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug").values
 
     for kind, regime in [("worker", "working_life"), ("retired", "retirement")]:
         numerical = _stack_regime_V(
@@ -124,9 +125,11 @@ def test_brute_force_regime_targeting_dcegm_regime_agrees_with_all_brute():
     )
     params = get_full_params(n_periods=n_periods, discount_factor=0.98, wage=20.0)
 
-    mixed_solution = mixed.solve(params=params, log_level="debug")
-    brute_solution = get_full_model(solver="brute_force", n_periods=n_periods).solve(
-        params=params, log_level="debug"
+    mixed_solution = mixed.solve(params=params, log_level="debug").values
+    brute_solution = (
+        get_full_model(solver="brute_force", n_periods=n_periods)
+        .solve(params=params, log_level="debug")
+        .values
     )
 
     for period in sorted(brute_solution)[:-1]:
@@ -194,7 +197,7 @@ def test_smoothed_model_brute_and_dcegm_agree():
 
     models = _smoothed_model_pair(n_periods=n_periods, shocks=ExtremeValueTasteShocks())
     solutions = {
-        solver: model.solve(params=params, log_level="debug")
+        solver: model.solve(params=params, log_level="debug").values
         for solver, model in models.items()
     }
 

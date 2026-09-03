@@ -7,12 +7,14 @@ if this test holds, `iskhakov_2017_*__values_retired.csv` is a valid target for
 any solver of the two-regime model.
 """
 
+from collections.abc import Mapping
+
 import numpy as np
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
 from _lcm.config import TEST_DATA
-from _lcm.typing import PeriodToRegimeToVArr
+from lcm.typing import FloatND
 from tests.test_models.deterministic.retirement_only import get_model, get_params
 
 ANALYTICAL_CASES = {
@@ -28,7 +30,9 @@ def load_analytical_values_retired(case: str) -> np.ndarray:
     )
 
 
-def stack_retirement_V(period_to_regime_to_V_arr: PeriodToRegimeToVArr) -> np.ndarray:
+def stack_retirement_V(
+    period_to_regime_to_V_arr: Mapping[int, Mapping[str, FloatND]],
+) -> np.ndarray:
     periods = sorted(period_to_regime_to_V_arr)[:-1]
     return np.stack(
         [np.asarray(period_to_regime_to_V_arr[p]["retirement"]) for p in periods]
@@ -41,7 +45,7 @@ def test_retirement_only_brute_force_matches_analytical(*, case, n_periods):
     model = get_model(n_periods)
     params = get_params(n_periods=n_periods, discount_factor=0.98, interest_rate=0.0)
 
-    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
+    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug").values
 
     numerical = stack_retirement_V(period_to_regime_to_V_arr)
     analytical = load_analytical_values_retired(case)

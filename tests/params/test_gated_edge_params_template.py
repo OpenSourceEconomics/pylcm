@@ -68,7 +68,7 @@ def test_gate_scalar_parameter_is_a_model_parameter():
     solution = model.solve(
         params={"discount_factor": DISCOUNT_FACTOR, "marriage_premium": 1.5},
         log_level="debug",
-    )
+    ).values
     aaae(
         np.asarray(solution[0]["single_f"]),
         np.array([2.9, 5.8]),
@@ -99,7 +99,7 @@ def test_gate_ref_projection_scalar_parameter_is_a_model_parameter():
             "husband_reference_weight": 0.5,
         },
         log_level="debug",
-    )
+    ).values
     aaae(
         np.asarray(solution[0]["single_f"]),
         np.array([2.425, 4.85]),
@@ -127,7 +127,7 @@ def test_leg_fallback_projection_scalar_parameter_is_a_model_parameter():
     solution = model.solve(
         params={"discount_factor": DISCOUNT_FACTOR, "wife_fallback_weight": 0.4},
         log_level="debug",
-    )
+    ).values
     aaae(
         np.asarray(solution[0]["single_f"]),
         np.array([2.9, 4.28]),

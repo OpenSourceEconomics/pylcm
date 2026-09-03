@@ -901,8 +901,12 @@ def test_nonlinear_certainty_equivalent_changes_solved_values():
     """With `risk_aversion = 2`, solved values differ from expected utility."""
     ez_model = get_model(certainty_equivalent=PowerMean())
     eu_model = get_model(certainty_equivalent=None)
-    V_ez = ez_model.solve(params=get_params(risk_aversion=2.0), log_level="debug")
-    V_eu = eu_model.solve(params=get_params(risk_aversion=None), log_level="debug")
+    V_ez = ez_model.solve(
+        params=get_params(risk_aversion=2.0), log_level="debug"
+    ).values
+    V_eu = eu_model.solve(
+        params=get_params(risk_aversion=None), log_level="debug"
+    ).values
     assert not np.allclose(
         np.asarray(V_ez[0]["alive"]), np.asarray(V_eu[0]["alive"]), rtol=1e-6
     )
@@ -912,8 +916,12 @@ def test_zero_risk_aversion_reduces_to_expected_utility():
     """`risk_aversion = 0` makes the power CE the linear expectation."""
     ez_model = get_model(certainty_equivalent=PowerMean())
     eu_model = get_model(certainty_equivalent=None)
-    V_ez = ez_model.solve(params=get_params(risk_aversion=0.0), log_level="debug")
-    V_eu = eu_model.solve(params=get_params(risk_aversion=None), log_level="debug")
+    V_ez = ez_model.solve(
+        params=get_params(risk_aversion=0.0), log_level="debug"
+    ).values
+    V_eu = eu_model.solve(
+        params=get_params(risk_aversion=None), log_level="debug"
+    ).values
     for period in V_eu:
         for regime_name in V_eu[period]:
             np.testing.assert_allclose(
@@ -968,7 +976,7 @@ def test_stateless_target_is_transformed_before_the_regime_expectation(
             "dead": {},
         },
         log_level="off",
-    )
+    ).values
     wealth = np.asarray(_WEALTH.to_jax())
     consumption = np.asarray(_CONSUMPTION.to_jax())
     best_flow = np.array([np.log(consumption[consumption <= w].max()) for w in wealth])
@@ -1110,7 +1118,7 @@ def test_epstein_zin_solved_values_match_numpy_reference(risk_aversion: float):
             intertemporal_elasticity_of_substitution=ies,
         ),
         log_level="debug",
-    )
+    ).values
     expected, _ = _reference_backward_induction(
         risk_aversion=risk_aversion,
         discount_factor=discount_factor,
@@ -1678,8 +1686,8 @@ def test_solve_with_a_generic_quasi_arithmetic_mean_matches_the_power_mean():
     )
     power_model = get_model(certainty_equivalent=PowerMean())
     params = get_params(risk_aversion=2.0)
-    V_generic = generic_model.solve(params=params, log_level="debug")
-    V_power = power_model.solve(params=params, log_level="debug")
+    V_generic = generic_model.solve(params=params, log_level="debug").values
+    V_power = power_model.solve(params=params, log_level="debug").values
     for period in V_power:
         for regime_name in V_power[period]:
             np.testing.assert_allclose(
@@ -1874,8 +1882,8 @@ def _assert_solved_values_are_equivariant(
 ) -> None:
     """Assert the model solved at `scale` is `scale` times the one solved at one."""
     params = _scaled_model_params(risk_aversion)
-    unit = make_model(1.0).solve(params=params, log_level="debug")
-    scaled = make_model(scale).solve(params=params, log_level="debug")
+    unit = make_model(1.0).solve(params=params, log_level="debug").values
+    scaled = make_model(scale).solve(params=params, log_level="debug").values
     for period in unit:
         for regime_name in unit[period]:
             np.testing.assert_allclose(
@@ -1990,8 +1998,8 @@ def test_linear_expectation_solves_to_the_same_values_as_the_generic_route():
         certainty_equivalent=QuasiArithmeticMean(transform=_identity, inverse=_identity)
     )
     params = get_params(risk_aversion=None)
-    V_fast = fast_model.solve(params=params, log_level="debug")
-    V_reference = reference_model.solve(params=params, log_level="debug")
+    V_fast = fast_model.solve(params=params, log_level="debug").values
+    V_reference = reference_model.solve(params=params, log_level="debug").values
     for period in V_fast:
         for regime_name in V_fast[period]:
             np.testing.assert_allclose(
@@ -2455,7 +2463,7 @@ def test_a_mean_that_states_both_reductions_is_accepted(x64_enabled: None) -> No
         working_kwargs={},
         retired_kwargs={},
     )
-    V_arr = model.solve(params={"discount_factor": 0.95}, log_level="debug")
+    V_arr = model.solve(params={"discount_factor": 0.95}, log_level="debug").values
     assert np.all(np.isfinite(np.asarray(V_arr[0]["working"])))
 
 

@@ -225,11 +225,11 @@ def test_dcegm_resources_reading_process_matches_dense_brute_force():
     value function matches the brute oracle up to the brute consumption-grid
     resolution, excluding the lowest wealth nodes.
     """
-    dcegm_solution = _get_model("dcegm").solve(
-        params=_get_params("dcegm"), log_level="debug"
+    dcegm_solution = (
+        _get_model("dcegm").solve(params=_get_params("dcegm"), log_level="debug").values
     )
-    brute_solution = _get_model("brute").solve(
-        params=_get_params("brute"), log_level="debug"
+    brute_solution = (
+        _get_model("brute").solve(params=_get_params("brute"), log_level="debug").values
     )
 
     for period in sorted(brute_solution)[:-1]:

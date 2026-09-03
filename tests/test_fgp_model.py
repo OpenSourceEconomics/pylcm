@@ -48,7 +48,6 @@ def _simulate(shock_type):
             "age": jnp.full(_N_SUBJECTS, 20.0),
             "regime_id": jnp.array([RegimeId.alive] * _N_SUBJECTS),
         },
-        period_to_regime_to_V_arr=None,
         seed=_SEED,
     )
     return result.to_dataframe()
@@ -73,7 +72,7 @@ def test_model_solves(shock_type):
         interest_rate=R,
         discount_factor=BETA,
     )
-    V = model.solve(log_level="debug", params=params)
+    V = model.solve(log_level="debug", params=params).values
     assert V is not None
     # Value functions include all periods (n_periods + 1 ages from AgeGrid)
     assert len(V) == model.n_periods

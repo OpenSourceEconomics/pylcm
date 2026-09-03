@@ -68,15 +68,19 @@ def _solvers():
 
 
 def _solve_default():
-    return get_model(n_periods=_N_PERIODS, solvers=_solvers()).solve(
-        params=get_params(), log_level="debug"
+    return (
+        get_model(n_periods=_N_PERIODS, solvers=_solvers())
+        .solve(params=get_params(), log_level="debug")
+        .values
     )
 
 
 def _solve_renamed():
-    return get_model(
-        n_periods=_N_PERIODS, solvers=_solvers(), laws=_renamed_laws()
-    ).solve(params=_rename_params(get_params()), log_level="debug")
+    return (
+        get_model(n_periods=_N_PERIODS, solvers=_solvers(), laws=_renamed_laws())
+        .solve(params=_rename_params(get_params()), log_level="debug")
+        .values
+    )
 
 
 def test_renaming_every_law_parameter_leaves_the_solution_unchanged():

@@ -34,7 +34,6 @@ initial_df = pd.DataFrame(
 result = model.simulate(
     params=params,
     initial_conditions=initial_df,
-    period_to_regime_to_V_arr=None,
     log_level="debug",
 )
 

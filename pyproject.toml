@@ -122,6 +122,7 @@ asv-quick = { cmd = "asv run --quick --set-commit-hash=$(git rev-parse HEAD)", e
 asv-run = { cmd = 'git status --porcelain --ignore-submodules | grep -q . && echo "Refusing to benchmark: worktree is dirty. Commit first." && exit 1; asv run -v --show-stderr --set-commit-hash=$(git rev-parse HEAD)', env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
 asv-run-and-pr-comment = { depends-on = [ "asv-run", "asv-pr-comment" ] }
 asv-run-and-publish-main = { depends-on = [ "asv-run", "asv-publish" ] }
+grid-search-pair = "python -m benchmarks.grid_search_pair"
 [tool.pixi.feature.benchmarks.pypi-dependencies]
 # Pinned to an aca-model main that carries both the keyword-only case-piece
 # call sites this branch's API requires and the DC-EGM solver path; flip back
@@ -247,6 +248,7 @@ extend-ignore = [
   "F722",    # https://docs.kidger.site/jaxtyping/faq/#flake8-or-ruff-are-throwing-an-error
 ]
 per-file-ignores."benchmarks/*" = [
+  "PD011",   # SolutionResult.values is not pandas .values
   "ANN",     # Annotations
   "ARG002",  # Unused method argument (ASV passes params to all methods)
   "BLE001",  # Blind exception
@@ -275,6 +277,13 @@ per-file-ignores."tests/candidate_certificate/**" = [
   "TRY004",  # Prefer TypeError for wrong type
   "TRY300",  # Consider else block
   "TRY301",  # Abstract raise to an inner function
+]
+per-file-ignores."tests/test_grid_search_pair.py" = [
+  # The harness test deliberately starts only fixed executables (`git` and the
+  # active Python interpreter) with argument vectors; no shell or user command
+  # string is involved.
+  "S603", # subprocess call without shell=True check
+  "S607", # Partial executable path
 ]
 per-file-ignores."tests/solution/_fused_continuation_envelope_oracle.py" = [
   "PLR0915", # Too many statements — kept structurally verbatim as an independent reference
@@ -313,6 +322,7 @@ per-file-ignores."src/lcm_examples/mahler_yum_2024/**" = [
   "PD011", # false positive on `AgeGrid.values`
 ]
 per-file-ignores."tests/*" = [
+  "PD011",   # SolutionResult.values is not pandas .values
   "ANN",     # Annotations
   "D",       # Docstrings
   "INP001",  # Implicit namespace package

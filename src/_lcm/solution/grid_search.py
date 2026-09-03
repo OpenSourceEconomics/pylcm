@@ -1,24 +1,33 @@
 """The default grid-search solver.
 
 `GridSearch` runs the max-Q-over-a grid search. Its `build_period_kernels`
-returns one `PeriodKernel` per period — a non-jitted adapter that wraps the
-shared jitted core (identity-deduped by `id(Q_and_F)`, so periods sharing a
-core reuse one compiled program), calls it with the grid-search argument
-layout, and assembles a `KernelResult` outside JIT.
+returns one `PeriodKernel` per period. Eligible ordinary hard-max kernels declare their
+canonical action product for blockwise execution, and the engine binds the block width
+before lowering. Collective and EV1 kernels deliberately retain their canonical dense
+reduction order. Each streamed period program also names its exact value-input artifacts
+and argument paths so the engine can resolve their transfers.
+Fixed distributed states co-map ordinary continuation leaves with the streamed state
+cell. Singleton folded-state routes stream actions before
+the unchanged quadrature reduction; the fold axis itself remains materialized. Co-map
+routes with separate same-period or edge-reference value channels retain the dense
+kernel. The adapter
+assembles the resulting `KernelResult` outside JIT.
 
-The kernel-building imports (`jax`, `get_max_Q_over_a`) are function-local so
+The max-Q kernel-building imports are function-local so
 the public `lcm.solvers` façade stays a thin re-export that pulls in no
 numerical engine modules.
 """
 
 import functools
+import inspect
 import logging
+import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
+from enum import StrEnum
 from types import MappingProxyType
 from typing import cast
 
-import jax
 import jax.numpy as jnp
 from beartype import beartype
 
@@ -30,7 +39,26 @@ from _lcm.constraints.routes import (
 )
 from _lcm.continuation import EGMContinuationLayout
 from _lcm.engine import StateActionSpace
+from _lcm.execution.core_program import (
+    CoreBuildContext,
+    CoreExecutionDisposition,
+    CoreExecutionRequirements,
+    CoreProgram,
+    StreamableProductAxis,
+    _TargetValueAccess,
+)
+from _lcm.execution.output_layout import (
+    DISSOLUTION_FLAG,
+    VALUE,
+)
+from _lcm.execution.value_transfer import (
+    ValueArtifactAddress,
+    ValueArtifactKind,
+    ValueConsumerAddress,
+    ValueInputChannel,
+)
 from _lcm.processes.base import _ContinuousStochasticProcess
+from _lcm.solution.action_reduction import HARD_MAX_REDUCTION
 from _lcm.solution.contract import (
     ConstraintRouteContext,
     ContinuationPayload,
@@ -51,6 +79,60 @@ from lcm.ages import AgeGrid
 from lcm.typing import (
     FloatND,
 )
+
+_ACTION_AXIS_NAME = "action"
+_ACTION_WIDTH_KEYWORD = "_lcm_action_block_width"
+_CORE_RUNTIME_ARG_NAMES = frozenset(
+    {
+        "next_regime_to_V_arr",
+        "same_period_regime_to_V_arr",
+        "same_period_regime_to_params",
+        "edge_reference_regime_to_V_arr",
+        "edge_reference_regime_to_params",
+        "period",
+        "age",
+    }
+)
+
+
+class _ActionStreamingDisposition(StrEnum):
+    """Why one GridSearch solve route streams actions or keeps the dense core."""
+
+    STREAMED = "streamed"
+    DENSE_EV1_NONCANONICAL = "deliberately_dense:ev1_canonical_reduction_order"
+    DENSE_COLLECTIVE_RESOURCES = "deliberately_dense:collective_resource_regression"
+    DENSE_TRIVIAL_ACTION_PRODUCT = "deliberately_dense:trivial_action_product"
+    DENSE_CO_MAP_REFERENCE_CHANNEL = (
+        "deliberately_dense:co_map_with_separate_reference_channel"
+    )
+    UNSUPPORTED_COLLECTIVE_EV1 = "unsupported:collective_ev1"
+    UNSUPPORTED_EV1_FOLD = "unsupported:ev1_fold"
+    UNSUPPORTED_COLLECTIVE_FOLD = "unsupported:collective_fold"
+    UNSUPPORTED_EV1_WITHOUT_DISCRETE_ACTION = "unsupported:ev1_without_discrete_action"
+
+    @property
+    def category(self) -> str:
+        """Return the stable streamed/deliberately-dense/unsupported category."""
+        return self.value.partition(":")[0]
+
+
+def _select_action_width_keyword(*, context: SolverBuildContext) -> str:
+    """Choose a deterministic planner keyword outside the model namespace."""
+    occupied = set(_CORE_RUNTIME_ARG_NAMES)
+    occupied.update(context.flat_param_names)
+    occupied.update(context.state_action_space.action_names)
+    occupied.update(context.state_action_space.state_names)
+    for Q_and_F in context.Q_and_F_functions.values():
+        occupied.update(inspect.signature(Q_and_F).parameters)
+    if context.pareto_weights is not None:
+        occupied.update(context.pareto_weights.param_names)
+
+    candidate = _ACTION_WIDTH_KEYWORD
+    suffix = 0
+    while candidate in occupied:
+        suffix += 1
+        candidate = f"{_ACTION_WIDTH_KEYWORD}_{suffix}"
+    return candidate
 
 
 @beartype(conf=REGIME_CONF)
@@ -108,15 +190,20 @@ class GridSearch(Solver):
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Build one max-Q-over-a period adapter per period.
 
-        Periods sharing the same Q_and_F object reuse a single jitted core,
-        and therefore a single compiled program.
+        Periods sharing the same Q_and_F object reuse the same selected program
+        function so the execution layer can deduplicate their lowerings. An eligible
+        route constructs only the streamed function; its dense evaluator remains an
+        independently constructed test oracle rather than a second production path.
         """
-        from _lcm.regime_building.max_Q_over_a import get_max_Q_over_a  # noqa: PLC0415
+        from _lcm.regime_building.max_Q_over_a import (  # noqa: PLC0415
+            get_max_Q_over_a,
+            get_streaming_max_Q_over_a,
+        )
         from _lcm.regime_building.processing import (  # noqa: PLC0415
             get_conditioned_fold_weights_by_code,
         )
 
-        built: dict[int, MaxQOverAFunction] = {}
+        program_functions: dict[int, MaxQOverAFunction] = {}
         result: dict[int, PeriodKernel] = {}
         # Fold weights are the folded process's own marginal distribution, a
         # plain constant computed once here at kernel-build time and never
@@ -139,100 +226,306 @@ class GridSearch(Solver):
                     name=name, grid=process, grids=context.grids
                 )
                 fold_conditioning[name] = process.state_conditioned.on
+        action_streaming = _classify_action_streaming(context=context)
+        stream_actions = action_streaming is _ActionStreamingDisposition.STREAMED
+        action_width_keyword = _select_action_width_keyword(context=context)
+        action_names = context.state_action_space.action_names
+        action_extents = context.state_action_space.actions_grid_shapes
         for period, Q_and_F in context.Q_and_F_functions.items():
             q_id = id(Q_and_F)
-            if q_id not in built:
-                func = get_max_Q_over_a(
-                    Q_and_F=Q_and_F,
-                    batch_sizes={
+            if q_id not in program_functions:
+                common_kwargs = {
+                    "Q_and_F": Q_and_F,
+                    "batch_sizes": {
                         name: grid.batch_size
                         for name, grid in context.grids.items()
                         if name in context.state_action_space.state_names
                     },
-                    action_names=context.state_action_space.action_names,
-                    state_names=context.state_action_space.state_names,
-                    n_discrete_action_axes=len(
+                    "action_names": action_names,
+                    "state_names": context.state_action_space.state_names,
+                    "n_discrete_action_axes": len(
                         context.state_action_space.discrete_actions
                     ),
-                    has_taste_shocks=context.has_taste_shocks,
-                    co_map_state_names=context.co_map_state_names,
-                    co_map_v_arr_in_axes=context.co_map_v_arr_in_axes,
-                    stakeholders=context.stakeholders,
-                    pareto_weights=context.pareto_weights,
-                    fold_state_names=context.fold_state_names,
-                    fold_weights=MappingProxyType(fold_weights),
-                    fold_conditioning=MappingProxyType(fold_conditioning),
+                    "has_taste_shocks": context.has_taste_shocks,
+                    "co_map_state_names": context.co_map_state_names,
+                    "co_map_v_arr_in_axes": context.co_map_v_arr_in_axes,
+                    "stakeholders": context.stakeholders,
+                    "pareto_weights": context.pareto_weights,
+                    "fold_state_names": context.fold_state_names,
+                    "fold_weights": MappingProxyType(fold_weights),
+                    "fold_conditioning": MappingProxyType(fold_conditioning),
+                }
+                program_functions[q_id] = (
+                    get_streaming_max_Q_over_a(
+                        **common_kwargs,
+                        action_width_keyword=action_width_keyword,
+                    )
+                    if stream_actions
+                    else get_max_Q_over_a(**common_kwargs)
                 )
-                built[q_id] = jax.jit(func) if context.enable_jit else func
-            result[period] = _GridSearchPeriodKernel(
-                core=built[q_id],
+            target_regimes = (
+                ()
+                if period == context.solution_reachability.n_periods - 1
+                else context.solution_reachability.targets(
+                    period=period,
+                    source=context.regime_name,
+                )
+            )
+            edge_reference_regimes = _edge_reference_regimes_for_targets(
+                context=context,
+                target_regimes=target_regimes,
+            )
+            argument_builder = _GridSearchArgumentBuilder(
                 regime_name=context.regime_name,
-                collective=context.stakeholders is not None,
                 same_period_ref_regimes=context.same_period_ref_regimes,
-                edge_reference_regimes=context.edge_reference_regimes,
+                edge_reference_regimes=edge_reference_regimes,
                 edge_target_regimes=context.edge_target_regimes,
+            )
+            requirements = CoreExecutionRequirements(
+                streamable_axes=(
+                    (
+                        StreamableProductAxis(
+                            name=_ACTION_AXIS_NAME,
+                            coordinate_names=action_names,
+                            coordinate_extents=action_extents,
+                            canonical_order="c",
+                            reduction=HARD_MAX_REDUCTION,
+                            width_keyword=action_width_keyword,
+                        ),
+                    )
+                    if stream_actions
+                    else ()
+                ),
+                target_value_accesses=_target_value_accesses(
+                    regime_name=context.regime_name,
+                    period=period,
+                    target_regimes=target_regimes,
+                    same_period_ref_regimes=context.same_period_ref_regimes,
+                    edge_reference_regimes=edge_reference_regimes,
+                    edge_target_regimes=context.edge_target_regimes,
+                ),
+            )
+            program = CoreProgram(
+                name="main",
+                function=program_functions[q_id],
+                argument_builder=argument_builder,
+                requirements=requirements,
+                output_roles=(
+                    (VALUE, DISSOLUTION_FLAG)
+                    if context.stakeholders is not None
+                    else VALUE
+                ),
+                disposition=(
+                    CoreExecutionDisposition.PLANNED
+                    if stream_actions
+                    else CoreExecutionDisposition.DENSE
+                ),
+                disposition_reason=(None if stream_actions else action_streaming.value),
+                donation_candidates=(),
+            )
+            result[period] = _GridSearchPeriodKernel(
+                _core_programs=MappingProxyType({"main": program})
             )
         return SolutionKernels(period_kernels=MappingProxyType(result))
 
 
+def _classify_action_streaming(
+    *, context: SolverBuildContext
+) -> _ActionStreamingDisposition:
+    """Classify one solve route without conflating dense and unsupported cases."""
+    action_extents = context.state_action_space.actions_grid_shapes
+    if context.has_taste_shocks and context.stakeholders is not None:
+        disposition = _ActionStreamingDisposition.UNSUPPORTED_COLLECTIVE_EV1
+    elif context.has_taste_shocks and context.fold_state_names:
+        disposition = _ActionStreamingDisposition.UNSUPPORTED_EV1_FOLD
+    elif context.stakeholders is not None and context.fold_state_names:
+        disposition = _ActionStreamingDisposition.UNSUPPORTED_COLLECTIVE_FOLD
+    elif context.has_taste_shocks and not context.state_action_space.discrete_actions:
+        disposition = (
+            _ActionStreamingDisposition.UNSUPPORTED_EV1_WITHOUT_DISCRETE_ACTION
+        )
+    elif not context.state_action_space.action_names or math.prod(action_extents) <= 1:
+        disposition = _ActionStreamingDisposition.DENSE_TRIVIAL_ACTION_PRODUCT
+    elif context.co_map_state_names and (
+        context.same_period_ref_regimes or context.edge_reference_regimes
+    ):
+        disposition = _ActionStreamingDisposition.DENSE_CO_MAP_REFERENCE_CHANNEL
+    elif context.has_taste_shocks:
+        disposition = _ActionStreamingDisposition.DENSE_EV1_NONCANONICAL
+    elif context.stakeholders is not None:
+        disposition = _ActionStreamingDisposition.DENSE_COLLECTIVE_RESOURCES
+    else:
+        disposition = _ActionStreamingDisposition.STREAMED
+    return disposition
+
+
+def _supports_action_streaming(*, context: SolverBuildContext) -> bool:
+    """Return whether the classified route has a streamed solve program."""
+    return (
+        _classify_action_streaming(context=context)
+        is _ActionStreamingDisposition.STREAMED
+    )
+
+
+def _edge_reference_regimes_for_targets(
+    *,
+    context: SolverBuildContext,
+    target_regimes: tuple[RegimeName, ...],
+) -> tuple[RegimeName, ...]:
+    """Return only edge references read by targets reachable this period."""
+    source = context.user_regimes[context.regime_name]
+    references: list[RegimeName] = []
+    for target in target_regimes:
+        edge = source.gated_edges.get(target)
+        if edge is None:
+            continue
+        references.extend(ref.regime for ref in edge.gate_refs.values())
+        references.extend(route.solve_fallback.regime for route in edge.legs.values())
+    return tuple(dict.fromkeys(references))
+
+
+def _target_value_accesses(
+    *,
+    regime_name: RegimeName,
+    period: int,
+    target_regimes: tuple[RegimeName, ...],
+    same_period_ref_regimes: tuple[RegimeName, ...],
+    edge_reference_regimes: tuple[RegimeName, ...],
+    edge_target_regimes: tuple[RegimeName, ...],
+) -> tuple[_TargetValueAccess, ...]:
+    """Declare every stored value leaf read by one GridSearch program."""
+    accesses: list[_TargetValueAccess] = []
+    for target_regime in target_regimes:
+        target = (
+            ValueArtifactAddress(
+                kind=ValueArtifactKind.GATED_CONTINUATION,
+                period=period + 1,
+                regime=regime_name,
+                target_regime=target_regime,
+            )
+            if target_regime in edge_target_regimes
+            else ValueArtifactAddress(
+                kind=ValueArtifactKind.REGIME_VALUE,
+                period=period + 1,
+                regime=target_regime,
+            )
+        )
+        accesses.append(
+            _target_value_access(
+                regime_name=regime_name,
+                period=period,
+                target=target,
+                channel=ValueInputChannel.NEXT_REGIME_VALUE,
+                path=(target_regime,),
+            )
+        )
+    accesses.extend(
+        _target_value_access(
+            regime_name=regime_name,
+            period=period,
+            target=ValueArtifactAddress(
+                kind=ValueArtifactKind.REGIME_VALUE,
+                period=period,
+                regime=reference_regime,
+            ),
+            channel=ValueInputChannel.SAME_PERIOD_VALUE,
+            path=(reference_regime,),
+        )
+        for reference_regime in same_period_ref_regimes
+    )
+    accesses.extend(
+        _target_value_access(
+            regime_name=regime_name,
+            period=period,
+            target=ValueArtifactAddress(
+                kind=ValueArtifactKind.REGIME_VALUE,
+                period=period + 1,
+                regime=reference_regime,
+            ),
+            channel=ValueInputChannel.EDGE_REFERENCE_VALUE,
+            path=(reference_regime,),
+        )
+        for reference_regime in edge_reference_regimes
+    )
+    return tuple(accesses)
+
+
+def _target_value_access(
+    *,
+    regime_name: RegimeName,
+    period: int,
+    target: ValueArtifactAddress,
+    channel: ValueInputChannel,
+    path: tuple[str | int, ...],
+) -> _TargetValueAccess:
+    """Pair one logical target artifact with its exact program-argument leaf."""
+    return _TargetValueAccess(
+        target=target,
+        source=ValueConsumerAddress(
+            source_period=period,
+            source_regime=regime_name,
+            core_key="main",
+            channel=channel,
+            path=path,
+        ),
+    )
+
+
 @dataclass(frozen=True, kw_only=True)
-class _GridSearchPeriodKernel:
-    """The grid-search period adapter — wraps one max-Q-over-a core.
-
-    Closes over the regime name (to project its flat params) and the shared
-    jitted core. Calling it evaluates Q on the full state-action product and
-    maximizes over the actions, returning a `KernelResult` whose only output is
-    the value-function array — no continuation, no simulation policy.
-    """
-
-    core: Callable
-    """The shared jitted max-Q-over-a core (`id`-deduped across periods)."""
+class _GridSearchArgumentBuilder:
+    """Build the one GridSearch program's arguments for lowering and execution."""
 
     regime_name: RegimeName
-    """Name of the regime whose flat params this adapter projects."""
-
-    collective: bool = False
-    """Whether the core is a collective (stakeholder-valued) reduction.
-
-    A collective core returns the pair `(V, D)` —
-    the stakeholder-axis value array plus the boolean dissolution flag — instead
-    of the plain V array; the adapter unpacks it into the `KernelResult`.
-    `False` keeps the singleton default byte-identical.
-    """
-
-    edge_reference_regimes: tuple[RegimeName, ...] = ()
-    """Regimes a gated edge reads a projected value from, or empty.
-
-    A gate reference and a leg fallback both name another regime's value at
-    coordinates a projection produces. Neither is tabulated on the target's
-    grid, so both are read where the source lands — inside the source's own
-    kernel — at the value of the period the source lands in. The rolled V
-    mapping already carries that array; these names are what pick it out and
-    thread each reference regime's OWN grid params beside it.
-    """
-
     same_period_ref_regimes: tuple[RegimeName, ...] = ()
-    """Reference regimes whose same-period V the core reads, or empty.
-
-    When non-empty, `__call__` forwards the solve loop's
-    `same_period_regime_to_V_arr` mapping into the core, and
-    `build_lower_args` supplies matching zero templates (reusing the
-    period-invariant `next_regime_to_V_arr` templates — a regime's V shape does
-    not change across periods, so the next-period template is also the correct
-    same-period lowering shape).
-    """
-
+    edge_reference_regimes: tuple[RegimeName, ...] = ()
     edge_target_regimes: tuple[RegimeName, ...] = ()
-    """Target regimes reached through a gated edge, or empty.
 
-    When non-empty, `build_lower_args` and `__call__`
-    replace each such target's entry in `next_regime_to_V_arr` with the gated
-    continuation object `Wbar` supplied under `edge_regime_to_V_arr` (a
-    per-source template at lowering, the freshly folded array at run time), so
-    the source's continuation reads `Wbar` in place of the raw target V with
-    no change to the compiled core. Empty keeps every other kernel
-    byte-identical.
-    """
+    def __call__(self, context: CoreBuildContext) -> Mapping[str, object]:
+        """Return the exact kwargs shared by lowering and the runtime call."""
+        state_action_space = cast("StateActionSpace", context.state_action_space)
+        next_regime_to_V_arr = cast(
+            "Mapping[RegimeName, FloatND]", context.next_regime_to_V_arr
+        )
+        flat_params = cast("FlatParams", context.flat_params)
+        ages = cast("AgeGrid", context.ages)
+        raw_next_regime_to_V_arr = next_regime_to_V_arr
+        next_regime_to_V_arr = self._with_edge_substitution(
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            edge_regime_to_V_arr=cast(
+                "Mapping[RegimeName, FloatND] | None",
+                context.edge_regime_to_V_arr,
+            ),
+        )
+        arguments: dict[str, object] = {
+            **dict(state_action_space.states),
+            **dict(state_action_space.actions),
+            "next_regime_to_V_arr": next_regime_to_V_arr,
+            **dict(flat_params[self.regime_name]),
+            "period": jnp.int32(context.period),
+            "age": ages.values[context.period],
+        }
+        if self.same_period_ref_regimes:
+            reference_values = (
+                MappingProxyType(
+                    {
+                        name: raw_next_regime_to_V_arr[name]
+                        for name in self.same_period_ref_regimes
+                    }
+                )
+                if context.same_period_regime_to_V_arr is None
+                else context.same_period_regime_to_V_arr
+            )
+            arguments["same_period_regime_to_V_arr"] = reference_values
+            arguments["same_period_regime_to_params"] = self._same_period_params(
+                flat_params=flat_params
+            )
+        arguments.update(
+            self._edge_reference_args(
+                next_regime_to_V_arr=raw_next_regime_to_V_arr,
+                flat_params=flat_params,
+            )
+        )
+        return MappingProxyType(arguments)
 
     def _with_edge_substitution(
         self,
@@ -240,7 +533,7 @@ class _GridSearchPeriodKernel:
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         edge_regime_to_V_arr: Mapping[RegimeName, FloatND] | None,
     ) -> Mapping[RegimeName, FloatND]:
-        """Replace edge targets' raw V with their gated `Wbar`."""
+        """Replace gated targets' raw values with their continuation objects."""
         if not self.edge_target_regimes:
             return next_regime_to_V_arr
         if edge_regime_to_V_arr is None:
@@ -261,9 +554,54 @@ class _GridSearchPeriodKernel:
             }
         )
 
-    def cores(self) -> Mapping[str, Callable]:
-        """Return the single max-Q-over-a core under the `"main"` key."""
-        return MappingProxyType({"main": self.core})
+    def _edge_reference_args(
+        self,
+        *,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        flat_params: FlatParams,
+    ) -> dict[str, object]:
+        """Build the edge-reference value and parameter channels."""
+        if not self.edge_reference_regimes:
+            return {}
+        return {
+            "edge_reference_regime_to_V_arr": MappingProxyType(
+                {
+                    name: next_regime_to_V_arr[name]
+                    for name in self.edge_reference_regimes
+                }
+            ),
+            "edge_reference_regime_to_params": MappingProxyType(
+                {name: flat_params[name] for name in self.edge_reference_regimes}
+            ),
+        }
+
+    def _same_period_params(
+        self, *, flat_params: FlatParams
+    ) -> MappingProxyType[RegimeName, Mapping[str, object]]:
+        """Return each same-period reference regime's own flat parameters."""
+        return MappingProxyType(
+            {name: flat_params[name] for name in self.same_period_ref_regimes}
+        )
+
+
+@dataclass(frozen=True, kw_only=True)
+class _GridSearchPeriodKernel:
+    """One period adapter whose native program graph is its sole core authority."""
+
+    _core_programs: Mapping[str, CoreProgram]
+    """The immutable one-node GridSearch program graph."""
+
+    def __post_init__(self) -> None:
+        """Snapshot and require the one mathematical GridSearch core."""
+        programs = MappingProxyType(dict(self._core_programs))
+        if tuple(programs) != ("main",):
+            msg = "GridSearch requires exactly one core program named 'main'."
+            raise ValueError(msg)
+        object.__setattr__(self, "_core_programs", programs)
+
+    def core_programs(self) -> Mapping[str, CoreProgram]:
+        """Return the sole native declaration used by eager, JIT, and AOT paths."""
+        return self._core_programs
 
     def with_fixed_params(
         self, *, fixed_flat_params: FlatParams
@@ -274,123 +612,23 @@ class _GridSearchPeriodKernel:
         regime's own fixed params restores the values removed from the live
         `flat_params`; the captured functions read only the keys they need.
         """
+        program = self._core_programs["main"]
+        argument_builder = cast("_GridSearchArgumentBuilder", program.argument_builder)
         regime_fixed = dict(
-            fixed_flat_params.get(self.regime_name, MappingProxyType({}))
+            fixed_flat_params.get(
+                argument_builder.regime_name,
+                MappingProxyType({}),
+            )
         )
         if not regime_fixed:
             return self
-        return replace(self, core=functools.partial(self.core, **regime_fixed))
-
-    def build_lower_args(
-        self,
-        *,
-        core_key: str = "main",  # noqa: ARG002
-        state_action_space: StateActionSpace,
-        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-        next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],  # noqa: ARG002
-        flat_params: FlatParams,
-        period: int,
-        ages: AgeGrid,
-        edge_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
-    ) -> Mapping[str, object]:
-        """Build the core's lowering arguments: the full state-action product.
-
-        A regime that declares same-period references (`same_period_ref_regimes`
-        non-empty) has those reference V arrays lowered with the zero templates
-        already built for `next_regime_to_V_arr` — a reference regime's
-        same-period array carries exactly its own (period-invariant) V shape and
-        sharding. A gated-edge source (`edge_target_regimes` non-empty) has each
-        edge target's continuation lowered with its `Wbar` template instead of
-        the raw target V: the target's grid plus the source's stakeholder axis.
-
-        The two slots stay independent when a regime both references and gates
-        into the SAME regime: the solve loop passes that regime's own V under
-        the same-period slot and its `Wbar` under the continuation slot, and
-        for a collective source the two differ in rank. So the same-period
-        templates read the raw mapping, never the edge-substituted one.
-        """
-        edge_substituted_V_arr = self._with_edge_substitution(
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            edge_regime_to_V_arr=edge_regime_to_V_arr,
+        bound_program = replace(
+            program,
+            function=functools.partial(program.function, **regime_fixed),
         )
-        lower_args: dict[str, object] = {
-            **dict(state_action_space.states),
-            **dict(state_action_space.actions),
-            "next_regime_to_V_arr": edge_substituted_V_arr,
-            **dict(flat_params[self.regime_name]),
-            "period": jnp.int32(period),
-            "age": ages.values[period],
-        }
-        if self.same_period_ref_regimes:
-            lower_args["same_period_regime_to_V_arr"] = MappingProxyType(
-                {
-                    regime_name: next_regime_to_V_arr[regime_name]
-                    for regime_name in self.same_period_ref_regimes
-                }
-            )
-            lower_args["same_period_regime_to_params"] = self._same_period_params(
-                flat_params=flat_params
-            )
-        lower_args.update(
-            self._edge_reference_args(
-                next_regime_to_V_arr=next_regime_to_V_arr, flat_params=flat_params
-            )
-        )
-        return lower_args
-
-    def _edge_reference_args(
-        self,
-        *,
-        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-        flat_params: FlatParams,
-    ) -> dict[str, object]:
-        """Build the edge-reference channel, empty for a regime that has none.
-
-        A gate reference and a leg fallback are read where the source lands, at
-        the value of the period it lands in — which backward induction has
-        already solved and rolled into `next_regime_to_V_arr`. Lowering and the
-        call share this builder, so the pytree the core is compiled against is
-        the pytree it is called with.
-
-        Takes the RAW rolled mapping, never the edge-substituted one: a
-        reference regime may also be an edge target, whose entry the
-        substitution replaces with that edge's `Wbar`.
-        """
-        if not self.edge_reference_regimes:
-            return {}
-        return {
-            "edge_reference_regime_to_V_arr": MappingProxyType(
-                {
-                    regime_name: next_regime_to_V_arr[regime_name]
-                    for regime_name in self.edge_reference_regimes
-                }
-            ),
-            "edge_reference_regime_to_params": MappingProxyType(
-                {
-                    regime_name: flat_params[regime_name]
-                    for regime_name in self.edge_reference_regimes
-                }
-            ),
-        }
-
-    def _same_period_params(
-        self, *, flat_params: FlatParams
-    ) -> MappingProxyType[RegimeName, Mapping[str, object]]:
-        """Each reference regime's OWN flat params, for its own grid.
-
-        A same-period reference reader interpolates the REFERENCE regime's V over
-        the REFERENCE regime's grid, so its runtime grid helpers (an
-        `IrregSpacedGrid(pass_points_at_runtime=True)` reference state's points)
-        are the reference regime's parameters — not this regime's, whose params
-        are the only ones splatted into the core. Threaded per regime name under
-        `Q_and_F.SAME_PERIOD_PARAMS_ARG`, exactly like the same-period V arrays
-        beside it; see that constant for the defect this ends.
-        """
-        return MappingProxyType(
-            {
-                regime_name: flat_params[regime_name]
-                for regime_name in self.same_period_ref_regimes
-            }
+        return replace(
+            self,
+            _core_programs=MappingProxyType({"main": bound_program}),
         )
 
     def __call__(
@@ -399,7 +637,7 @@ class _GridSearchPeriodKernel:
         compiled_cores: Mapping[str, Callable],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-        next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],  # noqa: ARG002
+        next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
         flat_params: FlatParams,
         period: int,
         ages: AgeGrid,
@@ -415,38 +653,32 @@ class _GridSearchPeriodKernel:
         `next_regime_to_V_arr` before the core call). Every other kernel keeps
         the uniform `PeriodKernel` call signature.
         """
-        raw_next_regime_to_V_arr = next_regime_to_V_arr
-        next_regime_to_V_arr = self._with_edge_substitution(
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            edge_regime_to_V_arr=edge_regime_to_V_arr,
-        )
-        extra_kwargs: dict[str, object] = self._edge_reference_args(
-            next_regime_to_V_arr=raw_next_regime_to_V_arr, flat_params=flat_params
-        )
-        if self.same_period_ref_regimes:
-            if same_period_regime_to_V_arr is None:
-                msg = (
-                    f"Regime '{self.regime_name}' declares same_period_refs on "
-                    f"{self.same_period_ref_regimes} but the solve loop passed "
-                    "no same-period V arrays."
-                )
-                raise RuntimeError(msg)
-            extra_kwargs["same_period_regime_to_V_arr"] = same_period_regime_to_V_arr
-            extra_kwargs["same_period_regime_to_params"] = self._same_period_params(
-                flat_params=flat_params
+        program = self._core_programs["main"]
+        argument_builder = cast("_GridSearchArgumentBuilder", program.argument_builder)
+        if (
+            argument_builder.same_period_ref_regimes
+            and same_period_regime_to_V_arr is None
+        ):
+            msg = (
+                f"Regime '{argument_builder.regime_name}' declares same_period_refs "
+                f"on {argument_builder.same_period_ref_regimes} but the solve loop "
+                "passed no same-period V arrays."
             )
-        out = compiled_cores["main"](
-            **state_action_space.states,
-            **state_action_space.actions,
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            **flat_params[self.regime_name],
-            period=jnp.int32(period),
-            age=ages.values[period],
-            **extra_kwargs,
+            raise RuntimeError(msg)
+        arguments = program.argument_builder(
+            CoreBuildContext(
+                state_action_space=state_action_space,
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                next_regime_to_continuation=next_regime_to_continuation,
+                flat_params=flat_params,
+                period=period,
+                ages=ages,
+                edge_regime_to_V_arr=edge_regime_to_V_arr,
+                same_period_regime_to_V_arr=same_period_regime_to_V_arr,
+            )
         )
-        if self.collective:
-            # The collective core returns the pair
-            # (stakeholder-axis V, dissolution flag D).
+        out = compiled_cores["main"](**arguments)
+        if program.output_roles == (VALUE, DISSOLUTION_FLAG):
             V_arr, dissolution = out
             return KernelResult(V_arr=V_arr, dissolution=dissolution)
         return KernelResult(V_arr=out)

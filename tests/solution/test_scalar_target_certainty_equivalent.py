@@ -81,7 +81,7 @@ def _solve_with_geometric_certainty_equivalent():
         "low": {"utility": {}},
         "high": {"utility": {}},
     }
-    return model.solve(params=params, log_level="debug")
+    return model.solve(params=params, log_level="debug").values
 
 
 def test_stateless_targets_enter_the_certainty_equivalent_transformed():

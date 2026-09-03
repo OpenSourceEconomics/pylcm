@@ -72,7 +72,7 @@ def test_ds2024_housing_builds_and_solves(variant: Literal["negm", "brute"]):
     )
     solution = model.solve(
         params=build_params(variant=variant, delta=0.0), log_level="debug"
-    )
+    ).values
 
     assert sorted(solution) == [0, 1, 2]
     alive_periods = [p for p in solution if "alive" in solution[p]]
@@ -92,18 +92,26 @@ def test_ds2024_housing_negm_matches_brute_on_interior():
     cells fall within the cell tolerance — the NEGM model is correct up to grid
     resolution.
     """
-    brute = build_model(
-        variant="brute",
-        n_grid=N_GRID,
-        n_periods=N_PERIODS,
-        n_consumption=N_CONSUMPTION,
-    ).solve(params=build_params(variant="brute", delta=0.0), log_level="debug")
-    negm = build_model(
-        variant="negm",
-        n_grid=N_GRID,
-        n_periods=N_PERIODS,
-        n_consumption=N_CONSUMPTION,
-    ).solve(params=build_params(variant="negm", delta=0.0), log_level="debug")
+    brute = (
+        build_model(
+            variant="brute",
+            n_grid=N_GRID,
+            n_periods=N_PERIODS,
+            n_consumption=N_CONSUMPTION,
+        )
+        .solve(params=build_params(variant="brute", delta=0.0), log_level="debug")
+        .values
+    )
+    negm = (
+        build_model(
+            variant="negm",
+            n_grid=N_GRID,
+            n_periods=N_PERIODS,
+            n_consumption=N_CONSUMPTION,
+        )
+        .solve(params=build_params(variant="negm", delta=0.0), log_level="debug")
+        .values
+    )
 
     differences = []
     for period in sorted(brute):
@@ -149,12 +157,16 @@ def test_ds2024_housing_vfi_oracle_matches_brute_at_zero_delta():
     the liquid-housing interior up to grid resolution. This pins the oracle's
     economics before it is used as the `delta > 0` reference.
     """
-    brute = build_model(
-        variant="brute",
-        n_grid=N_GRID,
-        n_periods=N_PERIODS,
-        n_consumption=N_CONSUMPTION,
-    ).solve(params=build_params(variant="brute", delta=0.0), log_level="debug")
+    brute = (
+        build_model(
+            variant="brute",
+            n_grid=N_GRID,
+            n_periods=N_PERIODS,
+            n_consumption=N_CONSUMPTION,
+        )
+        .solve(params=build_params(variant="brute", delta=0.0), log_level="debug")
+        .values
+    )
     oracle = solve_ds2024_housing_vfi(
         n_grid=N_GRID, n_periods=N_PERIODS, n_consumption=400, delta=0.0
     )
@@ -175,13 +187,17 @@ def test_ds2024_housing_negm_keeper_depreciation_matches_vfi_oracle():
     NEGM solve reproduces it on the liquid-housing interior up to grid resolution —
     the keeper depreciation is faithful.
     """
-    negm = build_model(
-        variant="negm",
-        n_grid=N_GRID,
-        n_periods=N_PERIODS,
-        n_consumption=N_CONSUMPTION,
-        delta=0.10,
-    ).solve(params=build_params(variant="negm", delta=0.10), log_level="debug")
+    negm = (
+        build_model(
+            variant="negm",
+            n_grid=N_GRID,
+            n_periods=N_PERIODS,
+            n_consumption=N_CONSUMPTION,
+            delta=0.10,
+        )
+        .solve(params=build_params(variant="negm", delta=0.10), log_level="debug")
+        .values
+    )
     oracle = solve_ds2024_housing_vfi(
         n_grid=N_GRID,
         n_periods=N_PERIODS,
@@ -227,14 +243,18 @@ def test_ds2024_housing_negm_improves_on_nested_outer_refinement():
     )
     means = []
     for n_outer_grid in (5, 9, 17):
-        negm = build_model(
-            variant="negm",
-            n_grid=N_GRID,
-            n_periods=N_PERIODS,
-            n_consumption=N_CONSUMPTION,
-            delta=0.10,
-            n_outer_grid=n_outer_grid,
-        ).solve(params=build_params(variant="negm", delta=0.10), log_level="debug")
+        negm = (
+            build_model(
+                variant="negm",
+                n_grid=N_GRID,
+                n_periods=N_PERIODS,
+                n_consumption=N_CONSUMPTION,
+                delta=0.10,
+                n_outer_grid=n_outer_grid,
+            )
+            .solve(params=build_params(variant="negm", delta=0.10), log_level="debug")
+            .values
+        )
         means.append(
             float(
                 _pooled_interior_difference(pylcm_solution=negm, oracle=oracle).mean()

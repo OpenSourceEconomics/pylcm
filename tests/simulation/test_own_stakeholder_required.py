@@ -89,10 +89,8 @@ def dissolution_model_and_solution():
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=DissolutionRegimeId,
     )
-    solution, dissolution_flags = model.solve(
-        params=_DISSOLUTION_PARAMS, log_level="off", return_dissolution_flags=True
-    )
-    return model, solution, dissolution_flags
+    solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="off")
+    return model, solution
 
 
 @pytest.fixture(scope="module")
@@ -171,7 +169,7 @@ def test_singleton_source_needs_no_own_role(consent_model_and_solution):
                 dtype=jnp.int32,
             ),
         },
-        period_to_regime_to_V_arr=solution,
+        solution=solution,
         log_level="off",
         seed=0,
     )
@@ -195,7 +193,6 @@ def test_collective_source_with_no_role_dependent_route_needs_no_own_role():
     result = model.simulate(
         params=params,
         initial_conditions=make_couple_initial_conditions(n_subjects=2),
-        period_to_regime_to_V_arr=None,
         log_level="off",
         seed=0,
     )
@@ -208,7 +205,7 @@ def test_collective_source_with_no_role_dependent_route_needs_no_own_role():
 
 def _simulate_dissolution_cohort(*, setup, own_stakeholder):
     """Simulate the dissolution miniature's three-subject cohort at one role."""
-    model, solution, dissolution_flags = setup
+    model, solution = setup
     return model.simulate(
         params=_DISSOLUTION_PARAMS,
         initial_conditions={
@@ -231,8 +228,7 @@ def _simulate_dissolution_cohort(*, setup, own_stakeholder):
                 }
             ),
         },
-        period_to_regime_to_V_arr=solution,
-        period_to_regime_to_dissolution_flags=dissolution_flags,
+        solution=solution,
         log_level="off",
         seed=0,
     )
@@ -305,10 +301,7 @@ def test_a_start_that_cannot_reach_a_role_dependent_route_needs_no_own_role():
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=UnreachableRoleRoutingRegimeId,
     )
-    solution, dissolution_flags = model.solve(
-        params=_DISSOLUTION_PARAMS, log_level="off", return_dissolution_flags=True
-    )
-
+    solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="off")
     result = model.simulate(
         params=_DISSOLUTION_PARAMS,
         initial_conditions={
@@ -320,8 +313,7 @@ def test_a_start_that_cannot_reach_a_role_dependent_route_needs_no_own_role():
                 dtype=jnp.int32,
             ),
         },
-        period_to_regime_to_V_arr=solution,
-        period_to_regime_to_dissolution_flags=dissolution_flags,
+        solution=solution,
         log_level="off",
         seed=0,
     )
@@ -389,10 +381,7 @@ def test_a_start_that_runs_into_a_role_dependent_route_still_needs_an_own_role()
         ages=AgeGrid(start=0, stop=4, step="Y"),
         regime_id_class=ReachableRoleRoutingRegimeId,
     )
-    solution, dissolution_flags = model.solve(
-        params=_DISSOLUTION_PARAMS, log_level="off", return_dissolution_flags=True
-    )
-
+    solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="off")
     with pytest.raises(InvalidInitialConditionsError, match="prelude"):
         model.simulate(
             params=_DISSOLUTION_PARAMS,
@@ -405,8 +394,7 @@ def test_a_start_that_runs_into_a_role_dependent_route_still_needs_an_own_role()
                     dtype=jnp.int32,
                 ),
             },
-            period_to_regime_to_V_arr=solution,
-            period_to_regime_to_dissolution_flags=dissolution_flags,
+            solution=solution,
             log_level="off",
             seed=0,
         )

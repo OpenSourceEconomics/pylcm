@@ -274,8 +274,8 @@ def test_passive_state_matches_dense_brute_force():
     exclusion the discrete DC-EGM tests use).
     """
     params = _get_params()
-    dcegm_solution = _get_model("dcegm").solve(params=params, log_level="debug")
-    brute_solution = _get_model("brute").solve(params=params, log_level="debug")
+    dcegm_solution = _get_model("dcegm").solve(params=params, log_level="debug").values
+    brute_solution = _get_model("brute").solve(params=params, log_level="debug").values
 
     n_brute_unstable_nodes = 8
     for period in sorted(brute_solution)[:-1]:
@@ -300,15 +300,21 @@ def test_on_node_passive_value_reproduces_skill_free_solution():
     constant baked into labor income — node for node, with no interpolation
     error from the passive read.
     """
-    sliced_solution = _get_model("dcegm_fixed_skill").solve(
-        params=_get_params(), log_level="debug"
+    sliced_solution = (
+        _get_model("dcegm_fixed_skill")
+        .solve(params=_get_params(), log_level="debug")
+        .values
     )
     skill_nodes = np.asarray(SKILL_GRID.to_jax())
 
     for skill_index in [0, 3, 6]:
-        single_solution = _get_model("dcegm_no_skill").solve(
-            params=_get_params(skill_level=float(skill_nodes[skill_index])),
-            log_level="debug",
+        single_solution = (
+            _get_model("dcegm_no_skill")
+            .solve(
+                params=_get_params(skill_level=float(skill_nodes[skill_index])),
+                log_level="debug",
+            )
+            .values
         )
         for period in sorted(sliced_solution)[:-1]:
             np.testing.assert_allclose(

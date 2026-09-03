@@ -385,7 +385,7 @@ def test_ir_model_via_public_model_api():
     solution = model.solve(
         params={"discount_factor": 0.95, "delta_f": 0.5, "delta_m": 0.2},
         log_level="off",
-    )
+    ).values
     np.testing.assert_allclose(
         np.asarray(solution[0]["married"]), _EXPECTED_V_MARRIED, rtol=1e-6
     )

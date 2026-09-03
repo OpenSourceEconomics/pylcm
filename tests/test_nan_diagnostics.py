@@ -220,7 +220,6 @@ def test_simulate_log_level_warning_does_not_raise_on_nan_V_arr() -> None:
     result = model.simulate(
         params=params,
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=None,
         log_level="warning",
     )
     assert set(result._raw_results) == {"non_terminal", "terminal"}
@@ -242,7 +241,6 @@ def test_simulate_log_level_off_skips_nan_validation() -> None:
     result = model.simulate(
         params=params,
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=None,
         log_level="off",
     )
     assert set(result._raw_results) == {"non_terminal", "terminal"}

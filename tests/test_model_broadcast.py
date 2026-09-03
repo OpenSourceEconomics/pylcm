@@ -323,7 +323,6 @@ def test_model_broadcast_solves_and_simulates() -> None:
             "skill": jnp.asarray([0, 1, 0, 1]),
             "regime_id": jnp.full(4, _RegimeId.work),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
         seed=3,
     )

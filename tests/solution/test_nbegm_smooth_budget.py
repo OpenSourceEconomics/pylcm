@@ -70,8 +70,12 @@ def test_nbegm_solves_a_budget_without_declared_breakpoints() -> None:
     is plain EGM: off-grid consumption, so at every state the value is at least
     the dense grid search's, up to interpolation noise on brute's grid.
     """
-    nbegm = _build_model(variant="nbegm").solve(params=_PARAMS, log_level="debug")
-    brute = _build_model(variant="brute").solve(params=_PARAMS, log_level="debug")
+    nbegm = (
+        _build_model(variant="nbegm").solve(params=_PARAMS, log_level="debug").values
+    )
+    brute = (
+        _build_model(variant="brute").solve(params=_PARAMS, log_level="debug").values
+    )
     for period in (0, 1, 2):
         nbegm_V = np.asarray(nbegm[period]["alive"])
         brute_V = np.asarray(brute[period]["alive"])

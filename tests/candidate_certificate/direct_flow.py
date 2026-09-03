@@ -6,21 +6,39 @@ explicitly separated claims. First, every coordinate produced by an already-cons
 built-in action-grid object or supplied through the public runtime-points seam reaches
 the pointwise ``Q_and_F`` call as an action argument. Second, on each GridSearch
 route, the exact arrays bound by ``Q_arr, F_arr = Q_and_F(...)`` must reach the
-full reducer without an intervening candidate-changing expression. The economic
+full reducer without an intervening candidate-changing expression. The streamed
+hard-max production route makes the equivalent pointwise claim: every canonical global
+action identity is decoded in C order, its exact Q/feasibility pair enters the
+mergeable hard-max reduction, and the resolved streamed program is the one lowered,
+compiled, and dispatched. The collective and EV1 streaming implementations remain
+sealed reference algorithms, but the native program graph deliberately selects their
+dense canonical reducers instead. A collective reference block is scalarized without
+changing action support; every stakeholder value is gathered at the one shared
+household winner and published with the empty-feasible-set dissolution flag. The EV1
+reference stream preserves the discrete-prefix branch order, hard-maxes each branch,
+then adds exactly one branch value to a log-sum-exp reduction bound to the runtime scale.
+The economic
 construction of Q/F values and feasibility—including user DAGs, constraints,
 transitions, continuation values, interpolation, and fold weights—is an explicit
 semantic boundary and is not re-proved here. The proof is strict by design: a new
 statement in either certified transport corridor is not assumed harmless; it has
 to enter the explicit, independently checked representation allowlist.
 
-The six corridors are:
+The nine corridors are:
 
 * singleton solve -> ``Q_arr.max(where=F_arr, ...)``;
+* singleton streamed solve -> complete C-order blocks -> mergeable hard max ->
+  optional unchanged fold quadrature -> compiled VALUE core;
 * singleton simulate -> ``argmax_and_max(Q_arr, where=F_arr, ...)``;
 * collective solve -> ``collective_readout(..., feasibility=F_arr, ...)``;
+* collective streamed reference -> complete C-order stakeholder blocks -> shared
+  household hard max -> compiled ``(VALUE, DISSOLUTION_FLAG)`` core;
 * collective simulate -> ``collective_argmax_and_readout(...,
   feasibility=F_arr, ...)``;
-* taste-shock solve -> exact mask, continuous maximum, then full discrete logsum;
+* taste-shock dense solve fallback -> exact mask, continuous maximum, then full
+  discrete logsum;
+* taste-shock streamed reference -> ordered discrete-prefix branch hard max -> one
+  dynamically bound log-sum-exp -> compiled VALUE core;
 * taste-shock simulate -> exact mask, row-major continuous maximum, one
   mean-zero Gumbel draw per discrete cell, and exact flat-index reconstruction.
 
@@ -35,8 +53,6 @@ logsum and taste-noise helpers are pinned too.
 
 # Exact production and mutation snippets intentionally preserve long source lines.
 # ruff: noqa: E501
-
-from __future__ import annotations
 
 import ast
 import hashlib
@@ -56,6 +72,13 @@ ARGMAX_SOURCE = "src/_lcm/regime_building/argmax.py"
 COLLECTIVE_SOURCE = "src/_lcm/regime_building/collective.py"
 LOGSUM_SOURCE = "src/_lcm/logsum.py"
 GRID_SEARCH_SOURCE = "src/_lcm/solution/grid_search.py"
+CORE_PROGRAM_SOURCE = "src/_lcm/execution/core_program.py"
+OUTPUT_LAYOUT_SOURCE = "src/_lcm/execution/output_layout.py"
+VALUE_TRANSFER_SOURCE = "src/_lcm/execution/value_transfer.py"
+ACTION_STREAMING_SOURCE = "src/_lcm/solution/action_streaming.py"
+ACTION_REDUCTION_SOURCE = "src/_lcm/solution/action_reduction.py"
+COLLECTIVE_ACTION_REDUCTION_SOURCE = "src/_lcm/solution/collective_action_reduction.py"
+LOGSUMEXP_ACTION_REDUCTION_SOURCE = "src/_lcm/solution/logsumexp_action_reduction.py"
 PROCESSING_SOURCE = "src/_lcm/regime_building/processing.py"
 DISPATCHERS_SOURCE = "src/_lcm/utils/dispatchers.py"
 FUNCTOOLS_SOURCE = "src/_lcm/utils/functools.py"
@@ -69,6 +92,7 @@ SIMULATION_TRANSITIONS_SOURCE = "src/_lcm/simulation/transitions.py"
 SIMULATION_COMPILE_SOURCE = "src/_lcm/simulation/compile.py"
 MODEL_SOURCE = "src/lcm/model.py"
 BACKWARD_INDUCTION_SOURCE = "src/_lcm/solution/backward_induction.py"
+PERIOD_REPLAY_SOURCE = "src/_lcm/solution/period_replay.py"
 INITIAL_CONDITIONS_SOURCE = "src/_lcm/simulation/initial_conditions.py"
 RESULT_SOURCE = "src/lcm/result.py"
 RESULT_DATAFRAME_SOURCE = "src/_lcm/simulation/result_dataframe.py"
@@ -101,7 +125,14 @@ _CERTIFIED_CORRIDOR_SOURCES = (
     COLLECTIVE_SOURCE,
     LOGSUM_SOURCE,
     GRID_SEARCH_SOURCE,
+    CORE_PROGRAM_SOURCE,
+    OUTPUT_LAYOUT_SOURCE,
+    VALUE_TRANSFER_SOURCE,
+    ACTION_STREAMING_SOURCE,
+    ACTION_REDUCTION_SOURCE,
+    COLLECTIVE_ACTION_REDUCTION_SOURCE,
     PROCESSING_SOURCE,
+    LOGSUMEXP_ACTION_REDUCTION_SOURCE,
     DISPATCHERS_SOURCE,
     FUNCTOOLS_SOURCE,
     CONTAINERS_SOURCE,
@@ -114,6 +145,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
     SIMULATION_COMPILE_SOURCE,
     MODEL_SOURCE,
     BACKWARD_INDUCTION_SOURCE,
+    PERIOD_REPLAY_SOURCE,
     INITIAL_CONDITIONS_SOURCE,
     RESULT_SOURCE,
     RESULT_DATAFRAME_SOURCE,
@@ -144,26 +176,34 @@ _CERTIFIED_CORRIDOR_SOURCES = (
 # These seals are deliberately internal to the semantic verifier. The generated
 # inventory, contract, policy, and manifest can all be synchronized after a source
 # mutation; this independent allowlist cannot. It closes relocation into every
-# repository-local helper on which the six certified routes depend.
+# repository-local helper on which the nine certified routes depend.
 _SOURCE_SEALS = {
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
     ARGMAX_SOURCE: "0d179a5aa65a6f310f598bdad8f75a9318a24832e31bd529184c2ea90356a72d",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
-    MAX_Q_SOURCE: "5420e559c718b4c14e07f69fefd6eb445a2b1316821893f90b48c19f53622c10",
-    PROCESSING_SOURCE: "e5be17aabbd14ad77bba9c2b503ef8563b8d2ba6ca3b5a7e6969e58a81e6150e",
-    GRID_SEARCH_SOURCE: "a035b1f5bd50e5ab831d9731341c0b48f1fb8112be8bb6411bec09a7159df58d",
+    MAX_Q_SOURCE: "6bed0c5a31bbc1c7fe9e0d9250223888d1271528b01844a398668af038e24844",
+    PROCESSING_SOURCE: "8a90088e268e0c7bd5a6cf7fb1f4befbec5aa9c1f4c7253bf229c7d287a21d05",
+    GRID_SEARCH_SOURCE: "1c9f20fd8662b4925d29399d2bd404cdbd65818f17bfe2b0c7b3a7b67450d0b4",
+    CORE_PROGRAM_SOURCE: "caf36e62a72dc2bfc5acceb05b48725186eccd68c79f66419f770527c5babe63",
+    OUTPUT_LAYOUT_SOURCE: "09237a7c2b137d3780abc2ff98aa3e38c7671828d7316904052d9572ed8b8e02",
+    VALUE_TRANSFER_SOURCE: "44b8629c7b461b6b0216c79ba25101179e1b8cb2edf40630a55c6b9403fbbd2d",
+    ACTION_STREAMING_SOURCE: "a34ca428598e37dd68fc3dcaa0c664c56f79afb6042c946246883f250bab681c",
+    ACTION_REDUCTION_SOURCE: "6cee6ea2dbef0ba710fa4a318a2113377d6513cee508e73004861597f9c220f9",
+    COLLECTIVE_ACTION_REDUCTION_SOURCE: "7a80418764fdf9754062a23707c5d39fa7abfcaac9c8e8f7803c4d8f1b461347",
     DISPATCHERS_SOURCE: "ef1d85c4fa7dbfbedc2c4afc36f307b915975c8a4a379aa40380fe8c89ecb663",
-    FUNCTOOLS_SOURCE: "e6707e1f76493a28023a1f1f536414ba6792df063e6cfc161fca2690b8f5bc1c",
+    FUNCTOOLS_SOURCE: "31f974b4fd42f9ef30f972406209d97fbd5e7e44eaf3f932847aa2ce8a1573cb",
     CONTAINERS_SOURCE: "0838079e35ba498009d8af7e6ed717f870a96a2fdc628d25e80310cd630174a9",
     ZERO_SAFE_SOURCE: "6b85bacd7c01fec283fcd309a731ab73d6639975ff34edbcce1a8450fbac5f33",
+    LOGSUMEXP_ACTION_REDUCTION_SOURCE: "732fda3ed4058445dedd160e58e3899ba286929413fd533e57113b5f772e7b79",
     PROBABILITY_SOURCE: "b59d16c16147af2518daaed643c10be43c506c6e3ac751cd52f04fa8fdab20d2",
-    ENGINE_SOURCE: "7a535d7a32c58a84c191eb8bb3c9a62b43f3dbc88857104a26fc1aee3f04541d",
+    ENGINE_SOURCE: "6d3962297eab6d6053619533211fa0e5a79fecf925cad671dc3c4d9d5bcc80e7",
     STATE_ACTION_SPACE_SOURCE: "c7af3ea4c3912efa3d5d7daa0d420168a7545e327f6e4c581b3baf54efc79f11",
-    SIMULATION_SOURCE: "0a2135531eeae6fab79e774d7a8ad276ceba92232fc7dd12bb1e2324d0714380",
+    SIMULATION_SOURCE: "a0703e3e195f38b3a36962490d8a3602f9ef5c18cf8ef486efa4f6b1bf98bb65",
     SIMULATION_TRANSITIONS_SOURCE: "1c503777887af52d1d5de36cf86acb4d8431fbe3d71203d7da881b4d0742c928",
     SIMULATION_COMPILE_SOURCE: "926feb249828f03cf722f8e517706e6651b0359f93fd29c6f87650773bfcaf04",
-    MODEL_SOURCE: "37d5f0c0c5390d4246537e8f5413073fcdbfac7eb375c3fa3313f06d01e09048",
-    BACKWARD_INDUCTION_SOURCE: "c2516960628c94ccc384af8789eeeeccd8d6f090368745f51fe06e3fa8f6d96e",
+    MODEL_SOURCE: "ddf57deb37663785bfad4d107c6ac263de379420cc50591011d065fdb33aa70d",
+    BACKWARD_INDUCTION_SOURCE: "dfa50cc2b25c5fae25c18baef52f9adafb47167460d64fc4cccc3b79827e35de",
+    PERIOD_REPLAY_SOURCE: "eeb2ce9327c1eb5a9a874a741de68d9f0b377d81759e78d1b5cf6589fb872679",
     INITIAL_CONDITIONS_SOURCE: "cb3663f59d10fa288d3da322b5f154545bb1ac4b9262073a87c405b5e950507f",
     RESULT_SOURCE: "992f8e14d2f47f505f6883e340e89d68dfc41311d4c36f7849a2f79331e4ba01",
     RESULT_DATAFRAME_SOURCE: "025e273c4d3bb9d8f9787189a551b113708c86b1e868d16178aa39555abf49a4",
@@ -171,7 +211,7 @@ _SOURCE_SEALS = {
     ADDITIONAL_TARGETS_SOURCE: "d1c8787e7968b868b4b09a90544050c5da65d2ca6203f2bc52fe6b7b7dd351e4",
     SIMULATION_RANDOM_SOURCE: "0f7d81ab5c36343ab24363dca159451c0a44a399ab150abd2e52fea6715ff20e",
     FOLD_ZERO_SAFE_SOURCE: "0f6c6c3ad1a69ea2ef241f8f0ce924e18c00e6515c7509577c761a8151d57feb",
-    SOLUTION_CONTRACT_SOURCE: "73a1148482739dad5d49939991c7ba06b693cf60f8594340f42a5633332346f7",
+    SOLUTION_CONTRACT_SOURCE: "51e9ecb17edb19f78f8fe801671732b755a0c6dbca2b7311392d8427e349e9e4",
     GRIDS_INIT_SOURCE: "c66aed5ef6cdb56cfa38eebb7f870f12475f7a5f62ca1962c17230f66fd3268a",
     GRID_BASE_SOURCE: "fd1064986abdbe1755383fb08758f74d40cad419c0da312f38b521c7d78ce59c",
     GRID_COORDINATES_SOURCE: "e0f3cffc38e2a854426309b3eacab5783a0a5725cc4e763a06969e03914619e8",
@@ -191,9 +231,9 @@ _SOURCE_SEALS = {
     MODEL_PROCESSING_SOURCE: "8a159831e37a9582852908c7e213106aa1070500f4e64fa12f1a7ed628854740",
 }
 
-EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 176
+EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 354
 EXPECTED_DIRECT_FLOW_MUTATION_NAMES_SHA256 = (
-    "fea9bb27d93337e16d2505c643660b3816cb37d5e87d3cb41a0a2e4baad4739f"
+    "292027e67d3d50cae11661a67779a6efe8e2be4219af95bdf32177116824fb30"
 )
 
 
@@ -381,6 +421,96 @@ def _body_without_docstring(node: ast.FunctionDef) -> list[ast.stmt]:
 def _ast_key(node: ast.AST) -> str:
     """Return a location-independent structural representation."""
     return ast.dump(node, annotate_fields=True, include_attributes=False)
+
+
+def _callable_ast_sha256(node: ast.FunctionDef) -> str:
+    """Hash one callable's exact AST, ignoring only its docstring and locations.
+
+    This is the compact form of the fail-closed allowlist for long transport
+    adapters. It includes the signature, annotations, decorators, type
+    parameters, and every executable statement; comments, formatting, and a
+    documentation-only edit do not force a semantic re-anchor.
+    """
+    parts: list[str | None] = [
+        _ast_key(node.args),
+        *(_ast_key(item) for item in node.decorator_list),
+        _ast_key(node.returns) if node.returns is not None else None,
+        node.type_comment,
+        *(_ast_key(item) for item in getattr(node, "type_params", ())),
+        *(_ast_key(item) for item in _body_without_docstring(node)),
+    ]
+    payload = json.dumps(parts, ensure_ascii=True, separators=(",", ":")).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _statements_ast_sha256(statements: Sequence[ast.stmt]) -> str:
+    """Hash an exact ordered statement corridor, independent of locations."""
+    payload = json.dumps(
+        [_ast_key(item) for item in statements],
+        ensure_ascii=True,
+        separators=(",", ":"),
+    ).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _exact_callable_errors(
+    *,
+    tree: ast.Module,
+    label: str,
+    contracts: dict[str, str],
+) -> list[str]:
+    """Check exact callable ASTs selected by top-level or ``Class.method`` name."""
+    errors: list[str] = []
+    for qualname, expected in contracts.items():
+        try:
+            if "." in qualname:
+                class_name, method_name = qualname.split(".", maxsplit=1)
+                _, node = _method_definition(
+                    tree=tree, class_name=class_name, method_name=method_name
+                )
+            else:
+                node = _definition(tree=tree, name=qualname)
+        except ValueError as error:
+            errors.append(f"{label}: {error}")
+            continue
+        actual = _callable_ast_sha256(node)
+        if actual != expected:
+            errors.append(f"{label}: exact callable corridor {qualname!r} changed")
+    return errors
+
+
+def _class_surface_errors(
+    *,
+    tree: ast.Module,
+    label: str,
+    class_name: str,
+    fields: tuple[str, ...],
+    methods: tuple[str, ...],
+    decorators: tuple[str, ...] = ("dataclass(frozen=True, kw_only=True)",),
+) -> list[str]:
+    """Forbid descriptors or magic methods from bypassing an exact corridor."""
+    try:
+        cls = _class_definition(tree=tree, name=class_name)
+    except ValueError as error:
+        return [f"{label}: {error}"]
+    observed_fields = tuple(
+        ast.unparse(item)
+        for item in cls.body
+        if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name)
+    )
+    observed_methods = tuple(
+        item.name for item in cls.body if isinstance(item, ast.FunctionDef)
+    )
+    errors: list[str] = []
+    if (
+        tuple(ast.unparse(item) for item in cls.decorator_list) != decorators
+        or cls.bases
+        or cls.keywords
+        or observed_fields != fields
+        or observed_methods != methods
+    ):
+        errors.append(f"{label}: {class_name} class surface changed")
+    return errors
 
 
 def _expected_statements(source: str) -> list[ast.stmt]:
@@ -1328,10 +1458,14 @@ Q_and_F = productmap(
                 "allow_args",
                 "allow_only_kwargs",
                 "argmax_and_max",
+                "build_streaming_collective_max_Q_over_a",
+                "build_streaming_ev1_max_Q_over_a",
+                "build_streaming_max_Q_over_a",
                 "cast",
                 "collective_argmax_and_readout",
                 "collective_readout",
                 "EULER_GAMMA",
+                "inspect",
                 "jax",
                 "jnp",
                 "logsum_and_softmax",
@@ -1339,8 +1473,10 @@ Q_and_F = productmap(
                 "productmap",
                 "vmap_1d",
                 "with_signature",
+                "ScalarFloat",
             },
             expected_imports=[
+                "import inspect",
                 "import math",
                 "from types import MappingProxyType",
                 "from typing import cast",
@@ -1350,8 +1486,10 @@ Q_and_F = productmap(
                 "from _lcm.logsum import EULER_GAMMA, logsum_and_softmax",
                 "from _lcm.regime_building.argmax import argmax_and_max",
                 "from _lcm.regime_building.collective import ParetoWeights, collective_argmax_and_readout, collective_readout",
+                "from _lcm.solution.action_streaming import build_streaming_collective_max_Q_over_a, build_streaming_ev1_max_Q_over_a, build_streaming_max_Q_over_a",
                 "from _lcm.utils.dispatchers import productmap, vmap_1d",
                 "from _lcm.utils.functools import allow_args, allow_only_kwargs",
+                "from lcm.typing import BoolND, FloatND, IntND, ScalarFloat",
             ],
             expected_binding_counts={
                 "MappingProxyType": 1,
@@ -1359,6 +1497,9 @@ Q_and_F = productmap(
                 "allow_args": 1,
                 "allow_only_kwargs": 1,
                 "argmax_and_max": 1,
+                "build_streaming_collective_max_Q_over_a": 1,
+                "build_streaming_ev1_max_Q_over_a": 1,
+                "build_streaming_max_Q_over_a": 1,
                 "cast": 1,
                 "collective_argmax_and_readout": 1,
                 "collective_readout": 1,
@@ -1368,6 +1509,9 @@ Q_and_F = productmap(
                 "EULER_GAMMA": 1,
                 "get_argmax_and_max_Q_over_a": 1,
                 "get_max_Q_over_a": 1,
+                "get_streaming_max_Q_over_a": 1,
+                "_fail_if_action_width_keyword_collides": 1,
+                "inspect": 1,
                 "jax": 1,
                 "jnp": 1,
                 "list": 0,
@@ -1379,6 +1523,7 @@ Q_and_F = productmap(
                 "tuple": 0,
                 "vmap_1d": 1,
                 "with_signature": 1,
+                "ScalarFloat": 1,
                 "zip": 0,
             },
         )
@@ -1386,8 +1531,386 @@ Q_and_F = productmap(
     return errors
 
 
+def _streamed_max_builder_errors(tree: ast.Module) -> list[str]:
+    """Pin streamed VALUE production, optional folding, and fail-closed boundaries."""
+    return _exact_callable_errors(
+        tree=tree,
+        label="streamed max-Q builder",
+        contracts={
+            "get_streaming_max_Q_over_a": "54999041a3f59036bea35b0250def6a49e69b216163b36aad66f116a2bd45027",
+            "_fail_if_action_width_keyword_collides": (
+                "20d3a1998c95f4decc9c5b5c8971ddc98fd1140c1954f427863409de33d2b2c4"
+            ),
+            "_fail_if_full_V_streaming_route_is_unsupported": (
+                "cd4c96d572ec7df9dc269f5fa2bfc1ec5c16fe0a78de3be56adc28c15f065d2c"
+            ),
+            "_fail_if_streaming_co_map_layout_is_invalid": (
+                "59c06aedafc8bcbe31d7f2f7f7b7d94e1d8044bf529c6f11a05882c5bf1d7979"
+            ),
+            "_wrap_with_fold_reduction": (
+                "a586674124f90ff862f64458b40d6a6f8bbf6586e9772d9bdb4d31bf68c9c34c"
+            ),
+        },
+    )
+
+
+def _functools_adapter_errors(tree: ast.Module) -> list[str]:
+    """Pin positional-origin preservation through nested co-map adapters."""
+    return _exact_callable_errors(
+        tree=tree,
+        label="allow-args positional transport",
+        contracts={
+            "_split_bound_arguments": (
+                "a7350bd29eb79dcb783acfc520638b8e959684ba5be19f3c4e4cac6f895534d8"
+            ),
+            "allow_args": (
+                "b4701afeb55c6320acd6eb3229a663143b8964f135476246c2e12e96d2b484f6"
+            ),
+        },
+    )
+
+
+def _core_program_transport_errors(tree: ast.Module) -> list[str]:
+    """Pin the sole native program graph through materialization and resolution."""
+    errors = _class_surface_errors(
+        tree=tree,
+        label="core-program target-value access",
+        class_name="_TargetValueAccess",
+        fields=(
+            "target: ValueArtifactAddress",
+            "source: ValueConsumerAddress",
+        ),
+        methods=("__post_init__",),
+    )
+    errors.extend(
+        _class_surface_errors(
+            tree=tree,
+            label="core-program action axis",
+            class_name="StreamableProductAxis",
+            fields=(
+                "name: str",
+                "coordinate_names: tuple[ActionName, ...]",
+                "coordinate_extents: tuple[int, ...]",
+                "canonical_order: str",
+                "reduction: ReductionSemantics",
+                "width_keyword: str",
+            ),
+            methods=("__post_init__", "extent"),
+        )
+    )
+    errors.extend(
+        _class_surface_errors(
+            tree=tree,
+            label="core-program execution requirements",
+            class_name="CoreExecutionRequirements",
+            fields=(
+                "streamable_axes: tuple[StreamableProductAxis, ...] = ()",
+                "target_value_accesses: tuple[_TargetValueAccess, ...] = ()",
+            ),
+            methods=("__post_init__",),
+        )
+    )
+    errors.extend(
+        _class_surface_errors(
+            tree=tree,
+            label="core-program build context",
+            class_name="CoreBuildContext",
+            fields=(
+                "state_action_space: object",
+                "next_regime_to_V_arr: Mapping[str, object]",
+                "next_regime_to_continuation: Mapping[str, object]",
+                "flat_params: Mapping[str, object]",
+                "period: int",
+                "ages: object",
+                "edge_regime_to_V_arr: Mapping[str, object] | None = None",
+                "same_period_regime_to_V_arr: Mapping[str, object] | None = None",
+            ),
+            methods=("__post_init__",),
+        )
+    )
+    errors.extend(
+        _class_surface_errors(
+            tree=tree,
+            label="core-program declaration",
+            class_name="CoreProgram",
+            fields=(
+                "name: str",
+                "function: Callable[..., object]",
+                "argument_builder: CoreArgumentBuilder",
+                "requirements: CoreExecutionRequirements",
+                "output_roles: object | None",
+                "disposition: CoreExecutionDisposition",
+                "disposition_reason: str | None = None",
+                "donation_candidates: tuple[str, ...] = ()",
+            ),
+            methods=("__post_init__",),
+        )
+    )
+    errors.extend(
+        _class_surface_errors(
+            tree=tree,
+            label="materialized core-program declaration",
+            class_name="MaterializedCoreProgram",
+            fields=(
+                "name: str",
+                "function: Callable[..., object]",
+                "arguments: Mapping[str, object]",
+                "requirements: CoreExecutionRequirements",
+                "output_roles: object | None",
+                "disposition: CoreExecutionDisposition",
+                "donation_candidates: tuple[str, ...]",
+                "disposition_reason: str | None = None",
+            ),
+            methods=("__post_init__",),
+        )
+    )
+    errors.extend(
+        _class_surface_errors(
+            tree=tree,
+            label="resolved core-program declaration",
+            class_name="ResolvedCoreProgram",
+            fields=(
+                "name: str",
+                "function: Callable[..., object]",
+                "arguments: Mapping[str, object]",
+                "static_kwargs: Mapping[str, int]",
+                "requirements: CoreExecutionRequirements",
+                "output_roles: object | None",
+                "disposition: CoreExecutionDisposition",
+                "donation_candidates: tuple[str, ...]",
+                "tile_widths: Mapping[str, int]",
+                "specialization_key: Hashable",
+                "input_transfer_plan: tuple[ResolvedValueTransfer, ...]",
+                "disposition_reason: str | None = None",
+            ),
+            methods=("__post_init__",),
+        )
+    )
+    try:
+        disposition = _class_definition(tree=tree, name="CoreExecutionDisposition")
+    except ValueError as error:
+        errors.append(f"core-program disposition: {error}")
+    else:
+        body = list(disposition.body)
+        if (
+            body
+            and isinstance(body[0], ast.Expr)
+            and isinstance(body[0].value, ast.Constant)
+            and isinstance(body[0].value.value, str)
+        ):
+            body.pop(0)
+        if (
+            [ast.unparse(item) for item in disposition.bases] != ["StrEnum"]
+            or disposition.decorator_list
+            or disposition.keywords
+            or not _statements_match(
+                observed=body,
+                expected_source="""PLANNED = "planned"
+DENSE = "dense"
+LEGACY_UNPLANNED = "legacy-unplanned"
+""",
+            )
+        ):
+            errors.append("core-program disposition contract changed")
+    errors.extend(
+        _exact_callable_errors(
+            tree=tree,
+            label="core-program provider-to-resolver transport",
+            contracts={
+                "_TargetValueAccess.__post_init__": "087df21f9a729fb78e784cd8a1ed466c97473cce55b4835aec7530b6c3608f73",
+                "StreamableProductAxis.__post_init__": "a83a07c71ec8a26d8ad9b8cc71ea65e3df8d000e7efdcc44802bc240a5db95c6",
+                "StreamableProductAxis.extent": "aebdd54708094461d473977783f0588d2491c212629e1f5a40f8cf24c789802a",
+                "CoreExecutionRequirements.__post_init__": "e4d9bc6d57b5394abcfe6b3429292116e691be52fb980604cdb6d2cf0e21a876",
+                "CoreBuildContext.__post_init__": "c001bdfea799659c6e0f1d0ee09180940d5176d8a59675dcabef190a12716d7b",
+                "CoreProgram.__post_init__": "46ed17fde1d9fa9aa918112289c57b3f748df8caca8b2a8787c8bc9c093ba1f6",
+                "MaterializedCoreProgram.__post_init__": "59cb5f175f44a50eb4679abd0001c59d0986cff9f3b6e5fa6a9ef7a568e6f648",
+                "ResolvedCoreProgram.__post_init__": "ff3e188e5f5ae8849bc9115b34bc3f4bf2b475f383e6dacf9ca25edfebda79bf",
+                "core_program_graph": "cc6ea72073cacba5168d0aea0023a23769f5e242fbca404b3d3a7d3c2865e9a0",
+                "_reject_native_duplicate_authorities": "718aa10be29ba96de933ccd778200a94dd5d2637b148988b950e5b5e070edcea",
+                "_snapshot_and_validate_graph": "86908fdd8486a84edbbece9be246821176dcad948d8cb06e2074591993ed82aa",
+                "_validate_program_declaration": "9387bb0b9df54f536546f00ce2a2160bb3e582ba4deb03e1aadbd13007cd372f",
+                "_validate_disposition_reason": "ead5c4df5fc7e1dd4fa680fdad02549c67d340d46b2ae3556eb8c83028532c3a",
+                "_legacy_core_program_graph": "a1d0be2bb811ab3ab03d179bde85fe6cdfa7e953e2ee2617ce14be4f7b23e4f2",
+                "materialize_core_program": "95b3e807b02e2ae13f0b4d61ce853d0e287229c0dc2578bb3da810b4eac29f6d",
+                "resolve_core_program": "7a55d0ae17b176491a83f25a8572df9d972c0296d6f532e0179736d194390227",
+                "initial_core_tile_widths": "496cd22a502c9dacdad36884c681cfed6353d840824a1e2dce3df7b1dcbcc3cf",
+                "_validate_core_program": "d55b9b72493f9565e341c20ac15f1041c4f6acd2134e25a923382c7a10304b59",
+                "_validate_materialized_declaration": "ad5f5d6d54ea666a203f8ec188b4f3cc7a496f74ed79da141b6e78b0e5526bc1",
+                "_resolve_input_transfer_plan": "86e49db184adcd67dbcdf9f7accfcc17e7adaac32042bf5233be71121d97b73e",
+                "_validate_target_value_accesses": "9f9c693c334394c0ea05e30b923dba937a2f6979c41b91c3855da1c6d0eac7ae",
+                "_target_value_argument_leaf": "ff8f95f1afe6f2e70d97d261317b158e94b376fda3842977cc88fc07529a9ce2",
+                "_validate_transfer_argument_metadata": "028eddda6b8348555f3f1dc1ce5bd869fdcbbf683f4e40e773d95f125556c95d",
+                "_validate_streamable_axis": "49d750f0fa436a7971480f75485b11dfa08643b1d709cadefbeedea2e0b9dd45",
+                "_validate_tile_width": "15f543450ad5f6b739cfa8aafbf0a4fb34a0c5b677da4866a2afedd1effde831",
+                "_validate_coordinate_argument": "401392c0069102b2983559a9b7c53bba6bd66ccf0b0126f8e6688bff49564b27",
+                "_validate_width_keyword": "57c76f0f7ffbb02e0ab500552522e0d1ec8652173d7b9ba81c842ec558beeaff",
+            },
+        )
+    )
+    return errors
+
+
+def _action_streaming_errors(tree: ast.Module) -> list[str]:
+    """Pin complete C-order block evaluation and exact reducer delegation."""
+    errors = _class_surface_errors(
+        tree=tree,
+        label="streamed action evaluator",
+        class_name="_StreamingHardMax",
+        fields=(
+            "Q_and_F: Callable[..., tuple[Any, Any]]",
+            "action_names: tuple[str, ...]",
+            "block_width: int",
+        ),
+        methods=("__call__",),
+        decorators=("dataclass(frozen=True)",),
+    )
+    errors.extend(
+        _class_surface_errors(
+            tree=tree,
+            label="streamed collective action evaluator",
+            class_name="_StreamingCollectiveHardMax",
+            fields=(
+                "Q_and_F: Callable[..., tuple[Any, Any]]",
+                "action_names: tuple[str, ...]",
+                "block_width: int",
+                "stakeholders: tuple[str, ...]",
+                "weights: Mapping[str, Any]",
+            ),
+            methods=("__call__",),
+            decorators=("dataclass(frozen=True)",),
+        )
+    )
+    errors.extend(
+        _class_surface_errors(
+            tree=tree,
+            label="streamed EV1 reduction identity",
+            class_name="GridSearchEV1ActionReduction",
+            fields=("n_discrete_action_axes: int",),
+            methods=("semantic_key",),
+            decorators=("dataclass(frozen=True)",),
+        )
+    )
+    errors.extend(
+        _class_surface_errors(
+            tree=tree,
+            label="streamed EV1 action evaluator",
+            class_name="_StreamingEV1ExpectedMax",
+            fields=(
+                "Q_and_F: Callable[..., tuple[Any, Any]]",
+                "action_names: tuple[str, ...]",
+                "n_discrete_action_axes: int",
+                "block_width: int",
+                "scale: Any",
+            ),
+            methods=("__call__",),
+            decorators=("dataclass(frozen=True)",),
+        )
+    )
+    errors.extend(
+        _exact_callable_errors(
+            tree=tree,
+            label="streamed action evaluator",
+            contracts={
+                "build_streaming_max_Q_over_a": "e5ae9742ba7baf789ff4659fd14c544ae5e5034a14117a1e704b27babd1087c6",
+                "build_streaming_collective_max_Q_over_a": "9b855229c633e1a03ccbd56aa626be0d6f5ab668b1881d9f54f9010083842d70",
+                "build_streaming_ev1_max_Q_over_a": "58c1d90efaa42c39bf4e8fb919a74cc1462bdec5420f016cc509af1151491236",
+                "GridSearchEV1ActionReduction.semantic_key": "94630b954057476990e5872b65ba67a691852e9a1555267a2bd5dc3041915454",
+                "_StreamingHardMax.__call__": "98e334a19ebeaa5e3aab9f87205166256a7cad545eba2bc2e7c1bc758d334b5b",
+                "_StreamingCollectiveHardMax.__call__": "9674dcfc6fd7026209d97cb30018f96088595a132bd88124b35e65c97bd7b3af",
+                "_StreamingEV1ExpectedMax.__call__": "9ad46e41de04ab0efb45f873459340f6933d984939f51d120afa6e53e2ad9510",
+                "_prepare_action_call": "290fd810472aeb3336fdd437ccba50159e9d28c6822d6b8122fa4bdec8c71159",
+                "_evaluate_block": "ee4a59644e10e1f5ebb8aaa917967a74eab852bd1bf1d5e824310bc2a26ab63f",
+                "_evaluate_ev1_branch_block": "4c4cb2e7de9cf3a732f4ee528f526f83e9bdeb7424ea4ce8acc74f10f041e467",
+                "_evaluate_collective_block": "8030607cabf36d76d766c5e8eea3ec1e8d9bbd8f41214c3490691f8dbe718d89",
+                "_start_reduction": "034b3966dd04c0e0d66e085e8e2c4e16b127e1d8a9869ecfa039c3b5e7928b04",
+                "_scan_remaining_blocks": "ccfb2af321657915e360867fd57bfec3e26eae86a031380fba94cd73a7384bc7",
+                "_add_block": "a5047bea80275b77727b69b06d563bcdfea7e80c0f99dda34f6570948ccd1a72",
+                "_reduce_no_action": "47067ad94112c815eccf14395b03ad372376e53cfd5b4f337ec70404d3a32da6",
+                "_start_collective_reduction": "019872b31d89c2a2c8ba68ee6128a9feb2b90b52c6ee3b00506708db6195adce",
+                "_scan_remaining_collective_blocks": "15c53ba8cc665ca03333103fe94a5f101e92fb216341e521fd1360097eb7987b",
+                "_add_collective_block": "5ed017db741c30cae43dd1c4a526c703c8601857c2fbca23e9900ca560e78198",
+                "_reduce_collective_no_action": "dbd215d04c091bdf6942fa6edb4a561468a5bc234f13ae24a67362dc5d48a9ff",
+                "_decode_action": "5ac47e5a2d400754255cd938bf9e27ec91007741c8bbf5ad18e04bb3a9a24cbe",
+                "_validate_scalar_Q_and_F": "a2b49855d9fe1572f7440248db7edfce283a2179394648ca55b6b8ce550f5364",
+                "_validate_block_Q_and_F": "7f00abbccfe23768df403596eb22c715eb3542b4e43dd67593f7bd3e487fdeef",
+                "_validate_collective_scalar_Q_and_F": "600332c08d2ed5aa6a4ffaeee07a878c8a713a674f54456c8a9d05dbe9eddd35",
+                "_validate_collective_block_Q_and_F": "1e12615fa5fa04137cebb137387bc1c2ad98b31f1978dd47f209d00207036bef",
+                "_initialize_ev1_reduction": "41728c9433880bdb06c0ab5d3c0821a7f100f238fa1faec90dc5ca967c627650",
+                "_add_ev1_block": "92fb55ab8e7ae853357ff9987d7f2f2a922141bf7222dc41436a0e0b2d84644f",
+                "_finalize_open_ev1_branch_group": "f1eea36aa27ec48e7e79557c8928ed62d5e6cf01d0cc100a8e558ebdb31196fd",
+                "_scan_remaining_ev1_blocks": "8914c1d83aa24460dbba72c0984b4ed3af8a67e82dfb6749423a131002f9c2a6",
+                "_flush_ev1_branch_group": "cda5422b10b274dcd2b7b2db8a15b56a6688e5d6ed64a112a6ce212a4dd314e3",
+            },
+        )
+    )
+    return errors
+
+
+def _hard_max_streaming_reduction_errors(tree: ast.Module) -> list[str]:
+    """Pin the complete hard-max accumulator and global-identity merge law."""
+    return _exact_callable_errors(
+        tree=tree,
+        label="streamed singleton hard-max reduction",
+        contracts={
+            "HardMaxReduction.semantic_key": "f024d59aadbce68d4647522cd802f542ed3a39c7cbc05664b03c5a362c6468bd",
+            "HardMaxReduction.initialize": "b29e84926276a74848f11826cb36ca2442e00cbc3ab3819bd197bfad624bc671",
+            "HardMaxReduction.add": "5264b88c3ba353f158b394889295be544309038425796dc8f68859ff977c3880",
+            "HardMaxReduction.merge": "de104bfa46bf5dff388f43bd1c4c696a4f1527613a2efcb359a762b513f28e2b",
+            "HardMaxReduction.finalize": "40a21bb4b44366d00ec79a56e7aa7594a7b7b5427e3c29d9910cbc9a1e69bed3",
+            "_reduce_block": "177143b0222c6386a30827b154bc0f618b7cebf9991d978c4afcc7575dc0dcd7",
+        },
+    )
+
+
+def _collective_hard_max_streaming_reduction_errors(
+    tree: ast.Module,
+) -> list[str]:
+    """Pin the shared-household winner and stakeholder-value gather law."""
+    return _exact_callable_errors(
+        tree=tree,
+        label="streamed collective hard-max reduction",
+        contracts={
+            "CollectiveHardMaxReduction.semantic_key": "1a2875f2b718377e51a76e0d37f1614f40f3e08b4cc730032add7a2373c5734b",
+            "CollectiveHardMaxReduction.initialize": "78e55824232f334491375fa641fb20e28bdc7be3dc2cd59cceedbe1b1e74db03",
+            "CollectiveHardMaxReduction.add": "8d69ebff49fe1f231e7941129ea582137430dfeb5c2719061676691e80aee747",
+            "CollectiveHardMaxReduction.merge": "4e288cd957f4840ebc2f5c185051a208c8e82d7df59d8d64dda3f9e5a42f530c",
+            "CollectiveHardMaxReduction.finalize": "2c2128c3095d373853e0bfc2bf9f8519d8782c58c9170fd79a5cc96358d6ee47",
+            "_validate_block_shapes": "ef3ba0ed14e345bd21da5ab0ac1e79824b04317f8817fce58f8ecd07a8a1b8a5",
+            "_reduce_block": "75ee08bb4dc9fc5bc9ec1ef3d700dba200b3e3cea5fd8def060f12d70403bd31",
+            "_take_stakeholder_values": "b84709a267bb886bef97f01076e40d5670e30caa1c4ffeede8d402008848072d",
+        },
+    )
+
+
+def _logsumexp_streaming_reduction_errors(tree: ast.Module) -> list[str]:
+    """Pin one dynamically bound log-sum-exp session across every branch."""
+    errors = _class_surface_errors(
+        tree=tree,
+        label="streamed bound log-sum-exp reduction",
+        class_name="BoundLogSumExpReduction",
+        fields=("scale: FloatND",),
+        methods=("initialize", "add", "merge", "finalize"),
+        decorators=("dataclass(frozen=True)",),
+    )
+    errors.extend(
+        _exact_callable_errors(
+            tree=tree,
+            label="streamed log-sum-exp reduction",
+            contracts={
+                "BoundLogSumExpReduction.initialize": "a85a8161da058019e24d2b33ce72d9881e4d8df843bcb57e2ea1143c7ad37d36",
+                "BoundLogSumExpReduction.add": "bc07d13e5fa3101df3216f75942966086537395d81bb2c6abc4276158ccf9a4d",
+                "BoundLogSumExpReduction.merge": "e1b12504e631c9659f1de5f55a48de26e3d4a1d5c089e6bc75738a52313fffc7",
+                "BoundLogSumExpReduction.finalize": "a5d920589ee7f6b7454e241c9ef5b0be41c11b75c806e578932d1244884ce5cb",
+                "LogSumExpReduction.semantic_key": "13bc88fd7862f49c2ef01b2de88e9c695276a163bc896d9c40dae5d4b104c671",
+                "LogSumExpReduction.bind": "1e3f07eb92d208799636c7958d2d2fdd8c955863630606ffa1a1fbba7c8de06a",
+            },
+        )
+    )
+    return errors
+
+
 def _grid_search_caller_errors(tree: ast.Module) -> list[str]:
-    """Pin solve-side action metadata and the exact live core publication."""
+    """Pin GridSearch's sole native program declaration and shared builder."""
     errors: list[str] = []
     try:
         cls, method = _method_definition(
@@ -1414,93 +1937,370 @@ def _grid_search_caller_errors(tree: ast.Module) -> list[str]:
         and not method.decorator_list
     ):
         errors.append("solve caller: build_period_kernels signature changed")
-    expected_body = r"""from _lcm.regime_building.max_Q_over_a import get_max_Q_over_a
-from _lcm.regime_building.processing import get_conditioned_fold_weights_by_code
-built: dict[int, MaxQOverAFunction] = {}
-result: dict[int, PeriodKernel] = {}
-fold_weights: dict[StateName, FloatND] = {}
-fold_conditioning: dict[StateName, StateName] = {}
-for name in context.fold_state_names:
-    process = cast("_ContinuousStochasticProcess", context.grids[name])
-    if process.state_conditioned is None:
-        fold_weights[name] = process.get_transition_probs()[0]
+    try:
+        disposition_cls = _class_definition(
+            tree=tree, name="_ActionStreamingDisposition"
+        )
+    except ValueError as error:
+        errors.append(f"solve caller: {error}")
     else:
-        fold_weights[name] = get_conditioned_fold_weights_by_code(
-            name=name, grid=process, grids=context.grids
-        )
-        fold_conditioning[name] = process.state_conditioned.on
-for period, Q_and_F in context.Q_and_F_functions.items():
-    q_id = id(Q_and_F)
-    if q_id not in built:
-        func = get_max_Q_over_a(
-            Q_and_F=Q_and_F,
-            batch_sizes={
-                name: grid.batch_size
-                for name, grid in context.grids.items()
-                if name in context.state_action_space.state_names
+        disposition_body = list(disposition_cls.body)
+        if (
+            disposition_body
+            and isinstance(disposition_body[0], ast.Expr)
+            and isinstance(disposition_body[0].value, ast.Constant)
+            and isinstance(disposition_body[0].value.value, str)
+        ):
+            disposition_body.pop(0)
+        if (
+            [ast.unparse(item) for item in disposition_cls.bases] != ["StrEnum"]
+            or disposition_cls.decorator_list
+            or disposition_cls.keywords
+            or not _statements_match(
+                observed=disposition_body,
+                expected_source='''STREAMED = "streamed"
+DENSE_EV1_NONCANONICAL = "deliberately_dense:ev1_canonical_reduction_order"
+DENSE_COLLECTIVE_RESOURCES = "deliberately_dense:collective_resource_regression"
+DENSE_TRIVIAL_ACTION_PRODUCT = "deliberately_dense:trivial_action_product"
+DENSE_CO_MAP_REFERENCE_CHANNEL = "deliberately_dense:co_map_with_separate_reference_channel"
+UNSUPPORTED_COLLECTIVE_EV1 = "unsupported:collective_ev1"
+UNSUPPORTED_EV1_FOLD = "unsupported:ev1_fold"
+UNSUPPORTED_COLLECTIVE_FOLD = "unsupported:collective_fold"
+UNSUPPORTED_EV1_WITHOUT_DISCRETE_ACTION = "unsupported:ev1_without_discrete_action"
+
+@property
+def category(self) -> str:
+    """Return the stable streamed/deliberately-dense/unsupported category."""
+    return self.value.partition(":")[0]
+''',
+            )
+        ):
+            errors.append("solve caller: action-streaming disposition contract changed")
+    errors.extend(
+        _exact_callable_errors(
+            tree=tree,
+            label="solve caller live streamed provider",
+            contracts={
+                "_select_action_width_keyword": "d5c0751bf2eb4a98a08b1641e41cfea9f46230af044a1c666e49f6f444cadb68",
+                "GridSearch.build_period_kernels": "a7c9cf78c051a97240c8a2ac2836819164b0ae12f86eb345fdfe7501d122a978",
+                "_edge_reference_regimes_for_targets": "fae893f62c5a3eb6e8d4df88dae39fd283a5d86cd1c87a173da15287ea945af0",
+                "_classify_action_streaming": "09d190475ffaf8c269880b7062a4be39e149f27d801e5fb640fa171753337ebf",
+                "_supports_action_streaming": "d93f977fad68ad528beb9d4b9e6d45e5eb95b53c9a0398ff6f6a62ec548bad11",
+                "_target_value_accesses": "542d72d188b29070da8e11b1296b4230054c5fa99783093b3285db387827b460",
+                "_target_value_access": "8d91533907c586084a3efe1b5465bc055e07779d2219c66f9d4515b1ee44dcce",
             },
-            action_names=context.state_action_space.action_names,
-            state_names=context.state_action_space.state_names,
-            n_discrete_action_axes=len(
-                context.state_action_space.discrete_actions
-            ),
-            has_taste_shocks=context.has_taste_shocks,
-            co_map_state_names=context.co_map_state_names,
-            co_map_v_arr_in_axes=context.co_map_v_arr_in_axes,
-            stakeholders=context.stakeholders,
-            pareto_weights=context.pareto_weights,
-            fold_state_names=context.fold_state_names,
-            fold_weights=MappingProxyType(fold_weights),
-            fold_conditioning=MappingProxyType(fold_conditioning),
         )
-        built[q_id] = jax.jit(func) if context.enable_jit else func
-    result[period] = _GridSearchPeriodKernel(
-        core=built[q_id],
-        regime_name=context.regime_name,
-        collective=context.stakeholders is not None,
-        same_period_ref_regimes=context.same_period_ref_regimes,
-        edge_reference_regimes=context.edge_reference_regimes,
-        edge_target_regimes=context.edge_target_regimes,
     )
-return SolutionKernels(period_kernels=MappingProxyType(result))
-"""
-    if not _body_matches(node=method, expected_source=expected_body):
-        errors.append(
-            "solve caller: action metadata, core wiring, or published result changed"
+    errors.extend(
+        _class_surface_errors(
+            tree=tree,
+            label="solve caller shared argument builder",
+            class_name="_GridSearchArgumentBuilder",
+            fields=(
+                "regime_name: RegimeName",
+                "same_period_ref_regimes: tuple[RegimeName, ...] = ()",
+                "edge_reference_regimes: tuple[RegimeName, ...] = ()",
+                "edge_target_regimes: tuple[RegimeName, ...] = ()",
+            ),
+            methods=(
+                "__call__",
+                "_with_edge_substitution",
+                "_edge_reference_args",
+                "_same_period_params",
+            ),
         )
+    )
+    errors.extend(
+        _class_surface_errors(
+            tree=tree,
+            label="solve caller native program graph",
+            class_name="_GridSearchPeriodKernel",
+            fields=("_core_programs: Mapping[str, CoreProgram]",),
+            methods=(
+                "__post_init__",
+                "core_programs",
+                "with_fixed_params",
+                "__call__",
+            ),
+        )
+    )
+    errors.extend(
+        _exact_callable_errors(
+            tree=tree,
+            label="solve caller shared builder and native program graph",
+            contracts={
+                "_GridSearchArgumentBuilder.__call__": "44f395121e063a099adc1c8fea5b7fd377ce5ac8019ea2ec59ffd82a9fb0915e",
+                "_GridSearchArgumentBuilder._with_edge_substitution": "8d253b526755274685f3dbf2e28efe4f35062993bedd017cffddf2d17fe657cc",
+                "_GridSearchArgumentBuilder._edge_reference_args": "dbc3490fe06a35e27546fd6c4a29d185c4e05c3ebc500aa2a1f220615f55c0b9",
+                "_GridSearchArgumentBuilder._same_period_params": "8a9e646c6abededa222865ead1ad7e07c5355626b32a9fb1e631497a4889a58e",
+                "_GridSearchPeriodKernel.__post_init__": "056fa9a213d05cd91edced63b00b0968a0cb34bd4aae6262d429fc46107d6b57",
+                "_GridSearchPeriodKernel.core_programs": "0d96f7bea814e419ef1dbdebbc3257d63c3c0d36d9e6e52e619f8f44ae5a8a56",
+                "_GridSearchPeriodKernel.with_fixed_params": "3ac015a29f87cd287c740773c837852d814c646a3131a9a2aa72ed99954bff1c",
+                "_GridSearchPeriodKernel.__call__": "c2bad5ac3b6f97c385b62455f936e68a467b30e14845ed5dd01612f53bf35c73",
+            },
+        )
+    )
+    return errors
+
+
+def _output_layout_errors(tree: ast.Module) -> list[str]:
+    """Pin planned lowering, validation, and identity-return publication."""
+    errors: list[str] = []
+    errors.extend(
+        _class_surface_errors(
+            tree=tree,
+            label="output layout",
+            class_name="ResolvedOutputLayout",
+            fields=(
+                "out_shardings: object",
+                "compilation_key: Hashable",
+                "expected_value_shape: tuple[int, ...]",
+                "expected_value_dtype: object",
+                "expected_dissolution_shape: tuple[int, ...] | None",
+                "expected_dissolution_dtype: object | None",
+            ),
+            methods=(),
+        )
+    )
+    errors.extend(
+        _class_surface_errors(
+            tree=tree,
+            label="output layout",
+            class_name="PlannedCore",
+            fields=(
+                "compiled: Callable",
+                "layout: ResolvedOutputLayout",
+                "input_transfer_plan: tuple[ResolvedValueTransfer, ...] = ()",
+            ),
+            methods=("__post_init__", "__call__"),
+        )
+    )
+    errors.extend(
+        _exact_callable_errors(
+            tree=tree,
+            label="output layout",
+            contracts={
+                "resolve_output_layout": "b0cef6ca2f872668725bcc7bb5b65f8fbd30be52e6f12f73654d3d022b92c9ed",
+                "_validate_output_roles": "8bf237a4b6a84fddd8bb2d425c25561498531ff01121c205fcd3be28fca480c7",
+                "assert_output_layout": "78b4040ad158cd8201ce739cfc08ee3e0ddc1d91b0019bbff5689e5b2bebd0f3",
+                "_assert_output_metadata": "8612094c85183f9c7cfa568bb0aad875ce729c79c60b31126efd8d04785644ca",
+                "PlannedCore.__post_init__": "c62b7dc586d1bc5e57a4ef9b72208b6cf5d125c73befd7dbf7a72e4f09982ad6",
+                "PlannedCore.__call__": "f41f3d370e5237e949f541b1b7f538fe3b30d70994602bb933acc51170207e07",
+                "planned_output_layout": "0518c706a7de02411a990d4cfa9c40f426cc83f825791c735aeb19c4603e5e1e",
+                "planned_input_transfer_plan": "8a36aa2054fb5706e97ee14324e56517c3069443e10785f919c8a0ce2e602679",
+            },
+        )
+    )
+    assignments = [
+        statement
+        for statement in tree.body
+        if isinstance(statement, ast.Assign)
+        and any(
+            _target_names(target) in {("VALUE",), ("DISSOLUTION_FLAG",), ("UNPLANNED",)}
+            for target in statement.targets
+        )
+    ]
+    if not _statements_match(
+        observed=assignments,
+        expected_source="""VALUE = OutputRole.VALUE
+DISSOLUTION_FLAG = OutputRole.DISSOLUTION_FLAG
+UNPLANNED = _Unplanned.TOKEN
+""",
+    ):
+        errors.append("output layout: logical output-role bindings changed")
+    return errors
+
+
+def _value_transfer_errors(tree: ast.Module) -> list[str]:
+    """Pin exact target artifacts through immutable source-core input adapters."""
+    errors = _class_surface_errors(
+        tree=tree,
+        label="value transfer artifact address",
+        class_name="ValueArtifactAddress",
+        fields=(
+            "kind: ValueArtifactKind",
+            "period: int",
+            "regime: RegimeName",
+            "target_regime: RegimeName | None = None",
+        ),
+        methods=("__post_init__",),
+    )
+    errors.extend(
+        _class_surface_errors(
+            tree=tree,
+            label="value transfer consumer address",
+            class_name="ValueConsumerAddress",
+            fields=(
+                "source_period: int",
+                "source_regime: RegimeName",
+                "core_key: str",
+                "channel: ValueInputChannel",
+                "path: tuple[str | int, ...]",
+            ),
+            methods=("__post_init__",),
+        )
+    )
+    errors.extend(
+        _class_surface_errors(
+            tree=tree,
+            label="resolved value transfer",
+            class_name="ResolvedValueTransfer",
+            fields=(
+                "target: ValueArtifactAddress",
+                "source: ValueConsumerAddress",
+                "kind: ValueTransferKind",
+                "stored_sharding: jax.sharding.Sharding",
+                "source_sharding: jax.sharding.Sharding",
+                "expected_shape: tuple[int, ...]",
+                "expected_dtype: object",
+                "specialization_key: Hashable = field(init=False)",
+            ),
+            methods=("__post_init__",),
+        )
+    )
+    enum_contracts = {
+        "ValueArtifactKind": """REGIME_VALUE = "regime_value"
+GATED_CONTINUATION = "gated_continuation"
+""",
+        "ValueInputChannel": """NEXT_REGIME_VALUE = "next_regime_to_V_arr"
+SAME_PERIOD_VALUE = "same_period_regime_to_V_arr"
+EDGE_REFERENCE_VALUE = "edge_reference_regime_to_V_arr"
+""",
+        "ValueTransferKind": """ALIGNED_LOCAL = "aligned_local"
+COPY_TO_SOURCE_LAYOUT = "copy_to_source_layout"
+""",
+    }
+    for class_name, expected_source in enum_contracts.items():
+        try:
+            cls = _class_definition(tree=tree, name=class_name)
+        except ValueError as error:
+            errors.append(f"value transfer: {error}")
+            continue
+        body = list(cls.body)
+        if (
+            body
+            and isinstance(body[0], ast.Expr)
+            and isinstance(body[0].value, ast.Constant)
+            and isinstance(body[0].value.value, str)
+        ):
+            body.pop(0)
+        if (
+            [ast.unparse(item) for item in cls.bases] != ["StrEnum"]
+            or cls.decorator_list
+            or cls.keywords
+            or not _statements_match(
+                observed=body,
+                expected_source=expected_source,
+            )
+        ):
+            errors.append(f"value transfer: {class_name} enum contract changed")
+
+    version_assignments = [
+        statement
+        for statement in tree.body
+        if isinstance(statement, ast.Assign)
+        and any(
+            _target_names(target) == ("_VALUE_TRANSFER_VERSION",)
+            for target in statement.targets
+        )
+    ]
+    if not _statements_match(
+        observed=version_assignments,
+        expected_source="_VALUE_TRANSFER_VERSION = 1",
+    ):
+        errors.append("value transfer: specialization version binding changed")
+
+    errors.extend(
+        _exact_callable_errors(
+            tree=tree,
+            label="value transfer",
+            contracts={
+                "ValueArtifactAddress.__post_init__": "f7308877e3094c499f628aea48b5e6496bba83bcbf7a47b2bfe6b8b9cf00516f",
+                "ValueConsumerAddress.__post_init__": "95839f87e475d04b156cd5a9a91635c481e87f5efff2e7ddc92aba50b7291cbc",
+                "ResolvedValueTransfer.__post_init__": "044b3d79ca212c88473b4140302a53d339114f2f0816446b0c54bcce479ec1f3",
+                "resolve_value_transfer": "232ec967f8b1c8c9055ae513e5afce130d808e8afe7f90271fc19f111db0cc1e",
+                "apply_value_transfer": "9b300e2118558fefb5027a39bfdac5acbfd933cc3c9f26ffa92237c2cad471c2",
+                "apply_value_transfer_plan": "5b29e5ee7a81f92bafeaf8316ce68a8b24df89a5c88b34a30272858719b860e4",
+                "_replace_transfer_leaf": "5c963af02fdc3b6b6db3d47738fcb5a88bc563abd3e084e7e2aa34dec65ee477",
+                "_validate_edge_identity": "e5dc95f73258f513d41f76d249422cfe0d8943cb2e4a128a45cc2a98c5e74ea5",
+                "_assert_value_metadata": "7ebe6eb927b678ae88ed2a12d8f7571bdd8a86d5a4bf3dc55cd24f92da6e389d",
+                "_normalize_shape": "346ecb8fac04e0e000005dbc613e197e374b60cd9b08d1a53bba790e04c3621a",
+                "_require_period": "31f344bbdf23177b3a5bd9d2561bcbe4c9398814c1e7cbd6920afdbc0c013d68",
+                "_require_name": "af49e5c3217919d353aa787908d9d0764ff17792b1d64aaeb08afa1f0a983628",
+                "_require_enum": "4294ec9593c985870368a5d21f476900ddfffe66f42d275dbc02bec9708aba0d",
+                "_validate_path_segment": "1c985002819fb5feb6148fede65bb43334852e7ac653e75322aa79fb15209787",
+                "_require_sharding": "f3f13469e2413f320cc998e10097b00fca815669d417189e7689366b9baf67df",
+                "_check_sharding_shape": "dba09ca24339aa961d7d8bc46a685c3f04c0c8b4669cc27482e0df08217c26aa",
+            },
+        )
+    )
     errors.extend(
         _module_contract_errors(
             tree=tree,
-            label="solve caller",
+            label="value transfer",
             relevant_import_names={
+                "Hashable",
+                "Iterable",
+                "Mapping",
                 "MappingProxyType",
-                "REGIME_CONF",
-                "Solver",
-                "beartype",
-                "cast",
+                "RegimeName",
+                "StrEnum",
                 "dataclass",
+                "field",
                 "jax",
+                "jnp",
             },
             expected_imports=[
-                "from dataclasses import dataclass, replace",
+                "from collections.abc import Hashable, Iterable, Mapping",
+                "from dataclasses import dataclass, field",
+                "from enum import StrEnum",
                 "from types import MappingProxyType",
-                "from typing import cast",
                 "import jax",
-                "from beartype import beartype",
-                "from _lcm.beartype_conf import REGIME_CONF",
-                "from _lcm.solution.contract import ConstraintRouteContext, ContinuationPayload, KernelResult, PeriodKernel, SolutionKernels, Solver, SolverBuildContext, simulation_route",
+                "import jax.numpy as jnp",
+                "from _lcm.typing import RegimeName",
             ],
             expected_binding_counts={
-                "GridSearch": 1,
+                "Hashable": 1,
+                "Iterable": 1,
+                "Mapping": 1,
                 "MappingProxyType": 1,
-                "REGIME_CONF": 1,
-                "Solver": 1,
-                "beartype": 1,
-                "cast": 1,
+                "RegimeName": 1,
+                "ResolvedValueTransfer": 1,
+                "StrEnum": 1,
+                "ValueArtifactAddress": 1,
+                "ValueArtifactKind": 1,
+                "ValueConsumerAddress": 1,
+                "ValueInputChannel": 1,
+                "ValueTransferKind": 1,
+                "_VALUE_TRANSFER_VERSION": 1,
+                "_assert_value_metadata": 1,
+                "_check_sharding_shape": 1,
+                "_normalize_shape": 1,
+                "_replace_transfer_leaf": 1,
+                "_require_enum": 1,
+                "_require_name": 1,
+                "_require_period": 1,
+                "_require_sharding": 1,
+                "_validate_edge_identity": 1,
+                "_validate_path_segment": 1,
+                "any": 0,
+                "apply_value_transfer": 1,
+                "apply_value_transfer_plan": 1,
+                "callable": 0,
                 "dataclass": 1,
-                "id": 0,
+                "dict": 0,
+                "field": 1,
+                "getattr": 0,
+                "isinstance": 0,
                 "jax": 1,
+                "jnp": 1,
                 "len": 0,
+                "list": 0,
+                "object": 0,
+                "resolve_value_transfer": 1,
+                "set": 0,
+                "tuple": 0,
+                "type": 0,
             },
         )
     )
@@ -1650,6 +2450,171 @@ return MappingProxyType(result)
         )
     )
     return errors
+
+
+def _initial_tile_width_validation_errors(tree: ast.Module) -> list[str]:
+    """Require full program validation to dominate every width computation."""
+    label = "streamed validation before initial width selection"
+    try:
+        node = _definition(tree=tree, name="_initial_tile_widths")
+    except ValueError as error:
+        return [f"{label}: {error}"]
+
+    body = _body_without_docstring(node)
+    validation_calls = [
+        child
+        for child in ast.walk(node)
+        if isinstance(child, ast.Call) and _call_name(child) == "_validate_core_program"
+    ]
+    sensitive: list[tuple[str, int]] = []
+    for index, statement in enumerate(body):
+        for child in ast.walk(statement):
+            descendants = tuple(ast.walk(child))
+            reads_extent = any(
+                isinstance(item, ast.Attribute) and item.attr == "extent"
+                for item in descendants
+            )
+            if isinstance(child, ast.Compare) and reads_extent:
+                sensitive.append(("extent comparison", index))
+            elif isinstance(child, ast.BinOp) and reads_extent:
+                sensitive.append(("extent arithmetic", index))
+            elif (
+                isinstance(child, ast.Call)
+                and isinstance(child.func, ast.Attribute)
+                and child.func.attr == "bit_length"
+            ):
+                sensitive.append(("bit_length", index))
+
+    expected_first = _expected_statements("_validate_core_program(program=program)")[0]
+    required = {"extent comparison", "extent arithmetic", "bit_length"}
+    observed = {kind for kind, _index in sensitive}
+    if (
+        not body
+        or _ast_key(body[0]) != _ast_key(expected_first)
+        or len(validation_calls) != 1
+        or not required <= observed
+        or any(index <= 0 for _kind, index in sensitive)
+    ):
+        return [
+            (
+                f"{label}: _validate_core_program must dominate every extent "
+                "comparison, arithmetic operation, and bit_length call"
+            )
+        ]
+    return []
+
+
+def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
+    """Pin native graph resolution and V/D publication through solve execution."""
+    errors = _exact_callable_errors(
+        tree=tree,
+        label="backward output-layout transport",
+        contracts={
+            "_compile_all_functions": "65525fe74b88547323c65c9305f7d80369fb6aee97bf7f1b910ab3deb2d6afc2",
+            "_resolve_output_layouts_and_lowering_keys": "c30038ac72611373fecdf3a3423bb71be92e2c62a20d702c5b83159d2eee44b4",
+            "_resolve_program_for_execution": "247155a79a8cdc2c16845aeb9d222b2c6aeea7129c90d9a733ecc66cf793f5d0",
+            "_resolve_value_input_transfer_plan": "40e46250dd373f2ea17e38c911e0c2df7ad01192dd82fcb1d7a7ddbf641f91bb",
+            "_resolve_value_transfer_layout": "6cd863aaa64c0f558c797b47667479b595c77d5f3ee5c8b3dcfae188f1d05edd",
+            "_lowering_key": "68e82c0372400e4577a6e38d4f5c64bdff88f5f732b86b15383a5e3157973b56",
+            "_abstract_arguments_key": "becd5c3e94366bc4e3e0afa31ea20886002228f7064c9a9ea0e7d0e681630dfa",
+            "_abstract_value_key": "b79bdd528ed264be0093eb5d04a0341e7376606d478ba0770aa5cb14f813638b",
+            "_abstract_leaf_key": "94afc53d035e8ad9812025f72adcbf76d8966430ef259d339977e9cf90262b66",
+            "_output_roles_key": "c73436e6abaec7f0388386d353675200d7bf3d5d3544654f8d47f37ad0e5e8da",
+            "_assert_lowered_output_roles": "46823cef80ae0bd1c5294a63472a23c4f8ade153fe8eae8327403fe637f59df8",
+            "_attach_resolved_output_layout": "0b0e805ac307e87e1376de47086898c140a3cf00e5e81eefd8faab26ff972942",
+            "_publish_kernel_value": "5547b40f26e1fc86303ada9503f65c4210cbb4bb0b4fe6e715b9d99a58f78901",
+        },
+    )
+    try:
+        solve = _definition(tree=tree, name="solve")
+    except ValueError as error:
+        errors.append(f"backward output-layout transport: {error}")
+    else:
+
+        def _is_kernel_result(statement: ast.stmt) -> bool:
+            return (
+                isinstance(statement, ast.Assign)
+                and any(
+                    _target_names(target) == ("result",) for target in statement.targets
+                )
+                and isinstance(statement.value, ast.Call)
+                and _call_name(statement.value) == "_run_period_kernel"
+            )
+
+        loops = [
+            node
+            for node in ast.walk(solve)
+            if isinstance(node, ast.For)
+            and any(_is_kernel_result(statement) for statement in node.body)
+        ]
+        corridors: list[list[ast.stmt]] = []
+        for loop in loops:
+            starts = [
+                index
+                for index, statement in enumerate(loop.body)
+                if _is_kernel_result(statement)
+            ]
+            ends = [
+                index
+                for index, statement in enumerate(loop.body)
+                if isinstance(statement, ast.Assign)
+                and any(
+                    ast.unparse(target) == "period_solution[regime_name]"
+                    for target in statement.targets
+                )
+            ]
+            if len(starts) == len(ends) == 1 and starts[0] <= ends[0]:
+                corridors.append(loop.body[starts[0] : ends[0] + 1])
+        expected = "2af421ea176139a27f12a196bc04dcd98c52bc62eef383612f03cbebacdfd35b"
+        if len(corridors) != 1 or _statements_ast_sha256(corridors[0]) != expected:
+            errors.append(
+                "backward output-layout transport: solve publication corridor changed"
+            )
+    return errors
+
+
+def _terminal_output_wrapper_errors(tree: ast.Module) -> list[str]:
+    """Pin terminal decoration and its sole native graph delegation."""
+    errors = _class_surface_errors(
+        tree=tree,
+        label="terminal output-layout wrapper",
+        class_name="_TerminalCarryPeriodKernel",
+        fields=(
+            "base: PeriodKernel",
+            "carry_producer: EGMCarryProducer",
+            "regime_name: RegimeName",
+        ),
+        methods=(
+            "core_programs",
+            "with_fixed_params",
+            "__call__",
+        ),
+    )
+    errors.extend(
+        _exact_callable_errors(
+            tree=tree,
+            label="terminal output-layout wrapper",
+            contracts={
+                "_TerminalCarryPeriodKernel.core_programs": "842c31af0bea766bfd410783881770152246a825505be327096c117f60ee65fa",
+                "_TerminalCarryPeriodKernel.with_fixed_params": "c9069b5fcc41d4b7b42a2ec21be12004fa57379216fbd7e4fc624473b4d89cc6",
+                "_TerminalCarryPeriodKernel.__call__": "77f27cca4b3d5da43fc3911cb736cf124829edeb7644ccabd14f0fa5607c2edc",
+            },
+        )
+    )
+    return errors
+
+
+def _period_replay_errors(tree: ast.Module) -> list[str]:
+    """Pin replay to the same graph, builder, resolver, and output-role checks."""
+    return _exact_callable_errors(
+        tree=tree,
+        label="period replay native-program transport",
+        contracts={
+            "replay_period": "919baec005808465b365523da329d9b2931a6f88dcb1d1470a0d5dbb79047b8e",
+            "_compile_cores_for_one_period": "0287dc3d7c1bf0aa9b6d5b5ec32674c5984aae764a5c67c91dc46c7261e16048",
+            "_core_build_context_for_one_period": "8d11e28bebf0c0df6bce4872e25a56e577592db26901d47d8cd5cf431a55b473",
+        },
+    )
 
 
 def _corridor_errors(
@@ -2179,6 +3144,7 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> dict[str, Any]:
         )
         taste_noise_errors = _taste_noise_errors(max_tree)
         wiring_errors = _max_builder_wiring_errors(max_tree)
+        streamed_builder_errors = _streamed_max_builder_errors(max_tree)
         max_errors = (
             binding_errors
             + solve_errors
@@ -2187,6 +3153,7 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> dict[str, Any]:
             + taste_simulate_errors
             + taste_noise_errors
             + wiring_errors
+            + streamed_builder_errors
         )
         errors.extend(max_errors)
         if max_errors:
@@ -2215,12 +3182,77 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> dict[str, Any]:
         errors.extend(new_errors)
         if new_errors:
             offending.add(GRID_SEARCH_SOURCE)
+    functools_tree = parsed.get(FUNCTOOLS_SOURCE)
+    if functools_tree is not None:
+        new_errors = _functools_adapter_errors(functools_tree)
+        errors.extend(new_errors)
+        if new_errors:
+            offending.add(FUNCTOOLS_SOURCE)
+    core_program_tree = parsed.get(CORE_PROGRAM_SOURCE)
+    if core_program_tree is not None:
+        new_errors = _core_program_transport_errors(core_program_tree)
+        errors.extend(new_errors)
+        if new_errors:
+            offending.add(CORE_PROGRAM_SOURCE)
+    action_streaming_tree = parsed.get(ACTION_STREAMING_SOURCE)
+    if action_streaming_tree is not None:
+        new_errors = _action_streaming_errors(action_streaming_tree)
+        errors.extend(new_errors)
+        if new_errors:
+            offending.add(ACTION_STREAMING_SOURCE)
+    action_reduction_tree = parsed.get(ACTION_REDUCTION_SOURCE)
+    if action_reduction_tree is not None:
+        new_errors = _hard_max_streaming_reduction_errors(action_reduction_tree)
+        errors.extend(new_errors)
+        if new_errors:
+            offending.add(ACTION_REDUCTION_SOURCE)
+    collective_action_reduction_tree = parsed.get(COLLECTIVE_ACTION_REDUCTION_SOURCE)
+    if collective_action_reduction_tree is not None:
+        new_errors = _collective_hard_max_streaming_reduction_errors(
+            collective_action_reduction_tree
+        )
+        errors.extend(new_errors)
+        if new_errors:
+            offending.add(COLLECTIVE_ACTION_REDUCTION_SOURCE)
+    logsumexp_action_reduction_tree = parsed.get(LOGSUMEXP_ACTION_REDUCTION_SOURCE)
+    if logsumexp_action_reduction_tree is not None:
+        new_errors = _logsumexp_streaming_reduction_errors(
+            logsumexp_action_reduction_tree
+        )
+        errors.extend(new_errors)
+        if new_errors:
+            offending.add(LOGSUMEXP_ACTION_REDUCTION_SOURCE)
+    output_layout_tree = parsed.get(OUTPUT_LAYOUT_SOURCE)
+    if output_layout_tree is not None:
+        new_errors = _output_layout_errors(output_layout_tree)
+        errors.extend(new_errors)
+        if new_errors:
+            offending.add(OUTPUT_LAYOUT_SOURCE)
+    value_transfer_tree = parsed.get(VALUE_TRANSFER_SOURCE)
+    if value_transfer_tree is not None:
+        new_errors = _value_transfer_errors(value_transfer_tree)
+        errors.extend(new_errors)
+        if new_errors:
+            offending.add(VALUE_TRANSFER_SOURCE)
     processing_tree = parsed.get(PROCESSING_SOURCE)
     if processing_tree is not None:
         new_errors = _processing_caller_errors(processing_tree)
+        new_errors += _terminal_output_wrapper_errors(processing_tree)
         errors.extend(new_errors)
         if new_errors:
             offending.add(PROCESSING_SOURCE)
+    backward_tree = parsed.get(BACKWARD_INDUCTION_SOURCE)
+    if backward_tree is not None:
+        new_errors = _backward_output_layout_errors(backward_tree)
+        errors.extend(new_errors)
+        if new_errors:
+            offending.add(BACKWARD_INDUCTION_SOURCE)
+    replay_tree = parsed.get(PERIOD_REPLAY_SOURCE)
+    if replay_tree is not None:
+        new_errors = _period_replay_errors(replay_tree)
+        errors.extend(new_errors)
+        if new_errors:
+            offending.add(PERIOD_REPLAY_SOURCE)
     grid_base_tree = parsed.get(GRID_BASE_SOURCE)
     if grid_base_tree is not None:
         new_errors = _grid_base_errors(grid_base_tree)
@@ -2252,10 +3284,21 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> dict[str, Any]:
         "offending_paths": sorted(offending),
         "routes": {
             "singleton_solve": "Q_and_F -> Q_arr.max(where=F_arr)",
+            "singleton_streamed_solve": (
+                "Q_and_F -> canonical C-order action blocks -> exact mergeable "
+                "hard max -> optional unchanged fold quadrature -> VALUE-only "
+                "compiled core"
+            ),
             "singleton_simulate": "Q_and_F -> argmax_and_max(a=Q_arr, where=F_arr)",
             "collective_solve": (
                 "Q_and_F -> trailing stakeholder split -> "
                 "collective_readout(feasibility=F_arr)"
+            ),
+            "collective_streamed_solve": (
+                "non-production reference: Q_and_F -> weighted C-order stakeholder "
+                "blocks -> one shared "
+                "household hard max -> exact stakeholder gather -> compiled "
+                "(VALUE, DISSOLUTION_FLAG) core"
             ),
             "collective_simulate": (
                 "Q_and_F -> trailing stakeholder split -> "
@@ -2264,6 +3307,11 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> dict[str, Any]:
             "taste_shock_solve": (
                 "Q_and_F -> exact feasibility mask -> continuous max -> "
                 "full discrete logsum"
+            ),
+            "taste_shock_streamed_solve": (
+                "non-production reference: Q_and_F -> ordered discrete-prefix hard "
+                "maxima -> dynamically "
+                "bound log-sum-exp -> VALUE-only compiled core"
             ),
             "taste_shock_simulate": (
                 "Q_and_F -> exact feasibility mask -> row-major continuous max -> "
@@ -2685,7 +3733,7 @@ def direct_flow_mutations(source: str) -> dict[str, str]:
         text=source,
         marker="    if has_taste_shocks:",
         insertion="    n_discrete_action_axes = n_discrete_action_axes - 1\n",
-        occurrence=2,
+        occurrence=3,
     )
     mutations["solve:action_names_rebinding"] = _insert_before_nth(
         text=source,
@@ -2799,6 +3847,21 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
     collective_source = (root / COLLECTIVE_SOURCE).read_text(encoding="utf-8")
     logsum_source = (root / LOGSUM_SOURCE).read_text(encoding="utf-8")
     grid_source = (root / GRID_SEARCH_SOURCE).read_text(encoding="utf-8")
+    core_program_source = (root / CORE_PROGRAM_SOURCE).read_text(encoding="utf-8")
+    output_layout_source = (root / OUTPUT_LAYOUT_SOURCE).read_text(encoding="utf-8")
+    value_transfer_source = (root / VALUE_TRANSFER_SOURCE).read_text(encoding="utf-8")
+    action_streaming_source = (root / ACTION_STREAMING_SOURCE).read_text(
+        encoding="utf-8"
+    )
+    action_reduction_source = (root / ACTION_REDUCTION_SOURCE).read_text(
+        encoding="utf-8"
+    )
+    collective_action_reduction_source = (
+        root / COLLECTIVE_ACTION_REDUCTION_SOURCE
+    ).read_text(encoding="utf-8")
+    logsumexp_action_reduction_source = (
+        root / LOGSUMEXP_ACTION_REDUCTION_SOURCE
+    ).read_text(encoding="utf-8")
     processing_source = (root / PROCESSING_SOURCE).read_text(encoding="utf-8")
     dispatchers_source = (root / DISPATCHERS_SOURCE).read_text(encoding="utf-8")
     functools_source = (root / FUNCTOOLS_SOURCE).read_text(encoding="utf-8")
@@ -2820,6 +3883,7 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
     backward_induction_source = (root / BACKWARD_INDUCTION_SOURCE).read_text(
         encoding="utf-8"
     )
+    period_replay_source = (root / PERIOD_REPLAY_SOURCE).read_text(encoding="utf-8")
     initial_conditions_source = (root / INITIAL_CONDITIONS_SOURCE).read_text(
         encoding="utf-8"
     )
@@ -2878,24 +3942,28 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
     grid_cases = {
         "caller_solve:action_names_slice": replace_once(
             source=grid_source,
-            old="                    action_names=context.state_action_space.action_names,",
-            new="                    action_names=context.state_action_space.action_names[:-1],",
+            old='                    "action_names": action_names,',
+            new='                    "action_names": action_names[:-1],',
             label="solve caller action names",
         ),
         "caller_solve:wrong_discrete_axis_count": replace_once(
             source=grid_source,
-            old="                    n_discrete_action_axes=len(\n"
-            "                        context.state_action_space.discrete_actions\n"
-            "                    ),",
-            new="                    n_discrete_action_axes=max(\n"
-            "                        0, len(context.state_action_space.discrete_actions) - 1\n"
-            "                    ),",
+            old=(
+                '                    "n_discrete_action_axes": len(\n'
+                "                        context.state_action_space.discrete_actions\n"
+                "                    ),"
+            ),
+            new=(
+                '                    "n_discrete_action_axes": max(\n'
+                "                        0, len(context.state_action_space.discrete_actions) - 1\n"
+                "                    ),"
+            ),
             label="solve caller axis count",
         ),
         "caller_solve:taste_flag_disabled": replace_once(
             source=grid_source,
-            old="                    has_taste_shocks=context.has_taste_shocks,",
-            new="                    has_taste_shocks=False,",
+            old='                    "has_taste_shocks": context.has_taste_shocks,',
+            new='                    "has_taste_shocks": False,',
             label="solve caller taste flag",
         ),
         "caller_solve:published_empty_mapping": replace_once(
@@ -2904,11 +3972,1359 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             new="        return SolutionKernels(period_kernels=MappingProxyType({}))",
             label="solve caller publication",
         ),
+        "native_graph:function_wrapped": replace_once(
+            source=grid_source,
+            old="                function=program_functions[q_id],",
+            new=(
+                "                function=lambda **kwargs: "
+                "program_functions[q_id](**kwargs),"
+            ),
+            label="native graph function authority",
+        ),
+        "native_graph:argument_builder_wrapped": replace_once(
+            source=grid_source,
+            old="                argument_builder=argument_builder,",
+            new="                argument_builder=lambda context: argument_builder(context),",
+            label="native graph argument-builder authority",
+        ),
+        "native_graph:requirements_erased": replace_once(
+            source=grid_source,
+            old="                requirements=requirements,",
+            new="                requirements=CoreExecutionRequirements(),",
+            label="native graph requirements authority",
+        ),
+        "native_graph:collective_output_role_dropped": replace_once(
+            source=grid_source,
+            old=(
+                "                    if context.stakeholders is not None\n"
+                "                    else VALUE"
+            ),
+            new="                    if False\n                    else VALUE",
+            label="native graph output-role authority",
+        ),
+        "native_graph:planned_disposition_forced_dense": replace_once(
+            source=grid_source,
+            old=(
+                "                    CoreExecutionDisposition.PLANNED\n"
+                "                    if stream_actions"
+            ),
+            new=(
+                "                    CoreExecutionDisposition.DENSE\n"
+                "                    if stream_actions"
+            ),
+            label="native graph disposition authority",
+        ),
+        "native_graph:dense_reason_erased": replace_once(
+            source=grid_source,
+            old=(
+                "                disposition_reason=(None if stream_actions else "
+                "action_streaming.value),"
+            ),
+            new="                disposition_reason=None,",
+            label="native graph disposition-reason authority",
+        ),
+        "native_graph:donation_candidates_changed": replace_once(
+            source=grid_source,
+            old="                donation_candidates=(),",
+            new='                donation_candidates=("next_regime_to_V_arr",),',
+            label="native graph donation authority",
+        ),
+        "native_graph:duplicate_legacy_cores_authority": _insert_before_nth(
+            text=grid_source,
+            marker="    def core_programs(self) -> Mapping[str, CoreProgram]:",
+            insertion=(
+                "    def cores(self) -> Mapping[str, Callable]:\n"
+                '        return MappingProxyType({"main": '
+                'self._core_programs["main"].function})\n\n'
+            ),
+            occurrence=1,
+        ),
+        "native_graph:duplicate_legacy_builder_authority": _insert_before_nth(
+            text=grid_source,
+            marker="    def core_programs(self) -> Mapping[str, CoreProgram]:",
+            insertion=(
+                "    def build_lower_args(self, *, core_key: str, **kwargs: object) "
+                "-> Mapping[str, object]:\n"
+                "        return kwargs\n\n"
+            ),
+            occurrence=1,
+        ),
+        "native_graph:duplicate_core_authority": _insert_before_nth(
+            text=grid_source,
+            marker="    def core_programs(self) -> Mapping[str, CoreProgram]:",
+            insertion=(
+                "    @property\n"
+                "    def core(self) -> Callable:\n"
+                '        return self._core_programs["main"].function\n\n'
+            ),
+            occurrence=1,
+        ),
+        "native_graph:duplicate_unwrapped_core_authority": _insert_before_nth(
+            text=grid_source,
+            marker="    def core_programs(self) -> Mapping[str, CoreProgram]:",
+            insertion=(
+                "    @property\n"
+                "    def unwrapped_core(self) -> Callable:\n"
+                '        return self._core_programs["main"].function\n\n'
+            ),
+            occurrence=1,
+        ),
+        "native_graph:duplicate_streamed_core_authority": _insert_before_nth(
+            text=grid_source,
+            marker="    def core_programs(self) -> Mapping[str, CoreProgram]:",
+            insertion=(
+                "    @property\n"
+                "    def streamed_core(self) -> Callable:\n"
+                '        return self._core_programs["main"].function\n\n'
+            ),
+            occurrence=1,
+        ),
+        "native_graph:program_name_rebound": replace_once(
+            source=grid_source,
+            old='                name="main",',
+            new='                name="alternate",',
+            label="native graph program name",
+        ),
+        "native_graph:mapping_key_rebound": replace_once(
+            source=grid_source,
+            old='_core_programs=MappingProxyType({"main": program})',
+            new='_core_programs=MappingProxyType({"alternate": program})',
+            label="native graph mapping key",
+        ),
+        "native_graph:published_mapping_filtered": replace_once(
+            source=grid_source,
+            old="        return self._core_programs",
+            new="        return candidate_filter(self._core_programs)",
+            label="native graph publication",
+        ),
+        "native_builder:next_values_filtered": replace_once(
+            source=grid_source,
+            old="        raw_next_regime_to_V_arr = next_regime_to_V_arr",
+            new=(
+                "        raw_next_regime_to_V_arr = "
+                "candidate_filter(next_regime_to_V_arr)"
+            ),
+            label="shared builder next-value identity",
+        ),
+        "native_builder:period_shifted": replace_once(
+            source=grid_source,
+            old='            "period": jnp.int32(context.period),',
+            new='            "period": jnp.int32(context.period + 1),',
+            label="shared builder period",
+        ),
+        "native_builder:runtime_bypasses_declared_builder": replace_once(
+            source=grid_source,
+            old="        arguments = program.argument_builder(",
+            new="        arguments = candidate_filter(program.argument_builder)(",
+            label="runtime shared builder",
+        ),
+        "native_graph:fixed_function_filtered": replace_once(
+            source=grid_source,
+            old="            function=functools.partial(program.function, **regime_fixed),",
+            new=(
+                "            function=candidate_filter("
+                "functools.partial(program.function, **regime_fixed)),"
+            ),
+            label="fixed native function identity",
+        ),
+        "streaming_dispatch:bypass_compiled_core": replace_once(
+            source=grid_source,
+            old='        out = compiled_cores["main"](**arguments)',
+            new="        out = program.function(**arguments)",
+            label="native compiled dispatch",
+        ),
+        "caller_solve:published_value_filtered": replace_once(
+            source=grid_source,
+            old="        return KernelResult(V_arr=out)",
+            new="        return KernelResult(V_arr=candidate_filter(out))",
+            label="solve caller value publication",
+        ),
+        "streaming_provider:action_names_slice": replace_once(
+            source=grid_source,
+            old="                            coordinate_names=action_names,",
+            new="                            coordinate_names=action_names[:-1],",
+            label="streamed provider action names",
+        ),
+        "streaming_provider:action_extents_slice": replace_once(
+            source=grid_source,
+            old="                            coordinate_extents=action_extents,",
+            new="                            coordinate_extents=action_extents[:-1],",
+            label="streamed provider action extents",
+        ),
+        "streaming_width_selector:suffix_search_truncated": replace_once(
+            source=grid_source,
+            old="    while candidate in occupied:",
+            new="    if candidate in occupied:",
+            label="streamed width-keyword suffix search",
+        ),
+        "streaming_width_selector:flat_params_omitted": replace_once(
+            source=grid_source,
+            old="    occupied.update(context.flat_param_names)",
+            new="    occupied.update(())",
+            label="streamed width-keyword flat-parameter namespace",
+        ),
+        "streaming_width_selector:q_arguments_omitted": replace_once(
+            source=grid_source,
+            old="        occupied.update(inspect.signature(Q_and_F).parameters)",
+            new="        occupied.update(())",
+            label="streamed width-keyword Q argument namespace",
+        ),
+        "streaming_width_selector:pareto_params_omitted": replace_once(
+            source=grid_source,
+            old="        occupied.update(context.pareto_weights.param_names)",
+            new="        occupied.update(())",
+            label="streamed width-keyword Pareto namespace",
+        ),
+        "streaming_width_transport:streamed_function_keyword_desynchronized": _replace_nth(
+            text=grid_source,
+            marker="                        action_width_keyword=action_width_keyword,",
+            replacement="                        action_width_keyword=_ACTION_WIDTH_KEYWORD,",
+            occurrence=1,
+        ),
+        "streaming_width_transport:core_program_keyword_desynchronized": replace_once(
+            source=grid_source,
+            old="                            width_keyword=action_width_keyword,",
+            new="                        width_keyword=_ACTION_WIDTH_KEYWORD,",
+            label="streamed CoreProgram width-keyword transport",
+        ),
+        "streaming_provider:fold_route_disabled": replace_once(
+            source=grid_source,
+            old=(
+                "    else:\n"
+                "        disposition = _ActionStreamingDisposition.STREAMED\n"
+                "    return disposition"
+            ),
+            new=(
+                "    elif context.fold_state_names:\n"
+                "        disposition = "
+                "_ActionStreamingDisposition.DENSE_TRIVIAL_ACTION_PRODUCT\n"
+                "    else:\n"
+                "        disposition = _ActionStreamingDisposition.STREAMED\n"
+                "    return disposition"
+            ),
+            label="streamed singleton fold eligibility",
+        ),
+        "streaming_provider:co_map_route_disabled": replace_once(
+            source=grid_source,
+            old=(
+                "    elif context.co_map_state_names and (\n"
+                "        context.same_period_ref_regimes or context.edge_reference_regimes\n"
+                "    ):\n"
+                "        disposition = "
+                "_ActionStreamingDisposition.DENSE_CO_MAP_REFERENCE_CHANNEL"
+            ),
+            new=(
+                "    elif context.co_map_state_names:\n"
+                "        disposition = "
+                "_ActionStreamingDisposition.DENSE_CO_MAP_REFERENCE_CHANNEL"
+            ),
+            label="streamed co-map route eligibility",
+        ),
+        "streaming_provider:co_map_reference_guard_bypassed": replace_once(
+            source=grid_source,
+            old=(
+                "    elif context.co_map_state_names and (\n"
+                "        context.same_period_ref_regimes or context.edge_reference_regimes\n"
+                "    ):\n"
+                "        disposition = "
+                "_ActionStreamingDisposition.DENSE_CO_MAP_REFERENCE_CHANNEL"
+            ),
+            new=(
+                "    elif False and context.co_map_state_names and (\n"
+                "        context.same_period_ref_regimes or context.edge_reference_regimes\n"
+                "    ):\n"
+                "        disposition = "
+                "_ActionStreamingDisposition.DENSE_CO_MAP_REFERENCE_CHANNEL"
+            ),
+            label="streamed co-map separate-reference guard",
+        ),
+        "streaming_classifier:collective_ev1_admitted": replace_once(
+            source=grid_source,
+            old="        disposition = _ActionStreamingDisposition.UNSUPPORTED_COLLECTIVE_EV1",
+            new="        disposition = _ActionStreamingDisposition.STREAMED",
+            label="collective EV1 disposition",
+        ),
+        "streaming_classifier:ev1_fold_admitted": replace_once(
+            source=grid_source,
+            old="        disposition = _ActionStreamingDisposition.UNSUPPORTED_EV1_FOLD",
+            new="        disposition = _ActionStreamingDisposition.STREAMED",
+            label="EV1 fold disposition",
+        ),
+        "streaming_classifier:collective_fold_admitted": replace_once(
+            source=grid_source,
+            old="        disposition = _ActionStreamingDisposition.UNSUPPORTED_COLLECTIVE_FOLD",
+            new="        disposition = _ActionStreamingDisposition.STREAMED",
+            label="collective fold disposition",
+        ),
+        "streaming_classifier:ev1_without_discrete_action_admitted": replace_once(
+            source=grid_source,
+            old=(
+                "        disposition = (\n"
+                "            _ActionStreamingDisposition."
+                "UNSUPPORTED_EV1_WITHOUT_DISCRETE_ACTION\n"
+                "        )"
+            ),
+            new="        disposition = _ActionStreamingDisposition.STREAMED",
+            label="EV1-without-discrete-action disposition",
+        ),
+        "streaming_classifier:jit_disabled_gate_reintroduced": replace_once(
+            source=grid_source,
+            old="    if context.has_taste_shocks and context.stakeholders is not None:",
+            new=(
+                "    if not context.enable_jit:\n"
+                "        disposition = "
+                "_ActionStreamingDisposition.DENSE_TRIVIAL_ACTION_PRODUCT\n"
+                "    elif context.has_taste_shocks and context.stakeholders is not None:"
+            ),
+            label="JIT-independent disposition",
+        ),
+        "streaming_classifier:trivial_product_admitted": replace_once(
+            source=grid_source,
+            old="        disposition = _ActionStreamingDisposition.DENSE_TRIVIAL_ACTION_PRODUCT",
+            new="        disposition = _ActionStreamingDisposition.STREAMED",
+            label="trivial-action-product disposition",
+        ),
+        "streaming_classifier:category_suffix_selected": replace_once(
+            source=grid_source,
+            old='        return self.value.partition(":")[0]',
+            new='        return self.value.partition(":")[2]',
+            label="disposition category projection",
+        ),
+        "streaming_classifier:ev1_reason_changed": replace_once(
+            source=grid_source,
+            old=(
+                "    DENSE_EV1_NONCANONICAL = "
+                '"deliberately_dense:ev1_canonical_reduction_order"'
+            ),
+            new=('    DENSE_EV1_NONCANONICAL = "deliberately_dense:ev1_noncanonical"'),
+            label="EV1 dense reason",
+        ),
+        "streaming_classifier:collective_reason_changed": replace_once(
+            source=grid_source,
+            old=(
+                "    DENSE_COLLECTIVE_RESOURCES = "
+                '"deliberately_dense:collective_resource_regression"'
+            ),
+            new=(
+                '    DENSE_COLLECTIVE_RESOURCES = "deliberately_dense:collective_slow"'
+            ),
+            label="collective dense reason",
+        ),
+        "streaming_classifier:ev1_gate_bypassed": replace_once(
+            source=grid_source,
+            old="        disposition = _ActionStreamingDisposition.DENSE_EV1_NONCANONICAL",
+            new="        disposition = _ActionStreamingDisposition.STREAMED",
+            label="EV1 canonical-order gate",
+        ),
+        "streaming_classifier:collective_resource_gate_bypassed": replace_once(
+            source=grid_source,
+            old="        disposition = _ActionStreamingDisposition.DENSE_COLLECTIVE_RESOURCES",
+            new="        disposition = _ActionStreamingDisposition.STREAMED",
+            label="collective resource gate",
+        ),
+        "streaming_classifier:ev1_precedes_trivial_product": replace_once(
+            source=grid_source,
+            old=(
+                "    elif not context.state_action_space.action_names or "
+                "math.prod(action_extents) <= 1:"
+            ),
+            new=(
+                "    elif context.has_taste_shocks:\n"
+                "        disposition = "
+                "_ActionStreamingDisposition.DENSE_EV1_NONCANONICAL\n"
+                "    elif not context.state_action_space.action_names or "
+                "math.prod(action_extents) <= 1:"
+            ),
+            label="EV1/trivial precedence",
+        ),
+        "streaming_classifier:collective_precedes_co_map": replace_once(
+            source=grid_source,
+            old=(
+                "    elif context.co_map_state_names and (\n"
+                "        context.same_period_ref_regimes or context.edge_reference_regimes\n"
+                "    ):"
+            ),
+            new=(
+                "    elif context.stakeholders is not None:\n"
+                "        disposition = "
+                "_ActionStreamingDisposition.DENSE_COLLECTIVE_RESOURCES\n"
+                "    elif context.co_map_state_names and (\n"
+                "        context.same_period_ref_regimes or context.edge_reference_regimes\n"
+                "    ):"
+            ),
+            label="collective/co-map precedence",
+        ),
+        "streaming_collective:published_dissolution_inverted": replace_once(
+            source=grid_source,
+            old="            return KernelResult(V_arr=V_arr, dissolution=dissolution)",
+            new="            return KernelResult(V_arr=V_arr, dissolution=~dissolution)",
+            label="streamed collective result publication",
+        ),
+        "value_access:grid_reachable_targets_dropped": _replace_nth(
+            text=grid_source,
+            marker="                target_regimes=target_regimes,",
+            replacement="                target_regimes=target_regimes[:-1],",
+            occurrence=1,
+        ),
+        "value_access:grid_gated_kind_bypassed": replace_once(
+            source=grid_source,
+            old="            if target_regime in edge_target_regimes",
+            new="                if False",
+            label="GridSearch gated-continuation artifact kind",
+        ),
+        "value_access:grid_same_period_shifted": replace_once(
+            source=grid_source,
+            old=(
+                "                period=period,\n"
+                "                regime=reference_regime,"
+            ),
+            new=(
+                "                period=period + 1,\n"
+                "                regime=reference_regime,"
+            ),
+            label="GridSearch same-period artifact coordinate",
+        ),
+        "value_access:grid_edge_reference_omitted": _replace_nth(
+            text=grid_source,
+            marker="        for reference_regime in edge_reference_regimes",
+            replacement="        for reference_regime in edge_reference_regimes[:-1]",
+            occurrence=1,
+        ),
+        "value_access:grid_program_declarations_dropped": replace_once(
+            source=grid_source,
+            old=(
+                "                target_value_accesses=_target_value_accesses(\n"
+                "                    regime_name=context.regime_name,\n"
+                "                    period=period,\n"
+                "                    target_regimes=target_regimes,\n"
+                "                    same_period_ref_regimes=context.same_period_ref_regimes,\n"
+                "                    edge_reference_regimes=edge_reference_regimes,\n"
+                "                    edge_target_regimes=context.edge_target_regimes,\n"
+                "                ),"
+            ),
+            new="                target_value_accesses=(),",
+            label="GridSearch CoreProgram target-value declarations",
+        ),
+        "value_access:grid_consumer_path_rebound": replace_once(
+            source=grid_source,
+            old="            path=path,",
+            new="            path=(path[0], path[0]),",
+            label="GridSearch exact consumer path",
+        ),
+        "value_access:grid_edge_refs_widened": replace_once(
+            source=grid_source,
+            old="    for target in target_regimes:",
+            new="    for target in source.gated_edges:",
+            label="GridSearch reachable edge-reference census",
+        ),
     }
     specs.update(
         {
             name: {"path": GRID_SEARCH_SOURCE, "source": mutated}
             for name, mutated in grid_cases.items()
+        }
+    )
+
+    specs["streaming_collective:builder_dissolution_inverted"] = {
+        "path": MAX_Q_SOURCE,
+        "source": replace_once(
+            source=max_source,
+            old="            ~collective_result.any_feasible,",
+            new="            collective_result.any_feasible,",
+            label="streamed collective dissolution output",
+        ),
+    }
+    specs["streaming_collective:builder_stakeholder_axis_sliced"] = {
+        "path": MAX_Q_SOURCE,
+        "source": replace_once(
+            source=max_source,
+            old="            collective_result.best_stakeholder_values,",
+            new="            collective_result.best_stakeholder_values[..., :-1],",
+            label="streamed collective stakeholder output",
+        ),
+    }
+    specs["streaming_width_transport:colliding_q_argument_filtered"] = {
+        "path": MAX_Q_SOURCE,
+        "source": replace_once(
+            source=max_source,
+            old="            if name in q_and_f_arg_names",
+            new=(
+                "            if name in q_and_f_arg_names "
+                'and name != "_lcm_action_block_width"'
+            ),
+            label="streamed colliding Q argument preservation",
+        ),
+    }
+    specs["streaming_width_transport:colliding_q_argument_substituted"] = {
+        "path": MAX_Q_SOURCE,
+        "source": _insert_before_nth(
+            text=max_source,
+            marker="        if has_taste_shocks:\n",
+            insertion=(
+                '        if "_lcm_action_block_width" in q_and_f_arg_names:\n'
+                '            q_and_f_params["_lcm_action_block_width"] = action_block_width\n'
+            ),
+            occurrence=1,
+        ),
+    }
+    specs["streaming_width_builder:collision_validation_removed"] = {
+        "path": MAX_Q_SOURCE,
+        "source": replace_once(
+            source=max_source,
+            old=(
+                "    _fail_if_action_width_keyword_collides(\n"
+                "        action_width_keyword=action_width_keyword,\n"
+                "        action_names=action_names,\n"
+                "        state_names=state_names,\n"
+                "        extra_param_names=extra_param_names,\n"
+                "    )"
+            ),
+            new="    pass",
+            label="streamed direct-builder width collision validation",
+        ),
+    }
+    specs["streaming_fold:width_keyword_renamed"] = {
+        "path": MAX_Q_SOURCE,
+        "source": replace_once(
+            source=max_source,
+            old=(
+                "            extra_param_names=[*extra_param_names, action_width_keyword],"
+            ),
+            new=(
+                "            extra_param_names=[\n"
+                '                *extra_param_names, f"{action_width_keyword}_renamed"\n'
+                "            ],"
+            ),
+            label="streamed fold selected-width keyword",
+        ),
+    }
+
+    streaming_fold_block = (
+        "    if fold_state_names:\n"
+        "        _fail_if_collective(\n"
+        "            fold_state_names=fold_state_names, stakeholders=stakeholders\n"
+        "        )\n"
+        "        mapped = _wrap_with_fold_reduction(\n"
+        '            mapped=cast("Callable[..., FloatND]", mapped),\n'
+        "            fold_state_names=fold_state_names,\n"
+        "            fold_weights=fold_weights,\n"
+        "            fold_conditioning=fold_conditioning,\n"
+        "            inner_state_names=inner_state_names,\n"
+        "            action_names=action_names,\n"
+        "            state_names=state_names,\n"
+        "            extra_param_names=[*extra_param_names, action_width_keyword],\n"
+        "        )\n"
+    )
+    streaming_fold_after_co_map = replace_once(
+        source=max_source,
+        old=streaming_fold_block,
+        new="",
+        label="streamed fold block relocation source",
+    )
+    streaming_fold_after_co_map = _insert_before_nth(
+        text=streaming_fold_after_co_map,
+        marker=(
+            '    return cast("MaxQOverAFunction", allow_only_kwargs(func=mapped, enforce=False))'
+        ),
+        insertion=streaming_fold_block,
+        occurrence=2,
+    )
+
+    specs["streaming_fold:rejection_restored"] = {
+        "path": MAX_Q_SOURCE,
+        "source": _insert_before_nth(
+            text=max_source,
+            marker="    if fold_state_names:\n        _fail_if_collective(",
+            insertion=(
+                "    if fold_state_names:\n"
+                '        raise NotImplementedError("Full-V action streaming does not support fold states.")\n'
+            ),
+            occurrence=2,
+        ),
+    }
+    specs["streaming_fold:productmap_output_filtered"] = {
+        "path": MAX_Q_SOURCE,
+        "source": _replace_nth(
+            text=max_source,
+            marker='            mapped=cast("Callable[..., FloatND]", mapped),',
+            replacement=(
+                '            mapped=cast("Callable[..., FloatND]", '
+                "candidate_filter(mapped)),"
+            ),
+            occurrence=2,
+        ),
+    }
+    specs["streaming_fold:reduction_after_co_map"] = {
+        "path": MAX_Q_SOURCE,
+        "source": streaming_fold_after_co_map,
+    }
+    specs["streaming_fold:signature_positionalized"] = {
+        "path": MAX_Q_SOURCE,
+        "source": replace_once(
+            source=max_source,
+            old="    @with_signature(\n        kwargs=[\n",
+            new="    @with_signature(\n        args=[\n",
+            label="streamed fold keyword-only signature",
+        ),
+    }
+    specs["streaming_fold:width_signature_dropped"] = {
+        "path": MAX_Q_SOURCE,
+        "source": replace_once(
+            source=max_source,
+            old=(
+                "            extra_param_names=[*extra_param_names, action_width_keyword],"
+            ),
+            new="            extra_param_names=extra_param_names,",
+            label="streamed fold width signature",
+        ),
+    }
+    specs["streaming_fold:width_forwarding_filtered"] = {
+        "path": MAX_Q_SOURCE,
+        "source": replace_once(
+            source=max_source,
+            old=(
+                "        V_arr = mapped(\n"
+                "            next_regime_to_V_arr=next_regime_to_V_arr, **states_actions_params\n"
+                "        )"
+            ),
+            new=(
+                "        V_arr = mapped(\n"
+                "            next_regime_to_V_arr=next_regime_to_V_arr,\n"
+                "            **{\n"
+                "                name: value\n"
+                "                for name, value in states_actions_params.items()\n"
+                "                if name != extra_param_names[-1]\n"
+                "            },\n"
+                "        )"
+            ),
+            label="streamed fold width forwarding",
+        ),
+    }
+    specs["streaming_co_map:inner_state_reincluded"] = {
+        "path": MAX_Q_SOURCE,
+        "source": _replace_nth(
+            text=max_source,
+            marker=(
+                "    inner_state_names = tuple(\n"
+                "        name for name in state_names if name not in co_map_state_names\n"
+                "    )"
+            ),
+            replacement="    inner_state_names = tuple(state_names)",
+            occurrence=2,
+        ),
+    }
+    specs["streaming_co_map:state_order_reversed"] = {
+        "path": MAX_Q_SOURCE,
+        "source": _replace_nth(
+            text=max_source,
+            marker=(
+                "    for state_name, v_arr_in_axes in zip(\n"
+                "        reversed(co_map_state_names), reversed(co_map_v_arr_in_axes), strict=True\n"
+                "    ):"
+            ),
+            replacement=(
+                "    for state_name, v_arr_in_axes in zip(\n"
+                "        co_map_state_names, co_map_v_arr_in_axes, strict=True\n"
+                "    ):"
+            ),
+            occurrence=2,
+        ),
+    }
+    specs["streaming_co_map:continuation_axes_broadcast"] = {
+        "path": MAX_Q_SOURCE,
+        "source": _replace_nth(
+            text=max_source,
+            marker=(
+                "            co_mapped_in_axes=MappingProxyType("
+                '{"next_regime_to_V_arr": v_arr_in_axes}),'
+            ),
+            replacement=(
+                "            co_mapped_in_axes=MappingProxyType("
+                '{"next_regime_to_V_arr": None}),'
+            ),
+            occurrence=2,
+        ),
+    }
+    specs["streaming_co_map:continuation_axes_forced"] = {
+        "path": MAX_Q_SOURCE,
+        "source": _replace_nth(
+            text=max_source,
+            marker=(
+                "            co_mapped_in_axes=MappingProxyType("
+                '{"next_regime_to_V_arr": v_arr_in_axes}),'
+            ),
+            replacement=(
+                "            co_mapped_in_axes=MappingProxyType("
+                '{"next_regime_to_V_arr": MappingProxyType('
+                "dict.fromkeys(v_arr_in_axes, 0))}),"
+            ),
+            occurrence=2,
+        ),
+    }
+    specs["streaming_co_map:layout_validation_bypassed"] = {
+        "path": MAX_Q_SOURCE,
+        "source": replace_once(
+            source=max_source,
+            old=(
+                "    _fail_if_streaming_co_map_layout_is_invalid(\n"
+                "        state_names=state_names,\n"
+                "        co_map_state_names=co_map_state_names,\n"
+                "        co_map_v_arr_in_axes=co_map_v_arr_in_axes,\n"
+                "    )"
+            ),
+            new="    pass",
+            label="streamed co-map layout validation",
+        ),
+    }
+    specs["streaming_ev1:runtime_scale_constant"] = {
+        "path": MAX_Q_SOURCE,
+        "source": replace_once(
+            source=max_source,
+            old=(
+                "                    states_actions_params[TASTE_SHOCK_SCALE_PARAM],\n"
+                "                ),\n"
+                "            )\n"
+                "            ev1_result = ev1_cell("
+            ),
+            new=(
+                "                    1.0,\n"
+                "                ),\n"
+                "            )\n"
+                "            ev1_result = ev1_cell("
+            ),
+            label="streamed EV1 runtime scale",
+        ),
+    }
+    specs["streaming_ev1:scale_signature_dropped"] = {
+        "path": MAX_Q_SOURCE,
+        "source": replace_once(
+            source=max_source,
+            old="        extra_param_names.append(TASTE_SHOCK_SCALE_PARAM)",
+            new="        pass",
+            label="streamed EV1 scale signature",
+        ),
+    }
+    specs["streaming_ev1:published_value_negated"] = {
+        "path": MAX_Q_SOURCE,
+        "source": replace_once(
+            source=max_source,
+            old="            return ev1_result.smoothed_value",
+            new="            return -ev1_result.smoothed_value",
+            label="streamed EV1 value publication",
+        ),
+    }
+
+    core_program_cases = {
+        "streaming_resolver:bypass_static_width_binding": replace_once(
+            source=core_program_source,
+            old="        static_kwargs=width_bindings,",
+            new="        static_kwargs={},",
+            label="streamed resolver static kwargs",
+        ),
+        "streaming_resolver:arguments_filtered": replace_once(
+            source=core_program_source,
+            old=(
+                "        arguments=apply_value_transfer_plan(\n"
+                "            arguments=program.arguments,\n"
+                "            plan=resolved_input_transfer_plan,\n"
+                "        ),"
+            ),
+            new=(
+                "        arguments=dict(\n"
+                "            tuple(\n"
+                "                apply_value_transfer_plan(\n"
+                "                    arguments=program.arguments,\n"
+                "                    plan=resolved_input_transfer_plan,\n"
+                "                ).items()\n"
+                "            )[:-1]\n"
+                "        ),"
+            ),
+            label="streamed resolver arguments",
+        ),
+        "streaming_resolver:specialization_drops_axes": replace_once(
+            source=core_program_source,
+            old="            tuple(compilation_axes),",
+            new="            (),",
+            label="streamed resolver specialization",
+        ),
+        "streaming_resolver:output_roles_dropped": _replace_nth(
+            text=core_program_source,
+            marker="        output_roles=program.output_roles,",
+            replacement="        output_roles=None,",
+            occurrence=2,
+        ),
+        "value_access:core_requirements_erased": replace_once(
+            source=core_program_source,
+            old=(
+                "        object.__setattr__(\n"
+                '            self, "target_value_accesses", '
+                "tuple(self.target_value_accesses)\n"
+                "        )"
+            ),
+            new='        object.__setattr__(self, "target_value_accesses", ())',
+            label="core-program target-value requirements snapshot",
+        ),
+        "value_access:core_plan_match_bypassed": replace_once(
+            source=core_program_source,
+            old="    if declared != planned:",
+            new="    if False:",
+            label="core-program declared-to-resolved transfer match",
+        ),
+        "value_access:core_metadata_check_bypassed": replace_once(
+            source=core_program_source,
+            old=(
+                "        _validate_transfer_argument_metadata(\n"
+                "            program=program, access=access, transfer=transfer\n"
+                "        )"
+            ),
+            new=(
+                "        if False:\n"
+                "            _validate_transfer_argument_metadata(\n"
+                "                program=program, access=access, transfer=transfer\n"
+                "            )"
+            ),
+            label="core-program transfer argument metadata validation",
+        ),
+        "value_access:core_lowering_plan_bypassed": replace_once(
+            source=core_program_source,
+            old=(
+                "        arguments=apply_value_transfer_plan(\n"
+                "            arguments=program.arguments,\n"
+                "            plan=resolved_input_transfer_plan,\n"
+                "        ),"
+            ),
+            new="        arguments=program.arguments,",
+            label="core-program lowering input transfer application",
+        ),
+        "value_access:core_specialization_dropped": _replace_nth(
+            text=core_program_source,
+            marker="            input_transfer_specialization_key,",
+            replacement="            (),",
+            occurrence=2,
+        ),
+        "value_access:core_consumer_channel_rebound": replace_once(
+            source=core_program_source,
+            old="    channel = access.source.channel.value",
+            new='    channel = "next_regime_to_V_arr"',
+            label="core-program exact consumer channel",
+        ),
+    }
+    specs.update(
+        {
+            name: {"path": CORE_PROGRAM_SOURCE, "source": mutated}
+            for name, mutated in core_program_cases.items()
+        }
+    )
+
+    action_streaming_cases = {
+        "streaming_blocks:skip_last_block": _replace_nth(
+            text=action_streaming_source,
+            marker="            n_remaining=n_blocks - 1,",
+            replacement="            n_remaining=n_blocks - 2,",
+            occurrence=1,
+        ),
+        "streaming_blocks:admit_padded_tail": _replace_nth(
+            text=action_streaming_source,
+            marker="    return values, feasible & valid, global_ids",
+            replacement="    return values, feasible, global_ids",
+            occurrence=1,
+        ),
+        "streaming_blocks:block_local_action_ids": _replace_nth(
+            text=action_streaming_source,
+            marker="    global_ids = block_start + safe_offsets",
+            replacement="    global_ids = safe_offsets",
+            occurrence=1,
+        ),
+        "streaming_blocks:reverse_coordinate_decode": replace_once(
+            source=action_streaming_source,
+            old="    for name, grid, size in zip(action_names, action_grids, action_sizes, strict=True):",
+            new=(
+                "    for name, grid, size in zip(reversed(action_names), "
+                "reversed(action_grids), reversed(action_sizes), strict=True):"
+            ),
+            label="streamed C-order coordinate decode",
+        ),
+        "streaming_ev1:skip_last_block": _replace_nth(
+            text=action_streaming_source,
+            marker="            n_remaining=n_blocks - 1,",
+            replacement="            n_remaining=n_blocks - 2,",
+            occurrence=2,
+        ),
+        "streaming_collective_blocks:skip_last_block": _replace_nth(
+            text=action_streaming_source,
+            marker="            n_remaining=n_blocks - 1,",
+            replacement="            n_remaining=n_blocks - 2,",
+            occurrence=3,
+        ),
+        "streaming_collective_blocks:admit_padded_tail": replace_once(
+            source=action_streaming_source,
+            old=(
+                "    return objectives, stakeholder_values, feasible & valid, "
+                "global_ids"
+            ),
+            new="    return objectives, stakeholder_values, feasible, global_ids",
+            label="streamed collective padded-tail mask",
+        ),
+        "streaming_collective_blocks:block_local_action_ids": _replace_nth(
+            text=action_streaming_source,
+            marker="    global_ids = block_start + safe_offsets",
+            replacement="    global_ids = safe_offsets",
+            occurrence=2,
+        ),
+        "streaming_ev1:composite_version_changed": replace_once(
+            source=action_streaming_source,
+            old='            "grid-search-ev1-action-reduction",\n            1,',
+            new='            "grid-search-ev1-action-reduction",\n            2,',
+            label="streamed EV1 composite semantic identity",
+        ),
+        "streaming_ev1:hard_max_semantic_key_dropped": replace_once(
+            source=action_streaming_source,
+            old="            HARD_MAX_REDUCTION.semantic_key,",
+            new='            ("hard-max", 0),',
+            label="streamed EV1 hard-max semantic identity",
+        ),
+        "streaming_ev1:logsum_semantic_key_dropped": replace_once(
+            source=action_streaming_source,
+            old="            LOGSUMEXP_REDUCTION.semantic_key,",
+            new='            ("logsumexp", 0),',
+            label="streamed EV1 log-sum-exp semantic identity",
+        ),
+        "streaming_ev1:scale_rebound": replace_once(
+            source=action_streaming_source,
+            old="        reduction = LOGSUMEXP_REDUCTION.bind(scale=jnp.asarray(self.scale))",
+            new="        reduction = LOGSUMEXP_REDUCTION.bind(scale=jnp.asarray(1.0))",
+            label="streamed EV1 one-session scale binding",
+        ),
+        "streaming_ev1:continuous_extent_changed": replace_once(
+            source=action_streaming_source,
+            old="        continuous_extent = math.prod(action_sizes[self.n_discrete_action_axes :])",
+            new="        continuous_extent = 1",
+            label="streamed EV1 discrete-prefix branch extent",
+        ),
+        "streaming_ev1:admit_padded_tail": replace_once(
+            source=replace_once(
+                source=action_streaming_source,
+                old="    valid_continuous = continuous_offsets < remaining",
+                new=(
+                    "    valid_continuous = "
+                    "jnp.ones(continuous_block_width, dtype=bool)"
+                ),
+                label="streamed EV1 continuous-tail validity",
+            ),
+            old=(
+                "    safe_continuous_offsets = "
+                "jnp.minimum(continuous_offsets, remaining - 1)"
+            ),
+            new="    safe_continuous_offsets = continuous_offsets",
+            label="streamed EV1 continuous-tail identities",
+        ),
+        "streaming_ev1:admit_padded_branch_tail": replace_once(
+            source=replace_once(
+                source=action_streaming_source,
+                old="    valid_branches = branch_offsets < remaining_branches",
+                new=("    valid_branches = jnp.ones(branches_per_block, dtype=bool)"),
+                label="streamed EV1 branch-tail validity",
+            ),
+            old=(
+                "    safe_branch_offsets = "
+                "jnp.minimum(branch_offsets, remaining_branches - 1)"
+            ),
+            new="    safe_branch_offsets = branch_offsets",
+            label="streamed EV1 branch-tail identities",
+        ),
+        "streaming_ev1:branch_identity_shifted": _replace_nth(
+            text=action_streaming_source,
+            marker=("    branch_group_id = block_index // blocks_per_branch_group"),
+            replacement=(
+                "    branch_group_id = (block_index + "
+                "blocks_per_branch_group) // blocks_per_branch_group"
+            ),
+            occurrence=1,
+        ),
+        "streaming_ev1:branch_transition_ignored": replace_once(
+            source=action_streaming_source,
+            old=(
+                "    branch_group_changed = "
+                "(accumulator.active_branch_group_id >= 0) & ("
+            ),
+            new="    branch_group_changed = jnp.asarray(False) & (",
+            label="streamed EV1 branch-group transition",
+        ),
+        "streaming_ev1:branch_value_negated": replace_once(
+            source=action_streaming_source,
+            old="        values=branch_group.best_value,",
+            new="        values=-branch_group.best_value,",
+            label="streamed EV1 finalized branch-group values",
+        ),
+        "streaming_ev1:last_branch_not_flushed": replace_once(
+            source=action_streaming_source,
+            old=(
+                "        accumulator = _flush_ev1_branch_group(\n"
+                "            accumulator=accumulator,\n"
+                "            reduction=reduction,\n"
+                "        )"
+            ),
+            new="        accumulator = accumulator",
+            label="streamed EV1 final branch-group flush",
+        ),
+        "streaming_ev1:reverse_block_order": replace_once(
+            source=action_streaming_source,
+            old=(
+                "        accumulator=accumulator.branch_group,\n"
+                "        values=values,\n"
+                "        feasible=feasible,\n"
+                "        action_ids=global_ids,"
+            ),
+            new=(
+                "        accumulator=accumulator.branch_group,\n"
+                "        values=values[..., ::-1],\n"
+                "        feasible=feasible,\n"
+                "        action_ids=global_ids,"
+            ),
+            label="streamed EV1 value-to-candidate alignment",
+        ),
+        "streaming_collective_blocks:objective_uses_first_stakeholder": replace_once(
+            source=action_streaming_source,
+            old=(
+                "    objectives = _weighted_sum(\n"
+                "        stakeholder_Q={\n"
+                "            name: stakeholder_values[..., index]\n"
+                "            for index, name in enumerate(stakeholders)\n"
+                "        },\n"
+                "        weights=weights,\n"
+                "    )"
+            ),
+            new="    objectives = stakeholder_values[..., 0]",
+            label="streamed collective household objective",
+        ),
+    }
+    for index in range(6):
+        action_streaming_cases[f"streaming_blocks:candidate_index_{index}"] = (
+            _replace_nth(
+                text=action_streaming_source,
+                marker="    return values, feasible & valid, global_ids",
+                replacement=(
+                    "    feasible = feasible & (global_ids != "
+                    f"{index})\n    return values, feasible & valid, global_ids"
+                ),
+                occurrence=1,
+            )
+        )
+        action_streaming_cases[f"streaming_ev1:candidate_index_{index}"] = _replace_nth(
+            text=action_streaming_source,
+            marker="    return values, feasible & valid, global_ids",
+            replacement=(
+                "    feasible = feasible & (global_ids != "
+                f"{index})\n    return values, feasible & valid, global_ids"
+            ),
+            occurrence=2,
+        )
+        action_streaming_cases[
+            f"streaming_collective_blocks:candidate_index_{index}"
+        ] = replace_once(
+            source=action_streaming_source,
+            old=(
+                "    return objectives, stakeholder_values, feasible & valid, "
+                "global_ids"
+            ),
+            new=(
+                "    feasible = feasible & (global_ids != "
+                f"{index})\n"
+                "    return objectives, stakeholder_values, feasible & valid, "
+                "global_ids"
+            ),
+            label=f"streamed collective candidate identity {index}",
+        )
+    specs.update(
+        {
+            name: {"path": ACTION_STREAMING_SOURCE, "source": mutated}
+            for name, mutated in action_streaming_cases.items()
+        }
+    )
+
+    action_reduction_cases = {
+        "streaming_hard_max:filter_last_identity": replace_once(
+            source=action_reduction_source,
+            old="            feasible=jnp.broadcast_to(feasible, values.shape),",
+            new=(
+                "            feasible=jnp.broadcast_to(feasible, values.shape)\n"
+                "            & (jnp.broadcast_to(action_ids, values.shape) != 5),"
+            ),
+            label="streamed hard-max feasibility",
+        ),
+        "streaming_hard_max:ignore_right_partial": replace_once(
+            source=action_reduction_source,
+            old="        choose_right = right.any_feasible & (",
+            new="        choose_right = jnp.zeros_like(right.any_feasible) & (",
+            label="streamed hard-max merge",
+        ),
+        "streaming_hard_max:signed_zero_normalization_bypassed": replace_once(
+            source=action_reduction_source,
+            old=(
+                "            best_value=jnp.where(\n"
+                "                both_feasible_zero, signed_zero_max, selected_best_value\n"
+                "            ),"
+            ),
+            new="            best_value=selected_best_value,",
+            label="streamed hard-max signed-zero numeric normalization",
+        ),
+        "streaming_hard_max:semantic_key_changed": replace_once(
+            source=action_reduction_source,
+            old='        return ("hard-max", 1)',
+            new='        return ("hard-max", 2)',
+            label="streamed hard-max semantic identity",
+        ),
+    }
+    specs.update(
+        {
+            name: {"path": ACTION_REDUCTION_SOURCE, "source": mutated}
+            for name, mutated in action_reduction_cases.items()
+        }
+    )
+
+    collective_action_reduction_cases = {
+        "streaming_collective_hard_max:filter_last_identity": replace_once(
+            source=collective_action_reduction_source,
+            old="            feasible=jnp.broadcast_to(feasible, objectives.shape),",
+            new=(
+                "            feasible=jnp.broadcast_to(feasible, objectives.shape)\n"
+                "            & (jnp.broadcast_to(action_ids, objectives.shape) != 5),"
+            ),
+            label="streamed collective hard-max feasibility",
+        ),
+        "streaming_collective_hard_max:ignore_right_partial": replace_once(
+            source=collective_action_reduction_source,
+            old="        choose_right = right.any_feasible & (",
+            new="        choose_right = jnp.zeros_like(right.any_feasible) & (",
+            label="streamed collective hard-max merge",
+        ),
+        "streaming_collective_hard_max:signed_zero_normalization_bypassed": replace_once(
+            source=collective_action_reduction_source,
+            old=(
+                "            best_objective=jnp.where(\n"
+                "                both_feasible_zero,\n"
+                "                signed_zero_max,\n"
+                "                selected_best_objective,\n"
+                "            ),"
+            ),
+            new="            best_objective=selected_best_objective,",
+            label="streamed collective hard-max signed-zero numeric normalization",
+        ),
+        "streaming_collective_hard_max:semantic_key_changed": replace_once(
+            source=collective_action_reduction_source,
+            old='        return ("collective-hard-max", 1)',
+            new='        return ("collective-hard-max", 2)',
+            label="streamed collective hard-max semantic identity",
+        ),
+        "streaming_collective_hard_max:stakeholder_gather_decoupled": replace_once(
+            source=collective_action_reduction_source,
+            old="        positions=winner_position,",
+            new="        positions=jnp.zeros_like(winner_position),",
+            label="streamed collective shared-winner gather",
+        ),
+        "streaming_collective_hard_max:winner_identity_shifted": replace_once(
+            source=collective_action_reduction_source,
+            old=(
+                "    best_global_action_id = jnp.where("
+                "any_feasible_nan, 0, best_global_action_id)"
+            ),
+            new=(
+                "    best_global_action_id = jnp.where("
+                "any_feasible_nan, 0, best_global_action_id + 1)"
+            ),
+            label="streamed collective winner identity",
+        ),
+    }
+    specs.update(
+        {
+            name: {
+                "path": COLLECTIVE_ACTION_REDUCTION_SOURCE,
+                "source": mutated,
+            }
+            for name, mutated in collective_action_reduction_cases.items()
+        }
+    )
+
+    logsumexp_action_reduction_cases = {
+        "streaming_logsumexp:filter_first_branch": replace_once(
+            source=logsumexp_action_reduction_source,
+            old="        finite = jnp.isfinite(values)",
+            new="        finite = jnp.isfinite(values).at[..., 0].set(False)",
+            label="streamed log-sum-exp branch admission",
+        ),
+        "streaming_logsumexp:ignore_right_partial": replace_once(
+            source=logsumexp_action_reduction_source,
+            old=(
+                "                left.rescaled_sum * left_factor"
+                " + right.rescaled_sum * right_factor"
+            ),
+            new="                left.rescaled_sum * left_factor + 0.0 * right_factor",
+            label="streamed log-sum-exp merge",
+        ),
+        "streaming_logsumexp:scale_dropped_at_finalize": replace_once(
+            source=logsumexp_action_reduction_source,
+            old="        finite_result = accumulator.running_max + self.scale * jnp.log(",
+            new="        finite_result = accumulator.running_max + jnp.log(",
+            label="streamed log-sum-exp final scale",
+        ),
+        "streaming_logsumexp:semantic_key_changed": replace_once(
+            source=logsumexp_action_reduction_source,
+            old='        return ("logsumexp", 1)',
+            new='        return ("logsumexp", 2)',
+            label="streamed log-sum-exp semantic identity",
+        ),
+        "streaming_logsumexp:bind_negates_scale": replace_once(
+            source=logsumexp_action_reduction_source,
+            old="        return BoundLogSumExpReduction(scale=scale)",
+            new="        return BoundLogSumExpReduction(scale=-scale)",
+            label="streamed log-sum-exp dynamic binding",
+        ),
+    }
+    specs.update(
+        {
+            name: {
+                "path": LOGSUMEXP_ACTION_REDUCTION_SOURCE,
+                "source": mutated,
+            }
+            for name, mutated in logsumexp_action_reduction_cases.items()
+        }
+    )
+
+    output_layout_cases = {
+        "output_layout:assert_then_filter": replace_once(
+            source=output_layout_source,
+            old="        assert_output_layout(output=output, layout=self.layout)\n"
+            "        return output",
+            new="        assert_output_layout(output=output, layout=self.layout)\n"
+            "        return candidate_filter(output)",
+            label="planned core post-assert identity",
+        ),
+        "output_layout:filter_before_assert": replace_once(
+            source=output_layout_source,
+            old="        output = self.compiled(*args, **planned_kwargs)",
+            new="        output = candidate_filter(self.compiled(*args, **planned_kwargs))",
+            label="planned core pre-assert identity",
+        ),
+        "output_layout:sharding_check_disabled": replace_once(
+            source=output_layout_source,
+            old="        if actual != expected:",
+            new="        if False and actual != expected:",
+            label="planned output sharding assertion",
+        ),
+        "output_layout:expected_value_shape_sliced": replace_once(
+            source=output_layout_source,
+            old="    expected_value_shape = tuple(int(size) for size in value_shape)",
+            new="    expected_value_shape = tuple(int(size) for size in value_shape)[1:]",
+            label="planned absolute value shape",
+        ),
+        "value_transfer:runtime_plan_bypassed": replace_once(
+            source=output_layout_source,
+            old=(
+                "        planned_kwargs = (\n"
+                "            apply_value_transfer_plan("
+                "arguments=kwargs, plan=self.input_transfer_plan)\n"
+                "            if self.input_transfer_plan\n"
+                "            else kwargs\n"
+                "        )"
+            ),
+            new="        planned_kwargs = kwargs",
+            label="PlannedCore runtime transfer application",
+        ),
+        "value_transfer:runtime_plan_truncated": replace_once(
+            source=output_layout_source,
+            old="plan=self.input_transfer_plan)",
+            new="plan=self.input_transfer_plan[:-1])",
+            label="PlannedCore complete runtime transfer plan",
+        ),
+        "value_transfer:planned_core_plan_erased": replace_once(
+            source=output_layout_source,
+            old="        plan = tuple(self.input_transfer_plan)",
+            new="        plan = ()",
+            label="PlannedCore resolved transfer-plan snapshot",
+        ),
+    }
+    specs.update(
+        {
+            name: {"path": OUTPUT_LAYOUT_SOURCE, "source": mutated}
+            for name, mutated in output_layout_cases.items()
+        }
+    )
+
+    value_transfer_cases = {
+        "value_transfer:aligned_value_sliced": replace_once(
+            source=value_transfer_source,
+            old="        return stored",
+            new="        return stored[1:]",
+            label="aligned-local value identity",
+        ),
+        "value_transfer:copy_value_sliced": replace_once(
+            source=value_transfer_source,
+            old="        copied = jax.device_put(stored, transfer.source_sharding)",
+            new="        copied = jax.device_put(stored[1:], transfer.source_sharding)",
+            label="copied value candidate preservation",
+        ),
+        "value_transfer:stored_metadata_check_bypassed": replace_once(
+            source=value_transfer_source,
+            old=(
+                "    stored = _assert_value_metadata(\n"
+                "        value=value,\n"
+                "        expected_shape=transfer.expected_shape,\n"
+                "        expected_dtype=transfer.expected_dtype,\n"
+                "        expected_sharding=transfer.stored_sharding,\n"
+                '        label="stored",\n'
+                "    )"
+            ),
+            new="    stored = value",
+            label="stored transfer metadata validation",
+        ),
+        "value_transfer:plan_skips_last": replace_once(
+            source=value_transfer_source,
+            old="    for transfer in transfers:",
+            new="    for transfer in transfers[:-1]:",
+            label="complete input transfer plan",
+        ),
+        "value_transfer:consumer_channel_ignored": replace_once(
+            source=value_transfer_source,
+            old=(
+                "        locator = ("
+                "transfer.source.channel.value, transfer.source.path)"
+            ),
+            new=(
+                "        locator = (ValueInputChannel.NEXT_REGIME_VALUE.value, "
+                "transfer.source.path)"
+            ),
+            label="exact transfer consumer channel",
+        ),
+        "value_transfer:edge_identity_check_bypassed": replace_once(
+            source=value_transfer_source,
+            old=(
+                "        _validate_edge_identity("
+                "target=self.target, source=self.source)"
+            ),
+            new=(
+                "        if False:\n"
+                "            _validate_edge_identity("
+                "target=self.target, source=self.source)"
+            ),
+            label="transfer artifact-to-consumer identity",
+        ),
+        "value_transfer:copy_destination_ignored": replace_once(
+            source=value_transfer_source,
+            old="        copied = jax.device_put(stored, transfer.source_sharding)",
+            new="        copied = jax.device_put(stored, transfer.stored_sharding)",
+            label="copy-to-source destination layout",
+        ),
+        "value_transfer:duplicate_consumer_admitted": replace_once(
+            source=value_transfer_source,
+            old="        if locator in seen:",
+            new="        if False:",
+            label="duplicate transfer consumer rejection",
+        ),
+    }
+    specs.update(
+        {
+            name: {"path": VALUE_TRANSFER_SOURCE, "source": mutated}
+            for name, mutated in value_transfer_cases.items()
         }
     )
 
@@ -2953,6 +5369,34 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             old="    return SimulationPhase(",
             new="    return candidate_filter.SimulationPhase(",
             label="simulate caller publication callee",
+        ),
+        "terminal_wrapper:native_graph_dropped": replace_once(
+            source=processing_source,
+            old="        return self.base.core_programs()",
+            new="        return MappingProxyType({})",
+            label="terminal wrapper native-graph delegation",
+        ),
+        "terminal_wrapper:native_graph_filtered": replace_once(
+            source=processing_source,
+            old="        return self.base.core_programs()",
+            new="        return candidate_filter(self.base.core_programs())",
+            label="terminal wrapper native-graph identity",
+        ),
+        "terminal_wrapper:duplicate_legacy_authority": _insert_before_nth(
+            text=processing_source,
+            marker="    def core_programs(self) -> Mapping[str, CoreProgram]:",
+            insertion=(
+                "    def cores(self) -> Mapping[str, Callable]:\n"
+                '        return MappingProxyType({"main": '
+                'self.base.core_programs()["main"].function})\n\n'
+            ),
+            occurrence=1,
+        ),
+        "terminal_wrapper:published_value_filtered": replace_once(
+            source=processing_source,
+            old="            V_arr=result.V_arr,\n            continuation=carry,",
+            new="            V_arr=candidate_filter(result.V_arr),\n            continuation=carry,",
+            label="terminal wrapper value publication",
         ),
     }
     specs.update(
@@ -3161,9 +5605,23 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": FUNCTOOLS_SOURCE,
             "source": replace_once(
                 source=functools_source,
-                old="        for name, value in bound.arguments.items():",
-                new="        for name, value in list(bound.arguments.items())[:-1]:",
+                old="    for name, value in bound.arguments.items():",
+                new="    for name, value in list(bound.arguments.items())[:-1]:",
                 label="allow-args argument drop",
+            ),
+        },
+        "shared_functools:positional_origin_reverted": {
+            "path": FUNCTOOLS_SOURCE,
+            "source": replace_once(
+                source=functools_source,
+                old=(
+                    "        elif kind == inspect.Parameter.POSITIONAL_ONLY or (\n"
+                    "            kind == inspect.Parameter.POSITIONAL_OR_KEYWORD\n"
+                    "            and name in positional_origins\n"
+                    "        ):"
+                ),
+                new="        elif kind == inspect.Parameter.POSITIONAL_ONLY:",
+                label="allow-args positional-origin preservation",
             ),
         },
         "shared_containers:duplicate_threshold": {
@@ -3296,6 +5754,219 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
                 "                self._simulate_compile_cache[compile_batch_size]\n"
                 "            )",
                 label="public Model AOT regime selection",
+            ),
+        },
+        "native_graph:solve_collection_bypasses_central_validator": {
+            "path": BACKWARD_INDUCTION_SOURCE,
+            "source": replace_once(
+                source=backward_induction_source,
+                old=(
+                    "            graph = core_program_graph("
+                    "kernel=regime.solution.period_kernels[period])"
+                ),
+                new="            graph = regime.solution.period_kernels[period].core_programs()",
+                label="solve central graph validation",
+            ),
+        },
+        "value_transfer:backward_source_coordinate_check_bypassed": {
+            "path": BACKWARD_INDUCTION_SOURCE,
+            "source": replace_once(
+                source=backward_induction_source,
+                old="        if declared_source != source:",
+                new="        if False:",
+                label="backward declared-to-actual source-coordinate rejection",
+            ),
+        },
+        "value_transfer:backward_actual_source_rebound": {
+            "path": BACKWARD_INDUCTION_SOURCE,
+            "source": replace_once(
+                source=backward_induction_source,
+                old="            source=(regime_name, period, core_key),",
+                new=(
+                    "            source=(\n"
+                    "                materialized.requirements.target_value_accesses[0].source.source_regime,\n"
+                    "                materialized.requirements.target_value_accesses[0].source.source_period,\n"
+                    "                materialized.requirements.target_value_accesses[0].source.core_key,\n"
+                    "            ),"
+                ),
+                label="backward actual source-coordinate authority",
+            ),
+        },
+        "value_transfer:backward_resolver_plan_omitted": {
+            "path": BACKWARD_INDUCTION_SOURCE,
+            "source": _replace_nth(
+                text=backward_induction_source,
+                marker="        input_transfer_plan=input_transfer_plan,",
+                replacement="        input_transfer_plan=(),",
+                occurrence=1,
+            ),
+        },
+        "value_transfer:backward_node_plan_dropped": {
+            "path": BACKWARD_INDUCTION_SOURCE,
+            "source": replace_once(
+                source=backward_induction_source,
+                old=(
+                    "                input_transfer_plan="
+                    "resolved_programs[triple].input_transfer_plan,"
+                ),
+                new="                input_transfer_plan=(),",
+                label="backward absolute-node transfer-plan attachment",
+            ),
+        },
+        "value_transfer:backward_copy_uses_output_spec": {
+            "path": BACKWARD_INDUCTION_SOURCE,
+            "source": replace_once(
+                source=backward_induction_source,
+                old="            spec=jax.P(),",
+                new="            spec=source_execution_sharding.spec,",
+                label="backward replicated copy destination",
+            ),
+        },
+        "value_transfer:backward_cross_mesh_admitted": {
+            "path": BACKWARD_INDUCTION_SOURCE,
+            "source": replace_once(
+                source=backward_induction_source,
+                old="        and stored_sharding.mesh == source_execution_sharding.mesh",
+                new="        and True",
+                label="backward aligned-local mesh identity",
+            ),
+        },
+        "value_transfer:backward_unsupported_conversion_admitted": {
+            "path": BACKWARD_INDUCTION_SOURCE,
+            "source": replace_once(
+                source=backward_induction_source,
+                old=(
+                    "    msg = (\n"
+                    '        "Unsupported target-value layout conversion: "'
+                ),
+                new=(
+                    "    return ValueTransferKind.ALIGNED_LOCAL, stored_sharding\n"
+                    "    msg = (\n"
+                    '        "Unsupported target-value layout conversion: "'
+                ),
+                label="backward fail-closed unsupported layout conversion",
+            ),
+        },
+        "native_graph:materialized_program_filtered": {
+            "path": BACKWARD_INDUCTION_SOURCE,
+            "source": replace_once(
+                source=backward_induction_source,
+                old=(
+                    "        materialized = materialize_core_program("
+                    "program=declaration, context=context)"
+                ),
+                new=(
+                    "        materialized = candidate_filter(materialize_core_program("
+                    "program=declaration, context=context))"
+                ),
+                label="solve materialized native program",
+            ),
+        },
+        "native_graph:initial_widths_bypassed": {
+            "path": BACKWARD_INDUCTION_SOURCE,
+            "source": replace_once(
+                source=backward_induction_source,
+                old="        tile_widths=initial_core_tile_widths(program=program),",
+                new="        tile_widths={},",
+                label="native program initial widths",
+            ),
+        },
+        "native_graph:aot_resolved_function_bypassed": {
+            "path": BACKWARD_INDUCTION_SOURCE,
+            "source": replace_once(
+                source=backward_induction_source,
+                old=(
+                    "            unique[lowering_key] = (\n"
+                    "                program.function,"
+                ),
+                new=(
+                    "            unique[lowering_key] = (\n"
+                    "                all_programs[triple].function,"
+                ),
+                label="AOT resolved function",
+            ),
+        },
+        "native_graph:aot_resolved_arguments_bypassed": {
+            "path": BACKWARD_INDUCTION_SOURCE,
+            "source": replace_once(
+                source=backward_induction_source,
+                old="        lower_args = resolved.arguments",
+                new="        lower_args = {},",
+                label="AOT resolved arguments",
+            ),
+        },
+        "native_graph:specialization_dropped": {
+            "path": BACKWARD_INDUCTION_SOURCE,
+            "source": replace_once(
+                source=backward_induction_source,
+                old="            specialization_key=resolved.specialization_key,",
+                new="            specialization_key=None,",
+                label="native lowering specialization",
+            ),
+        },
+        "native_graph:eager_resolved_function_bypassed": {
+            "path": BACKWARD_INDUCTION_SOURCE,
+            "source": replace_once(
+                source=backward_induction_source,
+                old=(
+                    "                    else program.function\n"
+                    "                ),\n"
+                    "                layout=all_layouts[triple],"
+                ),
+                new=(
+                    "                    else all_programs[triple].function\n"
+                    "                ),\n"
+                    "                layout=all_layouts[triple],"
+                ),
+                label="eager resolved function",
+            ),
+        },
+        "backward_layout:out_shardings_disabled": {
+            "path": BACKWARD_INDUCTION_SOURCE,
+            "source": replace_once(
+                source=backward_induction_source,
+                old='                out_shardings=cast("ResolvedOutputLayout", layout).out_shardings,',
+                new="                out_shardings=None,",
+                label="planned JIT output sharding",
+            ),
+        },
+        "backward_layout:planned_tag_dropped": {
+            "path": BACKWARD_INDUCTION_SOURCE,
+            "source": replace_once(
+                source=backward_induction_source,
+                old="    return PlannedCore(\n"
+                "        compiled=compiled,\n"
+                '        layout=cast("ResolvedOutputLayout", layout),\n'
+                "        input_transfer_plan=input_transfer_plan,\n"
+                "    )",
+                new="    return compiled",
+                label="planned core attachment",
+            ),
+        },
+        "backward_layout:publish_after_assert_filtered": {
+            "path": BACKWARD_INDUCTION_SOURCE,
+            "source": replace_once(
+                source=backward_induction_source,
+                old="        assert_output_layout(\n"
+                "            output=(value, dissolution) if dissolution is not None else value,\n"
+                "            layout=layout,\n"
+                "        )\n"
+                "        return value",
+                new="        assert_output_layout(\n"
+                "            output=(value, dissolution) if dissolution is not None else value,\n"
+                "            layout=layout,\n"
+                "        )\n"
+                "        return candidate_filter(value)",
+                label="planned publication identity",
+            ),
+        },
+        "backward_layout:solve_publication_filtered": {
+            "path": BACKWARD_INDUCTION_SOURCE,
+            "source": replace_once(
+                source=backward_induction_source,
+                old="            period_solution[regime_name] = V_arr",
+                new="            period_solution[regime_name] = candidate_filter(V_arr)",
+                label="solve-loop value publication",
             ),
         },
         "shared_dedup_key:collapse_plain_callables": {
@@ -3535,12 +6206,58 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
     }
     specs.update(dependency_cases)
 
+    specs["period_replay:central_graph_validator_bypassed"] = {
+        "path": PERIOD_REPLAY_SOURCE,
+        "source": replace_once(
+            source=period_replay_source,
+            old=(
+                "    for core_name, declaration in "
+                "core_program_graph(kernel=period_kernel).items():"
+            ),
+            new="    for core_name, declaration in period_kernel.core_programs().items():",
+            label="replay central graph validation",
+        ),
+    }
+    specs["period_replay:materialized_program_filtered"] = {
+        "path": PERIOD_REPLAY_SOURCE,
+        "source": _replace_nth(
+            text=period_replay_source,
+            marker=(
+                "        materialized = materialize_core_program("
+                "program=declaration, context=context)"
+            ),
+            replacement=(
+                "        materialized = candidate_filter(materialize_core_program("
+                "program=declaration, context=context))"
+            ),
+            occurrence=1,
+        ),
+    }
+    specs["period_replay:shared_resolver_bypassed"] = {
+        "path": PERIOD_REPLAY_SOURCE,
+        "source": _replace_nth(
+            text=period_replay_source,
+            marker="        resolved = _resolve_program_for_execution(",
+            replacement=(
+                "        resolved = candidate_filter(_resolve_program_for_execution)("
+            ),
+            occurrence=1,
+        ),
+    }
+
     originals = {
         MAX_Q_SOURCE: max_source,
         ARGMAX_SOURCE: argmax_source,
         COLLECTIVE_SOURCE: collective_source,
         LOGSUM_SOURCE: logsum_source,
         GRID_SEARCH_SOURCE: grid_source,
+        CORE_PROGRAM_SOURCE: core_program_source,
+        OUTPUT_LAYOUT_SOURCE: output_layout_source,
+        VALUE_TRANSFER_SOURCE: value_transfer_source,
+        ACTION_STREAMING_SOURCE: action_streaming_source,
+        ACTION_REDUCTION_SOURCE: action_reduction_source,
+        COLLECTIVE_ACTION_REDUCTION_SOURCE: collective_action_reduction_source,
+        LOGSUMEXP_ACTION_REDUCTION_SOURCE: logsumexp_action_reduction_source,
         PROCESSING_SOURCE: processing_source,
         DISPATCHERS_SOURCE: dispatchers_source,
         FUNCTOOLS_SOURCE: functools_source,
@@ -3554,6 +6271,7 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         SIMULATION_COMPILE_SOURCE: simulation_compile_source,
         MODEL_SOURCE: model_source,
         BACKWARD_INDUCTION_SOURCE: backward_induction_source,
+        PERIOD_REPLAY_SOURCE: period_replay_source,
         INITIAL_CONDITIONS_SOURCE: initial_conditions_source,
         RESULT_SOURCE: result_source,
         RESULT_DATAFRAME_SOURCE: result_dataframe_source,

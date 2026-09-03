@@ -196,7 +196,7 @@ def test_deterministic_target_only_state() -> None:
             "wealth": jnp.array([20.0, 80.0]),
             "regime_id": jnp.array([_RegimeId.alive] * 2),
         },
-        period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+        solution=period_to_regime_to_V_arr,
     )
     df = result.to_dataframe(use_labels=False)
     dead_rows = df[df["regime_name"] == "dead"]
@@ -291,7 +291,7 @@ def test_stochastic_target_only_state() -> None:
             "wealth": jnp.array([20.0, 80.0]),
             "regime_id": jnp.array([_RegimeId.alive] * 2),
         },
-        period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+        solution=period_to_regime_to_V_arr,
     )
     df = result.to_dataframe(use_labels=False)
     dead_rows = df[df["regime_name"] == "dead"]
@@ -379,7 +379,7 @@ def test_per_target_dict_transitions():
             "health": initial_health,
             "regime_id": jnp.array([RegimeId.working_life] * n_subjects),
         },
-        period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+        solution=period_to_regime_to_V_arr,
     )
     df = result.to_dataframe(use_labels=False)
 

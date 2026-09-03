@@ -95,7 +95,7 @@ def test_entering_a_one_node_support_yields_the_targets_value_there() -> None:
     V = model.solve(
         params={"source": {"koopmans_aggregator": {"discount_factor": 1.0}}},
         log_level="off",
-    )
+    ).values
 
     np.testing.assert_allclose(
         np.asarray(V[0]["source"]).ravel(), np.array([10.0]), atol=1e-5
@@ -134,9 +134,13 @@ def test_a_state_dependent_entry_off_the_sole_node_is_not_silently_accepted() ->
     support at wealth zero and off it at one and two, where no representation exists
     — so those points must not come back as ordinary numbers.
     """
-    V = _model_entering_at(_keep_wealth).solve(
-        params={"source": {"koopmans_aggregator": {"discount_factor": 1.0}}},
-        log_level="off",
+    V = (
+        _model_entering_at(_keep_wealth)
+        .solve(
+            params={"source": {"koopmans_aggregator": {"discount_factor": 1.0}}},
+            log_level="off",
+        )
+        .values
     )
 
     off_support = np.asarray(V[0]["source"]).ravel()[1:]
@@ -145,9 +149,13 @@ def test_a_state_dependent_entry_off_the_sole_node_is_not_silently_accepted() ->
 
 def test_an_entry_exactly_on_the_sole_node_stays_usable() -> None:
     """A law naming the sole node itself is on support everywhere."""
-    V = _model_entering_at(_enter_at_the_node_from_wealth).solve(
-        params={"source": {"koopmans_aggregator": {"discount_factor": 1.0}}},
-        log_level="off",
+    V = (
+        _model_entering_at(_enter_at_the_node_from_wealth)
+        .solve(
+            params={"source": {"koopmans_aggregator": {"discount_factor": 1.0}}},
+            log_level="off",
+        )
+        .values
     )
 
     assert not np.isnan(np.asarray(V[0]["source"])).any()

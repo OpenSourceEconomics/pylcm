@@ -34,7 +34,7 @@ def _solve(*, variant: str, n_consumption: int) -> Mapping[int, Mapping]:
         n_consumption=n_consumption,
         action_in_utility=True,
     )
-    return model.solve(params=toy.build_params(), log_level="debug")
+    return model.solve(params=toy.build_params(), log_level="debug").values
 
 
 def test_discrete_route_checks_affinity_across_the_liquid_domain() -> None:
@@ -58,28 +58,36 @@ def test_discrete_route_checks_affinity_across_the_liquid_domain() -> None:
 def test_single_liquid_nbegm_binds_action_before_building_preferences() -> None:
     """A single-liquid branch evaluates utility with its own discrete action."""
     params = toy.build_params(include_income=False, final_age_alive=2.0)
-    nbegm = toy.build_model(
-        variant="nbegm",
-        n_periods=3,
-        n_liquid=45,
-        liquid_max=20.0,
-        n_savings=80,
-        savings_max=18.0,
-        n_consumption=50,
-        action_in_utility=True,
-        include_income=False,
-    ).solve(params=params, log_level="debug")
-    brute = toy.build_model(
-        variant="brute",
-        n_periods=3,
-        n_liquid=45,
-        liquid_max=20.0,
-        n_savings=80,
-        savings_max=18.0,
-        n_consumption=1000,
-        action_in_utility=True,
-        include_income=False,
-    ).solve(params=params, log_level="debug")
+    nbegm = (
+        toy.build_model(
+            variant="nbegm",
+            n_periods=3,
+            n_liquid=45,
+            liquid_max=20.0,
+            n_savings=80,
+            savings_max=18.0,
+            n_consumption=50,
+            action_in_utility=True,
+            include_income=False,
+        )
+        .solve(params=params, log_level="debug")
+        .values
+    )
+    brute = (
+        toy.build_model(
+            variant="brute",
+            n_periods=3,
+            n_liquid=45,
+            liquid_max=20.0,
+            n_savings=80,
+            savings_max=18.0,
+            n_consumption=1000,
+            action_in_utility=True,
+            include_income=False,
+        )
+        .solve(params=params, log_level="debug")
+        .values
+    )
 
     period = max(p for p in brute if _ALIVE in brute[p])
     np.testing.assert_allclose(

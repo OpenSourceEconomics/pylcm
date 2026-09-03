@@ -143,7 +143,7 @@ def _model(alive: Regime) -> Model:
 
 
 def _solve_period0_alive(model: Model) -> jnp.ndarray:
-    return model.solve(params=_PARAMS, log_level="debug")[0]["alive"]
+    return model.solve(params=_PARAMS, log_level="debug").values[0]["alive"]
 
 
 @pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)

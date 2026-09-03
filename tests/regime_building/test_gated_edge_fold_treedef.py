@@ -73,9 +73,7 @@ def test_gate_reading_the_flag_without_one_supplied_is_refused():
     Standing in for the flag here would answer "nobody dissolved" to a gate
     asking who did, so the mapping refuses to build instead.
     """
-    with pytest.raises(
-        NotImplementedError, match="period_to_regime_to_dissolution_flags"
-    ):
+    with pytest.raises(NotImplementedError, match="dissolution-flag array"):
         _build_mapping(gate=_dissolution_gate, supply_flag=False)
 
 

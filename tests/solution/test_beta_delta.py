@@ -22,6 +22,7 @@ import pytest
 from numpy.testing import assert_allclose
 
 from lcm import AgeGrid, LinSpacedGrid, Model, Phased, categorical
+from lcm.exceptions import InvalidSimulationInputError
 from lcm.regime import Regime as UserRegime
 from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
 
@@ -158,7 +159,6 @@ def _denominators_naive(*, beta, delta):
             ),
         ),
         ("naive", 0.7, 0.95),
-        ("naive_phase_variant", 0.7, 0.95),
     ],
 )
 def test_beta_delta_consumption(*, label, beta, delta):
@@ -182,12 +182,13 @@ def test_beta_delta_consumption(*, label, beta, delta):
         "regime_id": jnp.array([RegimeId.working]),
     }
 
-    if label == "naive_phase_variant":
-        # Solve with exponential H, simulate with beta-delta H
+    if label == "naive":
+        # Naivete is phase-specific behavior, not permission to replay a result
+        # under different parameters. Solve with exponential H and simulate with
+        # beta-delta H inside one model-authoritative parameterization.
         model = _make_model(
             H_func=Phased(solve=exponential_H, simulate=beta_delta_H),
         )
-        # Params are the union of both variants' params
         params = {
             "working": {
                 "koopmans_aggregator": {
@@ -201,23 +202,6 @@ def test_beta_delta_consumption(*, label, beta, delta):
             log_level="debug",
             params=params,
             initial_conditions=initial_conditions,
-            period_to_regime_to_V_arr=None,
-        )
-    elif label == "naive":
-        model = _make_model()
-        # Solve with exponential discounting (beta=1)
-        solve_params = {
-            "working": {"koopmans_aggregator": {"beta": 1.0, "delta": delta}}
-        }
-        period_to_regime_to_V_arr = model.solve(log_level="debug", params=solve_params)
-
-        # Simulate with present-biased params
-        sim_params = {"working": {"koopmans_aggregator": h_params}}
-        result = model.simulate(
-            log_level="debug",
-            params=sim_params,
-            initial_conditions=initial_conditions,
-            period_to_regime_to_V_arr=period_to_regime_to_V_arr,
         )
     else:
         model = _make_model()
@@ -225,7 +209,6 @@ def test_beta_delta_consumption(*, label, beta, delta):
             log_level="debug",
             params={"working": {"koopmans_aggregator": h_params}},
             initial_conditions=initial_conditions,
-            period_to_regime_to_V_arr=None,
         )
 
     df = result.to_dataframe().query('regime_name == "working"')
@@ -235,3 +218,32 @@ def test_beta_delta_consumption(*, label, beta, delta):
     # Tolerance accounts for grid discretization
     assert_allclose(got_c0, expected_c0, atol=0.15, rtol=0)
     assert_allclose(got_c1, expected_c1, atol=0.15, rtol=0)
+
+
+def test_solution_result_rejects_naive_parameter_substitution() -> None:
+    """A solved result cannot be replayed under different canonical parameters."""
+    model = _make_model()
+    solution = model.solve(
+        log_level="debug",
+        params={
+            "working": {
+                "koopmans_aggregator": {"beta": 1.0, "delta": 0.95},
+            },
+        },
+    )
+
+    with pytest.raises(InvalidSimulationInputError, match="params_fingerprint"):
+        model.simulate(
+            log_level="debug",
+            params={
+                "working": {
+                    "koopmans_aggregator": {"beta": 0.7, "delta": 0.95},
+                },
+            },
+            initial_conditions={
+                "age": jnp.array([0.0]),
+                "wealth": jnp.array([20.0]),
+                "regime_id": jnp.array([RegimeId.working]),
+            },
+            solution=solution,
+        )

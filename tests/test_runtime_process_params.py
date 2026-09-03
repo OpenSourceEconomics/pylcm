@@ -126,7 +126,7 @@ def test_solve_with_runtime_process():
     """Solve should work with runtime-supplied process params."""
     model = _make_model()
     params = {"discount_factor": 1.0, **_TAUCHEN_PARAMS}
-    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
+    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug").values
     assert len(period_to_regime_to_V_arr) > 0
 
 
@@ -140,5 +140,5 @@ def test_runtime_process_with_fixed_params():
         assert name not in income_params
 
     params = {"discount_factor": 1.0}
-    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug")
+    period_to_regime_to_V_arr = model.solve(params=params, log_level="debug").values
     assert len(period_to_regime_to_V_arr) > 0

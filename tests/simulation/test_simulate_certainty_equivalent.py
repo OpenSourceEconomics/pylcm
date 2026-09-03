@@ -39,7 +39,6 @@ def test_simulated_period0_consumption_matches_reference_policy():
             "health": initial_health,
             "regime_id": jnp.full(3, EZRegimeId.alive),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
     df = result.to_dataframe(use_labels=False)
@@ -82,7 +81,6 @@ def test_bad_health_cost_drains_wealth_in_simulation():
             ),
             "regime_id": jnp.full(n_subjects, EZRegimeId.alive),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
         seed=7,
     )
@@ -120,7 +118,6 @@ def test_bequest_scale_scales_the_dead_regime_utility():
             "health": jnp.full(n_subjects, HealthStatus.bad),
             "regime_id": jnp.full(n_subjects, EZRegimeId.alive),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
         seed=7,
     )
@@ -145,7 +142,6 @@ def _simulated_period0_consumption(
             "health": jnp.array([_Health.bad, _Health.good]),
             "regime_id": jnp.full(2, _RegimeId.alive),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
     df = result.to_dataframe(use_labels=False)

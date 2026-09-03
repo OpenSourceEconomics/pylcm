@@ -9,15 +9,19 @@ reproduce the closed-form consumption, including at resources strictly between
 action-grid nodes (where a grid argmax cannot land).
 """
 
+from collections.abc import Mapping
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from _lcm.egm.interp import interp_on_padded_grid
 from _lcm.egm.published_policy import EGMSimPolicy
+from _lcm.solution.backward_induction import solve as backward_induction_solve
+from _lcm.utils.logging import get_logger
 from lcm import AgeGrid, LogSpacedGrid, Model
 from lcm.regime import Regime as UserRegime
-from lcm.typing import ContinuousState, FloatND
+from lcm.typing import ContinuousState, FloatND, RegimeName, UserParams
 from lcm_examples.iskhakov_et_al_2017 import WEALTH_GRID
 from tests.conftest import EXACT_KERNEL_SKIP_REASON
 from tests.test_models.deterministic import retirement_only
@@ -50,6 +54,26 @@ def _two_period_bequest_model() -> Model:
     )
 
 
+def _kernel_published_policies(
+    *, model: Model, params: UserParams
+) -> Mapping[int, Mapping[RegimeName, object]]:
+    """Return every simulation policy the model's kernels publish, by period.
+
+    The public result keeps a policy only where forward simulation consumes it;
+    the kernel's own publication is read through the backward-induction result.
+    """
+    result = backward_induction_solve(
+        flat_params=model._process_params(params),
+        ages=model.ages,
+        regimes=model._regimes,
+        logger=get_logger(log_level="off"),
+        enable_jit=model.enable_jit,
+        collect_simulation_policies=True,
+        simulation_policy_regimes=None,
+    )
+    return result.simulation_policies
+
+
 def test_solve_publishes_policy_matching_closed_form_consumption():
     """Interpolating the published policy reproduces `c* = wealth / (1 + beta)`.
 
@@ -61,8 +85,8 @@ def test_solve_publishes_policy_matching_closed_form_consumption():
     discount_factor = 0.98
     params = get_retirement_only_params(n_periods=2, discount_factor=discount_factor)
 
-    _v, sim_policy = _two_period_bequest_model().solve(
-        params=params, log_level="debug", return_simulation_policy=True
+    sim_policy = _kernel_published_policies(
+        model=_two_period_bequest_model(), params=params
     )
 
     pol = sim_policy[0]["retirement"]
@@ -87,8 +111,8 @@ def test_published_policies_are_host_resident():
     induction. So the returned policy arrays live on the host (CPU) device.
     """
     params = get_retirement_only_params(n_periods=2, discount_factor=0.98)
-    _v, sim_policy = _two_period_bequest_model().solve(
-        params=params, log_level="debug", return_simulation_policy=True
+    sim_policy = _kernel_published_policies(
+        model=_two_period_bequest_model(), params=params
     )
 
     pol = sim_policy[0]["retirement"]

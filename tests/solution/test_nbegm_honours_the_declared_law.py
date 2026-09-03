@@ -95,9 +95,11 @@ def _params():
 def test_a_fixed_cost_in_the_law_reaches_the_nbegm_value(period):
     """`NBEGM` and a dense `GridSearch` agree on a law carrying a fixed cost."""
     params = _params()
-    nbegm = _model(variant="nbegm").solve(params=params, log_level="off")
-    brute = _model(variant="brute", n_consumption=1200).solve(
-        params=params, log_level="off"
+    nbegm = _model(variant="nbegm").solve(params=params, log_level="off").values
+    brute = (
+        _model(variant="brute", n_consumption=1200)
+        .solve(params=params, log_level="off")
+        .values
     )
 
     got = np.asarray(nbegm[period]["alive"])[_INTERIOR]

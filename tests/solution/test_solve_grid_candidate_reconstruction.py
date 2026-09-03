@@ -130,8 +130,12 @@ def test_the_admission_domain_follows_each_period_s_own_outer_grid() -> None:
         signature=lambda age: 0.0 if age == 20 else 6.0,
     )
 
-    period_to_regime_to_V_arr = n_nbegm_toy.build_model(
-        variant="n_nbegm", n_periods=4, illiquid_grid=reaches_higher_later
-    ).solve(params={"discount_factor": 0.95}, log_level="debug")
+    period_to_regime_to_V_arr = (
+        n_nbegm_toy.build_model(
+            variant="n_nbegm", n_periods=4, illiquid_grid=reaches_higher_later
+        )
+        .solve(params={"discount_factor": 0.95}, log_level="debug")
+        .values
+    )
 
     assert bool(jnp.isfinite(period_to_regime_to_V_arr[2]["alive"]).all())

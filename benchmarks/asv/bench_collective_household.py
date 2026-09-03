@@ -142,8 +142,8 @@ class CollectiveHouseholdSimulate:
 
     def _build(self, n_subjects):
         self.model, self.model_params = _make_model()
-        self.period_to_regime_to_V_arr, self.dissolution_flags = self.model.solve(
-            params=self.model_params, log_level="off", return_dissolution_flags=True
+        self.period_to_regime_to_V_arr = self.model.solve(
+            params=self.model_params, log_level="off"
         )
         self.initial_conditions = _make_initial_conditions(
             model=self.model, n_subjects=n_subjects
@@ -162,8 +162,7 @@ class CollectiveHouseholdSimulate:
         self.model.simulate(
             params=self.model_params,
             initial_conditions=self.initial_conditions,
-            period_to_regime_to_V_arr=self.period_to_regime_to_V_arr,
-            period_to_regime_to_dissolution_flags=self.dissolution_flags,
+            solution=self.period_to_regime_to_V_arr,
             log_level="off",
             seed=0,
         )

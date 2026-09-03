@@ -10,15 +10,16 @@ including block sizes that do not divide the grid.
 """
 
 import functools
+from collections.abc import Mapping
 
 import numpy as np
 import pytest
 
-from _lcm.typing import PeriodToRegimeToVArr
 from lcm import LinSpacedGrid, MarkovTransition, Model
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
 from lcm.solvers import DCEGM
+from lcm.typing import FloatND
 from tests.conftest import DECIMAL_PRECISION, EXACT_KERNEL_SKIP_REASON
 from tests.solution.test_egm_batch_size_euler import (
     CONSUMPTION_GRID,
@@ -90,8 +91,8 @@ def _model(savings_batch_size: int) -> Model:
     )
 
 
-def _solve(savings_batch_size: int) -> PeriodToRegimeToVArr:
-    return _model(savings_batch_size).solve(params=_params(), log_level="debug")
+def _solve(savings_batch_size: int) -> Mapping[int, Mapping[str, FloatND]]:
+    return _model(savings_batch_size).solve(params=_params(), log_level="debug").values
 
 
 @pytest.mark.parametrize("savings_batch_size", [1, 7, N_SAVINGS])

@@ -38,7 +38,7 @@ def _solve(*, variant: str, stochastic_node_batch_size: int = 0):
     model = toy.build_model(
         variant=variant, stochastic_node_batch_size=stochastic_node_batch_size
     )
-    return model.solve(params=toy.build_params(), log_level="debug")
+    return model.solve(params=toy.build_params(), log_level="debug").values
 
 
 def test_nbegm_stochastic_node_matches_dense_brute_force():

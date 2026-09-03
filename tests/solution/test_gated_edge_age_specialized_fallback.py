@@ -90,7 +90,7 @@ def test_leg_fallback_on_an_age_specialized_reference_is_read_at_its_own_age() -
     )
 
     aaae(
-        np.asarray(solution[1]["saver"]),
+        np.asarray(solution.values[1]["saver"]),
         _EXPECTED_SAVER_V_AT_AGE_1,
         decimal=DECIMAL_PRECISION,
     )
@@ -108,7 +108,7 @@ def test_leg_fallback_on_an_age_specialized_reference_discounts_into_the_prior_a
     )
 
     aaae(
-        np.asarray(solution[0]["saver"]),
+        np.asarray(solution.values[0]["saver"]),
         _EXPECTED_SAVER_V_AT_AGE_0,
         decimal=DECIMAL_PRECISION,
     )
@@ -128,7 +128,7 @@ def test_simulated_saver_value_agrees_with_backward_induction() -> None:
     result = model.simulate(
         params={"discount_factor": _DISCOUNT_FACTOR},
         initial_conditions=_initial_conditions(n_subjects=2),
-        period_to_regime_to_V_arr=solution,
+        solution=solution,
         log_level="debug",
     )
 
@@ -189,7 +189,7 @@ def _routed_rows() -> pd.DataFrame:
     result = model.simulate(
         params={"discount_factor": _DISCOUNT_FACTOR},
         initial_conditions=_initial_conditions(n_subjects=2),
-        period_to_regime_to_V_arr=solution,
+        solution=solution,
         log_level="debug",
     )
     return result.to_dataframe().query("period == 2")

@@ -405,7 +405,6 @@ def test_round_trip_with_discrete_model():
         log_level="debug",
         params=params,
         initial_conditions=raw_conditions,
-        period_to_regime_to_V_arr=None,
     )
 
     # DataFrame approach
@@ -425,7 +424,6 @@ def test_round_trip_with_discrete_model():
         log_level="debug",
         params=params,
         initial_conditions=df_conditions,
-        period_to_regime_to_V_arr=None,
     )
 
     df_raw = result_raw.to_dataframe()
@@ -776,7 +774,6 @@ def test_heterogeneous_health_solve_simulate() -> None:
         log_level="debug",
         params={"bonus": 0.0, "discount_factor": 0.95},
         initial_conditions=ic,
-        period_to_regime_to_V_arr=None,
     )
     out = result.to_dataframe()
 
@@ -816,7 +813,6 @@ def test_heterogeneous_health_simulate_use_labels_false() -> None:
         log_level="debug",
         params={"bonus": 0.0, "discount_factor": 0.95},
         initial_conditions=ic,
-        period_to_regime_to_V_arr=None,
     )
     out = result.to_dataframe(use_labels=False)
 
@@ -839,7 +835,7 @@ def _array_to_series(*, arr, model):
     """Convert a probs array to a labeled Series with named MultiIndex using ages."""
     partner_labels = ("single", "partnered")
     work_labels = ("work", "retire")
-    ages = model.ages.values  # noqa: PD011
+    ages = model.ages.values
 
     records = []
     for p in range(model.n_periods):
@@ -1059,7 +1055,7 @@ def _regime_array_to_series(*, arr, model):
     """Convert a regime probs array to a labeled Series using ages."""
     health_labels = ("bad", "good")
     regime_labels = ("alive", "dead")
-    ages = model.ages.values  # noqa: PD011
+    ages = model.ages.values
 
     records = []
     for period_idx in range(model.n_periods):
@@ -1163,7 +1159,7 @@ def _build_partner_probs_series(model: Model) -> pd.Series:
     """Build a 4D Series with age x labor_supply x partner x next_partner MultiIndex."""
     partner_labels = ("single", "partnered")
     work_labels = ("work", "retire")
-    ages = model.ages.values  # noqa: PD011
+    ages = model.ages.values
 
     records = []
     val = 1.0
@@ -1568,7 +1564,7 @@ def test_convert_series_with_derived_categoricals() -> None:
     labor_grid = DiscreteGrid(category_class=LaborSupply)
 
     # Build a Series indexed by age x labor_supply x partner x next_partner
-    ages = model.ages.values  # noqa: PD011
+    ages = model.ages.values
     records = []
     val = 1.0
     for period_idx in range(model.n_periods):

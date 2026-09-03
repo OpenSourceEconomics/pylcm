@@ -42,7 +42,6 @@ model_params = adapt_params_to_paper_mode(model_params)
 result = model.simulate(
     params=model_params,
     initial_conditions=initial_conditions,
-    period_to_regime_to_V_arr=None,
     log_level="debug",
     seed=8295,
 )

@@ -70,7 +70,6 @@ def test_collective_model_simulates_under_the_aot_program():
     result = model.simulate(
         params=params,
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
     _fail_if_aot_programs_missing(model=model, n_subjects=_N_SUBJECTS)
@@ -104,7 +103,6 @@ def test_gated_edge_model_simulates_under_the_aot_program():
     result = model.simulate(
         params=params,
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
     _fail_if_aot_programs_missing(model=model, n_subjects=_N_SUBJECTS)
@@ -137,7 +135,6 @@ def test_gate_evaluators_are_compiled_before_the_first_simulated_period():
             "age": jnp.zeros(_N_SUBJECTS),
             "regime_id": jnp.full(_N_SUBJECTS, ConsentRegimeId.single, dtype=jnp.int32),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
 

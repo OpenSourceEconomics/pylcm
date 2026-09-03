@@ -90,7 +90,7 @@ def test_action_maximizes_expected_continuation_not_each_realized_node(
         "target": {"utility": {}},
     }
 
-    source_value = model.solve(params=params, log_level="debug")[0]["source"]
+    source_value = model.solve(params=params, log_level="debug").values[0]["source"]
 
     np.testing.assert_array_almost_equal(source_value, 6.0, decimal=DECIMAL_PRECISION)
     assert not np.isclose(float(source_value), 8.0)

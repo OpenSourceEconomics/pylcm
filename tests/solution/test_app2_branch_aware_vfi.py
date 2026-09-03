@@ -52,7 +52,9 @@ def test_standard_vfi_oracle_reproduces_brute(
         n_consumption=n_consumption,
         n_periods=n_periods,
     )
-    solution = brute.solve(params=build_params(variant="brute"), log_level="debug")
+    solution = brute.solve(
+        params=build_params(variant="brute"), log_level="debug"
+    ).values
     oracle = solve_branch_aware_vfi(
         branch_aware=False,
         n_grid=n_grid,

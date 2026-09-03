@@ -232,6 +232,12 @@ feasible action choice at that node, and only then averages the resulting values
 the process's own quadrature weights. Consequently a folded period stores one fewer
 axis, but utility and the chosen action may still depend on the realized shock.
 
+For an eligible JIT `GridSearch` fold, pylcm evaluates the action product in bounded
+blocks at each shock node before applying that same quadrature. The fold-node axis
+itself is still evaluated and reduced in full: this route changes only action
+evaluation, not the stochastic rule or reduction order. Runtime and peak-memory effects
+require paired measurement.
+
 Forward simulation is unchanged economically. A subject entering from another regime
 draws the shock on that transition; a subject whose initial regime is the folding regime
 must seed the process state in `initial_conditions`. Subsequent IID transitions redraw

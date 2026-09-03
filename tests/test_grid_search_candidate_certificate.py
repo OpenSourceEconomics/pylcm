@@ -22,7 +22,10 @@ the sweep is sensitive to a dropped grid point wherever it is dropped — in the
 solver, in the product map, or upstream in the state-action space.
 
 The singleton, collective, and taste-shock reductions are separate code paths and
-all are swept. The taste-shock sweep uses candidate-distinct deterministic noise
+all are swept. The native program graph selects streaming only for the ordinary
+hard-max production routes: collective and EV1 production remains deliberately dense,
+while their sealed streaming implementations are non-production references. The
+taste-shock sweep uses candidate-distinct deterministic noise
 at the production draw seam, so it checks the continuous winner, the noisy
 discrete winner, the row-major flat index, and the returned unshocked value.
 `test_dropping_one_candidate_is_visible_to_the_sweep` masks one cell inside the
@@ -38,10 +41,11 @@ The standard-library AST
 proof rejects any extra assignment, branch, slice, index, mask, `where`, rank,
 gap, support-size, shape, or axis transformation. The collective path permits
 only the independently checked split of the trailing stakeholder axis and pins
-the shared scalarization, argmax, and gather implementations exactly. The two
-taste-shock routes additionally pin masking, continuous reduction, logsum,
-per-discrete-cell mean-zero Gumbel noise, and flat-index reconstruction, including
-the deep shared helper bodies. The construction and correctness of Q/F values
+the shared scalarization, argmax, and gather implementations exactly. The three
+taste-shock routes additionally pin masking, continuous reduction, the reference
+streamed branch-hard-max then dynamically bound log-sum-exp composition,
+per-discrete-cell mean-zero Gumbel noise, and flat-index reconstruction, including the
+deep shared helper bodies. The construction and correctness of Q/F values
 and feasibility—including user DAGs, constraints, transitions, interpolation,
 continuation arithmetic, and folded-process weights—is outside this certificate
 and remains owned by its dedicated semantic tests.
@@ -73,6 +77,7 @@ from numpy.testing import assert_array_almost_equal as aaae
 from _lcm.regime_building import max_Q_over_a as max_Q_over_a_module
 from _lcm.simulation import compile as simulation_compile_module
 from _lcm.simulation import simulate as simulation_module
+from _lcm.solution import action_streaming as action_streaming_module
 from _lcm.solution import grid_search as grid_search_module
 from lcm import (
     AgeGrid,
@@ -297,7 +302,7 @@ def _splatted_chains(*, node: ast.AST) -> set[str]:
 
 
 def test_build_period_kernels_passes_the_whole_action_name_tuple():
-    """The kernel builder hands `get_max_Q_over_a` the space's own action names.
+    """Both solve builders receive the state-action space's own action names.
 
     Anything that filtered, sliced or rebuilt the tuple here would shrink the
     search without shrinking the declared grids, which is exactly the omission
@@ -305,26 +310,47 @@ def test_build_period_kernels_passes_the_whole_action_name_tuple():
     """
     tree = _parse("src/_lcm/solution/grid_search.py")
     builder = _definition(tree=tree, qualname="GridSearch.build_period_kernels")
-    call = _calls_named(node=builder, name="get_max_Q_over_a")[0]
-
-    assert (
-        _chain(_keyword(call=call, name="action_names"))
-        == "context.state_action_space.action_names"
+    assignments = {
+        ast.unparse(target): ast.unparse(statement.value)
+        for statement in ast.walk(builder)
+        if isinstance(statement, ast.Assign)
+        for target in statement.targets
+        if isinstance(target, ast.Name)
+    }
+    assert assignments["action_names"] == "context.state_action_space.action_names"
+    common_kwargs = next(
+        statement.value
+        for statement in ast.walk(builder)
+        if isinstance(statement, ast.Assign)
+        and any(ast.unparse(target) == "common_kwargs" for target in statement.targets)
     )
+    assert isinstance(common_kwargs, ast.Dict)
+    entries = {
+        ast.literal_eval(key): ast.unparse(value)
+        for key, value in zip(common_kwargs.keys, common_kwargs.values, strict=True)
+        if isinstance(key, ast.Constant)
+    }
+    assert entries["action_names"] == "action_names"
 
 
-@pytest.mark.parametrize("method", ["build_lower_args", "__call__"])
-def test_period_kernel_splats_the_whole_action_mapping(method: str):
-    """Lowering and the call both splat the state-action space's whole actions.
-
-    The compiled core is lowered against the same mapping it is called with, so
-    a subset in either place would silently compile a smaller search than the
-    one the other announces.
-    """
+def test_native_argument_builder_splats_the_whole_action_mapping():
+    """The sole lowering/runtime builder splats the complete action mapping."""
     tree = _parse("src/_lcm/solution/grid_search.py")
-    kernel = _definition(tree=tree, qualname=f"_GridSearchPeriodKernel.{method}")
+    builder = _definition(tree=tree, qualname="_GridSearchArgumentBuilder.__call__")
 
-    assert "state_action_space.actions" in _splatted_chains(node=kernel)
+    assert "state_action_space.actions" in _splatted_chains(node=builder)
+
+
+def test_period_kernel_runtime_uses_the_declared_argument_builder():
+    """Runtime calls the exact builder stored in the native program declaration."""
+    tree = _parse("src/_lcm/solution/grid_search.py")
+    kernel = _definition(tree=tree, qualname="_GridSearchPeriodKernel.__call__")
+
+    assert any(
+        _chain(call.func) == "program.argument_builder"
+        for call in ast.walk(kernel)
+        if isinstance(call, ast.Call)
+    )
 
 
 def test_actions_are_product_mapped_over_the_whole_action_tuple():
@@ -452,6 +478,7 @@ def test_q_and_f_arrays_reach_full_reducers_without_candidate_transformation():
     assert isinstance(_parse("src/_lcm/regime_building/collective.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/logsum.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/regime_building/processing.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/execution/output_layout.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/utils/dispatchers.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/utils/functools.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/utils/containers.py"), ast.Module)
@@ -496,16 +523,34 @@ def test_q_and_f_arrays_reach_full_reducers_without_candidate_transformation():
     assert tuple(sorted(result["certified_corridor_sources"])) == CERTIFIED_SOURCES
 
 
+def test_streamed_reducer_sources_are_literal_certificate_obligations():
+    """The generated inventory owns every live streamed transport helper."""
+    assert isinstance(_parse("src/_lcm/execution/core_program.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/execution/value_transfer.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/solution/action_streaming.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/solution/action_reduction.py"), ast.Module)
+    assert isinstance(
+        _parse("src/_lcm/solution/collective_action_reduction.py"), ast.Module
+    )
+    assert isinstance(
+        _parse("src/_lcm/solution/logsumexp_action_reduction.py"), ast.Module
+    )
+    assert isinstance(_parse("src/_lcm/solution/period_replay.py"), ast.Module)
+
+
 def test_direct_flow_certificate_names_every_supported_route():
-    """The universal proof covers both taste-shock routes as first-class routes."""
+    """The universal proof names every dense and streamed choice route."""
     result = verify_direct_candidate_flow(repo_root=_SRC_ROOT.parent)
 
     assert set(result["routes"]) == {
         "singleton_solve",
+        "singleton_streamed_solve",
         "singleton_simulate",
         "collective_solve",
+        "collective_streamed_solve",
         "collective_simulate",
         "taste_shock_solve",
+        "taste_shock_streamed_solve",
         "taste_shock_simulate",
     }
 
@@ -570,6 +615,7 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         "shared_collective:argmax_module_shadow",
         "shared_productmap:drop_last_axis",
         "shared_functools:drop_last_argument",
+        "shared_functools:positional_origin_reverted",
         "shared_containers:duplicate_threshold",
         "shared_zero_safe:ordered_sum_slice",
         "shared_probability:unbalanced_product",
@@ -610,20 +656,179 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         "candidate_materialization:negate_cast_runtime_points",
         "candidate_materialization:negate_series_runtime_points",
         "candidate_materialization:negate_fixed_runtime_points",
+        "native_graph:function_wrapped",
+        "native_graph:argument_builder_wrapped",
+        "native_graph:requirements_erased",
+        "native_graph:collective_output_role_dropped",
+        "native_graph:planned_disposition_forced_dense",
+        "native_graph:dense_reason_erased",
+        "native_graph:donation_candidates_changed",
+        "native_graph:duplicate_legacy_cores_authority",
+        "native_graph:duplicate_legacy_builder_authority",
+        "native_graph:duplicate_core_authority",
+        "native_graph:duplicate_streamed_core_authority",
+        "native_graph:duplicate_unwrapped_core_authority",
+        "native_graph:program_name_rebound",
+        "native_graph:mapping_key_rebound",
+        "native_graph:published_mapping_filtered",
+        "native_graph:fixed_function_filtered",
+        "native_builder:next_values_filtered",
+        "native_builder:period_shifted",
+        "native_builder:runtime_bypasses_declared_builder",
+        "streaming_provider:action_names_slice",
+        "streaming_provider:action_extents_slice",
+        "streaming_width_selector:suffix_search_truncated",
+        "streaming_width_selector:flat_params_omitted",
+        "streaming_width_selector:q_arguments_omitted",
+        "streaming_width_selector:pareto_params_omitted",
+        "streaming_width_transport:streamed_function_keyword_desynchronized",
+        "streaming_width_transport:core_program_keyword_desynchronized",
+        "streaming_width_transport:colliding_q_argument_filtered",
+        "streaming_width_transport:colliding_q_argument_substituted",
+        "streaming_fold:width_keyword_renamed",
+        "streaming_width_builder:collision_validation_removed",
+        "streaming_provider:fold_route_disabled",
+        "streaming_provider:co_map_route_disabled",
+        "streaming_provider:co_map_reference_guard_bypassed",
+        "streaming_fold:rejection_restored",
+        "streaming_fold:productmap_output_filtered",
+        "streaming_classifier:collective_ev1_admitted",
+        "streaming_classifier:ev1_fold_admitted",
+        "streaming_classifier:collective_fold_admitted",
+        "streaming_classifier:ev1_without_discrete_action_admitted",
+        "streaming_classifier:jit_disabled_gate_reintroduced",
+        "streaming_classifier:trivial_product_admitted",
+        "streaming_classifier:category_suffix_selected",
+        "streaming_classifier:ev1_reason_changed",
+        "streaming_classifier:collective_reason_changed",
+        "streaming_classifier:ev1_gate_bypassed",
+        "streaming_classifier:collective_resource_gate_bypassed",
+        "streaming_classifier:ev1_precedes_trivial_product",
+        "streaming_classifier:collective_precedes_co_map",
+        "streaming_fold:reduction_after_co_map",
+        "streaming_fold:signature_positionalized",
+        "streaming_fold:width_signature_dropped",
+        "streaming_fold:width_forwarding_filtered",
+        "streaming_co_map:inner_state_reincluded",
+        "streaming_co_map:state_order_reversed",
+        "streaming_co_map:continuation_axes_broadcast",
+        "streaming_co_map:continuation_axes_forced",
+        "streaming_co_map:layout_validation_bypassed",
+        "streaming_dispatch:bypass_compiled_core",
+        "streaming_collective:builder_dissolution_inverted",
+        "streaming_collective:builder_stakeholder_axis_sliced",
+        "streaming_collective:published_dissolution_inverted",
+        "streaming_ev1:runtime_scale_constant",
+        "streaming_ev1:scale_signature_dropped",
+        "streaming_ev1:published_value_negated",
+        "streaming_ev1:composite_version_changed",
+        "streaming_ev1:hard_max_semantic_key_dropped",
+        "streaming_ev1:logsum_semantic_key_dropped",
+        "streaming_ev1:scale_rebound",
+        "streaming_ev1:continuous_extent_changed",
+        "streaming_ev1:skip_last_block",
+        "streaming_ev1:admit_padded_tail",
+        "streaming_ev1:admit_padded_branch_tail",
+        "streaming_ev1:branch_identity_shifted",
+        "streaming_ev1:branch_transition_ignored",
+        "streaming_ev1:branch_value_negated",
+        "streaming_ev1:last_branch_not_flushed",
+        "streaming_ev1:reverse_block_order",
+        "streaming_logsumexp:filter_first_branch",
+        "streaming_logsumexp:ignore_right_partial",
+        "streaming_logsumexp:scale_dropped_at_finalize",
+        "streaming_logsumexp:semantic_key_changed",
+        "streaming_logsumexp:bind_negates_scale",
+        "terminal_wrapper:native_graph_dropped",
+        "terminal_wrapper:native_graph_filtered",
+        "terminal_wrapper:duplicate_legacy_authority",
+        "streaming_resolver:bypass_static_width_binding",
+        "streaming_resolver:arguments_filtered",
+        "streaming_resolver:specialization_drops_axes",
+        "streaming_resolver:output_roles_dropped",
+        "streaming_blocks:skip_last_block",
+        "streaming_blocks:admit_padded_tail",
+        "streaming_blocks:block_local_action_ids",
+        "streaming_blocks:reverse_coordinate_decode",
+        "streaming_hard_max:filter_last_identity",
+        "streaming_collective_blocks:skip_last_block",
+        "streaming_collective_blocks:admit_padded_tail",
+        "streaming_collective_blocks:block_local_action_ids",
+        "streaming_collective_blocks:objective_uses_first_stakeholder",
+        "streaming_hard_max:ignore_right_partial",
+        "streaming_hard_max:signed_zero_normalization_bypassed",
+        "streaming_hard_max:semantic_key_changed",
+        "native_graph:solve_collection_bypasses_central_validator",
+        "native_graph:materialized_program_filtered",
+        "native_graph:initial_widths_bypassed",
+        "native_graph:aot_resolved_function_bypassed",
+        "streaming_collective_hard_max:filter_last_identity",
+        "streaming_collective_hard_max:ignore_right_partial",
+        "streaming_collective_hard_max:signed_zero_normalization_bypassed",
+        "streaming_collective_hard_max:semantic_key_changed",
+        "streaming_collective_hard_max:stakeholder_gather_decoupled",
+        "streaming_collective_hard_max:winner_identity_shifted",
+        "native_graph:aot_resolved_arguments_bypassed",
+        "native_graph:specialization_dropped",
+        "native_graph:eager_resolved_function_bypassed",
+        "period_replay:central_graph_validator_bypassed",
+        "period_replay:materialized_program_filtered",
+        "period_replay:shared_resolver_bypassed",
+        "value_access:grid_reachable_targets_dropped",
+        "value_access:grid_gated_kind_bypassed",
+        "value_access:grid_same_period_shifted",
+        "value_access:grid_edge_reference_omitted",
+        "value_access:grid_program_declarations_dropped",
+        "value_access:grid_consumer_path_rebound",
+        "value_access:grid_edge_refs_widened",
+        "value_access:core_requirements_erased",
+        "value_access:core_plan_match_bypassed",
+        "value_access:core_metadata_check_bypassed",
+        "value_access:core_lowering_plan_bypassed",
+        "value_access:core_specialization_dropped",
+        "value_access:core_consumer_channel_rebound",
+        "value_transfer:runtime_plan_bypassed",
+        "value_transfer:runtime_plan_truncated",
+        "value_transfer:planned_core_plan_erased",
+        "value_transfer:backward_source_coordinate_check_bypassed",
+        "value_transfer:backward_actual_source_rebound",
+        "value_transfer:backward_resolver_plan_omitted",
+        "value_transfer:backward_node_plan_dropped",
+        "value_transfer:backward_copy_uses_output_spec",
+        "value_transfer:backward_cross_mesh_admitted",
+        "value_transfer:backward_unsupported_conversion_admitted",
+        "value_transfer:aligned_value_sliced",
+        "value_transfer:copy_value_sliced",
+        "value_transfer:stored_metadata_check_bypassed",
+        "value_transfer:plan_skips_last",
+        "value_transfer:consumer_channel_ignored",
+        "value_transfer:edge_identity_check_bypassed",
+        "value_transfer:copy_destination_ignored",
+        "value_transfer:duplicate_consumer_admitted",
     }
     required.update(
         f"{route}:candidate_index_{index}"
         for route in ("taste_shock_solve", "taste_shock_simulate")
         for index in range(len(_CANDIDATES))
     )
+    required.update(
+        f"streaming_blocks:candidate_index_{index}" for index in range(len(_CANDIDATES))
+    )
+    required.update(
+        f"streaming_collective_blocks:candidate_index_{index}"
+        for index in range(len(_CANDIDATES))
+    )
+    required.update(
+        f"streaming_ev1:candidate_index_{index}" for index in range(len(_CANDIDATES))
+    )
 
     assert required <= names
     # Independent literals make both cardinality and family identity part of this
     # certificate, rather than trusting constants supplied by the mutation generator.
-    assert len(names) == 176
+    assert len(names) == 354
     assert (
         hashlib.sha256(("\n".join(sorted(names)) + "\n").encode()).hexdigest()
-        == "fea9bb27d93337e16d2505c643660b3816cb37d5e87d3cb41a0a2e4baad4739f"
+        == "292027e67d3d50cae11661a67779a6efe8e2be4219af95bdf32177116824fb30"
     )
 
 
@@ -939,7 +1144,6 @@ def _simulate_dedup_model(*, model: Model, params: dict[str, Any]):
                 [DedupRegimeId.left, DedupRegimeId.right], dtype=jnp.int32
             ),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
     frame = result.to_dataframe(use_labels=False)
@@ -964,7 +1168,7 @@ def _solve_acting(
     params["acting"][function_name]["target_work"] = work
     params["acting"][function_name]["target_consumption"] = consumption
     params["acting"]["koopmans_aggregator"]["discount_factor"] = 0.5
-    return model.solve(params=params, log_level="debug")[0]["acting"]
+    return model.solve(params=params, log_level="debug").values[0]["acting"]
 
 
 @pytest.fixture(scope="module")
@@ -1129,7 +1333,6 @@ def _simulate_acting(
             "wealth": _WEALTH_VALUES,
             "regime_id": jnp.full(len(_WEALTH_VALUES), RegimeId.acting),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
     frame = result.to_dataframe(use_labels=False)
@@ -1216,7 +1419,7 @@ def _solve_mask_case(
 ) -> FloatND:
     """Solve one mask neighborhood and return the acting regime's value."""
     params = _params_for_mask(model=model, mask=mask, ranks=ranks)
-    return model.solve(params=params, log_level="debug")[0]["acting"]
+    return model.solve(params=params, log_level="debug").values[0]["acting"]
 
 
 def _simulate_mask_case(
@@ -1231,7 +1434,6 @@ def _simulate_mask_case(
             "wealth": _WEALTH_VALUES,
             "regime_id": jnp.full(len(_WEALTH_VALUES), RegimeId.acting),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
     frame = result.to_dataframe(use_labels=False)
@@ -1276,7 +1478,6 @@ def _simulate_materialization_case(
             "wealth": _WEALTH_VALUES,
             "regime_id": jnp.full(len(_WEALTH_VALUES), RegimeId.acting),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
     return _period_zero_action_views(result=result, regime_name="acting")
@@ -1442,7 +1643,6 @@ def _simulate_runtime_action_model(
             "wealth": _WEALTH_VALUES,
             "regime_id": jnp.full(len(_WEALTH_VALUES), RegimeId.acting),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
     return _period_zero_action_views(result=result, regime_name="acting")
@@ -1599,7 +1799,6 @@ def _simulate_taste_mask_case(
                 "wealth": _WEALTH_VALUES,
                 "regime_id": jnp.full(len(_WEALTH_VALUES), RegimeId.acting),
             },
-            period_to_regime_to_V_arr=None,
             log_level="debug",
             seed=409,
         )
@@ -1641,7 +1840,7 @@ def test_collapsing_plain_callable_dedup_keys_changes_the_published_candidate(
                 [DedupRegimeId.left, DedupRegimeId.right], dtype=jnp.int32
             ),
         },
-        period_to_regime_to_V_arr=values,
+        solution=values,
         log_level="debug",
     )
     frame = result.to_dataframe(use_labels=False)
@@ -1670,7 +1869,6 @@ def test_padded_heterogeneous_candidates_remain_subject_aligned(
             "wealth": jnp.asarray([1.0, 2.0, 1.0]),
             "regime_id": jnp.full(3, DedupRegimeId.left, dtype=jnp.int32),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
         subject_batch_size=2,
     )
@@ -1703,7 +1901,6 @@ def test_additional_targets_preserve_unbatched_selected_candidates(
             "wealth": jnp.asarray([1.0, 2.0, 1.0]),
             "regime_id": jnp.full(3, DedupRegimeId.left, dtype=jnp.int32),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
 
@@ -1785,7 +1982,6 @@ def _simulate_zero_weight_fold(model: Model) -> tuple[list[int], list[int], list
             "wealth": jnp.zeros(1),
             "regime_id": jnp.asarray([FoldRegimeId.src], dtype=jnp.int32),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
         seed=409,
     )
@@ -1869,7 +2065,6 @@ def _simulate_seeded_taste_routing(
             "wealth": jnp.ones(_RNG_N_SUBJECTS),
             "regime_id": jnp.full(_RNG_N_SUBJECTS, RegimeId.acting),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
         seed=409,
         subject_batch_size=subject_batch_size,
@@ -2141,36 +2336,17 @@ def test_masking_one_simulate_candidate_leaves_the_others_alone():
     assert rows["consumption"] == [_CONSUMPTION_VALUES[0]] * len(_WEALTH_VALUES)
 
 
-def _productmap_dropping_the_last_action_cell(
-    *, action_names: frozenset[str]
-) -> Callable[..., Any]:
-    """Return a `productmap` that hides the last cell of the action product.
-
-    Args:
-        action_names: Names identifying the action product map, so the state
-            product map built by the same function is left alone.
+def _streaming_block_dropping_the_last_action_cell() -> Callable[..., Any]:
+    """Return an action-block evaluator that hides global candidate five.
 
     Returns:
-        A drop-in replacement for `productmap`.
+        A drop-in replacement for `_evaluate_block`.
     """
-    real = max_Q_over_a_module.productmap
+    real = action_streaming_module._evaluate_block
 
-    def patched(
-        *,
-        func: Any,
-        variables: tuple[str, ...],
-        batch_sizes: dict[str, int],
-    ) -> Any:
-        mapped = real(func=func, variables=variables, batch_sizes=batch_sizes)
-        if frozenset(variables) != action_names:
-            return mapped
-
-        @functools.wraps(mapped, assigned=("__name__", "__qualname__", "__doc__"))
-        def masked(**call_kwargs: Any) -> Any:
-            Q_arr, F_arr = mapped(**call_kwargs)
-            return Q_arr, F_arr.at[..., -1].set(False)  # noqa: PD008
-
-        return masked
+    def patched(**kwargs: Any) -> Any:
+        values, feasible, global_ids = real(**kwargs)
+        return values, feasible & (global_ids != 5), global_ids
 
     return patched
 
@@ -2189,11 +2365,9 @@ def _solve_with_the_last_action_cell_dropped(
     """
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(
-            max_Q_over_a_module,
-            "productmap",
-            _productmap_dropping_the_last_action_cell(
-                action_names=frozenset({"work", "consumption"})
-            ),
+            action_streaming_module,
+            "_evaluate_block",
+            _streaming_block_dropping_the_last_action_cell(),
         )
         model = _build_model(
             utility=_labelled_utility,

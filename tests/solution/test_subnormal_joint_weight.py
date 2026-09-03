@@ -259,7 +259,7 @@ def test_a_model_whose_joint_node_underflows_still_solves() -> None:
     V = model.solve(
         params={"alive": {"koopmans_aggregator": {"discount_factor": 1.0}}},
         log_level="off",
-    )
+    ).values
 
     np.testing.assert_allclose(
         np.asarray(V[0]["alive"]), np.broadcast_to(_WEALTH_VALUES, (2, 2, 4))

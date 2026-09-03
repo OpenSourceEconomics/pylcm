@@ -108,7 +108,7 @@ def test_a_negative_regime_probability_is_refused_even_at_unit_mass(
     V = model.solve(
         params=_PARAMS if certainty_equivalent is None else _POWER_MEAN_PARAMS,
         log_level="off",
-    )
+    ).values
 
     assert bool(jnp.all(jnp.isnan(jnp.asarray(V[0]["source"]))))
 
@@ -117,7 +117,7 @@ def test_a_well_formed_regime_transition_is_untouched() -> None:
     """`0.25` and `0.75` pay `0.25 * w + 0.75 * 10w = 7.75 * w`."""
     model = _build(probability_a=0.25, probability_b=0.75)
 
-    V = model.solve(params=_PARAMS, log_level="off")
+    V = model.solve(params=_PARAMS, log_level="off").values
 
     np.testing.assert_allclose(
         np.asarray(V[0]["source"]),

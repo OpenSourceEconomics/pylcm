@@ -156,7 +156,9 @@ _PARAMS = {"source": {"koopmans_aggregator": {"discount_factor": 1.0}}}
 
 
 def _source_value(*, model: Model, log_level: LogLevel = "off") -> FloatND:
-    return jnp.asarray(model.solve(params=_PARAMS, log_level=log_level)[0]["source"])
+    return jnp.asarray(
+        model.solve(params=_PARAMS, log_level=log_level).values[0]["source"]
+    )
 
 
 def test_a_subnormal_weight_on_a_finite_value_drops() -> None:
@@ -184,7 +186,7 @@ def test_a_subnormal_weight_drops_under_a_nonlinear_aggregator() -> None:
             "certainty_equivalent": {"risk_aversion": 2.0},
         }
     }
-    value = jnp.asarray(model.solve(params=params, log_level="off")[0]["source"])
+    value = jnp.asarray(model.solve(params=params, log_level="off").values[0]["source"])
 
     np.testing.assert_allclose(np.asarray(value), 1.0)
 
@@ -322,7 +324,7 @@ def test_the_smallest_subnormal_keeps_its_true_nonlinear_weight() -> None:
         }
     }
 
-    got = jnp.asarray(model.solve(params=params, log_level="off")[0]["source"])
+    got = jnp.asarray(model.solve(params=params, log_level="off").values[0]["source"])
 
     np.testing.assert_allclose(
         np.asarray(got),

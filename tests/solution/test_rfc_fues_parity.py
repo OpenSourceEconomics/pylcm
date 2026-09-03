@@ -92,11 +92,15 @@ def test_rfc_matches_fues_on_concave_retirement(n_periods):
     """
     params = get_retirement_only_params(n_periods=n_periods)
 
-    fues = _retirement_only_model(envelope="fues", n_periods=n_periods).solve(
-        params=params, log_level="debug"
+    fues = (
+        _retirement_only_model(envelope="fues", n_periods=n_periods)
+        .solve(params=params, log_level="debug")
+        .values
     )
-    rfc = _retirement_only_model(envelope="rfc", n_periods=n_periods).solve(
-        params=params, log_level="debug"
+    rfc = (
+        _retirement_only_model(envelope="rfc", n_periods=n_periods)
+        .solve(params=params, log_level="debug")
+        .values
     )
 
     for period in sorted(fues)[:-1]:
@@ -157,7 +161,7 @@ def test_rfc_publishes_neg_inf_for_all_infeasible_combo_like_fues():
         )
 
     params = get_full_params(n_periods=n_periods, discount_factor=0.98, wage=20.0)
-    rfc = build("rfc").solve(params=params, log_level="debug")
+    rfc = build("rfc").solve(params=params, log_level="debug").values
 
     for period in sorted(rfc)[:-1]:
         working_V = np.asarray(rfc[period]["working_life"])
@@ -177,11 +181,15 @@ def test_rfc_matches_fues_on_discrete_choice_working_life(n_periods):
     """
     params = get_full_params(n_periods=n_periods, discount_factor=0.98, wage=20.0)
 
-    fues = _full_model(envelope="fues", n_periods=n_periods).solve(
-        params=params, log_level="debug"
+    fues = (
+        _full_model(envelope="fues", n_periods=n_periods)
+        .solve(params=params, log_level="debug")
+        .values
     )
-    rfc = _full_model(envelope="rfc", n_periods=n_periods).solve(
-        params=params, log_level="debug"
+    rfc = (
+        _full_model(envelope="rfc", n_periods=n_periods)
+        .solve(params=params, log_level="debug")
+        .values
     )
 
     n_unstable_low_nodes = 10
@@ -206,11 +214,15 @@ def test_rfc_handles_discount_factor_zero_like_fues():
     n_periods = 3
     params = get_retirement_only_params(n_periods=n_periods, discount_factor=0.0)
 
-    fues = _retirement_only_model(envelope="fues", n_periods=n_periods).solve(
-        params=params, log_level="debug"
+    fues = (
+        _retirement_only_model(envelope="fues", n_periods=n_periods)
+        .solve(params=params, log_level="debug")
+        .values
     )
-    rfc = _retirement_only_model(envelope="rfc", n_periods=n_periods).solve(
-        params=params, log_level="debug"
+    rfc = (
+        _retirement_only_model(envelope="rfc", n_periods=n_periods)
+        .solve(params=params, log_level="debug")
+        .values
     )
 
     for period in sorted(fues)[:-1]:

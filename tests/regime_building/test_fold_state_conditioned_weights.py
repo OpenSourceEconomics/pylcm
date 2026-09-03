@@ -192,7 +192,9 @@ def test_each_category_folds_against_its_own_quadrature_row(risk: str) -> None:
     nodes = _nodes()
     model = _conditioned_model()
 
-    V0 = np.asarray(model.solve(params=_params(), log_level="debug")[0]["period0"])
+    V0 = np.asarray(
+        model.solve(params=_params(), log_level="debug").values[0]["period0"]
+    )
 
     assert V0.shape == (len(SIGMA_BY_RISK),)
     np.testing.assert_almost_equal(
@@ -209,7 +211,9 @@ def test_the_two_categories_do_not_share_one_folded_value() -> None:
     decision rather than through the tolerance on the two levels.
     """
     V0 = np.asarray(
-        _conditioned_model().solve(params=_params(), log_level="debug")[0]["period0"]
+        _conditioned_model()
+        .solve(params=_params(), log_level="debug")
+        .values[0]["period0"]
     )
 
     assert V0[int(RiskType.low)] < V0[int(RiskType.high)]
@@ -222,12 +226,14 @@ def test_high_risk_cell_matches_the_unconditioned_fold() -> None:
     through the unconditioned code path — a second route to the same number.
     """
     conditioned = np.asarray(
-        _conditioned_model().solve(params=_params(), log_level="debug")[0]["period0"]
+        _conditioned_model()
+        .solve(params=_params(), log_level="debug")
+        .values[0]["period0"]
     )
     unconditioned = np.asarray(
-        _unconditioned_model(sigma=SIGMA_BY_RISK["high"]).solve(
-            params=_params(), log_level="debug"
-        )[0]["period0"]
+        _unconditioned_model(sigma=SIGMA_BY_RISK["high"])
+        .solve(params=_params(), log_level="debug")
+        .values[0]["period0"]
     )
 
     np.testing.assert_almost_equal(

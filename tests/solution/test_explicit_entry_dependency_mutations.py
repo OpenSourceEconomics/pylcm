@@ -94,7 +94,7 @@ def _wealth_utility(*, wealth: ScalarFloat, shock: ScalarFloat) -> FloatND:
 
 
 def _source_value(*, model: Model, params: dict) -> float:
-    solution = model.solve(params=params, log_level="debug")
+    solution = model.solve(params=params, log_level="debug").values
     period = max(p for p in solution if "source" in solution[p])
     return float(np.asarray(solution[period]["source"]).ravel()[0])
 

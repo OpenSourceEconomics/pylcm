@@ -44,7 +44,7 @@ def test_collective_utilities_may_come_from_the_model_level_slot():
         functions=utilities,
     )
 
-    solution = broadcast_model.solve(params=params, log_level="debug")
+    solution = broadcast_model.solve(params=params, log_level="debug").values
 
     aaae(solution[0]["couple"], TWO_STAKEHOLDER_V_PERIOD_0, decimal=DECIMAL_PRECISION)
 
@@ -69,6 +69,6 @@ def test_collective_discrete_action_may_come_from_the_model_level_slot():
         actions={"work": DiscreteGrid(category_class=Work)},
     )
 
-    solution = broadcast_model.solve(params=params, log_level="debug")
+    solution = broadcast_model.solve(params=params, log_level="debug").values
 
     aaae(solution[0]["couple"], TWO_STAKEHOLDER_V_PERIOD_0, decimal=DECIMAL_PRECISION)

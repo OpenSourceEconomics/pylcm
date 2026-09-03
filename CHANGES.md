@@ -7,6 +7,42 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### PR #433 execution planning and result convergence
+
+- `Model.solve()` returns a `SolutionResult` and is the only public solve entry
+  point. `solve_result()`, mapping and tuple returns, `return_simulation_policy`,
+  and `return_dissolution_flags` are removed; `simulate(solution=...)` consumes the
+  complete result, and omitting `solution` solves automatically. The result carries
+  values, replay artifacts, metadata, and explicit omission reasons, and the model
+  that produced it authenticates every value and replay cell on simulation.
+- One native `CoreProgram` graph per `GridSearch` period kernel is the sole
+  authority for each core's function, argument builder, execution requirements,
+  value reads, output roles, execution disposition, and reason. Eager, JIT,
+  ahead-of-time, liveness, output-layout, and period-replay paths resolve the same
+  graph through one seam; unmigrated endogenous-grid kernels cross one fail-closed
+  legacy adapter. A kernel publishing both a native graph and a legacy declaration
+  is rejected at build.
+- Streamed action reduction is planned per program with an explicit disposition and
+  reason. Singleton expected-value (EV1) reductions and collective hard-max
+  reductions stay dense by disposition: blockwise grouping changes the canonical
+  floating-point reduction order, and the collective streamed row regressed every
+  measured resource surface. The transition ledger in
+  `docs/development/architecture_transition_ledger.md` records each remaining bridge
+  with its retirement condition.
+- The fp32/fp64 candidate certificate binds the native graph: seals, AST hashes,
+  and 354 synchronized mutations cover duplicate authority, wrapped or rebound
+  functions and builders, erased requirements, roles, and reasons, forced
+  dispositions, and eager/AOT/replay bypasses.
+- The backward-induction diagnostics fold combines per-period scalars across value
+  arrays with different device placements: a planned single-device layout is
+  committed, and a mesh-sharded neighbour is moved onto the running flag's placement
+  before it is combined.
+- A gated edge into a stateless target is gated in solve: the source's continuation
+  applies the gate and the leg fallbacks to the target's folded channel stack, so a
+  closed gate pays the projected fallback. Previously the dense action reduction
+  silently reduced over the channel axis and the source always paid the target's own
+  value.
+
 ### PR #390 maintainer-review follow-up
 
 - `ConsumptionSavingsRegime` and `NestedConsumptionSavingsRegime` declare the

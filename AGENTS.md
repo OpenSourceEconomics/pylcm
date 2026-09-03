@@ -387,15 +387,13 @@ per-declaration.
 
 ### Core Methods
 
-- `model.solve(params=params, log_level="debug")` - Solve the model and return value
-  function arrays per period and regime
-- `model.simulate(params=params, initial_conditions=initial_conditions, period_to_regime_to_V_arr=period_to_regime_to_V_arr, log_level="debug")`
-  \- Simulate forward given solution. `period_to_regime_to_V_arr` is optional; when
-  `None`, the model is solved automatically before simulating.
-- `model.solve(params=params, log_level="debug", return_dissolution_flags=True)`
-  additionally returns each collective regime's dissolution flags; pass them back as
-  `simulate(period_to_regime_to_dissolution_flags=...)`. A gate that reads `D_target`
-  needs them — letting `simulate` solve for you threads them automatically.
+- `model.solve(params=params, log_level="debug")` - Solve the model and return a
+  `SolutionResult`; value arrays live in `solution.values`
+- `model.simulate(params=params, initial_conditions=initial_conditions, solution=solution, log_level="debug")`
+  \- Simulate forward from the complete result. Omit `solution` to solve automatically.
+- Collective dissolution flags are addressed replay artifacts in `SolutionResult`;
+  `simulate(solution=...)` validates and projects them. Automatic simulation threads
+  them directly.
 - `log_level` is **required** on both `solve()` and `simulate()`
   (`off < warning < progress < debug`). It governs all runtime validation: `"off"` skips
   it, `"warning"` / `"progress"` warn and continue, `"debug"` raises. Start projects at
@@ -563,7 +561,6 @@ resources = lcm.cash_on_hand_with_subsidy
 result = model.simulate(
     params=params,
     initial_conditions=initial_conditions,
-    period_to_regime_to_V_arr=None,
     log_level="debug",
 )
 
@@ -604,6 +601,20 @@ from pathlib import Path
 result.save(directory=Path("path/to/dir"))
 loaded = SimulationResult.load(directory=Path("path/to/dir"))
 ```
+
+### SolutionResult
+
+`model.solve()` returns an `lcm.solver_api.SolutionResult` that keeps values, artifacts,
+metadata, and explicit omission reasons separate; its default retention keeps replay
+artifacts. `model.simulate(solution=...)` unconditionally checks that the result came
+from the same model instance (whose token survives a pickle round trip), used the exact
+canonical parameters, and supplies valid required built-in artifacts. Returned value
+schemas and replay metadata are descriptive: both they and their payloads are checked
+independently against immutable descriptors owned by the producing and consuming model.
+Those descriptors come from the canonical model and parameters, plus private solve-side
+facts for data-dependent adaptive axes, and include exact dtypes, ordered axes, action
+roles, and categorical domains. `SolutionResult` persistence and a stable out-of-tree
+solver plugin API are not implemented yet.
 
 ### Initial Conditions Format
 

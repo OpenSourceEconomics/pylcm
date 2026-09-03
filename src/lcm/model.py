@@ -2,19 +2,21 @@
 
 import logging
 import threading
+import uuid
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
-from typing import Literal, cast, overload
+from typing import cast
 
 import jax
+import numpy as np
 import pandas as pd
 from beartype import beartype
 
 from _lcm.beartype_conf import MODEL_CONF, PARAMS_CONF
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
-from _lcm.egm.published_policy import NNBEGMSimPolicy
-from _lcm.engine import NNBEGMPolicyRead
+from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
+from _lcm.engine import EGMPolicyRead, NNBEGMPolicyRead
 from _lcm.grids import DiscreteGrid
 from _lcm.model_processing import (
     _validate_param_types,
@@ -60,30 +62,41 @@ from _lcm.simulation.initial_conditions import (
 )
 from _lcm.simulation.result_metadata import _get_output_dtypes
 from _lcm.simulation.simulate import simulate
+from _lcm.solution.artifacts import (
+    build_solution_result,
+    fingerprint_flat_params,
+)
 from _lcm.solution.backward_induction import (
     _build_base_state_action_spaces,
     _reject_edge_fold_state_param_collisions,
     solve,
 )
 from _lcm.solution.contract import BackwardInductionResult
+from _lcm.solution.model_authority import (
+    SolutionAuthority,
+    bind_generated_solution_authority,
+    build_solution_authority,
+)
 from _lcm.solution.preconditions import (
     check_pareto_weights,
     check_solver_params,
 )
-from _lcm.solution.v_topology import expected_V_rank
-from _lcm.solution.validate_V import contains_nan, validate_supplied_V_shapes
+from _lcm.solution.replay_validation import (
+    validate_egm_sim_policy,
+    validate_nested_egm_sim_policy,
+    validate_nnbegm_sim_policy,
+)
+from _lcm.solution.validate_V import contains_nan
 from _lcm.transition_checks import validate_transitions
 from _lcm.typing import (
     FlatParams,
     FunctionName,
-    ModelSolveReturn,
     ParamsTemplate,
     PeriodToRegimeToDissolutionFlags,
     PeriodToRegimeToSimulationPolicy,
     PeriodToRegimeToVArr,
     RegimeName,
     RegimeNamesToIds,
-    SimulationPolicy,
 )
 from _lcm.utils.containers import (
     ensure_containers_are_immutable,
@@ -108,12 +121,38 @@ from lcm.exceptions import (
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import Regime as UserRegime
 from lcm.result import SimulationResult
+from lcm.solver_api import (
+    DISSOLUTION_FLAG,
+    SIMULATION_POLICY,
+    ArtifactKey,
+    ArtifactRef,
+    ArtifactStore,
+    OmissionReason,
+    ResultRetention,
+    SolutionMetadata,
+    SolutionResult,
+    ValueArraySchema,
+)
 from lcm.typing import (
     UserFacingParamsTemplate,
     UserFunction,
     UserInitialConditions,
     UserParams,
 )
+
+
+def _same_exactly_typed(*, actual: object, expected: object) -> bool:
+    """Compare trusted metadata without admitting equal values of another type."""
+    if type(actual) is not type(expected):
+        return False
+    if isinstance(expected, tuple):
+        if not isinstance(actual, tuple):
+            return False
+        return len(actual) == len(expected) and all(
+            _same_exactly_typed(actual=actual_item, expected=expected_item)
+            for actual_item, expected_item in zip(actual, expected, strict=True)
+        )
+    return bool(actual == expected)
 
 
 class Model:
@@ -285,6 +324,11 @@ class Model:
         self._simulate_compile_cache = {}
         self._warned_n_subjects = set()
         self._simulate_compile_lock = threading.Lock()
+        # In-memory result provenance. Kept in pickle state so a model and a
+        # result round-tripped together remain compatible, but deliberately not
+        # presented as a durable model-content fingerprint.
+        self._solution_model_instance_id = uuid.uuid4().hex
+        self._solution_authorities: dict[str, SolutionAuthority] = {}
 
         # The single canonical activity schedule: every regime's `active`
         # predicate is evaluated exactly once, here, and threaded through
@@ -405,8 +449,12 @@ class Model:
         return state
 
     def __setstate__(self, state: dict[str, object]) -> None:
-        """Restore AOT compile state to a fresh empty cache."""
+        """Restore transient state and backfill legacy solution identity."""
         self.__dict__.update(state)
+        if "_solution_model_instance_id" not in state:
+            self._solution_model_instance_id = uuid.uuid4().hex
+        if "_solution_authorities" not in state:
+            self._solution_authorities = {}
         self._simulate_compile_cache = {}
         self._warned_n_subjects = set()
         self._simulate_compile_lock = threading.Lock()
@@ -427,145 +475,40 @@ class Model:
 
         return cast("UserFacingParamsTemplate", _readable(mutable))
 
-    @overload
-    def solve(
-        self,
-        *,
-        params: UserParams,
-        log_level: LogLevel,
-        max_compilation_workers: int | None = ...,
-        log_path: str | Path | None = ...,
-        log_keep_n_latest: int = ...,
-        return_simulation_policy: Literal[False] = ...,
-        return_dissolution_flags: Literal[False] = ...,
-    ) -> PeriodToRegimeToVArr: ...
-
-    @overload
-    def solve(
-        self,
-        *,
-        params: UserParams,
-        log_level: LogLevel,
-        max_compilation_workers: int | None = ...,
-        log_path: str | Path | None = ...,
-        log_keep_n_latest: int = ...,
-        return_simulation_policy: Literal[True],
-        return_dissolution_flags: Literal[False] = ...,
-    ) -> tuple[PeriodToRegimeToVArr, PeriodToRegimeToSimulationPolicy]: ...
-
-    @overload
-    def solve(
-        self,
-        *,
-        params: UserParams,
-        log_level: LogLevel,
-        max_compilation_workers: int | None = ...,
-        log_path: str | Path | None = ...,
-        log_keep_n_latest: int = ...,
-        return_simulation_policy: Literal[False] = ...,
-        return_dissolution_flags: Literal[True],
-    ) -> tuple[PeriodToRegimeToVArr, PeriodToRegimeToDissolutionFlags]: ...
-
-    @overload
-    def solve(
-        self,
-        *,
-        params: UserParams,
-        log_level: LogLevel,
-        max_compilation_workers: int | None = ...,
-        log_path: str | Path | None = ...,
-        log_keep_n_latest: int = ...,
-        return_simulation_policy: Literal[True],
-        return_dissolution_flags: Literal[True],
-    ) -> tuple[
-        PeriodToRegimeToVArr,
-        PeriodToRegimeToSimulationPolicy,
-        PeriodToRegimeToDissolutionFlags,
-    ]: ...
-
-    @overload
-    def solve(
-        self,
-        *,
-        params: UserParams,
-        log_level: LogLevel,
-        max_compilation_workers: int | None = ...,
-        log_path: str | Path | None = ...,
-        log_keep_n_latest: int = ...,
-        return_simulation_policy: bool,
-        return_dissolution_flags: bool,
-    ) -> ModelSolveReturn: ...
-
     @beartype(conf=PARAMS_CONF)
     def solve(
         self,
         *,
         params: UserParams,
         log_level: LogLevel,
+        retention: ResultRetention = ResultRetention.VALUES_AND_REPLAY,
         max_compilation_workers: int | None = None,
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
-        return_simulation_policy: bool = False,
-        return_dissolution_flags: bool = False,
-    ) -> ModelSolveReturn:
-        """Solve the model by backward induction, using each regime's solver.
+    ) -> SolutionResult:
+        """Solve the model into a labelled, model-authoritative result.
+
+        The default keeps replay artifacts so every built-in solver decision can be
+        replayed by ``simulate(solution=result)``. ``retention`` affects only
+        artifacts kept after the solve; continuations required during backward
+        induction are always produced and consumed. Solver diagnostics remain
+        governed solely by ``log_level``.
+
+        The result is bound to this model instance and the exact canonical parameter
+        values used here. The instance identity survives a pickle round trip of the
+        model but is not a durable model fingerprint.
 
         Args:
-            params: Model parameters compatible with `get_params_template()`.
-                Parameters can be provided at exactly one of three levels:
-                - Model level: {"arg_0": 0.0} - propagates to all functions needing
-                  arg_0
-                - Regime level: {"regime_0": {"arg_0": 0.0}} - propagates within
-                  regime_0
-                - Function level: {"regime_0": {"func": {"arg_0": 0.0}}} - direct
-                  specification
-                Values may be `pd.Series` with labeled indices; they are
-                auto-converted to JAX arrays.
-            log_level: Verbosity, and the runtime-validation policy it implies.
-                Required — pick deliberately for the situation:
-                - `"off"` — silent; transition-probability and NaN checks skipped.
-                - `"warning"` — validation runs, failures logged as warnings,
-                  the run continues.
-                - `"progress"` — as `"warning"`, plus timing.
-                - `"debug"` — validation runs and **raises** on the first
-                  failure; adds value-function stats.
-                Start every project at `"debug"`: fail early and gather maximum
-                diagnostics. Ease to `"warning"` / `"off"` only once the model
-                is trusted and you need the speed or the non-raising behaviour
-                for an estimation loop.
-            max_compilation_workers: Maximum number of threads for parallel XLA
-                compilation. Defaults to the number of physical CPU cores.
-            log_path: Directory for persisting diagnostic snapshots. Optional at
-                every level; snapshots are written only when it is set.
-            log_keep_n_latest: Maximum number of snapshots to retain on disk.
-
-            return_simulation_policy: When `True`, also return the per-period
-                simulation-policy artifacts published by the configured
-                solvers, as `(value_functions, policies)`. A policy is what
-                `simulate` interpolates at a subject's resources where the
-                regime qualifies for the off-grid read; a fresh `simulate`
-                publishes and consumes it internally. Return it to inspect the
-                artifact or to pass the exact `(value_functions, policies)` pair
-                into a separate `simulate` call. Regimes whose solver publishes
-                no policy have no entry in the policy
-                mapping. Defaults to `False` (value functions only).
-            return_dissolution_flags: When `True`, also return the per-period,
-                per-COLLECTIVE-regime dissolution-flag arrays `D` (`True` on state
-                cells whose action mask is empty; empty inner mappings for
-                models without collective regimes). Pass the result back into
-                `simulate(period_to_regime_to_dissolution_flags=...)` so a
-                `ValueDependentTransition` with a dissolution gate that reads
-                `D_target` can be evaluated during forward simulation. Defaults
-                to `False` (value functions only).
+            params: Model parameters compatible with ``get_params_template()``.
+            log_level: Verbosity and runtime-validation policy.
+            retention: Post-solve artifacts to retain.
+            max_compilation_workers: Maximum threads for parallel XLA compilation.
+            log_path: Optional directory for diagnostic snapshots.
+            log_keep_n_latest: Maximum snapshots to retain on disk.
 
         Returns:
-            Immutable mapping of period to a value function array for each
-            regime; combined with the per-period simulation-policy
-            mapping when `return_simulation_policy=True` and/or the
-            per-period dissolution-flag mapping when `return_dissolution_flags=True`
-            (in that order: value functions, then simulation policy, then
-            dissolution flags — either or both may be appended).
-
+            An immutable labelled result containing values, metadata, retained replay
+            and diagnostic artifacts, plus explicit artifact-omission reasons.
         """
         log = get_logger(log_level=log_level)
         flat_params = self._process_params(params)
@@ -575,6 +518,28 @@ class Model:
             ages=self.ages,
             logger=log,
         )
+        return self._solve_from_flat_params(
+            flat_params=flat_params,
+            params=params,
+            log=log,
+            retention=retention,
+            max_compilation_workers=max_compilation_workers,
+            log_path=log_path,
+            log_keep_n_latest=log_keep_n_latest,
+        )
+
+    def _solve_from_flat_params(
+        self,
+        *,
+        flat_params: FlatParams,
+        params: UserParams,
+        log: logging.Logger,
+        retention: ResultRetention,
+        max_compilation_workers: int | None,
+        log_path: str | Path | None,
+        log_keep_n_latest: int,
+    ) -> SolutionResult:
+        """Build the canonical public result from processed parameters."""
         internal_result = self._solve_compiled(
             flat_params=flat_params,
             params=params,
@@ -582,20 +547,40 @@ class Model:
             log_path=log_path,
             log_keep_n_latest=log_keep_n_latest,
             max_compilation_workers=max_compilation_workers,
-            collect_simulation_policies=return_simulation_policy,
-            retain_dissolution_flags=return_dissolution_flags,
+            collect_simulation_policies=retention.retains_replay,
+            simulation_policy_regimes=frozenset(
+                regime_name
+                for regime_name, regime in self._regimes.items()
+                if regime.simulation.egm_policy_read is not None
+            ),
+            retain_dissolution_flags=retention.retains_replay,
+            collect_solver_diagnostics=True,
+            track_artifact_publication=True,
         )
-        if return_simulation_policy and return_dissolution_flags:
-            return (
-                internal_result.value_functions,
-                internal_result.simulation_policies,
-                internal_result.dissolution_flags,
-            )
-        if return_simulation_policy:
-            return internal_result.value_functions, internal_result.simulation_policies
-        if return_dissolution_flags:
-            return internal_result.value_functions, internal_result.dissolution_flags
-        return internal_result.value_functions
+        params_fingerprint = fingerprint_flat_params(flat_params)
+        authority = bind_generated_solution_authority(
+            authority=build_solution_authority(
+                regimes=self._regimes,
+                flat_params=flat_params,
+                ages=self.ages,
+            ),
+            internal_result=internal_result,
+        )
+        if retention.retains_replay and any(
+            descriptor.adaptive_outer_nodes is not None
+            for descriptor in authority.replay.values()
+        ):
+            self._solution_authorities[params_fingerprint] = authority
+        return build_solution_result(
+            internal_result=internal_result,
+            retention=retention,
+            regimes=self._regimes,
+            user_regimes=self.user_regimes,
+            n_periods=self.n_periods,
+            model_instance_id=self._solution_model_instance_id,
+            params_fingerprint=params_fingerprint,
+            authority=authority,
+        )
 
     def _solve_compiled(
         self,
@@ -607,7 +592,10 @@ class Model:
         log_keep_n_latest: int,
         max_compilation_workers: int | None,
         collect_simulation_policies: bool,
+        simulation_policy_regimes: frozenset[RegimeName] | None = None,
         retain_dissolution_flags: bool = False,
+        collect_solver_diagnostics: bool = False,
+        track_artifact_publication: bool = False,
     ) -> BackwardInductionResult:
         """Run backward induction, persisting a diagnostic snapshot when warranted.
 
@@ -635,6 +623,9 @@ class Model:
                 logger=log,
                 enable_jit=self.enable_jit,
                 collect_simulation_policies=collect_simulation_policies,
+                simulation_policy_regimes=simulation_policy_regimes,
+                collect_solver_diagnostics=collect_solver_diagnostics,
+                track_artifact_publication=track_artifact_publication,
                 max_compilation_workers=max_compilation_workers,
                 retain_dissolution_flags=retain_dissolution_flags,
             )
@@ -702,107 +693,629 @@ class Model:
         with self._simulate_compile_lock:
             return self._simulate_compile_cache[compile_batch_size]
 
-    def _check_supplied_V_shapes(
-        self,
-        *,
-        period_to_regime_to_V_arr: PeriodToRegimeToVArr | None,
-        log: logging.Logger,
-    ) -> None:
-        """Validate a caller-supplied solution against the declared state spaces.
-
-        A freshly solved value function is correct by construction, so only a
-        supplied one is checked. It is the one simulate input nothing else
-        validates: a value function of the wrong rank broadcasts rather than
-        raising, so it has to be caught against the produced rank here.
-        """
-        if period_to_regime_to_V_arr is None or not validation_enabled(log):
-            return
-        try:
-            validate_supplied_V_shapes(
-                period_to_regime_to_V_arr=period_to_regime_to_V_arr,
-                # `expected_V_rank` is the same rule the solver sizes V with, so
-                # the rank a solve produces is the rank simulate accepts.
-                regime_to_expected_rank=MappingProxyType(
-                    {
-                        name: expected_V_rank(regime=regime)
-                        for name, regime in self._regimes.items()
-                    }
-                ),
-            )
-        except InvalidValueFunctionError as error:
-            raise_or_warn(logger=log, error=error)
-
-    def _check_supplied_replay_policies(
-        self,
-        *,
-        period_to_regime_to_V_arr: PeriodToRegimeToVArr | None,
-        policies: PeriodToRegimeToSimulationPolicy | None,
-    ) -> None:
-        """Require replay artifacts where values do not determine the decision.
-
-        Which artifact counts as matching follows the regime's configured outer
-        search, because that is what decides the type `solve()` publishes:
-
-        - finite outer grid ⇒ `NNBEGMSimPolicy`, one per solved period and
-          regime. The finite solve always publishes one, so a missing entry is
-          a caller error.
-        - adaptive outer mesh ⇒ `NestedEGMSimPolicy`. The adaptive solve
-          publishes one only where the nested payload is resolved and omits the
-          entry otherwise, so a present entry is type-checked while an absent
-          one is accepted: automatic simulation falls back there too, and
-          rejecting it would make the split workflow stricter than the route it
-          has to reproduce.
-
-        A wholly absent `policies` mapping is refused on both routes — that is
-        the caller who dropped the replay artifacts altogether.
-        """
-        if period_to_regime_to_V_arr is None:
-            return
-
-        nnbegm_reads = {
-            regime_name: policy_read
-            for regime_name, regime in self._regimes.items()
-            if isinstance(
-                (policy_read := regime.simulation.egm_policy_read), NNBEGMPolicyRead
-            )
-        }
-        if not nnbegm_reads:
-            return
-
-        solved_nnbegm_cells = tuple(
-            (period, regime_name)
-            for period, regime_to_V_arr in period_to_regime_to_V_arr.items()
-            for regime_name in regime_to_V_arr
-            if regime_name in nnbegm_reads
+    def _resolve_solution_result(
+        self, *, solution: SolutionResult, flat_params: FlatParams
+    ) -> tuple[
+        PeriodToRegimeToVArr,
+        PeriodToRegimeToSimulationPolicy,
+        PeriodToRegimeToDissolutionFlags,
+    ]:
+        """Resolve one model-authoritative result into engine replay inputs."""
+        authority = self._check_solution_result_structure(
+            solution=solution, flat_params=flat_params
         )
-        if not solved_nnbegm_cells:
-            return
+        policies, dissolution_flags = self._check_solution_result_artifacts(
+            solution=solution, authority=authority
+        )
+        return (
+            cast("PeriodToRegimeToVArr", solution.values),
+            policies,
+            dissolution_flags,
+        )
 
-        # No mapping at all is the caller who dropped the replay artifacts, and
-        # is refused on both routes before the per-cell rule (which accepts an
-        # absent adaptive entry) can excuse it.
-        missing_or_mismatched = (
-            solved_nnbegm_cells
-            if policies is None
-            else tuple(
+    def _check_solution_result_structure(
+        self, *, solution: SolutionResult, flat_params: FlatParams
+    ) -> SolutionAuthority:
+        """Reject an incompatible labelled result before simulation prepares work."""
+        self._check_solution_result_container_types(solution=solution)
+        expected_fingerprint = fingerprint_flat_params(flat_params)
+        self._check_solution_result_metadata(
+            solution=solution,
+            expected_fingerprint=expected_fingerprint,
+        )
+        authority = self._solution_authorities.get(
+            expected_fingerprint
+        ) or build_solution_authority(
+            regimes=self._regimes,
+            flat_params=flat_params,
+            ages=self.ages,
+        )
+        expected_coverage = set(authority.values)
+        value_store = solution.values  # noqa: PD011
+        expected_periods = {period for period, _regime_name in expected_coverage}
+        actual_periods = set(value_store)
+        if actual_periods != expected_periods:
+            missing = tuple(sorted(expected_periods - actual_periods))
+            unexpected = tuple(sorted(actual_periods - expected_periods))
+            msg = (
+                "SolutionResult value period coverage is incompatible with this "
+                f"model: missing={missing}, unexpected={unexpected}."
+            )
+            raise InvalidSimulationInputError(msg)
+        actual_coverage = {
+            (period, regime_name)
+            for period, regime_to_value in value_store.items()
+            for regime_name in regime_to_value
+        }
+        self._check_solution_result_coverage(
+            actual_coverage=actual_coverage,
+            expected_coverage=expected_coverage,
+            label="value",
+        )
+        self._check_solution_result_coverage(
+            actual_coverage=set(solution.metadata.value_schemas),
+            expected_coverage=expected_coverage,
+            label="value schema",
+        )
+        self._check_solution_result_artifact_coordinates(
+            solution=solution,
+            expected_coverage=expected_coverage,
+            authority=authority,
+        )
+        self._check_solution_value_schemas(
+            solution=solution,
+            authority=authority,
+            expected_coverage=expected_coverage,
+        )
+        return authority
+
+    @staticmethod
+    def _check_solution_result_container_types(*, solution: SolutionResult) -> None:
+        """Reject mutable, subclassed, or ill-typed transport containers up front."""
+        if type(solution) is not SolutionResult:
+            msg = "SolutionResult has the wrong exact container type."
+            raise InvalidSimulationInputError(msg)
+        if type(solution.metadata) is not SolutionMetadata:
+            msg = "SolutionResult metadata has the wrong exact container type."
+            raise InvalidSimulationInputError(msg)
+
+        named_stores = (
+            ("retained_continuations", solution.retained_continuations),
+            ("replay_artifacts", solution.replay_artifacts),
+            ("auxiliary_artifacts", solution.auxiliary_artifacts),
+            ("diagnostics", solution.diagnostics),
+        )
+        container_defects = [
+            *Model._artifact_store_type_defects(named_stores=named_stores),
+            *Model._value_store_type_defects(values=solution.values),
+            *Model._metadata_mapping_type_defects(metadata=solution.metadata),
+            *Model._omission_type_defects(omissions=solution.omissions),
+        ]
+        if container_defects:
+            msg = (
+                "SolutionResult containers are incompatible: "
+                + "; ".join(container_defects)
+                + "."
+            )
+            raise InvalidSimulationInputError(msg)
+
+    @staticmethod
+    def _artifact_store_type_defects(
+        *, named_stores: tuple[tuple[str, ArtifactStore], ...]
+    ) -> list[str]:
+        """Return defects in artifact-store containers and address types."""
+        defects: list[str] = []
+        for store_name, store in named_stores:
+            if type(store) is not ArtifactStore:
+                defects.append(f"{store_name} is not an exact ArtifactStore")
+                continue
+            if type(store._entries) is not MappingProxyType:  # noqa: SLF001
+                defects.append(f"{store_name} entries are not immutable")
+                continue
+            for ref in store._entries:  # noqa: SLF001
+                defect = Model._artifact_ref_type_defect(ref=ref)
+                if defect is not None:
+                    defects.append(f"{store_name}: {defect}")
+        return defects
+
+    @staticmethod
+    def _value_store_type_defects(
+        *, values: Mapping[int, Mapping[RegimeName, object]]
+    ) -> list[str]:
+        """Return defects in the immutable value-store topology."""
+        if type(values) is not MappingProxyType:
+            return ["values are not an immutable exact mapping"]
+        defects: list[str] = []
+        for period, regime_to_value in values.items():
+            if type(period) is not int:
+                defects.append("a value period is not an exact int")
+            if type(regime_to_value) is not MappingProxyType:
+                defects.append(
+                    f"value period {period!r} is not an immutable exact mapping"
+                )
+                continue
+            if any(type(regime_name) is not str for regime_name in regime_to_value):
+                defects.append(f"value period {period!r} has a non-exact regime name")
+        return defects
+
+    @staticmethod
+    def _metadata_mapping_type_defects(*, metadata: SolutionMetadata) -> list[str]:
+        """Return defects in descriptive metadata mappings and coordinates."""
+        defects: list[str] = []
+        if type(metadata.solver_types) is not MappingProxyType:
+            defects.append("solver_types are not an immutable exact mapping")
+        elif any(
+            type(regime_name) is not str or type(solver_type) is not str
+            for regime_name, solver_type in metadata.solver_types.items()
+        ):
+            defects.append("solver_types contain a non-exact str")
+        if type(metadata.value_schemas) is not MappingProxyType:
+            defects.append("value_schemas are not an immutable exact mapping")
+        else:
+            invalid_coordinate_count = sum(
+                not Model._is_exact_solution_coordinate(coordinate)
+                for coordinate in metadata.value_schemas
+            )
+            defects.extend(
+                ["value_schemas contain an ill-typed coordinate"]
+                * invalid_coordinate_count
+            )
+        return defects
+
+    @staticmethod
+    def _omission_type_defects(
+        *, omissions: Mapping[ArtifactRef, OmissionReason]
+    ) -> list[str]:
+        """Return defects in omission addresses and reasons."""
+        if type(omissions) is not MappingProxyType:
+            return ["omissions are not an immutable exact mapping"]
+        defects: list[str] = []
+        for ref, reason in omissions.items():
+            defect = Model._artifact_ref_type_defect(ref=ref)
+            if defect is not None:
+                defects.append(f"omissions: {defect}")
+            if type(reason) is not OmissionReason:
+                defects.append("omissions contain a non-exact OmissionReason")
+        return defects
+
+    @staticmethod
+    def _is_exact_solution_coordinate(coordinate: object) -> bool:
+        """Whether a descriptive value coordinate uses exact built-in types."""
+        if type(coordinate) is not tuple or len(coordinate) != 2:  # noqa: PLR2004
+            return False
+        return type(coordinate[0]) is int and type(coordinate[1]) is str
+
+    @staticmethod
+    def _artifact_ref_type_defect(*, ref: object) -> str | None:  # noqa: PLR0911
+        """Return a defect before an untrusted artifact address is hashed."""
+        if type(ref) is not ArtifactRef:
+            return "an artifact address is not an exact ArtifactRef"
+        typed_ref = ref
+        if type(typed_ref.period) is not int:
+            return "an artifact period is not an exact int"
+        if type(typed_ref.regime) is not str:
+            return "an artifact regime is not an exact str"
+        if type(typed_ref.key) is not ArtifactKey:
+            return "an artifact key is not an exact ArtifactKey"
+        if type(typed_ref.key.type_id) is not str:
+            return "an artifact type_id is not an exact str"
+        if type(typed_ref.key.schema_version) is not int:
+            return "an artifact schema_version is not an exact int"
+        if typed_ref.key.schema_version < 1:
+            return "an artifact schema_version is not positive"
+        return None
+
+    def _check_solution_result_metadata(
+        self, *, solution: SolutionResult, expected_fingerprint: str
+    ) -> None:
+        """Reject provenance, version, and regime metadata mismatches."""
+        expected_solver_types = {
+            regime_name: (
+                f"{type(user_regime.solver).__module__}."
+                f"{type(user_regime.solver).__qualname__}"
+            )
+            for regime_name, user_regime in self.user_regimes.items()
+        }
+        metadata_defects: list[str] = []
+        if not _same_exactly_typed(
+            actual=solution.metadata.model_instance_id,
+            expected=self._solution_model_instance_id,
+        ):
+            metadata_defects.append("model_instance_id does not match this Model")
+        if not _same_exactly_typed(
+            actual=solution.metadata.params_fingerprint,
+            expected=expected_fingerprint,
+        ):
+            metadata_defects.append(
+                "params_fingerprint does not match the canonical simulation params"
+            )
+        if not _same_exactly_typed(
+            actual=solution.metadata.solver_api_version, expected=1
+        ):
+            metadata_defects.append(
+                "solver_api_version="
+                f"{solution.metadata.solver_api_version} (expected 1)"
+            )
+        if not _same_exactly_typed(
+            actual=solution.metadata.solution_schema_version, expected=1
+        ):
+            metadata_defects.append(
+                "solution_schema_version="
+                f"{solution.metadata.solution_schema_version} (expected 1)"
+            )
+        if not _same_exactly_typed(
+            actual=solution.metadata.n_periods, expected=self.n_periods
+        ):
+            metadata_defects.append(
+                f"n_periods={solution.metadata.n_periods} (expected {self.n_periods})"
+            )
+        if not _same_exactly_typed(
+            actual=solution.metadata.regime_names,
+            expected=tuple(self._regimes),
+        ):
+            metadata_defects.append(
+                f"regime_names={solution.metadata.regime_names!r} "
+                f"(expected {tuple(self._regimes)!r})"
+            )
+        if type(solution.metadata.retention) is not ResultRetention:
+            metadata_defects.append("retention has the wrong exact type")
+        if dict(solution.metadata.solver_types) != expected_solver_types:
+            metadata_defects.append("solver_types do not match this model")
+        if metadata_defects:
+            msg = (
+                "SolutionResult metadata is incompatible with this model: "
+                + "; ".join(metadata_defects)
+                + "."
+            )
+            raise InvalidSimulationInputError(msg)
+
+    @staticmethod
+    def _check_solution_result_artifact_coordinates(
+        *,
+        solution: SolutionResult,
+        expected_coverage: set[tuple[int, RegimeName]],
+        authority: SolutionAuthority,
+    ) -> None:
+        """Reject malformed coordinates, versions, and channels."""
+        named_stores = (
+            ("retained_continuations", solution.retained_continuations),
+            ("replay_artifacts", solution.replay_artifacts),
+            ("auxiliary_artifacts", solution.auxiliary_artifacts),
+            ("diagnostics", solution.diagnostics),
+        )
+        present_stores = tuple(store for _name, store in named_stores)
+        present_refs = set().union(*(set(store) for store in present_stores))
+        omission_refs = set(solution.omissions)
+        unexpected = tuple(
+            sorted(
+                ref
+                for ref in present_refs | omission_refs
+                if (ref.period, ref.regime) not in expected_coverage
+            )
+        )
+        overlap = tuple(sorted(present_refs & omission_refs))
+        duplicated = tuple(
+            sorted(
+                ref
+                for ref in present_refs
+                if sum(ref in store for store in present_stores) > 1
+            )
+        )
+        replay_type_ids = {
+            SIMULATION_POLICY.type_id,
+            DISSOLUTION_FLAG.type_id,
+        }
+        exact_replay_keys = {SIMULATION_POLICY, DISSOLUTION_FLAG}
+        wrong_versions = tuple(
+            sorted(
+                ref
+                for ref in present_refs | omission_refs
+                if ref.key.type_id in replay_type_ids
+                and ref.key not in exact_replay_keys
+            )
+        )
+        wrong_channels = tuple(
+            sorted(
+                (store_name, ref)
+                for store_name, store in named_stores
+                for ref in store
+                if ref.key in exact_replay_keys
+                and authority.replay.get(ref) is not None
+                and store_name != authority.replay[ref].channel
+            )
+        )
+        if unexpected or overlap or duplicated or wrong_versions or wrong_channels:
+            msg = (
+                "SolutionResult artifact coordinates are incompatible: "
+                f"unexpected={unexpected}, refs both present and omitted={overlap}, "
+                f"refs in multiple stores={duplicated}, "
+                f"wrong schema versions={wrong_versions}, "
+                f"wrong channels={wrong_channels}."
+            )
+            raise InvalidSimulationInputError(msg)
+
+    @staticmethod
+    def _check_solution_result_coverage(
+        *,
+        actual_coverage: set[tuple[int, RegimeName]],
+        expected_coverage: set[tuple[int, RegimeName]],
+        label: str,
+    ) -> None:
+        """Reject missing or unexpected coordinates in one result store."""
+        if actual_coverage != expected_coverage:
+            missing = tuple(sorted(expected_coverage - actual_coverage))
+            unexpected = tuple(sorted(actual_coverage - expected_coverage))
+            msg = (
+                f"SolutionResult {label} coverage is incompatible with this model: "
+                f"missing={missing}, unexpected={unexpected}."
+            )
+            raise InvalidSimulationInputError(msg)
+
+    def _check_solution_value_schemas(
+        self,
+        *,
+        solution: SolutionResult,
+        authority: SolutionAuthority,
+        expected_coverage: set[tuple[int, RegimeName]],
+    ) -> None:
+        """Reject values and descriptive schemas that disagree with model authority."""
+        schemas = solution.metadata.value_schemas
+        value_store = solution.values  # noqa: PD011
+        schema_defects: list[str] = []
+        for period, regime_name in sorted(expected_coverage):
+            value = value_store[period][regime_name]
+            schema = schemas[(period, regime_name)]
+            descriptor = authority.values[(period, regime_name)]  # noqa: PD011
+            if not isinstance(value, descriptor.payload_type):
+                schema_defects.append(
+                    f"({period}, {regime_name!r}) payload type="
+                    f"{type(value).__name__!r}, expected="
+                    f"{descriptor.payload_type.__name__!r}"
+                )
+                continue
+            if type(schema) is not ValueArraySchema:
+                schema_defects.append(
+                    f"({period}, {regime_name!r}) schema type="
+                    f"{type(schema).__name__!r}, expected='ValueArraySchema'"
+                )
+                continue
+            if tuple(value.shape) != descriptor.shape or not _same_exactly_typed(
+                actual=schema.shape, expected=descriptor.shape
+            ):
+                schema_defects.append(
+                    f"({period}, {regime_name!r}) shape={tuple(value.shape)!r}, "
+                    f"schema={schema.shape!r}, expected={descriptor.shape!r}"
+                )
+            if str(value.dtype) != descriptor.dtype or not _same_exactly_typed(
+                actual=schema.dtype, expected=descriptor.dtype
+            ):
+                schema_defects.append(
+                    f"({period}, {regime_name!r}) dtype={str(value.dtype)!r}, "
+                    f"schema={schema.dtype!r}, expected={descriptor.dtype!r}"
+                )
+            if not _same_exactly_typed(
+                actual=schema.axis_names, expected=descriptor.axis_names
+            ):
+                schema_defects.append(
+                    f"({period}, {regime_name!r}) axis_names="
+                    f"{schema.axis_names!r}, expected={descriptor.axis_names!r}"
+                )
+        if schema_defects:
+            msg = "SolutionResult value schemas are incompatible: " + "; ".join(
+                schema_defects
+            )
+            raise InvalidSimulationInputError(msg)
+
+    def _check_solution_result_artifacts(
+        self,
+        *,
+        solution: SolutionResult,
+        authority: SolutionAuthority,
+    ) -> tuple[
+        PeriodToRegimeToSimulationPolicy,
+        PeriodToRegimeToDissolutionFlags,
+    ]:
+        """Require every replay artifact the labelled solution's routes consume."""
+        policies = solution.replay_artifacts.project(SIMULATION_POLICY)
+        dissolution_flags = solution.replay_artifacts.project(DISSOLUTION_FLAG)
+        self._check_solution_result_replay_policies(
+            solution=solution,
+            authority=authority,
+            policies=policies,
+        )
+        self._check_solution_result_dissolution_flags(
+            solution=solution,
+            authority=authority,
+            dissolution_flags=dissolution_flags,
+        )
+        return (
+            cast("PeriodToRegimeToSimulationPolicy", policies),
+            cast("PeriodToRegimeToDissolutionFlags", dissolution_flags),
+        )
+
+    def _check_solution_result_replay_policies(  # noqa: C901
+        self,
+        *,
+        solution: SolutionResult,
+        authority: SolutionAuthority,
+        policies: Mapping[int, Mapping[RegimeName, object]],
+    ) -> None:
+        """Require each solver decision that cannot be reconstructed from values."""
+        policies_without_route = tuple(
+            sorted(
                 (period, regime_name)
-                for period, regime_name in solved_nnbegm_cells
-                if not _replay_policy_matches(
-                    supplied=policies.get(period, {}).get(regime_name),
-                    is_nested=nnbegm_reads[regime_name].replay_policy_is_nested,
+                for period, regime_to_policy in policies.items()
+                for regime_name in regime_to_policy
+                if not isinstance(
+                    self._regimes[regime_name].simulation.egm_policy_read,
+                    EGMPolicyRead | NNBEGMPolicyRead,
                 )
             )
         )
-        if missing_or_mismatched:
+        if policies_without_route:
             msg = (
-                "NNBEGM simulation with caller-supplied value functions requires "
-                "a matching replay policy for every solved period and regime. "
-                f"Missing or mismatched entries: {missing_or_mismatched}. Supply "
-                "the exact `(values, policies)` returned by "
-                "`solve(return_simulation_policy=True)`, or pass "
-                "`period_to_regime_to_V_arr=None` to solve automatically."
+                f"Artifact {SIMULATION_POLICY.type_id!r} has no declared replay route "
+                "at (period, regime): "
+                f"{policies_without_route}."
             )
             raise InvalidSimulationInputError(msg)
+
+        missing_or_mismatched_policies: list[tuple[int, RegimeName, str]] = []
+        value_store = solution.values  # noqa: PD011
+        for period, regime_to_value in value_store.items():
+            for regime_name in regime_to_value:
+                ref = ArtifactRef(
+                    period=period,
+                    regime=regime_name,
+                    key=SIMULATION_POLICY,
+                )
+                descriptor = authority.replay[ref]
+                policy_read = descriptor.route
+                if not isinstance(policy_read, EGMPolicyRead | NNBEGMPolicyRead):
+                    continue
+                supplied = policies.get(period, {}).get(regime_name)
+                omission = solution.omissions.get(ref)
+                if supplied is None:
+                    if (
+                        not descriptor.required
+                        and omission is OmissionReason.NOT_APPLICABLE
+                    ):
+                        continue
+                    reason = omission.value if omission is not None else "unrecorded"
+                    missing_or_mismatched_policies.append((period, regime_name, reason))
+                    continue
+
+                payload_defect: str | None
+                if (
+                    descriptor.payload_type is None
+                    or type(supplied) is not descriptor.payload_type
+                ):
+                    expected_name = getattr(
+                        descriptor.payload_type,
+                        "__name__",
+                        repr(descriptor.payload_type),
+                    )
+                    payload_defect = f"expected exact payload type {expected_name}"
+                elif isinstance(policy_read, EGMPolicyRead):
+                    payload_defect = (
+                        validate_egm_sim_policy(
+                            policy=supplied,
+                            policy_read=policy_read,
+                            period=period,
+                            expected_node_count=descriptor.egm_node_count,
+                        )
+                        if isinstance(supplied, EGMSimPolicy)
+                        and descriptor.egm_node_count is not None
+                        else "model authority lacks the EGM node count"
+                    )
+                elif policy_read.replay_policy_is_nested:
+                    payload_defect = (
+                        validate_nested_egm_sim_policy(
+                            policy=supplied,
+                            policy_read=policy_read,
+                            period=period,
+                            expected_node_count=descriptor.egm_node_count,
+                            expected_outer_nodes=descriptor.adaptive_outer_nodes,
+                            expected_replay_capability=(
+                                descriptor.expected_replay_capability
+                            ),
+                        )
+                        if isinstance(supplied, NestedEGMSimPolicy)
+                        and descriptor.egm_node_count is not None
+                        and descriptor.adaptive_outer_nodes is not None
+                        and descriptor.expected_replay_capability is not None
+                        else "model authority lacks a nested replay descriptor"
+                    )
+                else:
+                    payload_defect = (
+                        validate_nnbegm_sim_policy(
+                            policy=supplied,
+                            policy_read=policy_read,
+                            period=period,
+                            expected_replay_capability=(
+                                descriptor.expected_replay_capability
+                            ),
+                        )
+                        if isinstance(supplied, NNBEGMSimPolicy)
+                        and descriptor.expected_replay_capability is not None
+                        else "model authority lacks a finite replay descriptor"
+                    )
+                if payload_defect is not None:
+                    missing_or_mismatched_policies.append(
+                        (
+                            period,
+                            regime_name,
+                            f"mismatched_payload: {payload_defect}",
+                        )
+                    )
+        if missing_or_mismatched_policies:
+            msg = (
+                f"Required artifact {SIMULATION_POLICY.type_id!r} is absent or "
+                "invalid at (period, regime, reason): "
+                f"{tuple(missing_or_mismatched_policies)}. Re-solve with "
+                "retention=ResultRetention.VALUES_AND_REPLAY."
+            )
+            raise InvalidSimulationInputError(msg)
+
+    def _check_solution_result_dissolution_flags(
+        self,
+        *,
+        solution: SolutionResult,
+        authority: SolutionAuthority,
+        dissolution_flags: Mapping[int, Mapping[RegimeName, object]],
+    ) -> None:
+        """Validate every present flag, then require model-declared consumers."""
+        missing_dissolution_flags = self._find_malformed_dissolution_flags(
+            dissolution_flags=dissolution_flags,
+            authority=authority,
+        )
+        for ref, descriptor in authority.replay.items():
+            if ref.key != DISSOLUTION_FLAG or not descriptor.required:
+                continue
+            supplied = dissolution_flags.get(ref.period, {}).get(ref.regime)
+            if supplied is not None:
+                continue
+            omission = solution.omissions.get(ref)
+            reason = omission.value if omission is not None else "unrecorded"
+            missing_dissolution_flags.append((ref.period, ref.regime, reason))
+        if missing_dissolution_flags:
+            msg = (
+                f"Required artifact {DISSOLUTION_FLAG.type_id!r} is absent or "
+                "invalid at "
+                "(period, regime, reason): "
+                f"{tuple(dict.fromkeys(missing_dissolution_flags))}. Re-solve with "
+                "retention=ResultRetention.VALUES_AND_REPLAY."
+            )
+            raise InvalidSimulationInputError(msg)
+
+    def _find_malformed_dissolution_flags(
+        self,
+        *,
+        dissolution_flags: Mapping[int, Mapping[RegimeName, object]],
+        authority: SolutionAuthority,
+    ) -> list[tuple[int, RegimeName, str]]:
+        """Return structural defects among all present dissolution artifacts."""
+        malformed: list[tuple[int, RegimeName, str]] = []
+        for period, regime_to_flag in dissolution_flags.items():
+            for regime_name, supplied in regime_to_flag.items():
+                ref = ArtifactRef(
+                    period=period,
+                    regime=regime_name,
+                    key=DISSOLUTION_FLAG,
+                )
+                descriptor = authority.replay[ref]
+                supplied_shape = tuple(getattr(supplied, "shape", ()))
+                supplied_dtype = getattr(supplied, "dtype", None)
+                if (
+                    not descriptor.applicable
+                    or descriptor.payload_type is None
+                    or not isinstance(supplied, descriptor.payload_type)
+                    or supplied_shape != descriptor.shape
+                    or supplied_dtype is None
+                    or str(np.dtype(supplied_dtype)) != descriptor.dtype
+                ):
+                    malformed.append((period, regime_name, "mismatched_payload"))
+        return malformed
 
     def _fail_if_simulation_is_unsupported(self) -> None:
         """Refuse model configurations whose solved decision cannot be replayed."""
@@ -823,16 +1336,13 @@ class Model:
         raise UnsupportedOperationError(msg)
 
     @beartype(conf=PARAMS_CONF)
-    def simulate(  # noqa: C901
+    def simulate(  # noqa: C901, PLR0912
         self,
         *,
         params: UserParams,
         initial_conditions: UserInitialConditions | pd.DataFrame,
-        period_to_regime_to_V_arr: PeriodToRegimeToVArr | None,
-        policies: PeriodToRegimeToSimulationPolicy | None = None,
+        solution: SolutionResult | None = None,
         log_level: LogLevel,
-        period_to_regime_to_dissolution_flags: PeriodToRegimeToDissolutionFlags
-        | None = None,
         seed: int | None = None,
         subject_batch_size: int = 0,
         log_path: str | Path | None = None,
@@ -841,9 +1351,9 @@ class Model:
     ) -> SimulationResult:
         """Simulate the model forward, optionally solving first.
 
-        When `period_to_regime_to_V_arr` is `None`, the model is solved before
-        simulating. Pass pre-computed value functions from `solve()` to skip the
-        solve step.
+        When ``solution`` is omitted, the model is solved before simulation. Pass
+        the complete result from ``solve()`` to replay a separate solve without
+        splitting values from solver-specific artifacts.
 
         Args:
             params: Model parameters compatible with `get_params_template()`.
@@ -867,18 +1377,11 @@ class Model:
                 as an integer code from the model's role vocabulary
                 (`model.stakeholder_names_to_ids`): which partner a row is
                 decides which regime it enters when the household dissolves.
-            period_to_regime_to_V_arr: Value function arrays from `solve()`.
-                When `None`, the model is solved automatically before simulating.
-            policies: Simulation-policy artifacts returned alongside the value
-                functions by `solve(return_simulation_policy=True)`. Supply the
-                exact pair to replay solver decisions that cannot be recovered
-                from value functions alone.
-            period_to_regime_to_dissolution_flags: Per-period, per-COLLECTIVE-regime
-                dissolution-flag arrays from `solve(return_dissolution_flags=True)`.
-                Required only for a model with a `ValueDependentTransition`
-                whose dissolution gate reads `D_target`; such a gate raises a
-                clear `NotImplementedError` at simulate time if this is left
-                `None`. `None` (the default) is a no-op for every other model.
+            solution: Complete labelled result returned by ``solve()``. Required
+                replay artifacts are validated before forward simulation starts. Its
+                model-instance identity, canonical parameters, and value schemas are
+                checked even when ``log_level="off"``. When omitted, ``simulate``
+                obtains the same complete result from an automatic solve.
             seed: Random seed.
             subject_batch_size: How to partition the subject axis of the forward
                 simulation. Results are invariant to this knob — per-subject RNG
@@ -906,8 +1409,8 @@ class Model:
                 every level; snapshots are written only when it is set.
             log_keep_n_latest: Maximum number of snapshots to retain on disk.
             max_compilation_workers: Maximum number of threads for parallel XLA
-                compilation. Only used when `period_to_regime_to_V_arr` is `None`
-                (i.e. when solve runs automatically). Defaults to the number of
+                compilation. Only used when ``solution`` is omitted (i.e. when
+                solve runs automatically). Defaults to the number of
                 physical CPU cores.
         Returns:
             SimulationResult object. Call .to_dataframe() to get a pandas DataFrame,
@@ -916,6 +1419,21 @@ class Model:
         """
         log = get_logger(log_level=log_level)
         self._fail_if_simulation_is_unsupported()
+        # The canonical parameters bind both the supplied result preflight and an
+        # automatic solve. Process them once and keep one model-authoritative seam.
+        flat_params = self._process_params(params)
+        if solution is not None:
+            (
+                period_to_regime_to_V_arr,
+                period_to_regime_to_sim_policy,
+                period_to_regime_to_dissolution_flags,
+            ) = self._resolve_solution_result(
+                solution=solution, flat_params=flat_params
+            )
+        else:
+            period_to_regime_to_V_arr = None
+            period_to_regime_to_sim_policy = None
+            period_to_regime_to_dissolution_flags = None
         if isinstance(initial_conditions, pd.DataFrame):
             initial_conditions = initial_conditions_from_dataframe(
                 df=initial_conditions,
@@ -949,17 +1467,9 @@ class Model:
             initial_conditions=initial_conditions,
             multiple=alignment,
         )
-        flat_params = self._process_params(params)
-        # The edge-fold state/source-param collision guard runs on the simulate
-        # entry as well as inside `solve()`. Simulation accepts a precomputed or
-        # cached `period_to_regime_to_V_arr` and then skips `solve()` entirely
-        # (the `period_to_regime_to_V_arr is None` branch below), so a guard
-        # sitting only in `solve()` would let the simulate gate and the
-        # fallback-state projector read a colliding leaf unchecked — a name that
-        # is both a target state of the target regime and a key of
-        # `flat_params[source]`. Running it here, before any simulation
-        # compilation or routing, covers every route to the value arrays.
-        # A cheap no-op when no regime declares gated edges.
+        # The edge-fold state/source-param collision guard runs on simulation as
+        # well as solve because a supplied SolutionResult skips backward induction.
+        # Running it before compilation or routing covers both entry paths.
         if any(regime.gated_edges for regime in self._regimes.values()):
             _reject_edge_fold_state_param_collisions(
                 regimes=self._regimes,
@@ -998,51 +1508,29 @@ class Model:
             max_compilation_workers=max_compilation_workers,
             log=log,
         )
-        self._check_supplied_V_shapes(
-            period_to_regime_to_V_arr=period_to_regime_to_V_arr, log=log
-        )
-        self._check_supplied_replay_policies(
-            period_to_regime_to_V_arr=period_to_regime_to_V_arr,
-            policies=policies,
-        )
-        period_to_regime_to_sim_policy = policies
-        auto_solved_dissolution_flags: PeriodToRegimeToDissolutionFlags | None = None
-        if period_to_regime_to_V_arr is None:
-            # A fresh solve publishes the off-grid EGM policy consumed by
-            # simulation. Policies paired with caller-supplied values enter
-            # through the public argument above and do not reach this branch.
-            #
-            # The auto-solve also carries each collective regime's dissolution
-            # flag D on the result, so a
-            # dissolution-gated model driven through the auto-solve path
-            # need not re-run `solve(return_dissolution_flags=True)`
-            # separately — the flags are threaded straight into `simulate`
-            # below (still overridable by an explicit caller-supplied
-            # `period_to_regime_to_dissolution_flags`). Nothing is requested
-            # here: a gate reading `D_target` is what makes the flags a
-            # simulate input, and backward induction reads that off the gate
-            # itself, so a model whose gates read only values carries none.
-            #
-            # Two signals are required because the flat endogenous-grid read is
-            # announced regime-side by `egm_policy_read`, while a self-describing
-            # nested payload is announced solver-side and leaves that field unset.
-            collect_simulation_policies = any(
-                regime.simulation.egm_policy_read is not None
-                or self.user_regimes[regime_name].solver.publishes_simulation_policy
-                for regime_name, regime in self._regimes.items()
-            )
-            internal_result = self._solve_compiled(
+        if solution is None:
+            solution = self._solve_from_flat_params(
                 flat_params=flat_params,
                 params=params,
                 log=log,
+                retention=ResultRetention.VALUES_AND_REPLAY,
+                max_compilation_workers=max_compilation_workers,
                 log_path=log_path,
                 log_keep_n_latest=log_keep_n_latest,
-                max_compilation_workers=max_compilation_workers,
-                collect_simulation_policies=collect_simulation_policies,
             )
-            period_to_regime_to_V_arr = internal_result.value_functions
-            period_to_regime_to_sim_policy = internal_result.simulation_policies
-            auto_solved_dissolution_flags = internal_result.dissolution_flags
+            (
+                period_to_regime_to_V_arr,
+                period_to_regime_to_sim_policy,
+                period_to_regime_to_dissolution_flags,
+            ) = self._resolve_solution_result(
+                solution=solution, flat_params=flat_params
+            )
+        if (
+            period_to_regime_to_V_arr is None
+            or period_to_regime_to_sim_policy is None
+            or period_to_regime_to_dissolution_flags is None
+        ):
+            raise AssertionError("Simulation solution inputs were not resolved.")
         simulate_regimes = self._resolve_simulate_regimes(
             actual_n_subjects=actual_n_subjects,
             compile_batch_size=compile_batch_size,
@@ -1057,10 +1545,6 @@ class Model:
             period_to_regime_to_V_arr=period_to_regime_to_V_arr,
             period_to_regime_to_dissolution_flags=(
                 period_to_regime_to_dissolution_flags
-                if period_to_regime_to_dissolution_flags is not None
-                else auto_solved_dissolution_flags
-                if auto_solved_dissolution_flags is not None
-                else MappingProxyType({})
             ),
             period_to_regime_to_sim_policy=period_to_regime_to_sim_policy,
             ages=self.ages,
@@ -1194,19 +1678,3 @@ class Model:
         _validate_param_types(flat_params)
         fail_if_nonpositive_taste_shock_scale(flat_params)
         return flat_params
-
-
-def _replay_policy_matches(
-    *,
-    supplied: SimulationPolicy | None,
-    is_nested: bool,
-) -> bool:
-    """Whether a supplied replay policy matches the configured outer search.
-
-    The adaptive mesh omits the entry for a period whose nested payload is
-    unresolved, and simulation falls back there on both routes, so `None` is
-    accepted for it and refused for the finite grid.
-    """
-    if is_nested:
-        return supplied is None or isinstance(supplied, NestedEGMSimPolicy)
-    return isinstance(supplied, NNBEGMSimPolicy)

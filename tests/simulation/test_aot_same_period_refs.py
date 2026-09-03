@@ -79,7 +79,6 @@ def test_same_period_ref_model_simulates_to_its_participation_constrained_values
     result = model.simulate(
         params=params,
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
     if declared_n_subjects is not None:

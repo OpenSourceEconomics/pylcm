@@ -138,7 +138,7 @@ def test_joint_output_helpers_inherit_node_and_sibling_output_namespace() -> Non
     assert model._params_template["source"]["matched_wealth"] == {}
     assert model._params_template["source"]["matched_income"] == {}
 
-    solution = model.solve(params=_helper_params(), log_level="debug")
+    solution = model.solve(params=_helper_params(), log_level="debug").values
 
     # Nodes are (wealth, income) = (0, 0) and (1, 2), so E[V] = 1.5.
     np.testing.assert_allclose(np.asarray(solution[0]["source"]), 1.5)

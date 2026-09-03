@@ -53,7 +53,6 @@ def _generate_precautionary_savings(data_dir: Path) -> None:
             "income": jnp.full(n_subjects, 0.0),
             "regime_id": jnp.zeros(n_subjects, dtype=jnp.int32),
         },
-        period_to_regime_to_V_arr=None,
         seed=12345,
         log_level="off",
     )
@@ -73,7 +72,6 @@ def _generate_mortality(data_dir: Path) -> None:
             "wealth": jnp.full(n_subjects, 100.0),
             "regime_id": jnp.zeros(n_subjects, dtype=jnp.int32),
         },
-        period_to_regime_to_V_arr=None,
         seed=12345,
         log_level="off",
     )

@@ -80,8 +80,10 @@ def test_gate_ref_is_read_at_its_own_period_axes_whichever_regime_it_names(
     answer with the same number at every age. Reading either against the wrong
     age's nodes prices the saver at `52` instead of `2`.
     """
-    solution = _build_model(reference_regime=reference_regime).solve(
-        params={"discount_factor": _DISCOUNT_FACTOR}, log_level="debug"
+    solution = (
+        _build_model(reference_regime=reference_regime)
+        .solve(params={"discount_factor": _DISCOUNT_FACTOR}, log_level="debug")
+        .values
     )
 
     aaae(
@@ -109,7 +111,7 @@ def test_the_saver_is_priced_at_the_continuation_it_actually_receives(
     result = model.simulate(
         params=params,
         initial_conditions=_initial_conditions(n_subjects=2),
-        period_to_regime_to_V_arr=model.solve(params=params, log_level="off"),
+        solution=model.solve(params=params, log_level="off"),
         log_level="debug",
     )
 

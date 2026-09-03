@@ -14,14 +14,15 @@ bit-identical.
 """
 
 import functools
+from collections.abc import Mapping
 
 import numpy as np
 import pytest
 
-from _lcm.typing import PeriodToRegimeToVArr
 from lcm import AgeGrid, Model
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.solvers import DCEGM
+from lcm.typing import FloatND
 from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
 from tests.solution.test_egm_process_states import (
     CONSUMPTION_GRID,
@@ -83,9 +84,11 @@ def _model(stochastic_node_batch_size: int) -> Model:
     )
 
 
-def _solve(stochastic_node_batch_size: int) -> PeriodToRegimeToVArr:
-    return _model(stochastic_node_batch_size).solve(
-        params=_get_params("iid"), log_level="debug"
+def _solve(stochastic_node_batch_size: int) -> Mapping[int, Mapping[str, FloatND]]:
+    return (
+        _model(stochastic_node_batch_size)
+        .solve(params=_get_params("iid"), log_level="debug")
+        .values
     )
 
 

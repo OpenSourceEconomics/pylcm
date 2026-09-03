@@ -14,6 +14,7 @@ from dataclasses import replace
 import pytest
 from numpy.testing import assert_array_equal
 
+from _lcm.execution.core_program import core_program_graph
 from _lcm.solution.backward_induction import _func_dedup_key
 from lcm import (
     AgeGrid,
@@ -84,9 +85,11 @@ def test_explicit_grid_search_matches_default_solution():
     """Setting `solver=GridSearch()` explicitly yields the same value function
     as leaving the solver at its default — the polymorphic dispatch changes no
     numerics."""
-    default = _build_model().solve(log_level="debug", params=_PARAMS)
-    explicit = _build_model(working_solver=GridSearch()).solve(
-        log_level="debug", params=_PARAMS
+    default = _build_model().solve(log_level="debug", params=_PARAMS).values
+    explicit = (
+        _build_model(working_solver=GridSearch())
+        .solve(log_level="debug", params=_PARAMS)
+        .values
     )
     for period, regime_to_V_arr in default.items():
         for regime_name, V_arr in regime_to_V_arr.items():
@@ -198,7 +201,10 @@ def test_period_kernels_sharing_a_config_reuse_one_compiled_core():
     # search); a model that shared no core would expose one core per period.
     assert len(period_kernels) > 1
 
-    distinct_cores = {_func_dedup_key(func=k.core) for k in period_kernels.values()}
+    distinct_cores = {
+        _func_dedup_key(func=core_program_graph(kernel=k)["main"].function)
+        for k in period_kernels.values()
+    }
     assert len(distinct_cores) < len(period_kernels)
 
     # Dedup collapses the active periods onto a fixed, small number of compiled

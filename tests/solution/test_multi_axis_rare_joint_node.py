@@ -210,7 +210,7 @@ _PARAMS = {
 
 def _source_value(model: Model) -> ScalarFloat:
     return jnp.max(
-        jnp.asarray(model.solve(params=_PARAMS, log_level="off")[0]["source"])
+        jnp.asarray(model.solve(params=_PARAMS, log_level="off").values[0]["source"])
     )
 
 

@@ -108,7 +108,7 @@ def test_carrying_the_same_runtime_process_still_solves() -> None:
         source_states={"shock": _RUNTIME_PROCESS}, source_state_transitions={}
     )
 
-    V = model.solve(params=_PARAMS, log_level="off")
+    V = model.solve(params=_PARAMS, log_level="off").values
 
     np.testing.assert_allclose(
         np.asarray(V[0]["source"]).ravel(), np.array([1.0, 2.0, 3.0]), atol=1e-5

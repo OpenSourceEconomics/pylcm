@@ -152,7 +152,7 @@ def test_equal_constant_weights_pick_the_larger_total_payoff() -> None:
         objective=ParetoObjective(weights={"f": 0.5, "m": 0.5}),
     )
 
-    solution = model.solve(params=_params(), log_level="debug")
+    solution = model.solve(params=_params(), log_level="debug").values
 
     np.testing.assert_array_almost_equal(
         np.asarray(solution[0]["couple"]),
@@ -172,7 +172,7 @@ def test_a_skewed_constant_weight_moves_the_household_choice() -> None:
         objective=ParetoObjective(weights={"f": 0.8, "m": 0.2}),
     )
 
-    solution = model.solve(params=_params(), log_level="debug")
+    solution = model.solve(params=_params(), log_level="debug").values
 
     np.testing.assert_array_almost_equal(
         np.asarray(solution[0]["couple"]),
@@ -196,8 +196,8 @@ def test_a_weight_parameter_is_estimable_without_rebuilding_the_model() -> None:
         "pareto_weight_f"
     }
 
-    hers = model.solve(params=_params(pareto_weight_f=0.8), log_level="debug")
-    his = model.solve(params=_params(pareto_weight_f=0.5), log_level="debug")
+    hers = model.solve(params=_params(pareto_weight_f=0.8), log_level="debug").values
+    his = model.solve(params=_params(pareto_weight_f=0.5), log_level="debug").values
 
     np.testing.assert_array_almost_equal(
         np.asarray(hers[0]["couple"]), np.array([3.0, 0.0]), decimal=DECIMAL_PRECISION
@@ -223,7 +223,7 @@ def test_a_state_dependent_weight_decides_cell_by_cell() -> None:
         state_transitions={"power": fixed_transition("power")},
     )
 
-    solution = model.solve(params=_params(), log_level="debug")
+    solution = model.solve(params=_params(), log_level="debug").values
 
     np.testing.assert_array_almost_equal(
         np.asarray(solution[0]["couple"]),
@@ -255,7 +255,7 @@ def test_a_zero_weight_annihilates_an_admissible_minus_infinity() -> None:
         utility_m=_utility_m_prefers_a,
     )
 
-    solution = model.solve(params=_params(), log_level="debug")
+    solution = model.solve(params=_params(), log_level="debug").values
 
     assert np.asarray(solution[0]["couple"]).tolist() == [-np.inf, 5.0]
 
@@ -361,7 +361,7 @@ def test_the_endpoints_of_the_weight_interval_read_one_partner(
         utility_m=_utility_m_prefers_a,
     )
 
-    solution = model.solve(params=_params(), log_level="debug")
+    solution = model.solve(params=_params(), log_level="debug").values
 
     assert np.asarray(solution[0]["couple"]).tolist() == expected
 
@@ -383,7 +383,7 @@ def test_a_weight_just_above_zero_still_weighs_its_stakeholder(
     """
     model = _build_model(objective=ParetoObjective(weights={"f": weight, "m": 1.0}))
 
-    solution = model.solve(params=_params(), log_level="debug")
+    solution = model.solve(params=_params(), log_level="debug").values
 
     np.testing.assert_array_almost_equal(
         np.asarray(solution[0]["couple"]),
@@ -450,7 +450,7 @@ def _three_stakeholder_solution(order: tuple[str, ...]) -> np.ndarray:
         ages=_AGES,
         regime_id_class=ThreeRegimeId,
     )
-    solution = model.solve(params=_three_params(), log_level="debug")
+    solution = model.solve(params=_three_params(), log_level="debug").values
     by_name = dict(zip(order, np.asarray(solution[0]["household"]), strict=True))
     return np.array([by_name["f"], by_name["m"], by_name["child"]])
 
@@ -548,7 +548,7 @@ def test_a_weight_reading_a_carried_state_solves_on_its_imputation() -> None:
     """
     model = _build_carried_power_model()
 
-    solution = model.solve(params=_params(), log_level="debug")
+    solution = model.solve(params=_params(), log_level="debug").values
 
     np.testing.assert_array_almost_equal(
         np.asarray(solution[0]["couple"]),
@@ -601,7 +601,7 @@ def test_a_carried_weight_preserves_ordinary_imputation_dependencies() -> None:
         regime_id_class=RegimeId,
     )
 
-    solution = model.solve(params=_params(), log_level="debug")
+    solution = model.solve(params=_params(), log_level="debug").values
 
     np.testing.assert_array_almost_equal(
         np.asarray(solution[0]["couple"]),
@@ -627,7 +627,6 @@ def test_a_carried_weight_decides_on_the_imputation_not_the_seeded_value() -> No
             "power": jnp.array([Power.low, Power.low]),
             "regime_id": jnp.array([RegimeId.couple, RegimeId.couple], dtype=jnp.int32),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
 

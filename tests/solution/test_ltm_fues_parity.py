@@ -92,11 +92,15 @@ def test_ltm_matches_fues_on_concave_retirement(n_periods):
     """
     params = get_retirement_only_params(n_periods=n_periods)
 
-    fues = _retirement_only_model(envelope="fues", n_periods=n_periods).solve(
-        params=params, log_level="debug"
+    fues = (
+        _retirement_only_model(envelope="fues", n_periods=n_periods)
+        .solve(params=params, log_level="debug")
+        .values
     )
-    ltm = _retirement_only_model(envelope="ltm", n_periods=n_periods).solve(
-        params=params, log_level="debug"
+    ltm = (
+        _retirement_only_model(envelope="ltm", n_periods=n_periods)
+        .solve(params=params, log_level="debug")
+        .values
     )
 
     for period in sorted(fues)[:-1]:
@@ -157,7 +161,7 @@ def test_ltm_publishes_neg_inf_for_all_infeasible_combo_like_fues():
         )
 
     params = get_full_params(n_periods=n_periods, discount_factor=0.98, wage=20.0)
-    ltm = build("ltm").solve(params=params, log_level="debug")
+    ltm = build("ltm").solve(params=params, log_level="debug").values
 
     for period in sorted(ltm)[:-1]:
         working_V = np.asarray(ltm[period]["working_life"])
@@ -177,11 +181,15 @@ def test_ltm_matches_fues_on_discrete_choice_working_life(n_periods):
     """
     params = get_full_params(n_periods=n_periods, discount_factor=0.98, wage=20.0)
 
-    fues = _full_model(envelope="fues", n_periods=n_periods).solve(
-        params=params, log_level="debug"
+    fues = (
+        _full_model(envelope="fues", n_periods=n_periods)
+        .solve(params=params, log_level="debug")
+        .values
     )
-    ltm = _full_model(envelope="ltm", n_periods=n_periods).solve(
-        params=params, log_level="debug"
+    ltm = (
+        _full_model(envelope="ltm", n_periods=n_periods)
+        .solve(params=params, log_level="debug")
+        .values
     )
 
     n_unstable_low_nodes = 10

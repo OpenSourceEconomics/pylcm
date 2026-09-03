@@ -71,7 +71,7 @@ def test_housing_keeper_solves_to_finite_values():
     `alpha * log(housing)`, so for every income node and liquid-asset node the
     solved value function is strictly increasing in the passive housing state.
     """
-    solution = build_model().solve(params=build_params(), log_level="debug")
+    solution = build_model().solve(params=build_params(), log_level="debug").values
 
     n_liquid = LIQUID_ASSETS_GRID.to_jax().shape[0]
     n_housing = HOUSING_GRID.to_jax().shape[0]
@@ -110,11 +110,15 @@ def test_housing_keeper_dcegm_matches_brute():
     liquid nodes — the coarse consumption grid makes brute itself unreliable, and
     DC-EGM legitimately exceeds it.
     """
-    dcegm_solution = build_model("dcegm").solve(
-        params=build_params("dcegm"), log_level="debug"
+    dcegm_solution = (
+        build_model("dcegm")
+        .solve(params=build_params("dcegm"), log_level="debug")
+        .values
     )
-    brute_solution = build_model("brute").solve(
-        params=build_params("brute"), log_level="debug"
+    brute_solution = (
+        build_model("brute")
+        .solve(params=build_params("brute"), log_level="debug")
+        .values
     )
 
     liquid = np.asarray(LIQUID_ASSETS_GRID.to_jax())

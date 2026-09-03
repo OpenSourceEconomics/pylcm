@@ -117,6 +117,6 @@ def test_a_correctly_shaped_probability_function_is_accepted(probabilities) -> N
     """One vector without grid arguments, one per cell with them, both solve."""
     model = _build_model(probabilities=probabilities)
 
-    period_to_regime_to_V_arr = model.solve(params=_params(), log_level="debug")
+    period_to_regime_to_V_arr = model.solve(params=_params(), log_level="debug").values
 
     assert set(period_to_regime_to_V_arr[0]) == {"working", "dead"}

@@ -15,6 +15,7 @@ import _lcm.solution.nnbegm as nnbegm_module
 from _lcm.egm.published_policy import NNBEGMSimPolicy
 from lcm import NormalIIDProcess
 from lcm.exceptions import RegimeInitializationError
+from lcm.solver_api import SIMULATION_POLICY
 from lcm.solvers import NBEGM, NNBEGM, FiniteOuterGrid
 from lcm.typing import ContinuousAction, ContinuousState
 from tests.test_models import n_nbegm_toy as toy
@@ -85,21 +86,21 @@ def test_constructing_nnbegm_with_a_non_nbegm_inner_is_refused() -> None:
 
 def test_negm_does_not_publish_a_keeper_only_simulation_policy() -> None:
     """The unrelated NEGM path remains on its existing no-policy contract."""
-    _, policies = toy.build_model(variant="negm", n_periods=2).solve(
+    _solution_result = toy.build_model(variant="negm", n_periods=2).solve(
         params=_PARAMS,
         log_level="debug",
-        return_simulation_policy=True,
     )
+    policies = _solution_result.replay_artifacts.project(SIMULATION_POLICY)
     assert all("alive" not in mapping for mapping in policies.values())
 
 
 def test_nnbegm_publishes_every_ranked_candidate_inner_policy() -> None:
     """Replay carries keeper plus each outer-grid candidate, in solve order."""
-    _, policies = toy.build_model(variant="n_nbegm", n_periods=2).solve(
+    _solution_result = toy.build_model(variant="n_nbegm", n_periods=2).solve(
         params=_PARAMS,
         log_level="debug",
-        return_simulation_policy=True,
     )
+    policies = _solution_result.replay_artifacts.project(SIMULATION_POLICY)
     policy = policies[0]["alive"]
     assert isinstance(policy, NNBEGMSimPolicy)
     n_candidates = 1 + toy.OUTER_GRID.to_jax().shape[0]
@@ -140,11 +141,11 @@ def test_nnbegm_retains_targets_for_a_nonunit_affine_outer_law(
 ) -> None:
     """A valid affine outer law retains keeper and adjuster target identities."""
     monkeypatch.setattr(toy, "new_illiquid", _affine_outer_target)
-    _values, policies = toy.build_model(variant="n_nbegm", n_periods=2).solve(
+    _values = toy.build_model(variant="n_nbegm", n_periods=2).solve(
         params=_PARAMS,
         log_level="off",
-        return_simulation_policy=True,
     )
+    policies = _values.replay_artifacts.project(SIMULATION_POLICY)
     policy = policies[0]["alive"]
     assert isinstance(policy, NNBEGMSimPolicy)
     expected = np.concatenate(([0.0], np.asarray(toy.OUTER_GRID.to_jax())))
@@ -162,11 +163,15 @@ def test_two_period_toy_agrees_with_nested_dcegm() -> None:
     set with an exact 1-D inner solve, and the value functions agree up to the
     inner families' constrained-region representation at the poorest cells.
     """
-    nested = toy.build_model(variant="n_nbegm", n_periods=2).solve(
-        params=_PARAMS, log_level="debug"
+    nested = (
+        toy.build_model(variant="n_nbegm", n_periods=2)
+        .solve(params=_PARAMS, log_level="debug")
+        .values
     )
-    negm = toy.build_model(variant="negm", n_periods=2).solve(
-        params=_PARAMS, log_level="debug"
+    negm = (
+        toy.build_model(variant="negm", n_periods=2)
+        .solve(params=_PARAMS, log_level="debug")
+        .values
     )
     V_nested = np.asarray(nested[0]["alive"])
     V_negm = np.asarray(negm[0]["alive"])
@@ -198,11 +203,15 @@ def test_two_period_toy_dominates_the_dense_brute_oracle() -> None:
     families, not of the outer wrapper this file pins, so it is documented here
     and asserted nowhere.
     """
-    nested = toy.build_model(variant="n_nbegm", n_periods=2).solve(
-        params=_PARAMS, log_level="debug"
+    nested = (
+        toy.build_model(variant="n_nbegm", n_periods=2)
+        .solve(params=_PARAMS, log_level="debug")
+        .values
     )
-    brute = toy.build_model(variant="brute", n_periods=2).solve(
-        params=_PARAMS, log_level="debug"
+    brute = (
+        toy.build_model(variant="brute", n_periods=2)
+        .solve(params=_PARAMS, log_level="debug")
+        .values
     )
     nested_V = np.asarray(nested[0]["alive"])
     brute_V = np.asarray(brute[0]["alive"])
@@ -226,11 +235,15 @@ def test_three_period_toy_tracks_nested_dcegm_through_published_carries() -> Non
     share that approximation class and stay close everywhere — the gate for
     the topology-preserving publication is a separate, tighter deliverable.
     """
-    nested = toy.build_model(variant="n_nbegm", n_periods=3).solve(
-        params=_PARAMS, log_level="debug"
+    nested = (
+        toy.build_model(variant="n_nbegm", n_periods=3)
+        .solve(params=_PARAMS, log_level="debug")
+        .values
     )
-    negm = toy.build_model(variant="negm", n_periods=3).solve(
-        params=_PARAMS, log_level="debug"
+    negm = (
+        toy.build_model(variant="negm", n_periods=3)
+        .solve(params=_PARAMS, log_level="debug")
+        .values
     )
     for period in (0, 1):
         np.testing.assert_allclose(
@@ -244,12 +257,18 @@ def test_three_period_toy_tracks_nested_dcegm_through_published_carries() -> Non
 @pytest.mark.parametrize("outer_batch_size", [1, 4, 100])
 def test_outer_batch_size_is_value_invariant(outer_batch_size: int) -> None:
     """Chunking the outer sweep never changes the solved values."""
-    reference = toy.build_model(variant="n_nbegm", n_periods=2).solve(
-        params=_PARAMS, log_level="debug"
+    reference = (
+        toy.build_model(variant="n_nbegm", n_periods=2)
+        .solve(params=_PARAMS, log_level="debug")
+        .values
     )
-    chunked = toy.build_model(
-        variant="n_nbegm", outer_batch_size=outer_batch_size, n_periods=2
-    ).solve(params=_PARAMS, log_level="debug")
+    chunked = (
+        toy.build_model(
+            variant="n_nbegm", outer_batch_size=outer_batch_size, n_periods=2
+        )
+        .solve(params=_PARAMS, log_level="debug")
+        .values
+    )
     for period, regime_to_V in reference.items():
         for regime_name, V_arr in regime_to_V.items():
             np.testing.assert_array_equal(
@@ -271,10 +290,14 @@ def test_finite_outer_grid_does_not_materialize_a_candidate_bank(monkeypatch) ->
         fail_if_bank_is_built,
     )
 
-    solution = toy.build_model(
-        variant="n_nbegm",
-        outer_search=FiniteOuterGrid(grid=toy.OUTER_GRID, batch_size=2),
-        n_periods=2,
-    ).solve(params=_PARAMS, log_level="debug")
+    solution = (
+        toy.build_model(
+            variant="n_nbegm",
+            outer_search=FiniteOuterGrid(grid=toy.OUTER_GRID, batch_size=2),
+            n_periods=2,
+        )
+        .solve(params=_PARAMS, log_level="debug")
+        .values
+    )
 
     assert np.isfinite(np.asarray(solution[0]["alive"])).all()

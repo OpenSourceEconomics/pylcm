@@ -1,5 +1,6 @@
 """NBEGM simulation evaluates phase-resolved post-decision constraints."""
 
+from dataclasses import replace
 from types import MappingProxyType
 
 import jax.numpy as jnp
@@ -119,15 +120,16 @@ def test_nbegm_simulation_evaluates_a_phase_resolved_savings_bound(
     """The chosen action satisfies the simulation post-decision function."""
     model = _model(hand_written=declaration_kind == "hand_written")
     params = _filled_params(model)
-    solved = model.solve(params=params, log_level="off")
-    zeroed = MappingProxyType(
+    solution = model.solve(params=params, log_level="off")
+    zeroed_values = MappingProxyType(
         {
             period: MappingProxyType(
                 {name: jnp.zeros_like(arr) for name, arr in regime_to_V.items()}
             )
-            for period, regime_to_V in solved.items()
+            for period, regime_to_V in solution.values.items()
         }
     )
+    zeroed = replace(solution, values=zeroed_values)
 
     result = model.simulate(
         params=params,
@@ -136,7 +138,7 @@ def test_nbegm_simulation_evaluates_a_phase_resolved_savings_bound(
             "age": jnp.array([0.0]),
             "regime_id": jnp.array([RegimeId.alive], dtype=jnp.int32),
         },
-        period_to_regime_to_V_arr=zeroed,
+        solution=zeroed,
         log_level="off",
         seed=1,
     )

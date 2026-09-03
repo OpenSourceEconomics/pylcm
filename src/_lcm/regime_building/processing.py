@@ -5,6 +5,8 @@ from collections import defaultdict
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
 from dataclasses import replace as dataclass_replace
+from itertools import product
+from math import prod as math_prod
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -19,12 +21,17 @@ from jax import numpy as jnp
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.coarse_transition import _CoarseTransitionCell
 from _lcm.continuation import EGMContinuationSpec
+from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.budget import (
     DCEGM_BUDGET_CONSTRAINT_NAME,
     INTRINSIC_BUDGET_SOLVERS,
     get_intrinsic_budget_constraint,
 )
 from _lcm.egm.carry import EGMCarry, build_template_egm_carry, shard_carry_template
+from _lcm.egm.regime_introspection import (
+    _get_discrete_state_names,
+    _get_passive_state_names,
+)
 from _lcm.egm.terminal import (
     N_STATELESS_CARRY_ROWS,
     get_brute_child_carry_producer,
@@ -41,10 +48,12 @@ from _lcm.engine import (
     StateActionSpace,
     Variables,
 )
+from _lcm.execution.core_program import CoreProgram, CoreProgramGraphAware
 from _lcm.grids import (
     ContinuousGrid,
     DiscreteGrid,
     Grid,
+    IrregSpacedGrid,
 )
 from _lcm.grids.coordinates import get_irreg_coordinate
 from _lcm.identity_transition import _IdentityTransition
@@ -155,6 +164,7 @@ from _lcm.solution.contract import (
     SolverBuildContext,
     SolverModelContext,
 )
+from _lcm.solution.kernel_output import require_legacy_kernel_result
 from _lcm.solution.shipped_solvers import fail_if_solver_is_not_shipped
 from _lcm.state_action_space import create_state_action_space
 from _lcm.transition_plans import (
@@ -214,6 +224,7 @@ from lcm.solvers import (
     DCEGM,
     NNBEGM,
     AdaptiveOuterMesh,
+    FiniteOuterGrid,
     Solver,
     UniformObservedFixedCost,
 )
@@ -758,6 +769,9 @@ def process_regimes(  # noqa: PLR0915
                 solve_transitions=solution.transitions,
                 solve_transition_plans=solution.transition_plans,
                 solve_compute_regime_transition_probs=solution.compute_regime_transition_probs,
+                solve_has_compiled_constraint_boundaries=(
+                    solution.has_compiled_constraint_boundaries
+                ),
                 has_taste_shocks=user_regime.taste_shocks is not None,
                 solver=user_regime.solver,
                 certainty_equivalent=user_regime.certainty_equivalent,
@@ -2825,6 +2839,9 @@ def _build_solution_phase(
         # continuation can resolve each at the age of the period it prices.
         _continuation_functions=core.functions,
         constraints=core.constraints,
+        has_compiled_constraint_boundaries=(
+            routing.plan is not None and bool(routing.plan.compiled_boundaries)
+        ),
         transitions=core.transitions,
         transition_plans=core.transition_plans,
         reachability=phase_reachability,
@@ -2863,10 +2880,10 @@ class _TerminalCarryPeriodKernel:
     array into the continuation a DC-EGM parent interpolates. Publishing a carry
     is a cross-solver concern, so the wrapped solver stays unaware of it.
 
-    `core` and `build_lower_args` delegate to the base adapter: the carry
+    `core_programs` delegates the base adapter's sole native graph: the carry
     producer is a separately built (and jitted) closure invoked inline, not part
-    of the AOT-compiled core, so AOT compilation deduplicates and lowers exactly
-    the base grid-search core.
+    of the AOT-compiled core, so every execution mode resolves exactly the base
+    GridSearch program.
     """
 
     base: PeriodKernel
@@ -2878,14 +2895,12 @@ class _TerminalCarryPeriodKernel:
     regime_name: RegimeName
     """Name of the terminal regime whose flat params the producer reads."""
 
-    @property
-    def core(self) -> Callable:
-        """The base adapter's shared jitted core, for any single-core reader."""
-        return self.base.core
-
-    def cores(self) -> Mapping[str, Callable]:
-        """Delegate to the base adapter's cores (a terminal regime is single-core)."""
-        return self.base.cores()
+    def core_programs(self) -> Mapping[str, CoreProgram]:
+        """Delegate the wrapped GridSearch kernel's exact native program graph."""
+        if not isinstance(self.base, CoreProgramGraphAware):
+            msg = "A terminal-carry decorator requires a native core-program graph."
+            raise TypeError(msg)
+        return self.base.core_programs()
 
     def with_fixed_params(
         self, *, fixed_flat_params: FlatParams
@@ -2910,39 +2925,6 @@ class _TerminalCarryPeriodKernel:
             )
         return dataclass_replace(self, base=base, carry_producer=carry_producer)
 
-    def build_lower_args(
-        self,
-        *,
-        core_key: str = "main",
-        state_action_space: StateActionSpace,
-        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-        next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
-        flat_params: FlatParams,
-        period: int,
-        ages: AgeGrid,
-        edge_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
-    ) -> Mapping[str, object]:
-        """Build the base core's lowering arguments (the carry producer is jitted
-        separately at build time, so it is not part of the AOT-compiled core).
-
-        The wrapped regime keeps whatever the base kernel is: a gated-edge
-        source stays one when a carry producer is composed around it, so its
-        `Wbar` templates pass straight through.
-        """
-        return self.base.build_lower_args(
-            core_key=core_key,
-            state_action_space=state_action_space,
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            next_regime_to_continuation=next_regime_to_continuation,
-            flat_params=flat_params,
-            period=period,
-            ages=ages,
-            **_edge_and_same_period_kwargs(
-                edge_regime_to_V_arr=edge_regime_to_V_arr,
-                same_period_regime_to_V_arr=None,
-            ),
-        )
-
     def __call__(
         self,
         *,
@@ -2958,19 +2940,22 @@ class _TerminalCarryPeriodKernel:
         edge_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
     ) -> KernelResult:
         """Run the base kernel, then publish the regime's continuation carry."""
-        result = self.base(
-            compiled_cores=compiled_cores,
-            state_action_space=state_action_space,
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            next_regime_to_continuation=next_regime_to_continuation,
-            flat_params=flat_params,
-            period=period,
-            ages=ages,
-            logger=logger,
-            **_edge_and_same_period_kwargs(
-                edge_regime_to_V_arr=edge_regime_to_V_arr,
-                same_period_regime_to_V_arr=same_period_regime_to_V_arr,
+        result = require_legacy_kernel_result(
+            output=self.base(
+                compiled_cores=compiled_cores,
+                state_action_space=state_action_space,
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                next_regime_to_continuation=next_regime_to_continuation,
+                flat_params=flat_params,
+                period=period,
+                ages=ages,
+                logger=logger,
+                **_edge_and_same_period_kwargs(
+                    edge_regime_to_V_arr=edge_regime_to_V_arr,
+                    same_period_regime_to_V_arr=same_period_regime_to_V_arr,
+                ),
             ),
+            consumer="terminal carry wrapper",
         )
         carry = self.carry_producer(
             V_arr=result.V_arr,
@@ -3154,7 +3139,78 @@ def _validated_bound_nnbegm(
     return cast("_BoundNNBEGM", solver)
 
 
-def _build_simulation_phase(  # noqa: PLR0915
+def _replay_axis_lengths_by_period(
+    *,
+    axis_names: tuple[StateOrActionName, ...],
+    regime_name: RegimeName,
+    active_periods: tuple[int, ...],
+    grids: MappingProxyType[StateOrActionName, Grid],
+    grid_schedule: AgeGridSchedule | None,
+) -> MappingProxyType[int, tuple[int, ...]]:
+    """Return exact model-owned lengths for one published axis tuple."""
+    return MappingProxyType(
+        {
+            period: tuple(
+                _replay_axis_length(
+                    name=name,
+                    regime_name=regime_name,
+                    period=period,
+                    grids=grids,
+                    grid_schedule=grid_schedule,
+                )
+                for name in axis_names
+            )
+            for period in active_periods
+        }
+    )
+
+
+def _replay_axis_length(
+    *,
+    name: StateOrActionName,
+    regime_name: RegimeName,
+    period: int,
+    grids: MappingProxyType[StateOrActionName, Grid],
+    grid_schedule: AgeGridSchedule | None,
+) -> int:
+    """Return one period's exact axis length without reading a result payload."""
+    if grid_schedule is not None:
+        resolved = grid_schedule.by_period.get(period, {}).get(regime_name, {})
+        if name in resolved:
+            return int(resolved[name].nodes.shape[0])
+    grid = grids[name]
+    if isinstance(grid, IrregSpacedGrid) and grid.pass_points_at_runtime:
+        return grid.n_points
+    return int(grid.to_jax().shape[0])
+
+
+def _outer_state_domain_by_period(
+    *,
+    state_name: StateName,
+    regime_name: RegimeName,
+    active_periods: tuple[int, ...],
+    grids: MappingProxyType[StateOrActionName, Grid],
+    grid_schedule: AgeGridSchedule | None,
+) -> MappingProxyType[int, tuple[float, float]]:
+    """Return exact model-owned outer-state endpoints for every active period."""
+    representative = grids[state_name].to_jax()
+    domains: dict[int, tuple[float, float]] = {}
+    for period in active_periods:
+        period_grids = (
+            {}
+            if grid_schedule is None
+            else grid_schedule.by_period.get(period, {}).get(regime_name, {})
+        )
+        nodes = (
+            period_grids[state_name].nodes
+            if state_name in period_grids
+            else representative
+        )
+        domains[period] = (float(nodes[0]), float(nodes[-1]))
+    return MappingProxyType(domains)
+
+
+def _build_simulation_phase(  # noqa: PLR0912, PLR0915
     *,
     spec: PhasedRegimeSpec,
     user_regime: UserRegime,
@@ -3182,6 +3238,7 @@ def _build_simulation_phase(  # noqa: PLR0915
     solve_transitions: TransitionFunctionsMapping,
     solve_transition_plans: TargetTransitionPlans,
     solve_compute_regime_transition_probs: RegimeTransitionFunction | None,
+    solve_has_compiled_constraint_boundaries: bool,
     has_taste_shocks: bool,
     solver: Solver,
     certainty_equivalent: CertaintyEquivalent | None,
@@ -3545,9 +3602,69 @@ def _build_simulation_phase(  # noqa: PLR0915
                 f"continuous actions "
                 f"{tuple(simulation_variables.continuous_action_names)!r}."
             )
+
+        active_periods = regimes_to_active_periods[regime_name]
+        grids = all_grids[regime_name]
+        state_names = tuple(state_action_space.states)
+        row_discrete_state_names = _get_discrete_state_names(
+            v_interpolation_info=own_v_info
+        )
+        row_passive_state_names = _get_passive_state_names(
+            v_interpolation_info=own_v_info,
+            euler_state_name=bound_nnbegm.inner.continuous_state,
+        )
+        discrete_action_names = tuple(state_action_space.discrete_actions)
+        discrete_action_code_domains = MappingProxyType(
+            {
+                name: cast("DiscreteGrid", grids[name]).codes
+                for name in discrete_action_names
+            }
+        )
+        branch_code_rows = (
+            tuple(product(*discrete_action_code_domains.values()))
+            if discrete_action_names
+            else ((),)
+        )
+        n_keeper_candidates = math_prod(
+            len(codes) for codes in discrete_action_code_domains.values()
+        )
+        outer_search = bound_nnbegm.outer_search
+        replay_policy_is_nested = isinstance(outer_search, AdaptiveOuterMesh)
+        if isinstance(outer_search, AdaptiveOuterMesh):
+            outer_grid_values = None
+            candidate_discrete_action_codes: tuple[tuple[int, ...], ...] = ()
+            candidate_count = None
+            golden_iterations = outer_search.golden_iterations
+            value_atol = outer_search.value_atol
+            value_rtol = outer_search.value_rtol
+        else:
+            finite_outer_nodes = cast("FiniteOuterGrid", outer_search).grid.to_jax()
+            n_outer_candidates = int(finite_outer_nodes.shape[0]) + 1
+            outer_grid_values = tuple(float(value) for value in finite_outer_nodes)
+            candidate_discrete_action_codes = (
+                branch_code_rows * n_outer_candidates if discrete_action_names else ()
+            )
+            candidate_count = n_keeper_candidates * n_outer_candidates
+            golden_iterations = None
+            value_atol = None
+            value_rtol = None
+
+        fixed_cost_unsupported = isinstance(
+            bound_nnbegm.branch_aggregator,
+            UniformObservedFixedCost,
+        )
+        nested_policy_is_structurally_published = (
+            replay_policy_is_nested
+            and not fixed_cost_unsupported
+            and not discrete_action_names
+            and not solve_has_compiled_constraint_boundaries
+        )
+        policy_applicable = (
+            nested_policy_is_structurally_published if replay_policy_is_nested else True
+        )
         egm_policy_read = NNBEGMPolicyRead(
             outer_target_function_by_period=_build_nnbegm_outer_target_functions(
-                active_periods=regimes_to_active_periods[regime_name],
+                active_periods=active_periods,
                 functions=simulate_functions,
                 outer_post_decision=bound_nnbegm.outer_post_decision,
                 outer_no_adjustment_target=(bound_nnbegm.outer_no_adjustment_candidate),
@@ -3555,14 +3672,52 @@ def _build_simulation_phase(  # noqa: PLR0915
             outer_post_decision=bound_nnbegm.outer_post_decision,
             outer_no_adjustment_target=bound_nnbegm.outer_no_adjustment_candidate,
             outer_state_name=bound_nnbegm.outer_state,
-            fixed_cost_simulation_unsupported=isinstance(
-                bound_nnbegm.branch_aggregator,
-                UniformObservedFixedCost,
+            inner_action_name=bound_nnbegm.inner.continuous_action,
+            outer_action_name=bound_nnbegm.outer_action,
+            state_names=state_names,
+            state_axis_lengths_by_period=_replay_axis_lengths_by_period(
+                axis_names=state_names,
+                regime_name=regime_name,
+                active_periods=active_periods,
+                grids=grids,
+                grid_schedule=grid_schedule,
             ),
-            replay_policy_is_nested=isinstance(
-                bound_nnbegm.outer_search,
-                AdaptiveOuterMesh,
+            row_discrete_state_names=row_discrete_state_names,
+            row_passive_state_names=row_passive_state_names,
+            row_axis_lengths_by_period=_replay_axis_lengths_by_period(
+                axis_names=row_discrete_state_names + row_passive_state_names,
+                regime_name=regime_name,
+                active_periods=active_periods,
+                grids=grids,
+                grid_schedule=grid_schedule,
             ),
+            discrete_action_names=discrete_action_names,
+            discrete_action_code_domains=discrete_action_code_domains,
+            candidate_discrete_action_codes=candidate_discrete_action_codes,
+            candidate_count=candidate_count,
+            float_dtype=str(np.dtype(canonical_float_dtype())),
+            integer_dtype=str(np.dtype(jnp.int32)),
+            outer_grid_values=outer_grid_values,
+            n_keeper_candidates=(
+                None if replay_policy_is_nested else n_keeper_candidates
+            ),
+            liquid_state_name=bound_nnbegm.inner.continuous_state,
+            resources_target=bound_nnbegm.inner.budget_target,
+            savings_lower_bound=float(bound_nnbegm.inner.savings_grid.to_jax()[0]),
+            golden_iterations=golden_iterations,
+            value_atol=value_atol,
+            value_rtol=value_rtol,
+            outer_state_domain_by_period=_outer_state_domain_by_period(
+                state_name=bound_nnbegm.outer_state,
+                regime_name=regime_name,
+                active_periods=active_periods,
+                grids=grids,
+                grid_schedule=grid_schedule,
+            ),
+            policy_applicable=policy_applicable,
+            policy_required=policy_applicable,
+            fixed_cost_simulation_unsupported=fixed_cost_unsupported,
+            replay_policy_is_nested=replay_policy_is_nested,
         )
     elif (
         bound_solver is not None
@@ -3578,10 +3733,34 @@ def _build_simulation_phase(  # noqa: PLR0915
             user_regime=user_regime, solver=bound_solver
         )
     ):
+        row_discrete_state_names = _get_discrete_state_names(
+            v_interpolation_info=own_v_info
+        )
+        row_passive_state_names = _get_passive_state_names(
+            v_interpolation_info=own_v_info,
+            euler_state_name=bound_solver.continuous_state,
+        )
+        row_discrete_action_names = tuple(state_action_space.discrete_actions)
+        row_names = (
+            row_discrete_state_names
+            + row_passive_state_names
+            + row_discrete_action_names
+        )
         egm_policy_read = EGMPolicyRead(
             action_name=bound_solver.continuous_action,
             resources_target=bound_solver.resources,
             savings_lower_bound=float(bound_solver.savings_grid.to_jax()[0]),
+            row_discrete_state_names=row_discrete_state_names,
+            row_passive_state_names=row_passive_state_names,
+            row_discrete_action_names=row_discrete_action_names,
+            row_axis_lengths_by_period=_replay_axis_lengths_by_period(
+                axis_names=row_names,
+                regime_name=regime_name,
+                active_periods=regimes_to_active_periods[regime_name],
+                grids=all_grids[regime_name],
+                grid_schedule=grid_schedule,
+            ),
+            float_dtype=str(np.dtype(canonical_float_dtype())),
         )
 
     # Inventory the periodized nodes the additional-target guard must reject —

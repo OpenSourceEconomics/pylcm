@@ -234,17 +234,26 @@ def _writes_a_decomposed_name(source: str) -> list[str]:
 
 #: Callables that take a decomposed name legitimately: the engine helpers a
 #: unit test drives directly.
-_ENGINE_CONSTRUCTORS = frozenset({"MockRegime", "_MockRegime", "build_pareto_weights"})
+_ENGINE_CONSTRUCTORS = frozenset(
+    {
+        "MockRegime",
+        "_MockRegime",
+        "build_pareto_weights",
+        "get_max_Q_over_a",
+        "get_streaming_max_Q_over_a",
+    }
+)
 
-#: Modules that build the ENGINE's regime rather than the author's, and so
-#: write the engine's own vocabulary on purpose. One replaces `stakeholders` on
-#: a canonical regime the solver already produced; the other mocks a canonical
-#: regime outright. Neither reaches `Regime.__init__`, so neither is a second
-#: way to write a model — but both are pinned here so that becoming one is a
-#: deliberate edit.
+#: Modules that build or directly exercise the ENGINE form rather than the
+#: author form, and so write the engine vocabulary on purpose. One replaces
+#: `stakeholders` on a canonical regime the solver already produced, one mocks a
+#: canonical regime outright, and one unit-tests the lowered GridSearch reducer and
+#: provider context. None reaches `Regime.__init__`, so none is a second way to
+#: write a model. Each is pinned here so that becoming one is a deliberate edit.
 _ENGINE_VOCABULARY_MODULES = frozenset(
     {
         "tests/regime_building/test_simulate_gate_param_and_leg_selection.py",
+        "tests/regime_building/test_streaming_max_Q_over_a.py",
         "tests/solution/test_edge_topologies_build_each_target_once.py",
     }
 )

@@ -7,6 +7,8 @@ https://doi.org/10.3982/QE643).
 
 """
 
+from collections.abc import Mapping
+
 import numpy as np
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
@@ -54,9 +56,9 @@ def test_analytical_solution(*, model_name, model_and_params):
     model = model_and_params["model"]
     params = model_and_params["params"]
 
-    period_to_regime_to_V_arr: dict[int, dict[str, FloatND]] = model.solve(
+    period_to_regime_to_V_arr: Mapping[int, Mapping[str, FloatND]] = model.solve(
         log_level="debug", params=params
-    )
+    ).values
 
     period_to_regime_to_V_arr_list = [
         period_to_regime_to_V_arr[period]

@@ -58,7 +58,7 @@ def _alive_values(model: Model) -> np.ndarray:
     return np.concatenate(
         [
             np.asarray(regimes["alive"]).ravel()
-            for regimes in solution.values()
+            for regimes in solution.values.values()
             if "alive" in regimes
         ]
     )

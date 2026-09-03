@@ -185,7 +185,7 @@ def test_an_edge_inside_a_phased_transition_solves_to_the_unphased_values():
 def _solve(regimes):
     """Solve the dissolution miniature built from `regimes`."""
     model = Model(regimes=regimes, ages=_AGES, regime_id_class=RegimeId)
-    return model.solve(params=_PARAMS, log_level="off")
+    return model.solve(params=_PARAMS, log_level="off").values
 
 
 def _new_vocabulary_regimes() -> dict[str, Regime]:

@@ -86,11 +86,15 @@ _RETIRED_SENTINEL = _CONTRACT["workloads"]["retired_egm"]["sentinel"]
 def _solve_pair(**grid_overrides):
     """Solve one grid configuration with the EGM solvers and with dense brute."""
     solvers = grid_overrides.pop("solvers")
-    egm = get_model(n_periods=_N_PERIODS, solvers=solvers, **grid_overrides).solve(
-        params=get_params(), log_level="debug"
+    egm = (
+        get_model(n_periods=_N_PERIODS, solvers=solvers, **grid_overrides)
+        .solve(params=get_params(), log_level="debug")
+        .values
     )
-    brute = get_model(n_periods=_N_PERIODS, n_consumption=200, **grid_overrides).solve(
-        params=get_params(), log_level="debug"
+    brute = (
+        get_model(n_periods=_N_PERIODS, n_consumption=200, **grid_overrides)
+        .solve(params=get_params(), log_level="debug")
+        .values
     )
     return egm, brute
 
@@ -240,11 +244,15 @@ def test_w5_egm_does_not_require_the_state_to_be_named_liquid():
     kernel's internal liquid role may surface as a requirement on the state's
     name.
     """
-    egm = _renamed_one_asset_model(solver=EGM(savings_grid=_SAVINGS_GRID)).solve(
-        params=_renamed_one_asset_params(), log_level="debug"
+    egm = (
+        _renamed_one_asset_model(solver=EGM(savings_grid=_SAVINGS_GRID))
+        .solve(params=_renamed_one_asset_params(), log_level="debug")
+        .values
     )
-    brute = _renamed_one_asset_model(solver=GridSearch(), n_consumption=200).solve(
-        params=_renamed_one_asset_params(), log_level="debug"
+    brute = (
+        _renamed_one_asset_model(solver=GridSearch(), n_consumption=200)
+        .solve(params=_renamed_one_asset_params(), log_level="debug")
+        .values
     )
     for period in (0, 1, 2):
         egm_v = np.asarray(egm[period]["alive"])[_RENAMED_UNCONSTRAINED]

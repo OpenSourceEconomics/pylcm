@@ -45,6 +45,47 @@ compile reuse, and device occupancy can reverse a simple operation-count ranking
 excellent on a GPU. Conversely, an EGM method with sequential scans or many small shapes
 can lose despite lower arithmetic complexity.
 
+Eligible JIT GridSearch solve kernels evaluate the canonical action product in bounded
+blocks. Each period kernel names every continuation and reference value it reads as an
+exact logical target artifact paired with the source core's argument channel and tree
+path. Same-period value references, gated-target continuations, and edge-reference
+values and parameters therefore remain ordinary dynamic inputs to those blocks, so a
+value-dependent declaration does not by itself force dense action materialization.
+Ordinary co-mapped state routes preserve device-local continuation reads while streaming
+actions. Eligible singleton folded-state routes also stream their action product at each
+shock node and then apply the unchanged quadrature reduction; the fold-node axis itself
+is still evaluated and reduced in full. The classifier deliberately keeps co-map
+intersections with separate same-period or edge-reference channels, trivial action
+products, JIT-disabled and raw execution, and all simulation-policy construction dense.
+Simulation lies outside the solve classifier. Collective EV1, EV1 with a fold,
+collective hard max with a fold, and EV1 without a discrete action are unsupported by
+the streamed program. See the canonical
+[GridSearch route matrix](../reference/solvers.md#gridsearch-jit-route-matrix). The
+planner selects a private width keyword outside the complete model argument namespace,
+so model names never force a dense fallback. Blockwise action evaluation preserves the
+full represented support; its runtime and memory effect remains empirical.
+
+Before lowering a planned GridSearch core, the engine resolves every declared value read
+to one of two private transfer operations. `ALIGNED_LOCAL` passes an array through when
+it is already resident on the source core's mesh, retaining the value's own
+rank-specific partitioning. `COPY_TO_SOURCE_LAYOUT` makes an explicit copy into the
+supported layout on the source core's mesh. The exact same resolved plan transforms the
+lowering arguments and the runtime arguments; unexpected shape, dtype, sharding,
+address, or conversion combinations fail closed.
+
+Each planned read also authenticates its declared
+`(source_regime, source_period, core_key)` against the actual compiled core before its
+channel and argument-tree path are resolved. Agreement among declarations cannot make a
+different source node authoritative.
+
+The exact declarations also support conservative remaining-consumer accounting. A
+logical artifact is counted once per planned dispatch and its count is committed only
+after that dispatch returns successfully. Reaching zero means only that an unpinned
+artifact is eligible for a later scheduler decision. The current planner does not
+physically release, donate, or offload arrays. Dense compatibility routes and consumers
+without a complete plan remain pinned, so this bookkeeping is not a graph-wide
+peak-memory claim.
+
 A large GPU should not be treated as a faster small GPU automatically. Independent
 tests, regimes, branches, subjects, or candidate chunks can improve occupancy, but only
 if scheduling keeps aggregate device memory bounded. pylcm's current public controls
@@ -68,6 +109,22 @@ Measure at least:
 
 A speed claim that reports only the fourth quantity does not answer whether the model is
 practical in estimation or CI.
+
+### Maintainer-only fused NB-EGM replay
+
+The private fused NB-EGM period replay is a compile-only architecture experiment. It
+compares the current split cores with their existing full continuation-to-envelope
+calculation placed inside one JIT boundary. Its question is narrowly whether that
+boundary changes the full stacks' compiler-visible lifetime. It is not a tile-local
+solver implementation or an architecture-completion claim.
+
+A period capture preserves logical pytrees, values, and production array shapes, but its
+pickle round trip does not preserve device sharding. The analyzer therefore lowers both
+forms using default backend placement after the capture round trip. Its report records
+this as machine-readable shape provenance and layout fidelity, and explicitly states
+that production sharding was not preserved. The resulting compiler byte counts are not
+production-layout memory measurements. Runtime and peak-memory claims require a
+representative execution with the intended production placement.
 
 ## What is known and what remains empirical
 

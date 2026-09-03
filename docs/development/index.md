@@ -15,6 +15,7 @@ here.
 - [Continuous integration](continuous_integration.md)
 - [Package benchmarks](benchmarking.md)
 - [Resource contract for collective and gated models](collective_resource_contract.md)
+- [Architecture transition ledger](architecture_transition_ledger.md)
 
 The public out-of-tree solver extension contract is not yet ready. See the honest
 [custom-solver stub](../reference/custom_solvers.md), not the internal implementation

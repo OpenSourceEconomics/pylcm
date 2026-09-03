@@ -15,15 +15,15 @@ class RegimeId:
 
 
 def _zero_utility() -> ScalarFloat:
-    return jnp.float32(0)
+    return jnp.asarray(0.0)
 
 
 def _low_utility() -> ScalarFloat:
-    return jnp.float32(0)
+    return jnp.asarray(0.0)
 
 
 def _high_utility() -> ScalarFloat:
-    return jnp.float32(10)
+    return jnp.asarray(10.0)
 
 
 def _probability_low(probability_high: ScalarFloat) -> ScalarFloat:
@@ -35,11 +35,11 @@ def _probability_high(probability_high: ScalarFloat) -> ScalarFloat:
 
 
 def _complement_of_dormant_probability() -> ScalarFloat:
-    return jnp.float32(0.9)
+    return jnp.asarray(0.9)
 
 
 def _positive_dormant_probability() -> ScalarFloat:
-    return jnp.float32(0.1)
+    return jnp.asarray(0.1)
 
 
 def _source_is_active(age: float) -> bool:
@@ -82,11 +82,11 @@ def test_runtime_zero_probability_keeps_static_continuation_targets() -> None:
     low_solution = model.solve(
         params={"discount_factor": 1.0, "probability_high": 0.0},
         log_level="debug",
-    )
+    ).values
     high_solution = model.solve(
         params={"discount_factor": 1.0, "probability_high": 1.0},
         log_level="debug",
-    )
+    ).values
 
     assert graph_targets == ("high", "low")
     assert (

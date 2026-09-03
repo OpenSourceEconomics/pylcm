@@ -1390,6 +1390,53 @@ class _RideAlongNBEGMPeriodKernel:
             }
         )
 
+    def build_fused_replay_core(self) -> Callable:
+        """Build a replay-only core spanning continuation through envelope.
+
+        Production deliberately keeps the two cores separate. This narrow diagnostic
+        wrapper puts their existing full-stack mathematics inside one JIT boundary. It
+        asks only whether that boundary changes the continuation stacks'
+        compiler-visible lifetime relative to the split cores. It is not a tile-local
+        architecture and makes no production-layout or production-memory claim. The
+        continuation stacks are local values: callers supply captured states, target
+        artifacts, params, period, and age, never a materialized cross-core stack.
+
+        Returns:
+            A callable returning exactly the envelope core's raw output pytree.
+
+        """
+        continuation_core = self.continuation_core
+        envelope_core = self.envelope_core
+        cliff_candidates = self.cliff_candidates
+
+        def fused_replay_core(
+            *,
+            next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
+            next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+            **kwargs: Any,  # noqa: ANN401 - state grids + params + period/age
+        ) -> object:
+            continuation_stacks = continuation_core(
+                next_regime_to_continuation=next_regime_to_continuation,
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                **kwargs,
+            )
+            if cliff_candidates:
+                cont_value_stack, cont_marginal_stack, cliff_savings_stack = (
+                    continuation_stacks
+                )
+                cliff_kwargs = {"cliff_savings_stack": cliff_savings_stack}
+            else:
+                cont_value_stack, cont_marginal_stack = continuation_stacks
+                cliff_kwargs = {}
+            return envelope_core(
+                cont_value_stack=cont_value_stack,
+                cont_marginal_stack=cont_marginal_stack,
+                **cliff_kwargs,
+                **kwargs,
+            )
+
+        return fused_replay_core
+
     def with_fixed_params(
         self, *, fixed_flat_params: FlatParams
     ) -> _RideAlongNBEGMPeriodKernel:

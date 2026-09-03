@@ -238,7 +238,7 @@ def test_stochastic_solve(*, discount_factor, n_wealth_points, probs_array):
     }
     got = model.solve(
         log_level="debug", params={"discount_factor": discount_factor, "alive": params}
-    )
+    ).values
 
     wealth_grid_class = cast("LinSpacedGrid", new_states["wealth"])
     _wealth_grid = np.linspace(
@@ -307,7 +307,6 @@ def test_stochastic_simulate(*, discount_factor, n_wealth_points, probs_array):
         log_level="debug",
         params={"discount_factor": discount_factor, "alive": params_alive},
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=None,
     )
     # Filter to alive regime only (dead regime has trivial values)
     got = result.to_dataframe().query('regime_name == "alive"').reset_index(drop=True)

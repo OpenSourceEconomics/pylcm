@@ -158,19 +158,21 @@ def test_discrete_state_slices_match_single_type_models():
     carry rows for the child's skill value would mix the types' carries and
     break this equality.
     """
-    skill_solution = _get_skill_model().solve(
-        params=_get_skill_model_params(), log_level="debug"
+    skill_solution = (
+        _get_skill_model()
+        .solve(params=_get_skill_model_params(), log_level="debug")
+        .values
     )
     base_model = get_full_model(solver="dcegm", n_periods=N_PERIODS)
     params = get_full_params(n_periods=N_PERIODS, discount_factor=0.98, wage=20.0)
     single_type_solutions = {
-        "low": base_model.solve(params=params, log_level="debug"),
+        "low": base_model.solve(params=params, log_level="debug").values,
         "high": base_model.solve(
             params=get_full_params(
                 n_periods=N_PERIODS, discount_factor=0.98, wage=40.0
             ),
             log_level="debug",
-        ),
+        ).values,
     }
 
     for period in sorted(skill_solution)[:-1]:
@@ -197,7 +199,7 @@ def test_infeasible_discrete_action_recovers_retirement_value():
     """
     params = get_full_params(n_periods=N_PERIODS, discount_factor=0.98, wage=20.0)
 
-    solution = _get_must_retire_model().solve(params=params, log_level="debug")
+    solution = _get_must_retire_model().solve(params=params, log_level="debug").values
 
     for period in sorted(solution)[:-1]:
         np.testing.assert_allclose(
@@ -248,8 +250,8 @@ def test_discrete_state_layout_matches_brute_force(regime_name):
         ages=ages,
         regime_id_class=base.RegimeId,
     )
-    brute_solution = brute_model.solve(params=params, log_level="debug")
-    dcegm_solution = _get_skill_model().solve(params=params, log_level="debug")
+    brute_solution = brute_model.solve(params=params, log_level="debug").values
+    dcegm_solution = _get_skill_model().solve(params=params, log_level="debug").values
 
     n_brute_unstable_nodes = 10
     for period in sorted(brute_solution)[:-1]:
@@ -358,8 +360,8 @@ def test_undeclared_stateless_regime_does_not_enter_the_continuation():
     )
     params = _get_skill_model_params()
 
-    solution_with = with_lost.solve(params=params, log_level="debug")
-    solution_without = without_lost.solve(params=params, log_level="debug")
+    solution_with = with_lost.solve(params=params, log_level="debug").values
+    solution_without = without_lost.solve(params=params, log_level="debug").values
 
     for period in sorted(solution_without)[:-1]:
         np.testing.assert_allclose(
@@ -404,7 +406,7 @@ def test_all_infeasible_regime_publishes_neg_inf_like_brute_force():
     )
     params = get_full_params(n_periods=N_PERIODS, discount_factor=0.98, wage=20.0)
 
-    solution = doomed_model.solve(params=params, log_level="debug")
+    solution = doomed_model.solve(params=params, log_level="debug").values
 
     for period in sorted(solution)[:-1]:
         working_V = np.asarray(solution[period]["working_life"])

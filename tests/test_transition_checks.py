@@ -658,6 +658,6 @@ def test_a_subnormal_probability_is_a_valid_row() -> None:
         return jnp.asarray([subnormal, 1.0 - subnormal], dtype=active)
 
     model = _model_with_state_probs(subnormal_probs)
-    V = model.solve(log_level="debug", params={"discount_factor": 0.95})
+    V = model.solve(log_level="debug", params={"discount_factor": 0.95}).values
 
     assert not bool(jnp.any(jnp.isnan(jnp.asarray(V[0]["alive"]))))

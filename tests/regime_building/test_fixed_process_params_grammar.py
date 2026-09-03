@@ -123,9 +123,11 @@ def test_every_level_pins_an_entered_process_law(
     the process's own law is worth `mu`. Each spelling must build *and* reach
     that value — building alone would not show the law was actually bound.
     """
-    solution = _entered_process_model(
-        fixed_params=_SPELLINGS[spelling], enable_jit=enable_jit
-    ).solve(params=_SOLVE_PARAMS, log_level="debug")
+    solution = (
+        _entered_process_model(fixed_params=_SPELLINGS[spelling], enable_jit=enable_jit)
+        .solve(params=_SOLVE_PARAMS, log_level="debug")
+        .values
+    )
 
     np.testing.assert_allclose(np.asarray(solution[0]["source"]), _MU, atol=1e-6)
 
@@ -182,7 +184,7 @@ def test_a_broadcast_that_binds_a_law_still_reaches_a_function() -> None:
         enable_jit=False,
     )
 
-    solution = model.solve(params=_SOLVE_PARAMS, log_level="debug")
+    solution = model.solve(params=_SOLVE_PARAMS, log_level="debug").values
 
     np.testing.assert_allclose(np.asarray(solution[0]["source"]), 2 * _MU, atol=1e-6)
 
@@ -236,7 +238,7 @@ def test_a_lognormal_law_pins_from_a_broadcast_too() -> None:
         enable_jit=False,
     )
 
-    solution = model.solve(params=_SOLVE_PARAMS, log_level="debug")
+    solution = model.solve(params=_SOLVE_PARAMS, log_level="debug").values
 
     raw_nodes, raw_weights = np.polynomial.hermite.hermgauss(3)
     nodes = math.sqrt(2.0) * raw_nodes
@@ -274,7 +276,7 @@ def test_a_coarse_regime_transition_pins_the_same_law() -> None:
         enable_jit=False,
     )
 
-    solution = model.solve(params=_SOLVE_PARAMS, log_level="debug")
+    solution = model.solve(params=_SOLVE_PARAMS, log_level="debug").values
 
     np.testing.assert_allclose(np.asarray(solution[0]["source"]), _MU, atol=1e-6)
 
@@ -336,7 +338,7 @@ def test_a_carried_state_elsewhere_does_not_block_binding() -> None:
         enable_jit=False,
     )
 
-    solution = model.solve(params=_SOLVE_PARAMS, log_level="debug")
+    solution = model.solve(params=_SOLVE_PARAMS, log_level="debug").values
 
     np.testing.assert_allclose(np.asarray(solution[0]["source"]), _MU, atol=1e-6)
 

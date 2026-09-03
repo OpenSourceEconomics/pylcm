@@ -215,8 +215,8 @@ def test_custom_ces_aggregator_differs_from_default():
         "dead": {},
     }
 
-    V_default = model_default.solve(log_level="debug", params=params_default)
-    V_ces = model_ces.solve(log_level="debug", params=params_ces)
+    V_default = model_default.solve(log_level="debug", params=params_default).values
+    V_ces = model_ces.solve(log_level="debug", params=params_ces).values
 
     # The value functions should differ because the aggregation rule differs
     has_difference = False
@@ -321,8 +321,8 @@ def test_terminal_regime_value_unchanged_by_W():
         "dead": {},
     }
 
-    V_default = model_default.solve(log_level="debug", params=params_default)
-    V_ces = model_ces.solve(log_level="debug", params=params_ces)
+    V_default = model_default.solve(log_level="debug", params=params_default).values
+    V_ces = model_ces.solve(log_level="debug", params=params_ces).values
 
     # Last period is terminal — value functions should be identical
     last_period = max(V_default.keys())
@@ -366,7 +366,7 @@ def test_dag_output_feeds_default_h_monotone_in_discount_factor():
             "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
         },
     }
-    V = model.solve(log_level="debug", params=params)
+    V = model.solve(log_level="debug", params=params).values
 
     # Pick a non-terminal period; slice each pref_type.
     non_terminal_periods = [p for p in V if p < max(V.keys())]
@@ -424,7 +424,7 @@ def test_h_consumes_continuous_state():
             },
             "dead": {},
         },
-    )
+    ).values
     V_pos = model.solve(
         log_level="debug",
         params={
@@ -434,7 +434,7 @@ def test_h_consumes_continuous_state():
             },
             "dead": {},
         },
-    )
+    ).values
     lift_at_terminal = (
         V_pos[FINAL_AGE_ALIVE]["working_life"] - V_zero[FINAL_AGE_ALIVE]["working_life"]
     )
@@ -475,7 +475,7 @@ def test_h_consumes_continuous_action():
             },
             "dead": {},
         },
-    )
+    ).values
     V_pos = model.solve(
         log_level="debug",
         params={
@@ -485,7 +485,7 @@ def test_h_consumes_continuous_action():
             },
             "dead": {},
         },
-    )
+    ).values
     non_terminal = [p for p in V_zero if p <= FINAL_AGE_ALIVE]
     assert non_terminal
     diffs_exist = any(
@@ -523,16 +523,20 @@ def test_h_consumes_discrete_action():
             },
             "dead": {},
         },
-    )
-    baseline = _make_model().solve(
-        log_level="debug",
-        params={
-            "discount_factor": 0.95,
-            "working_life": {
-                "utility": {"disutility_of_work": 0.5},
-                "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
+    ).values
+    baseline = (
+        _make_model()
+        .solve(
+            log_level="debug",
+            params={
+                "discount_factor": 0.95,
+                "working_life": {
+                    "utility": {"disutility_of_work": 0.5},
+                    "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
+                },
             },
-        },
+        )
+        .values
     )
     for period in V:
         for regime in V[period]:
@@ -568,7 +572,7 @@ def test_h_consumes_discrete_state():
                 "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
             },
         },
-    )
+    ).values
     non_terminal = [p for p in V if p <= FINAL_AGE_ALIVE]
     assert non_terminal
     for period in non_terminal:
@@ -614,7 +618,7 @@ def test_h_consumes_flat_param_state_action_and_dag_output():
                 "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
             },
         },
-    )
+    ).values
     for period in V:
         if "working_life" in V[period]:
             v = V[period]["working_life"]
@@ -675,7 +679,7 @@ def _solve_with_age_varying_discount(koopmans_aggregator: object) -> FloatND:
         [0.99, 0.90, 0.80], index=pd.Index([0.0, 1.0, 2.0], name="age")
     )
     params = {"alive": {"koopmans_aggregator": {"discount_factor": discount_factor}}}
-    return model.solve(params=params, log_level="debug")[0]["alive"]
+    return model.solve(params=params, log_level="debug").values[0]["alive"]
 
 
 def test_callable_object_aggregator_indexing_a_series_matches_the_function_form():
@@ -725,7 +729,7 @@ def _solve_with_aggregator_slot(
             "certainty_equivalent": {"risk_aversion": 2.0},
         }
     }
-    return template, model.solve(params=params, log_level="debug")[0]["alive"]
+    return template, model.solve(params=params, log_level="debug").values[0]["alive"]
 
 
 _PHASED_AGGREGATOR_PARAMS = {

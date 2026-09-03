@@ -25,38 +25,23 @@ shipped in aca-model — no aca-data pipeline run required.
 
 ASV wiring notes:
 
-- We use `setup_cache` with a cloudpickle-bytes wrapper. ASV's cache
-  machinery serialises `setup_cache`'s return value through stdlib
-  `pickle`, which can't handle the `MappingProxyType` leaves or
-  user-defined callables inside a pylcm `Model`. `setup_cache` returns
-  `cloudpickle.dumps(...)` of the `(model, params, initial_conditions)`
-  triple; each method's `setup(cache)` calls `cloudpickle.loads` and
-  runs a warm simulate. This amortises Python-level model construction
-  across `time_execution`, `peakmem_execution`, and
-  `track_compilation_time` (~60-120 s saved per ASV run). JAX
-  compilation is still per-method — the JIT cache is process-local —
-  but the persistent XLA disk cache keeps second and third compiles
-  fast.
-- `AcaBaselineDebugLog` subclasses `AcaBaseline`, overriding only the
-  `log_level` and the per-run temporary `log_path`; it reuses the same
-  `setup_cache` / metric methods.
-- `AcaBaselineGpuPeakMem` and `AcaBaselineDebugLogGpuPeakMem` run in a
-  separate subprocess via `_gpu_mem` that does not go through ASV's
-  `setup_cache` pipeline. They call `setup_for_gpu_measurement()`
-  (rebuild fresh, no warm-up) then `time_execution()` to measure cold
-  peak memory with autotuning disabled. Both methods accept `cache=None`
-  so the same callable serves ASV (cache passed in) and the subprocess
-  (cache omitted).
+- Each class's `setup_cache` launches one isolated subprocess through
+  `_gpu_mem.measure_combined`. That process builds once, runs one cold
+  simulation while recording compilation time and CPU/GPU peak memory,
+  then immediately times one warm simulation. Four cheap `track_*`
+  methods read the shared result. This avoids recompiling the model once
+  per metric while retaining four independent ASV series.
+- `AcaBaselineDebugLog` has its own `setup_cache` definition so ASV gives
+  the debug configuration a separate combined subprocess.
+- XLA autotuning is disabled and preallocation is off in the measurement
+  subprocess, preserving the previous GPU-memory benchmark semantics.
 """
 
 import atexit
-import gc
 import pathlib
 import shutil
 import tempfile
 import time
-
-import cloudpickle
 
 from . import _gpu_mem
 
@@ -64,9 +49,8 @@ _N_SUBJECTS = 1000
 
 _LOG_DIR_PREFIX = "aca-bench-debug-log-"
 
-# Longer than any single benchmark holds its log directory (the GPU-memory
-# classes cap out at `timeout = 3600`), so the sweep below can never remove a
-# directory belonging to a live run.
+# Longer than the combined subprocess timeout, so the sweep below can never
+# remove a directory belonging to a live run.
 _STALE_LOG_DIR_AGE_SECONDS = 24 * 3600
 
 
@@ -146,65 +130,49 @@ class AcaBaseline:
     # refactors that don't change what's measured.
     version = "1"
     timeout = 3600
-    # Pin every ASV sample knob to 1 so setup runs once per subprocess
-    # and one warm call is timed. `timeout=3600` gives headroom for the
-    # cold compile that happens inside setup(cache).
-    rounds = 1
-    repeat = 1
-    number = 1
-    warmup_time = 0
-
     # Simulate logging configuration; `AcaBaselineDebugLog` overrides both.
     log_level = "off"
     log_path: str | None = None
 
-    def setup_cache(self) -> bytes:
-        # Build once per ASV benchmark class run and hand the result to
-        # every method via ASV's setup_cache mechanism. ASV pickles the
-        # return value with stdlib `pickle`, which can't handle the
-        # `MappingProxyType` leaves or user callables inside a pylcm
-        # `Model` — so wrap the triple in cloudpickle bytes. ASV then
-        # ships plain bytes; each method's setup(cache) reconstructs.
-        return cloudpickle.dumps(_build())
-
-    def setup(self, cache: bytes) -> None:
-        self.model, self.model_params, self.initial_conditions = cloudpickle.loads(
-            cache
+    def setup_cache(self) -> dict[str, float]:
+        return _gpu_mem.measure_combined(
+            bench_module="benchmarks.asv.bench_aca_baseline",
+            bench_class="AcaBaseline",
         )
-        # Warm-trigger compilation so time_execution runs on a hot kernel.
-        start = time.perf_counter()
-        self._simulate()
-        self._compile_time = time.perf_counter() - start
+
+    def setup(self, cache: dict[str, float]) -> None:
+        self._measurements = cache
 
     def setup_for_gpu_measurement(self) -> None:
-        # Called by the _gpu_mem subprocess; bypasses ASV's setup_cache
-        # pipeline. The subprocess warms up (compiles) before sampling the
-        # measured run, so this only needs to build the model + params.
+        # Called inside the isolated combined-measurement subprocess. This only
+        # builds the model and inputs; the collector owns the cold and warm runs.
         self.model, self.model_params, self.initial_conditions = _build()
 
-    def _simulate(self) -> None:
+    def execute_for_measurement(self) -> None:
         self.model.simulate(
             params=self.model_params,
             initial_conditions=self.initial_conditions,
-            period_to_regime_to_V_arr=None,
             log_level=self.log_level,
             log_path=self.log_path,
         )
 
-    def time_execution(self, cache: bytes | None = None) -> None:
-        self._simulate()
+    def track_execution_time(self, cache: dict[str, float] | None = None) -> float:
+        return self._measurements["execution_time"]
 
-    def peakmem_execution(self, cache: bytes | None = None) -> None:
-        self._simulate()
+    track_execution_time.unit = "seconds"
 
-    def teardown(self, cache: bytes | None = None) -> None:
-        import jax
+    def track_peak_cpu_mem(self, cache: dict[str, float] | None = None) -> float:
+        return self._measurements["peak_cpu_mem"]
 
-        jax.clear_caches()
-        gc.collect()
+    track_peak_cpu_mem.unit = "bytes"
 
-    def track_compilation_time(self, cache: bytes | None = None) -> float:
-        return self._compile_time
+    def track_peak_gpu_mem(self, cache: dict[str, float] | None = None) -> float:
+        return self._measurements["peak_gpu_mem"]
+
+    track_peak_gpu_mem.unit = "bytes"
+
+    def track_compilation_time(self, cache: dict[str, float] | None = None) -> float:
+        return self._measurements["compilation_time"]
 
     track_compilation_time.unit = "seconds"
 
@@ -220,32 +188,15 @@ class AcaBaselineDebugLog(AcaBaseline):
 
     log_level = "debug"
 
-    def setup(self, cache: bytes) -> None:
-        self.log_path = _make_log_dir()
-        super().setup(cache)
+    def setup_cache(self) -> dict[str, float]:
+        return _gpu_mem.measure_combined(
+            bench_module="benchmarks.asv.bench_aca_baseline",
+            bench_class="AcaBaselineDebugLog",
+        )
 
     def setup_for_gpu_measurement(self) -> None:
         # Mirror `setup`'s log_path setup so the measurement subprocess
-        # exercises snapshot writing too. `teardown` never runs here --
-        # `measure_gpu_peak` spawns this as a bare subprocess, which just exits --
-        # so cleanup rides on `atexit` inside `_make_log_dir` instead.
+        # exercises snapshot writing too. It exits without ASV teardown, so
+        # cleanup rides on `atexit` inside `_make_log_dir` instead.
         self.log_path = _make_log_dir()
         super().setup_for_gpu_measurement()
-
-    def teardown(self, cache: bytes | None = None) -> None:
-        super().teardown(cache)
-        if self.log_path is not None:
-            shutil.rmtree(self.log_path, ignore_errors=True)
-            self.log_path = None
-
-
-class AcaBaselineGpuPeakMem(_gpu_mem.GpuPeakMem):
-    bench_module = "benchmarks.asv.bench_aca_baseline"
-    bench_class = "AcaBaseline"
-    timeout = 3600
-
-
-class AcaBaselineDebugLogGpuPeakMem(_gpu_mem.GpuPeakMem):
-    bench_module = "benchmarks.asv.bench_aca_baseline"
-    bench_class = "AcaBaselineDebugLog"
-    timeout = 3600

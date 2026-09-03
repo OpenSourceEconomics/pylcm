@@ -11,6 +11,17 @@ import pytest
 from jax import numpy as jnp
 from jax.sharding import NamedSharding, PartitionSpec
 
+from _lcm.execution.core_program import (
+    CoreBuildContext,
+    CoreExecutionDisposition,
+    core_program_graph,
+    materialize_core_program,
+)
+from _lcm.execution.value_transfer import (
+    ValueArtifactKind,
+    ValueInputChannel,
+    ValueTransferKind,
+)
 from _lcm.grids import categorical
 from _lcm.grids.continuous import LinSpacedGrid
 from _lcm.grids.discrete import DiscreteGrid
@@ -21,12 +32,13 @@ from _lcm.solution.v_topology import (
     _get_regime_V_shapes_and_shardings,
 )
 from _lcm.utils.logging import v_array_has_inf, v_array_has_nan
-from lcm import LinearAggregator, LinearExpectation, fixed_transition
+from lcm import CollectiveUtility, LinearAggregator, LinearExpectation, fixed_transition
 from lcm.ages import AgeGrid
 from lcm.exceptions import PyLCMError, RegimeInitializationError
 from lcm.model import Model
 from lcm.regime import Regime as UserRegime
 from lcm.result import SimulationResult
+from lcm.solver_api import DISSOLUTION_FLAG
 from lcm.typing import ScalarInt
 
 # Run these tests on a four-CPU-device topology. The pin only applies in a
@@ -77,17 +89,32 @@ def test_importing_this_module_after_jax_init_leaves_the_platform_unpinned():
 
 
 def _make_correct_distributed_model(
-    *, n_subjects: int | None = None, distributed: bool = True
+    *,
+    n_subjects: int | None = None,
+    distributed: bool = True,
+    distribute_type2: bool | None = None,
+    retirement_reads_type2: bool = True,
 ) -> Model:
     @categorical(ordered=False)
     class RegimeId:
         working_life: ScalarInt
         retirement: ScalarInt
 
-    @categorical(ordered=True)
-    class Type:
-        low: ScalarInt
-        high: ScalarInt
+    if distribute_type2 is False:
+
+        @categorical(ordered=True)
+        class Type:
+            lowest: ScalarInt
+            low: ScalarInt
+            high: ScalarInt
+            highest: ScalarInt
+
+    else:
+
+        @categorical(ordered=True)
+        class Type:
+            low: ScalarInt
+            high: ScalarInt
 
     working_life = UserRegime(
         functions={
@@ -112,11 +139,21 @@ def _make_correct_distributed_model(
         active=lambda age: age < 5,
     )
 
+    def retirement_utility_with_type2(*, wealth, type1, type2):
+        return (wealth * 0.5) * type1 * type2
+
+    def retirement_utility_without_type2(*, wealth, type1):
+        return (wealth * 0.5) * type1
+
+    retirement_utility = (
+        retirement_utility_with_type2
+        if retirement_reads_type2
+        else retirement_utility_without_type2
+    )
+
     retirement = UserRegime(
         transition=None,
-        functions={
-            "utility": lambda wealth, type1, type2: (wealth * 0.5) * type1 * type2
-        },
+        functions={"utility": retirement_utility},
         states={
             "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
         },
@@ -129,13 +166,83 @@ def _make_correct_distributed_model(
         regime_id_class=RegimeId,
         states={
             "type1": DiscreteGrid(category_class=Type, distributed=distributed),
-            "type2": DiscreteGrid(category_class=Type, distributed=distributed),
+            "type2": DiscreteGrid(
+                category_class=Type,
+                distributed=(
+                    distributed if distribute_type2 is None else distribute_type2
+                ),
+            ),
         },
         state_transitions={
             "type1": fixed_transition("type1"),
             "type2": fixed_transition("type2"),
         },
         n_subjects=n_subjects,
+    )
+
+
+def _make_one_axis_collective_model(*, distributed: bool) -> Model:
+    """Tiny collective GridSearch model with one four-device fixed-state axis."""
+
+    @categorical(ordered=False)
+    class RegimeId:
+        working: ScalarInt
+        retired: ScalarInt
+
+    @categorical(ordered=True)
+    class Type:
+        lowest: ScalarInt
+        low: ScalarInt
+        high: ScalarInt
+        highest: ScalarInt
+
+    def utility_f(*, wealth, consumption, type1):
+        return jnp.log(consumption) + 0.01 * wealth + 0.1 * type1
+
+    def utility_m(*, wealth, consumption, type1):
+        return 1.1 * jnp.log(consumption) + 0.02 * wealth + 0.2 * type1
+
+    def terminal_f(*, wealth, type1):
+        return 0.5 * wealth + 0.1 * type1
+
+    def terminal_m(*, wealth, type1):
+        return 0.4 * wealth + 0.2 * type1
+
+    def next_regime(age):
+        del age
+        return RegimeId.retired
+
+    return Model(
+        regimes={
+            "working": UserRegime(
+                transition=next_regime,
+                active=lambda age: age < 1,
+                states={"wealth": LinSpacedGrid(start=1, stop=4, n_points=4)},
+                state_transitions={
+                    "wealth": lambda wealth, consumption: wealth - consumption
+                },
+                actions={"consumption": LinSpacedGrid(start=0.5, stop=1, n_points=2)},
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={"f": utility_f, "m": utility_m}
+                    )
+                },
+            ),
+            "retired": UserRegime(
+                transition=None,
+                active=lambda age: age >= 1,
+                states={"wealth": LinSpacedGrid(start=1, stop=4, n_points=4)},
+                functions={
+                    "utility": CollectiveUtility(
+                        utilities={"f": terminal_f, "m": terminal_m}
+                    )
+                },
+            ),
+        },
+        ages=AgeGrid(start=0, stop=1, step="Y"),
+        regime_id_class=RegimeId,
+        states={"type1": DiscreteGrid(category_class=Type, distributed=distributed)},
+        state_transitions={"type1": fixed_transition("type1")},
     )
 
 
@@ -215,7 +322,7 @@ def test_solution_running_on_multiple_cpus(correct_distributed_model):
         params={"discount_factor": 0.95},
     )
 
-    assert period_to_regime_to_V_arr[0]["working_life"].sharding.num_devices == 4
+    assert period_to_regime_to_V_arr.values[0]["working_life"].sharding.num_devices == 4
 
 
 @_skip_pytest_parallel
@@ -229,11 +336,15 @@ def test_distributed_solve_matches_single_device_per_type():
     local index would corrupt some types' values.
     """
     params = {"discount_factor": 0.95}
-    sharded = _make_correct_distributed_model(distributed=True).solve(
-        log_level="debug", params=params
+    sharded = (
+        _make_correct_distributed_model(distributed=True)
+        .solve(log_level="debug", params=params)
+        .values
     )
-    single = _make_correct_distributed_model(distributed=False).solve(
-        log_level="debug", params=params
+    single = (
+        _make_correct_distributed_model(distributed=False)
+        .solve(log_level="debug", params=params)
+        .values
     )
 
     for period, regime_to_V_arr in sharded.items():
@@ -260,24 +371,38 @@ def _compiled_solve_kernel_hlo(*, model: Model, regime_name: str, period: int) -
     )
     regime = regimes[regime_name]
     period_kernel = regime.solution.period_kernels[period]
-    # Lower every shared core the period kernel carries exactly as backward
-    # induction does (a brute regime carries the single `"main"` core); the
-    # continuation V enters through `build_lower_args`, so the optimized HLO
-    # reflects the real sharded read.
+    # Materialize and resolve every native program exactly as backward induction
+    # does (GridSearch carries the sole `"main"` program), so the optimized HLO
+    # reflects the real sharded continuation read and planner-owned tile width.
     texts: list[str] = []
-    for core_key, core in period_kernel.cores().items():
-        lower_args = period_kernel.build_lower_args(
-            core_key=core_key,
-            state_action_space=regime.solution.state_action_space(
-                regime_params=flat_params[regime_name]
+    for core_key, declaration in core_program_graph(kernel=period_kernel).items():
+        materialized = materialize_core_program(
+            program=declaration,
+            context=CoreBuildContext(
+                state_action_space=regime.solution.state_action_space(
+                    regime_params=flat_params[regime_name]
+                ),
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                next_regime_to_continuation=MappingProxyType({}),
+                flat_params=flat_params,
+                period=period,
+                ages=model.ages,
             ),
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            next_regime_to_continuation=MappingProxyType({}),
-            flat_params=flat_params,
-            period=period,
-            ages=model.ages,
         )
-        text = jax.jit(core).lower(**lower_args).compile().as_text()
+        resolved = backward_induction._resolve_program_for_execution(
+            program=materialized,
+            source_value_template=next_regime_to_V_arr[regime_name],
+            source=(regime_name, period, core_key),
+        )
+        text = (
+            jax.jit(
+                resolved.function,
+                static_argnames=tuple(resolved.static_kwargs),
+            )
+            .lower(**resolved.arguments, **resolved.static_kwargs)
+            .compile()
+            .as_text()
+        )
         assert text is not None
         texts.append(text)
     hlo = "\n".join(texts)
@@ -300,17 +425,16 @@ def test_distributed_solve_kernel_does_not_all_gather_continuation_v():
 
 
 @_skip_pytest_parallel
-def test_solve_returns_template_sharded_V_even_when_kernel_output_is_replicated(
-    *, correct_distributed_model, monkeypatch
+def test_planned_solve_rejects_a_replicated_output_injected_after_kernel_call(
+    *, monkeypatch
 ):
-    """`solve()` publishes V arrays carrying the distributed template sharding.
+    """A planned V cannot be repaired after the GridSearch adapter returns.
 
-    The simulate programs are AOT-lowered against the per-regime V topology, so
-    the V mapping `solve()` returns must carry that sharding regardless of the
-    output sharding the period kernel's compiled program happens to emit — a
-    replicated kernel output must be placed back on the template's mesh before
-    it is published.
+    The injection happens after the adapter's full-output assertion.  The
+    generic publication seam therefore checks the actual ``KernelResult`` too
+    and fails closed instead of silently device-putting it into place.
     """
+    model = _make_correct_distributed_model(distribute_type2=False)
     original_run_period_kernel = backward_induction._run_period_kernel
     replicated_outputs: list[str] = []
 
@@ -329,18 +453,244 @@ def test_solve_returns_template_sharded_V_even_when_kernel_output_is_replicated(
 
     monkeypatch.setattr(backward_induction, "_run_period_kernel", emit_replicated_V)
 
-    period_to_regime_to_V_arr = correct_distributed_model.solve(
+    with pytest.raises(AssertionError, match="post-run repair is not permitted"):
+        model.solve(
+            log_level="off",
+            params={"discount_factor": 0.95},
+        )
+
+    assert replicated_outputs, "no kernel output was replicated; test is inert"
+
+
+@_skip_pytest_parallel
+def test_grid_search_aot_output_layout_is_native_local_and_deduplicated(monkeypatch):
+    """Real AOT GridSearch outputs are born sharded without repair or collectives."""
+    model = _make_correct_distributed_model(distribute_type2=False)
+    working_kernels = model._regimes["working_life"].solution.period_kernels
+    assert working_kernels
+    assert all(
+        core_program_graph(kernel=kernel)["main"].disposition
+        is CoreExecutionDisposition.PLANNED
+        for kernel in working_kernels.values()
+    )
+    assert all(
+        core_program_graph(kernel=kernel)["main"].disposition_reason is None
+        for kernel in working_kernels.values()
+    )
+    single = (
+        _make_correct_distributed_model(distributed=False, distribute_type2=False)
+        .solve(log_level="off", params={"discount_factor": 0.95})
+        .values
+    )
+    captured = []
+    original_attach = backward_induction._attach_resolved_output_layout
+
+    def capture_planned_core(**kwargs):
+        core = original_attach(**kwargs)
+        if hasattr(core, "layout"):
+            captured.append(core)
+        return core
+
+    def fail_repair(**kwargs):
+        raise AssertionError(f"planned output reached repair: {kwargs}")
+
+    monkeypatch.setattr(
+        backward_induction, "_attach_resolved_output_layout", capture_planned_core
+    )
+    monkeypatch.setattr(
+        backward_induction, "_repair_unplanned_kernel_value", fail_repair
+    )
+
+    distributed = model.solve(log_level="off", params={"discount_factor": 0.95}).values
+
+    assert captured
+    assert len({id(core.compiled) for core in captured}) < len(captured)
+    transfers = tuple(
+        transfer for core in captured for transfer in core.input_transfer_plan
+    )
+    assert transfers
+    assert {transfer.kind for transfer in transfers} == {
+        ValueTransferKind.ALIGNED_LOCAL
+    }
+    assert len({transfer.source for transfer in transfers}) == len(transfers)
+    for transfer in transfers:
+        assert transfer.target.kind is ValueArtifactKind.REGIME_VALUE
+        assert transfer.target.period == transfer.source.source_period + 1
+        assert transfer.source.path[0] == transfer.target.regime
+        assert isinstance(transfer.stored_sharding, NamedSharding)
+        assert transfer.source_sharding == transfer.stored_sharding
+    for core in captured:
+        assert core.compiled.output_shardings == core.layout.out_shardings
+    hlo = "\n".join(core.compiled.as_text().lower() for core in captured)
+    for collective in (
+        "all-gather",
+        "all-reduce",
+        "all-to-all",
+        "collective-permute",
+        "reduce-scatter",
+    ):
+        assert collective not in hlo
+
+    assert model._regimes["working_life"].solution.state_names == (
+        "type1",
+        "type2",
+        "wealth",
+    )
+    for period, regime_to_value in distributed.items():
+        for regime_name, value in regime_to_value.items():
+            assert isinstance(value.sharding, NamedSharding)
+            assert value.sharding.spec == PartitionSpec("type1", None, None)
+            np.testing.assert_array_equal(value, single[period][regime_name])
+
+
+@_skip_pytest_parallel
+def test_grid_search_same_mesh_rank_specific_value_input_stays_aligned(monkeypatch):
+    """A target keeps its own rank-specific spec on a shared execution mesh."""
+    model = _make_correct_distributed_model(
+        distribute_type2=False,
+        retirement_reads_type2=False,
+    )
+    captured = []
+    original_attach = backward_induction._attach_resolved_output_layout
+
+    def capture_planned_core(**kwargs):
+        core = original_attach(**kwargs)
+        if hasattr(core, "layout"):
+            captured.append(core)
+        return core
+
+    monkeypatch.setattr(
+        backward_induction, "_attach_resolved_output_layout", capture_planned_core
+    )
+    params = {"discount_factor": 0.95}
+    distributed = model.solve(log_level="off", params=params).values
+
+    assert model._regimes["working_life"].solution.state_names == (
+        "type1",
+        "type2",
+        "wealth",
+    )
+    assert model._regimes["retirement"].solution.state_names == ("type1", "wealth")
+    matching = [
+        (core, transfer)
+        for core in captured
+        for transfer in core.input_transfer_plan
+        if transfer.source.source_period == 4
+        and transfer.source.source_regime == "working_life"
+        and transfer.target.period == 5
+        and transfer.target.regime == "retirement"
+    ]
+    assert len(matching) == 1
+    core, transfer = matching[0]
+    assert transfer.kind is ValueTransferKind.ALIGNED_LOCAL
+
+    target_sharding = distributed[5]["retirement"].sharding
+    source_output_sharding = distributed[4]["working_life"].sharding
+    assert isinstance(target_sharding, NamedSharding)
+    assert isinstance(source_output_sharding, NamedSharding)
+    assert target_sharding.mesh == source_output_sharding.mesh
+    assert target_sharding.spec == PartitionSpec("type1", None)
+    assert source_output_sharding.spec == PartitionSpec("type1", None, None)
+    assert transfer.stored_sharding == target_sharding
+    assert transfer.source_sharding == target_sharding
+
+    single = (
+        _make_correct_distributed_model(
+            distributed=False,
+            distribute_type2=False,
+            retirement_reads_type2=False,
+        )
+        .solve(log_level="off", params=params)
+        .values
+    )
+    for period, regime_to_value in distributed.items():
+        for regime_name, value in regime_to_value.items():
+            np.testing.assert_array_equal(value, single[period][regime_name])
+
+    hlo = core.compiled.as_text().lower()
+    for collective in (
+        "all-gather",
+        "all-reduce",
+        "all-to-all",
+        "collective-permute",
+        "reduce-scatter",
+    ):
+        assert collective not in hlo
+
+
+@_skip_pytest_parallel
+def test_value_transfer_rejects_named_target_to_single_device_source():
+    """The planner fails closed if model-construction invariants are bypassed."""
+    # Distributed states are model-level declarations, and construction rejects a
+    # nonterminal source that prunes one. A valid model therefore cannot produce this
+    # transfer direction; the private resolver still refuses it explicitly.
+    target_sharding = NamedSharding(
+        jax.make_mesh((4,), ("type1",)),
+        PartitionSpec("type1"),
+    )
+    source_sharding = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+
+    with pytest.raises(
+        ValueError,
+        match="NamedSharding -> SingleDeviceSharding",
+    ):
+        backward_induction._resolve_value_transfer_layout(
+            stored_sharding=target_sharding,
+            source_execution_sharding=source_sharding,
+        )
+
+
+@_skip_pytest_parallel
+def test_collective_grid_search_value_and_dissolution_have_planned_state_layout():
+    """Collective V keeps its stakeholder axis replicated; D has state rank.
+
+    Values agree across differently fused device topologies to dtype-scale rounding;
+    dissolution and layout remain exact.
+    """
+    distributed_model = _make_one_axis_collective_model(distributed=True)
+    working_kernels = distributed_model._regimes["working"].solution.period_kernels
+    assert working_kernels
+    assert all(
+        core_program_graph(kernel=kernel)["main"].disposition
+        is CoreExecutionDisposition.DENSE
+        for kernel in working_kernels.values()
+    )
+    assert all(
+        core_program_graph(kernel=kernel)["main"].disposition_reason
+        == "deliberately_dense:collective_resource_regression"
+        for kernel in working_kernels.values()
+    )
+    single_model = _make_one_axis_collective_model(distributed=False)
+
+    distributed_values = distributed_model.solve(
         log_level="off",
         params={"discount_factor": 0.95},
     )
+    distributed_flags = distributed_values.replay_artifacts.project(DISSOLUTION_FLAG)
+    single_values = single_model.solve(
+        log_level="off",
+        params={"discount_factor": 0.95},
+    )
+    single_flags = single_values.replay_artifacts.project(DISSOLUTION_FLAG)
 
-    assert replicated_outputs, "no kernel output was replicated; test is inert"
-    for regime_to_V_arr in period_to_regime_to_V_arr.values():
-        for regime_name, V_arr in regime_to_V_arr.items():
-            if regime_name in replicated_outputs:
-                assert not V_arr.sharding.is_fully_replicated, (
-                    f"{regime_name}: published V is replicated, not template-sharded"
-                )
+    for period, regime_to_value in distributed_values.values.items():
+        for regime_name, value in regime_to_value.items():
+            assert value.shape == (4, 4, 2)
+            # `_RegimeSharding.V_arr_sharding` names only state axes: the
+            # replicated stakeholder entry is intentionally omitted.
+            assert isinstance(value.sharding, NamedSharding)
+            assert value.sharding.spec == PartitionSpec("type1", None)
+            reference = single_values.values[period][regime_name]
+            eps = np.finfo(np.asarray(value).dtype).eps
+            np.testing.assert_allclose(value, reference, rtol=2 * eps, atol=2 * eps)
+            dissolution = distributed_flags[period][regime_name]
+            assert isinstance(dissolution, jax.Array)
+            assert dissolution.shape == (4, 4)
+            assert isinstance(dissolution.sharding, NamedSharding)
+            assert dissolution.sharding.spec == PartitionSpec("type1", None)
+            np.testing.assert_array_equal(
+                dissolution, single_flags[period][regime_name]
+            )
 
 
 @_skip_pytest_parallel
@@ -355,7 +705,7 @@ def test_solve_returns_eagerly_materialised_V_arrs(correct_distributed_model):
         log_level="debug",
         params={"discount_factor": 0.95},
     )
-    for regime_to_V_arr in period_to_regime_to_V_arr.values():
+    for regime_to_V_arr in period_to_regime_to_V_arr.values.values():
         for V_arr in regime_to_V_arr.values():
             for shard in V_arr.addressable_shards:
                 assert shard.data.is_ready()
@@ -380,7 +730,6 @@ def test_simulate_returns_eagerly_materialised_V_arrs(correct_distributed_model)
             "type2": jnp.full(36, 1),
             "regime_id": jnp.zeros(36, dtype=jnp.int32),
         },
-        period_to_regime_to_V_arr=None,
         seed=12345,
     )
     for regime_period_data in res._raw_results.values():
@@ -403,7 +752,6 @@ def test_simulation_running_on_multiple_cpus(correct_distributed_model):
             "type2": jnp.full(36, 1),
             "regime_id": jnp.zeros(36, dtype=jnp.int32),
         },
-        period_to_regime_to_V_arr=None,
         seed=12345,
     )
 
@@ -435,7 +783,6 @@ def test_save_load_preserves_sharding_and_dataframe(
             "type2": jnp.full(36, 1),
             "regime_id": jnp.zeros(36, dtype=jnp.int32),
         },
-        period_to_regime_to_V_arr=None,
         seed=12345,
     )
 
@@ -479,7 +826,6 @@ def test_aot_compiled_simulation_running_on_multiple_cpus():
             "type2": jnp.full(36, 1),
             "regime_id": jnp.zeros(36, dtype=jnp.int32),
         },
-        period_to_regime_to_V_arr=None,
         seed=12345,
     )
 
@@ -518,7 +864,6 @@ def test_simulation_pads_non_device_multiple_subject_count(correct_distributed_m
             "type2": jnp.full(5, 1),
             "regime_id": jnp.zeros(5, dtype=jnp.int32),
         },
-        period_to_regime_to_V_arr=None,
         seed=12345,
     )
 
@@ -552,14 +897,12 @@ def test_distributed_simulation_with_subject_batching_matches_single_pass(
         log_level="off",
         params={"discount_factor": 0.95},
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=None,
         seed=12345,
     )
     chunked = correct_distributed_model.simulate(
         log_level="off",
         params={"discount_factor": 0.95},
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=None,
         seed=12345,
         subject_batch_size=subject_batch_size,
     )
@@ -588,14 +931,12 @@ def test_distributed_aot_simulation_pads_subjects_to_a_chunk_multiple():
         log_level="off",
         params={"discount_factor": 0.95},
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=None,
         seed=12345,
     )
     chunked = model.simulate(
         log_level="off",
         params={"discount_factor": 0.95},
         initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=None,
         seed=12345,
         subject_batch_size=8,
     )
@@ -603,8 +944,7 @@ def test_distributed_aot_simulation_pads_subjects_to_a_chunk_multiple():
     pd.testing.assert_frame_equal(chunked.to_dataframe(), single_pass.to_dataframe())
 
 
-@pytest.fixture
-def partially_distributed_model():
+def _make_partially_distributed_model(*, distributed: bool) -> Model:
     """Model where one regime has distributed grids and the other does not."""
 
     @categorical(ordered=False)
@@ -648,8 +988,8 @@ def partially_distributed_model():
         ages=AgeGrid(start=0, stop=5, step="Y"),
         regime_id_class=RegimeId,
         states={
-            "type1": DiscreteGrid(category_class=Type, distributed=True),
-            "type2": DiscreteGrid(category_class=Type, distributed=True),
+            "type1": DiscreteGrid(category_class=Type, distributed=distributed),
+            "type2": DiscreteGrid(category_class=Type, distributed=distributed),
         },
         state_transitions={
             "type1": fixed_transition("type1"),
@@ -658,21 +998,77 @@ def partially_distributed_model():
     )
 
 
+@pytest.fixture
+def partially_distributed_model():
+    """Return the mixed-layout model used by solve and transfer tests."""
+    return _make_partially_distributed_model(distributed=True)
+
+
 @_skip_pytest_parallel
 def test_solve_with_partial_distribution_returns_correct_shardings(
+    *,
     partially_distributed_model,
+    monkeypatch,
 ):
-    """Mixed-regime models solve cleanly: distributed regimes get sharded V-arrays.
+    """A single-device target is copied as a replicated source-mesh input."""
+    captured = []
+    original_attach = backward_induction._attach_resolved_output_layout
 
-    The distributed regime's V-array is sharded across all devices; the
-    undistributed regime's V-array carries no per-axis sharding (single device).
-    """
-    period_to_regime_to_V_arr = partially_distributed_model.solve(
-        log_level="debug",
-        params={"discount_factor": 0.95},
+    def capture_planned_core(**kwargs):
+        core = original_attach(**kwargs)
+        if hasattr(core, "layout"):
+            captured.append(core)
+        return core
+
+    monkeypatch.setattr(
+        backward_induction, "_attach_resolved_output_layout", capture_planned_core
     )
-    assert period_to_regime_to_V_arr[0]["working_life"].sharding.num_devices == 4
-    assert period_to_regime_to_V_arr[5]["retirement"].sharding.num_devices == 1
+    params = {"discount_factor": 0.95}
+    distributed = partially_distributed_model.solve(
+        log_level="debug",
+        params=params,
+    ).values
+
+    assert distributed[0]["working_life"].sharding.num_devices == 4
+    assert distributed[5]["retirement"].sharding.num_devices == 1
+    period_four_copies = [
+        transfer
+        for core in captured
+        for transfer in core.input_transfer_plan
+        if transfer.kind is ValueTransferKind.COPY_TO_SOURCE_LAYOUT
+        and transfer.source.source_period == 4
+        and transfer.source.source_regime == "working_life"
+        and transfer.target.period == 5
+        and transfer.target.regime == "retirement"
+    ]
+    assert len(period_four_copies) == 1
+    transfer = period_four_copies[0]
+    assert transfer.target.kind is ValueArtifactKind.REGIME_VALUE
+    assert transfer.target.target_regime is None
+    assert transfer.source.core_key == "main"
+    assert transfer.source.channel is ValueInputChannel.NEXT_REGIME_VALUE
+    assert transfer.source.path == ("retirement",)
+    assert isinstance(transfer.stored_sharding, jax.sharding.SingleDeviceSharding)
+    assert isinstance(transfer.source_sharding, NamedSharding)
+    assert transfer.source_sharding.spec == PartitionSpec()
+    assert transfer.source_sharding.is_fully_replicated
+
+    source_output_sharding = distributed[4]["working_life"].sharding
+    assert isinstance(source_output_sharding, NamedSharding)
+    assert transfer.source_sharding.mesh == source_output_sharding.mesh
+    assert transfer.source_sharding.spec != source_output_sharding.spec
+
+    single = (
+        _make_partially_distributed_model(distributed=False)
+        .solve(
+            log_level="debug",
+            params=params,
+        )
+        .values
+    )
+    for period, regime_to_value in distributed.items():
+        for regime_name, value in regime_to_value.items():
+            np.testing.assert_array_equal(value, single[period][regime_name])
 
 
 def test_distributed_action_grid_raises_at_regime_init():

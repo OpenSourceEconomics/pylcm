@@ -42,7 +42,9 @@ def _solve(
         n_consumption=n_consumption,
         envelope_arithmetic=envelope_arithmetic,
     )
-    return model.solve(params=toy.build_params(n_actions=n_actions), log_level="debug")
+    return model.solve(
+        params=toy.build_params(n_actions=n_actions), log_level="debug"
+    ).values
 
 
 @pytest.mark.parametrize(

@@ -317,7 +317,6 @@ def test_infeasible_initial_states_detected():
                 "wealth": jnp.array([0.25]),
                 "regime_id": jnp.array([_working_life]),
             },
-            period_to_regime_to_V_arr=None,
         )
 
 
@@ -344,7 +343,6 @@ def test_on_grid_state_but_combination_infeasible():
                 "wealth": jnp.array([0.3]),
                 "regime_id": jnp.array([_working_life]),
             },
-            period_to_regime_to_V_arr=None,
         )
 
 
@@ -366,7 +364,6 @@ def test_extrapolated_initial_states_accepted():
             "wealth": jnp.array([1.0]),
             "regime_id": jnp.array([_working_life]),
         },
-        period_to_regime_to_V_arr=None,
     )
 
 
@@ -388,7 +385,6 @@ def test_on_grid_initial_states_accepted():
             "wealth": jnp.array([5.0]),
             "regime_id": jnp.array([_working_life]),
         },
-        period_to_regime_to_V_arr=None,
     )
 
 
@@ -411,7 +407,6 @@ def test_irreg_spaced_grid_with_runtime_points():
                 "wealth": jnp.array([0.3]),
                 "regime_id": jnp.array([_working_life]),
             },
-            period_to_regime_to_V_arr=None,
         )
 
 

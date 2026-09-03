@@ -164,7 +164,7 @@ def test_no_published_affine_read_approaches_the_subnormal_band(
     assert finfo.bits == 32, "this bound is stated at fp32; see the module docstring"
 
     model = toy.build_model(variant="nbegm")
-    solution = model.solve(params=toy.build_params(), log_level="warning")
+    solution = model.solve(params=toy.build_params(), log_level="warning").values
     jax.block_until_ready(solution)
 
     reads = instrumented_reads

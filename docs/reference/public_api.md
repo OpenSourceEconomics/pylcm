@@ -88,17 +88,30 @@ and the correctness of destinations require page-specific documentation and test
 
 ## Explicit public submodule surfaces
 
-Most user-facing names are re-exported from `lcm`. Two deliberately public submodule
+Most user-facing names are re-exported from `lcm`. These deliberately public submodule
 surfaces remain outside that top-level namespace:
 
-| Public name                                                                | Canonical documentation         |
-| -------------------------------------------------------------------------- | ------------------------------- |
-| [`lcm.params.MappingLeaf`](../user_guide/parameters.md)                    | Mapping parameter leaf          |
-| [`lcm.params.SequenceLeaf`](../user_guide/parameters.md)                   | Sequence parameter leaf         |
-| [`lcm.params.UserMappingLeaf`](../user_guide/parameters.md)                | User mapping parameter leaf     |
-| [`lcm.params.UserSequenceLeaf`](../user_guide/parameters.md)               | User sequence parameter leaf    |
-| [`lcm.params.as_leaf`](../user_guide/parameters.md)                        | Explicit parameter-leaf wrapper |
-| [`lcm.koopmans_aggregation.KoopmansAggregator`](../methods/preferences.md) | Koopmans-form base contract     |
+| Public name                                                                       | Canonical documentation         |
+| --------------------------------------------------------------------------------- | ------------------------------- |
+| [`lcm.params.MappingLeaf`](../user_guide/parameters.md)                           | Mapping parameter leaf          |
+| [`lcm.params.SequenceLeaf`](../user_guide/parameters.md)                          | Sequence parameter leaf         |
+| [`lcm.params.UserMappingLeaf`](../user_guide/parameters.md)                       | User mapping parameter leaf     |
+| [`lcm.params.UserSequenceLeaf`](../user_guide/parameters.md)                      | User sequence parameter leaf    |
+| [`lcm.params.as_leaf`](../user_guide/parameters.md)                               | Explicit parameter-leaf wrapper |
+| [`lcm.koopmans_aggregation.KoopmansAggregator`](../methods/preferences.md)        | Koopmans-form base contract     |
+| [`lcm.solver_api.ResultRetention`](runtime_and_results.md#api-solution-result)    | Solution result retention       |
+| [`lcm.solver_api.ArtifactKey`](runtime_and_results.md#api-solution-result)        | Versioned artifact identity     |
+| [`lcm.solver_api.ArtifactRef`](runtime_and_results.md#api-solution-result)        | Period/regime artifact address  |
+| [`lcm.solver_api.ArtifactStore`](runtime_and_results.md#api-solution-result)      | Immutable artifact store        |
+| [`lcm.solver_api.KernelOutput`](custom_solvers.md)                                | Experimental producer envelope  |
+| [`lcm.solver_api.OmissionReason`](runtime_and_results.md#api-solution-result)     | Recorded reason for absence     |
+| [`lcm.solver_api.SolutionMetadata`](runtime_and_results.md#api-solution-result)   | Labelled-solution metadata      |
+| [`lcm.solver_api.SolutionResult`](runtime_and_results.md#api-solution-result)     | Labelled solution result        |
+| [`lcm.solver_api.ValueArraySchema`](runtime_and_results.md#api-solution-result)   | Named value-array shape/dtype   |
+| [`lcm.solver_api.SIMULATION_POLICY`](runtime_and_results.md#api-solution-result)  | Replay-policy schema key        |
+| [`lcm.solver_api.DISSOLUTION_FLAG`](runtime_and_results.md#api-solution-result)   | Dissolution-flag schema key     |
+| [`lcm.solver_api.EGM_CONTINUATION`](runtime_and_results.md#api-solution-result)   | Continuation schema key         |
+| [`lcm.solver_api.SOLVER_DIAGNOSTICS`](runtime_and_results.md#api-solution-result) | Diagnostics schema key          |
 
 ## Collective regimes and value-dependent choice
 

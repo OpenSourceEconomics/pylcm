@@ -37,6 +37,7 @@ from lcm import (
     ValueDependentTransition,
     categorical,
 )
+from lcm.solver_api import DISSOLUTION_FLAG
 from lcm.transition import MarkovTransition
 from lcm.typing import (
     BoolND,
@@ -160,7 +161,9 @@ def test_a_curved_fallback_projection_is_priced_where_the_source_lands():
 
     solution = model.solve(params=_PROJECTION_PARAMS, log_level="off")
 
-    aaae(np.asarray(solution[0]["source"]), [-0.75] * 3, decimal=DECIMAL_PRECISION)
+    aaae(
+        np.asarray(solution.values[0]["source"]), [-0.75] * 3, decimal=DECIMAL_PRECISION
+    )
 
 
 def test_the_simulated_row_lands_where_the_solved_value_priced_it():
@@ -181,7 +184,7 @@ def test_the_simulated_row_lands_where_the_solved_value_priced_it():
                 1, model.regime_names_to_ids["source"], dtype=jnp.int32
             ),
         },
-        period_to_regime_to_V_arr=solution,
+        solution=solution,
         log_level="off",
         seed=0,
     )
@@ -202,7 +205,9 @@ def test_an_affine_projection_is_left_exactly_where_it_was():
 
     solution = model.solve(params=_PROJECTION_PARAMS, log_level="off")
 
-    aaae(np.asarray(solution[0]["source"]), [-0.75] * 3, decimal=DECIMAL_PRECISION)
+    aaae(
+        np.asarray(solution.values[0]["source"]), [-0.75] * 3, decimal=DECIMAL_PRECISION
+    )
 
 
 @categorical(ordered=False)
@@ -361,9 +366,12 @@ def test_a_landing_touching_an_empty_cell_takes_the_branch_that_pays(
     """
     model = _coupled_model(saving_points)
 
-    solution, flags = model.solve(
-        params=_COUPLED_PARAMS, log_level="off", return_dissolution_flags=True
-    )
+    solution = model.solve(params=_COUPLED_PARAMS, log_level="off")
+    flags = solution.replay_artifacts.project(DISSOLUTION_FLAG)
 
     np.testing.assert_array_equal(np.asarray(flags[1]["pair"]), [False, True, False])
-    aaae(np.asarray(solution[0]["source"]), [expected] * 3, decimal=DECIMAL_PRECISION)
+    aaae(
+        np.asarray(solution.values[0]["source"]),
+        [expected] * 3,
+        decimal=DECIMAL_PRECISION,
+    )

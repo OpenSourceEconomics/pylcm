@@ -207,7 +207,7 @@ def test_reduced_housing_model_solves_on_gpu():
     """
     model = ds_app2_housing.build_model(n_grid=12, n_periods=51)
     params = ds_app2_housing.build_params(tau=0.05)
-    solution = model.solve(params=params, log_level="debug")
+    solution = model.solve(params=params, log_level="debug").values
     working = np.asarray(solution[0]["working"])
     assert working.size > 0
     assert np.all(np.isfinite(working))
@@ -221,7 +221,7 @@ def test_production_housing_model_solves_on_gpu():
     """The production DS App.2 grid remains available to nightly and full runs."""
     model = ds_app2_housing.build_model(n_grid=250)
     params = ds_app2_housing.build_params(tau=0.05)
-    solution = model.solve(params=params, log_level="debug")
+    solution = model.solve(params=params, log_level="debug").values
     assert solution[0]["working"] is not None
 
 

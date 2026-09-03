@@ -169,7 +169,7 @@ def _solve_working_V(model: Model) -> list[FloatND]:
     solution = model.solve(params=params, log_level="debug")
     return [
         regime_to_V["working"]
-        for regime_to_V in solution.values()
+        for regime_to_V in solution.values.values()
         if "working" in regime_to_V
     ]
 

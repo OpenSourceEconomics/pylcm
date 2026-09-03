@@ -402,29 +402,25 @@ template["source"]["target"] == {
 
 ## Solve and simulate
 
-A gate that reads `D_target` needs the dissolution flags at simulate time. Ask `solve`
-to return them and pass them back:
+A gate that reads `D_target` consumes the addressed dissolution artifact from the
+complete solution:
 
 ```python
-solution, flags = model.solve(
+solution = model.solve(
     params=params,
     log_level="debug",
-    return_dissolution_flags=True,
 )
 
 result = model.simulate(
     params=params,
     initial_conditions=initial_conditions,
-    period_to_regime_to_V_arr=solution,
-    period_to_regime_to_dissolution_flags=flags,
+    solution=solution,
     log_level="debug",
 )
 ```
 
-`period_to_regime_to_dissolution_flags` is required only for a model with a gate that
-reads `D_target`; such a gate raises `NotImplementedError` at simulate time if it is
-left `None`. It is a no-op for every other model. Letting `simulate` solve for itself
-(`period_to_regime_to_V_arr=None`) threads the flags through automatically.
+`simulate(solution=solution)` validates and projects the required artifact. Omitting
+`solution` asks simulation to solve and thread the same result automatically.
 
 ### Roles are carried per row
 

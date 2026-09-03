@@ -156,7 +156,7 @@ def test_source_value_is_a_value_one_branch_actually_pays() -> None:
     and the open branch at `x = 2`, an amount no branch delivers — and would
     publish `8.0`.
     """
-    solution = _make_model().solve(params=_params(), log_level="debug")
+    solution = _make_model().solve(params=_params(), log_level="debug").values
 
     np.testing.assert_array_almost_equal(
         np.asarray(solution[0]["source"]),
@@ -181,7 +181,6 @@ def test_the_action_taken_is_the_one_the_gated_value_ranks_first() -> None:
             "x": jnp.array([0.0]),
             "regime_id": jnp.array([RegimeId.source]),
         },
-        period_to_regime_to_V_arr=None,
         log_level="debug",
     )
     first_period = result.to_dataframe().query("period == 0")
@@ -199,7 +198,7 @@ def test_landings_that_all_fall_on_nodes_are_unaffected() -> None:
     """
     model = _make_model(saving_grid=_ON_GRID_SAVING)
 
-    solution = model.solve(params=_params(), log_level="debug")
+    solution = model.solve(params=_params(), log_level="debug").values
 
     np.testing.assert_array_almost_equal(
         np.asarray(solution[0]["source"]),
@@ -233,7 +232,7 @@ def test_off_grid_reject_accepts_a_target_reached_exactly() -> None:
     """
     model = _make_discrete_target_model(off_grid="reject")
 
-    solution = model.solve(params=_params(), log_level="debug")
+    solution = model.solve(params=_params(), log_level="debug").values
 
     # `sick` is closed and pays the fallback 0; `healthy` is open and pays 7.
     np.testing.assert_array_almost_equal(
@@ -439,7 +438,7 @@ def test_a_gate_that_flips_inside_a_cell_does_not_reward_the_risky_action() -> N
     """
     model = _witness_model()
 
-    solution = model.solve(params=_witness_params(), log_level="debug")
+    solution = model.solve(params=_witness_params(), log_level="debug").values
 
     # The nodewise surrogate, computed from the published terminal values: it
     # ranks the risky action above the safe one, so the fixture discriminates

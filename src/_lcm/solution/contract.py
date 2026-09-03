@@ -81,6 +81,7 @@ from _lcm.typing import (
     TransitionFunctionsMapping,
 )
 from lcm.ages import AgeGrid
+from lcm.solver_api import KernelOutput
 from lcm.typing import BoolND, Float1D, FloatND, UserFunction
 
 # The continuation channel is defined once in `_lcm.continuation`. Backward
@@ -415,6 +416,14 @@ class SolverBuildContext:
 
 
 @dataclass(frozen=True, kw_only=True)
+class GeneratedReplayAuthority:
+    """Trusted dynamic replay facts emitted beside, never read from, a payload."""
+
+    adaptive_outer_nodes: tuple[float, ...]
+    """Exact generated outer mesh, in candidate-axis order."""
+
+
+@dataclass(frozen=True, kw_only=True)
 class KernelResult:
     """One regime-period solve output, assembled outside JIT.
 
@@ -438,6 +447,9 @@ class KernelResult:
     simulation_policy: SimulationPolicy | None = None
     """Published off-grid simulation policy, or `None`."""
 
+    generated_replay_authority: GeneratedReplayAuthority | None = None
+    """Dynamic replay facts produced independently beside the public payload."""
+
     dissolution: BoolND | None = None
     """The dissolution / empty-feasible-set flag `D` on the state axes, or `None`.
 
@@ -457,8 +469,8 @@ class KernelResult:
 class BackwardInductionResult:
     """The generic outputs of one backward-induction run.
 
-    Internal to the engine: the public `Model.solve` unpacks it into its
-    documented mapping-or-tuple return shape.
+    Internal to the engine: the public `Model.solve` packages its values and
+    addressed artifacts into a `SolutionResult`.
     """
 
     value_functions: PeriodToRegimeToVArr
@@ -469,6 +481,11 @@ class BackwardInductionResult:
 
     Sparse over regimes: only kernels that publish a policy contribute entries.
     """
+
+    generated_replay_authorities: MappingProxyType[
+        int, MappingProxyType[RegimeName, GeneratedReplayAuthority]
+    ] = MappingProxyType({})
+    """Trusted dynamic facts kept outside the public replay payload store."""
 
     dissolution_flags: PeriodToRegimeToDissolutionFlags = MappingProxyType({})
     """Immutable mapping of period to each COLLECTIVE regime's dissolution flag `D`.
@@ -485,43 +502,36 @@ class BackwardInductionResult:
     whole induction.
     """
 
+    diagnostics: MappingProxyType[
+        int, MappingProxyType[RegimeName, SolverDiagnostics]
+    ] = MappingProxyType({})
+    """Solver-published diagnostics retained under the existing ``log_level``.
+
+    Sparse over periods and regimes and empty at ``log_level="off"``. This is
+    distinct from the engine's value-validation logging: it transports the
+    numerical self-report a period kernel already published instead of dropping
+    it at the period boundary.
+    """
+
+    published_simulation_policy_cells: frozenset[tuple[int, RegimeName]] = frozenset()
+    """Cells whose kernels produced a replay policy, whether retained or dropped.
+
+    This tiny identity ledger lets a values-only ``SolutionResult`` distinguish
+    a genuinely unrequested artifact from one that was not applicable without
+    retaining the policy's arrays.
+    """
+
 
 @runtime_checkable
 class PeriodKernel(Protocol):
     """One regime's per-period solve adapter — the loop's uniform call target.
 
-    A single non-jitted closure per regime-period that wraps the solver's shared
-    jitted core(s) (deduped across periods by core identity), calls them with the
-    solver's own argument layout, and assembles a `KernelResult` outside JIT.
-    Plain closures satisfy this structurally; the loop never inspects the solver
-    type. `cores()` exposes the shared jitted function(s) keyed by a stable
-    per-kernel name so AOT compilation can deduplicate and lower each;
-    `build_lower_args` builds a named core's lowering kwargs.
-
-    Most kernels carry exactly one core (`{"main": ...}`); a multi-core kernel
-    carries several under its own keys, one per distinct traced program it must
-    lower (for example a passive keeper alongside an adjuster sweep). The AOT
-    contract lowers, compiles, and dispatches each core by its key, so a
-    multi-core kernel never collapses into one program.
+    The runtime interface is intentionally smaller than the execution declaration.
+    A kernel invokes the named executable mapping and assembles a result outside JIT.
+    Native and legacy execution declarations both cross
+    :func:`_lcm.execution.core_program.core_program_graph`; the solve loop never reads
+    their distinct declaration methods through this protocol.
     """
-
-    def cores(self) -> Mapping[str, Callable]:
-        """Return the shared jitted core(s), keyed by stable per-kernel name.
-
-        Each value is a distinct traced program AOT compilation lowers and
-        deduplicates independently; `build_lower_args(core_key=...)` builds the
-        matching lowering kwargs and `__call__` reads the compiled cores back by
-        the same key.
-        """
-        ...
-
-    @property
-    def core(self) -> Callable:
-        """The kernel's `"main"` core, for any single-core reader.
-
-        Defaults to `cores()["main"]`; multi-core kernels override or omit it.
-        """
-        ...
 
     def with_fixed_params(self, *, fixed_flat_params: FlatParams) -> PeriodKernel:
         """Return a copy with the regime's fixed params bound into the core(s).
@@ -529,24 +539,6 @@ class PeriodKernel(Protocol):
         The adapter owns its solver's binding rule — which fixed params reach
         the core (and any inline closure it wraps) — so the engine binds fixed
         params without a solver-type switch.
-        """
-        ...
-
-    def build_lower_args(
-        self,
-        *,
-        core_key: str,
-        state_action_space: StateActionSpace,
-        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-        next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
-        flat_params: FlatParams,
-        period: int,
-        ages: AgeGrid,
-    ) -> Mapping[str, object]:
-        """Build the named core's lowering arguments for this period.
-
-        Single-core kernels ignore `core_key`; a multi-core kernel dispatches
-        its per-core lowering off it.
         """
         ...
 
@@ -561,11 +553,13 @@ class PeriodKernel(Protocol):
         period: int,
         ages: AgeGrid,
         logger: logging.Logger,
-    ) -> KernelResult:
-        """Invoke the compiled core(s) and assemble the period's `KernelResult`.
+    ) -> KernelOutput | KernelResult:
+        """Invoke the compiled core(s) and assemble a period output.
 
         Single-core kernels read `compiled_cores["main"]`; a multi-core kernel
-        reads each of its own core keys.
+        reads each of its own core keys. Migrated kernels return the public
+        :class:`~lcm.solver_api.KernelOutput`; legacy in-tree kernels may still
+        return ``KernelResult`` while the engine bridge remains in place.
 
         `logger` carries the run's validation policy. A kernel that can detect a
         defect only by reading a device value back reads it in raise mode alone
@@ -740,16 +734,13 @@ class Solver(ABC):
 
     @property
     def publishes_simulation_policy(self) -> bool:
-        """Whether this solver publishes a policy the regime does not qualify.
+        """Whether this solver can publish a policy independently of the flat read.
 
-        Collecting simulation policies costs a host transfer per regime-period,
-        so a solve only retains them where something will read them. The usual
-        signal is regime-level (`SimulationPhase.egm_policy_read`), which is set
-        exactly when the flat endogenous-grid read applies. A solver publishing a
-        *self-describing* payload — one naming its own actions, states and search
-        settings, and therefore needing no build-time read qualification — has no
-        such signal, and the regime-level test alone would silently drop its
-        policy before simulation ever sees it. Such a solver overrides this.
+        Collecting policies costs a host transfer per regime-period, so automatic
+        simulation requests them only where a producer declares one. The canonical
+        consuming-route signal is `SimulationPhase.egm_policy_read`. A solver can
+        additionally request collection for legacy auto-solve paths when its payload
+        is self-describing. `SolutionResult` still requires a canonical consumer.
         """
         return False
 
