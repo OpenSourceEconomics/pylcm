@@ -106,7 +106,7 @@ def _decision_regime(*, transition: object, active: object) -> Regime:
     )
 
 
-def _build_model(*, enable_jit: bool) -> Model:
+def _build_model(*, enable_jit: bool, n_subjects: int | None) -> Model:
     wealth_grid = WEALTH_GRID
     source = _decision_regime(
         transition={
@@ -138,15 +138,22 @@ def _build_model(*, enable_jit: bool) -> Model:
         },
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
+        n_subjects=n_subjects,
     )
 
 
 @pytest.mark.parametrize("enable_jit", [True, False])
+@pytest.mark.parametrize("n_subjects", [None, 2], ids=["lazy", "aot"])
 def test_simulate_with_disjoint_edge_target_windows_lands_in_reachable_target(
-    *, enable_jit: bool
+    *, enable_jit: bool, n_subjects: int | None
 ) -> None:
-    """A period whose only live edge leads to `near` routes every subject there."""
-    model = _build_model(enable_jit=enable_jit)
+    """A period whose only live edge leads to `near` routes every subject there.
+
+    `n_subjects` switches between lazy JIT and ahead-of-time compilation; the
+    AOT route lowers every edge gate before the first period runs, so it must
+    not ask an edge for a period its target is never active in.
+    """
+    model = _build_model(enable_jit=enable_jit, n_subjects=n_subjects)
     params = {
         "source": {"koopmans_aggregator": {"discount_factor": 0.95}},
         "near": {"koopmans_aggregator": {"discount_factor": 0.95}},

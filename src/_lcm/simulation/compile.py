@@ -387,9 +387,22 @@ def _collect_edge_gate_evaluators(
     An evaluator is shared across the periods that group onto it, and its
     period and age enter as traced scalars rather than as static arguments,
     so those periods share one program.
+
+    Only the fold periods the edge carries an evaluator for are lowered. An
+    edge whose target is active over a narrower window than its source has no
+    evaluator for the source's other landing periods, and the router never asks
+    for one there: it skips an edge whose target is not folded at the period it
+    routes against. Lowering what the router never calls would demand a program
+    the edge has no value to build.
     """
     for target_name, edge in regime.gated_edges.items():
+        by_period = edge.simulate_gate_evaluators_by_period
         for fold_period in _edge_fold_periods(regime=regime, ages=ages):
+            # An empty mapping is a staging mistake, not a narrow window, and
+            # the lookup below reports it as such; only a populated mapping
+            # decides which periods to skip.
+            if by_period and fold_period not in by_period:
+                continue
             evaluator = edge.simulate_gate_evaluator_at(period=fold_period)
             key = ("gate", regime_name, target_name, _func_dedup_key(func=evaluator))
             if key in gate_calls:
