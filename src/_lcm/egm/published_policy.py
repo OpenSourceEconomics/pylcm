@@ -166,6 +166,27 @@ jax.tree_util.register_pytree_node(
 )
 
 
+def egm_sim_policy_role_tree(
+    *,
+    row: object,
+    row_discrete_state_names: tuple[StateName, ...],
+    row_passive_state_names: tuple[StateName, ...],
+    row_discrete_action_names: tuple[ActionName, ...],
+) -> EGMSimPolicy:
+    """Build an `EGMSimPolicy`-shaped tree of output roles.
+
+    A kernel declares its policy outputs with the same pytree structure as the
+    policy it publishes, row names included: one role for each of the four
+    refined-grid rows. The leaves are role declarations rather than arrays, so
+    the tree is assembled through the pytree unflatten rather than the
+    runtime-checked constructor.
+    """
+    return _unflatten_egm_sim_policy(
+        (row_discrete_state_names, row_passive_state_names, row_discrete_action_names),
+        (row, row, row, row),
+    )
+
+
 @dataclass(frozen=True, kw_only=True)
 class NBEGMGridPolicy:
     """Inner NBEGM action on the regime state grid.

@@ -14,6 +14,7 @@ from jaxtyping import Float
 
 from _lcm.continuation import EGMContinuationSpec
 from _lcm.egm.carry import EGMCarry
+from _lcm.egm.published_policy import EGMSimPolicy
 from _lcm.solution import egm as egm_module
 from _lcm.solution.contract import KernelResult
 from _lcm.solution.kernel_output import (
@@ -22,7 +23,10 @@ from _lcm.solution.kernel_output import (
 )
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from lcm.solver_api import (
+    DISSOLUTION_FLAG,
     EGM_CONTINUATION,
+    SIMULATION_POLICY,
+    SOLVER_DIAGNOSTICS,
     ArtifactKey,
     KernelOutput,
     ResultRetention,
@@ -379,3 +383,73 @@ def test_values_only_result_does_not_suppress_solve_time_continuation() -> None:
     assert set(result.values) == set(range(model.n_periods))
     assert all(result.values[period] for period in result.values)
     assert not result.retained_continuations
+
+
+def test_bridge_consumes_a_published_simulation_policy() -> None:
+    policy = EGMSimPolicy(
+        endog_grid=jnp.asarray([[0.0, 1.0]]),
+        policy=jnp.asarray([[0.5, 0.5]]),
+        value=jnp.asarray([[0.0, 1.0]]),
+        marginal_utility=jnp.asarray([[1.0, 1.0]]),
+    )
+    output = KernelOutput(
+        value=jnp.asarray([1.0]),
+        continuations={EGM_CONTINUATION: _carry()},
+        replay={SIMULATION_POLICY: policy},
+    )
+
+    result = normalize_kernel_output(
+        output=output,
+        continuation_key=EGM_CONTINUATION,
+        regime_name="saving",
+        period=2,
+    )
+
+    assert result.simulation_policy is policy
+
+
+def test_bridge_consumes_a_published_dissolution_flag() -> None:
+    flag = jnp.asarray([True, False])
+    output = KernelOutput(
+        value=jnp.asarray([1.0, 2.0]),
+        solve_time_artifacts={DISSOLUTION_FLAG: flag},
+    )
+
+    result = normalize_kernel_output(
+        output=output, continuation_key=None, regime_name="couple", period=0
+    )
+
+    assert result.dissolution is flag
+
+
+def test_bridge_consumes_published_solver_diagnostics() -> None:
+    diagnostics = _diagnostics()
+    output = KernelOutput(
+        value=jnp.asarray([1.0]),
+        auxiliary={SOLVER_DIAGNOSTICS: diagnostics},
+    )
+
+    result = normalize_kernel_output(
+        output=output, continuation_key=None, regime_name="nested", period=0
+    )
+
+    assert result.diagnostics is diagnostics
+
+
+@pytest.mark.parametrize(
+    ("channel", "key", "payload"),
+    [
+        ("replay", SIMULATION_POLICY, object()),
+        ("solve_time_artifacts", DISSOLUTION_FLAG, object()),
+        ("auxiliary", SOLVER_DIAGNOSTICS, object()),
+    ],
+)
+def test_bridge_refuses_a_known_key_with_the_wrong_payload_type(
+    *, channel: str, key: ArtifactKey, payload: object
+) -> None:
+    output = KernelOutput(value=jnp.asarray([1.0]), **{channel: {key: payload}})
+
+    with pytest.raises(RuntimeError, match=f"'saving'.*period 2.*{key.type_id}"):
+        normalize_kernel_output(
+            output=output, continuation_key=None, regime_name="saving", period=2
+        )

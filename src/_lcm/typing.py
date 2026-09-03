@@ -275,11 +275,10 @@ class MaxQOverAFunction(Protocol):
 class EGMStepFunction(Protocol):
     """The per-period DC-EGM kernel for one regime.
 
-    Consumes the regime's exogenous state grids, the rolling value-function
-    and EGM-carry mappings, and the regime's flat params; returns the
-    regime's value-function array on the exogenous state grid, the carry its
-    parents interpolate, and the published consumption policy simulation
-    interpolates off-grid.
+    Consumes the regime's exogenous state grids, the rolling EGM-carry
+    mapping, and the regime's flat params; returns the regime's value-function
+    array on the exogenous state grid, the carry its parents interpolate, and
+    the published consumption policy simulation interpolates off-grid.
 
     Used for both type checking and beartype runtime checks.
 
@@ -288,7 +287,6 @@ class EGMStepFunction(Protocol):
     def __call__(
         self,
         *,
-        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
         next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
         **kwargs: Any,  # noqa: ANN401
     ) -> tuple[FloatND, EGMCarry, EGMSimPolicy]: ...

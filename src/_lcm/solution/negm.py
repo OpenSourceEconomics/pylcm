@@ -55,7 +55,6 @@ from _lcm.solution.contract import (
     simulation_route,
 )
 from _lcm.solution.dcegm import DCEGM, _BoundDCEGM, _combination_inputs
-from _lcm.solution.kernel_output import require_legacy_kernel_result
 from _lcm.typing import (
     EconFunction,
     EconFunctionsMapping,
@@ -64,6 +63,7 @@ from _lcm.typing import (
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidParamsError, RegimeInitializationError
+from lcm.solver_api import EGM_CONTINUATION, KernelOutput
 from lcm.typing import (
     ActionName,
     Float1D,
@@ -743,8 +743,9 @@ class _NEGMPeriodKernel:
         keeper's off-grid inner consumption function; the outer durable choice is
         re-optimized by grid argmax at simulate time, not carried on this axis.
         """
-        keeper_result = require_legacy_kernel_result(
-            output=self.keeper_kernel(
+        keeper_output = cast(
+            "KernelOutput",
+            self.keeper_kernel(
                 compiled_cores={"main": compiled_cores["keeper"]},
                 state_action_space=state_action_space,
                 next_regime_to_V_arr=next_regime_to_V_arr,
@@ -754,7 +755,6 @@ class _NEGMPeriodKernel:
                 ages=ages,
                 logger=logger,
             ),
-            consumer="NEGM keeper wrapper",
         )
         # The published continuation retains every outer candidate: the keeper
         # and each adjuster carry, lifted into a common cash-on-hand axis and
@@ -775,15 +775,16 @@ class _NEGMPeriodKernel:
         # `(A+1) * n_pad` resident width is inherent to the exact query-side
         # maximum, not a fold artifact. The keeper and every adjuster are
         # DC-EGM kernels, so each always publishes a continuation carry.
-        keeper_carry = cast("EGMCarry", keeper_result.continuation)
-        V_arr = keeper_result.V_arr
+        keeper_carry = cast("EGMCarry", keeper_output.continuations[EGM_CONTINUATION])
+        V_arr = jnp.asarray(keeper_output.value)
         nodes = self._outer_nodes()
         adjuster_carries: list[EGMCarry] = []
         chunk_size = self.outer_batch_size or len(nodes)
         for chunk_start in range(0, len(nodes), chunk_size):
-            chunk_results = [
-                require_legacy_kernel_result(
-                    output=self.adjuster_kernel(
+            chunk_outputs = [
+                cast(
+                    "KernelOutput",
+                    self.adjuster_kernel(
                         compiled_cores={"main": compiled_cores["adjuster"]},
                         state_action_space=state_action_space,
                         next_regime_to_V_arr=next_regime_to_V_arr,
@@ -798,13 +799,14 @@ class _NEGMPeriodKernel:
                         ages=ages,
                         logger=logger,
                     ),
-                    consumer="NEGM adjuster wrapper",
                 )
                 for node in nodes[chunk_start : chunk_start + chunk_size]
             ]
-            for adjuster_result in chunk_results:
-                V_arr = jnp.maximum(V_arr, adjuster_result.V_arr)
-                adjuster_carries.append(cast("EGMCarry", adjuster_result.continuation))
+            for adjuster_output in chunk_outputs:
+                V_arr = jnp.maximum(V_arr, jnp.asarray(adjuster_output.value))
+                adjuster_carries.append(
+                    cast("EGMCarry", adjuster_output.continuations[EGM_CONTINUATION])
+                )
             # Force the chunk's results to device before the next chunk. Without
             # this the lazy sweep accumulates a dependency on every chunk's
             # solves at once — the solve-side peak would grow with the whole
