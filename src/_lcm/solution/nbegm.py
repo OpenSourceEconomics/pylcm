@@ -94,7 +94,7 @@ from _lcm.solution.dcegm import (
     _carry_subset,
     _fail_if_exact_affine_kernel_unavailable,
 )
-from _lcm.solution.egm import _EGMPeriodKernel
+from _lcm.solution.egm import _build_egm_period_kernel
 from _lcm.solution.periodization import (
     resolve_solver_build_context,
     solver_period_group_key,
@@ -587,6 +587,9 @@ class NBEGM(OneMarginSolver):
             else "case"
         )
         grouped_param_checks: list[ParamCheck] = []
+        n_boundaries = sum(
+            len(constraint.program.surfaces) for constraint in feasibility_constraints
+        )
         for period, target in period_to_target.items():
             group_key = solver_period_group_key(
                 context=context,
@@ -609,7 +612,7 @@ class NBEGM(OneMarginSolver):
                 laws[group_key] = law
                 grouped_param_checks.extend(checks)
                 cores[group_key] = jax.jit(core) if context.enable_jit else core
-            period_kernels[period] = _EGMPeriodKernel(
+            period_kernels[period] = _build_egm_period_kernel(
                 core=cores[group_key],
                 declared_law=laws[group_key],
                 savings_grid=savings_grid,
@@ -623,16 +626,14 @@ class NBEGM(OneMarginSolver):
                     target=target,
                     target_state_name=liquid_state_name,
                 ),
+                publishes_breakpoints=n_boundaries > 0,
             )
         return SolutionKernels(
             period_kernels=MappingProxyType(period_kernels),
             continuation_spec=EGMContinuationSpec(
                 template=_build_nbegm_feasibility_carry_template(
                     liquid_grid=liquid_grid,
-                    n_boundaries=sum(
-                        len(constraint.program.surfaces)
-                        for constraint in feasibility_constraints
-                    ),
+                    n_boundaries=n_boundaries,
                 ),
                 layout=replace(
                     self.egm_continuation_layout,
