@@ -4,9 +4,14 @@ from collections.abc import Mapping
 from typing import cast
 
 import jax.numpy as jnp
+import pytest
 
 from _lcm import engine
-from _lcm.continuation import EGMContinuationLayout, EGMContinuationSpec
+from _lcm.continuation import (
+    ContinuationSpec,
+    EGMContinuationLayout,
+    EGMContinuationSpec,
+)
 from _lcm.egm.carry import EGMCarry
 from _lcm.reachability import build_phase_reachability
 from _lcm.regime_building.processing import _continuation_demands
@@ -14,6 +19,7 @@ from _lcm.solution import contract
 from _lcm.typing import RegimeName
 from lcm.grids import LinSpacedGrid
 from lcm.regime import Regime as UserRegime
+from lcm.solver_api import EGM_CONTINUATION, ArtifactKey
 from lcm.solvers import EGM, GridSearch
 from tests.mock_regime import MockRegime
 
@@ -91,3 +97,22 @@ def test_only_reachable_targets_of_continuation_readers_publish_carries():
     assert frozenset(target for _source, target, _key in demands) == frozenset(
         {"needed"}
     )
+
+
+def test_a_spec_accepts_a_template_that_carries_the_declared_key():
+    """Template and declaration agreeing is what makes a spec constructible."""
+    spec = ContinuationSpec(template=_template(), artifact_key=EGM_CONTINUATION)
+
+    assert spec.artifact_key == EGM_CONTINUATION
+
+
+def test_a_template_carrying_another_key_than_the_declared_one_is_refused():
+    """Constructing the spec names the template's key and the declared one."""
+    declared = ArtifactKey(type_id="example_solver.euler_residuals", schema_version=2)
+
+    with pytest.raises(ValueError, match="not the declared") as excinfo:
+        ContinuationSpec(template=_template(), artifact_key=declared)
+
+    message = str(excinfo.value)
+    assert "pylcm.egm.continuation" in message
+    assert "example_solver.euler_residuals" in message
