@@ -420,6 +420,7 @@ def exact_query_winner(
     right_value: FloatND,
     live: BoolND,
     x_query: FloatND,
+    stable_index: IntND | None = ...,
     return_strict_primary: Literal[False] = ...,
 ) -> tuple[IntND, IntND]: ...
 
@@ -433,6 +434,7 @@ def exact_query_winner(
     right_value: FloatND,
     live: BoolND,
     x_query: FloatND,
+    stable_index: IntND | None = ...,
     return_strict_primary: Literal[True],
 ) -> tuple[IntND, IntND, BoolND]: ...
 
@@ -446,6 +448,7 @@ def exact_query_winner(
     right_value: FloatND,
     live: BoolND,
     x_query: FloatND,
+    stable_index: IntND | None = ...,
     return_strict_primary: bool,
 ) -> tuple[IntND, IntND] | tuple[IntND, IntND, BoolND]: ...
 
@@ -458,6 +461,7 @@ def exact_query_winner(
     right_value: FloatND,
     live: BoolND,
     x_query: FloatND,
+    stable_index: IntND | None = None,
     return_strict_primary: bool = False,
 ) -> tuple[IntND, IntND] | tuple[IntND, IntND, BoolND]:
     """Select the exact right-continuous owner of every query.
@@ -483,6 +487,9 @@ def exact_query_winner(
         right_value: Stored value at `right_grid`.
         live: Whether each segment participates.
         x_query: Query abscissae, of any shape.
+        stable_index: Stable global identity of every segment. Smaller identities
+            win only after all value, right-extension, and slope fields tie.
+            `None` preserves the historical local stored-order identities.
         return_strict_primary: Whether to append an exact Boolean stating that
             the selected owner strictly exceeds every other bracketing segment
             in primary affine value.
@@ -525,7 +532,15 @@ def exact_query_winner(
     if live_array.shape != shape:
         msg = f"live must have segment shape {shape}, got {live_array.shape}."
         raise ValueError(msg)
-    winner, status = _shared_segment_winner(*floating, live_array, query)
+    stable_array = (
+        jnp.arange(shape[0], dtype=jnp.int32)
+        if stable_index is None
+        else jnp.asarray(stable_index, dtype=jnp.int32)
+    )
+    if stable_array.shape != shape:
+        msg = f"stable_index must have segment shape {shape}, got {stable_array.shape}."
+        raise ValueError(msg)
+    winner, status = _shared_segment_winner(*floating, live_array, stable_array, query)
     if return_strict_primary:
         strict_primary = _shared_strict_primary(
             *floating, live_array, query, winner, status
@@ -543,6 +558,7 @@ def exact_query_winner_batched(
     right_value: FloatND,
     live: BoolND,
     x_query: FloatND,
+    stable_index: IntND | None = ...,
     return_strict_primary: Literal[False] = ...,
 ) -> tuple[IntND, IntND]: ...
 
@@ -556,6 +572,7 @@ def exact_query_winner_batched(
     right_value: FloatND,
     live: BoolND,
     x_query: FloatND,
+    stable_index: IntND | None = ...,
     return_strict_primary: Literal[True],
 ) -> tuple[IntND, IntND, BoolND]: ...
 
@@ -569,6 +586,7 @@ def exact_query_winner_batched(
     right_value: FloatND,
     live: BoolND,
     x_query: FloatND,
+    stable_index: IntND | None = ...,
     return_strict_primary: bool,
 ) -> tuple[IntND, IntND] | tuple[IntND, IntND, BoolND]: ...
 
@@ -581,6 +599,7 @@ def exact_query_winner_batched(
     right_value: FloatND,
     live: BoolND,
     x_query: FloatND,
+    stable_index: IntND | None = None,
     return_strict_primary: bool = False,
 ) -> tuple[IntND, IntND] | tuple[IntND, IntND, BoolND]:
     """Select the exact owner of every query against that query's own segments.
@@ -601,6 +620,9 @@ def exact_query_winner_batched(
         live: Whether each segment participates, with the same shape.
         x_query: Query abscissae, carrying the segment operands' batch shape
             ahead of its own trailing query axis.
+        stable_index: Stable global identities with the segment shape. Smaller
+            identities win only after all preceding fields tie. `None` uses the
+            local trailing-axis positions in every batch element.
         return_strict_primary: Whether to append an exact Boolean stating that
             the selected owner strictly exceeds every other bracketing segment
             in primary affine value.
@@ -650,7 +672,17 @@ def exact_query_winner_batched(
     if live_array.shape != shape:
         msg = f"live must have segment shape {shape}, got {live_array.shape}."
         raise ValueError(msg)
-    winner, status = _batched_segment_winner_impl(*floating, live_array, query)
+    stable_array = (
+        jnp.broadcast_to(jnp.arange(shape[-1], dtype=jnp.int32), shape)
+        if stable_index is None
+        else jnp.asarray(stable_index, dtype=jnp.int32)
+    )
+    if stable_array.shape != shape:
+        msg = f"stable_index must have segment shape {shape}, got {stable_array.shape}."
+        raise ValueError(msg)
+    winner, status = _batched_segment_winner_impl(
+        *floating, live_array, stable_array, query
+    )
     if return_strict_primary:
         strict_primary = _batched_strict_primary(
             *floating, live_array, query, winner, status
@@ -835,6 +867,7 @@ def _batched_segment_winner_ffi(
     left_value: FloatND,
     right_value: FloatND,
     live: IntND,
+    stable_index: IntND,
     x_query: FloatND,
 ) -> tuple[IntND, IntND]:
     """Resolve every query against its own batch element's segment set."""
@@ -849,7 +882,15 @@ def _batched_segment_winner_ffi(
     )
     winner, status = jax.ffi.ffi_call(
         target, result_shapes, vmap_method="broadcast_all"
-    )(left_grid, right_grid, left_value, right_value, live, x_query)
+    )(
+        left_grid,
+        right_grid,
+        left_value,
+        right_value,
+        live,
+        stable_index,
+        x_query,
+    )
     return winner, status
 
 
@@ -859,8 +900,8 @@ _batched_segment_winner_impl = jax.custom_jvp(_batched_segment_winner_ffi)
 # keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
 @_batched_segment_winner_impl.defjvp
 def _batched_segment_winner_jvp(
-    primals: tuple[FloatND, FloatND, FloatND, FloatND, IntND, FloatND],
-    tangents: tuple[FloatND, FloatND, FloatND, FloatND, IntND, FloatND],
+    primals: tuple[FloatND, FloatND, FloatND, FloatND, IntND, IntND, FloatND],
+    tangents: tuple[FloatND, FloatND, FloatND, FloatND, IntND, IntND, FloatND],
 ) -> tuple[tuple[IntND, IntND], tuple[IntND, IntND]]:
     """Keep exact batched ownership discrete under differentiation."""
     del tangents
@@ -871,7 +912,8 @@ def _batched_segment_winner_jvp(
         left_value=stopped[2],
         right_value=stopped[3],
         live=stopped[4],
-        x_query=stopped[5],
+        stable_index=stopped[5],
+        x_query=stopped[6],
     )
     winner_dot = jnp.zeros(jnp.shape(winner), dtype=jax.dtypes.float0)
     status_dot = jnp.zeros(jnp.shape(status), dtype=jax.dtypes.float0)
@@ -885,6 +927,7 @@ def _shared_segment_winner_ffi(
     left_value: FloatND,
     right_value: FloatND,
     live: IntND,
+    stable_index: IntND,
     x_query: FloatND,
 ) -> tuple[IntND, IntND]:
     """Resolve every query against the one segment set they all share."""
@@ -898,7 +941,13 @@ def _shared_segment_winner_ffi(
         jax.ShapeDtypeStruct(x_query.shape, jnp.int32),
     )
     winner, status = jax.ffi.ffi_call(target, result_shapes, vmap_method="sequential")(
-        left_grid, right_grid, left_value, right_value, live, x_query
+        left_grid,
+        right_grid,
+        left_value,
+        right_value,
+        live,
+        stable_index,
+        x_query,
     )
     return winner, status
 
@@ -921,6 +970,7 @@ def _shared_segment_winner_vmap(
     left_value: FloatND,
     right_value: FloatND,
     live: IntND,
+    stable_index: IntND,
     x_query: FloatND,
 ) -> tuple[tuple[IntND, IntND], tuple[bool, bool]]:
     """Resolve a whole batch in one call rather than a loop around a scalar one.
@@ -955,6 +1005,11 @@ def _shared_segment_winner_vmap(
             _with_batch_axis(
                 operand=live, batched=segments_batched[4], axis_size=axis_size
             ),
+            _with_batch_axis(
+                operand=stable_index,
+                batched=segments_batched[5],
+                axis_size=axis_size,
+            ),
             query.reshape(axis_size, -1),
         )
     else:
@@ -964,6 +1019,7 @@ def _shared_segment_winner_vmap(
             left_value=left_value,
             right_value=right_value,
             live=live,
+            stable_index=stable_index,
             x_query=query.reshape(-1),
         )
     published = (winner.reshape(query.shape), status.reshape(query.shape))
@@ -985,8 +1041,8 @@ _shared_segment_winner_impl = jax.custom_jvp(_shared_segment_winner_primal)
 # keyword-only-exempt: library-callback=jax.custom_jvp.defjvp
 @_shared_segment_winner_impl.defjvp
 def _shared_segment_winner_jvp(
-    primals: tuple[FloatND, FloatND, FloatND, FloatND, IntND, FloatND],
-    tangents: tuple[FloatND, FloatND, FloatND, FloatND, IntND, FloatND],
+    primals: tuple[FloatND, FloatND, FloatND, FloatND, IntND, IntND, FloatND],
+    tangents: tuple[FloatND, FloatND, FloatND, FloatND, IntND, IntND, FloatND],
 ) -> tuple[tuple[IntND, IntND], tuple[IntND, IntND]]:
     """Keep exact shared ownership discrete under differentiation."""
     del tangents
@@ -997,7 +1053,8 @@ def _shared_segment_winner_jvp(
         left_value=stopped[2],
         right_value=stopped[3],
         live=stopped[4],
-        x_query=stopped[5],
+        stable_index=stopped[5],
+        x_query=stopped[6],
     )
     winner_dot = jnp.zeros(jnp.shape(winner), dtype=jax.dtypes.float0)
     status_dot = jnp.zeros(jnp.shape(status), dtype=jax.dtypes.float0)

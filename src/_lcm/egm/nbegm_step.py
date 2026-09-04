@@ -38,8 +38,8 @@ state and merged by the branch-aware upper envelope; the boundary's
 strict/non-strict comparison split.
 """
 
-from collections.abc import Mapping
-from typing import Any, Literal
+from collections.abc import Callable, Mapping
+from typing import Any, Literal, NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -58,7 +58,14 @@ from _lcm.egm.nbegm_segments import (
     segment_ids_from_folds,
 )
 from _lcm.egm.preferences import Preferences
-from _lcm.egm.upper_envelope.query import ComparisonArithmetic, envelope_at_query
+from _lcm.egm.upper_envelope.query import (
+    ComparisonArithmetic,
+    EnvelopeWinner,
+    empty_envelope_winner,
+    envelope_at_query,
+    finish_envelope_winner,
+    merge_envelope_winner,
+)
 from lcm.case_piece import EqualityOwner
 from lcm.typing import BoolND, Float1D, FloatND, IntND, ScalarFloat, ScalarInt
 
@@ -1007,8 +1014,8 @@ def _interval_corner_candidates(
 
 def nbegm_per_interval_continuation_step_savings(
     *,
-    cont_value: FloatND,
-    cont_marginal: FloatND,
+    cont_value: FloatND | None,
+    cont_marginal: FloatND | None,
     liquid_grid: Float1D,
     savings_grid: Float1D,
     discount_factor: ScalarFloat,
@@ -1023,6 +1030,8 @@ def nbegm_per_interval_continuation_step_savings(
     arithmetic: ComparisonArithmetic = "certified",
     feasibility_partition: ResolvedAxisPartition | None = None,
     feasible_interval_mask: BoolND | None = None,
+    interval_block_reader: Callable[[IntND], tuple[FloatND, ...]] | None = None,
+    interval_batch_size: int = 0,
 ) -> tuple[Float1D, Float1D, Float1D]:
     """Solve a budget whose continuation differs per liquid interval.
 
@@ -1041,9 +1050,11 @@ def nbegm_per_interval_continuation_step_savings(
 
     Args:
         cont_value: Expected continuation value per interval and savings node,
-            shaped `(n_intervals, n_savings)`.
+            shaped `(n_intervals, n_savings)` on the one-shot route. Pass `None`
+            when `interval_block_reader` supplies the rows lazily.
         cont_marginal: Expected marginal continuation (savings space) per interval
-            and savings node, shaped `(n_intervals, n_savings)`.
+            and savings node, shaped `(n_intervals, n_savings)` on the one-shot
+            route. Pass `None` with a block reader.
         liquid_grid: Regular liquid-state grid (ascending).
         savings_grid: Post-decision savings grid `s = coh - consumption` (>= 0,
             with `savings_grid[0] == 0` the no-save corner).
@@ -1067,6 +1078,13 @@ def nbegm_per_interval_continuation_step_savings(
             `(n_query, n_segment)` bracket matrix; `0` keeps the one-shot dense
             envelope. The result is identical either way — the knob trades peak
             memory against a sequential scan.
+        interval_block_reader: Optional callback receiving one fixed-width vector
+            of global interval indices and returning value/marginal continuation
+            rows, plus optional save-to-cliff targets. Each returned block is solved
+            and folded before the callback is invoked for the next block.
+        interval_batch_size: Static width of that read-and-fold stream. It must be
+            positive with `interval_block_reader`; `0` selects the full-array
+            one-shot route. Padding lanes are dead and cannot seed a winner.
         arithmetic: Which arithmetic decides envelope ownership; see
             `envelope_at_query`. `"certified"` delegates to the installed
             exact-affine kernel and orders stored operands by exact affine value,
@@ -1180,6 +1198,35 @@ def nbegm_per_interval_continuation_step_savings(
             interior[3],
             segment + base,
             *corners,
+        )
+
+    if interval_block_reader is not None:
+        return _streamed_interval_continuation_envelope(
+            solve_interval=solve_interval,
+            interval_block_reader=interval_block_reader,
+            interval_batch_size=interval_batch_size,
+            n_intervals=n_intervals,
+            interval_stride=interval_stride,
+            liquid_grid=liquid_grid,
+            savings_grid=savings_grid,
+            discount_factor=discount_factor,
+            preferences=preferences,
+            coh_slopes=coh_slopes,
+            coh_intercepts=coh_intercepts,
+            breakpoints=breakpoints,
+            lowers=lowers,
+            uppers=uppers,
+            coh_grid=coh_grid,
+            extra_savings=extra_savings,
+            extra_cont_value=extra_cont_value,
+            arithmetic=arithmetic,
+            feasibility_partition=feasibility_partition,
+            feasible_interval_mask=feasible_interval_mask,
+        )
+
+    if cont_value is None or cont_marginal is None:
+        raise ValueError(
+            "cont_value and cont_marginal are required for a one-shot interval solve."
         )
 
     # Solve the intervals with `lax.map` at a batch width of `_CHUNK_SIZE`: it
@@ -1306,6 +1353,363 @@ def nbegm_per_interval_continuation_step_savings(
     return value, marginal, policy
 
 
+# A block reader returns continuation value and marginal, and optionally the
+# block's save-to-cliff savings as a third row.
+_ROWS_WITHOUT_CLIFFS = 2
+_ROWS_WITH_CLIFFS = 3
+
+
+class _StreamedIntervalLayout(NamedTuple):
+    """Fixed-shape block schedule and candidate-family offsets of one stream.
+
+    The offsets place every block's candidates at the position the equivalent
+    one-shot family layout would give them, which is what lets a standing winner
+    re-enter a later block under an identity no partition can change.
+    """
+
+    safe_indices: IntND
+    """Per-block global interval indices, padding lanes clamped in range."""
+
+    live: BoolND
+    """Whether each lane of each block names a real interval."""
+
+    n_liquid: int
+    """Query-grid length."""
+
+    n_savings: int
+    """Savings-grid length."""
+
+    s0_offset: int
+    """First position of the lower-savings corner family."""
+
+    smax_offset: int
+    """First position of the upper-savings corner family."""
+
+    node_offset: int
+    """First position of the dense savings-node point family."""
+
+    node_family_size: int
+    """How many positions that dense node family occupies."""
+
+    node_segment_base: float
+    """First branch label above every per-interval block."""
+
+    cliff_segment_base: float
+    """First branch label above the dense savings-node family."""
+
+    def total_candidates(self, *, n_extra: int) -> int:
+        """Positions the one-shot layout holds, given this block's cliff width."""
+        return self.node_offset + self.node_family_size + 2 * self.n_liquid * n_extra
+
+
+def _streamed_interval_block_layout(
+    *,
+    interval_batch_size: int,
+    n_intervals: int,
+    interval_stride: int,
+    n_liquid: int,
+    n_savings: int,
+) -> _StreamedIntervalLayout:
+    """Schedule the interval axis into fixed-width blocks and place the families."""
+    block_size = min(interval_batch_size, n_intervals)
+    n_blocks = -(-n_intervals // block_size)
+    padded_indices = jnp.arange(n_blocks * block_size, dtype=jnp.int32).reshape(
+        n_blocks, block_size
+    )
+
+    # The branch-label ranges are the one-shot route's, so a streamed solve labels
+    # branches exactly as the mapped solve at `_CHUNK_SIZE` does. They are labels,
+    # not the total-order identity, which the candidate positions below supply.
+    n_padded = -(-n_intervals // _CHUNK_SIZE) * _CHUNK_SIZE
+    node_segment_base, cliff_segment_base = _point_candidate_segment_bases(
+        interval_block_end=n_padded * interval_stride,
+        n_liquid=n_liquid,
+        n_nodes=n_savings,
+    )
+    corner_family_size = n_intervals * 2 * n_liquid
+    s0_offset = n_intervals * n_savings
+    smax_offset = s0_offset + corner_family_size
+    return _StreamedIntervalLayout(
+        safe_indices=jnp.minimum(padded_indices, n_intervals - 1),
+        live=padded_indices < n_intervals,
+        n_liquid=n_liquid,
+        n_savings=n_savings,
+        s0_offset=s0_offset,
+        smax_offset=smax_offset,
+        node_offset=smax_offset + corner_family_size,
+        node_family_size=2 * n_liquid * n_savings,
+        node_segment_base=node_segment_base,
+        cliff_segment_base=cliff_segment_base,
+    )
+
+
+def _streamed_block_candidate_positions(
+    *,
+    layout: _StreamedIntervalLayout,
+    indices: IntND,
+    n_extra: int,
+) -> IntND:
+    """Global stored-link position of every candidate one block contributes."""
+    n_savings = layout.n_savings
+    corner_width = 2 * layout.n_liquid
+    int_positions = (
+        indices[:, None] * n_savings + jnp.arange(n_savings, dtype=jnp.int32)[None, :]
+    )
+    corner_position = jnp.arange(corner_width, dtype=jnp.int32)[None, :]
+    parts = [
+        int_positions.reshape(-1),
+        (layout.s0_offset + indices[:, None] * corner_width + corner_position).reshape(
+            -1
+        ),
+        (
+            layout.smax_offset + indices[:, None] * corner_width + corner_position
+        ).reshape(-1),
+        layout.node_offset + jnp.arange(layout.node_family_size, dtype=jnp.int32),
+    ]
+    if n_extra:
+        cliff_offset = layout.node_offset + layout.node_family_size
+        parts.append(cliff_offset + jnp.arange(corner_width * n_extra, dtype=jnp.int32))
+    return jnp.concatenate(parts)
+
+
+def _streamed_interval_continuation_envelope(
+    *,
+    solve_interval: Callable[..., tuple[Float1D, ...]],
+    interval_block_reader: Callable[[IntND], tuple[FloatND, ...]],
+    interval_batch_size: int,
+    n_intervals: int,
+    interval_stride: int,
+    liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat,
+    preferences: Preferences,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+    lowers: Float1D,
+    uppers: Float1D,
+    coh_grid: Float1D | None,
+    extra_savings: FloatND | None,
+    extra_cont_value: FloatND | None,
+    arithmetic: ComparisonArithmetic,
+    feasibility_partition: ResolvedAxisPartition | None,
+    feasible_interval_mask: BoolND | None,
+) -> tuple[Float1D, Float1D, Float1D]:
+    """Read and fold the interval axis in blocks of `interval_batch_size`.
+
+    Each block solves its own intervals, stacks their candidate families, and
+    folds them against the standing winner, which re-enters carrying the global
+    stored-link index of the candidate that produced it. Ownership is therefore
+    the one-shot layout's ownership at every partition; the published levels are
+    formed by kernels the backend vectorizes per compiled block width, so they
+    agree with it to within a few units in the last place rather than bit for bit.
+
+    Returns:
+        Tuple of the envelope value, the marginal value of liquid, and the
+        consumption policy on `liquid_grid`.
+
+    """
+    if interval_batch_size <= 0:
+        raise ValueError(
+            "interval_batch_size must be positive when interval_block_reader "
+            "streams continuation rows."
+        )
+    if extra_savings is not None or extra_cont_value is not None:
+        # A callback-owned stream carries its cliff columns and targets together;
+        # direct arrays take the one-shot route and never reach here.
+        raise ValueError(
+            "streamed interval continuation supplies cliff channels through "
+            "interval_block_reader, not full arrays."
+        )
+
+    layout = _streamed_interval_block_layout(
+        interval_batch_size=interval_batch_size,
+        n_intervals=n_intervals,
+        interval_stride=interval_stride,
+        n_liquid=liquid_grid.shape[0],
+        n_savings=savings_grid.shape[0],
+    )
+    safe_indices = layout.safe_indices
+    interval_live_blocks = layout.live
+    node_segment_base = layout.node_segment_base
+    cliff_segment_base = layout.cliff_segment_base
+    n_savings = layout.n_savings
+
+    def stack(*parts: FloatND) -> Float1D:
+        return jnp.concatenate([part.reshape(-1) for part in parts])
+
+    # keyword-only-exempt: library-callback=jax.lax.scan
+    def interval_winner_step(
+        held: EnvelopeWinner,
+        block_inputs: tuple[IntND, BoolND],
+    ) -> tuple[EnvelopeWinner, None]:
+        indices, interval_live = block_inputs
+        rows = interval_block_reader(indices)
+        if len(rows) == _ROWS_WITHOUT_CLIFFS:
+            block_value, block_marginal = rows
+            block_cliff_savings = None
+            block_extra_value = None
+        elif len(rows) == _ROWS_WITH_CLIFFS:
+            all_value, all_marginal, block_cliff_savings = rows
+            block_value = all_value[..., :n_savings]
+            block_marginal = all_marginal[..., :n_savings]
+            block_extra_value = all_value[..., n_savings:]
+        else:
+            raise ValueError(
+                "interval_block_reader must return value/marginal rows and "
+                "optionally cliff savings."
+            )
+
+        def solve_packed(
+            packed: tuple[IntND | FloatND, ...],
+        ) -> tuple[FloatND, ...]:
+            return solve_interval(
+                interval_index=packed[0],
+                interval_value=packed[1],
+                interval_marginal=packed[2],
+                coh_slope=packed[3],
+                coh_intercept=packed[4],
+                lower=packed[5],
+                upper=packed[6],
+            )
+
+        solved = jax.vmap(solve_packed)(
+            (
+                indices,
+                block_value,
+                block_marginal,
+                coh_slopes[indices],
+                coh_intercepts[indices],
+                lowers[indices],
+                uppers[indices],
+            )
+        )
+        (
+            int_endog,
+            int_value,
+            int_policy,
+            int_marginal,
+            int_segment,
+            s0_endog,
+            s0_value,
+            s0_policy,
+            s0_marginal,
+            s0_segment,
+            smax_endog,
+            smax_value,
+            smax_policy,
+            smax_marginal,
+            smax_segment,
+        ) = solved
+
+        def kill_padding(channel: FloatND) -> FloatND:
+            return jnp.where(interval_live[:, None], channel, jnp.nan)
+
+        int_endog, int_value, int_policy, int_marginal = (
+            kill_padding(channel)
+            for channel in (int_endog, int_value, int_policy, int_marginal)
+        )
+        s0_endog, s0_value, s0_policy, s0_marginal = (
+            kill_padding(channel)
+            for channel in (s0_endog, s0_value, s0_policy, s0_marginal)
+        )
+        smax_endog, smax_value, smax_policy, smax_marginal = (
+            kill_padding(channel)
+            for channel in (smax_endog, smax_value, smax_policy, smax_marginal)
+        )
+
+        node_parts = _savings_node_point_candidates_for_interval_block(
+            liquid_grid=liquid_grid,
+            savings_grid=savings_grid,
+            cont_value=block_value,
+            interval_indices=indices,
+            interval_live=interval_live,
+            discount_factor=discount_factor,
+            preferences=preferences,
+            coh_slopes=coh_slopes,
+            coh_intercepts=coh_intercepts,
+            breakpoints=breakpoints,
+            coh_grid=coh_grid,
+            segment_base=float(node_segment_base),
+        )
+        if block_cliff_savings is not None and block_extra_value is not None:
+            cliff_parts = _savings_node_point_candidates_for_interval_block(
+                liquid_grid=liquid_grid,
+                savings_grid=block_cliff_savings,
+                cont_value=block_extra_value,
+                interval_indices=indices,
+                interval_live=interval_live,
+                discount_factor=discount_factor,
+                preferences=preferences,
+                coh_slopes=coh_slopes,
+                coh_intercepts=coh_intercepts,
+                breakpoints=breakpoints,
+                coh_grid=coh_grid,
+                segment_base=float(cliff_segment_base),
+            )
+            n_extra = block_cliff_savings.shape[-1]
+        else:
+            cliff_parts = (jnp.empty((0,), dtype=liquid_grid.dtype),) * 5
+            n_extra = 0
+
+        endog = stack(int_endog, s0_endog, smax_endog, node_parts[0], cliff_parts[0])
+        values = stack(int_value, s0_value, smax_value, node_parts[1], cliff_parts[1])
+        policies = stack(
+            int_policy, s0_policy, smax_policy, node_parts[2], cliff_parts[2]
+        )
+        marginals = stack(
+            int_marginal,
+            s0_marginal,
+            smax_marginal,
+            node_parts[3],
+            cliff_parts[3],
+        )
+        segments = stack(
+            int_segment,
+            s0_segment,
+            smax_segment,
+            node_parts[4],
+            cliff_parts[4],
+        )
+        positions = _streamed_block_candidate_positions(
+            layout=layout, indices=indices, n_extra=n_extra
+        )
+        total_candidates = layout.total_candidates(n_extra=n_extra)
+        stable_links = jnp.concatenate(
+            [positions[:-1], (total_candidates - 1) + positions]
+        )
+        return (
+            merge_envelope_winner(
+                held=held,
+                endog_grid=endog,
+                policy=policies,
+                value=values,
+                marginal=marginals,
+                segment_id=segments,
+                stable_index=stable_links,
+                query=liquid_grid,
+                arithmetic=arithmetic,
+                feasibility_partition=feasibility_partition,
+                feasible_interval_mask=feasible_interval_mask,
+            ),
+            None,
+        )
+
+    winner, _ = jax.lax.scan(
+        interval_winner_step,
+        empty_envelope_winner(query=liquid_grid),
+        (safe_indices, interval_live_blocks),
+    )
+    value, policy, marginal = finish_envelope_winner(
+        winner=winner,
+        query=liquid_grid,
+        arithmetic=arithmetic,
+        feasibility_partition=feasibility_partition,
+        feasible_interval_mask=feasible_interval_mask,
+    )
+    return value, marginal, policy
+
+
 def _point_candidate_segment_bases(
     *, interval_block_end: int, n_liquid: int, n_nodes: int
 ) -> tuple[int, int]:
@@ -1328,6 +1732,78 @@ def _point_candidate_segment_bases(
 
     """
     return interval_block_end, interval_block_end + n_liquid * n_nodes
+
+
+def _savings_node_point_candidates_for_interval_block(
+    *,
+    liquid_grid: Float1D,
+    savings_grid: FloatND,
+    cont_value: FloatND,
+    interval_indices: IntND,
+    interval_live: BoolND,
+    discount_factor: ScalarFloat,
+    preferences: Preferences,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+    coh_grid: Float1D | None,
+    segment_base: float,
+) -> tuple[Float1D, ...]:
+    """Build only one interval block's live savings-node point candidates.
+
+    The arrays retain the canonical full point-family shape so the scan body is
+    fixed across dynamic breakpoint placements.  Points outside the current
+    interval block are NaN-dead; every point is live in exactly one block.
+    """
+    interval_of_grid = jnp.searchsorted(breakpoints, liquid_grid, side="right")
+    matches = (interval_of_grid[:, None] == interval_indices[None, :]) & interval_live[
+        None, :
+    ]
+    belongs = jnp.any(matches, axis=1)
+    local_interval = jnp.argmax(matches, axis=1)
+    point_cont_value = cont_value[local_interval]
+    point_coh = (
+        coh_slopes[interval_of_grid] * liquid_grid + coh_intercepts[interval_of_grid]
+        if coh_grid is None
+        else coh_grid
+    )
+    savings_at_grid = (
+        savings_grid[local_interval]
+        if savings_grid.ndim > 1
+        else jnp.broadcast_to(savings_grid[None, :], point_cont_value.shape)
+    )
+    consumption = point_coh[:, None] - savings_at_grid
+    feasible = affords_an_action(consumption) & belongs[:, None]
+    safe_consumption = jnp.where(feasible, consumption, 1.0)
+    node_value = jnp.where(
+        feasible,
+        preferences.utility(safe_consumption) + discount_factor * point_cont_value,
+        jnp.nan,
+    )
+    node_endog = jnp.where(
+        feasible,
+        jnp.broadcast_to(liquid_grid[:, None], consumption.shape),
+        jnp.nan,
+    )
+    node_marginal = coh_slopes[interval_of_grid][
+        :, None
+    ] * preferences.marginal_utility(safe_consumption)
+    node_marginal = jnp.where(feasible, node_marginal, jnp.nan)
+    node_policy = jnp.where(feasible, safe_consumption, jnp.nan)
+    node_segment = segment_base + jnp.arange(
+        consumption.size, dtype=jnp.result_type(float)
+    ).reshape(consumption.shape)
+
+    def as_pairs(entries: FloatND) -> Float1D:
+        return jnp.stack([entries, entries], axis=-1).reshape(-1)
+
+    return (
+        as_pairs(node_endog),
+        as_pairs(node_value),
+        as_pairs(node_policy),
+        as_pairs(node_marginal),
+        as_pairs(node_segment),
+    )
 
 
 def _savings_node_point_candidates(
