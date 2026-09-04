@@ -342,7 +342,10 @@ def test_the_consumer_refuses_a_wrong_payload_under_the_continuation_key() -> No
 
     with pytest.raises(
         RuntimeError,
-        match=r"pylcm.egm.continuation.*unsupported payload type object.*EGMCarry",
+        match=(
+            r"pylcm.egm.continuation.*unsupported payload type object"
+            r".*ContinuationArtifact"
+        ),
     ):
         _consume(output=output)
 

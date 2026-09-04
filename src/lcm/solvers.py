@@ -43,6 +43,20 @@ route under its documented approximation contract. Neither solver silently falls
 back. Solvers specialized to one paper's accounting remain published alongside that
 paper rather than here.
 
+A solver may also be written outside pylcm. `lcm.solvers` re-exports everything
+such a solver constructs — the execution-contract types (`CoreProgram`,
+`CoreBuildContext`, `CoreExecutionRequirements`, `CoreExecutionDisposition`,
+`ProgramScope`, `StreamableProductAxis`, `ReductionSemantics`, `OutputRole`,
+`StateAxesLeading`, `PeriodKernel`, `StateActionSpace`), the continuation types
+and helpers (`ContinuationSpec`, `EGMContinuationSpec`, `EGMContinuationLayout`,
+`period_to_continuation_target`, `target_period_grid`, `union_free_params`,
+`union_fixed_params`), and the artifact vocabulary (`KernelOutput`,
+`ArtifactKey`, the four keys, `ContinuationArtifact`, `ReplayMode`,
+`ReplayRoute`) — so no import from `_lcm` is needed. The surface is experimental
+until persistence, durable identity, a conformance suite, and a versioning policy
+exist; `docs/reference/custom_solvers.md` states what a solver owes the engine
+and what is still missing.
+
 The solvers are defined engine-side in per-solver modules under
 `_lcm.solution`; this module is a thin re-export so user code (and
 `lcm.regime`) can name them, and the `Solver` contract, without eagerly

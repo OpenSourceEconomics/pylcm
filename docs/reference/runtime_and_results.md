@@ -110,8 +110,9 @@ modes.
 
 `SolutionResult` persistence is not implemented yet. `save_solution()` persists only a
 standalone value-function mapping; it does not serialize the labelled metadata or
-artifact stores. This boundary is also not yet a stable contract for out-of-tree solver
-implementations.
+artifact stores. An out-of-tree solver can construct and publish through this boundary —
+see [Custom solvers](custom_solvers.md) — but it is not yet a *stable* contract, and the
+missing persistence is one of the reasons.
 
 ## Simulation
 
