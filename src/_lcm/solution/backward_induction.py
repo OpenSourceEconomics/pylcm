@@ -19,6 +19,7 @@ from _lcm.execution.core_program import (
     CoreExecutionRequirements,
     CoreProgram,
     MaterializedCoreProgram,
+    ProgramScope,
     ResolvedCoreProgram,
     _target_value_argument_leaf,
     core_program_graph,
@@ -99,7 +100,13 @@ from _lcm.utils.logging import (
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidValueFunctionError, ModelInitializationError
-from lcm.solver_api import KernelOutput
+from lcm.solver_api import (
+    SIMULATION_POLICY,
+    ArtifactKey,
+    ArtifactRef,
+    ArtifactStore,
+    KernelOutput,
+)
 from lcm.typing import BoolND, ContinuousState, DiscreteState, FloatND
 
 # Stands in for a period's flag mapping when the model retains no dissolution
@@ -119,6 +126,8 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     max_compilation_workers: int | None = None,
     retain_dissolution_flags: bool = True,
     retain_replay: bool = True,
+    retain_all_artifacts: bool = False,
+    persistable_artifact_refs: frozenset[ArtifactRef] = frozenset(),
 ) -> BackwardInductionResult:
     """Solve a model by backward induction, whatever solver each regime declares.
 
@@ -150,6 +159,12 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             policy is kept only for a regime whose declared simulation route
             reads it; a values-only solve drops every policy at the period
             boundary instead of retaining one device-sized artifact per period.
+        retain_all_artifacts: Whether independently persistable continuation and
+            auxiliary outputs may be retained.
+        persistable_artifact_refs: Exact model-authoritative artifact addresses
+            selected by ``ALL_PERSISTABLE_ARTIFACTS``. Only these addresses are
+            dispatched and copied for that mode; ordinary replay retention keeps
+            its separate in-memory behavior, including ``NOT_PERSISTED`` routes.
 
     Returns:
         The named backward-induction outputs: the immutable mapping of periods
@@ -193,10 +208,18 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         next_edge_to_V_arr=next_edge_to_V_arr,
         enable_jit=enable_jit,
         retain_replay=retain_replay,
+        persistable_artifact_refs=persistable_artifact_refs,
         max_compilation_workers=max_compilation_workers,
         logger=logger,
     )
     compiled_functions = compiled_programs.executables
+    replay_dispatches = {
+        (regime_name, period)
+        for (regime_name, period, _core_name), metadata in (
+            compiled_programs.metadata.items()
+        )
+        if metadata.scope is ProgramScope.REPLAY
+    }
     input_liveness = _build_planned_input_liveness(
         regimes=regimes, program_metadata=compiled_programs.metadata
     )
@@ -208,6 +231,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     ] = {}
     dissolution_flags: dict[int, MappingProxyType[RegimeName, BoolND]] = {}
     solver_diagnostics: dict[int, MappingProxyType[RegimeName, SolverDiagnostics]] = {}
+    retained_continuations: dict[ArtifactRef, object] = {}
+    replay_artifacts: dict[ArtifactRef, object] = {}
+    auxiliary_artifacts: dict[ArtifactRef, object] = {}
 
     # Every collective kernel publishes `D`, but only two things read the
     # ACCUMULATED per-period mapping: forward simulation, for a gate that
@@ -275,7 +301,10 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     # re-materializes on device.
     host_device = (
         jax.devices("cpu")[0]
-        if retain_replay or (collect_solver_diagnostics and diagnostics_enabled)
+        if retain_replay
+        or retain_all_artifacts
+        or persistable_artifact_refs
+        or (collect_solver_diagnostics and diagnostics_enabled)
         else None
     )
 
@@ -289,6 +318,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         ] = {}
         period_dissolution_flags: dict[RegimeName, BoolND] = {}
         period_solver_diagnostics: dict[RegimeName, SolverDiagnostics] = {}
+        period_retained_continuations: dict[tuple[RegimeName, ArtifactKey], object] = {}
+        period_replay_artifacts: dict[tuple[RegimeName, ArtifactKey], object] = {}
+        period_auxiliary_artifacts: dict[tuple[RegimeName, ArtifactKey], object] = {}
 
         active_regimes = {
             regime_name: regime
@@ -311,8 +343,11 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             active_regimes=active_regimes
         ):
             regime = active_regimes[regime_name]
-            regime_retains_replay = _regime_retains_replay(
-                regime=regime, retain_replay=retain_replay
+            regime_retains_replay = (regime_name, period) in replay_dispatches
+            selected_artifact_keys = _selected_artifact_keys_for_cell(
+                persistable_artifact_refs=persistable_artifact_refs,
+                regime_name=regime_name,
+                period=period,
             )
             output = _run_period_kernel(
                 regime=regime,
@@ -328,7 +363,11 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 logger=logger,
                 next_edge_to_V_arr=next_edge_to_V_arr,
                 period_solution=period_solution,
-                retain_replay=regime_retains_replay,
+                retain_replay=_regime_retains_replay(
+                    regime=regime,
+                    retain_replay=retain_replay,
+                ),
+                selected_artifact_keys=selected_artifact_keys,
             )
             input_liveness.commit_successful_dispatch(dispatch=(period, regime_name))
             continuation_spec = regime.solution.continuation_spec
@@ -341,6 +380,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 ),
                 regime_name=regime_name,
                 period=period,
+                artifact_authorities=regime.solution.artifact_authorities,
             )
             V_arr = result.value
             # The published V mapping is the calling convention for every
@@ -360,6 +400,19 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             )
             if result.continuation is not None:
                 period_continuations[regime_name] = result.continuation
+            if retain_all_artifacts:
+                period_retained_continuations.update(
+                    {
+                        (regime_name, key): payload
+                        for key, payload in result.continuation_artifacts.items()
+                        if ArtifactRef(
+                            period=period,
+                            regime=regime_name,
+                            key=key,
+                        )
+                        in persistable_artifact_refs
+                    }
+                )
             # A policy is kept only where the regime's declared simulation route
             # reads it; the replay authority travels with the policy it describes.
             if result.simulation_policy is not None and regime_retains_replay:
@@ -368,6 +421,35 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                     period_generated_replay_authorities[regime_name] = (
                         result.generated_replay_authority
                     )
+            period_replay_artifacts.update(
+                {
+                    (regime_name, key): payload
+                    for key, payload in result.replay_artifacts.items()
+                    if key != SIMULATION_POLICY
+                    and (
+                        retain_replay
+                        or ArtifactRef(
+                            period=period,
+                            regime=regime_name,
+                            key=key,
+                        )
+                        in persistable_artifact_refs
+                    )
+                }
+            )
+            if retain_all_artifacts:
+                period_auxiliary_artifacts.update(
+                    {
+                        (regime_name, key): payload
+                        for key, payload in result.auxiliary_artifacts.items()
+                        if ArtifactRef(
+                            period=period,
+                            regime=regime_name,
+                            key=key,
+                        )
+                        in persistable_artifact_refs
+                    }
+                )
             # A collective regime publishes its
             # empty-mask dissolution flag D alongside V; singleton regimes
             # leave it None and never touch this mapping.
@@ -447,7 +529,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             if publish_dissolution_flags
             else _NO_DISSOLUTION_FLAGS
         )
-        if retain_replay:
+        if retain_replay or period_simulation_policies:
             assert host_device is not None  # noqa: S101
             simulation_policies[period] = MappingProxyType(
                 {
@@ -474,6 +556,22 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                     for regime_name, diagnostics in period_solver_diagnostics.items()
                 }
             )
+        if retain_all_artifacts:
+            assert host_device is not None  # noqa: S101
+            for (regime_name, key), payload in period_retained_continuations.items():
+                retained_continuations[
+                    ArtifactRef(period=period, regime=regime_name, key=key)
+                ] = jax.block_until_ready(jax.device_put(payload, host_device))
+            for (regime_name, key), payload in period_auxiliary_artifacts.items():
+                auxiliary_artifacts[
+                    ArtifactRef(period=period, regime=regime_name, key=key)
+                ] = jax.block_until_ready(jax.device_put(payload, host_device))
+        if retain_replay or period_replay_artifacts:
+            assert host_device is not None  # noqa: S101
+            for (regime_name, key), payload in period_replay_artifacts.items():
+                replay_artifacts[
+                    ArtifactRef(period=period, regime=regime_name, key=key)
+                ] = jax.block_until_ready(jax.device_put(payload, host_device))
 
         elapsed = time.monotonic() - period_start
         log_period_timing(logger=logger, elapsed=elapsed)
@@ -523,6 +621,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         generated_replay_authorities=MappingProxyType(generated_replay_authorities),
         dissolution_flags=MappingProxyType(dissolution_flags),
         diagnostics=MappingProxyType(solver_diagnostics),
+        retained_continuations=ArtifactStore(retained_continuations),
+        replay_artifacts=ArtifactStore(replay_artifacts),
+        auxiliary_artifacts=ArtifactStore(auxiliary_artifacts),
     )
 
 
@@ -581,6 +682,7 @@ def _run_period_kernel(
     next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
     period_solution: Mapping[RegimeName, FloatND],
     retain_replay: bool,
+    selected_artifact_keys: frozenset[ArtifactKey],
 ) -> KernelOutput:
     """Invoke one regime's period adapter for one period.
 
@@ -633,6 +735,7 @@ def _run_period_kernel(
             "next_edge_to_V_arr": next_edge_to_V_arr,
             "period_solution": period_solution,
             "retain_replay": retain_replay,
+            "selected_artifact_keys": selected_artifact_keys,
         },
     )
 
@@ -1360,6 +1463,7 @@ class _ProgramExecutionMetadata:
 
     requirements: CoreExecutionRequirements
     disposition: CoreExecutionDisposition
+    scope: ProgramScope
     input_transfer_plan: tuple[ResolvedValueTransfer, ...]
 
 
@@ -1554,15 +1658,57 @@ def _conservative_dense_value_artifacts(
 
 
 def _regime_retains_replay(*, regime: Regime, retain_replay: bool) -> bool:
-    """Whether one regime's solve dispatches its replay-scoped programs.
+    """Whether one regime's normal retention dispatches every replay program.
 
     A simulation policy is consumed only through the regime's declared replay
     route. A regime without one (a standalone case-piece NB-EGM regime, whose
     simulation reads the grid argmax) dispatches its values-only programs under
     every retention, so a replay output is never assembled only to be discarded.
-    Programs scoped `ANY` are unaffected.
+    Persistence-oriented retention is resolved separately through exact artifact
+    identities rather than widening this boolean.
     """
-    return retain_replay and regime.simulation.egm_policy_read is not None
+    return retain_replay and (
+        regime.simulation.egm_policy_read is not None
+        or regime.simulation.external_replay_route is not None
+    )
+
+
+def _select_period_programs(
+    *,
+    regime: Regime,
+    regime_name: RegimeName,
+    period: int,
+    retain_replay: bool,
+    persistable_artifact_refs: frozenset[ArtifactRef],
+) -> MappingProxyType[str, CoreProgram]:
+    """Select one cell's programs from exact model-authoritative artifact keys."""
+    selected_artifact_keys = _selected_artifact_keys_for_cell(
+        persistable_artifact_refs=persistable_artifact_refs,
+        regime_name=regime_name,
+        period=period,
+    )
+    native_graph = core_program_graph(kernel=regime.solution.period_kernels[period])
+    return select_programs(
+        graph=native_graph,
+        retain_replay=_regime_retains_replay(
+            regime=regime, retain_replay=retain_replay
+        ),
+        selected_artifact_keys=selected_artifact_keys,
+    )
+
+
+def _selected_artifact_keys_for_cell(
+    *,
+    persistable_artifact_refs: frozenset[ArtifactRef],
+    regime_name: RegimeName,
+    period: int,
+) -> frozenset[ArtifactKey]:
+    """Project exact persistence retention onto one period/regime cell."""
+    return frozenset(
+        ref.key
+        for ref in persistable_artifact_refs
+        if ref.period == period and ref.regime == regime_name
+    )
 
 
 def _compile_all_functions(
@@ -1575,6 +1721,7 @@ def _compile_all_functions(
     next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
     enable_jit: bool,
     retain_replay: bool,
+    persistable_artifact_refs: frozenset[ArtifactRef],
     max_compilation_workers: int | None,
     logger: logging.Logger,
 ) -> _CompiledPrograms:
@@ -1606,6 +1753,8 @@ def _compile_all_functions(
         retain_replay: Whether the solve retains replay artifacts; with the
             regime's declared replay route it selects which scoped programs of
             each kernel's graph are dispatched.
+        persistable_artifact_refs: Exact model-authoritative addresses whose
+            replay programs are selected for persistence-oriented retention.
         max_compilation_workers: Maximum threads for parallel compilation.
             Defaults to `os.cpu_count()`.
         logger: Logger for compilation progress.
@@ -1619,13 +1768,13 @@ def _compile_all_functions(
     # Collect every kernel's native graph, narrowed to the retention's scope.
     all_programs: dict[_CoreTriple, CoreProgram] = {}
     for regime_name, regime in regimes.items():
-        regime_retains_replay = _regime_retains_replay(
-            regime=regime, retain_replay=retain_replay
-        )
         for period in regime.active_periods:
-            graph = select_programs(
-                graph=core_program_graph(kernel=regime.solution.period_kernels[period]),
-                retain_replay=regime_retains_replay,
+            graph = _select_period_programs(
+                regime=regime,
+                regime_name=regime_name,
+                period=period,
+                retain_replay=retain_replay,
+                persistable_artifact_refs=persistable_artifact_refs,
             )
             for core_name, program in graph.items():
                 all_programs[(regime_name, period, core_name)] = program
@@ -1652,6 +1801,7 @@ def _compile_all_functions(
             triple: _ProgramExecutionMetadata(
                 requirements=program.requirements,
                 disposition=program.disposition,
+                scope=program.scope,
                 input_transfer_plan=program.input_transfer_plan,
             )
             for triple, program in resolved_programs.items()

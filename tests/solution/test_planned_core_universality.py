@@ -15,6 +15,7 @@ from _lcm.execution.core_program import (
     CoreExecutionDisposition,
     CoreExecutionRequirements,
     CoreProgramGraphAware,
+    ProgramScope,
     _TargetValueAccess,
 )
 from _lcm.execution.output_layout import PlannedCore
@@ -98,6 +99,7 @@ def _metadata(
         requirements=CoreExecutionRequirements(target_value_accesses=accesses),
         disposition=CoreExecutionDisposition.DENSE,
         input_transfer_plan=(),
+        scope=ProgramScope.ANY,
     )
 
 

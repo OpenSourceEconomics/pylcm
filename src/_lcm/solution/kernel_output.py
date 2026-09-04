@@ -12,7 +12,8 @@ producer-side artifact without its engine reader cannot ship.
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from types import MappingProxyType
+from typing import Any, cast
 
 import jax.numpy as jnp
 
@@ -29,9 +30,12 @@ from lcm.solver_api import (
     DISSOLUTION_FLAG,
     SIMULATION_POLICY,
     SOLVER_DIAGNOSTICS,
+    ArtifactAuthority,
+    ArtifactChannel,
     ArtifactKey,
     ContinuationArtifact,
     KernelOutput,
+    _canonicalize_artifact_payload,
 )
 from lcm.typing import BoolND, FloatND
 
@@ -76,6 +80,15 @@ class ConsumedKernelOutput:
     diagnostics: SolverDiagnostics | None
     """The solver's numerical self-report, when it measures anything."""
 
+    continuation_artifacts: Mapping[ArtifactKey, object]
+    """Declared continuation payloads retained independently after rolling."""
+
+    replay_artifacts: Mapping[ArtifactKey, object]
+    """Every declared replay payload, including custom plugin artifacts."""
+
+    auxiliary_artifacts: Mapping[ArtifactKey, object]
+    """Declared solver outputs retained only for inspection or persistence."""
+
 
 def consume_kernel_output(
     *,
@@ -83,6 +96,9 @@ def consume_kernel_output(
     continuation_key: ArtifactKey | None,
     regime_name: RegimeName,
     period: int,
+    artifact_authorities: Mapping[ArtifactKey, ArtifactAuthority] = (
+        MappingProxyType({})
+    ),
 ) -> ConsumedKernelOutput:
     """Read one kernel's output by declared key; refuse anything without a reader.
 
@@ -102,6 +118,7 @@ def consume_kernel_output(
         raise TypeError(msg)
 
     continuations = dict(output.continuations)
+    published_continuations: dict[ArtifactKey, object] = {}
     continuation: ContinuationPayload | None = None
     if continuation_key is not None:
         _fail_on_version_mismatch(
@@ -131,6 +148,20 @@ def consume_kernel_output(
             regime_name=regime_name,
             period=period,
         )
+        continuation_authority = artifact_authorities.get(continuation_key)
+        if continuation_authority is not None:
+            continuation = cast(
+                "ContinuationPayload",
+                _canonicalize_declared_artifact(
+                    payload=continuation,
+                    authority=continuation_authority,
+                    channel=ArtifactChannel.CONTINUATION,
+                    key=continuation_key,
+                    regime_name=regime_name,
+                    period=period,
+                ),
+            )
+        published_continuations[continuation_key] = continuation
     _fail_on_unconsumed(
         channel="continuations",
         artifacts=continuations,
@@ -187,17 +218,26 @@ def consume_kernel_output(
             f"'{SIMULATION_POLICY.type_id}' policy on the replay channel."
         )
         raise RuntimeError(msg)
-    for channel, artifacts in (
-        ("solve_time_artifacts", solve_time_artifacts),
-        ("replay", replay),
-        ("auxiliary", auxiliary),
-    ):
-        _fail_on_unconsumed(
-            channel=channel,
-            artifacts=artifacts,
-            regime_name=regime_name,
-            period=period,
-        )
+    published_replay = _consume_declared_artifacts(
+        channel=ArtifactChannel.REPLAY,
+        artifacts=replay,
+        authorities=artifact_authorities,
+        regime_name=regime_name,
+        period=period,
+    )
+    declared_auxiliary = _consume_declared_artifacts(
+        channel=ArtifactChannel.AUXILIARY,
+        artifacts=auxiliary,
+        authorities=artifact_authorities,
+        regime_name=regime_name,
+        period=period,
+    )
+    _fail_on_unconsumed(
+        channel="solve_time_artifacts",
+        artifacts=solve_time_artifacts,
+        regime_name=regime_name,
+        period=period,
+    )
 
     return ConsumedKernelOutput(
         value=jnp.asarray(output.value),
@@ -206,7 +246,73 @@ def consume_kernel_output(
         generated_replay_authority=generated_replay_authority,
         dissolution=dissolution,
         diagnostics=diagnostics,
+        continuation_artifacts=published_continuations,
+        replay_artifacts=published_replay,
+        auxiliary_artifacts=declared_auxiliary,
     )
+
+
+def _consume_declared_artifacts(
+    *,
+    channel: ArtifactChannel,
+    artifacts: dict[ArtifactKey, object],
+    authorities: Mapping[ArtifactKey, ArtifactAuthority],
+    regime_name: RegimeName,
+    period: int,
+) -> dict[ArtifactKey, object]:
+    """Canonicalize extension artifacts once and return those exact snapshots."""
+    canonical: dict[ArtifactKey, object] = {}
+    for key in tuple(artifacts):
+        authority = authorities.get(key)
+        if authority is None or authority.descriptor.channel is not channel:
+            continue
+        payload = artifacts.pop(key)
+        canonical[key] = _canonicalize_declared_artifact(
+            payload=payload,
+            authority=authority,
+            channel=channel,
+            key=key,
+            regime_name=regime_name,
+            period=period,
+        )
+    _fail_on_unconsumed(
+        channel=channel.value,
+        artifacts=artifacts,
+        regime_name=regime_name,
+        period=period,
+    )
+    return canonical
+
+
+def _canonicalize_declared_artifact(
+    *,
+    payload: object,
+    authority: ArtifactAuthority,
+    channel: ArtifactChannel,
+    key: ArtifactKey,
+    regime_name: RegimeName,
+    period: int,
+) -> object:
+    """Canonicalize a producer payload and attach its cell to any defect."""
+    if authority.descriptor.key != key or authority.descriptor.channel is not channel:
+        raise RuntimeError(
+            f"Regime '{regime_name}' in period {period} has inconsistent authority "
+            f"for {channel.value} artifact '{key.type_id}'."
+        )
+    if not authority.applicable:
+        raise RuntimeError(
+            f"Regime '{regime_name}' in period {period} published {channel.value} "
+            f"artifact '{key.type_id}' version {key.schema_version} although its "
+            "declared authority is not applicable."
+        )
+    try:
+        return _canonicalize_artifact_payload(payload=payload, authority=authority)
+    except (TypeError, ValueError) as error:
+        raise RuntimeError(
+            f"Regime '{regime_name}' in period {period} published {channel.value} "
+            f"artifact '{key.type_id}' version {key.schema_version} outside its "
+            f"declared authority: {error}."
+        ) from error
 
 
 def _pop_typed_artifact(

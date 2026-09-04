@@ -15,6 +15,7 @@ import pytest
 from pandas.testing import assert_frame_equal
 
 import lcm.model as model_module
+import lcm.solver_api as solver_api_module
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
 from _lcm.regime_building import processing as regime_processing
@@ -26,7 +27,11 @@ from _lcm.typing import (
     FlatParams,
 )
 from lcm import LinSpacedGrid, Model
-from lcm.exceptions import InvalidParamsError, InvalidSimulationInputError
+from lcm.exceptions import (
+    IncompatibleSolutionError,
+    InvalidSimulationInputError,
+    SolutionIntegrityError,
+)
 from lcm.solver_api import (
     DISSOLUTION_FLAG,
     EGM_CONTINUATION,
@@ -35,11 +40,14 @@ from lcm.solver_api import (
     ArtifactKey,
     ArtifactRef,
     ArtifactStore,
+    LoadState,
     OmissionReason,
+    PersistencePolicy,
     ResultRetention,
     SolutionMetadata,
     SolutionResult,
     ValueArraySchema,
+    ValueStore,
 )
 from lcm.solvers import MSSEnvelope
 from lcm.typing import UserInitialConditions, UserParams
@@ -64,6 +72,22 @@ from tests.test_models.deterministic.regression import (
     get_model,
     get_params,
 )
+
+
+class _RaisingLazyValueEntry(solver_api_module._LazyEntry):
+    """Raise one chosen decoder exception when the value is materialized."""
+
+    def __init__(self, error: Exception) -> None:
+        self._error = error
+
+    @property
+    def load_state(self) -> LoadState:
+        """Report that the adversarial entry has not materialized."""
+        return LoadState.UNLOADED
+
+    def materialize(self, *, template: object | None = None) -> object:  # noqa: ARG002
+        """Raise the configured decoder exception."""
+        raise self._error
 
 
 def test_solver_api_has_no_private_lcm_imports() -> None:
@@ -146,11 +170,62 @@ def test_solution_result_keeps_values_explicit_and_immutable() -> None:
     result = SolutionResult(values=values, metadata=metadata)
 
     np.testing.assert_array_equal(result.value(period=0, regime="alive"), [1.0, 2.0])
-    assert isinstance(result.values, MappingProxyType)
-    assert isinstance(result.values[0], MappingProxyType)
+    assert isinstance(result.values, ValueStore)
+    assert isinstance(result.values[0], Mapping)
     assert isinstance(result.omissions, MappingProxyType)
     with pytest.raises(TypeError):
         result.values[0]["alive"] = jnp.asarray([9.0])  # ty: ignore[invalid-assignment]
+
+
+def test_store_lookups_reject_nonexact_coordinates_before_hashing() -> None:
+    """Reject equality-compatible lookup coordinates before mapping access."""
+
+    class _ArmedHashString(str):  # noqa: SLOT000
+        armed = False
+
+        def __hash__(self) -> int:
+            if self.armed:
+                raise RuntimeError("hostile lookup hash escaped")
+            return super().__hash__()
+
+    values = ValueStore({(0, "alive"): jnp.asarray([1.0], dtype=jnp.float32)})
+    result = SolutionResult(
+        values=values,
+        metadata=SolutionMetadata(
+            retention=ResultRetention.VALUES,
+            n_periods=1,
+            regime_names=("alive",),
+            solver_types={"alive": "example.Grid"},
+            model_instance_id="model-1",
+            params_fingerprint="0" * 64,
+            value_schemas={
+                (0, "alive"): ValueArraySchema(
+                    shape=(1,), dtype="float32", axis_names=("wealth",)
+                )
+            },
+        ),
+    )
+    hostile_regime = _ArmedHashString("alive")
+    hostile_regime.armed = True
+
+    assert True not in values
+    assert hostile_regime not in values[0]
+    with pytest.raises(TypeError, match="exact ints"):
+        result.value(period=True, regime="alive")
+    with pytest.raises(TypeError, match="exact strs"):
+        result.value(period=0, regime=hostile_regime)
+    with pytest.raises(TypeError, match="exact strs"):
+        values.load_state(period=0, regime=hostile_regime)
+
+    key = ArtifactKey(type_id="example.policy")
+    ref = ArtifactRef(period=0, regime="alive", key=key)
+    artifacts = ArtifactStore({ref: object()})
+    hostile_ref = replace(ref)
+    object.__setattr__(hostile_ref, "regime", hostile_regime)
+
+    assert hostile_ref not in artifacts
+    with pytest.raises(TypeError, match="exact strs"):
+        artifacts.load_state(hostile_ref)
 
 
 def test_solve_records_instance_params_and_value_array_schemas() -> None:
@@ -232,6 +307,59 @@ def test_model_solve_omits_policy_without_replay_route() -> None:
     assert not result.diagnostics
 
 
+def test_model_rejects_a_present_inapplicable_artifact() -> None:
+    """A false present payload cannot replace model authority's omission."""
+    model = _two_period_bequest_model()
+    params = get_retirement_only_params(n_periods=2, discount_factor=0.98)
+    solution = model.solve(params=params, log_level="off")
+    policy_ref = ArtifactRef(
+        period=0,
+        regime="retirement",
+        key=SIMULATION_POLICY,
+    )
+    malformed = replace(
+        solution,
+        replay_artifacts=ArtifactStore({policy_ref: object()}),
+        omissions={
+            ref: reason
+            for ref, reason in solution.omissions.items()
+            if ref != policy_ref
+        },
+    )
+
+    with pytest.raises(
+        InvalidSimulationInputError,
+        match=r"present artifacts.*not applicable",
+    ):
+        model.simulate(
+            params=params,
+            initial_conditions={},
+            solution=malformed,
+            log_level="off",
+        )
+
+
+def test_model_rejects_a_present_artifact_not_selected_by_retention() -> None:
+    """The metadata retention label constrains every present artifact channel."""
+    model = _make_dissolution_model()
+    solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="off")
+    malformed = replace(
+        solution,
+        metadata=replace(solution.metadata, retention=ResultRetention.VALUES),
+    )
+
+    with pytest.raises(
+        InvalidSimulationInputError,
+        match=r"present artifacts.*not selected by retention 'values'",
+    ):
+        model.simulate(
+            params=_DISSOLUTION_PARAMS,
+            initial_conditions={},
+            solution=malformed,
+            log_level="off",
+        )
+
+
 def test_solve_does_not_host_copy_policy_without_replay_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -272,7 +400,7 @@ def test_values_only_result_drops_replay_with_an_explicit_reason() -> None:
     assert result.omissions[policy_ref] is OmissionReason.NOT_APPLICABLE
 
 
-def test_all_persistable_marks_unretained_continuation_unsupported() -> None:
+def test_all_persistable_retains_model_verifiable_egm_continuation() -> None:
     model = _two_period_bequest_model()
     params = get_retirement_only_params(n_periods=2, discount_factor=0.98)
 
@@ -287,7 +415,12 @@ def test_all_persistable_marks_unretained_continuation_unsupported() -> None:
         regime="retirement",
         key=EGM_CONTINUATION,
     )
-    assert result.omissions[continuation_ref] is OmissionReason.UNSUPPORTED
+    assert continuation_ref in result.retained_continuations
+    assert continuation_ref not in result.omissions
+    assert (
+        result.metadata.artifact_descriptors[continuation_ref].persistence
+        is PersistencePolicy.MODEL_VERIFIABLE
+    )
 
 
 def test_solve_retains_kernel_diagnostics_only_when_log_level_enables_them(
@@ -564,7 +697,7 @@ def test_solution_result_has_no_mapping_compatibility_bridge() -> None:
     solution = model.solve(params=params, log_level="off")
 
     assert not isinstance(solution, Mapping)
-    with pytest.raises(InvalidParamsError):
+    with pytest.raises(InvalidSimulationInputError):
         model.simulate(
             params=params,
             initial_conditions=initial_conditions,
@@ -595,6 +728,67 @@ def test_solution_result_structure_is_checked_before_simulation(defect: str) -> 
         )
 
     with pytest.raises(InvalidSimulationInputError, match=defect):
+        model.simulate(
+            params=params,
+            initial_conditions=initial_conditions,
+            solution=malformed,
+            log_level="off",
+        )
+
+
+def test_solution_result_rejects_constructor_bypassed_nested_value_mapping() -> None:
+    """Preflight requires the value store whose materialization API it invokes."""
+    model, params, initial_conditions = _small_grid_search_inputs()
+    solution = model.solve(params=params, log_level="off")
+    malformed = replace(solution)
+    bypassed_values = MappingProxyType(
+        {
+            period: MappingProxyType(dict(regime_to_value))
+            for period, regime_to_value in solution.values.items()
+        }
+    )
+    object.__setattr__(malformed, "values", bypassed_values)
+
+    with pytest.raises(InvalidSimulationInputError, match="exact ValueStore"):
+        model.simulate(
+            params=params,
+            initial_conditions=initial_conditions,
+            solution=malformed,
+            log_level="off",
+        )
+
+
+@pytest.mark.parametrize(
+    ("decoder_error", "expected_error"),
+    [
+        (TypeError("hostile value decoder"), InvalidSimulationInputError),
+        (ValueError("hostile value decoder"), InvalidSimulationInputError),
+        (SolutionIntegrityError("hostile value decoder"), SolutionIntegrityError),
+        (IncompatibleSolutionError("hostile value decoder"), IncompatibleSolutionError),
+    ],
+    ids=(
+        "type-error-is-normalized",
+        "value-error-is-normalized",
+        "integrity-error-is-preserved",
+        "incompatibility-error-is-preserved",
+    ),
+)
+def test_lazy_value_decoder_errors_cross_the_public_boundary(
+    *, decoder_error: Exception, expected_error: type[Exception]
+) -> None:
+    """Normalize decoder mechanics without hiding archive-domain exceptions."""
+    model, params, initial_conditions = _small_grid_search_inputs()
+    solution = model.solve(params=params, log_level="off")
+    entries: dict[object, object] = {
+        (period, regime_name): value
+        for period, regime_to_value in solution.values.items()
+        for regime_name, value in regime_to_value.items()
+    }
+    coordinate = next(iter(entries))
+    entries[coordinate] = _RaisingLazyValueEntry(decoder_error)
+    malformed = replace(solution, values=ValueStore(entries))
+
+    with pytest.raises(expected_error, match="hostile value decoder"):
         model.simulate(
             params=params,
             initial_conditions=initial_conditions,
@@ -694,9 +888,7 @@ def test_solution_result_value_schema_is_checked_before_forward(
         )
 
 
-def test_solution_result_rejects_an_unexpected_empty_value_period_before_forward(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_solution_result_normalizes_an_unexpected_empty_value_period() -> None:
     model, params, initial_conditions = _small_grid_search_inputs()
     solution = model.solve(params=params, log_level="off")
     values = {
@@ -706,17 +898,13 @@ def test_solution_result_rejects_an_unexpected_empty_value_period_before_forward
     values[model.n_periods] = {}
     malformed = replace(solution, values=values)
 
-    def _forward_loop_must_not_run(**_kwargs: object) -> None:
-        raise AssertionError("forward simulation ran before value-period preflight")
-
-    monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
-    with pytest.raises(InvalidSimulationInputError, match="value period coverage"):
-        model.simulate(
-            params=params,
-            initial_conditions=initial_conditions,
-            solution=malformed,
-            log_level="off",
-        )
+    assert model.n_periods not in malformed.values
+    model.simulate(
+        params=params,
+        initial_conditions=initial_conditions,
+        solution=malformed,
+        log_level="off",
+    )
 
 
 @pytest.mark.parametrize(
@@ -930,7 +1118,10 @@ def test_malformed_finite_nnbegm_payload_is_refused_before_forward(
         raise AssertionError("forward simulation ran before replay-payload preflight")
 
     monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
-    with pytest.raises(InvalidSimulationInputError, match="mismatched_payload"):
+    with pytest.raises(
+        InvalidSimulationInputError,
+        match=r"mismatched_payload|artifact payloads cannot be detached",
+    ):
         model.simulate(
             params=_PARAMS,
             initial_conditions=dict(_INITIAL),
@@ -981,7 +1172,11 @@ def test_declared_egm_policy_read_requires_a_valid_egm_payload_before_forward(
         raise AssertionError("forward simulation ran before EGM replay preflight")
 
     monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
-    reason = "mismatched_payload" if payload is not None else "unrecorded"
+    reason = (
+        r"mismatched_payload|artifact payloads cannot be detached"
+        if payload is not None
+        else r"unrecorded|missing accounting"
+    )
     with pytest.raises(InvalidSimulationInputError, match=reason):
         model.simulate(
             params=params,
@@ -1058,7 +1253,10 @@ def test_nested_egm_payload_is_validated_recursively_before_forward(
         raise AssertionError("forward simulation ran before nested replay preflight")
 
     monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
-    with pytest.raises(InvalidSimulationInputError, match="mismatched_payload"):
+    with pytest.raises(
+        InvalidSimulationInputError,
+        match=r"mismatched_payload|artifact payloads cannot be detached",
+    ):
         model.simulate(
             params=_PARAMS,
             initial_conditions=dict(_INITIAL),
@@ -1156,7 +1354,10 @@ def test_malformed_dissolution_flag_is_refused_before_forward(
         raise AssertionError("forward simulation ran before dissolution preflight")
 
     monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
-    with pytest.raises(InvalidSimulationInputError, match="mismatched_payload"):
+    with pytest.raises(
+        InvalidSimulationInputError,
+        match=r"mismatched_payload|artifact payloads cannot be detached",
+    ):
         model.simulate(
             params=_DISSOLUTION_PARAMS,
             initial_conditions={},

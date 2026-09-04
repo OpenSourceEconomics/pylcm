@@ -36,7 +36,13 @@ from _lcm.typing import (
 )
 from _lcm.utils.containers import first_non_none
 from lcm.exceptions import PyLCMError
-from lcm.solver_api import ReplayMode, ReplayRoute
+from lcm.solver_api import (
+    ArtifactAuthority,
+    ArtifactKey,
+    ExecutableReplayRoute,
+    ReplayMode,
+    ReplayRoute,
+)
 from lcm.typing import (
     Bool1D,
     ContinuousAction,
@@ -382,6 +388,14 @@ class SolutionPhase:
 
     continuation_spec: ContinuationSpec | None = None
     """Template and identity of the continuation this regime's kernels publish."""
+
+    external_replay_route: ExecutableReplayRoute | None = None
+    """Plugin-owned replay implementation, or ``None`` for a built-in adapter."""
+
+    artifact_authorities: MappingProxyType[ArtifactKey, ArtifactAuthority] = (
+        MappingProxyType({})
+    )
+    """Model-built contracts for custom continuation/replay/auxiliary artifacts."""
 
     @property
     def continuation_template(self) -> ContinuationPayload | None:
@@ -901,6 +915,9 @@ class SimulationPhase:
     `None` keeps the grid-argmax decision path for the continuous action.
     """
 
+    external_replay_route: ExecutableReplayRoute | None = None
+    """Plugin route used in place of the engine's built-in replay adapters."""
+
     @property
     def replay_route(self) -> ReplayRoute:
         """How this regime's simulated decision is obtained each period.
@@ -909,6 +926,8 @@ class SimulationPhase:
         replay payload declares the grid-recomputation route, so simulation
         and the pre-simulation payload check never test for a missing read.
         """
+        if self.external_replay_route is not None:
+            return self.external_replay_route
         if self.egm_policy_read is None:
             return GRID_RECOMPUTATION_ROUTE
         return self.egm_policy_read

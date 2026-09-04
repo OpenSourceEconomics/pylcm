@@ -642,7 +642,7 @@ class NBEGM(OneMarginSolver):
                 ),
                 layout=replace(
                     self.egm_continuation_layout,
-                    rows_share_state_grid=not feasibility_constraints,
+                    rows_share_state_grid=n_boundaries == 0,
                 ),
             ),
             param_checks=tuple(grouped_param_checks),
@@ -930,6 +930,13 @@ class NBEGM(OneMarginSolver):
                 continuation_plan=plan,
                 savings_grid=savings_grid,
             )
+        n_carry_breakpoints = (
+            next(iter(statics_by_key.values())).n_published_jumps
+            if statics_by_key
+            else 0
+        ) + sum(
+            len(constraint.program.surfaces) for constraint in feasibility_constraints
+        )
         return SolutionKernels(
             period_kernels=MappingProxyType(period_kernels),
             continuation_spec=EGMContinuationSpec(
@@ -937,33 +944,12 @@ class NBEGM(OneMarginSolver):
                     template=_build_ride_along_carry_template(
                         liquid_grid=liquid_grid,
                         ride_shape=ride_shape,
-                        n_breakpoints=(
-                            next(iter(statics_by_key.values())).n_published_jumps
-                            if statics_by_key
-                            else 0
-                        )
-                        + sum(
-                            len(constraint.program.surfaces)
-                            for constraint in feasibility_constraints
-                        ),
+                        n_breakpoints=n_carry_breakpoints,
                         # Match `_assemble_ride_carry`'s carry_policy predicate:
                         # continuous-only (no ride discrete action) and jump-free.
                         carry_policy=(
                             not schedule_spec.discrete_actions
-                            and (
-                                (
-                                    next(
-                                        iter(statics_by_key.values())
-                                    ).n_published_jumps
-                                    if statics_by_key
-                                    else 0
-                                )
-                                + sum(
-                                    len(constraint.program.surfaces)
-                                    for constraint in feasibility_constraints
-                                )
-                            )
-                            == 0
+                            and n_carry_breakpoints == 0
                         ),
                     ),
                     grids=context.grids,
@@ -971,7 +957,7 @@ class NBEGM(OneMarginSolver):
                 ),
                 layout=replace(
                     self.egm_continuation_layout,
-                    rows_share_state_grid=not feasibility_constraints,
+                    rows_share_state_grid=n_carry_breakpoints == 0,
                 ),
             ),
             param_checks=tuple(param_checks),
@@ -5376,6 +5362,11 @@ def _ride_along_core_programs(
             disposition=CoreExecutionDisposition.PLANNED,
             donation_candidates=(),
             scope=scope,
+            retained_artifact_keys=(SIMULATION_POLICY,) if publish_replay else (),
+            retained_artifact_payload_types=(
+                {SIMULATION_POLICY: NBEGMGridPolicy} if publish_replay else {}
+            ),
+            replaces_program="main" if publish_replay else None,
         )
     return MappingProxyType(programs)
 

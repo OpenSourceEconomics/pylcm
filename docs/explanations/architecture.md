@@ -38,10 +38,12 @@ lcm/
 ├── model.py          ← Model
 ├── params.py         ← as_leaf + the MappingLeaf / SequenceLeaf re-exports
 ├── persistence.py    ← SolveSnapshot, SimulateSnapshot, load_snapshot,
-│                       save_solution, load_solution
+│                       complete-result save/load and legacy value reader
 ├── processes.py      ← the seven *Process classes
 ├── regime.py         ← Regime (Phased and MarkovTransition re-exported)
 ├── result.py         ← SimulationResult
+├── solver_api.py     ← versioned solver, artifact, replay, and solution contracts
+├── solvers.py        ← built-in solvers plus the out-of-tree re-export façade
 ├── transition.py     ← transition helpers
 ├── typing.py         ← user-facing type aliases
 └── exceptions.py     ← every project-specific exception class
@@ -67,7 +69,7 @@ _lcm/
 ├── version.py             ← generated version string (hatch-vcs)
 ├── grids/                 ← grid infrastructure
 ├── processes/             ← stochastic-process infrastructure
-├── persistence/           ← snapshot I/O and writer internals
+├── persistence/           ← snapshot I/O and versioned solution-archive internals
 ├── regime_building/       ← per-regime canonicalisation
 ├── solution/              ← backward induction (solve) + validate_V
 ├── simulation/            ← forward sampling (simulate) + result helpers
@@ -99,8 +101,10 @@ The mapping of public names to files:
 | `ages.py`        | `AgeGrid`. Step parser and validators live in `_lcm/ages.py`.                                                                                                                                             |
 | `grids.py`       | `LinSpacedGrid`, `LogSpacedGrid`, `IrregSpacedGrid`, `DiscreteGrid`, `PiecewiseLinSpacedGrid`, `PiecewiseLogSpacedGrid`, `GridBreakpoint`, and the `@categorical` decorator                               |
 | `processes.py`   | The seven `*Process` classes — `UniformIIDProcess`, `NormalIIDProcess`, `LogNormalIIDProcess`, `NormalMixtureIIDProcess`, `TauchenAR1Process`, `RouwenhorstAR1Process`, `TauchenNormalMixtureAR1Process`. |
-| `persistence.py` | `SolveSnapshot`, `SimulateSnapshot`, `load_snapshot`, `save_solution`, `load_solution`. Snapshot writers and atomic-dump live in `_lcm/persistence/`.                                                     |
+| `persistence.py` | `SolveSnapshot`, `SimulateSnapshot`, `load_snapshot`, complete-result `save_solution` / `load_solution`, and `load_legacy_solution`. Archive and snapshot writers live in `_lcm/persistence/`.            |
 | `result.py`      | `SimulationResult`. DataFrame assembly, metadata, and additional-targets computation live in `_lcm/simulation/result_*.py` and `_lcm/simulation/additional_targets.py`.                                   |
+| `solver_api.py`  | Lightweight versioned contracts for solver identity, kernel output, artifacts, replay, lazy solution stores, and descriptive result metadata.                                                             |
+| `solvers.py`     | Built-in solver configurations and the complete public re-export façade used by an out-of-tree solver.                                                                                                    |
 | `params.py`      | `as_leaf` plus the `MappingLeaf` / `SequenceLeaf` re-exports. The leaf-class definitions and the engine params machinery live in `_lcm/params/`.                                                          |
 | `typing.py`      | The model-authoring aliases (`FloatND`, `ScalarInt`, `Period`, `Age`, ...) and the `User*` boundary aliases.                                                                                              |
 | `exceptions.py`  | Every project-specific exception class.                                                                                                                                                                   |
@@ -362,13 +366,58 @@ producers and readers; the transition ledger records what closing that gap requi
 
 **A replay route is declared, not discovered.** Every canonical regime answers
 `simulation.replay_route` with one object carrying a `ReplayMode`, the exact payload
-class it retains, whether a solve owes one, and the name of the reader that consumes it.
-`EGMPolicyRead` and `NNBEGMPolicyRead` are those routes for the EGM and nested NB-EGM
-families; a regime that retains nothing declares the grid-recomputation route.
-`model_authority.py` builds its replay descriptors from the route, and `simulate.py`
-selects its reader by the route's `consumer_route` rather than by the class of whatever
-payload a solve happened to keep. The pre-simulation check therefore refuses a foreign
-payload by naming both the declared and the supplied class.
+class it retains, whether a solve owes one, and the reader that consumes it.
+`EGMPolicyRead` and `NNBEGMPolicyRead` are the built-in routes for the EGM and nested
+NB-EGM families; a regime that retains nothing declares grid recomputation. An external
+solver instead returns an `ExecutableReplayRoute` from `SolutionKernels`. Its stable
+plugin and route identities, period-specific artifact requirements, per-cell artifact
+authorities, mathematical validator, and JAX-transformable reader all use types
+re-exported by `lcm.solvers`.
+
+`model_authority.py` builds authority from the canonical model and consuming route. A
+restored or caller-supplied result is canonicalized once; required lazy entries are
+materialized and checksum checked; then pylcm validation, plugin validation, reader
+construction, and the forward loop consume that same immutable snapshot. Descriptors
+transported in `SolutionMetadata` remain descriptive and cannot authenticate their own
+payloads.
+
+## Solution identity and persistence
+
+`Model.solve()` returns one `SolutionResult` containing a `ValueStore`, addressed
+artifact stores, descriptive metadata, and explicit omission reasons. In-memory entries
+are loaded; entries restored by `load_solution` are independently lazy. Loading one
+period/regime value or artifact does not project or materialize its siblings, and an
+unloaded entry is present rather than omitted.
+
+The model fingerprint in `SolutionMetadata` is a deterministic digest of the canonical
+mathematical declarations and parameters needed to interpret a result. It includes grid
+support, category order, solver/replay/artifact identities, and callable semantics while
+excluding device, compiler, tiling, sharding, JIT, and other execution-only choices. An
+in-memory result additionally carries a process-local model-instance guard; a restored
+archive is accepted by a separately constructed compatible model through the durable
+fingerprint.
+
+`_lcm/persistence/solution.py` writes one HDF5 archive through an atomic sibling file.
+Its manifest is JSON; every value or artifact leaf is a separately addressed numerical
+dataset whose checksum binds its logical address, shape, dtype, and bytes. The archive
+serializes no Python implementation. `load_solution` checks the manifest and exact
+format/solution/solver-interface versions, then returns lazy handles that reopen the
+archive and verify a leaf before caching it. A whole-archive checksum pass deliberately
+does not change load state. Plugin PyTrees are reconstructed only from an installed
+route's model-authoritative template.
+
+Persistence is a per-artifact decision. `ArtifactDescriptor.persistence` is
+`MODEL_VERIFIABLE` only when another model process can independently rebuild the
+corresponding `ArtifactAuthority`; otherwise saving records `NOT_PERSISTED` and omits
+the payload. This keeps adaptive solve-generated coordinates out of the trust root. The
+same artifact identities drive computation: `REPLAY` programs are value-producing
+alternatives and `ARTIFACT` programs are additive, while each names its exact
+`CoreProgram.retained_artifact_keys` and the exact final `KernelOutput` payload type for
+every retained key. Every producer of one key must agree, including programs republished
+through a composite kernel; every replay program also names the exact values-only
+program it replaces. The engine selects them independently for every period/regime cell
+from model-authoritative `ArtifactRef` values, so requesting one persistable auxiliary
+or replay artifact does not suppress an unrelated values program.
 
 ## Params: boundary form vs. canonical form
 
@@ -460,8 +509,9 @@ They split into two categories:
 - **Runtime errors** — `InvalidValueFunctionError`,
   `InvalidRegimeTransitionProbabilitiesError`,
   `InvalidStateTransitionProbabilitiesError`, `InvalidParamsError`,
-  `InvalidInitialConditionsError`. These fire from `_lcm/transition_checks.py` and
-  `_lcm/solution/validate_V.py` during solve / simulate.
+  `InvalidInitialConditionsError`, `SolutionIntegrityError`, and
+  `IncompatibleSolutionError`. These fire from transition/value checks, restored-result
+  preflight, or the solution-archive reader during solve / simulate / load.
 
 The exception classes are public — both `from lcm.exceptions import InvalidParamsError`
 and `except lcm.InvalidParamsError` work. `format_messages`, the helper that assembles a

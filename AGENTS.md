@@ -605,18 +605,19 @@ loaded = SimulationResult.load(directory=Path("path/to/dir"))
 ### SolutionResult
 
 `model.solve()` returns an `lcm.solver_api.SolutionResult` that keeps values, artifacts,
-metadata, and explicit omission reasons separate; its default retention keeps replay
-artifacts. `model.simulate(solution=...)` unconditionally checks that the result came
-from the same model instance (whose token survives a pickle round trip), used the exact
-canonical parameters, and supplies valid required built-in artifacts. Returned value
-schemas and replay metadata are descriptive: both they and their payloads are checked
-independently against immutable descriptors owned by the producing and consuming model.
-Those descriptors come from the canonical model and parameters, plus private solve-side
-facts for data-dependent adaptive axes, and include exact dtypes, ordered axes, action
-roles, and categorical domains. `SolutionResult` persistence is not implemented yet. A
-solver can be written against `lcm.solvers`, `lcm.solver_api`, `lcm.typing` and
-`lcm.grids` alone, but that surface is not yet *stable*: persistence, durable
-cross-process identity, a conformance suite, and a versioning policy are missing.
+metadata, and explicit omission reasons separate. Its default retention keeps replay
+artifacts, while persistence-oriented retention keeps exactly those artifacts whose
+declared policy permits serialization. `model.simulate(solution=...)` checks the durable
+model fingerprint, solution-relevant canonical parameters, compatibility versions, and
+all required artifact descriptors before consuming the result. Descriptors are owned by
+the canonical model and include exact container structure, leaf dtypes and shapes,
+ordered axes, state and action roles, categorical domains, and consumer routing.
+`SolutionResult.save()` and `lcm.persistence.load_solution()` use the versioned,
+non-executable solution archive format; non-persisted artifacts remain explicit
+omissions. Solver plugins can be written against `lcm.solvers`, `lcm.solver_api`,
+`lcm.typing`, and `lcm.grids`, and can validate their boundary implementation with the
+published out-of-tree conformance suite. The solver API and archive format remain
+explicitly versioned experimental interfaces rather than stable compatibility promises.
 
 ### Initial Conditions Format
 

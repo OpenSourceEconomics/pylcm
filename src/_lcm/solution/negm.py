@@ -884,7 +884,7 @@ class _NEGMSweepArgumentBuilder:
 
 def _outer_sweep_program(
     *,
-    inner_core: Callable[..., tuple[FloatND, EGMCarry, object]],
+    inner_core: Callable[..., tuple[FloatND, EGMCarry]],
     outer_post_decision: FunctionName,
     durable_axis: int,
     outer_batch_size: int,
@@ -910,9 +910,7 @@ def _outer_sweep_program(
     n_nodes = outer_nodes.shape[0]
 
     def solve_node(node: ScalarFloat) -> tuple[FloatND, EGMCarry]:
-        value, carry, _policy = inner_core(
-            **{**adjuster_arguments, outer_post_decision: node}
-        )
+        value, carry = inner_core(**{**adjuster_arguments, outer_post_decision: node})
         return value, carry
 
     node_values, node_carries = jax.lax.map(

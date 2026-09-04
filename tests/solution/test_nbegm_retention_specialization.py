@@ -9,9 +9,9 @@ policy is omitted as not applicable rather than assembled and discarded.
 
 The two programs are one body, so the values and carries they publish agree to
 the working format's spacing. Under a values-only retention the nested finite
-solve never assembles its candidate banks, the adaptive solve never derives the
-nested policy or its generated replay authority, and solver diagnostics keep
-following `log_level` alone.
+solve never assembles its candidate banks. Persistence-oriented retention builds
+the finite bank but skips the non-persistable adaptive policy and generated
+authority. Solver diagnostics keep following `log_level` alone.
 """
 
 from collections.abc import Callable
@@ -19,6 +19,7 @@ from typing import Any, cast
 
 import pytest
 
+from _lcm.egm.published_policy import NBEGMGridPolicy
 from _lcm.solution import backward_induction
 from _lcm.solution import nbegm as nbegm_module
 from _lcm.solution import nnbegm as nnbegm_module
@@ -104,6 +105,11 @@ def test_a_standalone_regime_runs_main_under_every_retention(
     assert {solution.omissions[ref] for ref in policy_refs} == {
         OmissionReason.NOT_APPLICABLE
     }
+    expected_type_id = f"{NBEGMGridPolicy.__module__}.{NBEGMGridPolicy.__qualname__}"
+    assert {
+        solution.metadata.artifact_descriptors[ref].payload_type_id
+        for ref in policy_refs
+    } == {expected_type_id}
 
 
 @pytest.mark.parametrize("route", ["finite", "adaptive"])
@@ -117,6 +123,28 @@ def test_a_nested_replay_solve_runs_replay_alone(
 
     assert recorded
     assert set(recorded) == {("replay",)}
+
+
+@pytest.mark.parametrize(
+    ("route", "expected_program"), [("finite", "replay"), ("adaptive", "main")]
+)
+def test_all_persistable_dispatches_only_model_verifiable_replay(
+    *,
+    route: str,
+    expected_program: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recorded = _record_dispatched_programs(monkeypatch)
+    model, params = _nested(route)
+
+    model.solve(
+        params=params,
+        log_level="off",
+        retention=Retention.ALL_PERSISTABLE_ARTIFACTS,
+    )
+
+    assert recorded
+    assert set(recorded) == {(expected_program,)}
 
 
 @pytest.mark.parametrize("route", list(_MODELS))

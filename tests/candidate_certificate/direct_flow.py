@@ -184,9 +184,9 @@ _SOURCE_SEALS = {
     ARGMAX_SOURCE: "0d179a5aa65a6f310f598bdad8f75a9318a24832e31bd529184c2ea90356a72d",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
     MAX_Q_SOURCE: "6bed0c5a31bbc1c7fe9e0d9250223888d1271528b01844a398668af038e24844",
-    PROCESSING_SOURCE: "e6abd8e0ba09bf66c6df2010f9f54822e1fa4d346ac3cb73eda1f5f691088b47",
+    PROCESSING_SOURCE: "529c24632efe6a124ce5d51f3927d17f829671bfc51e2d68bc603eca3b53ddf9",
     GRID_SEARCH_SOURCE: "6a6f6fb6df90d727ecde2071395d0844da2d049827dfe154ace7854855726ec9",
-    CORE_PROGRAM_SOURCE: "0df3096812dc92df96bf73f587ab3016fc23294d7b8d9166ead7f2f2cd906673",
+    CORE_PROGRAM_SOURCE: "6101e7aea61ca01203a3635f3650333f94a1471a7906956e592936c7d64ff647",
     OUTPUT_LAYOUT_SOURCE: "50ddea50e75fca1e295f895ed97d33236675e0cd984391be83fc54f4f55b32e1",
     VALUE_TRANSFER_SOURCE: "44b8629c7b461b6b0216c79ba25101179e1b8cb2edf40630a55c6b9403fbbd2d",
     ACTION_STREAMING_SOURCE: "a34ca428598e37dd68fc3dcaa0c664c56f79afb6042c946246883f250bab681c",
@@ -198,15 +198,15 @@ _SOURCE_SEALS = {
     ZERO_SAFE_SOURCE: "6b85bacd7c01fec283fcd309a731ab73d6639975ff34edbcce1a8450fbac5f33",
     LOGSUMEXP_ACTION_REDUCTION_SOURCE: "732fda3ed4058445dedd160e58e3899ba286929413fd533e57113b5f772e7b79",
     PROBABILITY_SOURCE: "b59d16c16147af2518daaed643c10be43c506c6e3ac751cd52f04fa8fdab20d2",
-    ENGINE_SOURCE: "c0895764c13bc50c4bca28e01e351a247504525628dcf202234b93cc220daa72",
+    ENGINE_SOURCE: "f1efc4226565341238c56121b059f0093f715e43e0f891ca99c907d262e95e3d",
     STATE_ACTION_SPACE_SOURCE: "c7af3ea4c3912efa3d5d7daa0d420168a7545e327f6e4c581b3baf54efc79f11",
-    SIMULATION_SOURCE: "ae451adbfcfb8ef62cc30bb80371a3d4fdfd331f4face6dd12c8e5bbf8ad7376",
+    SIMULATION_SOURCE: "3781dfd2d45c07cc868accaa89390b2020a751f46eadaa1ede7e3c883fd237c1",
     SIMULATION_TRANSITIONS_SOURCE: "1c503777887af52d1d5de36cf86acb4d8431fbe3d71203d7da881b4d0742c928",
     SIMULATION_COMPILE_SOURCE: "bc59e06917ca26caa51bf6dee79f4f20b8f9c6dd652cf5648a17f02935d9a482",
-    MODEL_SOURCE: "abbd26107dfd9f8ce34b8fe0d9b4d7356b428b0dd420111548f354b996c44b79",
-    SOLVER_API_SOURCE: "ef8be1d5fff1dd56b8eddb9e51302f09f7383cb7c5604f9a0683fe5dbc58ce46",
-    BACKWARD_INDUCTION_SOURCE: "132cd6b86600d88ab28d2c3a59810707db624f06638cdd1badcb49ea1d71ddb8",
-    PERIOD_REPLAY_SOURCE: "590c46d46ebab603a59846f01918d15f88a83dba0b051e4f3e8c4cf40f2fa6e3",
+    MODEL_SOURCE: "fb9b3c06cc610dfbf859bccbd6fedc5f1b5b351fe5be9bd8847452f51d3ec850",
+    SOLVER_API_SOURCE: "1e7f7f777824384c238e962c0714d250a42552bd52f91443b514d38463b8a214",
+    BACKWARD_INDUCTION_SOURCE: "43d614ceb1463e1a0fb572d50ad4c7c9998df06550d74009bfa21974ef42e12c",
+    PERIOD_REPLAY_SOURCE: "d1bc0ef16e1dcf651992db73f59fbcc3e300cb30b4acf881512c72fb3fecc739",
     INITIAL_CONDITIONS_SOURCE: "cb3663f59d10fa288d3da322b5f154545bb1ac4b9262073a87c405b5e950507f",
     RESULT_SOURCE: "992f8e14d2f47f505f6883e340e89d68dfc41311d4c36f7849a2f79331e4ba01",
     RESULT_DATAFRAME_SOURCE: "025e273c4d3bb9d8f9787189a551b113708c86b1e868d16178aa39555abf49a4",
@@ -214,7 +214,7 @@ _SOURCE_SEALS = {
     ADDITIONAL_TARGETS_SOURCE: "d1c8787e7968b868b4b09a90544050c5da65d2ca6203f2bc52fe6b7b7dd351e4",
     SIMULATION_RANDOM_SOURCE: "0f7d81ab5c36343ab24363dca159451c0a44a399ab150abd2e52fea6715ff20e",
     FOLD_ZERO_SAFE_SOURCE: "0f6c6c3ad1a69ea2ef241f8f0ce924e18c00e6515c7509577c761a8151d57feb",
-    SOLUTION_CONTRACT_SOURCE: "8c6a3b873083ea33827750490d64599121fd337f7a7d270440183554e0f165dd",
+    SOLUTION_CONTRACT_SOURCE: "7adc156a09c14649383bb45fefe3d7a209f5ebd026d751d701b805757ff83259",
     GRIDS_INIT_SOURCE: "c66aed5ef6cdb56cfa38eebb7f870f12475f7a5f62ca1962c17230f66fd3268a",
     GRID_BASE_SOURCE: "fd1064986abdbe1755383fb08758f74d40cad419c0da312f38b521c7d78ce59c",
     GRID_COORDINATES_SOURCE: "e0f3cffc38e2a854426309b3eacab5783a0a5725cc4e763a06969e03914619e8",
@@ -1646,6 +1646,9 @@ def _core_program_transport_errors(tree: ast.Module) -> list[str]:
                 "disposition_reason: str | None = None",
                 "donation_candidates: tuple[str, ...] = ()",
                 "scope: ProgramScope = ProgramScope.ANY",
+                "retained_artifact_keys: _RetainedArtifactKeys = ()",
+                "retained_artifact_payload_types: _RetainedArtifactPayloadTypes = MappingProxyType({})",
+                "replaces_program: str | None = None",
             ),
             methods=("__post_init__",),
         )
@@ -1665,6 +1668,8 @@ def _core_program_transport_errors(tree: ast.Module) -> list[str]:
                 "donation_candidates: tuple[str, ...]",
                 "disposition_reason: str | None = None",
                 "scope: ProgramScope = ProgramScope.ANY",
+                "retained_artifact_keys: tuple[ArtifactKey, ...] = ()",
+                "replaces_program: str | None = None",
             ),
             methods=("__post_init__",),
         )
@@ -1688,6 +1693,8 @@ def _core_program_transport_errors(tree: ast.Module) -> list[str]:
                 "input_transfer_plan: tuple[ResolvedValueTransfer, ...]",
                 "disposition_reason: str | None = None",
                 "scope: ProgramScope = ProgramScope.ANY",
+                "retained_artifact_keys: tuple[ArtifactKey, ...] = ()",
+                "replaces_program: str | None = None",
             ),
             methods=("__post_init__",),
         )
@@ -1717,6 +1724,47 @@ DENSE = "dense"
             )
         ):
             errors.append("core-program disposition contract changed")
+    try:
+        scope = _class_definition(tree=tree, name="ProgramScope")
+    except ValueError as error:
+        errors.append(f"core-program scope: {error}")
+    else:
+        body = list(scope.body)
+        if (
+            body
+            and isinstance(body[0], ast.Expr)
+            and isinstance(body[0].value, ast.Constant)
+            and isinstance(body[0].value.value, str)
+        ):
+            body.pop(0)
+        if (
+            [ast.unparse(item) for item in scope.bases] != ["StrEnum"]
+            or scope.decorator_list
+            or scope.keywords
+            or not _statements_match(
+                observed=body,
+                expected_source="""ANY = "any"
+VALUES_ONLY = "values-only"
+REPLAY = "replay"
+ARTIFACT = "artifact"
+""",
+            )
+        ):
+            errors.append("core-program scope contract changed")
+    version_assignments = [
+        statement
+        for statement in tree.body
+        if isinstance(statement, ast.Assign)
+        and any(
+            _target_names(target) == ("_CORE_PROGRAM_VERSION",)
+            for target in statement.targets
+        )
+    ]
+    if not _statements_match(
+        observed=version_assignments,
+        expected_source="_CORE_PROGRAM_VERSION = 5",
+    ):
+        errors.append("core-program specialization version binding changed")
     errors.extend(
         _exact_callable_errors(
             tree=tree,
@@ -1727,20 +1775,23 @@ DENSE = "dense"
                 "StreamableProductAxis.extent": "aebdd54708094461d473977783f0588d2491c212629e1f5a40f8cf24c789802a",
                 "CoreExecutionRequirements.__post_init__": "e4d9bc6d57b5394abcfe6b3429292116e691be52fb980604cdb6d2cf0e21a876",
                 "CoreBuildContext.__post_init__": "c001bdfea799659c6e0f1d0ee09180940d5176d8a59675dcabef190a12716d7b",
-                "CoreProgram.__post_init__": "46ed17fde1d9fa9aa918112289c57b3f748df8caca8b2a8787c8bc9c093ba1f6",
-                "MaterializedCoreProgram.__post_init__": "59cb5f175f44a50eb4679abd0001c59d0986cff9f3b6e5fa6a9ef7a568e6f648",
-                "ResolvedCoreProgram.__post_init__": "ff3e188e5f5ae8849bc9115b34bc3f4bf2b475f383e6dacf9ca25edfebda79bf",
+                "CoreProgram.__post_init__": "ede0e5fc6b399a2facff96b7c30889755eb69f5f4b8e4b4395785b9b41c6cbea",
+                "MaterializedCoreProgram.__post_init__": "341245a3fb28a6d0597796693fe871e3c18a721d115a68ea7a5716596344f619",
+                "ResolvedCoreProgram.__post_init__": "c487c8bf929f592e7f4ff059c36efc58429c6b0c43650ca59f5493856786d3a0",
                 "core_program_graph": "0fb65d36c8408bfcec4b084cb304e3085037c266e932524d411654efac5c47f7",
                 "_reject_native_duplicate_authorities": "718aa10be29ba96de933ccd778200a94dd5d2637b148988b950e5b5e070edcea",
-                "_snapshot_and_validate_graph": "17cfd23f0460d4861f85f57eb7f3c2cd5e198b5386c4cea7dd77a9cfc82c2d30",
-                "_validate_program_declaration": "4428608faac231833b1dc45390dbe8872136e31fa88ab0b243cab866f0b383a3",
+                "_snapshot_and_validate_graph": "52b4ab20dc7d7a3dab2f06165ca9766831b3f498790ad8d93c8e08e3b6c18f7e",
+                "_validate_replay_replacements": "2aed7e1993700410979ff136c2dc13104a1f210b7d1eabf3bfd7dae22b75eb69",
+                "_validate_program_declaration": "6158dc42296c246bbb8ab23d270dcc46e8175e89ed190af503bdebe788f11c6b",
+                "_validate_retention_declaration": "62f75acabee1eb14ea74360f8563970ba1f5639dd06a0573a49d80402e437ba0",
+                "_validate_retained_artifact_payload_types": "8ceae90284dbdc25b64e0b66d79990e8f9104f9a6410d90d8eb94c426d24ecbd",
                 "_validate_disposition_reason": "1f72fd946d5b104131e2ca84095a5242c76fb78417a87f9668ff9ecb7c792644",
-                "materialize_core_program": "c50687b26506170c5d14b259527c5a24256f8df0f16ce5aca30129b685340616",
-                "resolve_core_program": "f965ef1a3b818caf84891420dcbad743984722153bd6d07a051045dc99a3852f",
-                "select_programs": "2a1968cbee59cf61bf5dc93ae2f168839caaa47b3de508863e4b0cbd769f79d0",
+                "materialize_core_program": "f847dab2d4111fc1875457a799012594305f7cdaf047ebc9e00a92fff972ea15",
+                "resolve_core_program": "c8daec7cf2131c0c541a259bc935ccbf02492b8a0eddb2c2efc1793e91ba009d",
+                "select_programs": "f1d7a08b98db1b9c9d0f289714d8c4c85eb061e30dd592a523aad429bf107828",
                 "initial_core_tile_widths": "496cd22a502c9dacdad36884c681cfed6353d840824a1e2dce3df7b1dcbcc3cf",
                 "_validate_core_program": "d55b9b72493f9565e341c20ac15f1041c4f6acd2134e25a923382c7a10304b59",
-                "_validate_materialized_declaration": "d26ec6c4301eba536847832fee263a0cf2af75eff9b8a624747e9282346c26fa",
+                "_validate_materialized_declaration": "d4a7b72b1943b877e689ed05bc6e83e8194fa20169615d7a0a8bd970bce96534",
                 "_resolve_input_transfer_plan": "86e49db184adcd67dbcdf9f7accfcc17e7adaac32042bf5233be71121d97b73e",
                 "_validate_target_value_accesses": "9f9c693c334394c0ea05e30b923dba937a2f6979c41b91c3855da1c6d0eac7ae",
                 "_target_value_argument_leaf": "ff8f95f1afe6f2e70d97d261317b158e94b376fda3842977cc88fc07529a9ce2",
@@ -2545,7 +2596,11 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
         tree=tree,
         label="backward output-layout transport",
         contracts={
-            "_compile_all_functions": "577d7fb83a9c7d397bb99fd2ea9c3421caec45c869172e3f4eef74be03495cb3",
+            "_run_period_kernel": "e937d852ef87aba3c525f7a495c73a8a74d47be6992743b26fb5f1d31d8c36d0",
+            "_regime_retains_replay": "04e8745dceb0e3c34e0f91fd11d27c43e0da5043cf2418b8015c15baa29d1d81",
+            "_select_period_programs": "55bff2bbffbc5a75f00a656f684093d89d3655bac48d76da2e9dbe716b62bb74",
+            "_selected_artifact_keys_for_cell": "1acc464529bc9833e48f727279682d969f850d2a3bb206e8a2695b1769f6182f",
+            "_compile_all_functions": "cce03681dc7cb7fba3c6cbc41594a7d4aa8ec2857557ce74a956fb1449acda8f",
             "_resolve_output_layouts_and_lowering_keys": "e7a68f078e0937fe7fa276a534f902f3957508ebcfa612c5d173f1320c069ee1",
             "_resolve_program_for_execution": "247155a79a8cdc2c16845aeb9d222b2c6aeea7129c90d9a733ecc66cf793f5d0",
             "_resolve_value_input_transfer_plan": "40e46250dd373f2ea17e38c911e0c2df7ad01192dd82fcb1d7a7ddbf641f91bb",
@@ -2600,7 +2655,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             ]
             if len(starts) == len(ends) == 1 and starts[0] <= ends[0]:
                 corridors.append(loop.body[starts[0] : ends[0] + 1])
-        expected = "17287984833fe761f26094cc1a986a9c977e8291b37a842be86f05c9efbb073d"
+        expected = "80d6b2cc022fb9105d5288f40b37ba02e18db12abe484fec952009c62c254d02"
         if len(corridors) != 1 or _statements_ast_sha256(corridors[0]) != expected:
             errors.append(
                 "backward output-layout transport: solve publication corridor changed"
@@ -2646,7 +2701,7 @@ def _period_replay_errors(tree: ast.Module) -> list[str]:
         label="period replay native-program transport",
         contracts={
             "replay_period": "bdaa7a9381889dc2dbbc84763861da30a4ccd8c279f1e2b01eefcc39d9b0a709",
-            "_compile_cores_for_one_period": "f3c7465b02e66815c6cc3277e472d292f792fa00c68320f55335b184e0cb50a1",
+            "_compile_cores_for_one_period": "377a05c8bc2881ce381a4e465fdf3317de78e240d5b0705353e477aaf2cd19bd",
             "_core_build_context_for_one_period": "8d11e28bebf0c0df6bce4872e25a56e577592db26901d47d8cd5cf431a55b473",
         },
     )
@@ -5806,12 +5861,12 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "source": replace_once(
                 source=backward_induction_source,
                 old=(
-                    "                graph=core_program_graph("
-                    "kernel=regime.solution.period_kernels[period]),"
+                    "    native_graph = core_program_graph("
+                    "kernel=regime.solution.period_kernels[period])"
                 ),
                 new=(
-                    "                graph=regime.solution.period_kernels[period]"
-                    ".core_programs(),"
+                    "    native_graph = regime.solution.period_kernels[period]"
+                    ".core_programs()"
                 ),
                 label="solve central graph validation",
             ),

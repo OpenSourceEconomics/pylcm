@@ -46,6 +46,14 @@ class InvalidSimulationInputError(PyLCMError):
     """
 
 
+class SolutionIntegrityError(PyLCMError):
+    """Raised when a persisted solution archive fails an integrity check."""
+
+
+class IncompatibleSolutionError(PyLCMError):
+    """Raised when a solution uses an unsupported schema or plugin version."""
+
+
 class UnsupportedOperationError(PyLCMError):
     """Raised when a valid model requests an unsupported runtime operation."""
 

@@ -1,11 +1,12 @@
 """A period kernel's native core-program graph is its only execution authority."""
 
 import ast
+import dataclasses
 import inspect
 import textwrap
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
-from typing import cast
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
@@ -26,6 +27,7 @@ from _lcm.execution.core_program import (
 from _lcm.execution.output_layout import VALUE
 from _lcm.solution import backward_induction, period_replay
 from _lcm.solution.backward_induction import _resolve_program_for_execution
+from lcm.solver_api import ArtifactKey
 
 
 def _identity(*, value: object) -> object:
@@ -134,7 +136,7 @@ def test_eager_aot_and_replay_entry_paths_cross_the_same_resolution_seam() -> No
     collect_calls = _direct_call_lines(collect_tree)
     replay_calls = _direct_call_lines(replay_tree)
 
-    assert len(compile_calls["core_program_graph"]) == 1
+    assert len(compile_calls["_select_period_programs"]) == 1
     assert len(compile_calls["_resolve_output_layouts_and_lowering_keys"]) == 1
     assert len(collect_calls["materialize_core_program"]) == 1
     assert len(collect_calls["_resolve_program_for_execution"]) == 1
@@ -148,7 +150,7 @@ def test_eager_aot_and_replay_entry_paths_cross_the_same_resolution_seam() -> No
         if isinstance(node, ast.If) and _is_not_enable_jit(node.test)
     )
     assert (
-        compile_calls["core_program_graph"][0]
+        compile_calls["_select_period_programs"][0]
         < compile_calls["_resolve_output_layouts_and_lowering_keys"][0]
         < eager_branch.lineno
     )
@@ -306,7 +308,15 @@ def test_materialization_rejects_unknown_donation_candidate() -> None:
         materialize_core_program(program=declaration, context=_context())
 
 
-def _scoped_program(*, name: str, scope: ProgramScope) -> CoreProgram:
+def _scoped_program(
+    *, name: str, scope: ProgramScope, replaces_program: str | None = None
+) -> CoreProgram:
+    retained_artifact_keys = (
+        (ArtifactKey(type_id=f"tests.core_program.{name}"),)
+        if scope in {ProgramScope.REPLAY, ProgramScope.ARTIFACT}
+        else ()
+    )
+    retained_artifact_payload_types = dict.fromkeys(retained_artifact_keys, object)
     return CoreProgram(
         name=name,
         function=_identity,
@@ -316,11 +326,136 @@ def _scoped_program(*, name: str, scope: ProgramScope) -> CoreProgram:
         disposition=CoreExecutionDisposition.DENSE,
         disposition_reason="test_dense_route",
         scope=scope,
+        retained_artifact_keys=retained_artifact_keys,
+        retained_artifact_payload_types=retained_artifact_payload_types,
+        replaces_program=(
+            "values"
+            if scope is ProgramScope.REPLAY and replaces_program is None
+            else replaces_program
+        ),
     )
 
 
 def test_native_program_scope_defaults_to_any() -> None:
     assert _native_program().scope is ProgramScope.ANY
+
+
+def test_retained_artifact_payload_types_are_snapshotted() -> None:
+    key = ArtifactKey(type_id="tests.core_program.typed")
+    payload_types = {key: dict}
+    declaration = dataclasses.replace(
+        _scoped_program(name="typed", scope=ProgramScope.ARTIFACT),
+        retained_artifact_keys=(key,),
+        retained_artifact_payload_types=payload_types,
+    )
+
+    payload_types[key] = tuple
+
+    assert declaration.retained_artifact_payload_types == {key: dict}
+
+
+def test_retained_artifact_payload_types_must_be_a_mapping() -> None:
+    with pytest.raises(TypeError, match="must be a mapping"):
+        dataclasses.replace(
+            _native_program(),
+            retained_artifact_payload_types=cast("Any", ()),
+        )
+
+
+@pytest.mark.parametrize(
+    ("payload_types", "match"),
+    [
+        pytest.param({"not-a-key": dict}, "exact ArtifactKey", id="wrong-key"),
+        pytest.param(
+            {ArtifactKey(type_id="tests.core_program.typed"): object()},
+            "must be types",
+            id="wrong-type",
+        ),
+        pytest.param(
+            {ArtifactKey(type_id="tests.core_program.typed"): dict},
+            "does not retain",
+            id="unretained",
+        ),
+    ],
+)
+def test_retained_artifact_payload_type_declarations_are_exact(
+    *, payload_types: Any, match: str
+) -> None:
+    declaration = dataclasses.replace(
+        _native_program(), retained_artifact_payload_types=payload_types
+    )
+
+    with pytest.raises((TypeError, ValueError), match=match):
+        core_program_graph(kernel=_NativeKernel({"main": declaration}))
+
+
+def test_retained_artifact_keys_must_be_exact_public_keys() -> None:
+    declaration = dataclasses.replace(
+        _scoped_program(name="typed", scope=ProgramScope.ARTIFACT),
+        retained_artifact_keys=cast("Any", ("tests.core_program.typed",)),
+        retained_artifact_payload_types={},
+    )
+
+    with pytest.raises(TypeError, match="exact public ArtifactKey"):
+        core_program_graph(kernel=_NativeKernel({"typed": declaration}))
+
+
+def test_retained_artifact_requires_a_payload_type_declaration() -> None:
+    declaration = dataclasses.replace(
+        _scoped_program(name="typed", scope=ProgramScope.ARTIFACT),
+        retained_artifact_payload_types={},
+    )
+
+    with pytest.raises(ValueError, match="without declaring their payload types"):
+        core_program_graph(kernel=_NativeKernel({"typed": declaration}))
+
+
+def test_missing_payload_type_diagnostic_is_deterministically_sorted() -> None:
+    left = ArtifactKey(type_id="tests.core_program.a")
+    right = ArtifactKey(type_id="tests.core_program.z")
+    declaration = dataclasses.replace(
+        _scoped_program(name="typed", scope=ProgramScope.ARTIFACT),
+        retained_artifact_keys=(right, left),
+        retained_artifact_payload_types={},
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"tests\.core_program\.a.*tests\.core_program\.z",
+    ):
+        core_program_graph(kernel=_NativeKernel({"typed": declaration}))
+
+
+def test_unretained_payload_type_diagnostic_is_deterministically_sorted() -> None:
+    left = ArtifactKey(type_id="tests.core_program.a")
+    right = ArtifactKey(type_id="tests.core_program.z")
+    declaration = dataclasses.replace(
+        _native_program(),
+        retained_artifact_payload_types={right: tuple, left: dict},
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"tests\.core_program\.a.*tests\.core_program\.z",
+    ):
+        core_program_graph(kernel=_NativeKernel({"main": declaration}))
+
+
+def test_core_program_graph_rejects_conflicting_producer_payload_types() -> None:
+    key = ArtifactKey(type_id="tests.core_program.typed")
+    kernel = _NativeKernel(
+        {
+            name: dataclasses.replace(
+                _scoped_program(name=name, scope=ProgramScope.ARTIFACT),
+                retained_artifact_keys=(key,),
+                retained_artifact_payload_types={key: payload_type},
+            )
+            for name, payload_type in (("left", dict), ("right", tuple))
+        }
+    )
+
+    with pytest.raises(ValueError, match="disagree on the payload type"):
+        core_program_graph(kernel=kernel)
 
 
 def test_program_scope_is_part_of_resolved_specialization_identity() -> None:
@@ -369,15 +504,99 @@ def test_select_programs_keeps_any_plus_exactly_the_dispatched_scope(
     assert all(selected[name] is graph[name] for name in expected)
 
 
+def test_select_programs_uses_exact_artifact_keys_for_persistence_retention() -> None:
+    graph = core_program_graph(
+        kernel=_NativeKernel(
+            {
+                "values-a": _scoped_program(
+                    name="values-a", scope=ProgramScope.VALUES_ONLY
+                ),
+                "policy": _scoped_program(
+                    name="policy",
+                    scope=ProgramScope.REPLAY,
+                    replaces_program="values-a",
+                ),
+                "values-b": _scoped_program(
+                    name="values-b", scope=ProgramScope.VALUES_ONLY
+                ),
+                "dynamic-bank": _scoped_program(
+                    name="dynamic-bank",
+                    scope=ProgramScope.REPLAY,
+                    replaces_program="values-b",
+                ),
+                "aux": _scoped_program(name="aux", scope=ProgramScope.ARTIFACT),
+            }
+        )
+    )
+
+    selected = select_programs(
+        graph=graph,
+        retain_replay=False,
+        selected_artifact_keys=frozenset(
+            {
+                ArtifactKey(type_id="tests.core_program.policy"),
+                ArtifactKey(type_id="tests.core_program.aux"),
+            }
+        ),
+    )
+
+    assert tuple(selected) == ("policy", "values-b", "aux")
+
+
+def test_additive_artifact_program_keeps_values_variant() -> None:
+    graph = core_program_graph(
+        kernel=_NativeKernel(
+            {
+                "values": _scoped_program(
+                    name="values", scope=ProgramScope.VALUES_ONLY
+                ),
+                "aux": _scoped_program(name="aux", scope=ProgramScope.ARTIFACT),
+            }
+        )
+    )
+
+    selected = select_programs(
+        graph=graph,
+        retain_replay=False,
+        selected_artifact_keys=frozenset(
+            {ArtifactKey(type_id="tests.core_program.aux")}
+        ),
+    )
+
+    assert tuple(selected) == ("values", "aux")
+
+
 def test_select_programs_fails_closed_when_nothing_is_dispatched() -> None:
     graph = core_program_graph(
         kernel=_NativeKernel(
-            {"replay": _scoped_program(name="replay", scope=ProgramScope.REPLAY)}
+            {"aux": _scoped_program(name="aux", scope=ProgramScope.ARTIFACT)}
         )
     )
 
     with pytest.raises(ValueError, match="No core program"):
         select_programs(graph=graph, retain_replay=False)
+
+
+def test_native_graph_rejects_replay_without_a_values_alternative() -> None:
+    replay = _scoped_program(
+        name="replay",
+        scope=ProgramScope.REPLAY,
+        replaces_program="missing",
+    )
+
+    with pytest.raises(ValueError, match="VALUES_ONLY"):
+        core_program_graph(kernel=_NativeKernel({"replay": replay}))
+
+
+def test_native_graph_rejects_two_replays_replacing_one_values_program() -> None:
+    graph = {
+        "values": _scoped_program(name="values", scope=ProgramScope.VALUES_ONLY),
+        "replay-a": _scoped_program(name="replay-a", scope=ProgramScope.REPLAY),
+        "replay-b": _scoped_program(name="replay-b", scope=ProgramScope.REPLAY),
+    }
+
+    with pytest.raises(ValueError, match="share replacement"):
+        core_program_graph(kernel=_NativeKernel(graph))
 
 
 def test_native_graph_rejects_a_scope_outside_the_enumeration() -> None:

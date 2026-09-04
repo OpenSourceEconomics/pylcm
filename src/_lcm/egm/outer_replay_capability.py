@@ -25,6 +25,7 @@ from fractions import Fraction
 
 from _lcm.egm.outer_inversion import DeclaredOuterInverse
 from lcm.exceptions import RegimeInitializationError
+from lcm.solver_api import _register_artifact_static_metadata_dataclass
 from lcm.typing import ActionName, FunctionName, RegimeName, StateName
 
 __all__ = [
@@ -75,6 +76,19 @@ class OuterReplayCapability:
             or self.unaddressable_discrete_actions
             or self.inverse.coefficient != Fraction(1)
         )
+
+
+_register_artifact_static_metadata_dataclass(
+    cls=OuterReplayCapability,
+    field_names=(
+        "inverse",
+        "undeclared_functions",
+        "unbindable_functions",
+        "unavailable_keeper_states",
+        "unaddressable_passive_states",
+        "unaddressable_discrete_actions",
+    ),
+)
 
 
 def resolve_outer_replay_capability(

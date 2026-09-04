@@ -491,6 +491,7 @@ def test_nested_policy_acceptance_truth_table(monkeypatch) -> None:
         "canonical_states": MappingProxyType({"wealth": jnp.ones(1)}),
         "action_names": ("consumption", "investment"),
         "next_regime_to_V_arr": MappingProxyType({}),
+        "referenced_value_kwargs": MappingProxyType({}),
         "grid_values": jnp.asarray([1.0]),
         "in_regime": jnp.ones(1, dtype=bool),
     }

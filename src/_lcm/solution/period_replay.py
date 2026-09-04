@@ -228,6 +228,7 @@ def _compile_cores_for_one_period(
     graph = select_programs(
         graph=core_program_graph(kernel=period_kernel),
         retain_replay=kernel_kwargs["retain_replay"],
+        selected_artifact_keys=kernel_kwargs["selected_artifact_keys"],
     )
     for core_name, declaration in graph.items():
         materialized = materialize_core_program(program=declaration, context=context)
