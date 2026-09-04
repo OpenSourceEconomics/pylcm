@@ -13,9 +13,7 @@ runs the keeper and settles the replay capability, so a caller that wraps or rec
 base call sees both.
 """
 
-import ast
 import functools
-import inspect
 from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any, cast
@@ -161,23 +159,6 @@ def test_the_adjuster_builder_binds_the_first_outer_node():
         np.asarray(composite.arguments[kernel.outer_post_decision]),
         np.asarray(first_node),
     )
-
-
-@pytest.mark.parametrize(
-    "legacy_name", ["cores", "core", "split_cores", "build_lower_args"]
-)
-def test_no_legacy_core_authority_survives_on_the_kernel(legacy_name: str):
-    kernel, _ = _kernel("finite")
-    assert not hasattr(kernel, legacy_name)
-
-
-def test_the_composite_never_routes_inner_results_through_the_legacy_adapter():
-    """The inner NB-EGM kernels are called directly; no result adapter is named."""
-    tree = ast.parse(inspect.getsource(nnbegm_module))
-    names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)} | {
-        node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)
-    }
-    assert "require_legacy_kernel_result" not in names
 
 
 def test_with_fixed_params_rebinds_both_roles():

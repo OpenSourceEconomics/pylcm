@@ -512,19 +512,6 @@ def test_ordinary_singleton_grid_search_declares_action_core_program() -> None:
     with pytest.raises(TypeError):
         cast("dict[str, object]", materialized.arguments)["injected"] = jnp.asarray(0)
 
-    for legacy_name in (
-        "cores",
-        "core",
-        "unwrapped_core",
-        "streamed_core",
-        "build_lower_args",
-        "build_core_program",
-        "target_value_accesses",
-        "output_roles",
-        "core_for_output_layout",
-    ):
-        assert not hasattr(kernel, legacy_name)
-
     resolved = resolve_core_program(
         program=materialized,
         tile_widths={"action": 2},

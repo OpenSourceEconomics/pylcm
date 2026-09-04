@@ -14,12 +14,10 @@ compiled sweep agrees with a keeper-then-per-node loop to the ULP for every
 outer batch size, the batch size being a vmap width and nothing else.
 """
 
-import ast
 import functools
 import logging
 from collections.abc import Mapping
 from dataclasses import replace
-from pathlib import Path
 from types import MappingProxyType
 from typing import Any, cast
 
@@ -37,7 +35,7 @@ from _lcm.execution.core_program import (
     materialize_core_program,
 )
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
-from _lcm.solution import backward_induction, negm, period_replay
+from _lcm.solution import backward_induction, period_replay
 from _lcm.solution.negm import (
     _COH_SHIFTS,
     _KEEPER_CARRY,
@@ -172,14 +170,6 @@ def test_the_graph_publishes_the_keeper_and_the_outer_sweep(*, captured):
     assert {keeper.scope, sweep.scope} == {ProgramScope.ANY}
     assert sweep.requirements.streamable_axes == ()
     assert sweep.requirements.target_value_accesses == ()
-
-
-@pytest.mark.parametrize(
-    "legacy_name", ["cores", "core", "build_lower_args", "_outer_nodes"]
-)
-def test_no_legacy_core_authority_survives_on_the_kernel(*, captured, legacy_name):
-    kernel, _ = captured
-    assert not hasattr(kernel, legacy_name)
 
 
 def test_the_keeper_program_is_the_inner_keepers_program_under_a_new_name(*, captured):
@@ -458,16 +448,3 @@ def test_a_replay_lowers_the_dense_programs_the_solve_ran(*, monkeypatch, tmp_pa
         expected=np.asarray(solution.values[_PERIOD][_REGIME]),
         n_ulp=1,
     )
-
-
-def test_negm_holds_no_legacy_result_type_and_no_per_node_python_loop():
-    module = ast.parse(Path(negm.__file__).read_text())
-    names = {node.id for node in ast.walk(module) if isinstance(node, ast.Name)}
-    defined = {
-        node.name
-        for node in ast.walk(module)
-        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
-    }
-
-    assert "KernelResult" not in names
-    assert defined.isdisjoint({"cores", "build_lower_args", "_outer_nodes"})

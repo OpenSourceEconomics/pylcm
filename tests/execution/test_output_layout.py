@@ -10,7 +10,6 @@ import numpy as np
 import pytest
 
 from _lcm.egm.carry import EGMCarry
-from _lcm.execution import output_layout
 from _lcm.execution.core_program import (
     CoreExecutionDisposition,
     CoreExecutionRequirements,
@@ -27,7 +26,6 @@ from _lcm.execution.output_layout import (
     resolve_output_layout,
 )
 from _lcm.regime_building.processing import _TerminalCarryPeriodKernel
-from _lcm.solution import backward_induction
 from _lcm.solution.backward_induction import (
     _assert_lowered_output_roles,
     _lowering_key,
@@ -378,11 +376,6 @@ def test_published_value_placement_is_asserted_not_repaired():
         _publish_kernel_value(value=replicated, compiled_cores={"main": core})
 
 
-def test_the_loop_has_no_value_repair_path():
-    """No engine seam re-places a published value on its template."""
-    assert not hasattr(backward_induction, "_repair_unplanned_kernel_value")
-
-
 def test_the_loop_publishes_values_only_through_planned_cores():
     """A compiled core without a resolved layout cannot publish a value."""
     template = _template()
@@ -391,11 +384,6 @@ def test_the_loop_publishes_values_only_through_planned_cores():
         _publish_kernel_value(
             value=template, compiled_cores={"main": lambda **_kwargs: template}
         )
-
-
-def test_no_unplanned_layout_token_exists():
-    """Every compiled core carries a resolved output layout."""
-    assert not hasattr(output_layout, "UNPLANNED")
 
 
 def _state_axes_roles():

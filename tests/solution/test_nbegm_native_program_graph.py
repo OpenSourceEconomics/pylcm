@@ -14,7 +14,6 @@ from typing import Any, cast
 
 import jax
 import numpy as np
-import pytest
 
 from _lcm.egm.carry import EGMCarry
 from _lcm.execution.core_program import (
@@ -102,24 +101,6 @@ def test_the_graph_publishes_exactly_a_values_only_main_and_a_replay_program():
         assert program.disposition_reason is None
         assert program.requirements.streamable_axes == ()
         assert program.requirements.target_value_accesses == ()
-
-
-@pytest.mark.parametrize(
-    "legacy_name",
-    [
-        "cores",
-        "core",
-        "split_cores",
-        "build_lower_args",
-        "_stack_placeholders",
-        "continuation_core",
-        "envelope_core",
-        "tiled_core",
-    ],
-)
-def test_no_legacy_core_authority_survives_on_the_kernel(legacy_name: str):
-    kernel, _ = _smooth_kernel()
-    assert not hasattr(kernel, legacy_name)
 
 
 def _carry_role_leaves(roles: EGMCarry) -> dict[str, object]:

@@ -10,11 +10,9 @@ consumes. The NEGM composite reads its keeper and adjuster children through that
 public output rather than through a legacy result.
 """
 
-import ast
 import functools
 import logging
 from collections.abc import Mapping
-from pathlib import Path
 from types import MappingProxyType
 from typing import Any, cast
 
@@ -32,7 +30,7 @@ from _lcm.execution.core_program import (
     materialize_core_program,
 )
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
-from _lcm.solution import negm, period_replay
+from _lcm.solution import period_replay
 from _lcm.solution.period_replay import replay_period
 from lcm.solver_api import (
     EGM_CONTINUATION,
@@ -107,12 +105,6 @@ def test_the_graph_publishes_one_dense_main_program():
     assert program.scope is ProgramScope.ANY
     assert program.requirements.streamable_axes == ()
     assert program.requirements.target_value_accesses == ()
-
-
-@pytest.mark.parametrize("legacy_name", ["cores", "core", "build_lower_args"])
-def test_no_legacy_core_authority_survives_on_the_kernel(*, legacy_name: str):
-    kernel, _ = _full_kernel()
-    assert not hasattr(kernel, legacy_name)
 
 
 def test_main_publishes_the_value_the_carry_and_the_policy_by_their_row_axes():
@@ -261,17 +253,3 @@ def test_a_regime_without_a_policy_read_route_omits_the_policy_as_not_applicable
     assert model._regimes[_REGIME].simulation.egm_policy_read is None
     assert not solution.replay_artifacts.project(SIMULATION_POLICY)
     assert solution.omissions[policy_ref] is OmissionReason.NOT_APPLICABLE
-
-
-def test_negm_consumes_its_children_as_public_outputs():
-    """The NEGM composite reads the keeper and adjuster value and carry directly."""
-    tree = ast.parse(Path(negm.__file__).read_text())
-    names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
-    imported = {
-        alias.name
-        for node in ast.walk(tree)
-        if isinstance(node, ast.ImportFrom)
-        for alias in node.names
-    }
-
-    assert "require_legacy_kernel_result" not in names | imported

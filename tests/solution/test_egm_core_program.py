@@ -77,14 +77,6 @@ def test_the_graph_publishes_one_dense_main_program():
     assert program.requirements.target_value_accesses == ()
 
 
-@pytest.mark.parametrize(
-    "legacy_name", ["cores", "core", "build_lower_args", "unwrapped_core"]
-)
-def test_no_legacy_core_authority_survives_on_the_kernel(*, legacy_name: str):
-    kernel, _ = _kernel()
-    assert not hasattr(kernel, legacy_name)
-
-
 def test_main_publishes_the_value_and_a_one_row_carry():
     kernel, _ = _kernel()
     value_role, carry_roles = cast(

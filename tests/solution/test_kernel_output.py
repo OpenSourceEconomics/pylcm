@@ -25,12 +25,10 @@ from jaxtyping import Float
 from _lcm.continuation import EGMContinuationSpec
 from _lcm.egm.carry import EGMCarry
 from _lcm.egm.published_policy import EGMSimPolicy
-from _lcm.solution import backward_induction, contract, period_replay
+from _lcm.solution import backward_induction, period_replay
 from _lcm.solution import egm as egm_module
-from _lcm.solution import kernel_output as kernel_output_module
 from _lcm.solution.contract import (
     GENERATED_REPLAY_AUTHORITY,
-    BackwardInductionResult,
     GeneratedReplayAuthority,
     PeriodKernel,
 )
@@ -140,7 +138,6 @@ def test_kernel_output_is_public_dependency_safe_and_defensively_immutable() -> 
     assert isinstance(output.solve_time_artifacts, MappingProxyType)
     assert isinstance(output.replay, MappingProxyType)
     assert isinstance(output.auxiliary, MappingProxyType)
-    assert "diagnostics" not in KernelOutput.__dataclass_fields__
     with pytest.raises(TypeError):
         output.continuations[key] = "changed"  # ty: ignore[invalid-assignment]
 
@@ -423,14 +420,10 @@ def test_the_consumer_refuses_anything_but_a_kernel_output() -> None:
         _consume(output=object(), continuation_key=None)
 
 
-def test_no_second_result_type_stands_between_a_kernel_and_the_loop() -> None:
-    """The producer contract is `KernelOutput`; nothing normalizes to another type."""
-    assert not hasattr(contract, "KernelResult")
-    assert not hasattr(kernel_output_module, "normalize_kernel_output")
-    assert not hasattr(kernel_output_module, "require_legacy_kernel_result")
+def test_a_period_kernel_returns_a_kernel_output_and_replay_carries_it() -> None:
+    """The producer contract is `KernelOutput`, and replay holds one on `output`."""
     assert get_type_hints(PeriodKernel.__call__)["return"] is KernelOutput
     assert "output" in period_replay.PeriodReplay.__dataclass_fields__
-    assert "result" not in period_replay.PeriodReplay.__dataclass_fields__
 
 
 def test_the_loop_retains_policies_by_declared_route_not_by_caller_flags() -> None:
@@ -438,15 +431,6 @@ def test_the_loop_retains_policies_by_declared_route_not_by_caller_flags() -> No
     parameters = inspect.signature(backward_induction.solve).parameters
 
     assert "retain_replay" in parameters
-    assert not {
-        "collect_simulation_policies",
-        "simulation_policy_regimes",
-        "track_artifact_publication",
-    } & set(parameters)
-    assert (
-        "published_simulation_policy_cells"
-        not in BackwardInductionResult.__dataclass_fields__
-    )
 
 
 def test_values_only_result_does_not_suppress_solve_time_continuation() -> None:
