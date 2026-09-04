@@ -2,7 +2,7 @@
 
 Every artifact a kernel publishes on a channel of its `KernelOutput` is read
 here by its declared key or refused: the continuation channel carries the
-`EGMCarry` a parent interpolates, the replay channel the simulation policy, the
+`ContinuationArtifact` a parent reads, the replay channel the simulation policy, the
 solve-time channel the collective dissolution flag, and the auxiliary channel
 the solver diagnostics and the engine-private replay authority. An artifact
 under any other key, or a known key with a payload of the wrong type, is an
@@ -17,21 +17,20 @@ from typing import Any
 import jax.numpy as jnp
 
 from _lcm.continuation import ContinuationPayload
-from _lcm.egm.carry import EGMCarry
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import EGMSimPolicy, NBEGMGridPolicy, NNBEGMSimPolicy
 from _lcm.solution.contract import (
     GENERATED_REPLAY_AUTHORITY,
     GeneratedReplayAuthority,
-    SimulationPolicy,
 )
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
-from _lcm.typing import RegimeName
+from _lcm.typing import RegimeName, SimulationPolicy
 from lcm.solver_api import (
     DISSOLUTION_FLAG,
     SIMULATION_POLICY,
     SOLVER_DIAGNOSTICS,
     ArtifactKey,
+    ContinuationArtifact,
     KernelOutput,
 )
 from lcm.typing import BoolND, FloatND
@@ -128,7 +127,7 @@ def consume_kernel_output(
             channel="continuations",
             artifacts=continuations,
             key=continuation_key,
-            expected_types=(EGMCarry,),
+            expected_types=(ContinuationArtifact,),
             regime_name=regime_name,
             period=period,
         )

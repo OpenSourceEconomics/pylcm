@@ -48,7 +48,7 @@ from _lcm.execution.core_program import (
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from _lcm.grids import ContinuousGrid
 from _lcm.processes.base import _ContinuousStochasticProcess
-from _lcm.solution.continuation_target import _union_fixed_params
+from _lcm.solution.continuation_target import union_fixed_params
 from _lcm.solution.contract import (
     ConstraintRouteContext,
     ContinuationPayload,
@@ -72,7 +72,7 @@ from _lcm.typing import (
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidParamsError, RegimeInitializationError
-from lcm.solver_api import EGM_CONTINUATION, KernelOutput
+from lcm.solver_api import EGM_CONTINUATION, ArtifactKey, KernelOutput
 from lcm.typing import (
     ActionName,
     Float1D,
@@ -198,9 +198,9 @@ class NEGM(TwoMarginSolver):
         )
 
     @property
-    def requires_continuation(self) -> bool:
+    def required_continuation_keys(self) -> frozenset[ArtifactKey]:
         """NEGM nests a DC-EGM solve that inverts the Euler equation."""
-        return True
+        return frozenset({EGM_CONTINUATION})
 
     @property
     def egm_continuation_layout(self) -> EGMContinuationLayout:
@@ -463,7 +463,7 @@ class NEGM(TwoMarginSolver):
             keeper_continuation_template = (
                 None
                 if group_keeper_kernels.continuation_spec is None
-                else group_keeper_kernels.continuation_spec.template
+                else cast("EGMCarry", group_keeper_kernels.continuation_spec.template)
             )
             group_coh_shift_func = _build_coh_shift_function(
                 functions=group_functions,
@@ -742,7 +742,7 @@ class _NEGMPeriodKernel:
             fixed_sweep_kwargs=MappingProxyType(
                 {
                     **self.fixed_sweep_kwargs,
-                    **_union_fixed_params(
+                    **union_fixed_params(
                         fixed_flat_params=fixed_flat_params,
                         regime_name=self.regime_name,
                         transition_target_names=self.transition_target_names,

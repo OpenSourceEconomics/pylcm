@@ -8,7 +8,9 @@ import jax
 from jax import Array
 
 from _lcm.certainty_equivalent import CertaintyEquivalent
-from _lcm.continuation import ContinuationPayload, EGMContinuationSpec
+from _lcm.continuation import ContinuationPayload, ContinuationSpec
+from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
+from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
 from _lcm.grids import DiscreteGrid, Grid, IrregSpacedGrid
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.reachability import PhaseReachability
@@ -34,6 +36,7 @@ from _lcm.typing import (
 )
 from _lcm.utils.containers import first_non_none
 from lcm.exceptions import PyLCMError
+from lcm.solver_api import ReplayMode, ReplayRoute
 from lcm.typing import (
     Bool1D,
     ContinuousAction,
@@ -377,8 +380,8 @@ class SolutionPhase:
     continuation carry.
     """
 
-    continuation_spec: EGMContinuationSpec | None = None
-    """Concrete EGM continuation template bundled with its static layout."""
+    continuation_spec: ContinuationSpec | None = None
+    """Template and identity of the continuation this regime's kernels publish."""
 
     @property
     def continuation_template(self) -> ContinuationPayload | None:
@@ -570,6 +573,44 @@ class SolutionPhase:
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
+class GridRecomputationRoute:
+    """The route of a regime whose simulated decision is recomputed on the grid.
+
+    Nothing is retained from the solve, so each simulated period re-runs the
+    argmax over the regime's own action grids at the subject's realized state.
+    """
+
+    @property
+    def replay_mode(self) -> ReplayMode:
+        """The decision is recomputed rather than read from a payload."""
+        return ReplayMode.VALID_RECOMPUTATION
+
+    @property
+    def payload_type(self) -> None:
+        """No payload is retained under this route."""
+        return None
+
+    @property
+    def policy_applicable(self) -> bool:
+        """No payload is structurally published."""
+        return False
+
+    @property
+    def policy_required(self) -> bool:
+        """No solve owes a payload here."""
+        return False
+
+    @property
+    def consumer_route(self) -> None:
+        """No payload reader consumes this route."""
+        return None
+
+
+# The route every regime without a published replay payload declares.
+GRID_RECOMPUTATION_ROUTE = GridRecomputationRoute()
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class EGMPolicyRead:
     """Names for the off-grid read of a published `EGMSimPolicy` in simulate.
 
@@ -602,6 +643,31 @@ class EGMPolicyRead:
 
     float_dtype: str
     """Canonical dtype of every numeric array leaf in the payload."""
+
+    @property
+    def replay_mode(self) -> ReplayMode:
+        """The stored rows name the decision; simulation reads them off-grid."""
+        return ReplayMode.EXACT_REPLAY
+
+    @property
+    def payload_type(self) -> type[object] | None:
+        """The exact replay payload class this route reads."""
+        return EGMSimPolicy
+
+    @property
+    def policy_applicable(self) -> bool:
+        """A qualifying EGM regime always publishes its policy rows."""
+        return True
+
+    @property
+    def policy_required(self) -> bool:
+        """A successful solve of a qualifying regime must retain the rows."""
+        return True
+
+    @property
+    def consumer_route(self) -> str:
+        """The reader that interpolates the rows at a subject's resources."""
+        return "egm_off_grid"
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -707,6 +773,34 @@ class NNBEGMPolicyRead:
     is what lets caller-supplied replay policies be checked against the type the
     solve actually returns."""
 
+    @property
+    def replay_mode(self) -> ReplayMode:
+        """How simulation obtains this regime's decision.
+
+        - the solve integrates an observed fixed cost simulation cannot draw
+          ⇒ `UNSUPPORTED`
+        - the configured search publishes no payload ⇒ `VALID_RECOMPUTATION`
+        - otherwise the retained candidate bank or nested rows are replayed
+          ⇒ `EXACT_REPLAY`
+        """
+        if self.fixed_cost_simulation_unsupported:
+            return ReplayMode.UNSUPPORTED
+        if not self.policy_applicable:
+            return ReplayMode.VALID_RECOMPUTATION
+        return ReplayMode.EXACT_REPLAY
+
+    @property
+    def payload_type(self) -> type[object] | None:
+        """The exact replay payload class, `None` when none is retained."""
+        if self.replay_mode is ReplayMode.VALID_RECOMPUTATION:
+            return None
+        return NestedEGMSimPolicy if self.replay_policy_is_nested else NNBEGMSimPolicy
+
+    @property
+    def consumer_route(self) -> str:
+        """The reader this route's payload is dispatched to."""
+        return "nnbegm_nested" if self.replay_policy_is_nested else "nnbegm_finite"
+
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class SimulationPhase:
@@ -806,6 +900,18 @@ class SimulationPhase:
     - the regime declares no taste shocks.
     `None` keeps the grid-argmax decision path for the continuous action.
     """
+
+    @property
+    def replay_route(self) -> ReplayRoute:
+        """How this regime's simulated decision is obtained each period.
+
+        Every regime declares exactly one route. A regime that publishes no
+        replay payload declares the grid-recomputation route, so simulation
+        and the pre-simulation payload check never test for a missing read.
+        """
+        if self.egm_policy_read is None:
+            return GRID_RECOMPUTATION_ROUTE
+        return self.egm_policy_read
 
     @property
     def state_names(self) -> tuple[StateOrActionName, ...]:

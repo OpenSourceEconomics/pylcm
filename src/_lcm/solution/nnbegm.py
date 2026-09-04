@@ -77,7 +77,6 @@ from _lcm.solution.contract import (
     ContinuationPayload,
     GeneratedReplayAuthority,
     PeriodKernel,
-    SimulationPolicy,
     SolutionKernels,
     Solver,
     SolverBuildContext,
@@ -111,6 +110,7 @@ from _lcm.typing import (
     EconFunctionsMapping,
     FlatParams,
     RegimeName,
+    SimulationPolicy,
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import (
@@ -229,9 +229,9 @@ class NNBEGM(TwoMarginSolver):
         )
 
     @property
-    def requires_continuation(self) -> bool:
+    def required_continuation_keys(self) -> frozenset[ArtifactKey]:
         """NNBEGM runs an inner NB-EGM solve that inverts the Euler equation."""
-        return True
+        return frozenset({EGM_CONTINUATION})
 
     @property
     def supports_nonlinear_certainty_equivalent(self) -> bool:
@@ -544,7 +544,7 @@ class NNBEGM(TwoMarginSolver):
                 outer_grid_values = search.grid.to_jax()
                 outer_batch_size = search.batch_size
                 template = _stack_carry_template(
-                    template=inner_template,
+                    template=cast("EGMCarry", inner_template),
                     n_candidates=int(outer_grid_values.shape[0]) + 1,
                 )
             case AdaptiveOuterMesh():

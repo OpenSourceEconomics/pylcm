@@ -73,10 +73,10 @@ from _lcm.grids import ContinuousGrid, DiscreteGrid
 from _lcm.grids.base import Grid
 from _lcm.params.mapping_leaf import MappingLeaf, UserMappingLeaf
 from _lcm.solution.continuation_target import (
-    _period_to_continuation_target,
-    _union_fixed_params,
-    _union_free_params,
+    period_to_continuation_target,
     target_period_grid,
+    union_fixed_params,
+    union_free_params,
 )
 from _lcm.solution.contract import (
     ConstraintRouteContext,
@@ -110,7 +110,12 @@ from lcm.ages import AgeGrid
 from lcm.case_piece import CaseBoundary, EqualityOwner
 from lcm.exceptions import RegimeInitializationError
 from lcm.fixed_forms import cash_on_hand_with_subsidy
-from lcm.solver_api import EGM_CONTINUATION, SIMULATION_POLICY, KernelOutput
+from lcm.solver_api import (
+    EGM_CONTINUATION,
+    SIMULATION_POLICY,
+    ArtifactKey,
+    KernelOutput,
+)
 from lcm.typing import (
     ActionName,
     BoolND,
@@ -325,9 +330,9 @@ class NBEGM(OneMarginSolver):
         )
 
     @property
-    def requires_continuation(self) -> bool:
+    def required_continuation_keys(self) -> frozenset[ArtifactKey]:
         """The case-piece EGM step reads its continuation's marginal value."""
-        return True
+        return frozenset({EGM_CONTINUATION})
 
     @property
     def supports_nonlinear_certainty_equivalent(self) -> bool:
@@ -568,7 +573,7 @@ class NBEGM(OneMarginSolver):
             liquid_state_name=liquid_state_name,
         )
 
-        period_to_target = _period_to_continuation_target(context=context)
+        period_to_target = period_to_continuation_target(context=context)
         cores: dict[Hashable, Callable] = {}
         laws: dict[Hashable, Callable[..., tuple[Float1D, Float1D]]] = {}
         period_kernels: dict[int, PeriodKernel] = {}
@@ -1366,7 +1371,7 @@ class _RideAlongArgumentBuilder:
                         context.next_regime_to_continuation,
                     ),
                 ),
-                **_union_free_params(
+                **union_free_params(
                     flat_params=flat_params,
                     regime_name=self.regime_name,
                     transition_target_names=self.transition_target_names,
@@ -1511,7 +1516,7 @@ class _RideAlongNBEGMPeriodKernel:
         self, *, fixed_flat_params: FlatParams
     ) -> _RideAlongNBEGMPeriodKernel:
         """Bind the regime's and its carry targets' fixed params into both programs."""
-        bound = _union_fixed_params(
+        bound = union_fixed_params(
             fixed_flat_params=fixed_flat_params,
             regime_name=self.regime_name,
             transition_target_names=self.transition_target_names,

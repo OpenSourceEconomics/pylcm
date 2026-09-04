@@ -128,6 +128,7 @@ from lcm.solver_api import (
     ArtifactRef,
     ArtifactStore,
     OmissionReason,
+    ReplayMode,
     ResultRetention,
     SolutionMetadata,
     SolutionResult,
@@ -1143,10 +1144,8 @@ class Model:
                 (period, regime_name)
                 for period, regime_to_policy in policies.items()
                 for regime_name in regime_to_policy
-                if not isinstance(
-                    self._regimes[regime_name].simulation.egm_policy_read,
-                    EGMPolicyRead | NNBEGMPolicyRead,
-                )
+                if self._regimes[regime_name].simulation.replay_route.payload_type
+                is None
             )
         )
         if policies_without_route:
@@ -1192,7 +1191,10 @@ class Model:
                         "__name__",
                         repr(descriptor.payload_type),
                     )
-                    payload_defect = f"expected exact payload type {expected_name}"
+                    payload_defect = (
+                        f"expected exact payload type {expected_name}, got "
+                        f"{type(supplied).__name__}"
+                    )
                 elif isinstance(policy_read, EGMPolicyRead):
                     payload_defect = (
                         validate_egm_sim_policy(
@@ -1317,8 +1319,7 @@ class Model:
         fixed_cost_regimes = tuple(
             regime_name
             for regime_name, regime in self._regimes.items()
-            if isinstance(regime.simulation.egm_policy_read, NNBEGMPolicyRead)
-            and regime.simulation.egm_policy_read.fixed_cost_simulation_unsupported
+            if regime.simulation.replay_route.replay_mode is ReplayMode.UNSUPPORTED
         )
         if not fixed_cost_regimes:
             return

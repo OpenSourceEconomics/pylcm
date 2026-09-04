@@ -9,7 +9,7 @@ from _lcm import engine
 from _lcm.continuation import EGMContinuationLayout, EGMContinuationSpec
 from _lcm.egm.carry import EGMCarry
 from _lcm.reachability import build_phase_reachability
-from _lcm.regime_building.processing import _continuation_targets
+from _lcm.regime_building.processing import _continuation_demands
 from _lcm.solution import contract
 from _lcm.typing import RegimeName
 from lcm.grids import LinSpacedGrid
@@ -84,7 +84,10 @@ def test_only_reachable_targets_of_continuation_readers_publish_carries():
         "unused": MockRegime(solver=GridSearch()),
     }
 
-    assert _continuation_targets(
+    demands = _continuation_demands(
         user_regimes=regimes,
         phase_reachability=reachability,
-    ) == frozenset({"needed"})
+    )
+    assert frozenset(target for _source, target, _key in demands) == frozenset(
+        {"needed"}
+    )

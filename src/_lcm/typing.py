@@ -112,12 +112,15 @@ type ParamsTemplate = MappingProxyType[RegimeName, RegimeParamsTemplate]
 
 # Type aliases for value function arrays
 type PeriodToRegimeToVArr = MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]
-# Sparse over regimes: the inner mapping carries an entry only for regimes
-# whose kernels publish a simulation policy. Regimes that publish none are
-# absent — callers must not assume the full regime keyset.
+# The payload classes the shipped replay routes declare. A regime's own
+# `SimulationPhase.replay_route` names which one it publishes and under which
+# `ReplayMode`; this alias only spells the union of those declarations.
 type SimulationPolicy = (
     EGMSimPolicy | NBEGMGridPolicy | NNBEGMSimPolicy | NestedEGMSimPolicy
 )
+# Sparse over regimes: the inner mapping carries an entry only for regimes
+# whose kernels publish a simulation policy. Regimes that publish none are
+# absent — callers must not assume the full regime keyset.
 type PeriodToRegimeToSimulationPolicy = MappingProxyType[
     int, MappingProxyType[RegimeName, SimulationPolicy]
 ]

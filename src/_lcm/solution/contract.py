@@ -47,16 +47,10 @@ from _lcm.constraints.routes import (
 )
 from _lcm.continuation import (
     ContinuationPayload,
+    ContinuationSpec,
     EGMContinuationLayout,
-    EGMContinuationSpec,
 )
 from _lcm.egm.branch_aggregation import OuterBranchAggregator
-from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
-from _lcm.egm.published_policy import (
-    EGMSimPolicy,
-    NBEGMGridPolicy,
-    NNBEGMSimPolicy,
-)
 from _lcm.engine import ParamCheck, StateActionSpace, Variables
 from _lcm.grids import Grid
 from _lcm.reachability import PhaseReachability
@@ -98,20 +92,11 @@ from lcm.typing import Float1D, FloatND, UserFunction
 # reaches for is the signal to introduce a protocol rather than to grow this
 # one — the seam is a stated read set, not permission to read whatever is there.
 #
-# The read set says what may be read off a row; this union says which rows
-# exist, and the two are separate rules. The simulation read dispatches on the
-# concrete payload type over this CLOSED union: a
-# `NestedEGMSimPolicy` routes to the engine-owned nested continuous-outer reader
-# (`_read_nested_policy`, which the self-describing payload parameterizes), an
-# `NNBEGMSimPolicy` routes to direct finite-candidate replay, an
-# `NBEGMGridPolicy` carries the conditional inner candidate rows, and a flat
-# `EGMSimPolicy` routes to the solver-supplied `egm_policy_read`. So it is
-# a deliberate closed-union dispatch in the engine's simulation loop, not an
-# open solver-owned reader seam; adding a payload class means extending both
-# this union and that dispatch.
-type SimulationPolicy = (
-    EGMSimPolicy | NBEGMGridPolicy | NNBEGMSimPolicy | NestedEGMSimPolicy
-)
+# Which payload a regime publishes is declared, not discovered: the regime's
+# `SimulationPhase.replay_route` names the exact `payload_type` and the
+# `ReplayMode` under which simulation reads it, and both the model authority's
+# preflight and the simulation loop dispatch on that route. `SimulationPolicy`
+# enumerates the payload classes the shipped routes declare.
 
 if TYPE_CHECKING:
     from _lcm.regime_building.finalize import FinalizedUserRegime
@@ -585,8 +570,8 @@ class SolutionKernels:
     period_kernels: Mapping[int, PeriodKernel]
     """Immutable mapping of period to the regime's uniform period adapter."""
 
-    continuation_spec: EGMContinuationSpec | None = None
-    """Concrete EGM continuation template bundled with its static layout."""
+    continuation_spec: ContinuationSpec | None = None
+    """Template and identity of the continuation this solver's kernels publish."""
 
     param_checks: tuple[ParamCheck, ...] = ()
     """Preconditions the engine passes every parameter draw against real params.
@@ -765,18 +750,19 @@ class Solver(ABC):
         return False
 
     @property
-    def requires_continuation(self) -> bool:
-        """Whether this solver reads a continuation payload from its targets.
+    def required_continuation_keys(self) -> frozenset[ArtifactKey]:
+        """Continuation artifacts this solver reads from its target regimes.
 
         An endogenous-grid solver inverts the Euler equation against its
         target regimes' value *and marginal* on a continuation grid, so each
-        target — including a terminal one — must publish a continuation the
-        engine rolls alongside `next_regime_to_V_arr`. Grid search reads only
-        the value array, so it needs none. The engine reads this off every
-        regime's solver to decide whether terminal regimes produce their
-        closed-form continuations, without forking on the solver type.
+        target — including a terminal one — must publish a continuation under
+        one of these keys, which the engine rolls alongside
+        `next_regime_to_V_arr`. Grid search reads only the value array, so its
+        set is empty. Model building matches each key against what every
+        reachable target publishes, so a version the targets do not carry is
+        refused before any solve, without forking on the solver type.
         """
-        return False
+        return frozenset()
 
     @property
     def supports_nonlinear_certainty_equivalent(self) -> bool:

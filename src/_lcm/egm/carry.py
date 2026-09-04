@@ -18,6 +18,7 @@ import jax
 import jax.numpy as jnp
 
 from _lcm.dtypes import canonical_float_dtype
+from lcm.solver_api import EGM_CONTINUATION, ArtifactKey
 from lcm.typing import FloatND, ScalarFloat, StateName, StateOrActionName
 
 
@@ -67,6 +68,11 @@ class EGMCarry:
     locations differ across the folded nodes, and lets an EGM parent add the
     fixed-savings candidate where the child boundary binds.
     """
+
+    @property
+    def artifact_key(self) -> ArtifactKey:
+        """Versioned identity under which EGM kernels publish this carry."""
+        return EGM_CONTINUATION
 
     policy: FloatND | None = None
     """Exact consumption at `endog_grid`, or `None` when not published.

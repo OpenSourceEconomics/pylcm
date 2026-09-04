@@ -11,8 +11,9 @@ gate below buys branch faithfulness at the switches, not exactness within a
 branch.
 
 A requesting solve can retain it alongside the value-function arrays. Forward
-simulation requests it only when a regime qualifies
-(`SimulationPhase.egm_policy_read`): the subject's row — indexed by
+simulation requests it only for a regime whose declared route names this class
+as its `payload_type` (`SimulationPhase.replay_route`): the subject's row —
+indexed by
 its discrete states — is interpolated at the subject's resources, replacing the
 action-grid argmax value of the continuous action, subject to a post-read
 feasibility check (in-support, finite, positive, within the intrinsic budget).

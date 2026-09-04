@@ -38,10 +38,10 @@ from _lcm.execution.core_program import (
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from _lcm.grids import ContinuousGrid
 from _lcm.solution.continuation_target import (
-    _period_to_continuation_target,
-    _union_fixed_params,
-    _union_free_params,
+    period_to_continuation_target,
     target_period_grid,
+    union_fixed_params,
+    union_free_params,
 )
 from _lcm.solution.contract import (
     ConstraintRouteContext,
@@ -67,7 +67,7 @@ from _lcm.typing import (
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
-from lcm.solver_api import EGM_CONTINUATION, KernelOutput
+from lcm.solver_api import EGM_CONTINUATION, ArtifactKey, KernelOutput
 from lcm.typing import (
     ActionName,
     Float1D,
@@ -115,9 +115,9 @@ class EGM(OneMarginSolver):
         )
 
     @property
-    def requires_continuation(self) -> bool:
+    def required_continuation_keys(self) -> frozenset[ArtifactKey]:
         """The 1-D EGM step reads its continuation's marginal value of liquid."""
-        return True
+        return frozenset({EGM_CONTINUATION})
 
     def validate_model(  # noqa: C901, PLR0912, PLR0915
         self, *, context: SolverModelContext
@@ -407,7 +407,7 @@ class EGM(OneMarginSolver):
                 f"extra states to discrete grids."
             )
             raise ModelInitializationError(msg)
-        for target in set(_period_to_continuation_target(context=context).values()):
+        for target in set(period_to_continuation_target(context=context).values()):
             target_user_regime = context.user_regimes[target]
             if target_user_regime.terminal and target_user_regime.actions:
                 msg = (
@@ -473,7 +473,7 @@ class EGM(OneMarginSolver):
             | frozenset(context.state_action_space.continuous_actions)
             | frozenset(context.state_action_space.discrete_actions)
         )
-        period_to_target = _period_to_continuation_target(context=context)
+        period_to_target = period_to_continuation_target(context=context)
         cores: dict[Hashable, Callable] = {}
         laws: dict[Hashable, Callable[..., tuple[Float1D, Float1D]]] = {}
         period_kernels: dict[int, PeriodKernel] = {}
@@ -671,6 +671,7 @@ class _EGMArgumentBuilder:
             "ContinuationPayload",
             context.next_regime_to_continuation[self.continuation_target],
         )
+        next_carry = cast("EGMCarry", next_carry)
         (
             effective_savings_grid,
             next_liquid,
@@ -692,7 +693,7 @@ class _EGMArgumentBuilder:
                 "boundary_next_liquid": boundary_next_liquid,
                 "next_value": next_carry.value,
                 "next_marginal": next_carry.marginal_utility,
-                **_union_free_params(
+                **union_free_params(
                     flat_params=flat_params,
                     regime_name=self.regime_name,
                     transition_target_names=self.transition_target_names,
@@ -715,7 +716,7 @@ class _EGMArgumentBuilder:
         """
         law_params = {
             **self.bound_params,
-            **_union_free_params(
+            **union_free_params(
                 flat_params=flat_params,
                 regime_name=self.regime_name,
                 transition_target_names=self.transition_target_names,
@@ -831,7 +832,7 @@ class _EGMPeriodKernel:
         The core receives them as bound keywords; the builder keeps them so the
         declared law reads the same params the core does.
         """
-        bound = _union_fixed_params(
+        bound = union_fixed_params(
             fixed_flat_params=fixed_flat_params,
             regime_name=self.regime_name,
             transition_target_names=self.transition_target_names,

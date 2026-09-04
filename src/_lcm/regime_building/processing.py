@@ -218,7 +218,7 @@ from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.phased import Phased
 from lcm.regime import ProjectedRegimeValue
 from lcm.regime import Regime as UserRegime
-from lcm.solver_api import EGM_CONTINUATION, KernelOutput
+from lcm.solver_api import EGM_CONTINUATION, ArtifactKey, KernelOutput
 from lcm.solvers import (
     DCEGM,
     NNBEGM,
@@ -540,9 +540,16 @@ def process_regimes(  # noqa: PLR0915
     # keeps whatever kernel its own solver built, however its states are
     # shaped — a `GridSearch` regime whose first declared state happens to be
     # continuous is not thereby anyone's continuation target.
-    continuation_targets = _continuation_targets(
+    continuation_demands = _continuation_demands(
         user_regimes=user_regimes,
         phase_reachability=reachability.solution,
+    )
+    # Only the EGM continuation has an engine-side producer; a target owing
+    # any other key must publish it from its own solver.
+    egm_continuation_targets = frozenset(
+        target
+        for _source, target, key in continuation_demands
+        if key == EGM_CONTINUATION
     )
 
     # Each regime's flat param names in the engine's binding vocabulary, keyed
@@ -726,7 +733,7 @@ def process_regimes(  # noqa: PLR0915
                 enable_jit=enable_jit,
                 certainty_equivalent=user_regime.certainty_equivalent,
                 solver=user_regime.solver,
-                continuation_demanded=regime_name in continuation_targets,
+                continuation_demanded=regime_name in egm_continuation_targets,
                 has_taste_shocks=user_regime.taste_shocks is not None,
                 value_aware_feasibility=value_aware_feasibility,
                 stakeholders=stakeholders,
@@ -841,6 +848,10 @@ def process_regimes(  # noqa: PLR0915
             grid_schedule=grid_schedule,
             enable_jit=enable_jit,
         )
+
+    _fail_if_a_continuation_demand_is_unmet(
+        demands=continuation_demands, canonical_regimes=canonical_regimes
+    )
 
     return ensure_containers_are_immutable(canonical_regimes)
 
@@ -2427,18 +2438,70 @@ def _has_valid_state_handoff(
     return law is not None and (not isinstance(law, Mapping) or target in law)
 
 
-def _continuation_targets(
+def _continuation_demands(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
     phase_reachability: PhaseReachability,
-) -> frozenset[RegimeName]:
-    """Return targets with incoming demand from a continuation-based source."""
-    return frozenset(
-        target
+) -> tuple[tuple[RegimeName, RegimeName, ArtifactKey], ...]:
+    """Return every `(source, target, key)` continuation demand in the model.
+
+    One entry per key a continuation-based source's solver declares and per
+    target that source can reach, so both the engine-side producer decision and
+    the published-key check read the same enumeration.
+    """
+    return tuple(
+        (source, target, key)
         for source, source_regime in user_regimes.items()
-        if source_regime.solver.requires_continuation
-        for target in phase_reachability.union_targets(source=source)
+        for key in sorted(
+            source_regime.solver.required_continuation_keys,
+            key=lambda key: (key.type_id, key.schema_version),
+        )
+        for target in sorted(phase_reachability.union_targets(source=source))
     )
+
+
+def _fail_if_a_continuation_demand_is_unmet(
+    *,
+    demands: tuple[tuple[RegimeName, RegimeName, ArtifactKey], ...],
+    canonical_regimes: Mapping[RegimeName, Regime],
+) -> None:
+    """Refuse a model whose continuation target publishes another key.
+
+    A parent reads its targets' continuations by versioned key, so a target
+    that publishes a different schema version — or none at all — would fail
+    inside the solve loop at the first rolled period. Both regimes and the
+    demanded version are named here instead, before anything compiles.
+
+    Every unmet demand is reported at once, so a model with several
+    non-publishing targets is repaired in one pass rather than one error each.
+
+    Raises:
+        RegimeInitializationError: If a reachable target of a continuation-based
+            regime publishes no continuation under the demanded key.
+
+    """
+    unmet: dict[tuple[RegimeName, ArtifactKey], list[str]] = {}
+    for source, target, key in demands:
+        spec = canonical_regimes[target].solution.continuation_spec
+        published = None if spec is None else spec.artifact_key
+        if published == key:
+            continue
+        publishes = (
+            "publishes no continuation"
+            if published is None
+            else (f"publishes '{published.type_id}' version {published.schema_version}")
+        )
+        unmet.setdefault((source, key), []).append(f"'{target}' {publishes}")
+    if not unmet:
+        return
+    complaints = "; ".join(
+        f"Regime '{source}' requires continuation artifact '{key.type_id}' "
+        f"version {key.schema_version} from every regime it transitions into, "
+        f"but {', '.join(offenders)}"
+        for (source, key), offenders in unmet.items()
+    )
+    msg = f"{complaints}."
+    raise RegimeInitializationError(msg)
 
 
 def _build_solution_phase(

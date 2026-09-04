@@ -62,7 +62,6 @@ from _lcm.solution.contract import (
     BackwardInductionResult,
     ContinuationPayload,
     GeneratedReplayAuthority,
-    SimulationPolicy,
 )
 from _lcm.solution.diagnostics import (
     _emit_post_loop_diagnostics,
@@ -89,7 +88,7 @@ from _lcm.solution.v_topology import (
     _get_regime_V_shapes_and_shardings,
     _RegimeVTopology,
 )
-from _lcm.typing import FlatParams, RegimeName
+from _lcm.typing import FlatParams, RegimeName, SimulationPolicy
 from _lcm.utils.logging import (
     format_duration,
     log_period_header,

@@ -45,7 +45,7 @@ from _lcm.execution.core_program import (
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from _lcm.grids import ContinuousGrid
 from _lcm.processes.base import _ContinuousStochasticProcess
-from _lcm.solution.continuation_target import _union_fixed_params, _union_free_params
+from _lcm.solution.continuation_target import union_fixed_params, union_free_params
 from _lcm.solution.contract import (
     ConstraintRouteContext,
     ContinuationPayload,
@@ -68,7 +68,12 @@ from lcm.exceptions import (
     ExactAffineKernelUnavailableError,
     RegimeInitializationError,
 )
-from lcm.solver_api import EGM_CONTINUATION, SIMULATION_POLICY, KernelOutput
+from lcm.solver_api import (
+    EGM_CONTINUATION,
+    SIMULATION_POLICY,
+    ArtifactKey,
+    KernelOutput,
+)
 from lcm.typing import (
     ActionName,
     FloatND,
@@ -308,9 +313,9 @@ class DCEGM(OneMarginSolver):
         )
 
     @property
-    def requires_continuation(self) -> bool:
+    def required_continuation_keys(self) -> frozenset[ArtifactKey]:
         """DC-EGM inverts the Euler equation against its targets' marginals."""
-        return True
+        return frozenset({EGM_CONTINUATION})
 
     def validate_model(self, *, context: SolverModelContext) -> None:
         """Validate the user-level DC-EGM contract for this regime."""
@@ -588,7 +593,7 @@ class _DCEGMArgumentBuilder:
                     ),
                     stateful_targets=self.stateful_targets,
                 ),
-                **_union_free_params(
+                **union_free_params(
                     flat_params=flat_params,
                     regime_name=self.regime_name,
                     transition_target_names=self.transition_target_names,
@@ -648,7 +653,7 @@ class _DCEGMPeriodKernel:
         carry targets' fixed params restores the values removed from the live
         `flat_params` for all of them at once.
         """
-        egm_fixed = _union_fixed_params(
+        egm_fixed = union_fixed_params(
             fixed_flat_params=fixed_flat_params,
             regime_name=self.regime_name,
             transition_target_names=self.transition_target_names,
@@ -719,7 +724,7 @@ def _carry_subset(
     """
     return MappingProxyType(
         {
-            name: next_regime_to_continuation[name]
+            name: cast("EGMCarry", next_regime_to_continuation[name])
             for name in next_regime_to_continuation
             if name in stateful_targets
         }
