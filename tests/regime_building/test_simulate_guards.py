@@ -454,6 +454,7 @@ def _solve_all_collective():
         }
     )
     _bi_result = solve(
+        model_fingerprint="test_simulate_guards",
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,
@@ -546,6 +547,7 @@ def test_stateless_collective_regime_simulate_carries_subject_axis():
     )
     flat_params = MappingProxyType({"stateless_couple": MappingProxyType({})})
     _bi_result = solve(
+        model_fingerprint="test_simulate_guards",
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,

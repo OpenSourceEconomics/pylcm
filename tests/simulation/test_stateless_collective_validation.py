@@ -46,6 +46,7 @@ def _simulate_stateless_collective_at_debug() -> PeriodRegimeSimulationData:
     )
     flat_params = MappingProxyType({_REGIME_NAME: MappingProxyType({})})
     solution = solve(
+        model_fingerprint="test_stateless_collective_validation",
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,

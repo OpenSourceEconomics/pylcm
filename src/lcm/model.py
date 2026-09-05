@@ -720,8 +720,16 @@ class Model:
             if retain_all_persistable
             else frozenset()
         )
+        model_fingerprint = fingerprint_model(
+            ages=self.ages,
+            regimes=self._regimes,
+            user_regimes=self.user_regimes,
+            regime_names_to_ids=self.regime_names_to_ids,
+            flat_params=flat_params,
+        )
         internal_result = self._solve_compiled(
             flat_params=flat_params,
+            model_fingerprint=model_fingerprint,
             params=params,
             log=log,
             execution_config=execution_config,
@@ -736,13 +744,6 @@ class Model:
         )
         params_fingerprint = fingerprint_flat_params(
             project_solution_params(flat_params=flat_params, regimes=self._regimes)
-        )
-        model_fingerprint = fingerprint_model(
-            ages=self.ages,
-            regimes=self._regimes,
-            user_regimes=self.user_regimes,
-            regime_names_to_ids=self.regime_names_to_ids,
-            flat_params=flat_params,
         )
         authority = bind_generated_solution_authority(
             authority=declared_authority,
@@ -773,6 +774,7 @@ class Model:
         self,
         *,
         flat_params: FlatParams,
+        model_fingerprint: str,
         params: UserParams,
         log: logging.Logger,
         execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
@@ -786,6 +788,9 @@ class Model:
         collect_solver_diagnostics: bool = False,
     ) -> BackwardInductionResult:
         """Run backward induction, persisting a diagnostic snapshot when warranted.
+
+        `model_fingerprint` is the durable identity of the model being solved,
+        and enters every executable's compilation key.
 
         Returns the named backward-induction outputs: value-function arrays,
         each regime's published per-period simulation policy, and the
@@ -809,6 +814,7 @@ class Model:
                 flat_params=flat_params,
                 ages=self.ages,
                 regimes=self._regimes,
+                model_fingerprint=model_fingerprint,
                 logger=log,
                 enable_jit=self.enable_jit,
                 execution_config=execution_config,

@@ -448,11 +448,12 @@ class NNBEGM(TwoMarginSolver):
 
         adjuster_by_period: dict[int, _RideAlongNBEGMPeriodKernel] = {}
         keeper_by_period: dict[int, _RideAlongNBEGMPeriodKernel] = {}
+        period_group_keys: dict[int, Hashable] = {}
         resolved_by_period: dict[int, SolverBuildContext] = {}
         outer_target_function_by_period: dict[int, Callable] = {}
         grouped_param_checks = []
         keeper_continuation_spec = None
-        for periods in grouped_periods.values():
+        for group_key, periods in grouped_periods.items():
             # The complete key above has already established that every period in
             # this group may share one concrete inner build. Resolve that pool once,
             # then narrow only the source regime's active-period tuple before handing
@@ -524,6 +525,14 @@ class NNBEGM(TwoMarginSolver):
                 )
                 keeper_by_period[period] = _ride_along_inner_kernel(
                     kernel=keeper_group.period_kernels[period], role="keeper"
+                )
+                # The outer key selected this build; the two inner builds may
+                # split it further, so both of their keys ride along.
+                period_group_keys[period] = (
+                    "nnbegm",
+                    group_key,
+                    adjuster_group.period_group_keys.get(period),
+                    keeper_group.period_group_keys.get(period),
                 )
                 outer_target_function_by_period[period] = outer_target_function
             grouped_param_checks.extend(adjuster_group.param_checks)
@@ -678,6 +687,7 @@ class NNBEGM(TwoMarginSolver):
         )
         return SolutionKernels(
             period_kernels=period_kernels,
+            period_group_keys=MappingProxyType(period_group_keys),
             continuation_spec=(
                 None
                 if keeper_egm_spec is None

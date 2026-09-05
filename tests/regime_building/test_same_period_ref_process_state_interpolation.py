@@ -172,6 +172,7 @@ def _solve_shock_ref_only() -> tuple[np.ndarray, np.ndarray]:
         }
     )
     _bi_result = solve(
+        model_fingerprint="test_same_period_ref_process_state_interpolation",
         flat_params=flat_params,
         ages=_AGES,
         regimes=regimes,
@@ -317,6 +318,7 @@ def _build_and_solve():
     )
     flat_params = _flat_params()
     _bi_result = solve(
+        model_fingerprint="test_same_period_ref_process_state_interpolation",
         flat_params=flat_params,
         ages=_AGES,
         regimes=regimes,

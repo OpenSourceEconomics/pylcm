@@ -2938,6 +2938,9 @@ def _build_solution_phase(
             user_regime=user_regimes[regime_name],
             grid_schedule=grid_schedule,
         ),
+        solver_period_group_keys=MappingProxyType(
+            dict(solver_kernels.period_group_keys)
+        ),
         validation_regime_transition_probs=validation_regime_transition_probs,
         compute_intermediates=compute_intermediates,
         continuation_spec=continuation_spec,

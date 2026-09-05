@@ -58,6 +58,18 @@ class MockSolutionPhase:
     )
     """The solve-phase regime graph; one regime, reachable from itself."""
 
+    @property
+    def period_signatures(self) -> MappingProxyType[int, object]:
+        """One signature per period: the mock builds a kernel per period."""
+        return MappingProxyType(
+            {period: ("mock", period) for period in self.period_kernels}
+        )
+
+    @property
+    def solver_period_group_keys(self) -> MappingProxyType[int, object]:
+        """No solver-side grouping; the per-period signature decides alone."""
+        return MappingProxyType({})
+
     def state_action_space(self, regime_params):  # noqa: ARG002
         return self._base_state_action_space
 
@@ -138,6 +150,7 @@ def test_memory_budget_requires_jit_before_backward_induction() -> None:
     """A device-memory budget needs compiler reports, which eager execution lacks."""
     with pytest.raises(ExecutionPlanningError, match="requires JIT compilation"):
         solve(
+            model_fingerprint="test_backward_induction",
             flat_params=MappingProxyType({}),
             ages=AgeGrid(start=0, stop=1, step="Y"),
             regimes=MappingProxyType({}),
@@ -261,6 +274,7 @@ def test_backward_induction():
     )
 
     solution = solve(
+        model_fingerprint="test_backward_induction",
         flat_params=MappingProxyType({"default": flat_params}),
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regimes=MappingProxyType({"default": regime}),
@@ -326,6 +340,7 @@ def test_backward_induction_single_period_Qc_arr():
     )
 
     got = solve(
+        model_fingerprint="test_backward_induction",
         flat_params=MappingProxyType({"default": MappingProxyType({})}),
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regimes=MappingProxyType({"default": regime}),

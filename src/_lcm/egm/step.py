@@ -488,12 +488,15 @@ def build_egm_step_functions(
         built[group_key] = kernel
 
     result: dict[int, EGMStepFunction] = {}
+    group_keys: dict[int, Hashable] = {}
     for key, periods in configs.items():
         for period in periods:
             result[period] = built[key]
+            group_keys[period] = key
 
     return EGMStepBuild(
         steps=MappingProxyType(dict(sorted(result.items()))),
+        step_group_keys=MappingProxyType(dict(sorted(group_keys.items()))),
         carry_template=carry_template,
         stateful_targets=stateful_targets_union,
         row_discrete_state_names=own_discrete_state_names,

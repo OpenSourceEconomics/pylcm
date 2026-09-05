@@ -477,6 +477,7 @@ class EGM(OneMarginSolver):
         cores: dict[Hashable, Callable] = {}
         laws: dict[Hashable, Callable[..., tuple[Float1D, Float1D]]] = {}
         period_kernels: dict[int, PeriodKernel] = {}
+        period_group_keys: dict[int, Hashable] = {}
         # The target's own name for its single continuous state. It is read off
         # that regime: the value grid it is tabulated on and the namespace its
         # transition params live under are both facts about the target, so
@@ -514,6 +515,7 @@ class EGM(OneMarginSolver):
                     target_state=target_state,
                     variable_names=variable_names,
                 )
+            period_group_keys[period] = group_key
             period_kernels[period] = _build_egm_period_kernel(
                 core=cores[group_key],
                 declared_law=laws[group_key],
@@ -531,6 +533,7 @@ class EGM(OneMarginSolver):
             )
         return SolutionKernels(
             period_kernels=MappingProxyType(period_kernels),
+            period_group_keys=MappingProxyType(period_group_keys),
             continuation_spec=EGMContinuationSpec(
                 template=_build_one_asset_carry_template(liquid_grid=liquid_grid),
                 layout=self.egm_continuation_layout,

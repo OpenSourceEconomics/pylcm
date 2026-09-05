@@ -394,6 +394,7 @@ class NEGM(TwoMarginSolver):
         # read. Function-local so the public `lcm.solvers` façade stays a thin
         # re-export that pulls in no engine modules.
         from _lcm.regime_building.age_normalization import (  # noqa: PLC0415
+            periodized_tree_signature,
             resolve_periodized_nodes,
         )
 
@@ -423,6 +424,7 @@ class NEGM(TwoMarginSolver):
         # build, which is today's behaviour.
         all_periods = tuple(sorted(adjuster_kernels.period_kernels))
         keeper_kernels_by_period: dict[int, PeriodKernel] = {}
+        keeper_group_keys_by_period: dict[int, Hashable] = {}
         coh_shift_by_period: dict[int, Callable[..., FloatND]] = {}
         keeper_continuation_template: EGMCarry | None = None
         # A regime whose inner builder produced no period kernels still owes the
@@ -480,6 +482,9 @@ class NEGM(TwoMarginSolver):
                 keeper_kernels_by_period[period] = group_keeper_kernels.period_kernels[
                     period
                 ]
+                keeper_group_keys_by_period[period] = (
+                    group_keeper_kernels.period_group_keys.get(period)
+                )
                 coh_shift_by_period[period] = group_coh_shift_func
         assert keeper_continuation_template is not None  # noqa: S101
         representative_durable_values = context.grids[durable_state].to_jax()
@@ -516,6 +521,22 @@ class NEGM(TwoMarginSolver):
         assert stacked_template is not None  # noqa: S101
         return SolutionKernels(
             period_kernels=period_kernels,
+            # The outer helper pool splits the keeper build, and the inner
+            # solver may split either branch further, so a period is grouped by
+            # its own declared helper signature together with both inner keys.
+            period_group_keys=MappingProxyType(
+                {
+                    period: (
+                        "negm",
+                        periodized_tree_signature(
+                            tree=context.functions, period=period
+                        ),
+                        adjuster_kernels.period_group_keys.get(period),
+                        keeper_group_keys_by_period.get(period),
+                    )
+                    for period in period_kernels
+                }
+            ),
             continuation_spec=EGMContinuationSpec(
                 template=stacked_template,
                 layout=self.egm_continuation_layout,

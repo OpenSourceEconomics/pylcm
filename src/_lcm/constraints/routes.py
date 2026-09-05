@@ -25,7 +25,7 @@ constraint's surface, so `spendable >= 0` and the same requirement spelled over
 """
 
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Hashable, Mapping
 from dataclasses import dataclass
 from typing import Literal, Protocol, runtime_checkable
 
@@ -254,6 +254,36 @@ class ConstraintPlan:
         )
 
     @property
+    def structural_digest(self) -> Hashable:
+        """Return a hashable description of what this plan decided.
+
+        Two plans built from the same declarations digest alike, whichever
+        objects carry them, so a compilation key that folds a plan in survives
+        the model being rebuilt. Every component is a name, a literal, or a
+        sentence the deciding site wrote — never an address — and the entries
+        are read in plan order, which is the order coverage is counted in.
+
+        Returns:
+            The digest, one component per entry.
+
+        """
+        return (
+            "constraint-plan",
+            tuple(
+                (
+                    entry.constraint_name,
+                    (
+                        entry.route.phase,
+                        entry.route.period_group,
+                        entry.route.solver_path,
+                    ),
+                    _disposition_digest(disposition=entry.disposition),
+                )
+                for entry in self.entries
+            ),
+        )
+
+    @property
     def compiled_boundaries(self) -> tuple[CompileBoundary, ...]:
         """Return the boundary dispositions in plan order.
 
@@ -309,6 +339,56 @@ def plan_constraints(
         entries=entries, constraints=constraints, routes=routes
     )
     return ConstraintPlan(entries=entries)
+
+
+def _disposition_digest(*, disposition: ConstraintDisposition) -> Hashable:
+    """Describe one terminal verdict without naming the object that holds it.
+
+    The four verdicts differ in what identifies them:
+
+    - `Evaluate` — the constraint's name and arg names, and the stage it is
+      called at;
+    - `ProvedByConstruction` — the sentence naming what enforces it;
+    - `CompileBoundary` — the constraint's name and arg names, and how many
+      surfaces the compiler produced. The compiled payload is private to the
+      compiling solver and is deliberately not read here;
+    - `Reject` — the refusal, which is raised verbatim.
+
+    Args:
+        disposition: The verdict to describe.
+
+    Returns:
+        A hashable description built from names and sentences alone.
+
+    Raises:
+        TypeError: If the verdict is of a kind this module does not define.
+
+    """
+    match disposition:
+        case Evaluate():
+            return (
+                "evaluate",
+                disposition.constraint.name,
+                disposition.constraint.arg_names,
+                disposition.stage,
+            )
+        case ProvedByConstruction():
+            return (
+                "proved-by-construction",
+                disposition.constraint.name,
+                disposition.proof.reason,
+            )
+        case CompileBoundary():
+            return (
+                "compile-boundary",
+                disposition.constraint.name,
+                disposition.constraint.arg_names,
+                len(disposition.program.surfaces),
+            )
+        case Reject():
+            return ("reject", disposition.constraint.name, disposition.reason)
+    msg = f"Unknown constraint disposition: {type(disposition).__name__}."
+    raise TypeError(msg)
 
 
 def _disposition_along(

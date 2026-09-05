@@ -133,6 +133,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     flat_params: FlatParams,
     ages: AgeGrid,
     regimes: MappingProxyType[RegimeName, Regime],
+    model_fingerprint: str,
     logger: logging.Logger,
     enable_jit: bool,
     execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
@@ -150,6 +151,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         ages: Age grid for the model.
         regimes: The internal regimes, that contain all necessary functions
             to solve the model.
+        model_fingerprint: Durable fingerprint of the model being solved; enters
+            every executable's compilation key, so equivalent programs of
+            equivalent models share one executable and two models never do.
         logger: Logger that logs to stdout, and carries the runtime-validation
             policy. `log_level="debug"` stops backward induction at the first
             NaN period and raises; `"warning"` / `"progress"` let induction run
@@ -224,6 +228,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     # Resolve every solve program, then compile unique lowerings when enabled.
     compiled_programs = _compile_all_functions(
         regimes=regimes,
+        model_fingerprint=model_fingerprint,
         flat_params=flat_params,
         ages=ages,
         next_regime_to_V_arr=next_regime_to_V_arr,
@@ -1739,6 +1744,7 @@ def _selected_artifact_keys_for_cell(
 def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     *,
     regimes: MappingProxyType[RegimeName, Regime],
+    model_fingerprint: str,
     flat_params: FlatParams,
     ages: AgeGrid,
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
@@ -1755,8 +1761,8 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
 
     Each regime exposes named cores through its period adapter. For every core, the
     engine first materializes the adapter's exact `CoreProgram`. The program supplies
-    the planner-resolved callable, static choices, and output roles. The complete
-    callable, abstract arguments, specialization, and
+    the planner-resolved callable, static choices, and output roles. The program's
+    durable identity, abstract arguments, specialization, and
     output layout form the lowering key. Each unique program is lowered once
     (sequentially, because tracing is single-threaded), then the XLA programs compile
     in parallel via a thread pool. The loop stays free of solver-type forks.
@@ -1766,6 +1772,8 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
 
     Args:
         regimes: The internal regimes containing the period adapters.
+        model_fingerprint: Durable fingerprint of the model being solved; opens
+            every program's identity, so two models never share an executable.
         flat_params: Regime parameters for constructing lowering args.
         ages: Age grid for the model.
         next_regime_to_V_arr: Template with consistent keys and V array shapes
@@ -1818,12 +1826,17 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     ) = _resolve_output_layouts_and_lowering_keys(
         all_programs=all_programs,
         regimes=regimes,
+        model_fingerprint=model_fingerprint,
         flat_params=flat_params,
         ages=ages,
         next_regime_to_V_arr=next_regime_to_V_arr,
         next_regime_to_continuation=next_regime_to_continuation,
         next_edge_to_V_arr=next_edge_to_V_arr,
         budget_bytes=execution_config.device_memory_bytes,
+    )
+
+    _fail_if_one_key_covers_two_callables(
+        lowering_keys=lowering_keys, resolved_programs=resolved_programs
     )
 
     candidates_by_triple: dict[_CoreTriple, list[_CoreCandidate]] = {}
@@ -2155,10 +2168,46 @@ def _count_triples_per_lowering_key(
     return counts
 
 
+def _fail_if_one_key_covers_two_callables(
+    *,
+    lowering_keys: Mapping[_CoreCandidate, Hashable],
+    resolved_programs: Mapping[_CoreCandidate, ResolvedCoreProgram],
+) -> None:
+    """Reject a compilation key that two different callables would answer to.
+
+    A key is an assertion about what a program computes, and the callables are
+    the oracle for it: two candidates that agree on the key while carrying
+    different callables mean the identity is coarser than what the solver
+    actually specialized, and compiling one of them once would run one period's
+    closure in another period's place.
+
+    Args:
+        lowering_keys: The compilation key of every resolved candidate.
+        resolved_programs: The candidates' resolved programs.
+
+    Raises:
+        ExecutionPlanningError: If two candidates share a key over different
+            callables.
+
+    """
+    callables_by_key: dict[Hashable, Hashable] = {}
+    for candidate, lowering_key in lowering_keys.items():
+        callable_key = _func_dedup_key(func=resolved_programs[candidate].function)
+        known = callables_by_key.setdefault(lowering_key, callable_key)
+        if known != callable_key:
+            msg = (
+                "Two core programs share one compilation key but are different "
+                f"callables: {candidate[0]!r}. The period signature is too coarse "
+                "for this solver's specialization."
+            )
+            raise ExecutionPlanningError(msg)
+
+
 def _resolve_output_layouts_and_lowering_keys(
     *,
     all_programs: Mapping[_CoreTriple, CoreProgram],
     regimes: MappingProxyType[RegimeName, Regime],
+    model_fingerprint: str,
     flat_params: FlatParams,
     ages: AgeGrid,
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
@@ -2176,6 +2225,10 @@ def _resolve_output_layouts_and_lowering_keys(
     Programs are visited so every producer of an internal output is materialized
     before the consumers that read it, and each consumer is lowered against the
     producer's abstract output rather than a stand-in.
+
+    Each candidate's lowering key opens with the program's durable identity —
+    the model, the regime, the core, and both groupings of its period — so a
+    key says what the program computes rather than which object computes it.
     """
     layouts: dict[_CoreTriple, ResolvedOutputLayout] = {}
     lowering_keys: dict[_CoreCandidate, Hashable] = {}
@@ -2250,7 +2303,15 @@ def _resolve_output_layouts_and_lowering_keys(
             candidate = (triple, _width_key(widths=resolved.tile_widths))
             resolved_programs[candidate] = resolved
             lowering_keys[candidate] = _lowering_key(
-                func=resolved.function,
+                program_identity=_program_identity(
+                    model_fingerprint=model_fingerprint,
+                    regime_name=regime_name,
+                    core_name=core_key,
+                    period_signature=regime.solution.period_signatures[period],
+                    solver_group_key=regime.solution.solver_period_group_keys.get(
+                        period
+                    ),
+                ),
                 layout_key=layout.compilation_key,
                 arguments={**resolved.arguments, **templates},
                 specialization_key=resolved.specialization_key,
@@ -2419,17 +2480,61 @@ def _resolve_value_transfer_layout(
     raise ValueError(msg)
 
 
+def _program_identity(
+    *,
+    model_fingerprint: str,
+    regime_name: RegimeName,
+    core_name: str,
+    period_signature: Hashable,
+    solver_group_key: Hashable,
+) -> Hashable:
+    """Return what a program computes, independent of which object computes it.
+
+    Five components, each durable across model constructions:
+
+    - `model_fingerprint` — the model the program belongs to;
+    - `regime_name` and `core_name` — which named core of which regime it is;
+    - `period_signature` — the engine's groupings of the period it serves
+      (`SolutionPhase.period_signatures`);
+    - `solver_group_key` — the solver's own grouping of that period
+      (`SolutionPhase.solver_period_group_keys`), `None` where the solver does
+      not group.
+
+    The engine's groupings and the solver's are independent: neither implies
+    the other, so both belong here.
+
+    Args:
+        model_fingerprint: Durable fingerprint of the model being solved.
+        regime_name: Name of the regime whose core this is.
+        core_name: The core's name within that regime's period graph.
+        period_signature: The engine's signature for the core's period.
+        solver_group_key: The solver's group key for the core's period.
+
+    Returns:
+        The hashable identity.
+
+    """
+    return (
+        "program",
+        model_fingerprint,
+        regime_name,
+        core_name,
+        period_signature,
+        solver_group_key,
+    )
+
+
 def _lowering_key(
     *,
-    func: Callable,
+    program_identity: Hashable,
     layout_key: Hashable,
     arguments: Mapping[str, object] | None = None,
     specialization_key: Hashable | None = None,
     output_roles: object | None = None,
 ) -> Hashable:
-    """Identify one callable, abstract input tree, specialization, and layout."""
+    """Identify one program, its abstract input tree, specialization, and layout."""
     return (
-        _func_dedup_key(func=func),
+        program_identity,
         (None if arguments is None else _abstract_arguments_key(arguments=arguments)),
         specialization_key,
         _output_roles_key(output_roles=output_roles),

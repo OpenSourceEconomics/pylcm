@@ -26,6 +26,17 @@ solver and its kernels answer three questions.
 - **What does a period compute?** `build_period_kernels(context=...)` returns
   `SolutionKernels` holding one period kernel per active period, and optionally a
   `ContinuationSpec` naming the artifact those kernels publish.
+- **Which periods did I build alike?** A solver that builds one numerical core per group
+  of periods publishes each period's group key in `SolutionKernels.period_group_keys`.
+  The engine folds that key into the compiled program's identity beside its own
+  per-period signature, so two periods share one executable only when both groupings
+  agree. Leave the mapping empty when every period gets its own build or when one build
+  serves them all — then the engine's signature decides alone. The key has to be
+  **durable**: build it from declared signatures, names, and literals, never from
+  `id()`, because it is compared across model constructions. Publishing a key too coarse
+  for what the solver actually specialized is refused at build time with an
+  `ExecutionPlanningError` rather than running one period's closure in another period's
+  place.
 - **What does one period publish?** Each kernel declares a native core-program graph
   through `core_programs()` and returns a `KernelOutput` from its call.
 

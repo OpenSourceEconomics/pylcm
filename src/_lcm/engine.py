@@ -396,6 +396,16 @@ class SolutionPhase:
     identity — also agrees.
     """
 
+    solver_period_group_keys: MappingProxyType[int, Hashable] = MappingProxyType({})
+    """Immutable mapping of period to the key its solver grouped it under.
+
+    The solver's own per-period grouping, published beside the engine's. A
+    period the solver did not group has no entry. Together with
+    `period_signatures` this is what a compiled program's identity is keyed on:
+    the engine's groupings say which periods the engine built alike, this one
+    says which periods the solver built alike, and neither implies the other.
+    """
+
     continuation_spec: ContinuationSpec | None = None
     """Template and identity of the continuation this regime's kernels publish."""
 

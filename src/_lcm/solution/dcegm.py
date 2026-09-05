@@ -16,7 +16,7 @@ pulls in no numerical engine modules.
 import functools
 import logging
 import math
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import cast
@@ -439,6 +439,7 @@ class DCEGM(OneMarginSolver):
         # retention authority needs it.
         programs_by_core: dict[int, MappingProxyType[str, CoreProgram]] = {}
         period_kernels: dict[int, PeriodKernel] = {}
+        period_group_keys: dict[int, Hashable] = {}
         for period, core in steps.items():
             if id(core) not in programs_by_core:
                 values_core = functools.partial(_dcegm_values_core, core=core)
@@ -481,6 +482,7 @@ class DCEGM(OneMarginSolver):
                         ),
                     }
                 )
+            period_group_keys[period] = build.step_group_keys[period]
             period_kernels[period] = _DCEGMPeriodKernel(
                 _core_programs=programs_by_core[id(core)],
                 regime_name=context.regime_name,
@@ -489,6 +491,7 @@ class DCEGM(OneMarginSolver):
             )
         return SolutionKernels(
             period_kernels=MappingProxyType(period_kernels),
+            period_group_keys=MappingProxyType(period_group_keys),
             continuation_spec=EGMContinuationSpec(
                 template=build.carry_template,
                 layout=self.egm_continuation_layout,
@@ -524,6 +527,14 @@ class EGMStepBuild:
 
     steps: MappingProxyType[int, EGMStepFunction]
     """Per-period step function; periods sharing a configuration share one."""
+
+    step_group_keys: MappingProxyType[int, Hashable]
+    """Per-period key of the configuration group whose step the period got.
+
+    Built from continuation targets and declared signatures alone, so two
+    builds of one model assign a period the same key. Two periods share a step
+    exactly when they share this key.
+    """
 
     carry_template: EGMCarry
     """The regime's all-finite carry template (discrete states, then passive

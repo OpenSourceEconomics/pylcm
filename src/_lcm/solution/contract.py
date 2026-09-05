@@ -602,6 +602,20 @@ class SolutionKernels:
     period_kernels: Mapping[int, PeriodKernel]
     """Immutable mapping of period to the regime's uniform period adapter."""
 
+    period_group_keys: Mapping[int, Hashable] = MappingProxyType({})
+    """Immutable mapping of period to the key this solver grouped it under.
+
+    A solver that builds one numerical core per group of periods publishes the
+    key each period's group was selected by, so a consumer keying a compiled
+    program can say which periods the solver itself treated alike. The key must
+    be durable — built from declared signatures and names rather than from
+    object addresses — because a compilation key that folds it in is compared
+    across model constructions.
+
+    Empty for a solver whose periods are grouped by the engine alone; a period
+    missing from the mapping carries no solver grouping.
+    """
+
     continuation_spec: ContinuationSpec | None = None
     """Template and identity of the continuation this solver's kernels publish."""
 
@@ -628,6 +642,9 @@ class SolutionKernels:
         """Snapshot mappings and reject contradictory artifact identities."""
         object.__setattr__(
             self, "period_kernels", MappingProxyType(dict(self.period_kernels))
+        )
+        object.__setattr__(
+            self, "period_group_keys", MappingProxyType(dict(self.period_group_keys))
         )
         authorities = dict(self.artifact_authorities)
         if any(

@@ -203,38 +203,47 @@ def test_compilation_key_tracks_layout_tree_and_shardings():
     assert first.compilation_key == same.compilation_key
     assert first.compilation_key != different.compilation_key
 
-    def func(x):
-        return x
+    identity = ("program", "fingerprint", "regime", "main", ("signature",), None)
+    other_identity = ("program", "fingerprint", "regime", "carry", ("signature",), None)
 
-    def other_func(x):
-        return x
-
-    assert _lowering_key(func=func, layout_key=first.compilation_key) == _lowering_key(
-        func=func, layout_key=same.compilation_key
+    assert _lowering_key(
+        program_identity=identity, layout_key=first.compilation_key
+    ) == _lowering_key(program_identity=identity, layout_key=same.compilation_key)
+    assert _lowering_key(
+        program_identity=identity, layout_key=first.compilation_key
+    ) != _lowering_key(program_identity=identity, layout_key=different.compilation_key)
+    assert _lowering_key(
+        program_identity=identity, layout_key=first.compilation_key
+    ) != _lowering_key(
+        program_identity=other_identity, layout_key=first.compilation_key
     )
-    assert _lowering_key(func=func, layout_key=first.compilation_key) != _lowering_key(
-        func=func, layout_key=different.compilation_key
-    )
-    assert _lowering_key(func=func, layout_key=first.compilation_key) != _lowering_key(
-        func=other_func, layout_key=first.compilation_key
-    )
 
 
-def test_lowering_key_tracks_positional_partial_bindings() -> None:
+def test_lowering_key_reads_the_program_identity_not_the_bound_callable() -> None:
+    """The key follows the program identity, not the object the program is carried on.
+
+    A compilation key says what a program computes. Which Python object carries
+    it — a partial over one policy object or over another — is not part of that
+    claim, so equal identities give one key and distinct identities give two.
+    """
+
     def core(_static_policy: object, /) -> object:
         return _static_policy
 
-    policy = object()
-    first = functools.partial(core, policy)
-    equivalent = functools.partial(core, policy)
-    different = functools.partial(core, object())
+    identity = ("program", "fingerprint", "regime", "main", ("signature",), None)
+    other_identity = ("program", "fingerprint", "regime", "main", ("other",), None)
+    first = functools.partial(core, object())
+    second = functools.partial(core, object())
+    # The two partials bind different objects, so a callable-keyed identity
+    # would separate them; the program identity is what decides here.
+    assert first() is not second()
 
-    first_key = _lowering_key(func=first, layout_key=("layout",))
-    equivalent_key = _lowering_key(func=equivalent, layout_key=("layout",))
-    different_key = _lowering_key(func=different, layout_key=("layout",))
-
-    assert first_key == equivalent_key
-    assert first_key != different_key
+    assert _lowering_key(
+        program_identity=identity, layout_key=("layout",)
+    ) == _lowering_key(program_identity=identity, layout_key=("layout",))
+    assert _lowering_key(
+        program_identity=identity, layout_key=("layout",)
+    ) != _lowering_key(program_identity=other_identity, layout_key=("layout",))
 
 
 def test_role_tree_output_mismatch_fails_during_lowering():

@@ -209,6 +209,7 @@ def _solve_and_simulate():
         }
     )
     bi_result = solve(
+        model_fingerprint="test_carried_state_through_gated_self_loop",
         flat_params=flat_params,
         ages=ages,
         regimes=regimes,

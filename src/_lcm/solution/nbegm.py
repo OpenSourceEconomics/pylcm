@@ -577,6 +577,7 @@ class NBEGM(OneMarginSolver):
         cores: dict[Hashable, Callable] = {}
         laws: dict[Hashable, Callable[..., tuple[Float1D, Float1D]]] = {}
         period_kernels: dict[int, PeriodKernel] = {}
+        period_group_keys: dict[int, Hashable] = {}
         variable_names = (
             frozenset(context.state_action_space.states)
             | frozenset(context.state_action_space.continuous_actions)
@@ -617,6 +618,7 @@ class NBEGM(OneMarginSolver):
                 laws[group_key] = law
                 grouped_param_checks.extend(checks)
                 cores[group_key] = jax.jit(core) if context.enable_jit else core
+            period_group_keys[period] = group_key
             period_kernels[period] = _build_egm_period_kernel(
                 core=cores[group_key],
                 declared_law=laws[group_key],
@@ -635,6 +637,7 @@ class NBEGM(OneMarginSolver):
             )
         return SolutionKernels(
             period_kernels=MappingProxyType(period_kernels),
+            period_group_keys=MappingProxyType(period_group_keys),
             continuation_spec=EGMContinuationSpec(
                 template=_build_nbegm_feasibility_carry_template(
                     liquid_grid=liquid_grid,
@@ -764,6 +767,7 @@ class NBEGM(OneMarginSolver):
         statics_by_key: dict[_RideAlongGroupKey, _NBEGMRideAlongStatics] = {}
         cliff_candidates_by_key: dict[_RideAlongGroupKey, bool] = {}
         period_kernels: dict[int, PeriodKernel] = {}
+        period_group_keys: dict[int, Hashable] = {}
         for period in active_periods:
             resolved = resolve_solver_build_context(context=context, period=period)
             group_spec = _collect_nbegm_schedule_spec(
@@ -919,6 +923,7 @@ class NBEGM(OneMarginSolver):
                 )
                 statics_by_key[key] = statics
                 cliff_candidates_by_key[key] = cliff_candidates
+            period_group_keys[period] = key
             period_kernels[period] = _RideAlongNBEGMPeriodKernel(
                 _core_programs=programs_by_key[key],
                 statics=statics_by_key[key],
@@ -939,6 +944,7 @@ class NBEGM(OneMarginSolver):
         )
         return SolutionKernels(
             period_kernels=MappingProxyType(period_kernels),
+            period_group_keys=MappingProxyType(period_group_keys),
             continuation_spec=EGMContinuationSpec(
                 template=_shard_ride_carry_template(
                     template=_build_ride_along_carry_template(
