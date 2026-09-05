@@ -2572,8 +2572,8 @@ def _stacked_branch_codes(
 def _branch_inputs(
     *,
     codes: IntND,
-    cont_value: FloatND,
-    cont_marginal: FloatND,
+    cont_value: FloatND | None,
+    cont_marginal: FloatND | None,
     extra_cont_value: FloatND | None,
     cliff_savings: FloatND | None,
 ) -> dict[str, Any]:
@@ -2583,11 +2583,11 @@ def _branch_inputs(
     regime without child cliffs or an extra continuation maps a narrower tree
     rather than one padded with sentinels that every branch would then carry.
     """
-    inputs: dict[str, Any] = {
-        "codes": codes,
-        "cont_value": cont_value,
-        "cont_marginal": cont_marginal,
-    }
+    inputs: dict[str, Any] = {"codes": codes}
+    if cont_value is not None:
+        inputs["cont_value"] = cont_value
+    if cont_marginal is not None:
+        inputs["cont_marginal"] = cont_marginal
     if extra_cont_value is not None:
         inputs["extra_cont_value"] = extra_cont_value
     if cliff_savings is not None:
@@ -5469,11 +5469,16 @@ def _build_nbegm_tiled_core(
             comap_values = tuple(comap_bindings[name] for name in co_map_names)
 
             def solve_cell(inner_values: tuple[Any, ...]) -> tuple[FloatND, ...]:
-                rows = cell_continuation(inner_values)
+                continuation = cell_continuation(inner_values)
+                if isinstance(continuation, _NBEGMIntervalContinuation):
+                    return solve_one_cell(
+                        ride_values=(*comap_values, *inner_values),
+                        interval_continuation=continuation,
+                    )
                 return solve_one_cell(
                     ride_values=(*comap_values, *inner_values),
                     **_nbegm_continuation_channels(
-                        rows=rows, cliff_candidates=cliff_candidates
+                        rows=continuation, cliff_candidates=cliff_candidates
                     ),
                 )
 
@@ -5601,7 +5606,15 @@ def _solve_nbegm_over_co_map(
     return solve_with_co_map(carry=carry, remaining=co_map_names, comap_bindings={})
 
 
-def _bind_nbegm_cell_continuation(  # noqa: C901
+@dataclass(frozen=True, kw_only=True)
+class _NBEGMIntervalContinuation:
+    """Bind a discrete branch to a fixed-width continuation block reader."""
+
+    bind: Callable[..., Callable[[IntND], tuple[FloatND, ...]]]
+    """Return ``read(interval_indices)`` for one cell and action binding."""
+
+
+def _bind_nbegm_cell_continuation(  # noqa: C901, PLR0915
     *,
     kwargs: dict[str, Any],
     carry: MappingProxyType[RegimeName, EGMCarry],
@@ -5612,7 +5625,7 @@ def _bind_nbegm_cell_continuation(  # noqa: C901
     regime_name: RegimeName,
     cliff_candidates: bool,
     schedule_spec: _NBEGMScheduleSpec,
-) -> Callable[[tuple[Any, ...]], tuple[FloatND, ...]]:
+) -> Callable[[tuple[Any, ...]], tuple[FloatND, ...] | _NBEGMIntervalContinuation]:
     """Bind one period's inputs into the per-cell continuation read.
 
     The returned callable takes one inner ride cell's coordinates (the ride states
@@ -5621,6 +5634,8 @@ def _bind_nbegm_cell_continuation(  # noqa: C901
     each with a leading branch axis when the regime carries a discrete action and an
     interval axis when the continuation reads the liquid state, plus the
     save-to-cliff savings targets when the one-sided read publishes jump topology.
+    With a positive interval batch size it instead returns a branch-bindable reader;
+    the interval scan requests and consumes one fixed-width row block at a time.
     """
     from _lcm.egm.continuation import bind_continuation  # noqa: PLC0415
     from _lcm.egm.nbegm_breakpoints import interval_midpoints  # noqa: PLC0415
@@ -5636,13 +5651,21 @@ def _bind_nbegm_cell_continuation(  # noqa: C901
     liquid = jnp.asarray(kwargs[liquid_name], dtype=dtype)
     param_pool = {key: v for key, v in kwargs.items() if key not in state_names}
 
-    def cell_continuation(ride_values: tuple[Any, ...]) -> tuple[FloatND, ...]:
+    def cell_continuation(
+        ride_values: tuple[Any, ...],
+    ) -> tuple[FloatND, ...] | _NBEGMIntervalContinuation:
         cell = dict(zip(inner_ride_names, ride_values, strict=True))
 
         def rows_for_pool(combo_pool: dict[str, Any]) -> tuple[FloatND, ...]:
             return _cell_rows_for_pool(combo_pool)
 
         base_pool = {**param_pool, **comap_bindings, **cell}
+        if statics.continuation_reads_liquid and statics.interval_batch_size > 0:
+            return _NBEGMIntervalContinuation(
+                bind=lambda *, action_binding: _bind_cell_interval_reader_for_pool(
+                    {**base_pool, **action_binding}
+                )
+            )
         if not action_names:
             return rows_for_pool(base_pool)
 
@@ -5677,6 +5700,84 @@ def _bind_nbegm_cell_continuation(  # noqa: C901
             statics.continuation_class_of_branch, dtype=jnp.int32
         )
         return jax.tree.map(lambda leaf: leaf[class_of_branch], class_rows)
+
+    def _bind_cell_interval_reader_for_pool(
+        combo_pool: dict[str, Any],
+    ) -> Callable[[IntND], tuple[FloatND, ...]]:
+        """Bind one branch and read only the interval indices a scan requests."""
+        cell = {name: combo_pool[name] for name in ride_names}
+        cell_action_binding = {
+            name: combo_pool[name] for name in action_names if name in combo_pool
+        }
+        breakpoints, _ = _nbegm_cell_breakpoints(
+            statics=statics,
+            kwargs=kwargs,
+            cell=cell,
+            liquid_grid=liquid,
+            dtype=dtype,
+            action_binding=cell_action_binding,
+        )
+        midpoints = interval_midpoints(liquid_grid=liquid, breakpoints=breakpoints)
+        cliff_targets = (
+            _cliff_savings_targets(
+                continuation_plan=continuation_plan,
+                regime_name=regime_name,
+                statics=statics,
+                kwargs=kwargs,
+                cell=cell,
+                combo_pool=combo_pool,
+                liquid_grid=liquid,
+                savings_grid=savings_grid,
+                dtype=dtype,
+                midpoints=midpoints,
+            )
+            if cliff_candidates
+            else None
+        )
+
+        def query_with(targets: FloatND) -> Float1D:
+            return jnp.concatenate(
+                [
+                    savings_grid,
+                    jnp.where(jnp.isnan(targets), savings_grid[0], targets),
+                ]
+            )
+
+        def interval_rows(
+            interval_inputs: tuple[FloatND, ...],
+        ) -> tuple[Float1D, Float1D]:
+            midpoint, *interval_targets = interval_inputs
+            interval_pool = {**combo_pool, liquid_name: midpoint}
+            interval_continuation = bind_continuation(
+                plan=continuation_plan,
+                combo_pool=interval_pool,
+                next_regime_to_continuation=carry,
+                dtype=dtype,
+                co_map_state_names=co_map_names,
+            )
+            query = (
+                savings_grid
+                if not interval_targets
+                else query_with(interval_targets[0])
+            )
+            return jax.vmap(interval_continuation)(query)
+
+        def read(interval_indices: IntND) -> tuple[FloatND, ...]:
+            selected_midpoints = midpoints[interval_indices]
+            selected_targets = (
+                None if cliff_targets is None else cliff_targets[interval_indices]
+            )
+            inputs = (
+                (selected_midpoints,)
+                if selected_targets is None
+                else (selected_midpoints, selected_targets)
+            )
+            rows = jax.vmap(interval_rows)(inputs)
+            if selected_targets is None:
+                return rows
+            return (*rows, selected_targets)
+
+        return read
 
     def _cell_rows_for_pool(combo_pool: dict[str, Any]) -> tuple[FloatND, ...]:
         cell = {name: combo_pool[name] for name in ride_names}
@@ -5879,7 +5980,7 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
     n_published_boundaries = statics.n_published_jumps + n_feasibility_boundaries
     schedule_kinds = tuple(source.kind for source in statics.sources)
 
-    def bind_cell(  # noqa: PLR0915
+    def bind_cell(  # noqa: C901, PLR0915
         kwargs: Mapping[str, Any],
     ) -> Callable[..., tuple[FloatND, ...]]:
         dtype = canonical_float_dtype()
@@ -5898,19 +5999,27 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
             else None
         )
 
-        def solve_one_cell(
+        def solve_one_cell(  # noqa: C901, PLR0915
             *,
             ride_values: tuple[Any, ...],
-            cont_value: FloatND,
-            cont_marginal: FloatND,
+            cont_value: FloatND | None = None,
+            cont_marginal: FloatND | None = None,
             cliff_savings: FloatND | None = None,
+            interval_continuation: _NBEGMIntervalContinuation | None = None,
         ) -> tuple[FloatND, ...]:
-            cont_value, cont_marginal, extra_cont_value = _split_cliff_columns(
-                cont_value=cont_value,
-                cont_marginal=cont_marginal,
-                n_nodes=savings_grid.shape[0],
-                has_cliff_columns=cliff_savings is not None,
-            )
+            if interval_continuation is None:
+                if cont_value is None or cont_marginal is None:
+                    raise ValueError(
+                        "one-shot NB-EGM cells require value and marginal rows."
+                    )
+                cont_value, cont_marginal, extra_cont_value = _split_cliff_columns(
+                    cont_value=cont_value,
+                    cont_marginal=cont_marginal,
+                    n_nodes=savings_grid.shape[0],
+                    has_cliff_columns=cliff_savings is not None,
+                )
+            else:
+                extra_cont_value = None
             cell = dict(zip(ride_names, ride_values, strict=True))
 
             # With published jump breakpoints, the cell publishes each jump's preimage
@@ -5967,8 +6076,8 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
             def solve_branch(
                 *,
                 action_binding: Mapping[str, IntND],
-                branch_cont_value: FloatND,
-                branch_cont_marginal: FloatND,
+                branch_cont_value: FloatND | None,
+                branch_cont_marginal: FloatND | None,
                 branch_extra_cont_value: FloatND | None,
                 branch_cliff_savings: FloatND | None,
             ) -> tuple[Float1D, Float1D, Float1D]:
@@ -6052,6 +6161,11 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
                     # feasible where a partly-binding kink makes an interval's recovered
                     # affine budget extrapolate below zero.
                     coh_grid = jax.vmap(coh_of_liquid)(query_grid)
+                    branch_interval_reader = (
+                        None
+                        if interval_continuation is None
+                        else interval_continuation.bind(action_binding=action_binding)
+                    )
                     return nbegm_per_interval_continuation_step_savings(
                         cont_value=branch_cont_value,
                         cont_marginal=branch_cont_marginal,
@@ -6069,6 +6183,12 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
                         extra_cont_value=branch_extra_cont_value,
                         feasibility_partition=feasibility_partition,
                         feasible_interval_mask=feasible_interval_mask,
+                        interval_block_reader=branch_interval_reader,
+                        interval_batch_size=statics.interval_batch_size,
+                    )
+                if branch_cont_value is None or branch_cont_marginal is None:
+                    raise ValueError(
+                        "a smooth NB-EGM cell cannot use an interval continuation."
                     )
                 return _solve_ride_along_cell_step(
                     has_jump=statics.has_jump,
@@ -6136,8 +6256,8 @@ def _build_nbegm_envelope_core(  # noqa: C901, PLR0915
                     }
                     step = solve_branch(
                         action_binding=binding,
-                        branch_cont_value=inputs["cont_value"],
-                        branch_cont_marginal=inputs["cont_marginal"],
+                        branch_cont_value=inputs.get("cont_value"),
+                        branch_cont_marginal=inputs.get("cont_marginal"),
                         branch_extra_cont_value=inputs.get("extra_cont_value"),
                         branch_cliff_savings=inputs.get("cliff_savings"),
                     )

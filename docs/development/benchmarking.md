@@ -76,22 +76,28 @@ pixi run -e benchmarks-cuda12 grid-search-pair \
     --base-revision <full-base-commit> \
     --head-checkout /path/to/head \
     --head-revision <full-head-commit> \
+    --harness-revision <full-harness-commit> \
     --output /path/outside/both/checkouts/grid-search-pair \
     --precision 32 \
     --backend gpu \
     --repeats 4
 ```
 
-Both revisions must be full 40-character commit hashes. The head checkout supplies the
-harness, and all three checkouts must agree on the lock file and scenario-owned sources.
-The output directory must not already exist and must lie outside the harness, base, and
-head checkouts.
+All three revisions must be full 40-character commit hashes. The checkout you run the
+task from supplies the harness and is validated against `--harness-revision`, so it need
+not be the head checkout; all three checkouts must agree on the lock file and
+scenario-owned sources. The output directory must not already exist and must lie outside
+the harness, base, and head checkouts.
 
-The harness measures five named routes: singleton hard max, singleton EV1, collective
-GridSearch with value-dependent inputs, distributed co-map, and folded singleton hard
-max. The distributed row always uses exactly four CPU devices; the other rows use the
-requested backend. Use at least two repeats so execution alternates base--head on even
-repeats and head--base on odd repeats; four repeats are the balanced evidence profile.
+The harness measures eleven named scenarios. Five are GridSearch routes: singleton hard
+max, singleton EV1, collective GridSearch with value-dependent inputs, distributed
+co-map, and folded singleton hard max. The other six are the full 18-regime ACA baseline
+at each combination of 3 or 6 asset points and 16, 64, or 256 consumption points, named
+`aca-a<assets>-c<consumption>`. Pass `--scenario` once per name to measure a subset;
+omitting it measures all eleven. The distributed row always uses exactly four CPU
+devices; the other rows use the requested backend. Use at least two repeats so execution
+alternates base--head on even repeats and head--base on odd repeats; four repeats are
+the balanced evidence profile.
 
 Every pair must pass numerical value parity and exact output shape, dtype, and sharding
 parity. The harness also requires non-empty HLO and compiler-memory status for every

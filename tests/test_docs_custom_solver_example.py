@@ -7,6 +7,7 @@ engine accepts, and still publishes the value it says it publishes, so the fence
 is executed here instead of read.
 """
 
+import ast
 import re
 from pathlib import Path
 from typing import Any
@@ -66,6 +67,21 @@ def _next_regime(age: ScalarFloat) -> ScalarInt:
 
 def _terminal_utility(*, wealth: Float1D) -> Float1D:
     return 0.0 * wealth
+
+
+def test_the_documented_fence_imports_nothing_private() -> None:
+    """The exact example contributors copy imports no engine-private module."""
+    tree = ast.parse(_documented_solver_source(), filename=str(_PAGE))
+    private_imports = [
+        node
+        for node in ast.walk(tree)
+        if (isinstance(node, ast.ImportFrom) and (node.module or "").startswith("_lcm"))
+        or (
+            isinstance(node, ast.Import)
+            and any(alias.name.startswith("_lcm") for alias in node.names)
+        )
+    ]
+    assert private_imports == []
 
 
 def test_the_documented_page_defines_the_solver_it_describes(

@@ -156,9 +156,9 @@ surfaces as early as it can be seen.
   `required_continuation_keys`. A reachable target that publishes another key, or none,
   is refused while the model builds, with both regimes and the demanded version named.
 - The child kernel returns `KernelOutput(value=..., continuations={key: payload})`. A
-  missing required continuation, a payload under a key no parent reads, or a payload
-  that is not a `ContinuationArtifact` is refused during the solve, with the regime and
-  period named.
+  missing required continuation, a payload under a key other than the child's declared
+  `ContinuationSpec.artifact_key`, or a payload that is not a `ContinuationArtifact` is
+  refused during the solve, with the regime and period named.
 
 `EGMContinuationSpec` is the shipped specialization: its template is an `EGMCarry`, its
 key is `EGM_CONTINUATION`, and it adds the layout properties a reading EGM parent needs.

@@ -664,7 +664,8 @@ PYLCM_HD PYLCM_INLINE int32_t CertifiedSlopeCompare(
 template <typename T>
 PYLCM_HD PYLCM_INLINE bool ExactQueryWinner(
     const T* left_grid, const T* right_grid, const T* left_value,
-    const T* right_value, const int32_t* live, int32_t n_segment, T query,
+    const T* right_value, const int32_t* live,
+    const int32_t* stable_index, int32_t n_segment, T query,
     int32_t* winner) {
   if (n_segment <= 0 || !Decode(query).finite) return false;
 
@@ -718,8 +719,11 @@ PYLCM_HD PYLCM_INLINE bool ExactQueryWinner(
             held.x1, held.v0, held.v1);
         if (slope_order == kUnresolved) return false;
         replace = slope_order > 0;
-        // An exact slope tie keeps the earlier segment. Iterating in stored
-        // order therefore implements the stable-index final field.
+        if (slope_order == 0) {
+          // Operand position is not an identity: a blocked reduction may
+          // reintroduce the standing winner anywhere in a later block.
+          replace = stable_index[index] < stable_index[held_index];
+        }
       }
     }
     if (replace) {

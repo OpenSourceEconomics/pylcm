@@ -234,16 +234,23 @@ The memory controls do not all mean “compiled batch width”:
 
 - `stochastic_node_batch_size` and `envelope_segment_block_size` stream their named
   intermediate axes;
-- `interval_batch_size`, `cell_block_size`, and `branch_batch_size` are compiled
-  `lax.map` batch widths for their respective interval, ride-cell, and discrete-branch
-  axes; the continuation read behind the branch axis runs once per class of branches
-  that agree on every discrete action reaching the continuation (the regime
-  transition, a law of motion, stochastic-state transition weights, a child's
-  resources, the discount factor, or, on a per-interval read, a schedule variable),
-  so a budget-only action costs one read
-  per cell however many branches it declares;
-- lower positive values can bound how many entries that mapped core evaluates together,
-  while `0` or a value covering the axis selects one vectorized pass.
+- `interval_batch_size` streams the continuation read and the candidate-envelope fold
+  together. A positive width reads only that many interval rows, folds their candidates
+  into one standing winner per query, then requests the next block. The standing winner
+  retains its global stored-link index, so every partition resolves ownership exactly as
+  the one-shot layout does under both envelope arithmetics — the same query nodes are
+  feasible and the same candidate owns each of them. The published levels agree to
+  within a few units in the last place rather than bit for bit, because a width is also
+  a compiled vmap width and the backend vectorizes each one differently.
+  `interval_batch_size=0` keeps the one-shot continuation matrix and envelope reduction;
+- `cell_block_size` and `branch_batch_size` are compiled `lax.map` batch widths for the
+  ride-cell and discrete-branch axes. The continuation read behind the branch axis runs
+  once per class of branches that agree on every discrete action reaching the
+  continuation (the regime transition, a law of motion, stochastic-state transition
+  weights, a child's resources, the discount factor, or a schedule variable), so a
+  budget-only action costs one read per cell however many branches it declares;
+- lower positive values bound the named streamed or mapped width. For the map-width
+  controls, `0` or a value covering the axis selects one vectorized pass.
 
 These fields bound only their named mapped work, not surrounding arrays or total memory.
 
