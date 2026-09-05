@@ -2659,6 +2659,9 @@ def _build_solution_phase(
     period_to_state_nodes = _period_to_state_nodes(
         regime_name=regime_name, grid_schedule=grid_schedule
     )
+    # Set by whichever branch below builds the decision kernels, to the key
+    # their periods were grouped by; `None` where one closure serves every period.
+    decision_group_key: Callable[..., Hashable] | None = None
     if spec.terminal:
         compute_regime_transition_probs = None
         validation_regime_transition_probs = None
@@ -2677,6 +2680,11 @@ def _build_solution_phase(
                 regime_to_v_interpolation_info=regime_to_v_interpolation_info,
                 period_to_regime_v_interp=period_to_regime_v_interp,
             )
+            # A value constraint makes that builder read a same-period reference
+            # grid, which moves with age, so it compiles one closure per period.
+            # Without one every period shares a single closure.
+            if value_aware_feasibility.value_constraints:
+                decision_group_key = _PerPeriodGroupKey(label="terminal-collective")
         else:
             terminal_func = get_Q_and_F_terminal(
                 flat_param_names=flat_param_names,
@@ -2732,7 +2740,7 @@ def _build_solution_phase(
             )
             for state in co_map_state_names
         )
-        Q_and_F_functions = _build_Q_and_F_per_period(
+        grouped_Q_and_F = _build_Q_and_F_per_period(
             active_periods=regimes_to_active_periods[regime_name],
             phase_reachability=phase_reachability,
             source_regime_name=regime_name,
@@ -2753,6 +2761,8 @@ def _build_solution_phase(
             grid_schedule=grid_schedule,
             gated_continuations=gated_continuations,
         )
+        Q_and_F_functions = grouped_Q_and_F.by_period
+        decision_group_key = grouped_Q_and_F.group_key
         if stakeholders is not None:
             # The NaN-diagnostics intermediates mirror
             # the singleton Q evaluation (one `utility` target), which a
@@ -2922,6 +2932,12 @@ def _build_solution_phase(
         reachability=phase_reachability,
         compute_regime_transition_probs=compute_regime_transition_probs,
         period_kernels=period_kernels,
+        period_signatures=_build_period_signatures(
+            active_periods=solution_active_periods,
+            decision_group_key=decision_group_key,
+            user_regime=user_regimes[regime_name],
+            grid_schedule=grid_schedule,
+        ),
         validation_regime_transition_probs=validation_regime_transition_probs,
         compute_intermediates=compute_intermediates,
         continuation_spec=continuation_spec,
@@ -2934,6 +2950,113 @@ def _build_solution_phase(
         _base_state_action_space=state_action_space,
         period_state_axes=period_state_axes,
     )
+
+
+@dataclass(frozen=True, kw_only=True)
+class _PerPeriodGroupKey:
+    """Grouping key of a builder that compiles one object per period."""
+
+    label: str
+    """Name of the grouping this key stands for."""
+
+    def __call__(self, *, period: int) -> Hashable:
+        """Return a key putting every period in a group of its own."""
+        return (self.label, period)
+
+
+def _build_period_signatures(
+    *,
+    active_periods: tuple[int, ...],
+    decision_group_key: Callable[..., Hashable] | None,
+    user_regime: UserRegime,
+    grid_schedule: AgeGridSchedule | None,
+) -> MappingProxyType[int, Hashable]:
+    """Record the signature every per-period grouping assigned each active period.
+
+    One component per grouping that builds the regime's solve kernels:
+
+    - the decision (`Q_and_F`) grouping, or `None` where a terminal regime's
+      kernel is one period-invariant closure;
+    - the gated-edge fold grouping the decision kernel consumes, or `None` for a
+      regime declaring no gated edge.
+
+    A component is never coarser than the grouping it stands for, so two periods
+    carrying equal signatures were put in one group by every grouping.
+
+    Args:
+        active_periods: The regime's active periods.
+        decision_group_key: The per-period key the regime's Q-and-F closures were
+            grouped by, or `None` where they are period-invariant.
+        user_regime: The finalized user regime, read for its gated edges.
+        grid_schedule: Age-specialized grid schedule, or `None`.
+
+    Returns:
+        Immutable mapping of period to its hashable signature.
+
+    """
+    signatures: dict[int, Hashable] = {}
+    for period in active_periods:
+        signature = (
+            "period-signature",
+            1,
+            None if decision_group_key is None else decision_group_key(period=period),
+            _gated_edge_group_components(
+                user_regime=user_regime, grid_schedule=grid_schedule, period=period
+            ),
+        )
+        # Every component is hashable by construction; raise here rather than at
+        # the first compilation keyed on the signature if a new one is not.
+        hash(signature)
+        signatures[period] = signature
+    return MappingProxyType(signatures)
+
+
+def _gated_edge_group_components(
+    *, user_regime: UserRegime, grid_schedule: AgeGridSchedule | None, period: int
+) -> Hashable:
+    """Fingerprint the gated-edge folds a period's decision kernel consumes.
+
+    A gated source's kernel at `period` takes the fold and the routing gate
+    compiled for the period it LANDS in, `period + 1`, so it is that period's
+    grids the two source periods have to agree on. The read set passed here is
+    the edge's declared gate references and leg fallbacks, a superset of the
+    regimes the compiled fold interpolates, which keeps the component at least
+    as fine as the grouping it stands for.
+
+    Args:
+        user_regime: The finalized user regime, read for its gated edges.
+        grid_schedule: Age-specialized grid schedule, or `None`.
+        period: The source regime's period.
+
+    Returns:
+        Tuple of per-target fold and gate-evaluator fingerprints, or `None` for a
+        regime declaring no gated edge.
+
+    """
+    if not user_regime.gated_edges:
+        return None
+    landing_period = period + 1
+    components: list[Hashable] = []
+    for target in sorted(user_regime.gated_edges):
+        read_regimes = _edge_reference_regimes(
+            user_regime=user_regime, targets=(target,)
+        )
+        components.append(
+            (
+                target,
+                _edge_grid_group_key(
+                    period=landing_period,
+                    grid_schedule=grid_schedule,
+                    read_regimes=read_regimes,
+                ),
+                _edge_grid_group_key(
+                    period=landing_period,
+                    grid_schedule=grid_schedule,
+                    read_regimes=(target, *read_regimes),
+                ),
+            )
+        )
+    return tuple(components)
 
 
 def _filter_kwargs_for_func(
@@ -3624,7 +3747,7 @@ def _build_simulation_phase(  # noqa: PLR0912, PLR0915
             continuation_functions=solve_functions,
             grid_schedule=grid_schedule,
             gated_continuations=gated_continuations,
-        )
+        ).by_period
 
     argmax_and_max_Q_over_a = _build_argmax_and_max_Q_over_a_per_period(
         state_action_space=state_action_space,
@@ -6622,6 +6745,17 @@ def _build_terminal_collective_Q_and_F_per_period(
     )
 
 
+@dataclass(frozen=True, kw_only=True)
+class _GroupedQAndF:
+    """A regime's per-period Q-and-F closures beside the key that grouped them."""
+
+    by_period: MappingProxyType[int, QAndFFunction]
+    """Immutable mapping of period to the closure built for that period's group."""
+
+    group_key: Callable[..., Hashable]
+    """The per-period grouping key the closures were built under."""
+
+
 def _build_Q_and_F_per_period(
     *,
     active_periods: tuple[int, ...],
@@ -6650,7 +6784,7 @@ def _build_Q_and_F_per_period(
     gated_continuations: Mapping[RegimeName, GatedContinuationSchedule] = (
         MappingProxyType({})
     ),
-) -> MappingProxyType[int, QAndFFunction]:
+) -> _GroupedQAndF:
     """Build Q-and-F closures for each active period of a non-terminal regime.
 
     Periods sharing the same target-regime configuration and static signature
@@ -6878,7 +7012,12 @@ def _build_Q_and_F_per_period(
             gated_continuations=period_gated_continuations,
         )
 
-    return expand_groups_to_periods(grouped_periods=configs, built_by_group=built)
+    return _GroupedQAndF(
+        by_period=expand_groups_to_periods(
+            grouped_periods=configs, built_by_group=built
+        ),
+        group_key=group_key,
+    )
 
 
 def _build_argmax_and_max_Q_over_a_per_period(
