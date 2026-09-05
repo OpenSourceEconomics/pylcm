@@ -149,7 +149,7 @@ A kernel that publishes more than one program can hand one program's output to a
 as an argument, instead of lowering the consumer against a stand-in it fills in later.
 The producer declares what it publishes and the consumer declares what it reads:
 
-```python
+```{code-block} python
 producer = CoreProgram(
     name="keeper",
     function=keeper_body,
