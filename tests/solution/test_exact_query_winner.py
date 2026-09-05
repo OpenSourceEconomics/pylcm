@@ -588,3 +588,41 @@ def test_batched_winner_breaks_an_exact_tie_by_stable_identity_in_either_slot(
         stable_index=jnp.asarray([stable_index], dtype=jnp.int32),
     )
     assert (int(status[0, 0]), int(winner[0, 0])) == (0, stable_index.index(2))
+
+
+@pytest.mark.parametrize("dtype", _DTYPES)
+@pytest.mark.parametrize(
+    ("query", "left", "right", "v_left", "v_right"),
+    [
+        # A unit line and a point both read 1 at the origin; the line extends to
+        # the right of the query and the point does not.
+        (0.0, (0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (1.0, 1.0)),
+        # Two lines through (0.5, 1), both extending right; the steeper one wins.
+        (0.5, (0.0, 0.0), (1.0, 1.0), (0.5, 1.0), (1.5, 1.0)),
+    ],
+    ids=["right-extension-over-identity", "slope-over-identity"],
+)
+def test_batched_winner_orders_a_link_over_a_tied_rival_before_identity(
+    *,
+    dtype,
+    query: float,
+    left: tuple[float, float],
+    right: tuple[float, float],
+    v_left: tuple[float, float],
+    v_right: tuple[float, float],
+) -> None:
+    """Right extension and then slope decide a tied value before the identity does.
+
+    The first segment carries the larger identity, so it wins only because a field
+    ahead of the identity separates the two.
+    """
+    winner, status = exact_query_winner_batched(
+        left_grid=jnp.asarray([left], dtype=dtype),
+        right_grid=jnp.asarray([right], dtype=dtype),
+        left_value=jnp.asarray([v_left], dtype=dtype),
+        right_value=jnp.asarray([v_right], dtype=dtype),
+        live=jnp.ones((1, 2), dtype=bool),
+        x_query=jnp.asarray([[query]], dtype=dtype),
+        stable_index=jnp.asarray([[9, 2]], dtype=jnp.int32),
+    )
+    assert (int(status[0, 0]), int(winner[0, 0])) == (0, 0)

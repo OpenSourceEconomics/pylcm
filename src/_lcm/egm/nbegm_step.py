@@ -1600,7 +1600,10 @@ def _streamed_interval_continuation_envelope(
     identities as the one-shot layout, so no partition can move a query to
     another candidate by where a record is stored. The records themselves are
     produced by kernels the backend vectorizes per compiled block width, so a
-    width can move a record by a unit in the last place: the published levels
+    width can move a record by a few units in the last place, and by more where
+    a candidate's own arithmetic cancels, as a point candidate's consumption
+    does when a grid point's cash-on-hand and a savings node nearly coincide:
+    the published levels
     agree with the one-shot layout to within a few units in the last place rather
     than bit for bit, and two candidates whose reads tie to within that spacing
     are ordered by the records each width produced.
