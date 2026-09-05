@@ -67,6 +67,7 @@ from _lcm.engine import ParamCheck, StateActionSpace
 from _lcm.execution.core_program import (
     CoreArgumentBuilder,
     CoreBuildContext,
+    CoreExecutionDisposition,
     CoreProgram,
     core_program_graph,
 )
@@ -134,6 +135,11 @@ from lcm.typing import (
     IntND,
     StateName,
 )
+
+# Why the adaptive mesh's adjuster programs are host-driven: the mesh driver
+# decides from the solves it has already seen how many more nodes to request,
+# so the number of adjuster dispatches is data-dependent and owned by the host.
+_ADAPTIVE_HOST_DRIVEN_REASON = "host_driven:adaptive_outer_mesh_refinement"
 
 
 @beartype(conf=REGIME_CONF)
@@ -976,6 +982,10 @@ class _NNBEGMPeriodKernel:
         publishes the value and the carry alone; a replay-retaining solve
         dispatches the inner `replay` programs and assembles the nested policy
         from their banks.
+
+        The keeper's programs keep the inner disposition; the adjuster's take
+        whichever `_adjuster_disposition` returns, so an outer search that
+        dispatches the adjuster from a host loop republishes it host-driven.
         """
         programs: dict[str, CoreProgram] = {}
         for role, kernel, outer_node in (
@@ -998,6 +1008,11 @@ class _NNBEGMPeriodKernel:
                     retained_artifact_payload_types[SIMULATION_POLICY] = (
                         self._published_policy_type
                     )
+                disposition, disposition_reason = (
+                    (program.disposition, program.disposition_reason)
+                    if role == "keeper"
+                    else self._adjuster_disposition(program=program)
+                )
                 programs[f"{role}:{name}"] = replace(
                     program,
                     name=f"{role}:{name}",
@@ -1010,6 +1025,8 @@ class _NNBEGMPeriodKernel:
                         inner=program.argument_builder, outer_node=outer_node
                     ),
                     retained_artifact_payload_types=(retained_artifact_payload_types),
+                    disposition=disposition,
+                    disposition_reason=disposition_reason,
                 )
         object.__setattr__(self, "_core_programs", MappingProxyType(programs))
 
@@ -1017,6 +1034,16 @@ class _NNBEGMPeriodKernel:
     def _published_policy_type(self) -> type[object]:
         """Return the final policy type assembled by this composite kernel."""
         raise NotImplementedError
+
+    def _adjuster_disposition(
+        self, *, program: CoreProgram
+    ) -> tuple[CoreExecutionDisposition, str | None]:
+        """Return the disposition the adjuster's programs are republished under.
+
+        The adjuster is dispatched once, exactly like the keeper, so it keeps the
+        inner program's own disposition.
+        """
+        return program.disposition, program.disposition_reason
 
     def core_programs(self) -> Mapping[str, CoreProgram]:
         """Return the native graph used by eager, JIT, AOT, and replay paths."""
@@ -1569,6 +1596,13 @@ class _AdaptiveNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
     def _published_policy_type(self) -> type[object]:
         """Return the nested policy payload published after composition."""
         return NestedEGMSimPolicy
+
+    def _adjuster_disposition(
+        self, *, program: CoreProgram
+    ) -> tuple[CoreExecutionDisposition, str | None]:
+        """The adaptive mesh dispatches the adjuster once per requested node."""
+        del program
+        return CoreExecutionDisposition.HOST_DRIVEN, _ADAPTIVE_HOST_DRIVEN_REASON
 
     def _solve_outer(
         self,

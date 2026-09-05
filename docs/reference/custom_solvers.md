@@ -129,13 +129,17 @@ class WealthSolver(Solver):
         )
 ```
 
-A program declares its disposition explicitly, and the two cases are mutually exclusive
+A program declares its disposition explicitly, and the cases are mutually exclusive
 rather than a default plus an override. `DENSE` means the solver, not the planner, owns
 the width its body runs at, and it must carry a non-blank `disposition_reason` saying
-why. `PLANNED` hands that choice to the engine and must *not* carry a reason; declaring
-one is refused. A planned program declares whichever action axes the engine may stream,
-together with the reduction each performs, and a solver whose body streams nothing
-declares an empty set — the shipped NB-EGM graph does exactly that.
+why. `HOST_DRIVEN` means the same, and adds that a host loop dispatches the compiled
+program a data-dependent number of times — the driver that owns the loop also owns the
+results it caches between dispatches — so it too must carry a reason. `PLANNED` hands
+the width choice to the engine and must *not* carry a reason; declaring one is refused.
+A planned program declares whichever action axes the engine may stream, together with
+the reduction each performs, and a solver whose body streams nothing declares an empty
+set — the shipped NB-EGM graph does exactly that. Only a planned program may declare a
+streamable axis.
 
 ## Publishing a continuation
 

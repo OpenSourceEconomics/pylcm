@@ -119,10 +119,20 @@ class CoreExecutionRequirements:
 
 
 class CoreExecutionDisposition(StrEnum):
-    """How the engine must execute one declared core."""
+    """How the engine must execute one declared core.
+
+    - `PLANNED`: the engine owns the width the body runs at and may stream the
+      axes the program declares.
+    - `DENSE`: the solver owns that width, and says why in `disposition_reason`.
+    - `HOST_DRIVEN`: a host loop dispatches the compiled program a data-dependent
+      number of times. The planner lowers the program like a dense one and bounds
+      one dispatch; the driver that owns the loop also owns the results it caches
+      between dispatches.
+    """
 
     PLANNED = "planned"
     DENSE = "dense"
+    HOST_DRIVEN = "host_driven"
 
 
 class ProgramScope(StrEnum):
@@ -579,7 +589,11 @@ def _validate_retained_artifact_payload_types(*, program: CoreProgram) -> None:
 def _validate_disposition_reason(
     *, program: CoreProgram | MaterializedCoreProgram
 ) -> None:
-    """Require an explicit, stable explanation for every dense route."""
+    """Require an explicit, stable explanation for every route the engine cedes.
+
+    Only a planned program leaves the width choice to the engine; a dense or
+    host-driven one takes it back and says why.
+    """
     reason = program.disposition_reason
     if program.disposition is CoreExecutionDisposition.PLANNED:
         if reason is not None:
@@ -588,7 +602,8 @@ def _validate_disposition_reason(
         return
     if not isinstance(reason, str) or not reason.strip():
         msg = (
-            f"Dense CoreProgram {program.name!r} must declare a non-empty "
+            f"CoreProgram {program.name!r} with disposition "
+            f"{program.disposition.value!r} must declare a non-empty "
             "disposition_reason."
         )
         raise ValueError(msg)
@@ -692,8 +707,8 @@ def resolve_core_program(
     else:
         if input_transfer_plan:
             msg = (
-                f"CoreProgram {program.name!r} with disposition "
-                f"{program.disposition.value!r} cannot carry a resolved input plan."
+                "A resolved input plan is for planned programs only; CoreProgram "
+                f"{program.name!r} has disposition {program.disposition.value!r}."
             )
             raise ValueError(msg)
         resolved_input_transfer_plan = ()
@@ -798,8 +813,9 @@ def _validate_core_program(*, program: MaterializedCoreProgram) -> None:
     axes = program.requirements.streamable_axes
     if program.disposition is not CoreExecutionDisposition.PLANNED and axes:
         msg = (
-            f"CoreProgram {program.name!r} has disposition "
-            f"{program.disposition.value!r} but declares streamable axes."
+            "Streamable axes are for planned programs only; CoreProgram "
+            f"{program.name!r} has disposition {program.disposition.value!r} but "
+            "declares streamable axes."
         )
         raise ValueError(msg)
     axis_names = [axis.name for axis in axes]

@@ -196,7 +196,7 @@ documented in [Custom solvers](custom_solvers.md).
 | [`lcm.solvers.CoreProgram`](custom_solvers.md)                                             | One declared compiled program        |
 | [`lcm.solvers.CoreBuildContext`](custom_solvers.md)                                        | Argument-builder input               |
 | [`lcm.solvers.CoreExecutionRequirements`](custom_solvers.md)                               | Declared execution requirements      |
-| [`lcm.solvers.CoreExecutionDisposition`](custom_solvers.md)                                | Planned or deliberately dense        |
+| [`lcm.solvers.CoreExecutionDisposition`](custom_solvers.md)                                | Planned, dense, or host-driven       |
 | [`lcm.solvers.ProgramScope`](custom_solvers.md)                                            | Retention scope of a program         |
 | [`lcm.solvers.StreamableProductAxis`](custom_solvers.md)                                   | Declared streamable action axis      |
 | [`lcm.solvers.ReductionSemantics`](custom_solvers.md)                                      | Reduction a streamed axis performs   |

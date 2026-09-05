@@ -114,6 +114,8 @@ def _program(
     *,
     axis: StreamableProductAxis | None = None,
     arguments: Mapping[str, object] | None = None,
+    disposition: CoreExecutionDisposition = CoreExecutionDisposition.PLANNED,
+    disposition_reason: str | None = None,
 ) -> MaterializedCoreProgram:
     if arguments is None:
         arguments = {
@@ -128,7 +130,8 @@ def _program(
             streamable_axes=(_axis() if axis is None else axis,)
         ),
         output_roles=VALUE,
-        disposition=CoreExecutionDisposition.PLANNED,
+        disposition=disposition,
+        disposition_reason=disposition_reason,
         donation_candidates=(),
     )
 
@@ -660,6 +663,17 @@ def test_resolver_binds_width_without_adding_a_dynamic_argument() -> None:
 def test_resolver_requires_a_planner_width_for_each_streamable_axis() -> None:
     with pytest.raises(ValueError, match=r"[Tt]ile width.*required"):
         resolve_core_program(program=_program())
+
+
+def test_a_host_driven_program_declares_no_streamable_axis() -> None:
+    """Only a planned program may declare a streamable axis."""
+    program = _program(
+        disposition=CoreExecutionDisposition.HOST_DRIVEN,
+        disposition_reason="host_driven:test",
+    )
+
+    with pytest.raises(ValueError, match=r"Streamable axes are for planned"):
+        resolve_core_program(program=program, tile_widths={"action": 2})
 
 
 @pytest.mark.parametrize(

@@ -249,6 +249,12 @@ def test_native_graph_rejects_every_parallel_declaration_seam(
             "cannot declare a reason",
             id="planned-with-reason",
         ),
+        pytest.param(
+            CoreExecutionDisposition.HOST_DRIVEN,
+            None,
+            "must declare a non-empty",
+            id="host-driven-without-reason",
+        ),
     ],
 )
 def test_native_graph_rejects_incoherent_disposition_reason(
@@ -287,11 +293,13 @@ def test_core_program_graph_rejects_a_kernel_without_a_native_graph() -> None:
         core_program_graph(kernel=_CoresOnlyKernel())
 
 
-def test_every_disposition_is_planned_or_dense() -> None:
-    """The engine plans a program or runs it deliberately dense; nothing else."""
+def test_every_disposition_is_planned_dense_or_host_driven() -> None:
+    """The engine plans a program, runs it deliberately dense, or lets a host
+    driver dispatch it a data-dependent number of times; nothing else."""
     assert {member.value for member in CoreExecutionDisposition} == {
         "planned",
         "dense",
+        "host_driven",
     }
 
 

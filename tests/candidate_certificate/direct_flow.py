@@ -186,7 +186,7 @@ _SOURCE_SEALS = {
     MAX_Q_SOURCE: "6bed0c5a31bbc1c7fe9e0d9250223888d1271528b01844a398668af038e24844",
     PROCESSING_SOURCE: "529c24632efe6a124ce5d51f3927d17f829671bfc51e2d68bc603eca3b53ddf9",
     GRID_SEARCH_SOURCE: "49c198be2598ef1791e9866d004e63de8dff00c46155c01d4fe8cbe128c0a1ff",
-    CORE_PROGRAM_SOURCE: "1df7bd12db0a9a109dc555d1344cb8f9544f3f4846e5c7af1121d831614a2756",
+    CORE_PROGRAM_SOURCE: "c298e08bc9028cd6ec9ded09a02a485860ed3810bb9e61c7bc38b220d677a904",
     OUTPUT_LAYOUT_SOURCE: "d8bea7c2ea2f77c1e3712b40ab2aadd4866ed67a7c44c172097800ee93ab0885",
     VALUE_TRANSFER_SOURCE: "44b8629c7b461b6b0216c79ba25101179e1b8cb2edf40630a55c6b9403fbbd2d",
     ACTION_STREAMING_SOURCE: "a34ca428598e37dd68fc3dcaa0c664c56f79afb6042c946246883f250bab681c",
@@ -205,7 +205,7 @@ _SOURCE_SEALS = {
     SIMULATION_COMPILE_SOURCE: "bc59e06917ca26caa51bf6dee79f4f20b8f9c6dd652cf5648a17f02935d9a482",
     MODEL_SOURCE: "9012952d4e8f8472bd648234eb3ec27c0412abc8a705799c0bebcef6ef9eb571",
     SOLVER_API_SOURCE: "89adec9b59c6eaa5dc3d285568376ca23685cf7ce08f5095aff2c350048fe8d6",
-    BACKWARD_INDUCTION_SOURCE: "c3e0d4ff029892d02cfe3fab64a5b99d847b7a29fe6d1a8e907ecf9432bffee3",
+    BACKWARD_INDUCTION_SOURCE: "47c042f722aa39526afd1d6ede8c9738cb4764a421b3b1c3cf9b54ceb17e9cdd",
     PERIOD_REPLAY_SOURCE: "e7749112601b4e75e3cfc86c4d43619f6e93143081311c17254b4c32963c3405",
     INITIAL_CONDITIONS_SOURCE: "cb3663f59d10fa288d3da322b5f154545bb1ac4b9262073a87c405b5e950507f",
     RESULT_SOURCE: "992f8e14d2f47f505f6883e340e89d68dfc41311d4c36f7849a2f79331e4ba01",
@@ -1721,6 +1721,7 @@ def _core_program_transport_errors(tree: ast.Module) -> list[str]:
                 observed=body,
                 expected_source="""PLANNED = "planned"
 DENSE = "dense"
+HOST_DRIVEN = "host_driven"
 """,
             )
         ):
@@ -1786,11 +1787,11 @@ ARTIFACT = "artifact"
                 "_validate_program_declaration": "6158dc42296c246bbb8ab23d270dcc46e8175e89ed190af503bdebe788f11c6b",
                 "_validate_retention_declaration": "62f75acabee1eb14ea74360f8563970ba1f5639dd06a0573a49d80402e437ba0",
                 "_validate_retained_artifact_payload_types": "8ceae90284dbdc25b64e0b66d79990e8f9104f9a6410d90d8eb94c426d24ecbd",
-                "_validate_disposition_reason": "1f72fd946d5b104131e2ca84095a5242c76fb78417a87f9668ff9ecb7c792644",
+                "_validate_disposition_reason": "03cb7d272c11a686adf713cc1f8ddbf4f516ef61f3bde01b59b800fc9a58ab4b",
                 "materialize_core_program": "f847dab2d4111fc1875457a799012594305f7cdaf047ebc9e00a92fff972ea15",
-                "resolve_core_program": "28c6f32d2a212999510d320a0f032d3eb120339da21e8adefac7e95f36d1149b",
+                "resolve_core_program": "e57d539695013b9d8b5bea7035ce1513e1f535613f373ddd242f0f38c6019950",
                 "select_programs": "f1d7a08b98db1b9c9d0f289714d8c4c85eb061e30dd592a523aad429bf107828",
-                "_validate_core_program": "d55b9b72493f9565e341c20ac15f1041c4f6acd2134e25a923382c7a10304b59",
+                "_validate_core_program": "732d66341ea1547f8f9041a0401997aa492a4cb1f9023af95f7e83339467b197",
                 "_validate_materialized_declaration": "d4a7b72b1943b877e689ed05bc6e83e8194fa20169615d7a0a8bd970bce96534",
                 "_resolve_input_transfer_plan": "86e49db184adcd67dbcdf9f7accfcc17e7adaac32042bf5233be71121d97b73e",
                 "_validate_target_value_accesses": "9f9c693c334394c0ea05e30b923dba937a2f6979c41b91c3855da1c6d0eac7ae",

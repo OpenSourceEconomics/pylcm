@@ -1544,11 +1544,11 @@ def _classify_dispatch_value_artifacts(
     tuple[ValueArtifactAddress, ...],
     bool,
 ]:
-    """Separate finite planned reads from pinned dense or undeclared reads.
+    """Separate finite planned reads from pinned unplanned or undeclared reads.
 
-    A dense program pins exactly the value reads it declares; one that declares
-    none may still read any reachable value through its builder, so it is
-    reported as unknown and pinned conservatively.
+    A program the engine does not plan pins exactly the value reads it declares;
+    one that declares none may still read any reachable value through its
+    builder, so it is reported as unknown and pinned conservatively.
     """
     planned: list[ValueArtifactAddress] = []
     unplanned_exact: list[ValueArtifactAddress] = []
@@ -1558,7 +1558,7 @@ def _classify_dispatch_value_artifacts(
         declared_targets = tuple(
             access.target for access in metadata.requirements.target_value_accesses
         )
-        if metadata.disposition is CoreExecutionDisposition.DENSE:
+        if metadata.disposition is not CoreExecutionDisposition.PLANNED:
             if not declared_targets:
                 has_unknown = True
             else:
