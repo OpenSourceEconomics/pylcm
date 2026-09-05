@@ -8,7 +8,7 @@ from dataclasses import replace as dataclass_replace
 from itertools import product
 from math import prod as math_prod
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast, runtime_checkable
 
 import jax
 import numpy as np
@@ -2661,7 +2661,7 @@ def _build_solution_phase(
     )
     # Set by whichever branch below builds the decision kernels, to the key
     # their periods were grouped by; `None` where one closure serves every period.
-    decision_group_key: Callable[..., Hashable] | None = None
+    decision_group_key: _PeriodGroupKey | None = None
     if spec.terminal:
         compute_regime_transition_probs = None
         validation_regime_transition_probs = None
@@ -2952,6 +2952,14 @@ def _build_solution_phase(
     )
 
 
+@runtime_checkable
+class _PeriodGroupKey(Protocol):
+    """Callable mapping a period to the key its group was built under."""
+
+    def __call__(self, *, period: int) -> Hashable:
+        """Return the grouping key `period` was assigned."""
+
+
 @dataclass(frozen=True, kw_only=True)
 class _PerPeriodGroupKey:
     """Grouping key of a builder that compiles one object per period."""
@@ -2967,21 +2975,30 @@ class _PerPeriodGroupKey:
 def _build_period_signatures(
     *,
     active_periods: tuple[int, ...],
-    decision_group_key: Callable[..., Hashable] | None,
+    decision_group_key: _PeriodGroupKey | None,
     user_regime: UserRegime,
     grid_schedule: AgeGridSchedule | None,
 ) -> MappingProxyType[int, Hashable]:
-    """Record the signature every per-period grouping assigned each active period.
+    """Record the signature the engine's per-period groupings assigned each period.
 
-    One component per grouping that builds the regime's solve kernels:
+    One `(name, value)` component per engine-side grouping:
 
-    - the decision (`Q_and_F`) grouping, or `None` where a terminal regime's
+    - `"decision"` — the `Q_and_F` grouping, or `None` where a terminal regime's
       kernel is one period-invariant closure;
-    - the gated-edge fold grouping the decision kernel consumes, or `None` for a
-      regime declaring no gated edge.
+    - `"gated-edges"` — the gated-edge grouping the decision kernel's fold comes
+      from, or `None` for a regime declaring no gated edge.
 
-    A component is never coarser than the grouping it stands for, so two periods
-    carrying equal signatures were put in one group by every grouping.
+    Neither component is coarser than the grouping it stands for, so two periods
+    carrying equal signatures were put in one group by both of them. A solver's
+    own per-period grouping inside `build_period_kernels`
+    (`_lcm.solution.periodization.solver_period_group_key`) is a separate
+    component of a compiled program's identity and is not represented here: a
+    consumer keying an executable on this signature carries that one alongside.
+
+    A gated component says nothing about which regimes are active. Where a
+    declared target is active at one period's landing period and not at
+    another's, the two gated components can coincide, and the split is then
+    carried by the target tuple inside the decision component.
 
     Args:
         active_periods: The regime's active periods.
@@ -2999,9 +3016,17 @@ def _build_period_signatures(
         signature = (
             "period-signature",
             1,
-            None if decision_group_key is None else decision_group_key(period=period),
-            _gated_edge_group_components(
-                user_regime=user_regime, grid_schedule=grid_schedule, period=period
+            (
+                "decision",
+                None
+                if decision_group_key is None
+                else decision_group_key(period=period),
+            ),
+            (
+                "gated-edges",
+                _gated_edge_group_components(
+                    user_regime=user_regime, grid_schedule=grid_schedule, period=period
+                ),
             ),
         )
         # Every component is hashable by construction; raise here rather than at
@@ -3014,14 +3039,20 @@ def _build_period_signatures(
 def _gated_edge_group_components(
     *, user_regime: UserRegime, grid_schedule: AgeGridSchedule | None, period: int
 ) -> Hashable:
-    """Fingerprint the gated-edge folds a period's decision kernel consumes.
+    """Fingerprint both objects the gated-edge grouping compiles for one period.
 
-    A gated source's kernel at `period` takes the fold and the routing gate
-    compiled for the period it LANDS in, `period + 1`, so it is that period's
-    grids the two source periods have to agree on. The read set passed here is
-    the edge's declared gate references and leg fallbacks, a superset of the
-    regimes the compiled fold interpolates, which keeps the component at least
-    as fine as the grouping it stands for.
+    Each is keyed by the period the edge folds at, which for a source period is
+    the period it LANDS in, `period + 1`:
+
+    - the fold, which the source's own decision kernel reads;
+    - the gate evaluator, which `route_gated_edges` re-evaluates the predicate
+      with during simulation.
+
+    The evaluator half is fingerprinted here because one grouping produces both,
+    so a period pair this component merges is a pair that shares each object.
+    The read set passed for either is the edge's declared gate references and leg
+    fallbacks, a superset of the regimes the compiled objects interpolate, which
+    keeps the component at least as fine as the grouping it stands for.
 
     Args:
         user_regime: The finalized user regime, read for its gated edges.
@@ -6752,7 +6783,7 @@ class _GroupedQAndF:
     by_period: MappingProxyType[int, QAndFFunction]
     """Immutable mapping of period to the closure built for that period's group."""
 
-    group_key: Callable[..., Hashable]
+    group_key: _PeriodGroupKey
     """The per-period grouping key the closures were built under."""
 
 
@@ -7016,7 +7047,10 @@ def _build_Q_and_F_per_period(
         by_period=expand_groups_to_periods(
             grouped_periods=configs, built_by_group=built
         ),
-        group_key=group_key,
+        # `continuation_group_key` declares its result positionally; the function
+        # it returns takes `period` by keyword, which is the convention every
+        # consumer of a grouping key here calls under.
+        group_key=cast("_PeriodGroupKey", group_key),
     )
 
 

@@ -387,9 +387,13 @@ class SolutionPhase:
     """
 
     period_signatures: MappingProxyType[int, Hashable]
-    """Immutable mapping of period to the hashable signature every per-period
-    grouping assigned it; two periods with equal signatures were built from the
-    same grouped inputs, so their kernels' programs share a compiled executable.
+    """Immutable mapping of period to the hashable signature the engine grouped it by.
+
+    Two groupings are covered: the decision grouping and the gated-edge fold
+    grouping. Two periods with equal signatures were built from the same grouped
+    engine inputs, so their kernels' programs can share a compiled executable
+    once the solver's own period grouping — a separate component of a program's
+    identity — also agrees.
     """
 
     continuation_spec: ContinuationSpec | None = None

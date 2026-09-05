@@ -1,15 +1,29 @@
-"""A solution phase records, per period, the signature its kernels were grouped by.
+"""A solution phase records, per period, the signature the engine grouped it by.
 
-Two periods carry the same signature exactly when every per-period grouping that
-built the regime's solve kernels put them in one group, so the signature is a
-sound key for a compiled program: equal signature implies identical grouped
-inputs.
+Two periods carry the same signature exactly when both engine-side per-period
+groupings — the decision grouping and the gated-edge fold grouping — put them in
+one group. A solver's own per-period grouping inside `build_period_kernels` is a
+separate component of a compiled program's identity and is not represented here,
+so a consumer keying a compiled executable on this signature carries that
+component alongside it.
 """
 
+from collections.abc import Hashable
+from typing import cast
+
 from tests.solution.test_dcegm_age_specialized_function import _twin
+from tests.solution.test_gated_edge_reference_age_specialized_axes import (
+    _build_model as _build_gated_model,
+)
 from tests.test_models.deterministic.regression import get_model
 
 _N_PERIODS = 5
+
+
+def _component(*, signature: Hashable, name: str) -> Hashable:
+    """Read one named component out of a period signature."""
+    components = cast("tuple[tuple[str, Hashable], ...]", signature)[2:]
+    return dict(components)[name]
 
 
 def test_period_signatures_cover_exactly_the_regimes_active_periods() -> None:
@@ -67,3 +81,40 @@ def test_signatures_are_hashable() -> None:
     """Every signature can be used as a dictionary key."""
     regime = get_model(n_periods=_N_PERIODS)._regimes["working_life"]
     assert isinstance(hash(tuple(regime.solution.period_signatures.values())), int)
+
+
+def test_periods_reading_different_reference_grids_get_distinct_gated_components() -> (
+    None
+):
+    """A gated edge's fingerprint moves with the grids it lands on.
+
+    `saver` folds its edge into `account` at the period it lands in, and the
+    gate reference `index` carries an `AgeSpecializedGrid` whose nodes drop
+    between those two landing periods. The two source periods therefore never
+    share the compiled fold, and their gated components say so.
+    """
+    signatures = _build_gated_model()._regimes["saver"].solution.period_signatures
+    assert _component(signature=signatures[0], name="gated-edges") != _component(
+        signature=signatures[1], name="gated-edges"
+    )
+
+
+def test_a_regime_declaring_no_gated_edge_has_no_gated_component() -> None:
+    """A regime with no gated edge contributes `None` in the gated slot."""
+    regime = get_model(n_periods=_N_PERIODS)._regimes["working_life"]
+    signature = regime.solution.period_signatures[0]
+    assert _component(signature=signature, name="gated-edges") is None
+
+
+def test_a_source_period_losing_a_target_gets_its_own_decision_component() -> None:
+    """Losing a declared target splits a gated source through its decision component.
+
+    `saver` can continue as itself from period 0 but not from period 1. The
+    gated fingerprint knows nothing about which regimes are active, so where two
+    landing periods resolve the same grids it is the decision component's target
+    tuple that keeps the periods apart.
+    """
+    signatures = _build_gated_model()._regimes["saver"].solution.period_signatures
+    assert _component(signature=signatures[0], name="decision") != _component(
+        signature=signatures[1], name="decision"
+    )
