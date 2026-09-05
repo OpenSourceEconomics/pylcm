@@ -8,9 +8,10 @@ maximum. `_NEGMPeriodKernel` publishes a native two-program graph: `keeper` is
 the inner keeper's own program under a new name, and `outer_sweep` is one
 deliberately dense program that maps the inner adjuster over the outer grid,
 takes the exact maximum with the keeper value, and stacks every candidate carry.
-The sweep binds the keeper's outputs at runtime: the graph declares no typed
-internal outputs, so the kernel runs `keeper` first and hands its value and
-carry to `outer_sweep` in place of the placeholders its builder lowers with.
+The graph declares the dependency between them: `keeper` publishes its value and
+carry as typed internal outputs, `outer_sweep` names them as internal inputs, so
+the engine lowers the sweep against the keeper's own abstract output and the
+kernel hands the keeper's outputs over under those names.
 """
 
 import functools
@@ -43,6 +44,8 @@ from _lcm.execution.core_program import (
     CoreExecutionDisposition,
     CoreExecutionRequirements,
     CoreProgram,
+    InternalInputRef,
+    InternalOutputSpec,
     core_program_graph,
 )
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
@@ -506,7 +509,6 @@ class NEGM(TwoMarginSolver):
                     durable_grid_values=_durable_values_at(period),
                     durable_axis_in_carry=durable_axis_in_carry,
                     carry_row_state_names=carry_row_state_names,
-                    keeper_carry_template=keeper_continuation_template,
                     outer_batch_size=bound_self.outer_batch_size,
                 )
                 for period, adjuster_kernel in adjuster_kernels.period_kernels.items()
@@ -654,9 +656,6 @@ class _NEGMPeriodKernel:
     carry_row_state_names: tuple[StateName, ...]
     """The discrete then passive state names leading every carry row."""
 
-    keeper_carry_template: EGMCarry
-    """The keeper's carry template, the shape the sweep is lowered against."""
-
     outer_batch_size: int
     """Outer-grid nodes solved per block of the sweep; `0` is one block."""
 
@@ -682,7 +681,14 @@ class _NEGMPeriodKernel:
         )
         row = StateAxesLeading(state_names=self.carry_row_state_names)
         programs = {
-            "keeper": replace(keeper, name="keeper"),
+            "keeper": replace(
+                keeper,
+                name="keeper",
+                internal_outputs=(
+                    InternalOutputSpec(label="value", path=(0,)),
+                    InternalOutputSpec(label="carry", path=(1,)),
+                ),
+            ),
             "outer_sweep": CoreProgram(
                 name="outer_sweep",
                 function=sweep_function,
@@ -693,9 +699,19 @@ class _NEGMPeriodKernel:
                     outer_grid_values=self.outer_grid_values,
                     durable_grid_values=self.durable_grid_values,
                     coh_shift_func=self.coh_shift_func,
-                    keeper_carry_template=self.keeper_carry_template,
                 ),
-                requirements=CoreExecutionRequirements(),
+                requirements=CoreExecutionRequirements(
+                    internal_inputs=MappingProxyType(
+                        {
+                            _KEEPER_VALUE: InternalInputRef(
+                                producer="keeper", label="value"
+                            ),
+                            _KEEPER_CARRY: InternalInputRef(
+                                producer="keeper", label="carry"
+                            ),
+                        }
+                    )
+                ),
                 output_roles=(
                     VALUE,
                     egm_carry_role_tree(
@@ -763,11 +779,13 @@ class _NEGMPeriodKernel:
         ages: AgeGrid,
         logger: logging.Logger,
     ) -> KernelOutput:
-        r"""Run the keeper, then the sweep with the keeper's outputs bound.
+        r"""Run the keeper, then the sweep fed by the keeper's declared outputs.
 
         The keeper runs the passive DC-EGM once, yielding the value of leaving
-        the durable stock unchanged at every durable state. The sweep solves
-        the adjuster at every exogenous outer-grid node $s_{t,j}^\textit{post-dec}$,
+        the durable stock unchanged at every durable state; its value and carry
+        travel to the sweep under the argument names the sweep declares as its
+        internal inputs. The sweep solves the adjuster at every exogenous
+        outer-grid node $s_{t,j}^\textit{post-dec}$,
         collapses the outer axis into the value array by
         `V = max(V_keeper, max_j W_j)`, and retains every candidate carry in
         the published continuation so the parent read can take the exact
@@ -797,16 +815,9 @@ class _NEGMPeriodKernel:
                 )
             )
         )
-        _fail_if_keeper_output_departs_from_its_placeholder(
-            arguments=arguments,
-            keeper_value=keeper_value,
-            keeper_carry=keeper_carry,
-            regime_name=self.regime_name,
-            period=period,
+        V_arr, carry = compiled_cores["outer_sweep"](
+            **arguments, **{_KEEPER_VALUE: keeper_value, _KEEPER_CARRY: keeper_carry}
         )
-        arguments[_KEEPER_VALUE] = keeper_value
-        arguments[_KEEPER_CARRY] = keeper_carry
-        V_arr, carry = compiled_cores["outer_sweep"](**arguments)
         return KernelOutput(value=V_arr, continuations={EGM_CONTINUATION: carry})
 
 
@@ -816,10 +827,9 @@ class _NEGMSweepArgumentBuilder:
 
     Delegates to the inner adjuster's builder with the outer post-decision
     bound at the first outer node, so the per-node arguments have exactly the
-    shape the sweep traces, and adds the sweep's own inputs: the outer nodes,
-    the credited-cost shifts, and the keeper value and carry as zero-filled
-    placeholders in the keeper outputs' shape. The kernel replaces the
-    placeholders by the keeper's outputs at runtime.
+    shape the sweep traces, and adds the sweep's own inputs: the outer nodes and
+    the credited-cost shifts. The keeper's value and carry are not built here —
+    they are internal inputs the engine supplies from the keeper's own output.
     """
 
     adjuster_builder: CoreArgumentBuilder
@@ -840,13 +850,9 @@ class _NEGMSweepArgumentBuilder:
     coh_shift_func: Callable[..., FloatND]
     """The per-(durable, outer-node) cash-on-hand shift of each adjuster."""
 
-    keeper_carry_template: EGMCarry
-    """The keeper's carry template, the placeholder's shape and dtype."""
-
     def __call__(self, context: CoreBuildContext) -> Mapping[str, object]:
         """Return the exact kwargs shared by lowering and the runtime call."""
         flat_params = cast("FlatParams", context.flat_params)
-        state_action_space = cast("StateActionSpace", context.state_action_space)
         arguments = dict(
             self.adjuster_builder(
                 replace(
@@ -860,15 +866,7 @@ class _NEGMSweepArgumentBuilder:
                 )
             )
         )
-        value_shape = tuple(
-            state_action_space.states[name].shape[0]
-            for name in state_action_space.state_names
-        )
         own = {
-            _KEEPER_VALUE: jnp.zeros(
-                value_shape, dtype=self.keeper_carry_template.value.dtype
-            ),
-            _KEEPER_CARRY: jax.tree.map(jnp.zeros_like, self.keeper_carry_template),
             _OUTER_NODES: self.outer_grid_values,
             _COH_SHIFTS: self.coh_shift_func(
                 durable_values=self.durable_grid_values,
@@ -943,29 +941,6 @@ def _fail_if_sweep_inputs_collide_with_the_adjusters(
             "model can produce these names; this is an internal namespace error."
         )
         raise RegimeInitializationError(msg)
-
-
-def _fail_if_keeper_output_departs_from_its_placeholder(
-    *,
-    arguments: Mapping[str, object],
-    keeper_value: FloatND,
-    keeper_carry: EGMCarry,
-    regime_name: RegimeName,
-    period: int,
-) -> None:
-    """Refuse a keeper output whose shape the sweep was not lowered against."""
-
-    def describe(tree: object) -> object:
-        return jax.tree.map(lambda leaf: (leaf.shape, str(leaf.dtype)), tree)
-
-    expected = describe((arguments[_KEEPER_VALUE], arguments[_KEEPER_CARRY]))
-    got = describe((keeper_value, keeper_carry))
-    if expected != got:
-        msg = (
-            f"Regime '{regime_name}' in period {period}: the keeper published "
-            f"{got}, but the outer sweep was lowered against {expected}."
-        )
-        raise RuntimeError(msg)
 
 
 def _stack_carry_template(
