@@ -13,7 +13,8 @@ import weakref
 import jax
 
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model
-from lcm.solvers import GridSearch
+from lcm.solvers import AdaptiveOuterMesh, GridSearch
+from tests.test_models import n_nbegm_toy
 from tests.test_models.deterministic.regression import (
     START_AGE,
     LaborSupply,
@@ -64,6 +65,29 @@ def _model() -> Model:
     )
 
 
+def _adaptive_model() -> Model:
+    """Build the smallest two-period adaptive-outer-mesh NNBEGM toy."""
+    return n_nbegm_toy.build_model(
+        variant="n_nbegm",
+        n_periods=2,
+        illiquid_grid=LinSpacedGrid(start=0.0, stop=20.0, n_points=2),
+        outer_search=AdaptiveOuterMesh(
+            initial_grid=LinSpacedGrid(start=0.0, stop=20.0, n_points=3),
+            max_nodes=9,
+            max_refinement_rounds=1,
+            value_atol=1e-2,
+            value_rtol=1e-2,
+            golden_iterations=4,
+            fail_closed=False,
+        ),
+    )
+
+
+def _adaptive_params() -> dict[str, float]:
+    """Return the parameters the adaptive-outer-mesh toy is solved at."""
+    return {"discount_factor": 0.95}
+
+
 def test_a_dropped_solution_releases_every_compiled_executable() -> None:
     before = _live_compiled_executables()
 
@@ -83,3 +107,18 @@ def test_counting_live_executables_tolerates_a_dead_weak_proxy() -> None:
 
     assert _live_compiled_executables() >= 0
     assert proxy is not None
+
+
+def test_a_dropped_adaptive_nested_solution_releases_every_compiled_executable() -> (
+    None
+):
+    """The adaptive outer mesh's host driver keeps no executable alive after solving."""
+    warm = _adaptive_model()
+    warm.solve(params=_adaptive_params(), log_level="off")
+    del warm
+    before = _live_compiled_executables()
+
+    solution = _adaptive_model().solve(params=_adaptive_params(), log_level="off")
+    del solution
+
+    assert _live_compiled_executables() == before
