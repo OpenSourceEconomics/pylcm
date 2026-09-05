@@ -93,6 +93,7 @@ from lcm.exceptions import (
     UnrepresentableOuterCandidateError,
 )
 from lcm.result import SimulationResult
+from lcm.solver_api import ActionOutput, ReplayReader
 from lcm.typing import (
     BoolND,
     Float1D,
@@ -115,6 +116,8 @@ type _GatedEdgeFolds = tuple[
 # Gated-edge folds already evaluated, keyed by source regime and period.
 type _GatedEdgeFoldCache = dict[tuple[RegimeName, int], _GatedEdgeFolds]
 
+type _PeriodToRegimeToReplayReader = Mapping[int, Mapping[RegimeName, ReplayReader]]
+
 
 def simulate(
     *,
@@ -129,6 +132,9 @@ def simulate(
     ages: AgeGrid,
     simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
     period_to_regime_to_sim_policy: PeriodToRegimeToSimulationPolicy | None = None,
+    period_to_regime_to_replay_reader: _PeriodToRegimeToReplayReader = (
+        MappingProxyType({})
+    ),
     seed: int | None = None,
     subject_batch_size: int = 0,
     original_n_subjects: int | None = None,
@@ -159,6 +165,9 @@ def simulate(
             Where a regime qualifies (`SimulationPhase.egm_policy_read`), the
             continuous action is interpolated from the policy at the
             subject's resources instead of argmaxed over the action grid.
+        period_to_regime_to_replay_reader: Model-preflighted external replay
+            readers, independently addressed by period and regime. Empty for
+            built-in solver routes.
         simulation_output_dtypes: Mapping of variable name to `pd.CategoricalDtype`,
             used for building simulation metadata.
         seed: Random number seed; will be passed to `jax.random.key`. If not provided,
@@ -273,6 +282,7 @@ def simulate(
             period_to_regime_to_V_arr=period_to_regime_to_V_arr,
             period_to_regime_to_dissolution_flags=period_to_regime_to_dissolution_flags,
             period_to_regime_to_sim_policy=period_to_regime_to_sim_policy,
+            period_to_regime_to_replay_reader=(period_to_regime_to_replay_reader),
             flat_params=flat_params,
             ages=ages,
             seed=seed,
@@ -363,6 +373,9 @@ def _simulate_subject_chunk(
     logger: logging.Logger,
     initial_own_stakeholder: Int1D,
     period_to_regime_to_sim_policy: PeriodToRegimeToSimulationPolicy | None = None,
+    period_to_regime_to_replay_reader: _PeriodToRegimeToReplayReader = (
+        MappingProxyType({})
+    ),
     gated_edge_fold_cache: _GatedEdgeFoldCache | None = None,
 ) -> dict[RegimeName, dict[int, PeriodRegimeSimulationData]]:
     """Run the full period loop for one chunk of subjects.
@@ -448,6 +461,9 @@ def _simulate_subject_chunk(
                     sim_policy=(period_to_regime_to_sim_policy or {})
                     .get(period, {})
                     .get(regime_name),
+                    replay_reader=period_to_regime_to_replay_reader.get(period, {}).get(
+                        regime_name
+                    ),
                     flat_params=flat_params,
                     regime_names_to_ids=regime_names_to_ids,
                     decision_targets_next_period=(
@@ -661,6 +677,165 @@ def _referenced_value_kwargs(
     return kwargs
 
 
+def _read_external_replay(
+    *,
+    reader: ReplayReader,
+    regime_name: RegimeName,
+    regime: Regime,
+    period: int,
+    age: ScalarInt | ScalarFloat,
+    states: Mapping[StateName, object],
+    state_action_space: StateActionSpace,
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+    flat_params: FlatRegimeParams,
+    referenced_value_kwargs: Mapping[str, object],
+    subject_ids_in_regime: BoolND,
+) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND]:
+    """Run one preflighted external reader and verify its chosen actions."""
+    n_subjects = subject_ids_in_regime.shape[0]
+    fallback_actions = MappingProxyType(
+        {
+            name: jnp.broadcast_to(jnp.asarray(nodes)[0], (n_subjects,))
+            for name, nodes in state_action_space.actions.items()
+        }
+    )
+    try:
+        replay_output = reader(
+            states=MappingProxyType(dict(states)),
+            fallback_actions=fallback_actions,
+        )
+    except Exception as error:
+        raise InvalidSimulationInputError(
+            f"External replay reader failed at ({period}, {regime_name!r}): {error}"
+        ) from error
+    if type(replay_output) is not ActionOutput:
+        raise InvalidSimulationInputError(
+            "External replay reader returned the wrong output type at "
+            f"({period}, {regime_name!r}); expected ActionOutput."
+        )
+    expected_action_names = set(state_action_space.action_names)
+    actual_action_names = set(replay_output.actions)
+    if actual_action_names != expected_action_names:
+        raise InvalidSimulationInputError(
+            "External replay reader returned incompatible action names at "
+            f"({period}, {regime_name!r}): expected "
+            f"{tuple(state_action_space.action_names)!r}, got "
+            f"{tuple(replay_output.actions)!r}."
+        )
+    optimal_actions = _canonicalize_external_replay_actions(
+        replay_output=replay_output,
+        state_action_space=state_action_space,
+        subject_ids_in_regime=subject_ids_in_regime,
+        n_subjects=n_subjects,
+        regime_name=regime_name,
+        period=period,
+    )
+    value, replay_feasible = _canonical_Q_at_actions(
+        candidate_actions=optimal_actions,
+        regime=regime,
+        canonical_states=state_action_space.states,
+        action_names=state_action_space.action_names,
+        next_regime_to_V_arr=next_regime_to_V_arr,
+        flat_params=flat_params,
+        referenced_value_kwargs=referenced_value_kwargs,
+        period=period,
+        age=age,
+    )
+    if bool(jnp.any(subject_ids_in_regime & ~replay_feasible)):
+        raise InvalidSimulationInputError(
+            "External replay reader returned an infeasible action for at least "
+            f"one subject at ({period}, {regime_name!r})."
+        )
+    return optimal_actions, value
+
+
+def _canonicalize_external_replay_actions(
+    *,
+    replay_output: ActionOutput,
+    state_action_space: StateActionSpace,
+    subject_ids_in_regime: BoolND,
+    n_subjects: int,
+    regime_name: RegimeName,
+    period: int,
+) -> MappingProxyType[ActionName, FloatND | IntND]:
+    """Broadcast reader actions and reject invalid values before canonical scoring."""
+    actions: dict[ActionName, FloatND | IntND] = {}
+    for name in state_action_space.action_names:
+        try:
+            action = jnp.broadcast_to(
+                jnp.asarray(replay_output.actions[name]),
+                (n_subjects,),
+            )
+        except (TypeError, ValueError) as error:
+            raise InvalidSimulationInputError(
+                "External replay reader returned an action that cannot be converted "
+                f"and broadcast for {name!r} at ({period}, {regime_name!r}): {error}"
+            ) from error
+
+        if not (
+            jnp.issubdtype(action.dtype, jnp.integer)
+            or jnp.issubdtype(action.dtype, jnp.floating)
+        ):
+            raise InvalidSimulationInputError(
+                "External replay reader returned a non-numeric action for "
+                f"{name!r} at ({period}, {regime_name!r})."
+            )
+        if bool(jnp.any(subject_ids_in_regime & ~jnp.isfinite(action))):
+            raise InvalidSimulationInputError(
+                "External replay reader returned a non-finite action for "
+                f"{name!r} at ({period}, {regime_name!r})."
+            )
+
+        discrete_domain = state_action_space.discrete_actions.get(name)
+        if discrete_domain is not None:
+            if not jnp.issubdtype(action.dtype, jnp.integer):
+                raise InvalidSimulationInputError(
+                    "External replay reader returned a non-integer categorical code "
+                    f"for action {name!r} at ({period}, {regime_name!r})."
+                )
+            domain = jnp.asarray(discrete_domain)
+            in_domain = jnp.any(action[:, None] == domain[None, :], axis=1)
+            if bool(jnp.any(subject_ids_in_regime & ~in_domain)):
+                raise InvalidSimulationInputError(
+                    "External replay reader returned an action outside its declared "
+                    f"categorical domain for {name!r} at "
+                    f"({period}, {regime_name!r})."
+                )
+            action = action.astype(domain.dtype)
+
+        actions[name] = action
+
+    return MappingProxyType(actions)
+
+
+def _validate_simulated_value(
+    *,
+    value: FloatND,
+    subject_ids_in_regime: BoolND,
+    age: ScalarInt | ScalarFloat,
+    regime_name: RegimeName,
+    logger: logging.Logger,
+) -> None:
+    """Validate values only for subjects whose current regime owns the rows."""
+    if not validation_enabled(logger):
+        return
+    try:
+        # Out-of-regime subjects carry placeholder entries (their state is
+        # meaningless under this regime's problem). A collective value carries a
+        # trailing stakeholder axis, so broadcast the ownership mask over it.
+        in_regime_mask = subject_ids_in_regime.reshape(
+            subject_ids_in_regime.shape
+            + (1,) * (value.ndim - subject_ids_in_regime.ndim)
+        )
+        validate_V(
+            V_arr=jnp.where(in_regime_mask, value, 0.0),
+            age=age,
+            regime_name=regime_name,
+        )
+    except InvalidValueFunctionError as error:
+        raise_or_warn(logger=logger, error=error)
+
+
 def _simulate_regime_in_period(
     *,
     regime_name: RegimeName,
@@ -694,6 +869,7 @@ def _simulate_regime_in_period(
     sim_policy: (
         EGMSimPolicy | NBEGMGridPolicy | NNBEGMSimPolicy | NestedEGMSimPolicy | None
     ) = None,
+    replay_reader: ReplayReader | None = None,
     gated_edge_fold_cache: _GatedEdgeFoldCache | None = None,
 ) -> tuple[PeriodRegimeSimulationData, StatesPerRegime, Int1D, Int1D, PRNGKeyND]:
     """Simulate one regime for one period.
@@ -747,6 +923,8 @@ def _simulate_regime_in_period(
         sim_policy: The regime's published off-grid simulation policy for this
             period, or `None`. Consumed only where the regime qualifies
             (`regime.simulation.egm_policy_read`).
+        replay_reader: Model-preflighted external policy reader for this exact
+            result cell, or ``None`` for an engine-owned replay route.
         gated_edge_fold_cache: Store of gated-edge folds already evaluated for
             some (regime, period), shared across subject chunks by `simulate`.
             The fold depends on no subject, so a chunk that finds its
@@ -821,13 +999,34 @@ def _simulate_regime_in_period(
         if cache is not None:
             cache[regime_name, period] = folds
     next_regime_to_V_arr, same_period_mappings = folds
+    referenced_value_kwargs = _referenced_value_kwargs(
+        regime=regime,
+        period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+        flat_params=flat_params,
+        period=period,
+    )
 
     n_chunk_subjects = subject_ids_in_regime.shape[0]
     replay_route = regime.simulation.replay_route
     direct_nnbegm_replay = replay_route.consumer_route == "nnbegm_finite" and (
         isinstance(sim_policy, NNBEGMSimPolicy)
     )
-    if direct_nnbegm_replay:
+    if replay_reader is not None:
+        optimal_actions, V_arr = _read_external_replay(
+            reader=replay_reader,
+            regime_name=regime_name,
+            regime=regime,
+            period=period,
+            age=age,
+            states=states[regime_name],
+            state_action_space=state_action_space,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            flat_params=flat_params[regime_name],
+            referenced_value_kwargs=referenced_value_kwargs,
+            subject_ids_in_regime=subject_ids_in_regime,
+        )
+        nested_fallback = None
+    elif direct_nnbegm_replay:
         # The payload names the complete finite candidate set, so the unrelated
         # Cartesian simulation argmax is neither compiled nor executed.
         optimal_actions, V_arr = _replay_nnbegm_candidates(
@@ -841,18 +1040,12 @@ def _simulate_regime_in_period(
             canonical_states=state_action_space.states,
             action_names=state_action_space.action_names,
             next_regime_to_V_arr=next_regime_to_V_arr,
+            referenced_value_kwargs=referenced_value_kwargs,
             logger=logger,
         )
         nested_fallback = None
     else:
         argmax_and_max_Q_over_a = regime.simulation.argmax_and_max_Q_over_a[period]
-
-        same_period_kwargs = _referenced_value_kwargs(
-            regime=regime,
-            period_to_regime_to_V_arr=period_to_regime_to_V_arr,
-            flat_params=flat_params,
-            period=period,
-        )
 
         taste_shock_kwargs = {}
         if regime.has_taste_shocks:
@@ -871,7 +1064,7 @@ def _simulate_regime_in_period(
             **state_action_space.continuous_actions,
             **taste_shock_kwargs,
             next_regime_to_V_arr=next_regime_to_V_arr,
-            **same_period_kwargs,
+            **referenced_value_kwargs,
             **flat_params[regime_name],
             period=jnp.int32(period),
             age=age,
@@ -899,32 +1092,20 @@ def _simulate_regime_in_period(
                 canonical_states=state_action_space.states,
                 action_names=state_action_space.action_names,
                 next_regime_to_V_arr=next_regime_to_V_arr,
+                referenced_value_kwargs=referenced_value_kwargs,
                 grid_values=V_arr,
                 in_regime=subject_ids_in_regime,
                 logger=logger,
             )
         )
 
-    if validation_enabled(logger):
-        try:
-            # Out-of-regime subjects carry placeholder entries (their state is
-            # meaningless under this regime's problem); validate only the
-            # subjects simulated in this regime.
-            #
-            # `V_arr` carries a trailing stakeholder
-            # axis for a collective regime; broadcast the mask the same way
-            # as the diagnostic logger below.
-            in_regime_mask = subject_ids_in_regime.reshape(
-                subject_ids_in_regime.shape
-                + (1,) * (V_arr.ndim - subject_ids_in_regime.ndim)
-            )
-            validate_V(
-                V_arr=jnp.where(in_regime_mask, V_arr, 0.0),
-                age=age,
-                regime_name=regime_name,
-            )
-        except InvalidValueFunctionError as error:
-            raise_or_warn(logger=logger, error=error)
+    _validate_simulated_value(
+        value=V_arr,
+        subject_ids_in_regime=subject_ids_in_regime,
+        age=age,
+        regime_name=regime_name,
+        logger=logger,
+    )
 
     # Store results for this regime-period
     # For state-less regimes (e.g., terminal regimes with no states), V_arr may be a
@@ -1041,6 +1222,7 @@ def _replace_continuous_action_with_policy_read(  # noqa: PLR0911
     grid_values: FloatND,
     in_regime: BoolND,
     logger: logging.Logger,
+    referenced_value_kwargs: Mapping[str, object] = MappingProxyType({}),
 ) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND, BoolND | None]:
     """Interpolate the published EGM policy at each subject's resources.
 
@@ -1112,6 +1294,7 @@ def _replace_continuous_action_with_policy_read(  # noqa: PLR0911
             action_names=action_names,
             next_regime_to_V_arr=next_regime_to_V_arr,
             flat_params=flat_params,
+            referenced_value_kwargs=referenced_value_kwargs,
             period=period,
             age=age,
         )
@@ -1134,6 +1317,7 @@ def _replace_continuous_action_with_policy_read(  # noqa: PLR0911
             action_names=action_names,
             next_regime_to_V_arr=next_regime_to_V_arr,
             flat_params=flat_params,
+            referenced_value_kwargs=referenced_value_kwargs,
             period=period,
             age=age,
             replay_candidate=replay_candidate,
@@ -1192,6 +1376,7 @@ def _replace_continuous_action_with_policy_read(  # noqa: PLR0911
             canonical_states=canonical_states,
             action_names=action_names,
             next_regime_to_V_arr=next_regime_to_V_arr,
+            referenced_value_kwargs=referenced_value_kwargs,
             logger=logger,
         )
         return replayed_actions, replayed_value, None
@@ -1224,6 +1409,7 @@ def _replace_continuous_action_with_policy_read(  # noqa: PLR0911
         action_names=action_names,
         next_regime_to_V_arr=next_regime_to_V_arr,
         flat_params=flat_params,
+        referenced_value_kwargs=referenced_value_kwargs,
         period=period,
         age=age,
     )
@@ -1905,6 +2091,7 @@ def _nested_grid_baseline(
     period: int,
     age: ScalarFloat | ScalarInt,
     replay_candidate: tuple[FloatND, FloatND, BoolND],
+    referenced_value_kwargs: Mapping[str, object] = MappingProxyType({}),
 ) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND, BoolND]:
     """Return the deterministic canonical-Q baseline for nested replay.
 
@@ -1929,6 +2116,7 @@ def _nested_grid_baseline(
         action_names=action_names,
         next_regime_to_V_arr=next_regime_to_V_arr,
         flat_params=flat_params,
+        referenced_value_kwargs=referenced_value_kwargs,
         period=period,
         age=age,
     )
@@ -1990,6 +2178,7 @@ def _nested_grid_baseline(
             action_names=action_names,
             next_regime_to_V_arr=next_regime_to_V_arr,
             flat_params=flat_params,
+            referenced_value_kwargs=referenced_value_kwargs,
             period=period,
             age=age,
         )
@@ -2376,6 +2565,7 @@ def _score_nnbegm_candidate_bank(
     canonical_states: Mapping[StateName, FloatND | IntND],
     action_names: tuple[ActionName, ...],
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+    referenced_value_kwargs: Mapping[str, object] = MappingProxyType({}),
 ) -> tuple[FloatND, BoolND]:
     """Construct complete candidate action tuples and score canonical Q."""
     n_candidates, n_subjects = candidate_inner.shape
@@ -2425,6 +2615,7 @@ def _score_nnbegm_candidate_bank(
         action_names=action_names,
         next_regime_to_V_arr=next_regime_to_V_arr,
         flat_params=flat_params,
+        referenced_value_kwargs=referenced_value_kwargs,
         period=period,
         age=age,
     )
@@ -2568,6 +2759,7 @@ def _replay_nnbegm_candidates(
     action_names: tuple[ActionName, ...],
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     logger: logging.Logger,
+    referenced_value_kwargs: Mapping[str, object] = MappingProxyType({}),
 ) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND]:
     """Replay and canonical-score the exact solve candidate product."""
     n_subjects = next(iter(states.values())).shape[0]
@@ -2635,6 +2827,7 @@ def _replay_nnbegm_candidates(
         canonical_states=canonical_states,
         action_names=action_names,
         next_regime_to_V_arr=next_regime_to_V_arr,
+        referenced_value_kwargs=referenced_value_kwargs,
     )
     valid = represented & canonical_feasible & jnp.isfinite(canonical_values)
     ranking_values = jnp.where(valid, canonical_values, -jnp.inf)
@@ -2725,6 +2918,7 @@ def _canonical_Q_at_actions(
     flat_params: FlatRegimeParams,
     period: int,
     age: ScalarFloat | ScalarInt,
+    referenced_value_kwargs: Mapping[str, object] = MappingProxyType({}),
 ) -> tuple[FloatND, BoolND]:
     """Score one action value per subject with the canonical state-action value.
 
@@ -2743,6 +2937,7 @@ def _canonical_Q_at_actions(
         **canonical_states,
         **{name: jnp.asarray(candidate_actions[name]) for name in action_names},
         next_regime_to_V_arr=next_regime_to_V_arr,
+        **referenced_value_kwargs,
         **flat_params,
         period=jnp.int32(period),
         age=age,
@@ -2760,6 +2955,7 @@ def _score_nested_action_pair(
     flat_params: FlatRegimeParams,
     period: int,
     age: ScalarFloat | ScalarInt,
+    referenced_value_kwargs: Mapping[str, object] = MappingProxyType({}),
 ) -> tuple[MappingProxyType[ActionName, FloatND | IntND], FloatND, BoolND]:
     """Score the published nested action pair once through canonical Q.
 
@@ -2776,6 +2972,7 @@ def _score_nested_action_pair(
         action_names=action_names,
         next_regime_to_V_arr=next_regime_to_V_arr,
         flat_params=flat_params,
+        referenced_value_kwargs=referenced_value_kwargs,
         period=period,
         age=age,
     )

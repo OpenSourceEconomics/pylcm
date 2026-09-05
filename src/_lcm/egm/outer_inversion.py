@@ -30,6 +30,7 @@ import jax.numpy as jnp
 
 from _lcm.egm.outer_affine_structure import certify_outer_coefficient
 from lcm.exceptions import RegimeInitializationError
+from lcm.solver_api import _register_artifact_static_metadata_dataclass
 from lcm.typing import BoolND, FloatND, ScalarFloat
 
 __all__ = [
@@ -56,6 +57,12 @@ class DeclaredOuterInverse:
 
     high: float
     """Upper endpoint of the outer state's declared domain."""
+
+
+_register_artifact_static_metadata_dataclass(
+    cls=DeclaredOuterInverse,
+    field_names=("coefficient", "low", "high"),
+)
 
 
 @dataclass(frozen=True)

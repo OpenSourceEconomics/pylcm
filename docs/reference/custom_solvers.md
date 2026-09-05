@@ -6,9 +6,10 @@ title: Custom solvers
 
 A solver can be written outside pylcm against public names only. The surface is
 `lcm.solvers`, `lcm.solver_api`, `lcm.typing`, and `lcm.grids`; nothing in a custom
-solver needs to import `_lcm`. What is still missing before this counts as a *supported*
-plugin API is listed under [Status](#status) at the end of this page, and the interface
-remains experimental until those exist.
+solver needs to import `_lcm`. The contract covers solve programs, keyed continuations,
+model-authoritative replay, durable result persistence, and exact version identities. It
+is an exact-version extension contract: a matching version is supported, while an
+adapter or automatic migration across versions is not implied.
 
 ## What a solver owes the engine
 
@@ -44,12 +45,13 @@ from lcm.solvers import (
     CoreExecutionDisposition,
     CoreExecutionRequirements,
     CoreProgram,
+    KernelOutput,
     OutputRole,
     SolutionKernels,
     Solver,
     SolverBuildContext,
+    SolverIdentity,
 )
-from lcm.solver_api import KernelOutput
 from lcm.typing import Float1D
 
 
@@ -96,6 +98,14 @@ class WealthKernel:
 
 class WealthSolver(Solver):
     """Publishes the wealth grid as the value in every active period."""
+
+    @property
+    def identity(self) -> SolverIdentity:
+        """Return the package-owned compatibility identity."""
+        return SolverIdentity(
+            plugin_id="example.wealth_solver",
+            plugin_version="1.0.0",
+        )
 
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         program = CoreProgram(
@@ -171,27 +181,129 @@ class of whatever payload a solve happened to retain. A route names its `replay_
 - `UNSUPPORTED` — the solve's decision can be reproduced neither way, so simulating the
   regime is refused with a message naming the reason.
 
-A custom solver's regimes declare `VALID_RECOMPUTATION`: publishing a replay payload
-requires a reader in the simulation loop, which is engine-side and not part of this
-surface.
+An external solver that needs its own payload implements `ExecutableReplayRoute` and
+returns it as `SolutionKernels(replay_route=...)`. The route supplies:
+
+- a package-owned `SolverIdentity` and `ReplayRouteIdentity`;
+- `requirements(context=...)`, declaring the exact artifact keys consumed for the
+  period-specific model view;
+- an `ArtifactAuthority` for each required key and solution cell;
+- `validate(snapshot=..., context=...)` for solver-specific mathematical invariants; and
+- `build_reader(snapshot=..., context=...)`, returning a JAX-transformable
+  `ReplayReader` whose result is an `ActionOutput` mapping named actions to arrays.
+
+`ArtifactAuthority` is constructed from the current model and route. It owns the exact
+payload and container runtime types, `TreePath`-addressed numerical leaves, named-axis
+roles and coordinates, state and action roles, categorical domains, required consumer,
+and applicability. Its separate `ArtifactDescriptor` carries the transport-safe copy of
+those facts together with the key, channel, payload identity, requiredness, and
+persistence policy. A `MODEL_VERIFIABLE` artifact may be saved because another process
+can reconstruct and check its authority independently. A dynamic artifact whose exact
+axes exist only as a solve-side fact must declare `NOT_PERSISTED` until those axes can
+be rederived from the model.
+
+Before forward execution, pylcm checks the archive and solver-interface versions, model
+and parameter fingerprints, plugin and route identities, key versions, coordinates,
+channels, requiredness, shapes, dtypes, and the model-built authorities. It materializes
+the required lazy entries once. At authority declaration it invokes a plugin PyTree's
+flatten callback exactly once, then invokes its unflatten callback once with opaque leaf
+tokens to compile a sealed construction plan. Later materialization copies numerical
+leaves into private buffers and reconstructs fresh exact tuples or structurally closed
+dataclass records from that plan without calling either plugin callback.
+PyTree-represented static metadata is validated; callback-injected instance state is
+canonicalized to the declared plan. The resulting owned snapshot is supplied to the
+route's `validate` and `build_reader` methods. This ownership boundary does not sandbox
+installed plugin validation or reader code, and a route cannot authorize itself from a
+descriptor copied out of the result.
+
+`ReplayModelContext` and `SimulationBuildContext` expose the same period-specific
+solve-grid view: `state_names` and `action_names` are the canonical solution axes, and
+their node mappings contain exactly those named grids. A state declared with
+`Phased(solve=callable, simulate=Grid)` is carried per subject only during simulation;
+it is therefore not an artifact axis and does not appear in either build context. The
+reader still receives that carried state in its per-subject `states` mapping at runtime.
+
+The reader receives only this public `SimulationBuildContext` and the validated
+`ReplayRouteSnapshot`. Its call has this shape:
+
+```text
+reader(states={...}, fallback_actions={...})
+    -> ActionOutput(actions={"consumption": ...})
+```
+
+It must be pure and JAX-transformable. Every declared action is returned by name as a
+scalar or an array broadcastable to one entry per subject; it must not invoke Python I/O
+or inspect an engine-private object.
+
+## Persistence
+
+`save_solution(solution=..., path=...)` stores public metadata, omissions, values, and
+every present artifact whose descriptor declares `MODEL_VERIFIABLE`. Each numerical
+entry is independently addressed and checksummed; the archive contains no plugin class,
+callable, pickle, or executable code. An emitted artifact declared `NOT_PERSISTED` is
+replaced in the restored result by an explicit omission with that reason.
+
+Loading does not import a plugin named by archive metadata. Without the plugin, pylcm
+can inspect metadata and omissions, verify checksums, and lazily read ordinary array
+entries. A plugin-defined PyTree stays uninterpreted until a model with the matching
+installed route supplies its trusted template during replay.
+
+Compatibility is exact for `SOLVER_API_VERSION`, the archive and solution schema
+versions, `SolverIdentity`, `ReplayRouteIdentity`, and every
+`ArtifactKey.schema_version`. Changing a payload's meaning requires a new artifact
+schema version. Changing route semantics requires a new route version. pylcm rejects
+incompatible persisted results clearly; plugins own any migration they choose to provide
+outside the replay path.
+
+Custom artifact authorities must use plugin-owned type IDs. The built-in
+`SIMULATION_POLICY`, `DISSOLUTION_FLAG`, `EGM_CONTINUATION`, and `SOLVER_DIAGNOSTICS`
+type-ID namespaces (including other schema versions) are reserved for the engine's own
+channel readers.
+
+## Conformance contract
+
+The repository carries an executable out-of-tree reference fixture, exercised by pylcm's
+focused tests, that imports only `lcm.solvers`, `lcm.solver_api`, and `lcm.typing`. It
+is a deliberately small two-state solver and establishes this minimum acceptance
+contract:
+
+1. declare a package identity and build all kernels through `SolverBuildContext`;
+1. publish retention-specialized `PLANNED` programs with a named `candidate`
+   `StreamableProductAxis`, a custom reduction semantic key, exact
+   `retained_artifact_keys`, an exact `retained_artifact_payload_types` entry for every
+   retained key, an explicit `replaces_program` link from replay to values, and
+   `StateAxesLeading` output roles, plus an additive artifact-only scratch program;
+1. return `KernelOutput` with a non-EGM `Counter` continuation declared `NOT_PERSISTED`
+   and a scratch auxiliary declared `MODEL_VERIFIABLE`;
+1. publish a registered plugin-defined PyTree as a `MODEL_VERIFIABLE` replay artifact
+   through an `ExecutableReplayRoute` with durable plugin and route identities;
+1. exercise solve/result retention, omission records, custom tied-action replay, and a
+   JAX-transformed reader;
+1. save, load independently lazy entries, construct a fresh compatible model, validate
+   the route, build its reader, and simulate from the restored result; and
+1. reject structurally or mathematically invalid replay artifacts during preflight.
+
+The fixture proves that the common planner and replay boundary need no engine-side
+branch for this solver. It is reference source inside pylcm's test suite, not a packaged
+or supported user-runnable conformance command. External plugin authors can copy its
+contract shape and should reproduce the same matrix with a representative model.
+
+The payload-type declaration names the final artifact published by the period kernel,
+after any adapter or composite transformation. Every program retaining the same key must
+name the same exact type, and that type must agree with the solver-built artifact
+authority and consuming replay route. Conditional publication affects applicability and
+requiredness, not the declared type of a payload when it is present.
 
 (status)=
 
 ## Status
 
-The names above are importable and tested end to end, including an assertion that the
-exercising test module imports nothing from `_lcm`. They are not yet a supported plugin
-API, and the following are the concrete gaps:
-
-- `SolutionResult` has no persistence boundary and no durable cross-process identity, so
-  a custom solver's artifacts cannot be saved and reloaded;
-- there is no external conformance suite a solver can run to establish that it satisfies
-  the contract;
-- there is no published compatibility or versioning policy for these names.
-
-Until those exist and the maintainers make an explicit stability decision, treat this
-page as a contributor-facing description of a moving seam. Progress is tracked in
-[issue #422](https://github.com/OpenSourceEconomics/pylcm/issues/422).
+The contract above is exercised end to end by the in-repository reference solver. Its
+source imports nothing from `_lcm`, and the focused tests cover persistence and restored
+replay. The contract is supported only for the exact declared versions. pylcm is
+pre-1.0, so a future release may deliberately increment `SOLVER_API_VERSION`; a plugin
+must then update and re-run its own contract checks rather than assume source or archive
+compatibility.
 
 Use a shipped solver from `lcm.solvers` wherever one represents the economic problem,
 and `GridSearch` where none does.

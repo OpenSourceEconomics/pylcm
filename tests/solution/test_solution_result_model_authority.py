@@ -145,7 +145,9 @@ def test_nnbegm_self_consistent_omitted_state_axis_is_rejected_before_forward(
     monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
     with pytest.raises(
         InvalidSimulationInputError,
-        match=r"state_names|axis|state/action roles",
+        match=(
+            r"state_names|axis|state/action roles|artifact payloads cannot be detached"
+        ),
     ):
         model.simulate(
             params=_PARAMS,

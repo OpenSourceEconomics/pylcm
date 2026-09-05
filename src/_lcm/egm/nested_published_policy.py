@@ -26,6 +26,7 @@ Both containers are registered as JAX pytrees (explicit
 """
 
 from dataclasses import dataclass
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -138,8 +139,10 @@ def _flatten_outer_policy_bank(
 
 # keyword-only-exempt: library-callback=jax.tree_util.register_pytree_node
 def _unflatten_outer_policy_bank(
-    _aux: None, children: tuple[Float1D, EGMSimPolicy]
+    _aux: None, children: tuple[Any, EGMSimPolicy]
 ) -> OuterPolicyBank:
+    # JAX also calls this declaration-time with opaque leaf tokens. Exact public
+    # artifact validation runs after reconstruction, outside this library callback.
     bank = object.__new__(OuterPolicyBank)
     object.__setattr__(bank, "outer_nodes", children[0])
     object.__setattr__(bank, "policies", children[1])

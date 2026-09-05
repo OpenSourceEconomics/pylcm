@@ -16,7 +16,14 @@ from _lcm.egm.nested_published_policy import NestedEGMSimPolicy, OuterPolicyBank
 from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
 from _lcm.regime_building import processing as regime_processing
 from lcm.exceptions import InvalidSimulationInputError
-from lcm.solver_api import SIMULATION_POLICY, ArtifactKey, ArtifactRef, ArtifactStore
+from lcm.solver_api import (
+    EGM_CONTINUATION,
+    SIMULATION_POLICY,
+    ArtifactKey,
+    ArtifactRef,
+    ArtifactStore,
+    AxisRole,
+)
 from lcm.solvers import MSSEnvelope
 from tests.simulation.test_nnbegm_split_workflow_parity import (
     _INITIAL as _ADAPTIVE_INITIAL,
@@ -216,6 +223,26 @@ def _adaptive_fixture():
     return model, solution, ref, policy
 
 
+def test_stateless_terminal_carry_uses_a_synthetic_node_axis(
+    ordinary_egm_fixture,
+) -> None:
+    """A stateless terminal carry's two padding nodes are not model state nodes."""
+    _model, _params, _initial, solution, _policy_ref, _policy = ordinary_egm_fixture
+    continuation_ref = next(
+        ref
+        for ref in solution.metadata.artifact_descriptors
+        if ref.key == EGM_CONTINUATION and ref.regime == "dead"
+    )
+    descriptor = solution.metadata.artifact_descriptors[continuation_ref]
+
+    assert descriptor.state_roles == ()
+    assert len(descriptor.named_axes) == 1
+    axis = descriptor.named_axes[0]
+    assert axis.name == "pylcm:egm:node"
+    assert axis.role is AxisRole.OTHER
+    assert axis.coordinates == tuple(range(axis.length))
+
+
 @pytest.fixture(scope="module")
 def finite_authority_fixture():
     """Share one finite producer result across the broader mutation families."""
@@ -336,7 +363,10 @@ def test_ordinary_egm_model_authority_rejects_self_consistent_row_mutations(
         malformed_policy = _astype_egm_policy(policy=policy, dtype=jnp.float16)
 
     monkeypatch.setattr(model_module, "simulate", _must_not_run)
-    with pytest.raises(InvalidSimulationInputError, match="mismatched_payload"):
+    with pytest.raises(
+        InvalidSimulationInputError,
+        match=r"mismatched_payload|artifact payloads cannot be detached",
+    ):
         model.simulate(
             params=params,
             initial_conditions=initial_conditions,
@@ -424,7 +454,10 @@ def test_nested_egm_authority_rejects_coherent_recursive_and_role_mutations(
         )
 
     monkeypatch.setattr(model_module, "simulate", _must_not_run)
-    with pytest.raises(InvalidSimulationInputError, match="mismatched_payload"):
+    with pytest.raises(
+        InvalidSimulationInputError,
+        match=r"mismatched_payload|artifact payloads cannot be detached",
+    ):
         model.simulate(
             params=_ADAPTIVE_PARAMS,
             initial_conditions=dict(_ADAPTIVE_INITIAL),
@@ -459,7 +492,10 @@ def test_nested_egm_authority_rejects_changed_adaptive_outer_coordinate(
     )
 
     monkeypatch.setattr(model_module, "simulate", _must_not_run)
-    with pytest.raises(InvalidSimulationInputError, match="mismatched_payload"):
+    with pytest.raises(
+        InvalidSimulationInputError,
+        match=r"mismatched_payload|artifact payloads cannot be detached",
+    ):
         model.simulate(
             params=_ADAPTIVE_PARAMS,
             initial_conditions=dict(_ADAPTIVE_INITIAL),
@@ -506,7 +542,10 @@ def test_nested_egm_authority_requires_exact_recursive_container_types(
         )
 
     monkeypatch.setattr(model_module, "simulate", _must_not_run)
-    with pytest.raises(InvalidSimulationInputError, match="mismatched_payload"):
+    with pytest.raises(
+        InvalidSimulationInputError,
+        match=r"mismatched_payload|artifact payloads cannot be detached",
+    ):
         model.simulate(
             params=_ADAPTIVE_PARAMS,
             initial_conditions=dict(_ADAPTIVE_INITIAL),
@@ -533,7 +572,10 @@ def test_finite_nnbegm_rejects_payload_owned_inverse_coefficient(
     )
 
     monkeypatch.setattr(model_module, "simulate", _must_not_run)
-    with pytest.raises(InvalidSimulationInputError, match="mismatched_payload"):
+    with pytest.raises(
+        InvalidSimulationInputError,
+        match=r"mismatched_payload|artifact payloads cannot be detached",
+    ):
         model.simulate(
             params=_PARAMS,
             initial_conditions=dict(_INITIAL),
@@ -560,7 +602,10 @@ def test_nested_nnbegm_rejects_payload_owned_inverse_coefficient(
     )
 
     monkeypatch.setattr(model_module, "simulate", _must_not_run)
-    with pytest.raises(InvalidSimulationInputError, match="mismatched_payload"):
+    with pytest.raises(
+        InvalidSimulationInputError,
+        match=r"mismatched_payload|artifact payloads cannot be detached",
+    ):
         model.simulate(
             params=_ADAPTIVE_PARAMS,
             initial_conditions=dict(_ADAPTIVE_INITIAL),
@@ -626,7 +671,10 @@ def test_finite_nnbegm_rejects_legal_but_model_wrong_candidate_metadata(
         malformed_policy = replace(policy, n_keeper_candidates=alternate)
 
     monkeypatch.setattr(model_module, "simulate", _must_not_run)
-    with pytest.raises(InvalidSimulationInputError, match="mismatched_payload"):
+    with pytest.raises(
+        InvalidSimulationInputError,
+        match=r"mismatched_payload|artifact payloads cannot be detached",
+    ):
         model.simulate(
             params=_PARAMS,
             initial_conditions=dict(_INITIAL),

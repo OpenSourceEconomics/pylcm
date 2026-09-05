@@ -6,6 +6,8 @@ before lowering. Every kernel publishes its own graph: the engine plans a progra
 or runs it deliberately dense, and refuses a kernel that publishes no graph.
 """
 
+from __future__ import annotations
+
 import inspect
 import math
 import weakref
@@ -13,7 +15,7 @@ from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from types import MappingProxyType
-from typing import Protocol, cast, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 
 from _lcm.execution.value_transfer import (
     ResolvedValueTransfer,
@@ -22,10 +24,20 @@ from _lcm.execution.value_transfer import (
     apply_value_transfer_plan,
 )
 from _lcm.typing import ActionName
+from lcm.solver_api import ArtifactKey
 
-_CORE_PROGRAM_VERSION = 4
+_CORE_PROGRAM_VERSION = 5
 _INT32_MAX = 2_147_483_647
 _INITIAL_TILE_WIDTH_CAP = 64
+
+if TYPE_CHECKING:
+    type _RetainedArtifactKeys = tuple[ArtifactKey, ...]
+    type _RetainedArtifactPayloadTypes = Mapping[ArtifactKey, type[object]]
+else:
+    # Runtime construction deliberately reaches CoreProgram's exact, deterministic
+    # validation instead of a decorator-generated annotation error.
+    type _RetainedArtifactKeys = object
+    type _RetainedArtifactPayloadTypes = object
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -118,7 +130,10 @@ class ProgramScope(StrEnum):
 
     - `ANY`: dispatched under every retention.
     - `VALUES_ONLY`: dispatched only when the solve retains no replay artifacts.
-    - `REPLAY`: dispatched only when the solve retains replay artifacts.
+    - `REPLAY`: an alternative value-producing variant, dispatched for normal
+      replay retention or when one of its exact artifact keys is selected.
+    - `ARTIFACT`: an additive program dispatched only when one of its exact
+      artifact keys is selected.
 
     A kernel publishing both scoped variants of one body lets a values-only solve
     skip the replay outputs' assembly instead of computing and discarding them.
@@ -127,6 +142,7 @@ class ProgramScope(StrEnum):
     ANY = "any"
     VALUES_ONLY = "values-only"
     REPLAY = "replay"
+    ARTIFACT = "artifact"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -190,10 +206,26 @@ class CoreProgram:
     disposition_reason: str | None = None
     donation_candidates: tuple[str, ...] = ()
     scope: ProgramScope = ProgramScope.ANY
+    retained_artifact_keys: _RetainedArtifactKeys = ()
+    retained_artifact_payload_types: _RetainedArtifactPayloadTypes = MappingProxyType(
+        {}
+    )
+    replaces_program: str | None = None
 
     def __post_init__(self) -> None:
         """Snapshot caller-owned sequences."""
+        if not isinstance(self.retained_artifact_payload_types, Mapping):
+            msg = "CoreProgram retained_artifact_payload_types must be a mapping."
+            raise TypeError(msg)
         object.__setattr__(self, "donation_candidates", tuple(self.donation_candidates))
+        object.__setattr__(
+            self, "retained_artifact_keys", tuple(self.retained_artifact_keys)
+        )
+        object.__setattr__(
+            self,
+            "retained_artifact_payload_types",
+            MappingProxyType(dict(self.retained_artifact_payload_types)),
+        )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -209,11 +241,16 @@ class MaterializedCoreProgram:
     donation_candidates: tuple[str, ...]
     disposition_reason: str | None = None
     scope: ProgramScope = ProgramScope.ANY
+    retained_artifact_keys: tuple[ArtifactKey, ...] = ()
+    replaces_program: str | None = None
 
     def __post_init__(self) -> None:
         """Snapshot the exact dynamic argument tree."""
         object.__setattr__(self, "arguments", MappingProxyType(dict(self.arguments)))
         object.__setattr__(self, "donation_candidates", tuple(self.donation_candidates))
+        object.__setattr__(
+            self, "retained_artifact_keys", tuple(self.retained_artifact_keys)
+        )
 
 
 @runtime_checkable
@@ -242,27 +279,109 @@ def core_program_graph(*, kernel: object) -> MappingProxyType[str, CoreProgram]:
     return _snapshot_and_validate_graph(graph=kernel.core_programs())
 
 
+def retained_artifact_payload_type(
+    *, graph: Mapping[str, CoreProgram], key: ArtifactKey
+) -> type[object] | None:
+    """Return the unique producer-declared payload type for one retained artifact.
+
+    ``None`` means no program retains ``key``. A retained key without a type is
+    refused when a model needs its producer description, as are conflicting type
+    declarations across programs in the same graph.
+    """
+    producers = tuple(
+        (name, program)
+        for name, program in graph.items()
+        if key in program.retained_artifact_keys
+    )
+    if not producers:
+        return None
+    missing = tuple(
+        name
+        for name, program in producers
+        if key not in program.retained_artifact_payload_types
+    )
+    if missing:
+        msg = (
+            f"CorePrograms {missing!r} retain artifact {key!r} without declaring "
+            "its payload type."
+        )
+        raise ValueError(msg)
+    declarations = tuple(
+        (name, program.retained_artifact_payload_types[key])
+        for name, program in producers
+    )
+    expected = declarations[0][1]
+    if any(payload_type is not expected for _name, payload_type in declarations[1:]):
+        msg = (
+            f"CorePrograms disagree on the payload type of retained artifact "
+            f"{key!r}: {declarations!r}."
+        )
+        raise ValueError(msg)
+    return expected
+
+
+def _validate_retained_artifact_payload_type_consistency(
+    *, graph: Mapping[str, CoreProgram]
+) -> None:
+    """Require every retained key to have one exact producer payload type."""
+    keys = sorted(
+        {key for program in graph.values() for key in program.retained_artifact_keys}
+    )
+    for key in keys:
+        retained_artifact_payload_type(graph=graph, key=key)
+
+
 def select_programs(
-    *, graph: Mapping[str, CoreProgram], retain_replay: bool
+    *,
+    graph: Mapping[str, CoreProgram],
+    retain_replay: bool,
+    selected_artifact_keys: frozenset[ArtifactKey] = frozenset(),
 ) -> MappingProxyType[str, CoreProgram]:
     """Keep the programs one solve dispatches under its result retention.
 
-    Every `ANY` program is kept, plus exactly the programs of the one scope the
-    retention selects. A graph that leaves nothing to dispatch is refused: a period
-    without a program would publish no value.
+    Every `ANY` program is kept. Normal replay retention selects every `REPLAY`
+    variant. Persistence-oriented retention instead selects only `REPLAY` and
+    additive `ARTIFACT` programs whose declared artifact identities intersect the
+    exact model-authoritative keys selected for this regime-period cell. If no replay
+    variant is selected, `VALUES_ONLY` is the value-producing alternative. A graph
+    that leaves nothing to dispatch is refused: a period without a program would
+    publish no value.
     """
-    dispatched_scope = (
-        ProgramScope.REPLAY if retain_replay else ProgramScope.VALUES_ONLY
-    )
+    if type(retain_replay) is not bool:
+        raise TypeError("retain_replay must be an exact bool.")
+    if type(selected_artifact_keys) is not frozenset:
+        raise TypeError("selected_artifact_keys must be an exact frozenset.")
+    selected_replay_names = {
+        name
+        for name, program in graph.items()
+        if program.scope is ProgramScope.REPLAY
+        and (
+            retain_replay
+            or not selected_artifact_keys.isdisjoint(program.retained_artifact_keys)
+        )
+    }
+    replaced_value_names = {
+        cast("str", graph[name].replaces_program) for name in selected_replay_names
+    }
     selected = {
         name: program
         for name, program in graph.items()
-        if program.scope in (ProgramScope.ANY, dispatched_scope)
+        if program.scope is ProgramScope.ANY
+        or name in selected_replay_names
+        or (
+            program.scope is ProgramScope.VALUES_ONLY
+            and name not in replaced_value_names
+        )
+        or (
+            program.scope is ProgramScope.ARTIFACT
+            and not selected_artifact_keys.isdisjoint(program.retained_artifact_keys)
+        )
     }
     if not selected:
         msg = (
-            f"No core program is dispatched with retain_replay={retain_replay!r}: "
-            "the graph declares scopes "
+            "No core program is dispatched with "
+            f"retain_replay={retain_replay!r} and selected_artifact_keys="
+            f"{selected_artifact_keys!r}: the graph declares scopes "
             f"{ {name: program.scope.value for name, program in graph.items()}!r}."
         )
         raise ValueError(msg)
@@ -319,7 +438,35 @@ def _snapshot_and_validate_graph(
             )
             raise ValueError(msg)
         _validate_program_declaration(program=program)
+    _validate_replay_replacements(graph=snapshot)
+    _validate_retained_artifact_payload_type_consistency(graph=snapshot)
     return MappingProxyType(snapshot)
+
+
+def _validate_replay_replacements(*, graph: Mapping[str, CoreProgram]) -> None:
+    """Require every replay alternative to replace one distinct values program."""
+    replacements: dict[str, str] = {}
+    for name, program in graph.items():
+        if program.scope is not ProgramScope.REPLAY:
+            continue
+        replaced_name = cast("str", program.replaces_program)
+        replaced = graph.get(replaced_name)
+        if replaced is None or replaced.scope is not ProgramScope.VALUES_ONLY:
+            msg = (
+                f"Replay CoreProgram {name!r} declares replacement target "
+                f"{replaced_name!r}, which must name a VALUES_ONLY program in the "
+                "same graph."
+            )
+            raise ValueError(msg)
+        previous = replacements.get(replaced_name)
+        if previous is not None:
+            msg = (
+                f"Replay CorePrograms {previous!r} and {name!r} share replacement "
+                f"target {replaced_name!r}; one values program may have only one "
+                "replay alternative."
+            )
+            raise ValueError(msg)
+        replacements[replaced_name] = name
 
 
 def _validate_program_declaration(*, program: CoreProgram) -> None:
@@ -339,6 +486,7 @@ def _validate_program_declaration(*, program: CoreProgram) -> None:
     if not isinstance(program.scope, ProgramScope):
         msg = f"CoreProgram {program.name!r} scope has the wrong type."
         raise TypeError(msg)
+    _validate_retention_declaration(program=program)
     if program.output_roles is None:
         msg = f"CoreProgram {program.name!r} must declare output_roles."
         raise ValueError(msg)
@@ -350,6 +498,80 @@ def _validate_program_declaration(*, program: CoreProgram) -> None:
         msg = (
             f"CoreProgram {program.name!r} donation_candidates must be unique, "
             "non-empty argument names."
+        )
+        raise ValueError(msg)
+
+
+def _validate_retention_declaration(
+    *, program: CoreProgram | MaterializedCoreProgram
+) -> None:
+    """Require artifact-scoped programs to name their exact retained outputs."""
+    retention_keys = program.retained_artifact_keys
+    if any(type(key) is not ArtifactKey for key in retention_keys):
+        msg = (
+            f"CoreProgram {program.name!r} retained_artifact_keys must contain exact "
+            "public ArtifactKey values."
+        )
+        raise TypeError(msg)
+    if len(retention_keys) != len(set(retention_keys)):
+        msg = f"CoreProgram {program.name!r} retained_artifact_keys must be unique."
+        raise ValueError(msg)
+    if isinstance(program, CoreProgram):
+        _validate_retained_artifact_payload_types(program=program)
+    artifact_scopes = {ProgramScope.REPLAY, ProgramScope.ARTIFACT}
+    if (program.scope in artifact_scopes) != bool(retention_keys):
+        msg = (
+            f"CoreProgram {program.name!r} must declare retained_artifact_keys "
+            "exactly when its scope is REPLAY or ARTIFACT."
+        )
+        raise ValueError(msg)
+    if program.scope is ProgramScope.REPLAY:
+        if not isinstance(program.replaces_program, str) or not (
+            program.replaces_program
+        ):
+            msg = (
+                f"Replay CoreProgram {program.name!r} must name the VALUES_ONLY "
+                "program it replaces."
+            )
+            raise ValueError(msg)
+    elif program.replaces_program is not None:
+        msg = (
+            f"CoreProgram {program.name!r} may declare replaces_program only when "
+            "its scope is REPLAY."
+        )
+        raise ValueError(msg)
+
+
+def _validate_retained_artifact_payload_types(*, program: CoreProgram) -> None:
+    """Require one exact payload type for every artifact this program retains."""
+    payload_types = program.retained_artifact_payload_types
+    if any(type(key) is not ArtifactKey for key in payload_types):
+        msg = (
+            f"CoreProgram {program.name!r} retained artifact payload types must "
+            "be keyed by exact ArtifactKey values."
+        )
+        raise TypeError(msg)
+    if any(
+        not isinstance(payload_type, type) for payload_type in payload_types.values()
+    ):
+        msg = (
+            f"CoreProgram {program.name!r} retained artifact payload values "
+            "must be types."
+        )
+        raise TypeError(msg)
+    retention_keys = set(program.retained_artifact_keys)
+    unretained = sorted(payload_types.keys() - retention_keys)
+    missing = sorted(retention_keys - payload_types.keys())
+    if unretained:
+        msg = (
+            f"CoreProgram {program.name!r} declares payload types for artifacts "
+            f"it does not retain: {tuple(unretained)!r}."
+        )
+        raise ValueError(msg)
+    if missing:
+        msg = (
+            f"CoreProgram {program.name!r} retains artifacts without declaring "
+            f"their payload types: {tuple(missing)!r}."
         )
         raise ValueError(msg)
 
@@ -390,6 +612,8 @@ def materialize_core_program(
         donation_candidates=program.donation_candidates,
         disposition_reason=program.disposition_reason,
         scope=program.scope,
+        retained_artifact_keys=program.retained_artifact_keys,
+        replaces_program=program.replaces_program,
     )
     missing_donations = set(materialized.donation_candidates) - set(
         materialized.arguments
@@ -421,6 +645,8 @@ class ResolvedCoreProgram:
     input_transfer_plan: tuple[ResolvedValueTransfer, ...]
     disposition_reason: str | None = None
     scope: ProgramScope = ProgramScope.ANY
+    retained_artifact_keys: tuple[ArtifactKey, ...] = ()
+    replaces_program: str | None = None
 
     def __post_init__(self) -> None:
         """Snapshot the materialized argument and planning containers."""
@@ -434,6 +660,9 @@ class ResolvedCoreProgram:
             self,
             "tile_widths",
             MappingProxyType(dict(self.tile_widths)),
+        )
+        object.__setattr__(
+            self, "retained_artifact_keys", tuple(self.retained_artifact_keys)
         )
         object.__setattr__(self, "input_transfer_plan", tuple(self.input_transfer_plan))
         object.__setattr__(self, "donation_candidates", tuple(self.donation_candidates))
@@ -517,6 +746,8 @@ def resolve_core_program(
         donation_candidates=program.donation_candidates,
         disposition_reason=program.disposition_reason,
         scope=program.scope,
+        retained_artifact_keys=program.retained_artifact_keys,
+        replaces_program=program.replaces_program,
         tile_widths=resolved_widths,
         input_transfer_plan=resolved_input_transfer_plan,
         specialization_key=(
@@ -525,6 +756,8 @@ def resolve_core_program(
             program.disposition.value,
             program.disposition_reason,
             program.scope.value,
+            program.retained_artifact_keys,
+            program.replaces_program,
             program.donation_candidates,
             tuple(compilation_axes),
             input_transfer_specialization_key,
@@ -618,6 +851,10 @@ def _validate_materialized_declaration(*, program: MaterializedCoreProgram) -> N
     if not isinstance(program.disposition, CoreExecutionDisposition):
         msg = f"CoreProgram {program.name!r} disposition has the wrong type."
         raise TypeError(msg)
+    if not isinstance(program.scope, ProgramScope):
+        msg = f"CoreProgram {program.name!r} scope has the wrong type."
+        raise TypeError(msg)
+    _validate_retention_declaration(program=program)
     if program.output_roles is None:
         msg = f"CoreProgram {program.name!r} must declare output_roles."
         raise ValueError(msg)

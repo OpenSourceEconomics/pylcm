@@ -293,14 +293,14 @@ def _unflatten_grid_policy(
     aux: tuple[Any, ...], children: Sequence[Any]
 ) -> NBEGMGridPolicy:
     state_names, discrete_action_names = aux
-    return NBEGMGridPolicy(
-        action=children[0],
-        branch_inner_action=children[1],
-        branch_value=children[2],
-        branch_discrete_actions=children[3],
-        state_names=state_names,
-        discrete_action_names=discrete_action_names,
-    )
+    policy = object.__new__(NBEGMGridPolicy)
+    object.__setattr__(policy, "action", children[0])
+    object.__setattr__(policy, "branch_inner_action", children[1])
+    object.__setattr__(policy, "branch_value", children[2])
+    object.__setattr__(policy, "branch_discrete_actions", children[3])
+    object.__setattr__(policy, "state_names", state_names)
+    object.__setattr__(policy, "discrete_action_names", discrete_action_names)
+    return policy
 
 
 def _flatten_nnbegm_policy(
@@ -335,19 +335,19 @@ def _unflatten_nnbegm_policy(
         replay_capability,
         discrete_action_names,
     ) = aux
-    return NNBEGMSimPolicy(
-        candidate_inner_action=children[0],
-        candidate_outer_target=children[1],
-        candidate_value=children[2],
-        outer_grid_values=children[3],
-        candidate_discrete_actions=children[4],
-        state_names=state_names,
-        inner_action_name=inner_action_name,
-        outer_action_name=outer_action_name,
-        n_keeper_candidates=n_keeper_candidates,
-        replay_capability=replay_capability,
-        discrete_action_names=discrete_action_names,
-    )
+    policy = object.__new__(NNBEGMSimPolicy)
+    object.__setattr__(policy, "candidate_inner_action", children[0])
+    object.__setattr__(policy, "candidate_outer_target", children[1])
+    object.__setattr__(policy, "candidate_value", children[2])
+    object.__setattr__(policy, "outer_grid_values", children[3])
+    object.__setattr__(policy, "candidate_discrete_actions", children[4])
+    object.__setattr__(policy, "state_names", state_names)
+    object.__setattr__(policy, "inner_action_name", inner_action_name)
+    object.__setattr__(policy, "outer_action_name", outer_action_name)
+    object.__setattr__(policy, "n_keeper_candidates", n_keeper_candidates)
+    object.__setattr__(policy, "replay_capability", replay_capability)
+    object.__setattr__(policy, "discrete_action_names", discrete_action_names)
+    return policy
 
 
 jax.tree_util.register_pytree_node(

@@ -123,7 +123,7 @@ def _keeper_then_per_node_loop(
         program=core_program_graph(kernel=kernel.keeper_kernel)["main"],
         context=build_context,
     )
-    V_arr, keeper_carry, _ = jax.jit(keeper.function)(**keeper.arguments)
+    V_arr, keeper_carry = jax.jit(keeper.function)(**keeper.arguments)
     adjuster_program = core_program_graph(kernel=kernel.adjuster_kernel)["main"]
     adjuster_core = jax.jit(adjuster_program.function)
     carries: list[EGMCarry] = []
@@ -138,7 +138,7 @@ def _keeper_then_per_node_loop(
             ),
         )
         adjuster = materialize_core_program(program=adjuster_program, context=bound)
-        node_value, node_carry, _ = adjuster_core(
+        node_value, node_carry = adjuster_core(
             **adjuster.arguments, **kernel.fixed_sweep_kwargs
         )
         V_arr = jax.numpy.maximum(V_arr, node_value)
@@ -167,7 +167,8 @@ def test_the_graph_publishes_the_keeper_and_the_outer_sweep(*, captured):
     assert keeper.disposition_reason == _KEEPER_REASON
     assert sweep.disposition is CoreExecutionDisposition.DENSE
     assert sweep.disposition_reason == _SWEEP_REASON
-    assert {keeper.scope, sweep.scope} == {ProgramScope.ANY}
+    assert keeper.scope is ProgramScope.VALUES_ONLY
+    assert sweep.scope is ProgramScope.ANY
     assert sweep.requirements.streamable_axes == ()
     assert sweep.requirements.target_value_accesses == ()
 
@@ -220,7 +221,7 @@ def test_the_sweep_builder_binds_the_first_node_and_keeper_shaped_placeholders(
     keeper = materialize_core_program(
         program=core_program_graph(kernel=kernel)["keeper"], context=build_context
     )
-    keeper_value, keeper_carry, _ = jax.jit(keeper.function)(**keeper.arguments)
+    keeper_value, keeper_carry = jax.jit(keeper.function)(**keeper.arguments)
 
     assert "next_regime_to_V_arr" not in arguments
     np.testing.assert_array_equal(arguments[_OUTER_NODES], kernel.outer_grid_values)

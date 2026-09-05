@@ -66,6 +66,7 @@ from lcm.solver_api import (
     SIMULATION_POLICY,
     ResultRetention,
     SolutionResult,
+    ValueStore,
 )
 from lcm.transition import MarkovTransition
 from lcm.typing import (
@@ -1178,7 +1179,7 @@ def test_public_model_solve_returns_labelled_values_for_every_period():
     model = _make_dissolution_model()
     solution = model.solve(params=_DISSOLUTION_PARAMS, log_level="debug")
     assert isinstance(solution, SolutionResult)
-    assert isinstance(solution.values, MappingProxyType)
+    assert isinstance(solution.values, ValueStore)
     assert set(solution.values) == {0, 1, 2, 3}
 
 

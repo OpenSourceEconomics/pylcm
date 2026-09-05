@@ -48,18 +48,62 @@ result = model.simulate(
 `VALUES` drops replay artifacts and works only when every simulated decision can be
 recovered from values and no applicable collective gate needs a dissolution flag.
 `ALL_PERSISTABLE_ARTIFACTS` keeps only what the result carries on its own: continuation
-artifacts are not yet retainable, and the `NNBEGM` replay policy of an
-`AdaptiveOuterMesh` search, which is replayed against a solve-generated mesh the model
-instance holds privately, is omitted as `NOT_PERSISTED`. Diagnostics follow `log_level`,
-not retention.
+or solver-defined artifacts are kept only where their model-built authority marks them
+as independently verifiable, and the `NNBEGM` replay policy of an `AdaptiveOuterMesh`
+search, which is replayed against a solve-generated mesh the model instance holds
+privately, is omitted as `NOT_PERSISTED`. Diagnostics follow `log_level`, not retention.
 
-Simulation validates the originating model instance, exact canonical parameters, result
-versions, value coverage and schemas, and every required replay artifact before forward
-execution. The checks remain active at `log_level="off"`. Omit `solution` to solve
-automatically; there are no separate value, policy, or dissolution inputs. Persistence
-and durable cross-process model identity remain future capabilities. See
+Simulation validates the durable model fingerprint, exact solution-relevant canonical
+parameters, solver/plugin and replay-route versions, value coverage and schemas, and
+every required replay artifact before forward execution. An in-memory result also has to
+come from the originating model instance. A restored result may come from another
+process: compatibility rests on the durable model fingerprint and exact declared
+versions instead. The checks remain active at `log_level="off"`. Omit `solution` to
+solve automatically; there are no separate value, policy, or dissolution inputs. See
 [Runtime, results, and persistence](../reference/runtime_and_results.md#api-solution-result)
-for the artifact stores and current limits.
+for the artifact stores and compatibility rules.
+
+### Saving and restoring a solution
+
+Save the complete result, including its metadata, omissions, and every retained artifact
+that has model-verifiable persistence authority:
+
+```python
+from pathlib import Path
+
+from lcm import load_solution, save_solution
+
+path = Path("solution.lcm")
+save_solution(solution=solution, path=path)
+
+restored = load_solution(path=path)
+result = model.simulate(
+    params=params,
+    initial_conditions=initial_conditions,
+    solution=restored,
+    log_level="debug",
+)
+```
+
+`solution.save(path=path)` is the equivalent convenience method. Saving uses an atomic
+sibling-file replacement, so a failed write does not publish a partial archive. Values
+and artifacts are independently lazy after loading:
+
+```python
+from lcm.solver_api import LoadState
+
+assert restored.values.load_state(period=0, regime="working") is LoadState.UNLOADED
+V_working = restored.value(period=0, regime="working")
+assert restored.values.load_state(period=0, regime="working") is LoadState.LOADED
+```
+
+Loading one value leaves every other value and replay entry unloaded. Pass
+`verify_checksums=True` to `load_solution` to verify the entire archive without
+materializing any entry. Loading requires the exact solution-format, labelled-result
+schema, and solver-interface versions; replay also requires exact route, plugin, and
+artifact-schema identities. pylcm rejects a mismatch rather than migrating it silently.
+`load_legacy_solution(path=...)` is the explicit migration reader for the old value-only
+HDF5 format, which cannot be passed to `simulate` as a complete solution.
 
 ### Log levels and runtime validation
 

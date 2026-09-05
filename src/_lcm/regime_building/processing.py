@@ -218,7 +218,12 @@ from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.phased import Phased
 from lcm.regime import ProjectedRegimeValue
 from lcm.regime import Regime as UserRegime
-from lcm.solver_api import EGM_CONTINUATION, ArtifactKey, KernelOutput
+from lcm.solver_api import (
+    EGM_CONTINUATION,
+    ArtifactKey,
+    ExecutableReplayRoute,
+    KernelOutput,
+)
 from lcm.solvers import (
     DCEGM,
     NNBEGM,
@@ -778,6 +783,7 @@ def process_regimes(  # noqa: PLR0915
                 solve_has_compiled_constraint_boundaries=(
                     solution.has_compiled_constraint_boundaries
                 ),
+                external_replay_route=solution.external_replay_route,
                 has_taste_shocks=user_regime.taste_shocks is not None,
                 solver=user_regime.solver,
                 certainty_equivalent=user_regime.certainty_equivalent,
@@ -2919,6 +2925,10 @@ def _build_solution_phase(
         validation_regime_transition_probs=validation_regime_transition_probs,
         compute_intermediates=compute_intermediates,
         continuation_spec=continuation_spec,
+        external_replay_route=solver_kernels.replay_route,
+        artifact_authorities=MappingProxyType(
+            dict(solver_kernels.artifact_authorities)
+        ),
         param_checks=solver_kernels.param_checks,
         pareto_weights=pareto_weights,
         _base_state_action_space=state_action_space,
@@ -3319,6 +3329,7 @@ def _build_simulation_phase(  # noqa: PLR0912, PLR0915
     solve_transition_plans: TargetTransitionPlans,
     solve_compute_regime_transition_probs: RegimeTransitionFunction | None,
     solve_has_compiled_constraint_boundaries: bool,
+    external_replay_route: ExecutableReplayRoute | None,
     has_taste_shocks: bool,
     solver: Solver,
     certainty_equivalent: CertaintyEquivalent | None,
@@ -3917,6 +3928,7 @@ def _build_simulation_phase(  # noqa: PLR0912, PLR0915
         Q_and_F=pointwise_Q_and_F,
         next_state=next_state,
         egm_policy_read=egm_policy_read,
+        external_replay_route=external_replay_route,
     )
 
 

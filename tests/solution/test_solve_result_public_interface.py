@@ -2,7 +2,7 @@
 
 from types import MappingProxyType
 
-from lcm.solver_api import DISSOLUTION_FLAG, SolutionResult
+from lcm.solver_api import DISSOLUTION_FLAG, SolutionResult, ValueStore
 from tests.regime_building.test_collective_regime_simulate import (
     _DISSOLUTION_PARAMS,
     _make_dissolution_model,
@@ -27,7 +27,7 @@ def test_singleton_solve_returns_one_labelled_result() -> None:
     result = model.solve(params=params, log_level="off")
 
     assert isinstance(result, SolutionResult)
-    assert isinstance(result.values, MappingProxyType)
+    assert isinstance(result.values, ValueStore)
     assert not result.replay_artifacts.project(DISSOLUTION_FLAG)
 
 

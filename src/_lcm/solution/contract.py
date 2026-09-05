@@ -32,7 +32,7 @@ field annotations to resolve to real objects when an instance is constructed.
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Hashable, Mapping
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal, Protocol, TypeAlias, cast, runtime_checkable
 
@@ -75,7 +75,20 @@ from _lcm.typing import (
     TransitionFunctionsMapping,
 )
 from lcm.ages import AgeGrid
-from lcm.solver_api import ArtifactKey, KernelOutput
+from lcm.solver_api import (
+    DISSOLUTION_FLAG,
+    EGM_CONTINUATION,
+    SIMULATION_POLICY,
+    SOLVER_API_VERSION,
+    SOLVER_DIAGNOSTICS,
+    ArtifactAuthority,
+    ArtifactChannel,
+    ArtifactKey,
+    ArtifactStore,
+    ExecutableReplayRoute,
+    KernelOutput,
+    SolverIdentity,
+)
 from lcm.typing import Float1D, FloatND, UserFunction
 
 # The continuation channel is defined once in `_lcm.continuation`. Backward
@@ -416,6 +429,16 @@ GENERATED_REPLAY_AUTHORITY = ArtifactKey(
     type_id="pylcm.engine.generated_replay_authority", schema_version=1
 )
 
+_ENGINE_ARTIFACT_TYPE_IDS = frozenset(
+    {
+        DISSOLUTION_FLAG.type_id,
+        EGM_CONTINUATION.type_id,
+        GENERATED_REPLAY_AUTHORITY.type_id,
+        SIMULATION_POLICY.type_id,
+        SOLVER_DIAGNOSTICS.type_id,
+    }
+)
+
 
 @dataclass(frozen=True, kw_only=True)
 class BackwardInductionResult:
@@ -464,6 +487,15 @@ class BackwardInductionResult:
     numerical self-report a period kernel already published instead of dropping
     it at the period boundary.
     """
+
+    retained_continuations: ArtifactStore = field(default_factory=ArtifactStore)
+    """Addressed continuations retained only under all-persistable mode."""
+
+    replay_artifacts: ArtifactStore = field(default_factory=ArtifactStore)
+    """Addressed replay artifacts, including plugin-defined payloads."""
+
+    auxiliary_artifacts: ArtifactStore = field(default_factory=ArtifactStore)
+    """Addressed solver-defined inspection/persistence artifacts."""
 
 
 @runtime_checkable
@@ -586,6 +618,47 @@ class SolutionKernels:
     whose scope is decided by structure alone.
     """
 
+    replay_route: ExecutableReplayRoute | None = None
+    """External executable replay route, or ``None`` for an engine adapter."""
+
+    artifact_authorities: Mapping[ArtifactKey, ArtifactAuthority] = MappingProxyType({})
+    """Model-derived contracts for custom retained artifacts."""
+
+    def __post_init__(self) -> None:
+        """Snapshot mappings and reject contradictory artifact identities."""
+        object.__setattr__(
+            self, "period_kernels", MappingProxyType(dict(self.period_kernels))
+        )
+        authorities = dict(self.artifact_authorities)
+        if any(
+            key != authority.descriptor.key for key, authority in authorities.items()
+        ):
+            raise ValueError(
+                "SolutionKernels.artifact_authorities keys must equal each "
+                "authority descriptor's ArtifactKey."
+            )
+        if any(
+            authority.descriptor.channel is ArtifactChannel.DIAGNOSTIC
+            for authority in authorities.values()
+        ):
+            raise TypeError(
+                "SolutionKernels cannot declare custom DIAGNOSTIC authorities; "
+                "KernelOutput exposes no corresponding extension channel."
+            )
+        reserved_type_ids = tuple(
+            sorted(
+                key.type_id
+                for key in authorities
+                if key.type_id in _ENGINE_ARTIFACT_TYPE_IDS
+            )
+        )
+        if reserved_type_ids:
+            raise ValueError(
+                "SolutionKernels cannot declare custom authorities under "
+                f"engine-owned artifact type ids: {reserved_type_ids!r}."
+            )
+        object.__setattr__(self, "artifact_authorities", MappingProxyType(authorities))
+
     @property
     def continuation_template(self) -> ContinuationPayload | None:
         """Return the template payload for generic rolling and lowering code."""
@@ -666,6 +739,21 @@ class Solver(ABC):
     @abstractmethod
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Build the regime's per-period solve adapters."""
+
+    @property
+    def identity(self) -> SolverIdentity:
+        """Return this solver implementation's exact public compatibility identity.
+
+        Built-in and legacy extension solvers receive a deterministic version-1
+        identity. Supported external plugins should override this property with a
+        package-owned stable identifier and release version.
+        """
+        solver_type = type(self)
+        return SolverIdentity(
+            plugin_id=f"{solver_type.__module__}.{solver_type.__qualname__}",
+            plugin_version="1",
+            solver_api_version=SOLVER_API_VERSION,
+        )
 
     @property
     def egm_continuation_layout(self) -> EGMContinuationLayout:
