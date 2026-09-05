@@ -245,7 +245,10 @@ The memory controls do not all mean “compiled batch width”:
   What a width does change is the compiled vmap width the records are produced at, and
   the backend vectorizes each one differently: the published levels agree to within a
   few units in the last place rather than bit for bit, and two candidates whose reads
-  tie to within that spacing are ordered by the records each width produced.
+  tie to within that spacing are ordered by the records each width produced. The one
+  place this is visible on a regular grid is a node where a savings-node point candidate
+  coincides with an interior candidate: the two are the same point, and which of them
+  is named the owner can differ between widths while the published level does not.
   `interval_batch_size=0` keeps the one-shot continuation matrix and envelope reduction;
 - `cell_block_size` and `branch_batch_size` are compiled `lax.map` batch widths for the
   ride-cell and discrete-branch axes. The continuation read behind the branch axis runs
