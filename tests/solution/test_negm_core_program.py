@@ -433,8 +433,14 @@ def test_fixed_params_bind_into_the_sweep_the_keeper_and_the_shift(*, captured):
     assert bound.coh_shift_func.keywords["final_age_alive"] == 30.0
 
 
-def test_periods_sharing_one_inner_core_share_one_sweep_lowering_key():
-    """An age-invariant regime compiles its sweep once, with or without fixed params."""
+def test_periods_sharing_one_inner_core_share_one_sweep_callable():
+    """An age-invariant regime's periods carry one sweep callable, fixed params or not.
+
+    Sharing the callable is what lets the periods share a compiled program: the
+    engine reads it as the oracle for its own compilation key rather than as a
+    component of it, so a period that built its own closure is caught rather
+    than quietly given another period's.
+    """
     kernels = negm_kinked_toy.build_model()._regimes[_REGIME].solution.period_kernels
     first, second = (kernels[period] for period in sorted(kernels)[:2])
     fixed = _fixed_flat_params()

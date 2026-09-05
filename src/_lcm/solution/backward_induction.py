@@ -2179,7 +2179,8 @@ def _fail_if_one_key_covers_two_callables(
     the oracle for it: two candidates that agree on the key while carrying
     different callables mean the identity is coarser than what the solver
     actually specialized, and compiling one of them once would run one period's
-    closure in another period's place.
+    closure in another period's place. Both colliding addresses are named, so a
+    reader can see which two programs the identity failed to tell apart.
 
     Args:
         lowering_keys: The compilation key of every resolved candidate.
@@ -2190,17 +2191,26 @@ def _fail_if_one_key_covers_two_callables(
             callables.
 
     """
-    callables_by_key: dict[Hashable, Hashable] = {}
+    seen_by_key: dict[Hashable, tuple[_CoreCandidate, Hashable]] = {}
     for candidate, lowering_key in lowering_keys.items():
         callable_key = _func_dedup_key(func=resolved_programs[candidate].function)
-        known = callables_by_key.setdefault(lowering_key, callable_key)
-        if known != callable_key:
+        known_candidate, known_callable = seen_by_key.setdefault(
+            lowering_key, (candidate, callable_key)
+        )
+        if known_callable != callable_key:
             msg = (
                 "Two core programs share one compilation key but are different "
-                f"callables: {candidate[0]!r}. The period signature is too coarse "
-                "for this solver's specialization."
+                f"callables: {_describe_candidate(candidate=known_candidate)} and "
+                f"{_describe_candidate(candidate=candidate)}. The program "
+                "identity is too coarse for this solver's specialization."
             )
             raise ExecutionPlanningError(msg)
+
+
+def _describe_candidate(*, candidate: _CoreCandidate) -> str:
+    """Name one candidate's address in the words a model author uses."""
+    regime_name, period, core_name = candidate[0]
+    return f"regime {regime_name!r}, core {core_name!r}, period {period}"
 
 
 def _resolve_output_layouts_and_lowering_keys(
