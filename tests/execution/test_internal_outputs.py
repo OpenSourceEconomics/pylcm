@@ -19,15 +19,22 @@ from _lcm.execution.core_program import (
     CoreProgram,
     InternalInputRef,
     InternalOutputSpec,
+    ProgramScope,
     core_program_graph,
     materialize_core_program,
+    select_programs,
 )
 from _lcm.execution.internal_outputs import (
     assert_internal_inputs,
     internal_input_templates,
     topological_program_order,
 )
-from _lcm.execution.output_layout import VALUE
+from _lcm.execution.output_layout import (
+    VALUE,
+    PlannedCore,
+    resolve_output_layout,
+)
+from lcm.solver_api import ArtifactKey
 
 
 def _producer_function(*, x):
@@ -197,4 +204,69 @@ def test_an_internal_input_may_not_collide_with_a_built_argument() -> None:
     with pytest.raises(ValueError, match="'x'"):
         internal_input_templates(
             program=materialized["consumer"], producers=materialized
+        )
+
+
+def _scoped_graph():
+    """A producer kept only for replay feeding a consumer kept only without it."""
+    programs = _graph()
+    key = ArtifactKey(type_id="tests.internal_outputs.producer")
+    programs["producer"] = dataclasses.replace(
+        programs["producer"],
+        scope=ProgramScope.REPLAY,
+        replaces_program="consumer",
+        retained_artifact_keys=(key,),
+        retained_artifact_payload_types={key: dict},
+    )
+    programs["consumer"] = dataclasses.replace(
+        programs["consumer"], scope=ProgramScope.VALUES_ONLY
+    )
+    return programs
+
+
+def test_selecting_away_a_producer_its_consumer_still_needs_is_refused() -> None:
+    """A retention that drops a producer but keeps its consumer names all three."""
+    graph = core_program_graph(kernel=_Kernel(programs=_scoped_graph()))
+
+    with pytest.raises(ValueError, match=r"consumer.*upstream_value.*producer"):
+        select_programs(graph=graph, retain_replay=False)
+
+
+def test_a_values_only_producer_without_a_replay_alternative_survives_replay() -> None:
+    """Retention keeps an unreplaced values program, so its consumers keep theirs."""
+    programs = _graph()
+    programs["producer"] = dataclasses.replace(
+        programs["producer"], scope=ProgramScope.VALUES_ONLY
+    )
+    graph = core_program_graph(kernel=_Kernel(programs=programs))
+
+    selected = select_programs(graph=graph, retain_replay=True)
+
+    assert tuple(selected) == ("producer", "consumer")
+
+
+def test_a_planned_core_names_itself_when_an_internal_input_is_misshapen() -> None:
+    """A wrongly shaped handover is refused at dispatch, naming the program."""
+    template = jnp.zeros((3,))
+    layout = resolve_output_layout(
+        core_key="consumer",
+        value_template=template,
+        state_order=("wealth",),
+        output_roles=VALUE,
+    )
+    core = PlannedCore(
+        compiled=_consumer_function,
+        layout=layout,
+        tile_widths={},
+        internal_input_templates={
+            "upstream_value": jax.ShapeDtypeStruct((3,), template.dtype)
+        },
+        name="consumer",
+    )
+
+    with pytest.raises(ValueError, match="'consumer'"):
+        core(
+            x=template,
+            upstream_value=jnp.zeros((4,)),
+            upstream_carry={"carry": template},
         )

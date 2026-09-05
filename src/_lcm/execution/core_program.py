@@ -417,7 +417,8 @@ def select_programs(
     exact model-authoritative keys selected for this regime-period cell. If no replay
     variant is selected, `VALUES_ONLY` is the value-producing alternative. A graph
     that leaves nothing to dispatch is refused: a period without a program would
-    publish no value.
+    publish no value, as is one that keeps a consumer without the producer of an
+    internal input it declares.
     """
     if type(retain_replay) is not bool:
         raise TypeError("retain_replay must be an exact bool.")
@@ -457,7 +458,30 @@ def select_programs(
             f"{ {name: program.scope.value for name, program in graph.items()}!r}."
         )
         raise ValueError(msg)
+    _validate_selected_internal_edges(selected=selected, graph=graph)
     return MappingProxyType(selected)
+
+
+def _validate_selected_internal_edges(
+    *, selected: Mapping[str, CoreProgram], graph: Mapping[str, CoreProgram]
+) -> None:
+    """Require every kept consumer's producers to survive the same selection.
+
+    A consumer whose producer this retention deselects has no source for the
+    argument it declares, so the scopes of the two programs must be chosen
+    together rather than discovered at lowering.
+    """
+    for name, program in selected.items():
+        for argument_name, ref in program.requirements.internal_inputs.items():
+            if ref.producer in selected:
+                continue
+            msg = (
+                f"CoreProgram {name!r} takes internal input {argument_name!r} from "
+                f"{ref.producer!r}, which this retention does not dispatch: "
+                f"{name!r} has scope {program.scope.value!r} and {ref.producer!r} "
+                f"has scope {graph[ref.producer].scope.value!r}."
+            )
+            raise ValueError(msg)
 
 
 def _reject_native_duplicate_authorities(*, kernel: object) -> None:
