@@ -49,6 +49,12 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - `SolutionResult.save()` flushes the archive through a writable handle before the
   atomic rename, so publication also succeeds on platforms that refuse to flush a
   read-only one.
+- A result nobody references any more releases its arrays. The store constructors and
+  the artifact plan walkers keep their working state in explicit arguments rather than
+  in per-call closures: pylcm's beartype claw decorates every function definition,
+  including one executed inside a call, and beartype memoizes each decorated function
+  object for the rest of the process, so a per-call closure would pin the value
+  entries or artifact leaves it closed over long after the result was dropped.
 - External solvers can declare an `ExecutableReplayRoute` with durable plugin and route
   identities, period-specific artifact requirements, model-built artifact authorities,
   a mathematical preflight, and a JAX-transformable reader returning named

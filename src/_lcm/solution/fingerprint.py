@@ -371,45 +371,56 @@ def _nested_callable_parameter_names(value: object) -> frozenset[str]:
     return names
 
 
+def _walk_parameter_usage(  # noqa: PLR0911
+    *, current: object, seen: set[int]
+) -> tuple[frozenset[str], bool]:
+    """Collect parameter usage below one object; `seen` guards against cycles."""
+    if current is None or _has_exact_type(
+        value=current, candidates=(bool, int, float, str, bytes)
+    ):
+        return frozenset(), False
+    identity = id(current)
+    if identity in seen:
+        return frozenset(), False
+    seen.add(identity)
+    try:
+        if isinstance(current, Mapping):
+            return _union_parameter_usage(
+                _walk_parameter_usage(seen=seen, current=child)
+                for child in current.values()
+            )
+        if _has_exact_type(value=current, candidates=(tuple, list, frozenset, set)):
+            children = cast("Iterable[object]", current)
+            return _union_parameter_usage(
+                _walk_parameter_usage(seen=seen, current=child) for child in children
+            )
+        if dataclasses.is_dataclass(current) and not isinstance(current, type):
+            field_names, field_unknown = _union_parameter_usage(
+                _walk_parameter_usage(
+                    seen=seen, current=getattr(current, declaration.name)
+                )
+                for declaration in dataclasses.fields(current)
+                if not _exclude_field(owner=current, field_name=declaration.name)
+            )
+            if not callable(current):
+                return field_names, field_unknown
+            callable_names, callable_unknown = _callable_parameter_usage(current)
+            return (
+                field_names | callable_names,
+                field_unknown or callable_unknown,
+            )
+        if not callable(current):
+            return frozenset(), False
+        return _callable_parameter_usage(current)
+    finally:
+        seen.remove(identity)
+
+
 def _nested_callable_parameter_usage(value: object) -> tuple[frozenset[str], bool]:
     """Collect explicit names and conservatively flag generic/opaque callables."""
     seen: set[int] = set()
 
-    def walk(current: object) -> tuple[frozenset[str], bool]:  # noqa: PLR0911
-        if current is None or _has_exact_type(
-            value=current, candidates=(bool, int, float, str, bytes)
-        ):
-            return frozenset(), False
-        identity = id(current)
-        if identity in seen:
-            return frozenset(), False
-        seen.add(identity)
-        try:
-            if isinstance(current, Mapping):
-                return _union_parameter_usage(walk(child) for child in current.values())
-            if _has_exact_type(value=current, candidates=(tuple, list, frozenset, set)):
-                children = cast("Iterable[object]", current)
-                return _union_parameter_usage(walk(child) for child in children)
-            if dataclasses.is_dataclass(current) and not isinstance(current, type):
-                field_names, field_unknown = _union_parameter_usage(
-                    walk(getattr(current, declaration.name))
-                    for declaration in dataclasses.fields(current)
-                    if not _exclude_field(owner=current, field_name=declaration.name)
-                )
-                if not callable(current):
-                    return field_names, field_unknown
-                callable_names, callable_unknown = _callable_parameter_usage(current)
-                return (
-                    field_names | callable_names,
-                    field_unknown or callable_unknown,
-                )
-            if not callable(current):
-                return frozenset(), False
-            return _callable_parameter_usage(current)
-        finally:
-            seen.remove(identity)
-
-    return walk(value)
+    return _walk_parameter_usage(seen=seen, current=value)
 
 
 def _callable_parameter_usage(value: object) -> tuple[frozenset[str], bool]:
