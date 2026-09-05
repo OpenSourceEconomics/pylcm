@@ -2257,6 +2257,21 @@ def _policy_persistence_and_template(
     return PersistencePolicy.NOT_PERSISTED, None
 
 
+def _inner_policy_from_array(
+    *, array: Array, policy_read: NNBEGMPolicyRead
+) -> EGMSimPolicy:
+    """Fill every numerical field of an inner policy template with one array."""
+    return EGMSimPolicy(
+        endog_grid=array,
+        policy=array,
+        value=array,
+        marginal_utility=array,
+        row_discrete_state_names=policy_read.row_discrete_state_names,
+        row_passive_state_names=policy_read.row_passive_state_names,
+        row_discrete_action_names=(),
+    )
+
+
 def _adaptive_policy_template(
     *,
     policy_read: NNBEGMPolicyRead,
@@ -2282,25 +2297,16 @@ def _adaptive_policy_template(
         dtype=policy_read.float_dtype,
     )
 
-    def make_inner_policy(array: Array) -> EGMSimPolicy:
-        return EGMSimPolicy(
-            endog_grid=array,
-            policy=array,
-            value=array,
-            marginal_utility=array,
-            row_discrete_state_names=policy_read.row_discrete_state_names,
-            row_passive_state_names=policy_read.row_passive_state_names,
-            row_discrete_action_names=(),
-        )
-
     return NestedEGMSimPolicy(
-        keeper=make_inner_policy(row),
+        keeper=_inner_policy_from_array(policy_read=policy_read, array=row),
         adjuster=OuterPolicyBank(
             outer_nodes=jnp.asarray(
                 adaptive_outer_nodes,
                 dtype=policy_read.float_dtype,
             ),
-            policies=make_inner_policy(candidate_row),
+            policies=_inner_policy_from_array(
+                policy_read=policy_read, array=candidate_row
+            ),
         ),
         outer_action_name=policy_read.outer_action_name,
         outer_state_name=policy_read.outer_state_name,

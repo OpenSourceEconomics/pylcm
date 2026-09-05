@@ -6,6 +6,7 @@ definitions cover result identity and retention without referring to engine-priv
 """
 
 import dataclasses
+import functools
 import struct
 import weakref
 from abc import ABC, abstractmethod
@@ -937,6 +938,28 @@ _ARTIFACT_AUTHORITY_TEMPLATE_INITIALIZING: dict[
 ] = {}
 
 
+# keyword-only-exempt: library-callback=weakref.ref
+def _discard_initializing_identity(
+    dead_ref: weakref.ReferenceType[ArtifactAuthority], *, identity: int
+) -> None:
+    """Forget an initializing authority identity once its referent is collected."""
+    with _ARTIFACT_AUTHORITY_TEMPLATE_LOCK:
+        current_ref = _ARTIFACT_AUTHORITY_TEMPLATE_INITIALIZING.get(identity)
+        if current_ref is dead_ref:
+            del _ARTIFACT_AUTHORITY_TEMPLATE_INITIALIZING[identity]
+
+
+# keyword-only-exempt: library-callback=weakref.ref
+def _discard_binding_identity(
+    dead_ref: weakref.ReferenceType[ArtifactAuthority], *, identity: int
+) -> None:
+    """Forget a template binding once the authority it belongs to is collected."""
+    with _ARTIFACT_AUTHORITY_TEMPLATE_LOCK:
+        current = _ARTIFACT_AUTHORITY_TEMPLATE_BINDINGS.get(identity)
+        if current is not None and current.authority_ref is dead_ref:
+            del _ARTIFACT_AUTHORITY_TEMPLATE_BINDINGS[identity]
+
+
 def _assert_artifact_authority_unbound(authority: ArtifactAuthority) -> None:
     """Reject constructor re-entry before touching any caller-replaced field."""
     identity = id(authority)
@@ -954,15 +977,9 @@ def _assert_artifact_authority_unbound(authority: ArtifactAuthority) -> None:
                 "Artifact authority identity collides with live initialization."
             )
 
-        def discard(dead_ref: weakref.ReferenceType[ArtifactAuthority]) -> None:
-            with _ARTIFACT_AUTHORITY_TEMPLATE_LOCK:
-                current_ref = _ARTIFACT_AUTHORITY_TEMPLATE_INITIALIZING.get(identity)
-                if current_ref is dead_ref:
-                    del _ARTIFACT_AUTHORITY_TEMPLATE_INITIALIZING[identity]
-
         _ARTIFACT_AUTHORITY_TEMPLATE_INITIALIZING[identity] = weakref.ref(
             authority,
-            discard,
+            functools.partial(_discard_initializing_identity, identity=identity),
         )
 
 
@@ -983,13 +1000,10 @@ def _bind_artifact_authority_template(
         raise TypeError("Artifact template bindings require exact public leaves.")
     identity = id(authority)
 
-    def discard(dead_ref: weakref.ReferenceType[ArtifactAuthority]) -> None:
-        with _ARTIFACT_AUTHORITY_TEMPLATE_LOCK:
-            current = _ARTIFACT_AUTHORITY_TEMPLATE_BINDINGS.get(identity)
-            if current is not None and current.authority_ref is dead_ref:
-                del _ARTIFACT_AUTHORITY_TEMPLATE_BINDINGS[identity]
-
-    authority_ref = weakref.ref(authority, discard)
+    authority_ref = weakref.ref(
+        authority,
+        functools.partial(_discard_binding_identity, identity=identity),
+    )
     binding = _ArtifactAuthorityTemplateBinding(
         authority_ref=authority_ref,
         template=authority.template,
@@ -1124,65 +1138,80 @@ def _normalize_jax_tree_path(path: tuple[object, ...]) -> TreePath:  # noqa: C90
     return tuple(normalized)
 
 
-def _container_types_from_tree(  # noqa: C901
+def _collect_container_types(  # noqa: C901
+    *,
+    node: jax.tree_util.PyTreeDef,
+    path: TreePath,
+    leaf_offset: int,
+    leaf_paths: tuple[TreePath, ...],
+    containers: dict[TreePath, type[object]],
+) -> int:
+    """Record one PyTree node's container class and descend into its children."""
+    children = node.children()
+    node_data = node.node_data()
+    if node_data is None:
+        if children or node.num_leaves != 1:
+            raise TypeError("Artifact PyTree exposes an invalid numerical leaf.")
+        return leaf_offset + 1
+    if (
+        type(node_data) is not tuple
+        or not node_data
+        or not isinstance(node_data[0], type)
+    ):
+        raise TypeError("Artifact PyTree exposes no exact container runtime type.")
+    runtime_type = node_data[0]
+    if node.num_leaves == 0:
+        if runtime_type is not tuple and runtime_type is not type(None):
+            raise TypeError(
+                "Zero-leaf artifact PyTree node at "
+                f"{path!r} must be an exact tuple or NoneType; got "
+                f"{runtime_type.__name__}."
+            )
+        for index, child in enumerate(children):
+            child_path = (*path, f"pytree-child:{index}")
+            leaf_offset = _collect_container_types(
+                leaf_paths=leaf_paths,
+                containers=containers,
+                node=child,
+                path=child_path,
+                leaf_offset=leaf_offset,
+            )
+        return leaf_offset
+
+    if path in containers:
+        raise TypeError(f"Artifact PyTree container path {path!r} is ambiguous.")
+    containers[path] = runtime_type
+    for index, child in enumerate(children):
+        child_leaves = child.num_leaves
+        if child_leaves == 0:
+            child_path = (*path, f"pytree-child:{index}")
+        else:
+            if leaf_offset >= len(leaf_paths):
+                raise TypeError("Artifact PyTree paths do not cover its containers.")
+            child_path = leaf_paths[leaf_offset][: len(path) + 1]
+            if len(child_path) != len(path) + 1:
+                raise TypeError(
+                    "Artifact PyTree paths do not identify every container child."
+                )
+        leaf_offset = _collect_container_types(
+            leaf_paths=leaf_paths,
+            containers=containers,
+            node=child,
+            path=child_path,
+            leaf_offset=leaf_offset,
+        )
+    return leaf_offset
+
+
+def _container_types_from_tree(
     *, tree: jax.tree_util.PyTreeDef, leaf_paths: tuple[TreePath, ...]
 ) -> dict[TreePath, type[object]]:
     """Derive exact container classes from a PyTreeDef and its ordered leaf paths."""
     containers: dict[TreePath, type[object]] = {}
 
-    def visit(  # noqa: C901
-        *, node: jax.tree_util.PyTreeDef, path: TreePath, leaf_offset: int
-    ) -> int:
-        children = node.children()
-        node_data = node.node_data()
-        if node_data is None:
-            if children or node.num_leaves != 1:
-                raise TypeError("Artifact PyTree exposes an invalid numerical leaf.")
-            return leaf_offset + 1
-        if (
-            type(node_data) is not tuple
-            or not node_data
-            or not isinstance(node_data[0], type)
-        ):
-            raise TypeError("Artifact PyTree exposes no exact container runtime type.")
-        runtime_type = node_data[0]
-        if node.num_leaves == 0:
-            if runtime_type is not tuple and runtime_type is not type(None):
-                raise TypeError(
-                    "Zero-leaf artifact PyTree node at "
-                    f"{path!r} must be an exact tuple or NoneType; got "
-                    f"{runtime_type.__name__}."
-                )
-            for index, child in enumerate(children):
-                child_path = (*path, f"pytree-child:{index}")
-                leaf_offset = visit(
-                    node=child,
-                    path=child_path,
-                    leaf_offset=leaf_offset,
-                )
-            return leaf_offset
-
-        if path in containers:
-            raise TypeError(f"Artifact PyTree container path {path!r} is ambiguous.")
-        containers[path] = runtime_type
-        for index, child in enumerate(children):
-            child_leaves = child.num_leaves
-            if child_leaves == 0:
-                child_path = (*path, f"pytree-child:{index}")
-            else:
-                if leaf_offset >= len(leaf_paths):
-                    raise TypeError(
-                        "Artifact PyTree paths do not cover its containers."
-                    )
-                child_path = leaf_paths[leaf_offset][: len(path) + 1]
-                if len(child_path) != len(path) + 1:
-                    raise TypeError(
-                        "Artifact PyTree paths do not identify every container child."
-                    )
-            leaf_offset = visit(node=child, path=child_path, leaf_offset=leaf_offset)
-        return leaf_offset
-
-    consumed = visit(node=tree, path=(), leaf_offset=0)
+    consumed = _collect_container_types(
+        leaf_paths=leaf_paths, containers=containers, node=tree, path=(), leaf_offset=0
+    )
     if consumed != len(leaf_paths):
         raise TypeError("Artifact PyTree paths do not cover its leaves exactly.")
     return containers
@@ -1787,6 +1816,83 @@ def _construction_plan_from_callback_value(
     )
 
 
+def _mark_static_provenance_node(
+    *, node: object, source: object, missing: object
+) -> object:
+    """Copy one plan node, marking static metadata the declaration payload carried."""
+    node_type = type(node)
+    if node_type is _ArtifactLeafSlot:
+        return node
+    if node_type is _ArtifactStaticPlan:
+        static = cast("_ArtifactStaticPlan", node)
+        represented = False
+        if source is not missing:
+            try:
+                represented = _same_inert_pytree_metadata(
+                    actual=source,
+                    expected=static.value,
+                )
+            except TypeError:
+                represented = False
+        return _ArtifactStaticPlan(
+            value=_snapshot_inert_pytree_metadata(value=static.value),
+            validate_payload=represented,
+        )
+    if node_type is _ArtifactTuplePlan:
+        tuple_plan = cast("_ArtifactTuplePlan", node)
+        source_children = (
+            source
+            if type(source) is tuple and len(source) == len(tuple_plan.children)
+            else None
+        )
+        return _ArtifactTuplePlan(
+            children=tuple(
+                _mark_static_provenance_node(
+                    missing=missing,
+                    node=child,
+                    source=(
+                        source_children[index]
+                        if source_children is not None
+                        else missing
+                    ),
+                )
+                for index, child in enumerate(tuple_plan.children)
+            )
+        )
+    if node_type is not _ArtifactDataclassPlan:
+        raise TypeError("Artifact construction plan contains an unsupported node.")
+    dataclass_plan = cast("_ArtifactDataclassPlan", node)
+    source_fields: dict[tuple[str, bool], object] = {}
+    if type(source) is dataclass_plan.runtime_type:
+        try:
+            source_fields = {
+                (name, stored_in_dict): value
+                for name, stored_in_dict, value in (
+                    _artifact_dataclass_field_values(source)
+                )
+            }
+        except TypeError:
+            source_fields = {}
+    return _ArtifactDataclassPlan(
+        runtime_type=dataclass_plan.runtime_type,
+        fields=tuple(
+            _ArtifactDataclassFieldPlan(
+                name=field.name,
+                stored_in_dict=field.stored_in_dict,
+                value=_mark_static_provenance_node(
+                    missing=missing,
+                    node=field.value,
+                    source=source_fields.get(
+                        (field.name, field.stored_in_dict),
+                        missing,
+                    ),
+                ),
+            )
+            for field in dataclass_plan.fields
+        ),
+    )
+
+
 def _mark_artifact_static_provenance(*, plan: object, payload: object) -> object:
     """Mark static fields represented identically by the declaration payload.
 
@@ -1798,78 +1904,7 @@ def _mark_artifact_static_provenance(*, plan: object, payload: object) -> object
     """
     missing = object()
 
-    def visit(*, node: object, source: object) -> object:
-        node_type = type(node)
-        if node_type is _ArtifactLeafSlot:
-            return node
-        if node_type is _ArtifactStaticPlan:
-            static = cast("_ArtifactStaticPlan", node)
-            represented = False
-            if source is not missing:
-                try:
-                    represented = _same_inert_pytree_metadata(
-                        actual=source,
-                        expected=static.value,
-                    )
-                except TypeError:
-                    represented = False
-            return _ArtifactStaticPlan(
-                value=_snapshot_inert_pytree_metadata(value=static.value),
-                validate_payload=represented,
-            )
-        if node_type is _ArtifactTuplePlan:
-            tuple_plan = cast("_ArtifactTuplePlan", node)
-            source_children = (
-                source
-                if type(source) is tuple and len(source) == len(tuple_plan.children)
-                else None
-            )
-            return _ArtifactTuplePlan(
-                children=tuple(
-                    visit(
-                        node=child,
-                        source=(
-                            source_children[index]
-                            if source_children is not None
-                            else missing
-                        ),
-                    )
-                    for index, child in enumerate(tuple_plan.children)
-                )
-            )
-        if node_type is not _ArtifactDataclassPlan:
-            raise TypeError("Artifact construction plan contains an unsupported node.")
-        dataclass_plan = cast("_ArtifactDataclassPlan", node)
-        source_fields: dict[tuple[str, bool], object] = {}
-        if type(source) is dataclass_plan.runtime_type:
-            try:
-                source_fields = {
-                    (name, stored_in_dict): value
-                    for name, stored_in_dict, value in (
-                        _artifact_dataclass_field_values(source)
-                    )
-                }
-            except TypeError:
-                source_fields = {}
-        return _ArtifactDataclassPlan(
-            runtime_type=dataclass_plan.runtime_type,
-            fields=tuple(
-                _ArtifactDataclassFieldPlan(
-                    name=field.name,
-                    stored_in_dict=field.stored_in_dict,
-                    value=visit(
-                        node=field.value,
-                        source=source_fields.get(
-                            (field.name, field.stored_in_dict),
-                            missing,
-                        ),
-                    ),
-                )
-                for field in dataclass_plan.fields
-            ),
-        )
-
-    return visit(node=plan, source=payload)
+    return _mark_static_provenance_node(missing=missing, node=plan, source=payload)
 
 
 def _compile_artifact_construction_plan(
@@ -1917,94 +1952,99 @@ def _compile_artifact_construction_plan(
     )
 
 
-def _snapshot_artifact_construction_plan(*, plan: object, leaf_count: int) -> object:  # noqa: C901, PLR0915
+def _snapshot_plan_node(  # noqa: C901, PLR0912
+    *, node: object, seen: list[int], active_ids: set[int]
+) -> object:
+    """Validate and copy one plan node; `seen` counts every leaf slot met."""
+    node_type = type(node)
+    if node_type is _ArtifactLeafSlot:
+        slot = cast("_ArtifactLeafSlot", node)
+        if type(slot.index) is not int or slot.index < 0 or slot.index >= len(seen):
+            raise TypeError("Artifact construction plan has an invalid leaf slot.")
+        seen[slot.index] += 1
+        return _ArtifactLeafSlot(index=slot.index)
+    if node_type is _ArtifactStaticPlan:
+        static = cast("_ArtifactStaticPlan", node)
+        if type(static.validate_payload) is not bool:
+            raise TypeError(
+                "Artifact static plan validation marker must be an exact bool."
+            )
+        return _ArtifactStaticPlan(
+            value=_snapshot_inert_pytree_metadata(value=static.value),
+            validate_payload=static.validate_payload,
+        )
+    if node_type is _ArtifactTuplePlan:
+        tuple_plan = cast("_ArtifactTuplePlan", node)
+        if type(tuple_plan.children) is not tuple:
+            raise TypeError("Artifact tuple plan children must be an exact tuple.")
+        marker = id(node)
+        if marker in active_ids:
+            raise TypeError("Artifact construction plan must be acyclic.")
+        active_ids.add(marker)
+        try:
+            return _ArtifactTuplePlan(
+                children=tuple(
+                    _snapshot_plan_node(seen=seen, active_ids=active_ids, node=child)
+                    for child in tuple_plan.children
+                )
+            )
+        finally:
+            active_ids.remove(marker)
+    if node_type is _ArtifactDataclassPlan:
+        dataclass_plan = cast("_ArtifactDataclassPlan", node)
+        if not isinstance(dataclass_plan.runtime_type, type):
+            raise TypeError("Artifact dataclass plan runtime type is invalid.")
+        layout = _frozen_dataclass_layout(dataclass_plan.runtime_type)
+        if layout is None or type(dataclass_plan.fields) is not tuple:
+            raise TypeError("Artifact dataclass plan is not structurally valid.")
+        field_names, stored_in_dict, _dict_descriptor, _slots = layout
+        if len(dataclass_plan.fields) != len(field_names):
+            raise TypeError("Artifact dataclass plan fields are incomplete.")
+        marker = id(node)
+        if marker in active_ids:
+            raise TypeError("Artifact construction plan must be acyclic.")
+        active_ids.add(marker)
+        try:
+            copied_fields: list[_ArtifactDataclassFieldPlan] = []
+            for field_plan, expected_name, expected_storage in zip(
+                dataclass_plan.fields,
+                field_names,
+                stored_in_dict,
+                strict=True,
+            ):
+                if (
+                    type(field_plan) is not _ArtifactDataclassFieldPlan
+                    or field_plan.name != expected_name
+                    or type(field_plan.stored_in_dict) is not bool
+                    or field_plan.stored_in_dict is not expected_storage
+                ):
+                    raise TypeError(
+                        "Artifact dataclass plan fields differ from exact storage."
+                    )
+                copied_fields.append(
+                    _ArtifactDataclassFieldPlan(
+                        name=expected_name,
+                        stored_in_dict=expected_storage,
+                        value=_snapshot_plan_node(
+                            seen=seen, active_ids=active_ids, node=field_plan.value
+                        ),
+                    )
+                )
+            return _ArtifactDataclassPlan(
+                runtime_type=dataclass_plan.runtime_type,
+                fields=tuple(copied_fields),
+            )
+        finally:
+            active_ids.remove(marker)
+    raise TypeError("Artifact construction plan contains an unsupported node.")
+
+
+def _snapshot_artifact_construction_plan(*, plan: object, leaf_count: int) -> object:
     """Validate and detach one closed construction plan without plugin callbacks."""
     seen = [0] * leaf_count
     active_ids: set[int] = set()
 
-    def visit(node: object) -> object:  # noqa: C901, PLR0912
-        node_type = type(node)
-        if node_type is _ArtifactLeafSlot:
-            slot = cast("_ArtifactLeafSlot", node)
-            if (
-                type(slot.index) is not int
-                or slot.index < 0
-                or slot.index >= leaf_count
-            ):
-                raise TypeError("Artifact construction plan has an invalid leaf slot.")
-            seen[slot.index] += 1
-            return _ArtifactLeafSlot(index=slot.index)
-        if node_type is _ArtifactStaticPlan:
-            static = cast("_ArtifactStaticPlan", node)
-            if type(static.validate_payload) is not bool:
-                raise TypeError(
-                    "Artifact static plan validation marker must be an exact bool."
-                )
-            return _ArtifactStaticPlan(
-                value=_snapshot_inert_pytree_metadata(value=static.value),
-                validate_payload=static.validate_payload,
-            )
-        if node_type is _ArtifactTuplePlan:
-            tuple_plan = cast("_ArtifactTuplePlan", node)
-            if type(tuple_plan.children) is not tuple:
-                raise TypeError("Artifact tuple plan children must be an exact tuple.")
-            marker = id(node)
-            if marker in active_ids:
-                raise TypeError("Artifact construction plan must be acyclic.")
-            active_ids.add(marker)
-            try:
-                return _ArtifactTuplePlan(
-                    children=tuple(visit(child) for child in tuple_plan.children)
-                )
-            finally:
-                active_ids.remove(marker)
-        if node_type is _ArtifactDataclassPlan:
-            dataclass_plan = cast("_ArtifactDataclassPlan", node)
-            if not isinstance(dataclass_plan.runtime_type, type):
-                raise TypeError("Artifact dataclass plan runtime type is invalid.")
-            layout = _frozen_dataclass_layout(dataclass_plan.runtime_type)
-            if layout is None or type(dataclass_plan.fields) is not tuple:
-                raise TypeError("Artifact dataclass plan is not structurally valid.")
-            field_names, stored_in_dict, _dict_descriptor, _slots = layout
-            if len(dataclass_plan.fields) != len(field_names):
-                raise TypeError("Artifact dataclass plan fields are incomplete.")
-            marker = id(node)
-            if marker in active_ids:
-                raise TypeError("Artifact construction plan must be acyclic.")
-            active_ids.add(marker)
-            try:
-                copied_fields: list[_ArtifactDataclassFieldPlan] = []
-                for field_plan, expected_name, expected_storage in zip(
-                    dataclass_plan.fields,
-                    field_names,
-                    stored_in_dict,
-                    strict=True,
-                ):
-                    if (
-                        type(field_plan) is not _ArtifactDataclassFieldPlan
-                        or field_plan.name != expected_name
-                        or type(field_plan.stored_in_dict) is not bool
-                        or field_plan.stored_in_dict is not expected_storage
-                    ):
-                        raise TypeError(
-                            "Artifact dataclass plan fields differ from exact storage."
-                        )
-                    copied_fields.append(
-                        _ArtifactDataclassFieldPlan(
-                            name=expected_name,
-                            stored_in_dict=expected_storage,
-                            value=visit(field_plan.value),
-                        )
-                    )
-                return _ArtifactDataclassPlan(
-                    runtime_type=dataclass_plan.runtime_type,
-                    fields=tuple(copied_fields),
-                )
-            finally:
-                active_ids.remove(marker)
-        raise TypeError("Artifact construction plan contains an unsupported node.")
-
-    copied = visit(plan)
+    copied = _snapshot_plan_node(seen=seen, active_ids=active_ids, node=plan)
     if any(count != 1 for count in seen):
         raise TypeError(
             "Artifact construction plan must contain every leaf slot exactly once."
@@ -2012,99 +2052,205 @@ def _snapshot_artifact_construction_plan(*, plan: object, leaf_count: int) -> ob
     return copied
 
 
-def _reconstruct_artifact_from_plan(  # noqa: C901
+def _reconstruct_plan_node(*, node: object, leaves: tuple[object, ...]) -> object:  # noqa: C901, PLR0912
+    """Build one node of an owned payload graph from the plan and its leaves."""
+    node_type = type(node)
+    if node_type is _ArtifactLeafSlot:
+        index = cast("_ArtifactLeafSlot", node).index
+        if type(index) is not int or index < 0 or index >= len(leaves):
+            raise TypeError("Artifact construction plan has an invalid leaf slot.")
+        return leaves[index]
+    if node_type is _ArtifactStaticPlan:
+        return _snapshot_inert_pytree_metadata(
+            value=cast("_ArtifactStaticPlan", node).value
+        )
+    if node_type is _ArtifactTuplePlan:
+        children = cast("_ArtifactTuplePlan", node).children
+        if type(children) is not tuple:
+            raise TypeError("Artifact tuple plan children must be an exact tuple.")
+        return tuple(
+            _reconstruct_plan_node(leaves=leaves, node=child) for child in children
+        )
+    if node_type is not _ArtifactDataclassPlan:
+        raise TypeError("Artifact construction plan contains an unsupported node.")
+
+    dataclass_plan = cast("_ArtifactDataclassPlan", node)
+    layout = _frozen_dataclass_layout(dataclass_plan.runtime_type)
+    if layout is None:
+        raise TypeError("Artifact dataclass plan is not structurally valid.")
+    field_names, stored_in_dict, dict_descriptor, slot_descriptors = layout
+    if type(dataclass_plan.fields) is not tuple or len(dataclass_plan.fields) != len(
+        field_names
+    ):
+        raise TypeError("Artifact dataclass plan fields are incomplete.")
+    values: list[tuple[str, bool, object]] = []
+    for field_plan, expected_name, expected_storage in zip(
+        dataclass_plan.fields,
+        field_names,
+        stored_in_dict,
+        strict=True,
+    ):
+        if (
+            type(field_plan) is not _ArtifactDataclassFieldPlan
+            or field_plan.name != expected_name
+            or field_plan.stored_in_dict is not expected_storage
+        ):
+            raise TypeError("Artifact dataclass plan fields differ from exact storage.")
+        values.append(
+            (
+                expected_name,
+                expected_storage,
+                _reconstruct_plan_node(leaves=leaves, node=field_plan.value),
+            )
+        )
+    try:
+        instance = object.__new__(dataclass_plan.runtime_type)
+    except Exception as error:
+        raise TypeError(
+            "Artifact dataclass cannot be allocated without its constructor."
+        ) from error
+    if type(instance) is not dataclass_plan.runtime_type:
+        raise TypeError("Artifact dataclass allocation returned a different type.")
+    if dict_descriptor is not None:
+        try:
+            instance_dict = cast("Any", dict_descriptor).__get__(
+                instance,
+                dataclass_plan.runtime_type,
+            )
+        except Exception as error:
+            raise TypeError(
+                "Artifact dataclass dictionary cannot be initialized safely."
+            ) from error
+        if type(instance_dict) is not dict or instance_dict:
+            raise TypeError(
+                "A fresh artifact dataclass has unexpected dictionary state."
+            )
+        for name, is_dict_field, field_value in values:
+            if is_dict_field:
+                instance_dict[name] = field_value
+    for name, is_dict_field, field_value in values:
+        if not is_dict_field:
+            try:
+                cast("Any", slot_descriptors[name]).__set__(
+                    instance,
+                    field_value,
+                )
+            except Exception as error:
+                msg = f"Artifact dataclass slot {name!r} cannot be initialized safely."
+                raise TypeError(msg) from error
+    return instance
+
+
+def _reconstruct_artifact_from_plan(
     *, plan: object, leaves: tuple[object, ...]
 ) -> object:
     """Build an owned payload graph without invoking plugin-owned code."""
 
-    def visit(node: object) -> object:  # noqa: C901, PLR0912
-        node_type = type(node)
-        if node_type is _ArtifactLeafSlot:
-            index = cast("_ArtifactLeafSlot", node).index
-            if type(index) is not int or index < 0 or index >= len(leaves):
-                raise TypeError("Artifact construction plan has an invalid leaf slot.")
-            return leaves[index]
-        if node_type is _ArtifactStaticPlan:
-            return _snapshot_inert_pytree_metadata(
-                value=cast("_ArtifactStaticPlan", node).value
+    return _reconstruct_plan_node(leaves=leaves, node=plan)
+
+
+@dataclass(slots=True, kw_only=True)
+class _LeafExtraction:
+    """Working state of one callback-free leaf extraction."""
+
+    seen: list[int]
+    """Number of times each leaf slot has been met."""
+    extracted: list[object]
+    """Leaf value per slot, `missing` until the slot is met."""
+    missing: object
+    """Sentinel for a slot no payload field has filled."""
+    active_ids: set[int]
+    """Identities of containers on the current descent path."""
+    encountered_ids: set[int]
+    """Identities of every non-empty container met, to refuse aliasing."""
+    validate_static: bool
+    """Whether static metadata is compared against its binding."""
+
+
+def _extract_plan_leaves(  # noqa: C901, PLR0912
+    *, value: object, node: object, state: _LeafExtraction
+) -> None:
+    """Walk one payload node against its plan node, collecting leaves in `state`."""
+    node_type = type(node)
+    if node_type is _ArtifactLeafSlot:
+        index = cast("_ArtifactLeafSlot", node).index
+        if type(index) is not int or index < 0 or index >= len(state.seen):
+            raise TypeError("Artifact construction plan has an invalid leaf slot.")
+        state.seen[index] += 1
+        state.extracted[index] = value
+        return
+    if node_type is _ArtifactStaticPlan:
+        static = cast("_ArtifactStaticPlan", node)
+        if (
+            state.validate_static or static.validate_payload
+        ) and not _same_inert_pytree_metadata(
+            actual=value,
+            expected=static.value,
+        ):
+            raise TypeError("Artifact PyTree static metadata differs from its binding.")
+        return
+
+    marker = id(value)
+    if node_type is _ArtifactTuplePlan:
+        if type(value) is not tuple:
+            raise TypeError(
+                "Artifact template tuple structure differs from its binding."
             )
+        if value and marker in state.encountered_ids:
+            raise TypeError("Artifact template graph must not alias containers.")
+        if value:
+            state.encountered_ids.add(marker)
+    elif marker in state.encountered_ids:
+        raise TypeError("Artifact template graph must not alias containers.")
+    else:
+        state.encountered_ids.add(marker)
+    if marker in state.active_ids:
+        raise TypeError("Artifact template construction graph must be acyclic.")
+    state.active_ids.add(marker)
+    try:
         if node_type is _ArtifactTuplePlan:
             children = cast("_ArtifactTuplePlan", node).children
-            if type(children) is not tuple:
-                raise TypeError("Artifact tuple plan children must be an exact tuple.")
-            return tuple(visit(child) for child in children)
+            if type(value) is not tuple or len(value) != len(children):
+                raise TypeError(
+                    "Artifact template tuple structure differs from its binding."
+                )
+            for child_value, child_plan in zip(value, children, strict=True):
+                _extract_plan_leaves(state=state, value=child_value, node=child_plan)
+            return
         if node_type is not _ArtifactDataclassPlan:
             raise TypeError("Artifact construction plan contains an unsupported node.")
-
         dataclass_plan = cast("_ArtifactDataclassPlan", node)
-        layout = _frozen_dataclass_layout(dataclass_plan.runtime_type)
-        if layout is None:
-            raise TypeError("Artifact dataclass plan is not structurally valid.")
-        field_names, stored_in_dict, dict_descriptor, slot_descriptors = layout
-        if type(dataclass_plan.fields) is not tuple or len(
-            dataclass_plan.fields
-        ) != len(field_names):
-            raise TypeError("Artifact dataclass plan fields are incomplete.")
-        values: list[tuple[str, bool, object]] = []
-        for field_plan, expected_name, expected_storage in zip(
+        if type(value) is not dataclass_plan.runtime_type:
+            raise TypeError(
+                "Artifact template dataclass type differs from its binding."
+            )
+        actual_fields = _artifact_dataclass_field_values(value)
+        if len(actual_fields) != len(dataclass_plan.fields):
+            raise TypeError(
+                "Artifact template dataclass fields differ from its binding."
+            )
+        for actual_field, expected_field in zip(
+            actual_fields,
             dataclass_plan.fields,
-            field_names,
-            stored_in_dict,
             strict=True,
         ):
+            name, stored_in_dict, field_value = actual_field
             if (
-                type(field_plan) is not _ArtifactDataclassFieldPlan
-                or field_plan.name != expected_name
-                or field_plan.stored_in_dict is not expected_storage
+                type(expected_field) is not _ArtifactDataclassFieldPlan
+                or name != expected_field.name
+                or stored_in_dict is not expected_field.stored_in_dict
             ):
                 raise TypeError(
-                    "Artifact dataclass plan fields differ from exact storage."
+                    "Artifact template dataclass fields differ from its binding."
                 )
-            values.append((expected_name, expected_storage, visit(field_plan.value)))
-        try:
-            instance = object.__new__(dataclass_plan.runtime_type)
-        except Exception as error:
-            raise TypeError(
-                "Artifact dataclass cannot be allocated without its constructor."
-            ) from error
-        if type(instance) is not dataclass_plan.runtime_type:
-            raise TypeError("Artifact dataclass allocation returned a different type.")
-        if dict_descriptor is not None:
-            try:
-                instance_dict = cast("Any", dict_descriptor).__get__(
-                    instance,
-                    dataclass_plan.runtime_type,
-                )
-            except Exception as error:
-                raise TypeError(
-                    "Artifact dataclass dictionary cannot be initialized safely."
-                ) from error
-            if type(instance_dict) is not dict or instance_dict:
-                raise TypeError(
-                    "A fresh artifact dataclass has unexpected dictionary state."
-                )
-            for name, is_dict_field, field_value in values:
-                if is_dict_field:
-                    instance_dict[name] = field_value
-        for name, is_dict_field, field_value in values:
-            if not is_dict_field:
-                try:
-                    cast("Any", slot_descriptors[name]).__set__(
-                        instance,
-                        field_value,
-                    )
-                except Exception as error:
-                    msg = (
-                        f"Artifact dataclass slot {name!r} cannot be initialized "
-                        "safely."
-                    )
-                    raise TypeError(msg) from error
-        return instance
-
-    return visit(plan)
+            _extract_plan_leaves(
+                state=state, value=field_value, node=expected_field.value
+            )
+    finally:
+        state.active_ids.remove(marker)
 
 
-def _artifact_leaf_values_from_plan(  # noqa: C901, PLR0915
+def _artifact_leaf_values_from_plan(
     *,
     payload: object,
     plan: object,
@@ -2112,99 +2258,24 @@ def _artifact_leaf_values_from_plan(  # noqa: C901, PLR0915
     validate_static: bool = True,
 ) -> tuple[object, ...]:
     """Extract ordered numerical fields through a sealed callback-free plan."""
-    seen = [0] * leaf_count
     missing = object()
-    extracted: list[object] = [missing] * leaf_count
-    active_ids: set[int] = set()
-    encountered_ids: set[int] = set()
+    state = _LeafExtraction(
+        seen=[0] * leaf_count,
+        extracted=[missing] * leaf_count,
+        missing=missing,
+        active_ids=set(),
+        encountered_ids=set(),
+        validate_static=validate_static,
+    )
 
-    def visit(*, value: object, node: object) -> None:  # noqa: C901, PLR0912
-        node_type = type(node)
-        if node_type is _ArtifactLeafSlot:
-            index = cast("_ArtifactLeafSlot", node).index
-            if type(index) is not int or index < 0 or index >= leaf_count:
-                raise TypeError("Artifact construction plan has an invalid leaf slot.")
-            seen[index] += 1
-            extracted[index] = value
-            return
-        if node_type is _ArtifactStaticPlan:
-            static = cast("_ArtifactStaticPlan", node)
-            if (
-                validate_static or static.validate_payload
-            ) and not _same_inert_pytree_metadata(
-                actual=value,
-                expected=static.value,
-            ):
-                raise TypeError(
-                    "Artifact PyTree static metadata differs from its binding."
-                )
-            return
-
-        marker = id(value)
-        if node_type is _ArtifactTuplePlan:
-            if type(value) is not tuple:
-                raise TypeError(
-                    "Artifact template tuple structure differs from its binding."
-                )
-            if value and marker in encountered_ids:
-                raise TypeError("Artifact template graph must not alias containers.")
-            if value:
-                encountered_ids.add(marker)
-        elif marker in encountered_ids:
-            raise TypeError("Artifact template graph must not alias containers.")
-        else:
-            encountered_ids.add(marker)
-        if marker in active_ids:
-            raise TypeError("Artifact template construction graph must be acyclic.")
-        active_ids.add(marker)
-        try:
-            if node_type is _ArtifactTuplePlan:
-                children = cast("_ArtifactTuplePlan", node).children
-                if type(value) is not tuple or len(value) != len(children):
-                    raise TypeError(
-                        "Artifact template tuple structure differs from its binding."
-                    )
-                for child_value, child_plan in zip(value, children, strict=True):
-                    visit(value=child_value, node=child_plan)
-                return
-            if node_type is not _ArtifactDataclassPlan:
-                raise TypeError(
-                    "Artifact construction plan contains an unsupported node."
-                )
-            dataclass_plan = cast("_ArtifactDataclassPlan", node)
-            if type(value) is not dataclass_plan.runtime_type:
-                raise TypeError(
-                    "Artifact template dataclass type differs from its binding."
-                )
-            actual_fields = _artifact_dataclass_field_values(value)
-            if len(actual_fields) != len(dataclass_plan.fields):
-                raise TypeError(
-                    "Artifact template dataclass fields differ from its binding."
-                )
-            for actual_field, expected_field in zip(
-                actual_fields,
-                dataclass_plan.fields,
-                strict=True,
-            ):
-                name, stored_in_dict, field_value = actual_field
-                if (
-                    type(expected_field) is not _ArtifactDataclassFieldPlan
-                    or name != expected_field.name
-                    or stored_in_dict is not expected_field.stored_in_dict
-                ):
-                    raise TypeError(
-                        "Artifact template dataclass fields differ from its binding."
-                    )
-                visit(value=field_value, node=expected_field.value)
-        finally:
-            active_ids.remove(marker)
-
-    visit(value=payload, node=plan)
-    if any(count != 1 for count in seen) or any(leaf is missing for leaf in extracted):
+    _extract_plan_leaves(state=state, value=payload, node=plan)
+    if any(count != 1 for count in state.seen) or any(
+        leaf is missing for leaf in state.extracted
+    ):
         raise TypeError(
             "Artifact template must expose every bound numerical field exactly once."
         )
-    return tuple(extracted)
+    return tuple(state.extracted)
 
 
 def _validate_artifact_value_against_plan(
@@ -3508,6 +3579,29 @@ class _ValuePeriodView(Mapping[RegimeName, FloatND]):
         return regime in self.store._regimes_by_period[self.period]  # noqa: SLF001
 
 
+def _admit_value_entry(
+    *,
+    period: object,
+    regime: object,
+    value: object,
+    entries: dict[tuple[int, RegimeName], object],
+    regimes_by_period: dict[int, list[RegimeName]],
+) -> None:
+    """Check one raw coordinate exactly and for uniqueness, then own its value."""
+    coordinate = (
+        _require_exact_value_period(period),
+        _require_exact_regime_name(regime),
+    )
+    if coordinate in entries:
+        raise ValueError(f"ValueStore coordinate {coordinate!r} appears twice.")
+    entries[coordinate] = (
+        value
+        if isinstance(value, _LazyEntry) and type(value) is not _CanonicalValueEntry
+        else _canonical_value_entry(value=value)
+    )
+    regimes_by_period.setdefault(coordinate[0], []).append(coordinate[1])
+
+
 @dataclass(frozen=True, eq=False)
 class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
     """Immutable, independently materializable value-function store.
@@ -3541,28 +3635,17 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
         entries: dict[tuple[int, RegimeName], object] = {}
         regimes_by_period: dict[int, list[RegimeName]] = {}
 
-        def admit(*, period: object, regime: object, value: object) -> None:
-            coordinate = (
-                _require_exact_value_period(period),
-                _require_exact_regime_name(regime),
-            )
-            if coordinate in entries:
-                raise ValueError(f"ValueStore coordinate {coordinate!r} appears twice.")
-            entries[coordinate] = (
-                value
-                if isinstance(value, _LazyEntry)
-                and type(value) is not _CanonicalValueEntry
-                else _canonical_value_entry(value=value)
-            )
-            regimes_by_period.setdefault(coordinate[0], []).append(coordinate[1])
-
         if all(is_flat):
             for coordinate, value in items:
                 typed_coordinate = cast("tuple[object, ...]", coordinate)
                 if len(typed_coordinate) != 2:  # noqa: PLR2004
                     raise ValueError("A ValueStore coordinate must have two entries.")
-                admit(
-                    period=typed_coordinate[0], regime=typed_coordinate[1], value=value
+                _admit_value_entry(
+                    entries=entries,
+                    regimes_by_period=regimes_by_period,
+                    period=typed_coordinate[0],
+                    regime=typed_coordinate[1],
+                    value=value,
                 )
         else:
             for period, regime_to_value in items:
@@ -3576,7 +3659,13 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
                     mapping=regime_to_value,
                     label=f"ValueStore period {exact_period} entries",
                 ):
-                    admit(period=exact_period, regime=regime, value=value)
+                    _admit_value_entry(
+                        entries=entries,
+                        regimes_by_period=regimes_by_period,
+                        period=exact_period,
+                        regime=regime,
+                        value=value,
+                    )
         object.__setattr__(self, "_entries", MappingProxyType(entries))
         object.__setattr__(
             self,
