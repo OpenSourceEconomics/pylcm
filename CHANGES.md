@@ -49,6 +49,10 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - `SolutionResult.save()` flushes the archive through a writable handle before the
   atomic rename, so publication also succeeds on platforms that refuse to flush a
   read-only one.
+- A function that carries beartype's marks only because `functools.wraps` copied them
+  from the guarded callee it forwards to is fingerprinted as the function it is. Only
+  a body beartype itself compiled is treated as a transparent guard to see through,
+  so a downstream package's guarded model functions survive the engine's own adapters.
 - A result nobody references any more releases its arrays. The store constructors and
   the artifact plan walkers keep their working state in explicit arguments rather than
   in per-call closures: pylcm's beartype claw decorates every function definition,
