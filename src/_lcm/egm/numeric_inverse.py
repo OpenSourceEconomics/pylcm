@@ -35,7 +35,9 @@ still unbracketed after expansion fails loudly with NaN; a root below the positi
 `c_lower` floor retains the floor as its active numerical bound.
 """
 
+import functools
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 import jax
@@ -105,31 +107,14 @@ def numeric_inverse_marginal_utility(
     # is static, so the path remains jit- and vmap-safe; if no finite bracket is
     # found, `upper_bracketed` below poisons the result instead of publishing an
     # arbitrary generated endpoint with a zero derivative.
-    # `fori_loop` passes the index and carry positionally, so this body cannot
-    # take keyword-only arguments.
-    # keyword-only-exempt: library-callback=jax.lax.fori_loop
-    def expand_upper(
-        _index: Any,  # noqa: ANN401  -- the loop index follows the x64 policy
-        state: tuple[ScalarFloat, ScalarFloat],
-    ) -> tuple[ScalarFloat, ScalarFloat]:
-        upper, mu_at_upper = state
-        needs_expansion = (
-            (mu_at_upper > m)
-            & (mu_at_upper > 0.0)
-            & jnp.isfinite(mu_at_upper)
-            & jnp.isfinite(upper)
-        )
-        candidate = upper * _BRACKET_GROWTH
-        candidate_mu = marginal_utility(candidate)
-        return (
-            jnp.where(needs_expansion, candidate, upper),
-            jnp.where(needs_expansion, candidate_mu, mu_at_upper),
-        )
-
     c_upper, mu_upper = jax.lax.fori_loop(
         0,
         _BRACKET_EXPANSIONS,
-        expand_upper,
+        functools.partial(
+            _expand_upper_bracket,
+            marginal_continuation=m,
+            marginal_utility=marginal_utility,
+        ),
         (c_upper, marginal_utility(c_upper)),
     )
     log_m = jnp.log(m)
@@ -146,9 +131,7 @@ def numeric_inverse_marginal_utility(
         & jnp.isfinite(log_m)
     )
 
-    def log_marginal_utility(log_c: ScalarFloat) -> ScalarFloat:
-        return jnp.log(marginal_utility(jnp.exp(log_c)))
-
+    log_marginal_utility = _LogMarginalUtility(marginal_utility=marginal_utility)
     log_marginal_slope = jax.grad(log_marginal_utility)
 
     # Static-count safeguarded Newton, unrolled at trace time (`n_iter` is a
@@ -200,3 +183,43 @@ def numeric_inverse_marginal_utility(
     return jnp.where(
         log_well_defined & (upper_bracketed | lower_bound_active), root, jnp.nan
     )
+
+
+# keyword-only-exempt: library-callback=jax.lax.fori_loop
+def _expand_upper_bracket(
+    _index: Any,  # noqa: ANN401  -- the loop index follows the x64 policy
+    state: tuple[ScalarFloat, ScalarFloat],
+    *,
+    marginal_continuation: ScalarFloat,
+    marginal_utility: Callable[[ScalarFloat], ScalarFloat],
+) -> tuple[ScalarFloat, ScalarFloat]:
+    """Grow the upper action bracket while the marginal there exceeds the target.
+
+    One `fori_loop` step: the bracket expands by `_BRACKET_GROWTH` only while a
+    positive, finite, decreasing marginal still sits above the target at the
+    upper endpoint, so a bracket that already contains the root is left alone.
+    """
+    upper, mu_at_upper = state
+    needs_expansion = (
+        (mu_at_upper > marginal_continuation)
+        & (mu_at_upper > 0.0)
+        & jnp.isfinite(mu_at_upper)
+        & jnp.isfinite(upper)
+    )
+    candidate = upper * _BRACKET_GROWTH
+    candidate_mu = marginal_utility(candidate)
+    return (
+        jnp.where(needs_expansion, candidate, upper),
+        jnp.where(needs_expansion, candidate_mu, mu_at_upper),
+    )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _LogMarginalUtility:
+    """`log u'(e^{log_c})`: the marginal utility in log-consumption coordinates."""
+
+    marginal_utility: Callable[[ScalarFloat], ScalarFloat]
+    """The marginal utility `u'` of the action, parameters bound."""
+
+    def __call__(self, log_c: ScalarFloat) -> ScalarFloat:
+        return jnp.log(self.marginal_utility(jnp.exp(log_c)))

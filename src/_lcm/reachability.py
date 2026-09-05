@@ -270,22 +270,41 @@ def build_model_reachability(
     computed once at model preparation (via `AgeGrid.get_periods_where`) —
     this function does not evaluate `Regime.active` itself.
     """
-    all_regime_names = frozenset(active_periods_by_regime)
-
-    def build(phase: PhaseName) -> PhaseReachability:
-        transitions = transitions_by_phase[phase]
-        candidates = {
-            source: candidate_targets_from_transition(
-                transition=transitions.get(source),
-                all_regime_names=all_regime_names,
-            )
-            for source in all_regime_names
-        }
-        return build_phase_reachability(
+    return ModelReachability(
+        solution=_build_phase_from_transitions(
             n_periods=n_periods,
             active_periods_by_regime=active_periods_by_regime,
-            candidate_targets_by_source=candidates,
+            transitions=transitions_by_phase["solution"],
             terminal_regimes=terminal_regimes,
-        )
+        ),
+        simulation=_build_phase_from_transitions(
+            n_periods=n_periods,
+            active_periods_by_regime=active_periods_by_regime,
+            transitions=transitions_by_phase["simulation"],
+            terminal_regimes=terminal_regimes,
+        ),
+    )
 
-    return ModelReachability(solution=build("solution"), simulation=build("simulation"))
+
+def _build_phase_from_transitions(
+    *,
+    n_periods: int,
+    active_periods_by_regime: Mapping[RegimeName, Collection[int]],
+    transitions: Mapping[RegimeName, object],
+    terminal_regimes: Collection[RegimeName],
+) -> PhaseReachability:
+    """Build one phase's graph from that phase's declared regime transitions."""
+    all_regime_names = frozenset(active_periods_by_regime)
+    candidates = {
+        source: candidate_targets_from_transition(
+            transition=transitions.get(source),
+            all_regime_names=all_regime_names,
+        )
+        for source in all_regime_names
+    }
+    return build_phase_reachability(
+        n_periods=n_periods,
+        active_periods_by_regime=active_periods_by_regime,
+        candidate_targets_by_source=candidates,
+        terminal_regimes=terminal_regimes,
+    )

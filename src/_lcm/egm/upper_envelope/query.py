@@ -1211,12 +1211,14 @@ def merge_envelope_winner(
     )
     flat_query = jnp.asarray(query).reshape(-1)
     n_query = flat_query.shape[0]
-
-    def spread(column: FloatND | BoolND | IntND) -> FloatND | BoolND | IntND:
-        return jnp.broadcast_to(column[None, :], (n_query, column.shape[0]))
-
     columns = tuple(
-        jnp.concatenate([held_column.reshape(-1, 1), spread(block_column)], axis=1)
+        jnp.concatenate(
+            [
+                held_column.reshape(-1, 1),
+                _spread_over_queries(column=block_column, n_query=n_query),
+            ],
+            axis=1,
+        )
         for held_column, block_column in zip(held[:10], links, strict=True)
     )
     # The ordering reads geometry, value and identity only; the winner's policy
@@ -1260,11 +1262,8 @@ def merge_envelope_winner(
         resolved = jnp.any(brackets, axis=1)
         settled = held.settled.reshape(-1)
 
-    def pick(column: FloatND | BoolND | IntND) -> FloatND | BoolND | IntND:
-        return jnp.take_along_axis(column, index, axis=1)[:, 0]
-
-    picked = tuple(pick(column) for column in columns[:8])
-    picked_identity = pick(identities)
+    picked = tuple(_pick_column(column=column, index=index) for column in columns[:8])
+    picked_identity = _pick_column(column=identities, index=index)
     unreadable = held.unreadable.reshape(-1)
     if arithmetic == "ordinary":
         unreadable = (
@@ -1306,28 +1305,15 @@ def finish_envelope_winner(
     lower_grid = jnp.where(descending, right_grid, left_grid)
     upper_grid = jnp.where(descending, left_grid, right_grid)
 
-    def endpoint_order(*, left: FloatND, right: FloatND) -> tuple[FloatND, FloatND]:
-        flat_left = left.reshape(-1)
-        flat_right = right.reshape(-1)
-        lower = jnp.where(descending, flat_right, flat_left)
-        upper = jnp.where(descending, flat_left, flat_right)
-        return lower, jnp.where(zero_width, lower, upper)
-
     if arithmetic == "certified":
-        read_x0 = jnp.where(zero_width, jnp.zeros_like(lower_grid), lower_grid)
-        read_x1 = jnp.where(zero_width, jnp.ones_like(upper_grid), upper_grid)
-        read_query = jnp.where(zero_width, jnp.zeros_like(flat_query), flat_query)
-
-        def read_exact(*, left: FloatND, right: FloatND) -> tuple[FloatND, IntND]:
-            lower, upper = endpoint_order(left=left, right=right)
-            return exact_affine_read(
-                x0=read_x0,
-                x1=read_x1,
-                v0=lower,
-                v1=upper,
-                x_query=read_query,
-            )
-
+        read_exact = functools.partial(
+            _read_exact_channel,
+            descending=descending,
+            zero_width=zero_width,
+            read_x0=jnp.where(zero_width, jnp.zeros_like(lower_grid), lower_grid),
+            read_x1=jnp.where(zero_width, jnp.ones_like(upper_grid), upper_grid),
+            read_query=jnp.where(zero_width, jnp.zeros_like(flat_query), flat_query),
+        )
         value, value_status = read_exact(
             left=winner.left_value, right=winner.right_value
         )
@@ -1339,33 +1325,122 @@ def finish_envelope_winner(
         )
         readable = (value_status | policy_status | marginal_status) == 0
     else:
-
-        def read_ordinary(*, left: FloatND, right: FloatND) -> FloatND:
-            lower, upper = endpoint_order(left=left, right=right)
-            return _along_link(
-                left=lower,
-                right=upper,
-                query=flat_query,
-                left_grid=lower_grid,
-                right_grid=upper_grid,
-                arithmetic="ordinary",
-            )
-
+        read_ordinary = functools.partial(
+            _read_ordinary_channel,
+            descending=descending,
+            zero_width=zero_width,
+            flat_query=flat_query,
+            lower_grid=lower_grid,
+            upper_grid=upper_grid,
+        )
         value = read_ordinary(left=winner.left_value, right=winner.right_value)
         policy = read_ordinary(left=winner.left_policy, right=winner.right_policy)
         marginal = read_ordinary(left=winner.left_marginal, right=winner.right_marginal)
         readable = ~winner.unreadable.reshape(-1)
 
     decided = winner.live.reshape(-1) & winner.settled.reshape(-1) & readable
-
-    def publish(channel: FloatND) -> FloatND:
-        return jnp.where(decided, channel, jnp.nan).reshape(query.shape)
-
     return _mask_infeasible_queries(
-        published=(publish(value), publish(policy), publish(marginal)),
+        published=(
+            _publish_decided(channel=value, decided=decided, shape=query.shape),
+            _publish_decided(channel=policy, decided=decided, shape=query.shape),
+            _publish_decided(channel=marginal, decided=decided, shape=query.shape),
+        ),
         query=query,
         partition=feasibility_partition,
         feasible_interval_mask=feasible_interval_mask,
+    )
+
+
+def _spread_over_queries(
+    *, column: FloatND | BoolND | IntND, n_query: int
+) -> FloatND | BoolND | IntND:
+    """Repeat one candidate column across every query row."""
+    return jnp.broadcast_to(column[None, :], (n_query, column.shape[0]))
+
+
+def _pick_column(
+    *, column: FloatND | BoolND | IntND, index: IntND
+) -> FloatND | BoolND | IntND:
+    """Gather each query row's entry at its `(n_query, 1)` column index."""
+    return jnp.take_along_axis(column, index, axis=1)[:, 0]
+
+
+def _take_rows(*, column: FloatND | IntND, index: IntND) -> FloatND | IntND:
+    """Gather the candidate rows of `column` selected per query."""
+    return jnp.take(column, index, axis=0)
+
+
+def _publish_decided(
+    *, channel: FloatND, decided: BoolND, shape: tuple[int, ...]
+) -> FloatND:
+    """Shape one channel like the query, NaN where no winner was decided."""
+    return jnp.where(decided, channel, jnp.nan).reshape(shape)
+
+
+def _endpoint_order(
+    *, left: FloatND, right: FloatND, descending: BoolND, zero_width: BoolND
+) -> tuple[FloatND, FloatND]:
+    """Order a winner's stored endpoint channel by ascending abscissa.
+
+    A zero-width winner has no affine line and reads its stored left endpoint,
+    so both ordered endpoints carry that reading there.
+    """
+    flat_left = left.reshape(-1)
+    flat_right = right.reshape(-1)
+    lower = jnp.where(descending, flat_right, flat_left)
+    upper = jnp.where(descending, flat_left, flat_right)
+    return lower, jnp.where(zero_width, lower, upper)
+
+
+def _read_exact_channel(
+    *,
+    left: FloatND,
+    right: FloatND,
+    descending: BoolND,
+    zero_width: BoolND,
+    read_x0: FloatND,
+    read_x1: FloatND,
+    read_query: FloatND,
+) -> tuple[FloatND, IntND]:
+    """Read one channel of the winner at the query with the exact affine reader.
+
+    The exact reader keeps its positive-width contract, so a zero-width winner
+    arrives canonicalized to a flat unit line (`read_x0`, `read_x1`) read at zero
+    (`read_query`), and all three channels pass through the one native reader.
+    """
+    lower, upper = _endpoint_order(
+        left=left, right=right, descending=descending, zero_width=zero_width
+    )
+    return exact_affine_read(
+        x0=read_x0,
+        x1=read_x1,
+        v0=lower,
+        v1=upper,
+        x_query=read_query,
+    )
+
+
+def _read_ordinary_channel(
+    *,
+    left: FloatND,
+    right: FloatND,
+    descending: BoolND,
+    zero_width: BoolND,
+    flat_query: FloatND,
+    lower_grid: FloatND,
+    upper_grid: FloatND,
+) -> FloatND:
+    """Read one channel of the winner at the query in the ordinary arithmetic."""
+    lower, upper = _endpoint_order(
+        left=left, right=right, descending=descending, zero_width=zero_width
+    )
+    return _along_link(
+        left=lower,
+        right=upper,
+        query=flat_query,
+        left_grid=lower_grid,
+        right_grid=upper_grid,
+        arithmetic="ordinary",
     )
 
 
@@ -1407,12 +1482,10 @@ def _envelope_exact(*, links: _SegmentLinks, query: FloatND) -> _EnvelopeReducti
     )
     flat_query = query.reshape(-1)
     flat_winner = winner.reshape(-1)
+    take = functools.partial(_take_rows, index=flat_winner)
 
-    def _take(column: FloatND) -> FloatND:
-        return jnp.take(column, flat_winner, axis=0)
-
-    stored_left_grid = _take(links.left_grid)
-    stored_right_grid = _take(links.right_grid)
+    stored_left_grid = take(column=links.left_grid)
+    stored_right_grid = take(column=links.right_grid)
     descending = stored_left_grid > stored_right_grid
     zero_width = stored_left_grid == stored_right_grid
     left_grid = jnp.where(descending, stored_right_grid, stored_left_grid)
@@ -1422,39 +1495,33 @@ def _envelope_exact(*, links: _SegmentLinks, query: FloatND) -> _EnvelopeReducti
     # the stored left endpoint. Canonicalize that selected point to a flat unit
     # line and read it at zero, so all three channels still pass through exactly
     # one winner-only native reader without broadening the reader's API.
-    read_x0 = jnp.where(zero_width, jnp.zeros_like(left_grid), left_grid)
-    read_x1 = jnp.where(zero_width, jnp.ones_like(right_grid), right_grid)
-    read_query = jnp.where(zero_width, jnp.zeros_like(flat_query), flat_query)
-
-    def _read(*, left: FloatND, right: FloatND) -> tuple[FloatND, IntND]:
-        stored_left = _take(left)
-        stored_right = _take(right)
-        lower_value = jnp.where(descending, stored_right, stored_left)
-        upper_value = jnp.where(descending, stored_left, stored_right)
-        upper_value = jnp.where(zero_width, lower_value, upper_value)
-        return exact_affine_read(
-            x0=read_x0,
-            x1=read_x1,
-            v0=lower_value,
-            v1=upper_value,
-            x_query=read_query,
-        )
-
-    value, value_status = _read(left=links.left_value, right=links.right_value)
-    policy, policy_status = _read(left=links.left_policy, right=links.right_policy)
-    marginal, marginal_status = _read(
-        left=links.left_marginal, right=links.right_marginal
+    read = functools.partial(
+        _read_exact_channel,
+        descending=descending,
+        zero_width=zero_width,
+        read_x0=jnp.where(zero_width, jnp.zeros_like(left_grid), left_grid),
+        read_x1=jnp.where(zero_width, jnp.ones_like(right_grid), right_grid),
+        read_query=jnp.where(zero_width, jnp.zeros_like(flat_query), flat_query),
+    )
+    value, value_status = read(
+        left=take(column=links.left_value), right=take(column=links.right_value)
+    )
+    policy, policy_status = read(
+        left=take(column=links.left_policy), right=take(column=links.right_policy)
+    )
+    marginal, marginal_status = read(
+        left=take(column=links.left_marginal), right=take(column=links.right_marginal)
     )
     coupled_status = (
         winner_status.reshape(-1) | value_status | policy_status | marginal_status
     )
     decided = coupled_status == 0
-
-    def _published(channel: FloatND) -> FloatND:
-        return jnp.where(decided, channel, jnp.nan).reshape(query.shape)
-
     return _EnvelopeReduction(
-        published=(_published(value), _published(policy), _published(marginal)),
+        published=(
+            _publish_decided(channel=value, decided=decided, shape=query.shape),
+            _publish_decided(channel=policy, decided=decided, shape=query.shape),
+            _publish_decided(channel=marginal, decided=decided, shape=query.shape),
+        ),
         owner=jnp.where(
             decided, jnp.take(links.stable_index, flat_winner, axis=0), NO_OWNER
         ).reshape(query.shape),
@@ -1586,16 +1653,23 @@ def _envelope_dense(
         best = owner.index
         decided = any_bracket & owner.settled
 
-    def _from_winner(channel: FloatND) -> FloatND:
-        """Publish one channel of the winner, or NaN where no winner was decided."""
-        taken = jnp.take_along_axis(channel, best, axis=1)[:, 0]
-        return jnp.where(decided, taken, jnp.nan).reshape(query.shape)
-
     return _EnvelopeReduction(
         published=(
-            _from_winner(value_interp),
-            _from_winner(policy_interp),
-            _from_winner(marginal_interp),
+            _publish_decided(
+                channel=_pick_column(column=value_interp, index=best),
+                decided=decided,
+                shape=query.shape,
+            ),
+            _publish_decided(
+                channel=_pick_column(column=policy_interp, index=best),
+                decided=decided,
+                shape=query.shape,
+            ),
+            _publish_decided(
+                channel=_pick_column(column=marginal_interp, index=best),
+                decided=decided,
+                shape=query.shape,
+            ),
         )
     )
 
@@ -1818,34 +1892,6 @@ def _highest_reading_line_over_blocks(
     since such a query publishes NaN on `any_bracket` regardless.
     """
     n_query = flat.shape[0]
-
-    # keyword-only-exempt: library-callback=jax.lax.scan
-    def step(
-        carry: tuple[FloatND, ...], block_and_live: tuple[FloatND, BoolND]
-    ) -> tuple[tuple[FloatND, ...], None]:
-        best_read, *kept = carry
-        block, block_live = block_and_live
-        terms = _block_query_terms(block=block, live=block_live, flat=flat)
-        lines = _block_lines(block=block, live=block_live)
-        candidate = jnp.where(eligible(terms=terms, lines=lines), terms.value, -jnp.inf)
-        index = jnp.argmax(candidate, axis=1)[:, None]
-        take = jnp.take_along_axis(candidate, index, axis=1)[:, 0] > best_read
-        taken = (
-            jnp.take_along_axis(
-                jnp.broadcast_to(field, candidate.shape), index, axis=1
-            )[:, 0]
-            for field in lines
-        )
-        return (
-            jnp.where(
-                take, jnp.take_along_axis(candidate, index, axis=1)[:, 0], best_read
-            ),
-            *(
-                jnp.where(take, offered, standing)
-                for offered, standing in zip(taken, kept, strict=True)
-            ),
-        ), None
-
     zeros = jnp.zeros((n_query,), dtype=dtype)
     placeholder = _ComparableLines(
         x0=zeros, x1=jnp.ones((n_query,), dtype=dtype), v0=zeros, v1=zeros
@@ -1856,11 +1902,42 @@ def _highest_reading_line_over_blocks(
         else _ComparableLines(*(field[:, 0] for field in held))
     )
     carry, _ = jax.lax.scan(
-        step,
+        functools.partial(_highest_reading_step, flat=flat, eligible=eligible),
         (jnp.full((n_query,), -jnp.inf, dtype=dtype), *standing),
         (blocks, live_blocks),
     )
     return _ComparableLines(*(field[:, None] for field in carry[1:])), carry[0][:, None]
+
+
+# keyword-only-exempt: library-callback=jax.lax.scan
+def _highest_reading_step(
+    carry: tuple[FloatND, ...],
+    block_and_live: tuple[FloatND, BoolND],
+    *,
+    flat: Float1D,
+    eligible: Callable[..., BoolND],
+) -> tuple[tuple[FloatND, ...], None]:
+    """Replace the held line where this block offers a higher eligible reading."""
+    best_read, *kept = carry
+    block, block_live = block_and_live
+    terms = _block_query_terms(block=block, live=block_live, flat=flat)
+    lines = _block_lines(block=block, live=block_live)
+    candidate = jnp.where(eligible(terms=terms, lines=lines), terms.value, -jnp.inf)
+    index = jnp.argmax(candidate, axis=1)[:, None]
+    take = jnp.take_along_axis(candidate, index, axis=1)[:, 0] > best_read
+    taken = (
+        jnp.take_along_axis(jnp.broadcast_to(field, candidate.shape), index, axis=1)[
+            :, 0
+        ]
+        for field in lines
+    )
+    return (
+        jnp.where(take, jnp.take_along_axis(candidate, index, axis=1)[:, 0], best_read),
+        *(
+            jnp.where(take, offered, standing)
+            for offered, standing in zip(taken, kept, strict=True)
+        ),
+    ), None
 
 
 # Candidates the ordinary read holds against one query when nothing is asked for.
@@ -1909,22 +1986,16 @@ def _link_blocks(
     """
     n_segment = links.live.shape[0]
     pad = (-n_segment) % block_size
-
-    def padded(*, column: FloatND, fill: float) -> FloatND:
-        if pad == 0:
-            return column
-        return jnp.concatenate([column, jnp.full((pad,), fill, dtype=column.dtype)])
-
     columns = jnp.stack(
         [
-            padded(column=links.left_grid, fill=0.0),
-            padded(column=links.right_grid, fill=0.0),
-            padded(column=links.left_value, fill=0.0),
-            padded(column=links.right_value, fill=0.0),
-            padded(column=links.left_policy, fill=0.0),
-            padded(column=links.right_policy, fill=0.0),
-            padded(column=links.left_marginal, fill=0.0),
-            padded(column=links.right_marginal, fill=0.0),
+            _pad_column(column=links.left_grid, fill=0.0, n_padding=pad),
+            _pad_column(column=links.right_grid, fill=0.0, n_padding=pad),
+            _pad_column(column=links.left_value, fill=0.0, n_padding=pad),
+            _pad_column(column=links.right_value, fill=0.0, n_padding=pad),
+            _pad_column(column=links.left_policy, fill=0.0, n_padding=pad),
+            _pad_column(column=links.right_policy, fill=0.0, n_padding=pad),
+            _pad_column(column=links.left_marginal, fill=0.0, n_padding=pad),
+            _pad_column(column=links.right_marginal, fill=0.0, n_padding=pad),
         ],
         axis=1,
     )
@@ -1952,6 +2023,13 @@ def _link_blocks(
         live.reshape(-1, block_size),
         stable_index.reshape(-1, block_size),
     )
+
+
+def _pad_column(*, column: FloatND, fill: float, n_padding: int) -> FloatND:
+    """Append `n_padding` dead entries so the column divides into whole blocks."""
+    if n_padding == 0:
+        return column
+    return jnp.concatenate([column, jnp.full((n_padding,), fill, dtype=column.dtype)])
 
 
 class _OrdinaryRank(NamedTuple):
@@ -2005,86 +2083,7 @@ def _envelope_blocked_ordinary(
     blocks, live_blocks, stable_blocks = _link_blocks(
         links=links, block_size=block_size
     )
-
-    def block_best(
-        *, block: FloatND, block_live: BoolND, block_stable_index: IntND
-    ) -> tuple[_OrdinaryRank, tuple[FloatND, ...]]:
-        """The block's own winner per query, as its rank and its channels."""
-        terms = _block_query_terms(
-            block=block, live=block_live, flat=flat, arithmetic="ordinary"
-        )
-        excluded = jnp.full_like(terms.value, -jnp.inf)
-        offered = _OrdinaryRank(
-            value=jnp.where(terms.brackets, terms.value, excluded),
-            right_available=jnp.where(
-                terms.brackets,
-                (flat[:, None] < terms.upper).astype(dtype),
-                excluded,
-            ),
-            slope_high=jnp.where(terms.brackets, terms.slope_high, excluded),
-            slope_low=jnp.where(terms.brackets, terms.slope_low, excluded),
-            stable_index=jnp.where(
-                terms.brackets,
-                jnp.broadcast_to(block_stable_index[None, :], terms.brackets.shape),
-                jnp.iinfo(block_stable_index.dtype).max,
-            ),
-        )
-        still_tied = jnp.ones_like(offered.value, dtype=bool)
-        for field in offered[:-1]:
-            best = jnp.max(
-                jnp.where(still_tied, field, -jnp.inf), axis=1, keepdims=True
-            )
-            still_tied = still_tied & (field == best)
-        earliest = jnp.min(
-            jnp.where(
-                still_tied,
-                offered.stable_index,
-                jnp.iinfo(offered.stable_index.dtype).max,
-            ),
-            axis=1,
-            keepdims=True,
-        )
-        still_tied = still_tied & (offered.stable_index == earliest)
-        index = jnp.argmax(still_tied, axis=1)[:, None]
-
-        def pick(field: FloatND | IntND) -> FloatND | IntND:
-            return jnp.take_along_axis(field, index, axis=1)[:, 0]
-
-        return (
-            _OrdinaryRank(*(pick(field) for field in offered)),
-            (pick(terms.value), pick(terms.policy), pick(terms.marginal)),
-        )
-
-    # keyword-only-exempt: library-callback=jax.lax.scan
-    def step(
-        carry: tuple[FloatND | IntND, ...],
-        block_live_and_stable: tuple[FloatND, BoolND, IntND],
-    ) -> tuple[tuple[FloatND | IntND, ...], None]:
-        held = _OrdinaryRank(*carry[:5])
-        standing = carry[5:]
-        offered, channels = block_best(
-            block=block_live_and_stable[0],
-            block_live=block_live_and_stable[1],
-            block_stable_index=block_live_and_stable[2],
-        )
-        decided = jnp.zeros((n_query,), dtype=bool)
-        take = jnp.zeros((n_query,), dtype=bool)
-        for challenging, holding in zip(offered[:-1], held[:-1], strict=True):
-            take = take | (~decided & (challenging > holding))
-            decided = decided | (challenging != holding)
-        take = take | (~decided & (offered.stable_index < held.stable_index))
-        return (
-            *(
-                jnp.where(take, challenging, holding)
-                for challenging, holding in zip(offered, held, strict=True)
-            ),
-            *(
-                jnp.where(take, offered_channel, standing_channel)
-                for offered_channel, standing_channel in zip(
-                    channels, standing, strict=True
-                )
-            ),
-        ), None
+    step = functools.partial(_ordinary_block_step, flat=flat, dtype=dtype)
 
     empty_rank = jnp.full((n_query,), -jnp.inf, dtype=dtype)
     empty_stable_index = jnp.full(
@@ -2155,7 +2154,7 @@ def _envelope_blocked(
         flat=flat,
         dtype=dtype,
         held=None,
-        eligible=lambda terms, lines: terms.brackets,  # noqa: ARG005
+        eligible=_bracketing_links,
     )
     level = jnp.where(jnp.isfinite(best_read), best_read, 0.0)
     pivot_numerator, pivot_divisor = _value_quotient(
@@ -2166,57 +2165,22 @@ def _envelope_blocked(
         right_grid=pivot_lines.x1,
         level=level,
     )
-
-    def _block_margin(lines: _ComparableLines) -> QuotientMargin:
-        """Certify every link of one block against the query's pivot."""
-        numerator, divisor = _value_quotient(
-            left=lines.v0,
-            right=lines.v1,
-            query=flat[:, None],
-            left_grid=lines.x0,
-            right_grid=lines.x1,
-            level=level,
-        )
-        return certified_quotient_margin(
-            left_numerator=numerator,
-            left_divisor=divisor,
-            right_numerator=pivot_numerator,
-            right_divisor=pivot_divisor,
-        )
-
-    # keyword-only-exempt: library-callback=jax.lax.scan
-    def bounds_step(
-        carry: FloatND, block_and_live: tuple[FloatND, BoolND]
-    ) -> tuple[FloatND, None]:
-        block, block_live = block_and_live
-        terms = _block_query_terms(block=block, live=block_live, flat=flat)
-        margin = _block_margin(_block_lines(block=block, live=block_live))
-        return jnp.maximum(
-            carry,
-            jnp.max(
-                jnp.where(
-                    terms.brackets & margin.trustworthy,
-                    margin.value - margin.bound,
-                    -jnp.inf,
-                ),
-                axis=1,
-            ),
-        ), None
+    block_margin = functools.partial(
+        _block_margin,
+        flat=flat,
+        level=level,
+        pivot_numerator=pivot_numerator,
+        pivot_divisor=pivot_divisor,
+    )
 
     running, _ = jax.lax.scan(
-        bounds_step,
+        functools.partial(_bounds_step, flat=flat, block_margin=block_margin),
         jnp.full((n_query,), -jnp.inf, dtype=dtype),
         (blocks, live_blocks),
     )
-    certain_lower = running[:, None]
-
-    def block_contending(*, terms: _BlockTerms, lines: _ComparableLines) -> BoolND:
-        """Which of the block's bracketing links the margins leave in contention."""
-        return _contending_against(
-            brackets=terms.brackets,
-            margin=_block_margin(lines),
-            certain_lower=certain_lower,
-        )
+    block_contending = functools.partial(
+        _block_contending, block_margin=block_margin, certain_lower=running[:, None]
+    )
 
     reference, _ = _highest_reading_line_over_blocks(
         blocks=blocks,
@@ -2234,67 +2198,23 @@ def _envelope_blocked(
             flat=flat,
             dtype=dtype,
             held=standing,
-            eligible=lambda terms, lines, standing=standing: (
-                block_contending(terms=terms, lines=lines)
-                & (
-                    _sign_against_reference(
-                        lines=lines, reference=standing, query=flat[:, None]
-                    )
-                    == 1
-                )
+            eligible=functools.partial(
+                _promotable_links,
+                block_contending=block_contending,
+                standing=standing,
+                flat=flat,
             ),
         )
-
-    # keyword-only-exempt: library-callback=jax.lax.scan
-    def winner_step(
-        carry: tuple[_TieBreakKey, FloatND, FloatND, FloatND, BoolND, BoolND],
-        block_live_and_stable: tuple[FloatND, BoolND, IntND],
-    ) -> tuple[tuple[_TieBreakKey, FloatND, FloatND, FloatND, BoolND, BoolND], None]:
-        best_key, best_value, best_policy, best_marginal, any_bracket, settled = carry
-        block, block_live, block_stable_index = block_live_and_stable
-        terms = _block_query_terms(block=block, live=block_live, flat=flat)
-        lines = _block_lines(block=block, live=block_live)
-        contending = block_contending(terms=terms, lines=lines)
-        sign = _sign_against_reference(
-            lines=lines, reference=reference, query=flat[:, None]
-        )
-        key = _tie_break_key(
-            level_with=contending & (sign == 0),
-            right_available=flat[:, None] < terms.upper,
-            slope_high=terms.slope_high,
-            slope_low=terms.slope_low,
-            stable_index=jnp.broadcast_to(
-                block_stable_index[None, :], terms.brackets.shape
-            ),
-        )
-        winner = _lexicographic_argmax(key)
-
-        def _take(channel: FloatND) -> FloatND:
-            return jnp.take_along_axis(channel, winner, axis=1)[:, 0]
-
-        block_key = _TieBreakKey(*(_take(field) for field in key))
-        take = _outranks(challenger=block_key, held=best_key)
-        return (
-            _TieBreakKey(
-                *(
-                    jnp.where(take, challenging, standing)
-                    for challenging, standing in zip(block_key, best_key, strict=True)
-                )
-            ),
-            jnp.where(take, _take(terms.value), best_value),
-            jnp.where(take, _take(terms.policy), best_policy),
-            jnp.where(take, _take(terms.marginal), best_marginal),
-            any_bracket | jnp.any(terms.brackets, axis=1),
-            settled
-            & ~jnp.any(terms.brackets & (sign == 1), axis=1)
-            & ~jnp.any(terms.brackets & (sign == UNRESOLVED_SIGN), axis=1)
-            & ~jnp.any(terms.brackets & (sign == BELOW_RESOLUTION_SIGN), axis=1),
-        ), None
 
     empty = jnp.full((n_query,), jnp.nan, dtype=dtype)
     nothing_yet = jnp.full((n_query,), -jnp.inf, dtype=dtype)
     (_, env_value, env_policy, env_marginal, any_bracket, settled), _ = jax.lax.scan(
-        winner_step,
+        functools.partial(
+            _winner_step,
+            flat=flat,
+            block_contending=block_contending,
+            reference=reference,
+        ),
         (
             _TieBreakKey(
                 nothing_yet,
@@ -2316,15 +2236,243 @@ def _envelope_blocked(
     )
 
     decided = any_bracket & settled
-
-    def _published(channel: FloatND) -> FloatND:
-        """Shape one channel like the query, NaN where no winner was decided."""
-        return jnp.where(decided, channel, jnp.nan).reshape(query.shape)
-
     return _EnvelopeReduction(
         published=(
-            _published(env_value),
-            _published(env_policy),
-            _published(env_marginal),
+            _publish_decided(channel=env_value, decided=decided, shape=query.shape),
+            _publish_decided(channel=env_policy, decided=decided, shape=query.shape),
+            _publish_decided(channel=env_marginal, decided=decided, shape=query.shape),
         )
     )
+
+
+def _ordinary_block_best(
+    *,
+    block: FloatND,
+    block_live: BoolND,
+    block_stable_index: IntND,
+    flat: Float1D,
+    dtype: jnp.dtype,
+) -> tuple[_OrdinaryRank, tuple[FloatND, ...]]:
+    """The block's own winner per query, as its rank and its channels."""
+    terms = _block_query_terms(
+        block=block, live=block_live, flat=flat, arithmetic="ordinary"
+    )
+    excluded = jnp.full_like(terms.value, -jnp.inf)
+    offered = _OrdinaryRank(
+        value=jnp.where(terms.brackets, terms.value, excluded),
+        right_available=jnp.where(
+            terms.brackets,
+            (flat[:, None] < terms.upper).astype(dtype),
+            excluded,
+        ),
+        slope_high=jnp.where(terms.brackets, terms.slope_high, excluded),
+        slope_low=jnp.where(terms.brackets, terms.slope_low, excluded),
+        stable_index=jnp.where(
+            terms.brackets,
+            jnp.broadcast_to(block_stable_index[None, :], terms.brackets.shape),
+            jnp.iinfo(block_stable_index.dtype).max,
+        ),
+    )
+    still_tied = jnp.ones_like(offered.value, dtype=bool)
+    for field in offered[:-1]:
+        best = jnp.max(jnp.where(still_tied, field, -jnp.inf), axis=1, keepdims=True)
+        still_tied = still_tied & (field == best)
+    earliest = jnp.min(
+        jnp.where(
+            still_tied,
+            offered.stable_index,
+            jnp.iinfo(offered.stable_index.dtype).max,
+        ),
+        axis=1,
+        keepdims=True,
+    )
+    still_tied = still_tied & (offered.stable_index == earliest)
+    index = jnp.argmax(still_tied, axis=1)[:, None].astype(jnp.int32)
+    return (
+        _OrdinaryRank(*(_pick_column(column=field, index=index) for field in offered)),
+        (
+            _pick_column(column=terms.value, index=index),
+            _pick_column(column=terms.policy, index=index),
+            _pick_column(column=terms.marginal, index=index),
+        ),
+    )
+
+
+# keyword-only-exempt: library-callback=jax.lax.scan
+def _ordinary_block_step(
+    carry: tuple[FloatND | IntND, ...],
+    block_live_and_stable: tuple[FloatND, BoolND, IntND],
+    *,
+    flat: Float1D,
+    dtype: jnp.dtype,
+) -> tuple[tuple[FloatND | IntND, ...], None]:
+    """Replace the standing ordinary winner where this block's best outranks it."""
+    n_query = flat.shape[0]
+    held = _OrdinaryRank(*carry[:5])
+    standing = carry[5:]
+    offered, channels = _ordinary_block_best(
+        block=block_live_and_stable[0],
+        block_live=block_live_and_stable[1],
+        block_stable_index=block_live_and_stable[2],
+        flat=flat,
+        dtype=dtype,
+    )
+    decided = jnp.zeros((n_query,), dtype=bool)
+    take = jnp.zeros((n_query,), dtype=bool)
+    for challenging, holding in zip(offered[:-1], held[:-1], strict=True):
+        take = take | (~decided & (challenging > holding))
+        decided = decided | (challenging != holding)
+    take = take | (~decided & (offered.stable_index < held.stable_index))
+    return (
+        *(
+            jnp.where(take, challenging, holding)
+            for challenging, holding in zip(offered, held, strict=True)
+        ),
+        *(
+            jnp.where(take, offered_channel, standing_channel)
+            for offered_channel, standing_channel in zip(
+                channels, standing, strict=True
+            )
+        ),
+    ), None
+
+
+def _bracketing_links(*, terms: _BlockTerms, lines: _ComparableLines) -> BoolND:
+    """Every bracketing link is eligible: the opening reference's rule."""
+    del lines
+    return terms.brackets
+
+
+def _block_margin(
+    *,
+    lines: _ComparableLines,
+    flat: Float1D,
+    level: FloatND,
+    pivot_numerator: DoubleDouble,
+    pivot_divisor: DoubleDouble,
+) -> QuotientMargin:
+    """Certify every link of one block against the query's pivot."""
+    numerator, divisor = _value_quotient(
+        left=lines.v0,
+        right=lines.v1,
+        query=flat[:, None],
+        left_grid=lines.x0,
+        right_grid=lines.x1,
+        level=level,
+    )
+    return certified_quotient_margin(
+        left_numerator=numerator,
+        left_divisor=divisor,
+        right_numerator=pivot_numerator,
+        right_divisor=pivot_divisor,
+    )
+
+
+# keyword-only-exempt: library-callback=jax.lax.scan
+def _bounds_step(
+    carry: FloatND,
+    block_and_live: tuple[FloatND, BoolND],
+    *,
+    flat: Float1D,
+    block_margin: Callable[..., QuotientMargin],
+) -> tuple[FloatND, None]:
+    """Raise the per-query certain lower bound by this block's trustworthy margins."""
+    block, block_live = block_and_live
+    terms = _block_query_terms(block=block, live=block_live, flat=flat)
+    margin = block_margin(lines=_block_lines(block=block, live=block_live))
+    return jnp.maximum(
+        carry,
+        jnp.max(
+            jnp.where(
+                terms.brackets & margin.trustworthy,
+                margin.value - margin.bound,
+                -jnp.inf,
+            ),
+            axis=1,
+        ),
+    ), None
+
+
+def _block_contending(
+    *,
+    terms: _BlockTerms,
+    lines: _ComparableLines,
+    block_margin: Callable[..., QuotientMargin],
+    certain_lower: FloatND,
+) -> BoolND:
+    """Which of the block's bracketing links the margins leave in contention."""
+    return _contending_against(
+        brackets=terms.brackets,
+        margin=block_margin(lines=lines),
+        certain_lower=certain_lower,
+    )
+
+
+def _promotable_links(
+    *,
+    terms: _BlockTerms,
+    lines: _ComparableLines,
+    block_contending: Callable[..., BoolND],
+    standing: _ComparableLines,
+    flat: Float1D,
+) -> BoolND:
+    """Which contending links are certified strictly above the standing line."""
+    return block_contending(terms=terms, lines=lines) & (
+        _sign_against_reference(lines=lines, reference=standing, query=flat[:, None])
+        == 1
+    )
+
+
+type _WinnerCarry = tuple[_TieBreakKey, FloatND, FloatND, FloatND, BoolND, BoolND]
+
+
+# keyword-only-exempt: library-callback=jax.lax.scan
+def _winner_step(
+    carry: _WinnerCarry,
+    block_live_and_stable: tuple[FloatND, BoolND, IntND],
+    *,
+    flat: Float1D,
+    block_contending: Callable[..., BoolND],
+    reference: _ComparableLines,
+) -> tuple[_WinnerCarry, None]:
+    """Fold one block into the level-with-reference winner and its settledness."""
+    best_key, best_value, best_policy, best_marginal, any_bracket, settled = carry
+    block, block_live, block_stable_index = block_live_and_stable
+    terms = _block_query_terms(block=block, live=block_live, flat=flat)
+    lines = _block_lines(block=block, live=block_live)
+    contending = block_contending(terms=terms, lines=lines)
+    sign = _sign_against_reference(
+        lines=lines, reference=reference, query=flat[:, None]
+    )
+    key = _tie_break_key(
+        level_with=contending & (sign == 0),
+        right_available=flat[:, None] < terms.upper,
+        slope_high=terms.slope_high,
+        slope_low=terms.slope_low,
+        stable_index=jnp.broadcast_to(
+            block_stable_index[None, :], terms.brackets.shape
+        ),
+    )
+    winner = _lexicographic_argmax(key)
+    block_key = _TieBreakKey(
+        *(_pick_column(column=field, index=winner) for field in key)
+    )
+    take = _outranks(challenger=block_key, held=best_key)
+    return (
+        _TieBreakKey(
+            *(
+                jnp.where(take, challenging, standing)
+                for challenging, standing in zip(block_key, best_key, strict=True)
+            )
+        ),
+        jnp.where(take, _pick_column(column=terms.value, index=winner), best_value),
+        jnp.where(take, _pick_column(column=terms.policy, index=winner), best_policy),
+        jnp.where(
+            take, _pick_column(column=terms.marginal, index=winner), best_marginal
+        ),
+        any_bracket | jnp.any(terms.brackets, axis=1),
+        settled
+        & ~jnp.any(terms.brackets & (sign == 1), axis=1)
+        & ~jnp.any(terms.brackets & (sign == UNRESOLVED_SIGN), axis=1)
+        & ~jnp.any(terms.brackets & (sign == BELOW_RESOLUTION_SIGN), axis=1),
+    ), None

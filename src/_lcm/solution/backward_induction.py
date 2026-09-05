@@ -1187,13 +1187,13 @@ def _match_continuation_template_sharding(
     itself sharded — an unsharded template under a distributed state would
     pull the continuation onto one device.
     """
-    return jax.tree.map(
-        lambda leaf, template_leaf: _match_leaf_template_sharding(
-            leaf=leaf, template_leaf=template_leaf
-        ),
-        continuation,
-        template,
-    )
+    return jax.tree.map(_match_leaf_pair_sharding, continuation, template)
+
+
+# keyword-only-exempt: library-callback=jax.tree.map
+def _match_leaf_pair_sharding(leaf: FloatND, template_leaf: FloatND) -> FloatND:
+    """Place one continuation leaf on its template leaf's sharding."""
+    return _match_leaf_template_sharding(leaf=leaf, template_leaf=template_leaf)
 
 
 def _publish_kernel_value(
@@ -1900,21 +1900,6 @@ def _compile_all_functions(
 
     # Phase 2: Compile all lowered programs in parallel (XLA releases the GIL).
     compiled: dict[Hashable, jax.stages.Compiled] = {}
-
-    def _compile_and_log(
-        *,
-        lowering_key: Hashable,
-        low: jax.stages.Lowered,
-        label: str,
-    ) -> tuple[Hashable, jax.stages.Compiled]:
-        logger.info("  compiling %s ...", label)
-        start = time.monotonic()
-        result = low.compile()
-        elapsed = time.monotonic() - start
-        logger.info("  compiled  %s  %s", label, format_duration(seconds=elapsed))
-        _log_kernel_memory(compiled=result, label=label, logger=logger)
-        return lowering_key, result
-
     with ThreadPoolExecutor(max_workers=n_workers) as pool:
         futures = [
             pool.submit(
@@ -1922,6 +1907,7 @@ def _compile_all_functions(
                 lowering_key=lowering_key,
                 low=low,
                 label=labels[lowering_key],
+                logger=logger,
             )
             for lowering_key, low in lowered.items()
         ]
@@ -2318,6 +2304,23 @@ def _group_cores_by_regime_period(
     for (regime_name, period, core_key), core in cores_by_triple.items():
         grouped.setdefault((regime_name, period), {})[core_key] = core
     return {key: MappingProxyType(cores) for key, cores in grouped.items()}
+
+
+def _compile_and_log(
+    *,
+    lowering_key: Hashable,
+    low: jax.stages.Lowered,
+    label: str,
+    logger: logging.Logger,
+) -> tuple[Hashable, jax.stages.Compiled]:
+    """Compile one lowered program, logging its duration and kernel memory."""
+    logger.info("  compiling %s ...", label)
+    start = time.monotonic()
+    result = low.compile()
+    elapsed = time.monotonic() - start
+    logger.info("  compiled  %s  %s", label, format_duration(seconds=elapsed))
+    _log_kernel_memory(compiled=result, label=label, logger=logger)
+    return lowering_key, result
 
 
 def _log_kernel_memory(

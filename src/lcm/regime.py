@@ -452,6 +452,11 @@ class Regime:
         )
         return isinstance(transition, MarkovTransition | Mapping)
 
+    def _make_field_immutable(self, *, name: str) -> None:
+        """Replace the named mapping field with its immutable form."""
+        value = ensure_containers_are_immutable(getattr(self, name))
+        object.__setattr__(self, name, value)
+
     def __post_init__(self) -> None:
         self._lower_value_dependent_declarations()
         self._fail_if_egm_solver_has_no_margin_declaration()
@@ -492,23 +497,19 @@ class Regime:
         _validate_logical_consistency(self)
         _validate_fold_declarations(self)
 
-        def make_immutable(name: str) -> None:
-            value = ensure_containers_are_immutable(getattr(self, name))
-            object.__setattr__(self, name, value)
-
         # Completeness (a `utility` entry, aggregator injection, transition
         # coverage) is validated when the model finalizes its regimes
         # — model-level slots may still satisfy it after merging.
-        make_immutable("functions")
-        make_immutable("states")
-        make_immutable("state_transitions")
-        make_immutable("joint_transitions")
-        make_immutable("actions")
-        make_immutable("constraints")
-        make_immutable("derived_categoricals")
-        make_immutable("value_constraints")
-        make_immutable("gated_edges")
-        make_immutable("same_period_refs")
+        self._make_field_immutable(name="functions")
+        self._make_field_immutable(name="states")
+        self._make_field_immutable(name="state_transitions")
+        self._make_field_immutable(name="joint_transitions")
+        self._make_field_immutable(name="actions")
+        self._make_field_immutable(name="constraints")
+        self._make_field_immutable(name="derived_categoricals")
+        self._make_field_immutable(name="value_constraints")
+        self._make_field_immutable(name="gated_edges")
+        self._make_field_immutable(name="same_period_refs")
 
         # The phase grammar (states matrix, carried laws, regime-transition
         # variants) is validated by the normalizer; the per-phase spec it
@@ -801,13 +802,9 @@ class Regime:
 
         """
 
-        def resolve(value: object) -> UserFunction:
-            if isinstance(value, Phased):
-                value = value.solve if phase == "solve" else value.simulate
-            return cast("UserFunction", value)
-
         result: dict[str, UserFunction] = {
-            name: resolve(func) for name, func in self.decomposed_functions.items()
+            name: _resolve_phase_variant(value=func, phase=phase)
+            for name, func in self.decomposed_functions.items()
         }
         for name, spec in self.states.items():
             if isinstance(spec, Phased):
@@ -834,7 +831,10 @@ class Regime:
                 state_transitions=self.state_transitions,
                 joint_output_names=joint_output_names,
             )
-            result |= {name: resolve(func) for name, func in collected.items()}
+            result |= {
+                name: _resolve_phase_variant(value=func, phase=phase)
+                for name, func in collected.items()
+            }
             transition = decomposed_transition
             if isinstance(transition, Phased):
                 transition = (
@@ -1125,3 +1125,12 @@ def _as_markov_transition(
     if isinstance(probability, MarkovTransition):
         return probability
     return MarkovTransition(probability)
+
+
+def _resolve_phase_variant(
+    *, value: object, phase: Literal["solve", "simulate"]
+) -> UserFunction:
+    """Return the variant of a possibly `Phased` entry that applies in `phase`."""
+    if isinstance(value, Phased):
+        value = value.solve if phase == "solve" else value.simulate
+    return cast("UserFunction", value)

@@ -52,6 +52,7 @@ still returned (guarded against division blow-up) so a vectorized caller
 does not NaN-poison resolved cells.
 """
 
+import functools
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import NamedTuple
@@ -236,10 +237,9 @@ def _continuous_outer_optimum_primal(
         `(f_star, value, basin_margin)` — the winning abscissa, the value
         at the winner, and the mesh-stage best-vs-second-best margin.
     """
-    positional_objective = allow_args(objective)
     lower, upper = bounds
     return _mesh_and_polish(
-        objective=lambda f: positional_objective(f, theta),
+        objective=_ActionSection(objective=allow_args(objective), theta=theta),
         lower=lower,
         upper=upper,
         n_mesh=n_mesh,
@@ -278,13 +278,16 @@ def _continuous_outer_optimum_jvp(
     # through any inner control flow (while/fori loops in a nested solve)
     # that reverse-mode AD cannot.
     ones = jnp.ones_like(f_star)
-
-    # keyword-only-exempt: library-callback=jax.jvp
-    def q_f(f: FloatND, t: FloatND) -> FloatND:
-        return jax.jvp(lambda g: positional_objective(g, t), (f,), (ones,))[1]
-
-    _, q_ff = jax.jvp(lambda f: q_f(f, theta), (f_star,), (ones,))
-    _, q_ftheta_dot = jax.jvp(lambda t: q_f(f_star, t), (theta,), (theta_dot,))
+    _, q_ff = jax.jvp(
+        _ActionSlopeInAction(objective=positional_objective, theta=theta, ones=ones),
+        (f_star,),
+        (ones,),
+    )
+    _, q_ftheta_dot = jax.jvp(
+        _ActionSlopeInParameter(objective=positional_objective, f=f_star, ones=ones),
+        (theta,),
+        (theta_dot,),
+    )
     # At a maximum Q_ff <= 0; a flat top is guarded toward -floor so the
     # tangent stays finite (the diagnostics flag such cells as unresolved).
     guarded_curvature = jnp.where(
@@ -297,10 +300,95 @@ def _continuous_outer_optimum_jvp(
     # interior optimum; at a bound the reported value tangent is still the
     # partial (the bound's own movement is not differentiated here).
     _, value_dot = jax.jvp(
-        lambda t: positional_objective(f_star, t), (theta,), (theta_dot,)
+        _ParameterSection(objective=positional_objective, f=f_star),
+        (theta,),
+        (theta_dot,),
     )
     margin_dot = jnp.zeros_like(basin_margin)
     return (f_star, value, basin_margin), (f_dot, value_dot, margin_dot)
+
+
+@dataclass(frozen=True, eq=False)
+class _ActionSection:
+    """`Q(., theta)`: the objective as a map of the action at a fixed parameter."""
+
+    objective: Callable[..., FloatND]
+    """The objective, called positionally as `objective(f, theta)`."""
+
+    theta: FloatND
+    """The parameter held fixed."""
+
+    def __call__(self, f: FloatND) -> FloatND:
+        """Evaluate `Q(f, theta)`."""
+        return self.objective(f, self.theta)
+
+
+@dataclass(frozen=True, eq=False)
+class _ParameterSection:
+    """`Q(f, .)`: the objective as a map of the parameter at a fixed action."""
+
+    objective: Callable[..., FloatND]
+    """The objective, called positionally as `objective(f, theta)`."""
+
+    f: FloatND
+    """The action held fixed."""
+
+    def __call__(self, theta: FloatND) -> FloatND:
+        """Evaluate `Q(f, theta)`."""
+        return self.objective(self.f, theta)
+
+
+def _action_slope(
+    *, objective: Callable[..., FloatND], f: FloatND, theta: FloatND, ones: FloatND
+) -> FloatND:
+    """`Q_f(f, theta)` by forward mode.
+
+    The objective is per-cell (cell i's value depends only on `f[i]`), so the
+    ones-tangent JVP is exactly the elementwise derivative — and forward mode
+    differentiates through any inner control flow (while/fori loops in a nested
+    solve) that reverse-mode AD cannot.
+    """
+    return jax.jvp(_ActionSection(objective=objective, theta=theta), (f,), (ones,))[1]
+
+
+@dataclass(frozen=True, eq=False)
+class _ActionSlopeInAction:
+    """`Q_f(., theta)`: the action slope as a map of the action."""
+
+    objective: Callable[..., FloatND]
+    """The objective, called positionally as `objective(f, theta)`."""
+
+    theta: FloatND
+    """The parameter held fixed."""
+
+    ones: FloatND
+    """The unit tangent of the cell axes, `ones_like(f)`."""
+
+    def __call__(self, f: FloatND) -> FloatND:
+        """Evaluate `Q_f(f, theta)`."""
+        return _action_slope(
+            objective=self.objective, f=f, theta=self.theta, ones=self.ones
+        )
+
+
+@dataclass(frozen=True, eq=False)
+class _ActionSlopeInParameter:
+    """`Q_f(f, .)`: the action slope as a map of the parameter."""
+
+    objective: Callable[..., FloatND]
+    """The objective, called positionally as `objective(f, theta)`."""
+
+    f: FloatND
+    """The action held fixed."""
+
+    ones: FloatND
+    """The unit tangent of the cell axes, `ones_like(f)`."""
+
+    def __call__(self, theta: FloatND) -> FloatND:
+        """Evaluate `Q_f(f, theta)`."""
+        return _action_slope(
+            objective=self.objective, f=self.f, theta=theta, ones=self.ones
+        )
 
 
 def _cell_bool(*, value: object, like: FloatND) -> BoolND:
@@ -433,9 +521,11 @@ def implicit_optimum_diagnostics(
     lower, upper = bounds
     width = 2.0 * (upper - lower) / (n_mesh - 1) * (0.618**polish_iterations)
     ones = jnp.ones_like(f_star)
-    q_f = jax.jvp(lambda f: positional_objective(f, theta), (f_star,), (ones,))[1]
+    q_f = _action_slope(
+        objective=positional_objective, f=f_star, theta=theta, ones=ones
+    )
     _, q_ff = jax.jvp(
-        lambda f: jax.jvp(lambda g: positional_objective(g, theta), (f,), (ones,))[1],
+        _ActionSlopeInAction(objective=positional_objective, theta=theta, ones=ones),
         (f_star,),
         (ones,),
     )
@@ -445,21 +535,16 @@ def implicit_optimum_diagnostics(
     tie = basin_margin < tie_margin
     action_delta = jnp.maximum(width, kink_probe_atol)
 
-    def _slope_jump(radius: FloatND) -> FloatND:
-        f_plus = jnp.clip(f_star + radius, min=lower, max=upper)
-        f_minus = jnp.clip(f_star - radius, min=lower, max=upper)
-        step_plus = jnp.where(f_plus > f_star, f_plus - f_star, 1.0)
-        step_minus = jnp.where(f_star > f_minus, f_star - f_minus, 1.0)
-        slope_plus = (
-            positional_objective(f_plus, theta) - positional_objective(f_star, theta)
-        ) / step_plus
-        slope_minus = (
-            positional_objective(f_star, theta) - positional_objective(f_minus, theta)
-        ) / step_minus
-        return jnp.abs(slope_plus - slope_minus)
-
-    jump_outer = _slope_jump(action_delta)
-    jump_inner = _slope_jump(action_delta / kink_contraction_ratio)
+    slope_jump = functools.partial(
+        _slope_jump,
+        f_star=f_star,
+        lower=lower,
+        upper=upper,
+        objective=positional_objective,
+        theta=theta,
+    )
+    jump_outer = slope_jump(radius=action_delta)
+    jump_inner = slope_jump(radius=action_delta / kink_contraction_ratio)
     eps = jnp.finfo(jnp.asarray(f_star).dtype).eps
     value_scale = jnp.abs(positional_objective(f_star, theta))
     jump_noise = stationarity_atol + _KINK_NOISE_ULPS * eps * value_scale * (
@@ -548,3 +633,26 @@ def implicit_optimum_diagnostics(
         owner_changed=owner_changed,
         unresolved=unresolved,
     )
+
+
+def _slope_jump(
+    *,
+    radius: FloatND,
+    f_star: FloatND,
+    lower: FloatND,
+    upper: FloatND,
+    objective: Callable[..., FloatND],
+    theta: FloatND,
+) -> FloatND:
+    """Gap between the one-sided secant slopes at `f_star`, probed at `radius`.
+
+    Each probe is clipped to the bracket; a side that cannot move contributes a
+    zero-numerator slope over a unit step rather than a division by zero.
+    """
+    f_plus = jnp.clip(f_star + radius, min=lower, max=upper)
+    f_minus = jnp.clip(f_star - radius, min=lower, max=upper)
+    step_plus = jnp.where(f_plus > f_star, f_plus - f_star, 1.0)
+    step_minus = jnp.where(f_star > f_minus, f_star - f_minus, 1.0)
+    slope_plus = (objective(f_plus, theta) - objective(f_star, theta)) / step_plus
+    slope_minus = (objective(f_star, theta) - objective(f_minus, theta)) / step_minus
+    return jnp.abs(slope_plus - slope_minus)

@@ -235,16 +235,26 @@ def _continuous_outer_argmax(
     config: AdaptiveOuterMesh,
 ) -> SafeguardedSearchResult:
     """Safeguarded continuous argmax over the outer axis of one surface."""
-
-    def objective(query: FloatND) -> FloatND:
-        return _INTERPOLANT.evaluate(nodes=nodes, values=stacked, query=query)
-
     return safeguarded_continuous_argmax(
-        objective=objective,
+        objective=_InterpolantObjective(nodes=nodes, stacked=stacked),
         nodes=nodes,
         node_values=stacked,
         golden_iterations=config.golden_iterations,
     )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _InterpolantObjective:
+    """The continuous surrogate of one stacked surface: its interpolant read."""
+
+    nodes: FloatND
+    """The shared outer candidate nodes, shape `(C,)`."""
+
+    stacked: FloatND
+    """The surface's exact values on the nodes, shape `(C, *S)`."""
+
+    def __call__(self, query: FloatND) -> FloatND:
+        return _INTERPOLANT.evaluate(nodes=self.nodes, values=self.stacked, query=query)
 
 
 def _fold_continuous(

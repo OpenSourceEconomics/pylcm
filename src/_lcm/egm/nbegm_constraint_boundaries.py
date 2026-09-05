@@ -63,8 +63,18 @@ def build_nbegm_feasibility_boundary_compiler(
         unsupported declaration with an attributed diagnostic.
 
     """
+    return _NBEGMFeasibilityBoundaryCompiler(liquid_state=liquid_state)
 
-    def compile_boundary(
+
+@dataclass(frozen=True, kw_only=True)
+class _NBEGMFeasibilityBoundaryCompiler:
+    """The `BoundaryCompiler` of one resolved NBEGM liquid state."""
+
+    liquid_state: StateName
+    """Current liquid state whose axis the solver partitions."""
+
+    def __call__(
+        self,
         *,
         bound: BoundConstraint,
         context: ConstraintContext,
@@ -87,7 +97,7 @@ def build_nbegm_feasibility_boundary_compiler(
             result = _compile_surface(
                 surface=surface,
                 constraint_name=bound.constraint.name,
-                liquid_state=liquid_state,
+                liquid_state=self.liquid_state,
                 flat_param_names=context.param_names,
             )
             if isinstance(result, str):
@@ -96,15 +106,13 @@ def build_nbegm_feasibility_boundary_compiler(
 
         payload = NBEGMFeasibilityBoundaryProgram(
             constraint_name=bound.constraint.name,
-            liquid_state=liquid_state,
+            liquid_state=self.liquid_state,
             surfaces=tuple(compiled),
         )
         return CompileBoundary(
             constraint=bound.constraint,
             program=BoundaryProgram(surfaces=surfaces, payload=payload),
         )
-
-    return compile_boundary
 
 
 def _compile_surface(

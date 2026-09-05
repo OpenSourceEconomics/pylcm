@@ -51,6 +51,19 @@ def _function_source(*, path: Path, name: str) -> str:
     return segment
 
 
+def _class_source(*, path: Path, name: str) -> str:
+    text = _text(path)
+    nodes = [
+        node
+        for node in ast.parse(text, filename=str(path)).body
+        if isinstance(node, ast.ClassDef) and node.name == name
+    ]
+    assert nodes, f"missing class {name} in {path}"
+    segment = ast.get_source_segment(text, nodes[-1])
+    assert segment is not None
+    return segment
+
+
 def test_ordinary_order_uses_the_global_index_as_its_last_field() -> None:
     tree = _tree(QUERY)
     tie_class = next(
@@ -115,11 +128,16 @@ def test_positive_interval_width_streams_the_read_and_fold_together() -> None:
     stream = _function_source(
         path=STEP, name="_streamed_interval_continuation_envelope"
     )
-    assert "rows = interval_block_reader(indices)" in stream
+    assert "_IntervalWinnerStep(" in stream
     assert "jax.lax.scan" in stream
-    assert "merge_envelope_winner" in stream
     assert "finish_envelope_winner" in stream
-    assert "_streamed_block_candidate_positions" in stream
+
+    # The scan step is a module-level callable, so the block read and the fold
+    # live in its `__call__` rather than in the envelope function itself.
+    step = _class_source(path=STEP, name="_IntervalWinnerStep")
+    assert "rows = self.interval_block_reader(indices)" in step
+    assert "merge_envelope_winner" in step
+    assert "_streamed_block_candidate_positions" in step
 
     solution = _text(SOLUTION)
     assert "class _NBEGMIntervalContinuation" in solution

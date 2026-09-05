@@ -76,16 +76,11 @@ def get_numeric_inverse_marginal_utility(
         `u'(c)` with it.
 
     """
-
-    def scalar_inverse(marginal_continuation: ScalarFloat) -> ScalarFloat:
-        return numeric_inverse_marginal_utility(
-            marginal_continuation=marginal_continuation,
-            marginal_utility=marginal_utility,
-            c_lower=jnp.asarray(action_lower),
-            c_upper=jnp.asarray(action_upper),
-        )
-
-    return scalar_inverse
+    return _NumericInverseMarginalUtility(
+        marginal_utility=marginal_utility,
+        action_lower=action_lower,
+        action_upper=action_upper,
+    )
 
 
 @dataclass(frozen=True)
@@ -182,34 +177,13 @@ def get_preferences_builder(
         else None
     )
 
-    def build(params: Mapping[str, Any]) -> Preferences:
-        def utility_of_action(action_value: FloatND) -> FloatND:
-            return utility_func(**{action_name: action_value}, **params)
-
-        marginal_utility = _elementwise(jax.grad(utility_of_action))
-
-        if analytic_inverse is not None:
-
-            def inverse_marginal_utility(marginal_continuation: FloatND) -> FloatND:
-                return analytic_inverse(
-                    marginal_continuation=marginal_continuation, **params
-                )
-        else:
-            inverse_marginal_utility = _elementwise(
-                get_numeric_inverse_marginal_utility(
-                    marginal_utility=jax.grad(utility_of_action),
-                    action_lower=action_lower,
-                    action_upper=action_upper,
-                )
-            )
-
-        return Preferences(
-            utility=utility_of_action,
-            marginal_utility=marginal_utility,
-            inverse_marginal_utility=inverse_marginal_utility,
-        )
-
-    return build
+    return _PreferencesBuilder(
+        utility_func=utility_func,
+        analytic_inverse=analytic_inverse,
+        action_name=action_name,
+        action_lower=action_lower,
+        action_upper=action_upper,
+    )
 
 
 def get_discount_factor_reader(
@@ -235,15 +209,11 @@ def get_discount_factor_reader(
         Callable mapping the regime's flat parameters to the discount factor.
 
     """
-    build_W_kwargs = _get_build_W_kwargs(
-        functions=functions, koopmans_aggregator=koopmans_aggregator
+    return _DiscountFactorReader(
+        build_W_kwargs=_get_build_W_kwargs(
+            functions=functions, koopmans_aggregator=koopmans_aggregator
+        )
     )
-
-    def read(params: Mapping[str, Any]) -> ScalarFloat:
-        (discount_factor,) = tuple(build_W_kwargs(params).values())
-        return discount_factor
-
-    return read
 
 
 def concatenate_regime_function(
@@ -270,9 +240,137 @@ def _elementwise(
     the shape covers both — a 0-d input maps through a length-one batch — and
     keeps the lifted map jittable and itself vmappable.
     """
+    return _Elementwise(func=func)
 
-    def lifted(values: FloatND) -> FloatND:
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _Elementwise:
+    """A scalar-in, scalar-out map lifted to any array shape."""
+
+    func: Callable[[ScalarFloat], ScalarFloat]
+    """The scalar map applied at every element."""
+
+    def __call__(self, values: FloatND) -> FloatND:
         array = jnp.asarray(values)
-        return jax.vmap(func)(array.reshape(-1)).reshape(array.shape)
+        return jax.vmap(self.func)(array.reshape(-1)).reshape(array.shape)
 
-    return lifted
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class BoundUtilityOfAction:
+    """Felicity `u(c)` of the consumption action, everything else bound.
+
+    Calls the regime's concatenated utility with the action under the regime's
+    own name and every other argument — states, discrete codes, flat params —
+    from `bound`.
+    """
+
+    utility_func: UserFunction
+    """The regime's concatenated utility function."""
+
+    action_name: ActionName
+    """The regime's name for the consumption action."""
+
+    bound: Mapping[str, Any]
+    """Every other argument of `utility_func`, by name."""
+
+    def __call__(self, action_value: FloatND) -> FloatND:
+        return self.utility_func(**{self.action_name: action_value}, **self.bound)
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class AnalyticInverseMarginalUtility:
+    """The regime's declared `inverse_marginal_utility`, parameters bound."""
+
+    analytic_inverse: UserFunction
+    """The regime's concatenated inverse-marginal-utility function."""
+
+    bound: Mapping[str, Any]
+    """Every argument of `analytic_inverse` but `marginal_continuation`."""
+
+    def __call__(self, marginal_continuation: FloatND) -> FloatND:
+        return self.analytic_inverse(
+            marginal_continuation=marginal_continuation, **self.bound
+        )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _NumericInverseMarginalUtility:
+    """The bracketed Newton inverse of a marginal felicity — the iEGM path."""
+
+    marginal_utility: Callable[[ScalarFloat], ScalarFloat]
+    """Marginal felicity `u'(c)` of a scalar action, bound to one parameter set."""
+
+    action_lower: ScalarFloat | float
+    """Lower bracket on the action — a small positive floor."""
+
+    action_upper: ScalarFloat | float
+    """Initial upper bracket on the action, expanded when the root lies above it."""
+
+    def __call__(self, marginal_continuation: ScalarFloat) -> ScalarFloat:
+        return numeric_inverse_marginal_utility(
+            marginal_continuation=marginal_continuation,
+            marginal_utility=self.marginal_utility,
+            c_lower=jnp.asarray(self.action_lower),
+            c_upper=jnp.asarray(self.action_upper),
+        )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _PreferencesBuilder:
+    """Bind a regime's concatenated preference maps to one parameter set.
+
+    The concatenation happens once, at kernel-build time; each call binds the
+    regime's flat parameters into the three maps, so a solve may vary
+    parameters without recompiling the DAG.
+    """
+
+    utility_func: UserFunction
+    """The regime's concatenated `utility` target."""
+
+    analytic_inverse: UserFunction | None
+    """The regime's concatenated `inverse_marginal_utility` target, if declared."""
+
+    action_name: ActionName
+    """The regime's own name for the consumption action."""
+
+    action_lower: ScalarFloat | float
+    """Lower bracket for the Newton inverse (unused with an analytic inverse)."""
+
+    action_upper: ScalarFloat | float
+    """Initial upper bracket for the Newton inverse."""
+
+    def __call__(self, params: Mapping[str, Any]) -> Preferences:
+        utility_of_action = BoundUtilityOfAction(
+            utility_func=self.utility_func, action_name=self.action_name, bound=params
+        )
+        marginal_utility = _elementwise(jax.grad(utility_of_action))
+        inverse_marginal_utility: Callable[[FloatND], FloatND]
+        if self.analytic_inverse is not None:
+            inverse_marginal_utility = AnalyticInverseMarginalUtility(
+                analytic_inverse=self.analytic_inverse, bound=params
+            )
+        else:
+            inverse_marginal_utility = _elementwise(
+                get_numeric_inverse_marginal_utility(
+                    marginal_utility=jax.grad(utility_of_action),
+                    action_lower=self.action_lower,
+                    action_upper=self.action_upper,
+                )
+            )
+        return Preferences(
+            utility=utility_of_action,
+            marginal_utility=marginal_utility,
+            inverse_marginal_utility=inverse_marginal_utility,
+        )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _DiscountFactorReader:
+    """Read the discount factor off the Koopmans aggregator's own signature."""
+
+    build_W_kwargs: Callable[[Mapping[str, Any]], dict[str, Any]]
+    """Assembles the aggregator's keyword arguments beyond `utility` and `CE`."""
+
+    def __call__(self, params: Mapping[str, Any]) -> ScalarFloat:
+        (discount_factor,) = tuple(self.build_W_kwargs(params).values())
+        return discount_factor

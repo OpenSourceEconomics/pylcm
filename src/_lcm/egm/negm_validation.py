@@ -64,6 +64,7 @@ savings-stage functions — e.g. a non-additively-separable utility cross-term i
 `(c, s')` — is rejected by the additive-separability check on utility.
 """
 
+import functools
 import inspect
 from collections.abc import Mapping
 from typing import cast
@@ -518,17 +519,13 @@ def _fail_if_utility_couples_action_and_outer_margin(
         return
     c0 = action_sample[0]
     z0 = outer_sample[0]
-
-    def value(*, consumption: ScalarFloat, outer: ScalarFloat) -> FloatND | IntND:
-        return _call_with_varied(
-            func=utility_func,
-            fixed=fixed,
-            varied={
-                inner.continuous_action: consumption,
-                solver.outer_post_decision: outer,
-            },
-        )
-
+    value = functools.partial(
+        _utility_at_action_and_outer,
+        utility_func=utility_func,
+        fixed=fixed,
+        action_name=inner.continuous_action,
+        outer_name=solver.outer_post_decision,
+    )
     baseline = value(consumption=c0, outer=z0)
     tolerance = 1e-8 if jnp.asarray(baseline).dtype == jnp.float64 else 1e-4
     for consumption in action_sample:
@@ -562,6 +559,23 @@ def _fail_if_utility_couples_action_and_outer_margin(
                     "foundation (G2EGM / multidim-RFC), not NEGM."
                 )
                 raise ModelInitializationError(msg)
+
+
+def _utility_at_action_and_outer(
+    *,
+    utility_func: UserFunction,
+    fixed: dict[str, object],
+    action_name: FunctionName,
+    outer_name: FunctionName,
+    consumption: ScalarFloat,
+    outer: ScalarFloat,
+) -> FloatND | IntND:
+    """Evaluate the composed utility at one action and outer post-decision pair."""
+    return _call_with_varied(
+        func=utility_func,
+        fixed=fixed,
+        varied={action_name: consumption, outer_name: outer},
+    )
 
 
 def _fail_if_taste_shock_ordering_violated(

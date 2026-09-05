@@ -183,14 +183,33 @@ def _fori_loop_body_index_annotations() -> list[tuple[str, str, str]]:
                 if not ast.unparse(node.func).endswith("fori_loop"):
                     continue
                 # `fori_loop(lower, upper, body, init)` — the body is third.
-                body_arg = node.args[2]
-                if not isinstance(body_arg, ast.Name):
+                body_name = _fori_loop_body_name(node.args[2])
+                if body_name is None:
                     continue
-                index = bodies[body_arg.id].args.args[0]
+                index = bodies[body_name].args.args[0]
                 if index.annotation is None:
                     continue
-                annotations.append((module, body_arg.id, ast.unparse(index.annotation)))
+                annotations.append((module, body_name, ast.unparse(index.annotation)))
     return annotations
+
+
+def _fori_loop_body_name(body_arg: ast.expr) -> str | None:
+    """The module-level function a `fori_loop` body argument names, if any.
+
+    A body is either the bare name of a module-level function or a
+    `functools.partial` of one that binds the closed-over operands; a lambda or
+    any other expression names nothing the claw could annotate.
+    """
+    if isinstance(body_arg, ast.Name):
+        return body_arg.id
+    if (
+        isinstance(body_arg, ast.Call)
+        and ast.unparse(body_arg.func) in {"partial", "functools.partial"}
+        and body_arg.args
+        and isinstance(body_arg.args[0], ast.Name)
+    ):
+        return body_arg.args[0].id
+    return None
 
 
 def test_every_fori_loop_body_index_annotation_admits_a_python_int() -> None:

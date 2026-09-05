@@ -60,6 +60,7 @@ All shapes are static, so the kernel can be `jax.jit`-compiled and `jax.vmap`-
 batched over a leading dimension of the candidate arrays.
 """
 
+import functools
 from typing import NamedTuple
 
 import jax
@@ -283,24 +284,17 @@ def refine_envelope(
         first_savings=savings_sorted[0],
     )
 
-    # keyword-only-exempt: library-callback=jax.lax.scan
-    def step(
-        carry: Float1D, idx: ScalarInt
-    ) -> tuple[Float1D, tuple[Float1D, Float1D, Float1D, ScalarInt]]:
-        """Delegate to `_inspect_candidate`; positional per `jax.lax.scan`."""
-        return _inspect_candidate(
-            carry=carry,
-            idx=idx,
-            grid_sorted=grid_sorted,
-            policy_sorted=policy_sorted,
-            value_sorted=value_sorted,
-            segment_sorted=segment_sorted,
-            savings_sorted=savings_sorted,
-            use_savings=use_savings,
-            jump_thresh=jump_thresh,
-            n_points_to_scan=n_points_to_scan,
-        )
-
+    step = functools.partial(
+        _inspect_candidate_step,
+        grid_sorted=grid_sorted,
+        policy_sorted=policy_sorted,
+        value_sorted=value_sorted,
+        segment_sorted=segment_sorted,
+        savings_sorted=savings_sorted,
+        use_savings=use_savings,
+        jump_thresh=jump_thresh,
+        n_points_to_scan=n_points_to_scan,
+    )
     indices = jnp.arange(1, n_input, dtype=jnp.int32)
     carry_final, (block_grid, block_policy, block_value, block_count) = jax.lax.scan(
         step, carry_init, indices, unroll=scan_unroll
@@ -638,6 +632,35 @@ def _emission_block(
         kink_5, 3, jnp.where(kink_6 | kink_on_j | kink_on_i, 2, jnp.where(plain, 1, 0))
     ).astype(jnp.int32)
     return row_grid, row_policy, row_value, count
+
+
+# keyword-only-exempt: library-callback=jax.lax.scan
+def _inspect_candidate_step(
+    carry: Float1D,
+    idx: ScalarInt,
+    *,
+    grid_sorted: Float1D,
+    policy_sorted: Float1D,
+    value_sorted: Float1D,
+    segment_sorted: Float1D,
+    savings_sorted: Float1D,
+    use_savings: bool,
+    jump_thresh: float,
+    n_points_to_scan: int,
+) -> tuple[Float1D, tuple[Float1D, Float1D, Float1D, ScalarInt]]:
+    """Delegate to `_inspect_candidate`; positional per `jax.lax.scan`."""
+    return _inspect_candidate(
+        carry=carry,
+        idx=idx,
+        grid_sorted=grid_sorted,
+        policy_sorted=policy_sorted,
+        value_sorted=value_sorted,
+        segment_sorted=segment_sorted,
+        savings_sorted=savings_sorted,
+        use_savings=use_savings,
+        jump_thresh=jump_thresh,
+        n_points_to_scan=n_points_to_scan,
+    )
 
 
 def _inspect_candidate(

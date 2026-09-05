@@ -13,6 +13,7 @@ everything multi-target, passive-state, taste-shock, and stochastic-node lives
 behind that boundary.
 """
 
+import functools
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from types import MappingProxyType
@@ -366,19 +367,55 @@ def bind_continuation(
         for target in plan.stateful_targets
     }
 
-    def continuation(
+    return _BoundContinuation(
+        plan=plan,
+        regime_transition_probs=regime_transition_probs,
+        risk_aversion=risk_aversion,
+        child_readers=child_readers,
+        next_regime_to_continuation=next_regime_to_continuation,
+        dtype=dtype,
+    )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _BoundContinuation:
+    """The regime's expected continuation at a savings node, one combo bound.
+
+    Linear (expected-utility) mode returns the regime-probability-weighted
+    expected value and marginal. Epstein-Zin mode blends each target's
+    stable partials `(CE_r, W_r, ell_r, M_r)` with the
+    regime probabilities (`ez_blend_partials`) and inverts once, so the
+    certainty equivalent spans the joint (regime x shock) lottery — the
+    regime split (e.g. survival) is inside the CE, not a linear average of
+    per-regime certainty equivalents.
+    """
+
+    plan: ContinuationPlan
+    """Build-time statics of the continuation aggregation."""
+
+    regime_transition_probs: Mapping[RegimeName, FloatND]
+    """The combo's regime transition probabilities, by target."""
+
+    risk_aversion: FloatND | None
+    """The Epstein-Zin risk-aversion coefficient; `None` for the linear read."""
+
+    child_readers: Mapping[RegimeName, Callable[[ScalarFloat], object]]
+    """Per stateful target, the carry read at a savings node."""
+
+    next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry]
+    """The next period's EGM carries (scalar targets read their constant)."""
+
+    dtype: Any
+    """The canonical float dtype of the blended results."""
+
+    def __call__(
+        self,
         savings_value: ScalarFloat,
     ) -> tuple[ScalarFloat, ScalarFloat]:
-        """Blend the reachable targets' continuations at one savings node.
-
-        Linear (expected-utility) mode returns the regime-probability-weighted
-        expected value and marginal. Epstein-Zin mode blends each target's
-        stable partials `(CE_r, W_r, ell_r, M_r)` with the
-        regime probabilities (`ez_blend_partials`) and inverts once, so the
-        certainty equivalent spans the joint (regime x shock) lottery — the
-        regime split (e.g. survival) is inside the CE, not a linear average of
-        per-regime certainty equivalents.
-        """
+        """Blend the reachable targets' continuations at one savings node."""
+        plan = self.plan
+        risk_aversion = self.risk_aversion
+        regime_transition_probs = self.regime_transition_probs
         if risk_aversion is not None:
             certainty_equivalents: list[ScalarFloat] = []
             weight_sums: list[ScalarFloat] = []
@@ -393,7 +430,7 @@ def bind_continuation(
                     marginal_mantissa,
                 ) = cast(
                     "_EZPartials",
-                    child_readers[target](savings_value),
+                    self.child_readers[target](savings_value),
                 )
                 certainty_equivalents.append(certainty_equivalent)
                 weight_sums.append(weight_sum)
@@ -401,7 +438,7 @@ def bind_continuation(
                 marginal_mantissas.append(marginal_mantissa)
                 probs.append(regime_transition_probs[target])
             for target in plan.scalar_targets:
-                constant_value = next_regime_to_continuation[target].value[0]
+                constant_value = self.next_regime_to_continuation[target].value[0]
                 (
                     certainty_equivalent,
                     weight_sum,
@@ -435,13 +472,13 @@ def bind_continuation(
                 marginal_mantissa=blended_mantissa,
                 risk_aversion=risk_aversion,
             )
-        blended_marginal = jnp.asarray(0.0, dtype=dtype)
-        blended_value = jnp.asarray(0.0, dtype=dtype)
+        blended_marginal = jnp.asarray(0.0, dtype=self.dtype)
+        blended_value = jnp.asarray(0.0, dtype=self.dtype)
         for target in plan.stateful_targets:
             # Linear mode: the reader returns the plain (value, marginal) pair.
             target_value, target_marginal = cast(
                 "tuple[ScalarFloat, ScalarFloat]",
-                child_readers[target](savings_value),
+                self.child_readers[target](savings_value),
             )
             prob = regime_transition_probs[target]
             # Zero unreachable-target contributions on the results, never by
@@ -456,13 +493,11 @@ def bind_continuation(
             )
         for target in plan.scalar_targets:
             prob = regime_transition_probs[target]
-            constant_value = next_regime_to_continuation[target].value[0]
+            constant_value = self.next_regime_to_continuation[target].value[0]
             blended_value = blended_value + jnp.where(
                 prob > 0.0, prob * constant_value, prob * 0.0
             )
         return blended_value, blended_marginal
-
-    return continuation
 
 
 def build_continuation_plan(
@@ -596,20 +631,80 @@ def _get_child_carry_reader(
     prepared_search_grid = flat_search.reshape(carry.endog_grid.shape)
     prepared_valid_length = flat_valid.reshape(carry.endog_grid.shape[:-1])
 
-    def read_child(
+    return _ChildCarryReader(
+        read=read,
+        carry=carry,
+        combo_pool=combo_pool,
+        post_decision_name=post_decision_name,
+        stochastic_node_batch_size=stochastic_node_batch_size,
+        risk_aversion=risk_aversion,
+        stochastic_node_values=stochastic_node_values,
+        weight_vecs=weight_vecs,
+        resources_reads_stochastic=resources_reads_stochastic,
+        prepared_search_grid=prepared_search_grid,
+        prepared_valid_length=prepared_valid_length,
+    )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _ChildCarryReader:
+    """The per-savings-node carry read of one target for one combo.
+
+    Maps a savings node to the target's smoothed continuation value and
+    marginal (linear mode) or its stable Epstein-Zin partials.
+    """
+
+    read: _ChildRead
+    """Build-time statics of the target's read."""
+
+    carry: EGMCarry
+    """The target's carry rows for the period."""
+
+    combo_pool: dict[str, Any]
+    """The combo's pool: flat params, `period`, `age`, and the combo's values."""
+
+    post_decision_name: FunctionName
+    """Name of the savings node as the next-state DAG's input."""
+
+    stochastic_node_batch_size: int
+    """Block size of the streamed stochastic-node expectation (0 fuses)."""
+
+    risk_aversion: FloatND | None
+    """The Epstein-Zin risk-aversion coefficient; `None` for the linear read."""
+
+    stochastic_node_values: tuple[FloatND | IntND, ...]
+    """Node values of each stochastic child axis, runtime-resolved."""
+
+    weight_vecs: tuple[Float1D, ...]
+    """Intrinsic weight vectors of the stochastic axes, from the combo pool."""
+
+    resources_reads_stochastic: bool
+    """Whether the child resources function reads a stochastic state."""
+
+    prepared_search_grid: FloatND
+    """The carry rows' `+inf`-padded search keys."""
+
+    prepared_valid_length: IntND
+    """The carry rows' valid prefix lengths."""
+
+    def __call__(
+        self,
         savings_value: ScalarFloat,
     ) -> (
         tuple[ScalarFloat, ScalarFloat]
         | tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]
     ):
         """Read the child's carry at one savings node."""
+        read = self.read
+        combo_pool = self.combo_pool
+        risk_aversion = self.risk_aversion
         # The solution-phase next-state function returns a flat mapping of
         # `next_<state>` names to scalars; the shared protocol's nested
         # return type is the simulation form. Everything but the child's
         # Euler state is savings-independent (validated), so these values
         # ride as constants through the composed gradients below.
         next_states = read.next_state_func(
-            **combo_pool, **{post_decision_name: savings_value}
+            **combo_pool, **{self.post_decision_name: savings_value}
         )
         deterministic_index = tuple(
             cast("ScalarInt", next_states[f"next_{name}"])
@@ -645,29 +740,25 @@ def _get_child_carry_reader(
         resources_param_kwargs = {
             name: combo_pool[name] for name in read.resources_param_names
         }
-
-        def child_euler_state(savings: ScalarFloat) -> ScalarFloat:
-            inner = read.next_state_func(**combo_pool, **{post_decision_name: savings})
-            return cast("ScalarFloat", inner[read.next_state_key])
-
-        def queries_and_gradients(
-            stochastic_values: tuple[ScalarFloat | ScalarInt, ...],
-        ) -> tuple[FloatND, FloatND]:
-            return _compute_row_queries_and_gradients(
-                read=read,
-                child_euler_state=child_euler_state,
-                deterministic_resources_kwargs=deterministic_resources_kwargs,
-                resources_param_kwargs=resources_param_kwargs,
-                savings_value=savings_value,
-                stochastic_values=stochastic_values,
-            )
+        queries_and_gradients = _RowQueriesAndGradients(
+            read=read,
+            child_euler_state=_ChildEulerState(
+                next_state_func=read.next_state_func,
+                combo_pool=combo_pool,
+                post_decision_name=self.post_decision_name,
+                next_state_key=read.next_state_key,
+            ),
+            deterministic_resources_kwargs=deterministic_resources_kwargs,
+            resources_param_kwargs=resources_param_kwargs,
+            savings_value=savings_value,
+        )
 
         if not read.stochastic_state_names:
             queries, gradients = queries_and_gradients(())
             value, marginal = _aggregate_child_choices(
-                carry=carry,
-                prepared_search_grid=prepared_search_grid,
-                prepared_valid_length=prepared_valid_length,
+                carry=self.carry,
+                prepared_search_grid=self.prepared_search_grid,
+                prepared_valid_length=self.prepared_valid_length,
                 has_taste_shocks=read.has_taste_shocks,
                 child_index=deterministic_index,
                 child_passive_values=child_passive_values,
@@ -694,20 +785,74 @@ def _get_child_carry_reader(
 
         return _expect_over_stochastic_nodes(
             read=read,
-            carry=carry,
-            prepared_search_grid=prepared_search_grid,
-            prepared_valid_length=prepared_valid_length,
-            stochastic_node_values=stochastic_node_values,
-            weight_vecs=weight_vecs,
+            carry=self.carry,
+            prepared_search_grid=self.prepared_search_grid,
+            prepared_valid_length=self.prepared_valid_length,
+            stochastic_node_values=self.stochastic_node_values,
+            weight_vecs=self.weight_vecs,
             deterministic_index=deterministic_index,
             child_passive_values=child_passive_values,
             queries_and_gradients=queries_and_gradients,
-            resources_reads_stochastic=resources_reads_stochastic,
-            stochastic_node_batch_size=stochastic_node_batch_size,
+            resources_reads_stochastic=self.resources_reads_stochastic,
+            stochastic_node_batch_size=self.stochastic_node_batch_size,
             risk_aversion=risk_aversion,
         )
 
-    return read_child
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _ChildEulerState:
+    """The child's Euler state as a function of the savings node, combo bound."""
+
+    next_state_func: Callable[..., Any]
+    """The solution-phase next-state DAG of the target."""
+
+    combo_pool: dict[str, Any]
+    """The combo's pool, bound into every argument but the savings node."""
+
+    post_decision_name: FunctionName
+    """Name of the savings node as the DAG's input."""
+
+    next_state_key: str
+    """Key of the child's Euler state in the DAG's output mapping."""
+
+    def __call__(self, savings: ScalarFloat) -> ScalarFloat:
+        inner = self.next_state_func(
+            **self.combo_pool, **{self.post_decision_name: savings}
+        )
+        return cast("ScalarFloat", inner[self.next_state_key])
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _RowQueriesAndGradients:
+    """Per-row resources queries and composed gradients at one savings node."""
+
+    read: _ChildRead
+    """Build-time statics of the target's read."""
+
+    child_euler_state: Callable[[ScalarFloat], ScalarFloat]
+    """The child's Euler state as a function of the savings node."""
+
+    deterministic_resources_kwargs: dict[str, Any]
+    """Deterministic next-state values the resources function reads."""
+
+    resources_param_kwargs: dict[str, Any]
+    """Flat params and `age`/`period` the resources function reads."""
+
+    savings_value: ScalarFloat
+    """The savings node the queries are taken at."""
+
+    def __call__(
+        self,
+        stochastic_values: tuple[ScalarFloat | ScalarInt, ...],
+    ) -> tuple[FloatND, FloatND]:
+        return _compute_row_queries_and_gradients(
+            read=self.read,
+            child_euler_state=self.child_euler_state,
+            deterministic_resources_kwargs=self.deterministic_resources_kwargs,
+            resources_param_kwargs=self.resources_param_kwargs,
+            savings_value=self.savings_value,
+            stochastic_values=stochastic_values,
+        )
 
 
 def _compute_row_queries_and_gradients(
@@ -730,13 +875,12 @@ def _compute_row_queries_and_gradients(
     broadcast across the row block.
     """
     if read.resources_is_simple:
-
-        def composed(savings: ScalarFloat) -> ScalarFloat:
-            return read.resources_func(
-                **{read.euler_state_name: child_euler_state(savings)},
-                **resources_param_kwargs,
-            )
-
+        composed = functools.partial(
+            _composed_simple_resources,
+            read=read,
+            child_euler_state=child_euler_state,
+            resources_param_kwargs=resources_param_kwargs,
+        )
         query, gradient = jax.value_and_grad(composed)(savings_value)
         return (
             jnp.broadcast_to(query, read.row_block_shape),
@@ -750,21 +894,14 @@ def _compute_row_queries_and_gradients(
         if stochastic_values
         else {}
     )
-
-    # keyword-only-exempt: library-callback=jax.value_and_grad
-    def composed_row(
-        savings: ScalarFloat, row_values: tuple[ScalarFloat | ScalarInt, ...]
-    ) -> ScalarFloat:
-        bound = {
-            read.euler_state_name: child_euler_state(savings),
-            **deterministic_resources_kwargs,
-            **stochastic_kwargs,
-            **dict(zip(read.row_arg_names, row_values, strict=True)),
-        }
-        return read.resources_func(
-            **{k: v for k, v in bound.items() if k in read.resources_arg_names},
-            **resources_param_kwargs,
-        )
+    composed_row = functools.partial(
+        _composed_row_resources,
+        read=read,
+        child_euler_state=child_euler_state,
+        deterministic_resources_kwargs=deterministic_resources_kwargs,
+        stochastic_kwargs=stochastic_kwargs,
+        resources_param_kwargs=resources_param_kwargs,
+    )
 
     if read.row_values:
         queries, gradients = jax.vmap(
@@ -778,6 +915,45 @@ def _compute_row_queries_and_gradients(
     return (
         jnp.broadcast_to(query, read.row_block_shape),
         jnp.broadcast_to(gradient, read.row_block_shape),
+    )
+
+
+# keyword-only-exempt: library-callback=jax.value_and_grad
+def _composed_simple_resources(
+    savings: ScalarFloat,
+    *,
+    read: _ChildRead,
+    child_euler_state: Callable[[ScalarFloat], ScalarFloat],
+    resources_param_kwargs: dict[str, Any],
+) -> ScalarFloat:
+    """Child resources at the savings node, for a resources map of Euler state alone."""
+    return read.resources_func(
+        **{read.euler_state_name: child_euler_state(savings)},
+        **resources_param_kwargs,
+    )
+
+
+# keyword-only-exempt: library-callback=jax.value_and_grad
+def _composed_row_resources(
+    savings: ScalarFloat,
+    row_values: tuple[ScalarFloat | ScalarInt, ...],
+    *,
+    read: _ChildRead,
+    child_euler_state: Callable[[ScalarFloat], ScalarFloat],
+    deterministic_resources_kwargs: dict[str, Any],
+    stochastic_kwargs: dict[str, Any],
+    resources_param_kwargs: dict[str, Any],
+) -> ScalarFloat:
+    """Child resources at the savings node for one row's discrete/passive values."""
+    bound = {
+        read.euler_state_name: child_euler_state(savings),
+        **deterministic_resources_kwargs,
+        **stochastic_kwargs,
+        **dict(zip(read.row_arg_names, row_values, strict=True)),
+    }
+    return read.resources_func(
+        **{k: v for k, v in bound.items() if k in read.resources_arg_names},
+        **resources_param_kwargs,
     )
 
 
@@ -815,8 +991,9 @@ def _expect_over_stochastic_nodes(
     """
     # The queries depend on the node combo only when the resources function
     # reads a stochastic state; otherwise compute them once and share.
-    if not resources_reads_stochastic:
-        shared_queries, shared_gradients = queries_and_gradients(())
+    shared_queries_and_gradients = (
+        None if resources_reads_stochastic else queries_and_gradients(())
+    )
 
     # Co-mapped deterministic axes have already been sliced from the carry and
     # therefore have no corresponding entry in ``deterministic_index``.
@@ -829,38 +1006,19 @@ def _expect_over_stochastic_nodes(
         )
         if name not in read.co_map_state_names
     )
-
-    def read_at_nodes(
-        node_indices: tuple[ScalarInt, ...],
-    ) -> tuple[ScalarFloat, ScalarFloat]:
-        """Run the full carry read at one child stochastic-node combo."""
-        if resources_reads_stochastic:
-            stochastic_values = tuple(
-                values[index]
-                for values, index in zip(
-                    stochastic_node_values, node_indices, strict=True
-                )
-            )
-            queries, gradients = queries_and_gradients(stochastic_values)
-        else:
-            queries, gradients = shared_queries, shared_gradients
-        return _aggregate_child_choices(
-            carry=carry,
-            prepared_search_grid=prepared_search_grid,
-            prepared_valid_length=prepared_valid_length,
-            has_taste_shocks=read.has_taste_shocks,
-            child_index=_interleave_child_index(
-                deterministic_index=deterministic_index,
-                node_indices=node_indices,
-                stochastic_flags=carry_axis_stochastic_flags,
-            ),
-            child_passive_values=child_passive_values,
-            child_passive_grids=read.passive_grids,
-            row_queries=queries,
-            row_gradients=gradients,
-            paired_marginal_read=risk_aversion is not None,
-            n_outer_candidates=read.n_outer_candidates,
-        )
+    read_at_nodes = _ReadAtNodes(
+        read=read,
+        carry=carry,
+        prepared_search_grid=prepared_search_grid,
+        prepared_valid_length=prepared_valid_length,
+        stochastic_node_values=stochastic_node_values,
+        deterministic_index=deterministic_index,
+        carry_axis_stochastic_flags=carry_axis_stochastic_flags,
+        child_passive_values=child_passive_values,
+        queries_and_gradients=queries_and_gradients,
+        shared_queries_and_gradients=shared_queries_and_gradients,
+        risk_aversion=risk_aversion,
+    )
 
     node_index_mesh = jnp.meshgrid(
         *(
@@ -873,20 +1031,6 @@ def _expect_over_stochastic_nodes(
     joint_weights, node_shift = _joint_node_weights(
         weight_vecs=weight_vecs, node_indices=flat_node_indices
     )
-
-    def _weighted_node_sum(*, values: FloatND, weights: FloatND) -> ScalarFloat:
-        # A zero-weight node contributes exactly 0.0 even when its smoothed
-        # value is -inf, while a NaN weight still poisons the sum and a
-        # negative one stays visible rather than collapsing to zero.
-        #
-        # The nodes arrive on one common base-two scale, so every weight here is
-        # one the dtype can multiply and no term has an exponent left to move.
-        # `_on_node_scale` takes the reduction back down.
-        return jnp.sum(
-            zero_safe_weighted_term(
-                weight=weights, value=values, subnormal_is_accounted_for=True
-            )
-        )
 
     # The expectation mesh (the product of the child's stochastic-node counts)
     # is the dominant `egm_step` working buffer's child-node axis. A positive
@@ -929,23 +1073,12 @@ def _expect_over_stochastic_nodes(
                 shift=node_shift,
             )
 
-        # keyword-only-exempt: library-callback=jax.lax.scan
-        def accumulate(
-            carry: tuple[ScalarFloat, ScalarFloat],
-            block: tuple[tuple[IntND, ...], FloatND],
-        ) -> tuple[tuple[ScalarFloat, ScalarFloat], None]:
-            block_indices, block_weights = block
-            block_values, block_marginals = jax.vmap(read_at_nodes)(block_indices)
-            acc_value, acc_marginal = carry
-            return (
-                acc_value
-                + _weighted_node_sum(values=block_values, weights=block_weights),
-                acc_marginal
-                + _weighted_node_sum(values=block_marginals, weights=block_weights),
-            ), None
-
         (smoothed_value, smoothed_marginal), _ = jax.lax.scan(
-            accumulate, (zero, zero), (blocked_indices, blocked_weights)
+            functools.partial(
+                _accumulate_weighted_node_block, read_at_nodes=read_at_nodes
+            ),
+            (zero, zero),
+            (blocked_indices, blocked_weights),
         )
         return (
             _on_node_scale(values=smoothed_value, shift=node_shift),
@@ -976,6 +1109,115 @@ def _expect_over_stochastic_nodes(
         _on_node_scale(values=smoothed_value, shift=node_shift),
         _on_node_scale(values=smoothed_marginal, shift=node_shift),
     )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _ReadAtNodes:
+    """The full carry read of one target at one child stochastic-node combo."""
+
+    read: _ChildRead
+    """Build-time statics of the target's read."""
+
+    carry: EGMCarry
+    """The target's carry rows for the period."""
+
+    prepared_search_grid: FloatND
+    """The carry rows' `+inf`-padded search keys."""
+
+    prepared_valid_length: IntND
+    """The carry rows' valid prefix lengths."""
+
+    stochastic_node_values: tuple[FloatND | IntND, ...]
+    """Node values of each stochastic child axis."""
+
+    deterministic_index: tuple[ScalarInt, ...]
+    """The deterministic discrete codes selecting the carry's leading axes."""
+
+    carry_axis_stochastic_flags: tuple[bool, ...]
+    """Per carry axis, whether it is a stochastic node axis."""
+
+    child_passive_values: tuple[ScalarFloat, ...]
+    """The child's passive next-state values."""
+
+    queries_and_gradients: Callable[
+        [tuple[ScalarFloat | ScalarInt, ...]], tuple[FloatND, FloatND]
+    ]
+    """Per-row queries and gradients for given stochastic node values."""
+
+    shared_queries_and_gradients: tuple[FloatND, FloatND] | None
+    """The node-independent queries and gradients, or `None` when the
+    resources function reads a stochastic state."""
+
+    risk_aversion: FloatND | None
+    """The Epstein-Zin risk-aversion coefficient; `None` for the linear read."""
+
+    def __call__(
+        self,
+        node_indices: tuple[ScalarInt, ...],
+    ) -> tuple[ScalarFloat, ScalarFloat]:
+        read = self.read
+        if self.shared_queries_and_gradients is None:
+            stochastic_values = tuple(
+                values[index]
+                for values, index in zip(
+                    self.stochastic_node_values, node_indices, strict=True
+                )
+            )
+            queries, gradients = self.queries_and_gradients(stochastic_values)
+        else:
+            queries, gradients = self.shared_queries_and_gradients
+        return _aggregate_child_choices(
+            carry=self.carry,
+            prepared_search_grid=self.prepared_search_grid,
+            prepared_valid_length=self.prepared_valid_length,
+            has_taste_shocks=read.has_taste_shocks,
+            child_index=_interleave_child_index(
+                deterministic_index=self.deterministic_index,
+                node_indices=node_indices,
+                stochastic_flags=self.carry_axis_stochastic_flags,
+            ),
+            child_passive_values=self.child_passive_values,
+            child_passive_grids=read.passive_grids,
+            row_queries=queries,
+            row_gradients=gradients,
+            paired_marginal_read=self.risk_aversion is not None,
+            n_outer_candidates=read.n_outer_candidates,
+        )
+
+
+def _weighted_node_sum(*, values: FloatND, weights: FloatND) -> ScalarFloat:
+    """Sum node values by their weights on the nodes' common base-two scale.
+
+    A zero-weight node contributes exactly 0.0 even when its smoothed value is
+    -inf, while a NaN weight still poisons the sum and a negative one stays
+    visible rather than collapsing to zero. The nodes arrive on one common
+    base-two scale, so every weight here is one the dtype can multiply and no
+    term has an exponent left to move; `_on_node_scale` takes the reduction
+    back down.
+    """
+    return jnp.sum(
+        zero_safe_weighted_term(
+            weight=weights, value=values, subnormal_is_accounted_for=True
+        )
+    )
+
+
+# keyword-only-exempt: library-callback=jax.lax.scan
+def _accumulate_weighted_node_block(
+    carry: tuple[ScalarFloat, ScalarFloat],
+    block: tuple[tuple[IntND, ...], FloatND],
+    *,
+    read_at_nodes: Callable[[tuple[IntND, ...]], tuple[FloatND, FloatND]],
+) -> tuple[tuple[ScalarFloat, ScalarFloat], None]:
+    """Fold one block of nodes' weighted values and marginals into the scan carry."""
+    block_indices, block_weights = block
+    block_values, block_marginals = jax.vmap(read_at_nodes)(block_indices)
+    acc_value, acc_marginal = carry
+    return (
+        acc_value + _weighted_node_sum(values=block_values, weights=block_weights),
+        acc_marginal
+        + _weighted_node_sum(values=block_marginals, weights=block_weights),
+    ), None
 
 
 def _joint_node_weights(
@@ -1079,36 +1321,48 @@ def _accumulate_ez_partials_over_blocks(
     unit_probs = jnp.ones(2, dtype=dtype)
     zero = jnp.zeros((), dtype=dtype)
     one = jnp.ones((), dtype=dtype)
-
-    # keyword-only-exempt: library-callback=jax.lax.scan
-    def accumulate_partials(
-        carry: tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat],
-        block: tuple[tuple[IntND, ...], FloatND],
-    ) -> tuple[tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat], None]:
-        block_indices, block_weights = block
-        block_values, block_marginals = jax.vmap(read_at_nodes)(block_indices)
-        block_partials = ez_transform_partials(
-            child_values=block_values,
-            child_marginals=block_marginals,
-            weights=block_weights,
-            risk_aversion=risk_aversion,
-        )
-        combined = ez_blend_partials(
-            certainty_equivalents=jnp.stack([carry[0], block_partials[0]]),
-            weight_sums=jnp.stack([carry[1], block_partials[1]]),
-            marginal_log_scales=jnp.stack([carry[2], block_partials[2]]),
-            marginal_mantissas=jnp.stack([carry[3], block_partials[3]]),
-            probs=unit_probs,
-            risk_aversion=risk_aversion,
-        )
-        return combined, None
-
     partials, _ = jax.lax.scan(
-        accumulate_partials,
+        functools.partial(
+            _accumulate_ez_partials_block,
+            read_at_nodes=read_at_nodes,
+            risk_aversion=risk_aversion,
+            unit_probs=unit_probs,
+        ),
         (one, zero, zero, zero),
         (blocked_indices, blocked_weights),
     )
     return partials
+
+
+# keyword-only-exempt: library-callback=jax.lax.scan
+def _accumulate_ez_partials_block(
+    carry: tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat],
+    block: tuple[tuple[IntND, ...], FloatND],
+    *,
+    read_at_nodes: Callable[
+        [tuple[ScalarInt, ...] | tuple[IntND, ...]], tuple[FloatND, FloatND]
+    ],
+    risk_aversion: ScalarFloat,
+    unit_probs: Float1D,
+) -> tuple[tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat], None]:
+    """Blend one block's PowerMean partials into the running scan carry."""
+    block_indices, block_weights = block
+    block_values, block_marginals = jax.vmap(read_at_nodes)(block_indices)
+    block_partials = ez_transform_partials(
+        child_values=block_values,
+        child_marginals=block_marginals,
+        weights=block_weights,
+        risk_aversion=risk_aversion,
+    )
+    combined = ez_blend_partials(
+        certainty_equivalents=jnp.stack([carry[0], block_partials[0]]),
+        weight_sums=jnp.stack([carry[1], block_partials[1]]),
+        marginal_log_scales=jnp.stack([carry[2], block_partials[2]]),
+        marginal_mantissas=jnp.stack([carry[3], block_partials[3]]),
+        probs=unit_probs,
+        risk_aversion=risk_aversion,
+    )
+    return combined, None
 
 
 def _interleave_child_index(
@@ -1877,27 +2131,15 @@ def _build_child_reads(
         # transition into this target. Both are integrated over the child's
         # node axis with the intrinsic weights `weight_<target>__next_<name>`.
         target_transition_names = frozenset(transitions[target])
-
-        def _is_stochastic(
-            *,
-            name: StateName,
-            target: RegimeName = target,
-            target_info: VInterpolationInfo = target_info,
-            target_transition_names: frozenset[
-                TransitionFunctionName
-            ] = target_transition_names,
-        ) -> bool:
-            if isinstance(
-                target_info.discrete_states[name], _ContinuousStochasticProcess
-            ):
-                return True
-            transition_name = f"next_{name}"
-            return transition_name in target_transition_names and transition_plans[
-                target
-            ].is_lottery(transition_name)
-
         stochastic_flags = tuple(
-            _is_stochastic(name=name) for name in discrete_state_names
+            _is_stochastic_child_axis(
+                name=name,
+                target=target,
+                target_info=target_info,
+                target_transition_names=target_transition_names,
+                transition_plans=transition_plans,
+            )
+            for name in discrete_state_names
         )
         stochastic_state_names = tuple(
             name
@@ -2028,3 +2270,26 @@ def _build_child_reads(
             n_outer_candidates=n_outer_candidates,
         )
     return MappingProxyType(reads)
+
+
+def _is_stochastic_child_axis(
+    *,
+    name: StateName,
+    target: RegimeName,
+    target_info: VInterpolationInfo,
+    target_transition_names: frozenset[TransitionFunctionName],
+    transition_plans: TargetTransitionPlans,
+) -> bool:
+    """Whether a child's discrete dimension is a stochastic node axis.
+
+    A discrete dimension is a stochastic node axis when its next-period node
+    is distributed by a transition law: a continuous AR(1) process state, or a
+    Markov-discrete state whose `next_<name>` is a stochastic transition into
+    this target.
+    """
+    if isinstance(target_info.discrete_states[name], _ContinuousStochasticProcess):
+        return True
+    transition_name = f"next_{name}"
+    return transition_name in target_transition_names and transition_plans[
+        target
+    ].is_lottery(transition_name)

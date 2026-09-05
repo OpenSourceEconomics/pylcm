@@ -10,8 +10,9 @@ The fused output is consumed by `_enrich_with_diagnostics` in
 """
 
 from collections.abc import Callable, Hashable, Mapping
+from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, cast
+from typing import Any, cast, no_type_check
 
 import jax
 import jax.numpy as jnp
@@ -241,13 +242,30 @@ def _wrap_with_reduction(
 
     """
 
+    return _ReducedIntermediates(func=func, variable_names=variable_names)
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _ReducedIntermediates:
+    """Productmap'd intermediates fused with on-device NaN/feasibility reductions."""
+
+    func: Callable
+    """Productmap'd function returning `(U_arr, F_arr, CE, Q_arr, regime_probs)`."""
+    variable_names: tuple[str, ...]
+    """State + action names in the order of `func`'s productmap axes."""
+
     # `kwargs` carries the wrapped function's full input map: the
     # `next_regime_to_V_arr` mapping alongside the Float/Int/Bool-valued
     # state/action inputs.
-    def reduced(
+    # The kernel is traced with whatever leaves its caller supplies -- tracers,
+    # Python scalars, arrays of either integer width -- so its annotations
+    # document the contract and are not enforced at call time.
+    @no_type_check
+    def __call__(
+        self,
         **kwargs: MappingProxyType[RegimeName, FloatND] | FloatND | IntND | BoolND,
     ) -> dict[str, Any]:
-        U_arr, F_arr, CE, Q_arr, regime_probs = func(**kwargs)
+        U_arr, F_arr, CE, Q_arr, regime_probs = self.func(**kwargs)
         F_float = F_arr.astype(float)
         # NaN-count arrays are masked by feasibility: only feasible cells
         # contribute to numerators. Infeasible cells are zeroed out because
@@ -263,7 +281,7 @@ def _wrap_with_reduction(
         F_total = jnp.maximum(jnp.sum(F_float), 1.0)
         for key, arr in nan_arrays.items():
             out[f"{key}_overall"] = jnp.sum(arr) / F_total
-            for i, name in enumerate(variable_names):
+            for i, name in enumerate(self.variable_names):
                 if i < arr.ndim:
                     axes = tuple(j for j in range(arr.ndim) if j != i)
                     F_slice = jnp.maximum(jnp.sum(F_float, axis=axes), 1.0)
@@ -272,15 +290,13 @@ def _wrap_with_reduction(
         # F itself is a plain mean over all cells — it is the denominator's
         # source, not a conditional metric.
         out["F_feasible_overall"] = jnp.mean(F_float)
-        for i, name in enumerate(variable_names):
+        for i, name in enumerate(self.variable_names):
             if i < F_float.ndim:
                 axes = tuple(j for j in range(F_float.ndim) if j != i)
                 out[f"F_feasible_by_{name}"] = jnp.mean(F_float, axis=axes)
 
         out["regime_probs"] = {k: jnp.mean(v) for k, v in regime_probs.items()}
         return out
-
-    return reduced
 
 
 def _productmap_over_state_action_space(

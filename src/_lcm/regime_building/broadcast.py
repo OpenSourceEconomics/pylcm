@@ -19,11 +19,13 @@ both take their roots from it, so the two cannot disagree about what counts
 as a read.
 """
 
+import inspect
 from collections.abc import Mapping
+from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Literal, cast
+from typing import Literal, cast, no_type_check
 
-from dags import get_ancestors, with_signature
+from dags import get_ancestors
 
 from _lcm.grids import Grid
 from _lcm.processes import _ContinuousStochasticProcess
@@ -675,10 +677,41 @@ def _composed_resources_edge(
     if not isinstance(resources, NetOfAdjustmentCost) or resources.output in pool:
         return {}
 
-    @with_signature(args=[resources.before_cost, resources.cost])
-    def composed_resources(*args: object, **kwargs: object) -> None: ...
+    return {
+        resources.output: cast(
+            "UserFunction",
+            _ComposedResourcesEdge(
+                before_cost=resources.before_cost, cost=resources.cost
+            ),
+        )
+    }
 
-    return {resources.output: cast("UserFunction", composed_resources)}
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _ComposedResourcesEdge:
+    """A bodiless stand-in carrying only the composed resources' argument names."""
+
+    before_cost: str
+    """Name of the cost-free base."""
+    cost: str
+    """Name of the adjustment cost."""
+
+    def __post_init__(self) -> None:
+        signature = inspect.Signature(
+            [
+                inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+                for name in (self.before_cost, self.cost)
+            ]
+        )
+        object.__setattr__(self, "__signature__", signature)
+        object.__setattr__(self, "__annotations__", {})
+        object.__setattr__(self, "__name__", "composed_resources")
+
+    # The kernel is traced with whatever leaves its caller supplies -- tracers,
+    # Python scalars, arrays of either integer width -- so its annotations
+    # document the contract and are not enforced at call time.
+    @no_type_check
+    def __call__(self, *args: object, **kwargs: object) -> None: ...
 
 
 def _law_roots(

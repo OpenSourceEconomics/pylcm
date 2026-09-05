@@ -12,18 +12,19 @@ containers, and per-target dicts survive untouched, so the params template
 reads the user's coarseness off it.
 """
 
-import functools
 import inspect
 from collections.abc import Mapping
+from dataclasses import dataclass
 from types import MappingProxyType
-from typing import cast
+from typing import cast, no_type_check
 
 import jax.numpy as jnp
-from dags import get_annotations, with_signature
+from dags import get_annotations
 from dags.annotations import ensure_annotations_are_strings
 
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.constraints.ir import Condition
+from _lcm.egm.nbegm import PieceSet
 from _lcm.grids import DiscreteGrid
 from _lcm.typing import FunctionName, RegimeName
 from _lcm.user_regime_validation import (
@@ -162,32 +163,7 @@ def _compose_case_piece_outputs(
     *, functions: dict[FunctionName, UserFunction | Phased | None]
 ) -> None:
     """Build each split output declared by a complete pair of case pieces."""
-    from _lcm.egm.nbegm import PieceSet, collect_nbegm_metadata  # noqa: PLC0415
-
-    def build(piece_set: PieceSet) -> UserFunction:
-        producer_names = (
-            piece_set.predicate_name,
-            piece_set.when_func,
-            piece_set.otherwise_func,
-        )
-
-        @with_signature(
-            args={name: _return_annotation(functions[name]) for name in producer_names},
-            return_annotation=_case_output_annotation(
-                functions=functions,
-                output=piece_set.output,
-                branch_names=(piece_set.when_func, piece_set.otherwise_func),
-            ),
-        )
-        def composed_case_output(**kwargs: FloatND) -> FloatND:
-            return jnp.where(
-                kwargs[piece_set.predicate_name],
-                kwargs[piece_set.when_func],
-                kwargs[piece_set.otherwise_func],
-            )
-
-        composed_case_output.__name__ = piece_set.output
-        return cast("UserFunction", composed_case_output)
+    from _lcm.egm.nbegm import collect_nbegm_metadata  # noqa: PLC0415
 
     registry = collect_nbegm_metadata(functions=functions)
     producer_names = dict.fromkeys(
@@ -206,10 +182,79 @@ def _compose_case_piece_outputs(
                 function=cast("UserFunction", function), functions=functions
             )
             if isinstance(function, CaseBoundary):
-                annotated.__lcm_case_boundary__ = function  # ty: ignore[unresolved-attribute]
+                object.__setattr__(annotated, "__lcm_case_boundary__", function)
             functions[name] = annotated
     for piece_set in registry.piece_sets:
-        functions[piece_set.output] = build(piece_set)
+        functions[piece_set.output] = _build_case_output(
+            piece_set=piece_set, functions=functions
+        )
+
+
+def _build_case_output(
+    *,
+    piece_set: PieceSet,
+    functions: dict[FunctionName, UserFunction | Phased | None],
+) -> UserFunction:
+    """Build the split output one complete pair of case pieces declares."""
+    producer_names = (
+        piece_set.predicate_name,
+        piece_set.when_func,
+        piece_set.otherwise_func,
+    )
+    return cast(
+        "UserFunction",
+        _ComposedCaseOutput(
+            output=piece_set.output,
+            predicate_name=piece_set.predicate_name,
+            when_func=piece_set.when_func,
+            otherwise_func=piece_set.otherwise_func,
+            argument_annotations={
+                name: _return_annotation(functions[name]) for name in producer_names
+            },
+            return_annotation=_case_output_annotation(
+                functions=functions,
+                output=piece_set.output,
+                branch_names=(piece_set.when_func, piece_set.otherwise_func),
+            ),
+        ),
+    )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _ComposedCaseOutput:
+    """The split output `where(predicate, when, otherwise)` of a case-piece pair."""
+
+    output: FunctionName
+    """Name of the output, also the callable's published name."""
+    predicate_name: FunctionName
+    """Name of the case boundary deciding the side."""
+    when_func: FunctionName
+    """Name of the piece owning the predicate's `True` side."""
+    otherwise_func: FunctionName
+    """Name of the piece owning the predicate's `False` side."""
+    argument_annotations: dict[str, str]
+    """Annotation of each producer, in signature order."""
+    return_annotation: str
+    """Annotation of the output."""
+
+    def __post_init__(self) -> None:
+        _publish_signature(
+            target=self,
+            args=self.argument_annotations,
+            return_annotation=self.return_annotation,
+            name=self.output,
+        )
+
+    # The kernel is traced with whatever leaves its caller supplies -- tracers,
+    # Python scalars, arrays of either integer width -- so its annotations
+    # document the contract and are not enforced at call time.
+    @no_type_check
+    def __call__(self, **kwargs: FloatND) -> FloatND:
+        return jnp.where(
+            kwargs[self.predicate_name],
+            kwargs[self.when_func],
+            kwargs[self.otherwise_func],
+        )
 
 
 def _with_inferred_case_annotations(
@@ -231,15 +276,69 @@ def _with_inferred_case_annotations(
             else inferred
         )
 
-    @with_signature(
-        args=argument_annotations,
-        return_annotation=annotations.get("return", "no_annotation_found"),
+    return cast(
+        "UserFunction",
+        _AnnotatedCaseFunction(
+            function=function,
+            argument_annotations=argument_annotations,
+            return_annotation=annotations.get("return", "no_annotation_found"),
+        ),
     )
-    @functools.wraps(function)
-    def annotated_case_function(**kwargs: object) -> object:
-        return function(**kwargs)
 
-    return cast("UserFunction", annotated_case_function)
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _AnnotatedCaseFunction:
+    """A case function republished with its missing DAG annotations filled in.
+
+    Stands in for `function` everywhere: it carries the function's own
+    attributes (a `__lcm_piece__` marker among them), its `__wrapped__` chain
+    for `inspect.unwrap`, and the completed annotations in its signature.
+    """
+
+    function: UserFunction
+    """The case function evaluated on each call."""
+    argument_annotations: dict[str, str]
+    """Annotation of each argument, in signature order."""
+    return_annotation: str
+    """Annotation of the return value."""
+
+    def __post_init__(self) -> None:
+        for attribute, value in getattr(self.function, "__dict__", {}).items():
+            if attribute not in _PROTECTED_WRAPPER_ATTRIBUTES:
+                object.__setattr__(self, attribute, value)
+        for attribute in _COPIED_WRAPPER_ATTRIBUTES:
+            if hasattr(self.function, attribute):
+                object.__setattr__(self, attribute, getattr(self.function, attribute))
+        object.__setattr__(self, "__wrapped__", self.function)
+        _publish_signature(
+            target=self,
+            args=self.argument_annotations,
+            return_annotation=self.return_annotation,
+            name=getattr(self.function, "__name__", "annotated_case_function"),
+        )
+
+    @no_type_check
+    def __call__(self, **kwargs: object) -> object:
+        return self.function(**kwargs)
+
+
+# The wrapped function's attributes an annotated case function takes over, and
+# the ones it never inherits: its own fields and the introspection attributes it
+# publishes itself.
+_COPIED_WRAPPER_ATTRIBUTES: tuple[str, ...] = ("__module__", "__qualname__", "__doc__")
+_PROTECTED_WRAPPER_ATTRIBUTES: frozenset[str] = frozenset(
+    {
+        "function",
+        "argument_annotations",
+        "return_annotation",
+        "__signature__",
+        "__wrapped__",
+        "__annotations__",
+        "__annotate__",
+        "__name__",
+        "__dict__",
+    }
+)
 
 
 def _annotation_for_argument(
@@ -336,15 +435,47 @@ def _compose_margin_resources(
     base_annotation = _return_annotation(functions[base_name])
     cost_annotation = _return_annotation(functions[cost_name])
 
-    @with_signature(
-        args={base_name: base_annotation, cost_name: cost_annotation},
-        return_annotation=base_annotation,
+    functions[resources_name] = cast(
+        "UserFunction",
+        _ComposedResources(
+            resources_name=resources_name,
+            base_name=base_name,
+            cost_name=cost_name,
+            base_annotation=base_annotation,
+            cost_annotation=cost_annotation,
+        ),
     )
-    def composed_resources(**kwargs: FloatND) -> FloatND:
-        return kwargs[base_name] - kwargs[cost_name]
 
-    composed_resources.__name__ = resources_name
-    functions[resources_name] = cast("UserFunction", composed_resources)
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _ComposedResources:
+    """The resources `<before_cost> - <cost>` of a `NetOfAdjustmentCost` regime."""
+
+    resources_name: FunctionName
+    """Name of the resources output, also the callable's published name."""
+    base_name: FunctionName
+    """Name of the cost-free base."""
+    cost_name: FunctionName
+    """Name of the adjustment cost."""
+    base_annotation: str
+    """Annotation of the base, also the output's annotation."""
+    cost_annotation: str
+    """Annotation of the cost."""
+
+    def __post_init__(self) -> None:
+        _publish_signature(
+            target=self,
+            args={
+                self.base_name: self.base_annotation,
+                self.cost_name: self.cost_annotation,
+            },
+            return_annotation=self.base_annotation,
+            name=self.resources_name,
+        )
+
+    @no_type_check
+    def __call__(self, **kwargs: FloatND) -> FloatND:
+        return kwargs[self.base_name] - kwargs[self.cost_name]
 
 
 def _return_annotation(func: UserFunction | Phased | None) -> str:
@@ -417,3 +548,30 @@ def _fail_if_continuation_slot_is_mixed(
             f"regime that has a continuation."
         )
         raise ModelInitializationError(msg)
+
+
+def _publish_signature(
+    *,
+    target: object,
+    args: Mapping[str, str],
+    return_annotation: str,
+    name: str,
+) -> None:
+    """Publish a DAG-facing signature, annotations, and name on a callable instance.
+
+    The instance is a frozen dataclass, so the attributes go through
+    `object.__setattr__`. `args` maps each argument name to its annotation
+    string; the DAG reads both the signature and `__annotations__`.
+    """
+    signature = inspect.Signature(
+        [
+            inspect.Parameter(
+                arg, inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=annotation
+            )
+            for arg, annotation in args.items()
+        ],
+        return_annotation=return_annotation,
+    )
+    object.__setattr__(target, "__signature__", signature)
+    object.__setattr__(target, "__annotations__", {**args, "return": return_annotation})
+    object.__setattr__(target, "__name__", name)

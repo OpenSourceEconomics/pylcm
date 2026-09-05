@@ -725,15 +725,7 @@ class _SemanticHasher:
                 self._visit_code(value)
                 return
             if isinstance(value, type):
-                if (
-                    not _contains_identity(
-                        value=value, candidates=_BUILTIN_TYPE_OBJECTS
-                    )
-                    and not _contains_identity(
-                        value=value, candidates=_TRUSTED_DIRECT_TYPE_OBJECTS
-                    )
-                    and not _is_versioned_numeric_library_type(value)
-                ):
+                if not _is_closed_direct_type(value):
                     msg = (
                         "Cannot durably fingerprint direct class dependency "
                         f"{value.__module__}.{value.__qualname__}."
@@ -1949,11 +1941,7 @@ def _is_closed_terminal_reference(  # noqa: C901, PLR0911, PLR0912
     if inspect.isfunction(value) or inspect.isbuiltin(value):
         return True
     if isinstance(value, type):
-        return (
-            _contains_identity(value=value, candidates=_BUILTIN_TYPE_OBJECTS)
-            or _contains_identity(value=value, candidates=_TRUSTED_DIRECT_TYPE_OBJECTS)
-            or _is_versioned_numeric_library_type(value)
-        )
+        return _is_closed_direct_type(value)
 
     if not isinstance(value, functools.partial) and not _has_exact_type(
         value=value,
@@ -1987,6 +1975,22 @@ def _is_closed_terminal_reference(  # noqa: C901, PLR0911, PLR0912
         )
     finally:
         active.remove(identity)
+
+
+def _is_closed_direct_type(value: type) -> bool:
+    """Whether a class consumed directly enters the digest by identity alone.
+
+    Builtin and versioned numeric-library classes are sealed by their library
+    versions, and so is every class defined in a shipped pylcm module: its
+    implementation is fixed by the separately checked pylcm version, so its name
+    is its identity. Any other class binds behaviour the digest cannot see.
+    """
+    return (
+        _contains_identity(value=value, candidates=_BUILTIN_TYPE_OBJECTS)
+        or _contains_identity(value=value, candidates=_TRUSTED_DIRECT_TYPE_OBJECTS)
+        or _is_versioned_numeric_library_type(value)
+        or _is_shipped_pylcm_module_name(value.__module__)
+    )
 
 
 def _dataclasses_field_marker_name(value: object) -> str | None:

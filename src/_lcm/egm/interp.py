@@ -22,6 +22,7 @@ genuinely narrow brackets down the degenerate branch and lose the interpolant
 they carry.
 """
 
+import functools
 from typing import Literal
 
 import jax
@@ -306,20 +307,12 @@ def _hermite_prepared_read_primal(
 def _hermite_prepared_read_jvp(primals, tangents):  # noqa: ANN001, ANN202
     x_query, search_grid, valid_length, xp, fp, fp_slopes = primals
     x_query_dot, _, _, xp_dot, fp_dot, fp_slopes_dot = tangents
-
-    # keyword-only-exempt: library-callback=jax.jvp
-    def read_at_fixed_query(
-        xp_in: Float1D, fp_in: Float1D, fp_slopes_in: Float1D
-    ) -> FloatND:
-        return _read_prepared_row(
-            x_query=x_query,
-            search_grid=search_grid,
-            valid_length=valid_length,
-            xp=xp_in,
-            fp=fp_in,
-            fp_slopes=fp_slopes_in,
-        )
-
+    read_at_fixed_query = functools.partial(
+        _hermite_read_at_fixed_query,
+        x_query=x_query,
+        search_grid=search_grid,
+        valid_length=valid_length,
+    )
     primal_out, passive_tangent = jax.jvp(
         read_at_fixed_query, (xp, fp, fp_slopes), (xp_dot, fp_dot, fp_slopes_dot)
     )
@@ -339,6 +332,31 @@ def _hermite_prepared_read_jvp(primals, tangents):  # noqa: ANN001, ANN202
 # `custom_jvp` instance binds it to its `__call__`, losing `defjvp`.
 _hermite_prepared_read = jax.custom_jvp(_hermite_prepared_read_primal)
 _hermite_prepared_read.defjvp(_hermite_prepared_read_jvp)
+
+
+# keyword-only-exempt: library-callback=jax.jvp
+def _hermite_read_at_fixed_query(
+    xp_in: Float1D,
+    fp_in: Float1D,
+    fp_slopes_in: Float1D,
+    *,
+    x_query: FloatND,
+    search_grid: Float1D,
+    valid_length: ScalarInt,
+) -> FloatND:
+    """The Hermite row read as a function of the row alone, the query held fixed.
+
+    The passive channels (grid, values, slopes) keep the primal program's
+    tangents; only the query channel is replaced analytically.
+    """
+    return _read_prepared_row(
+        x_query=x_query,
+        search_grid=search_grid,
+        valid_length=valid_length,
+        xp=xp_in,
+        fp=fp_in,
+        fp_slopes=fp_slopes_in,
+    )
 
 
 def _hermite_query_derivative(
@@ -435,18 +453,12 @@ def _linear_prepared_read_primal(
 def _linear_prepared_read_jvp(primals, tangents):  # noqa: ANN001, ANN202
     x_query, search_grid, valid_length, xp, fp = primals
     x_query_dot, _, _, xp_dot, fp_dot = tangents
-
-    # keyword-only-exempt: library-callback=jax.jvp
-    def read_at_fixed_query(xp_in: Float1D, fp_in: Float1D) -> FloatND:
-        return _read_prepared_row(
-            x_query=x_query,
-            search_grid=search_grid,
-            valid_length=valid_length,
-            xp=xp_in,
-            fp=fp_in,
-            fp_slopes=None,
-        )
-
+    read_at_fixed_query = functools.partial(
+        _linear_read_at_fixed_query,
+        x_query=x_query,
+        search_grid=search_grid,
+        valid_length=valid_length,
+    )
     primal_out, passive_tangent = jax.jvp(
         read_at_fixed_query, (xp, fp), (xp_dot, fp_dot)
     )
@@ -464,6 +476,26 @@ def _linear_prepared_read_jvp(primals, tangents):  # noqa: ANN001, ANN202
 # decorated `custom_jvp` instance to its `__call__`).
 _linear_prepared_read = jax.custom_jvp(_linear_prepared_read_primal)
 _linear_prepared_read.defjvp(_linear_prepared_read_jvp)
+
+
+# keyword-only-exempt: library-callback=jax.jvp
+def _linear_read_at_fixed_query(
+    xp_in: Float1D,
+    fp_in: Float1D,
+    *,
+    x_query: FloatND,
+    search_grid: Float1D,
+    valid_length: ScalarInt,
+) -> FloatND:
+    """The linear row read as a function of the row alone, the query held fixed."""
+    return _read_prepared_row(
+        x_query=x_query,
+        search_grid=search_grid,
+        valid_length=valid_length,
+        xp=xp_in,
+        fp=fp_in,
+        fp_slopes=None,
+    )
 
 
 def _linear_query_derivative(
@@ -567,22 +599,19 @@ def _read_prepared_row(
     # Feed the arithmetic a finite dummy bracket on those rows; the overrides
     # below still publish the contract values.
     degenerate = valid_length < 2  # noqa: PLR2004
-
-    def _sanitized(*, gathered: FloatND, dummy: float) -> FloatND:
-        return jnp.where(degenerate, dummy, gathered)
-
+    sanitized = functools.partial(_sanitize_gathered, degenerate=degenerate)
     result = _interp_between_nodes(
         x_query=x_query,
-        xp_lower=_sanitized(gathered=xp[lower], dummy=0.0),
-        xp_upper=_sanitized(gathered=xp[upper], dummy=1.0),
-        fp_lower=_sanitized(gathered=fp[lower], dummy=0.0),
-        fp_upper=_sanitized(gathered=fp[upper], dummy=0.0),
+        xp_lower=sanitized(gathered=xp[lower], dummy=0.0),
+        xp_upper=sanitized(gathered=xp[upper], dummy=1.0),
+        fp_lower=sanitized(gathered=fp[lower], dummy=0.0),
+        fp_upper=sanitized(gathered=fp[upper], dummy=0.0),
         slope_lower=None
         if fp_slopes is None
-        else _sanitized(gathered=fp_slopes[lower], dummy=0.0),
+        else sanitized(gathered=fp_slopes[lower], dummy=0.0),
         slope_upper=None
         if fp_slopes is None
-        else _sanitized(gathered=fp_slopes[upper], dummy=0.0),
+        else sanitized(gathered=fp_slopes[upper], dummy=0.0),
     )
     # Degenerate-row contract:
     # - one valid node ⇒ the edge clamp on both sides is that node's value
@@ -873,16 +902,13 @@ def _hermite_bracket_derivatives(
     # derivative (`0 · NaN = NaN` in the second-order tangents). Feed the
     # arithmetic a finite dummy bracket, exactly as the primal row read does.
     degenerate = valid_length < 2  # noqa: PLR2004
-
-    def _sanitized(*, gathered: FloatND, dummy: float) -> FloatND:
-        return jnp.where(degenerate, dummy, gathered)
-
-    xp_lower = _sanitized(gathered=xp[lower], dummy=0.0)
-    xp_upper = _sanitized(gathered=xp[upper], dummy=1.0)
-    fp_lower = _sanitized(gathered=fp[lower], dummy=0.0)
-    fp_upper = _sanitized(gathered=fp[upper], dummy=0.0)
-    slope_lower = _sanitized(gathered=fp_slopes[lower], dummy=0.0)
-    slope_upper = _sanitized(gathered=fp_slopes[upper], dummy=0.0)
+    sanitized = functools.partial(_sanitize_gathered, degenerate=degenerate)
+    xp_lower = sanitized(gathered=xp[lower], dummy=0.0)
+    xp_upper = sanitized(gathered=xp[upper], dummy=1.0)
+    fp_lower = sanitized(gathered=fp[lower], dummy=0.0)
+    fp_upper = sanitized(gathered=fp[upper], dummy=0.0)
+    slope_lower = sanitized(gathered=fp_slopes[lower], dummy=0.0)
+    slope_upper = sanitized(gathered=fp_slopes[upper], dummy=0.0)
 
     bracket_width = xp_upper - xp_lower
     safe_width = jnp.where(bracket_width == 0.0, 1.0, bracket_width)
@@ -894,14 +920,8 @@ def _hermite_bracket_derivatives(
     df = fp_upper - fp_lower
     safe_df = jnp.where(jnp.isfinite(df), df, 0.0)
     secant = safe_df / safe_width
-
-    def limit(slope: FloatND) -> FloatND:
-        same_sign = slope * secant > 0.0
-        limited = jnp.sign(secant) * jnp.minimum(jnp.abs(slope), 3.0 * jnp.abs(secant))
-        return jnp.where(same_sign, limited, 0.0)
-
-    coeff_lower = safe_width * limit(slope_lower) - safe_df
-    coeff_upper = safe_df - safe_width * limit(slope_upper)
+    coeff_lower = safe_width * _limit_slope(slope=slope_lower, secant=secant) - safe_df
+    coeff_upper = safe_df - safe_width * _limit_slope(slope=slope_upper, secant=secant)
     hermite_first = (
         safe_df
         + (1.0 - 2.0 * relative_position)
@@ -1125,35 +1145,32 @@ def interp_and_derivative_on_prepared_grid(
     # `interp_on_prepared_grid`, AD-safe under a further differentiation) and
     # publish the contract values through the overrides below.
     degenerate = valid_length < 2  # noqa: PLR2004
-
-    def _sanitized(*, gathered: FloatND, dummy: float) -> FloatND:
-        return jnp.where(degenerate, dummy, gathered)
-
+    sanitized = functools.partial(_sanitize_gathered, degenerate=degenerate)
     value = _interp_between_nodes(
         x_query=x_query,
-        xp_lower=_sanitized(gathered=xp[lower], dummy=0.0),
-        xp_upper=_sanitized(gathered=xp[upper], dummy=1.0),
-        fp_lower=_sanitized(gathered=fp[lower], dummy=0.0),
-        fp_upper=_sanitized(gathered=fp[upper], dummy=0.0),
+        xp_lower=sanitized(gathered=xp[lower], dummy=0.0),
+        xp_upper=sanitized(gathered=xp[upper], dummy=1.0),
+        fp_lower=sanitized(gathered=fp[lower], dummy=0.0),
+        fp_upper=sanitized(gathered=fp[upper], dummy=0.0),
         slope_lower=None
         if fp_slopes is None
-        else _sanitized(gathered=fp_slopes[lower], dummy=0.0),
+        else sanitized(gathered=fp_slopes[lower], dummy=0.0),
         slope_upper=None
         if fp_slopes is None
-        else _sanitized(gathered=fp_slopes[upper], dummy=0.0),
+        else sanitized(gathered=fp_slopes[upper], dummy=0.0),
     )
     derivative = _derivative_between_nodes(
         x_query=x_query,
-        xp_lower=_sanitized(gathered=xp[lower], dummy=0.0),
-        xp_upper=_sanitized(gathered=xp[upper], dummy=1.0),
-        fp_lower=_sanitized(gathered=fp[lower], dummy=0.0),
-        fp_upper=_sanitized(gathered=fp[upper], dummy=0.0),
+        xp_lower=sanitized(gathered=xp[lower], dummy=0.0),
+        xp_upper=sanitized(gathered=xp[upper], dummy=1.0),
+        fp_lower=sanitized(gathered=fp[lower], dummy=0.0),
+        fp_upper=sanitized(gathered=fp[upper], dummy=0.0),
         slope_lower=None
         if fp_slopes is None
-        else _sanitized(gathered=fp_slopes[lower], dummy=0.0),
+        else sanitized(gathered=fp_slopes[lower], dummy=0.0),
         slope_upper=None
         if fp_slopes is None
-        else _sanitized(gathered=fp_slopes[upper], dummy=0.0),
+        else sanitized(gathered=fp_slopes[upper], dummy=0.0),
     )
     # Degenerate valid prefixes share the value channel's contract (see
     # `interp_on_prepared_grid`): a singleton row is the constant pair
@@ -1306,14 +1323,8 @@ def _hermite_coefficients(
     df = fp_upper - fp_lower
     safe_df = jnp.where(jnp.isfinite(df), df, 0.0)
     secant = safe_df / safe_width
-
-    def limit(slope: FloatND) -> FloatND:
-        same_sign = slope * secant > 0.0
-        limited = jnp.sign(secant) * jnp.minimum(jnp.abs(slope), 3.0 * jnp.abs(secant))
-        return jnp.where(same_sign, limited, 0.0)
-
-    coeff_lower = safe_width * limit(slope_lower) - safe_df
-    coeff_upper = safe_df - safe_width * limit(slope_upper)
+    coeff_lower = safe_width * _limit_slope(slope=slope_lower, secant=secant) - safe_df
+    coeff_upper = safe_df - safe_width * _limit_slope(slope=slope_upper, secant=secant)
     applicable = (
         (bracket_width > 0.0)
         & jnp.isfinite(fp_lower)
@@ -1356,3 +1367,28 @@ def _hermite_correction(
         * ((1.0 - relative_position) * coeff_lower + relative_position * coeff_upper)
     )
     return jnp.where(applicable, correction, 0.0)
+
+
+def _sanitize_gathered(
+    *, gathered: FloatND, dummy: float, degenerate: BoolND
+) -> FloatND:
+    """Replace a bracket gather by a finite dummy on degenerate rows.
+
+    Degenerate valid prefixes (fewer than two nodes) gather NaN padding into
+    the bracket; feeding the bracket arithmetic a finite dummy there keeps
+    `jnp.where`'s discarded branch free of NaN partials under autodiff.
+    """
+    return jnp.where(degenerate, dummy, gathered)
+
+
+def _limit_slope(*, slope: FloatND, secant: FloatND) -> FloatND:
+    """Fritsch-Carlson limit of a node slope against its bracket's secant.
+
+    Keeps the slope's sign equal to the secant's and its magnitude at most
+    three times the secant's — a sufficient condition for the cubic Hermite
+    piece to be monotone on a monotone bracket; a slope opposing the secant
+    limits to zero.
+    """
+    same_sign = slope * secant > 0.0
+    limited = jnp.sign(secant) * jnp.minimum(jnp.abs(slope), 3.0 * jnp.abs(secant))
+    return jnp.where(same_sign, limited, 0.0)

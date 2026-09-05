@@ -1,6 +1,7 @@
 """User-facing `SimulationResult` with deferred DataFrame computation."""
 
 import gc
+import operator
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -467,7 +468,7 @@ def _collect_array_tree_leaf_sizes(
     """
     leaves: list[_ArrayTreeLeaf] = []
     _walk_tree(node=tree, path_parts=(), leaves=leaves)
-    leaves.sort(key=lambda leaf: leaf.n_bytes, reverse=True)
+    leaves.sort(key=operator.attrgetter("n_bytes"), reverse=True)
     return leaves
 
 

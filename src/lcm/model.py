@@ -1,6 +1,7 @@
 """Collection of classes that are used by the user to define the model and grids."""
 
 import logging
+import operator
 import threading
 import uuid
 from collections.abc import Mapping
@@ -542,7 +543,7 @@ class Model:
             dict(
                 sorted(
                     get_field_names_and_values(regime_id_class).items(),
-                    key=lambda x: x[1],
+                    key=operator.itemgetter(1),
                 )
             )
         )
@@ -617,13 +618,7 @@ class Model:
 
         """
         mutable = ensure_containers_are_mutable(self._params_template)
-
-        def _readable(value: object) -> object:
-            if isinstance(value, Mapping):
-                return {key: _readable(inner) for key, inner in value.items()}
-            return getattr(value, "__name__", str(value))
-
-        return cast("UserFacingParamsTemplate", _readable(mutable))
+        return cast("UserFacingParamsTemplate", _readable_template(mutable))
 
     @beartype(conf=PARAMS_CONF)
     def solve(
@@ -2203,3 +2198,10 @@ def _missing_policy_message(
             "retention keeps it; only VALUES_AND_REPLAY retains it."
         )
     return msg
+
+
+def _readable_template(value: object) -> object:
+    """Replace every leaf of a params template by its name or string form."""
+    if isinstance(value, Mapping):
+        return {key: _readable_template(inner) for key, inner in value.items()}
+    return getattr(value, "__name__", str(value))

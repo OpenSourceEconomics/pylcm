@@ -247,13 +247,10 @@ class _EGMFamilyRegime(Regime):
         if resources_annotation == "no_annotation_found":
             resources_annotation = state_annotation
 
-        @with_signature(
+        direct_resources = with_signature(
             args={state: state_annotation},
             return_annotation=resources_annotation,
-        )
-        def direct_resources(**kwargs: object) -> object:
-            return kwargs[state]
-
+        )(_DirectResources(state=state))
         direct_resources.__dict__["_lcm_internal_no_params"] = True
 
         augmented = {
@@ -611,3 +608,23 @@ def _composition_rule_message(
         f"{resources.output!r} = {resources.before_cost!r} - "
         f"{resources.cost!r}."
     )
+
+
+@dataclass(frozen=True)
+class _DirectResources:
+    """The DAG node that reads the liquid state as the resources role.
+
+    Its DAG signature is stamped by `dags.with_signature`, which reads the
+    `__name__` set here for its error messages.
+    """
+
+    state: StateName
+    """Name of the liquid state the node returns."""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "__name__", "direct_resources")
+        object.__setattr__(self, "__qualname__", "direct_resources")
+
+    def __call__(self, **kwargs: object) -> object:
+        """Return the liquid state's value."""
+        return kwargs[self.state]

@@ -360,18 +360,24 @@ def _drop_flat_keys(*, params: UserParams, drop: set[str]) -> UserParams:
     if not drop:
         return params
 
-    def _prune(*, branch: Mapping[str, Any], prefix: tuple[str, ...]) -> dict[str, Any]:
-        kept: dict[str, Any] = {}
-        for key, value in branch.items():
-            path = (*prefix, key)
-            if qname_from_tree_path(path) in drop:
-                continue
-            if isinstance(value, Mapping):
-                inner = _prune(branch=cast("Mapping[str, Any]", value), prefix=path)
-                if inner:
-                    kept[key] = inner
-                continue
-            kept[key] = value
-        return kept
+    return MappingProxyType(_prune_flat_keys(branch=params, prefix=(), drop=drop))
 
-    return MappingProxyType(_prune(branch=params, prefix=()))
+
+def _prune_flat_keys(
+    *, branch: Mapping[str, Any], prefix: tuple[str, ...], drop: set[str]
+) -> dict[str, Any]:
+    """Copy `branch` without the leaves whose qualified name is in `drop`."""
+    kept: dict[str, Any] = {}
+    for key, value in branch.items():
+        path = (*prefix, key)
+        if qname_from_tree_path(path) in drop:
+            continue
+        if isinstance(value, Mapping):
+            inner = _prune_flat_keys(
+                branch=cast("Mapping[str, Any]", value), prefix=path, drop=drop
+            )
+            if inner:
+                kept[key] = inner
+            continue
+        kept[key] = value
+    return kept
