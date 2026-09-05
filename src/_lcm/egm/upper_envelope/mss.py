@@ -392,8 +392,15 @@ def _certified_owner(
     stored link. A node where two branches meet is therefore owned by the branch
     that owns the interval above it, so the switch is published at the node the
     geometry puts it at.
+
+    The comparator refuses rather than guesses on operands it cannot decide, and
+    this method has no channel through which to refuse in turn: a query whose
+    comparisons all come back refused keeps the highest reading, which is the
+    answer the method gave before any of them were certified. Nothing is
+    published that a certified comparison contradicted.
     """
-    reference = _take_link(links=links, index=_leader(brackets=brackets, value=value))
+    provisional = _leader(brackets=brackets, value=value)
+    reference = _take_link(links=links, index=provisional)
     for _ in range(_PROMOTION_ROUNDS):
         beats = brackets & (
             _sign_against(links=links, reference=reference, x=query) == 1
@@ -421,7 +428,11 @@ def _certified_owner(
     sentinel = jnp.iinfo(jnp.int32).max
     index_key = jnp.where(still_tied, stable_index, sentinel)
     earliest = jnp.min(index_key, axis=1, keepdims=True)
-    return jnp.argmax(still_tied & (index_key == earliest), axis=1).astype(jnp.int32)
+    settled = still_tied & (index_key == earliest)
+    chosen = jnp.argmax(settled, axis=1).astype(jnp.int32)
+    return jnp.where(jnp.any(settled, axis=1), chosen, provisional[:, 0]).astype(
+        jnp.int32
+    )
 
 
 def _leader(*, brackets: BoolND, value: FloatND) -> IntND:
@@ -667,15 +678,13 @@ def _crossing_step(
         links=links,
     )
     valid = switches & row.resolved
-    at_left = valid & (row.grid == prev_grid)
-    at_right = valid & (row.grid == this_grid)
     emitted = _CrossingRow(
         grid=row.grid,
         value=row.value,
         policy_left=row.policy_a,
         policy_right=row.policy_b,
-        left_valid=valid & ~at_left,
-        right_valid=valid & ~at_right,
+        left_valid=valid & ~row.at_left,
+        right_valid=valid & ~row.at_right,
         segment_left=prev_segment,
         segment_right=this_segment,
     )
@@ -702,6 +711,10 @@ class _SegmentIntersection:
     """Policy of the incoming owner at the crossing."""
     resolved: BoolND
     """Whether the two chords in fact cross inside the interval."""
+    at_left: BoolND
+    """Whether the crossing sits exactly on the left query abscissa."""
+    at_right: BoolND
+    """Whether the crossing sits exactly on the right query abscissa."""
 
 
 def _crossing_in_interval(
@@ -714,16 +727,22 @@ def _crossing_in_interval(
 ) -> _SegmentIntersection:
     """Locate where chords `seg_a` and `seg_b` cross between the two abscissae.
 
-    The gap between the two chords is itself affine, so it is evaluated at the
-    two abscissae the switch was observed between and the crossing is the root
-    of its own secant through them. The interval is where the switch happened,
-    so the solve is anchored on it rather than on either chord's stored
-    endpoints, and a gap that does not change sign across it means the two
-    chords do not cross there at all — a switch that happened because one branch
-    started or stopped covering the interval, not because the two met.
+    *Whether* they cross is certified: the comparator settles the sign of their
+    difference at each of the two abscissae from the stored operands, and a
+    crossing exists exactly where the outgoing chord is at or above the incoming
+    one at the left abscissa and at or below it at the right. Reading those two
+    signs off a floating evaluation instead would put the existence of the
+    crossing back at the mercy of the last bit, which is what leaves a switch
+    unpublished; a gap that does not change sign is a switch that happened
+    because a branch started or stopped covering the interval, not because the
+    two met.
 
-    A gap that is exactly zero at one of the two abscissae puts the crossing on
-    that node exactly, which is the case a strict interior window would drop.
+    A certified zero at one of the two abscissae is a crossing sitting exactly on
+    that node, and the emitted abscissa is that node exactly. Only the interior
+    case is located by arithmetic, and it is located inside the interval the
+    switch was observed in — the root of the gap's own secant across it, clamped
+    to the interval the certified signs bracket it in — rather than by
+    extrapolating either chord from its stored endpoints.
     """
     a_x0, a_x1 = links.x0[seg_a], links.x1[seg_a]
     a_v0, a_v1 = links.v0[seg_a], links.v1[seg_a]
@@ -742,19 +761,23 @@ def _crossing_in_interval(
         "b_v0": b_v0,
         "b_v1": b_v1,
     }
+    sign_prev = certified_margin_sign(x_query=prev_grid, **chords)
+    sign_this = certified_margin_sign(x_query=this_grid, **chords)
+    at_left = sign_prev == 0
+    at_right = (sign_this == 0) & ~at_left
+    crosses_inside = (sign_prev == 1) & (sign_this == -1)
+    resolved = at_left | at_right | crosses_inside
+
     gap_prev = _chord_gap(x=prev_grid, **chords)
     gap_this = _chord_gap(x=this_grid, **chords)
     denominator = gap_prev - gap_this
-    resolved = (gap_prev >= 0.0) & (gap_this <= 0.0) & (denominator > 0.0)
     safe_denominator = jnp.where(denominator > 0.0, denominator, 1.0)
     interior = jnp.clip(
         (gap_prev * this_grid - gap_this * prev_grid) / safe_denominator,
         prev_grid,
         this_grid,
     )
-    grid = jnp.where(
-        gap_prev == 0.0, prev_grid, jnp.where(gap_this == 0.0, this_grid, interior)
-    )
+    grid = jnp.where(at_left, prev_grid, jnp.where(at_right, this_grid, interior))
 
     value_a = _chord_value(x=grid, x0=a_x0, x1=a_x1, v0=a_v0, v1=a_v1)
     value_b = _chord_value(x=grid, x0=b_x0, x1=b_x1, v0=b_v0, v1=b_v1)
@@ -768,6 +791,8 @@ def _crossing_in_interval(
         policy_a=_chord_reading(x=grid, x0=a_x0, x1=a_x1, v0=a_p0, v1=a_p1),
         policy_b=_chord_reading(x=grid, x0=b_x0, x1=b_x1, v0=b_p0, v1=b_p1),
         resolved=resolved,
+        at_left=at_left,
+        at_right=at_right,
     )
 
 
