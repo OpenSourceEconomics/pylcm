@@ -11,6 +11,7 @@ instead, so a dropped model and solution leave nothing behind.
 
 import gc
 import types
+import weakref
 from collections.abc import Callable
 from pathlib import Path
 
@@ -58,12 +59,17 @@ def _live_nested_functions(*, source_root: Path) -> int:
     is decided by the code object's filename, so a wrapper another library defined
     and `functools.wraps` relabelled with the inspected module's name is not counted,
     and the count is complete over every function object the collector tracks.
+
+    The collector hands back weak-reference proxies alongside ordinary objects, and
+    one whose referent is already gone raises on any attribute access — `isinstance`
+    included, since it reads the proxied `__class__`. Exact type identity asks the
+    proxy nothing, so the walk is decided without ever dereferencing one.
     """
     gc.collect()
     return sum(
         1
         for obj in gc.get_objects()
-        if isinstance(obj, types.FunctionType)
+        if type(obj) is types.FunctionType
         and "<locals>" in obj.__qualname__
         # An annotated function also owns a deferred annotation thunk; it lives
         # and dies with its function, so counting it would double every survivor.
@@ -149,6 +155,30 @@ def test_a_dropped_model_and_solution_leave_no_nested_engine_function_behind(
     _build_solve_and_drop(family)
 
     assert _live_nested_functions(source_root=_ENGINE_SOURCE_ROOT) == before
+
+
+def test_the_nested_function_probe_survives_a_dead_weak_reference() -> None:
+    """The probe counts even while a proxy to a collected object is still tracked.
+
+    Anything the collector tracks reaches the walk, a weak-reference proxy whose
+    referent is gone included, and such a proxy raises on any attribute read. The
+    count is a property of the live functions, so it is produced rather than lost
+    to whatever else happens to be in flight.
+    """
+
+    class _Referent:
+        """Something a proxy can outlive."""
+
+    source_root = Path(__file__).resolve().parent
+    baseline = _live_nested_functions(source_root=source_root)
+
+    proxy = weakref.proxy(_Referent())
+    gc.collect()
+    # The specimen is only a specimen once its referent is gone.
+    with pytest.raises(ReferenceError):
+        proxy.__class__  # noqa: B018
+
+    assert _live_nested_functions(source_root=source_root) == baseline
 
 
 def test_the_nested_function_probe_counts_a_live_nested_function() -> None:
