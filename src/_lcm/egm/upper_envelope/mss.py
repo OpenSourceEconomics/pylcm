@@ -60,7 +60,12 @@ contributes only the other one:
   the outgoing owner's record is inserted, before it.
 
 Either way the kink abscissa carries exactly two rows, outgoing owner first, and
-no row duplicates the node's own.
+no row duplicates the node's own. Both orientations are stated so the ordering
+is defined whichever way the geometry falls, but they are not equally reachable:
+right-continuous ownership hands a node where two branches meet to the branch
+that owns the interval above it, which puts the crossing on the *right* node of
+the interval the switch is observed in. The left-node branch is the rule's other
+half rather than a case the sweep is expected to take.
 
 All shapes are static, so the kernel can be `jax.jit`-compiled and `jax.vmap`-
 batched over a leading dimension of the candidate arrays.
