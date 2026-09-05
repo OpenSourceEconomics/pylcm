@@ -17,7 +17,7 @@ class PlannedInputLiveness[DispatchKey, ArtifactKey]:
     accesses. An artifact is counted once per dispatch; duplicate declarations inside
     one dispatch are errors. A dispatch stays pending until that exact ID commits, so
     repeating a peer with the same access set cannot mask a skipped node. Artifacts
-    with legacy or otherwise unplanned consumers must also be listed in
+    with dense or otherwise unplanned consumers must also be listed in
     ``pinned_artifacts``. Pinning preserves finite planned counts while preventing zero
     from becoming release eligibility.
 

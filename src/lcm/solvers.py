@@ -43,6 +43,20 @@ route under its documented approximation contract. Neither solver silently falls
 back. Solvers specialized to one paper's accounting remain published alongside that
 paper rather than here.
 
+A solver may also be written outside pylcm. `lcm.solvers` re-exports everything
+such a solver constructs — the execution-contract types (`CoreProgram`,
+`CoreBuildContext`, `CoreExecutionRequirements`, `CoreExecutionDisposition`,
+`ProgramScope`, `StreamableProductAxis`, `ReductionSemantics`, `OutputRole`,
+`StateAxesLeading`, `PeriodKernel`, `StateActionSpace`), the continuation types
+and helpers (`ContinuationSpec`, `EGMContinuationSpec`, `EGMContinuationLayout`,
+`period_to_continuation_target`, `target_period_grid`, `union_free_params`,
+`union_fixed_params`), and the artifact vocabulary (`KernelOutput`,
+`ArtifactKey`, the four keys, `ContinuationArtifact`, `ReplayMode`,
+`ReplayRoute`) — so no import from `_lcm` is needed. The surface is experimental
+until persistence, durable identity, a conformance suite, and a versioning policy
+exist; `docs/reference/custom_solvers.md` states what a solver owes the engine
+and what is still missing.
+
 The solvers are defined engine-side in per-solver modules under
 `_lcm.solution`; this module is a thin re-export so user code (and
 `lcm.regime`) can name them, and the `Solver` contract, without eagerly
@@ -50,8 +64,31 @@ importing the numerical engine. The engine dispatches polymorphically on the
 solver instance (`solver.build_period_kernels(context)`), not on its type.
 """
 
+from _lcm.continuation import (
+    ContinuationSpec,
+    EGMContinuationLayout,
+    EGMContinuationSpec,
+)
+from _lcm.engine import StateActionSpace
+from _lcm.execution.core_program import (
+    CoreBuildContext,
+    CoreExecutionDisposition,
+    CoreExecutionRequirements,
+    CoreProgram,
+    ProgramScope,
+    ReductionSemantics,
+    StreamableProductAxis,
+)
+from _lcm.execution.output_layout import OutputRole, StateAxesLeading
+from _lcm.solution.continuation_target import (
+    period_to_continuation_target,
+    target_period_grid,
+    union_fixed_params,
+    union_free_params,
+)
 from _lcm.solution.contract import (
     OneMarginSolver,
+    PeriodKernel,
     SolutionKernels,
     Solver,
     SolverBuildContext,
@@ -82,30 +119,68 @@ from lcm.outer_search import (
     FiniteOuterGrid,
     OuterSearch,
 )
+from lcm.solver_api import (
+    DISSOLUTION_FLAG,
+    EGM_CONTINUATION,
+    SIMULATION_POLICY,
+    SOLVER_DIAGNOSTICS,
+    ArtifactKey,
+    ContinuationArtifact,
+    KernelOutput,
+    ReplayMode,
+    ReplayRoute,
+)
 
 __all__ = [
     "DCEGM",
+    "DISSOLUTION_FLAG",
     "EGM",
+    "EGM_CONTINUATION",
     "NBEGM",
     "NEGM",
     "NNBEGM",
+    "SIMULATION_POLICY",
+    "SOLVER_DIAGNOSTICS",
     "AdaptiveOuterMesh",
+    "ArtifactKey",
     "BranchAggregateResult",
+    "ContinuationArtifact",
+    "ContinuationSpec",
+    "CoreBuildContext",
+    "CoreExecutionDisposition",
+    "CoreExecutionRequirements",
+    "CoreProgram",
     "DeterministicOuterMaximum",
+    "EGMContinuationLayout",
+    "EGMContinuationSpec",
     "EnvelopeConfig",
     "ExactEnvelope",
     "FUESEnvelope",
     "FiniteOuterGrid",
     "GridSearch",
+    "KernelOutput",
     "LTMEnvelope",
     "MSSEnvelope",
     "OneMarginSolver",
     "OuterBranchAggregator",
     "OuterSearch",
+    "OutputRole",
+    "PeriodKernel",
+    "ProgramScope",
     "RFCEnvelope",
+    "ReductionSemantics",
+    "ReplayMode",
+    "ReplayRoute",
     "SolutionKernels",
     "Solver",
     "SolverBuildContext",
+    "StateActionSpace",
+    "StateAxesLeading",
+    "StreamableProductAxis",
     "TwoMarginSolver",
     "UniformObservedFixedCost",
+    "period_to_continuation_target",
+    "target_period_grid",
+    "union_fixed_params",
+    "union_free_params",
 ]

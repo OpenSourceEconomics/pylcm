@@ -954,7 +954,7 @@ def _certainty_equivalent_errors(regime: lcm.regime.Regime) -> list[str]:
     if _is_plain_linear_expectation(regime.certainty_equivalent):
         return error_messages
     if (
-        regime.solver.requires_continuation
+        regime.solver.required_continuation_keys
         and not regime.solver.supports_nonlinear_certainty_equivalent
     ):
         error_messages.append(

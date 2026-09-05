@@ -11,7 +11,6 @@ from types import MappingProxyType
 from typing import cast
 
 import jax
-import jax.numpy as jnp
 
 from _lcm.engine import Regime, StateActionSpace, _build_regime_sharding
 from _lcm.execution.core_program import (
@@ -26,16 +25,14 @@ from _lcm.execution.core_program import (
     initial_core_tile_widths,
     materialize_core_program,
     resolve_core_program,
+    select_programs,
 )
 from _lcm.execution.liveness import PlannedInputLiveness
 from _lcm.execution.output_layout import (
-    DISSOLUTION_FLAG,
-    UNPLANNED,
-    VALUE,
+    ExpectedOutputLeaf,
     PlannedCore,
     ResolvedOutputLayout,
-    assert_output_layout,
-    planned_output_layout,
+    assert_value_leaf_layout,
     resolve_output_layout,
 )
 from _lcm.execution.value_transfer import (
@@ -65,8 +62,6 @@ from _lcm.solution.contract import (
     BackwardInductionResult,
     ContinuationPayload,
     GeneratedReplayAuthority,
-    KernelResult,
-    SimulationPolicy,
 )
 from _lcm.solution.diagnostics import (
     _emit_post_loop_diagnostics,
@@ -78,7 +73,10 @@ from _lcm.solution.kernel_attribution import (
     log_executed_kernel,
     log_module_fanout,
 )
-from _lcm.solution.kernel_output import normalize_kernel_output
+from _lcm.solution.kernel_output import (
+    ConsumedKernelOutput,
+    consume_kernel_output,
+)
 from _lcm.solution.period_capture import (
     PeriodCaptureTarget,
     capture_kernel_inputs,
@@ -90,7 +88,7 @@ from _lcm.solution.v_topology import (
     _get_regime_V_shapes_and_shardings,
     _RegimeVTopology,
 )
-from _lcm.typing import FlatParams, RegimeName
+from _lcm.typing import FlatParams, RegimeName, SimulationPolicy
 from _lcm.utils.logging import (
     format_duration,
     log_period_header,
@@ -101,6 +99,7 @@ from _lcm.utils.logging import (
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidValueFunctionError, ModelInitializationError
+from lcm.solver_api import KernelOutput
 from lcm.typing import BoolND, ContinuousState, DiscreteState, FloatND
 
 # Stands in for a period's flag mapping when the model retains no dissolution
@@ -116,12 +115,10 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     regimes: MappingProxyType[RegimeName, Regime],
     logger: logging.Logger,
     enable_jit: bool,
-    collect_simulation_policies: bool = False,
-    simulation_policy_regimes: frozenset[RegimeName] | None = None,
     collect_solver_diagnostics: bool = False,
-    track_artifact_publication: bool = False,
     max_compilation_workers: int | None = None,
     retain_dissolution_flags: bool = True,
+    retain_replay: bool = True,
 ) -> BackwardInductionResult:
     """Solve a model by backward induction, whatever solver each regime declares.
 
@@ -136,33 +133,31 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             to completion and log a warning, so `solve` returns a complete
             (NaN-bearing) solution; `"off"` skips the NaN check.
         enable_jit: Whether to JIT-compile the functions of the internal regimes.
-        collect_simulation_policies: Whether to retain and copy published off-grid
-            policies to the host. The solve kernels may publish an internal policy
-            alongside their other outputs, but a value-only solve drops it at the
-            period boundary instead of retaining one device-sized artifact per period.
-        simulation_policy_regimes: Optional canonical-regime allowlist for policy
-            collection. ``None`` permits every publisher.
         collect_solver_diagnostics: Whether to retain a kernel's numerical
             self-report. Public ``Model.solve()`` and automatic simulation request
             it; ``log_level`` still decides whether diagnostics are calculated and
             retained. Internal callers may disable collection.
-        track_artifact_publication: Whether to retain the tiny set of cells whose
-            kernels produced a simulation policy. Used to write truthful omission
-            records without retaining values-only replay arrays.
         max_compilation_workers: Maximum number of threads for parallel XLA compilation.
             Defaults to `os.cpu_count()`.
         retain_dissolution_flags: Whether a caller wants the per-period
             dissolution flags on the result for their own sake. A model whose
             gates read `D_target` retains them regardless — the flags are a
             simulate-side input there, not an inspection artifact.
+        retain_replay: Whether replay artifacts are retained. Selects, per
+            period kernel, the scoped programs that are dispatched (a kernel may
+            publish a values-only and a replay variant of one body) and whether
+            a published simulation policy is copied to the host and kept. A
+            policy is kept only for a regime whose declared simulation route
+            reads it; a values-only solve drops every policy at the period
+            boundary instead of retaining one device-sized artifact per period.
 
     Returns:
         The named backward-induction outputs: the immutable mapping of periods
         to regime value-function arrays, the immutable mapping of periods to each
         regime's published simulation policy (the off-grid policy artifact
-        simulation can interpolate; regimes whose kernels publish none have no
-        entry, and the whole mapping is empty when
-        `collect_simulation_policies` is false), and the immutable mapping of
+        simulation can interpolate; regimes whose kernels publish none, or whose
+        simulation route does not read one, have no entry, and the whole
+        mapping is empty when `retain_replay` is false), and the immutable mapping of
         periods to each COLLECTIVE regime's dissolution flag `D` — `True` on the
         state cells whose action mask is empty, distinct from a numeric `-inf`
         value; empty inner mappings for models without collective regimes, so
@@ -197,6 +192,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         next_regime_to_continuation=next_regime_to_continuation,
         next_edge_to_V_arr=next_edge_to_V_arr,
         enable_jit=enable_jit,
+        retain_replay=retain_replay,
         max_compilation_workers=max_compilation_workers,
         logger=logger,
     )
@@ -212,7 +208,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     ] = {}
     dissolution_flags: dict[int, MappingProxyType[RegimeName, BoolND]] = {}
     solver_diagnostics: dict[int, MappingProxyType[RegimeName, SolverDiagnostics]] = {}
-    published_simulation_policy_cells: set[tuple[int, RegimeName]] = set()
 
     # Every collective kernel publishes `D`, but only two things read the
     # ACCUMULATED per-period mapping: forward simulation, for a gate that
@@ -280,8 +275,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     # re-materializes on device.
     host_device = (
         jax.devices("cpu")[0]
-        if collect_simulation_policies
-        or (collect_solver_diagnostics and diagnostics_enabled)
+        if retain_replay or (collect_solver_diagnostics and diagnostics_enabled)
         else None
     )
 
@@ -317,7 +311,10 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             active_regimes=active_regimes
         ):
             regime = active_regimes[regime_name]
-            result = _run_period_kernel(
+            regime_retains_replay = _regime_retains_replay(
+                regime=regime, retain_replay=retain_replay
+            )
+            output = _run_period_kernel(
                 regime=regime,
                 regime_name=regime_name,
                 period=period,
@@ -331,19 +328,28 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 logger=logger,
                 next_edge_to_V_arr=next_edge_to_V_arr,
                 period_solution=period_solution,
+                retain_replay=regime_retains_replay,
             )
             input_liveness.commit_successful_dispatch(dispatch=(period, regime_name))
-            V_arr = result.V_arr
+            continuation_spec = regime.solution.continuation_spec
+            result = consume_kernel_output(
+                output=output,
+                continuation_key=(
+                    None
+                    if continuation_spec is None
+                    else continuation_spec.artifact_key
+                ),
+                regime_name=regime_name,
+                period=period,
+            )
+            V_arr = result.value
             # The published V mapping is the calling convention for every
             # downstream consumer — the parents' cores and the AOT-lowered
             # simulate programs are both compiled against the per-regime V
-            # topology — so a kernel output arriving with a different
-            # sharding (the compiled program's output sharding is the
-            # backend's choice) is placed back on the template's mesh here.
+            # topology — so a kernel value must leave its compiled program on
+            # the template's placement; it is asserted here, never re-placed.
             V_arr = _publish_kernel_value(
                 value=V_arr,
-                dissolution=result.dissolution,
-                template=next_regime_to_V_arr[regime_name],
                 compiled_cores=compiled_functions[(regime_name, period)],
             )
             _fail_if_continuation_publisher_returned_none(
@@ -354,25 +360,11 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             )
             if result.continuation is not None:
                 period_continuations[regime_name] = result.continuation
-            if result.simulation_policy is not None:
-                if collect_simulation_policies and (
-                    simulation_policy_regimes is None
-                    or regime_name in simulation_policy_regimes
-                ):
-                    period_simulation_policies[regime_name] = result.simulation_policy
-                if track_artifact_publication:
-                    published_simulation_policy_cells.add((period, regime_name))
-            if result.generated_replay_authority is not None:
-                if result.simulation_policy is None:
-                    msg = (
-                        "A generated replay authority has no matching simulation "
-                        f"policy at ({period}, {regime_name!r})."
-                    )
-                    raise TypeError(msg)
-                if collect_simulation_policies and (
-                    simulation_policy_regimes is None
-                    or regime_name in simulation_policy_regimes
-                ):
+            # A policy is kept only where the regime's declared simulation route
+            # reads it; the replay authority travels with the policy it describes.
+            if result.simulation_policy is not None and regime_retains_replay:
+                period_simulation_policies[regime_name] = result.simulation_policy
+                if result.generated_replay_authority is not None:
                     period_generated_replay_authorities[regime_name] = (
                         result.generated_replay_authority
                     )
@@ -455,7 +447,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             if publish_dissolution_flags
             else _NO_DISSOLUTION_FLAGS
         )
-        if collect_simulation_policies:
+        if retain_replay:
             assert host_device is not None  # noqa: S101
             simulation_policies[period] = MappingProxyType(
                 {
@@ -531,7 +523,6 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         generated_replay_authorities=MappingProxyType(generated_replay_authorities),
         dissolution_flags=MappingProxyType(dissolution_flags),
         diagnostics=MappingProxyType(solver_diagnostics),
-        published_simulation_policy_cells=frozenset(published_simulation_policy_cells),
     )
 
 
@@ -589,17 +580,16 @@ def _run_period_kernel(
     logger: logging.Logger,
     next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
     period_solution: Mapping[RegimeName, FloatND],
-) -> KernelResult:
+    retain_replay: bool,
+) -> KernelOutput:
     """Invoke one regime's period adapter for one period.
 
     Every regime exposes the same kind of adapter; the loop never branches on
-    solver type. The adapter wraps the regime's shared jitted core(s) (passed in
+    solver type. The adapter wraps the regime's compiled programs (passed in
     AOT-compiled as `compiled_cores`), calls them with the solver's own argument
-    layout, and returns either the public `KernelOutput` envelope or a legacy
-    `KernelResult`. The fail-closed bridge below normalizes both to the latter —
-    the value-function array plus the optional generic outputs (`continuation`,
-    `simulation_policy`, and the collective `dissolution` flag D), which the
-    backward-induction loop accumulates.
+    layout, and returns the public `KernelOutput`: the value-function array plus
+    the artifacts it publishes on its keyed channels, which the loop reads through
+    `consume_kernel_output` and accumulates where something consumes them.
 
     A regime declaring `same_period_refs` additionally
     receives the referenced regimes' V arrays of THIS period, read off
@@ -619,7 +609,7 @@ def _run_period_kernel(
     own core keys.
 
     Returns:
-        The kernel's result for this regime-period.
+        The kernel's output for this regime-period, exactly as returned.
 
     """
     period_kernel = regime.solution.period_kernels[period]
@@ -642,6 +632,7 @@ def _run_period_kernel(
             "logger": logger,
             "next_edge_to_V_arr": next_edge_to_V_arr,
             "period_solution": period_solution,
+            "retain_replay": retain_replay,
         },
     )
 
@@ -700,7 +691,7 @@ def _run_period_kernel(
             next_edge_to_V_arr=next_edge_to_V_arr,
         )
     )
-    output = period_kernel(
+    return period_kernel(
         compiled_cores=compiled_cores,
         state_action_space=state_action_space,
         next_regime_to_V_arr=next_regime_to_V_arr,
@@ -710,15 +701,6 @@ def _run_period_kernel(
         ages=ages,
         logger=logger,
         **same_period_kwargs,
-    )
-    continuation_spec = regime.solution.continuation_spec
-    return normalize_kernel_output(
-        output=output,
-        continuation_key=(
-            None if continuation_spec is None else continuation_spec.artifact_key
-        ),
-        regime_name=regime_name,
-        period=period,
     )
 
 
@@ -1114,32 +1096,39 @@ def _match_continuation_template_sharding(
 def _publish_kernel_value(
     *,
     value: FloatND,
-    dissolution: BoolND | None,
-    template: FloatND,
     compiled_cores: Mapping[str, Callable],
 ) -> FloatND:
-    """Publish a period value in the engine-owned layout.
+    """Publish a period value after asserting its planned placement.
 
-    An output-layout-aware core has already asserted the complete runtime
-    output tree against the layout used to lower it, so its value leaf is born
-    in the template layout.  Legacy kernels retain the existing repair at this
-    boundary.  Continuation rolling deliberately keeps its independent repair:
-    it is a different producer/consumer boundary.
+    Every compiled core has already asserted its complete runtime output tree
+    against the layout used to lower it at the compiled-core seam; here only the
+    value leaf the loop publishes is checked again, since the kernel may have
+    unpacked the rest of its tree into channels. The check reads the first
+    compiled core the period dispatched, whatever its name, since a
+    retention-scoped graph compiles one program under one name and another under
+    another. A core without a resolved layout cannot publish a value: nothing is
+    re-placed here. Continuation rolling keeps its independent placement repair,
+    which is a different producer/consumer boundary.
     """
-    main = compiled_cores.get("main")
-    layout = None if main is None else planned_output_layout(main)
-    if layout is not None and layout is not UNPLANNED:
-        assert_output_layout(
-            output=(value, dissolution) if dissolution is not None else value,
-            layout=layout,
+    planned = tuple(
+        core for core in compiled_cores.values() if isinstance(core, PlannedCore)
+    )
+    if len(planned) != len(compiled_cores):
+        unplanned = tuple(
+            name
+            for name, core in compiled_cores.items()
+            if not isinstance(core, PlannedCore)
         )
-        return value
-    return _repair_unplanned_kernel_value(value=value, template=template)
-
-
-def _repair_unplanned_kernel_value(*, value: FloatND, template: FloatND) -> FloatND:
-    """Place a legacy kernel output onto the published value template."""
-    return _match_leaf_template_sharding(leaf=value, template_leaf=template)
+        msg = (
+            "A period value can be published only through a PlannedCore; "
+            f"{unplanned!r} carry no resolved layout."
+        )
+        raise TypeError(msg)
+    if not planned:
+        msg = "A period dispatched no compiled core, so it publishes no value."
+        raise ValueError(msg)
+    assert_value_leaf_layout(value=value, layout=planned[0].layout)
+    return value
 
 
 def _match_leaf_template_sharding(*, leaf: FloatND, template_leaf: FloatND) -> FloatND:
@@ -1158,7 +1147,7 @@ def _match_leaf_template_sharding(*, leaf: FloatND, template_leaf: FloatND) -> F
 
 def _fail_if_continuation_publisher_returned_none(
     *,
-    result: KernelResult,
+    result: ConsumedKernelOutput,
     regime_name: RegimeName,
     period: int,
     continuation_publishers: Mapping[RegimeName, ContinuationPayload],
@@ -1409,7 +1398,7 @@ def _build_planned_input_liveness(
         pinned_artifacts.update(unplanned_exact)
         if has_unknown:
             pinned_artifacts.update(
-                _conservative_legacy_value_artifacts(
+                _conservative_dense_value_artifacts(
                     regime=regime,
                     regime_name=regime_name,
                     period=period,
@@ -1430,7 +1419,12 @@ def _classify_dispatch_value_artifacts(
     tuple[ValueArtifactAddress, ...],
     bool,
 ]:
-    """Separate finite planned reads from pinned dense or unknown reads."""
+    """Separate finite planned reads from pinned dense or undeclared reads.
+
+    A dense program pins exactly the value reads it declares; one that declares
+    none may still read any reachable value through its builder, so it is
+    reported as unknown and pinned conservatively.
+    """
     planned: list[ValueArtifactAddress] = []
     unplanned_exact: list[ValueArtifactAddress] = []
     has_unknown = False
@@ -1439,14 +1433,11 @@ def _classify_dispatch_value_artifacts(
         declared_targets = tuple(
             access.target for access in metadata.requirements.target_value_accesses
         )
-        if metadata.disposition is CoreExecutionDisposition.LEGACY_UNPLANNED:
+        if metadata.disposition is CoreExecutionDisposition.DENSE:
             if not declared_targets:
                 has_unknown = True
             else:
                 unplanned_exact.extend(declared_targets)
-            continue
-        if metadata.disposition is CoreExecutionDisposition.DENSE:
-            unplanned_exact.extend(declared_targets)
             continue
 
         plan = metadata.input_transfer_plan
@@ -1513,13 +1504,13 @@ def _gated_fold_raw_value_artifacts(
     return _unique_value_artifacts(artifacts)
 
 
-def _conservative_legacy_value_artifacts(
+def _conservative_dense_value_artifacts(
     *,
     regime: Regime,
     regime_name: RegimeName,
     period: int,
 ) -> tuple[ValueArtifactAddress, ...]:
-    """Pin graph-declared values when a core has no complete input plan."""
+    """Pin every graph-reachable value for a dense core declaring no reads."""
     artifacts: list[ValueArtifactAddress] = [
         ValueArtifactAddress(
             kind=ValueArtifactKind.REGIME_VALUE,
@@ -1562,6 +1553,18 @@ def _conservative_legacy_value_artifacts(
     return _unique_value_artifacts(artifacts)
 
 
+def _regime_retains_replay(*, regime: Regime, retain_replay: bool) -> bool:
+    """Whether one regime's solve dispatches its replay-scoped programs.
+
+    A simulation policy is consumed only through the regime's declared replay
+    route. A regime without one (a standalone case-piece NB-EGM regime, whose
+    simulation reads the grid argmax) dispatches its values-only programs under
+    every retention, so a replay output is never assembled only to be discarded.
+    Programs scoped `ANY` are unaffected.
+    """
+    return retain_replay and regime.simulation.egm_policy_read is not None
+
+
 def _compile_all_functions(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
@@ -1571,6 +1574,7 @@ def _compile_all_functions(
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
     next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
     enable_jit: bool,
+    retain_replay: bool,
     max_compilation_workers: int | None,
     logger: logging.Logger,
 ) -> _CompiledPrograms:
@@ -1599,6 +1603,9 @@ def _compile_all_functions(
             for constructing a source kernel's gated-edge lowering arguments;
             empty for models without gated edges.
         enable_jit: Whether to JIT-compile the functions of the internal regimes.
+        retain_replay: Whether the solve retains replay artifacts; with the
+            regime's declared replay route it selects which scoped programs of
+            each kernel's graph are dispatched.
         max_compilation_workers: Maximum threads for parallel compilation.
             Defaults to `os.cpu_count()`.
         logger: Logger for compilation progress.
@@ -1609,11 +1616,17 @@ def _compile_all_functions(
         entries call compiled executables carrying the same plans.
 
     """
-    # Collect the authoritative native graphs or their centralized legacy adapters.
+    # Collect every kernel's native graph, narrowed to the retention's scope.
     all_programs: dict[_CoreTriple, CoreProgram] = {}
     for regime_name, regime in regimes.items():
+        regime_retains_replay = _regime_retains_replay(
+            regime=regime, retain_replay=retain_replay
+        )
         for period in regime.active_periods:
-            graph = core_program_graph(kernel=regime.solution.period_kernels[period])
+            graph = select_programs(
+                graph=core_program_graph(kernel=regime.solution.period_kernels[period]),
+                retain_replay=regime_retains_replay,
+            )
             for core_name, program in graph.items():
                 all_programs[(regime_name, period, core_name)] = program
 
@@ -1719,20 +1732,15 @@ def _compile_all_functions(
         logger.info("  lowering ...")
         start = time.monotonic()
         layout = all_layouts[triple]
-        jitted = (
-            jax.jit(func, static_argnames=tuple(static_kwargs))
-            if layout is UNPLANNED
-            else jax.jit(
-                func,
-                static_argnames=tuple(static_kwargs),
-                out_shardings=cast("ResolvedOutputLayout", layout).out_shardings,
-            )
+        jitted = jax.jit(
+            func,
+            static_argnames=tuple(static_kwargs),
+            out_shardings=layout.out_shardings,
         )
         low = jitted.lower(**lower_args, **static_kwargs)
         _assert_lowered_output_roles(
             lowered=low,
             output_roles=resolved.output_roles,
-            value_template=next_regime_to_V_arr[regime_name],
             layout=layout,
             label=label,
         )
@@ -1810,12 +1818,12 @@ def _resolve_output_layouts_and_lowering_keys(
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
     next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
 ) -> tuple[
-    dict[_CoreTriple, ResolvedOutputLayout | object],
+    dict[_CoreTriple, ResolvedOutputLayout],
     dict[_CoreTriple, Hashable],
     dict[_CoreTriple, ResolvedCoreProgram],
 ]:
     """Materialize each core's complete, immutable lowering description."""
-    layouts: dict[_CoreTriple, ResolvedOutputLayout | object] = {}
+    layouts: dict[_CoreTriple, ResolvedOutputLayout] = {}
     lowering_keys: dict[_CoreTriple, Hashable] = {}
     resolved_programs: dict[_CoreTriple, ResolvedCoreProgram] = {}
     for (regime_name, period, core_key), declaration in all_programs.items():
@@ -1852,23 +1860,18 @@ def _resolve_output_layouts_and_lowering_keys(
             for name in state_action_space.states
             if name not in regime.fold_state_names
         )
-        layout = (
-            UNPLANNED
-            if resolved.disposition is CoreExecutionDisposition.LEGACY_UNPLANNED
-            else resolve_output_layout(
-                core_key=core_key,
-                value_template=next_regime_to_V_arr[regime_name],
-                state_order=state_order,
-                output_roles=resolved.output_roles,
-            )
+        layout = resolve_output_layout(
+            core_key=core_key,
+            value_template=next_regime_to_V_arr[regime_name],
+            state_order=state_order,
+            output_roles=resolved.output_roles,
         )
         triple = (regime_name, period, core_key)
         layouts[triple] = layout
         resolved_programs[triple] = resolved
-        layout_key = UNPLANNED if layout is UNPLANNED else layout.compilation_key
         lowering_keys[triple] = _lowering_key(
             func=resolved.function,
-            layout_key=layout_key,
+            layout_key=layout.compilation_key,
             arguments=resolved.arguments,
             specialization_key=resolved.specialization_key,
             output_roles=resolved.output_roles,
@@ -2068,55 +2071,27 @@ def _output_roles_key(*, output_roles: object | None) -> Hashable:
     )
 
 
-_NO_EXPECTED_SHARDING = object()
-
-
 def _assert_lowered_output_roles(
     *,
     lowered: jax.stages.Lowered,
-    output_roles: object | None,
-    value_template: object,
+    output_roles: object,
+    layout: ResolvedOutputLayout,
     label: str,
-    layout: ResolvedOutputLayout | object = UNPLANNED,
 ) -> None:
     """Reject lowered output that violates the declared role contract."""
-    if output_roles is None:
-        return
     _assert_lowered_output_tree(
         output_roles=output_roles,
         output_info=lowered.out_info,
         label=label,
     )
-    expected_value_shape, expected_value_dtype = _expected_value_metadata(
-        value_template=value_template,
-        label=label,
-    )
-    role_leaves = jax.tree.leaves(output_roles)
     output_leaves = jax.tree.leaves(lowered.out_info)
-    expected_shardings = (
-        jax.tree.leaves(layout.out_shardings)
-        if isinstance(layout, ResolvedOutputLayout)
-        else None
-    )
-    for index, (role, output_info) in enumerate(
-        zip(role_leaves, output_leaves, strict=True)
+    for output_info, expected in zip(
+        output_leaves, layout.expected_leaves, strict=True
     ):
-        expected_metadata = _expected_role_metadata(
-            role=role,
-            value_shape=expected_value_shape,
-            value_dtype=expected_value_dtype,
-            label=label,
-        )
-        expected_sharding = (
-            _NO_EXPECTED_SHARDING
-            if expected_shardings is None
-            else expected_shardings[index]
-        )
         _assert_lowered_output_leaf(
             output_info=output_info,
             label=label,
-            expected_metadata=expected_metadata,
-            expected_sharding=expected_sharding,
+            expected=expected,
         )
 
 
@@ -2134,88 +2109,54 @@ def _assert_lowered_output_tree(
         raise TypeError(msg)
 
 
-def _expected_value_metadata(
-    *, value_template: object, label: str
-) -> tuple[tuple[int, ...], object]:
-    """Read the absolute value metadata used by every declared role."""
-    value_shape = getattr(value_template, "shape", None)
-    value_dtype = getattr(value_template, "dtype", None)
-    if value_shape is None or value_dtype is None:
-        msg = f"{label} value template must expose an absolute shape and dtype."
-        raise TypeError(msg)
-    return tuple(int(size) for size in value_shape), value_dtype
-
-
-def _expected_role_metadata(
-    *,
-    role: object,
-    value_shape: tuple[int, ...],
-    value_dtype: object,
-    label: str,
-) -> tuple[str, tuple[int, ...], object]:
-    """Derive one lowered leaf's metadata from its logical role."""
-    if role is VALUE:
-        return "value", value_shape, value_dtype
-    if role is DISSOLUTION_FLAG:
-        return "dissolution", value_shape[:-1], jnp.dtype(bool)
-    msg = f"{label} declared unsupported output role {role!r}."
-    raise TypeError(msg)
-
-
 def _assert_lowered_output_leaf(
     *,
     output_info: object,
     label: str,
-    expected_metadata: tuple[str, tuple[int, ...], object],
-    expected_sharding: object,
+    expected: ExpectedOutputLeaf,
 ) -> None:
-    """Check one lowered leaf's shape, dtype, and optional placement."""
-    role_label, expected_shape, expected_dtype = expected_metadata
-    actual_shape = getattr(output_info, "shape", None)
-    if actual_shape != expected_shape:
-        msg = (
-            f"{label} {role_label} output shape mismatch: "
-            f"expected {expected_shape}, got {actual_shape}."
-        )
-        raise TypeError(msg)
-    actual_dtype = getattr(output_info, "dtype", None)
-    if actual_dtype != expected_dtype:
-        msg = (
-            f"{label} {role_label} output dtype mismatch: "
-            f"expected {expected_dtype}, got {actual_dtype}."
-        )
-        raise TypeError(msg)
-    if expected_sharding is not _NO_EXPECTED_SHARDING:
-        actual_sharding = getattr(output_info, "sharding", None)
-        if actual_sharding != expected_sharding:
+    """Check one lowered leaf's declared shape and dtype, and its placement."""
+    if expected.shape is not None:
+        actual_shape = getattr(output_info, "shape", None)
+        if actual_shape != expected.shape:
             msg = (
-                f"{label} {role_label} output sharding mismatch: "
-                f"expected {expected_sharding}, got {actual_sharding}."
+                f"{label} {expected.label} output shape mismatch: "
+                f"expected {expected.shape}, got {actual_shape}."
             )
             raise TypeError(msg)
+    if expected.dtype is not None:
+        actual_dtype = getattr(output_info, "dtype", None)
+        if actual_dtype != expected.dtype:
+            msg = (
+                f"{label} {expected.label} output dtype mismatch: "
+                f"expected {expected.dtype}, got {actual_dtype}."
+            )
+            raise TypeError(msg)
+    actual_sharding = getattr(output_info, "sharding", None)
+    if actual_sharding != expected.sharding:
+        msg = (
+            f"{label} {expected.label} output sharding mismatch: "
+            f"expected {expected.sharding}, got {actual_sharding}."
+        )
+        raise TypeError(msg)
 
 
 def _attach_resolved_output_layout(
     *,
     compiled: Callable[..., object],
-    layout: ResolvedOutputLayout | object,
+    layout: ResolvedOutputLayout,
     input_transfer_plan: tuple[ResolvedValueTransfer, ...] = (),
-) -> Callable:
+) -> PlannedCore:
     """Carry one node's resolved output and input plans to runtime dispatch."""
-    if layout is UNPLANNED:
-        if input_transfer_plan:
-            msg = "An unplanned core cannot carry a resolved input transfer plan."
-            raise ValueError(msg)
-        return compiled
     return PlannedCore(
         compiled=compiled,
-        layout=cast("ResolvedOutputLayout", layout),
+        layout=layout,
         input_transfer_plan=input_transfer_plan,
     )
 
 
 def _group_cores_by_regime_period(
-    cores_by_triple: dict[tuple[RegimeName, int, str], Callable],
+    cores_by_triple: Mapping[tuple[RegimeName, int, str], Callable],
 ) -> dict[tuple[RegimeName, int], MappingProxyType[str, Callable]]:
     """Group (regime, period, core_key) -> core into (regime, period) -> {key: core}.
 

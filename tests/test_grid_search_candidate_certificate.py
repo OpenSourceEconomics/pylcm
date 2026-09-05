@@ -490,6 +490,7 @@ def test_q_and_f_arrays_reach_full_reducers_without_candidate_transformation():
     assert isinstance(_parse("src/_lcm/simulation/transitions.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/simulation/compile.py"), ast.Module)
     assert isinstance(_parse("src/lcm/model.py"), ast.Module)
+    assert isinstance(_parse("src/lcm/solver_api.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/solution/backward_induction.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/simulation/initial_conditions.py"), ast.Module)
     assert isinstance(_parse("src/lcm/result.py"), ast.Module)
@@ -639,7 +640,8 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         "additional_targets:overwrite_actions_chunked",
         "simulation_random:reassign_taste_keys",
         "shared_fold_average:negated_value",
-        "solution_contract:negate_kernel_result",
+        "solution_contract:negate_backward_induction_values",
+        "solver_api:negate_kernel_output_value",
         "candidate_materialization:rebind_continuous_grid",
         "candidate_materialization:rebind_process_class",
         "candidate_materialization:drop_last_discrete_code",
@@ -825,10 +827,10 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
     assert required <= names
     # Independent literals make both cardinality and family identity part of this
     # certificate, rather than trusting constants supplied by the mutation generator.
-    assert len(names) == 354
+    assert len(names) == 355
     assert (
         hashlib.sha256(("\n".join(sorted(names)) + "\n").encode()).hexdigest()
-        == "292027e67d3d50cae11661a67779a6efe8e2be4219af95bdf32177116824fb30"
+        == "f5627cb8d4e6928c03c1707ef5ca396f5c16fd17d182c3668531f11f12802c91"
     )
 
 
@@ -2026,7 +2028,7 @@ def test_negating_the_fold_average_reverses_the_public_candidate(
 
 
 @pytest.mark.parametrize("compiled_n_subjects", [None, 1], ids=["lazy", "aot"])
-def test_negating_kernel_result_reverses_the_public_candidate(
+def test_negating_kernel_output_reverses_the_public_candidate(
     *,
     compiled_n_subjects: int | None,
     monkeypatch: pytest.MonkeyPatch,
@@ -2034,14 +2036,14 @@ def test_negating_kernel_result_reverses_the_public_candidate(
     """The solved-value transport into backward induction is behaviorally live."""
     model = _build_zero_weight_fold_model(n_subjects=compiled_n_subjects)
     baseline = _simulate_zero_weight_fold(model)
-    original = grid_search_module.KernelResult
+    original = grid_search_module.KernelOutput
 
-    def negated_kernel_result(**kwargs: Any) -> Any:
-        result = original(**kwargs)
-        object.__setattr__(result, "V_arr", -result.V_arr)
-        return result
+    def negated_kernel_output(**kwargs: Any) -> Any:
+        output = original(**kwargs)
+        object.__setattr__(output, "value", -output.value)
+        return output
 
-    monkeypatch.setattr(grid_search_module, "KernelResult", negated_kernel_result)
+    monkeypatch.setattr(grid_search_module, "KernelOutput", negated_kernel_output)
     shifted = _simulate_zero_weight_fold(model)
 
     assert baseline == ([1], [1], [1])

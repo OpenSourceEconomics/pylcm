@@ -9,7 +9,7 @@ entry per carry-producing regime (DC-EGM regimes and terminal regimes a
 DC-EGM regime can target).
 """
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
@@ -18,6 +18,7 @@ import jax
 import jax.numpy as jnp
 
 from _lcm.dtypes import canonical_float_dtype
+from lcm.solver_api import EGM_CONTINUATION, ArtifactKey
 from lcm.typing import FloatND, ScalarFloat, StateName, StateOrActionName
 
 
@@ -68,6 +69,11 @@ class EGMCarry:
     fixed-savings candidate where the child boundary binds.
     """
 
+    @property
+    def artifact_key(self) -> ArtifactKey:
+        """Versioned identity under which EGM kernels publish this carry."""
+        return EGM_CONTINUATION
+
     policy: FloatND | None = None
     """Exact consumption at `endog_grid`, or `None` when not published.
 
@@ -102,15 +108,51 @@ def _flatten_egm_carry(carry: EGMCarry) -> tuple[tuple[Any, ...], None]:
     return tuple(getattr(carry, name) for name in _EGM_CARRY_FIELDS), None
 
 
-# keyword-only-exempt: library-callback=jax.tree_util.register_pytree_node
-def _unflatten_egm_carry(_aux: None, children: Sequence[Any]) -> EGMCarry:
+def _flatten_egm_carry_with_keys(
+    carry: EGMCarry,
+) -> tuple[tuple[tuple[jax.tree_util.GetAttrKey, Any], ...], None]:
+    """Flatten with field-named keys so a leaf path reads `.endog_grid`."""
+    return (
+        tuple(
+            (jax.tree_util.GetAttrKey(name), getattr(carry, name))
+            for name in _EGM_CARRY_FIELDS
+        ),
+        None,
+    )
+
+
+# keyword-only-exempt: library-callback=jax.tree_util.register_pytree_with_keys
+def _unflatten_egm_carry(_aux: None, children: Iterable[Any]) -> EGMCarry:
     carry = object.__new__(EGMCarry)
     for name, child in zip(_EGM_CARRY_FIELDS, children, strict=True):
         object.__setattr__(carry, name, child)
     return carry
 
 
-jax.tree_util.register_pytree_node(EGMCarry, _flatten_egm_carry, _unflatten_egm_carry)
+jax.tree_util.register_pytree_with_keys(
+    EGMCarry,
+    _flatten_egm_carry_with_keys,
+    _unflatten_egm_carry,
+    _flatten_egm_carry,
+)
+
+
+def egm_carry_role_tree(
+    *,
+    row: object,
+    scalar: object,
+    breakpoints: object | None,
+    policy: object | None,
+) -> EGMCarry:
+    """Build an `EGMCarry`-shaped tree of output roles.
+
+    A kernel declares its carry outputs with the same pytree structure as the
+    carry it publishes: one role for each of the three grid rows, one for the
+    0-d taste-shock scale, and `None` for a row it does not publish. The leaves
+    are role declarations rather than arrays, so the tree is assembled through
+    the pytree unflatten rather than the runtime-checked constructor.
+    """
+    return _unflatten_egm_carry(None, (row, row, row, scalar, breakpoints, policy))
 
 
 def build_template_egm_carry(

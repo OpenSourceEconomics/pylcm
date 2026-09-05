@@ -113,8 +113,8 @@ metadata are errors. Each declaration's `(source_regime, source_period, core_key
 also match the actual compiled core before its channel and argument-tree path are
 resolved. Remaining-consumer counts are committed only after successful dispatch. A
 zero count records eligibility for future memory
-planning; it does not release, donate, or offload an array. Dense compatibility and
-unplanned legacy consumers remain pinned.
+planning; it does not release, donate, or offload an array. Dense programs without
+declared value reads and other unplanned consumers remain pinned.
 
 With EV1 taste shocks, GridSearch first maximizes over the continuous-action axes within
 each discrete-action combination and then applies the discrete log-sum. Simulation uses
@@ -234,11 +234,30 @@ The memory controls do not all mean “compiled batch width”:
 
 - `stochastic_node_batch_size` and `envelope_segment_block_size` stream their named
   intermediate axes;
-- `interval_batch_size`, `cell_block_size`, and `branch_batch_size` are compiled
-  `lax.map` batch widths for their respective interval, ride-cell, and discrete-branch
-  axes;
-- lower positive values can bound how many entries that mapped core evaluates together,
-  while `0` or a value covering the axis selects one vectorized pass.
+- `interval_batch_size` streams the continuation read and the candidate-envelope fold
+  together. A positive width reads only that many interval rows, folds their candidates
+  into one standing winner per query, then requests the next block. The standing winner
+  retains its global stored-link index, so given the candidate records every partition
+  decides ownership by the same total order over the same identities as the one-shot
+  layout, under both envelope arithmetics: no width can hand a query to another
+  candidate by where a record happens to be stored, and the step reports the owner of
+  every node on request (`return_owner=True`) so a partition test asserts it exactly.
+  What a width does change is the compiled vmap width the records are produced at, and
+  the backend vectorizes each one differently: the published levels agree to within a
+  few units in the last place rather than bit for bit, and two candidates whose reads
+  tie to within that spacing are ordered by the records each width produced. The one
+  place this is visible on a regular grid is a node where a savings-node point candidate
+  coincides with an interior candidate: the two are the same point, and which of them
+  is named the owner can differ between widths while the published level does not.
+  `interval_batch_size=0` keeps the one-shot continuation matrix and envelope reduction;
+- `cell_block_size` and `branch_batch_size` are compiled `lax.map` batch widths for the
+  ride-cell and discrete-branch axes. The continuation read behind the branch axis runs
+  once per class of branches that agree on every discrete action reaching the
+  continuation (the regime transition, a law of motion, stochastic-state transition
+  weights, a child's resources, the discount factor, or a schedule variable), so a
+  budget-only action costs one read per cell however many branches it declares;
+- lower positive values bound the named streamed or mapped width. For the map-width
+  controls, `0` or a value covering the axis selects one vectorized pass.
 
 These fields bound only their named mapped work, not surrounding arrays or total memory.
 
@@ -253,12 +272,26 @@ Nests an `NBEGM` liquid solve inside a configurable outer search. The inner solv
 use a bridged carry compatible with the outer fold. See
 [Outer search and branch aggregation](outer_search.md).
 
+The nested period kernel publishes no traced body of its own: its core-program graph
+republishes the inner NB-EGM programs as `keeper:main`, `keeper:replay`,
+`adjuster:main`, and `adjuster:replay`, each with the inner program's output roles,
+scope, and planned disposition. The keeper programs are built from the period's own
+inputs; the adjuster programs bind the outer post-decision at the first outer node, the
+same shape every per-node call rebinds. A values-only solve dispatches the inner `main`
+programs and the nested collapse publishes the value and the carry alone; a
+replay-retaining solve dispatches the inner `replay` programs and assembles the nested
+policy from their banks.
+
 How the keeper and adjuster branches combine is an economic declaration, not a solver
 setting: it lives on [`OuterContinuousMargin.adjustment_cost`](consumption_savings.md).
 
 With `FiniteOuterGrid`, NNBEGM replays the keeper-plus-outer-grid candidates ranked
 during the solve; with `AdaptiveOuterMesh` it republishes the mesh policies and the
-search settings, and re-refines per subject at that subject's own resources. Every
+search settings, and re-refines per subject at that subject's own resources. The
+adaptive replay reads the exact generated mesh, which the solving model instance holds
+beside the result, so that policy is retained under `ResultRetention.VALUES_AND_REPLAY`
+and omitted as `NOT_PERSISTED` under `ALL_PERSISTABLE_ARTIFACTS`; the finite candidate
+bank is self-contained and persists under both. Every
 declaration that can affect that replay must therefore be phase-invariant by object
 identity: a bare declaration and `Phased(solve=f, simulate=f)` are accepted, while
 distinct solve/simulate functions, state or regime transitions, Koopmans aggregators,

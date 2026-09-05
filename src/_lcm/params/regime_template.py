@@ -1214,10 +1214,13 @@ def _drop_engine_provided_args(
     `inverse_marginal_utility` receives `marginal_continuation` from the EGM
     kernel (in a regime whose solver reads no continuation, a function of that
     name is ordinary). This must not surface as a user-facing param, so it is
-    popped in place. Gated on the `requires_continuation` capability, not the
+    popped in place. Gated on the declared continuation demand, not the
     concrete solver type, so every Euler-inversion solver is covered.
     """
-    if name == "inverse_marginal_utility" and user_regime.solver.requires_continuation:
+    if (
+        name == "inverse_marginal_utility"
+        and user_regime.solver.required_continuation_keys
+    ):
         params.pop("marginal_continuation", None)
 
 

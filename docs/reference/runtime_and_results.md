@@ -46,7 +46,7 @@ they are not re-exported from the top-level `lcm` namespace. The retention modes
 | --------------------------- | ---------------------------------------------------------------------------- |
 | `VALUES`                    | Values; no replay artifacts                                                  |
 | `VALUES_AND_REPLAY`         | Values plus applicable simulation-policy and dissolution artifacts (default) |
-| `ALL_PERSISTABLE_ARTIFACTS` | All currently persistable artifacts; presently the same replay set           |
+| `ALL_PERSISTABLE_ARTIFACTS` | Every replay artifact a result can carry on its own, without this instance   |
 
 Artifacts are addressed by an `ArtifactRef(period=..., regime=..., key=...)` and kept in
 immutable `ArtifactStore` instances. Built-in key identities include
@@ -69,10 +69,50 @@ artifacts used during backward induction are not currently retainable: their abs
 recorded as `NOT_REQUESTED`, or as `UNSUPPORTED` when `ALL_PERSISTABLE_ARTIFACTS`
 requests everything the boundary can describe.
 
+A retention also selects what a solve computes. Every built-in kernel publishes its
+programs with a scope, and the solve compiles and runs only the programs its retention
+dispatches: `VALUES` runs the values-only programs everywhere, so an NB-EGM period
+publishes its value and carry without assembling the consumption policy or the branch
+banks, and a nested NNBEGM solve folds its candidates without building the replay banks
+or the adaptive nested policy. A replay-retaining solve runs the replay programs only
+where a declared replay route consumes them; a standalone case-piece NB-EGM regime has
+none, so it runs its values-only program under every retention and its policy is
+recorded as `NOT_APPLICABLE`. Values and carries agree across retentions to the working
+format's spacing.
+
+A values-only solve is the cheap way to obtain value functions from a case-piece or
+piecewise-affine budget model, for example to compare solvers or to sweep parameters:
+
+```python
+from lcm.solver_api import ResultRetention
+
+values_only = model.solve(
+    params=params,
+    log_level="warning",
+    retention=ResultRetention.VALUES,
+)
+
+V_alive = values_only.value(period=0, regime="alive")
+```
+
+Such a result simulates only where every decision is recoverable from values; a model
+whose simulation reads an NB-EGM or NNBEGM policy needs the default retention before it
+can be simulated.
+
+`ALL_PERSISTABLE_ARTIFACTS` keeps only artifacts the result carries on its own. The
+`NNBEGM` replay policy of an `AdaptiveOuterMesh` search is replayed against the exact
+mesh the solve generated, a fact the solving model instance holds privately beside the
+result rather than inside it; that policy is retained under `VALUES_AND_REPLAY` and
+omitted as `NOT_PERSISTED` under `ALL_PERSISTABLE_ARTIFACTS`. Simulating from such a
+result is refused before forward execution with the omission reason named. The finite
+candidate bank of a `FiniteOuterGrid` search is self-contained and persists under both
+modes.
+
 `SolutionResult` persistence is not implemented yet. `save_solution()` persists only a
 standalone value-function mapping; it does not serialize the labelled metadata or
-artifact stores. This boundary is also not yet a stable contract for out-of-tree solver
-implementations.
+artifact stores. An out-of-tree solver can construct and publish through this boundary —
+see [Custom solvers](custom_solvers.md) — but it is not yet a *stable* contract, and the
+missing persistence is one of the reasons.
 
 ## Simulation
 

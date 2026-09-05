@@ -19,11 +19,9 @@ from _lcm.execution.core_program import (
     resolve_core_program,
 )
 from _lcm.execution.output_layout import (
-    UNPLANNED,
     VALUE,
     PlannedCore,
-    ResolvedOutputLayout,
-    planned_input_transfer_plan,
+    resolve_output_layout,
 )
 from _lcm.execution.value_transfer import (
     ResolvedValueTransfer,
@@ -414,13 +412,11 @@ def test_planned_core_applies_and_retains_its_absolute_input_transfer_plan() -> 
         source_sharding=source_sharding,
         kind=ValueTransferKind.COPY_TO_SOURCE_LAYOUT,
     )
-    layout = ResolvedOutputLayout(
-        out_shardings=source_sharding,
-        compilation_key=("test-layout", source_sharding),
-        expected_value_shape=value.shape,
-        expected_value_dtype=value.dtype,
-        expected_dissolution_shape=None,
-        expected_dissolution_dtype=None,
+    layout = resolve_output_layout(
+        core_key="main",
+        value_template=jax.device_put(value, source_sharding),
+        state_order=("x",),
+        output_roles=VALUE,
     )
 
     def compiled(**kwargs: object) -> object:
@@ -440,8 +436,6 @@ def test_planned_core_applies_and_retains_its_absolute_input_transfer_plan() -> 
     )
 
     assert planned.input_transfer_plan == (transfer,)
-    assert planned_input_transfer_plan(planned) == (transfer,)
-    assert planned_input_transfer_plan(object()) is UNPLANNED
     assert output.sharding == source_sharding
     assert np.array_equal(output, value)
 

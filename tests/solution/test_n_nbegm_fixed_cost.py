@@ -15,12 +15,14 @@ from jax import config as jax_config
 
 import _lcm.solution.nnbegm as solvers_mod
 from lcm.exceptions import RegimeInitializationError, UnsupportedOperationError
+from lcm.solver_api import EGM_CONTINUATION, SIMULATION_POLICY, SOLVER_DIAGNOSTICS
 from lcm.solvers import AdaptiveOuterMesh, UniformObservedFixedCost
 from tests.test_models import n_nbegm_toy as toy
 
 if TYPE_CHECKING:
     from _lcm.egm.carry import EGMCarry
-    from _lcm.solution.contract import KernelResult
+    from _lcm.solution.solver_diagnostics import SolverDiagnostics
+    from lcm.solver_api import KernelOutput
 
 _PARAMS = {"discount_factor": 0.95}
 _ORIGINAL_KERNEL_CALL = solvers_mod._NNBEGMPeriodKernel.__call__
@@ -89,13 +91,13 @@ def test_state_dependent_scale_fails_at_build() -> None:
 
 def _solve_recorded(
     *, aggregator: UniformObservedFixedCost | None, monkeypatch: pytest.MonkeyPatch
-) -> dict[int, KernelResult]:
-    recorded: dict[int, KernelResult] = {}
+) -> dict[int, KernelOutput]:
+    recorded: dict[int, KernelOutput] = {}
 
     def recording_call(
         self: solvers_mod._NNBEGMPeriodKernel,
         **kwargs: object,
-    ) -> KernelResult:
+    ) -> KernelOutput:
         result = _ORIGINAL_KERNEL_CALL(self, **kwargs)  # ty: ignore[invalid-argument-type]
         recorded[cast("int", kwargs["period"])] = result
         return result
@@ -120,28 +122,28 @@ def test_aggregated_solve_publishes_probabilities_and_bounded_values(
 
     det = deterministic[0]
     agg = aggregated[0]
-    assert det.diagnostics is not None
-    assert det.diagnostics.adjustment_probability is None
-    assert agg.diagnostics is not None
-    probability = agg.diagnostics.adjustment_probability
+    det_diagnostics = cast("SolverDiagnostics", det.auxiliary[SOLVER_DIAGNOSTICS])
+    agg_diagnostics = cast("SolverDiagnostics", agg.auxiliary[SOLVER_DIAGNOSTICS])
+    assert det_diagnostics.adjustment_probability is None
+    probability = agg_diagnostics.adjustment_probability
     assert probability is not None
-    assert probability.shape == agg.V_arr.shape
+    assert probability.shape == agg.value.shape
     p = np.asarray(probability)
     assert np.all((p >= 0.0) & (p <= 1.0))
     assert np.any((p > 0.0) & (p < 1.0)), "no interior cutoff cell in the toy"
 
-    v_det = np.asarray(det.V_arr)
-    v_agg = np.asarray(agg.V_arr)
+    v_det = np.asarray(det.value)
+    v_agg = np.asarray(agg.value)
     both = np.isfinite(v_det) & np.isfinite(v_agg)
     assert np.all(v_agg[both] <= v_det[both] + 1e-10)
     assert np.any(v_agg[both] < v_det[both] - 1e-8)
 
     # No nested simulation payload under a fixed-cost aggregation: the read
     # would replay a hard maximum the solve did not use.
-    assert agg.simulation_policy is None
+    assert SIMULATION_POLICY not in agg.replay
 
     # The expected marginal stays finite and the carry keeps its shape.
-    carry = cast("EGMCarry", agg.continuation)
+    carry = cast("EGMCarry", agg.continuations[EGM_CONTINUATION])
     assert np.all(np.isfinite(np.asarray(carry.marginal_utility)))
 
 

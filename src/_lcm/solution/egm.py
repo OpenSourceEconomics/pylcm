@@ -27,14 +27,21 @@ from _lcm.constraints.routes import (
     ConstraintSite,
 )
 from _lcm.continuation import EGMContinuationSpec
-from _lcm.egm.carry import EGMCarry
+from _lcm.egm.carry import EGMCarry, egm_carry_role_tree
 from _lcm.engine import StateActionSpace
+from _lcm.execution.core_program import (
+    CoreBuildContext,
+    CoreExecutionDisposition,
+    CoreExecutionRequirements,
+    CoreProgram,
+)
+from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from _lcm.grids import ContinuousGrid
 from _lcm.solution.continuation_target import (
-    _period_to_continuation_target,
-    _union_fixed_params,
-    _union_free_params,
+    period_to_continuation_target,
     target_period_grid,
+    union_fixed_params,
+    union_free_params,
 )
 from _lcm.solution.contract import (
     ConstraintRouteContext,
@@ -60,7 +67,7 @@ from _lcm.typing import (
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
-from lcm.solver_api import EGM_CONTINUATION, KernelOutput
+from lcm.solver_api import EGM_CONTINUATION, ArtifactKey, KernelOutput
 from lcm.typing import (
     ActionName,
     Float1D,
@@ -108,9 +115,9 @@ class EGM(OneMarginSolver):
         )
 
     @property
-    def requires_continuation(self) -> bool:
+    def required_continuation_keys(self) -> frozenset[ArtifactKey]:
         """The 1-D EGM step reads its continuation's marginal value of liquid."""
-        return True
+        return frozenset({EGM_CONTINUATION})
 
     def validate_model(  # noqa: C901, PLR0912, PLR0915
         self, *, context: SolverModelContext
@@ -400,7 +407,7 @@ class EGM(OneMarginSolver):
                 f"extra states to discrete grids."
             )
             raise ModelInitializationError(msg)
-        for target in set(_period_to_continuation_target(context=context).values()):
+        for target in set(period_to_continuation_target(context=context).values()):
             target_user_regime = context.user_regimes[target]
             if target_user_regime.terminal and target_user_regime.actions:
                 msg = (
@@ -466,7 +473,7 @@ class EGM(OneMarginSolver):
             | frozenset(context.state_action_space.continuous_actions)
             | frozenset(context.state_action_space.discrete_actions)
         )
-        period_to_target = _period_to_continuation_target(context=context)
+        period_to_target = period_to_continuation_target(context=context)
         cores: dict[Hashable, Callable] = {}
         laws: dict[Hashable, Callable[..., tuple[Float1D, Float1D]]] = {}
         period_kernels: dict[int, PeriodKernel] = {}
@@ -507,7 +514,7 @@ class EGM(OneMarginSolver):
                     target_state=target_state,
                     variable_names=variable_names,
                 )
-            period_kernels[period] = _EGMPeriodKernel(
+            period_kernels[period] = _build_egm_period_kernel(
                 core=cores[group_key],
                 declared_law=laws[group_key],
                 savings_grid=savings_grid,
@@ -554,28 +561,90 @@ class _BoundEGM(EGM):
     """Name of the function giving the savings the exogenous grid spans."""
 
 
-@dataclass(frozen=True, kw_only=True)
-class _EGMPeriodKernel:
-    """The 1-D EGM period adapter — wraps the shared `egm_one_asset_step` core.
+# Why the one-row EGM program executes dense: it has no product axis to stream
+# over, and its continuation is read from the target's carry alone.
+_EGM_DENSE_REASON = "deliberately_dense:egm_one_row_no_product_axis"
 
-    Closes over the regime name, the period's single deterministic
-    continuation target (whose value array and marginal carry feed the Euler
-    inversion), and the transition target names (to union their params).
-    Returns a public `KernelOutput` carrying the value array and the
-    marginal-value continuation a parent EGM regime interpolates.
+
+def _build_egm_period_kernel(
+    *,
+    core: Callable,
+    declared_law: Callable[..., tuple[Float1D, Float1D]],
+    savings_grid: Float1D,
+    regime_name: RegimeName,
+    continuation_target: RegimeName,
+    liquid_state: StateName,
+    transition_target_names: tuple[RegimeName, ...],
+    next_liquid_grid: Float1D,
+    publishes_breakpoints: bool = False,
+) -> _EGMPeriodKernel:
+    """Declare one period's EGM program graph around a shared core.
+
+    The core is shared by every period of one solver group, so those periods'
+    programs share one compiled function; the argument builder and the kernel
+    are the period's own. The single program `main` publishes the value array
+    and the one-row carry, both replicated across any device mesh: the regime's
+    only state is the liquid axis the rows sit on. `publishes_breakpoints` says
+    whether the core's carry carries a breakpoints row (a single-liquid NB-EGM
+    core with feasibility boundaries does; the plain EGM core does not).
+    """
+    argument_builder = _EGMArgumentBuilder(
+        regime_name=regime_name,
+        continuation_target=continuation_target,
+        liquid_state=liquid_state,
+        transition_target_names=transition_target_names,
+        declared_law=declared_law,
+        savings_grid=savings_grid,
+    )
+    program = CoreProgram(
+        name="main",
+        function=core,
+        argument_builder=argument_builder,
+        requirements=CoreExecutionRequirements(),
+        output_roles=(
+            VALUE,
+            egm_carry_role_tree(
+                row=StateAxesLeading(state_names=()),
+                scalar=StateAxesLeading(state_names=(), shape=()),
+                breakpoints=StateAxesLeading(state_names=())
+                if publishes_breakpoints
+                else None,
+                policy=None,
+            ),
+        ),
+        disposition=CoreExecutionDisposition.DENSE,
+        disposition_reason=_EGM_DENSE_REASON,
+        donation_candidates=(),
+    )
+    return _EGMPeriodKernel(
+        _core_programs=MappingProxyType({"main": program}),
+        regime_name=regime_name,
+        continuation_target=continuation_target,
+        liquid_state=liquid_state,
+        transition_target_names=transition_target_names,
+        next_liquid_grid=next_liquid_grid,
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class _EGMArgumentBuilder:
+    """Build the EGM program's arguments for lowering and execution.
+
+    The program takes the liquid grid, the continuation target's carry rows, the
+    two readings of the regime's declared law of motion on the savings grid, the
+    savings candidates bracketing the target's breakpoints, and the free params
+    of the regime and of its transition targets. No target value array is read:
+    the continuation is interpolated from the carry alone.
     """
 
-    core: Callable
-    """The shared jitted 1-D EGM-step core."""
-
     regime_name: RegimeName
-    """Name of the regime whose flat params this adapter projects."""
+    """Name of the regime whose flat params the program projects."""
 
     continuation_target: RegimeName
-    """The regime active next period; its value and marginal continue this one."""
+    """The regime active next period; its carry continues this one."""
 
     liquid_state: StateName
-    """The regime's own name for the state filling the kernel's liquid role.
+    """The regime's own name for the state filling the program's liquid role.
 
     The core takes its state grid under the private keyword `liquid`; this is
     the name the modeller gave it, used to look the grid up in the state-action
@@ -585,21 +654,52 @@ class _EGMPeriodKernel:
     transition_target_names: tuple[RegimeName, ...]
     """Names of the regime's transition targets, whose params are unioned in."""
 
-    next_liquid_grid: Float1D
-    """The continuation target's liquid nodes in the *next* period.
-
-    The abscissae of the continuation value and marginal this adapter reads. Equal
-    to this period's own grid unless the liquid state is an `AgeSpecializedGrid`.
-    """
-
     declared_law: Callable[..., tuple[Float1D, Float1D]]
     """The regime's own law toward the target, as a function of savings."""
 
     savings_grid: Float1D
     """The post-decision grid the law is tabulated on."""
 
-    bound_params: Mapping[str, FloatND] = MappingProxyType({})
+    bound_params: Mapping[str, object] = MappingProxyType({})
     """Fixed params bound into the core, kept so the law can read them too."""
+
+    def __call__(self, context: CoreBuildContext) -> Mapping[str, object]:
+        """Return the exact kwargs shared by lowering and the runtime call."""
+        state_action_space = cast("StateActionSpace", context.state_action_space)
+        flat_params = cast("FlatParams", context.flat_params)
+        next_carry = cast(
+            "ContinuationPayload",
+            context.next_regime_to_continuation[self.continuation_target],
+        )
+        next_carry = cast("EGMCarry", next_carry)
+        (
+            effective_savings_grid,
+            next_liquid,
+            marginal_return,
+            boundary_savings_targets,
+            boundary_next_liquid,
+        ) = self._law_readings(
+            flat_params=flat_params,
+            next_breakpoints=next_carry.breakpoints,
+        )
+        return MappingProxyType(
+            {
+                "liquid": state_action_space.states[self.liquid_state],
+                "next_liquid_grid": next_carry.endog_grid,
+                "next_liquid": next_liquid,
+                "marginal_return": marginal_return,
+                "effective_savings_grid": effective_savings_grid,
+                "boundary_savings_targets": boundary_savings_targets,
+                "boundary_next_liquid": boundary_next_liquid,
+                "next_value": next_carry.value,
+                "next_marginal": next_carry.marginal_utility,
+                **union_free_params(
+                    flat_params=flat_params,
+                    regime_name=self.regime_name,
+                    transition_target_names=self.transition_target_names,
+                ),
+            }
+        )
 
     def _law_readings(
         self,
@@ -616,7 +716,7 @@ class _EGMPeriodKernel:
         """
         law_params = {
             **self.bound_params,
-            **_union_free_params(
+            **union_free_params(
                 flat_params=flat_params,
                 regime_name=self.regime_name,
                 transition_target_names=self.transition_target_names,
@@ -676,105 +776,114 @@ class _EGMPeriodKernel:
             boundary_next_liquid,
         )
 
-    def cores(self) -> Mapping[str, Callable]:
-        """Return the single EGM-step core under the `"main"` key."""
-        return MappingProxyType({"main": self.core})
+
+@dataclass(frozen=True, kw_only=True)
+class _EGMPeriodKernel:
+    """The 1-D EGM period kernel: one native dense program around the shared core.
+
+    `main` runs `egm_one_asset_step` for the period and publishes the value
+    array and the marginal-value carry a parent EGM regime interpolates. The
+    one-row kernel has no product axis to stream over and reads its continuation
+    from the target's carry alone, so the program is deliberately dense and
+    declares no target value access. Calling the kernel builds the program's
+    arguments through its declared builder and returns a public `KernelOutput`.
+    """
+
+    _core_programs: Mapping[str, CoreProgram]
+    """The immutable one-node program graph, `main`."""
+
+    regime_name: RegimeName
+    """Name of the regime whose flat params this kernel projects."""
+
+    continuation_target: RegimeName
+    """The regime active next period; its carry continues this one."""
+
+    liquid_state: StateName
+    """The regime's own name for the state filling the program's liquid role."""
+
+    transition_target_names: tuple[RegimeName, ...]
+    """Names of the regime's transition targets, whose params are unioned in."""
+
+    next_liquid_grid: Float1D
+    """The continuation target's liquid nodes in the *next* period.
+
+    The abscissae of the continuation value and marginal this kernel reads. Equal
+    to this period's own grid unless the liquid state is an `AgeSpecializedGrid`.
+    """
+
+    def __post_init__(self) -> None:
+        """Snapshot the graph and require exactly the `main` program."""
+        programs = MappingProxyType(dict(self._core_programs))
+        if tuple(programs) != ("main",):
+            msg = (
+                "An EGM kernel publishes exactly the program 'main'; got "
+                f"{tuple(programs)}."
+            )
+            raise ValueError(msg)
+        object.__setattr__(self, "_core_programs", programs)
+
+    def core_programs(self) -> Mapping[str, CoreProgram]:
+        """Return the native graph used by eager, JIT, AOT, and replay paths."""
+        return self._core_programs
 
     def with_fixed_params(self, *, fixed_flat_params: FlatParams) -> _EGMPeriodKernel:
-        """Bind the regime's and its targets' fixed params into the core."""
-        bound = _union_fixed_params(
+        """Bind the regime's and its targets' fixed params into the program.
+
+        The core receives them as bound keywords; the builder keeps them so the
+        declared law reads the same params the core does.
+        """
+        bound = union_fixed_params(
             fixed_flat_params=fixed_flat_params,
             regime_name=self.regime_name,
             transition_target_names=self.transition_target_names,
         )
         if not bound:
             return self
+        program = self._core_programs["main"]
+        argument_builder = cast("_EGMArgumentBuilder", program.argument_builder)
         return replace(
             self,
-            core=functools.partial(self.core, **bound),
-            bound_params=MappingProxyType(dict(bound)),
-        )
-
-    def build_lower_args(
-        self,
-        *,
-        core_key: str = "main",  # noqa: ARG002
-        state_action_space: StateActionSpace,
-        next_regime_to_V_arr: Mapping[RegimeName, FloatND],  # noqa: ARG002
-        next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
-        flat_params: FlatParams,
-        period: int,  # noqa: ARG002
-        ages: AgeGrid,  # noqa: ARG002
-    ) -> Mapping[str, object]:
-        """Build the core's lowering arguments: state, continuation, law, params."""
-        next_carry = next_regime_to_continuation[self.continuation_target]
-        (
-            effective_savings_grid,
-            next_liquid,
-            marginal_return,
-            boundary_savings_targets,
-            boundary_next_liquid,
-        ) = self._law_readings(
-            flat_params=flat_params,
-            next_breakpoints=next_carry.breakpoints,
-        )
-        return {
-            "liquid": state_action_space.states[self.liquid_state],
-            "next_liquid_grid": next_carry.endog_grid,
-            "next_liquid": next_liquid,
-            "marginal_return": marginal_return,
-            "effective_savings_grid": effective_savings_grid,
-            "boundary_savings_targets": boundary_savings_targets,
-            "boundary_next_liquid": boundary_next_liquid,
-            "next_value": next_carry.value,
-            "next_marginal": next_carry.marginal_utility,
-            **_union_free_params(
-                flat_params=flat_params,
-                regime_name=self.regime_name,
-                transition_target_names=self.transition_target_names,
+            _core_programs=MappingProxyType(
+                {
+                    "main": replace(
+                        program,
+                        function=functools.partial(program.function, **bound),
+                        argument_builder=replace(
+                            argument_builder,
+                            bound_params=MappingProxyType(
+                                {**argument_builder.bound_params, **bound}
+                            ),
+                        ),
+                    )
+                }
             ),
-        }
+        )
 
     def __call__(
         self,
         *,
         compiled_cores: Mapping[str, Callable],
         state_action_space: StateActionSpace,
-        next_regime_to_V_arr: Mapping[RegimeName, FloatND],  # noqa: ARG002
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
         flat_params: FlatParams,
-        period: int,  # noqa: ARG002
-        ages: AgeGrid,  # noqa: ARG002
+        period: int,
+        ages: AgeGrid,
         logger: logging.Logger,  # noqa: ARG002
     ) -> KernelOutput:
-        """Run the 1-D EGM step and publish its typed continuation."""
-        next_carry = next_regime_to_continuation[self.continuation_target]
-        (
-            effective_savings_grid,
-            next_liquid,
-            marginal_return,
-            boundary_savings_targets,
-            boundary_next_liquid,
-        ) = self._law_readings(
-            flat_params=flat_params,
-            next_breakpoints=next_carry.breakpoints,
-        )
-        V_arr, carry = compiled_cores["main"](
-            liquid=state_action_space.states[self.liquid_state],
-            next_liquid_grid=next_carry.endog_grid,
-            next_liquid=next_liquid,
-            marginal_return=marginal_return,
-            effective_savings_grid=effective_savings_grid,
-            boundary_savings_targets=boundary_savings_targets,
-            boundary_next_liquid=boundary_next_liquid,
-            next_value=next_carry.value,
-            next_marginal=next_carry.marginal_utility,
-            **_union_free_params(
+        """Run the compiled `main` program and publish its typed continuation."""
+        program = self._core_programs["main"]
+        arguments = program.argument_builder(
+            CoreBuildContext(
+                state_action_space=state_action_space,
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                next_regime_to_continuation=next_regime_to_continuation,
                 flat_params=flat_params,
-                regime_name=self.regime_name,
-                transition_target_names=self.transition_target_names,
-            ),
+                period=period,
+                ages=ages,
+            )
         )
+        V_arr, carry = compiled_cores["main"](**arguments)
         return KernelOutput(
             value=V_arr,
             continuations={EGM_CONTINUATION: carry},

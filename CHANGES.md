@@ -7,6 +7,70 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Every built-in kernel on the public execution contract
+
+- Every shipped period kernel — plain EGM, DC-EGM, NEGM, NB-EGM, NNBEGM (finite
+  and adaptive), grid search, and the engine's terminal-carry wrapper — publishes
+  a native core-program graph and returns a `KernelOutput`. The centralized legacy
+  adapter is gone, and with it `require_legacy_kernel_result`,
+  `normalize_kernel_output`, `KernelResult`, the `UNPLANNED` layout, and the
+  post-hoc repair that moved a kernel's published value onto its template's
+  placement. A value now lands in its declared placement or the solve fails.
+- NEGM's outer sweep over the durable margin is one compiled program driven by
+  `jax.lax.map` rather than a Python chunk loop, with `outer_batch_size` selecting
+  the block width. Solved values are invariant to that width to within a few units
+  in the last place; the support of the compiled DC-EGM adjuster at float32 is not,
+  because each width is a separate XLA kernel, so support identity is asserted
+  under float64 only.
+- NB-EGM reads its continuation once per branch equivalence class rather than once
+  per discrete action, and a solve retaining only values never compiles or lowers
+  the replay program.
+
+### A public contract for out-of-tree solvers
+
+- A solver can be written against `lcm.solvers`, `lcm.solver_api`, `lcm.typing`
+  and `lcm.grids` alone. Those modules now export the execution-contract types a
+  solver constructs (`CoreProgram`, `CoreBuildContext`, `CoreExecutionRequirements`,
+  `CoreExecutionDisposition`, `ProgramScope`, `StreamableProductAxis`,
+  `ReductionSemantics`, `OutputRole`, `StateAxesLeading`, `PeriodKernel`,
+  `StateActionSpace`), the continuation types and helpers
+  (`ContinuationSpec`, `EGMContinuationSpec`, `EGMContinuationLayout`,
+  `ContinuationArtifact`, `period_to_continuation_target`, `target_period_grid`,
+  `union_free_params`, `union_fixed_params`), the parameter aliases
+  (`FlatParams`, `FlatRegimeParams`, `EconFunction`, `EconFunctionsMapping`), and
+  `ContinuousGrid`. The surface stays experimental: see
+  [Custom solvers](reference/custom_solvers.md) for what is still missing.
+- `Solver.requires_continuation` is replaced by `Solver.required_continuation_keys`,
+  a frozenset of `ArtifactKey`. Model building matches every declared key against
+  what each reachable target publishes and refuses the model, naming both regimes
+  and the demanded version, before anything compiles.
+- The rolling continuation channel is keyed rather than concrete. A period kernel
+  may publish any payload satisfying the `ContinuationArtifact` protocol under its
+  own versioned key, and the engine stores and rolls it without reading its
+  fields.
+- Every regime declares one replay route, `SimulationPhase.replay_route`, carrying
+  a `ReplayMode` of `EXACT_REPLAY`, `VALID_RECOMPUTATION`, or `UNSUPPORTED`, the
+  exact payload class it retains, and the reader that consumes it. Forward
+  simulation and the pre-simulation payload check dispatch on that route instead
+  of on the class of whatever payload a solve happened to keep, and a mismatched
+  payload is refused with both the declared and the supplied class named.
+
+### Tile-local NB-EGM ride-along execution
+
+- A regime carrying ride-along co-states solves each period in one tile-local
+  `NBEGM` core: every cell block's transition-aware continuation read (the
+  complete expectation over reachable targets and stochastic nodes, on the savings
+  grid) is consumed by that block's envelope solve inside the same compiled body,
+  so the expected-continuation stacks over every cell are never a complete array
+  and never a core argument. The period kernel publishes a native two-program
+  graph with planned outputs: `main` for a values-only solve (the value array and
+  the carry) and `replay` for a solve retaining replay artifacts (adding the
+  consumption policy and the conditional branch banks). A direct scalar oracle in
+  the test suite, independent of the production expectation and envelope code,
+  replaces the split continuation and envelope cores; the compile-only fused
+  replay experiment is replaced by a per-period core memory analyzer that lowers
+  the production programs.
+
 ### Gated edges into targets with disjoint activity windows
 
 - Simulation reads a gated edge's gate references and leg fallbacks only in the

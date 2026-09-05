@@ -150,3 +150,21 @@ outer_unchanged: FunctionName = "__outer_unchanged__"
 # the assembled regime DAG. A sentinel, rather than a generated callable, keeps
 # the public declaration serialisable and avoids callable-wrapper behaviour under
 # the project's beartype claw.
+
+
+# The engine's typing module imports this one, so the four solver-contract
+# aliases it defines are resolved lazily rather than imported at module load.
+
+_ENGINE_ALIASES = frozenset(
+    {"EconFunction", "EconFunctionsMapping", "FlatParams", "FlatRegimeParams"}
+)
+
+
+def __getattr__(name: str) -> object:
+    """Resolve the solver-contract aliases the engine defines."""
+    if name in _ENGINE_ALIASES:
+        import _lcm.typing as engine_typing  # noqa: PLC0415
+
+        return getattr(engine_typing, name)
+    msg = f"module 'lcm.typing' has no attribute {name!r}"
+    raise AttributeError(msg)

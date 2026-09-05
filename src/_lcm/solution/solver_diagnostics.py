@@ -3,9 +3,10 @@
 A continuous-outer solve is only inference-grade when its numerical error is
 *observable*: how far the interpolant strays from exact solves, how wide the
 final refinement brackets are, how much population-relevant state mass sits at
-bounds or branch ties. Solvers publish those observations through
-`SolverDiagnostics` on their `KernelResult`; the engine treats the payload as
-opaque cargo (no solver-type switch), and downstream release gates read it.
+bounds or branch ties. Solvers publish those observations as a
+`SolverDiagnostics` on the auxiliary channel of their `KernelOutput`; the
+engine treats the payload as opaque cargo (no solver-type switch), and
+downstream release gates read it.
 
 The finite-grid solvers publish nothing (`None`); the continuous-outer solver
 fills the fields it can measure. Every field is optional-by-shape rather than

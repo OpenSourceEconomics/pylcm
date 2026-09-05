@@ -11,8 +11,9 @@ gate below buys branch faithfulness at the switches, not exactness within a
 branch.
 
 A requesting solve can retain it alongside the value-function arrays. Forward
-simulation requests it only when a regime qualifies
-(`SimulationPhase.egm_policy_read`): the subject's row — indexed by
+simulation requests it only for a regime whose declared route names this class
+as its `payload_type` (`SimulationPhase.replay_route`): the subject's row —
+indexed by
 its discrete states — is interpolated at the subject's resources, replacing the
 action-grid argmax value of the continuous action, subject to a post-read
 feasibility check (in-support, finite, positive, within the intrinsic budget).
@@ -164,6 +165,27 @@ def _unflatten_egm_sim_policy(
 jax.tree_util.register_pytree_node(
     EGMSimPolicy, _flatten_egm_sim_policy, _unflatten_egm_sim_policy
 )
+
+
+def egm_sim_policy_role_tree(
+    *,
+    row: object,
+    row_discrete_state_names: tuple[StateName, ...],
+    row_passive_state_names: tuple[StateName, ...],
+    row_discrete_action_names: tuple[ActionName, ...],
+) -> EGMSimPolicy:
+    """Build an `EGMSimPolicy`-shaped tree of output roles.
+
+    A kernel declares its policy outputs with the same pytree structure as the
+    policy it publishes, row names included: one role for each of the four
+    refined-grid rows. The leaves are role declarations rather than arrays, so
+    the tree is assembled through the pytree unflatten rather than the
+    runtime-checked constructor.
+    """
+    return _unflatten_egm_sim_policy(
+        (row_discrete_state_names, row_passive_state_names, row_discrete_action_names),
+        (row, row, row, row),
+    )
 
 
 @dataclass(frozen=True, kw_only=True)

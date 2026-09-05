@@ -20,6 +20,7 @@ from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
 from _lcm.regime_building import processing as regime_processing
 from _lcm.solution import artifacts as private_artifacts
 from _lcm.solution import backward_induction
+from _lcm.solution.contract import GENERATED_REPLAY_AUTHORITY
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from _lcm.typing import (
     FlatParams,
@@ -295,7 +296,7 @@ def test_solve_retains_kernel_diagnostics_only_when_log_level_enables_them(
     original = backward_induction._run_period_kernel
 
     def _with_diagnostics(**kwargs: object):
-        kernel_result = original(**kwargs)  # ty: ignore[invalid-argument-type]
+        output = original(**kwargs)  # ty: ignore[invalid-argument-type]
         scalar = jnp.asarray(0.0)
         flag = jnp.zeros((), dtype=jnp.bool_)
         diagnostics = SolverDiagnostics(
@@ -310,7 +311,10 @@ def test_solve_retains_kernel_diagnostics_only_when_log_level_enables_them(
             unresolved_mask=flag,
             n_outer_all_invalid_cells=jnp.asarray(0, dtype=jnp.int32),
         )
-        return replace(kernel_result, diagnostics=diagnostics)
+        return replace(
+            output,
+            auxiliary={**output.auxiliary, SOLVER_DIAGNOSTICS: diagnostics},
+        )
 
     monkeypatch.setattr(backward_induction, "_run_period_kernel", _with_diagnostics)
     model = _two_period_bequest_model()
@@ -1005,10 +1009,19 @@ def test_adaptive_policy_omission_is_derived_from_model_authority(
     original = backward_induction._run_period_kernel
 
     def _without_policy(**kwargs: object):
+        output = original(**kwargs)  # ty: ignore[invalid-argument-type]
         return replace(
-            original(**kwargs),  # ty: ignore[invalid-argument-type]
-            simulation_policy=None,
-            generated_replay_authority=None,
+            output,
+            replay={
+                key: payload
+                for key, payload in output.replay.items()
+                if key != SIMULATION_POLICY
+            },
+            auxiliary={
+                key: payload
+                for key, payload in output.auxiliary.items()
+                if key != GENERATED_REPLAY_AUTHORITY
+            },
         )
 
     monkeypatch.setattr(backward_induction, "_run_period_kernel", _without_policy)
@@ -1208,3 +1221,88 @@ def _with_artifact(
         solution,
         **{channel: replacement},
     )
+
+
+def _policy_refs(solution: SolutionResult) -> set[ArtifactRef]:
+    """Every simulation-policy coordinate the result accounts for."""
+    return {
+        ref
+        for ref in (*solution.replay_artifacts, *solution.omissions)
+        if ref.key == SIMULATION_POLICY
+    }
+
+
+def test_all_persistable_omits_the_adaptive_nnbegm_policy_as_not_persisted() -> None:
+    """The adaptive replay policy reads solve-generated mesh facts held only by
+    the solving model instance, so no persistable retention keeps it."""
+    model = _build("adaptive")
+    solution = model.solve(
+        params=_PARAMS,
+        log_level="off",
+        retention=ResultRetention.ALL_PERSISTABLE_ARTIFACTS,
+    )
+
+    refs = _policy_refs(solution)
+    assert refs
+    assert not any(ref in solution.replay_artifacts for ref in refs)
+    assert {solution.omissions[ref] for ref in refs} == {OmissionReason.NOT_PERSISTED}
+
+
+def test_all_persistable_retains_the_finite_nnbegm_policy() -> None:
+    """The finite candidate bank is self-contained, so it persists."""
+    model = _build("finite")
+    solution = model.solve(
+        params=_PARAMS,
+        log_level="off",
+        retention=ResultRetention.ALL_PERSISTABLE_ARTIFACTS,
+    )
+
+    refs = _policy_refs(solution)
+    assert refs
+    assert all(
+        isinstance(solution.replay_artifacts[ref], NNBEGMSimPolicy) for ref in refs
+    )
+
+
+def test_values_and_replay_retains_the_adaptive_nnbegm_policy() -> None:
+    model = _build("adaptive")
+    solution = model.solve(
+        params=_PARAMS,
+        log_level="off",
+        retention=ResultRetention.VALUES_AND_REPLAY,
+    )
+
+    refs = _policy_refs(solution)
+    assert refs
+    assert all(
+        isinstance(solution.replay_artifacts[ref], NestedEGMSimPolicy) for ref in refs
+    )
+
+
+def test_not_persisted_adaptive_policy_is_refused_before_forward_simulation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = _build("adaptive")
+    solution = model.solve(
+        params=_PARAMS,
+        log_level="off",
+        retention=ResultRetention.ALL_PERSISTABLE_ARTIFACTS,
+    )
+
+    def _forward_loop_must_not_run(**_kwargs: object) -> None:
+        raise AssertionError("forward simulation ran before replay preflight")
+
+    monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
+    with pytest.raises(
+        InvalidSimulationInputError,
+        match=(
+            r"pylcm\.simulation\.policy.*not_persisted"
+            r"(.|\n)*AdaptiveOuterMesh(.|\n)*VALUES_AND_REPLAY"
+        ),
+    ):
+        model.simulate(
+            params=_PARAMS,
+            initial_conditions=dict(_INITIAL),
+            solution=solution,
+            log_level="off",
+        )

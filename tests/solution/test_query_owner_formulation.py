@@ -200,6 +200,8 @@ def test_distinct_slopes_are_not_collapsed_onto_one_tie_break_key(
         right_available=eligible,
         slope_high=slope_high,
         slope_low=slope_low,
+        # Distinct identities, so the slope fields alone decide this witness.
+        stable_index=jnp.asarray([[0, 1]], dtype=jnp.int32),
     )
 
     assert _key_at(key=key, column=0) != _key_at(key=key, column=1)

@@ -1,18 +1,22 @@
 """The NEGM solver (nested endogenous grid method, Druedahl 2021).
 
 `NEGM` nests a `DCEGM` inner solve: a per-durable-node passive keeper alongside
-one adjuster sweep per exogenous outer post-decision node, whose conditional
+one adjuster solve per exogenous outer post-decision node, whose conditional
 carries are lifted into common cash-on-hand (via the declared outer cost) and
 stacked; the parent read collapses the candidate axis by the exact query-side
-maximum. `_NEGMPeriodKernel` carries two cores (`"keeper"` / `"adjuster"`)
-wrapped from the inner DC-EGM kernels; the AOT contract lowers and dispatches
-each by key.
+maximum. `_NEGMPeriodKernel` publishes a native two-program graph: `keeper` is
+the inner keeper's own program under a new name, and `outer_sweep` is one
+deliberately dense program that maps the inner adjuster over the outer grid,
+takes the exact maximum with the keeper value, and stacks every candidate carry.
+The sweep binds the keeper's outputs at runtime: the graph declares no typed
+internal outputs, so the kernel runs `keeper` first and hands its value and
+carry to `outer_sweep` in place of the placeholders its builder lowers with.
 """
 
 import functools
 import logging
 from collections.abc import Callable, Hashable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import cast
 
@@ -30,19 +34,24 @@ from _lcm.constraints.routes import (
     ConstraintSite,
 )
 from _lcm.continuation import EGMContinuationLayout, EGMContinuationSpec
-from _lcm.egm.carry import EGMCarry
+from _lcm.egm.carry import EGMCarry, egm_carry_role_tree
+from _lcm.egm.outer_envelope import build_stacked_outer_carry
 from _lcm.engine import StateActionSpace
 from _lcm.execution.core_program import (
+    CoreArgumentBuilder,
     CoreBuildContext,
+    CoreExecutionDisposition,
+    CoreExecutionRequirements,
+    CoreProgram,
     core_program_graph,
-    materialize_core_program,
 )
+from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from _lcm.grids import ContinuousGrid
 from _lcm.processes.base import _ContinuousStochasticProcess
+from _lcm.solution.continuation_target import union_fixed_params
 from _lcm.solution.contract import (
     ConstraintRouteContext,
     ContinuationPayload,
-    KernelResult,
     ParamCheck,
     PeriodKernel,
     SolutionKernels,
@@ -55,7 +64,6 @@ from _lcm.solution.contract import (
     simulation_route,
 )
 from _lcm.solution.dcegm import DCEGM, _BoundDCEGM, _combination_inputs
-from _lcm.solution.kernel_output import require_legacy_kernel_result
 from _lcm.typing import (
     EconFunction,
     EconFunctionsMapping,
@@ -64,6 +72,7 @@ from _lcm.typing import (
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidParamsError, RegimeInitializationError
+from lcm.solver_api import EGM_CONTINUATION, ArtifactKey, KernelOutput
 from lcm.typing import (
     ActionName,
     Float1D,
@@ -73,6 +82,21 @@ from lcm.typing import (
     StateName,
     StateOrActionName,
 )
+
+_NEGM_SWEEP_DENSE_REASON = (
+    "deliberately_dense:negm_outer_candidates_retained_not_reduced"
+)
+# The keeper's outputs and the sweep's own inputs enter the compiled sweep next
+# to the inner adjuster's arguments, under engine-only names. A public regime,
+# function, state, or action name cannot contain the ``__`` qualified-name
+# separator, and a generated qualified parameter name always has a non-empty
+# component before its separator, so a key that starts with the separator can
+# never be produced by a supported model.
+_TRANSPORT_PREFIX = "__lcm_negm_"
+_KEEPER_VALUE = f"{_TRANSPORT_PREFIX}keeper_value"
+_KEEPER_CARRY = f"{_TRANSPORT_PREFIX}keeper_carry"
+_OUTER_NODES = f"{_TRANSPORT_PREFIX}outer_nodes"
+_COH_SHIFTS = f"{_TRANSPORT_PREFIX}coh_shifts"
 
 
 @beartype(conf=REGIME_CONF)
@@ -121,12 +145,13 @@ class NEGM(TwoMarginSolver):
     r"""Exogenous grid over the outer post-decision margin $s_t^\textit{post-dec}$."""
 
     outer_batch_size: int = 0
-    """Number of outer-grid nodes solved per chunk of the outer sweep.
+    """Number of outer-grid nodes solved per block of the compiled outer sweep.
 
-    Bounds the *solve-side* chunk transients only: each chunk's per-node
-    intermediate buffers are materialised and released together, so they never
-    grow with the whole outer grid. It does not bound the period's peak, whose
-    remaining candidate-scaled contributions chunking cannot remove:
+    The sweep maps the inner adjuster over the exogenous outer grid in blocks
+    of this many nodes; a block is the vector width the adjuster is compiled
+    for, so the knob bounds the *solve-side* block transients only. It does not
+    bound the period's peak, whose remaining candidate-scaled contributions
+    blocking cannot remove:
 
     - the candidate *carries* are all retained — the published stacked
       continuation holds every outer candidate (`(A+1) * n_pad` grid slots per
@@ -136,11 +161,11 @@ class NEGM(TwoMarginSolver):
     - the parent's continuation read prepares a search key of the full stacked
       shape and evaluates every candidate per query.
 
-    A positive value processes that many nodes at once (their independent
-    solves overlap); `0` (the default) solves every node at once — fastest,
-    but its solve-side peak grows with the outer-grid size. It is a
-    memory-vs-parallelism knob only: the solved value function is identical
-    across batch sizes.
+    A positive value solves that many nodes per block; `0` (the default)
+    solves every node in one block — fastest, but its solve-side peak grows
+    with the outer-grid size. It is a memory-vs-parallelism knob only: the
+    solved value function and every carry leaf agree across batch sizes to
+    the working format's spacing.
     """
 
     def __post_init__(self) -> None:
@@ -173,9 +198,9 @@ class NEGM(TwoMarginSolver):
         )
 
     @property
-    def requires_continuation(self) -> bool:
+    def required_continuation_keys(self) -> frozenset[ArtifactKey]:
         """NEGM nests a DC-EGM solve that inverts the Euler equation."""
-        return True
+        return frozenset({EGM_CONTINUATION})
 
     @property
     def egm_continuation_layout(self) -> EGMContinuationLayout:
@@ -438,7 +463,7 @@ class NEGM(TwoMarginSolver):
             keeper_continuation_template = (
                 None
                 if group_keeper_kernels.continuation_spec is None
-                else group_keeper_kernels.continuation_spec.template
+                else cast("EGMCarry", group_keeper_kernels.continuation_spec.template)
             )
             group_coh_shift_func = _build_coh_shift_function(
                 functions=group_functions,
@@ -467,18 +492,21 @@ class NEGM(TwoMarginSolver):
                 durable_state, representative_durable_values
             )
 
+        carry_row_state_names = discrete_state_names + passive_state_names
         period_kernels = MappingProxyType(
             {
                 period: _NEGMPeriodKernel(
                     keeper_kernel=keeper_kernels_by_period[period],
                     adjuster_kernel=adjuster_kernel,
                     regime_name=context.regime_name,
+                    transition_target_names=tuple(context.transitions),
                     outer_grid_values=outer_grid_values,
-                    durable_state=durable_state,
                     outer_post_decision=bound_self.outer_post_decision,
                     coh_shift_func=coh_shift_by_period[period],
                     durable_grid_values=_durable_values_at(period),
                     durable_axis_in_carry=durable_axis_in_carry,
+                    carry_row_state_names=carry_row_state_names,
+                    keeper_carry_template=keeper_continuation_template,
                     outer_batch_size=bound_self.outer_batch_size,
                 )
                 for period, adjuster_kernel in adjuster_kernels.period_kernels.items()
@@ -562,43 +590,49 @@ class _BoundNEGM(NEGM):
 
 @dataclass(frozen=True, kw_only=True)
 class _NEGMPeriodKernel:
-    """The NEGM period adapter — a keeper plus an adjuster outer search.
+    """The NEGM period kernel — a keeper program and a compiled outer sweep.
 
-    Holds two inner DC-EGM period adapters and the exogenous outer grid. The
-    outer durable choice splits into two distinct traced programs:
+    Holds two inner DC-EGM period kernels and the exogenous outer grid. The
+    outer durable choice splits into two programs of the kernel's native graph:
 
-    - the *keeper* — a per-durable-state passive DC-EGM (`next_illiquid =
-      illiquid`, identity) that keeps the durable stock unchanged for free
-      (`credited(s, s) = 0`), run once over the full durable grid; and
-    - the *adjuster* — the inner DC-EGM with the outer transition stripped, run
-      once per exogenous outer-grid node with `outer_post_decision` bound to that
-      node as a constant.
+    - `keeper` — the inner keeper's own program, a per-durable-state passive
+      DC-EGM (`next_illiquid = illiquid`, identity) that keeps the durable
+      stock unchanged for free (`credited(s, s) = 0`), run once over the full
+      durable grid; and
+    - `outer_sweep` — one deliberately dense program that maps the inner
+      adjuster (the DC-EGM with the outer transition stripped) over the
+      exogenous outer grid with `outer_post_decision` bound to each node,
+      collapses the value by `V = max(V_keeper, max_j W_j)` and stacks the
+      keeper carry with every node carry, lifted into common cash on hand, on
+      the candidate axis.
 
-    Calling it runs the keeper once and the adjuster once per outer-grid node,
-    then collapses the stacked outer axis by `V = max(V_keeper, V_adjuster_sweep)`
-    — the same shape brute would search, but with the inner consumption margin
-    off-grid (the accuracy win). The adapter is non-jitted: it calls the shared
-    jitted inner cores, matching `_DCEGMPeriodKernel`.
+    The graph declares no typed internal outputs, so the sweep takes the keeper
+    value and carry as arguments: its builder lowers with placeholders in their
+    shape, and calling the kernel runs `keeper`, replaces exactly those two
+    arguments, and dispatches `outer_sweep`. The published simulation policy is
+    absent: a keeper-only proposal cannot represent the joint durable/liquid
+    decision, so simulation retains its canonical full-grid action pair.
     """
 
     keeper_kernel: PeriodKernel
-    """The keeper inner adapter — a passive per-durable-state DC-EGM."""
+    """The keeper inner kernel — a passive per-durable-state DC-EGM."""
 
     adjuster_kernel: PeriodKernel
-    """The adjuster inner adapter whose shared jitted core is swept."""
+    """The adjuster inner kernel whose program the sweep maps over the nodes.
+
+    Held with no fixed params bound: the sweep binds them itself, so periods
+    sharing one adjuster program keep sharing one compiled sweep.
+    """
 
     regime_name: RegimeName
     """Name of the regime whose flat params the outer node binds into."""
 
+    transition_target_names: tuple[RegimeName, ...]
+    """Names of the regime's transition targets, whose fixed params the inner
+    adjuster reads under their namespace."""
+
     outer_grid_values: Float1D
     r"""Exogenous grid over the outer post-decision margin $s_t^\textit{post-dec}$."""
-
-    durable_state: StateName
-    """Name of the durable state the outer margin moves.
-
-    The bound node is the durable's next-period value, so it is published under
-    `next_<durable>` as well for the generic child-carry read.
-    """
 
     outer_post_decision: FunctionName
     """Name of the outer post-decision function bound per outer-grid node."""
@@ -617,43 +651,81 @@ class _NEGMPeriodKernel:
     durable_axis_in_carry: int
     """Position of the durable state among the carry's leading state axes."""
 
+    carry_row_state_names: tuple[StateName, ...]
+    """The discrete then passive state names leading every carry row."""
+
+    keeper_carry_template: EGMCarry
+    """The keeper's carry template, the shape the sweep is lowered against."""
+
     outer_batch_size: int
-    """Outer-grid nodes solved per chunk of the outer sweep.
+    """Outer-grid nodes solved per block of the sweep; `0` is one block."""
 
-    `0` solves every node at once; a positive value bounds the *solve-side*
-    chunk transients only. It does not bound the period's peak: every candidate
-    carry stays resident for the stacked continuation, the unstacked candidate
-    list and the stacked output coexist while the stack is built, and the
-    parent read evaluates the full candidate axis per query. A
-    memory-vs-parallelism knob only — value-invariant.
-    """
+    fixed_sweep_kwargs: Mapping[str, object] = MappingProxyType({})
+    """The regime's and its targets' fixed params, bound into the sweep."""
 
-    def cores(self) -> Mapping[str, Callable]:
-        """Return the keeper and adjuster inner cores, keyed independently.
+    _core_programs: Mapping[str, CoreProgram] = field(
+        init=False, repr=False, compare=False
+    )
+    """The native graph, `keeper` then `outer_sweep`; derived at construction."""
 
-        Each is a distinct traced DC-EGM program — the keeper is a passive
-        per-durable-state solve (`next_illiquid = illiquid`, identity), the
-        adjuster strips that transition and binds the outer node as a constant —
-        so AOT compilation lowers and compiles each under its own key rather than
-        collapsing both into one program.
-        """
-        return MappingProxyType(
-            {
-                "keeper": core_program_graph(kernel=self.keeper_kernel)[
-                    "main"
-                ].function,
-                "adjuster": core_program_graph(kernel=self.adjuster_kernel)[
-                    "main"
-                ].function,
-            }
+    def __post_init__(self) -> None:
+        """Derive the graph from the inner kernels and the sweep's bindings."""
+        keeper = core_program_graph(kernel=self.keeper_kernel)["main"]
+        adjuster = core_program_graph(kernel=self.adjuster_kernel)["main"]
+        sweep_function = functools.partial(
+            _outer_sweep_program,
+            inner_core=adjuster.function,
+            outer_post_decision=self.outer_post_decision,
+            durable_axis=self.durable_axis_in_carry,
+            outer_batch_size=self.outer_batch_size,
+            **self.fixed_sweep_kwargs,
         )
+        row = StateAxesLeading(state_names=self.carry_row_state_names)
+        programs = {
+            "keeper": replace(keeper, name="keeper"),
+            "outer_sweep": CoreProgram(
+                name="outer_sweep",
+                function=sweep_function,
+                argument_builder=_NEGMSweepArgumentBuilder(
+                    adjuster_builder=adjuster.argument_builder,
+                    regime_name=self.regime_name,
+                    outer_post_decision=self.outer_post_decision,
+                    outer_grid_values=self.outer_grid_values,
+                    durable_grid_values=self.durable_grid_values,
+                    coh_shift_func=self.coh_shift_func,
+                    keeper_carry_template=self.keeper_carry_template,
+                ),
+                requirements=CoreExecutionRequirements(),
+                output_roles=(
+                    VALUE,
+                    egm_carry_role_tree(
+                        row=row,
+                        scalar=StateAxesLeading(state_names=(), shape=()),
+                        breakpoints=None,
+                        policy=None,
+                    ),
+                ),
+                disposition=CoreExecutionDisposition.DENSE,
+                disposition_reason=_NEGM_SWEEP_DENSE_REASON,
+                donation_candidates=(),
+            ),
+        }
+        object.__setattr__(self, "_core_programs", MappingProxyType(programs))
+
+    def core_programs(self) -> Mapping[str, CoreProgram]:
+        """Return the native graph used by eager, JIT, AOT, and replay paths."""
+        return self._core_programs
 
     def with_fixed_params(self, *, fixed_flat_params: FlatParams) -> _NEGMPeriodKernel:
-        """Bind the regime's fixed params into both inner kernels and the shift.
+        """Bind the regime's fixed params into the keeper, the sweep, and the shift.
 
-        The cash-on-hand shift evaluates the regime's inner resources, which may
-        read a fixed param, so the same fixed params removed from the live
-        `flat_params` are bound into `coh_shift_func` as well.
+        The keeper binds them into its own program. The sweep binds the union
+        of the regime's and its targets' fixed params as its own keyword
+        arguments, which it forwards to the inner adjuster per node; binding
+        them on the sweep rather than on the adjuster's program keeps one
+        compiled sweep per adjuster program across periods. The cash-on-hand
+        shift evaluates the regime's inner resources, which may read a fixed
+        param, so the same values are bound into `coh_shift_func` as well.
         """
         regime_fixed = dict(
             fixed_flat_params.get(self.regime_name, MappingProxyType({}))
@@ -666,56 +738,18 @@ class _NEGMPeriodKernel:
             keeper_kernel=self.keeper_kernel.with_fixed_params(
                 fixed_flat_params=fixed_flat_params
             ),
-            adjuster_kernel=self.adjuster_kernel.with_fixed_params(
-                fixed_flat_params=fixed_flat_params
-            ),
             coh_shift_func=coh_shift_func,
-        )
-
-    def build_lower_args(
-        self,
-        *,
-        core_key: str,
-        state_action_space: StateActionSpace,
-        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-        next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
-        flat_params: FlatParams,
-        period: int,
-        ages: AgeGrid,
-    ) -> Mapping[str, object]:
-        """Delegate the named inner core's lowering arguments.
-
-        The keeper is a normal passive DC-EGM, lowered straight off the inner
-        kernel with no outer-node binding (its `next_illiquid = illiquid`
-        identity sources the durable as a genuine passive state). The adjuster
-        binds `outer_post_decision` into the regime's flat params at the first
-        outer-grid node, so its lowered inner program matches the shape every
-        per-node call traces; the outer axis is added outside the jitted core by
-        the `__call__` sweep.
-        """
-        if core_key == "keeper":
-            kernel = self.keeper_kernel
-            program_flat_params = flat_params
-        else:
-            kernel = self.adjuster_kernel
-            program_flat_params = _with_outer_post_decision(
-                flat_params=flat_params,
-                regime_name=self.regime_name,
-                outer_post_decision=self.outer_post_decision,
-                value=self.outer_grid_values[0],
-            )
-        declaration = core_program_graph(kernel=kernel)["main"]
-        return materialize_core_program(
-            program=declaration,
-            context=CoreBuildContext(
-                state_action_space=state_action_space,
-                next_regime_to_V_arr=next_regime_to_V_arr,
-                next_regime_to_continuation=next_regime_to_continuation,
-                flat_params=program_flat_params,
-                period=period,
-                ages=ages,
+            fixed_sweep_kwargs=MappingProxyType(
+                {
+                    **self.fixed_sweep_kwargs,
+                    **union_fixed_params(
+                        fixed_flat_params=fixed_flat_params,
+                        regime_name=self.regime_name,
+                        transition_target_names=self.transition_target_names,
+                    ),
+                }
             ),
-        ).arguments
+        )
 
     def __call__(
         self,
@@ -728,117 +762,212 @@ class _NEGMPeriodKernel:
         period: int,
         ages: AgeGrid,
         logger: logging.Logger,
-    ) -> KernelResult:
-        r"""Run keeper and adjuster sweep, collapse by `max`, assemble the result.
+    ) -> KernelOutput:
+        r"""Run the keeper, then the sweep with the keeper's outputs bound.
 
-        The keeper runs the passive DC-EGM once, yielding the value of leaving the
-        durable stock unchanged at every durable state. For each exogenous
-        outer-grid node $s_{t,j}^\textit{post-dec}$, the adjuster runs with
-        `outer_post_decision` bound to $s_{t,j}^\textit{post-dec}$, yielding `W_j`,
-        the inner value over the liquid endogenous grid at durable
-        $s_{t,j}^\textit{post-dec}$. The outer axis is collapsed into the value array by
-        `V = max(V_keeper, max_j W_j)`, and every candidate carry is retained in
+        The keeper runs the passive DC-EGM once, yielding the value of leaving
+        the durable stock unchanged at every durable state. The sweep solves
+        the adjuster at every exogenous outer-grid node $s_{t,j}^\textit{post-dec}$,
+        collapses the outer axis into the value array by
+        `V = max(V_keeper, max_j W_j)`, and retains every candidate carry in
         the published continuation so the parent read can take the exact
-        `max_j V_j(q)` at its own query. The published simulation policy is the
-        keeper's off-grid inner consumption function; the outer durable choice is
-        re-optimized by grid argmax at simulate time, not carried on this axis.
+        `max_j V_j(q)` at its own query.
         """
-        keeper_result = require_legacy_kernel_result(
-            output=self.keeper_kernel(
-                compiled_cores={"main": compiled_cores["keeper"]},
-                state_action_space=state_action_space,
-                next_regime_to_V_arr=next_regime_to_V_arr,
-                next_regime_to_continuation=next_regime_to_continuation,
-                flat_params=flat_params,
-                period=period,
-                ages=ages,
-                logger=logger,
-            ),
-            consumer="NEGM keeper wrapper",
+        keeper_output = self.keeper_kernel(
+            compiled_cores={"main": compiled_cores["keeper"]},
+            state_action_space=state_action_space,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            next_regime_to_continuation=next_regime_to_continuation,
+            flat_params=flat_params,
+            period=period,
+            ages=ages,
+            logger=logger,
         )
-        # The published continuation retains every outer candidate: the keeper
-        # and each adjuster carry, lifted into a common cash-on-hand axis and
-        # stacked on a candidate axis. The parent period's continuation read
-        # takes the exact `max_j V_j(q)` over that axis at its own query, so an
-        # adjuster that wins strictly between keeper nodes is read at its true
-        # value there — never bridged upward by interpolating a node-sampled
-        # maximum.
-        coh_shifts = self.coh_shift_func(
-            durable_values=self.durable_grid_values,
-            outer_values=self.outer_grid_values,
-            **flat_params[self.regime_name],
-        )
-        # Sweep the adjuster outer-grid nodes in chunks of `outer_batch_size`:
-        # each chunk's independent solves overlap, and blocking on the chunk
-        # bounds the *solve*-side peak (the per-node intermediate buffers) to
-        # one chunk. The candidate carries themselves are all retained — the
-        # `(A+1) * n_pad` resident width is inherent to the exact query-side
-        # maximum, not a fold artifact. The keeper and every adjuster are
-        # DC-EGM kernels, so each always publishes a continuation carry.
-        keeper_carry = cast("EGMCarry", keeper_result.continuation)
-        V_arr = keeper_result.V_arr
-        nodes = self._outer_nodes()
-        adjuster_carries: list[EGMCarry] = []
-        chunk_size = self.outer_batch_size or len(nodes)
-        for chunk_start in range(0, len(nodes), chunk_size):
-            chunk_results = [
-                require_legacy_kernel_result(
-                    output=self.adjuster_kernel(
-                        compiled_cores={"main": compiled_cores["adjuster"]},
-                        state_action_space=state_action_space,
-                        next_regime_to_V_arr=next_regime_to_V_arr,
-                        next_regime_to_continuation=next_regime_to_continuation,
-                        flat_params=_with_outer_post_decision(
-                            flat_params=flat_params,
-                            regime_name=self.regime_name,
-                            outer_post_decision=self.outer_post_decision,
-                            value=node,
-                        ),
-                        period=period,
-                        ages=ages,
-                        logger=logger,
-                    ),
-                    consumer="NEGM adjuster wrapper",
+        keeper_value = jnp.asarray(keeper_output.value)
+        keeper_carry = cast("EGMCarry", keeper_output.continuations[EGM_CONTINUATION])
+        arguments = dict(
+            self._core_programs["outer_sweep"].argument_builder(
+                CoreBuildContext(
+                    state_action_space=state_action_space,
+                    next_regime_to_V_arr=next_regime_to_V_arr,
+                    next_regime_to_continuation=next_regime_to_continuation,
+                    flat_params=flat_params,
+                    period=period,
+                    ages=ages,
                 )
-                for node in nodes[chunk_start : chunk_start + chunk_size]
-            ]
-            for adjuster_result in chunk_results:
-                V_arr = jnp.maximum(V_arr, adjuster_result.V_arr)
-                adjuster_carries.append(cast("EGMCarry", adjuster_result.continuation))
-            # Force the chunk's results to device before the next chunk. Without
-            # this the lazy sweep accumulates a dependency on every chunk's
-            # solves at once — the solve-side peak would grow with the whole
-            # outer grid rather than one chunk — and the chunk's independent
-            # solves could not overlap.
-            V_arr, _ = jax.block_until_ready((V_arr, adjuster_carries[chunk_start:]))
-        from _lcm.egm.outer_envelope import build_stacked_outer_carry  # noqa: PLC0415
-
-        carry = build_stacked_outer_carry(
+            )
+        )
+        _fail_if_keeper_output_departs_from_its_placeholder(
+            arguments=arguments,
+            keeper_value=keeper_value,
             keeper_carry=keeper_carry,
-            adjuster_carries=tuple(adjuster_carries),
-            coh_shifts=coh_shifts,
-            durable_axis=self.durable_axis_in_carry,
+            regime_name=self.regime_name,
+            period=period,
         )
-        # A keeper-only proposal cannot represent the joint durable/liquid
-        # decision. Publish no finite replay policy so simulation retains its
-        # canonical full-grid action pair.
-        return KernelResult(
-            V_arr=V_arr,
-            continuation=carry,
+        arguments[_KEEPER_VALUE] = keeper_value
+        arguments[_KEEPER_CARRY] = keeper_carry
+        V_arr, carry = compiled_cores["outer_sweep"](**arguments)
+        return KernelOutput(value=V_arr, continuations={EGM_CONTINUATION: carry})
+
+
+@dataclass(frozen=True, kw_only=True)
+class _NEGMSweepArgumentBuilder:
+    """Build the outer sweep's arguments for lowering and execution.
+
+    Delegates to the inner adjuster's builder with the outer post-decision
+    bound at the first outer node, so the per-node arguments have exactly the
+    shape the sweep traces, and adds the sweep's own inputs: the outer nodes,
+    the credited-cost shifts, and the keeper value and carry as zero-filled
+    placeholders in the keeper outputs' shape. The kernel replaces the
+    placeholders by the keeper's outputs at runtime.
+    """
+
+    adjuster_builder: CoreArgumentBuilder
+    """The inner adjuster program's own argument builder."""
+
+    regime_name: RegimeName
+    """Name of the regime whose flat params receive the bound node."""
+
+    outer_post_decision: FunctionName
+    """Name of the outer post-decision function the node is bound as."""
+
+    outer_grid_values: Float1D
+    """The exogenous outer grid the sweep maps over."""
+
+    durable_grid_values: Float1D
+    """The durable state's grid used for the credited-cost lift."""
+
+    coh_shift_func: Callable[..., FloatND]
+    """The per-(durable, outer-node) cash-on-hand shift of each adjuster."""
+
+    keeper_carry_template: EGMCarry
+    """The keeper's carry template, the placeholder's shape and dtype."""
+
+    def __call__(self, context: CoreBuildContext) -> Mapping[str, object]:
+        """Return the exact kwargs shared by lowering and the runtime call."""
+        flat_params = cast("FlatParams", context.flat_params)
+        state_action_space = cast("StateActionSpace", context.state_action_space)
+        arguments = dict(
+            self.adjuster_builder(
+                replace(
+                    context,
+                    flat_params=_with_outer_post_decision(
+                        flat_params=flat_params,
+                        regime_name=self.regime_name,
+                        outer_post_decision=self.outer_post_decision,
+                        value=self.outer_grid_values[0],
+                    ),
+                )
+            )
         )
+        value_shape = tuple(
+            state_action_space.states[name].shape[0]
+            for name in state_action_space.state_names
+        )
+        own = {
+            _KEEPER_VALUE: jnp.zeros(
+                value_shape, dtype=self.keeper_carry_template.value.dtype
+            ),
+            _KEEPER_CARRY: jax.tree.map(jnp.zeros_like, self.keeper_carry_template),
+            _OUTER_NODES: self.outer_grid_values,
+            _COH_SHIFTS: self.coh_shift_func(
+                durable_values=self.durable_grid_values,
+                outer_values=self.outer_grid_values,
+                **flat_params[self.regime_name],
+            ),
+        }
+        _fail_if_sweep_inputs_collide_with_the_adjusters(
+            arguments=arguments, own=own, regime_name=self.regime_name
+        )
+        return MappingProxyType({**arguments, **own})
 
-    def _outer_nodes(self) -> list[ScalarFloat]:
-        r"""Return the exogenous outer post-decision nodes, each a scalar
-        $s_{t,j}^\textit{post-dec}$.
 
-        The state-specific no-adjustment kink $s_t^\textit{post-dec} = s_t$ a fixed
-        exogenous grid
-        would miss is covered by the keeper, not appended here.
-        """
-        return [
-            self.outer_grid_values[index]
-            for index in range(self.outer_grid_values.shape[0])
-        ]
+def _outer_sweep_program(
+    *,
+    inner_core: Callable[..., tuple[FloatND, EGMCarry, object]],
+    outer_post_decision: FunctionName,
+    durable_axis: int,
+    outer_batch_size: int,
+    **arguments: object,
+) -> tuple[FloatND, EGMCarry]:
+    """Solve the adjuster at every outer node and stack it with the keeper.
+
+    The inner adjuster program runs once per exogenous node with the outer
+    post-decision bound into its arguments, in blocks of `outer_batch_size`
+    nodes (`0`: one block). The value is the exact maximum of the keeper value
+    and every node value; the continuation is the keeper carry followed by
+    every node carry lifted into common cash on hand on the candidate axis.
+
+    The keeper's value and carry, the outer nodes, and the cash-on-hand shifts
+    arrive among `arguments` under the engine-only transport keys; everything
+    else is the inner adjuster's own argument tree.
+    """
+    adjuster_arguments = dict(arguments)
+    keeper_value = cast("FloatND", adjuster_arguments.pop(_KEEPER_VALUE))
+    keeper_carry = cast("EGMCarry", adjuster_arguments.pop(_KEEPER_CARRY))
+    outer_nodes = cast("Float1D", adjuster_arguments.pop(_OUTER_NODES))
+    coh_shifts = cast("FloatND", adjuster_arguments.pop(_COH_SHIFTS))
+    n_nodes = outer_nodes.shape[0]
+
+    def solve_node(node: ScalarFloat) -> tuple[FloatND, EGMCarry]:
+        value, carry, _policy = inner_core(
+            **{**adjuster_arguments, outer_post_decision: node}
+        )
+        return value, carry
+
+    node_values, node_carries = jax.lax.map(
+        solve_node, outer_nodes, batch_size=outer_batch_size or n_nodes
+    )
+    V_arr = jnp.maximum(keeper_value, jnp.max(node_values, axis=0))
+    carry = build_stacked_outer_carry(
+        keeper_carry=keeper_carry,
+        adjuster_carries=tuple(
+            jax.tree.map(lambda leaf, index=index: leaf[index], node_carries)
+            for index in range(n_nodes)
+        ),
+        coh_shifts=coh_shifts,
+        durable_axis=durable_axis,
+    )
+    return V_arr, carry
+
+
+def _fail_if_sweep_inputs_collide_with_the_adjusters(
+    *,
+    arguments: Mapping[str, object],
+    own: Mapping[str, object],
+    regime_name: RegimeName,
+) -> None:
+    collisions = sorted(set(arguments) & set(own))
+    if collisions:
+        msg = (
+            f"Regime '{regime_name}' produced arguments {collisions} that collide "
+            "with the NEGM outer sweep's engine-only transport keys. No supported "
+            "model can produce these names; this is an internal namespace error."
+        )
+        raise RegimeInitializationError(msg)
+
+
+def _fail_if_keeper_output_departs_from_its_placeholder(
+    *,
+    arguments: Mapping[str, object],
+    keeper_value: FloatND,
+    keeper_carry: EGMCarry,
+    regime_name: RegimeName,
+    period: int,
+) -> None:
+    """Refuse a keeper output whose shape the sweep was not lowered against."""
+
+    def describe(tree: object) -> object:
+        return jax.tree.map(lambda leaf: (leaf.shape, str(leaf.dtype)), tree)
+
+    expected = describe((arguments[_KEEPER_VALUE], arguments[_KEEPER_CARRY]))
+    got = describe((keeper_value, keeper_carry))
+    if expected != got:
+        msg = (
+            f"Regime '{regime_name}' in period {period}: the keeper published "
+            f"{got}, but the outer sweep was lowered against {expected}."
+        )
+        raise RuntimeError(msg)
 
 
 def _stack_carry_template(
@@ -1110,9 +1239,9 @@ def _fail_if_outer_batch_size_negative(
     if outer_batch_size < 0:
         msg = (
             f"{solver_name}.outer_batch_size must be non-negative, got "
-            f"{outer_batch_size}. Use 0 to solve every outer-grid node at once, "
-            "or a positive value to fold the outer search in chunks of that "
-            "many nodes."
+            f"{outer_batch_size}. Use 0 to solve every outer-grid node in one "
+            "block, or a positive value to sweep the outer grid in blocks of "
+            "that many nodes."
         )
         raise RegimeInitializationError(msg)
 

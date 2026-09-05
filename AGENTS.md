@@ -613,8 +613,10 @@ schemas and replay metadata are descriptive: both they and their payloads are ch
 independently against immutable descriptors owned by the producing and consuming model.
 Those descriptors come from the canonical model and parameters, plus private solve-side
 facts for data-dependent adaptive axes, and include exact dtypes, ordered axes, action
-roles, and categorical domains. `SolutionResult` persistence and a stable out-of-tree
-solver plugin API are not implemented yet.
+roles, and categorical domains. `SolutionResult` persistence is not implemented yet. A
+solver can be written against `lcm.solvers`, `lcm.solver_api`, `lcm.typing` and
+`lcm.grids` alone, but that surface is not yet *stable*: persistence, durable
+cross-process identity, a conformance suite, and a versioning policy are missing.
 
 ### Initial Conditions Format
 
