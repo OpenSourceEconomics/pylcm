@@ -16,7 +16,15 @@ from fractions import Fraction
 from pathlib import Path
 from threading import RLock
 from types import GetSetDescriptorType, MappingProxyType, MemberDescriptorType
-from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Protocol,
+    SupportsIndex,
+    TypeAlias,
+    cast,
+    runtime_checkable,
+)
 
 import jax
 import numpy as np
@@ -692,6 +700,24 @@ class _CanonicalArtifactTemplate:
 
 
 @dataclass(frozen=True, kw_only=True)
+class _ArtifactAuthorityPickleState:
+    """Callback-free sealed state used only for trusted Python-object transport."""
+
+    descriptor: ArtifactDescriptor
+    payload_runtime_type: type[object]
+    template_snapshot: _CanonicalArtifactTemplate | None
+    container_runtime_types: Mapping[TreePath, type[object]]
+    leaves: Mapping[TreePath, LeafAuthority]
+    axes: tuple[AxisAuthority, ...]
+    state_roles: tuple[str, ...]
+    action_roles: tuple[str, ...]
+    categorical_domains: Mapping[str, CategoryDomain]
+    consumer_route: ReplayRouteIdentity | None
+    applicable: bool
+    required: bool
+
+
+@dataclass(frozen=True, kw_only=True)
 class ArtifactAuthority:
     """Model-built validation authority for one artifact in one solution cell."""
 
@@ -865,6 +891,29 @@ class ArtifactAuthority:
             authority=self,
             snapshot=template_snapshot,
             public_template_leaves=public_template_leaves,
+        )
+
+    def __copy__(self) -> ArtifactAuthority:
+        """Return an unbound field copy that cannot inherit private authority."""
+        return _copy_artifact_authority_without_binding(authority=self)
+
+    def __deepcopy__(self, memo: dict[int, object], /) -> ArtifactAuthority:
+        """Return a detached but unbound copy without invoking plugin callbacks."""
+        canonical = _restore_artifact_authority_from_pickle(
+            _artifact_authority_pickle_state(authority=self)
+        )
+        copied = _copy_artifact_authority_without_binding(authority=canonical)
+        memo[id(self)] = copied
+        return copied
+
+    def __reduce_ex__(
+        self, protocol: SupportsIndex, /
+    ) -> tuple[object, tuple[object, ...]]:
+        """Transport a sealed declaration and rebind it without plugin callbacks."""
+        del protocol
+        return (
+            _restore_artifact_authority_from_pickle,
+            (_artifact_authority_pickle_state(authority=self),),
         )
 
 
@@ -1619,6 +1668,41 @@ def _artifact_dataclass_field_values(
     return tuple(result)
 
 
+def _artifact_leaf_slot_from_callback_token(
+    *,
+    token: _ArtifactLeafToken,
+    tokens: tuple[_ArtifactLeafToken, ...],
+    seen: list[int],
+) -> _ArtifactLeafSlot:
+    """Validate one opaque callback token and record its exact leaf slot."""
+    if (
+        type(token.index) is not int
+        or token.index < 0
+        or token.index >= len(tokens)
+        or token is not tokens[token.index]
+    ):
+        raise TypeError("Artifact unflatten callback forged a leaf token.")
+    seen[token.index] += 1
+    return _ArtifactLeafSlot(index=token.index)
+
+
+def _artifact_static_plan_from_callback_value(
+    *, value: object
+) -> _ArtifactStaticPlan | None:
+    """Own token-free callback metadata, leaving dynamic records structural."""
+    value_type = type(value)
+    if (
+        value_type is not tuple
+        and _artifact_static_metadata_field_names(value_type) is None
+    ):
+        return None
+    try:
+        static_value = _snapshot_inert_pytree_metadata(value=value)
+    except TypeError:
+        return None
+    return _ArtifactStaticPlan(value=static_value, validate_payload=False)
+
+
 def _construction_plan_from_callback_value(
     *,
     value: object,
@@ -1630,16 +1714,15 @@ def _construction_plan_from_callback_value(
     """Own one callback result while retaining no callback-returned reference."""
     value_type = type(value)
     if value_type is _ArtifactLeafToken:
-        token = cast("_ArtifactLeafToken", value)
-        if (
-            type(token.index) is not int
-            or token.index < 0
-            or token.index >= len(tokens)
-            or token is not tokens[token.index]
-        ):
-            raise TypeError("Artifact unflatten callback forged a leaf token.")
-        seen[token.index] += 1
-        return _ArtifactLeafSlot(index=token.index)
+        return _artifact_leaf_slot_from_callback_token(
+            token=cast("_ArtifactLeafToken", value),
+            tokens=tokens,
+            seen=seen,
+        )
+
+    static_plan = _artifact_static_plan_from_callback_value(value=value)
+    if static_plan is not None:
+        return static_plan
 
     if value_type is tuple:
         marker = id(value)
@@ -2607,6 +2690,93 @@ def _artifact_authority_from_template_snapshot(
         public_template_leaves=public_template_leaves,
     )
     return authority
+
+
+def _copy_artifact_authority_without_binding(
+    *, authority: ArtifactAuthority
+) -> ArtifactAuthority:
+    """Copy public fields without granting the new identity reconstruction authority."""
+    if type(authority) is not ArtifactAuthority:
+        raise TypeError("Only an exact ArtifactAuthority can be copied.")
+    copied = object.__new__(ArtifactAuthority)
+    for name in (
+        "descriptor",
+        "payload_runtime_type",
+        "template",
+        "container_runtime_types",
+        "leaves",
+        "axes",
+        "state_roles",
+        "action_roles",
+        "categorical_domains",
+        "consumer_route",
+        "applicable",
+        "required",
+    ):
+        object.__setattr__(
+            copied,
+            name,
+            object.__getattribute__(authority, name),
+        )
+    return copied
+
+
+def _artifact_authority_pickle_state(
+    *, authority: ArtifactAuthority
+) -> _ArtifactAuthorityPickleState:
+    """Capture a validated authority and its sealed callback-free declaration."""
+    if type(authority) is not ArtifactAuthority:
+        raise TypeError("Only an exact ArtifactAuthority can be transported.")
+    template_snapshot = _artifact_authority_template_snapshot(authority)
+    canonical = _artifact_authority_from_template_snapshot(
+        descriptor=authority.descriptor,
+        payload_runtime_type=authority.payload_runtime_type,
+        template_snapshot=template_snapshot,
+        container_runtime_types=authority.container_runtime_types,
+        leaves=authority.leaves,
+        axes=authority.axes,
+        state_roles=authority.state_roles,
+        action_roles=authority.action_roles,
+        categorical_domains=authority.categorical_domains,
+        consumer_route=authority.consumer_route,
+        applicable=authority.applicable,
+        required=authority.required,
+    )
+    return _ArtifactAuthorityPickleState(
+        descriptor=canonical.descriptor,
+        payload_runtime_type=canonical.payload_runtime_type,
+        template_snapshot=_artifact_authority_template_snapshot(canonical),
+        container_runtime_types=canonical.container_runtime_types,
+        leaves=canonical.leaves,
+        axes=canonical.axes,
+        state_roles=canonical.state_roles,
+        action_roles=canonical.action_roles,
+        categorical_domains=canonical.categorical_domains,
+        consumer_route=canonical.consumer_route,
+        applicable=canonical.applicable,
+        required=canonical.required,
+    )
+
+
+def _restore_artifact_authority_from_pickle(state: object) -> ArtifactAuthority:
+    """Rebuild one transported authority through the validated private constructor."""
+    if type(state) is not _ArtifactAuthorityPickleState:
+        raise TypeError("Artifact authority pickle state must be exact.")
+    owned = state
+    return _artifact_authority_from_template_snapshot(
+        descriptor=owned.descriptor,
+        payload_runtime_type=owned.payload_runtime_type,
+        template_snapshot=owned.template_snapshot,
+        container_runtime_types=owned.container_runtime_types,
+        leaves=owned.leaves,
+        axes=owned.axes,
+        state_roles=owned.state_roles,
+        action_roles=owned.action_roles,
+        categorical_domains=owned.categorical_domains,
+        consumer_route=owned.consumer_route,
+        applicable=owned.applicable,
+        required=owned.required,
+    )
 
 
 def _canonicalize_declared_template(

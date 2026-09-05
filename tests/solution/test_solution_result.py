@@ -5,6 +5,7 @@ import hashlib
 import inspect
 from collections.abc import Mapping
 from dataclasses import replace
+from pathlib import Path
 from types import MappingProxyType
 from typing import cast
 
@@ -612,7 +613,9 @@ def test_retained_adaptive_nnbegm_result_replay_matches_automatic_solve() -> Non
     assert_frame_equal(direct.to_dataframe(), automatic.to_dataframe())
 
 
-def test_adaptive_authority_and_result_survive_pickle_for_valid_replay() -> None:
+def test_adaptive_authority_and_result_survive_pickle_for_valid_replay(
+    tmp_path: Path,
+) -> None:
     model = _build("adaptive")
     solution = model.solve(params=_PARAMS, log_level="off")
     fingerprint = solution.metadata.params_fingerprint
@@ -626,6 +629,7 @@ def test_adaptive_authority_and_result_survive_pickle_for_valid_replay() -> None
     restored_model, restored_solution = cloudpickle.loads(
         cloudpickle.dumps((model, solution))
     )
+    restored_solution.save(path=tmp_path / "restored-solution")
     restored_authority = restored_model._solution_authorities[fingerprint]
     after = {
         ref: descriptor.adaptive_outer_nodes
@@ -1265,7 +1269,7 @@ def test_nested_egm_payload_is_validated_recursively_before_forward(
         )
 
 
-def test_policy_without_a_declared_replay_route_is_refused_before_forward(
+def test_policy_at_an_undeclared_coordinate_is_refused_before_forward(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source_model = _build("adaptive")
@@ -1295,7 +1299,10 @@ def test_policy_without_a_declared_replay_route_is_refused_before_forward(
         raise AssertionError("forward simulation ran before replay-route preflight")
 
     monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
-    with pytest.raises(InvalidSimulationInputError, match="no declared replay route"):
+    with pytest.raises(
+        InvalidSimulationInputError,
+        match=r"undeclared=.*pylcm\.simulation\.policy",
+    ):
         model.simulate(
             params=params,
             initial_conditions=initial_conditions,

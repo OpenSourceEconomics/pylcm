@@ -7,6 +7,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import ClassVar, NamedTuple, Never, Self, cast
 
+import cloudpickle
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -326,6 +327,73 @@ class _PlanBox:
     value: object
 
 
+@dataclass(frozen=True)
+class _TrustedStaticPlanBox:
+    """Identity-registered test record for inert callback metadata."""
+
+    value: object
+
+
+solver_api_module._register_artifact_static_metadata_dataclass(
+    cls=_TrustedStaticPlanBox,
+    field_names=("value",),
+)
+
+
+@jax.tree_util.register_pytree_node_class
+@dataclass(frozen=True)
+class _SharedInertTupleTree:
+    """Custom tree whose callback reuses one immutable metadata tuple."""
+
+    value: object
+    left_names: tuple[str, ...]
+    right_names: tuple[str, ...]
+    flatten_count: ClassVar[int] = 0
+    unflatten_count: ClassVar[int] = 0
+
+    def tree_flatten(self) -> tuple[tuple[object, ...], None]:
+        type(self).flatten_count += 1
+        return (self.value,), None
+
+    # keyword-only-exempt: library-callback=jax.tree_util.register_pytree_node
+    @classmethod
+    def tree_unflatten(
+        cls,
+        _metadata: None,
+        children: tuple[object, ...],
+    ) -> _SharedInertTupleTree:
+        cls.unflatten_count += 1
+        shared = ("illiquid",)
+        return cls(children[0], shared, shared)
+
+
+@jax.tree_util.register_pytree_node_class
+@dataclass(frozen=True)
+class _SharedTrustedStaticTree:
+    """Custom tree whose callback reuses one trusted static record."""
+
+    value: object
+    left: _TrustedStaticPlanBox
+    right: _TrustedStaticPlanBox
+    flatten_count: ClassVar[int] = 0
+    unflatten_count: ClassVar[int] = 0
+
+    def tree_flatten(self) -> tuple[tuple[object, ...], None]:
+        type(self).flatten_count += 1
+        return (self.value,), None
+
+    # keyword-only-exempt: library-callback=jax.tree_util.register_pytree_node
+    @classmethod
+    def tree_unflatten(
+        cls,
+        _metadata: None,
+        children: tuple[object, ...],
+    ) -> _SharedTrustedStaticTree:
+        cls.unflatten_count += 1
+        shared = _TrustedStaticPlanBox(("illiquid",))
+        return cls(children[0], shared, shared)
+
+
 @jax.tree_util.register_pytree_node_class
 @dataclass(frozen=True)
 class _AdversarialPlanTree:
@@ -360,8 +428,13 @@ class _AdversarialPlanTree:
             return cls(children[0], children[0])
         if cls.mode == "transform":
             return cls(0.0, children[1])
-        if cls.mode == "alias":
-            shared = _PlanBox(children[0])
+        if cls.mode in {"alias", "tuple_alias", "trusted_alias"}:
+            if cls.mode == "alias":
+                shared = _PlanBox(children[0])
+            elif cls.mode == "tuple_alias":
+                shared = (children[0],)
+            else:
+                shared = _TrustedStaticPlanBox(children[0])
             return cls(shared, shared)
         return cls(children[0], children[1])
 
@@ -866,6 +939,44 @@ def test_copied_authority_identity_has_no_template_binding() -> None:
     assert _CountingTree.flatten_count == 0
 
 
+def test_deepcopied_authority_identity_has_no_template_binding() -> None:
+    """A detached generic deep copy also receives no reconstruction authority."""
+    authority = _counting_tree_authority(value=2.0)
+    _CountingTree.flatten_count = 0
+    _CountingTree.unflatten_count = 0
+
+    copied = copy.deepcopy(authority)
+
+    assert copied is not authority
+    assert copied.template is not authority.template
+    with pytest.raises(TypeError, match="no identity-bound template"):
+        snapshot_artifact_template_declaration(copied)
+    assert _CountingTree.flatten_count == 0
+    assert _CountingTree.unflatten_count == 0
+
+
+def test_pickled_authority_rebinds_without_template_callbacks() -> None:
+    """Trusted Python transport rebinds the sealed callback-free declaration."""
+    _CountingTree.flatten_count = 0
+    _CountingTree.unflatten_count = 0
+    authority = _counting_tree_authority(value=3.0)
+    declaration_counts = (
+        _CountingTree.flatten_count,
+        _CountingTree.unflatten_count,
+    )
+
+    restored = cloudpickle.loads(cloudpickle.dumps(authority))
+    declaration = snapshot_artifact_template_declaration(restored)
+
+    assert declaration is not None
+    payload = cast("_CountingTree", declaration.payload)
+    assert float(cast("jax.Array", payload.value)) == pytest.approx(3.0)
+    assert (
+        _CountingTree.flatten_count,
+        _CountingTree.unflatten_count,
+    ) == declaration_counts
+
+
 def test_authority_post_init_reentry_fails_before_mapping_or_template_callback() -> (
     None
 ):
@@ -1134,7 +1245,15 @@ def test_nested_public_template_mutation_is_detected_without_callbacks() -> None
 
 @pytest.mark.parametrize(
     "mode",
-    ["singleton", "drop", "duplicate", "transform", "alias"],
+    [
+        "singleton",
+        "drop",
+        "duplicate",
+        "transform",
+        "alias",
+        "tuple_alias",
+        "trusted_alias",
+    ],
 )
 def test_unflatten_plan_rejects_every_leaf_fidelity_attack(*, mode: str) -> None:
     """One token observation rejects shared, dropped, duplicated, or aliased state."""
@@ -1156,6 +1275,69 @@ def test_unflatten_plan_rejects_every_leaf_fidelity_attack(*, mode: str) -> None
 
     assert _AdversarialPlanTree.flatten_count == 1
     assert _AdversarialPlanTree.unflatten_count == 1
+
+
+def test_unflatten_plan_owns_repeated_inert_metadata_without_aliasing() -> None:
+    """Repeated token-free metadata is copied, not treated as a dynamic alias."""
+    _SharedInertTupleTree.flatten_count = 0
+    _SharedInertTupleTree.unflatten_count = 0
+    template = _SharedInertTupleTree(
+        jnp.asarray(1.0, dtype=jnp.float32),
+        ("illiquid",),
+        ("illiquid",),
+    )
+
+    authority = _custom_tree_authority(
+        template=template,
+        runtime_type=_SharedInertTupleTree,
+        leaf_count=1,
+    )
+    first_declaration = snapshot_artifact_template_declaration(authority)
+    second_declaration = snapshot_artifact_template_declaration(authority)
+    assert first_declaration is not None
+    assert second_declaration is not None
+    first = cast("_SharedInertTupleTree", first_declaration.payload)
+    second = cast("_SharedInertTupleTree", second_declaration.payload)
+
+    assert first.left_names == ("illiquid",)
+    assert first.right_names == ("illiquid",)
+    assert first.left_names is not first.right_names
+    assert first.left_names is not template.left_names
+    assert first.left_names is not second.left_names
+    assert _SharedInertTupleTree.flatten_count == 1
+    assert _SharedInertTupleTree.unflatten_count == 1
+
+
+def test_unflatten_plan_owns_repeated_trusted_static_metadata() -> None:
+    """Repeated registered static records and their fields are copied independently."""
+    _SharedTrustedStaticTree.flatten_count = 0
+    _SharedTrustedStaticTree.unflatten_count = 0
+    template = _SharedTrustedStaticTree(
+        jnp.asarray(1.0, dtype=jnp.float32),
+        _TrustedStaticPlanBox(("illiquid",)),
+        _TrustedStaticPlanBox(("illiquid",)),
+    )
+
+    authority = _custom_tree_authority(
+        template=template,
+        runtime_type=_SharedTrustedStaticTree,
+        leaf_count=1,
+    )
+    first_declaration = snapshot_artifact_template_declaration(authority)
+    second_declaration = snapshot_artifact_template_declaration(authority)
+    assert first_declaration is not None
+    assert second_declaration is not None
+    first = cast("_SharedTrustedStaticTree", first_declaration.payload)
+    second = cast("_SharedTrustedStaticTree", second_declaration.payload)
+
+    assert first.left.value == ("illiquid",)
+    assert first.right.value == ("illiquid",)
+    assert first.left is not first.right
+    assert first.left.value is not first.right.value
+    assert first.left is not template.left
+    assert first.left is not second.left
+    assert _SharedTrustedStaticTree.flatten_count == 1
+    assert _SharedTrustedStaticTree.unflatten_count == 1
 
 
 def test_nonempty_tuple_subclass_is_rejected_before_unflatten() -> None:
