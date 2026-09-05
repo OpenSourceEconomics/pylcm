@@ -65,6 +65,8 @@ from lcm.solver_api import (
     SolverIdentity,
 )
 
+# beartype compiles every guard it writes under this synthetic filename.
+_BEARTYPE_BODY_FILENAME_PREFIX = "<@beartype("
 _BEARTYPE_CLAW_STATE = vars(certainty_equivalent_declarations).get(
     "__claw_state_beartype__"
 )
@@ -1610,6 +1612,20 @@ def _nested_code_names(code: types.CodeType) -> frozenset[str]:
     return frozenset(names)
 
 
+def _has_beartype_written_body(function: types.FunctionType) -> bool:
+    """Whether beartype compiled this exact function object's body.
+
+    `functools.wraps` copies the wrapped function's attributes onto its wrapper,
+    beartype's `__beartype_wrapper` mark included, so an ordinary adapter that
+    forwards to a guarded callee advertises marks it did not earn. Its code object
+    does not lie: beartype compiles a guard under a `<@beartype(...)>` filename,
+    while a function written in a source file keeps that file. An adapter is
+    therefore hashed as the function it is, and the callee it closes over enters
+    the identity through the closure.
+    """
+    return function.__code__.co_filename.startswith(_BEARTYPE_BODY_FILENAME_PREFIX)
+
+
 def _capture_shipped_beartype_wrappers() -> tuple[  # noqa: C901, PLR0912
     tuple[types.FunctionType, types.CodeType, types.FunctionType], ...
 ]:
@@ -1664,7 +1680,7 @@ def _capture_shipped_beartype_wrappers() -> tuple[  # noqa: C901, PLR0912
                 and isinstance(wrapped, types.FunctionType)
                 and type(keyword_defaults) is dict
                 and keyword_defaults.get("__beartype_func") is wrapped
-                and value.__code__.co_filename.startswith("<@beartype(")
+                and _has_beartype_written_body(value)
             ):
                 captures.append((value, value.__code__, wrapped))
                 queue.append(wrapped)
@@ -1712,6 +1728,8 @@ def _unwrap_exact_beartype_wrapper(
         None,
     )
     if capture is None:
+        if not _has_beartype_written_body(function):
+            return None
         if not _is_shipped_pylcm_module_name(function.__module__):
             return _unwrap_downstream_beartype_wrapper(function)
         msg = (
@@ -1728,7 +1746,7 @@ def _unwrap_exact_beartype_wrapper(
         and wrapped is captured_wrapped
         and type(keyword_defaults) is dict
         and keyword_defaults.get("__beartype_func") is captured_wrapped
-        and function.__code__.co_filename.startswith("<@beartype(")
+        and _has_beartype_written_body(function)
     )
     if not is_exact_wrapper:
         msg = (
@@ -1765,7 +1783,7 @@ def _unwrap_downstream_beartype_wrapper(
         and type(keyword_defaults) is dict
         and keyword_defaults.get("__beartype_func") is wrapped
         and isinstance(conf, BeartypeConf)
-        and function.__code__.co_filename.startswith("<@beartype(")
+        and _has_beartype_written_body(function)
     ):
         msg = (
             "Cannot durably fingerprint an uncaptured transparent beartype wrapper "

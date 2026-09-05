@@ -3,10 +3,12 @@
 A package that builds models on pylcm may install its own beartype claw, so every
 function it hands to a `Regime` arrives wrapped in a beartype guard that pylcm never
 captured at import. The guard is transparent to the economics: the fingerprint has to
-see through it to the callee, while a wrapper that merely wears beartype's marks stays
-refused.
+see through it to the callee, while a forged guard whose body is not beartype's own
+stays refused. An ordinary adapter that merely inherited beartype's marks through
+`functools.wraps` is neither: it is hashed as the function it is.
 """
 
+import functools
 from collections.abc import Callable
 from pathlib import Path
 
@@ -137,6 +139,46 @@ def test_downstream_guard_whose_code_beartype_does_not_regenerate_is_refused(
 
     with pytest.raises(TypeError, match="does not regenerate its code"):
         fingerprints._semantic_fingerprint(guarded)
+
+
+def _adapted(func: Callable[[], FloatND]) -> Callable[..., FloatND]:
+    """`func` behind a forwarding adapter, the way the engine adapts a callee.
+
+    `functools.wraps` copies the callee's attributes onto the adapter, beartype's
+    own marks included, so the adapter advertises marks it did not earn.
+    """
+
+    @functools.wraps(func)
+    def adapted(*args: object, **kwargs: object) -> FloatND:
+        return func(*args, **kwargs)
+
+    return adapted
+
+
+def test_an_adapter_only_inherits_the_marks_of_the_guard_it_forwards_to() -> None:
+    """The specimen wears beartype's mark on a body beartype did not write."""
+    adapted = _adapted(_downstream_terminal_utility(1.0))
+
+    assert (
+        adapted.__dict__.get("__beartype_wrapper"),
+        adapted.__code__.co_filename.startswith(  # ty: ignore[unresolved-attribute]
+            "<@beartype("
+        ),
+    ) == (True, False)
+
+
+def test_an_adapter_that_only_inherited_the_marks_is_hashed_as_itself() -> None:
+    """Marks copied onto an ordinary function do not make it a guard to see through."""
+    assert fingerprints._semantic_fingerprint(
+        _adapted(_downstream_terminal_utility(1.0))
+    )
+
+
+def test_an_adapter_binds_the_guarded_callee_it_forwards_to() -> None:
+    """Hashing the adapter still binds what the guarded callee computes."""
+    assert fingerprints._semantic_fingerprint(
+        _adapted(_downstream_terminal_utility(2.0))
+    ) != fingerprints._semantic_fingerprint(_adapted(_downstream_terminal_utility(3.0)))
 
 
 def test_downstream_guarded_model_replays_its_archive_in_a_rebuilt_model(
