@@ -9,6 +9,7 @@ explicit arguments instead, so dropping a result releases its arrays.
 """
 
 import gc
+import weakref
 
 import numpy as np
 import pytest
@@ -30,13 +31,17 @@ _LEAF_LENGTH = 7907
 
 def _holds_array(*, candidate: object, length: int) -> bool:
     """Whether a gc-tracked container or entry holds an array of `length` first."""
+    # The gc heap also holds weak proxies whose referent may be gone, and
+    # `isinstance` dereferences a proxy, so proxies are excluded by exact type first.
+    if type(candidate) in (weakref.ProxyType, weakref.CallableProxyType):
+        return False
     if isinstance(candidate, _CanonicalValueEntry):
         held: object = candidate.value
     elif isinstance(candidate, tuple | list) and candidate:
         held = candidate[0]
     else:
         return False
-    return isinstance(held, np.ndarray) and held.shape == (length,)
+    return type(held) is np.ndarray and held.shape == (length,)
 
 
 def _live_holders(length: int) -> int:

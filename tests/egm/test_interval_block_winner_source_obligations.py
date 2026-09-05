@@ -161,6 +161,6 @@ def test_maintainer_suite_covers_channels_profiles_arithmetics_and_partitions() 
         "np.isfinite",
         "NO_OWNER",
         "return_owner=True",
-        "[1, 2, 4, 7]",
+        "(1, 2, 4, 7)",
     ):
         assert token in integration
