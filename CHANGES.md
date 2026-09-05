@@ -21,6 +21,11 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   model nor the parameter fingerprint.
 - Period captures record the selected tile widths, so `replay_period` and the
   compiler-memory analyzer lower exactly the executable the solve dispatched.
+- The ASV GPU-memory series for the ACA baseline and Mahler–Yum rows are split into
+  three independently measured phases — automatic solve+simulate,
+  `ALL_PERSISTABLE_ARTIFACTS` solve+save, and load+supplied-solution simulate — each in
+  a fresh, phase-isolated child process with exact provenance. The combined
+  timing/CPU subprocess no longer reports a GPU peak.
 
 ### Complete solution persistence and executable external replay
 
