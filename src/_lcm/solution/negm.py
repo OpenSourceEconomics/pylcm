@@ -608,12 +608,13 @@ class _NEGMPeriodKernel:
       keeper carry with every node carry, lifted into common cash on hand, on
       the candidate axis.
 
-    The graph declares no typed internal outputs, so the sweep takes the keeper
-    value and carry as arguments: its builder lowers with placeholders in their
-    shape, and calling the kernel runs `keeper`, replaces exactly those two
-    arguments, and dispatches `outer_sweep`. The published simulation policy is
-    absent: a keeper-only proposal cannot represent the joint durable/liquid
-    decision, so simulation retains its canonical full-grid action pair.
+    `keeper` publishes its value and carry as typed internal outputs and
+    `outer_sweep` names them as internal inputs, so the engine lowers the sweep
+    against the keeper's own abstract output and calling the kernel runs
+    `keeper`, then dispatches `outer_sweep` with the keeper's outputs under
+    those argument names. The published simulation policy is absent: a
+    keeper-only proposal cannot represent the joint durable/liquid decision, so
+    simulation retains its canonical full-grid action pair.
     """
 
     keeper_kernel: PeriodKernel
@@ -829,7 +830,9 @@ class _NEGMSweepArgumentBuilder:
     bound at the first outer node, so the per-node arguments have exactly the
     shape the sweep traces, and adds the sweep's own inputs: the outer nodes and
     the credited-cost shifts. The keeper's value and carry are not built here —
-    they are internal inputs the engine supplies from the keeper's own output.
+    they are internal inputs: the engine lowers the sweep against the keeper's
+    abstract output, and the kernel hands the keeper's real outputs over at
+    dispatch.
     """
 
     adjuster_builder: CoreArgumentBuilder
