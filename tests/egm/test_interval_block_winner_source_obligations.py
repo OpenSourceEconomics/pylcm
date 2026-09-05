@@ -143,7 +143,8 @@ def test_docs_retire_the_transition_and_define_zero_versus_positive_width() -> N
     docs = _text(SOLVER_DOCS)
     assert "`interval_batch_size` streams the continuation read" in docs
     assert "global stored-link index" in docs
-    assert "resolves ownership exactly as" in docs
+    assert "decides ownership by the same total order" in docs
+    assert "return_owner=True" in docs
     assert "units in the last place" in docs
     assert "`interval_batch_size=0`" in docs
 
@@ -158,6 +159,8 @@ def test_maintainer_suite_covers_channels_profiles_arithmetics_and_partitions() 
         "cont_marginal=None",
         "assert_agrees_to_ulp",
         "np.isfinite",
+        "NO_OWNER",
+        "return_owner=True",
         "[1, 2, 4, 7]",
     ):
         assert token in integration

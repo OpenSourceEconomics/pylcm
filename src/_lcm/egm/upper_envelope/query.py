@@ -27,7 +27,7 @@ is cheaper, but it carries no exact ownership guarantee.
 
 import functools
 from collections.abc import Callable
-from typing import Literal, NamedTuple, cast
+from typing import Literal, NamedTuple, cast, overload
 
 import jax
 import jax.numpy as jnp
@@ -73,6 +73,9 @@ type ComparisonArithmetic = Literal["certified", "ordinary"]
 # one certifies that nothing remains above. A query needing more promotions than
 # this publishes NaN rather than a candidate that was never validated.
 _PROMOTION_ROUNDS = 2
+
+# The owner published at a query that carries no finite envelope level.
+NO_OWNER = -1
 
 
 def _along_link(
@@ -689,6 +692,60 @@ def _segment_links_from_candidates(
     return links, (endog_grid, value, policy, marginal)
 
 
+@overload
+def envelope_at_query(
+    *,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    marginal: Float1D,
+    segment_id: Float1D,
+    stable_index: IntND | None = ...,
+    x_query: FloatND,
+    segment_block_size: int = ...,
+    arithmetic: ComparisonArithmetic = ...,
+    feasibility_partition: ResolvedAxisPartition | None = ...,
+    feasible_interval_mask: BoolND | None = ...,
+    return_owner: Literal[False] = ...,
+) -> tuple[FloatND, FloatND, FloatND]: ...
+
+
+@overload
+def envelope_at_query(
+    *,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    marginal: Float1D,
+    segment_id: Float1D,
+    stable_index: IntND | None = ...,
+    x_query: FloatND,
+    segment_block_size: int = ...,
+    arithmetic: ComparisonArithmetic = ...,
+    feasibility_partition: ResolvedAxisPartition | None = ...,
+    feasible_interval_mask: BoolND | None = ...,
+    return_owner: Literal[True],
+) -> tuple[FloatND, FloatND, FloatND, IntND]: ...
+
+
+@overload
+def envelope_at_query(
+    *,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    marginal: Float1D,
+    segment_id: Float1D,
+    stable_index: IntND | None = ...,
+    x_query: FloatND,
+    segment_block_size: int = ...,
+    arithmetic: ComparisonArithmetic = ...,
+    feasibility_partition: ResolvedAxisPartition | None = ...,
+    feasible_interval_mask: BoolND | None = ...,
+    return_owner: bool,
+) -> tuple[FloatND, FloatND, FloatND] | tuple[FloatND, FloatND, FloatND, IntND]: ...
+
+
 def envelope_at_query(
     *,
     endog_grid: Float1D,
@@ -702,7 +759,8 @@ def envelope_at_query(
     arithmetic: ComparisonArithmetic = "certified",
     feasibility_partition: ResolvedAxisPartition | None = None,
     feasible_interval_mask: BoolND | None = None,
-) -> tuple[FloatND, FloatND, FloatND]:
+    return_owner: bool = False,
+) -> tuple[FloatND, FloatND, FloatND] | tuple[FloatND, FloatND, FloatND, IntND]:
     """Evaluate the branch-aware upper envelope at each query abscissa.
 
     Args:
@@ -745,11 +803,18 @@ def envelope_at_query(
             `feasibility_partition` is feasible. Infeasible candidates are
             removed before links are built, and infeasible queries publish the
             carry contract: `-inf` value, NaN policy, and zero marginal.
+        return_owner: Also publish the owner of each query: the stable identity
+            of the link the three channels were read from (`stable_index` where
+            supplied, the stored-link position otherwise), `NO_OWNER` wherever
+            the value is not finite. Ownership is a structural decision, so a
+            caller comparing two layouts of the same candidates asserts it
+            exactly and reserves a tolerance for the levels.
 
     Returns:
         Tuple of the envelope value, the winning segment's policy, and the
-        winning segment's marginal at each query, each shaped like `x_query`. A
-        query no live segment brackets yields NaN in all three.
+        winning segment's marginal at each query, each shaped like `x_query`,
+        followed by the owner when `return_owner` is set. A query no live
+        segment brackets yields NaN in all three channels.
 
     Note:
         Under `arithmetic="certified"` the read is differentiable in forward
@@ -780,33 +845,49 @@ def envelope_at_query(
         # a partition request with no numerical effect: the native operation
         # streams the same stored segments and returns one winner/status per
         # query, so dense and blocked calls are identical by construction.
-        published = _envelope_exact(links=links, query=query).published
-        return _mask_infeasible_queries(
-            published=published,
+        reduction = _envelope_exact(links=links, query=query)
+        published = _mask_infeasible_queries(
+            published=reduction.published,
             query=query,
             partition=feasibility_partition,
             feasible_interval_mask=feasible_interval_mask,
         )
+    else:
+        reduction = _envelope_blocked_ordinary(
+            links=links,
+            query=query,
+            block_size=_ordinary_block_size(
+                requested=segment_block_size, n_segment=n_segment
+            ),
+        )
+        unreadable = _subnormal_operand_present(
+            row=(endog_grid, value, policy, marginal), query=query
+        ) | _derived_subnormal_possible(links=links, query=query)
+        readable_value, readable_policy, readable_marginal = (
+            jnp.where(unreadable, jnp.nan, channel) for channel in reduction.published
+        )
+        published = _mask_infeasible_queries(
+            published=(readable_value, readable_policy, readable_marginal),
+            query=query,
+            partition=feasibility_partition,
+            feasible_interval_mask=feasible_interval_mask,
+        )
+    if not return_owner:
+        return published
+    owner = cast("IntND", reduction.owner)
+    return (*published, published_owner(value=published[0], stable_index=owner))
 
-    published = _envelope_blocked_ordinary(
-        links=links,
-        query=query,
-        block_size=_ordinary_block_size(
-            requested=segment_block_size, n_segment=n_segment
-        ),
-    ).published
-    unreadable = _subnormal_operand_present(
-        row=(endog_grid, value, policy, marginal), query=query
-    ) | _derived_subnormal_possible(links=links, query=query)
-    readable_value, readable_policy, readable_marginal = (
-        jnp.where(unreadable, jnp.nan, channel) for channel in published
-    )
-    return _mask_infeasible_queries(
-        published=(readable_value, readable_policy, readable_marginal),
-        query=query,
-        partition=feasibility_partition,
-        feasible_interval_mask=feasible_interval_mask,
-    )
+
+def published_owner(*, value: FloatND, stable_index: IntND) -> IntND:
+    """Name the owner of every query that publishes a finite level.
+
+    The owner is a structural fact about a reduction — which stored link the
+    published channels were read from — so it is reported wherever a finite level
+    is published and is `NO_OWNER` everywhere else: at a query no live link
+    brackets, one a certificate refused, and one the feasibility carry contract
+    fills with `-inf`.
+    """
+    return jnp.where(jnp.isfinite(value), stable_index, NO_OWNER).astype(jnp.int32)
 
 
 def _mask_infeasible_queries(
@@ -1293,6 +1374,11 @@ class _EnvelopeReduction(NamedTuple):
 
     published: tuple[FloatND, FloatND, FloatND]
     """Value, policy, and marginal of the winning candidate at each query."""
+    owner: IntND | None = None
+    """Stable identity of the winner at each query, `NO_OWNER` where undecided.
+
+    `None` for a reduction that does not report identities.
+    """
 
 
 def _envelope_exact(*, links: _SegmentLinks, query: FloatND) -> _EnvelopeReduction:
@@ -1305,7 +1391,10 @@ def _envelope_exact(*, links: _SegmentLinks, query: FloatND) -> _EnvelopeReducti
     """
     if links.left_grid.shape[0] == 0:
         empty = jnp.full_like(query, jnp.nan)
-        return _EnvelopeReduction(published=(empty, empty, empty))
+        return _EnvelopeReduction(
+            published=(empty, empty, empty),
+            owner=jnp.full(query.shape, NO_OWNER, dtype=jnp.int32),
+        )
 
     winner, winner_status = exact_query_winner(
         left_grid=links.left_grid,
@@ -1365,7 +1454,10 @@ def _envelope_exact(*, links: _SegmentLinks, query: FloatND) -> _EnvelopeReducti
         return jnp.where(decided, channel, jnp.nan).reshape(query.shape)
 
     return _EnvelopeReduction(
-        published=(_published(value), _published(policy), _published(marginal))
+        published=(_published(value), _published(policy), _published(marginal)),
+        owner=jnp.where(
+            decided, jnp.take(links.stable_index, flat_winner, axis=0), NO_OWNER
+        ).reshape(query.shape),
     )
 
 
@@ -2011,7 +2103,10 @@ def _envelope_blocked_ordinary(
         jnp.where(decided, channel, jnp.nan).reshape(query.shape)
         for channel in carry[5:]
     )
-    return _EnvelopeReduction(published=(value, policy, marginal))
+    return _EnvelopeReduction(
+        published=(value, policy, marginal),
+        owner=jnp.where(decided, carry[4], NO_OWNER).reshape(query.shape),
+    )
 
 
 def _envelope_blocked(

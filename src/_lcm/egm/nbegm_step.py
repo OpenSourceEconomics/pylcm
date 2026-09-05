@@ -39,7 +39,7 @@ strict/non-strict comparison split.
 """
 
 from collections.abc import Callable, Mapping
-from typing import Any, Literal, NamedTuple
+from typing import Any, Literal, NamedTuple, overload
 
 import jax
 import jax.numpy as jnp
@@ -65,9 +65,18 @@ from _lcm.egm.upper_envelope.query import (
     envelope_at_query,
     finish_envelope_winner,
     merge_envelope_winner,
+    published_owner,
 )
 from lcm.case_piece import EqualityOwner
-from lcm.typing import BoolND, Float1D, FloatND, IntND, ScalarFloat, ScalarInt
+from lcm.typing import (
+    BoolND,
+    Float1D,
+    FloatND,
+    Int1D,
+    IntND,
+    ScalarFloat,
+    ScalarInt,
+)
 
 # Below this |xi| = |phi (1-rho) - 1| the Euler equation is treated as constant in
 # consumption: the closed-form inversion `c = x^(1/xi)` is undefined at xi = 0, so
@@ -1012,6 +1021,81 @@ def _interval_corner_candidates(
     return (*lower_pair, lower_segment, *smax_pair, smax_segment)
 
 
+@overload
+def nbegm_per_interval_continuation_step_savings(
+    *,
+    cont_value: FloatND | None,
+    cont_marginal: FloatND | None,
+    liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat,
+    preferences: Preferences,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+    coh_grid: Float1D | None = ...,
+    envelope_segment_block_size: int = ...,
+    extra_savings: FloatND | None = ...,
+    extra_cont_value: FloatND | None = ...,
+    arithmetic: ComparisonArithmetic = ...,
+    feasibility_partition: ResolvedAxisPartition | None = ...,
+    feasible_interval_mask: BoolND | None = ...,
+    interval_block_reader: Callable[[IntND], tuple[FloatND, ...]] | None = ...,
+    interval_batch_size: int = ...,
+    return_owner: Literal[False] = ...,
+) -> tuple[Float1D, Float1D, Float1D]: ...
+
+
+@overload
+def nbegm_per_interval_continuation_step_savings(
+    *,
+    cont_value: FloatND | None,
+    cont_marginal: FloatND | None,
+    liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat,
+    preferences: Preferences,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+    coh_grid: Float1D | None = ...,
+    envelope_segment_block_size: int = ...,
+    extra_savings: FloatND | None = ...,
+    extra_cont_value: FloatND | None = ...,
+    arithmetic: ComparisonArithmetic = ...,
+    feasibility_partition: ResolvedAxisPartition | None = ...,
+    feasible_interval_mask: BoolND | None = ...,
+    interval_block_reader: Callable[[IntND], tuple[FloatND, ...]] | None = ...,
+    interval_batch_size: int = ...,
+    return_owner: Literal[True],
+) -> tuple[Float1D, Float1D, Float1D, Int1D]: ...
+
+
+@overload
+def nbegm_per_interval_continuation_step_savings(
+    *,
+    cont_value: FloatND | None,
+    cont_marginal: FloatND | None,
+    liquid_grid: Float1D,
+    savings_grid: Float1D,
+    discount_factor: ScalarFloat,
+    preferences: Preferences,
+    coh_slopes: Float1D,
+    coh_intercepts: Float1D,
+    breakpoints: Float1D,
+    coh_grid: Float1D | None = ...,
+    envelope_segment_block_size: int = ...,
+    extra_savings: FloatND | None = ...,
+    extra_cont_value: FloatND | None = ...,
+    arithmetic: ComparisonArithmetic = ...,
+    feasibility_partition: ResolvedAxisPartition | None = ...,
+    feasible_interval_mask: BoolND | None = ...,
+    interval_block_reader: Callable[[IntND], tuple[FloatND, ...]] | None = ...,
+    interval_batch_size: int = ...,
+    return_owner: bool,
+) -> tuple[Float1D, Float1D, Float1D] | tuple[Float1D, Float1D, Float1D, Int1D]: ...
+
+
 def nbegm_per_interval_continuation_step_savings(
     *,
     cont_value: FloatND | None,
@@ -1032,7 +1116,8 @@ def nbegm_per_interval_continuation_step_savings(
     feasible_interval_mask: BoolND | None = None,
     interval_block_reader: Callable[[IntND], tuple[FloatND, ...]] | None = None,
     interval_batch_size: int = 0,
-) -> tuple[Float1D, Float1D, Float1D]:
+    return_owner: bool = False,
+) -> tuple[Float1D, Float1D, Float1D] | tuple[Float1D, Float1D, Float1D, Int1D]:
     """Solve a budget whose continuation differs per liquid interval.
 
     When the next-period state law carries a current-asset boundary — a transfer,
@@ -1093,10 +1178,17 @@ def nbegm_per_interval_continuation_step_savings(
             `"ordinary"` takes the largest read in the working format, at a
             fraction of the cost, and is adequate where candidate values are
             separated by much more than the format's resolution.
+        return_owner: Also publish, per liquid node, the global stored-link
+            identity of the candidate the three channels were read from —
+            `NO_OWNER` where no finite value is published. The one-shot and
+            streamed routes name candidates in the same layout, so their owners
+            are comparable exactly; a test of a partition knob asserts them
+            equal and keeps a tolerance for the levels alone.
 
     Returns:
         Tuple of this period's value, marginal value of liquid, and consumption
-        policy, each on `liquid_grid`.
+        policy, each on `liquid_grid`, followed by the owner when `return_owner`
+        is set.
 
     """
     n_intervals = coh_slopes.shape[0]
@@ -1201,7 +1293,7 @@ def nbegm_per_interval_continuation_step_savings(
         )
 
     if interval_block_reader is not None:
-        return _streamed_interval_continuation_envelope(
+        streamed = _streamed_interval_continuation_envelope(
             solve_interval=solve_interval,
             interval_block_reader=interval_block_reader,
             interval_batch_size=interval_batch_size,
@@ -1223,6 +1315,7 @@ def nbegm_per_interval_continuation_step_savings(
             feasibility_partition=feasibility_partition,
             feasible_interval_mask=feasible_interval_mask,
         )
+        return streamed if return_owner else streamed[:3]
 
     if cont_value is None or cont_marginal is None:
         raise ValueError(
@@ -1334,7 +1427,7 @@ def nbegm_per_interval_continuation_step_savings(
     def stack(*parts: FloatND) -> Float1D:
         return jnp.concatenate([part.reshape(-1) for part in parts])
 
-    value, policy, marginal = envelope_at_query(
+    value, policy, marginal, owner = envelope_at_query(
         endog_grid=stack(int_endog, s0_endog, smax_endog, node_endog, cliff_parts[0]),
         policy=stack(int_policy, s0_policy, smax_policy, node_policy, cliff_parts[2]),
         value=stack(int_value, s0_value, smax_value, node_value, cliff_parts[1]),
@@ -1349,7 +1442,10 @@ def nbegm_per_interval_continuation_step_savings(
         arithmetic=arithmetic,
         feasibility_partition=feasibility_partition,
         feasible_interval_mask=feasible_interval_mask,
+        return_owner=True,
     )
+    if return_owner:
+        return value, marginal, policy, owner
     return value, marginal, policy
 
 
@@ -1494,19 +1590,24 @@ def _streamed_interval_continuation_envelope(
     arithmetic: ComparisonArithmetic,
     feasibility_partition: ResolvedAxisPartition | None,
     feasible_interval_mask: BoolND | None,
-) -> tuple[Float1D, Float1D, Float1D]:
+) -> tuple[Float1D, Float1D, Float1D, Int1D]:
     """Read and fold the interval axis in blocks of `interval_batch_size`.
 
     Each block solves its own intervals, stacks their candidate families, and
     folds them against the standing winner, which re-enters carrying the global
-    stored-link index of the candidate that produced it. Ownership is therefore
-    the one-shot layout's ownership at every partition; the published levels are
-    formed by kernels the backend vectorizes per compiled block width, so they
-    agree with it to within a few units in the last place rather than bit for bit.
+    stored-link index of the candidate that produced it. Given the candidate
+    records, ownership is decided by the same total order over the same
+    identities as the one-shot layout, so no partition can move a query to
+    another candidate by where a record is stored. The records themselves are
+    produced by kernels the backend vectorizes per compiled block width, so a
+    width can move a record by a unit in the last place: the published levels
+    agree with the one-shot layout to within a few units in the last place rather
+    than bit for bit, and two candidates whose reads tie to within that spacing
+    are ordered by the records each width produced.
 
     Returns:
-        Tuple of the envelope value, the marginal value of liquid, and the
-        consumption policy on `liquid_grid`.
+        Tuple of the envelope value, the marginal value of liquid, the
+        consumption policy, and the owner on `liquid_grid`.
 
     """
     if interval_batch_size <= 0:
@@ -1707,7 +1808,12 @@ def _streamed_interval_continuation_envelope(
         feasibility_partition=feasibility_partition,
         feasible_interval_mask=feasible_interval_mask,
     )
-    return value, marginal, policy
+    return (
+        value,
+        marginal,
+        policy,
+        published_owner(value=value, stable_index=winner.stable_index),
+    )
 
 
 def _point_candidate_segment_bases(
