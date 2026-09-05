@@ -104,13 +104,13 @@ def refine_envelope(
     per consecutive input pair), as the Euler inversion produces them: the
     constrained run followed by the interior run, each ascending along its own
     margin but jointly non-monotone in the endogenous grid. The abscissae are
-    sorted ascending and swept left-to-right; at each abscissa the highest
-    bracketing segment is kept, and where the winning segment switches between
-    two adjacent abscissae the exact crossing point is inserted (twice — left and
-    right policy — unless the crossing lands on one of the two nodes, whose own
-    row is then one of the two records). The refined arrays have static length
-    `n_refined`, hold the envelope points in weakly ascending grid order, and are
-    NaN-padded in the tail.
+    sorted ascending and swept left-to-right; at each abscissa the certified
+    owner among the bracketing segments publishes both the value and the policy,
+    and where the owning branch switches between two adjacent abscissae the
+    crossing is inserted (twice — left and right policy — unless it lands on one
+    of the two nodes, whose own row is then one of the two records). The refined
+    arrays have static length `n_refined`, hold the envelope points in weakly
+    ascending grid order, and are NaN-padded in the tail.
 
     Args:
         endog_grid: Candidate endogenous grid points (resources). Consecutive
