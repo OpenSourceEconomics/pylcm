@@ -23,10 +23,12 @@ from _lcm.solution.action_streaming import (
 )
 from _lcm.solution.contract import SolverBuildContext
 from _lcm.solution.grid_search import (
+    GridSearch,
     _ActionStreamingDisposition,
     _classify_action_streaming,
     _supports_action_streaming,
 )
+from lcm.exceptions import RegimeInitializationError
 
 
 def _Q_and_F(
@@ -899,6 +901,53 @@ def test_action_streaming_route_classification_matrix(
 
     assert actual is expected
     assert supported is (expected is _ActionStreamingDisposition.STREAMED)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "reason"),
+    [
+        pytest.param(
+            {"stakeholders": ("f", "m")},
+            "collective_resource_regression",
+            id="dense",
+        ),
+        pytest.param(
+            {"action_names": (), "actions_grid_shapes": ()},
+            "trivial_action_product",
+            id="inert",
+        ),
+        pytest.param(
+            {
+                "has_taste_shocks": True,
+                "stakeholders": ("f", "m"),
+                "discrete_actions": ("action",),
+            },
+            "unsupported:collective_ev1",
+            id="unsupported",
+        ),
+    ],
+)
+def test_explicit_action_width_rejects_routes_without_a_streamed_action_axis(
+    *, overrides: dict[str, Any], reason: str
+) -> None:
+    solver = GridSearch(action_block_width=2)
+    context = _action_streaming_route_context(**overrides)
+
+    with pytest.raises(RegimeInitializationError, match=reason):
+        solver.validate_build(context=context)
+
+
+def test_explicit_action_width_accepts_a_streamed_action_route() -> None:
+    GridSearch(action_block_width=2).validate_build(
+        context=_action_streaming_route_context()
+    )
+
+
+def test_explicit_action_width_cannot_exceed_the_streamed_product() -> None:
+    with pytest.raises(RegimeInitializationError, match=r"exceeds.*extent 5"):
+        GridSearch(action_block_width=6).validate_build(
+            context=_action_streaming_route_context(actions_grid_shapes=(5,))
+        )
 
 
 def _fold_Q_and_F(

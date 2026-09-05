@@ -1,6 +1,7 @@
 """End-to-end benchmark for the Mahler & Yum (2024) replication model."""
 
 import gc
+import pathlib
 import time
 
 from . import _gpu_mem
@@ -55,6 +56,40 @@ class MahlerYum:
             log_level="off",
         )
 
+    def execute_gpu_memory_phase(
+        self,
+        *,
+        phase: str,
+        archive_path: pathlib.Path,
+    ) -> None:
+        """Run one exact solution-lifecycle phase in its dedicated child process."""
+        if phase == _gpu_mem.AUTOMATIC_SOLVE_SIMULATE:
+            self.time_execution()
+            return
+        if phase == _gpu_mem.SOLVE_SAVE_ALL_PERSISTABLE:
+            from lcm.solver_api import ResultRetention
+
+            solution = self.model.solve(
+                params=self.model_params,
+                log_level="off",
+                retention=ResultRetention.ALL_PERSISTABLE_ARTIFACTS,
+            )
+            solution.save(path=archive_path)
+            return
+        if phase == _gpu_mem.LOAD_SUPPLIED_SOLUTION_SIMULATE:
+            from lcm.persistence import load_solution
+
+            solution = load_solution(path=archive_path)
+            self.model.simulate(
+                params=self.model_params,
+                initial_conditions=self.initial_conditions,
+                solution=solution,
+                log_level="off",
+            )
+            return
+        msg = f"Unknown GPU memory profile phase: {phase!r}."
+        raise ValueError(msg)
+
     def teardown(self):
         import jax
 
@@ -67,6 +102,6 @@ class MahlerYum:
     track_compilation_time.unit = "seconds"
 
 
-class MahlerYumGpuPeakMem(_gpu_mem.GpuPeakMem):
+class MahlerYumGpuPeakMem(_gpu_mem.GpuPeakMemProfile):
     bench_module = "benchmarks.asv.bench_mahler_yum"
     bench_class = "MahlerYum"

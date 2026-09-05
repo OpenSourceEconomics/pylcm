@@ -74,6 +74,7 @@ from _lcm.typing import (
     StateName,
 )
 from lcm.ages import AgeGrid
+from lcm.exceptions import RegimeInitializationError
 from lcm.solver_api import DISSOLUTION_FLAG as DISSOLUTION_FLAG_ARTIFACT
 from lcm.solver_api import KernelOutput
 from lcm.typing import (
@@ -140,6 +141,24 @@ def _select_action_width_keyword(*, context: SolverBuildContext) -> str:
 class GridSearch(Solver):
     """Grid-search solver over the full state-action product (the default)."""
 
+    action_block_width: int | None = None
+    """Requested width of the streamed Cartesian action axis.
+
+    None uses the full action product unless a memory budget asks the execution
+    planner to choose a smaller width.
+    """
+
+    def __post_init__(self) -> None:
+        """Validate the optional execution-only action width."""
+        if self.action_block_width is None:
+            return
+        if type(self.action_block_width) is not int:
+            msg = "GridSearch.action_block_width must be an exact integer or None."
+            raise RegimeInitializationError(msg)
+        if self.action_block_width <= 0:
+            msg = "GridSearch.action_block_width must be positive."
+            raise RegimeInitializationError(msg)
+
     @property
     def supports_transition_local_lotteries(self) -> bool:
         """Grid search enumerates transition-local lotteries inside Q."""
@@ -186,6 +205,25 @@ class GridSearch(Solver):
                 ),
             ),
         )
+
+    def validate_build(self, *, context: SolverBuildContext) -> None:
+        """Reject an explicit width when this route has no streamed action axis."""
+        if self.action_block_width is None:
+            return
+        disposition = _classify_action_streaming(context=context)
+        if disposition is not _ActionStreamingDisposition.STREAMED:
+            msg = (
+                "GridSearch.action_block_width applies only to a streamed action "
+                f"product; this route is classified as '{disposition.value}'."
+            )
+            raise RegimeInitializationError(msg)
+        extent = math.prod(context.state_action_space.actions_grid_shapes)
+        if self.action_block_width > extent:
+            msg = (
+                f"GridSearch.action_block_width {self.action_block_width} exceeds "
+                f"the action-product extent {extent}."
+            )
+            raise RegimeInitializationError(msg)
 
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Build one max-Q-over-a period adapter per period.
@@ -291,6 +329,7 @@ class GridSearch(Solver):
                             canonical_order="c",
                             reduction=HARD_MAX_REDUCTION,
                             width_keyword=action_width_keyword,
+                            requested_width=self.action_block_width,
                         ),
                     )
                     if stream_actions

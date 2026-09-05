@@ -23,10 +23,13 @@ from _lcm.execution.core_program import (
     ResolvedCoreProgram,
     _target_value_argument_leaf,
     core_program_graph,
-    initial_core_tile_widths,
     materialize_core_program,
     resolve_core_program,
     select_programs,
+)
+from _lcm.execution.internal_outputs import (
+    internal_input_templates,
+    topological_program_order,
 )
 from _lcm.execution.liveness import PlannedInputLiveness
 from _lcm.execution.output_layout import (
@@ -42,6 +45,11 @@ from _lcm.execution.value_transfer import (
     ValueArtifactKind,
     ValueTransferKind,
     resolve_value_transfer,
+)
+from _lcm.execution.workspace_planning import (
+    compiler_peak_bytes,
+    plan_workspace,
+    workspace_width_candidates,
 )
 from _lcm.regime_building.gated_edges import (
     EDGE_PERIOD_CONTEXT_ARGS,
@@ -99,7 +107,12 @@ from _lcm.utils.logging import (
     validation_raises,
 )
 from lcm.ages import AgeGrid
-from lcm.exceptions import InvalidValueFunctionError, ModelInitializationError
+from lcm.exceptions import (
+    ExecutionPlanningError,
+    InvalidValueFunctionError,
+    ModelInitializationError,
+)
+from lcm.execution import ExecutionConfig
 from lcm.solver_api import (
     SIMULATION_POLICY,
     ArtifactKey,
@@ -122,6 +135,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     regimes: MappingProxyType[RegimeName, Regime],
     logger: logging.Logger,
     enable_jit: bool,
+    execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
     collect_solver_diagnostics: bool = False,
     max_compilation_workers: int | None = None,
     retain_dissolution_flags: bool = True,
@@ -142,6 +156,8 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             to completion and log a warning, so `solve` returns a complete
             (NaN-bearing) solution; `"off"` skips the NaN check.
         enable_jit: Whether to JIT-compile the functions of the internal regimes.
+        execution_config: Hardware-local solve controls, including the optional
+            per-device workspace budget.
         collect_solver_diagnostics: Whether to retain a kernel's numerical
             self-report. Public ``Model.solve()`` and automatic simulation request
             it; ``log_level`` still decides whether diagnostics are calculated and
@@ -179,6 +195,13 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         the default path only gains an empty dissolution mapping.
 
     """
+    if execution_config.device_memory_bytes is not None and not enable_jit:
+        msg = (
+            "ExecutionConfig.device_memory_bytes requires JIT compilation so the "
+            "compiler can report peak workspace."
+        )
+        raise ExecutionPlanningError(msg)
+
     capture_target = resolve_capture_target()
 
     # The state-action spaces and the fence that reads them depend only on
@@ -207,6 +230,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         next_regime_to_continuation=next_regime_to_continuation,
         next_edge_to_V_arr=next_edge_to_V_arr,
         enable_jit=enable_jit,
+        execution_config=execution_config,
         retain_replay=retain_replay,
         persistable_artifact_refs=persistable_artifact_refs,
         max_compilation_workers=max_compilation_workers,
@@ -671,7 +695,7 @@ def _run_period_kernel(
     regime: Regime,
     regime_name: RegimeName,
     period: int,
-    compiled_cores: MappingProxyType[str, Callable],
+    compiled_cores: MappingProxyType[str, PlannedCore],
     capture_target: PeriodCaptureTarget | None,
     state_action_space: StateActionSpace,
     flat_params: FlatParams,
@@ -723,6 +747,7 @@ def _run_period_kernel(
         regime=regime,
         regime_name=regime_name,
         period=period,
+        compiled_cores=compiled_cores,
         kernel_kwargs={
             "regime_name": regime_name,
             "period": period,
@@ -1455,6 +1480,8 @@ def _drain_V_arr_shards(
 
 type _InputDispatch = tuple[int, RegimeName]
 type _CoreTriple = tuple[RegimeName, int, str]
+type _WidthKey = tuple[tuple[str, int], ...]
+type _CoreCandidate = tuple[_CoreTriple, _WidthKey]
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -1471,9 +1498,7 @@ class _ProgramExecutionMetadata:
 class _CompiledPrograms:
     """Executable graph plus the metadata liveness reads through the same seam."""
 
-    executables: dict[
-        tuple[RegimeName, int], MappingProxyType[str, Callable[..., object]]
-    ]
+    executables: dict[tuple[RegimeName, int], MappingProxyType[str, PlannedCore]]
     metadata: MappingProxyType[_CoreTriple, _ProgramExecutionMetadata]
 
 
@@ -1523,11 +1548,11 @@ def _classify_dispatch_value_artifacts(
     tuple[ValueArtifactAddress, ...],
     bool,
 ]:
-    """Separate finite planned reads from pinned dense or undeclared reads.
+    """Separate finite planned reads from pinned unplanned or undeclared reads.
 
-    A dense program pins exactly the value reads it declares; one that declares
-    none may still read any reachable value through its builder, so it is
-    reported as unknown and pinned conservatively.
+    A program the engine does not plan pins exactly the value reads it declares;
+    one that declares none may still read any reachable value through its
+    builder, so it is reported as unknown and pinned conservatively.
     """
     planned: list[ValueArtifactAddress] = []
     unplanned_exact: list[ValueArtifactAddress] = []
@@ -1537,7 +1562,7 @@ def _classify_dispatch_value_artifacts(
         declared_targets = tuple(
             access.target for access in metadata.requirements.target_value_accesses
         )
-        if metadata.disposition is CoreExecutionDisposition.DENSE:
+        if metadata.disposition is not CoreExecutionDisposition.PLANNED:
             if not declared_targets:
                 has_unknown = True
             else:
@@ -1711,7 +1736,7 @@ def _selected_artifact_keys_for_cell(
     )
 
 
-def _compile_all_functions(
+def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
@@ -1720,6 +1745,7 @@ def _compile_all_functions(
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
     next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
     enable_jit: bool,
+    execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
     retain_replay: bool,
     persistable_artifact_refs: frozenset[ArtifactRef],
     max_compilation_workers: int | None,
@@ -1750,6 +1776,8 @@ def _compile_all_functions(
             for constructing a source kernel's gated-edge lowering arguments;
             empty for models without gated edges.
         enable_jit: Whether to JIT-compile the functions of the internal regimes.
+        execution_config: Hardware-local solve controls, including the optional
+            per-device workspace budget.
         retain_replay: Whether the solve retains replay artifacts; with the
             regime's declared replay route it selects which scoped programs of
             each kernel's graph are dispatched.
@@ -1786,6 +1814,7 @@ def _compile_all_functions(
         all_layouts,
         lowering_keys,
         resolved_programs,
+        internal_templates,
     ) = _resolve_output_layouts_and_lowering_keys(
         all_programs=all_programs,
         regimes=regimes,
@@ -1794,24 +1823,27 @@ def _compile_all_functions(
         next_regime_to_V_arr=next_regime_to_V_arr,
         next_regime_to_continuation=next_regime_to_continuation,
         next_edge_to_V_arr=next_edge_to_V_arr,
+        budget_bytes=execution_config.device_memory_bytes,
     )
 
-    metadata = MappingProxyType(
-        {
-            triple: _ProgramExecutionMetadata(
-                requirements=program.requirements,
-                disposition=program.disposition,
-                scope=program.scope,
-                input_transfer_plan=program.input_transfer_plan,
-            )
-            for triple, program in resolved_programs.items()
-        }
-    )
+    candidates_by_triple: dict[_CoreTriple, list[_CoreCandidate]] = {}
+    for candidate in resolved_programs:
+        candidates_by_triple.setdefault(candidate[0], []).append(candidate)
 
     # Eager execution uses the same resolved function, arguments, requirements,
     # roles, static widths, and transfers as AOT. Only the final JAX compilation
     # step is omitted.
     if not enable_jit:
+        if execution_config.device_memory_bytes is not None:
+            msg = (
+                "ExecutionConfig.device_memory_bytes requires JIT compilation so the "
+                "compiler can report peak workspace."
+            )
+            raise ExecutionPlanningError(msg)
+        selected_programs = {
+            triple: resolved_programs[candidates[0]]
+            for triple, candidates in candidates_by_triple.items()
+        }
         eager = {
             triple: _attach_resolved_output_layout(
                 compiled=(
@@ -1820,58 +1852,213 @@ def _compile_all_functions(
                     else program.function
                 ),
                 layout=all_layouts[triple],
+                tile_widths=program.tile_widths,
                 input_transfer_plan=program.input_transfer_plan,
+                internal_input_templates=internal_templates[triple],
+                name=triple[2],
             )
-            for triple, program in resolved_programs.items()
+            for triple, program in selected_programs.items()
         }
         return _CompiledPrograms(
-            executables=_group_cores_by_regime_period(eager), metadata=metadata
+            executables=_group_cores_by_regime_period(eager),
+            metadata=_execution_metadata(programs=selected_programs),
         )
 
-    # Keep one representative per lowering key so its adapter can build the
-    # matching arguments.  Selection happens only after layout resolution.
-    unique: dict[Hashable, tuple[Callable, RegimeName, int, str]] = {}
-    for triple, program in resolved_programs.items():
-        lowering_key = lowering_keys[triple]
-        if lowering_key not in unique:
-            regime_name, period, core_key = triple
-            unique[lowering_key] = (
-                program.function,
-                regime_name,
-                period,
-                core_key,
-            )
-
-    n_triples_per_lowering = _count_triples_per_lowering_key(
-        lowering_keys=lowering_keys
-    )
-
+    # Candidates are ranked widest-first within each triple. Lowering proceeds in
+    # waves: wave 0 holds every triple's top-ranked candidate — the bootstrap width
+    # without a budget, the full extent under one, or the requested width — so an
+    # unbudgeted solve lowers exactly one candidate per core. Under a budget, only
+    # the triples whose current candidate exceeds it
+    # advance to their next candidate in the following wave. Each wave deduplicates
+    # by lowering key across triples, lowers sequentially (tracing is
+    # single-threaded), and compiles in parallel.
+    budget_bytes = execution_config.device_memory_bytes
     n_workers = _resolve_compilation_workers(
         max_compilation_workers=max_compilation_workers
     )
-    n_unique = len(unique)
+    compiled: dict[Hashable, jax.stages.Compiled] = {}
+    labels: dict[Hashable, str] = {}
+    peak_bytes_by_lowering_key: dict[Hashable, int] = {}
+    pending: dict[_CoreTriple, int] = dict.fromkeys(candidates_by_triple, 0)
+    wave = 0
+    while pending:
+        wave_candidates = {
+            triple: candidates_by_triple[triple][position]
+            for triple, position in pending.items()
+        }
+        wave_lowering_keys = {
+            candidate: lowering_keys[candidate]
+            for candidate in wave_candidates.values()
+        }
+        new_lowerings: dict[Hashable, _CoreCandidate] = {}
+        for candidate, lowering_key in wave_lowering_keys.items():
+            if lowering_key not in compiled:
+                new_lowerings.setdefault(lowering_key, candidate)
+        logger.info(
+            "AOT compilation wave %d: %d unique lowerings for %d regime-period-core "
+            "triples (%d workers)",
+            wave,
+            len(new_lowerings),
+            len(pending),
+            n_workers,
+        )
+        _lower_and_compile_wave(
+            new_lowerings=new_lowerings,
+            resolved_programs=resolved_programs,
+            all_layouts=all_layouts,
+            internal_templates=internal_templates,
+            ages=ages,
+            n_triples_per_lowering=_count_triples_per_lowering_key(
+                lowering_keys=wave_lowering_keys
+            ),
+            log_kernel_memory=budget_bytes is None,
+            n_workers=n_workers,
+            logger=logger,
+            compiled=compiled,
+            labels=labels,
+        )
+        if budget_bytes is None:
+            break
+        next_pending: dict[_CoreTriple, int] = {}
+        for triple, position in pending.items():
+            candidate = wave_candidates[triple]
+            lowering_key = lowering_keys[candidate]
+            if lowering_key not in peak_bytes_by_lowering_key:
+                peak_bytes = compiler_peak_bytes(
+                    compiled=compiled[lowering_key],
+                    widths=resolved_programs[candidate].tile_widths,
+                )
+                peak_bytes_by_lowering_key[lowering_key] = peak_bytes
+                _log_kernel_memory(
+                    compiled=compiled[lowering_key],
+                    label=labels[lowering_key],
+                    logger=logger,
+                    precomputed_peak_bytes=peak_bytes,
+                )
+            if peak_bytes_by_lowering_key[lowering_key] <= budget_bytes:
+                continue
+            if position + 1 < len(candidates_by_triple[triple]):
+                next_pending[triple] = position + 1
+            # A triple that fits at no width has its whole frontier compiled; the
+            # planner below reports it with every candidate's peak in hand.
+        pending = next_pending
+        wave += 1
 
-    logger.info(
-        "AOT compilation: %d unique functions (%d regime-period-core triples, "
-        "%d workers)",
-        n_unique,
-        len(all_programs),
-        n_workers,
+    peak_bytes_by_compiled_id = {
+        id(compiled[lowering_key]): peak_bytes
+        for lowering_key, peak_bytes in peak_bytes_by_lowering_key.items()
+    }
+
+    # Select within each triple through the planner, which walks the same ranked
+    # frontier and stops at the same first feasible candidate; the waves above
+    # compiled exactly the candidates it asks for, so the winner reaches dispatch
+    # without a second lowering or compilation.
+    selected_programs: dict[_CoreTriple, ResolvedCoreProgram] = {}
+    selected_cores: dict[_CoreTriple, PlannedCore] = {}
+    for triple, candidates in candidates_by_triple.items():
+        programs_by_width = {
+            candidate[1]: resolved_programs[candidate] for candidate in candidates
+        }
+        compiled_by_width = {
+            candidate[1]: compiled[lowering_keys[candidate]]
+            for candidate in candidates
+            if lowering_keys[candidate] in compiled
+        }
+        representative = resolved_programs[candidates[0]]
+        plan = plan_workspace(
+            axes=representative.requirements.streamable_axes,
+            compile_candidate=_CompiledCandidateLookup(
+                compiled_by_width=compiled_by_width
+            ),
+            budget_bytes=budget_bytes,
+            peak_bytes_for=(
+                None
+                if budget_bytes is None
+                else _PeakBytesLookup(
+                    peak_bytes_by_compiled_id=peak_bytes_by_compiled_id
+                )
+            ),
+        )
+        selected = programs_by_width[_width_key(widths=plan.widths)]
+        selected_programs[triple] = selected
+        selected_cores[triple] = _attach_resolved_output_layout(
+            compiled=plan.compiled,
+            layout=all_layouts[triple],
+            tile_widths=plan.widths,
+            input_transfer_plan=selected.input_transfer_plan,
+            internal_input_templates=internal_templates[triple],
+            name=triple[2],
+        )
+
+    return _CompiledPrograms(
+        executables=_group_cores_by_regime_period(selected_cores),
+        metadata=_execution_metadata(programs=selected_programs),
     )
 
-    # Phase 1: Lower all unique cores (sequential — tracing is not thread-safe
-    # and must happen on the main thread). Arguments were materialized before
-    # representative selection and are reused verbatim here.
+
+# The planner's lookups are instances of module-level classes rather than functions
+# defined per solve. The package's beartype claw decorates every `def` it imports,
+# including one executed inside a call, and keeps each decorated function in a
+# process-wide registry; a nested function would therefore pin its closure — here
+# every compiled executable of a core — for the life of the process.
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _CompiledCandidateLookup:
+    """Serve the planner's width requests from one triple's compiled candidates."""
+
+    compiled_by_width: Mapping[_WidthKey, jax.stages.Compiled]
+
+    def __call__(self, widths: Mapping[str, int]) -> jax.stages.Compiled:
+        try:
+            return self.compiled_by_width[_width_key(widths=widths)]
+        except KeyError:
+            msg = (
+                "The workspace planner asked for a width candidate that no "
+                f"compilation wave lowered: {dict(widths)!r}."
+            )
+            raise RuntimeError(msg) from None
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _PeakBytesLookup:
+    """Serve the planner's peak queries from the waves' compiler reports."""
+
+    peak_bytes_by_compiled_id: Mapping[int, int]
+
+    def __call__(self, executable: jax.stages.Compiled) -> int:
+        return self.peak_bytes_by_compiled_id[id(executable)]
+
+
+def _lower_and_compile_wave(
+    *,
+    new_lowerings: Mapping[Hashable, _CoreCandidate],
+    resolved_programs: Mapping[_CoreCandidate, ResolvedCoreProgram],
+    all_layouts: Mapping[_CoreTriple, ResolvedOutputLayout],
+    internal_templates: Mapping[_CoreTriple, Mapping[str, object]],
+    ages: AgeGrid,
+    n_triples_per_lowering: Mapping[Hashable, int],
+    log_kernel_memory: bool,
+    n_workers: int,
+    logger: logging.Logger,
+    compiled: dict[Hashable, jax.stages.Compiled],
+    labels: dict[Hashable, str],
+) -> None:
+    """Lower one wave's new candidates sequentially and compile them in parallel.
+
+    Tracing is single-threaded, so lowering runs on the calling thread; XLA releases
+    the GIL, so compilation fans out over a thread pool. Executables and their log
+    labels land in `compiled` and `labels`, keyed by lowering key.
+    """
     lowered: dict[Hashable, jax.stages.Lowered] = {}
-    labels: dict[Hashable, str] = {}
-    for i, (lowering_key, (func, regime_name, period, core_key)) in enumerate(
-        unique.items(), 1
-    ):
-        triple = (regime_name, period, core_key)
-        resolved = resolved_programs[triple]
-        lower_args = resolved.arguments
+    n_unique = len(new_lowerings)
+    for i, (lowering_key, candidate) in enumerate(new_lowerings.items(), 1):
+        triple, _ = candidate
+        regime_name, period, core_key = triple
+        resolved = resolved_programs[candidate]
         static_kwargs = resolved.static_kwargs
-        label = f"{regime_name} {core_key} (age {ages.values[period].item()})"
+        label = (
+            f"{regime_name} {core_key} (age {ages.values[period].item()}, "
+            f"widths={dict(resolved.tile_widths)!r})"
+        )
         labels[lowering_key] = label
         log_module_fanout(
             label=label,
@@ -1883,11 +2070,13 @@ def _compile_all_functions(
         start = time.monotonic()
         layout = all_layouts[triple]
         jitted = jax.jit(
-            func,
+            resolved.function,
             static_argnames=tuple(static_kwargs),
             out_shardings=layout.out_shardings,
         )
-        low = jitted.lower(**lower_args, **static_kwargs)
+        low = jitted.lower(
+            **resolved.arguments, **internal_templates[triple], **static_kwargs
+        )
         _assert_lowered_output_roles(
             lowered=low,
             output_roles=resolved.output_roles,
@@ -1898,23 +2087,6 @@ def _compile_all_functions(
         elapsed = time.monotonic() - start
         logger.info("  lowered in %s", format_duration(seconds=elapsed))
 
-    # Phase 2: Compile all lowered programs in parallel (XLA releases the GIL).
-    compiled: dict[Hashable, jax.stages.Compiled] = {}
-
-    def _compile_and_log(
-        *,
-        lowering_key: Hashable,
-        low: jax.stages.Lowered,
-        label: str,
-    ) -> tuple[Hashable, jax.stages.Compiled]:
-        logger.info("  compiling %s ...", label)
-        start = time.monotonic()
-        result = low.compile()
-        elapsed = time.monotonic() - start
-        logger.info("  compiled  %s  %s", label, format_duration(seconds=elapsed))
-        _log_kernel_memory(compiled=result, label=label, logger=logger)
-        return lowering_key, result
-
     with ThreadPoolExecutor(max_workers=n_workers) as pool:
         futures = [
             pool.submit(
@@ -1922,6 +2094,8 @@ def _compile_all_functions(
                 lowering_key=lowering_key,
                 low=low,
                 label=labels[lowering_key],
+                log_kernel_memory=log_kernel_memory,
+                logger=logger,
             )
             for lowering_key, low in lowered.items()
         ]
@@ -1929,25 +2103,48 @@ def _compile_all_functions(
             lowering_key, comp = future.result()
             compiled[lowering_key] = comp
 
-    # Map back to (regime, period) keys, grouping the compiled cores by core key.
-    executables = _group_cores_by_regime_period(
+
+def _compile_and_log(
+    *,
+    lowering_key: Hashable,
+    low: jax.stages.Lowered,
+    label: str,
+    log_kernel_memory: bool,
+    logger: logging.Logger,
+) -> tuple[Hashable, jax.stages.Compiled]:
+    """Compile one lowered program on a pool thread and log its timing."""
+    logger.info("  compiling %s ...", label)
+    start = time.monotonic()
+    result = low.compile()
+    elapsed = time.monotonic() - start
+    logger.info("  compiled  %s  %s", label, format_duration(seconds=elapsed))
+    if log_kernel_memory:
+        _log_kernel_memory(compiled=result, label=label, logger=logger)
+    return lowering_key, result
+
+
+def _execution_metadata(
+    *, programs: Mapping[_CoreTriple, ResolvedCoreProgram]
+) -> MappingProxyType[_CoreTriple, _ProgramExecutionMetadata]:
+    """Retain selected declaration facts without pinning argument templates."""
+    return MappingProxyType(
         {
-            triple: _attach_resolved_output_layout(
-                compiled=compiled[lowering_keys[triple]],
-                layout=all_layouts[triple],
-                input_transfer_plan=resolved_programs[triple].input_transfer_plan,
+            triple: _ProgramExecutionMetadata(
+                requirements=program.requirements,
+                disposition=program.disposition,
+                scope=program.scope,
+                input_transfer_plan=program.input_transfer_plan,
             )
-            for triple in all_programs
+            for triple, program in programs.items()
         }
     )
-    return _CompiledPrograms(executables=executables, metadata=metadata)
 
 
 def _count_triples_per_lowering_key(
     *,
-    lowering_keys: Mapping[tuple[RegimeName, int, str], Hashable],
+    lowering_keys: Mapping[_CoreCandidate, Hashable],
 ) -> dict[Hashable, int]:
-    """Count the triples each callable-and-output-layout module will serve.
+    """Count the candidate addresses each compiled module will serve.
 
     A shared callable with distinct output layouts is deliberately counted as
     distinct lowered modules.
@@ -1967,16 +2164,38 @@ def _resolve_output_layouts_and_lowering_keys(
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
     next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
+    budget_bytes: int | None,
 ) -> tuple[
     dict[_CoreTriple, ResolvedOutputLayout],
-    dict[_CoreTriple, Hashable],
-    dict[_CoreTriple, ResolvedCoreProgram],
+    dict[_CoreCandidate, Hashable],
+    dict[_CoreCandidate, ResolvedCoreProgram],
+    dict[_CoreTriple, Mapping[str, object]],
 ]:
-    """Materialize each core's complete, immutable lowering description."""
+    """Materialize once, then resolve every width candidate before global dedup.
+
+    Programs are visited so every producer of an internal output is materialized
+    before the consumers that read it, and each consumer is lowered against the
+    producer's abstract output rather than a stand-in.
+    """
     layouts: dict[_CoreTriple, ResolvedOutputLayout] = {}
-    lowering_keys: dict[_CoreTriple, Hashable] = {}
-    resolved_programs: dict[_CoreTriple, ResolvedCoreProgram] = {}
-    for (regime_name, period, core_key), declaration in all_programs.items():
+    lowering_keys: dict[_CoreCandidate, Hashable] = {}
+    resolved_programs: dict[_CoreCandidate, ResolvedCoreProgram] = {}
+    internal_templates: dict[_CoreTriple, Mapping[str, object]] = {}
+    # A materialized program is kept only while its own graph is being resolved,
+    # and only when some consumer of that graph names it, so no argument tree is
+    # held across the whole solve.
+    producers: dict[str, MaterializedCoreProgram] = {}
+    consumed_names: frozenset[str] = frozenset()
+    current_cell: tuple[RegimeName, int] | None = None
+    ordered_programs = _programs_in_producer_order(all_programs=all_programs)
+    for (regime_name, period, core_key), declaration in ordered_programs.items():
+        triple = (regime_name, period, core_key)
+        if (regime_name, period) != current_cell:
+            current_cell = (regime_name, period)
+            producers = {}
+            consumed_names = _consumed_producer_names(
+                all_programs=all_programs, regime_name=regime_name, period=period
+            )
         regime = regimes[regime_name]
         state_action_space = regime.solution.state_action_space(
             regime_params=flat_params[regime_name]
@@ -1999,39 +2218,90 @@ def _resolve_output_layouts_and_lowering_keys(
             ),
         )
         materialized = materialize_core_program(program=declaration, context=context)
-        resolved = _resolve_program_for_execution(
-            program=materialized,
-            source_value_template=next_regime_to_V_arr[regime_name],
-            source=(regime_name, period, core_key),
+        if core_key in consumed_names:
+            producers[core_key] = materialized
+        templates = internal_input_templates(program=materialized, producers=producers)
+        internal_templates[triple] = templates
+        width_candidates = workspace_width_candidates(
+            axes=materialized.requirements.streamable_axes,
+            budget_bytes=budget_bytes,
         )
-
         state_order = tuple(
             name
             for name in state_action_space.states
             if name not in regime.fold_state_names
         )
-        layout = resolve_output_layout(
-            core_key=core_key,
-            value_template=next_regime_to_V_arr[regime_name],
-            state_order=state_order,
-            output_roles=resolved.output_roles,
-        )
-        triple = (regime_name, period, core_key)
-        layouts[triple] = layout
-        resolved_programs[triple] = resolved
-        lowering_keys[triple] = _lowering_key(
-            func=resolved.function,
-            layout_key=layout.compilation_key,
-            arguments=resolved.arguments,
-            specialization_key=resolved.specialization_key,
-            output_roles=resolved.output_roles,
-        )
-    return layouts, lowering_keys, resolved_programs
+        for widths in width_candidates:
+            resolved = _resolve_program_for_execution(
+                program=materialized,
+                tile_widths=widths,
+                source_value_template=next_regime_to_V_arr[regime_name],
+                source=triple,
+            )
+            layout = layouts.get(triple)
+            if layout is None:
+                layout = resolve_output_layout(
+                    core_key=core_key,
+                    value_template=next_regime_to_V_arr[regime_name],
+                    state_order=state_order,
+                    output_roles=resolved.output_roles,
+                )
+                layouts[triple] = layout
+            candidate = (triple, _width_key(widths=resolved.tile_widths))
+            resolved_programs[candidate] = resolved
+            lowering_keys[candidate] = _lowering_key(
+                func=resolved.function,
+                layout_key=layout.compilation_key,
+                arguments={**resolved.arguments, **templates},
+                specialization_key=resolved.specialization_key,
+                output_roles=resolved.output_roles,
+            )
+    return layouts, lowering_keys, resolved_programs, internal_templates
+
+
+def _consumed_producer_names(
+    *,
+    all_programs: Mapping[_CoreTriple, CoreProgram],
+    regime_name: RegimeName,
+    period: int,
+) -> frozenset[str]:
+    """Return the programs of one regime-period graph whose outputs are consumed."""
+    return frozenset(
+        ref.producer
+        for (other_regime, other_period, _core_key), program in all_programs.items()
+        if (other_regime, other_period) == (regime_name, period)
+        for ref in program.requirements.internal_inputs.values()
+    )
+
+
+def _programs_in_producer_order(
+    *, all_programs: Mapping[_CoreTriple, CoreProgram]
+) -> dict[_CoreTriple, CoreProgram]:
+    """Reorder the flat program map so producers precede their consumers.
+
+    Ordering is per regime-period graph, since internal outputs never cross one.
+    Declaration order breaks ties, so a graph without internal edges keeps the
+    order its kernel published.
+    """
+    cells: dict[tuple[RegimeName, int], dict[str, CoreProgram]] = {}
+    for (regime_name, period, core_key), program in all_programs.items():
+        cells.setdefault((regime_name, period), {})[core_key] = program
+    ordered: dict[_CoreTriple, CoreProgram] = {}
+    for (regime_name, period), graph in cells.items():
+        for core_key in topological_program_order(graph=graph):
+            ordered[(regime_name, period, core_key)] = graph[core_key]
+    return ordered
+
+
+def _width_key(*, widths: Mapping[str, int]) -> _WidthKey:
+    """Freeze a width map while preserving axis declaration order."""
+    return tuple(widths.items())
 
 
 def _resolve_program_for_execution(
     *,
     program: MaterializedCoreProgram,
+    tile_widths: Mapping[str, int],
     source_value_template: object,
     source: _CoreTriple,
 ) -> ResolvedCoreProgram:
@@ -2047,7 +2317,7 @@ def _resolve_program_for_execution(
     )
     return resolve_core_program(
         program=program,
-        tile_widths=initial_core_tile_widths(program=program),
+        tile_widths=tile_widths,
         input_transfer_plan=input_transfer_plan,
     )
 
@@ -2295,26 +2565,32 @@ def _attach_resolved_output_layout(
     *,
     compiled: Callable[..., object],
     layout: ResolvedOutputLayout,
+    tile_widths: Mapping[str, int],
     input_transfer_plan: tuple[ResolvedValueTransfer, ...] = (),
+    internal_input_templates: Mapping[str, object] = MappingProxyType({}),
+    name: str = "",
 ) -> PlannedCore:
     """Carry one node's resolved output and input plans to runtime dispatch."""
     return PlannedCore(
         compiled=compiled,
         layout=layout,
+        tile_widths=tile_widths,
         input_transfer_plan=input_transfer_plan,
+        internal_input_templates=internal_input_templates,
+        name=name,
     )
 
 
 def _group_cores_by_regime_period(
-    cores_by_triple: Mapping[tuple[RegimeName, int, str], Callable],
-) -> dict[tuple[RegimeName, int], MappingProxyType[str, Callable]]:
+    cores_by_triple: Mapping[_CoreTriple, PlannedCore],
+) -> dict[tuple[RegimeName, int], MappingProxyType[str, PlannedCore]]:
     """Group (regime, period, core_key) -> core into (regime, period) -> {key: core}.
 
     The solve loop dispatches each period adapter with its full per-key core map,
     so a multi-core kernel receives all its compiled cores while a single-core
     kernel receives `{"main": ...}`.
     """
-    grouped: dict[tuple[RegimeName, int], dict[str, Callable]] = {}
+    grouped: dict[tuple[RegimeName, int], dict[str, PlannedCore]] = {}
     for (regime_name, period, core_key), core in cores_by_triple.items():
         grouped.setdefault((regime_name, period), {})[core_key] = core
     return {key: MappingProxyType(cores) for key, cores in grouped.items()}
@@ -2325,6 +2601,7 @@ def _log_kernel_memory(
     compiled: jax.stages.Compiled,
     label: str,
     logger: logging.Logger,
+    precomputed_peak_bytes: int | None = None,
 ) -> None:
     """Log XLA's compile-time memory analysis for one compiled kernel.
 
@@ -2346,6 +2623,14 @@ def _log_kernel_memory(
     if os.environ.get("LCM_LOG_KERNEL_MEMORY", "0") == "0":
         return
     level = max(logger.getEffectiveLevel(), logging.INFO)
+    if precomputed_peak_bytes is not None:
+        logger.log(
+            level,
+            "  [mem] %s: compiler peak=%.3f GiB (planner cache)",
+            label,
+            precomputed_peak_bytes / 1024**3,
+        )
+        return
     try:
         stats = compiled.memory_analysis()
     except Exception as exc:  # noqa: BLE001 - backend may not support analysis

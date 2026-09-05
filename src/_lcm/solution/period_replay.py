@@ -18,13 +18,22 @@ import cloudpickle
 import jax
 
 from _lcm.engine import StateActionSpace
+from _lcm.execution.compiler_memory import (
+    CompilerMemoryBytes,
+    compiler_memory_bytes,
+)
 from _lcm.execution.core_program import (
     CoreBuildContext,
+    MaterializedCoreProgram,
     core_program_graph,
     materialize_core_program,
     select_programs,
 )
-from _lcm.execution.output_layout import resolve_output_layout
+from _lcm.execution.internal_outputs import (
+    internal_input_templates,
+    topological_program_order,
+)
+from _lcm.execution.output_layout import PlannedCore, resolve_output_layout
 from _lcm.solution.backward_induction import (
     _assert_lowered_output_roles,
     _attach_resolved_output_layout,
@@ -52,23 +61,6 @@ class PeriodReplay:
 
     output: KernelOutput
     """What the kernel returned: the value array and its artifact channels."""
-
-
-@dataclasses.dataclass(frozen=True)
-class CompilerMemoryBytes:
-    """Backend-independent byte counts from JAX compiler memory analysis."""
-
-    generated_code_size_in_bytes: int | None
-    argument_size_in_bytes: int | None
-    output_size_in_bytes: int | None
-    alias_size_in_bytes: int | None
-    temp_size_in_bytes: int | None
-    peak_memory_in_bytes: int | None
-    host_generated_code_size_in_bytes: int | None
-    host_argument_size_in_bytes: int | None
-    host_output_size_in_bytes: int | None
-    host_alias_size_in_bytes: int | None
-    host_temp_size_in_bytes: int | None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -116,12 +108,16 @@ def replay_period(*, directory: Path) -> PeriodReplay:
     regime = payload["regime"]
     period = payload["period"]
     kernel_kwargs = payload["kernel_kwargs"]
+    core_tile_widths = payload["core_tile_widths"]
 
     output = _run_period_kernel(
         regime=regime,
         capture_target=None,
         compiled_cores=_compile_cores_for_one_period(
-            regime=regime, period=period, kernel_kwargs=kernel_kwargs
+            regime=regime,
+            period=period,
+            kernel_kwargs=kernel_kwargs,
+            core_tile_widths=core_tile_widths,
         ),
         **kernel_kwargs,
     )
@@ -154,9 +150,13 @@ def analyze_period_core_memory(*, directory: Path) -> PeriodCoreMemoryAnalysis:
     regime = payload["regime"]
     period = payload["period"]
     kernel_kwargs = payload["kernel_kwargs"]
+    core_tile_widths = payload["core_tile_widths"]
 
     production = _compile_cores_for_one_period(
-        regime=regime, period=period, kernel_kwargs=kernel_kwargs
+        regime=regime,
+        period=period,
+        kernel_kwargs=kernel_kwargs,
+        core_tile_widths=core_tile_widths,
     )
     return PeriodCoreMemoryAnalysis(
         regime_name=kernel_kwargs["regime_name"],
@@ -165,7 +165,7 @@ def analyze_period_core_memory(*, directory: Path) -> PeriodCoreMemoryAnalysis:
         preserves_production_sharding=False,
         core_memory_bytes=MappingProxyType(
             {
-                key: _compiler_memory_bytes(compiled=core)
+                key: compiler_memory_bytes(compiled=core.compiled)
                 for key, core in production.items()
             }
         ),
@@ -175,37 +175,80 @@ def analyze_period_core_memory(*, directory: Path) -> PeriodCoreMemoryAnalysis:
 def _load_capture_payload(*, directory: Path) -> dict[str, Any]:
     """Load one period's logical inputs; array sharding is not round-tripped."""
     with (directory / _PAYLOAD_NAME).open("rb") as stream:
-        return cloudpickle.load(stream)
-
-
-def _compiler_memory_bytes(*, compiled: Any) -> CompilerMemoryBytes | None:  # noqa: ANN401
-    """Normalize a backend memory-analysis object to stable integer byte fields."""
-    try:
-        stats = compiled.memory_analysis()
-    except Exception:  # noqa: BLE001 - analysis is optional across JAX backends
-        return None
-    if stats is None:
-        return None
-
-    def optional_bytes(name: str) -> int | None:
-        value = getattr(stats, name, None)
-        return None if value is None else int(value)
-
-    return CompilerMemoryBytes(
-        generated_code_size_in_bytes=optional_bytes("generated_code_size_in_bytes"),
-        argument_size_in_bytes=optional_bytes("argument_size_in_bytes"),
-        output_size_in_bytes=optional_bytes("output_size_in_bytes"),
-        alias_size_in_bytes=optional_bytes("alias_size_in_bytes"),
-        temp_size_in_bytes=optional_bytes("temp_size_in_bytes"),
-        peak_memory_in_bytes=optional_bytes("peak_memory_in_bytes"),
-        host_generated_code_size_in_bytes=optional_bytes(
-            "host_generated_code_size_in_bytes"
-        ),
-        host_argument_size_in_bytes=optional_bytes("host_argument_size_in_bytes"),
-        host_output_size_in_bytes=optional_bytes("host_output_size_in_bytes"),
-        host_alias_size_in_bytes=optional_bytes("host_alias_size_in_bytes"),
-        host_temp_size_in_bytes=optional_bytes("host_temp_size_in_bytes"),
+        payload = cloudpickle.load(stream)
+    if not isinstance(payload, dict):
+        msg = "A period capture payload must be a dictionary."
+        raise TypeError(msg)
+    if "core_tile_widths" not in payload:
+        msg = "Period capture is missing required 'core_tile_widths'."
+        raise ValueError(msg)
+    loaded = dict(payload)
+    loaded["core_tile_widths"] = _normalize_core_tile_widths(
+        raw=payload["core_tile_widths"]
     )
+    return loaded
+
+
+def _normalize_core_tile_widths(
+    *, raw: object
+) -> MappingProxyType[str, MappingProxyType[str, int]]:
+    """Validate and freeze the portable width map stored in a capture."""
+    if not isinstance(raw, Mapping):
+        msg = "Period capture 'core_tile_widths' must be a mapping."
+        raise TypeError(msg)
+
+    normalized: dict[str, MappingProxyType[str, int]] = {}
+    for core_name, raw_widths in raw.items():
+        if not isinstance(core_name, str) or not core_name:
+            msg = "Captured core names must be non-empty strings."
+            raise TypeError(msg)
+        if not isinstance(raw_widths, Mapping):
+            msg = f"Captured tile widths for core {core_name!r} must be a mapping."
+            raise TypeError(msg)
+
+        widths: dict[str, int] = {}
+        for axis_name, width in raw_widths.items():
+            if not isinstance(axis_name, str) or not axis_name:
+                msg = (
+                    f"Captured tile-width names for core {core_name!r} must be "
+                    "non-empty strings."
+                )
+                raise TypeError(msg)
+            if type(width) is not int:
+                msg = (
+                    f"Captured tile width for {core_name!r}/{axis_name!r} must be "
+                    "an exact integer."
+                )
+                raise TypeError(msg)
+            if width <= 0:
+                msg = (
+                    f"Captured tile width for {core_name!r}/{axis_name!r} must be "
+                    "positive."
+                )
+                raise ValueError(msg)
+            widths[axis_name] = width
+        normalized[core_name] = MappingProxyType(widths)
+    return MappingProxyType(normalized)
+
+
+def _require_exact_core_tile_widths(
+    *,
+    raw: object,
+    core_names: tuple[str, ...],
+) -> MappingProxyType[str, MappingProxyType[str, int]]:
+    """Require one captured width map for every selected replay core."""
+    widths = _normalize_core_tile_widths(raw=raw)
+    expected = frozenset(core_names)
+    actual = frozenset(widths)
+    if actual != expected:
+        missing = sorted(expected - actual)
+        extra = sorted(actual - expected)
+        msg = (
+            "Captured core_tile_widths must match the selected replay cores "
+            f"exactly; missing={missing!r}, extra={extra!r}."
+        )
+        raise ValueError(msg)
+    return widths
 
 
 def _compile_cores_for_one_period(
@@ -213,7 +256,8 @@ def _compile_cores_for_one_period(
     regime: Any,  # noqa: ANN401 - the canonical Regime, circular to import here
     period: int,
     kernel_kwargs: dict[str, Any],
-) -> MappingProxyType[str, Any]:
+    core_tile_widths: object,
+) -> MappingProxyType[str, PlannedCore]:
     """Lower and compile the cores of a single period.
 
     The solve loop compiles every regime-period up front and deduplicates
@@ -224,16 +268,25 @@ def _compile_cores_for_one_period(
     context = _core_build_context_for_one_period(
         regime=regime, period=period, kernel_kwargs=kernel_kwargs
     )
-    compiled = {}
     graph = select_programs(
         graph=core_program_graph(kernel=period_kernel),
         retain_replay=kernel_kwargs["retain_replay"],
         selected_artifact_keys=kernel_kwargs["selected_artifact_keys"],
     )
-    for core_name, declaration in graph.items():
+    captured_widths = _require_exact_core_tile_widths(
+        raw=core_tile_widths,
+        core_names=tuple(graph),
+    )
+    compiled: dict[str, PlannedCore] = {}
+    producers: dict[str, MaterializedCoreProgram] = {}
+    for core_name in topological_program_order(graph=graph):
+        declaration = graph[core_name]
         materialized = materialize_core_program(program=declaration, context=context)
+        producers[core_name] = materialized
+        templates = internal_input_templates(program=materialized, producers=producers)
         resolved = _resolve_program_for_execution(
             program=materialized,
+            tile_widths=captured_widths[core_name],
             source_value_template=context.next_regime_to_V_arr[
                 kernel_kwargs["regime_name"]
             ],
@@ -256,7 +309,9 @@ def _compile_cores_for_one_period(
             static_argnames=tuple(resolved.static_kwargs),
             out_shardings=layout.out_shardings,
         )
-        lowered = jitted.lower(**resolved.arguments, **resolved.static_kwargs)
+        lowered = jitted.lower(
+            **resolved.arguments, **templates, **resolved.static_kwargs
+        )
         _assert_lowered_output_roles(
             lowered=lowered,
             output_roles=resolved.output_roles,
@@ -269,7 +324,10 @@ def _compile_cores_for_one_period(
         compiled[core_name] = _attach_resolved_output_layout(
             compiled=executable,
             layout=layout,
+            tile_widths=resolved.tile_widths,
             input_transfer_plan=resolved.input_transfer_plan,
+            internal_input_templates=templates,
+            name=core_name,
         )
     return MappingProxyType(compiled)
 

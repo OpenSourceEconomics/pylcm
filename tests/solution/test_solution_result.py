@@ -27,8 +27,9 @@ from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from _lcm.typing import (
     FlatParams,
 )
-from lcm import LinSpacedGrid, Model
+from lcm import ExecutionConfig, LinSpacedGrid, Model
 from lcm.exceptions import (
+    ExecutionPlanningError,
     IncompatibleSolutionError,
     InvalidSimulationInputError,
     SolutionIntegrityError,
@@ -694,6 +695,32 @@ def test_obsolete_solve_and_simulate_interfaces_are_absent() -> None:
     assert "period_to_regime_to_V_arr" not in simulate_parameters
     assert "policies" not in simulate_parameters
     assert "period_to_regime_to_dissolution_flags" not in simulate_parameters
+
+
+def test_unmeetable_execution_budget_fails_closed_before_solving() -> None:
+    """A one-byte device budget fits no compiled core and raises before induction."""
+    model, params, _initial_conditions = _small_grid_search_inputs()
+
+    with pytest.raises(ExecutionPlanningError, match="No workspace-width candidate"):
+        model.solve(
+            params=params,
+            log_level="off",
+            execution_config=ExecutionConfig(device_memory_bytes=1),
+        )
+
+
+def test_supplied_solution_rejects_only_a_nondefault_execution_config() -> None:
+    model, params, initial_conditions = _small_grid_search_inputs()
+    solution = model.solve(params=params, log_level="off")
+
+    with pytest.raises(ExecutionPlanningError, match="already-solved"):
+        model.simulate(
+            params=params,
+            initial_conditions=initial_conditions,
+            solution=solution,
+            log_level="off",
+            execution_config=ExecutionConfig(device_memory_bytes=1),
+        )
 
 
 def test_solution_result_has_no_mapping_compatibility_bridge() -> None:

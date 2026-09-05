@@ -17,7 +17,6 @@ from _lcm.execution.core_program import (
     MaterializedCoreProgram,
     StreamableProductAxis,
     core_program_graph,
-    initial_core_tile_widths,
     materialize_core_program,
     resolve_core_program,
 )
@@ -199,7 +198,9 @@ def test_value_dependent_model_declares_its_required_program_disposition(
     )
     resolved = resolve_core_program(
         program=program,
-        tile_widths=initial_core_tile_widths(program=program),
+        tile_widths={
+            axis.name: axis.extent for axis in program.requirements.streamable_axes
+        },
         input_transfer_plan=transfer_plan,
     )
     actual = resolved.function(**resolved.arguments, **resolved.static_kwargs)

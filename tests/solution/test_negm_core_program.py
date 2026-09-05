@@ -7,11 +7,12 @@ grid inside the compiled program, binding the outer post-decision per node,
 takes the exact maximum of the keeper value and every node value, and stacks the
 keeper carry with every node carry on the candidate axis after lifting each
 into common cash on hand. Its builder delegates to the inner adjuster's builder
-with the first outer node bound and adds the outer nodes, the credited-cost
-shifts, and placeholders in the keeper outputs' shape; calling the kernel runs
-the keeper, replaces exactly those placeholders, and dispatches the sweep. The
-compiled sweep agrees with a keeper-then-per-node loop to the ULP for every
-outer batch size, the batch size being a vmap width and nothing else.
+with the first outer node bound and adds the outer nodes and the credited-cost
+shifts; the keeper's value and carry reach it through the internal edge the
+graph declares, so calling the kernel runs the keeper and hands its outputs to
+the sweep under the declared argument names. The compiled sweep agrees with a
+keeper-then-per-node loop to the ULP for every outer batch size, the batch size
+being a vmap width and nothing else.
 """
 
 import functools
@@ -22,6 +23,7 @@ from types import MappingProxyType
 from typing import Any, cast
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
@@ -30,9 +32,16 @@ from _lcm.egm.outer_envelope import build_stacked_outer_carry
 from _lcm.execution.core_program import (
     CoreBuildContext,
     CoreExecutionDisposition,
+    InternalInputRef,
+    InternalOutputSpec,
+    MaterializedCoreProgram,
     ProgramScope,
     core_program_graph,
     materialize_core_program,
+)
+from _lcm.execution.internal_outputs import (
+    internal_input_templates,
+    topological_program_order,
 )
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from _lcm.solution import backward_induction, period_replay
@@ -41,6 +50,8 @@ from _lcm.solution.negm import (
     _KEEPER_CARRY,
     _KEEPER_VALUE,
     _OUTER_NODES,
+    _NodeSolver,
+    _OuterCostAtCell,
     _with_outer_post_decision,
 )
 from _lcm.solution.period_replay import replay_period
@@ -87,14 +98,28 @@ def _build_context(context: Mapping[str, Any]) -> CoreBuildContext:
 
 
 def _compiled_cores(*, kernel: Any, context: Mapping[str, Any]) -> dict[str, Any]:
-    """Compile every program of the graph the way the solve loop does."""
+    """Compile every program of the graph the way the solve loop does.
+
+    Programs are visited so every producer precedes its consumers, and each
+    consumer is lowered against the abstract templates of the internal inputs it
+    declares, exactly as the solve loop lowers them.
+    """
     build_context = _build_context(context)
-    return {
-        name: jax.jit(
-            materialize_core_program(program=program, context=build_context).function
+    graph = core_program_graph(kernel=kernel)
+    compiled: dict[str, Any] = {}
+    producers: dict[str, MaterializedCoreProgram] = {}
+    for name in topological_program_order(graph=graph):
+        materialized = materialize_core_program(
+            program=graph[name], context=build_context
         )
-        for name, program in core_program_graph(kernel=kernel).items()
-    }
+        producers[name] = materialized
+        templates = internal_input_templates(program=materialized, producers=producers)
+        compiled[name] = (
+            jax.jit(materialized.function)
+            .lower(**materialized.arguments, **templates)
+            .compile()
+        )
+    return compiled
 
 
 def _call(*, kernel: Any, context: Mapping[str, Any]) -> KernelOutput:
@@ -206,23 +231,34 @@ def test_the_sweep_publishes_the_value_and_the_stacked_carry_on_the_durable_axis
     ) == (row, row, row, StateAxesLeading(state_names=(), shape=()), None, None)
 
 
-def test_the_sweep_builder_binds_the_first_node_and_keeper_shaped_placeholders(
-    *, captured
-):
+def test_the_sweep_declares_the_keepers_value_and_carry_as_internal_inputs(*, captured):
+    """The sweep names the keeper's outputs; the keeper publishes them by label."""
+    kernel, _ = captured
+    graph = core_program_graph(kernel=kernel)
+
+    assert graph["keeper"].internal_outputs == (
+        InternalOutputSpec(label="value", path=(0,)),
+        InternalOutputSpec(label="carry", path=(1,)),
+    )
+    assert dict(graph["outer_sweep"].requirements.internal_inputs) == {
+        _KEEPER_VALUE: InternalInputRef(producer="keeper", label="value"),
+        _KEEPER_CARRY: InternalInputRef(producer="keeper", label="carry"),
+    }
+
+
+def test_the_sweep_builder_binds_the_first_node_and_the_sweeps_own_inputs(*, captured):
+    """Keeper outputs reach the sweep only through the declared internal edge."""
     kernel, context = captured
-    build_context = _build_context(context)
     arguments = cast(
         "Mapping[str, Any]",
         materialize_core_program(
             program=core_program_graph(kernel=kernel)["outer_sweep"],
-            context=build_context,
+            context=_build_context(context),
         ).arguments,
     )
-    keeper = materialize_core_program(
-        program=core_program_graph(kernel=kernel)["keeper"], context=build_context
-    )
-    keeper_value, keeper_carry = jax.jit(keeper.function)(**keeper.arguments)
 
+    assert _KEEPER_VALUE not in arguments
+    assert _KEEPER_CARRY not in arguments
     assert "next_regime_to_V_arr" not in arguments
     np.testing.assert_array_equal(arguments[_OUTER_NODES], kernel.outer_grid_values)
     assert arguments[kernel.outer_post_decision] == kernel.outer_grid_values[0]
@@ -230,20 +266,6 @@ def test_the_sweep_builder_binds_the_first_node_and_keeper_shaped_placeholders(
         kernel.durable_grid_values.shape[0],
         _N_OUTER,
     )
-    assert (arguments[_KEEPER_VALUE].shape, arguments[_KEEPER_VALUE].dtype) == (
-        keeper_value.shape,
-        keeper_value.dtype,
-    )
-    assert jax.tree.structure(arguments[_KEEPER_CARRY]) == jax.tree.structure(
-        keeper_carry
-    )
-    assert jax.tree.map(
-        lambda placeholder, leaf: (
-            placeholder.shape == leaf.shape and placeholder.dtype == leaf.dtype
-        ),
-        arguments[_KEEPER_CARRY],
-        keeper_carry,
-    ) == jax.tree.map(lambda _leaf: True, keeper_carry)
 
 
 def test_the_sweep_transport_keys_live_in_an_engine_only_namespace():
@@ -449,3 +471,61 @@ def test_a_replay_lowers_the_dense_programs_the_solve_ran(*, monkeypatch, tmp_pa
         expected=np.asarray(solution.values[_PERIOD][_REGIME]),
         n_ulp=1,
     )
+
+
+def test_the_node_solver_compares_by_identity_so_an_array_field_cannot_break_it() -> (
+    None
+):
+    """Two node solvers built from equal arguments are distinct objects.
+
+    The solver carries the adjuster's argument tree, whose leaves are arrays, so
+    comparing two solvers field by field would take the truth value of an array and
+    raise. Comparison is by identity instead.
+    """
+    first = _NodeSolver(
+        inner_core=_unused_inner_core,
+        outer_post_decision="new_illiquid",
+        adjuster_arguments=MappingProxyType({"wealth": jnp.arange(3.0)}),
+    )
+    second = _NodeSolver(
+        inner_core=_unused_inner_core,
+        outer_post_decision="new_illiquid",
+        adjuster_arguments=MappingProxyType({"wealth": jnp.arange(3.0)}),
+    )
+
+    assert first != second
+
+
+def test_the_outer_cost_cell_compares_by_identity_when_a_param_is_an_array() -> None:
+    """Two cost cells built from equal params are distinct objects.
+
+    The cell carries the regime's flat params, which may hold arrays, so comparing
+    two cells field by field would take the truth value of an array and raise.
+    Comparison is by identity instead.
+    """
+    first = _OuterCostAtCell(
+        cost_func=_unused_cost_func,
+        cost_arg_names=frozenset({"illiquid"}),
+        durable_state_name="illiquid",
+        outer_post_decision="new_illiquid",
+        params=MappingProxyType({"interest_rate": jnp.arange(3.0)}),
+    )
+    second = _OuterCostAtCell(
+        cost_func=_unused_cost_func,
+        cost_arg_names=frozenset({"illiquid"}),
+        durable_state_name="illiquid",
+        outer_post_decision="new_illiquid",
+        params=MappingProxyType({"interest_rate": jnp.arange(3.0)}),
+    )
+
+    assert first != second
+
+
+def _unused_inner_core(**kwargs: object) -> tuple[Any, Any]:
+    """Stand in for the adjuster program; the comparison tests never call it."""
+    raise AssertionError(kwargs)
+
+
+def _unused_cost_func(**kwargs: object) -> Any:
+    """Stand in for the cost DAG; the comparison tests never call it."""
+    raise AssertionError(kwargs)

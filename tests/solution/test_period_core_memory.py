@@ -14,6 +14,10 @@ import cloudpickle
 import jax
 import jax.numpy as jnp
 
+from _lcm.execution.compiler_memory import (
+    CompilerMemoryBytes,
+    compiler_memory_bytes,
+)
 from _lcm.solution import period_replay
 from _lcm.solution.period_capture import _PAYLOAD_NAME
 
@@ -44,7 +48,7 @@ class _CompileOnlyExecutable:
 
 
 def _reports(
-    reports: Mapping[str, period_replay.CompilerMemoryBytes | None],
+    reports: Mapping[str, CompilerMemoryBytes | None],
 ) -> dict[str, dict[str, int | None]]:
     """Read every per-core report as a plain dict, failing on a missing one."""
     read: dict[str, dict[str, int | None]] = {}
@@ -58,9 +62,13 @@ def test_core_memory_analyzer_compiles_but_never_executes(
     *, monkeypatch, tmp_path: Path
 ) -> None:
     """Production cores are reported per name; none is called."""
-    production = {
+    executables = {
         "main": _CompileOnlyExecutable(offset=100),
         "replay": _CompileOnlyExecutable(offset=200),
+    }
+    production = {
+        name: SimpleNamespace(compiled=executable)
+        for name, executable in executables.items()
     }
     calls = []
 
@@ -74,6 +82,7 @@ def test_core_memory_analyzer_compiles_but_never_executes(
     payload = {
         "regime": object(),
         "period": 1,
+        "core_tile_widths": {},
         "kernel_kwargs": {
             "regime_name": "parent",
             "ages": SimpleNamespace(values=jnp.array([40.0, 41.0])),
@@ -86,18 +95,18 @@ def test_core_memory_analyzer_compiles_but_never_executes(
 
     assert [call[0] for call in calls] == ["production"]
     assert _reports(analysis.core_memory_bytes) == {
-        name: vars(core.stats) for name, core in production.items()
+        name: vars(executable.stats) for name, executable in executables.items()
     }
     assert (analysis.regime_name, analysis.period, analysis.age) == ("parent", 1, 41.0)
     assert analysis.preserves_production_sharding is False
-    assert not any(core.executed for core in production.values())
+    assert not any(core.compiled.executed for core in production.values())
 
 
 def test_compiler_memory_bytes_normalizes_real_and_unsupported_backends() -> None:
     """Backend-specific stats become integer-or-None fields, or no report."""
     compiled = jax.jit(lambda values: values + 1).lower(jnp.ones(2)).compile()
 
-    report = period_replay._compiler_memory_bytes(compiled=compiled)
+    report = compiler_memory_bytes(compiled=compiled)
 
     raw = compiled.memory_analysis()
     if raw is None:
@@ -116,15 +125,5 @@ def test_compiler_memory_bytes_normalizes_real_and_unsupported_backends() -> Non
             if self.raises:
                 raise RuntimeError("backend has no memory analysis")
 
-    assert (
-        period_replay._compiler_memory_bytes(
-            compiled=UnsupportedExecutable(raises=False)
-        )
-        is None
-    )
-    assert (
-        period_replay._compiler_memory_bytes(
-            compiled=UnsupportedExecutable(raises=True)
-        )
-        is None
-    )
+    assert compiler_memory_bytes(compiled=UnsupportedExecutable(raises=False)) is None
+    assert compiler_memory_bytes(compiled=UnsupportedExecutable(raises=True)) is None

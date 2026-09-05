@@ -120,6 +120,23 @@ def test_the_graph_republishes_every_inner_program_under_role_prefixes():
     assert graph["adjuster:replay"].replaces_program == "adjuster:main"
 
 
+def test_the_adaptive_kernel_marks_its_adjuster_programs_host_driven():
+    """An adaptive outer mesh dispatches the adjuster a data-dependent number of
+    times from a host loop; the keeper is dispatched once and stays planned."""
+    kernel, _ = _kernel("adaptive")
+    graph = core_program_graph(kernel=kernel)
+
+    for name, program in graph.items():
+        if name.startswith("adjuster:"):
+            assert program.disposition is CoreExecutionDisposition.HOST_DRIVEN
+            assert program.disposition_reason == (
+                "host_driven:adaptive_outer_mesh_refinement"
+            )
+        else:
+            assert program.disposition is CoreExecutionDisposition.PLANNED
+            assert program.disposition_reason is None
+
+
 @pytest.mark.parametrize(
     ("route", "payload_type"),
     [("finite", NNBEGMSimPolicy), ("adaptive", NestedEGMSimPolicy)],

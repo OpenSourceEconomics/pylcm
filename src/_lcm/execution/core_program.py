@@ -26,9 +26,8 @@ from _lcm.execution.value_transfer import (
 from _lcm.typing import ActionName
 from lcm.solver_api import ArtifactKey
 
-_CORE_PROGRAM_VERSION = 5
+_CORE_PROGRAM_VERSION = 7
 _INT32_MAX = 2_147_483_647
-_INITIAL_TILE_WIDTH_CAP = 64
 
 if TYPE_CHECKING:
     type _RetainedArtifactKeys = tuple[ArtifactKey, ...]
@@ -91,6 +90,7 @@ class StreamableProductAxis:
     canonical_order: str
     reduction: ReductionSemantics
     width_keyword: str
+    requested_width: int | None = None
 
     def __post_init__(self) -> None:
         """Snapshot caller-owned sequences while leaving validation late."""
@@ -104,25 +104,91 @@ class StreamableProductAxis:
 
 
 @dataclass(frozen=True, kw_only=True)
+class InternalOutputSpec:
+    """One output a program publishes to other programs of the same graph."""
+
+    label: str
+    """Name other programs of the same graph use to request this output."""
+
+    path: tuple[int | str, ...]
+    """Pytree path into the producer's raw output selecting the published subtree."""
+
+    def __post_init__(self) -> None:
+        """Snapshot the caller-owned path and require an exact label spelling."""
+        if type(self.label) is not str or not self.label:
+            msg = "An InternalOutputSpec label must be a non-empty string."
+            raise TypeError(msg)
+        path = tuple(self.path)
+        if any(isinstance(step, bool) or type(step) not in (int, str) for step in path):
+            msg = (
+                f"InternalOutputSpec {self.label!r} path must contain only integer "
+                "and string pytree steps."
+            )
+            raise TypeError(msg)
+        object.__setattr__(self, "path", path)
+
+
+@dataclass(frozen=True, kw_only=True)
+class InternalInputRef:
+    """One argument a program takes from another program of the same graph."""
+
+    producer: str
+    """Graph key of the program whose output is consumed."""
+
+    label: str
+    """`InternalOutputSpec.label` declared by that producer."""
+
+    def __post_init__(self) -> None:
+        """Require an exact producer key and label spelling."""
+        if type(self.producer) is not str or not self.producer:
+            msg = "An InternalInputRef producer must be a non-empty string."
+            raise TypeError(msg)
+        if type(self.label) is not str or not self.label:
+            msg = "An InternalInputRef label must be a non-empty string."
+            raise TypeError(msg)
+
+
+@dataclass(frozen=True, kw_only=True)
 class CoreExecutionRequirements:
     """Static requirements that the execution planner must resolve for a core."""
 
     streamable_axes: tuple[StreamableProductAxis, ...] = ()
     target_value_accesses: tuple[_TargetValueAccess, ...] = ()
+    internal_inputs: Mapping[str, InternalInputRef] = MappingProxyType({})
+    """Consumer argument name to the producer output that fills it at dispatch."""
 
     def __post_init__(self) -> None:
-        """Snapshot the declared axes and exact target-value reads."""
+        """Snapshot the declared axes, target-value reads, and internal inputs."""
         object.__setattr__(self, "streamable_axes", tuple(self.streamable_axes))
         object.__setattr__(
             self, "target_value_accesses", tuple(self.target_value_accesses)
         )
+        internal_inputs = dict(self.internal_inputs)
+        for name, ref in internal_inputs.items():
+            if type(name) is not str or not name:
+                msg = "An internal input must be keyed by a non-empty argument name."
+                raise TypeError(msg)
+            if not isinstance(ref, InternalInputRef):
+                msg = f"Internal input {name!r} must be an InternalInputRef."
+                raise TypeError(msg)
+        object.__setattr__(self, "internal_inputs", MappingProxyType(internal_inputs))
 
 
 class CoreExecutionDisposition(StrEnum):
-    """How the engine must execute one declared core."""
+    """How the engine must execute one declared core.
+
+    - `PLANNED`: the engine owns the width the body runs at and may stream the
+      axes the program declares.
+    - `DENSE`: the solver owns that width, and says why in `disposition_reason`.
+    - `HOST_DRIVEN`: a host loop dispatches the compiled program a data-dependent
+      number of times. The planner lowers the program like a dense one and bounds
+      one dispatch; the driver that owns the loop also owns the results it caches
+      between dispatches.
+    """
 
     PLANNED = "planned"
     DENSE = "dense"
+    HOST_DRIVEN = "host_driven"
 
 
 class ProgramScope(StrEnum):
@@ -211,12 +277,15 @@ class CoreProgram:
         {}
     )
     replaces_program: str | None = None
+    internal_outputs: tuple[InternalOutputSpec, ...] = ()
+    """Outputs another program of the same graph may name as an input."""
 
     def __post_init__(self) -> None:
         """Snapshot caller-owned sequences."""
         if not isinstance(self.retained_artifact_payload_types, Mapping):
             msg = "CoreProgram retained_artifact_payload_types must be a mapping."
             raise TypeError(msg)
+        object.__setattr__(self, "internal_outputs", tuple(self.internal_outputs))
         object.__setattr__(self, "donation_candidates", tuple(self.donation_candidates))
         object.__setattr__(
             self, "retained_artifact_keys", tuple(self.retained_artifact_keys)
@@ -243,10 +312,13 @@ class MaterializedCoreProgram:
     scope: ProgramScope = ProgramScope.ANY
     retained_artifact_keys: tuple[ArtifactKey, ...] = ()
     replaces_program: str | None = None
+    internal_outputs: tuple[InternalOutputSpec, ...] = ()
+    """Outputs another program of the same graph may name as an input."""
 
     def __post_init__(self) -> None:
         """Snapshot the exact dynamic argument tree."""
         object.__setattr__(self, "arguments", MappingProxyType(dict(self.arguments)))
+        object.__setattr__(self, "internal_outputs", tuple(self.internal_outputs))
         object.__setattr__(self, "donation_candidates", tuple(self.donation_candidates))
         object.__setattr__(
             self, "retained_artifact_keys", tuple(self.retained_artifact_keys)
@@ -345,7 +417,8 @@ def select_programs(
     exact model-authoritative keys selected for this regime-period cell. If no replay
     variant is selected, `VALUES_ONLY` is the value-producing alternative. A graph
     that leaves nothing to dispatch is refused: a period without a program would
-    publish no value.
+    publish no value, as is one that keeps a consumer without the producer of an
+    internal input it declares.
     """
     if type(retain_replay) is not bool:
         raise TypeError("retain_replay must be an exact bool.")
@@ -385,7 +458,30 @@ def select_programs(
             f"{ {name: program.scope.value for name, program in graph.items()}!r}."
         )
         raise ValueError(msg)
+    _validate_selected_internal_edges(selected=selected, graph=graph)
     return MappingProxyType(selected)
+
+
+def _validate_selected_internal_edges(
+    *, selected: Mapping[str, CoreProgram], graph: Mapping[str, CoreProgram]
+) -> None:
+    """Require every kept consumer's producers to survive the same selection.
+
+    A consumer whose producer this retention deselects has no source for the
+    argument it declares, so the scopes of the two programs must be chosen
+    together rather than discovered at lowering.
+    """
+    for name, program in selected.items():
+        for argument_name, ref in program.requirements.internal_inputs.items():
+            if ref.producer in selected:
+                continue
+            msg = (
+                f"CoreProgram {name!r} takes internal input {argument_name!r} from "
+                f"{ref.producer!r}, which this retention does not dispatch: "
+                f"{name!r} has scope {program.scope.value!r} and {ref.producer!r} "
+                f"has scope {graph[ref.producer].scope.value!r}."
+            )
+            raise ValueError(msg)
 
 
 def _reject_native_duplicate_authorities(*, kernel: object) -> None:
@@ -440,7 +536,69 @@ def _snapshot_and_validate_graph(
         _validate_program_declaration(program=program)
     _validate_replay_replacements(graph=snapshot)
     _validate_retained_artifact_payload_type_consistency(graph=snapshot)
+    _validate_internal_edges(graph=snapshot)
     return MappingProxyType(snapshot)
+
+
+def _validate_internal_edges(*, graph: Mapping[str, CoreProgram]) -> None:
+    """Require every internal input to name a declared output and no cycle to form."""
+    for name, program in graph.items():
+        labels = [spec.label for spec in program.internal_outputs]
+        duplicates = sorted({label for label in labels if labels.count(label) > 1})
+        if duplicates:
+            msg = (
+                f"CoreProgram {name!r} declares internal outputs with duplicate "
+                f"labels: {tuple(duplicates)!r}."
+            )
+            raise ValueError(msg)
+    for name, program in graph.items():
+        for argument_name, ref in program.requirements.internal_inputs.items():
+            producer = graph.get(ref.producer)
+            if producer is None:
+                msg = (
+                    f"CoreProgram {name!r} takes internal input {argument_name!r} "
+                    f"from {ref.producer!r}, which is not a program of the same "
+                    f"graph: {tuple(graph)!r}."
+                )
+                raise ValueError(msg)
+            declared = tuple(spec.label for spec in producer.internal_outputs)
+            if ref.label not in declared:
+                msg = (
+                    f"CoreProgram {name!r} takes internal input {argument_name!r} "
+                    f"labelled {ref.label!r} from {ref.producer!r}, which declares "
+                    f"internal outputs {declared!r}."
+                )
+                raise ValueError(msg)
+    _topological_program_order(graph=graph)
+
+
+def _topological_program_order(*, graph: Mapping[str, CoreProgram]) -> tuple[str, ...]:
+    """Return graph keys so every producer precedes its consumers.
+
+    Declaration order breaks ties, so a graph without internal edges keeps the
+    order its kernel published.
+    """
+    remaining = dict(graph)
+    order: list[str] = []
+    while remaining:
+        ready = [
+            name
+            for name, program in remaining.items()
+            if all(
+                ref.producer not in remaining
+                for ref in program.requirements.internal_inputs.values()
+            )
+        ]
+        if not ready:
+            msg = (
+                "Core programs' internal inputs form a cycle among "
+                f"{tuple(remaining)!r}."
+            )
+            raise ValueError(msg)
+        for name in ready:
+            order.append(name)
+            del remaining[name]
+    return tuple(order)
 
 
 def _validate_replay_replacements(*, graph: Mapping[str, CoreProgram]) -> None:
@@ -579,7 +737,11 @@ def _validate_retained_artifact_payload_types(*, program: CoreProgram) -> None:
 def _validate_disposition_reason(
     *, program: CoreProgram | MaterializedCoreProgram
 ) -> None:
-    """Require an explicit, stable explanation for every dense route."""
+    """Require an explicit, stable explanation for every route the engine cedes.
+
+    Only a planned program leaves the width choice to the engine; a dense or
+    host-driven one takes it back and says why.
+    """
     reason = program.disposition_reason
     if program.disposition is CoreExecutionDisposition.PLANNED:
         if reason is not None:
@@ -588,7 +750,8 @@ def _validate_disposition_reason(
         return
     if not isinstance(reason, str) or not reason.strip():
         msg = (
-            f"Dense CoreProgram {program.name!r} must declare a non-empty "
+            f"CoreProgram {program.name!r} with disposition "
+            f"{program.disposition.value!r} must declare a non-empty "
             "disposition_reason."
         )
         raise ValueError(msg)
@@ -614,6 +777,7 @@ def materialize_core_program(
         scope=program.scope,
         retained_artifact_keys=program.retained_artifact_keys,
         replaces_program=program.replaces_program,
+        internal_outputs=program.internal_outputs,
     )
     missing_donations = set(materialized.donation_candidates) - set(
         materialized.arguments
@@ -647,10 +811,13 @@ class ResolvedCoreProgram:
     scope: ProgramScope = ProgramScope.ANY
     retained_artifact_keys: tuple[ArtifactKey, ...] = ()
     replaces_program: str | None = None
+    internal_outputs: tuple[InternalOutputSpec, ...] = ()
+    """Outputs another program of the same graph may name as an input."""
 
     def __post_init__(self) -> None:
         """Snapshot the materialized argument and planning containers."""
         object.__setattr__(self, "arguments", MappingProxyType(dict(self.arguments)))
+        object.__setattr__(self, "internal_outputs", tuple(self.internal_outputs))
         object.__setattr__(
             self,
             "static_kwargs",
@@ -692,8 +859,8 @@ def resolve_core_program(
     else:
         if input_transfer_plan:
             msg = (
-                f"CoreProgram {program.name!r} with disposition "
-                f"{program.disposition.value!r} cannot carry a resolved input plan."
+                "A resolved input plan is for planned programs only; CoreProgram "
+                f"{program.name!r} has disposition {program.disposition.value!r}."
             )
             raise ValueError(msg)
         resolved_input_transfer_plan = ()
@@ -718,6 +885,12 @@ def resolve_core_program(
             axis=axis,
             width=requested_widths[axis.name],
         )
+        if axis.requested_width is not None and width != axis.requested_width:
+            msg = (
+                f"Tile width {width} for axis {axis.name!r} does not match its "
+                f"requested width {axis.requested_width}."
+            )
+            raise ValueError(msg)
         resolved_widths[axis.name] = width
         width_bindings[axis.width_keyword] = width
         compilation_axes.append(
@@ -748,6 +921,7 @@ def resolve_core_program(
         scope=program.scope,
         retained_artifact_keys=program.retained_artifact_keys,
         replaces_program=program.replaces_program,
+        internal_outputs=program.internal_outputs,
         tile_widths=resolved_widths,
         input_transfer_plan=resolved_input_transfer_plan,
         specialization_key=(
@@ -761,34 +935,15 @@ def resolve_core_program(
             program.donation_candidates,
             tuple(compilation_axes),
             input_transfer_specialization_key,
+            tuple(
+                sorted(
+                    (name, ref.producer, ref.label)
+                    for name, ref in program.requirements.internal_inputs.items()
+                )
+            ),
+            tuple((spec.label, spec.path) for spec in program.internal_outputs),
         ),
     )
-
-
-def initial_core_tile_widths(
-    *, program: CoreProgram | MaterializedCoreProgram
-) -> MappingProxyType[str, int]:
-    """Choose the shared bounded bootstrap width for every planned product axis."""
-    if program.disposition is not CoreExecutionDisposition.PLANNED:
-        if program.requirements.streamable_axes:
-            msg = (
-                f"CoreProgram {program.name!r} has disposition "
-                f"{program.disposition.value!r} but declares streamable axes."
-            )
-            raise ValueError(msg)
-        return MappingProxyType({})
-    result: dict[str, int] = {}
-    for axis in program.requirements.streamable_axes:
-        _validate_coordinate_declaration(axis=axis)
-        if axis.extent <= 1:
-            msg = (
-                f"Streamable axis {axis.name!r} must have extent greater than one; "
-                "the program must declare a dense disposition otherwise."
-            )
-            raise ValueError(msg)
-        upper_bound = min(_INITIAL_TILE_WIDTH_CAP, axis.extent - 1)
-        result[axis.name] = 1 << (upper_bound.bit_length() - 1)
-    return MappingProxyType(result)
 
 
 def _validate_core_program(*, program: MaterializedCoreProgram) -> None:
@@ -818,8 +973,9 @@ def _validate_core_program(*, program: MaterializedCoreProgram) -> None:
     axes = program.requirements.streamable_axes
     if program.disposition is not CoreExecutionDisposition.PLANNED and axes:
         msg = (
-            f"CoreProgram {program.name!r} has disposition "
-            f"{program.disposition.value!r} but declares streamable axes."
+            "Streamable axes are for planned programs only; CoreProgram "
+            f"{program.name!r} has disposition {program.disposition.value!r} but "
+            "declares streamable axes."
         )
         raise ValueError(msg)
     axis_names = [axis.name for axis in axes]
@@ -1044,6 +1200,7 @@ def _validate_streamable_axis(
 ) -> None:
     """Fail closed for product declarations outside the supported contract."""
     _validate_coordinate_declaration(axis=axis)
+    _validate_requested_width(axis=axis)
     if axis.canonical_order != "c":
         msg = f"Streamable axis {axis.name!r} canonical order must be 'c'."
         raise ValueError(msg)
@@ -1119,6 +1276,26 @@ def _validate_axis_width_keyword(
             f"{axis.width_keyword!r} is already present in dynamic arguments."
         )
         raise ValueError(msg)
+
+
+def _validate_requested_width(*, axis: StreamableProductAxis) -> int | None:
+    """Validate a solver-requested width against its declared product."""
+    width = axis.requested_width
+    if width is None:
+        return None
+    if type(width) is not int:
+        msg = f"Streamable axis {axis.name!r} requested width must be an integer."
+        raise TypeError(msg)
+    if width <= 0:
+        msg = f"Streamable axis {axis.name!r} requested width must be positive."
+        raise ValueError(msg)
+    if width > axis.extent:
+        msg = (
+            f"Streamable axis {axis.name!r} requested width {width} exceeds its "
+            f"product extent {axis.extent}."
+        )
+        raise ValueError(msg)
+    return width
 
 
 def _validate_tile_width(*, axis: StreamableProductAxis, width: object) -> int:

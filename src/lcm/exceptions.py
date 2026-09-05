@@ -54,6 +54,10 @@ class IncompatibleSolutionError(PyLCMError):
     """Raised when a solution uses an unsupported schema or plugin version."""
 
 
+class ExecutionPlanningError(PyLCMError):
+    """Raised when the requested execution policy cannot produce a valid plan."""
+
+
 class UnsupportedOperationError(PyLCMError):
     """Raised when a valid model requests an unsupported runtime operation."""
 

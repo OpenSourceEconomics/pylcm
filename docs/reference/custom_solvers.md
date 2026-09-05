@@ -129,13 +129,78 @@ class WealthSolver(Solver):
         )
 ```
 
-A program declares its disposition explicitly, and the two cases are mutually exclusive
+A program declares its disposition explicitly, and the cases are mutually exclusive
 rather than a default plus an override. `DENSE` means the solver, not the planner, owns
 the width its body runs at, and it must carry a non-blank `disposition_reason` saying
-why. `PLANNED` hands that choice to the engine and must *not* carry a reason; declaring
-one is refused. A planned program declares whichever action axes the engine may stream,
-together with the reduction each performs, and a solver whose body streams nothing
-declares an empty set — the shipped NB-EGM graph does exactly that.
+why. `HOST_DRIVEN` means the same, and adds that a host loop dispatches the compiled
+program a data-dependent number of times — the driver that owns the loop also owns the
+results it caches between dispatches — so it too must carry a reason. `PLANNED` hands
+the width choice to the engine and must *not* carry a reason; declaring one is refused.
+A planned program declares whichever action axes the engine may stream, together with
+the reduction each performs, and a solver whose body streams nothing declares an empty
+set — the shipped NB-EGM graph does exactly that. Only a planned program may declare a
+streamable axis.
+
+(internal-outputs)=
+
+## Internal outputs
+
+A kernel that publishes more than one program can hand one program's output to another
+as an argument, instead of lowering the consumer against a stand-in it fills in later.
+The producer declares what it publishes and the consumer declares what it reads:
+
+```{code-block} python
+producer = CoreProgram(
+    name="keeper",
+    function=keeper_body,
+    argument_builder=build_keeper_arguments,
+    requirements=CoreExecutionRequirements(),
+    output_roles=(VALUE, {"carry": VALUE}),
+    disposition=CoreExecutionDisposition.DENSE,
+    disposition_reason="one_row_per_state_node",
+    internal_outputs=(
+        InternalOutputSpec(label="value", path=(0,)),
+        InternalOutputSpec(label="carry", path=(1,)),
+    ),
+)
+consumer = CoreProgram(
+    name="outer_sweep",
+    function=sweep_body,
+    argument_builder=build_sweep_arguments,
+    requirements=CoreExecutionRequirements(
+        internal_inputs={
+            "keeper_value": InternalInputRef(producer="keeper", label="value"),
+            "keeper_carry": InternalInputRef(producer="keeper", label="carry"),
+        }
+    ),
+    output_roles=VALUE,
+    disposition=CoreExecutionDisposition.DENSE,
+    disposition_reason="one_row_per_outer_node",
+)
+```
+
+`InternalOutputSpec.path` is a pytree path into the producer's raw output, so a label
+may name a whole subtree rather than a single leaf. `InternalInputRef` is keyed by the
+consumer's own argument name, which may not collide with a name its argument builder
+already supplies.
+
+The engine reads these declarations at three moments:
+
+- **When the graph is built.** Every reference must name a program of the same graph and
+  a label that program declares, labels within one producer must be unique, and the
+  references must not form a cycle.
+- **When a retention selects the graph's programs.** A retention that keeps a consumer
+  must also keep every producer it reads, so a producer and its consumers belong in
+  scopes that are selected together.
+- **When the period is lowered.** The engine visits producers before consumers, runs
+  each producer's function abstractly once, and lowers the consumer against the exact
+  shapes and dtypes of the subtrees its references select. Those templates are part of
+  the program's compilation identity, so two cells that differ only in an internal
+  input's shape do not share an executable.
+
+At dispatch the compiled core refuses an internal input that is missing, or whose shape
+or dtype departs from the template it was lowered against, naming the program and the
+argument.
 
 ## Publishing a continuation
 

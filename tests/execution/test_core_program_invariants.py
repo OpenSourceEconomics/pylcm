@@ -428,6 +428,7 @@ def test_planned_core_applies_and_retains_its_absolute_input_transfer_plan() -> 
     planned = PlannedCore(
         compiled=compiled,
         layout=layout,
+        tile_widths={},
         input_transfer_plan=(transfer,),
     )
     output = cast(

@@ -15,6 +15,7 @@ and the correctness of destinations require page-specific documentation and test
 | ---------------------------------------------------------------------------------------------------- | --------------------------------------- |
 | [`lcm.Model`](model_and_regime.md#api-model)                                                         | Model assembly and execution            |
 | [`lcm.Regime`](model_and_regime.md#api-regime)                                                       | General regime                          |
+| [`lcm.ExecutionConfig`](runtime_and_results.md#compiler-workspace-budgets)                           | Hardware-local solve controls           |
 | [`lcm.ConsumptionSavingsRegime`](consumption_savings.md#api-consumption-savings-regime)              | One liquid margin                       |
 | [`lcm.NestedConsumptionSavingsRegime`](consumption_savings.md#api-nested-consumption-savings-regime) | Liquid plus outer margin                |
 | [`lcm.LiquidMargin`](consumption_savings.md#api-liquid-margin)                                       | Liquid roles                            |
@@ -195,7 +196,9 @@ documented in [Custom solvers](custom_solvers.md).
 | [`lcm.solvers.CoreProgram`](custom_solvers.md)                                             | One declared compiled program        |
 | [`lcm.solvers.CoreBuildContext`](custom_solvers.md)                                        | Argument-builder input               |
 | [`lcm.solvers.CoreExecutionRequirements`](custom_solvers.md)                               | Declared execution requirements      |
-| [`lcm.solvers.CoreExecutionDisposition`](custom_solvers.md)                                | Planned or deliberately dense        |
+| [`lcm.solvers.CoreExecutionDisposition`](custom_solvers.md)                                | Planned, dense, or host-driven       |
+| [`lcm.solvers.InternalOutputSpec`](custom_solvers.md#internal-outputs)                     | Output published within one graph    |
+| [`lcm.solvers.InternalInputRef`](custom_solvers.md#internal-outputs)                       | Argument read from another program   |
 | [`lcm.solvers.ProgramScope`](custom_solvers.md)                                            | Retention scope of a program         |
 | [`lcm.solvers.StreamableProductAxis`](custom_solvers.md)                                   | Declared streamable action axis      |
 | [`lcm.solvers.ReductionSemantics`](custom_solvers.md)                                      | Reduction a streamed axis performs   |

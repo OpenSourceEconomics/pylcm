@@ -104,6 +104,7 @@ def test_shared_resolver_preserves_the_entire_native_program_contract() -> None:
                 program=declaration,
                 context=_context(),
             ),
+            tile_widths={},
             source_value_template=jnp.asarray(0.0),
             source=("source", 0, "main"),
         )
@@ -186,6 +187,7 @@ def test_dense_reason_is_part_of_resolved_specialization_identity() -> None:
         program=materialize_core_program(
             program=_native_program(reason="first_dense_reason"), context=context
         ),
+        tile_widths={},
         source_value_template=jnp.asarray(0.0),
         source=("source", 0, "main"),
     )
@@ -193,6 +195,7 @@ def test_dense_reason_is_part_of_resolved_specialization_identity() -> None:
         program=materialize_core_program(
             program=_native_program(reason="second_dense_reason"), context=context
         ),
+        tile_widths={},
         source_value_template=jnp.asarray(0.0),
         source=("source", 0, "main"),
     )
@@ -246,6 +249,12 @@ def test_native_graph_rejects_every_parallel_declaration_seam(
             "cannot declare a reason",
             id="planned-with-reason",
         ),
+        pytest.param(
+            CoreExecutionDisposition.HOST_DRIVEN,
+            None,
+            "must declare a non-empty",
+            id="host-driven-without-reason",
+        ),
     ],
 )
 def test_native_graph_rejects_incoherent_disposition_reason(
@@ -284,11 +293,13 @@ def test_core_program_graph_rejects_a_kernel_without_a_native_graph() -> None:
         core_program_graph(kernel=_CoresOnlyKernel())
 
 
-def test_every_disposition_is_planned_or_dense() -> None:
-    """The engine plans a program or runs it deliberately dense; nothing else."""
+def test_every_disposition_is_planned_dense_or_host_driven() -> None:
+    """The engine plans a program, runs it deliberately dense, or lets a host
+    driver dispatch it a data-dependent number of times; nothing else."""
     assert {member.value for member in CoreExecutionDisposition} == {
         "planned",
         "dense",
+        "host_driven",
     }
 
 
@@ -465,6 +476,7 @@ def test_program_scope_is_part_of_resolved_specialization_identity() -> None:
             program=materialize_core_program(
                 program=_scoped_program(name="main", scope=scope), context=context
             ),
+            tile_widths={},
             source_value_template=jnp.asarray(0.0),
             source=("source", 0, "main"),
         )

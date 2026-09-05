@@ -122,6 +122,7 @@ from lcm.consumption_savings_regime import (  # noqa: E402
     outer_unchanged,
     post_decision_lower_bound,
 )
+from lcm.execution import ExecutionConfig  # noqa: E402
 from lcm.fixed_forms import (  # noqa: E402
     cash_on_hand_with_subsidy,
     liquid_law_from_resources,
@@ -198,6 +199,7 @@ __all__ = [
     "Condition",
     "ConsumptionSavingsRegime",
     "DiscreteGrid",
+    "ExecutionConfig",
     "ExtremeValueTasteShocks",
     "GridBreakpoint",
     "IrregSpacedGrid",

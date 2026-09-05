@@ -185,9 +185,9 @@ _SOURCE_SEALS = {
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
     MAX_Q_SOURCE: "6bed0c5a31bbc1c7fe9e0d9250223888d1271528b01844a398668af038e24844",
     PROCESSING_SOURCE: "529c24632efe6a124ce5d51f3927d17f829671bfc51e2d68bc603eca3b53ddf9",
-    GRID_SEARCH_SOURCE: "6a6f6fb6df90d727ecde2071395d0844da2d049827dfe154ace7854855726ec9",
-    CORE_PROGRAM_SOURCE: "6101e7aea61ca01203a3635f3650333f94a1471a7906956e592936c7d64ff647",
-    OUTPUT_LAYOUT_SOURCE: "50ddea50e75fca1e295f895ed97d33236675e0cd984391be83fc54f4f55b32e1",
+    GRID_SEARCH_SOURCE: "49c198be2598ef1791e9866d004e63de8dff00c46155c01d4fe8cbe128c0a1ff",
+    CORE_PROGRAM_SOURCE: "c2e842a1de6ae3bde27e979e022a08caf0dae6a7cdb56f81b70e466f77bfd16f",
+    OUTPUT_LAYOUT_SOURCE: "171566e384a070bb9daebbe74d2418cb25f82291cfc93983d2a56e589486a395",
     VALUE_TRANSFER_SOURCE: "44b8629c7b461b6b0216c79ba25101179e1b8cb2edf40630a55c6b9403fbbd2d",
     ACTION_STREAMING_SOURCE: "a34ca428598e37dd68fc3dcaa0c664c56f79afb6042c946246883f250bab681c",
     ACTION_REDUCTION_SOURCE: "6cee6ea2dbef0ba710fa4a318a2113377d6513cee508e73004861597f9c220f9",
@@ -203,10 +203,10 @@ _SOURCE_SEALS = {
     SIMULATION_SOURCE: "3781dfd2d45c07cc868accaa89390b2020a751f46eadaa1ede7e3c883fd237c1",
     SIMULATION_TRANSITIONS_SOURCE: "1c503777887af52d1d5de36cf86acb4d8431fbe3d71203d7da881b4d0742c928",
     SIMULATION_COMPILE_SOURCE: "bc59e06917ca26caa51bf6dee79f4f20b8f9c6dd652cf5648a17f02935d9a482",
-    MODEL_SOURCE: "1fb7bb3f01a85583d319781f77937a3c5c6295fbfa8071cb0699a92a80155156",
+    MODEL_SOURCE: "9012952d4e8f8472bd648234eb3ec27c0412abc8a705799c0bebcef6ef9eb571",
     SOLVER_API_SOURCE: "89adec9b59c6eaa5dc3d285568376ca23685cf7ce08f5095aff2c350048fe8d6",
-    BACKWARD_INDUCTION_SOURCE: "43d614ceb1463e1a0fb572d50ad4c7c9998df06550d74009bfa21974ef42e12c",
-    PERIOD_REPLAY_SOURCE: "d1bc0ef16e1dcf651992db73f59fbcc3e300cb30b4acf881512c72fb3fecc739",
+    BACKWARD_INDUCTION_SOURCE: "f6f34cd651b9b99eeb9c2357e14af7bd51fd772279b3dbd2f43464ac397c7993",
+    PERIOD_REPLAY_SOURCE: "71bdcc15215cafce5a6f248bbd1ba264170c23cc867b7bc9d9f472926928ed34",
     INITIAL_CONDITIONS_SOURCE: "cb3663f59d10fa288d3da322b5f154545bb1ac4b9262073a87c405b5e950507f",
     RESULT_SOURCE: "992f8e14d2f47f505f6883e340e89d68dfc41311d4c36f7849a2f79331e4ba01",
     RESULT_DATAFRAME_SOURCE: "025e273c4d3bb9d8f9787189a551b113708c86b1e868d16178aa39555abf49a4",
@@ -1597,6 +1597,7 @@ def _core_program_transport_errors(tree: ast.Module) -> list[str]:
                 "canonical_order: str",
                 "reduction: ReductionSemantics",
                 "width_keyword: str",
+                "requested_width: int | None = None",
             ),
             methods=("__post_init__", "extent"),
         )
@@ -1609,6 +1610,7 @@ def _core_program_transport_errors(tree: ast.Module) -> list[str]:
             fields=(
                 "streamable_axes: tuple[StreamableProductAxis, ...] = ()",
                 "target_value_accesses: tuple[_TargetValueAccess, ...] = ()",
+                "internal_inputs: Mapping[str, InternalInputRef] = MappingProxyType({})",
             ),
             methods=("__post_init__",),
         )
@@ -1649,6 +1651,7 @@ def _core_program_transport_errors(tree: ast.Module) -> list[str]:
                 "retained_artifact_keys: _RetainedArtifactKeys = ()",
                 "retained_artifact_payload_types: _RetainedArtifactPayloadTypes = MappingProxyType({})",
                 "replaces_program: str | None = None",
+                "internal_outputs: tuple[InternalOutputSpec, ...] = ()",
             ),
             methods=("__post_init__",),
         )
@@ -1670,6 +1673,7 @@ def _core_program_transport_errors(tree: ast.Module) -> list[str]:
                 "scope: ProgramScope = ProgramScope.ANY",
                 "retained_artifact_keys: tuple[ArtifactKey, ...] = ()",
                 "replaces_program: str | None = None",
+                "internal_outputs: tuple[InternalOutputSpec, ...] = ()",
             ),
             methods=("__post_init__",),
         )
@@ -1695,6 +1699,7 @@ def _core_program_transport_errors(tree: ast.Module) -> list[str]:
                 "scope: ProgramScope = ProgramScope.ANY",
                 "retained_artifact_keys: tuple[ArtifactKey, ...] = ()",
                 "replaces_program: str | None = None",
+                "internal_outputs: tuple[InternalOutputSpec, ...] = ()",
             ),
             methods=("__post_init__",),
         )
@@ -1720,6 +1725,7 @@ def _core_program_transport_errors(tree: ast.Module) -> list[str]:
                 observed=body,
                 expected_source="""PLANNED = "planned"
 DENSE = "dense"
+HOST_DRIVEN = "host_driven"
 """,
             )
         ):
@@ -1762,7 +1768,7 @@ ARTIFACT = "artifact"
     ]
     if not _statements_match(
         observed=version_assignments,
-        expected_source="_CORE_PROGRAM_VERSION = 5",
+        expected_source="_CORE_PROGRAM_VERSION = 7",
     ):
         errors.append("core-program specialization version binding changed")
     errors.extend(
@@ -1773,30 +1779,29 @@ ARTIFACT = "artifact"
                 "_TargetValueAccess.__post_init__": "087df21f9a729fb78e784cd8a1ed466c97473cce55b4835aec7530b6c3608f73",
                 "StreamableProductAxis.__post_init__": "a83a07c71ec8a26d8ad9b8cc71ea65e3df8d000e7efdcc44802bc240a5db95c6",
                 "StreamableProductAxis.extent": "aebdd54708094461d473977783f0588d2491c212629e1f5a40f8cf24c789802a",
-                "CoreExecutionRequirements.__post_init__": "e4d9bc6d57b5394abcfe6b3429292116e691be52fb980604cdb6d2cf0e21a876",
+                "CoreExecutionRequirements.__post_init__": "950154207415a21f885cd609179af3ad8ecf43edac2b3ce5940487a78e3c9c4d",
                 "CoreBuildContext.__post_init__": "c001bdfea799659c6e0f1d0ee09180940d5176d8a59675dcabef190a12716d7b",
-                "CoreProgram.__post_init__": "ede0e5fc6b399a2facff96b7c30889755eb69f5f4b8e4b4395785b9b41c6cbea",
-                "MaterializedCoreProgram.__post_init__": "341245a3fb28a6d0597796693fe871e3c18a721d115a68ea7a5716596344f619",
-                "ResolvedCoreProgram.__post_init__": "c487c8bf929f592e7f4ff059c36efc58429c6b0c43650ca59f5493856786d3a0",
+                "CoreProgram.__post_init__": "3459025376c2a5fb6ef1e1e31e5036847109185fc97f90f0688aed00b0ee4fdc",
+                "MaterializedCoreProgram.__post_init__": "a1f51b850b99ba8058d895bf6d8f1f09c15c3114d580c7a551765a1c4aab6943",
+                "ResolvedCoreProgram.__post_init__": "b36477b923d3353f4af4050faed9644df10250f10ae8757298c30710f686098b",
                 "core_program_graph": "0fb65d36c8408bfcec4b084cb304e3085037c266e932524d411654efac5c47f7",
                 "_reject_native_duplicate_authorities": "718aa10be29ba96de933ccd778200a94dd5d2637b148988b950e5b5e070edcea",
-                "_snapshot_and_validate_graph": "52b4ab20dc7d7a3dab2f06165ca9766831b3f498790ad8d93c8e08e3b6c18f7e",
+                "_snapshot_and_validate_graph": "391b89b66355ecdba2d0c869b4a748f2a0ef065610255e4819e398cf53faa7ca",
                 "_validate_replay_replacements": "2aed7e1993700410979ff136c2dc13104a1f210b7d1eabf3bfd7dae22b75eb69",
                 "_validate_program_declaration": "6158dc42296c246bbb8ab23d270dcc46e8175e89ed190af503bdebe788f11c6b",
                 "_validate_retention_declaration": "62f75acabee1eb14ea74360f8563970ba1f5639dd06a0573a49d80402e437ba0",
                 "_validate_retained_artifact_payload_types": "8ceae90284dbdc25b64e0b66d79990e8f9104f9a6410d90d8eb94c426d24ecbd",
-                "_validate_disposition_reason": "1f72fd946d5b104131e2ca84095a5242c76fb78417a87f9668ff9ecb7c792644",
-                "materialize_core_program": "f847dab2d4111fc1875457a799012594305f7cdaf047ebc9e00a92fff972ea15",
-                "resolve_core_program": "c8daec7cf2131c0c541a259bc935ccbf02492b8a0eddb2c2efc1793e91ba009d",
-                "select_programs": "f1d7a08b98db1b9c9d0f289714d8c4c85eb061e30dd592a523aad429bf107828",
-                "initial_core_tile_widths": "496cd22a502c9dacdad36884c681cfed6353d840824a1e2dce3df7b1dcbcc3cf",
-                "_validate_core_program": "d55b9b72493f9565e341c20ac15f1041c4f6acd2134e25a923382c7a10304b59",
+                "_validate_disposition_reason": "03cb7d272c11a686adf713cc1f8ddbf4f516ef61f3bde01b59b800fc9a58ab4b",
+                "materialize_core_program": "3889c6fd64636d8133e524001e8540558a5229e7886776fb22217f0eeee07660",
+                "resolve_core_program": "d5661feb91854806a2f4c9c420ce6c41466d575bf1a84b7569f0c1135bfd3cf7",
+                "select_programs": "545d2aaa5fd158f5cbbe4c8a2bf69cfffdaff588eb5066fcde54de59fb37c91b",
+                "_validate_core_program": "732d66341ea1547f8f9041a0401997aa492a4cb1f9023af95f7e83339467b197",
                 "_validate_materialized_declaration": "d4a7b72b1943b877e689ed05bc6e83e8194fa20169615d7a0a8bd970bce96534",
                 "_resolve_input_transfer_plan": "86e49db184adcd67dbcdf9f7accfcc17e7adaac32042bf5233be71121d97b73e",
                 "_validate_target_value_accesses": "9f9c693c334394c0ea05e30b923dba937a2f6979c41b91c3855da1c6d0eac7ae",
                 "_target_value_argument_leaf": "ff8f95f1afe6f2e70d97d261317b158e94b376fda3842977cc88fc07529a9ce2",
                 "_validate_transfer_argument_metadata": "028eddda6b8348555f3f1dc1ce5bd869fdcbbf683f4e40e773d95f125556c95d",
-                "_validate_streamable_axis": "49d750f0fa436a7971480f75485b11dfa08643b1d709cadefbeedea2e0b9dd45",
+                "_validate_streamable_axis": "e0398857430aece0ac4722c6ae6660ccbf0d95a5549f318ae0245aab34905eb3",
                 "_validate_tile_width": "15f543450ad5f6b739cfa8aafbf0a4fb34a0c5b677da4866a2afedd1effde831",
                 "_validate_coordinate_argument": "401392c0069102b2983559a9b7c53bba6bd66ccf0b0126f8e6688bff49564b27",
                 "_validate_width_keyword": "57c76f0f7ffbb02e0ab500552522e0d1ec8652173d7b9ba81c842ec558beeaff",
@@ -2038,7 +2043,7 @@ def category(self) -> str:
             label="solve caller live streamed provider",
             contracts={
                 "_select_action_width_keyword": "d5c0751bf2eb4a98a08b1641e41cfea9f46230af044a1c666e49f6f444cadb68",
-                "GridSearch.build_period_kernels": "a7c9cf78c051a97240c8a2ac2836819164b0ae12f86eb345fdfe7501d122a978",
+                "GridSearch.build_period_kernels": "79a9fdd4a2bf55adbce52bd377592bfd426f252c33b811d2693c01c33cd38f91",
                 "_edge_reference_regimes_for_targets": "fae893f62c5a3eb6e8d4df88dae39fd283a5d86cd1c87a173da15287ea945af0",
                 "_classify_action_streaming": "09d190475ffaf8c269880b7062a4be39e149f27d801e5fb640fa171753337ebf",
                 "_supports_action_streaming": "d93f977fad68ad528beb9d4b9e6d45e5eb95b53c9a0398ff6f6a62ec548bad11",
@@ -2125,7 +2130,10 @@ def _output_layout_errors(tree: ast.Module) -> list[str]:
             fields=(
                 "compiled: Callable",
                 "layout: ResolvedOutputLayout",
+                "tile_widths: Mapping[str, int]",
                 "input_transfer_plan: tuple[ResolvedValueTransfer, ...] = ()",
+                "internal_input_templates: Mapping[str, object] = MappingProxyType({})",
+                "name: str = ''",
             ),
             methods=("__post_init__", "__call__"),
         )
@@ -2167,8 +2175,8 @@ def _output_layout_errors(tree: ast.Module) -> list[str]:
                 "_validate_output_roles": "7cbf07ffbcb4becaabdb34d86ea44caca2bb8561b14f6768970ebccea79e4b08",
                 "assert_output_layout": "daad2a8d5013f547b1004e7f51d7c71d6051b57badf5d3933c866774f862c2a8",
                 "_assert_output_metadata": "4fdb1d8439ec600990e801f0da9197759f71dc01661a1d0cf14d332be05b1209",
-                "PlannedCore.__post_init__": "c62b7dc586d1bc5e57a4ef9b72208b6cf5d125c73befd7dbf7a72e4f09982ad6",
-                "PlannedCore.__call__": "f41f3d370e5237e949f541b1b7f538fe3b30d70994602bb933acc51170207e07",
+                "PlannedCore.__post_init__": "ebb7de9740b5d6b471b106fc7927210a128754af2504f3a90987105a1c431ed3",
+                "PlannedCore.__call__": "6f10b5f5d4aa8b41d62e8d2347c36eee8e4ddbfb2a8eaae55ca1a4f7f4f29707",
                 "assert_value_leaf_layout": "9362aaf98344976ae13de7ac67e05d23fe983f12e34eac9f2ad439762a5d159d",
                 "_assert_output_leaf": "8a75af878a85e6cc997e5d823b55ba0545ff3f147a30a7ddbfd2666db07d70fd",
                 "_resolve_output_leaf": "b321849f4ff64dbab550be131a31a74157e9749a396958917b8e587fdffe5fa4",
@@ -2538,71 +2546,19 @@ return MappingProxyType(result)
     return errors
 
 
-def _initial_tile_width_validation_errors(tree: ast.Module) -> list[str]:
-    """Require full program validation to dominate every width computation."""
-    label = "streamed validation before initial width selection"
-    try:
-        node = _definition(tree=tree, name="_initial_tile_widths")
-    except ValueError as error:
-        return [f"{label}: {error}"]
-
-    body = _body_without_docstring(node)
-    validation_calls = [
-        child
-        for child in ast.walk(node)
-        if isinstance(child, ast.Call) and _call_name(child) == "_validate_core_program"
-    ]
-    sensitive: list[tuple[str, int]] = []
-    for index, statement in enumerate(body):
-        for child in ast.walk(statement):
-            descendants = tuple(ast.walk(child))
-            reads_extent = any(
-                isinstance(item, ast.Attribute) and item.attr == "extent"
-                for item in descendants
-            )
-            if isinstance(child, ast.Compare) and reads_extent:
-                sensitive.append(("extent comparison", index))
-            elif isinstance(child, ast.BinOp) and reads_extent:
-                sensitive.append(("extent arithmetic", index))
-            elif (
-                isinstance(child, ast.Call)
-                and isinstance(child.func, ast.Attribute)
-                and child.func.attr == "bit_length"
-            ):
-                sensitive.append(("bit_length", index))
-
-    expected_first = _expected_statements("_validate_core_program(program=program)")[0]
-    required = {"extent comparison", "extent arithmetic", "bit_length"}
-    observed = {kind for kind, _index in sensitive}
-    if (
-        not body
-        or _ast_key(body[0]) != _ast_key(expected_first)
-        or len(validation_calls) != 1
-        or not required <= observed
-        or any(index <= 0 for _kind, index in sensitive)
-    ):
-        return [
-            (
-                f"{label}: _validate_core_program must dominate every extent "
-                "comparison, arithmetic operation, and bit_length call"
-            )
-        ]
-    return []
-
-
 def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
     """Pin native graph resolution and V/D publication through solve execution."""
     errors = _exact_callable_errors(
         tree=tree,
         label="backward output-layout transport",
         contracts={
-            "_run_period_kernel": "e937d852ef87aba3c525f7a495c73a8a74d47be6992743b26fb5f1d31d8c36d0",
+            "_run_period_kernel": "7507b0912580b34a2e83b9d82d5cf7e5c2f2e0606b2f3e8e8bcf5718a169ffd6",
             "_regime_retains_replay": "04e8745dceb0e3c34e0f91fd11d27c43e0da5043cf2418b8015c15baa29d1d81",
             "_select_period_programs": "55bff2bbffbc5a75f00a656f684093d89d3655bac48d76da2e9dbe716b62bb74",
             "_selected_artifact_keys_for_cell": "1acc464529bc9833e48f727279682d969f850d2a3bb206e8a2695b1769f6182f",
-            "_compile_all_functions": "cce03681dc7cb7fba3c6cbc41594a7d4aa8ec2857557ce74a956fb1449acda8f",
-            "_resolve_output_layouts_and_lowering_keys": "e7a68f078e0937fe7fa276a534f902f3957508ebcfa612c5d173f1320c069ee1",
-            "_resolve_program_for_execution": "247155a79a8cdc2c16845aeb9d222b2c6aeea7129c90d9a733ecc66cf793f5d0",
+            "_compile_all_functions": "6978adb7621341408b62ad1f10a9fc896e6a36b7d4ed49b9fa84ee1b8dc8d203",
+            "_resolve_output_layouts_and_lowering_keys": "9cdd2813230f45a8311160bea8126f117e1e11e7a174a1ed0d708792a594a181",
+            "_resolve_program_for_execution": "6e3ec3139833f459a49be4a30a6c8c5813ba8cd66176a849ee24e7a81b27b433",
             "_resolve_value_input_transfer_plan": "40e46250dd373f2ea17e38c911e0c2df7ad01192dd82fcb1d7a7ddbf641f91bb",
             "_resolve_value_transfer_layout": "6cd863aaa64c0f558c797b47667479b595c77d5f3ee5c8b3dcfae188f1d05edd",
             "_lowering_key": "68e82c0372400e4577a6e38d4f5c64bdff88f5f732b86b15383a5e3157973b56",
@@ -2611,7 +2567,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             "_abstract_leaf_key": "94afc53d035e8ad9812025f72adcbf76d8966430ef259d339977e9cf90262b66",
             "_output_roles_key": "c73436e6abaec7f0388386d353675200d7bf3d5d3544654f8d47f37ad0e5e8da",
             "_assert_lowered_output_roles": "62fcff4b0e2d8566017c980c72046445639aba034da0be42480dd52a9e499871",
-            "_attach_resolved_output_layout": "63e5fb772ba5efb257930a9ae350a50470049b93a19e02ab0b57c29be5ccbcf9",
+            "_attach_resolved_output_layout": "13fbb28be2d2b81d69fba4a30dcac646190ae2927cce11d3e5f9c7926d6c181a",
             "_publish_kernel_value": "df201c75574aab5280bc841d51cfb143c6a2939a65cc5e8bdee8884760d3e2d2",
         },
     )
@@ -2700,8 +2656,8 @@ def _period_replay_errors(tree: ast.Module) -> list[str]:
         tree=tree,
         label="period replay native-program transport",
         contracts={
-            "replay_period": "bdaa7a9381889dc2dbbc84763861da30a4ccd8c279f1e2b01eefcc39d9b0a709",
-            "_compile_cores_for_one_period": "377a05c8bc2881ce381a4e465fdf3317de78e240d5b0705353e477aaf2cd19bd",
+            "replay_period": "78848f526164f957ab3634f8c5db7740e7b452719830b5c887b523360ff5beeb",
+            "_compile_cores_for_one_period": "898d1a2d3f7a0a0ce8f12724d7f8f99f1823faee3ed3e6203c6cf83f078b7670",
             "_core_build_context_for_one_period": "8d11e28bebf0c0df6bce4872e25a56e577592db26901d47d8cd5cf431a55b473",
         },
     )
@@ -5884,13 +5840,13 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": BACKWARD_INDUCTION_SOURCE,
             "source": replace_once(
                 source=backward_induction_source,
-                old="            source=(regime_name, period, core_key),",
+                old="                source=triple,",
                 new=(
-                    "            source=(\n"
-                    "                materialized.requirements.target_value_accesses[0].source.source_regime,\n"
-                    "                materialized.requirements.target_value_accesses[0].source.source_period,\n"
-                    "                materialized.requirements.target_value_accesses[0].source.core_key,\n"
-                    "            ),"
+                    "                source=(\n"
+                    "                    materialized.requirements.target_value_accesses[0].source.source_regime,\n"
+                    "                    materialized.requirements.target_value_accesses[0].source.source_period,\n"
+                    "                    materialized.requirements.target_value_accesses[0].source.core_key,\n"
+                    "                ),"
                 ),
                 label="backward actual source-coordinate authority",
             ),
@@ -5908,11 +5864,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": BACKWARD_INDUCTION_SOURCE,
             "source": replace_once(
                 source=backward_induction_source,
-                old=(
-                    "                input_transfer_plan="
-                    "resolved_programs[triple].input_transfer_plan,"
-                ),
-                new="                input_transfer_plan=(),",
+                old="            input_transfer_plan=selected.input_transfer_plan,",
+                new="            input_transfer_plan=(),",
                 label="backward absolute-node transfer-plan attachment",
             ),
         },
@@ -5969,9 +5922,9 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": BACKWARD_INDUCTION_SOURCE,
             "source": replace_once(
                 source=backward_induction_source,
-                old="        tile_widths=initial_core_tile_widths(program=program),",
-                new="        tile_widths={},",
-                label="native program initial widths",
+                old="                tile_widths=widths,",
+                new="                tile_widths={},",
+                label="native program planned widths",
             ),
         },
         "native_graph:aot_resolved_function_bypassed": {
@@ -5979,12 +5932,12 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "source": replace_once(
                 source=backward_induction_source,
                 old=(
-                    "            unique[lowering_key] = (\n"
-                    "                program.function,"
+                    "            resolved.function,\n"
+                    "            static_argnames=tuple(static_kwargs),"
                 ),
                 new=(
-                    "            unique[lowering_key] = (\n"
-                    "                all_programs[triple].function,"
+                    "            candidate_filter(resolved.function),\n"
+                    "            static_argnames=tuple(static_kwargs),"
                 ),
                 label="AOT resolved function",
             ),
@@ -5993,8 +5946,13 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": BACKWARD_INDUCTION_SOURCE,
             "source": replace_once(
                 source=backward_induction_source,
-                old="        lower_args = resolved.arguments",
-                new="        lower_args = {},",
+                old=(
+                    "        low = jitted.lower(\n"
+                    "            **resolved.arguments, **internal_templates[triple], "
+                    "**static_kwargs\n"
+                    "        )"
+                ),
+                new="        low = jitted.lower(**static_kwargs)",
                 label="AOT resolved arguments",
             ),
         },
@@ -6040,7 +5998,10 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
                 old="    return PlannedCore(\n"
                 "        compiled=compiled,\n"
                 "        layout=layout,\n"
+                "        tile_widths=tile_widths,\n"
                 "        input_transfer_plan=input_transfer_plan,\n"
+                "        internal_input_templates=internal_input_templates,\n"
+                "        name=name,\n"
                 "    )",
                 new="    return compiled",
                 label="planned core attachment",

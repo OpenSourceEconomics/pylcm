@@ -67,6 +67,7 @@ from _lcm.engine import ParamCheck, StateActionSpace
 from _lcm.execution.core_program import (
     CoreArgumentBuilder,
     CoreBuildContext,
+    CoreExecutionDisposition,
     CoreProgram,
     core_program_graph,
 )
@@ -134,6 +135,11 @@ from lcm.typing import (
     IntND,
     StateName,
 )
+
+# Why the adaptive mesh's adjuster programs are host-driven: the mesh driver
+# decides from the solves it has already seen how many more nodes to request,
+# so the number of adjuster dispatches is data-dependent and owned by the host.
+_ADAPTIVE_HOST_DRIVEN_REASON = "host_driven:adaptive_outer_mesh_refinement"
 
 
 @beartype(conf=REGIME_CONF)
@@ -976,6 +982,10 @@ class _NNBEGMPeriodKernel:
         publishes the value and the carry alone; a replay-retaining solve
         dispatches the inner `replay` programs and assembles the nested policy
         from their banks.
+
+        The keeper's programs keep the inner disposition; the adjuster's take
+        whichever `_adjuster_disposition` returns, so an outer search that
+        dispatches the adjuster from a host loop republishes it host-driven.
         """
         programs: dict[str, CoreProgram] = {}
         for role, kernel, outer_node in (
@@ -998,6 +1008,11 @@ class _NNBEGMPeriodKernel:
                     retained_artifact_payload_types[SIMULATION_POLICY] = (
                         self._published_policy_type
                     )
+                disposition, disposition_reason = (
+                    (program.disposition, program.disposition_reason)
+                    if role == "keeper"
+                    else self._adjuster_disposition(program=program)
+                )
                 programs[f"{role}:{name}"] = replace(
                     program,
                     name=f"{role}:{name}",
@@ -1010,6 +1025,8 @@ class _NNBEGMPeriodKernel:
                         inner=program.argument_builder, outer_node=outer_node
                     ),
                     retained_artifact_payload_types=(retained_artifact_payload_types),
+                    disposition=disposition,
+                    disposition_reason=disposition_reason,
                 )
         object.__setattr__(self, "_core_programs", MappingProxyType(programs))
 
@@ -1017,6 +1034,16 @@ class _NNBEGMPeriodKernel:
     def _published_policy_type(self) -> type[object]:
         """Return the final policy type assembled by this composite kernel."""
         raise NotImplementedError
+
+    def _adjuster_disposition(
+        self, *, program: CoreProgram
+    ) -> tuple[CoreExecutionDisposition, str | None]:
+        """Return the disposition the adjuster's programs are republished under.
+
+        The adjuster is dispatched once, exactly like the keeper, so it keeps the
+        inner program's own disposition.
+        """
+        return program.disposition, program.disposition_reason
 
     def core_programs(self) -> Mapping[str, CoreProgram]:
         """Return the native graph used by eager, JIT, AOT, and replay paths."""
@@ -1570,6 +1597,13 @@ class _AdaptiveNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
         """Return the nested policy payload published after composition."""
         return NestedEGMSimPolicy
 
+    def _adjuster_disposition(
+        self, *, program: CoreProgram
+    ) -> tuple[CoreExecutionDisposition, str | None]:
+        """The adaptive mesh dispatches the adjuster once per requested node."""
+        del program
+        return CoreExecutionDisposition.HOST_DRIVEN, _ADAPTIVE_HOST_DRIVEN_REASON
+
     def _solve_outer(
         self,
         *,
@@ -1599,35 +1633,20 @@ class _AdaptiveNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
         capability gates publication rather than the search.
         """
         config = self.outer_search
-        adjuster_cores = _subcores(compiled_cores=compiled_cores, role="adjuster")
         cache: dict[float, OuterCandidateResult] = {}
-
-        def solve_nodes(nodes_arr: Float1D) -> FloatND:
-            requested = [float(node) for node in np.asarray(nodes_arr)]
-            pending = [node for node in requested if node not in cache]
-            chunk_size = config.batch_size or max(len(pending), 1)
-            for chunk_start in range(0, len(pending), chunk_size):
-                chunk = pending[chunk_start : chunk_start + chunk_size]
-                chunk_results = [
-                    self._solve_adjuster_node(
-                        node=jnp.asarray(node),
-                        adjuster_cores=adjuster_cores,
-                        state_action_space=state_action_space,
-                        next_regime_to_V_arr=next_regime_to_V_arr,
-                        next_regime_to_continuation=next_regime_to_continuation,
-                        flat_params=flat_params,
-                        period=period,
-                        ages=ages,
-                        logger=logger,
-                    )
-                    for node in chunk
-                ]
-                jax.block_until_ready(
-                    [(result.V_arr, result.carry) for result in chunk_results]
-                )
-                cache.update(zip(chunk, chunk_results, strict=True))
-            return jnp.stack([cache[node].V_arr for node in requested])
-
+        solve_nodes = _AdaptiveNodeSolver(
+            kernel=self,
+            adjuster_cores=_subcores(compiled_cores=compiled_cores, role="adjuster"),
+            cache=cache,
+            batch_size=config.batch_size,
+            state_action_space=state_action_space,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            next_regime_to_continuation=next_regime_to_continuation,
+            flat_params=flat_params,
+            period=period,
+            ages=ages,
+            logger=logger,
+        )
         mesh = refine_outer_mesh(
             initial_nodes=self.outer_grid_values,
             solve_at=solve_nodes,
@@ -1769,6 +1788,83 @@ class _AdaptiveNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
             replay=replay,
             auxiliary=auxiliary,
         )
+
+
+@dataclass(frozen=True, kw_only=True)
+class _AdaptiveNodeSolver:
+    """The adaptive mesh driver's exact-solve callback for one period.
+
+    Solves every requested outer node through the adjuster kernel, chunked by
+    the strategy's `batch_size`, and caches each `OuterCandidateResult` by node
+    value so a node the driver revisits is solved once. Every input the callback
+    reads is an explicit field, so the compiled adjuster cores stay reachable
+    only through this instance, which the period's solve drops on return.
+    """
+
+    kernel: _AdaptiveNNBEGMPeriodKernel
+    """The period kernel whose adjuster branch each node is solved through."""
+
+    adjuster_cores: Mapping[str, Callable]
+    """Immutable mapping of the adjuster's compiled core programs."""
+
+    cache: dict[float, OuterCandidateResult]
+    """Node value to its solved candidate; the driver's caller reads it back
+    to assemble the final bank."""
+
+    batch_size: int
+    """Mesh nodes solved per chunk; `0` solves every pending node at once."""
+
+    state_action_space: StateActionSpace
+    """The period's state-action space."""
+
+    next_regime_to_V_arr: Mapping[RegimeName, FloatND]
+    """Immutable mapping of next-period regime name to its value array."""
+
+    next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload]
+    """Immutable mapping of next-period regime name to its continuation payload."""
+
+    flat_params: FlatParams
+    """The solve's flat parameters."""
+
+    period: int
+    """The period being solved."""
+
+    ages: AgeGrid
+    """The model's lifecycle age grid."""
+
+    logger: logging.Logger
+    """Logger the adjuster kernel reports through."""
+
+    def __call__(self, nodes_arr: Float1D) -> FloatND:
+        """Return the candidate values on `nodes_arr`, stacked in request order.
+
+        `refine_outer_mesh` calls its `solve_at` with the requested nodes as the
+        sole positional argument.
+        """
+        requested = [float(node) for node in np.asarray(nodes_arr)]
+        pending = [node for node in requested if node not in self.cache]
+        chunk_size = self.batch_size or max(len(pending), 1)
+        for chunk_start in range(0, len(pending), chunk_size):
+            chunk = pending[chunk_start : chunk_start + chunk_size]
+            chunk_results = [
+                self.kernel._solve_adjuster_node(  # noqa: SLF001
+                    node=jnp.asarray(node),
+                    adjuster_cores=self.adjuster_cores,
+                    state_action_space=self.state_action_space,
+                    next_regime_to_V_arr=self.next_regime_to_V_arr,
+                    next_regime_to_continuation=self.next_regime_to_continuation,
+                    flat_params=self.flat_params,
+                    period=self.period,
+                    ages=self.ages,
+                    logger=self.logger,
+                )
+                for node in chunk
+            ]
+            jax.block_until_ready(
+                [(result.V_arr, result.carry) for result in chunk_results]
+            )
+            self.cache.update(zip(chunk, chunk_results, strict=True))
+        return jnp.stack([self.cache[node].V_arr for node in requested])
 
 
 def derive_nnbegm_replay_capability(

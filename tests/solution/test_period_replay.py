@@ -10,11 +10,14 @@ replayed is what ran — not a reconstruction that might differ from it.
 """
 
 import logging
+import math
 import re
 
+import cloudpickle
 import numpy as np
 import pytest
 
+from _lcm.execution.workspace_planning import bootstrap_width
 from _lcm.solution import backward_induction, period_replay
 from lcm import AgeGrid, Model
 from lcm.persistence import replay_period
@@ -234,3 +237,74 @@ def test_replay_lowers_the_scope_the_solve_dispatched(
     replay_period(directory=tmp_path / "working_life@1")
 
     assert observed == [(regime_retains_replay, frozenset())]
+
+
+def _rewrite_capture(*, directory, mutate):
+    """Load, mutate, and rewrite one capture payload."""
+    path = directory / period_replay._PAYLOAD_NAME
+    with path.open("rb") as stream:
+        payload = cloudpickle.load(stream)
+    mutate(payload)
+    with path.open("wb") as stream:
+        cloudpickle.dump(payload, stream)
+
+
+def test_a_capture_records_the_tile_widths_the_solve_dispatched(
+    *, monkeypatch, tmp_path
+):
+    """The captured widths are the bootstrap widths of the unbudgeted solve."""
+    model, _ = _solve_capturing(
+        monkeypatch=monkeypatch, tmp_path=tmp_path, target="working_life@1"
+    )
+    path = tmp_path / "working_life@1" / period_replay._PAYLOAD_NAME
+    with path.open("rb") as stream:
+        payload = cloudpickle.load(stream)
+
+    regime = model._regimes["working_life"]
+    space = regime.solution.state_action_space(
+        regime_params=model._process_params(get_params(n_periods=_N_PERIODS))[
+            "working_life"
+        ]
+    )
+    extent = math.prod(space.actions_grid_shapes)
+    assert payload["core_tile_widths"] == {
+        "main": {"action": bootstrap_width(extent=extent)}
+    }
+
+
+def test_a_capture_without_tile_widths_is_refused(*, monkeypatch, tmp_path):
+    """Replay never plans widths itself, so a capture must state them."""
+    _solve_capturing(
+        monkeypatch=monkeypatch, tmp_path=tmp_path, target="working_life@1"
+    )
+    _rewrite_capture(
+        directory=tmp_path / "working_life@1",
+        mutate=lambda payload: payload.pop("core_tile_widths"),
+    )
+
+    with pytest.raises(ValueError, match="core_tile_widths"):
+        replay_period(directory=tmp_path / "working_life@1")
+
+
+@pytest.mark.parametrize(
+    ("widths", "error"),
+    [
+        ({"main": {"action": 0}}, ValueError),
+        ({"main": {"action": 2.0}}, TypeError),
+        ({"other": {"action": 2}}, ValueError),
+    ],
+    ids=["nonpositive-width", "noninteger-width", "wrong-core-names"],
+)
+def test_malformed_captured_tile_widths_are_refused(
+    *, monkeypatch, tmp_path, widths, error
+):
+    _solve_capturing(
+        monkeypatch=monkeypatch, tmp_path=tmp_path, target="working_life@1"
+    )
+    _rewrite_capture(
+        directory=tmp_path / "working_life@1",
+        mutate=lambda payload: payload.__setitem__("core_tile_widths", widths),
+    )
+
+    with pytest.raises(error):
+        replay_period(directory=tmp_path / "working_life@1")
