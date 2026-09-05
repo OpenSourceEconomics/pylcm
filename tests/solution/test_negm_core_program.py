@@ -23,6 +23,7 @@ from types import MappingProxyType
 from typing import Any, cast
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
@@ -49,6 +50,8 @@ from _lcm.solution.negm import (
     _KEEPER_CARRY,
     _KEEPER_VALUE,
     _OUTER_NODES,
+    _NodeSolver,
+    _OuterCostAtCell,
     _with_outer_post_decision,
 )
 from _lcm.solution.period_replay import replay_period
@@ -468,3 +471,61 @@ def test_a_replay_lowers_the_dense_programs_the_solve_ran(*, monkeypatch, tmp_pa
         expected=np.asarray(solution.values[_PERIOD][_REGIME]),
         n_ulp=1,
     )
+
+
+def test_the_node_solver_compares_by_identity_so_an_array_field_cannot_break_it() -> (
+    None
+):
+    """Two node solvers built from equal arguments are distinct objects.
+
+    The solver carries the adjuster's argument tree, whose leaves are arrays, so
+    comparing two solvers field by field would take the truth value of an array and
+    raise. Comparison is by identity instead.
+    """
+    first = _NodeSolver(
+        inner_core=_unused_inner_core,
+        outer_post_decision="new_illiquid",
+        adjuster_arguments=MappingProxyType({"wealth": jnp.arange(3.0)}),
+    )
+    second = _NodeSolver(
+        inner_core=_unused_inner_core,
+        outer_post_decision="new_illiquid",
+        adjuster_arguments=MappingProxyType({"wealth": jnp.arange(3.0)}),
+    )
+
+    assert first != second
+
+
+def test_the_outer_cost_cell_compares_by_identity_when_a_param_is_an_array() -> None:
+    """Two cost cells built from equal params are distinct objects.
+
+    The cell carries the regime's flat params, which may hold arrays, so comparing
+    two cells field by field would take the truth value of an array and raise.
+    Comparison is by identity instead.
+    """
+    first = _OuterCostAtCell(
+        cost_func=_unused_cost_func,
+        cost_arg_names=frozenset({"illiquid"}),
+        durable_state_name="illiquid",
+        outer_post_decision="new_illiquid",
+        params=MappingProxyType({"interest_rate": jnp.arange(3.0)}),
+    )
+    second = _OuterCostAtCell(
+        cost_func=_unused_cost_func,
+        cost_arg_names=frozenset({"illiquid"}),
+        durable_state_name="illiquid",
+        outer_post_decision="new_illiquid",
+        params=MappingProxyType({"interest_rate": jnp.arange(3.0)}),
+    )
+
+    assert first != second
+
+
+def _unused_inner_core(**kwargs: object) -> tuple[Any, Any]:
+    """Stand in for the adjuster program; the comparison tests never call it."""
+    raise AssertionError(kwargs)
+
+
+def _unused_cost_func(**kwargs: object) -> Any:
+    """Stand in for the cost DAG; the comparison tests never call it."""
+    raise AssertionError(kwargs)

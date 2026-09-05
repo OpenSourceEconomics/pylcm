@@ -8,6 +8,7 @@ memory budget.
 """
 
 import gc
+import inspect
 import types
 import weakref
 
@@ -28,6 +29,13 @@ from tests.test_models.deterministic.regression import (
 
 _N_PERIODS = 2
 _NEGM_SOURCE_FILE = negm.__file__
+# A code object records the filename the compiler saw, which is not guaranteed to be
+# the module's own `__file__` string: the beartype claw rebinds each module attribute
+# to a wrapper whose own code object reports a synthetic name, so the pin has to reach
+# through it. Assert the two agree at import, so a probe pointed at `_NEGM_SOURCE_FILE`
+# cannot report zero merely by naming a file no code object claims — which would let
+# the regression assertion below hold vacuously.
+assert inspect.unwrap(negm._durable_values_at).__code__.co_filename == _NEGM_SOURCE_FILE
 
 
 def _live_compiled_executables() -> int:
@@ -143,8 +151,8 @@ def _live_nested_functions(*, source_file: str) -> int:
     name; one that is still alive after the call that created it has been pinned by
     something outside that call, together with everything it closed over. Membership
     is decided by the code object's filename, so a wrapper another library defined
-    and `functools.wraps` relabelled with this module's name is not counted, and the
-    count is complete over every function object the collector tracks.
+    and `functools.wraps` relabelled with the inspected module's name is not counted,
+    and the count is complete over every function object the collector tracks.
     """
     gc.collect()
     return sum(

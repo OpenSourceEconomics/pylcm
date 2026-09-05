@@ -20,7 +20,7 @@ import operator
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import cast
+from typing import ClassVar, cast
 
 import jax
 import jax.numpy as jnp
@@ -961,12 +961,14 @@ def _outer_sweep_program(
     return V_arr, carry
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, eq=False)
 class _NodeSolver:
     """Solve the inner adjuster at one outer node.
 
     Every input is an explicit field, so the adjuster core stays reachable only
-    through this instance, which the sweep drops when its trace ends.
+    through this instance, which the sweep drops when its trace ends. The
+    argument tree holds traced arrays, whose truth value is undefined, so
+    instances compare by identity (`eq=False`).
     """
 
     inner_core: Callable[..., tuple[FloatND, EGMCarry]]
@@ -1192,9 +1194,13 @@ def _fail_if_the_outer_cost_reads_beyond_one_cell(
         raise InvalidParamsError(msg)
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, eq=False)
 class _OuterCostAtCell:
-    """Evaluate the regime's declared outer cost at one (durable, outer) cell."""
+    """Evaluate the regime's declared outer cost at one (durable, outer) cell.
+
+    The bound params may hold arrays, whose truth value is undefined, so
+    instances compare by identity (`eq=False`).
+    """
 
     cost_func: Callable[..., FloatND]
     """The concatenated DAG targeting the declared outer-cost node."""
@@ -1338,6 +1344,9 @@ class _KeeperOuterPostDecision:
     caller wraps it in `dags.with_signature` to advertise the arguments the
     inner resources DAG binds by name.
     """
+
+    __name__: ClassVar[str] = "keep_outer_post_decision"
+    """Name `dags` reads off the callable when it reports an invalid argument."""
 
     durable_state: StateName
     """Name of the durable leaf state the identity keeper returns."""
