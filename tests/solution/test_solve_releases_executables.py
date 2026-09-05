@@ -8,10 +8,12 @@ memory budget.
 """
 
 import gc
+import types
 import weakref
 
 import jax
 
+from _lcm.solution import negm
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model
 from lcm.solvers import AdaptiveOuterMesh, GridSearch
 from tests.test_models import n_nbegm_toy
@@ -25,6 +27,7 @@ from tests.test_models.deterministic.regression import (
 )
 
 _N_PERIODS = 2
+_NEGM_SOURCE_FILE = negm.__file__
 
 
 def _live_compiled_executables() -> int:
@@ -122,3 +125,70 @@ def test_a_dropped_adaptive_nested_solution_releases_every_compiled_executable()
     del solution
 
     assert _live_compiled_executables() == before
+
+
+def _negm_model() -> Model:
+    """Build the smallest two-period NEGM toy."""
+    return n_nbegm_toy.build_model(
+        variant="negm",
+        n_periods=2,
+        illiquid_grid=LinSpacedGrid(start=0.0, stop=20.0, n_points=2),
+    )
+
+
+def _live_nested_functions(*, source_file: str) -> int:
+    """Count the per-call nested functions of one source file still reachable.
+
+    A function defined inside another function carries `<locals>` in its qualified
+    name; one that is still alive after the call that created it has been pinned by
+    something outside that call, together with everything it closed over. Membership
+    is decided by the code object's filename, so a wrapper another library defined
+    and `functools.wraps` relabelled with this module's name is not counted, and the
+    count is complete over every function object the collector tracks.
+    """
+    gc.collect()
+    return sum(
+        1
+        for obj in gc.get_objects()
+        if isinstance(obj, types.FunctionType)
+        and obj.__code__.co_filename == source_file
+        and "<locals>" in obj.__qualname__
+    )
+
+
+def test_a_dropped_negm_solution_releases_every_compiled_executable() -> None:
+    """A finished NEGM solve keeps no compiled executable alive."""
+    warm = _negm_model()
+    warm.solve(params={"discount_factor": 0.95}, log_level="off")
+    del warm
+    before = _live_compiled_executables()
+
+    solution = _negm_model().solve(params={"discount_factor": 0.95}, log_level="off")
+    del solution
+
+    assert _live_compiled_executables() == before
+
+
+def test_a_dropped_negm_model_and_solution_leave_no_nested_function_behind() -> None:
+    """Building and solving a NEGM model creates no nested function that outlives it."""
+    warm = _negm_model()
+    warm.solve(params={"discount_factor": 0.95}, log_level="off")
+    del warm
+    before = _live_nested_functions(source_file=_NEGM_SOURCE_FILE)
+
+    solution = _negm_model().solve(params={"discount_factor": 0.95}, log_level="off")
+    del solution
+
+    assert _live_nested_functions(source_file=_NEGM_SOURCE_FILE) == before
+
+
+def test_the_nested_function_probe_counts_a_live_nested_function() -> None:
+    """The probe reports a nested function of the source file it is pointed at."""
+    baseline = _live_nested_functions(source_file=__file__)
+
+    def _pinned_nested_function() -> None:
+        """Stay alive for the rest of this test so the probe has one to find."""
+
+    _pinned_nested_function()
+
+    assert _live_nested_functions(source_file=__file__) > baseline
