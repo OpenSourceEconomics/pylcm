@@ -100,7 +100,8 @@ def _captured_widths(tmp_path: Path) -> dict[str, dict[str, int]]:
         return cloudpickle.load(stream)["core_tile_widths"]
 
 
-def test_no_budget_keeps_the_full_action_product(*, monkeypatch, tmp_path) -> None:
+def test_no_budget_uses_the_bootstrap_width(*, monkeypatch, tmp_path) -> None:
+    """Extent six streams in blocks of four; the whole product needs a budget."""
     _solve_capturing(
         monkeypatch=monkeypatch,
         tmp_path=tmp_path,
@@ -108,7 +109,7 @@ def test_no_budget_keeps_the_full_action_product(*, monkeypatch, tmp_path) -> No
         device_memory_bytes=None,
     )
 
-    assert _captured_widths(tmp_path) == {"main": {"action": _ACTION_EXTENT}}
+    assert _captured_widths(tmp_path) == {"main": {"action": 4}}
 
 
 @pytest.mark.usefixtures("synthetic_peaks")

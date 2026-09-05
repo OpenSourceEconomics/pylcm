@@ -14,7 +14,8 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   each executable's compiler memory report without running it, and dispatches the
   first candidate that fits, so a core whose full extent fits costs no extra
   compilation; when no candidate fits, `ExecutionPlanningError` is raised before
-  backward induction. Without a budget the full action product is used.
+  backward induction. Without a budget every streamed axis is lowered at its bootstrap
+  width — the largest power of two below the extent, capped at 64.
 - `GridSearch(action_block_width=...)` fixes the streamed action-block width of a
   regime's eligible solve cores. It is an execution request — rejected at model build on
   deliberately dense, unsupported, or trivial-product routes — and enters neither the

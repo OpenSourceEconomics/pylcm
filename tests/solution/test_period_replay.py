@@ -17,6 +17,7 @@ import cloudpickle
 import numpy as np
 import pytest
 
+from _lcm.execution.workspace_planning import bootstrap_width
 from _lcm.solution import backward_induction, period_replay
 from lcm import AgeGrid, Model
 from lcm.persistence import replay_period
@@ -251,7 +252,7 @@ def _rewrite_capture(*, directory, mutate):
 def test_a_capture_records_the_tile_widths_the_solve_dispatched(
     *, monkeypatch, tmp_path
 ):
-    """The captured widths are the full action product of the unbudgeted solve."""
+    """The captured widths are the bootstrap widths of the unbudgeted solve."""
     model, _ = _solve_capturing(
         monkeypatch=monkeypatch, tmp_path=tmp_path, target="working_life@1"
     )
@@ -266,7 +267,9 @@ def test_a_capture_records_the_tile_widths_the_solve_dispatched(
         ]
     )
     extent = math.prod(space.actions_grid_shapes)
-    assert payload["core_tile_widths"] == {"main": {"action": extent}}
+    assert payload["core_tile_widths"] == {
+        "main": {"action": bootstrap_width(extent=extent)}
+    }
 
 
 def test_a_capture_without_tile_widths_is_refused(*, monkeypatch, tmp_path):

@@ -120,7 +120,20 @@ def test_no_axes_are_one_budgeted_candidate() -> None:
     assert compiler.calls[0][1].memory_analysis_calls == 1
 
 
-def test_no_budget_compiles_full_or_requested_widths_exactly_once() -> None:
+@pytest.mark.parametrize(
+    ("extent", "expected"),
+    [(2, 1), (3, 2), (6, 4), (64, 32), (65, 64), (1000, 64)],
+)
+def test_bootstrap_width_is_the_largest_power_of_two_below_the_extent_capped_at_64(
+    *, extent: int, expected: int
+) -> None:
+    """Without a budget an axis streams below its extent, never the whole product."""
+    candidates = workspace_width_candidates(axes=(_axis(name="a", extent=extent),))
+
+    assert candidates == ({"a": expected},)
+
+
+def test_no_budget_compiles_bootstrap_or_requested_widths_exactly_once() -> None:
     executable = _Executable(
         analysis_error=AssertionError("memory analysis must not be called"),
         analysis=None,
@@ -139,9 +152,9 @@ def test_no_budget_compiles_full_or_requested_widths_exactly_once() -> None:
         compile_candidate=compile_candidate,
     )
 
-    assert calls == [{"outer": 5, "inner": 3}]
+    assert calls == [{"outer": 4, "inner": 3}]
     assert tuple(plan.widths) == ("outer", "inner")
-    assert plan.widths == {"outer": 5, "inner": 3}
+    assert plan.widths == {"outer": 4, "inner": 3}
     assert plan.peak_bytes is None
     assert plan.compiled is executable
     assert executable.memory_analysis_calls == 0

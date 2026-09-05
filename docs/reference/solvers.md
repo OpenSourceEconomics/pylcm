@@ -73,7 +73,8 @@ routes evaluate bounded C-order action blocks while preserving the complete supp
 solve core. It must be an exact positive integer no larger than that product. A fixed
 width is rejected when the route is deliberately dense, unsupported, or has no
 nontrivial action product; it is an execution request, not a hint that can be ignored.
-With no fixed width and no device-memory budget, pylcm uses the full action product.
+With no fixed width and no device-memory budget, pylcm streams every eligible core at
+its bootstrap width: the largest power of two below the action product, capped at 64.
 With an [`ExecutionConfig`](runtime_and_results.md#compiler-workspace-budgets), the
 planner instead walks a deterministic width frontier widest-first and dispatches the
 first candidate whose compiler-reported peak fits. Supplying both makes the fixed width

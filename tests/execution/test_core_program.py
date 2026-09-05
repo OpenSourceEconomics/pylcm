@@ -690,12 +690,15 @@ def test_width_candidates_reject_invalid_coordinate_extents_fail_closed(
         workspace_width_candidates(axes=program.requirements.streamable_axes)
 
 
-def test_unbudgeted_width_candidate_is_the_full_product_without_an_override() -> None:
+def test_unbudgeted_width_candidate_is_the_bootstrap_width_without_an_override() -> (
+    None
+):
+    """Extent six streams in blocks of four, the largest power of two below it."""
     candidates = workspace_width_candidates(
         axes=_program().requirements.streamable_axes
     )
 
-    assert candidates == ({"action": 6},)
+    assert candidates == ({"action": 4},)
 
 
 def test_unbudgeted_width_candidate_is_the_declared_override() -> None:

@@ -39,9 +39,11 @@ solution = model.solve(
 )
 ```
 
-Without a budget (the default), every streamed action product is lowered at its full
-extent — or at the width a solver requests, such as `GridSearch(action_block_width=...)`
-— and compiler memory reports are not consulted. With a budget, the planner enumerates a
+Without a budget (the default), every streamed action product is lowered at its
+bootstrap width — the largest power of two below the product's extent, capped at 64 — or
+at the width a solver requests, such as `GridSearch(action_block_width=...)`, and
+compiler memory reports are not consulted. The whole product is lowered only when a
+budget shows it fits or a solver requests it. With a budget, the planner enumerates a
 deterministic width frontier for each streamed axis (one, the powers of two below the
 extent, and the full extent; a requested width is the only candidate) and walks it
 widest-first — descending width product, ties broken toward the lexicographically
@@ -49,12 +51,12 @@ largest width tuple in axis declaration order. Each candidate is lowered and com
 its compiler-reported peak is read, and the first candidate that fits is dispatched; a
 narrower candidate is compiled only after every wider one exceeded the budget. That
 selects the same candidate an exhaustive search would, at the cost of one extra lowering
-per rejected width: a core whose full extent fits costs nothing beyond an unbudgeted
-solve, and a core that fits at no width compiles its whole frontier before the error.
-Compilation is scheduled in waves across regime-period cells — every cell's widest
-candidate first, then the next candidate of only those cells still over budget — so
-parallel compilation and the deduplication of identical lowerings are unchanged. A dense
-program has exactly one candidate.
+per rejected width: a core whose full extent fits compiles exactly one candidate, and a
+core that fits at no width compiles its whole frontier before the error. Compilation is
+scheduled in waves across regime-period cells — every cell's widest candidate first,
+then the next candidate of only those cells still over budget — so parallel compilation
+and the deduplication of identical lowerings are unchanged. A dense program has exactly
+one candidate.
 
 The budget is compile-only and fail-closed:
 

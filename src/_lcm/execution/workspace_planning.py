@@ -20,6 +20,9 @@ from lcm.exceptions import ExecutionPlanningError
 
 _MISSING = object()
 
+# Largest width an unbudgeted streamed axis is lowered at.
+BOOTSTRAP_WIDTH_CAP = 64
+
 
 class _MemoryAnalyzable(Protocol):
     """Compiler result exposing JAX-style memory analysis."""
@@ -49,8 +52,9 @@ def workspace_width_candidates(
 ) -> tuple[Mapping[str, int], ...]:
     """Return the candidate sequence in planner rank order without compiling it.
 
-    Without a budget the sequence holds one candidate: each axis at its full extent
-    or its requested width.  With a budget it holds the Cartesian product of the
+    Without a budget the sequence holds one candidate: each axis at its bootstrap
+    width (see `bootstrap_width`) or its requested width.  With a budget it holds
+    the Cartesian product of the
     per-axis frontiers, widest first: descending width product, ties broken toward
     the lexicographically greatest width tuple in axis declaration order.
     """
@@ -71,7 +75,7 @@ def plan_workspace[Compiled](
 ) -> WorkspacePlan[Compiled]:
     """Compile the width frontier widest-first and return the first candidate that fits.
 
-    Without a budget, the full extent (or an axis's requested width) is compiled
+    Without a budget, the bootstrap width (or an axis's requested width) is compiled
     exactly once and compiler memory analysis is deliberately not consulted.  With a
     budget, candidates are compiled and analyzed in rank order — descending width
     product, ties broken toward the lexicographically greatest width tuple in axis
@@ -212,15 +216,32 @@ def _validate_width(*, axis_name: str, extent: int, width: object) -> int:
     return width
 
 
+def bootstrap_width(*, extent: int) -> int:
+    """Return the width an axis streams at when no device-memory budget is declared.
+
+    The width is the largest power of two strictly below the extent, capped at
+    `BOOTSTRAP_WIDTH_CAP`, so an unbudgeted solve never lowers a whole action
+    product and its working set stays bounded on every backend.  The full extent is
+    reached only through a budget that shows it fits or through a requested width.
+    """
+    if type(extent) is not int or extent <= 1:
+        msg = f"A streamable axis needs an exact int extent above one, got {extent!r}."
+        raise ValueError(msg)
+    upper_bound = min(BOOTSTRAP_WIDTH_CAP, extent - 1)
+    return 1 << (upper_bound.bit_length() - 1)
+
+
 def _workspace_width_candidates(
     *,
     axes: tuple[StreamableProductAxis, ...],
     budget_bytes: int | None,
 ) -> tuple[MappingProxyType[str, int], ...]:
-    """Enumerate one eager width map or the complete budgeted frontier, widest first."""
+    """Enumerate one bootstrap width map or the budgeted frontier, widest first."""
     if budget_bytes is None:
         values = tuple(
-            axis.extent if axis.requested_width is None else axis.requested_width
+            bootstrap_width(extent=axis.extent)
+            if axis.requested_width is None
+            else axis.requested_width
             for axis in axes
         )
         return (_width_mapping(axes=axes, values=values),)

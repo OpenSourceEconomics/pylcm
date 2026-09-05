@@ -1858,9 +1858,10 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         )
 
     # Candidates are ranked widest-first within each triple. Lowering proceeds in
-    # waves: wave 0 holds every triple's top-ranked candidate — the full extent, or
-    # the requested width — so an unbudgeted solve lowers exactly one candidate per
-    # core. Under a budget, only the triples whose current candidate exceeds it
+    # waves: wave 0 holds every triple's top-ranked candidate — the bootstrap width
+    # without a budget, the full extent under one, or the requested width — so an
+    # unbudgeted solve lowers exactly one candidate per core. Under a budget, only
+    # the triples whose current candidate exceeds it
     # advance to their next candidate in the following wave. Each wave deduplicates
     # by lowering key across triples, lowers sequentially (tracing is
     # single-threaded), and compiles in parallel.
