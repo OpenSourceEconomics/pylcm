@@ -1052,6 +1052,26 @@ def test_captured_inspect_signature_code_mutation_fails_closed() -> None:
         inspect.signature.__code__ = original_code
 
 
+def test_stdlib_dataclasses_replace_has_a_closed_fingerprint() -> None:
+    assert fingerprints._semantic_fingerprint(dataclasses.replace) == (
+        fingerprints._semantic_fingerprint(dataclasses.replace)
+    )
+
+
+def test_nominal_dataclasses_field_marker_cannot_spoof_captured_identity(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    marker = vars(dataclasses)["_FIELD_CLASSVAR"]
+    nominal_marker = type(marker)(repr(marker))
+    monkeypatch.setitem(vars(dataclasses), "_FIELD_CLASSVAR", nominal_marker)
+
+    with pytest.raises(
+        TypeError,
+        match=r"direct object dependency dataclasses[.]_FIELD_BASE",
+    ):
+        fingerprints._semantic_fingerprint(dataclasses.replace)
+
+
 def test_noncaptured_inspect_callable_remains_fail_closed() -> None:
     with pytest.raises(TypeError, match="ForwardRef"):
         fingerprints._semantic_fingerprint(inspect.get_annotations)

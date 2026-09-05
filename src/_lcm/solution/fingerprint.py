@@ -70,6 +70,10 @@ _BEARTYPE_CLAW_STATE = vars(certainty_equivalent_declarations).get(
 _INSPECT_SIGNATURE_FUNCTION = inspect.signature
 _INSPECT_SIGNATURE_CODE = inspect.signature.__code__
 _DATACLASSES_MISSING = dataclasses.MISSING
+_DATACLASSES_FIELD_MARKERS: tuple[tuple[str, object], ...] = tuple(
+    (name, vars(dataclasses)[name])
+    for name in ("_FIELD", "_FIELD_CLASSVAR", "_FIELD_INITVAR")
+)
 _PYTHON_IMPLEMENTATION_SEAL = (
     sys.implementation.name,
     tuple(sys.implementation.version),
@@ -556,6 +560,9 @@ class _SemanticHasher:
             return
         if value is _DATACLASSES_MISSING:
             self.frame(label="dataclasses-missing")
+            return
+        if (marker_name := _dataclasses_field_marker_name(value)) is not None:
+            self.frame(label="dataclasses-field-marker", payload=marker_name.encode())
             return
         if value is None or _has_exact_type(
             value=value, candidates=(bool, int, float, str, bytes)
@@ -1828,6 +1835,8 @@ def _is_closed_terminal_reference(  # noqa: C901, PLR0911, PLR0912
     """Whether the semantic serializer closes direct use of this exact value."""
     if value is Ellipsis or value is _DATACLASSES_MISSING:
         return True
+    if _dataclasses_field_marker_name(value) is not None:
+        return True
     if value is None or _has_exact_type(
         value=value, candidates=(bool, int, float, str, bytes)
     ):
@@ -1891,6 +1900,14 @@ def _is_closed_terminal_reference(  # noqa: C901, PLR0911, PLR0912
         )
     finally:
         active.remove(identity)
+
+
+def _dataclasses_field_marker_name(value: object) -> str | None:
+    """Return the stable name of one exact stdlib dataclass field marker."""
+    return next(
+        (name for name, marker in _DATACLASSES_FIELD_MARKERS if value is marker),
+        None,
+    )
 
 
 def _validate_static_attribute_access(*, value: object, path: tuple[str, ...]) -> None:

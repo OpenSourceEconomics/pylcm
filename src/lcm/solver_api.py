@@ -9,7 +9,7 @@ import dataclasses
 import struct
 import weakref
 from abc import ABC, abstractmethod
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from fractions import Fraction
@@ -419,6 +419,97 @@ class LeafAuthority:
         )
 
 
+if TYPE_CHECKING:
+    _CategoricalDomainsBoundary: TypeAlias = Mapping[  # noqa: UP040
+        str, CategoryDomain
+    ]
+    _ContainerRuntimeTypesBoundary: TypeAlias = Mapping[  # noqa: UP040
+        TreePath, type[object]
+    ]
+    _LeafAuthoritiesBoundary: TypeAlias = Mapping[  # noqa: UP040
+        TreePath, LeafAuthority
+    ]
+else:
+    # These public constructors own exact, single-traversal mapping validation.
+    # Runtime annotation sampling must not observe a stateful mapping first.
+    _CategoricalDomainsBoundary = object
+    _ContainerRuntimeTypesBoundary = object
+    _LeafAuthoritiesBoundary = object
+
+
+def _capture_nonempty_mapping_name(value: object) -> str:
+    """Canonicalize one exact nonempty mapping-name key before hashing it."""
+    if type(value) is not str or not value:
+        raise TypeError("Artifact mapping keys must be nonempty exact strs.")
+    return value
+
+
+def _capture_artifact_tree_path(value: object) -> TreePath:
+    """Canonicalize one exact TreePath before hashing it."""
+    if type(value) is not tuple:
+        raise TypeError("Artifact mapping keys must be exact TreePaths.")
+    components = value
+    if any(type(component) is not str or not component for component in components):
+        raise TypeError("Artifact TreePath components must be nonempty exact strs.")
+    return cast("TreePath", tuple(component for component in components))
+
+
+def _capture_category_domain(value: object) -> CategoryDomain:
+    """Require one exact categorical-domain value before insertion."""
+    if type(value) is not CategoryDomain:
+        raise TypeError("Artifact categorical domains must be exact CategoryDomains.")
+    return value
+
+
+def _capture_container_runtime_type(value: object) -> type[object]:
+    """Require one runtime-type declaration before insertion."""
+    if not isinstance(value, type):
+        raise TypeError("Artifact container runtime declarations must be types.")
+    return value
+
+
+def _capture_leaf_authority(value: object) -> LeafAuthority:
+    """Require one exact leaf authority and validate its path before insertion."""
+    if type(value) is not LeafAuthority:
+        raise TypeError("Artifact leaves must be exact LeafAuthority objects.")
+    _capture_artifact_tree_path(value.path)
+    return value
+
+
+def _capture_mapping_item_stream_once(
+    *,
+    mapping: object,
+    label: str,
+    snapshot_key: Callable[[object], object],
+    snapshot_value: Callable[[object], object],
+) -> dict[object, object]:
+    """Own and canonicalize one mapping through exactly one item iterator."""
+    if not isinstance(mapping, Mapping):
+        raise TypeError(f"{label} must be a mapping.")
+    try:
+        iterator = iter(mapping.items())
+    except Exception as error:
+        raise TypeError(f"{label} cannot be traversed as mapping items.") from error
+
+    copied: dict[object, object] = {}
+    while True:
+        try:
+            item = next(iterator)
+        except StopIteration:
+            break
+        except Exception as error:
+            raise TypeError(f"{label} cannot be traversed as mapping items.") from error
+        if type(item) is not tuple or len(item) != 2:  # noqa: PLR2004
+            raise TypeError(f"{label} items must be exact key-value pairs.")
+        raw_key, raw_value = item
+        key = snapshot_key(raw_key)
+        value = snapshot_value(raw_value)
+        if key in copied:
+            raise ValueError(f"{label} keys collide after exact reconstruction.")
+        copied[key] = value
+    return copied
+
+
 @dataclass(frozen=True, kw_only=True)
 class ArtifactDescriptor:
     """Public description of one versioned artifact schema.
@@ -437,7 +528,7 @@ class ArtifactDescriptor:
     named_axes: tuple[AxisDescriptor, ...] = ()
     state_roles: tuple[str, ...] = ()
     action_roles: tuple[str, ...] = ()
-    categorical_domains: Mapping[str, CategoryDomain] = field(default_factory=dict)
+    categorical_domains: _CategoricalDomainsBoundary = field(default_factory=dict)
     required_for: frozenset[ReplayRouteIdentity] = frozenset()
     required: bool = False
 
@@ -462,7 +553,15 @@ class ArtifactDescriptor:
         axes = tuple(self.named_axes)
         state_roles = tuple(self.state_roles)
         action_roles = tuple(self.action_roles)
-        categories = dict(self.categorical_domains)
+        categories = cast(
+            "dict[str, CategoryDomain]",
+            _capture_mapping_item_stream_once(
+                mapping=self.categorical_domains,
+                label="ArtifactDescriptor.categorical_domains",
+                snapshot_key=_capture_nonempty_mapping_name,
+                snapshot_value=_capture_category_domain,
+            ),
+        )
         required_for = frozenset(self.required_for)
         if any(type(leaf) is not LeafDescriptor for leaf in leaves):
             raise TypeError("ArtifactDescriptor leaves must be exact LeafDescriptors.")
@@ -599,14 +698,14 @@ class ArtifactAuthority:
     descriptor: ArtifactDescriptor
     payload_runtime_type: type[object]
     template: object | None
-    container_runtime_types: Mapping[TreePath, type[object]] = field(
+    container_runtime_types: _ContainerRuntimeTypesBoundary = field(
         default_factory=dict
     )
-    leaves: Mapping[TreePath, LeafAuthority] = field(default_factory=dict)
+    leaves: _LeafAuthoritiesBoundary = field(default_factory=dict)
     axes: tuple[AxisAuthority, ...] = ()
     state_roles: tuple[str, ...] = ()
     action_roles: tuple[str, ...] = ()
-    categorical_domains: Mapping[str, CategoryDomain] = field(default_factory=dict)
+    categorical_domains: _CategoricalDomainsBoundary = field(default_factory=dict)
     consumer_route: ReplayRouteIdentity | None = None
     applicable: bool = True
     required: bool = False
@@ -617,12 +716,36 @@ class ArtifactAuthority:
             raise TypeError("ArtifactAuthority.descriptor must be exact.")
         if not isinstance(self.payload_runtime_type, type):
             raise TypeError("ArtifactAuthority.payload_runtime_type must be a type.")
-        containers = dict(self.container_runtime_types)
-        leaves = dict(self.leaves)
+        containers = cast(
+            "dict[TreePath, type[object]]",
+            _capture_mapping_item_stream_once(
+                mapping=self.container_runtime_types,
+                label="ArtifactAuthority.container_runtime_types",
+                snapshot_key=_capture_artifact_tree_path,
+                snapshot_value=_capture_container_runtime_type,
+            ),
+        )
+        leaves = cast(
+            "dict[TreePath, LeafAuthority]",
+            _capture_mapping_item_stream_once(
+                mapping=self.leaves,
+                label="ArtifactAuthority.leaves",
+                snapshot_key=_capture_artifact_tree_path,
+                snapshot_value=_capture_leaf_authority,
+            ),
+        )
         axes = tuple(self.axes)
         state_roles = tuple(self.state_roles)
         action_roles = tuple(self.action_roles)
-        categories = dict(self.categorical_domains)
+        categories = cast(
+            "dict[str, CategoryDomain]",
+            _capture_mapping_item_stream_once(
+                mapping=self.categorical_domains,
+                label="ArtifactAuthority.categorical_domains",
+                snapshot_key=_capture_nonempty_mapping_name,
+                snapshot_value=_capture_category_domain,
+            ),
+        )
         if any(
             type(path) is not tuple
             or any(type(component) is not str or not component for component in path)
@@ -633,7 +756,9 @@ class ArtifactAuthority:
                 "ArtifactAuthority container paths and runtime types must be exact."
             )
         if any(
-            type(path) is not tuple or type(leaf) is not LeafAuthority
+            type(path) is not tuple
+            or any(type(component) is not str or not component for component in path)
+            or type(leaf) is not LeafAuthority
             for path, leaf in leaves.items()
         ):
             raise TypeError(

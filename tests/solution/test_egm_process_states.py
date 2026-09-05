@@ -359,7 +359,6 @@ def test_nan_process_transition_weights_surface_as_error(
     masking of unreachable nodes. The process parameters remain finite so the
     model-owned grid coordinates pass their independent authority check.
     """
-    model = _get_model(solver="dcegm", shock_type="rouwenhorst")
     params = _get_params("rouwenhorst")
 
     def nan_transition_weights(
@@ -367,11 +366,14 @@ def test_nan_process_transition_weights_surface_as_error(
     ) -> FloatND:
         return jnp.full((self.n_points, self.n_points), jnp.nan)
 
+    _get_model.cache_clear()
     monkeypatch.setattr(
         RouwenhorstAR1Process,
         "compute_transition_probs",
         nan_transition_weights,
     )
+    model = _get_model(solver="dcegm", shock_type="rouwenhorst")
+    _get_model.cache_clear()
 
     with pytest.raises(InvalidValueFunctionError):
         model.solve(params=params, log_level="debug")

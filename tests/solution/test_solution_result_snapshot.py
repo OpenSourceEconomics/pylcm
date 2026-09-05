@@ -77,6 +77,35 @@ class _OneShotMapping(Mapping[object, object]):
         raise RuntimeError("mapping values were traversed independently")
 
 
+class _SingleItemMapping(Mapping[object, object]):
+    """Yield one raw pair without hashing its caller-owned key."""
+
+    def __init__(self, *, key: object, value: object) -> None:
+        self._key = key
+        self._value = value
+
+    def __getitem__(self, key: object) -> object:
+        if key is not self._key:
+            raise KeyError(key)
+        return self._value
+
+    def __iter__(self) -> Iterator[object]:
+        return iter((self._key,))
+
+    def __len__(self) -> Never:
+        raise RuntimeError("single-item mapping length must not be observed")
+
+
+class _RaisingPathComponent:
+    """Expose any hash/equality use before exact TreePath validation."""
+
+    def __hash__(self) -> Never:
+        raise RuntimeError("invalid TreePath component was hashed")
+
+    def __eq__(self, _other: object) -> Never:
+        raise RuntimeError("invalid TreePath component was compared")
+
+
 class _RaisingMapping(_OneShotMapping):
     """Fail while the sole item stream is being advanced."""
 
@@ -691,6 +720,51 @@ def test_descriptor_and_authority_mappings_are_each_captured_once() -> None:
     assert leaves.traversals == 1
     assert authority_categories.traversals == 1
     assert _CountingTree.flatten_count == 0
+
+
+@pytest.mark.parametrize("spoof_location", ["mapping_key", "leaf_path"])
+def test_authority_tree_paths_are_validated_before_hashing(
+    spoof_location: str,
+) -> None:
+    """Caller objects cannot execute hash/equality before exact path validation."""
+    leaf_path = ("flattened:0",)
+    leaf_descriptor = LeafDescriptor(
+        path=leaf_path,
+        shape=(),
+        dtype="float32",
+        axis_names=(),
+    )
+    leaf_authority = LeafAuthority(
+        path=leaf_path,
+        runtime_type=jax.Array,
+        shape=(),
+        dtype="float32",
+        axis_names=(),
+    )
+    invalid_component = _RaisingPathComponent()
+    mapping_path: object = leaf_path
+    if spoof_location == "mapping_key":
+        mapping_path = (invalid_component,)
+    else:
+        object.__setattr__(leaf_authority, "path", (invalid_component,))
+
+    leaves = cast(
+        "Mapping[tuple[str, ...], LeafAuthority]",
+        _SingleItemMapping(key=mapping_path, value=leaf_authority),
+    )
+    with pytest.raises(TypeError, match="TreePath"):
+        ArtifactAuthority(
+            descriptor=ArtifactDescriptor(
+                key=ArtifactKey(type_id="example.prehash"),
+                channel=ArtifactChannel.AUXILIARY,
+                persistence=PersistencePolicy.NOT_PERSISTED,
+                payload_type_id="example.CountingTree",
+                leaf_descriptors=(leaf_descriptor,),
+            ),
+            payload_runtime_type=_CountingTree,
+            template=_CountingTree(jnp.asarray(1.0, dtype=jnp.float32)),
+            leaves=leaves,
+        )
 
 
 def test_public_and_engine_authorities_observe_each_template_exactly_once() -> None:
