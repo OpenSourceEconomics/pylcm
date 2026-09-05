@@ -62,12 +62,23 @@ A valid declaration is part of the model, not a hint. Start with
 ### `GridSearch`
 
 ```python
-GridSearch()
+GridSearch(action_block_width=None)
 ```
 
 Covers the complete represented state-action product and applies constraints directly.
 It is the broadest route and the default solver on `Regime`. Eligible JIT solve-value
 routes evaluate bounded C-order action blocks while preserving the complete support.
+
+`action_block_width` fixes the flattened action-product width of every eligible streamed
+solve core. It must be an exact positive integer no larger than that product. A fixed
+width is rejected when the route is deliberately dense, unsupported, or has no
+nontrivial action product; it is an execution request, not a hint that can be ignored.
+With no fixed width and no device-memory budget, pylcm uses the full action product.
+With an [`ExecutionConfig`](runtime_and_results.md#compiler-workspace-budgets), the
+planner instead walks a deterministic width frontier widest-first and dispatches the
+first candidate whose compiler-reported peak fits. Supplying both makes the fixed width
+the only candidate, which must fit the budget.
+
 This matrix uses exactly three disposition labels:
 
 (gridsearch-jit-route-matrix)=

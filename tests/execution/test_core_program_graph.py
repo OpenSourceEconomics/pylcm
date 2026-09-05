@@ -104,6 +104,7 @@ def test_shared_resolver_preserves_the_entire_native_program_contract() -> None:
                 program=declaration,
                 context=_context(),
             ),
+            tile_widths={},
             source_value_template=jnp.asarray(0.0),
             source=("source", 0, "main"),
         )
@@ -186,6 +187,7 @@ def test_dense_reason_is_part_of_resolved_specialization_identity() -> None:
         program=materialize_core_program(
             program=_native_program(reason="first_dense_reason"), context=context
         ),
+        tile_widths={},
         source_value_template=jnp.asarray(0.0),
         source=("source", 0, "main"),
     )
@@ -193,6 +195,7 @@ def test_dense_reason_is_part_of_resolved_specialization_identity() -> None:
         program=materialize_core_program(
             program=_native_program(reason="second_dense_reason"), context=context
         ),
+        tile_widths={},
         source_value_template=jnp.asarray(0.0),
         source=("source", 0, "main"),
     )
@@ -465,6 +468,7 @@ def test_program_scope_is_part_of_resolved_specialization_identity() -> None:
             program=materialize_core_program(
                 program=_scoped_program(name="main", scope=scope), context=context
             ),
+            tile_widths={},
             source_value_template=jnp.asarray(0.0),
             source=("source", 0, "main"),
         )

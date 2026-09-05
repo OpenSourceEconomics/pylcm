@@ -134,24 +134,15 @@ class MockRegime(Regime):
         )
 
 
-@pytest.mark.parametrize(
-    ("enable_jit", "message"),
-    [
-        (False, "requires JIT compilation"),
-        (True, "not available"),
-    ],
-    ids=["eager", "temporary-jit-guard"],
-)
-def test_memory_budget_fails_closed_before_backward_induction(
-    *, enable_jit: bool, message: str
-) -> None:
-    with pytest.raises(ExecutionPlanningError, match=message):
+def test_memory_budget_requires_jit_before_backward_induction() -> None:
+    """A device-memory budget needs compiler reports, which eager execution lacks."""
+    with pytest.raises(ExecutionPlanningError, match="requires JIT compilation"):
         solve(
             flat_params=MappingProxyType({}),
             ages=AgeGrid(start=0, stop=1, step="Y"),
             regimes=MappingProxyType({}),
             logger=get_logger(log_level="off"),
-            enable_jit=enable_jit,
+            enable_jit=False,
             execution_config=ExecutionConfig(device_memory_bytes=1),
         )
 

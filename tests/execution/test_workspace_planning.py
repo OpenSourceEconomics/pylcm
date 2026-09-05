@@ -1,15 +1,18 @@
 """Tests for compile-only workspace-frontier selection."""
 
-from __future__ import annotations
-
 from collections.abc import Callable, Hashable, Mapping
 from types import SimpleNamespace
 from typing import cast
 
 import pytest
+from beartype.roar import BeartypeCallHintViolation
 
 from _lcm.execution.core_program import ReductionSemantics, StreamableProductAxis
-from _lcm.execution.workspace_planning import WorkspacePlan, plan_workspace
+from _lcm.execution.workspace_planning import (
+    WorkspacePlan,
+    plan_workspace,
+    workspace_width_candidates,
+)
 from lcm.exceptions import ExecutionPlanningError
 
 
@@ -144,58 +147,52 @@ def test_no_budget_compiles_full_or_requested_widths_exactly_once() -> None:
     assert executable.memory_analysis_calls == 0
 
 
-def test_budget_frontier_is_cartesian_in_axis_declaration_order() -> None:
-    compiler = _Compiler(lambda _widths: _stats(0))
-
-    plan = plan_workspace(
+def test_budget_frontier_is_cartesian_and_ranked_widest_first() -> None:
+    """Every combination appears once, ordered by product then lexicographically."""
+    candidates = workspace_width_candidates(
         axes=(
             _axis(name="outer", extent=5),
             _axis(name="inner", extent=3),
         ),
-        compile_candidate=compiler,
         budget_bytes=1,
     )
 
-    assert [widths for widths, _ in compiler.calls] == [
+    cartesian = [
         {"outer": outer, "inner": inner}
         for outer in (1, 2, 4, 5)
         for inner in (1, 2, 3)
     ]
-    assert plan.widths == {"outer": 5, "inner": 3}
-    assert all(tuple(widths) == ("outer", "inner") for widths, _ in compiler.calls)
+    assert sorted(map(dict, candidates), key=repr) == sorted(cartesian, key=repr)
+    assert list(map(dict, candidates)) == sorted(
+        cartesian,
+        key=lambda widths: (widths["outer"] * widths["inner"], tuple(widths.values())),
+        reverse=True,
+    )
+    assert all(tuple(widths) == ("outer", "inner") for widths in candidates)
 
 
 def test_power_of_two_extent_appears_only_once_in_the_frontier() -> None:
-    compiler = _Compiler(lambda _widths: _stats(0))
+    candidates = workspace_width_candidates(axes=(_axis(extent=8),), budget_bytes=1)
 
-    plan_workspace(
-        axes=(_axis(extent=8),),
-        compile_candidate=compiler,
-        budget_bytes=1,
-    )
-
-    assert [widths["action"] for widths, _ in compiler.calls] == [1, 2, 4, 8]
+    assert [widths["action"] for widths in candidates] == [8, 4, 2, 1]
 
 
 def test_requested_axis_is_singleton_while_other_axes_keep_their_frontier() -> None:
-    compiler = _Compiler(lambda _widths: _stats(0))
-
-    plan = plan_workspace(
+    candidates = workspace_width_candidates(
         axes=(
             _axis(name="requested", extent=8, requested_width=3),
             _axis(name="searched", extent=5),
         ),
-        compile_candidate=compiler,
         budget_bytes=1,
     )
 
-    assert [widths for widths, _ in compiler.calls] == [
-        {"requested": 3, "searched": width} for width in (1, 2, 4, 5)
+    assert list(map(dict, candidates)) == [
+        {"requested": 3, "searched": width} for width in (5, 4, 2, 1)
     ]
-    assert plan.widths == {"requested": 3, "searched": 5}
 
 
-def test_budgeted_planning_compiles_and_analyzes_every_candidate() -> None:
+def test_budgeted_planning_stops_at_the_first_feasible_candidate() -> None:
+    """The full extent fits, so no narrower candidate is ever compiled."""
     compiler = _Compiler(lambda widths: _stats(widths["action"]))
 
     plan = plan_workspace(
@@ -204,11 +201,26 @@ def test_budgeted_planning_compiles_and_analyzes_every_candidate() -> None:
         budget_bytes=100,
     )
 
-    assert [widths["action"] for widths, _ in compiler.calls] == [1, 2, 4, 8, 9]
+    assert [widths["action"] for widths, _ in compiler.calls] == [9]
+    assert compiler.calls[0][1].memory_analysis_calls == 1
+    assert plan.widths == {"action": 9}
+
+
+def test_budgeted_planning_descends_the_frontier_until_one_candidate_fits() -> None:
+    """Wider candidates are compiled and rejected before the widest feasible one."""
+    compiler = _Compiler(lambda widths: _stats(widths["action"]))
+
+    plan = plan_workspace(
+        axes=(_axis(extent=9),),
+        compile_candidate=compiler,
+        budget_bytes=4,
+    )
+
+    assert [widths["action"] for widths, _ in compiler.calls] == [9, 8, 4]
     assert all(
         executable.memory_analysis_calls == 1 for _, executable in compiler.calls
     )
-    assert plan.widths == {"action": 9}
+    assert plan.widths == {"action": 4}
 
 
 def test_peak_equal_to_budget_is_feasible() -> None:
@@ -422,7 +434,7 @@ def test_no_feasible_candidate_is_reported_after_the_entire_frontier() -> None:
             budget_bytes=10,
         )
 
-    assert [widths["action"] for widths, _ in compiler.calls] == [1, 2, 4, 8]
+    assert [widths["action"] for widths, _ in compiler.calls] == [8, 4, 2, 1]
     assert all(
         executable.memory_analysis_calls == 1 for _, executable in compiler.calls
     )
@@ -441,7 +453,7 @@ def test_selected_executable_is_never_executed_or_recompiled() -> None:
         executable for widths, executable in compiler.calls if widths == {"action": 4}
     )
     assert plan.compiled is selected
-    assert len({id(executable) for _, executable in compiler.calls}) == 4
+    assert len({id(executable) for _, executable in compiler.calls}) == 2
     assert all(not executable.executed for _, executable in compiler.calls)
     assert all(
         executable.memory_analysis_calls == 1 for _, executable in compiler.calls
@@ -477,7 +489,7 @@ def test_duplicate_axis_names_are_rejected_before_compilation() -> None:
 
 
 def test_non_axis_declaration_is_rejected_before_compilation() -> None:
-    with pytest.raises(TypeError, match="StreamableProductAxis"):
+    with pytest.raises(BeartypeCallHintViolation):
         plan_workspace(
             axes=cast("tuple[StreamableProductAxis, ...]", (object(),)),
             compile_candidate=lambda _widths: object(),
@@ -507,11 +519,6 @@ def test_non_axis_declaration_is_rejected_before_compilation() -> None:
             "extents must be integers",
         ),
         (
-            _axis(coordinate_extents=cast("tuple[int, ...]", (2.0,))),
-            TypeError,
-            "extents must be integers",
-        ),
-        (
             _axis(coordinate_extents=(0,)),
             ValueError,
             "extents must be positive",
@@ -528,7 +535,6 @@ def test_non_axis_declaration_is_rejected_before_compilation() -> None:
         "mismatched-coordinate-declaration",
         "empty-coordinate-product",
         "bool-extent",
-        "float-extent",
         "zero-extent",
         "negative-extent",
         "singleton-product",
@@ -548,7 +554,7 @@ def test_invalid_axis_extent_assumptions_are_rejected_at_the_planner_seam(
     ("requested_width", "error", "match"),
     [
         (True, TypeError, "must be an integer"),
-        (cast("int", 2.0), TypeError, "must be an integer"),
+        (cast("int", 2.0), BeartypeCallHintViolation, "requested_width"),
         (_IntSubclass(2), TypeError, "must be an integer"),
         (0, ValueError, "must be positive"),
         (-1, ValueError, "must be positive"),
@@ -570,7 +576,7 @@ def test_invalid_requested_width_is_rejected_before_compilation(
     ("budget", "error", "match"),
     [
         (True, TypeError, "integer number of bytes"),
-        (cast("int", 1.0), TypeError, "integer number of bytes"),
+        (cast("int", 1.0), BeartypeCallHintViolation, "budget_bytes"),
         (_IntSubclass(1), TypeError, "integer number of bytes"),
         (0, ValueError, "positive"),
         (-1, ValueError, "positive"),
@@ -598,7 +604,7 @@ def test_invalid_budget_is_rejected_before_compilation(
 
 
 def test_non_callable_compiler_is_rejected() -> None:
-    with pytest.raises(TypeError, match="compiler must be callable"):
+    with pytest.raises(BeartypeCallHintViolation):
         plan_workspace(
             axes=(_axis(),),
             compile_candidate=cast("Callable[[Mapping[str, int]], object]", object()),

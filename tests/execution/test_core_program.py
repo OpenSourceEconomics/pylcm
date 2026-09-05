@@ -23,7 +23,6 @@ from _lcm.execution.core_program import (
     StreamableProductAxis,
     _TargetValueAccess,
     core_program_graph,
-    initial_core_tile_widths,
     materialize_core_program,
     resolve_core_program,
 )
@@ -38,6 +37,7 @@ from _lcm.execution.value_transfer import (
     ValueConsumerAddress,
     ValueInputChannel,
 )
+from _lcm.execution.workspace_planning import workspace_width_candidates
 from _lcm.solution.action_reduction import HARD_MAX_REDUCTION
 from _lcm.solution.backward_induction import (
     _assert_lowered_output_roles,
@@ -517,7 +517,7 @@ def test_ordinary_singleton_grid_search_declares_action_core_program() -> None:
 
     resolved = resolve_core_program(
         program=materialized,
-        tile_widths={"action": 2},
+        tile_widths={"action": 3},
         input_transfer_plan=_resolve_value_input_transfer_plan(
             program=materialized,
             source_value_template=next_V["alive"],
@@ -665,20 +665,20 @@ def test_resolver_requires_a_planner_width_for_each_streamable_axis() -> None:
 @pytest.mark.parametrize(
     ("coordinate_extent", "error", "message"),
     [
-        (2.5, TypeError, r"coordinate extents must be integers"),
-        (True, TypeError, r"coordinate extents must be integers"),
-        (0, ValueError, r"coordinate extents must be positive"),
-        (-1, ValueError, r"coordinate extents must be positive"),
+        (2.5, TypeError, r"extents must be integers"),
+        (True, TypeError, r"extents must be integers"),
+        (0, ValueError, r"extents must be positive"),
+        (-1, ValueError, r"extents must be positive"),
     ],
     ids=["float", "bool", "zero", "negative"],
 )
-def test_initial_tile_widths_rejects_invalid_coordinate_extents_fail_closed(
+def test_width_candidates_reject_invalid_coordinate_extents_fail_closed(
     *,
     coordinate_extent: object,
     error: type[Exception],
     message: str,
 ) -> None:
-    """AOT bootstrap validates product declarations before doing width arithmetic."""
+    """Width planning validates product declarations before doing width arithmetic."""
     axis = _axis(coordinate_names=("first",), coordinate_extents=(2,))
     object.__setattr__(axis, "coordinate_extents", (coordinate_extent,))
     program = _program(
@@ -687,17 +687,23 @@ def test_initial_tile_widths_rejects_invalid_coordinate_extents_fail_closed(
     )
 
     with pytest.raises(error, match=message):
-        initial_core_tile_widths(program=program)
+        workspace_width_candidates(axes=program.requirements.streamable_axes)
 
 
-def test_initial_tile_widths_uses_the_full_product_without_an_override() -> None:
-    assert initial_core_tile_widths(program=_program()) == {"action": 6}
+def test_unbudgeted_width_candidate_is_the_full_product_without_an_override() -> None:
+    candidates = workspace_width_candidates(
+        axes=_program().requirements.streamable_axes
+    )
+
+    assert candidates == ({"action": 6},)
 
 
-def test_initial_tile_widths_uses_the_declared_override() -> None:
-    assert initial_core_tile_widths(
-        program=_program(axis=_axis(requested_width=3))
-    ) == {"action": 3}
+def test_unbudgeted_width_candidate_is_the_declared_override() -> None:
+    candidates = workspace_width_candidates(
+        axes=_program(axis=_axis(requested_width=3)).requirements.streamable_axes
+    )
+
+    assert candidates == ({"action": 3},)
 
 
 @pytest.mark.parametrize(

@@ -15,6 +15,7 @@ and the correctness of destinations require page-specific documentation and test
 | ---------------------------------------------------------------------------------------------------- | --------------------------------------- |
 | [`lcm.Model`](model_and_regime.md#api-model)                                                         | Model assembly and execution            |
 | [`lcm.Regime`](model_and_regime.md#api-regime)                                                       | General regime                          |
+| [`lcm.ExecutionConfig`](runtime_and_results.md#compiler-workspace-budgets)                           | Hardware-local solve controls           |
 | [`lcm.ConsumptionSavingsRegime`](consumption_savings.md#api-consumption-savings-regime)              | One liquid margin                       |
 | [`lcm.NestedConsumptionSavingsRegime`](consumption_savings.md#api-nested-consumption-savings-regime) | Liquid plus outer margin                |
 | [`lcm.LiquidMargin`](consumption_savings.md#api-liquid-margin)                                       | Liquid roles                            |

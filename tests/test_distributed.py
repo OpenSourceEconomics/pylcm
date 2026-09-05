@@ -391,6 +391,10 @@ def _compiled_solve_kernel_hlo(*, model: Model, regime_name: str, period: int) -
         )
         resolved = backward_induction._resolve_program_for_execution(
             program=materialized,
+            tile_widths={
+                axis.name: axis.extent
+                for axis in materialized.requirements.streamable_axes
+            },
             source_value_template=next_regime_to_V_arr[regime_name],
             source=(regime_name, period, core_key),
         )

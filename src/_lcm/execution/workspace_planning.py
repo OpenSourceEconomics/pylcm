@@ -2,11 +2,10 @@
 
 The planner owns one narrow seam: callers describe streamable product axes and
 provide a compiler for a concrete width mapping.  This module enumerates the static
-frontier, inspects compiler memory reports without executing a candidate, and returns
-the already-compiled winner for dispatch.
+frontier in rank order, inspects compiler memory reports without executing a
+candidate, and returns the first feasible candidate — the already-compiled winner —
+for dispatch.
 """
-
-from __future__ import annotations
 
 import itertools
 import math
@@ -30,14 +29,6 @@ class _MemoryAnalyzable(Protocol):
         ...
 
 
-type _RankedCandidate[Compiled] = tuple[
-    tuple[int, tuple[int, ...]],
-    Mapping[str, int],
-    int,
-    Compiled,
-]
-
-
 @dataclass(frozen=True, slots=True)
 class WorkspacePlan[Compiled]:
     """One selected width mapping and its already-compiled executable."""
@@ -51,19 +42,43 @@ class WorkspacePlan[Compiled]:
         object.__setattr__(self, "widths", MappingProxyType(dict(self.widths)))
 
 
+def workspace_width_candidates(
+    *,
+    axes: tuple[StreamableProductAxis, ...],
+    budget_bytes: int | None = None,
+) -> tuple[Mapping[str, int], ...]:
+    """Return the candidate sequence in planner rank order without compiling it.
+
+    Without a budget the sequence holds one candidate: each axis at its full extent
+    or its requested width.  With a budget it holds the Cartesian product of the
+    per-axis frontiers, widest first: descending width product, ties broken toward
+    the lexicographically greatest width tuple in axis declaration order.
+    """
+    declared_axes = _validate_axes(axes=axes)
+    budget = _validate_budget(budget_bytes=budget_bytes)
+    return _workspace_width_candidates(
+        axes=declared_axes,
+        budget_bytes=budget,
+    )
+
+
 def plan_workspace[Compiled](
     *,
     axes: tuple[StreamableProductAxis, ...],
     compile_candidate: Callable[[Mapping[str, int]], Compiled],
     budget_bytes: int | None = None,
+    peak_bytes_for: Callable[[Compiled], int] | None = None,
 ) -> WorkspacePlan[Compiled]:
-    """Compile a deterministic width frontier and return its feasible maximum.
+    """Compile the width frontier widest-first and return the first candidate that fits.
 
     Without a budget, the full extent (or an axis's requested width) is compiled
     exactly once and compiler memory analysis is deliberately not consulted.  With a
-    budget, every Cartesian candidate is compiled and analyzed.  Feasible candidates
-    maximize the product of their widths, with the lexicographically greatest width
-    tuple in axis declaration order breaking ties.
+    budget, candidates are compiled and analyzed in rank order — descending width
+    product, ties broken toward the lexicographically greatest width tuple in axis
+    declaration order — and the first whose compiler-reported peak fits is returned.
+    That is the feasible maximum of the whole frontier, reached without compiling any
+    candidate narrower than the winner; only a core that fits at no width compiles
+    its entire frontier before failing.
 
     The returned executable is the exact object compiled for the selected candidate;
     the planner neither executes it nor recompiles the winner.
@@ -73,49 +88,46 @@ def plan_workspace[Compiled](
     if not callable(compile_candidate):
         msg = "The workspace candidate compiler must be callable."
         raise TypeError(msg)
+    if peak_bytes_for is not None and not callable(peak_bytes_for):
+        msg = "The workspace peak lookup must be callable or None."
+        raise TypeError(msg)
+
+    candidates = _workspace_width_candidates(
+        axes=declared_axes,
+        budget_bytes=budget,
+    )
 
     if budget is None:
-        widths = _width_mapping(
-            axes=declared_axes,
-            values=tuple(
-                axis.extent if axis.requested_width is None else axis.requested_width
-                for axis in declared_axes
-            ),
-        )
+        widths = candidates[0]
         compiled = compile_candidate(widths)
         return WorkspacePlan(widths=widths, peak_bytes=None, compiled=compiled)
 
-    best: _RankedCandidate[Compiled] | None = None
     least_peak: int | None = None
-    frontiers = tuple(_axis_frontier(axis=axis) for axis in declared_axes)
-    for values in itertools.product(*frontiers):
-        widths = _width_mapping(axes=declared_axes, values=values)
+    for widths in candidates:
         compiled = compile_candidate(widths)
-        peak_bytes = _compiled_peak_bytes(compiled=compiled, widths=widths)
+        peak_bytes = _peak_bytes_for_candidate(
+            compiled=compiled, widths=widths, peak_bytes_for=peak_bytes_for
+        )
         least_peak = peak_bytes if least_peak is None else min(least_peak, peak_bytes)
         if peak_bytes <= budget:
-            rank = (math.prod(values), values)
-            if best is None or rank > best[0]:
-                best = (rank, widths, peak_bytes, compiled)
-
-    if best is None:
-        if declared_axes and all(
-            axis.requested_width is not None for axis in declared_axes
-        ):
-            msg = (
-                "The explicitly requested workspace widths require "
-                f"{least_peak} peak bytes, exceeding the {budget}-byte budget."
+            return WorkspacePlan(
+                widths=widths, peak_bytes=peak_bytes, compiled=compiled
             )
-        else:
-            msg = (
-                "No workspace-width candidate fits the "
-                f"{budget}-byte budget; the smallest reported peak is "
-                f"{least_peak} bytes."
-            )
-        raise ExecutionPlanningError(msg)
 
-    _, widths, peak_bytes, compiled = best
-    return WorkspacePlan(widths=widths, peak_bytes=peak_bytes, compiled=compiled)
+    if declared_axes and all(
+        axis.requested_width is not None for axis in declared_axes
+    ):
+        msg = (
+            "The explicitly requested workspace widths require "
+            f"{least_peak} peak bytes, exceeding the {budget}-byte budget."
+        )
+    else:
+        msg = (
+            "No workspace-width candidate fits the "
+            f"{budget}-byte budget; the smallest reported peak is "
+            f"{least_peak} bytes."
+        )
+    raise ExecutionPlanningError(msg)
 
 
 def _validate_axes(
@@ -200,6 +212,33 @@ def _validate_width(*, axis_name: str, extent: int, width: object) -> int:
     return width
 
 
+def _workspace_width_candidates(
+    *,
+    axes: tuple[StreamableProductAxis, ...],
+    budget_bytes: int | None,
+) -> tuple[MappingProxyType[str, int], ...]:
+    """Enumerate one eager width map or the complete budgeted frontier, widest first."""
+    if budget_bytes is None:
+        values = tuple(
+            axis.extent if axis.requested_width is None else axis.requested_width
+            for axis in axes
+        )
+        return (_width_mapping(axes=axes, values=values),)
+
+    frontiers = tuple(_axis_frontier(axis=axis) for axis in axes)
+    candidates = (
+        _width_mapping(axes=axes, values=values)
+        for values in itertools.product(*frontiers)
+    )
+    return tuple(sorted(candidates, key=_candidate_rank, reverse=True))
+
+
+def _candidate_rank(widths: Mapping[str, int]) -> tuple[int, tuple[int, ...]]:
+    """Rank a candidate by width product, then by its width tuple in axis order."""
+    values = tuple(widths.values())
+    return (math.prod(values), values)
+
+
 def _axis_frontier(*, axis: StreamableProductAxis) -> tuple[int, ...]:
     """Return one requested width, or 1/powers-of-two/full without duplicates."""
     if axis.requested_width is not None:
@@ -224,7 +263,33 @@ def _width_mapping(
     )
 
 
-def _compiled_peak_bytes[Compiled](
+def _peak_bytes_for_candidate[Compiled](
+    *,
+    compiled: Compiled,
+    widths: Mapping[str, int],
+    peak_bytes_for: Callable[[Compiled], int] | None,
+) -> int:
+    """Read one candidate peak directly or through a caller-owned cache."""
+    if peak_bytes_for is None:
+        return compiler_peak_bytes(compiled=compiled, widths=widths)
+
+    try:
+        value = peak_bytes_for(compiled)
+    except Exception as exc:
+        msg = f"Compiler memory peak lookup failed for widths {dict(widths)!r}."
+        raise ExecutionPlanningError(msg) from exc
+
+    try:
+        return _non_negative_bytes(value=value)
+    except Exception as exc:
+        msg = (
+            "Compiler memory peak lookup returned an invalid byte count for widths "
+            f"{dict(widths)!r}."
+        )
+        raise ExecutionPlanningError(msg) from exc
+
+
+def compiler_peak_bytes[Compiled](
     *, compiled: Compiled, widths: Mapping[str, int]
 ) -> int:
     """Read and strictly normalize one candidate's compiler-reported peak."""

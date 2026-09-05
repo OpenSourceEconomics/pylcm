@@ -697,10 +697,11 @@ def test_obsolete_solve_and_simulate_interfaces_are_absent() -> None:
     assert "period_to_regime_to_dissolution_flags" not in simulate_parameters
 
 
-def test_nondefault_execution_budget_fails_closed_until_planning_lands() -> None:
+def test_unmeetable_execution_budget_fails_closed_before_solving() -> None:
+    """A one-byte device budget fits no compiled core and raises before induction."""
     model, params, _initial_conditions = _small_grid_search_inputs()
 
-    with pytest.raises(ExecutionPlanningError, match="not available"):
+    with pytest.raises(ExecutionPlanningError, match="No workspace-width candidate"):
         model.solve(
             params=params,
             log_level="off",

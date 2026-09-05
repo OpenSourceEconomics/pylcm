@@ -5,6 +5,23 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Memory-aware action-width policy and solve/simulate GPU-memory attribution
+
+- `ExecutionConfig(device_memory_bytes=...)`, passed to `model.solve(...)` or to an
+  auto-solving `model.simulate(...)`, declares a per-device ceiling for the
+  compiler-reported peak workspace of every compiled solve core. The planner walks a
+  deterministic width frontier for each streamed action product widest-first, reads
+  each executable's compiler memory report without running it, and dispatches the
+  first candidate that fits, so a core whose full extent fits costs no extra
+  compilation; when no candidate fits, `ExecutionPlanningError` is raised before
+  backward induction. Without a budget the full action product is used.
+- `GridSearch(action_block_width=...)` fixes the streamed action-block width of a
+  regime's eligible solve cores. It is an execution request — rejected at model build on
+  deliberately dense, unsupported, or trivial-product routes — and enters neither the
+  model nor the parameter fingerprint.
+- Period captures record the selected tile widths, so `replay_period` and the
+  compiler-memory analyzer lower exactly the executable the solve dispatched.
+
 ### Complete solution persistence and executable external replay
 
 - `save_solution(solution=..., path=...)` and `SolutionResult.save(path=...)` atomically

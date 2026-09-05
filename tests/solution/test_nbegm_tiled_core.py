@@ -16,12 +16,12 @@ import jax
 import numpy as np
 import pytest
 
+from _lcm.execution.compiler_memory import compiler_memory_bytes
 from _lcm.execution.core_program import (
     CoreBuildContext,
     core_program_graph,
     materialize_core_program,
 )
-from _lcm.solution.period_replay import _compiler_memory_bytes
 from tests.conftest import invariance_tolerances
 from tests.solution._nbegm_direct_oracle import ride_along_kernel as _ride_along_kernel
 from tests.test_models import nbegm_ride_along_toy
@@ -116,7 +116,7 @@ def test_tile_local_core_arguments_are_exactly_the_declared_inputs() -> None:
         for leaf in jax.tree.leaves(dict(materialized.arguments))
     )
     compiled = jax.jit(materialized.function).lower(**materialized.arguments).compile()
-    report = _compiler_memory_bytes(compiled=compiled)
+    report = compiler_memory_bytes(compiled=compiled)
     assert report is not None
     assert report.argument_size_in_bytes is not None
     assert declared_bytes > 0

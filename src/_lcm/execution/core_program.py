@@ -771,32 +771,6 @@ def resolve_core_program(
     )
 
 
-def initial_core_tile_widths(
-    *, program: CoreProgram | MaterializedCoreProgram
-) -> MappingProxyType[str, int]:
-    """Choose each full product width unless its declaration requests an override."""
-    if program.disposition is not CoreExecutionDisposition.PLANNED:
-        if program.requirements.streamable_axes:
-            msg = (
-                f"CoreProgram {program.name!r} has disposition "
-                f"{program.disposition.value!r} but declares streamable axes."
-            )
-            raise ValueError(msg)
-        return MappingProxyType({})
-    result: dict[str, int] = {}
-    for axis in program.requirements.streamable_axes:
-        _validate_coordinate_declaration(axis=axis)
-        if axis.extent <= 1:
-            msg = (
-                f"Streamable axis {axis.name!r} must have extent greater than one; "
-                "the program must declare a dense disposition otherwise."
-            )
-            raise ValueError(msg)
-        requested_width = _validate_requested_width(axis=axis)
-        result[axis.name] = axis.extent if requested_width is None else requested_width
-    return MappingProxyType(result)
-
-
 def _validate_core_program(*, program: MaterializedCoreProgram) -> None:
     """Validate a complete declaration before planner choices inspect it."""
     _validate_materialized_declaration(program=program)
