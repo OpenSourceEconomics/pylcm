@@ -568,3 +568,23 @@ def test_batched_winner_accepts_a_multi_axis_batch() -> None:
         np.asarray(nested_winner).reshape(n_batch, n_query),
         np.asarray(flat_winner),
     )
+
+
+@pytest.mark.parametrize("dtype", _DTYPES)
+@pytest.mark.parametrize("stable_index", [(2, 9), (9, 2)])
+def test_batched_winner_breaks_an_exact_tie_by_stable_identity_in_either_slot(
+    *, dtype, stable_index: tuple[int, int]
+) -> None:
+    """Two identical zero-width links tie; the smaller identity wins in either slot."""
+    zeros = jnp.zeros((1, 2), dtype=dtype)
+    ones = jnp.ones((1, 2), dtype=dtype)
+    winner, status = exact_query_winner_batched(
+        left_grid=zeros,
+        right_grid=zeros,
+        left_value=ones,
+        right_value=ones,
+        live=jnp.ones((1, 2), dtype=bool),
+        x_query=jnp.zeros((1, 1), dtype=dtype),
+        stable_index=jnp.asarray([stable_index], dtype=jnp.int32),
+    )
+    assert (int(status[0, 0]), int(winner[0, 0])) == (0, stable_index.index(2))

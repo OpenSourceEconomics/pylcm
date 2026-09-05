@@ -10,9 +10,10 @@ candidates are compared under the same total order, and the standing winner
 re-enters each block under its global stored-link index. What a partition does
 change is the vmap width each block is compiled for, so the two routes can name the
 same real number with adjacent bit patterns. Ownership is therefore asserted
-exactly — the published feasible set, which a mis-ordered fold moves by a finite
-amount — and the published levels in units of the working format's spacing. The
-normal precision fixture runs this module at float64 and with ``--precision=32``.
+exactly — the global stored-link identity that owns each node, and with it the
+published feasible set, both of which a mis-ordered fold moves by a finite amount —
+and the published levels in units of the working format's spacing. The normal
+precision fixture runs this module at float64 and with ``--precision=32``.
 """
 
 from collections.abc import Callable
@@ -29,7 +30,7 @@ from _lcm.egm.preferences import Preferences
 from _lcm.egm.upper_envelope._exact_affine.ffi import (
     kernel_built_for_current_backend,
 )
-from _lcm.egm.upper_envelope.query import ComparisonArithmetic
+from _lcm.egm.upper_envelope.query import NO_OWNER, ComparisonArithmetic
 from lcm.typing import Float1D, FloatND, IntND, ScalarFloat
 from tests.conftest import assert_agrees_to_ulp
 from tests.solution._crra_preferences import crra_preferences
@@ -89,6 +90,7 @@ def _one_shot(
         cont_marginal=cont_marginal,
         arithmetic=arithmetic,
         interval_batch_size=0,
+        return_owner=True,
     )
 
 
@@ -110,6 +112,7 @@ def _streamed(
         arithmetic=arithmetic,
         interval_block_reader=read,
         interval_batch_size=interval_batch_size,
+        return_owner=True,
     )
 
 
@@ -117,7 +120,7 @@ def _streamed(
 def _published(
     *, arithmetic: ComparisonArithmetic, interval_batch_size: int
 ) -> tuple[np.ndarray, ...]:
-    """Publish the three channels once per (arithmetic, width), compiled."""
+    """Publish the three channels and the owner once per (arithmetic, width)."""
     cont_value, cont_marginal = _continuation()
     if interval_batch_size == 0:
         solve: Callable[..., tuple[FloatND, ...]] = jax.jit(
@@ -155,9 +158,46 @@ def test_streamed_step_publishes_the_one_shot_feasible_set(
     )
 
     np.testing.assert_array_equal(
-        [np.isfinite(channel) for channel in candidate],
-        [np.isfinite(channel) for channel in reference],
+        [np.isfinite(channel) for channel in candidate[:3]],
+        [np.isfinite(channel) for channel in reference[:3]],
     )
+
+
+@pytest.mark.parametrize("arithmetic", ["ordinary", "certified"])
+@pytest.mark.parametrize("interval_batch_size", [1, 2, 4, 7])
+def test_streamed_step_publishes_the_one_shot_owner_at_every_node(
+    *, arithmetic: ComparisonArithmetic, interval_batch_size: int
+) -> None:
+    """The same global stored-link identity owns each node at every partition."""
+    _skip_without_payload(arithmetic)
+    np.testing.assert_array_equal(
+        _published(arithmetic=arithmetic, interval_batch_size=interval_batch_size)[3],
+        _published(arithmetic=arithmetic, interval_batch_size=0)[3],
+        err_msg=f"arithmetic={arithmetic}, interval_batch_size={interval_batch_size}",
+    )
+
+
+@pytest.mark.parametrize("arithmetic", ["ordinary", "certified"])
+def test_the_one_shot_owner_names_several_candidates(
+    *, arithmetic: ComparisonArithmetic
+) -> None:
+    """The owner comparison ranges over distinct identities, not a constant."""
+    _skip_without_payload(arithmetic)
+    owner = _published(arithmetic=arithmetic, interval_batch_size=0)[3]
+    assert np.unique(owner[owner != NO_OWNER]).size > 1
+
+
+@pytest.mark.parametrize("arithmetic", ["ordinary", "certified"])
+@pytest.mark.parametrize("interval_batch_size", [0, 1, 2, 4, 7])
+def test_an_owner_is_published_exactly_where_a_level_is(
+    *, arithmetic: ComparisonArithmetic, interval_batch_size: int
+) -> None:
+    """A node carries an owner if and only if it carries a finite value."""
+    _skip_without_payload(arithmetic)
+    value, _, _, owner = _published(
+        arithmetic=arithmetic, interval_batch_size=interval_batch_size
+    )
+    np.testing.assert_array_equal(owner != NO_OWNER, np.isfinite(value))
 
 
 @pytest.mark.parametrize("channel", range(len(_CHANNELS)), ids=_CHANNELS)
