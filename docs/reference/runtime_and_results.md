@@ -87,9 +87,13 @@ used exclusively by simulation-phase transitions. An array a declaration referen
 through a closure cell, a default, or a solution-relevant parameter — is hashed with the
 rank and shape it actually has, so a scalar array and a length-one vector holding the
 same bytes are different identities; its memory order is storage rather than identity
-and does not enter the digest. Separately, an in-memory result keeps its model-instance
-token; that same-instance check is not applied to a restored archive. `metadata.source`
-records that distinction as `IN_MEMORY` or `PERSISTED`.
+and does not enter the digest. A model function wrapped by a beartype guard — pylcm's
+own or one a downstream package's claw installed — is fingerprinted through the guard:
+the guard is accepted as transparent only when beartype regenerates its code from the
+bound callee with the guard's own configuration, and the callee is what enters the
+identity. Separately, an in-memory result keeps its model-instance token; that
+same-instance check is not applied to a restored archive. `metadata.source` records that
+distinction as `IN_MEMORY` or `PERSISTED`.
 
 Each `(period, regime)` value has a lightweight `ValueArraySchema` recording its exact
 shape, dtype, and canonical named axes. Artifact descriptors play the corresponding

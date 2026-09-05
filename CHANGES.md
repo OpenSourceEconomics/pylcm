@@ -42,6 +42,13 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   array with its original rank and shape; a scalar array and a length-one vector with
   the same bytes are distinct identities, while memory order does not enter the digest.
   The model-fingerprint record version is 5.
+- The durable model fingerprint sees through beartype guards that a downstream
+  package's own claw wraps around its model functions: such a guard is accepted only
+  when beartype regenerates its code from the bound callee with the guard's own
+  configuration, and the callee is what enters the identity.
+- `SolutionResult.save()` flushes the archive through a writable handle before the
+  atomic rename, so publication also succeeds on platforms that refuse to flush a
+  read-only one.
 - External solvers can declare an `ExecutableReplayRoute` with durable plugin and route
   identities, period-specific artifact requirements, model-built artifact authorities,
   a mathematical preflight, and a JAX-transformable reader returning named

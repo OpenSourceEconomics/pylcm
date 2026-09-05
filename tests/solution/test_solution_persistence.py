@@ -1,8 +1,10 @@
 """Persistence and independent lazy loading of complete solution results."""
 
 import dataclasses
+import errno
 import hashlib
 import json
+import os
 from pathlib import Path
 from types import MappingProxyType
 from typing import ClassVar, cast
@@ -1406,6 +1408,28 @@ def test_save_succeeds_without_a_platform_directory_open_flag(
 ) -> None:
     """Atomic publication remains portable when ``O_DIRECTORY`` is unavailable."""
     monkeypatch.delattr(solution_persistence.os, "O_DIRECTORY", raising=False)
+
+    path = save_solution(
+        solution=_make_solution(),
+        path=tmp_path / "solution.lcm",
+    )
+
+    assert path.is_file()
+
+
+def test_save_flushes_the_archive_through_a_writable_descriptor(
+    *, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Publication survives a platform that refuses to flush a read-only handle."""
+    fcntl = pytest.importorskip("fcntl")
+    real_fsync = os.fsync
+
+    def fsync_writable_only(descriptor: int) -> None:
+        if fcntl.fcntl(descriptor, fcntl.F_GETFL) & os.O_ACCMODE == os.O_RDONLY:
+            raise OSError(errno.EBADF, "Bad file descriptor")
+        real_fsync(descriptor)
+
+    monkeypatch.setattr(solution_persistence.os, "fsync", fsync_writable_only)
 
     path = save_solution(
         solution=_make_solution(),
