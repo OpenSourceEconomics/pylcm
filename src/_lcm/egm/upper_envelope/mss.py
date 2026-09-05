@@ -398,11 +398,16 @@ def _certified_owner(
     that owns the interval above it, so the switch is published at the node the
     geometry puts it at.
 
-    The comparator refuses rather than guesses on operands it cannot decide, and
-    this method has no channel through which to refuse in turn: a query whose
-    comparisons all come back refused keeps the highest reading, which is the
-    answer the method gave before any of them were certified. Nothing is
-    published that a certified comparison contradicted.
+    Two things bound what that settles. The promotion budget is finite, so a
+    query at which more links are mis-ordered by the reading than there are
+    rounds can still publish a link another is certified above; a link can only
+    be mis-ordered by the reading when the two sit within a few representable
+    steps of each other, so the residual is of the same order as the published
+    value's own. And the comparator refuses rather than guesses on operands it
+    cannot decide, while this method has no channel through which to refuse in
+    turn: a query whose comparisons all come back refused keeps the highest
+    reading, which is the answer the method gave before any of them were
+    certified.
     """
     provisional = _leader(brackets=brackets, value=value)
     reference = _take_link(links=links, index=provisional)
