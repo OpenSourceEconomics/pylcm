@@ -186,8 +186,8 @@ _SOURCE_SEALS = {
     MAX_Q_SOURCE: "6bed0c5a31bbc1c7fe9e0d9250223888d1271528b01844a398668af038e24844",
     PROCESSING_SOURCE: "529c24632efe6a124ce5d51f3927d17f829671bfc51e2d68bc603eca3b53ddf9",
     GRID_SEARCH_SOURCE: "49c198be2598ef1791e9866d004e63de8dff00c46155c01d4fe8cbe128c0a1ff",
-    CORE_PROGRAM_SOURCE: "c298e08bc9028cd6ec9ded09a02a485860ed3810bb9e61c7bc38b220d677a904",
-    OUTPUT_LAYOUT_SOURCE: "d8bea7c2ea2f77c1e3712b40ab2aadd4866ed67a7c44c172097800ee93ab0885",
+    CORE_PROGRAM_SOURCE: "e11da2930ca20fe41cab00532307c4783a478c2e95e8d5f02bbbee29b526056b",
+    OUTPUT_LAYOUT_SOURCE: "171566e384a070bb9daebbe74d2418cb25f82291cfc93983d2a56e589486a395",
     VALUE_TRANSFER_SOURCE: "44b8629c7b461b6b0216c79ba25101179e1b8cb2edf40630a55c6b9403fbbd2d",
     ACTION_STREAMING_SOURCE: "a34ca428598e37dd68fc3dcaa0c664c56f79afb6042c946246883f250bab681c",
     ACTION_REDUCTION_SOURCE: "6cee6ea2dbef0ba710fa4a318a2113377d6513cee508e73004861597f9c220f9",
@@ -205,8 +205,8 @@ _SOURCE_SEALS = {
     SIMULATION_COMPILE_SOURCE: "bc59e06917ca26caa51bf6dee79f4f20b8f9c6dd652cf5648a17f02935d9a482",
     MODEL_SOURCE: "9012952d4e8f8472bd648234eb3ec27c0412abc8a705799c0bebcef6ef9eb571",
     SOLVER_API_SOURCE: "89adec9b59c6eaa5dc3d285568376ca23685cf7ce08f5095aff2c350048fe8d6",
-    BACKWARD_INDUCTION_SOURCE: "47c042f722aa39526afd1d6ede8c9738cb4764a421b3b1c3cf9b54ceb17e9cdd",
-    PERIOD_REPLAY_SOURCE: "e7749112601b4e75e3cfc86c4d43619f6e93143081311c17254b4c32963c3405",
+    BACKWARD_INDUCTION_SOURCE: "f6f34cd651b9b99eeb9c2357e14af7bd51fd772279b3dbd2f43464ac397c7993",
+    PERIOD_REPLAY_SOURCE: "71bdcc15215cafce5a6f248bbd1ba264170c23cc867b7bc9d9f472926928ed34",
     INITIAL_CONDITIONS_SOURCE: "cb3663f59d10fa288d3da322b5f154545bb1ac4b9262073a87c405b5e950507f",
     RESULT_SOURCE: "992f8e14d2f47f505f6883e340e89d68dfc41311d4c36f7849a2f79331e4ba01",
     RESULT_DATAFRAME_SOURCE: "025e273c4d3bb9d8f9787189a551b113708c86b1e868d16178aa39555abf49a4",
@@ -1610,6 +1610,7 @@ def _core_program_transport_errors(tree: ast.Module) -> list[str]:
             fields=(
                 "streamable_axes: tuple[StreamableProductAxis, ...] = ()",
                 "target_value_accesses: tuple[_TargetValueAccess, ...] = ()",
+                "internal_inputs: Mapping[str, InternalInputRef] = MappingProxyType({})",
             ),
             methods=("__post_init__",),
         )
@@ -1650,6 +1651,7 @@ def _core_program_transport_errors(tree: ast.Module) -> list[str]:
                 "retained_artifact_keys: _RetainedArtifactKeys = ()",
                 "retained_artifact_payload_types: _RetainedArtifactPayloadTypes = MappingProxyType({})",
                 "replaces_program: str | None = None",
+                "internal_outputs: tuple[InternalOutputSpec, ...] = ()",
             ),
             methods=("__post_init__",),
         )
@@ -1671,6 +1673,7 @@ def _core_program_transport_errors(tree: ast.Module) -> list[str]:
                 "scope: ProgramScope = ProgramScope.ANY",
                 "retained_artifact_keys: tuple[ArtifactKey, ...] = ()",
                 "replaces_program: str | None = None",
+                "internal_outputs: tuple[InternalOutputSpec, ...] = ()",
             ),
             methods=("__post_init__",),
         )
@@ -1696,6 +1699,7 @@ def _core_program_transport_errors(tree: ast.Module) -> list[str]:
                 "scope: ProgramScope = ProgramScope.ANY",
                 "retained_artifact_keys: tuple[ArtifactKey, ...] = ()",
                 "replaces_program: str | None = None",
+                "internal_outputs: tuple[InternalOutputSpec, ...] = ()",
             ),
             methods=("__post_init__",),
         )
@@ -1764,7 +1768,7 @@ ARTIFACT = "artifact"
     ]
     if not _statements_match(
         observed=version_assignments,
-        expected_source="_CORE_PROGRAM_VERSION = 6",
+        expected_source="_CORE_PROGRAM_VERSION = 7",
     ):
         errors.append("core-program specialization version binding changed")
     errors.extend(
@@ -1775,21 +1779,21 @@ ARTIFACT = "artifact"
                 "_TargetValueAccess.__post_init__": "087df21f9a729fb78e784cd8a1ed466c97473cce55b4835aec7530b6c3608f73",
                 "StreamableProductAxis.__post_init__": "a83a07c71ec8a26d8ad9b8cc71ea65e3df8d000e7efdcc44802bc240a5db95c6",
                 "StreamableProductAxis.extent": "aebdd54708094461d473977783f0588d2491c212629e1f5a40f8cf24c789802a",
-                "CoreExecutionRequirements.__post_init__": "e4d9bc6d57b5394abcfe6b3429292116e691be52fb980604cdb6d2cf0e21a876",
+                "CoreExecutionRequirements.__post_init__": "950154207415a21f885cd609179af3ad8ecf43edac2b3ce5940487a78e3c9c4d",
                 "CoreBuildContext.__post_init__": "c001bdfea799659c6e0f1d0ee09180940d5176d8a59675dcabef190a12716d7b",
-                "CoreProgram.__post_init__": "ede0e5fc6b399a2facff96b7c30889755eb69f5f4b8e4b4395785b9b41c6cbea",
-                "MaterializedCoreProgram.__post_init__": "341245a3fb28a6d0597796693fe871e3c18a721d115a68ea7a5716596344f619",
-                "ResolvedCoreProgram.__post_init__": "c487c8bf929f592e7f4ff059c36efc58429c6b0c43650ca59f5493856786d3a0",
+                "CoreProgram.__post_init__": "3459025376c2a5fb6ef1e1e31e5036847109185fc97f90f0688aed00b0ee4fdc",
+                "MaterializedCoreProgram.__post_init__": "a1f51b850b99ba8058d895bf6d8f1f09c15c3114d580c7a551765a1c4aab6943",
+                "ResolvedCoreProgram.__post_init__": "b36477b923d3353f4af4050faed9644df10250f10ae8757298c30710f686098b",
                 "core_program_graph": "0fb65d36c8408bfcec4b084cb304e3085037c266e932524d411654efac5c47f7",
                 "_reject_native_duplicate_authorities": "718aa10be29ba96de933ccd778200a94dd5d2637b148988b950e5b5e070edcea",
-                "_snapshot_and_validate_graph": "52b4ab20dc7d7a3dab2f06165ca9766831b3f498790ad8d93c8e08e3b6c18f7e",
+                "_snapshot_and_validate_graph": "391b89b66355ecdba2d0c869b4a748f2a0ef065610255e4819e398cf53faa7ca",
                 "_validate_replay_replacements": "2aed7e1993700410979ff136c2dc13104a1f210b7d1eabf3bfd7dae22b75eb69",
                 "_validate_program_declaration": "6158dc42296c246bbb8ab23d270dcc46e8175e89ed190af503bdebe788f11c6b",
                 "_validate_retention_declaration": "62f75acabee1eb14ea74360f8563970ba1f5639dd06a0573a49d80402e437ba0",
                 "_validate_retained_artifact_payload_types": "8ceae90284dbdc25b64e0b66d79990e8f9104f9a6410d90d8eb94c426d24ecbd",
                 "_validate_disposition_reason": "03cb7d272c11a686adf713cc1f8ddbf4f516ef61f3bde01b59b800fc9a58ab4b",
-                "materialize_core_program": "f847dab2d4111fc1875457a799012594305f7cdaf047ebc9e00a92fff972ea15",
-                "resolve_core_program": "e57d539695013b9d8b5bea7035ce1513e1f535613f373ddd242f0f38c6019950",
+                "materialize_core_program": "3889c6fd64636d8133e524001e8540558a5229e7886776fb22217f0eeee07660",
+                "resolve_core_program": "d5661feb91854806a2f4c9c420ce6c41466d575bf1a84b7569f0c1135bfd3cf7",
                 "select_programs": "f1d7a08b98db1b9c9d0f289714d8c4c85eb061e30dd592a523aad429bf107828",
                 "_validate_core_program": "732d66341ea1547f8f9041a0401997aa492a4cb1f9023af95f7e83339467b197",
                 "_validate_materialized_declaration": "d4a7b72b1943b877e689ed05bc6e83e8194fa20169615d7a0a8bd970bce96534",
@@ -2128,6 +2132,8 @@ def _output_layout_errors(tree: ast.Module) -> list[str]:
                 "layout: ResolvedOutputLayout",
                 "tile_widths: Mapping[str, int]",
                 "input_transfer_plan: tuple[ResolvedValueTransfer, ...] = ()",
+                "internal_input_templates: Mapping[str, object] = MappingProxyType({})",
+                "name: str = ''",
             ),
             methods=("__post_init__", "__call__"),
         )
@@ -2169,8 +2175,8 @@ def _output_layout_errors(tree: ast.Module) -> list[str]:
                 "_validate_output_roles": "7cbf07ffbcb4becaabdb34d86ea44caca2bb8561b14f6768970ebccea79e4b08",
                 "assert_output_layout": "daad2a8d5013f547b1004e7f51d7c71d6051b57badf5d3933c866774f862c2a8",
                 "_assert_output_metadata": "4fdb1d8439ec600990e801f0da9197759f71dc01661a1d0cf14d332be05b1209",
-                "PlannedCore.__post_init__": "05728bba01640514ff4b3156cc3de1f845e8315a125381c0e5b27822b87a15d4",
-                "PlannedCore.__call__": "f41f3d370e5237e949f541b1b7f538fe3b30d70994602bb933acc51170207e07",
+                "PlannedCore.__post_init__": "ebb7de9740b5d6b471b106fc7927210a128754af2504f3a90987105a1c431ed3",
+                "PlannedCore.__call__": "6f10b5f5d4aa8b41d62e8d2347c36eee8e4ddbfb2a8eaae55ca1a4f7f4f29707",
                 "assert_value_leaf_layout": "9362aaf98344976ae13de7ac67e05d23fe983f12e34eac9f2ad439762a5d159d",
                 "_assert_output_leaf": "8a75af878a85e6cc997e5d823b55ba0545ff3f147a30a7ddbfd2666db07d70fd",
                 "_resolve_output_leaf": "b321849f4ff64dbab550be131a31a74157e9749a396958917b8e587fdffe5fa4",
@@ -2550,8 +2556,8 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             "_regime_retains_replay": "04e8745dceb0e3c34e0f91fd11d27c43e0da5043cf2418b8015c15baa29d1d81",
             "_select_period_programs": "55bff2bbffbc5a75f00a656f684093d89d3655bac48d76da2e9dbe716b62bb74",
             "_selected_artifact_keys_for_cell": "1acc464529bc9833e48f727279682d969f850d2a3bb206e8a2695b1769f6182f",
-            "_compile_all_functions": "a3fed6e972b41d85c9af641c35fb5981b32cbbba9adb7a2b0f8c8ca1e4ea41b9",
-            "_resolve_output_layouts_and_lowering_keys": "ab2c6891e30fec8abb23543197d61461bd7282bd6392b7987df8a83603b5d723",
+            "_compile_all_functions": "6978adb7621341408b62ad1f10a9fc896e6a36b7d4ed49b9fa84ee1b8dc8d203",
+            "_resolve_output_layouts_and_lowering_keys": "9cdd2813230f45a8311160bea8126f117e1e11e7a174a1ed0d708792a594a181",
             "_resolve_program_for_execution": "6e3ec3139833f459a49be4a30a6c8c5813ba8cd66176a849ee24e7a81b27b433",
             "_resolve_value_input_transfer_plan": "40e46250dd373f2ea17e38c911e0c2df7ad01192dd82fcb1d7a7ddbf641f91bb",
             "_resolve_value_transfer_layout": "6cd863aaa64c0f558c797b47667479b595c77d5f3ee5c8b3dcfae188f1d05edd",
@@ -2561,7 +2567,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             "_abstract_leaf_key": "94afc53d035e8ad9812025f72adcbf76d8966430ef259d339977e9cf90262b66",
             "_output_roles_key": "c73436e6abaec7f0388386d353675200d7bf3d5d3544654f8d47f37ad0e5e8da",
             "_assert_lowered_output_roles": "62fcff4b0e2d8566017c980c72046445639aba034da0be42480dd52a9e499871",
-            "_attach_resolved_output_layout": "679cfd25faa76929893fcff7be38cd3f2f9785d86d8af1c5a5090d819b91bc56",
+            "_attach_resolved_output_layout": "13fbb28be2d2b81d69fba4a30dcac646190ae2927cce11d3e5f9c7926d6c181a",
             "_publish_kernel_value": "df201c75574aab5280bc841d51cfb143c6a2939a65cc5e8bdee8884760d3e2d2",
         },
     )
@@ -2651,7 +2657,7 @@ def _period_replay_errors(tree: ast.Module) -> list[str]:
         label="period replay native-program transport",
         contracts={
             "replay_period": "78848f526164f957ab3634f8c5db7740e7b452719830b5c887b523360ff5beeb",
-            "_compile_cores_for_one_period": "a90d9c196473d83b9990b2a19d2390fa152b321167a35c5b8cdc1cfbe8f0283d",
+            "_compile_cores_for_one_period": "898d1a2d3f7a0a0ce8f12724d7f8f99f1823faee3ed3e6203c6cf83f078b7670",
             "_core_build_context_for_one_period": "8d11e28bebf0c0df6bce4872e25a56e577592db26901d47d8cd5cf431a55b473",
         },
     )
@@ -5940,7 +5946,12 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "path": BACKWARD_INDUCTION_SOURCE,
             "source": replace_once(
                 source=backward_induction_source,
-                old="        low = jitted.lower(**resolved.arguments, **static_kwargs)",
+                old=(
+                    "        low = jitted.lower(\n"
+                    "            **resolved.arguments, **internal_templates[triple], "
+                    "**static_kwargs\n"
+                    "        )"
+                ),
                 new="        low = jitted.lower(**static_kwargs)",
                 label="AOT resolved arguments",
             ),
@@ -5989,6 +6000,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
                 "        layout=layout,\n"
                 "        tile_widths=tile_widths,\n"
                 "        input_transfer_plan=input_transfer_plan,\n"
+                "        internal_input_templates=internal_input_templates,\n"
+                "        name=name,\n"
                 "    )",
                 new="    return compiled",
                 label="planned core attachment",

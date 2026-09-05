@@ -24,9 +24,14 @@ from _lcm.execution.compiler_memory import (
 )
 from _lcm.execution.core_program import (
     CoreBuildContext,
+    MaterializedCoreProgram,
     core_program_graph,
     materialize_core_program,
     select_programs,
+)
+from _lcm.execution.internal_outputs import (
+    internal_input_templates,
+    topological_program_order,
 )
 from _lcm.execution.output_layout import PlannedCore, resolve_output_layout
 from _lcm.solution.backward_induction import (
@@ -273,8 +278,12 @@ def _compile_cores_for_one_period(
         core_names=tuple(graph),
     )
     compiled: dict[str, PlannedCore] = {}
-    for core_name, declaration in graph.items():
+    producers: dict[str, MaterializedCoreProgram] = {}
+    for core_name in topological_program_order(graph=graph):
+        declaration = graph[core_name]
         materialized = materialize_core_program(program=declaration, context=context)
+        producers[core_name] = materialized
+        templates = internal_input_templates(program=materialized, producers=producers)
         resolved = _resolve_program_for_execution(
             program=materialized,
             tile_widths=captured_widths[core_name],
@@ -300,7 +309,9 @@ def _compile_cores_for_one_period(
             static_argnames=tuple(resolved.static_kwargs),
             out_shardings=layout.out_shardings,
         )
-        lowered = jitted.lower(**resolved.arguments, **resolved.static_kwargs)
+        lowered = jitted.lower(
+            **resolved.arguments, **templates, **resolved.static_kwargs
+        )
         _assert_lowered_output_roles(
             lowered=lowered,
             output_roles=resolved.output_roles,
@@ -315,6 +326,8 @@ def _compile_cores_for_one_period(
             layout=layout,
             tile_widths=resolved.tile_widths,
             input_transfer_plan=resolved.input_transfer_plan,
+            internal_input_templates=templates,
+            name=core_name,
         )
     return MappingProxyType(compiled)
 

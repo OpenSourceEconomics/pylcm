@@ -26,7 +26,7 @@ from _lcm.execution.value_transfer import (
 from _lcm.typing import ActionName
 from lcm.solver_api import ArtifactKey
 
-_CORE_PROGRAM_VERSION = 6
+_CORE_PROGRAM_VERSION = 7
 _INT32_MAX = 2_147_483_647
 
 if TYPE_CHECKING:
@@ -104,18 +104,74 @@ class StreamableProductAxis:
 
 
 @dataclass(frozen=True, kw_only=True)
+class InternalOutputSpec:
+    """One output a program publishes to other programs of the same graph."""
+
+    label: str
+    """Name other programs of the same graph use to request this output."""
+
+    path: tuple[int | str, ...]
+    """Pytree path into the producer's raw output selecting the published subtree."""
+
+    def __post_init__(self) -> None:
+        """Snapshot the caller-owned path and require an exact label spelling."""
+        if type(self.label) is not str or not self.label:
+            msg = "An InternalOutputSpec label must be a non-empty string."
+            raise TypeError(msg)
+        path = tuple(self.path)
+        if any(isinstance(step, bool) or type(step) not in (int, str) for step in path):
+            msg = (
+                f"InternalOutputSpec {self.label!r} path must contain only integer "
+                "and string pytree steps."
+            )
+            raise TypeError(msg)
+        object.__setattr__(self, "path", path)
+
+
+@dataclass(frozen=True, kw_only=True)
+class InternalInputRef:
+    """One argument a program takes from another program of the same graph."""
+
+    producer: str
+    """Graph key of the program whose output is consumed."""
+
+    label: str
+    """`InternalOutputSpec.label` declared by that producer."""
+
+    def __post_init__(self) -> None:
+        """Require an exact producer key and label spelling."""
+        if type(self.producer) is not str or not self.producer:
+            msg = "An InternalInputRef producer must be a non-empty string."
+            raise TypeError(msg)
+        if type(self.label) is not str or not self.label:
+            msg = "An InternalInputRef label must be a non-empty string."
+            raise TypeError(msg)
+
+
+@dataclass(frozen=True, kw_only=True)
 class CoreExecutionRequirements:
     """Static requirements that the execution planner must resolve for a core."""
 
     streamable_axes: tuple[StreamableProductAxis, ...] = ()
     target_value_accesses: tuple[_TargetValueAccess, ...] = ()
+    internal_inputs: Mapping[str, InternalInputRef] = MappingProxyType({})
+    """Consumer argument name to the producer output that fills it at dispatch."""
 
     def __post_init__(self) -> None:
-        """Snapshot the declared axes and exact target-value reads."""
+        """Snapshot the declared axes, target-value reads, and internal inputs."""
         object.__setattr__(self, "streamable_axes", tuple(self.streamable_axes))
         object.__setattr__(
             self, "target_value_accesses", tuple(self.target_value_accesses)
         )
+        internal_inputs = dict(self.internal_inputs)
+        for name, ref in internal_inputs.items():
+            if type(name) is not str or not name:
+                msg = "An internal input must be keyed by a non-empty argument name."
+                raise TypeError(msg)
+            if not isinstance(ref, InternalInputRef):
+                msg = f"Internal input {name!r} must be an InternalInputRef."
+                raise TypeError(msg)
+        object.__setattr__(self, "internal_inputs", MappingProxyType(internal_inputs))
 
 
 class CoreExecutionDisposition(StrEnum):
@@ -221,12 +277,15 @@ class CoreProgram:
         {}
     )
     replaces_program: str | None = None
+    internal_outputs: tuple[InternalOutputSpec, ...] = ()
+    """Outputs another program of the same graph may name as an input."""
 
     def __post_init__(self) -> None:
         """Snapshot caller-owned sequences."""
         if not isinstance(self.retained_artifact_payload_types, Mapping):
             msg = "CoreProgram retained_artifact_payload_types must be a mapping."
             raise TypeError(msg)
+        object.__setattr__(self, "internal_outputs", tuple(self.internal_outputs))
         object.__setattr__(self, "donation_candidates", tuple(self.donation_candidates))
         object.__setattr__(
             self, "retained_artifact_keys", tuple(self.retained_artifact_keys)
@@ -253,10 +312,13 @@ class MaterializedCoreProgram:
     scope: ProgramScope = ProgramScope.ANY
     retained_artifact_keys: tuple[ArtifactKey, ...] = ()
     replaces_program: str | None = None
+    internal_outputs: tuple[InternalOutputSpec, ...] = ()
+    """Outputs another program of the same graph may name as an input."""
 
     def __post_init__(self) -> None:
         """Snapshot the exact dynamic argument tree."""
         object.__setattr__(self, "arguments", MappingProxyType(dict(self.arguments)))
+        object.__setattr__(self, "internal_outputs", tuple(self.internal_outputs))
         object.__setattr__(self, "donation_candidates", tuple(self.donation_candidates))
         object.__setattr__(
             self, "retained_artifact_keys", tuple(self.retained_artifact_keys)
@@ -450,7 +512,69 @@ def _snapshot_and_validate_graph(
         _validate_program_declaration(program=program)
     _validate_replay_replacements(graph=snapshot)
     _validate_retained_artifact_payload_type_consistency(graph=snapshot)
+    _validate_internal_edges(graph=snapshot)
     return MappingProxyType(snapshot)
+
+
+def _validate_internal_edges(*, graph: Mapping[str, CoreProgram]) -> None:
+    """Require every internal input to name a declared output and no cycle to form."""
+    for name, program in graph.items():
+        labels = [spec.label for spec in program.internal_outputs]
+        duplicates = sorted({label for label in labels if labels.count(label) > 1})
+        if duplicates:
+            msg = (
+                f"CoreProgram {name!r} declares internal outputs with duplicate "
+                f"labels: {tuple(duplicates)!r}."
+            )
+            raise ValueError(msg)
+    for name, program in graph.items():
+        for argument_name, ref in program.requirements.internal_inputs.items():
+            producer = graph.get(ref.producer)
+            if producer is None:
+                msg = (
+                    f"CoreProgram {name!r} takes internal input {argument_name!r} "
+                    f"from {ref.producer!r}, which is not a program of the same "
+                    f"graph: {tuple(graph)!r}."
+                )
+                raise ValueError(msg)
+            declared = tuple(spec.label for spec in producer.internal_outputs)
+            if ref.label not in declared:
+                msg = (
+                    f"CoreProgram {name!r} takes internal input {argument_name!r} "
+                    f"labelled {ref.label!r} from {ref.producer!r}, which declares "
+                    f"internal outputs {declared!r}."
+                )
+                raise ValueError(msg)
+    _topological_program_order(graph=graph)
+
+
+def _topological_program_order(*, graph: Mapping[str, CoreProgram]) -> tuple[str, ...]:
+    """Return graph keys so every producer precedes its consumers.
+
+    Declaration order breaks ties, so a graph without internal edges keeps the
+    order its kernel published.
+    """
+    remaining = dict(graph)
+    order: list[str] = []
+    while remaining:
+        ready = [
+            name
+            for name, program in remaining.items()
+            if all(
+                ref.producer not in remaining
+                for ref in program.requirements.internal_inputs.values()
+            )
+        ]
+        if not ready:
+            msg = (
+                "Core programs' internal inputs form a cycle among "
+                f"{tuple(remaining)!r}."
+            )
+            raise ValueError(msg)
+        for name in ready:
+            order.append(name)
+            del remaining[name]
+    return tuple(order)
 
 
 def _validate_replay_replacements(*, graph: Mapping[str, CoreProgram]) -> None:
@@ -629,6 +753,7 @@ def materialize_core_program(
         scope=program.scope,
         retained_artifact_keys=program.retained_artifact_keys,
         replaces_program=program.replaces_program,
+        internal_outputs=program.internal_outputs,
     )
     missing_donations = set(materialized.donation_candidates) - set(
         materialized.arguments
@@ -662,10 +787,13 @@ class ResolvedCoreProgram:
     scope: ProgramScope = ProgramScope.ANY
     retained_artifact_keys: tuple[ArtifactKey, ...] = ()
     replaces_program: str | None = None
+    internal_outputs: tuple[InternalOutputSpec, ...] = ()
+    """Outputs another program of the same graph may name as an input."""
 
     def __post_init__(self) -> None:
         """Snapshot the materialized argument and planning containers."""
         object.__setattr__(self, "arguments", MappingProxyType(dict(self.arguments)))
+        object.__setattr__(self, "internal_outputs", tuple(self.internal_outputs))
         object.__setattr__(
             self,
             "static_kwargs",
@@ -769,6 +897,7 @@ def resolve_core_program(
         scope=program.scope,
         retained_artifact_keys=program.retained_artifact_keys,
         replaces_program=program.replaces_program,
+        internal_outputs=program.internal_outputs,
         tile_widths=resolved_widths,
         input_transfer_plan=resolved_input_transfer_plan,
         specialization_key=(
@@ -782,6 +911,13 @@ def resolve_core_program(
             program.donation_candidates,
             tuple(compilation_axes),
             input_transfer_specialization_key,
+            tuple(
+                sorted(
+                    (name, ref.producer, ref.label)
+                    for name, ref in program.requirements.internal_inputs.items()
+                )
+            ),
+            tuple((spec.label, spec.path) for spec in program.internal_outputs),
         ),
     )
 
