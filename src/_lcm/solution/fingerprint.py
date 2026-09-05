@@ -23,6 +23,7 @@ import jax.numpy as jnp
 import jax.scipy as jsp
 import jaxlib
 import numpy as np
+from beartype import BeartypeConf
 from beartype import beartype as _beartype_decorator
 from jax import Array
 
@@ -458,7 +459,7 @@ def fingerprint_model(
         regimes=regimes,
     )
     record = (
-        ("pylcm-model-fingerprint", 4),
+        ("pylcm-model-fingerprint", 5),
         tuple(ages.exact_values),
         {name: int(regime_id) for name, regime_id in regime_names_to_ids.items()},
         {
@@ -620,7 +621,12 @@ class _SemanticHasher:
             value=value, candidates=_NUMPY_SCALAR_TYPES
         )
         if isinstance(value, Array) or is_exact_numpy_value:
-            array = np.ascontiguousarray(np.asarray(value))
+            # The shape frame records the rank and shape the declaration actually
+            # holds: a 0-d array is a different mathematical object from a
+            # length-one vector even though their bytes agree. Memory order is
+            # storage, not identity, and ``tobytes(order="C")`` serializes any
+            # layout, so no contiguity normalization happens before framing.
+            array = np.asarray(value)
             if array.dtype.hasobject:
                 msg = "Object arrays cannot enter a durable model fingerprint."
                 raise TypeError(msg)
@@ -1695,6 +1701,8 @@ def _unwrap_exact_beartype_wrapper(
         None,
     )
     if capture is None:
+        if not _is_shipped_pylcm_module_name(function.__module__):
+            return _unwrap_downstream_beartype_wrapper(function)
         msg = (
             "Cannot durably fingerprint an uncaptured transparent beartype wrapper "
             f"{function.__module__}.{function.__qualname__}."
@@ -1718,6 +1726,56 @@ def _unwrap_exact_beartype_wrapper(
         )
         raise TypeError(msg)
     return captured_wrapped
+
+
+def _unwrap_downstream_beartype_wrapper(
+    function: types.FunctionType,
+) -> types.FunctionType:
+    """Return the bound callee of a beartype wrapper built outside pylcm or fail closed.
+
+    A package that models on pylcm may run its own beartype claw, so its model
+    functions arrive wrapped by guards pylcm never captured at import. Such a guard
+    is transparent only if beartype itself reproduces it: decorating the bound
+    callee with the wrapper's own configuration must yield the same code. A wrapper
+    whose marks disagree, or whose code beartype does not regenerate, is refused
+    because its body may do more than check the callee's annotations.
+    """
+    label = f"{function.__module__}.{function.__qualname__}"
+    state = function.__dict__
+    keyword_defaults = function.__kwdefaults__
+    wrapped = state.get("__wrapped__")
+    conf = (
+        keyword_defaults.get("__beartype_conf")
+        if type(keyword_defaults) is dict
+        else None
+    )
+    if not (
+        isinstance(wrapped, types.FunctionType)
+        and type(keyword_defaults) is dict
+        and keyword_defaults.get("__beartype_func") is wrapped
+        and isinstance(conf, BeartypeConf)
+        and function.__code__.co_filename.startswith("<@beartype(")
+    ):
+        msg = (
+            "Cannot durably fingerprint an uncaptured transparent beartype wrapper "
+            f"{label}: its beartype marks do not name one bound callee."
+        )
+        raise TypeError(msg)
+    regenerated = _beartype_decorator(conf=conf)(wrapped)
+    code = function.__code__
+    if (
+        regenerated is wrapped
+        or not isinstance(regenerated, types.FunctionType)
+        or regenerated.__code__.co_code != code.co_code
+        or regenerated.__code__.co_consts != code.co_consts
+        or regenerated.__code__.co_names != code.co_names
+    ):
+        msg = (
+            "Cannot durably fingerprint an uncaptured transparent beartype wrapper "
+            f"{label}: beartype does not regenerate its code from the bound callee."
+        )
+        raise TypeError(msg)
+    return wrapped
 
 
 def _is_solver_instance(value: object) -> bool:

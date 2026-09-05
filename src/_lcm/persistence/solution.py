@@ -476,7 +476,9 @@ def save_solution_archive(*, solution: _SolutionResultBoundary, path: Path) -> P
         os.close(descriptor)
         tmp_path = Path(tmp_name)
         _write_archive(snapshot=snapshot, path=tmp_path)
-        with tmp_path.open("rb") as file_handle:
+        # Opened for writing without truncation: the flush needs a writable
+        # handle, since Windows refuses to flush a read-only one.
+        with tmp_path.open("r+b") as file_handle:
             os.fsync(file_handle.fileno())
         tmp_path.replace(path)
         directory_open_flag = getattr(os, "O_DIRECTORY", None)

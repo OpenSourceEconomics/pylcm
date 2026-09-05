@@ -308,7 +308,9 @@ def fingerprint_flat_params(flat_params: FlatParams) -> str:
                 update_value(value=child, path=(*path, str(index)))
             return
 
-        array = np.ascontiguousarray(np.asarray(value))
+        # ``asarray`` keeps the declared rank; a 0-d parameter and a length-one
+        # vector are distinct leaves even when their bytes agree.
+        array = np.asarray(value)
         update_token("array")
         update_token(",".join(str(size) for size in array.shape))
         update_token(array.dtype.str)

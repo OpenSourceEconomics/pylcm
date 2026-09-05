@@ -210,11 +210,11 @@
           },
           {
             "path": "src/lcm/solver_api.py",
-            "sha256": "504f58723f3a4617e885d3e1a07e8d97edefa7320c31ecca07bc2496bb4f8b3b"
+            "sha256": "5387e307d71895a3fcadd9014a4a75f0d4f6f4e8476f52f5abcafcb394ce51f2"
           }
         ],
         "source_count": 52,
-        "source_inventory_sha256": "e7acdf98505b5080e0dbf3c5b83d1c23de6f122b003f0ecd7ff6896773b224df"
+        "source_inventory_sha256": "674228a9b002203a234c2bbd813173f6cfb4ba19b19c0e24727674fd24e32569"
       },
       "fast": {
         "candidate_sources": [
@@ -424,17 +424,17 @@
           },
           {
             "path": "src/lcm/solver_api.py",
-            "sha256": "504f58723f3a4617e885d3e1a07e8d97edefa7320c31ecca07bc2496bb4f8b3b"
+            "sha256": "5387e307d71895a3fcadd9014a4a75f0d4f6f4e8476f52f5abcafcb394ce51f2"
           }
         ],
         "source_count": 52,
-        "source_inventory_sha256": "e7acdf98505b5080e0dbf3c5b83d1c23de6f122b003f0ecd7ff6896773b224df"
+        "source_inventory_sha256": "674228a9b002203a234c2bbd813173f6cfb4ba19b19c0e24727674fd24e32569"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "e7acdf98505b5080e0dbf3c5b83d1c23de6f122b003f0ecd7ff6896773b224df",
+  "source_inventory_sha256": "674228a9b002203a234c2bbd813173f6cfb4ba19b19c0e24727674fd24e32569",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -642,7 +642,7 @@
     },
     {
       "path": "src/lcm/solver_api.py",
-      "sha256": "504f58723f3a4617e885d3e1a07e8d97edefa7320c31ecca07bc2496bb4f8b3b"
+      "sha256": "5387e307d71895a3fcadd9014a4a75f0d4f6f4e8476f52f5abcafcb394ce51f2"
     }
   ]
 }

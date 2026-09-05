@@ -249,11 +249,18 @@ The memory controls do not all mean “compiled batch width”:
 - `interval_batch_size` streams the continuation read and the candidate-envelope fold
   together. A positive width reads only that many interval rows, folds their candidates
   into one standing winner per query, then requests the next block. The standing winner
-  retains its global stored-link index, so every partition resolves ownership exactly as
-  the one-shot layout does under both envelope arithmetics — the same query nodes are
-  feasible and the same candidate owns each of them. The published levels agree to
-  within a few units in the last place rather than bit for bit, because a width is also
-  a compiled vmap width and the backend vectorizes each one differently.
+  retains its global stored-link index, so given the candidate records every partition
+  decides ownership by the same total order over the same identities as the one-shot
+  layout, under both envelope arithmetics: no width can hand a query to another
+  candidate by where a record happens to be stored, and the step reports the owner of
+  every node on request (`return_owner=True`) so a partition test asserts it exactly.
+  What a width does change is the compiled vmap width the records are produced at, and
+  the backend vectorizes each one differently: the published levels agree to within a
+  few units in the last place rather than bit for bit, and two candidates whose reads
+  tie to within that spacing are ordered by the records each width produced. The one
+  place this is visible on a regular grid is a node where a savings-node point candidate
+  coincides with an interior candidate: the two are the same point, and which of them
+  is named the owner can differ between widths while the published level does not.
   `interval_batch_size=0` keeps the one-shot continuation matrix and envelope reduction;
 - `cell_block_size` and `branch_batch_size` are compiled `lax.map` batch widths for the
   ride-cell and discrete-branch axes. The continuation read behind the branch axis runs

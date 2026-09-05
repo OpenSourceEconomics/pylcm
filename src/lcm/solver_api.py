@@ -3427,6 +3427,29 @@ else:
     _ArtifactKeyBoundary = object
 
 
+def _traverse_public_mapping_items(
+    *, mapping: object, label: str
+) -> list[tuple[object, object]]:
+    """Consume one item traversal of a public mapping into an owned list of pairs.
+
+    A public mapping may be any `Mapping` implementation, so its key view, item
+    view, and length can disagree or execute backing code. Store constructors read
+    this one item traversal and nothing else, and check every raw key exactly before
+    it is hashed into a store, so an equality alias (`True` for `1`) or a repeated
+    address cannot contract away unseen.
+    """
+    if not isinstance(mapping, Mapping):
+        raise TypeError(f"{label} must be a mapping.")
+    try:
+        items = list(mapping.items())
+    except Exception as error:
+        raise TypeError(f"{label} cannot be traversed as mapping items.") from error
+    for item in items:
+        if type(item) is not tuple or len(item) != 2:  # noqa: PLR2004
+            raise TypeError(f"{label} items must be exact key-value pairs.")
+    return items
+
+
 def _require_exact_value_period(period: object) -> int:
     if type(period) is not int:
         raise TypeError("Value periods must be exact ints.")
@@ -3500,37 +3523,60 @@ class ValueStore(Mapping[int, Mapping[RegimeName, FloatND]]):
     )
 
     def __post_init__(self) -> None:
-        entries: dict[tuple[int, RegimeName], object] = {}
-        if all(type(key) is tuple for key in self._entries):
-            for coordinate, value in self._entries.items():
-                typed_coordinate = cast("tuple[object, ...]", coordinate)
-                if len(typed_coordinate) != 2:  # noqa: PLR2004
-                    raise ValueError("A ValueStore coordinate must have two entries.")
-                period, regime = typed_coordinate
-                entries[(cast("int", period), cast("RegimeName", regime))] = value
-        else:
-            nested = cast("Mapping[int, Mapping[RegimeName, object]]", self._entries)
-            for period, regime_to_value in nested.items():
-                for regime, value in regime_to_value.items():
-                    entries[(period, regime)] = value
+        # The mapping is read through exactly one item traversal. Its form — flat
+        # ``(period, regime)`` tuples or ``period -> regime -> value`` — is decided
+        # from those same items, and every raw coordinate is checked exactly and for
+        # uniqueness before it is inserted, so ``True`` cannot overwrite ``1`` and a
+        # repeated address cannot be contracted into one.
+        items = _traverse_public_mapping_items(
+            mapping=self._entries, label="ValueStore entries"
+        )
+        is_flat = [type(key) is tuple for key, _ in items]
+        if any(is_flat) and not all(is_flat):
+            raise TypeError(
+                "ValueStore entries must be keyed either by (period, regime) tuples "
+                "or by periods, not by both."
+            )
 
-        entries = {
-            coordinate: (
+        entries: dict[tuple[int, RegimeName], object] = {}
+        regimes_by_period: dict[int, list[RegimeName]] = {}
+
+        def admit(*, period: object, regime: object, value: object) -> None:
+            coordinate = (
+                _require_exact_value_period(period),
+                _require_exact_regime_name(regime),
+            )
+            if coordinate in entries:
+                raise ValueError(f"ValueStore coordinate {coordinate!r} appears twice.")
+            entries[coordinate] = (
                 value
                 if isinstance(value, _LazyEntry)
                 and type(value) is not _CanonicalValueEntry
                 else _canonical_value_entry(value=value)
             )
-            for coordinate, value in entries.items()
-        }
+            regimes_by_period.setdefault(coordinate[0], []).append(coordinate[1])
 
-        regimes_by_period: dict[int, list[RegimeName]] = {}
-        for period, regime in entries:
-            if type(period) is not int or period < 0:
-                raise TypeError("ValueStore periods must be non-negative exact ints.")
-            if type(regime) is not str or not regime:
-                raise TypeError("ValueStore regime names must be non-empty exact strs.")
-            regimes_by_period.setdefault(period, []).append(regime)
+        if all(is_flat):
+            for coordinate, value in items:
+                typed_coordinate = cast("tuple[object, ...]", coordinate)
+                if len(typed_coordinate) != 2:  # noqa: PLR2004
+                    raise ValueError("A ValueStore coordinate must have two entries.")
+                admit(
+                    period=typed_coordinate[0], regime=typed_coordinate[1], value=value
+                )
+        else:
+            for period, regime_to_value in items:
+                exact_period = _require_exact_value_period(period)
+                if not isinstance(regime_to_value, Mapping):
+                    raise TypeError(
+                        f"ValueStore period {exact_period} must map to a mapping of "
+                        "regime names to values."
+                    )
+                for regime, value in _traverse_public_mapping_items(
+                    mapping=regime_to_value,
+                    label=f"ValueStore period {exact_period} entries",
+                ):
+                    admit(period=exact_period, regime=regime, value=value)
         object.__setattr__(self, "_entries", MappingProxyType(entries))
         object.__setattr__(
             self,
@@ -3619,17 +3665,29 @@ class ArtifactStore(Mapping[ArtifactRef, object]):
     key.
     """
 
-    _entries: Mapping[ArtifactRef, object] = field(default_factory=dict, repr=False)
+    # Typed with ``Any`` keys so the runtime annotation check does not traverse the
+    # key view; ``__post_init__`` is the one admission boundary.
+    _entries: Mapping[Any, object] = field(default_factory=dict, repr=False)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "_entries", MappingProxyType(dict(self._entries)))
+        # One item traversal; each raw address is an exact ``ArtifactRef`` and unique
+        # before it is inserted, so no equality alias or repeat can contract.
+        entries: dict[ArtifactRef, object] = {}
+        for raw_ref, payload in _traverse_public_mapping_items(
+            mapping=self._entries, label="ArtifactStore entries"
+        ):
+            ref = _require_exact_artifact_ref(raw_ref)
+            if ref in entries:
+                raise ValueError(f"ArtifactStore address {ref!r} appears twice.")
+            entries[ref] = payload
+        object.__setattr__(self, "_entries", MappingProxyType(entries))
 
     def __getitem__(self, ref: _ArtifactRefBoundary) -> object:
         ref = _require_exact_artifact_ref(ref)
         return _materialize_entry(entry=self._entries[ref])
 
     def __iter__(self) -> Iterator[ArtifactRef]:
-        return iter(self._entries)
+        return iter(cast("Mapping[ArtifactRef, object]", self._entries))
 
     def __len__(self) -> int:
         return len(self._entries)
@@ -4104,7 +4162,22 @@ class SolutionResult:
             else ValueStore(cast("Mapping", self.values))
         )
         object.__setattr__(self, "values", values)
-        object.__setattr__(self, "omissions", MappingProxyType(dict(self.omissions)))
+        omissions: dict[ArtifactRef, OmissionReason] = {}
+        for raw_ref, reason in _traverse_public_mapping_items(
+            mapping=self.omissions, label="SolutionResult omissions"
+        ):
+            ref = _require_exact_artifact_ref(raw_ref)
+            if type(reason) is not OmissionReason:
+                raise TypeError(
+                    "SolutionResult omission reasons must be exact OmissionReason "
+                    "values."
+                )
+            if ref in omissions:
+                raise ValueError(
+                    f"SolutionResult omission address {ref!r} appears twice."
+                )
+            omissions[ref] = reason
+        object.__setattr__(self, "omissions", MappingProxyType(omissions))
 
     def value(
         self,
