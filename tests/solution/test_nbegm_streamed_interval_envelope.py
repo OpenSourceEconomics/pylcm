@@ -18,19 +18,24 @@ precision fixture runs this module at float64 and with ``--precision=32``.
 
 from collections.abc import Callable
 from functools import cache
-from typing import TypedDict
+from typing import Any, TypedDict
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.egm import nbegm_step
 from _lcm.egm.nbegm_step import nbegm_per_interval_continuation_step_savings
 from _lcm.egm.preferences import Preferences
 from _lcm.egm.upper_envelope._exact_affine.ffi import (
     kernel_built_for_current_backend,
 )
-from _lcm.egm.upper_envelope.query import NO_OWNER, ComparisonArithmetic
+from _lcm.egm.upper_envelope.query import (
+    NO_OWNER,
+    ComparisonArithmetic,
+    EnvelopeWinner,
+)
 from lcm.typing import Float1D, FloatND, IntND, ScalarFloat
 from tests.conftest import assert_agrees_to_ulp
 from tests.solution._crra_preferences import crra_preferences
@@ -221,6 +226,57 @@ def test_streamed_step_agrees_with_the_one_shot_merge_to_the_format_spacing(
             f"channel={_CHANNELS[channel]}, arithmetic={arithmetic}, "
             f"interval_batch_size={interval_batch_size}"
         ),
+    )
+
+
+@cache
+def _relabelled_streamed(*, interval_batch_size: int) -> tuple[np.ndarray, ...]:
+    """Stream with a fold that names every candidate by its block-local slot.
+
+    The relabelled fold still compares the same records under the same order, so
+    where no two candidates tie it selects the same record and publishes the same
+    levels; only the identity it reports is wrong. It is the defect class the owner
+    assertion exists for, and it is invisible to the level assertions.
+    """
+    production = nbegm_step.merge_envelope_winner
+
+    def relabelled(*, stable_index: IntND, **kwargs: Any) -> EnvelopeWinner:
+        return production(
+            stable_index=jnp.arange(stable_index.shape[0], dtype=jnp.int32), **kwargs
+        )
+
+    cont_value, cont_marginal = _continuation()
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(nbegm_step, "merge_envelope_winner", relabelled)
+        solve = jax.jit(
+            lambda value, marginal: _streamed(
+                cont_value=value,
+                cont_marginal=marginal,
+                arithmetic="ordinary",
+                interval_batch_size=interval_batch_size,
+            )
+        )
+        return tuple(
+            np.asarray(channel) for channel in solve(cont_value, cont_marginal)
+        )
+
+
+def test_the_owner_assertion_rejects_a_fold_that_relabels_identities() -> None:
+    """The instrument fires on the defect it guards against, in this run."""
+    relabelled = _relabelled_streamed(interval_batch_size=2)[3]
+    reference = _published(arithmetic="ordinary", interval_batch_size=0)[3]
+    assert not np.array_equal(relabelled, reference)
+
+
+@pytest.mark.parametrize("channel", range(len(_CHANNELS)), ids=_CHANNELS)
+def test_the_level_assertions_do_not_see_a_fold_that_relabels_identities(
+    *, channel: int
+) -> None:
+    """Relabelled identities leave every level within the spacing budget."""
+    assert_agrees_to_ulp(
+        got=_relabelled_streamed(interval_batch_size=2)[channel],
+        expected=_published(arithmetic="ordinary", interval_batch_size=0)[channel],
+        n_ulp=_PARTITION_ULP,
     )
 
 
