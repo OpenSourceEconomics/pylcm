@@ -91,9 +91,12 @@ and does not enter the digest. A model function wrapped by a beartype guard — 
 own or one a downstream package's claw installed — is fingerprinted through the guard:
 the guard is accepted as transparent only when beartype regenerates its code from the
 bound callee with the guard's own configuration, and the callee is what enters the
-identity. Separately, an in-memory result keeps its model-instance token; that
-same-instance check is not applied to a restored archive. `metadata.source` records that
-distinction as `IN_MEMORY` or `PERSISTED`.
+identity. A result that nothing references any more releases its value and artifact
+arrays: no per-call closure inside pylcm keeps them alive, which matters because the
+package's beartype claw decorates every function definition and beartype retains each
+decorated function object for the life of the process. Separately, an in-memory result
+keeps its model-instance token; that same-instance check is not applied to a restored
+archive. `metadata.source` records that distinction as `IN_MEMORY` or `PERSISTED`.
 
 Each `(period, regime)` value has a lightweight `ValueArraySchema` recording its exact
 shape, dtype, and canonical named axes. Artifact descriptors play the corresponding
