@@ -5,6 +5,28 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Solver API version 2
+
+- `SOLVER_API_VERSION` is 2. A core program declares what it publishes to another
+  program of the same kernel graph with `InternalOutputSpec`, and a consumer names what
+  it reads with `InternalInputRef`; both are published through `lcm.solvers`. The engine
+  lowers producers before consumers against the exact shapes and dtypes the references
+  select, so a consumer no longer runs against a stand-in filled in later. NEGM's
+  keeper-to-sweep dependency uses the typed edge.
+- `CoreExecutionDisposition.HOST_DRIVEN` declares a program whose host loop dispatches
+  it a data-dependent number of times. Like `DENSE` it owns its own width and must carry
+  a `disposition_reason`; the engine plans nothing for it.
+- A compiled solve executable is keyed by program identity — the durable model
+  fingerprint, the regime name, the core name, the engine's per-period signature
+  (`SolutionPhase.period_signatures`), and the solver's own period group key
+  (`SolutionKernels.period_group_keys`) — instead of the identity of a Python callable.
+  Equivalent programs built separately share one executable, and a solver whose
+  published group key is coarser than what it actually specialized is refused at build
+  time with an `ExecutionPlanningError` naming both colliding programs.
+- Solution archives written under solver API version 1 are rejected with
+  `IncompatibleSolutionError`. Compatibility remains exact; pylcm does not migrate an
+  archive across a solver API version.
+
 ### Memory-aware action-width policy and solve/simulate GPU-memory attribution
 
 - `ExecutionConfig(device_memory_bytes=...)`, passed to `model.solve(...)` or to an

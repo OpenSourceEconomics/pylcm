@@ -305,7 +305,7 @@ def test_model_solve_omits_policy_without_replay_route() -> None:
     )
     assert result.omissions[policy_ref] is OmissionReason.NOT_APPLICABLE
     assert result.omissions[continuation_ref] is OmissionReason.NOT_REQUESTED
-    assert result.metadata.solver_api_version == 1
+    assert result.metadata.solver_api_version == 2
     assert not result.diagnostics
 
 

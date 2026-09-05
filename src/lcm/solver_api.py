@@ -37,8 +37,10 @@ from lcm.version import __version__
 _SHA256_HEX_LENGTH = 64
 PYLCM_VERSION = __version__
 
-SOLVER_API_VERSION = 1
+SOLVER_API_VERSION = 2
 # Version of the public solver/plugin protocol implemented by this release.
+# Version 2 covers typed internal outputs between core programs, the host-driven
+# core-execution disposition, and compilation keys formed from program identity.
 
 SOLUTION_SCHEMA_VERSION = 2
 # Version of the labelled in-memory solution schema.

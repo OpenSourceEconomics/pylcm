@@ -213,6 +213,12 @@ The engine reads these declarations at three moments:
   the program's compilation identity, so two cells that differ only in an internal
   input's shape do not share an executable.
 
+A typed internal edge is the route between two programs the engine lowers together. A
+`HOST_DRIVEN` program is dispatched by the solver's own host loop, so a driver that
+feeds one program's result into the next dispatch holds that result on the host and
+passes it through its argument builder; the engine plans nothing for it and there is no
+internal reference to declare.
+
 At dispatch the compiled core refuses an internal input that is missing, or whose shape
 or dtype departs from the template it was lowered against, naming the program and the
 argument.
