@@ -150,7 +150,7 @@
           },
           {
             "path": "src/_lcm/solution/backward_induction.py",
-            "sha256": "2b558a5b233a653df778b0f4f46131e2e00156db18f4d54a2e856d421fd05736"
+            "sha256": "c3e0d4ff029892d02cfe3fab64a5b99d847b7a29fe6d1a8e907ecf9432bffee3"
           },
           {
             "path": "src/_lcm/solution/collective_action_reduction.py",
@@ -214,7 +214,7 @@
           }
         ],
         "source_count": 52,
-        "source_inventory_sha256": "4b31b288e8d22a27cd682d9bf93ad5c25d92aba84fcf50fefba06220da779439"
+        "source_inventory_sha256": "e7acdf98505b5080e0dbf3c5b83d1c23de6f122b003f0ecd7ff6896773b224df"
       },
       "fast": {
         "candidate_sources": [
@@ -364,7 +364,7 @@
           },
           {
             "path": "src/_lcm/solution/backward_induction.py",
-            "sha256": "2b558a5b233a653df778b0f4f46131e2e00156db18f4d54a2e856d421fd05736"
+            "sha256": "c3e0d4ff029892d02cfe3fab64a5b99d847b7a29fe6d1a8e907ecf9432bffee3"
           },
           {
             "path": "src/_lcm/solution/collective_action_reduction.py",
@@ -428,13 +428,13 @@
           }
         ],
         "source_count": 52,
-        "source_inventory_sha256": "4b31b288e8d22a27cd682d9bf93ad5c25d92aba84fcf50fefba06220da779439"
+        "source_inventory_sha256": "e7acdf98505b5080e0dbf3c5b83d1c23de6f122b003f0ecd7ff6896773b224df"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "4b31b288e8d22a27cd682d9bf93ad5c25d92aba84fcf50fefba06220da779439",
+  "source_inventory_sha256": "e7acdf98505b5080e0dbf3c5b83d1c23de6f122b003f0ecd7ff6896773b224df",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -582,7 +582,7 @@
     },
     {
       "path": "src/_lcm/solution/backward_induction.py",
-      "sha256": "2b558a5b233a653df778b0f4f46131e2e00156db18f4d54a2e856d421fd05736"
+      "sha256": "c3e0d4ff029892d02cfe3fab64a5b99d847b7a29fe6d1a8e907ecf9432bffee3"
     },
     {
       "path": "src/_lcm/solution/collective_action_reduction.py",

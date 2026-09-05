@@ -1957,17 +1957,19 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
             if lowering_keys[candidate] in compiled
         }
         representative = resolved_programs[candidates[0]]
-
-        def cached_peak_bytes(executable: jax.stages.Compiled) -> int:
-            return peak_bytes_by_compiled_id[id(executable)]
-
         plan = plan_workspace(
             axes=representative.requirements.streamable_axes,
-            compile_candidate=_compiled_candidate_lookup(
+            compile_candidate=_CompiledCandidateLookup(
                 compiled_by_width=compiled_by_width
             ),
             budget_bytes=budget_bytes,
-            peak_bytes_for=None if budget_bytes is None else cached_peak_bytes,
+            peak_bytes_for=(
+                None
+                if budget_bytes is None
+                else _PeakBytesLookup(
+                    peak_bytes_by_compiled_id=peak_bytes_by_compiled_id
+                )
+            ),
         )
         selected = programs_by_width[_width_key(widths=plan.widths)]
         selected_programs[triple] = selected
@@ -1984,14 +1986,20 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     )
 
 
-def _compiled_candidate_lookup(
-    *, compiled_by_width: Mapping[_WidthKey, jax.stages.Compiled]
-) -> Callable[[Mapping[str, int]], jax.stages.Compiled]:
+# The planner's lookups are instances of module-level classes rather than functions
+# defined per solve. The package's beartype claw decorates every `def` it imports,
+# including one executed inside a call, and keeps each decorated function in a
+# process-wide registry; a nested function would therefore pin its closure — here
+# every compiled executable of a core — for the life of the process.
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _CompiledCandidateLookup:
     """Serve the planner's width requests from one triple's compiled candidates."""
 
-    def compiled_candidate(widths: Mapping[str, int]) -> jax.stages.Compiled:
+    compiled_by_width: Mapping[_WidthKey, jax.stages.Compiled]
+
+    def __call__(self, widths: Mapping[str, int]) -> jax.stages.Compiled:
         try:
-            return compiled_by_width[_width_key(widths=widths)]
+            return self.compiled_by_width[_width_key(widths=widths)]
         except KeyError:
             msg = (
                 "The workspace planner asked for a width candidate that no "
@@ -1999,7 +2007,15 @@ def _compiled_candidate_lookup(
             )
             raise RuntimeError(msg) from None
 
-    return compiled_candidate
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _PeakBytesLookup:
+    """Serve the planner's peak queries from the waves' compiler reports."""
+
+    peak_bytes_by_compiled_id: Mapping[int, int]
+
+    def __call__(self, executable: jax.stages.Compiled) -> int:
+        return self.peak_bytes_by_compiled_id[id(executable)]
 
 
 def _lower_and_compile_wave(
@@ -2058,21 +2074,6 @@ def _lower_and_compile_wave(
         elapsed = time.monotonic() - start
         logger.info("  lowered in %s", format_duration(seconds=elapsed))
 
-    def _compile_and_log(
-        *,
-        lowering_key: Hashable,
-        low: jax.stages.Lowered,
-        label: str,
-    ) -> tuple[Hashable, jax.stages.Compiled]:
-        logger.info("  compiling %s ...", label)
-        start = time.monotonic()
-        result = low.compile()
-        elapsed = time.monotonic() - start
-        logger.info("  compiled  %s  %s", label, format_duration(seconds=elapsed))
-        if log_kernel_memory:
-            _log_kernel_memory(compiled=result, label=label, logger=logger)
-        return lowering_key, result
-
     with ThreadPoolExecutor(max_workers=n_workers) as pool:
         futures = [
             pool.submit(
@@ -2080,12 +2081,33 @@ def _lower_and_compile_wave(
                 lowering_key=lowering_key,
                 low=low,
                 label=labels[lowering_key],
+                log_kernel_memory=log_kernel_memory,
+                logger=logger,
             )
             for lowering_key, low in lowered.items()
         ]
         for future in as_completed(futures):
             lowering_key, comp = future.result()
             compiled[lowering_key] = comp
+
+
+def _compile_and_log(
+    *,
+    lowering_key: Hashable,
+    low: jax.stages.Lowered,
+    label: str,
+    log_kernel_memory: bool,
+    logger: logging.Logger,
+) -> tuple[Hashable, jax.stages.Compiled]:
+    """Compile one lowered program on a pool thread and log its timing."""
+    logger.info("  compiling %s ...", label)
+    start = time.monotonic()
+    result = low.compile()
+    elapsed = time.monotonic() - start
+    logger.info("  compiled  %s  %s", label, format_duration(seconds=elapsed))
+    if log_kernel_memory:
+        _log_kernel_memory(compiled=result, label=label, logger=logger)
+    return lowering_key, result
 
 
 def _execution_metadata(
