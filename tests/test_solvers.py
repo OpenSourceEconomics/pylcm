@@ -80,6 +80,19 @@ def test_regime_solver_defaults_to_grid_search():
     assert working_life.solver == GridSearch()
 
 
+def test_grid_search_action_block_width_is_an_optional_positive_integer() -> None:
+    assert GridSearch().action_block_width is None
+    assert GridSearch(action_block_width=3).action_block_width == 3
+
+
+@pytest.mark.parametrize("action_block_width", [True, 0, -1, 1.5])
+def test_grid_search_rejects_invalid_action_block_width(
+    *, action_block_width: object
+) -> None:
+    with pytest.raises(RegimeInitializationError):
+        GridSearch(action_block_width=action_block_width)  # ty: ignore[invalid-argument-type]
+
+
 @pytest.mark.slow
 def test_explicit_grid_search_matches_default_solution():
     """Setting `solver=GridSearch()` explicitly yields the same value function

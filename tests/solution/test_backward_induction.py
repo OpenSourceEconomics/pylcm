@@ -3,6 +3,7 @@ from types import MappingProxyType, SimpleNamespace
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
 from _lcm.engine import Regime, StateActionSpace
@@ -24,7 +25,9 @@ from _lcm.solution.grid_search import (
 )
 from _lcm.typing import MaxQOverAFunction, StateOrActionName
 from _lcm.utils.logging import get_logger
+from lcm import ExecutionConfig
 from lcm.ages import AgeGrid
+from lcm.exceptions import ExecutionPlanningError
 
 
 @dataclasses.dataclass(frozen=True)
@@ -128,6 +131,28 @@ class MockRegime(Regime):
             self,
             "simulation",
             SimpleNamespace(egm_policy_read=None, external_replay_route=None),
+        )
+
+
+@pytest.mark.parametrize(
+    ("enable_jit", "message"),
+    [
+        (False, "requires JIT compilation"),
+        (True, "not available"),
+    ],
+    ids=["eager", "temporary-jit-guard"],
+)
+def test_memory_budget_fails_closed_before_backward_induction(
+    *, enable_jit: bool, message: str
+) -> None:
+    with pytest.raises(ExecutionPlanningError, match=message):
+        solve(
+            flat_params=MappingProxyType({}),
+            ages=AgeGrid(start=0, stop=1, step="Y"),
+            regimes=MappingProxyType({}),
+            logger=get_logger(log_level="off"),
+            enable_jit=enable_jit,
+            execution_config=ExecutionConfig(device_memory_bytes=1),
         )
 
 

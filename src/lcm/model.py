@@ -126,11 +126,13 @@ from _lcm.utils.logging import (
 from lcm.ages import AgeGrid
 from lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
 from lcm.exceptions import (
+    ExecutionPlanningError,
     InvalidInitialConditionsError,
     InvalidSimulationInputError,
     InvalidValueFunctionError,
     UnsupportedOperationError,
 )
+from lcm.execution import ExecutionConfig
 from lcm.koopmans_aggregation import LinearAggregator
 from lcm.regime import Regime as UserRegime
 from lcm.result import SimulationResult
@@ -631,6 +633,7 @@ class Model:
         *,
         params: UserParams,
         log_level: LogLevel,
+        execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
         retention: ResultRetention = ResultRetention.VALUES_AND_REPLAY,
         max_compilation_workers: int | None = None,
         log_path: str | Path | None = None,
@@ -652,6 +655,8 @@ class Model:
         Args:
             params: Model parameters compatible with ``get_params_template()``.
             log_level: Verbosity and runtime-validation policy.
+            execution_config: Hardware-local solve controls. The default carries no
+                device-memory budget.
             retention: Post-solve artifacts to retain.
             max_compilation_workers: Maximum threads for parallel XLA compilation.
             log_path: Optional directory for diagnostic snapshots.
@@ -673,6 +678,7 @@ class Model:
             flat_params=flat_params,
             params=params,
             log=log,
+            execution_config=execution_config,
             retention=retention,
             max_compilation_workers=max_compilation_workers,
             log_path=log_path,
@@ -685,6 +691,7 @@ class Model:
         flat_params: FlatParams,
         params: UserParams,
         log: logging.Logger,
+        execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
         retention: ResultRetention,
         max_compilation_workers: int | None,
         log_path: str | Path | None,
@@ -717,6 +724,7 @@ class Model:
             flat_params=flat_params,
             params=params,
             log=log,
+            execution_config=execution_config,
             log_path=log_path,
             log_keep_n_latest=log_keep_n_latest,
             max_compilation_workers=max_compilation_workers,
@@ -767,6 +775,7 @@ class Model:
         flat_params: FlatParams,
         params: UserParams,
         log: logging.Logger,
+        execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
         log_path: str | Path | None,
         log_keep_n_latest: int,
         max_compilation_workers: int | None,
@@ -802,6 +811,7 @@ class Model:
                 regimes=self._regimes,
                 logger=log,
                 enable_jit=self.enable_jit,
+                execution_config=execution_config,
                 collect_solver_diagnostics=collect_solver_diagnostics,
                 max_compilation_workers=max_compilation_workers,
                 retain_dissolution_flags=retain_dissolution_flags,
@@ -1831,13 +1841,14 @@ class Model:
         raise UnsupportedOperationError(msg)
 
     @beartype(conf=PARAMS_CONF)
-    def simulate(  # noqa: C901, PLR0912
+    def simulate(  # noqa: C901, PLR0912, PLR0915
         self,
         *,
         params: UserParams,
         initial_conditions: UserInitialConditions | pd.DataFrame,
         solution: _SolutionResultBoundary | None = None,
         log_level: LogLevel,
+        execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
         seed: int | None = None,
         subject_batch_size: int = 0,
         log_path: str | Path | None = None,
@@ -1879,6 +1890,9 @@ class Model:
                 token; restored results instead match the durable model fingerprint.
                 When omitted, ``simulate`` obtains the same complete result from an
                 automatic solve.
+            execution_config: Hardware-local solve controls. With a supplied solution,
+                only the default configuration is valid because backward induction has
+                already completed.
             seed: Random seed.
             subject_batch_size: How to partition the subject axis of the forward
                 simulation. Results are invariant to this knob — per-subject RNG
@@ -1916,6 +1930,11 @@ class Model:
         """
         log = get_logger(log_level=log_level)
         self._fail_if_simulation_is_unsupported()
+        if solution is not None and execution_config.device_memory_bytes is not None:
+            msg = (
+                "A device-memory budget cannot be applied to an already-solved result."
+            )
+            raise ExecutionPlanningError(msg)
         # The canonical parameters bind both the supplied result preflight and an
         # automatic solve. Process them once and keep one model-authoritative seam.
         flat_params = self._process_params(params)
@@ -2012,6 +2031,7 @@ class Model:
                 flat_params=flat_params,
                 params=params,
                 log=log,
+                execution_config=execution_config,
                 retention=ResultRetention.VALUES_AND_REPLAY,
                 max_compilation_workers=max_compilation_workers,
                 log_path=log_path,

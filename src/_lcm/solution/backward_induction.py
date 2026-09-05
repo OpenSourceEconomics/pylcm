@@ -99,7 +99,12 @@ from _lcm.utils.logging import (
     validation_raises,
 )
 from lcm.ages import AgeGrid
-from lcm.exceptions import InvalidValueFunctionError, ModelInitializationError
+from lcm.exceptions import (
+    ExecutionPlanningError,
+    InvalidValueFunctionError,
+    ModelInitializationError,
+)
+from lcm.execution import ExecutionConfig
 from lcm.solver_api import (
     SIMULATION_POLICY,
     ArtifactKey,
@@ -122,6 +127,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     regimes: MappingProxyType[RegimeName, Regime],
     logger: logging.Logger,
     enable_jit: bool,
+    execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
     collect_solver_diagnostics: bool = False,
     max_compilation_workers: int | None = None,
     retain_dissolution_flags: bool = True,
@@ -142,6 +148,8 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             to completion and log a warning, so `solve` returns a complete
             (NaN-bearing) solution; `"off"` skips the NaN check.
         enable_jit: Whether to JIT-compile the functions of the internal regimes.
+        execution_config: Hardware-local solve controls, including the optional
+            per-device workspace budget.
         collect_solver_diagnostics: Whether to retain a kernel's numerical
             self-report. Public ``Model.solve()`` and automatic simulation request
             it; ``log_level`` still decides whether diagnostics are calculated and
@@ -179,6 +187,13 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         the default path only gains an empty dissolution mapping.
 
     """
+    if execution_config.device_memory_bytes is not None and not enable_jit:
+        msg = (
+            "ExecutionConfig.device_memory_bytes requires JIT compilation so the "
+            "compiler can report peak workspace."
+        )
+        raise ExecutionPlanningError(msg)
+
     capture_target = resolve_capture_target()
 
     # The state-action spaces and the fence that reads them depend only on
@@ -207,6 +222,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         next_regime_to_continuation=next_regime_to_continuation,
         next_edge_to_V_arr=next_edge_to_V_arr,
         enable_jit=enable_jit,
+        execution_config=execution_config,
         retain_replay=retain_replay,
         persistable_artifact_refs=persistable_artifact_refs,
         max_compilation_workers=max_compilation_workers,
@@ -1711,7 +1727,7 @@ def _selected_artifact_keys_for_cell(
     )
 
 
-def _compile_all_functions(
+def _compile_all_functions(  # noqa: C901, PLR0915
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
@@ -1720,6 +1736,7 @@ def _compile_all_functions(
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
     next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
     enable_jit: bool,
+    execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
     retain_replay: bool,
     persistable_artifact_refs: frozenset[ArtifactRef],
     max_compilation_workers: int | None,
@@ -1750,6 +1767,8 @@ def _compile_all_functions(
             for constructing a source kernel's gated-edge lowering arguments;
             empty for models without gated edges.
         enable_jit: Whether to JIT-compile the functions of the internal regimes.
+        execution_config: Hardware-local solve controls, including the optional
+            per-device workspace budget.
         retain_replay: Whether the solve retains replay artifacts; with the
             regime's declared replay route it selects which scoped programs of
             each kernel's graph are dispatched.
@@ -1765,6 +1784,13 @@ def _compile_all_functions(
         entries call compiled executables carrying the same plans.
 
     """
+    if execution_config.device_memory_bytes is not None:
+        msg = (
+            "Device-memory workspace planning is not available in this execution "
+            "corridor yet."
+        )
+        raise ExecutionPlanningError(msg)
+
     # Collect every kernel's native graph, narrowed to the retention's scope.
     all_programs: dict[_CoreTriple, CoreProgram] = {}
     for regime_name, regime in regimes.items():

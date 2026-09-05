@@ -26,9 +26,8 @@ from _lcm.execution.value_transfer import (
 from _lcm.typing import ActionName
 from lcm.solver_api import ArtifactKey
 
-_CORE_PROGRAM_VERSION = 5
+_CORE_PROGRAM_VERSION = 6
 _INT32_MAX = 2_147_483_647
-_INITIAL_TILE_WIDTH_CAP = 64
 
 if TYPE_CHECKING:
     type _RetainedArtifactKeys = tuple[ArtifactKey, ...]
@@ -91,6 +90,7 @@ class StreamableProductAxis:
     canonical_order: str
     reduction: ReductionSemantics
     width_keyword: str
+    requested_width: int | None = None
 
     def __post_init__(self) -> None:
         """Snapshot caller-owned sequences while leaving validation late."""
@@ -718,6 +718,12 @@ def resolve_core_program(
             axis=axis,
             width=requested_widths[axis.name],
         )
+        if axis.requested_width is not None and width != axis.requested_width:
+            msg = (
+                f"Tile width {width} for axis {axis.name!r} does not match its "
+                f"requested width {axis.requested_width}."
+            )
+            raise ValueError(msg)
         resolved_widths[axis.name] = width
         width_bindings[axis.width_keyword] = width
         compilation_axes.append(
@@ -768,7 +774,7 @@ def resolve_core_program(
 def initial_core_tile_widths(
     *, program: CoreProgram | MaterializedCoreProgram
 ) -> MappingProxyType[str, int]:
-    """Choose the shared bounded bootstrap width for every planned product axis."""
+    """Choose each full product width unless its declaration requests an override."""
     if program.disposition is not CoreExecutionDisposition.PLANNED:
         if program.requirements.streamable_axes:
             msg = (
@@ -786,8 +792,8 @@ def initial_core_tile_widths(
                 "the program must declare a dense disposition otherwise."
             )
             raise ValueError(msg)
-        upper_bound = min(_INITIAL_TILE_WIDTH_CAP, axis.extent - 1)
-        result[axis.name] = 1 << (upper_bound.bit_length() - 1)
+        requested_width = _validate_requested_width(axis=axis)
+        result[axis.name] = axis.extent if requested_width is None else requested_width
     return MappingProxyType(result)
 
 
@@ -1044,6 +1050,7 @@ def _validate_streamable_axis(
 ) -> None:
     """Fail closed for product declarations outside the supported contract."""
     _validate_coordinate_declaration(axis=axis)
+    _validate_requested_width(axis=axis)
     if axis.canonical_order != "c":
         msg = f"Streamable axis {axis.name!r} canonical order must be 'c'."
         raise ValueError(msg)
@@ -1119,6 +1126,26 @@ def _validate_axis_width_keyword(
             f"{axis.width_keyword!r} is already present in dynamic arguments."
         )
         raise ValueError(msg)
+
+
+def _validate_requested_width(*, axis: StreamableProductAxis) -> int | None:
+    """Validate a solver-requested width against its declared product."""
+    width = axis.requested_width
+    if width is None:
+        return None
+    if type(width) is not int:
+        msg = f"Streamable axis {axis.name!r} requested width must be an integer."
+        raise TypeError(msg)
+    if width <= 0:
+        msg = f"Streamable axis {axis.name!r} requested width must be positive."
+        raise ValueError(msg)
+    if width > axis.extent:
+        msg = (
+            f"Streamable axis {axis.name!r} requested width {width} exceeds its "
+            f"product extent {axis.extent}."
+        )
+        raise ValueError(msg)
+    return width
 
 
 def _validate_tile_width(*, axis: StreamableProductAxis, width: object) -> int:

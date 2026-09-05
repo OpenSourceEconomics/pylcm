@@ -97,6 +97,7 @@ def _axis(
     coordinate_extents: tuple[int, ...] = (2, 3),
     canonical_order: Literal["c"] = "c",
     reduction: ReductionSemantics = HARD_MAX_REDUCTION,
+    requested_width: int | None = None,
 ) -> StreamableProductAxis:
     return StreamableProductAxis(
         name="action",
@@ -105,6 +106,7 @@ def _axis(
         canonical_order=canonical_order,
         reduction=reduction,
         width_keyword=_WIDTH_KEYWORD,
+        requested_width=requested_width,
     )
 
 
@@ -446,7 +448,7 @@ def test_ordinary_singleton_grid_search_declares_action_core_program() -> None:
         n_consumption=4,
         alive_functions={"utility": utility, "resources": resources},
         liquid_law=next_liquid,
-        alive_solver=GridSearch(),
+        alive_solver=GridSearch(action_block_width=3),
         constraints={"feasible": feasible},
     )
     flat_params = model._process_params(
@@ -507,6 +509,7 @@ def test_ordinary_singleton_grid_search_declares_action_core_program() -> None:
             canonical_order="c",
             reduction=HARD_MAX_REDUCTION,
             width_keyword=_WIDTH_KEYWORD,
+            requested_width=3,
         ),
     )
     with pytest.raises(TypeError):
@@ -687,8 +690,48 @@ def test_initial_tile_widths_rejects_invalid_coordinate_extents_fail_closed(
         initial_core_tile_widths(program=program)
 
 
-def test_initial_tile_widths_preserves_bounded_power_of_two_policy() -> None:
-    assert initial_core_tile_widths(program=_program()) == {"action": 4}
+def test_initial_tile_widths_uses_the_full_product_without_an_override() -> None:
+    assert initial_core_tile_widths(program=_program()) == {"action": 6}
+
+
+def test_initial_tile_widths_uses_the_declared_override() -> None:
+    assert initial_core_tile_widths(
+        program=_program(axis=_axis(requested_width=3))
+    ) == {"action": 3}
+
+
+@pytest.mark.parametrize(
+    ("requested_width", "error", "message"),
+    [
+        (True, TypeError, "requested width.*integer"),
+        (1.5, TypeError, "requested width.*integer"),
+        (0, ValueError, "requested width.*positive"),
+        (-1, ValueError, "requested width.*positive"),
+        (7, ValueError, "requested width.*extent"),
+    ],
+    ids=["bool", "float", "zero", "negative", "beyond-extent"],
+)
+def test_resolver_rejects_invalid_declared_requested_widths(
+    *, requested_width: object, error: type[Exception], message: str
+) -> None:
+    axis = _axis()
+    object.__setattr__(axis, "requested_width", requested_width)
+
+    with pytest.raises(error, match=message):
+        resolve_core_program(
+            program=_program(axis=axis),
+            tile_widths={"action": 1},
+        )
+
+
+def test_requested_width_does_not_duplicate_the_resolved_specialization() -> None:
+    inferred = resolve_core_program(program=_program(), tile_widths={"action": 3})
+    requested = resolve_core_program(
+        program=_program(axis=_axis(requested_width=3)),
+        tile_widths={"action": 3},
+    )
+
+    assert requested.specialization_key == inferred.specialization_key
 
 
 def test_program_and_resolution_snapshot_their_input_mappings() -> None:
