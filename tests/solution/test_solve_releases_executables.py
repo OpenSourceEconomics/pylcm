@@ -8,6 +8,7 @@ memory budget.
 """
 
 import gc
+import weakref
 
 import jax
 
@@ -28,7 +29,19 @@ _N_PERIODS = 2
 def _live_compiled_executables() -> int:
     """Count the compiled executables the collector can still reach."""
     gc.collect()
-    return sum(isinstance(obj, jax.stages.Compiled) for obj in gc.get_objects())
+    return sum(_is_compiled_executable(obj) for obj in gc.get_objects())
+
+
+def _is_compiled_executable(obj: object) -> bool:
+    """Return whether `obj` is a compiled executable.
+
+    A dead weak proxy raises `ReferenceError` on any attribute access, including
+    the one `isinstance` performs; it is not an executable.
+    """
+    try:
+        return isinstance(obj, jax.stages.Compiled)
+    except ReferenceError:
+        return False
 
 
 def _model() -> Model:
@@ -58,3 +71,15 @@ def test_a_dropped_solution_releases_every_compiled_executable() -> None:
     del solution
 
     assert _live_compiled_executables() == before
+
+
+def test_counting_live_executables_tolerates_a_dead_weak_proxy() -> None:
+    class _Referent:
+        pass
+
+    referent = _Referent()
+    proxy = weakref.proxy(referent)
+    del referent
+
+    assert _live_compiled_executables() >= 0
+    assert proxy is not None
