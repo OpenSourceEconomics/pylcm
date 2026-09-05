@@ -119,6 +119,26 @@ def test_downstream_guard_whose_callee_mark_was_repointed_is_refused() -> None:
         fingerprints._semantic_fingerprint(guarded)
 
 
+@pytest.mark.parametrize("field", ["co_consts", "co_names"])
+def test_downstream_guard_whose_code_beartype_does_not_regenerate_is_refused(
+    field: str,
+) -> None:
+    """Every beartype mark in place is not enough: the body must be beartype's own.
+
+    A wrapper carrying the callee, configuration, and code-filename marks is seen
+    through only if decorating its callee with its configuration reproduces its code.
+    A body that differs in what it references may do more than check annotations.
+    """
+    guarded = _downstream_terminal_utility(1.0)
+    code = guarded.__code__  # ty: ignore[unresolved-attribute]
+    guarded.__code__ = code.replace(  # ty: ignore[unresolved-attribute]
+        **{field: (*getattr(code, field), "forged")}
+    )
+
+    with pytest.raises(TypeError, match="does not regenerate its code"):
+        fingerprints._semantic_fingerprint(guarded)
+
+
 def test_downstream_guarded_model_replays_its_archive_in_a_rebuilt_model(
     tmp_path: Path,
 ) -> None:
