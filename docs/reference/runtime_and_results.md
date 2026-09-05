@@ -61,6 +61,16 @@ requires `store.materialize(ref, template=...)` (as used by model replay) so its
 non-executable archive leaves can be rebuilt safely. `LoadState.UNLOADED` is storage
 state, not an omission reason.
 
+Both stores, and the `omissions` mapping of `SolutionResult`, admit a public mapping
+through exactly one item traversal. Every raw coordinate is checked before it is
+inserted anywhere: a `ValueStore` period must be an exact `int` and a regime name an
+exact `str` (so `True` is refused rather than merged into `1`), an artifact or omission
+address must be an exact `ArtifactRef`, and a logical address that the traversal emits
+twice is refused instead of contracted. A mapping's key view or length is never
+consulted, so a mapping whose keys disagree with its items cannot smuggle a payload past
+the checks. Nested `period -> regime -> value` and flat `(period, regime) -> value`
+forms are recognized from the same traversal.
+
 Built-in key identities include `SIMULATION_POLICY`, `DISSOLUTION_FLAG`,
 `EGM_CONTINUATION`, and `SOLVER_DIAGNOSTICS`. The `omissions` mapping distinguishes an
 artifact that is not applicable, not requested, unsupported, or not persisted.
@@ -73,9 +83,13 @@ period/regime topology, state and action names, grid support and category order,
 solver/replay/artifact versions, numerical conventions, and those solution-relevant
 parameter values. It excludes execution-only details such as devices, JIT selection,
 tiling, sharding, and compiler versions, as well as parameters and callable semantics
-used exclusively by simulation-phase transitions. Separately, an in-memory result keeps
-its model-instance token; that same-instance check is not applied to a restored archive.
-`metadata.source` records that distinction as `IN_MEMORY` or `PERSISTED`.
+used exclusively by simulation-phase transitions. An array a declaration references —
+through a closure cell, a default, or a solution-relevant parameter — is hashed with the
+rank and shape it actually has, so a scalar array and a length-one vector holding the
+same bytes are different identities; its memory order is storage rather than identity
+and does not enter the digest. Separately, an in-memory result keeps its model-instance
+token; that same-instance check is not applied to a restored archive. `metadata.source`
+records that distinction as `IN_MEMORY` or `PERSISTED`.
 
 Each `(period, regime)` value has a lightweight `ValueArraySchema` recording its exact
 shape, dtype, and canonical named axes. Artifact descriptors play the corresponding

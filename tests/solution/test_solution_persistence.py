@@ -1618,15 +1618,35 @@ def test_save_detaches_eager_artifact_before_lazy_value_mutates_it(
         _StatefulPersistenceTree.reset()
 
 
+def test_result_construction_rejects_noncanonical_omission_reason() -> None:
+    """A user string never enters the omissions as if it were an omission enum."""
+    source = _make_solution()
+
+    with pytest.raises(TypeError, match="exact OmissionReason"):
+        dataclasses.replace(
+            source,
+            replay_artifacts=ArtifactStore(
+                {_REPLAY_REFS[0]: source.replay_artifacts[_REPLAY_REFS[0]]}
+            ),
+            omissions={_REPLAY_REFS[1]: cast("object", "not_requested")},
+        )
+
+
 def test_save_preflight_rejects_noncanonical_omission_reason(tmp_path: Path) -> None:
-    """Never coerce a user string into an omission enum during serialization."""
+    """Never coerce a user string into an omission enum during serialization, even
+    when the constructor boundary was bypassed."""
     source = _make_solution()
     malformed = dataclasses.replace(
         source,
         replay_artifacts=ArtifactStore(
             {_REPLAY_REFS[0]: source.replay_artifacts[_REPLAY_REFS[0]]}
         ),
-        omissions={_REPLAY_REFS[1]: cast("object", "not_requested")},
+        omissions={_REPLAY_REFS[1]: OmissionReason.NOT_REQUESTED},
+    )
+    object.__setattr__(
+        malformed,
+        "omissions",
+        MappingProxyType({_REPLAY_REFS[1]: cast("object", "not_requested")}),
     )
     object.__setattr__(
         malformed,

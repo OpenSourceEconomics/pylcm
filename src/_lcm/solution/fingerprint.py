@@ -458,7 +458,7 @@ def fingerprint_model(
         regimes=regimes,
     )
     record = (
-        ("pylcm-model-fingerprint", 4),
+        ("pylcm-model-fingerprint", 5),
         tuple(ages.exact_values),
         {name: int(regime_id) for name, regime_id in regime_names_to_ids.items()},
         {
@@ -620,7 +620,12 @@ class _SemanticHasher:
             value=value, candidates=_NUMPY_SCALAR_TYPES
         )
         if isinstance(value, Array) or is_exact_numpy_value:
-            array = np.ascontiguousarray(np.asarray(value))
+            # The shape frame records the rank and shape the declaration actually
+            # holds: a 0-d array is a different mathematical object from a
+            # length-one vector even though their bytes agree. Memory order is
+            # storage, not identity, and ``tobytes(order="C")`` serializes any
+            # layout, so no contiguity normalization happens before framing.
+            array = np.asarray(value)
             if array.dtype.hasobject:
                 msg = "Object arrays cannot enter a durable model fingerprint."
                 raise TypeError(msg)

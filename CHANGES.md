@@ -32,6 +32,16 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - `ValueStore` and `ArtifactStore` expose per-entry `LoadState`. Metadata, omissions,
   coordinates, and whole-archive checksum verification do not materialize payloads;
   value-only inspection therefore does not load replay banks.
+- `ValueStore`, `ArtifactStore`, and the `omissions` of `SolutionResult` admit a public
+  mapping through one item traversal and check every raw address before inserting it:
+  a Boolean period alias (`True` for `1`) is refused rather than merged into the exact
+  integer coordinate, a repeated logical address is refused rather than contracted, and
+  a mapping's key view is never consulted, so flat and nested forms are recognized from
+  the items alone.
+- The durable model fingerprint and the canonical-parameter digest hash every referenced
+  array with its original rank and shape; a scalar array and a length-one vector with
+  the same bytes are distinct identities, while memory order does not enter the digest.
+  The model-fingerprint record version is 5.
 - External solvers can declare an `ExecutableReplayRoute` with durable plugin and route
   identities, period-specific artifact requirements, model-built artifact authorities,
   a mathematical preflight, and a JAX-transformable reader returning named
