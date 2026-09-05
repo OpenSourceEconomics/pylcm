@@ -8,8 +8,9 @@ artifact templates.
 """
 
 from collections.abc import Callable, Mapping
+from functools import partial
 from types import MappingProxyType
-from typing import TYPE_CHECKING, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 from lcm.solver_api import (
     ArtifactAuthority,
@@ -75,8 +76,8 @@ def capture_exact_mapping[Key, Value](
     mapping: object,
     *,
     label: str,
-    snapshot_key: Callable[[object], Key],
-    snapshot_value: Callable[[object], Value],
+    snapshot_key: Callable[[Any], Key],
+    snapshot_value: Callable[[Any], Value],
 ) -> dict[Key, Value]:
     """Own one exact mapping through one canonicalizing item traversal.
 
@@ -152,8 +153,8 @@ def snapshot_artifact_store(
     entries = capture_exact_mapping(
         store._entries,  # noqa: SLF001
         label="Artifact store entries",
-        snapshot_key=lambda ref: snapshot_artifact_ref(cast("ArtifactRef", ref)),
-        snapshot_value=lambda payload: payload,
+        snapshot_key=snapshot_artifact_ref,
+        snapshot_value=_keep_payload,
     )
     if authorities is not None:
         for ref, payload in entries.items():
@@ -181,7 +182,7 @@ def snapshot_value_store(store: _ValueStoreBoundary) -> _ValueStoreBoundary:
         store._entries,  # noqa: SLF001
         label="Solution value entries",
         snapshot_key=_snapshot_value_coordinate,
-        snapshot_value=lambda payload: payload,
+        snapshot_value=_keep_payload,
     )
     return ValueStore(cast("Mapping[object, object]", entries))
 
@@ -193,7 +194,7 @@ def snapshot_omissions(
     copied = capture_exact_mapping(
         omissions,
         label="Solution omissions",
-        snapshot_key=lambda ref: snapshot_artifact_ref(cast("ArtifactRef", ref)),
+        snapshot_key=snapshot_artifact_ref,
         snapshot_value=_snapshot_omission_reason,
     )
     return MappingProxyType(copied)
@@ -222,50 +223,38 @@ def snapshot_solution_metadata(metadata: SolutionMetadata) -> SolutionMetadata:
     solver_types = capture_exact_mapping(
         solver_types_source,
         label="solver_types",
-        snapshot_key=lambda regime: _snapshot_nonempty_exact_str(
-            regime,
-            label="solver_types regime",
-        ),
-        snapshot_value=lambda solver_type: _snapshot_nonempty_exact_str(
-            solver_type,
-            label="solver_types value",
+        snapshot_key=partial(_snapshot_nonempty_exact_str, label="solver_types regime"),
+        snapshot_value=partial(
+            _snapshot_nonempty_exact_str, label="solver_types value"
         ),
     )
     value_schemas = capture_exact_mapping(
         value_schemas_source,
         label="value_schemas",
         snapshot_key=_snapshot_value_coordinate,
-        snapshot_value=lambda schema: _snapshot_value_array_schema(
-            cast("ValueArraySchema", schema)
-        ),
+        snapshot_value=_snapshot_value_array_schema,
     )
     solver_identities = capture_exact_mapping(
         solver_identities_source,
         label="solver_identities",
-        snapshot_key=lambda regime: _snapshot_nonempty_exact_str(
-            regime,
-            label="solver_identities regime",
+        snapshot_key=partial(
+            _snapshot_nonempty_exact_str, label="solver_identities regime"
         ),
-        snapshot_value=lambda identity: _snapshot_solver_identity(
-            cast("SolverIdentity", identity)
-        ),
+        snapshot_value=_snapshot_solver_identity,
     )
     replay_routes = capture_exact_mapping(
         replay_routes_source,
         label="replay_routes",
-        snapshot_key=lambda regime: _snapshot_nonempty_exact_str(
-            regime,
-            label="replay_routes regime",
+        snapshot_key=partial(
+            _snapshot_nonempty_exact_str, label="replay_routes regime"
         ),
         snapshot_value=_snapshot_optional_replay_route_identity,
     )
     artifact_descriptors = capture_exact_mapping(
         artifact_descriptors_source,
         label="artifact_descriptors",
-        snapshot_key=lambda ref: snapshot_artifact_ref(cast("ArtifactRef", ref)),
-        snapshot_value=lambda descriptor: snapshot_artifact_descriptor(
-            cast("ArtifactDescriptor", descriptor)
-        ),
+        snapshot_key=snapshot_artifact_ref,
+        snapshot_value=snapshot_artifact_descriptor,
     )
     return SolutionMetadata(
         retention=retention,
@@ -316,13 +305,10 @@ def snapshot_artifact_descriptor(
     categorical_domains = capture_exact_mapping(
         descriptor.categorical_domains,
         label="categorical_domains",
-        snapshot_key=lambda name: _snapshot_nonempty_exact_str(
-            name,
-            label="categorical domain name",
+        snapshot_key=partial(
+            _snapshot_nonempty_exact_str, label="categorical domain name"
         ),
-        snapshot_value=lambda domain: _snapshot_category_domain(
-            cast("CategoryDomain", domain)
-        ),
+        snapshot_value=_snapshot_category_domain,
     )
     return ArtifactDescriptor(
         key=key,
@@ -347,10 +333,8 @@ def snapshot_artifact_authorities(
     copied = capture_exact_mapping(
         authorities,
         label="Artifact authority",
-        snapshot_key=lambda ref: snapshot_artifact_ref(cast("ArtifactRef", ref)),
-        snapshot_value=lambda authority: _snapshot_artifact_authority(
-            cast("ArtifactAuthority", authority)
-        ),
+        snapshot_key=snapshot_artifact_ref,
+        snapshot_value=_snapshot_artifact_authority,
     )
     return MappingProxyType(copied)
 
@@ -414,20 +398,15 @@ def _snapshot_artifact_authority(authority: ArtifactAuthority) -> ArtifactAuthor
         leaves_source,
         label="authority leaves",
         snapshot_key=_snapshot_tree_path,
-        snapshot_value=lambda leaf: _snapshot_leaf_authority(
-            cast("LeafAuthority", leaf)
-        ),
+        snapshot_value=_snapshot_leaf_authority,
     )
     categories = capture_exact_mapping(
         categories_source,
         label="authority categorical_domains",
-        snapshot_key=lambda name: _snapshot_nonempty_exact_str(
-            name,
-            label="authority categorical domain name",
+        snapshot_key=partial(
+            _snapshot_nonempty_exact_str, label="authority categorical domain name"
         ),
-        snapshot_value=lambda domain: _snapshot_category_domain(
-            cast("CategoryDomain", domain)
-        ),
+        snapshot_value=_snapshot_category_domain,
     )
     _validate_authority_copy(
         descriptor=descriptor,
@@ -539,6 +518,11 @@ def _snapshot_omission_reason(reason: object) -> OmissionReason:
             "Solution omission reasons must be exact OmissionReason values."
         )
     return reason
+
+
+def _keep_payload(payload: object) -> object:
+    """Return a store payload as is; only its address is reconstructed."""
+    return payload
 
 
 # keyword-only-exempt: primary-argument=value

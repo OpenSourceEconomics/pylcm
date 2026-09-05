@@ -13,7 +13,7 @@ import logging
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, replace
 from types import MappingProxyType
-from typing import cast
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
@@ -939,7 +939,7 @@ def _build_egm_core(
     koopmans_aggregator: EconFunction,
     consumption_action: ActionName,
 ) -> Callable:
-    """Build the jitted-able 1-D EGM core closing over the savings grid.
+    """Build the jit-able 1-D EGM core for the savings grid.
 
     The core reads the state grid under the private role keyword `liquid`, the
     continuation value and marginal, the two readings of the declared law of
@@ -973,8 +973,26 @@ def _build_egm_core(
     read_discount_factor = get_discount_factor_reader(
         functions=functions, koopmans_aggregator=koopmans_aggregator
     )
+    return _EGMCore(
+        egm_one_asset_step=egm_one_asset_step,
+        build_preferences=build_preferences,
+        read_discount_factor=read_discount_factor,
+    )
 
-    def core(
+
+@dataclass(frozen=True, eq=False)
+class _EGMCore:
+    """The jit-able 1-D EGM core bound to one regime's preferences and discounting."""
+
+    egm_one_asset_step: Callable[..., Any]
+    """The one-asset EGM step the core runs."""
+    build_preferences: Callable[[Mapping[str, Any]], Any]
+    """Build the felicity trio from the regime's scalar params."""
+    read_discount_factor: Callable[[Mapping[str, Any]], Any]
+    """Read the discount factor off the regime's scalar params."""
+
+    def __call__(
+        self,
         *,
         liquid: Float1D,
         next_liquid_grid: Float1D,
@@ -982,19 +1000,20 @@ def _build_egm_core(
         next_marginal: Float1D,
         next_liquid: Float1D,
         marginal_return: Float1D,
-        boundary_savings_targets: Float1D,  # noqa: ARG001
-        boundary_next_liquid: Float1D,  # noqa: ARG001
+        boundary_savings_targets: Float1D,  # noqa: ARG002
+        boundary_next_liquid: Float1D,  # noqa: ARG002
         effective_savings_grid: Float1D,
         **params: FloatND,
     ) -> tuple[Float1D, EGMCarry]:
-        step = egm_one_asset_step(
+        """Run one EGM step and return the value array and the marginal-value carry."""
+        step = self.egm_one_asset_step(
             next_value=next_value,
             next_marginal=next_marginal,
             liquid_grid=liquid,
             next_liquid_grid=next_liquid_grid,
             savings_grid=effective_savings_grid,
-            discount_factor=read_discount_factor(params),
-            preferences=build_preferences(params),
+            discount_factor=self.read_discount_factor(params),
+            preferences=self.build_preferences(params),
             next_liquid=next_liquid,
             marginal_return=marginal_return,
         )
@@ -1005,8 +1024,6 @@ def _build_egm_core(
             taste_shock_scale=jnp.asarray(0.0, dtype=step.value.dtype),
         )
         return step.value, carry
-
-    return core
 
 
 def _build_one_asset_carry_template(*, liquid_grid: Float1D) -> EGMCarry:

@@ -9,6 +9,7 @@ entry per carry-producing regime (DC-EGM regimes and terminal regimes a
 DC-EGM regime can target).
 """
 
+import functools
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -234,8 +235,20 @@ def shard_carry_template(
         ),
     )
     scalar_spec = jax.NamedSharding(plan.mesh, jax.P())
+    return jax.tree.map(
+        functools.partial(
+            _place_carry_leaf, scalar_spec=scalar_spec, leading_spec=leading_spec
+        ),
+        template,
+    )
 
-    def _place(leaf: FloatND) -> FloatND:
-        return jax.device_put(leaf, scalar_spec if leaf.ndim == 0 else leading_spec)
 
-    return jax.tree.map(_place, template)
+# keyword-only-exempt: library-callback=jax.tree.map
+def _place_carry_leaf(
+    leaf: FloatND,
+    *,
+    scalar_spec: jax.NamedSharding,
+    leading_spec: jax.NamedSharding,
+) -> FloatND:
+    """Place one carry leaf: a scalar replicates, a row takes the leading sharding."""
+    return jax.device_put(leaf, scalar_spec if leaf.ndim == 0 else leading_spec)

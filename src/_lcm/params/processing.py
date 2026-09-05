@@ -243,12 +243,6 @@ def cast_params_to_canonical_dtypes(flat_params: FlatParams) -> FlatParams:
     # identity and large array leaves are not copied per slot.
     memo: dict[int, Any] = {}
 
-    def _cast_shared(*, value: Any, name: str) -> Any:  # noqa: ANN401
-        key = id(value)
-        if key not in memo:
-            memo[key] = _cast_leaves_to_canonical_dtype(value=value, name=name)
-        return memo[key]
-
     return cast(
         "FlatParams",
         MappingProxyType(
@@ -256,7 +250,9 @@ def cast_params_to_canonical_dtypes(flat_params: FlatParams) -> FlatParams:
                 regime: MappingProxyType(
                     {
                         param_qname: _cast_shared(
-                            value=value, name=f"{regime}{QNAME_DELIMITER}{param_qname}"
+                            value=value,
+                            name=f"{regime}{QNAME_DELIMITER}{param_qname}",
+                            memo=memo,
                         )
                         for param_qname, value in leaves.items()
                     }
@@ -265,6 +261,14 @@ def cast_params_to_canonical_dtypes(flat_params: FlatParams) -> FlatParams:
             }
         ),
     )
+
+
+def _cast_shared(*, value: Any, name: str, memo: dict[int, Any]) -> Any:  # noqa: ANN401
+    """Cast `value` once per distinct input object, memoized by identity in `memo`."""
+    key = id(value)
+    if key not in memo:
+        memo[key] = _cast_leaves_to_canonical_dtype(value=value, name=name)
+    return memo[key]
 
 
 def _cast_leaves_to_canonical_dtype(*, value: Any, name: str) -> Any:  # noqa: ANN401, C901, PLR0911
@@ -562,14 +566,17 @@ def get_flat_param_names(regime_params_template: RegimeParamsTemplate) -> set[st
 
     """
     result: set[str] = set()
-
-    def collect(*, prefix: tuple[str, ...], node: object) -> None:
-        if isinstance(node, Mapping):
-            for name, child in node.items():
-                collect(prefix=(*prefix, name), node=child)
-        else:
-            result.add(qname_from_tree_path(prefix))
-
     for key, value in regime_params_template.items():
-        collect(prefix=(key,), node=value)
+        _collect_flat_param_names(prefix=(key,), node=value, result=result)
     return result
+
+
+def _collect_flat_param_names(
+    *, prefix: tuple[str, ...], node: object, result: set[str]
+) -> None:
+    """Add the qualified name of every leaf under `node` to `result`."""
+    if isinstance(node, Mapping):
+        for name, child in node.items():
+            _collect_flat_param_names(prefix=(*prefix, name), node=child, result=result)
+    else:
+        result.add(qname_from_tree_path(prefix))

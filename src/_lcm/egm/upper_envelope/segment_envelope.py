@@ -44,6 +44,9 @@ NaN-poisoned and reported as an overflow so the solve loop's diagnostics name th
 offending cell instead of publishing a guess.
 """
 
+import functools
+from collections.abc import Callable
+
 import jax
 import jax.numpy as jnp
 
@@ -250,29 +253,14 @@ def _active_links_at_cell(
     *, runs: _RunNodes, cell_left: FloatND, cell_live: BoolND, n_candidates: int
 ) -> tuple[BoolND, IntND, IntND]:
     """Return, for one node cell, the link each run contributes to it."""
-    # A bisection over a run's block, carried as scalars. Searching the block in
-    # place keeps the cell body free of any candidate-length array, so what a
-    # cell holds is one entry per run and nothing that grows with the row.
-    n_steps = max(int(n_candidates).bit_length(), 1)
-
-    def locate(*, start: ScalarInt, n_nodes: ScalarInt) -> tuple[BoolND, IntND, IntND]:
-        low = jnp.zeros_like(n_nodes)
-        high = n_nodes
-        for _ in range(n_steps):
-            searching = low < high
-            middle = (low + high) // 2
-            at_middle = runs.node_x[jnp.clip(start + middle, 0, n_candidates - 1)]
-            below = at_middle <= cell_left
-            low = jnp.where(searching & below, middle + 1, low)
-            high = jnp.where(searching & ~below, middle, high)
-        # The cell's left boundary is itself a node abscissa, so counting the
-        # nodes at or below it lands one past the node opening the covering link.
-        position = low - 1
-        live = cell_live & (position >= 0) & (position <= n_nodes - 2)
-        safe = start + jnp.clip(position, 0, jnp.maximum(n_nodes - 2, 0))
-        safe = jnp.clip(safe, 0, n_candidates - 2)
-        return live, runs.order[safe], runs.order[safe + 1]
-
+    locate = functools.partial(
+        _locate_link_in_run,
+        runs=runs,
+        cell_left=cell_left,
+        cell_live=cell_live,
+        n_candidates=n_candidates,
+        n_steps=max(int(n_candidates).bit_length(), 1),
+    )
     return jax.vmap(locate)(start=runs.start, n_nodes=runs.n_nodes)
 
 
@@ -309,72 +297,29 @@ def _sub_cells_per_node_cell(
     chunk = max(1, cell_batch_size or 1)
     n_cells = cell_left.shape[0]
     n_chunks = -(-n_cells // chunk)
-    padded = n_chunks * chunk
-    n_candidates = endog_grid.shape[0]
-
-    def pad(*, array: FloatND | BoolND, fill: float | bool) -> FloatND | BoolND:
-        return jnp.concatenate(
-            [array, jnp.full(padded - n_cells, fill, dtype=array.dtype)]
-        )
+    n_padding = n_chunks * chunk - n_cells
 
     # Padding cells are dead, so they contribute no sub-cell and cannot change
     # the row; they only make the cell count divide by the chunk.
     chunks = (
-        pad(array=cell_left, fill=0.0).reshape(n_chunks, chunk),
-        pad(array=cell_right, fill=0.0).reshape(n_chunks, chunk),
-        pad(array=cell_live, fill=False).reshape(n_chunks, chunk),
+        _pad_cells(array=cell_left, fill=0.0, n_padding=n_padding).reshape(
+            n_chunks, chunk
+        ),
+        _pad_cells(array=cell_right, fill=0.0, n_padding=n_padding).reshape(
+            n_chunks, chunk
+        ),
+        _pad_cells(array=cell_live, fill=False, n_padding=n_padding).reshape(
+            n_chunks, chunk
+        ),
     )
-
-    def split(
-        *, left: FloatND, right: FloatND, live_cell: BoolND
-    ) -> tuple[FloatND, FloatND, IntND, IntND, BoolND, ScalarBool]:
-        live, low, high = _active_links_at_cell(
-            runs=runs, cell_left=left, cell_live=live_cell, n_candidates=n_candidates
-        )
-        bounds, owner, unresolved = hull_owners(
-            left=left,
-            right=right,
-            live=live,
-            low=low,
-            high=high,
-            endog_grid=endog_grid,
-            value=value,
-            max_runs=max_runs,
-        )
-        sub_left = bounds[:-1]
-        sub_right = bounds[1:]
-        sub_live = (sub_right > sub_left) & jnp.any(live)
-        return sub_left, sub_right, low[owner], high[owner], sub_live, unresolved
-
-    type _RowCarry = tuple[ScalarInt, FloatND, FloatND, IntND, IntND, ScalarBool]
-
-    # keyword-only-exempt: library-callback=jax.lax.scan
-    def append_chunk(
-        carry: _RowCarry, cells: tuple[FloatND, FloatND, BoolND]
-    ) -> tuple[_RowCarry, None]:
-        cursor, row_left, row_right, row_low, row_high, poisoned = carry
-        sub_left, sub_right, owner_low, owner_high, sub_live, unresolved = jax.vmap(
-            split
-        )(left=cells[0], right=cells[1], live_cell=cells[2])
-        keep = sub_live.reshape(-1)
-        target = cursor + jnp.cumsum(keep.astype(jnp.int32)) - 1
-        slot = jnp.where(keep, target, n_slots)
-
-        def place(
-            *, row: FloatND | IntND, source: FloatND | IntND, empty: float
-        ) -> FloatND | IntND:
-            return row.at[slot].set(
-                jnp.where(keep, source.reshape(-1), empty), mode="drop"
-            )
-
-        return (
-            cursor + jnp.sum(keep, dtype=jnp.int32),
-            place(row=row_left, source=sub_left, empty=jnp.nan),
-            place(row=row_right, source=sub_right, empty=jnp.nan),
-            place(row=row_low, source=owner_low, empty=0),
-            place(row=row_high, source=owner_high, empty=0),
-            poisoned | jnp.any(unresolved),
-        ), None
+    split = functools.partial(
+        _split_cell,
+        runs=runs,
+        n_candidates=endog_grid.shape[0],
+        endog_grid=endog_grid,
+        value=value,
+        max_runs=max_runs,
+    )
 
     init = (
         jnp.zeros((), dtype=jnp.int32),
@@ -385,7 +330,7 @@ def _sub_cells_per_node_cell(
         jnp.zeros((), dtype=bool),
     )
     (n_live, row_left, row_right, row_low, row_high, poisoned), _ = jax.lax.scan(
-        append_chunk, init, chunks
+        functools.partial(_append_chunk, split=split, n_slots=n_slots), init, chunks
     )
 
     return _SubCells(
@@ -396,6 +341,126 @@ def _sub_cells_per_node_cell(
         n_live=n_live,
         poisoned=poisoned,
     )
+
+
+def _locate_link_in_run(
+    *,
+    start: ScalarInt,
+    n_nodes: ScalarInt,
+    runs: _RunNodes,
+    cell_left: FloatND,
+    cell_live: BoolND,
+    n_candidates: int,
+    n_steps: int,
+) -> tuple[BoolND, IntND, IntND]:
+    """Find the link one run contributes to the node cell opening at `cell_left`.
+
+    A bisection over the run's block, carried as scalars. Searching the block in
+    place keeps the cell body free of any candidate-length array, so what a cell
+    holds is one entry per run and nothing that grows with the row.
+    """
+    low = jnp.zeros_like(n_nodes)
+    high = n_nodes
+    for _ in range(n_steps):
+        searching = low < high
+        middle = (low + high) // 2
+        at_middle = runs.node_x[jnp.clip(start + middle, 0, n_candidates - 1)]
+        below = at_middle <= cell_left
+        low = jnp.where(searching & below, middle + 1, low)
+        high = jnp.where(searching & ~below, middle, high)
+    # The cell's left boundary is itself a node abscissa, so counting the
+    # nodes at or below it lands one past the node opening the covering link.
+    position = low - 1
+    live = cell_live & (position >= 0) & (position <= n_nodes - 2)
+    safe = start + jnp.clip(position, 0, jnp.maximum(n_nodes - 2, 0))
+    safe = jnp.clip(safe, 0, n_candidates - 2)
+    return live, runs.order[safe], runs.order[safe + 1]
+
+
+def _pad_cells(
+    *, array: FloatND | BoolND, fill: float | bool, n_padding: int
+) -> FloatND | BoolND:
+    """Append `n_padding` dead cells so the cell count divides by the chunk."""
+    return jnp.concatenate([array, jnp.full(n_padding, fill, dtype=array.dtype)])
+
+
+type _SplitCell = tuple[FloatND, FloatND, IntND, IntND, BoolND, ScalarBool]
+
+
+def _split_cell(
+    *,
+    left: FloatND,
+    right: FloatND,
+    live_cell: BoolND,
+    runs: _RunNodes,
+    n_candidates: int,
+    endog_grid: Float1D,
+    value: Float1D,
+    max_runs: int,
+) -> _SplitCell:
+    """Resolve one node cell into its owned sub-cells and their owning links."""
+    live, low, high = _active_links_at_cell(
+        runs=runs, cell_left=left, cell_live=live_cell, n_candidates=n_candidates
+    )
+    bounds, owner, unresolved = hull_owners(
+        left=left,
+        right=right,
+        live=live,
+        low=low,
+        high=high,
+        endog_grid=endog_grid,
+        value=value,
+        max_runs=max_runs,
+    )
+    sub_left = bounds[:-1]
+    sub_right = bounds[1:]
+    sub_live = (sub_right > sub_left) & jnp.any(live)
+    return sub_left, sub_right, low[owner], high[owner], sub_live, unresolved
+
+
+type _RowCarry = tuple[ScalarInt, FloatND, FloatND, IntND, IntND, ScalarBool]
+
+
+# keyword-only-exempt: library-callback=jax.lax.scan
+def _append_chunk(
+    carry: _RowCarry,
+    cells: tuple[FloatND, FloatND, BoolND],
+    *,
+    split: Callable[..., _SplitCell],
+    n_slots: int,
+) -> tuple[_RowCarry, None]:
+    """Resolve one chunk of node cells and append its owned sub-cells to the row."""
+    cursor, row_left, row_right, row_low, row_high, poisoned = carry
+    sub_left, sub_right, owner_low, owner_high, sub_live, unresolved = jax.vmap(split)(
+        left=cells[0], right=cells[1], live_cell=cells[2]
+    )
+    keep = sub_live.reshape(-1)
+    target = cursor + jnp.cumsum(keep.astype(jnp.int32)) - 1
+    slot = jnp.where(keep, target, n_slots)
+    return (
+        cursor + jnp.sum(keep, dtype=jnp.int32),
+        _place_in_row(
+            row=row_left, source=sub_left, empty=jnp.nan, slot=slot, keep=keep
+        ),
+        _place_in_row(
+            row=row_right, source=sub_right, empty=jnp.nan, slot=slot, keep=keep
+        ),
+        _place_in_row(row=row_low, source=owner_low, empty=0, slot=slot, keep=keep),
+        _place_in_row(row=row_high, source=owner_high, empty=0, slot=slot, keep=keep),
+        poisoned | jnp.any(unresolved),
+    ), None
+
+
+def _place_in_row(
+    *,
+    row: FloatND | IntND,
+    source: FloatND | IntND,
+    empty: float,
+    slot: IntND,
+    keep: BoolND,
+) -> FloatND | IntND:
+    """Scatter the kept sub-cell entries of `source` into their row slots."""
+    return row.at[slot].set(jnp.where(keep, source.reshape(-1), empty), mode="drop")
 
 
 def _emit_envelope(

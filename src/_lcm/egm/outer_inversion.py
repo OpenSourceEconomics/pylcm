@@ -110,15 +110,12 @@ def certify_declared_outer_inverse(
             that cannot be divided out exactly.
     """
     names = tuple(arg_names)
-
-    def outer_post_decision(*values: object) -> FloatND:
-        bound = dict(zip(names, values, strict=True))
-        return jnp.asarray(func(**bound)[outer_post_decision_name])
-
-    outer_post_decision.__name__ = outer_post_decision_name
-
     certificate = certify_outer_coefficient(
-        func=outer_post_decision,
+        func=_OuterPostDecisionTarget(
+            func=func,
+            arg_names=names,
+            outer_post_decision_name=outer_post_decision_name,
+        ),
         outer_action_name=outer_action_name,
         abstract_args=abstract_args,
         arg_names=names,
@@ -156,6 +153,32 @@ def certify_declared_outer_inverse(
         raise RegimeInitializationError(msg)
     low, high = outer_state_domain
     return DeclaredOuterInverse(coefficient=certificate.coefficient, low=low, high=high)
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _OuterPostDecisionTarget:
+    """One target of a post-decision DAG, callable positionally in argument order.
+
+    The coefficient certificate traces a positional map, while the resolved DAG
+    binds by name and returns every target at once; this binds the two forms.
+    Its `__name__` is the target's, so the certificate's diagnostics name it.
+    """
+
+    func: Callable[..., Mapping[str, FloatND]]
+    """The resolved post-decision DAG, returning a mapping of targets."""
+
+    arg_names: tuple[str, ...]
+    """Names of `func`'s arguments, in the positional order it is called with."""
+
+    outer_post_decision_name: str
+    """The target read off the DAG's output mapping."""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "__name__", self.outer_post_decision_name)
+
+    def __call__(self, *values: object) -> FloatND:
+        bound = dict(zip(self.arg_names, values, strict=True))
+        return jnp.asarray(self.func(**bound)[self.outer_post_decision_name])
 
 
 def invert_declared_outer_target(

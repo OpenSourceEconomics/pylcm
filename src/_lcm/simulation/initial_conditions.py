@@ -6,6 +6,7 @@ Consolidates initial condition construction (`build_initial_states`) and validat
 """
 
 import dataclasses
+import functools
 from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
 from typing import NoReturn, cast
@@ -37,7 +38,7 @@ from _lcm.typing import (
 )
 from _lcm.utils.containers import invert_regime_ids
 from _lcm.utils.error_messages import format_messages
-from _lcm.utils.functools import allow_args, get_union_of_args
+from _lcm.utils.functools import get_union_of_args
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidInitialConditionsError, PyLCMError
 from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, UserInitialConditions
@@ -751,31 +752,22 @@ def _batched_feasibility_check(
 
     """
     if action_kwargs:
-
-        def _is_combo_feasible(
-            *,
-            action_kw: Mapping[str, FloatND | IntND],
-            subject_kw: Mapping[str, FloatND | IntND],
-        ) -> BoolND:
-            return feasibility_func(**action_kw, **subject_kw, **filtered_params)
-
-        def _is_any_action_feasible(
-            per_subject_kwargs: Mapping[str, FloatND | IntND],
-        ) -> BoolND:
-            per_combo = jax.vmap(allow_args(_is_combo_feasible), in_axes=(0, None))(
-                action_kwargs,
-                per_subject_kwargs,
+        vmapped_check = jax.vmap(
+            functools.partial(
+                _is_any_action_feasible,
+                feasibility_func=feasibility_func,
+                action_kwargs=action_kwargs,
+                filtered_params=filtered_params,
             )
-            return jnp.any(per_combo)
-
+        )
     else:
-
-        def _is_any_action_feasible(
-            per_subject_kwargs: Mapping[str, FloatND | IntND],
-        ) -> BoolND:
-            return jnp.any(feasibility_func(**per_subject_kwargs, **filtered_params))
-
-    vmapped_check = jax.vmap(_is_any_action_feasible)
+        vmapped_check = jax.vmap(
+            functools.partial(
+                _is_feasible_without_actions,
+                feasibility_func=feasibility_func,
+                filtered_params=filtered_params,
+            )
+        )
 
     n_subjects = len(next(iter(subject_states.values())))
     n_action_combos = max(len(v) for v in flat_actions.values())
@@ -957,11 +949,13 @@ def _check_regime_feasibility(  # noqa: C901
     else:
         # No per-subject varying states: feasibility is identical for all subjects.
         if action_kwargs:
-
-            def _check_combo(action_kw: dict[str, FloatND | IntND]) -> BoolND:
-                return feasibility_func(**action_kw, **filtered_params)  # ty: ignore[invalid-argument-type]
-
-            result = jax.vmap(_check_combo)(action_kwargs)
+            result = jax.vmap(
+                functools.partial(
+                    _is_combo_feasible_for_all_subjects,
+                    feasibility_func=feasibility_func,
+                    params=filtered_params,
+                )
+            )(action_kwargs)
         else:
             result = feasibility_func(**filtered_params)  # ty: ignore[invalid-argument-type]
         infeasible_indices = [] if jnp.any(result) else subject_indices
@@ -996,13 +990,69 @@ def _admits_any_action(
 ) -> bool:
     """Return True iff the feasibility function admits ≥ 1 action under params."""
     if action_kwargs:
-
-        def _check_combo(action_kw: Mapping[str, FloatND | IntND]) -> BoolND:
-            return feasibility_func(**action_kw, **params)
-
-        per_combo = jax.vmap(_check_combo)(action_kwargs)
+        per_combo = jax.vmap(
+            functools.partial(
+                _is_combo_feasible_for_all_subjects,
+                feasibility_func=feasibility_func,
+                params=params,
+            )
+        )(action_kwargs)
         return bool(jnp.any(per_combo))
     return bool(feasibility_func(**params))
+
+
+# keyword-only-exempt: library-callback=jax.vmap
+def _is_combo_feasible(
+    action_kw: Mapping[str, FloatND | IntND],
+    subject_kw: Mapping[str, FloatND | IntND],
+    *,
+    feasibility_func: Callable[..., BoolND],
+    filtered_params: Mapping[str, object],
+) -> BoolND:
+    """Evaluate feasibility of one action combo at one subject's states."""
+    return feasibility_func(**action_kw, **subject_kw, **filtered_params)
+
+
+# keyword-only-exempt: library-callback=jax.vmap
+def _is_any_action_feasible(
+    per_subject_kwargs: Mapping[str, FloatND | IntND],
+    *,
+    feasibility_func: Callable[..., BoolND],
+    action_kwargs: Mapping[str, FloatND | IntND],
+    filtered_params: Mapping[str, object],
+) -> BoolND:
+    """Return whether any action combo is feasible at one subject's states."""
+    per_combo = jax.vmap(
+        functools.partial(
+            _is_combo_feasible,
+            feasibility_func=feasibility_func,
+            filtered_params=filtered_params,
+        ),
+        in_axes=(0, None),
+    )(action_kwargs, per_subject_kwargs)
+    return jnp.any(per_combo)
+
+
+# keyword-only-exempt: library-callback=jax.vmap
+def _is_feasible_without_actions(
+    per_subject_kwargs: Mapping[str, FloatND | IntND],
+    *,
+    feasibility_func: Callable[..., BoolND],
+    filtered_params: Mapping[str, object],
+) -> BoolND:
+    """Return whether an action-free regime is feasible at one subject's states."""
+    return jnp.any(feasibility_func(**per_subject_kwargs, **filtered_params))
+
+
+# keyword-only-exempt: library-callback=jax.vmap
+def _is_combo_feasible_for_all_subjects(
+    action_kw: Mapping[str, FloatND | IntND],
+    *,
+    feasibility_func: Callable[..., BoolND],
+    params: Mapping[str, object],
+) -> BoolND:
+    """Evaluate feasibility of one action combo when no state varies by subject."""
+    return feasibility_func(**action_kw, **params)
 
 
 def _per_constraint_feasibility(

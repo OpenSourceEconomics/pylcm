@@ -1,3 +1,4 @@
+import functools
 from collections.abc import Callable
 from dataclasses import dataclass, field, is_dataclass
 
@@ -43,7 +44,17 @@ def categorical[T](*, ordered: bool) -> Callable[[type[T]], type[T]]:
 
     """
 
-    def decorator(cls: type[T]) -> type[T]:
+    return _CategoricalDecorator(ordered=ordered)
+
+
+@dataclass(frozen=True, kw_only=True)
+class _CategoricalDecorator:
+    """Turn a `ScalarInt`-annotated class into a frozen categorical dataclass."""
+
+    ordered: bool
+    """Whether the categories have a meaningful ordering."""
+
+    def __call__[T](self, cls: type[T]) -> type[T]:
         annotations = getattr(cls, "__annotations__", {})
 
         bad_fields = {
@@ -71,19 +82,16 @@ def categorical[T](*, ordered: bool) -> Callable[[type[T]], type[T]]:
         for i, name in enumerate(annotations):
             setattr(cls, name, field(default=i, init=False))
 
-        cls._ordered = ordered  # ty: ignore[unresolved-attribute]
+        cls._ordered = self.ordered  # ty: ignore[unresolved-attribute]
 
         # The category names and their order are fixed by the declaration, so
-        # the published dtype closes over them instead of re-deriving them from
+        # the published dtype carries them instead of re-deriving them from
         # the decorated class at call time.
-        category_names = tuple(annotations)
-
-        @staticmethod
-        def _to_categorical_dtype() -> pd.CategoricalDtype:
-            """Return a `pd.CategoricalDtype` with the class's category names."""
-            return pd.CategoricalDtype(categories=list(category_names), ordered=ordered)
-
-        cls.to_categorical_dtype = _to_categorical_dtype  # ty: ignore[unresolved-attribute]
+        cls.to_categorical_dtype = functools.partial(  # ty: ignore[unresolved-attribute]
+            _categorical_dtype,
+            category_names=tuple(annotations),
+            ordered=self.ordered,
+        )
 
         new_cls = dataclass(frozen=True)(cls)
 
@@ -95,7 +103,12 @@ def categorical[T](*, ordered: bool) -> Callable[[type[T]], type[T]]:
 
         return new_cls
 
-    return decorator
+
+def _categorical_dtype(
+    *, category_names: tuple[str, ...], ordered: bool
+) -> pd.CategoricalDtype:
+    """Return a `pd.CategoricalDtype` with the given category names."""
+    return pd.CategoricalDtype(categories=list(category_names), ordered=ordered)
 
 
 def validate_category_class(category_class: type) -> list[str]:

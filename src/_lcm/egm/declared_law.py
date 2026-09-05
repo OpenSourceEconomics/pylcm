@@ -16,8 +16,10 @@ would let the DAG compute savings internally from the state and action leaves,
 which runs and is silently wrong.
 """
 
+import functools
 import inspect
 from collections.abc import Callable
+from dataclasses import dataclass
 from types import MappingProxyType
 
 import jax
@@ -27,6 +29,7 @@ from _lcm.regime_building.next_state import get_next_state_function_for_solution
 from _lcm.typing import (
     EconFunctionsMapping,
     FloatND,
+    NextStateSimulationFunction,
     RegimeName,
     StateName,
     StateOrActionName,
@@ -92,26 +95,70 @@ def build_declared_liquid_law(
         law_name=law_name,
     )
 
-    def law(
-        *, savings_grid: Float1D, **params: FloatND | float
+    return _DeclaredLiquidLaw(
+        next_state_func=next_state_func,
+        post_decision_name=post_decision_name,
+        law_name=law_name,
+        wanted=wanted,
+    )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _DeclaredLiquidLaw:
+    """A regime's composed law of motion as a function of post-decision savings.
+
+    Called with `savings_grid` and the regime's flat params, it returns the
+    landing points on that grid and their derivative with respect to savings.
+    """
+
+    next_state_func: NextStateSimulationFunction
+    """The composed next-state DAG with the post-decision function removed."""
+
+    post_decision_name: str
+    """Name of the (removed) post-decision function, now a DAG input."""
+
+    law_name: TransitionFunctionName
+    """Key of the target state's law in the DAG's output mapping."""
+
+    wanted: frozenset[str]
+    """The params the law reads, selected from the caller's whole pool."""
+
+    def __call__(
+        self, *, savings_grid: Float1D, **params: FloatND | float
     ) -> tuple[Float1D, Float1D]:
         # The DAG's own signature takes arrays, so a scalar param declared as a
         # plain Python float is lifted before it enters.
         array_params = {
-            name: jnp.asarray(value) for name, value in params.items() if name in wanted
+            name: jnp.asarray(value)
+            for name, value in params.items()
+            if name in self.wanted
         }
-
-        def landing(savings: ScalarFloat) -> FloatND:
-            # The builder is annotated with the simulation shape, which nests by
-            # target regime; built for the solution it returns one flat mapping
-            # keyed by law name, so the single index yields the array.
-            return next_state_func(**{post_decision_name: savings}, **array_params)[  # ty: ignore[invalid-return-type]
-                law_name
-            ]
-
+        landing = functools.partial(
+            _landing_point,
+            next_state_func=self.next_state_func,
+            post_decision_name=self.post_decision_name,
+            law_name=self.law_name,
+            array_params=array_params,
+        )
         return jax.vmap(jax.value_and_grad(landing))(savings_grid)
 
-    return law
+
+# keyword-only-exempt: library-callback=jax.value_and_grad
+def _landing_point(
+    savings: ScalarFloat,
+    *,
+    next_state_func: NextStateSimulationFunction,
+    post_decision_name: str,
+    law_name: TransitionFunctionName,
+    array_params: dict[str, FloatND],
+) -> FloatND:
+    """Where one savings level lands next period under the composed law."""
+    # The builder is annotated with the simulation shape, which nests by
+    # target regime; built for the solution it returns one flat mapping
+    # keyed by law name, so the single index yields the array.
+    return next_state_func(**{post_decision_name: savings}, **array_params)[  # ty: ignore[invalid-return-type]
+        law_name
+    ]
 
 
 def _fail_if_law_reaches_past_the_post_decision(

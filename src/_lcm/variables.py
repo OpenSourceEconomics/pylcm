@@ -15,6 +15,7 @@ break by `batch_size` with 0 last (treated as +∞).
 """
 
 import math
+from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING, cast
 
@@ -166,12 +167,7 @@ def _ordered_state_action_names(
 
     """
 
-    grid_states = _grid_states(user_regime)
-
-    def state_sort_key(name: StateOrActionName) -> tuple[bool, float]:
-        grid = grid_states[name]
-        batch_size = grid.batch_size
-        return (not grid.distributed, batch_size if batch_size != 0 else math.inf)
+    state_sort_key = _StateSortKey(grid_states=_grid_states(user_regime))
 
     discrete_states = sorted(
         (
@@ -195,3 +191,16 @@ def _ordered_state_action_names(
     if set(ordered) != set(info):
         raise ValueError("Order and index do not match.")
     return ordered
+
+
+@dataclass(frozen=True, eq=False)
+class _StateSortKey:
+    """Sort key placing distributed states first and `batch_size == 0` last."""
+
+    grid_states: dict[StateName, Grid]
+    """Mapping of state names to their grids, read for `distributed`/`batch_size`."""
+
+    def __call__(self, name: StateOrActionName) -> tuple[bool, float]:
+        grid = self.grid_states[name]
+        batch_size = grid.batch_size
+        return (not grid.distributed, batch_size if batch_size != 0 else math.inf)

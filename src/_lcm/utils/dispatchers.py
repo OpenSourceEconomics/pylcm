@@ -1,5 +1,6 @@
 import inspect
 from collections.abc import Callable
+from dataclasses import dataclass
 from functools import partial
 from types import MappingProxyType
 from typing import Any, Literal, TypeVar, cast
@@ -10,7 +11,7 @@ from jax import vmap
 
 from _lcm.typing import ActionName, StateName
 from _lcm.utils.containers import find_duplicates
-from _lcm.utils.functools import allow_args, allow_only_kwargs
+from _lcm.utils.functools import allow_args, allow_only_kwargs, publish_signature
 from lcm.exceptions import FunctionDispatchError
 from lcm.typing import BoolND, FloatND, IntND
 
@@ -112,8 +113,7 @@ def simulation_spacemap(
     )
     mapped = vmap_1d(func=mapped, variables=state_names, callable_with="only_args")
 
-    # Callables do not necessarily have a __signature__ attribute.
-    mapped.__signature__ = inspect.signature(mappable_func)  # ty: ignore[unresolved-attribute]
+    publish_signature(target=mapped, signature=inspect.signature(mappable_func))
 
     return cast("FunctionWithArrayReturn", allow_only_kwargs(func=mapped))
 
@@ -192,7 +192,7 @@ def vmap_1d(
         out = allow_only_kwargs(func=vmapped, enforce=False)
     else:
         out = vmapped
-    out.__signature__ = signature  # ty: ignore[unresolved-attribute]
+    publish_signature(target=out, signature=signature)
 
     return cast("FunctionWithArrayReturn", out)
 
@@ -249,7 +249,7 @@ def productmap(
         for p in signature.parameters.values()
     ]
     new_signature = signature.replace(parameters=new_parameters)
-    mapped.__signature__ = new_signature  # ty: ignore[unresolved-attribute]
+    publish_signature(target=mapped, signature=new_signature)
 
     return cast(
         "FunctionWithArrayReturn", allow_only_kwargs(func=mapped, enforce=False)
@@ -286,45 +286,95 @@ def _base_productmap_batched(
                 "is POSITIONAL_ONLY."
             )
 
-    def batched_vmap(**kwargs: Any) -> Any:  # noqa: ANN401
-        # `batched_vmap` is a generic helper: it accepts whatever values the
-        # composed `func` expects (canonical JAX arrays in the production
-        # pipeline, but also Python scalars, non-canonical-dtype arrays, or
-        # `MappingProxyType` containers in callers that wrap their own pytrees)
-        # and returns whatever `func` returns. Beartype shouldn't constrain
-        # the shape here — the wrapped `func` is responsible for its own
-        # contract.
+    return cast(
+        "FunctionWithArrayReturn",
+        _ProductMapBatched(
+            func=func,
+            product_axes=product_axes,
+            batch_sizes=MappingProxyType(dict(batch_sizes)),
+        ),
+    )
+
+
+@dataclass(frozen=True, eq=False)
+class _ProductMapBatched:
+    """Evaluate `func` on the Cartesian product of `product_axes`, in batches.
+
+    Accepts whatever values the composed `func` expects (canonical JAX arrays in
+    the production pipeline, but also Python scalars, non-canonical-dtype arrays,
+    or `MappingProxyType` containers in callers that wrap their own pytrees) and
+    returns whatever `func` returns; the wrapped `func` is responsible for its own
+    contract.
+    """
+
+    func: Callable[..., Any]
+    """The function evaluated at every point of the product."""
+    product_axes: tuple[str, ...]
+    """Names of the arguments whose values span the product, outermost first."""
+    batch_sizes: MappingProxyType[str, int]
+    """The `jax.lax.map` batch size per product axis, `0` for one vectorized pass."""
+
+    def __call__(self, **kwargs: Any) -> Any:  # noqa: ANN401
         non_array_kwargs = {
-            key: val for key, val in kwargs.items() if key not in product_axes
+            key: val for key, val in kwargs.items() if key not in self.product_axes
         }
-        func_with_partialled_args = cast(
-            "FunctionWithArrayReturn", partial(func, **non_array_kwargs)
+        loop_func = cast(
+            "FunctionWithArrayReturn", partial(self.func, **non_array_kwargs)
+        )
+        # Map over one more product axis per step, innermost axis first, so the
+        # outermost axis drives the outermost `jax.lax.map`.
+        for axis in reversed(self.product_axes):
+            loop_func = cast(
+                "FunctionWithArrayReturn",
+                _MappedOverOneMoreAxis(
+                    loop_func=loop_func,
+                    axis=axis,
+                    axis_values=kwargs[axis],
+                    batch_size=self.batch_sizes[axis],
+                ),
+            )
+        return cast("FloatND", loop_func())
+
+
+@dataclass(frozen=True, eq=False)
+class _MappedOverOneMoreAxis:
+    """`loop_func` mapped with `jax.lax.map` over the values of one product axis."""
+
+    loop_func: Callable[..., Any]
+    """The function evaluated once per value of `axis`."""
+    axis: str
+    """The argument of `loop_func` that takes one value of the axis per evaluation."""
+    axis_values: Any
+    """The values of the axis, mapped over their leading dimension."""
+    batch_size: int
+    """The `jax.lax.map` batch size, `0` for one vectorized pass."""
+
+    def __call__(
+        self,
+        *already_mapped_args: Any,  # noqa: ANN401
+        **already_mapped_kwargs: Any,  # noqa: ANN401
+    ) -> Any:  # noqa: ANN401
+        return jax.lax.map(
+            partial(
+                _evaluate_at_axis_value,
+                loop_func=self.loop_func,
+                axis=self.axis,
+                mapped_args=already_mapped_args,
+                mapped_kwargs=already_mapped_kwargs,
+            ),
+            jnp.atleast_1d(self.axis_values),
+            batch_size=self.batch_size,
         )
 
-        # Recursively map over one more product axis
-        def map_one_more(
-            *, loop_func: FunctionWithArrayReturn, axis: str
-        ) -> FunctionWithArrayReturn:
-            def func_mapped_over_one_more_axis(
-                *already_mapped_args: Any,  # noqa: ANN401
-                **already_mapped_kwargs: Any,  # noqa: ANN401
-            ) -> Any:  # noqa: ANN401
-                return jax.lax.map(
-                    lambda axis_i: loop_func(
-                        *already_mapped_args, **{axis: axis_i}, **already_mapped_kwargs
-                    ),
-                    jnp.atleast_1d(kwargs[axis]),
-                    batch_size=batch_sizes[axis],
-                )
 
-            return cast("FunctionWithArrayReturn", func_mapped_over_one_more_axis)
-
-        # Loop over all product axes
-        for axis in reversed(product_axes):
-            func_with_partialled_args = map_one_more(
-                loop_func=func_with_partialled_args, axis=axis
-            )
-
-        return cast("FloatND", func_with_partialled_args())
-
-    return cast("FunctionWithArrayReturn", batched_vmap)
+# keyword-only-exempt: library-callback=jax.lax.map
+def _evaluate_at_axis_value(
+    axis_value: Any,  # noqa: ANN401
+    *,
+    loop_func: Callable[..., Any],
+    axis: str,
+    mapped_args: tuple[Any, ...],
+    mapped_kwargs: dict[str, Any],
+) -> Any:  # noqa: ANN401
+    """Evaluate `loop_func` at one value of `axis`, forwarding the other arguments."""
+    return loop_func(*mapped_args, **{axis: axis_value}, **mapped_kwargs)

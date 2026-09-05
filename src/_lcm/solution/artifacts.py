@@ -286,43 +286,56 @@ def fingerprint_flat_params(flat_params: FlatParams) -> str:
     exact canonical parameters used by a solve; it is not a model fingerprint.
     """
     digest = hashlib.sha256()
-
-    def update_token(token: str | bytes) -> None:
-        payload = token.encode() if isinstance(token, str) else token
-        digest.update(len(payload).to_bytes(8, byteorder="big"))
-        digest.update(payload)
-
-    def update_value(*, value: Any, path: tuple[str, ...]) -> None:  # noqa: ANN401
-        update_token("path")
-        update_token(str(len(path)))
-        for component in path:
-            update_token(component)
-        if isinstance(value, MappingLeaf):
-            update_token("mapping")
-            for key in sorted(value.data):
-                update_value(value=value.data[key], path=(*path, key))
-            return
-        if isinstance(value, SequenceLeaf):
-            update_token("sequence")
-            for index, child in enumerate(value.data):
-                update_value(value=child, path=(*path, str(index)))
-            return
-
-        # ``asarray`` keeps the declared rank; a 0-d parameter and a length-one
-        # vector are distinct leaves even when their bytes agree.
-        array = np.asarray(value)
-        update_token("array")
-        update_token(",".join(str(size) for size in array.shape))
-        update_token(array.dtype.str)
-        update_token(array.tobytes(order="C"))
-
     for regime_name in sorted(flat_params):
         for param_name in sorted(flat_params[regime_name]):
-            update_value(
+            _update_digest_value(
+                digest=digest,
                 value=flat_params[regime_name][param_name],
                 path=(regime_name, param_name),
             )
     return digest.hexdigest()
+
+
+def _update_digest_token(*, digest: Any, chunk: str | bytes) -> None:  # noqa: ANN401
+    """Feed one length-prefixed token into the digest."""
+    payload = chunk.encode() if isinstance(chunk, str) else chunk
+    digest.update(len(payload).to_bytes(8, byteorder="big"))
+    digest.update(payload)
+
+
+def _update_digest_value(
+    *,
+    digest: Any,  # noqa: ANN401
+    value: Any,  # noqa: ANN401
+    path: tuple[str, ...],
+) -> None:
+    """Feed one parameter leaf, with its tree path and container boundaries."""
+    _update_digest_token(digest=digest, chunk="path")
+    _update_digest_token(digest=digest, chunk=str(len(path)))
+    for component in path:
+        _update_digest_token(digest=digest, chunk=component)
+    if isinstance(value, MappingLeaf):
+        _update_digest_token(digest=digest, chunk="mapping")
+        for key in sorted(value.data):
+            _update_digest_value(
+                digest=digest, value=value.data[key], path=(*path, key)
+            )
+        return
+    if isinstance(value, SequenceLeaf):
+        _update_digest_token(digest=digest, chunk="sequence")
+        for index, child in enumerate(value.data):
+            _update_digest_value(digest=digest, value=child, path=(*path, str(index)))
+        return
+
+    # ``asarray`` keeps the declared rank; a 0-d parameter and a length-one
+    # vector are distinct leaves even when their bytes agree.
+    array = np.asarray(value)
+    _update_digest_token(digest=digest, chunk="array")
+    _update_digest_token(
+        digest=digest, chunk=",".join(str(size) for size in array.shape)
+    )
+    _update_digest_token(digest=digest, chunk=array.dtype.str)
+    _update_digest_token(digest=digest, chunk=array.tobytes(order="C"))
 
 
 def _canonical_value_axis_names(*, regime: Regime) -> tuple[str, ...]:

@@ -1,12 +1,14 @@
 import dataclasses
 import functools
+import inspect
 import operator
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
+from typing import no_type_check
 
 import jax
 import jax.numpy as jnp
-from dags import concatenate_functions, with_signature
+from dags import concatenate_functions
 from dags.tree import qname_from_tree_path
 
 from _lcm.grids import ContinuousGrid, DiscreteGrid, IrregSpacedGrid
@@ -17,7 +19,7 @@ from _lcm.typing import StateName
 from _lcm.utils.functools import all_as_kwargs
 from _lcm.variables import from_regime, get_grids
 from lcm.regime import Regime as UserRegime
-from lcm.typing import BoolND, FloatND, IntND, ScalarFloat
+from lcm.typing import BoolND, Float1D, FloatND, IntND, ScalarFloat
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -363,27 +365,7 @@ def _get_named_category_guard(
         returning the read, or NaN where an axis named no category.
 
     """
-    arg_names = [read_name, *(axis.coord_name for axis in categorical_axes)]
-
-    @with_signature(
-        args=dict.fromkeys(arg_names, "FloatND"), return_annotation="FloatND"
-    )
-    def guard_named_categories(*args: FloatND, **kwargs: FloatND) -> FloatND:
-        kwargs = all_as_kwargs(args=args, kwargs=kwargs, arg_names=arg_names)
-        on_axes = []
-        for axis in categorical_axes:
-            coordinate = kwargs[axis.coord_name]
-            on_axis = (coordinate >= 0) & (coordinate <= axis.n_categories - 1)
-            _fail_if_code_is_off_the_axis(
-                axis=axis, coordinate=coordinate, on_axis=on_axis
-            )
-            on_axes.append(on_axis)
-        # The caller builds this guard only for a read with at least one
-        # categorical axis, so there is always a mask to reduce.
-        names_a_category = functools.reduce(operator.and_, on_axes)
-        return jnp.where(names_a_category, kwargs[read_name], jnp.nan)
-
-    return guard_named_categories
+    return _NamedCategoryGuard(read_name=read_name, categorical_axes=categorical_axes)
 
 
 def _fail_if_code_is_off_the_axis(
@@ -447,17 +429,7 @@ def _get_process_coordinate_finder(
         value into a clamped coordinate on its node axis.
 
     """
-    n_points = grid.n_points
-
-    @with_signature(
-        args=dict.fromkeys([in_name], "FloatND"), return_annotation="FloatND"
-    )
-    def find_process_coordinate(*args: FloatND, **kwargs: FloatND) -> FloatND:
-        kwargs = all_as_kwargs(args=args, kwargs=kwargs, arg_names=[in_name])
-        coordinate = grid.get_coordinate(kwargs[in_name])
-        return jnp.clip(coordinate, 0.0, n_points - 1)
-
-    return find_process_coordinate
+    return _ProcessCoordinateFinder(in_name=in_name, grid=grid)
 
 
 def _get_identity_coordinate(*, in_name: str) -> Callable[..., FloatND]:
@@ -490,32 +462,7 @@ def _get_identity_coordinate(*, in_name: str) -> Callable[..., FloatND]:
 
     """
 
-    @with_signature(
-        args=dict.fromkeys([in_name], "FloatND"), return_annotation="FloatND"
-    )
-    def identity_coordinate(*args: FloatND, **kwargs: FloatND) -> FloatND:
-        kwargs = all_as_kwargs(args=args, kwargs=kwargs, arg_names=[in_name])
-        value = kwargs[in_name]
-        if jnp.issubdtype(jnp.asarray(value).dtype, jnp.integer):
-            # An integer code is a category by construction, and returning it
-            # untouched keeps the coordinate's dtype the caller's own.
-            return value
-        names_a_category = value == jnp.round(value)
-        try:
-            all_name_a_category = bool(jnp.all(names_a_category))
-        except jax.errors.ConcretizationTypeError:
-            return jnp.where(names_a_category, value, jnp.nan)
-        if not all_name_a_category:
-            msg = (
-                f"Categorical state '{in_name}' was read at a coordinate that "
-                "lies strictly between two of its categories, which names no "
-                f"category: {value}. A categorical value must be one of the "
-                "integer codes of its `DiscreteGrid`."
-            )
-            raise ValueError(msg)
-        return value
-
-    return identity_coordinate
+    return _IdentityCoordinate(in_name=in_name)
 
 
 def _get_lookup_function(
@@ -539,22 +486,11 @@ def _get_lookup_function(
         retained ones, that looks up values from an array called `array_name`.
 
     """
-    indexed_axis_names = [var for var in axis_names if var not in retained_axis_names]
-    arg_names = [*indexed_axis_names, array_name]
-
-    @with_signature(
-        args=dict.fromkeys(arg_names, "FloatND | IntND"),
-        return_annotation="FloatND",
+    return _LookupWrapper(
+        array_name=array_name,
+        axis_names=tuple(axis_names),
+        retained_axis_names=retained_axis_names,
     )
-    def lookup_wrapper(*args: FloatND | IntND, **kwargs: FloatND | IntND) -> FloatND:
-        kwargs = all_as_kwargs(args=args, kwargs=kwargs, arg_names=arg_names)
-        positions = tuple(
-            slice(None) if var in retained_axis_names else kwargs[var]
-            for var in axis_names
-        )
-        return kwargs[array_name][positions]
-
-    return lookup_wrapper
 
 
 def _get_entered_process_coordinate_finder(
@@ -580,28 +516,7 @@ def _get_entered_process_coordinate_finder(
         coordinate, or NaN for a value the process cannot represent.
 
     """
-    gridpoints = process.to_jax()
-    lower = gridpoints[0]
-    upper = gridpoints[-1]
-
-    @with_signature(args={in_name: "FloatND"}, return_annotation="FloatND")
-    def find_entered_process_coordinate(*args: FloatND, **kwargs: FloatND) -> FloatND:
-        kwargs = all_as_kwargs(args=args, kwargs=kwargs, arg_names=[in_name])
-        value = kwargs[in_name]
-        coordinate = get_irreg_coordinate(value=value, points=gridpoints)
-        # The interpolation extrapolates outside the node range rather than
-        # refusing, and the target has no representation out there, so an entry
-        # naming such a value is poisoned here and the solve-time check names the
-        # regime and period.
-        #
-        # The test is on the physical value, not its coordinate. A coordinate only
-        # stands in for the value where the map is invertible, which it is not on
-        # a support of one node: there every value shares the sole index, so a
-        # coordinate test would accept the whole real line.
-        on_support = (value >= lower) & (value <= upper)
-        return jnp.where(on_support, coordinate, jnp.nan)
-
-    return find_entered_process_coordinate
+    return _EnteredProcessCoordinateFinder(in_name=in_name, gridpoints=process.to_jax())
 
 
 def _get_coordinate_finder(
@@ -629,41 +544,14 @@ def _get_coordinate_finder(
         if grid.pass_points_at_runtime:
             state_name = in_name.removeprefix("next_")
             points_param = qname_from_tree_path((state_name, "points"))
-            arg_names = [in_name, points_param]
-
-            @with_signature(
-                args=dict.fromkeys(arg_names, "FloatND"), return_annotation="FloatND"
+            return _RuntimePointsIrregCoordinateFinder(
+                in_name=in_name, points_param=points_param
             )
-            def find_irreg_coordinate(*args: FloatND, **kwargs: FloatND) -> FloatND:
-                kwargs = all_as_kwargs(args=args, kwargs=kwargs, arg_names=arg_names)
-                return get_irreg_coordinate(
-                    value=kwargs[in_name], points=kwargs[points_param]
-                )
-
-            return find_irreg_coordinate
-
-        # Fixed points — capture in closure
-        points_jax = grid.to_jax()
-
-        @with_signature(
-            args=dict.fromkeys([in_name], "FloatND"), return_annotation="FloatND"
-        )
-        def find_irreg_coordinate(*args: FloatND, **kwargs: FloatND) -> FloatND:
-            kwargs = all_as_kwargs(args=args, kwargs=kwargs, arg_names=[in_name])
-            return get_irreg_coordinate(value=kwargs[in_name], points=points_jax)
-
-        return find_irreg_coordinate
+        return _FixedPointsIrregCoordinateFinder(in_name=in_name, points=grid.to_jax())
 
     # All other grid types (LinSpaced, LogSpaced, Piecewise*,
     # _ContinuousStochasticProcess)
-    @with_signature(
-        args=dict.fromkeys([in_name], "FloatND"), return_annotation="FloatND"
-    )
-    def find_coordinate(*args: FloatND, **kwargs: FloatND) -> FloatND:
-        kwargs = all_as_kwargs(args=args, kwargs=kwargs, arg_names=[in_name])
-        return grid.get_coordinate(kwargs[in_name])
-
-    return find_coordinate
+    return _GridCoordinateFinder(in_name=in_name, grid=grid)
 
 
 def _get_interpolator(
@@ -687,24 +575,325 @@ def _get_interpolator(
         A callable that interpolates a function via named axes.
 
     """
-    arg_names = [name_of_values_on_grid, *axis_names]
-    pinned_axes = tuple(
-        axis for axis, var in enumerate(axis_names) if var in pinned_axis_names
+    return _Interpolator(
+        name_of_values_on_grid=name_of_values_on_grid,
+        axis_names=tuple(axis_names),
+        pinned_axes=tuple(
+            axis for axis, var in enumerate(axis_names) if var in pinned_axis_names
+        ),
     )
 
-    @with_signature(
-        args=dict.fromkeys(arg_names, "FloatND"), return_annotation="FloatND"
-    )
-    def interpolate(*args: FloatND, **kwargs: FloatND) -> FloatND:
-        kwargs = all_as_kwargs(args=args, kwargs=kwargs, arg_names=arg_names)
-        coordinates = jnp.array([kwargs[var] for var in axis_names])
-        return map_coordinates(
-            input=kwargs[name_of_values_on_grid],
-            coordinates=coordinates,
-            pinned_axes=pinned_axes,
+
+@dataclasses.dataclass(frozen=True, kw_only=True, eq=False)
+class _NamedCategoryGuard:
+    """Discard a read whose categorical axes named no category."""
+
+    read_name: str
+    """Name of the DAG node holding the value read off `V_arr`."""
+    categorical_axes: tuple[_CategoricalAxis, ...]
+    """The genuine `DiscreteGrid` axes the read selected."""
+
+    def __post_init__(self) -> None:
+        _publish_signature(
+            target=self,
+            args=dict.fromkeys(self.arg_names, "FloatND"),
+            return_annotation="FloatND",
+            name="guard_named_categories",
         )
 
-    return interpolate
+    @property
+    def arg_names(self) -> list[str]:
+        """List of the read's name followed by each categorical coordinate name."""
+        return [self.read_name, *(axis.coord_name for axis in self.categorical_axes)]
+
+    # The kernel is traced with whatever leaves its caller supplies -- tracers,
+    # Python scalars, arrays of either integer width -- so its annotations
+    # document the contract and are not enforced at call time.
+    @no_type_check
+    def __call__(self, *args: FloatND, **kwargs: FloatND) -> FloatND:
+        kwargs = all_as_kwargs(args=args, kwargs=kwargs, arg_names=self.arg_names)
+        on_axes = []
+        for axis in self.categorical_axes:
+            coordinate = kwargs[axis.coord_name]
+            on_axis = (coordinate >= 0) & (coordinate <= axis.n_categories - 1)
+            _fail_if_code_is_off_the_axis(
+                axis=axis, coordinate=coordinate, on_axis=on_axis
+            )
+            on_axes.append(on_axis)
+        # The caller builds this guard only for a read with at least one
+        # categorical axis, so there is always a mask to reduce.
+        names_a_category = functools.reduce(operator.and_, on_axes)
+        return jnp.where(names_a_category, kwargs[self.read_name], jnp.nan)
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True, eq=False)
+class _ProcessCoordinateFinder:
+    """Map a process VALUE to a coordinate clamped onto its node axis."""
+
+    in_name: str
+    """Name under which the value arrives."""
+    grid: _ContinuousStochasticProcess
+    """The process whose node axis the value is translated onto."""
+
+    def __post_init__(self) -> None:
+        _publish_signature(
+            target=self,
+            args={self.in_name: "FloatND"},
+            return_annotation="FloatND",
+            name="find_process_coordinate",
+        )
+
+    @no_type_check
+    def __call__(self, *args: FloatND, **kwargs: FloatND) -> FloatND:
+        kwargs = all_as_kwargs(args=args, kwargs=kwargs, arg_names=[self.in_name])
+        coordinate = self.grid.get_coordinate(kwargs[self.in_name])
+        return jnp.clip(coordinate, 0.0, self.grid.n_points - 1)
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True, eq=False)
+class _IdentityCoordinate:
+    """Place a genuine discrete axis value on its own axis, refusing a non-code."""
+
+    in_name: str
+    """Name under which the value arrives."""
+
+    def __post_init__(self) -> None:
+        _publish_signature(
+            target=self,
+            args={self.in_name: "FloatND"},
+            return_annotation="FloatND",
+            name="identity_coordinate",
+        )
+
+    @no_type_check
+    def __call__(self, *args: FloatND, **kwargs: FloatND) -> FloatND:
+        kwargs = all_as_kwargs(args=args, kwargs=kwargs, arg_names=[self.in_name])
+        value = kwargs[self.in_name]
+        if jnp.issubdtype(jnp.asarray(value).dtype, jnp.integer):
+            # An integer code is a category by construction, and returning it
+            # untouched keeps the coordinate's dtype the caller's own.
+            return value
+        names_a_category = value == jnp.round(value)
+        try:
+            all_name_a_category = bool(jnp.all(names_a_category))
+        except jax.errors.ConcretizationTypeError:
+            return jnp.where(names_a_category, value, jnp.nan)
+        if not all_name_a_category:
+            msg = (
+                f"Categorical state '{self.in_name}' was read at a coordinate that "
+                "lies strictly between two of its categories, which names no "
+                f"category: {value}. A categorical value must be one of the "
+                "integer codes of its `DiscreteGrid`."
+            )
+            raise ValueError(msg)
+        return value
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True, eq=False)
+class _LookupWrapper:
+    """Index into an array via named axes, keeping the retained ones whole."""
+
+    array_name: str
+    """Name of the array argument."""
+    axis_names: tuple[str, ...]
+    """Names of the array's axes, in order."""
+    retained_axis_names: frozenset[str]
+    """Axes that take a full slice instead of an index."""
+
+    def __post_init__(self) -> None:
+        _publish_signature(
+            target=self,
+            args=dict.fromkeys(self.arg_names, "FloatND | IntND"),
+            return_annotation="FloatND",
+            name="lookup_wrapper",
+        )
+
+    @property
+    def arg_names(self) -> list[str]:
+        """List of the indexed axis names followed by the array name."""
+        indexed = [
+            var for var in self.axis_names if var not in self.retained_axis_names
+        ]
+        return [*indexed, self.array_name]
+
+    @no_type_check
+    def __call__(self, *args: FloatND | IntND, **kwargs: FloatND | IntND) -> FloatND:
+        kwargs = all_as_kwargs(args=args, kwargs=kwargs, arg_names=self.arg_names)
+        positions = tuple(
+            slice(None) if var in self.retained_axis_names else kwargs[var]
+            for var in self.axis_names
+        )
+        return kwargs[self.array_name][positions]
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True, eq=False)
+class _EnteredProcessCoordinateFinder:
+    """Place a declared entry value on a process's node axis, NaN off its support."""
+
+    in_name: str
+    """Name under which the declared physical value arrives."""
+    gridpoints: Float1D
+    """The process's nodes."""
+
+    def __post_init__(self) -> None:
+        _publish_signature(
+            target=self,
+            args={self.in_name: "FloatND"},
+            return_annotation="FloatND",
+            name="find_entered_process_coordinate",
+        )
+
+    @no_type_check
+    def __call__(self, *args: FloatND, **kwargs: FloatND) -> FloatND:
+        kwargs = all_as_kwargs(args=args, kwargs=kwargs, arg_names=[self.in_name])
+        value = kwargs[self.in_name]
+        coordinate = get_irreg_coordinate(value=value, points=self.gridpoints)
+        # The interpolation extrapolates outside the node range rather than
+        # refusing, and the target has no representation out there, so an entry
+        # naming such a value is poisoned here and the solve-time check names the
+        # regime and period.
+        #
+        # The test is on the physical value, not its coordinate. A coordinate only
+        # stands in for the value where the map is invertible, which it is not on
+        # a support of one node: there every value shares the sole index, so a
+        # coordinate test would accept the whole real line.
+        on_support = (value >= self.gridpoints[0]) & (value <= self.gridpoints[-1])
+        return jnp.where(on_support, coordinate, jnp.nan)
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True, eq=False)
+class _RuntimePointsIrregCoordinateFinder:
+    """Translate a value into a coordinate on an irregular grid supplied at runtime."""
+
+    in_name: str
+    """Name under which the value arrives."""
+    points_param: str
+    """Qualified name of the runtime parameter carrying the grid points."""
+
+    def __post_init__(self) -> None:
+        _publish_signature(
+            target=self,
+            args=dict.fromkeys([self.in_name, self.points_param], "FloatND"),
+            return_annotation="FloatND",
+            name="find_irreg_coordinate",
+        )
+
+    @no_type_check
+    def __call__(self, *args: FloatND, **kwargs: FloatND) -> FloatND:
+        kwargs = all_as_kwargs(
+            args=args, kwargs=kwargs, arg_names=[self.in_name, self.points_param]
+        )
+        return get_irreg_coordinate(
+            value=kwargs[self.in_name], points=kwargs[self.points_param]
+        )
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True, eq=False)
+class _FixedPointsIrregCoordinateFinder:
+    """Translate a value into a coordinate on an irregular grid with fixed points."""
+
+    in_name: str
+    """Name under which the value arrives."""
+    points: Float1D
+    """The grid's points."""
+
+    def __post_init__(self) -> None:
+        _publish_signature(
+            target=self,
+            args={self.in_name: "FloatND"},
+            return_annotation="FloatND",
+            name="find_irreg_coordinate",
+        )
+
+    @no_type_check
+    def __call__(self, *args: FloatND, **kwargs: FloatND) -> FloatND:
+        kwargs = all_as_kwargs(args=args, kwargs=kwargs, arg_names=[self.in_name])
+        return get_irreg_coordinate(value=kwargs[self.in_name], points=self.points)
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True, eq=False)
+class _GridCoordinateFinder:
+    """Translate a value into a coordinate via the grid's own `get_coordinate`."""
+
+    in_name: str
+    """Name under which the value arrives."""
+    grid: ContinuousGrid
+    """The grid the value is placed on."""
+
+    def __post_init__(self) -> None:
+        _publish_signature(
+            target=self,
+            args={self.in_name: "FloatND"},
+            return_annotation="FloatND",
+            name="find_coordinate",
+        )
+
+    @no_type_check
+    def __call__(self, *args: FloatND, **kwargs: FloatND) -> FloatND:
+        kwargs = all_as_kwargs(args=args, kwargs=kwargs, arg_names=[self.in_name])
+        return self.grid.get_coordinate(kwargs[self.in_name])
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True, eq=False)
+class _Interpolator:
+    """Interpolate values on a grid via named coordinate axes."""
+
+    name_of_values_on_grid: str
+    """Name of the argument carrying the values evaluated on the grid."""
+    axis_names: tuple[str, ...]
+    """Names of the axes in the data array."""
+    pinned_axes: tuple[int, ...]
+    """Axes read at exactly one node rather than between two."""
+
+    def __post_init__(self) -> None:
+        _publish_signature(
+            target=self,
+            args=dict.fromkeys(self.arg_names, "FloatND"),
+            return_annotation="FloatND",
+            name="interpolate",
+        )
+
+    @property
+    def arg_names(self) -> list[str]:
+        """List of the values name followed by the axis names."""
+        return [self.name_of_values_on_grid, *self.axis_names]
+
+    @no_type_check
+    def __call__(self, *args: FloatND, **kwargs: FloatND) -> FloatND:
+        kwargs = all_as_kwargs(args=args, kwargs=kwargs, arg_names=self.arg_names)
+        coordinates = jnp.array([kwargs[var] for var in self.axis_names])
+        return map_coordinates(
+            input=kwargs[self.name_of_values_on_grid],
+            coordinates=coordinates,
+            pinned_axes=self.pinned_axes,
+        )
+
+
+def _publish_signature(
+    *,
+    target: object,
+    args: Mapping[str, str],
+    return_annotation: str,
+    name: str,
+) -> None:
+    """Publish a DAG-facing signature, annotations, and name on a callable instance.
+
+    The instance is a frozen dataclass, so the attributes go through
+    `object.__setattr__`. `args` maps each argument name to its annotation
+    string; the DAG reads both the signature and `__annotations__`.
+    """
+    signature = inspect.Signature(
+        [
+            inspect.Parameter(
+                arg, inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=annotation
+            )
+            for arg, annotation in args.items()
+        ],
+        return_annotation=return_annotation,
+    )
+    object.__setattr__(target, "__signature__", signature)
+    object.__setattr__(target, "__annotations__", {**args, "return": return_annotation})
+    object.__setattr__(target, "__name__", name)
 
 
 def _fail_if_interpolation_axes_are_not_last(

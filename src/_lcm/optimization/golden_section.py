@@ -22,6 +22,7 @@ primitive: a fixed-iteration, array-valued golden-section maximizer that
 Maximization only: the solver's objectives are values. Minimize by negating.
 """
 
+import functools
 from collections.abc import Callable
 from dataclasses import dataclass
 from math import sqrt
@@ -120,50 +121,33 @@ def maximize_golden_section(
     safe_lower = jnp.where(is_valid, lower_arr, 0.0)
     safe_upper = jnp.where(is_valid, upper_arr, 0.0)
 
-    def probe(x: FloatND) -> FloatND:
-        raw = objective(x)
-        return jnp.where(jnp.isnan(raw), -jnp.inf, raw)
-
     width = safe_upper - safe_lower
     x1 = safe_lower + _INV_PHI_SQ * width
     x2 = safe_lower + _INV_PHI * width
-    carry0 = (safe_lower, safe_upper, x1, probe(x1), x2, probe(x2))
+    carry0 = (
+        safe_lower,
+        safe_upper,
+        x1,
+        _probe(objective=objective, x=x1),
+        x2,
+        _probe(objective=objective, x=x2),
+    )
 
-    # keyword-only-exempt: library-callback=jax.lax.fori_loop
-    def body(
-        _i: LoopIndex,
-        carry: tuple[FloatND, FloatND, FloatND, FloatND, FloatND, FloatND],
-    ) -> tuple[FloatND, FloatND, FloatND, FloatND, FloatND, FloatND]:
-        a, b, xa, fa, xb, fb = carry
-        # Keep the sub-bracket containing the better interior point; exact
-        # interior ties keep the LEFT sub-bracket (smaller abscissae).
-        take_left = fa >= fb
-        a_next = jnp.where(take_left, a, xa)
-        b_next = jnp.where(take_left, xb, b)
-        # The surviving interior point and its (reused) evaluation ...
-        x_kept = jnp.where(take_left, xa, xb)
-        f_kept = jnp.where(take_left, fa, fb)
-        # ... and its golden mirror in the new bracket — one new probe per
-        # iteration, exactly the classic bookkeeping, elementwise.
-        x_new = a_next + b_next - x_kept
-        f_new = probe(x_new)
-        left_is_kept = x_kept <= x_new
-        xa_next = jnp.where(left_is_kept, x_kept, x_new)
-        fa_next = jnp.where(left_is_kept, f_kept, f_new)
-        xb_next = jnp.where(left_is_kept, x_new, x_kept)
-        fb_next = jnp.where(left_is_kept, f_new, f_kept)
-        return (a_next, b_next, xa_next, fa_next, xb_next, fb_next)
-
-    a, b, xa, fa, xb, fb = jax.lax.fori_loop(0, iterations, body, carry0)
+    a, b, xa, fa, xb, fb = jax.lax.fori_loop(
+        0,
+        iterations,
+        functools.partial(_shrink_bracket, objective=objective),
+        carry0,
+    )
 
     # Explicit endpoint safeguard, then select in increasing-abscissa order
     # with a strict `>` so exact ties resolve to the smaller abscissa.
     best_x = safe_lower
-    best_f = probe(safe_lower)
+    best_f = _probe(objective=objective, x=safe_lower)
     for cand_x, cand_f in (
         (xa, fa),
         (xb, fb),
-        (safe_upper, probe(safe_upper)),
+        (safe_upper, _probe(objective=objective, x=safe_upper)),
     ):
         take = cand_f > best_f
         best_x = jnp.where(take, cand_x, best_x)
@@ -183,3 +167,41 @@ def maximize_golden_section(
         converged=converged,
         valid=is_valid,
     )
+
+
+def _probe(*, objective: Callable[[FloatND], FloatND], x: FloatND) -> FloatND:
+    """Evaluate the objective at `x`, reading a NaN result as `-inf`."""
+    raw = objective(x)
+    return jnp.where(jnp.isnan(raw), -jnp.inf, raw)
+
+
+type _Bracket = tuple[FloatND, FloatND, FloatND, FloatND, FloatND, FloatND]
+
+
+# keyword-only-exempt: library-callback=jax.lax.fori_loop
+def _shrink_bracket(
+    _i: LoopIndex,
+    carry: _Bracket,
+    *,
+    objective: Callable[[FloatND], FloatND],
+) -> _Bracket:
+    """Run one golden-section iteration on every cell's bracket."""
+    a, b, xa, fa, xb, fb = carry
+    # Keep the sub-bracket containing the better interior point; exact
+    # interior ties keep the LEFT sub-bracket (smaller abscissae).
+    take_left = fa >= fb
+    a_next = jnp.where(take_left, a, xa)
+    b_next = jnp.where(take_left, xb, b)
+    # The surviving interior point and its (reused) evaluation ...
+    x_kept = jnp.where(take_left, xa, xb)
+    f_kept = jnp.where(take_left, fa, fb)
+    # ... and its golden mirror in the new bracket — one new probe per
+    # iteration, exactly the classic bookkeeping, elementwise.
+    x_new = a_next + b_next - x_kept
+    f_new = _probe(objective=objective, x=x_new)
+    left_is_kept = x_kept <= x_new
+    xa_next = jnp.where(left_is_kept, x_kept, x_new)
+    fa_next = jnp.where(left_is_kept, f_kept, f_new)
+    xb_next = jnp.where(left_is_kept, x_new, x_kept)
+    fb_next = jnp.where(left_is_kept, f_new, f_kept)
+    return (a_next, b_next, xa_next, fa_next, xb_next, fb_next)

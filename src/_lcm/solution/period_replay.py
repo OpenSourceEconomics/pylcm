@@ -9,6 +9,7 @@ by the backward-induction loop, and the replay side imports that loop.
 """
 
 import dataclasses
+import functools
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
@@ -186,26 +187,30 @@ def _compiler_memory_bytes(*, compiled: Any) -> CompilerMemoryBytes | None:  # n
         return None
     if stats is None:
         return None
-
-    def optional_bytes(name: str) -> int | None:
-        value = getattr(stats, name, None)
-        return None if value is None else int(value)
-
+    optional_bytes = functools.partial(_optional_bytes, stats=stats)
     return CompilerMemoryBytes(
-        generated_code_size_in_bytes=optional_bytes("generated_code_size_in_bytes"),
-        argument_size_in_bytes=optional_bytes("argument_size_in_bytes"),
-        output_size_in_bytes=optional_bytes("output_size_in_bytes"),
-        alias_size_in_bytes=optional_bytes("alias_size_in_bytes"),
-        temp_size_in_bytes=optional_bytes("temp_size_in_bytes"),
-        peak_memory_in_bytes=optional_bytes("peak_memory_in_bytes"),
-        host_generated_code_size_in_bytes=optional_bytes(
-            "host_generated_code_size_in_bytes"
+        generated_code_size_in_bytes=optional_bytes(
+            name="generated_code_size_in_bytes"
         ),
-        host_argument_size_in_bytes=optional_bytes("host_argument_size_in_bytes"),
-        host_output_size_in_bytes=optional_bytes("host_output_size_in_bytes"),
-        host_alias_size_in_bytes=optional_bytes("host_alias_size_in_bytes"),
-        host_temp_size_in_bytes=optional_bytes("host_temp_size_in_bytes"),
+        argument_size_in_bytes=optional_bytes(name="argument_size_in_bytes"),
+        output_size_in_bytes=optional_bytes(name="output_size_in_bytes"),
+        alias_size_in_bytes=optional_bytes(name="alias_size_in_bytes"),
+        temp_size_in_bytes=optional_bytes(name="temp_size_in_bytes"),
+        peak_memory_in_bytes=optional_bytes(name="peak_memory_in_bytes"),
+        host_generated_code_size_in_bytes=optional_bytes(
+            name="host_generated_code_size_in_bytes"
+        ),
+        host_argument_size_in_bytes=optional_bytes(name="host_argument_size_in_bytes"),
+        host_output_size_in_bytes=optional_bytes(name="host_output_size_in_bytes"),
+        host_alias_size_in_bytes=optional_bytes(name="host_alias_size_in_bytes"),
+        host_temp_size_in_bytes=optional_bytes(name="host_temp_size_in_bytes"),
     )
+
+
+def _optional_bytes(*, stats: Any, name: str) -> int | None:  # noqa: ANN401
+    """Read one optional byte count off a backend memory-analysis object."""
+    value = getattr(stats, name, None)
+    return None if value is None else int(value)
 
 
 def _compile_cores_for_one_period(

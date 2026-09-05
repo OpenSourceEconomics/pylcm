@@ -53,6 +53,7 @@ offending piece. The rules, in the order they are checked:
 
 """
 
+import functools
 import inspect
 from collections.abc import Mapping
 from typing import cast
@@ -63,6 +64,7 @@ from dags import concatenate_functions, get_ancestors
 
 from _lcm.constraints.bounds import lower_bound_declaration
 from _lcm.constraints.processed import ConstraintLike, normalize_constraints
+from _lcm.egm.preferences import BoundUtilityOfAction
 from _lcm.grids import ContinuousGrid, DiscreteGrid, Grid, IrregSpacedGrid
 from _lcm.post_decision_bound import _PostDecisionLowerBound
 from _lcm.processes import _ContinuousStochasticProcess
@@ -1093,12 +1095,6 @@ def _fail_if_numeric_spot_checks_fail(
         require_strict = savings_stage_reads_euler_state(
             user_regime=user_regime, solver=solver
         )
-
-        def _violates(
-            *, r_lo: float, r_hi: float, strict: bool = require_strict
-        ) -> bool:
-            return r_hi <= r_lo + atol if strict else r_hi < r_lo - atol
-
         bad = [
             (float(w_lo), float(w_hi))
             for w_lo, w_hi, r_lo, r_hi in zip(
@@ -1108,7 +1104,9 @@ def _fail_if_numeric_spot_checks_fail(
                 resources_at[1:],
                 strict=True,
             )
-            if _violates(r_lo=float(r_lo), r_hi=float(r_hi))
+            if _violates_monotonicity(
+                r_lo=float(r_lo), r_hi=float(r_hi), strict=require_strict, atol=atol
+            )
         ]
         if bad:
             requirement = "strictly increasing" if require_strict else "non-decreasing"
@@ -1228,13 +1226,11 @@ def _fail_if_inverse_marginal_utility_inconsistent(
     for utility_kwargs, inverse_kwargs in zip(
         utility_contexts, inverse_contexts, strict=True
     ):
-        # keyword-only-exempt: library-callback=jax.grad
-        def utility_of_action(
-            action_value: ScalarFloat,
-            _kwargs: dict[str, object] = utility_kwargs,
-        ) -> ScalarFloat:
-            return utility_func(**_kwargs, **{solver.continuous_action: action_value})
-
+        utility_of_action = BoundUtilityOfAction(
+            utility_func=utility_func,
+            action_name=solver.continuous_action,
+            bound=utility_kwargs,
+        )
         marginal_utility = [jax.grad(utility_of_action)(c) for c in action_sample]
 
         # Mirror the sibling resources strict-monotonicity check's tolerance:
@@ -1458,18 +1454,47 @@ def _law_values_on_sample(
     weight vectors) stack along the sample axis; deterministic regime
     transitions yield integer regime ids.
     """
-
-    def law_of_euler_state(state_value: ScalarFloat) -> FloatND | IntND:
-        return _call_with_varied(
-            func=law_func,
-            fixed=context,
-            varied={
-                euler_state_name: state_value,
-                post_decision_name: savings_value,
-            },
-        )
-
+    law_of_euler_state = functools.partial(
+        _law_at_euler_state,
+        law_func=law_func,
+        context=context,
+        euler_state_name=euler_state_name,
+        post_decision_name=post_decision_name,
+        savings_value=savings_value,
+    )
     return jax.vmap(law_of_euler_state)(euler_sample)
+
+
+# keyword-only-exempt: library-callback=jax.vmap
+def _law_at_euler_state(
+    state_value: ScalarFloat,
+    *,
+    law_func: UserFunction,
+    context: dict[str, object],
+    euler_state_name: StateName,
+    post_decision_name: FunctionName,
+    savings_value: ScalarFloat,
+) -> FloatND | IntND:
+    """Evaluate one savings-stage law at one Euler-state value, savings fixed."""
+    return _call_with_varied(
+        func=law_func,
+        fixed=context,
+        varied={
+            euler_state_name: state_value,
+            post_decision_name: savings_value,
+        },
+    )
+
+
+def _violates_monotonicity(
+    *, r_lo: float, r_hi: float, strict: bool, atol: float
+) -> bool:
+    """Whether a resources pair breaks the required ordering beyond `atol`.
+
+    Strict mode (asset-row regimes) rejects a flat step, `r_hi <= r_lo + atol`;
+    otherwise only a decrease, `r_hi < r_lo - atol`, violates.
+    """
+    return r_hi <= r_lo + atol if strict else r_hi < r_lo - atol
 
 
 def _combo_contexts(

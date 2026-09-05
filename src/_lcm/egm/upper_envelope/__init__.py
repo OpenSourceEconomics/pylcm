@@ -32,6 +32,7 @@ value)` triple plus the kept-point count. Only RFC consumes the supgradient, to
 build each point's tangent; the others recover slopes from the segments.
 """
 
+import functools
 from collections.abc import Callable
 from typing import Protocol, runtime_checkable
 
@@ -100,120 +101,32 @@ def get_upper_envelope(*, solver: DCEGM, n_refined: int) -> UpperEnvelopeBackend
 
     """
     if isinstance(solver.envelope, FUESEnvelope):
-        jump_thresh = solver.envelope.jump_thresh
-        n_points_to_scan = solver.envelope.n_points_to_scan
-        scan_unroll = solver.envelope.scan_unroll
-
-        def fues_backend(
-            *,
-            endog_grid: Float1D,
-            policy: Float1D,
-            value: Float1D,
-            marginal_utility: Float1D,
-            savings: Float1D,
-        ) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
-            """Run the FUES scan with the solver's thresholds.
-
-            FUES recovers segment slopes from its own forward scan, so the
-            candidate supgradient is not consumed; the exogenous source savings
-            resolve the savings-monotonicity test exactly.
-            """
-            del marginal_utility
-            return refine_envelope_fues(
-                endog_grid=endog_grid,
-                policy=policy,
-                value=value,
-                n_refined=n_refined,
-                jump_thresh=jump_thresh,
-                n_points_to_scan=n_points_to_scan,
-                savings=savings,
-                scan_unroll=scan_unroll,
-            )
-
-        return fues_backend
+        return functools.partial(
+            _fues_backend,
+            n_refined=n_refined,
+            jump_thresh=solver.envelope.jump_thresh,
+            n_points_to_scan=solver.envelope.n_points_to_scan,
+            scan_unroll=solver.envelope.scan_unroll,
+        )
 
     if isinstance(solver.envelope, ExactEnvelope):
-        return _build_exact_backend(envelope=solver.envelope, n_refined=n_refined)
+        return functools.partial(
+            _exact_backend, envelope=solver.envelope, n_refined=n_refined
+        )
 
     if isinstance(solver.envelope, RFCEnvelope):
-        search_radius = solver.envelope.search_radius
-        jump_thresh = solver.envelope.jump_thresh
-
-        def rfc_backend(
-            *,
-            endog_grid: Float1D,
-            policy: Float1D,
-            value: Float1D,
-            marginal_utility: Float1D,
-            savings: Float1D,
-        ) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
-            """Run the rooftop cut with the solver's thresholds.
-
-            The exogenous source savings are a FUES-only refinement; RFC judges
-            monotonicity from its own geometry.
-            """
-            del savings
-            return refine_envelope_rfc(
-                endog_grid=endog_grid,
-                policy=policy,
-                value=value,
-                marginal_utility=marginal_utility,
-                n_refined=n_refined,
-                search_radius=search_radius,
-                jump_thresh=jump_thresh,
-            )
-
-        return rfc_backend
+        return functools.partial(
+            _rfc_backend,
+            n_refined=n_refined,
+            search_radius=solver.envelope.search_radius,
+            jump_thresh=solver.envelope.jump_thresh,
+        )
 
     if isinstance(solver.envelope, LTMEnvelope):
-
-        def ltm_backend(
-            *,
-            endog_grid: Float1D,
-            policy: Float1D,
-            value: Float1D,
-            marginal_utility: Float1D,
-            savings: Float1D,
-        ) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
-            """Run the brute local-upper-bound scan.
-
-            LTM recovers segment slopes from the candidate chain, so neither the
-            candidate supgradient nor the exogenous source savings are consumed.
-            """
-            del marginal_utility, savings
-            return refine_envelope_ltm(
-                endog_grid=endog_grid,
-                policy=policy,
-                value=value,
-                n_refined=n_refined,
-            )
-
-        return ltm_backend
+        return functools.partial(_ltm_backend, n_refined=n_refined)
 
     if isinstance(solver.envelope, MSSEnvelope):
-
-        def mss_backend(
-            *,
-            endog_grid: Float1D,
-            policy: Float1D,
-            value: Float1D,
-            marginal_utility: Float1D,
-            savings: Float1D,
-        ) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
-            """Run HARK's EGM upper-envelope sweep with crossing insertion.
-
-            MSS recovers segment slopes from the candidate chain, so neither the
-            candidate supgradient nor the exogenous source savings are consumed.
-            """
-            del marginal_utility, savings
-            return refine_envelope_mss(
-                endog_grid=endog_grid,
-                policy=policy,
-                value=value,
-                n_refined=n_refined,
-            )
-
-        return mss_backend
+        return functools.partial(_mss_backend, n_refined=n_refined)
 
     msg = f"Unknown upper-envelope backend: {solver.envelope!r}."
     raise ValueError(msg)
@@ -250,241 +163,347 @@ def get_bracket_finder(*, solver: DCEGM, n_refined: int) -> Callable[..., QueryB
 
     """
     if isinstance(solver.envelope, FUESEnvelope):
-        jump_thresh = solver.envelope.jump_thresh
-        n_points_to_scan = solver.envelope.n_points_to_scan
-        scan_unroll = solver.envelope.scan_unroll
-
-        def fues_bracket_finder(
-            *,
-            endog_grid: Float1D,
-            policy: Float1D,
-            value: Float1D,
-            marginal_utility: Float1D,
-            savings: Float1D,
-            x_query: ScalarFloat,
-        ) -> QueryBracket:
-            """Build FUES's full refined row and slice the query bracket.
-
-            FUES recovers segment slopes from its own forward scan, so the
-            candidate supgradient is not consumed; the exogenous source savings
-            resolve the savings-monotonicity test exactly. Like every backend it
-            materializes the full `n_refined` row (`refine_to_bracket` builds it
-            via `refine_envelope`) and slices the bracketing pair — there is no
-            O(1) streamed carry.
-            """
-            del marginal_utility
-            return refine_to_bracket(
-                endog_grid=endog_grid,
-                policy=policy,
-                value=value,
-                x_query=x_query,
-                n_refined=n_refined,
-                jump_thresh=jump_thresh,
-                n_points_to_scan=n_points_to_scan,
-                savings=savings,
-                scan_unroll=scan_unroll,
-            )
-
-        return fues_bracket_finder
+        return functools.partial(
+            _fues_bracket_finder,
+            n_refined=n_refined,
+            jump_thresh=solver.envelope.jump_thresh,
+            n_points_to_scan=solver.envelope.n_points_to_scan,
+            scan_unroll=solver.envelope.scan_unroll,
+        )
 
     if isinstance(solver.envelope, RFCEnvelope):
-        search_radius = solver.envelope.search_radius
-        jump_thresh = solver.envelope.jump_thresh
-
-        def rfc_bracket_finder(
-            *,
-            endog_grid: Float1D,
-            policy: Float1D,
-            value: Float1D,
-            marginal_utility: Float1D,
-            savings: Float1D,
-            x_query: ScalarFloat,
-        ) -> QueryBracket:
-            """Locate the query bracket from RFC's full refined envelope.
-
-            Runs the rooftop cut to a full NaN-padded envelope row, then reads
-            the bracket the row path would: the `searchsorted(side="right")`
-            pair clamped to `[1, max(n_kept - 1, 1)]` (the
-            `interp_on_prepared_grid` rule), so the published value cannot
-            diverge from full-envelope-then-interpolate. The exogenous source
-            savings are a FUES-only refinement.
-            """
-            del savings
-            refined_grid, refined_policy, refined_value, n_kept = refine_envelope_rfc(
-                endog_grid=endog_grid,
-                policy=policy,
-                value=value,
-                marginal_utility=marginal_utility,
-                n_refined=n_refined,
-                search_radius=search_radius,
-                jump_thresh=jump_thresh,
-            )
-            return _bracket_from_refined_row(
-                refined_grid=refined_grid,
-                refined_policy=refined_policy,
-                refined_value=refined_value,
-                n_kept=n_kept,
-                x_query=x_query,
-            )
-
-        return rfc_bracket_finder
+        return functools.partial(
+            _rfc_bracket_finder,
+            n_refined=n_refined,
+            search_radius=solver.envelope.search_radius,
+            jump_thresh=solver.envelope.jump_thresh,
+        )
 
     if isinstance(solver.envelope, LTMEnvelope):
-
-        def ltm_bracket_finder(
-            *,
-            endog_grid: Float1D,
-            policy: Float1D,
-            value: Float1D,
-            marginal_utility: Float1D,
-            savings: Float1D,
-            x_query: ScalarFloat,
-        ) -> QueryBracket:
-            """Locate the query bracket from LTM's full refined envelope.
-
-            Runs the brute scan to a full NaN-padded envelope row, then reads
-            the bracket the row path would: the `searchsorted(side="right")`
-            pair clamped to `[1, max(n_kept - 1, 1)]` (the
-            `interp_on_prepared_grid` rule), so the published value cannot
-            diverge from full-envelope-then-interpolate. Like every backend —
-            FUES's `refine_to_bracket` included — it materializes the full
-            `n_pad` row and slices; no backend streams an O(1) carry. The
-            exogenous source savings are a FUES-only refinement.
-            """
-            del marginal_utility, savings
-            refined_grid, refined_policy, refined_value, n_kept = refine_envelope_ltm(
-                endog_grid=endog_grid,
-                policy=policy,
-                value=value,
-                n_refined=n_refined,
-            )
-            return _bracket_from_refined_row(
-                refined_grid=refined_grid,
-                refined_policy=refined_policy,
-                refined_value=refined_value,
-                n_kept=n_kept,
-                x_query=x_query,
-            )
-
-        return ltm_bracket_finder
+        return functools.partial(_ltm_bracket_finder, n_refined=n_refined)
 
     if isinstance(solver.envelope, MSSEnvelope):
-
-        def mss_bracket_finder(
-            *,
-            endog_grid: Float1D,
-            policy: Float1D,
-            value: Float1D,
-            marginal_utility: Float1D,
-            savings: Float1D,
-            x_query: ScalarFloat,
-        ) -> QueryBracket:
-            """Locate the query bracket from MSS's full refined envelope.
-
-            Runs the HARK sweep to a full NaN-padded envelope row, then reads the
-            bracket the row path would: the `searchsorted(side="right")` pair
-            clamped to `[1, max(n_kept - 1, 1)]` (the `interp_on_prepared_grid`
-            rule), so the published value cannot diverge from
-            full-envelope-then-interpolate. Like every backend —
-            FUES's `refine_to_bracket` included — it materializes the full
-            `n_pad` row and slices; no backend streams an O(1) carry. The
-            exogenous source savings are a FUES-only refinement.
-            """
-            del marginal_utility, savings
-            refined_grid, refined_policy, refined_value, n_kept = refine_envelope_mss(
-                endog_grid=endog_grid,
-                policy=policy,
-                value=value,
-                n_refined=n_refined,
-            )
-            return _bracket_from_refined_row(
-                refined_grid=refined_grid,
-                refined_policy=refined_policy,
-                refined_value=refined_value,
-                n_kept=n_kept,
-                x_query=x_query,
-            )
-
-        return mss_bracket_finder
+        return functools.partial(_mss_bracket_finder, n_refined=n_refined)
 
     if isinstance(solver.envelope, ExactEnvelope):
-        return _build_exact_bracket_finder(
-            envelope=solver.envelope, n_refined=n_refined
+        return functools.partial(
+            _exact_bracket_finder, envelope=solver.envelope, n_refined=n_refined
         )
 
     msg = f"Unknown upper-envelope backend: {solver.envelope!r}."
     raise ValueError(msg)
 
 
-def _build_exact_backend(
-    *, envelope: ExactEnvelope, n_refined: int
-) -> UpperEnvelopeBackend:
-    """Build the exact segment-envelope backend."""
+def _fues_backend(
+    *,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    marginal_utility: Float1D,
+    savings: Float1D,
+    n_refined: int,
+    jump_thresh: float,
+    n_points_to_scan: int | None,
+    scan_unroll: int,
+) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
+    """Run the FUES scan with the solver's thresholds.
 
-    def exact_backend(
-        *,
-        endog_grid: Float1D,
-        policy: Float1D,
-        value: Float1D,
-        marginal_utility: Float1D,
-        savings: Float1D,
-    ) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
-        """Build the exact segment envelope of the candidate cloud.
-
-        The construction reads its topology off the candidate order and its
-        geometry off the value links, so neither the candidate supgradient nor
-        the exogenous source savings are consumed.
-        """
-        del marginal_utility, savings
-        return refine_envelope_exact(
-            endog_grid=endog_grid,
-            policy=policy,
-            value=value,
-            n_refined=n_refined,
-            max_runs=envelope.max_runs,
-            cell_batch_size=envelope.cell_batch_size,
-        )
-
-    return exact_backend
+    FUES recovers segment slopes from its own forward scan, so the candidate
+    supgradient is not consumed; the exogenous source savings resolve the
+    savings-monotonicity test exactly.
+    """
+    del marginal_utility
+    return refine_envelope_fues(
+        endog_grid=endog_grid,
+        policy=policy,
+        value=value,
+        n_refined=n_refined,
+        jump_thresh=jump_thresh,
+        n_points_to_scan=n_points_to_scan,
+        savings=savings,
+        scan_unroll=scan_unroll,
+    )
 
 
-def _build_exact_bracket_finder(
-    *, envelope: ExactEnvelope, n_refined: int
-) -> Callable[..., QueryBracket]:
-    """Build the single-query bracket finder backed by the exact envelope."""
+def _exact_backend(
+    *,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    marginal_utility: Float1D,
+    savings: Float1D,
+    envelope: ExactEnvelope,
+    n_refined: int,
+) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
+    """Build the exact segment envelope of the candidate cloud.
 
-    def exact_bracket_finder(
-        *,
-        endog_grid: Float1D,
-        policy: Float1D,
-        value: Float1D,
-        marginal_utility: Float1D,
-        savings: Float1D,
-        x_query: ScalarFloat,
-    ) -> QueryBracket:
-        """Locate the query bracket from the exact segment envelope.
+    The construction reads its topology off the candidate order and its geometry
+    off the value links, so neither the candidate supgradient nor the exogenous
+    source savings are consumed.
+    """
+    del marginal_utility, savings
+    return refine_envelope_exact(
+        endog_grid=endog_grid,
+        policy=policy,
+        value=value,
+        n_refined=n_refined,
+        max_runs=envelope.max_runs,
+        cell_batch_size=envelope.cell_batch_size,
+    )
 
-        Builds the same full NaN-padded row the full-envelope path publishes and
-        slices the bracketing pair, so the two paths cannot diverge.
-        """
-        del marginal_utility, savings
-        refined_grid, refined_policy, refined_value, n_kept = refine_envelope_exact(
-            endog_grid=endog_grid,
-            policy=policy,
-            value=value,
-            n_refined=n_refined,
-            max_runs=envelope.max_runs,
-            cell_batch_size=envelope.cell_batch_size,
-        )
-        return _bracket_from_refined_row(
-            refined_grid=refined_grid,
-            refined_policy=refined_policy,
-            refined_value=refined_value,
-            n_kept=n_kept,
-            x_query=x_query,
-        )
 
-    return exact_bracket_finder
+def _rfc_backend(
+    *,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    marginal_utility: Float1D,
+    savings: Float1D,
+    n_refined: int,
+    search_radius: int,
+    jump_thresh: float,
+) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
+    """Run the rooftop cut with the solver's thresholds.
+
+    The exogenous source savings are a FUES-only refinement; RFC judges
+    monotonicity from its own geometry.
+    """
+    del savings
+    return refine_envelope_rfc(
+        endog_grid=endog_grid,
+        policy=policy,
+        value=value,
+        marginal_utility=marginal_utility,
+        n_refined=n_refined,
+        search_radius=search_radius,
+        jump_thresh=jump_thresh,
+    )
+
+
+def _ltm_backend(
+    *,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    marginal_utility: Float1D,
+    savings: Float1D,
+    n_refined: int,
+) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
+    """Run the brute local-upper-bound scan.
+
+    LTM recovers segment slopes from the candidate chain, so neither the
+    candidate supgradient nor the exogenous source savings are consumed.
+    """
+    del marginal_utility, savings
+    return refine_envelope_ltm(
+        endog_grid=endog_grid,
+        policy=policy,
+        value=value,
+        n_refined=n_refined,
+    )
+
+
+def _mss_backend(
+    *,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    marginal_utility: Float1D,
+    savings: Float1D,
+    n_refined: int,
+) -> tuple[Float1D, Float1D, Float1D, ScalarInt]:
+    """Run HARK's EGM upper-envelope sweep with crossing insertion.
+
+    MSS recovers segment slopes from the candidate chain, so neither the
+    candidate supgradient nor the exogenous source savings are consumed.
+    """
+    del marginal_utility, savings
+    return refine_envelope_mss(
+        endog_grid=endog_grid,
+        policy=policy,
+        value=value,
+        n_refined=n_refined,
+    )
+
+
+def _fues_bracket_finder(
+    *,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    marginal_utility: Float1D,
+    savings: Float1D,
+    x_query: ScalarFloat,
+    n_refined: int,
+    jump_thresh: float,
+    n_points_to_scan: int | None,
+    scan_unroll: int,
+) -> QueryBracket:
+    """Build FUES's full refined row and slice the query bracket.
+
+    FUES recovers segment slopes from its own forward scan, so the candidate
+    supgradient is not consumed; the exogenous source savings resolve the
+    savings-monotonicity test exactly. Like every backend it materializes the
+    full `n_refined` row (`refine_to_bracket` builds it via `refine_envelope`)
+    and slices the bracketing pair — there is no O(1) streamed carry.
+    """
+    del marginal_utility
+    return refine_to_bracket(
+        endog_grid=endog_grid,
+        policy=policy,
+        value=value,
+        x_query=x_query,
+        n_refined=n_refined,
+        jump_thresh=jump_thresh,
+        n_points_to_scan=n_points_to_scan,
+        savings=savings,
+        scan_unroll=scan_unroll,
+    )
+
+
+def _rfc_bracket_finder(
+    *,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    marginal_utility: Float1D,
+    savings: Float1D,
+    x_query: ScalarFloat,
+    n_refined: int,
+    search_radius: int,
+    jump_thresh: float,
+) -> QueryBracket:
+    """Locate the query bracket from RFC's full refined envelope.
+
+    Runs the rooftop cut to a full NaN-padded envelope row, then reads the
+    bracket the row path would: the `searchsorted(side="right")` pair clamped to
+    `[1, max(n_kept - 1, 1)]` (the `interp_on_prepared_grid` rule), so the
+    published value cannot diverge from full-envelope-then-interpolate. The
+    exogenous source savings are a FUES-only refinement.
+    """
+    del savings
+    refined_grid, refined_policy, refined_value, n_kept = refine_envelope_rfc(
+        endog_grid=endog_grid,
+        policy=policy,
+        value=value,
+        marginal_utility=marginal_utility,
+        n_refined=n_refined,
+        search_radius=search_radius,
+        jump_thresh=jump_thresh,
+    )
+    return _bracket_from_refined_row(
+        refined_grid=refined_grid,
+        refined_policy=refined_policy,
+        refined_value=refined_value,
+        n_kept=n_kept,
+        x_query=x_query,
+    )
+
+
+def _ltm_bracket_finder(
+    *,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    marginal_utility: Float1D,
+    savings: Float1D,
+    x_query: ScalarFloat,
+    n_refined: int,
+) -> QueryBracket:
+    """Locate the query bracket from LTM's full refined envelope.
+
+    Runs the brute scan to a full NaN-padded envelope row, then reads the
+    bracket the row path would: the `searchsorted(side="right")` pair clamped to
+    `[1, max(n_kept - 1, 1)]` (the `interp_on_prepared_grid` rule), so the
+    published value cannot diverge from full-envelope-then-interpolate. Like
+    every backend — FUES's `refine_to_bracket` included — it materializes the
+    full `n_pad` row and slices; no backend streams an O(1) carry. The exogenous
+    source savings are a FUES-only refinement.
+    """
+    del marginal_utility, savings
+    refined_grid, refined_policy, refined_value, n_kept = refine_envelope_ltm(
+        endog_grid=endog_grid,
+        policy=policy,
+        value=value,
+        n_refined=n_refined,
+    )
+    return _bracket_from_refined_row(
+        refined_grid=refined_grid,
+        refined_policy=refined_policy,
+        refined_value=refined_value,
+        n_kept=n_kept,
+        x_query=x_query,
+    )
+
+
+def _mss_bracket_finder(
+    *,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    marginal_utility: Float1D,
+    savings: Float1D,
+    x_query: ScalarFloat,
+    n_refined: int,
+) -> QueryBracket:
+    """Locate the query bracket from MSS's full refined envelope.
+
+    Runs the HARK sweep to a full NaN-padded envelope row, then reads the
+    bracket the row path would: the `searchsorted(side="right")` pair clamped to
+    `[1, max(n_kept - 1, 1)]` (the `interp_on_prepared_grid` rule), so the
+    published value cannot diverge from full-envelope-then-interpolate. Like
+    every backend — FUES's `refine_to_bracket` included — it materializes the
+    full `n_pad` row and slices; no backend streams an O(1) carry. The exogenous
+    source savings are a FUES-only refinement.
+    """
+    del marginal_utility, savings
+    refined_grid, refined_policy, refined_value, n_kept = refine_envelope_mss(
+        endog_grid=endog_grid,
+        policy=policy,
+        value=value,
+        n_refined=n_refined,
+    )
+    return _bracket_from_refined_row(
+        refined_grid=refined_grid,
+        refined_policy=refined_policy,
+        refined_value=refined_value,
+        n_kept=n_kept,
+        x_query=x_query,
+    )
+
+
+def _exact_bracket_finder(
+    *,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    marginal_utility: Float1D,
+    savings: Float1D,
+    x_query: ScalarFloat,
+    envelope: ExactEnvelope,
+    n_refined: int,
+) -> QueryBracket:
+    """Locate the query bracket from the exact segment envelope.
+
+    Builds the same full NaN-padded row the full-envelope path publishes and
+    slices the bracketing pair, so the two paths cannot diverge.
+    """
+    del marginal_utility, savings
+    refined_grid, refined_policy, refined_value, n_kept = refine_envelope_exact(
+        endog_grid=endog_grid,
+        policy=policy,
+        value=value,
+        n_refined=n_refined,
+        max_runs=envelope.max_runs,
+        cell_batch_size=envelope.cell_batch_size,
+    )
+    return _bracket_from_refined_row(
+        refined_grid=refined_grid,
+        refined_policy=refined_policy,
+        refined_value=refined_value,
+        n_kept=n_kept,
+        x_query=x_query,
+    )
 
 
 def _bracket_from_refined_row(

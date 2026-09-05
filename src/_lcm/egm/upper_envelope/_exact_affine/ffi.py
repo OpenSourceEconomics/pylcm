@@ -804,16 +804,15 @@ def _batched_strict_primary_primal(
     n_segment = left_grid.shape[-1]
     candidate_shape = (*x_query.shape, n_segment)
 
-    def expand(values: FloatND | IntND) -> FloatND | IntND:
-        return jnp.broadcast_to(values[..., None, :], candidate_shape)
-
-    x0_all, x1_all, v0_all, v1_all = map(expand, (x0, x1, v0, v1))
+    x0_all, x1_all, v0_all, v1_all = (
+        jnp.broadcast_to(values[..., None, :], candidate_shape)
+        for values in (x0, x1, v0, v1)
+    )
     safe_winner = jnp.where(status == 0, winner, 0)
-
-    def selected(values: FloatND) -> FloatND:
-        return jnp.take_along_axis(values, safe_winner[..., None], axis=-1)[..., 0]
-
-    held_x0, held_x1, held_v0, held_v1 = map(selected, (x0_all, x1_all, v0_all, v1_all))
+    held_x0, held_x1, held_v0, held_v1 = (
+        jnp.take_along_axis(values, safe_winner[..., None], axis=-1)[..., 0]
+        for values in (x0_all, x1_all, v0_all, v1_all)
+    )
     query = x_query[..., None]
     comparison = certified_affine_compare(
         a_x0=held_x0[..., None],

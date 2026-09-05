@@ -34,6 +34,7 @@ All shapes are static, so the kernel can be `jax.jit`-compiled and `jax.vmap`-
 batched over a leading dimension of the candidate arrays.
 """
 
+import functools
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -303,48 +304,19 @@ def _crossing_blocks(
     switch and inserts nothing; only a genuine branch change is a kink.
     """
     n_query = query_grid.shape[0]
-    live = ~query_drop
-
-    # keyword-only-exempt: library-callback=jax.lax.scan
-    def step(
-        carry: tuple[ScalarInt, ScalarInt, FloatND], idx: ScalarInt
-    ) -> tuple[tuple[ScalarInt, ScalarInt, FloatND], _CrossingRow]:
-        prev_link, prev_segment, prev_grid = carry
-        is_live = live[idx]
-        this_link = winner_link[idx]
-        this_segment = winner_segment[idx]
-        this_grid = query_grid[idx]
-
-        switches = is_live & (prev_segment >= 0) & (this_segment != prev_segment)
-        row = _intersect_winners(
-            seg_a=prev_link,
-            seg_b=this_link,
-            left_grid=left_grid,
-            right_grid=right_grid,
-            left_policy=left_policy,
-            right_policy=right_policy,
-            left_value=left_value,
-            right_value=right_value,
-        )
-        # The crossing must fall strictly inside the switch interval; whether it
-        # is a genuine envelope kink (rather than a phantom intersection across a
-        # gap) is settled by the dense on-envelope test the caller applies.
-        within = switches & (row.grid > prev_grid) & (row.grid < this_grid)
-        emitted = _CrossingRow(
-            grid=row.grid,
-            value=row.value,
-            policy_left=row.policy_a,
-            policy_right=row.policy_b,
-            valid=within,
-        )
-
-        # Advance the previous-live-query carry only on a live query; a dropped
-        # query leaves the comparison anchored at the last live winner/abscissa.
-        new_link = jnp.where(is_live, this_link, prev_link).astype(jnp.int32)
-        new_segment = jnp.where(is_live, this_segment, prev_segment).astype(jnp.int32)
-        new_grid = jnp.where(is_live, this_grid, prev_grid)
-        return (new_link, new_segment, new_grid), emitted
-
+    step = functools.partial(
+        _crossing_step,
+        live=~query_drop,
+        winner_link=winner_link,
+        winner_segment=winner_segment,
+        query_grid=query_grid,
+        left_grid=left_grid,
+        right_grid=right_grid,
+        left_policy=left_policy,
+        right_policy=right_policy,
+        left_value=left_value,
+        right_value=right_value,
+    )
     carry_init = (
         jnp.int32(0),
         jnp.int32(-1),
@@ -397,6 +369,65 @@ def _unflatten_crossing_row(_aux: None, children: Sequence[Any]) -> _CrossingRow
 jax.tree_util.register_pytree_node(
     _CrossingRow, _flatten_crossing_row, _unflatten_crossing_row
 )
+
+
+# keyword-only-exempt: library-callback=jax.lax.scan
+def _crossing_step(
+    carry: tuple[ScalarInt, ScalarInt, FloatND],
+    idx: ScalarInt,
+    *,
+    live: BoolND,
+    winner_link: Int1D,
+    winner_segment: Int1D,
+    query_grid: Float1D,
+    left_grid: Float1D,
+    right_grid: Float1D,
+    left_policy: Float1D,
+    right_policy: Float1D,
+    left_value: Float1D,
+    right_value: Float1D,
+) -> tuple[tuple[ScalarInt, ScalarInt, FloatND], _CrossingRow]:
+    """Emit the crossing query `idx` opens, and advance the previous-winner carry.
+
+    The carry is the previous live query's winning link, its branch id, and its
+    abscissa. A crossing is emitted where the winning branch switches and the
+    two winning links' value lines intersect strictly inside the switch interval.
+    """
+    prev_link, prev_segment, prev_grid = carry
+    is_live = live[idx]
+    this_link = winner_link[idx]
+    this_segment = winner_segment[idx]
+    this_grid = query_grid[idx]
+
+    switches = is_live & (prev_segment >= 0) & (this_segment != prev_segment)
+    row = _intersect_winners(
+        seg_a=prev_link,
+        seg_b=this_link,
+        left_grid=left_grid,
+        right_grid=right_grid,
+        left_policy=left_policy,
+        right_policy=right_policy,
+        left_value=left_value,
+        right_value=right_value,
+    )
+    # The crossing must fall strictly inside the switch interval; whether it
+    # is a genuine envelope kink (rather than a phantom intersection across a
+    # gap) is settled by the dense on-envelope test the caller applies.
+    within = switches & (row.grid > prev_grid) & (row.grid < this_grid)
+    emitted = _CrossingRow(
+        grid=row.grid,
+        value=row.value,
+        policy_left=row.policy_a,
+        policy_right=row.policy_b,
+        valid=within,
+    )
+
+    # Advance the previous-live-query carry only on a live query; a dropped
+    # query leaves the comparison anchored at the last live winner/abscissa.
+    new_link = jnp.where(is_live, this_link, prev_link).astype(jnp.int32)
+    new_segment = jnp.where(is_live, this_segment, prev_segment).astype(jnp.int32)
+    new_grid = jnp.where(is_live, this_grid, prev_grid)
+    return (new_link, new_segment, new_grid), emitted
 
 
 @dataclass(frozen=True, kw_only=True)

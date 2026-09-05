@@ -134,21 +134,13 @@ def _add_raw_transition(
     if isinstance(raw, Phased) and (
         isinstance(raw.solve, Mapping) or isinstance(raw.simulate, Mapping)
     ):
-
-        def _cell(*, side: object, target: RegimeName) -> UserFunction:
-            # A per-target dict yields its cell; a bare law broadcasts over targets.
-            if isinstance(side, Mapping):
-                by_target = cast("Mapping[RegimeName, object]", side)
-                return cast("UserFunction", by_target[target])
-            return cast("UserFunction", side)
-
         target_source = raw.solve if isinstance(raw.solve, Mapping) else raw.simulate
         targets = cast("Mapping[RegimeName, object]", target_source)
         for target_regime_name in targets:
             key = f"next_{name}{QNAME_DELIMITER}{target_regime_name}"
             transitions[key] = Phased(
-                solve=_cell(side=raw.solve, target=target_regime_name),
-                simulate=_cell(side=raw.simulate, target=target_regime_name),
+                solve=_phase_cell(side=raw.solve, target=target_regime_name),
+                simulate=_phase_cell(side=raw.simulate, target=target_regime_name),
             )
     elif callable(raw) or isinstance(raw, Phased):
         transitions[f"next_{name}"] = cast("UserFunction", raw)
@@ -156,3 +148,11 @@ def _add_raw_transition(
         for target_regime_name, law in raw.items():
             key = f"next_{name}{QNAME_DELIMITER}{target_regime_name}"
             transitions[key] = cast("UserFunction", law)
+
+
+def _phase_cell(*, side: object, target: RegimeName) -> UserFunction:
+    """Return one phase side's law for `target`: its cell, or the bare law broadcast."""
+    if isinstance(side, Mapping):
+        by_target = cast("Mapping[RegimeName, object]", side)
+        return cast("UserFunction", by_target[target])
+    return cast("UserFunction", side)

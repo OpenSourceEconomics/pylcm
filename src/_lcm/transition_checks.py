@@ -30,8 +30,9 @@ inspect grids, signatures, and Python source) are a separate concern.
 import inspect
 import logging
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any
+from typing import Any, no_type_check
 
 import jax
 import jax.numpy as jnp
@@ -266,21 +267,16 @@ def _validate_regime_transition_single(
         mesh = jnp.meshgrid(*grid_arrays, indexing="ij")
         flat_arrays = [m.ravel() for m in mesh]
 
-        def _call(
-            *args: FloatND | IntND,
-            _names: list[str] = grid_var_names,
-            _params: dict = filtered_params,
-            _func: object = regime_transition_func,
-            _period: ScalarInt = period_int32,
-            _age: ScalarInt | ScalarFloat = ages.values[period],  # noqa: PD011
-        ) -> MappingProxyType[RegimeName, FloatND]:
-            kwargs = dict(zip(_names, args, strict=True))
-            return _func(  # ty: ignore[call-non-callable]
-                **kwargs, **_params, period=_period, age=_age
-            )
-
         regime_transition_probs: MappingProxyType[RegimeName, FloatND] = jax.vmap(
-            _call
+            _GridPointCall(
+                names=tuple(grid_var_names),
+                scalar_kwargs={
+                    **filtered_params,
+                    "period": period_int32,
+                    "age": ages.values[period],  # noqa: PD011
+                },
+                func=regime_transition_func,  # ty: ignore[invalid-argument-type]
+            )
         )(*flat_arrays)
         point = dict(zip(grid_var_names, flat_arrays, strict=True))
     else:
@@ -829,11 +825,10 @@ def _evaluate_joint_weights(
     mesh = jnp.meshgrid(*grid_args.values(), indexing="ij")
     flat_arrays = [array.ravel() for array in mesh]
 
-    def _call(*args: FloatND | IntND) -> Mapping[str, FloatND | IntND]:
-        kwargs = dict(zip(grid_var_names, args, strict=True))
-        return func(**kwargs, **scalar_kwargs)
-
-    return jax.vmap(_call)(*flat_arrays), int(flat_arrays[0].size)
+    grid_point_call = _GridPointCall(
+        names=tuple(grid_var_names), scalar_kwargs=scalar_kwargs, func=func
+    )
+    return jax.vmap(grid_point_call)(*flat_arrays), int(flat_arrays[0].size)
 
 
 def _state_transition_unused_in_period(
@@ -914,16 +909,11 @@ def _validate_state_transition_single(
         mesh = jnp.meshgrid(*grid_arrays, indexing="ij")
         flat_arrays = [m.ravel() for m in mesh]
 
-        def _call(
-            *args: FloatND | IntND,
-            _names: list[str] = grid_var_names,
-            _scalar: dict[str, object] = scalar_kwargs,
-            _func: object = func,
-        ) -> FloatND:
-            kwargs = dict(zip(_names, args, strict=True))
-            return _func(**kwargs, **_scalar)  # ty: ignore[call-non-callable]
-
-        probs = jax.vmap(_call)(*flat_arrays)
+        probs = jax.vmap(
+            _GridPointCall(
+                names=tuple(grid_var_names), scalar_kwargs=scalar_kwargs, func=func
+            )
+        )(*flat_arrays)
     else:
         probs = func(**scalar_kwargs)
 
@@ -993,3 +983,23 @@ def _unit_mass_violations(sum_all: FloatND) -> BoolND:
     """
     tolerance = 16.0 * float(jnp.finfo(sum_all.dtype).eps)
     return jnp.abs(sum_all - 1.0) > tolerance
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _GridPointCall:
+    """Call a transition at one grid point, given positionally for `jax.vmap`."""
+
+    names: tuple[str, ...]
+    """Grid variable names, in the order the positional values arrive."""
+    scalar_kwargs: Mapping[str, object]
+    """Arguments held fixed across grid points."""
+    func: Callable[..., Any]
+    """The transition function."""
+
+    # The kernel is traced with whatever leaves its caller supplies -- tracers,
+    # Python scalars, arrays of either integer width -- so its annotations
+    # document the contract and are not enforced at call time.
+    @no_type_check
+    def __call__(self, *args: FloatND | IntND) -> Any:  # noqa: ANN401
+        kwargs = dict(zip(self.names, args, strict=True))
+        return self.func(**kwargs, **self.scalar_kwargs)

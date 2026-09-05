@@ -5,6 +5,25 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
+### Engine functions are defined once, never per call
+
+- Every function the engine defines is a module-level function or a frozen dataclass
+  with a `__call__`; no function definition runs inside another function per model
+  build, per solve, per simulate, or per trace. pylcm's beartype claw decorates each
+  function definition it sees and beartype memoizes every decorated function object
+  for the life of the process, so a per-call definition pinned everything it closed
+  over: grids, arrays, tracers, compiled kernels, whole models. Building and solving,
+  then dropping, a model of any shipped solver family now leaves no engine function
+  behind, and a long session or test worker no longer grows with every model it
+  builds.
+- The call-convention adapters (`allow_only_kwargs`, `allow_args`) and the batched
+  product map are frozen dataclasses that carry the wrapped function's name, docstring,
+  attributes, and `__signature__`, so `inspect.signature`, `dags`, and the JAX
+  transformations see the function they stand in for.
+- The durable model fingerprint treats a class defined in a shipped pylcm module as a
+  closed direct reference: only its name enters the digest, its implementation being
+  sealed by the separately checked pylcm version.
+
 ### Complete solution persistence and executable external replay
 
 - `save_solution(solution=..., path=...)` and `SolutionResult.save(path=...)` atomically
@@ -49,10 +68,6 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - `SolutionResult.save()` flushes the archive through a writable handle before the
   atomic rename, so publication also succeeds on platforms that refuse to flush a
   read-only one.
-- A function that carries beartype's marks only because `functools.wraps` copied them
-  from the guarded callee it forwards to is fingerprinted as the function it is. Only
-  a body beartype itself compiled is treated as a transparent guard to see through,
-  so a downstream package's guarded model functions survive the engine's own adapters.
 - A result nobody references any more releases its arrays. The store constructors and
   the artifact plan walkers keep their working state in explicit arguments rather than
   in per-call closures: pylcm's beartype claw decorates every function definition,

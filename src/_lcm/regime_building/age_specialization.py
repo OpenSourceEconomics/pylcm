@@ -80,9 +80,18 @@ def tree_signature(*, tree: Mapping[str, object], age: float) -> Hashable:
     Recurse into `Mapping` values and emit sorted `(path, signature)` pairs, so a
     marked node nested under one key cannot collide with one under another.
     """
-    return _tree_signature(
-        tree=tree, leaf_signature=lambda node: node_signature(node=node, age=age)
-    )
+    return _tree_signature(tree=tree, leaf_signature=_NodeSignatureAtAge(age=age))
+
+
+@dataclass(frozen=True)
+class _NodeSignatureAtAge:
+    """Leaf-signature callback fingerprinting a node at one fixed age."""
+
+    age: float
+    """The age every node is fingerprinted at."""
+
+    def __call__(self, node: object) -> Hashable:
+        return node_signature(node=node, age=self.age)
 
 
 class _GridTraitsError(Exception):
