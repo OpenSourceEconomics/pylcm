@@ -570,6 +570,9 @@ def test_batched_winner_accepts_a_multi_axis_batch() -> None:
     )
 
 
+# The stable-index operand is the one kernel input no other GPU-owned test feeds, so
+# the CUDA build's tie-break is exercised on the bounded GPU leg as well as on CPU.
+@pytest.mark.coverage(backends=("cpu", "gpu-small"), precisions="both")
 @pytest.mark.parametrize("dtype", _DTYPES)
 @pytest.mark.parametrize("stable_index", [(2, 9), (9, 2)])
 def test_batched_winner_breaks_an_exact_tie_by_stable_identity_in_either_slot(
