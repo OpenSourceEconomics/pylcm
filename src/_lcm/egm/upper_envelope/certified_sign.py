@@ -311,8 +311,13 @@ def backend_flushes_subnormals(dtype: DTypeLike) -> bool:
     """
     with jax.ensure_compile_time_eval():
         smallest_normal = np.asarray(jnp.finfo(dtype).tiny, dtype=dtype)
-        halved = jax.jit(lambda value: value * 0.5)(smallest_normal)
+        halved = jax.jit(_halve)(smallest_normal)
         return bool(np.asarray(halved) == 0.0)
+
+
+def _halve(value: FloatND) -> FloatND:
+    """Multiply by one half — the step that takes a smallest normal subnormal."""
+    return value * 0.5
 
 
 def is_subnormal(value: FloatND) -> BoolND:

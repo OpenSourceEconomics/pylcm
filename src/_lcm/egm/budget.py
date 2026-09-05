@@ -13,6 +13,7 @@ constraint set, where it enters the feasibility array `F` exactly like a
 user-declared constraint.
 """
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 from dags import get_annotations, with_signature
@@ -95,7 +96,7 @@ def get_intrinsic_budget_constraint(
         action_name = inner.continuous_action
         resources_name = inner.resources
 
-    @with_signature(
+    return with_signature(  # ty: ignore[invalid-return-type]
         args={
             action_name: _find_annotation_of_arg(
                 functions=functions, arg_name=action_name
@@ -106,14 +107,42 @@ def get_intrinsic_budget_constraint(
         },
         return_annotation="BoolND",
         enforce=False,
-    )
-    def budget_constraint(**action_and_resources: FloatND) -> BoolND:
-        return (
-            action_and_resources[action_name]
-            <= action_and_resources[resources_name] - borrowing_limit
+    )(
+        _IntrinsicBudgetConstraint(
+            action_name=action_name,
+            resources_name=resources_name,
+            borrowing_limit=borrowing_limit,
         )
+    )
 
-    return budget_constraint  # ty: ignore[invalid-return-type]
+
+@dataclass(frozen=True, kw_only=True)
+class _IntrinsicBudgetConstraint:
+    """The mask `action <= resources - borrowing_limit`, read by the regime's names.
+
+    Called with the regime's continuous action and resources as keyword
+    arguments (the DAG binds them by name), it marks an action feasible iff it
+    leaves at least the borrowing limit in savings.
+    """
+
+    action_name: StateOrActionName
+    """The regime's name for its continuous action."""
+
+    resources_name: FunctionName
+    """The regime's name for its resources function."""
+
+    borrowing_limit: float
+    """Lowest node of the savings grid."""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "__name__", "budget_constraint")
+        object.__setattr__(self, "__qualname__", "budget_constraint")
+
+    def __call__(self, **action_and_resources: FloatND) -> BoolND:
+        return (
+            action_and_resources[self.action_name]
+            <= action_and_resources[self.resources_name] - self.borrowing_limit
+        )
 
 
 def _find_annotation_of_arg(

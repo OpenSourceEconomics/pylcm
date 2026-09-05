@@ -17,7 +17,8 @@ This module exposes:
 """
 
 from collections.abc import Callable, Mapping
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, no_type_check
 
 from dags import concatenate_functions
 
@@ -87,11 +88,7 @@ def _get_build_W_kwargs(
     passthrough = W_accepted_params - dag_targets
 
     if not dag_targets:
-
-        def build(states_actions_params: Mapping[str, Any]) -> dict[str, Any]:
-            return {k: v for k, v in states_actions_params.items() if k in passthrough}
-
-        return build
+        return _BuildWKwargs(passthrough=passthrough, dag_func=None)
 
     dag_func = concatenate_functions(
         functions=dict(functions),
@@ -99,13 +96,27 @@ def _get_build_W_kwargs(
         return_type="dict",
         enforce_signature=False,
     )
+    return _BuildWKwargs(passthrough=passthrough, dag_func=dag_func)
 
-    def build(states_actions_params: Mapping[str, Any]) -> dict[str, Any]:
-        out = {k: v for k, v in states_actions_params.items() if k in passthrough}
-        out |= dag_func(**states_actions_params)
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _BuildWKwargs:
+    """Assemble `W_kwargs` from `states_actions_params` at the Bellman step."""
+
+    passthrough: frozenset[FunctionName]
+    """Names W accepts directly from states, actions, and flat user params."""
+    dag_func: Callable[..., dict[str, Any]] | None
+    """Compiled DAG computing W's regime-function inputs, or `None` if it has none."""
+
+    # The kernel is traced with whatever leaves its caller supplies -- tracers,
+    # Python scalars, arrays of either integer width -- so its annotations
+    # document the contract and are not enforced at call time.
+    @no_type_check
+    def __call__(self, states_actions_params: Mapping[str, Any]) -> dict[str, Any]:
+        out = {k: v for k, v in states_actions_params.items() if k in self.passthrough}
+        if self.dag_func is not None:
+            out |= self.dag_func(**states_actions_params)
         return out
-
-    return build
 
 
 def _accepted_params(koopmans_aggregator: UserFunction) -> frozenset[FunctionName]:

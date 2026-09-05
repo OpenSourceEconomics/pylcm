@@ -27,7 +27,11 @@ from _lcm.egm.euler import invert_euler
 from _lcm.egm.interp import (
     interp_on_padded_grid,
 )
-from _lcm.egm.numeric_inverse import numeric_inverse_marginal_utility
+from _lcm.egm.preferences import (
+    AnalyticInverseMarginalUtility,
+    BoundUtilityOfAction,
+    get_numeric_inverse_marginal_utility,
+)
 from _lcm.egm.upper_envelope.fues import QueryBracket
 from _lcm.typing import (
     ActionName,
@@ -152,15 +156,47 @@ def _get_solve_one_combo(
     reading a process node integrates over the resolved nodes.
     """
     del euler_batch_size
-    dtype = state_grid.dtype
+    return _SolveOneCombo(
+        pieces=pieces,
+        pool=pool,
+        state_grid=state_grid,
+        next_regime_to_continuation=next_regime_to_continuation,
+        savings_batch_size=savings_batch_size,
+        resolved_process_grids=resolved_process_grids,
+    )
 
-    def solve_one_combo(
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _SolveOneCombo:
+    """The single-post-state EGM step for one kernel invocation, per combo.
+
+    Takes the combo's values (discrete codes and passive node values)
+    positionally so `jax.vmap` can batch over flattened combo arrays.
+    """
+
+    pieces: _EgmKernelPieces
+    """Build-time statics shared by every per-combo computation."""
+
+    pool: dict[str, Any]
+    """The kernel's flat params, `period`, and `age`."""
+
+    state_grid: Float1D
+    """The regime's exogenous Euler-state grid."""
+
+    next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry]
+    """The next period's EGM carries."""
+
+    savings_batch_size: int
+    """The savings grid's `batch_size`."""
+
+    resolved_process_grids: Mapping[StateName, FloatND]
+    """Solve-time grids of runtime-resolved process states."""
+
+    def __call__(
+        self,
         combo_values: tuple[ScalarInt | ScalarFloat, ...],
     ) -> tuple[Float1D, Float1D, Float1D, Float1D, Float1D, ScalarBool]:
         """Run the EGM step for one (discrete x passive-node) combo.
-
-        Takes the combo's values (discrete codes and passive node values)
-        positionally so `jax.vmap` can batch over flattened combo arrays.
 
         Returns:
             Tuple of the combo's value row on the exogenous state grid, its
@@ -171,40 +207,40 @@ def _get_solve_one_combo(
             may consume it).
 
         """
+        pieces = self.pieces
+        dtype = self.state_grid.dtype
         combo_pool = {
-            **pool,
+            **self.pool,
             **dict(zip(pieces.combo_names, combo_values, strict=True)),
         }
         # Validation pins the default Bellman aggregator, whose single
         # non-(utility, CE) parameter is the discount factor.
         (discount_factor,) = tuple(pieces.build_W_kwargs(combo_pool).values())
-
-        def utility_of_action(action_value: ScalarFloat) -> ScalarFloat:
-            return pieces.utility_func(
-                **{pieces.action_name: action_value}, **combo_pool
-            )
-
+        utility_of_action = BoundUtilityOfAction(
+            utility_func=pieces.utility_func,
+            action_name=pieces.action_name,
+            bound=combo_pool,
+        )
         compute_node = _get_compute_node(
             pieces=pieces,
             combo_pool=combo_pool,
             discount_factor=discount_factor,
             utility_of_action=utility_of_action,
-            next_regime_to_continuation=next_regime_to_continuation,
+            next_regime_to_continuation=self.next_regime_to_continuation,
             dtype=dtype,
-            resolved_process_grids=resolved_process_grids,
+            resolved_process_grids=self.resolved_process_grids,
         )
         actions, endog_grid, values, expected_values = _compute_nodes_over_savings(
             compute_node=compute_node,
             savings_nodes=pieces.savings_nodes,
-            savings_batch_size=savings_batch_size,
+            savings_batch_size=self.savings_batch_size,
         )
-
-        def own_resources_of_state(state_value: ScalarFloat) -> ScalarFloat:
-            return pieces.own_resources_func(
-                **{pieces.euler_state_name: state_value}, **combo_pool
-            )
-
-        publish_resources = jax.vmap(own_resources_of_state)(state_grid)
+        own_resources_of_state = ResourcesOfState(
+            resources_func=pieces.own_resources_func,
+            euler_state_name=pieces.euler_state_name,
+            bound=combo_pool,
+        )
+        publish_resources = jax.vmap(own_resources_of_state)(self.state_grid)
 
         constrained_actions, constrained_values = _compute_constrained_candidates(
             first_endogenous_point=endog_grid[0],
@@ -310,7 +346,22 @@ def _get_solve_one_combo(
             read_supported,
         )
 
-    return solve_one_combo
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class ResourcesOfState:
+    """The regime's resources as a function of its Euler state, all else bound."""
+
+    resources_func: UserFunction
+    """The regime's concatenated resources function."""
+
+    euler_state_name: StateName
+    """The regime's name for its continuous (Euler) state."""
+
+    bound: Mapping[str, Any]
+    """Every other argument of `resources_func`, by name."""
+
+    def __call__(self, state_value: ScalarFloat) -> ScalarFloat:
+        return self.resources_func(**{self.euler_state_name: state_value}, **self.bound)
 
 
 def _compute_nodes_over_savings(
@@ -355,14 +406,11 @@ def _get_compute_node(
     )
 
     analytic_inverse = pieces.inverse_marginal_utility_func
+    inverse_marginal_utility: Callable[[ScalarFloat], ScalarFloat]
     if analytic_inverse is not None:
-
-        def inverse_marginal_utility(
-            marginal_continuation: ScalarFloat,
-        ) -> ScalarFloat:
-            return analytic_inverse(
-                marginal_continuation=marginal_continuation, **combo_pool
-            )
+        inverse_marginal_utility = AnalyticInverseMarginalUtility(
+            analytic_inverse=analytic_inverse, bound=combo_pool
+        )
     else:
         # iEGM: no analytic inverse supplied, so invert `u'` numerically. The
         # marginal utility is the action-derivative of the combo-bound utility;
@@ -380,35 +428,50 @@ def _get_compute_node(
         # above the savings scale) is mis-scaled for this grid and would clamp a
         # real interior root to the bound (reported with `dc/dm = 0`, like a binding
         # corner); widen the savings grid or supply an analytic inverse in that case.
-        marginal_utility_of_action = jax.grad(utility_of_action)
         action_upper = pieces.savings_nodes[-1] * 1000.0 + 1000.0
         action_lower = jnp.asarray(1e-8, dtype=action_upper.dtype)
+        inverse_marginal_utility = get_numeric_inverse_marginal_utility(
+            marginal_utility=jax.grad(utility_of_action),
+            action_lower=action_lower,
+            action_upper=action_upper,
+        )
+    return _ComputeNode(
+        continuation=continuation,
+        discount_factor=discount_factor,
+        inverse_marginal_utility=inverse_marginal_utility,
+        utility_of_action=utility_of_action,
+    )
 
-        def inverse_marginal_utility(
-            marginal_continuation: ScalarFloat,
-        ) -> ScalarFloat:
-            return numeric_inverse_marginal_utility(
-                marginal_continuation=marginal_continuation,
-                marginal_utility=marginal_utility_of_action,
-                c_lower=action_lower,
-                c_upper=action_upper,
-            )
 
-    def compute_node(
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _ComputeNode:
+    """Euler-invert one savings node against the bound continuation."""
+
+    continuation: Callable[[ScalarFloat], tuple[ScalarFloat, ScalarFloat]]
+    """Expected continuation value and marginal at a savings node."""
+
+    discount_factor: ScalarFloat
+    """The combo's discount factor."""
+
+    inverse_marginal_utility: Callable[[ScalarFloat], ScalarFloat]
+    """The Euler inversion `(u')^{-1}`, parameters bound."""
+
+    utility_of_action: Callable[[ScalarFloat], ScalarFloat]
+    """Felicity of the consumption action, everything else bound."""
+
+    def __call__(
+        self,
         savings_value: ScalarFloat,
     ) -> tuple[ScalarFloat, ScalarFloat, ScalarFloat, ScalarFloat]:
-        """Euler-invert one savings node against the continuation."""
-        expected_value, expected_marginal = continuation(savings_value)
+        expected_value, expected_marginal = self.continuation(savings_value)
         action = invert_euler(
             expected_marginal_continuation=expected_marginal,
-            discount_factor=discount_factor,
-            inverse_marginal_utility=inverse_marginal_utility,
+            discount_factor=self.discount_factor,
+            inverse_marginal_utility=self.inverse_marginal_utility,
         )
         endog_point = savings_value + action
-        value = utility_of_action(action) + discount_factor * expected_value
+        value = self.utility_of_action(action) + self.discount_factor * expected_value
         return action, endog_point, value, expected_value
-
-    return compute_node
 
 
 def _candidate_supgradient(

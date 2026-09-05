@@ -1,11 +1,14 @@
 """Generate function that compute the next states for solution and simulation."""
 
+import inspect
+import operator
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any
+from typing import Any, no_type_check
 
 import jax
-from dags import concatenate_functions, with_signature
+from dags import concatenate_functions
 from dags.tree import qname_from_tree_path
 
 from _lcm.grids import DiscreteGrid, Grid
@@ -156,7 +159,7 @@ def get_next_stochastic_weights_function(
         functions=functions,
         transitions=transitions,
         transition_plans=transition_plans,
-        select=lambda plans, target, name: plans[target].is_lottery(name),
+        select=_is_lottery,
     )
 
 
@@ -189,7 +192,7 @@ def get_next_interpolation_basis_weights_function(
         functions=functions,
         transitions=transitions,
         transition_plans=transition_plans,
-        select=lambda plans, target, name: plans[target].has_interpolation_basis(name),
+        select=_has_interpolation_basis,
     )
 
 
@@ -199,7 +202,7 @@ def _get_next_weights_function(
     functions: EconFunctionsMapping,
     transitions: MappingProxyType[TransitionFunctionName, TransitionFunction],
     transition_plans: TargetTransitionPlans,
-    select: Callable[[TargetTransitionPlans, RegimeName, TransitionFunctionName], bool],
+    select: Callable[..., bool],
 ) -> Callable[..., dict[str, FloatND | IntND]]:
     """Build the DAG producing one kind of target-qualified weight vector.
 
@@ -218,7 +221,7 @@ def _get_next_weights_function(
     targets = [
         f"weight_{regime_name}__{func_name}"
         for func_name in transitions
-        if select(transition_plans, regime_name, func_name)
+        if select(plans=transition_plans, target=regime_name, name=func_name)
     ]
     # A weight law may read another transition's `next_<state>` output within the
     # same target's DAG -- the supported transition-reads-transition composition
@@ -251,6 +254,20 @@ def _get_next_weights_function(
         enforce_signature=False,
         set_annotations=True,
     )
+
+
+def _is_lottery(
+    *, plans: TargetTransitionPlans, target: RegimeName, name: TransitionFunctionName
+) -> bool:
+    """Whether `name` is a stochastic law of `target`."""
+    return plans[target].is_lottery(name)
+
+
+def _has_interpolation_basis(
+    *, plans: TargetTransitionPlans, target: RegimeName, name: TransitionFunctionName
+) -> bool:
+    """Whether `name` is a declared entry placed on `target`'s nodes."""
+    return plans[target].has_interpolation_basis(name)
 
 
 def _extend_bundle_for_simulation(
@@ -333,25 +350,52 @@ def _create_joint_stochastic_next_func(
         )
     qname = qname_from_tree_path((target_regime_name, lottery_name))
 
-    @with_signature(
-        args={
-            f"weight_{qname}": "FloatND",
-            f"key_{qname}": "PRNGKeyND",
-            support_provider_name: node_annotation,
-        },
-        return_annotation=node_annotation,
+    return _RealizedJointNode(
+        qname=qname,
+        support_provider_name=support_provider_name,
+        support_size=support_size,
+        node_annotation=node_annotation,
     )
-    def realized_node(**kwargs: Any) -> Any:  # noqa: ANN401
-        index = jax.random.choice(
-            key=kwargs[f"key_{qname}"],
-            a=support_size,
-            p=kwargs[f"weight_{qname}"],
-        )
-        return jax.tree_util.tree_map(
-            lambda leaf: leaf[index], kwargs[support_provider_name]
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _RealizedJointNode:
+    """Draw one support node of a joint lottery and publish its whole pytree."""
+
+    qname: str
+    """Qualified `<target>__<lottery>` name of the lottery."""
+    support_provider_name: str
+    """Name of the DAG node supplying the lottery's support."""
+    support_size: int
+    """Static number of support nodes."""
+    node_annotation: str
+    """Annotation of one support node, also the return annotation."""
+
+    def __post_init__(self) -> None:
+        _publish_signature(
+            target=self,
+            args={
+                f"weight_{self.qname}": "FloatND",
+                f"key_{self.qname}": "PRNGKeyND",
+                self.support_provider_name: self.node_annotation,
+            },
+            return_annotation=self.node_annotation,
+            name="realized_node",
         )
 
-    return realized_node
+    # The kernel is traced with whatever leaves its caller supplies -- tracers,
+    # Python scalars, arrays of either integer width -- so its annotations
+    # document the contract and are not enforced at call time.
+    @no_type_check
+    def __call__(self, **kwargs: Any) -> Any:  # noqa: ANN401
+        index = jax.random.choice(
+            key=kwargs[f"key_{self.qname}"],
+            a=self.support_size,
+            p=kwargs[f"weight_{self.qname}"],
+        )
+        return jax.tree_util.tree_map(
+            operator.itemgetter(index), kwargs[self.support_provider_name]
+        )
 
 
 def _create_discrete_stochastic_next_func(
@@ -382,18 +426,33 @@ def _create_discrete_stochastic_next_func(
     """
     qname = qname_from_tree_path((target_regime_name, next_state_name))
 
-    @with_signature(
-        args={f"weight_{qname}": "FloatND", f"key_{qname}": "PRNGKeyND"},
-        return_annotation="DiscreteState",
-    )
-    def next_stochastic_state(**kwargs: FloatND) -> DiscreteState:
-        return jax.random.choice(
-            key=kwargs[f"key_{qname}"],
-            a=labels,
-            p=kwargs[f"weight_{qname}"],
+    return _DiscreteStochasticNextState(qname=qname, labels=labels)
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _DiscreteStochasticNextState:
+    """Draw a discrete state's next value from its weight vector."""
+
+    qname: str
+    """Qualified `<target>__next_<state>` name of the transition."""
+    labels: DiscreteState
+    """Category codes the drawn value is one of."""
+
+    def __post_init__(self) -> None:
+        _publish_signature(
+            target=self,
+            args={f"weight_{self.qname}": "FloatND", f"key_{self.qname}": "PRNGKeyND"},
+            return_annotation="DiscreteState",
+            name="next_stochastic_state",
         )
 
-    return next_stochastic_state
+    @no_type_check
+    def __call__(self, **kwargs: FloatND) -> DiscreteState:
+        return jax.random.choice(
+            key=kwargs[f"key_{self.qname}"],
+            a=self.labels,
+            p=kwargs[f"weight_{self.qname}"],
+        )
 
 
 def _create_continuous_stochastic_next_func(
@@ -484,24 +543,58 @@ def _create_ar1_next_func(
     }
     if conditioned is not None:
         args[conditioned[0].on] = "DiscreteState"
-    _draw_shock = grid.draw_shock
+    return _AR1NextState(
+        qname=qname,
+        state_name=state_name,
+        args=args,
+        fixed_params=fixed_params,
+        runtime_param_names=runtime_param_names,
+        conditioned=conditioned,
+        draw_shock=grid.draw_shock,
+    )
 
-    @with_signature(args=args, return_annotation="ContinuousState")
-    def next_stochastic_state(**kwargs: FloatND) -> ContinuousState:
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _AR1NextState:
+    """Draw an AR(1) process's next value from its current value and a key."""
+
+    qname: str
+    """Qualified `<target>__next_<state>` name of the transition."""
+    state_name: StateName
+    """Name of the process state whose current value the draw conditions on."""
+    args: dict[str, str]
+    """Argument names and annotations, in signature order."""
+    fixed_params: dict[str, Any]
+    """Process parameters fixed at construction."""
+    runtime_param_names: dict[str, str]
+    """Mapping of qualified runtime-param names to the process's own names."""
+    conditioned: tuple[StateConditioned, Float1D] | None
+    """The state-conditioned sigma array, or `None` for an unconditioned process."""
+    draw_shock: Callable[..., ContinuousState]
+    """The process's own draw."""
+
+    def __post_init__(self) -> None:
+        _publish_signature(
+            target=self,
+            args=self.args,
+            return_annotation="ContinuousState",
+            name="next_stochastic_state",
+        )
+
+    @no_type_check
+    def __call__(self, **kwargs: FloatND) -> ContinuousState:
         params = MappingProxyType(
             {
-                **fixed_params,
-                **{raw: kwargs[qn] for qn, raw in runtime_param_names.items()},
-                **_conditioned_sigma(conditioned=conditioned, kwargs=kwargs),
+                **self.fixed_params,
+                **{raw: kwargs[qn] for qn, raw in self.runtime_param_names.items()},
+                **_conditioned_sigma(conditioned=self.conditioned, kwargs=kwargs),
             }
         )
-        return _draw_shock(
+        return self.draw_shock(
             params=params,
-            key=kwargs[f"key_{qname}"],
-            current_value=kwargs[state_name],
+            key=kwargs[f"key_{self.qname}"],
+            current_value=kwargs[self.state_name],
         )
-
-    return next_stochastic_state
 
 
 def _create_iid_next_func(
@@ -521,23 +614,54 @@ def _create_iid_next_func(
     }
     if conditioned is not None:
         args[conditioned[0].on] = "DiscreteState"
-    _draw_shock = grid.draw_shock
+    return _IIDNextState(
+        qname=qname,
+        args=args,
+        fixed_params=fixed_params,
+        runtime_param_names=runtime_param_names,
+        conditioned=conditioned,
+        draw_shock=grid.draw_shock,
+    )
 
-    @with_signature(args=args, return_annotation="ContinuousState")
-    def next_stochastic_state(**kwargs: FloatND) -> ContinuousState:
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _IIDNextState:
+    """Draw an IID process's next value from a key."""
+
+    qname: str
+    """Qualified `<target>__next_<state>` name of the transition."""
+    args: dict[str, str]
+    """Argument names and annotations, in signature order."""
+    fixed_params: dict[str, Any]
+    """Process parameters fixed at construction."""
+    runtime_param_names: dict[str, str]
+    """Mapping of qualified runtime-param names to the process's own names."""
+    conditioned: tuple[StateConditioned, Float1D] | None
+    """The state-conditioned sigma array, or `None` for an unconditioned process."""
+    draw_shock: Callable[..., ContinuousState]
+    """The process's own draw."""
+
+    def __post_init__(self) -> None:
+        _publish_signature(
+            target=self,
+            args=self.args,
+            return_annotation="ContinuousState",
+            name="next_stochastic_state",
+        )
+
+    @no_type_check
+    def __call__(self, **kwargs: FloatND) -> ContinuousState:
         params = MappingProxyType(
             {
-                **fixed_params,
-                **{raw: kwargs[qn] for qn, raw in runtime_param_names.items()},
-                **_conditioned_sigma(conditioned=conditioned, kwargs=kwargs),
+                **self.fixed_params,
+                **{raw: kwargs[qn] for qn, raw in self.runtime_param_names.items()},
+                **_conditioned_sigma(conditioned=self.conditioned, kwargs=kwargs),
             }
         )
-        return _draw_shock(
+        return self.draw_shock(
             params=params,
-            key=kwargs[f"key_{qname}"],
+            key=kwargs[f"key_{self.qname}"],
         )
-
-    return next_stochastic_state
 
 
 def _conditioned_sigma(
@@ -552,3 +676,30 @@ def _conditioned_sigma(
         return {}
     sc, sigma_by_code = conditioned
     return {"sigma": gather_sigma(sigma_by_code=sigma_by_code, code=kwargs[sc.on])}
+
+
+def _publish_signature(
+    *,
+    target: object,
+    args: Mapping[str, str],
+    return_annotation: str,
+    name: str,
+) -> None:
+    """Publish a DAG-facing signature, annotations, and name on a callable instance.
+
+    The instance is a frozen dataclass, so the attributes go through
+    `object.__setattr__`. `args` maps each argument name to its annotation
+    string; the DAG reads both the signature and `__annotations__`.
+    """
+    signature = inspect.Signature(
+        [
+            inspect.Parameter(
+                arg, inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=annotation
+            )
+            for arg, annotation in args.items()
+        ],
+        return_annotation=return_annotation,
+    )
+    object.__setattr__(target, "__signature__", signature)
+    object.__setattr__(target, "__annotations__", {**args, "return": return_annotation})
+    object.__setattr__(target, "__name__", name)

@@ -6,6 +6,7 @@ transition functions from user-defined regimes; this module executes them.
 
 """
 
+from functools import partial
 from types import MappingProxyType
 
 import jax
@@ -26,7 +27,6 @@ from _lcm.typing import (
     StateName,
     StatesPerRegime,
 )
-from _lcm.utils.functools import allow_args
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.typing import Bool1D, Float1D, FloatND, Int1D, IntND, ScalarFloat, ScalarInt
 
@@ -310,7 +310,7 @@ def draw_key_from_dict(
     # Sorted by regime id, not `d`'s insertion order: the draw for a fixed key
     # must not depend on which order an upstream caller happened to list
     # candidates in (e.g. a reachability graph's alphabetical convention).
-    regime_names = sorted(d, key=lambda name: regime_names_to_ids[name])
+    regime_names = sorted(d, key=regime_names_to_ids.__getitem__)
     regime_ids = jnp.asarray(
         [regime_names_to_ids[regime_name] for regime_name in regime_names],
         dtype=jnp.int32,
@@ -344,10 +344,17 @@ def _draw_random_regime_ids(
             (keys.shape[0], regime_transition_probs.shape[0]),
         )
 
-    def random_id(*, key: PRNGKeyND, p: Float1D) -> ScalarInt:
-        return jax.random.choice(key, regime_ids, p=p)
+    return vmap(partial(_draw_random_regime_id, regime_ids=regime_ids), in_axes=(0, 0))(
+        keys, regime_transition_probs
+    )
 
-    return vmap(allow_args(random_id), in_axes=(0, 0))(keys, regime_transition_probs)
+
+# keyword-only-exempt: library-callback=jax.vmap
+def _draw_random_regime_id(
+    key: PRNGKeyND, p: Float1D, *, regime_ids: Int1D
+) -> ScalarInt:
+    """Draw one regime id from `regime_ids` with probabilities `p`."""
+    return jax.random.choice(key, regime_ids, p=p)
 
 
 def _advance_states_for_subjects(

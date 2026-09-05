@@ -25,7 +25,7 @@ from _lcm.engine import Regime as EngineRegime
 from _lcm.identity_transition import _IdentityTransition
 from _lcm.solution import fingerprint as fingerprints
 from _lcm.typing import FlatParams, RegimeNamesToIds
-from _lcm.utils.functools import allow_args
+from _lcm.utils.functools import _PositionalAdapter, allow_args
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -981,6 +981,7 @@ def test_trusted_frozen_dependencies_bind_their_semantic_state(
         And,
         dags_exceptions.InvalidFunctionArgumentsError,
         ContinuousState,
+        _PositionalAdapter,
     ],
     ids=[
         "grid-class",
@@ -990,6 +991,7 @@ def test_trusted_frozen_dependencies_bind_their_semantic_state(
         "constraint-class",
         "dags-exception-class",
         "type-alias",
+        "shipped-adapter-class",
     ],
 )
 def test_identity_gated_direct_dependencies_have_closed_fingerprints(

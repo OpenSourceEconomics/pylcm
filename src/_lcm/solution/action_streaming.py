@@ -401,15 +401,14 @@ def _evaluate_block(
     safe_offsets = jnp.minimum(block_offsets, remaining - 1)
     global_ids = block_start + safe_offsets
 
-    def evaluate_one(global_id: jax.Array) -> tuple[Any, Any]:
-        action_kwargs = _decode_action(
-            global_id=global_id,
-            action_names=action_names,
-            action_grids=action_grids,
-            action_sizes=action_sizes,
-        )
-        return Q_and_F(**fixed_kwargs, **action_kwargs)
-
+    evaluate_one = partial(
+        _evaluate_one_action,
+        Q_and_F=Q_and_F,
+        action_names=action_names,
+        action_grids=action_grids,
+        action_sizes=action_sizes,
+        fixed_kwargs=fixed_kwargs,
+    )
     values, feasible = jax.vmap(evaluate_one)(global_ids)
     values = jnp.asarray(values)
     feasible = jnp.asarray(feasible)
@@ -455,15 +454,14 @@ def _evaluate_ev1_branch_block(
     )
     valid = valid_branches[:, jnp.newaxis] & valid_continuous[jnp.newaxis, :]
 
-    def evaluate_one(global_id: jax.Array) -> tuple[Any, Any]:
-        action_kwargs = _decode_action(
-            global_id=global_id,
-            action_names=action_names,
-            action_grids=action_grids,
-            action_sizes=action_sizes,
-        )
-        return Q_and_F(**fixed_kwargs, **action_kwargs)
-
+    evaluate_one = partial(
+        _evaluate_one_action,
+        Q_and_F=Q_and_F,
+        action_names=action_names,
+        action_grids=action_grids,
+        action_sizes=action_sizes,
+        fixed_kwargs=fixed_kwargs,
+    )
     values, feasible = jax.vmap(jax.vmap(evaluate_one))(global_ids)
     values = jnp.asarray(values)
     feasible = jnp.asarray(feasible)
@@ -495,15 +493,14 @@ def _evaluate_collective_block(
     safe_offsets = jnp.minimum(block_offsets, remaining - 1)
     global_ids = block_start + safe_offsets
 
-    def evaluate_one(global_id: jax.Array) -> tuple[Any, Any]:
-        action_kwargs = _decode_action(
-            global_id=global_id,
-            action_names=action_names,
-            action_grids=action_grids,
-            action_sizes=action_sizes,
-        )
-        return Q_and_F(**fixed_kwargs, **action_kwargs)
-
+    evaluate_one = partial(
+        _evaluate_one_action,
+        Q_and_F=Q_and_F,
+        action_names=action_names,
+        action_grids=action_grids,
+        action_sizes=action_sizes,
+        fixed_kwargs=fixed_kwargs,
+    )
     stakeholder_values, feasible = jax.vmap(evaluate_one)(global_ids)
     stakeholder_values = jnp.asarray(stakeholder_values)
     feasible = jnp.asarray(feasible)
@@ -520,6 +517,26 @@ def _evaluate_collective_block(
         weights=weights,
     )
     return objectives, stakeholder_values, feasible & valid, global_ids
+
+
+# keyword-only-exempt: library-callback=jax.vmap
+def _evaluate_one_action(
+    global_id: jax.Array,
+    *,
+    Q_and_F: Callable[..., tuple[Any, Any]],
+    action_names: tuple[str, ...],
+    action_grids: tuple[jax.Array, ...],
+    action_sizes: tuple[int, ...],
+    fixed_kwargs: dict[str, Any],
+) -> tuple[Any, Any]:
+    """Evaluate ``Q_and_F`` at one global C-order action identity."""
+    action_kwargs = _decode_action(
+        global_id=global_id,
+        action_names=action_names,
+        action_grids=action_grids,
+        action_sizes=action_sizes,
+    )
+    return Q_and_F(**fixed_kwargs, **action_kwargs)
 
 
 def _start_reduction(*, block: _Block) -> HardMaxAccumulator:
@@ -543,21 +560,27 @@ def _scan_remaining_blocks(
     n_remaining: int,
 ) -> HardMaxAccumulator:
     """Use a source-level scan whose returned history is the ``None`` pytree."""
-
-    # keyword-only-exempt: library-callback=jax.lax.scan
-    def scan_one_block(carry: _ScanCarry, _unused: None) -> tuple[_ScanCarry, None]:
-        partial_accumulator, block_index = carry
-        block = evaluate_block(block_index=block_index)
-        partial_accumulator = _add_block(accumulator=partial_accumulator, block=block)
-        return (partial_accumulator, block_index + 1), None
-
     (accumulator, _), _history = jax.lax.scan(
-        scan_one_block,
+        partial(_scan_one_block, evaluate_block=evaluate_block),
         (accumulator, jnp.asarray(1, dtype=jnp.int32)),
         xs=None,
         length=n_remaining,
     )
     return accumulator
+
+
+# keyword-only-exempt: library-callback=jax.lax.scan
+def _scan_one_block(
+    carry: _ScanCarry,
+    _unused: None,
+    *,
+    evaluate_block: Callable[..., _Block],
+) -> tuple[_ScanCarry, None]:
+    """Evaluate the carried block index and merge it into the hard-max state."""
+    partial_accumulator, block_index = carry
+    block = evaluate_block(block_index=block_index)
+    partial_accumulator = _add_block(accumulator=partial_accumulator, block=block)
+    return (partial_accumulator, block_index + 1), None
 
 
 def _add_block(*, accumulator: HardMaxAccumulator, block: _Block) -> HardMaxAccumulator:
@@ -605,11 +628,8 @@ def _add_ev1_block(
     )
     accumulator = jax.lax.cond(
         branch_group_changed,
-        lambda current: _finalize_open_ev1_branch_group(
-            accumulator=current,
-            reduction=reduction,
-        ),
-        lambda current: current,
+        partial(_finalize_ev1_branch_group_operand, reduction=reduction),
+        _keep_ev1_accumulator,
         accumulator,
     )
     branch_group = HARD_MAX_REDUCTION.add(
@@ -645,6 +665,26 @@ def _finalize_open_ev1_branch_group(
     )
 
 
+# keyword-only-exempt: library-callback=jax.lax.cond
+def _finalize_ev1_branch_group_operand(
+    accumulator: _EV1ActionAccumulator,
+    *,
+    reduction: BoundLogSumExpReduction,
+) -> _EV1ActionAccumulator:
+    """Close the open branch group of a ``lax.cond`` operand."""
+    return _finalize_open_ev1_branch_group(
+        accumulator=accumulator,
+        reduction=reduction,
+    )
+
+
+def _keep_ev1_accumulator(
+    accumulator: _EV1ActionAccumulator,
+) -> _EV1ActionAccumulator:
+    """Return a ``lax.cond`` operand unchanged."""
+    return accumulator
+
+
 def _scan_remaining_ev1_blocks(
     *,
     accumulator: _EV1ActionAccumulator,
@@ -654,30 +694,40 @@ def _scan_remaining_ev1_blocks(
     reduction: BoundLogSumExpReduction,
 ) -> _EV1ActionAccumulator:
     """Scan later vector blocks while keeping one branch group open."""
-
-    # keyword-only-exempt: library-callback=jax.lax.scan
-    def scan_one_block(
-        carry: _EV1ScanCarry,
-        _unused: None,
-    ) -> tuple[_EV1ScanCarry, None]:
-        partial, block_index = carry
-        block = evaluate_block(block_index=block_index)
-        partial = _add_ev1_block(
-            accumulator=partial,
-            block=block,
-            block_index=block_index,
+    (accumulator, _), _history = jax.lax.scan(
+        partial(
+            _scan_one_ev1_block,
+            evaluate_block=evaluate_block,
             blocks_per_branch_group=blocks_per_branch_group,
             reduction=reduction,
-        )
-        return (partial, block_index + 1), None
-
-    (accumulator, _), _history = jax.lax.scan(
-        scan_one_block,
+        ),
         (accumulator, jnp.asarray(1, dtype=jnp.int32)),
         xs=None,
         length=n_remaining,
     )
     return accumulator
+
+
+# keyword-only-exempt: library-callback=jax.lax.scan
+def _scan_one_ev1_block(
+    carry: _EV1ScanCarry,
+    _unused: None,
+    *,
+    evaluate_block: Callable[..., _Block],
+    blocks_per_branch_group: int,
+    reduction: BoundLogSumExpReduction,
+) -> tuple[_EV1ScanCarry, None]:
+    """Evaluate the carried block index and merge it into the open branch group."""
+    partial_accumulator, block_index = carry
+    block = evaluate_block(block_index=block_index)
+    partial_accumulator = _add_ev1_block(
+        accumulator=partial_accumulator,
+        block=block,
+        block_index=block_index,
+        blocks_per_branch_group=blocks_per_branch_group,
+        reduction=reduction,
+    )
+    return (partial_accumulator, block_index + 1), None
 
 
 def _flush_ev1_branch_group(
@@ -688,11 +738,8 @@ def _flush_ev1_branch_group(
     """Finalize the last non-padding branch group after the ordered scan."""
     return jax.lax.cond(
         accumulator.active_branch_group_id >= 0,
-        lambda current: _finalize_open_ev1_branch_group(
-            accumulator=current,
-            reduction=reduction,
-        ),
-        lambda current: current,
+        partial(_finalize_ev1_branch_group_operand, reduction=reduction),
+        _keep_ev1_accumulator,
         accumulator,
     )
 
@@ -738,26 +785,30 @@ def _scan_remaining_collective_blocks(
     n_remaining: int,
 ) -> CollectiveHardMaxAccumulator:
     """Scan remaining collective blocks without retaining a block history."""
-
-    # keyword-only-exempt: library-callback=jax.lax.scan
-    def scan_one_block(
-        carry: _CollectiveScanCarry, _unused: None
-    ) -> tuple[_CollectiveScanCarry, None]:
-        partial_accumulator, block_index = carry
-        block = evaluate_block(block_index=block_index)
-        partial_accumulator = _add_collective_block(
-            accumulator=partial_accumulator,
-            block=block,
-        )
-        return (partial_accumulator, block_index + 1), None
-
     (accumulator, _), _history = jax.lax.scan(
-        scan_one_block,
+        partial(_scan_one_collective_block, evaluate_block=evaluate_block),
         (accumulator, jnp.asarray(1, dtype=jnp.int32)),
         xs=None,
         length=n_remaining,
     )
     return accumulator
+
+
+# keyword-only-exempt: library-callback=jax.lax.scan
+def _scan_one_collective_block(
+    carry: _CollectiveScanCarry,
+    _unused: None,
+    *,
+    evaluate_block: Callable[..., _CollectiveBlock],
+) -> tuple[_CollectiveScanCarry, None]:
+    """Evaluate the carried block index and merge it into the household state."""
+    partial_accumulator, block_index = carry
+    block = evaluate_block(block_index=block_index)
+    partial_accumulator = _add_collective_block(
+        accumulator=partial_accumulator,
+        block=block,
+    )
+    return (partial_accumulator, block_index + 1), None
 
 
 def _add_collective_block(

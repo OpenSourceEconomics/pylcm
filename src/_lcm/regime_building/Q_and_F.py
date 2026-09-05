@@ -1,15 +1,16 @@
 import dataclasses
+import inspect
+import operator
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, cast
+from typing import Any, cast, no_type_check
 
 import jax
 import jax.numpy as jnp
 from dags import (
     concatenate_functions,
     get_annotations,
-    with_signature,
 )
 
 from _lcm.certainty_equivalent import CertaintyEquivalent, LinearExpectation
@@ -104,31 +105,44 @@ def _bitonic_value_order_network(
 ) -> tuple[tuple[int, int, bool], ...]:
     """Return a static O(K log² K) compare-swap network for arbitrary ``K``."""
     comparisons: list[tuple[int, int, bool]] = []
-
-    def greatest_power_of_two_less_than(n: int) -> int:
-        out = 1
-        while out < n:
-            out *= 2
-        return out // 2
-
-    def merge(*, lo: int, n: int, ascending: bool) -> None:
-        if n <= 1:
-            return
-        split = greatest_power_of_two_less_than(n)
-        comparisons.extend((i, i + split, ascending) for i in range(lo, lo + n - split))
-        merge(lo=lo, n=split, ascending=ascending)
-        merge(lo=lo + split, n=n - split, ascending=ascending)
-
-    def sort(*, lo: int, n: int, ascending: bool) -> None:
-        if n <= 1:
-            return
-        split = n // 2
-        sort(lo=lo, n=split, ascending=not ascending)
-        sort(lo=lo + split, n=n - split, ascending=ascending)
-        merge(lo=lo, n=n, ascending=ascending)
-
-    sort(lo=0, n=n_items, ascending=True)
+    _bitonic_sort(comparisons=comparisons, lo=0, n=n_items, ascending=True)
     return tuple(comparisons)
+
+
+def _greatest_power_of_two_less_than(n: int) -> int:
+    """Return the largest power of two strictly below `n` (one for `n <= 1`)."""
+    out = 1
+    while out < n:
+        out *= 2
+    return out // 2
+
+
+def _bitonic_merge(
+    *, comparisons: list[tuple[int, int, bool]], lo: int, n: int, ascending: bool
+) -> None:
+    """Append the compare-swaps merging the bitonic run `[lo, lo + n)`."""
+    if n <= 1:
+        return
+    split = _greatest_power_of_two_less_than(n)
+    comparisons.extend((i, i + split, ascending) for i in range(lo, lo + n - split))
+    _bitonic_merge(comparisons=comparisons, lo=lo, n=split, ascending=ascending)
+    _bitonic_merge(
+        comparisons=comparisons, lo=lo + split, n=n - split, ascending=ascending
+    )
+
+
+def _bitonic_sort(
+    *, comparisons: list[tuple[int, int, bool]], lo: int, n: int, ascending: bool
+) -> None:
+    """Append the compare-swaps sorting `[lo, lo + n)` in the given direction."""
+    if n <= 1:
+        return
+    split = n // 2
+    _bitonic_sort(comparisons=comparisons, lo=lo, n=split, ascending=not ascending)
+    _bitonic_sort(
+        comparisons=comparisons, lo=lo + split, n=n - split, ascending=ascending
+    )
+    _bitonic_merge(comparisons=comparisons, lo=lo, n=n, ascending=ascending)
 
 
 def _sum_regime_mixture(
@@ -359,10 +373,44 @@ def get_Q_and_F(
         exclude=frozenset(),
     )
 
-    @with_signature(
-        args=arg_names_of_Q_and_F, return_annotation="tuple[FloatND, BoolND]"
+    return _QAndF(
+        U_and_F=U_and_F,
+        compute_CE=compute_CE,
+        koopmans_aggregator=koopmans_aggregator,
+        build_W_kwargs=_build_W_kwargs,
+        arg_names=tuple(arg_names_of_Q_and_F),
     )
-    def Q_and_F(
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _QAndF:
+    """State-action value and feasibility of a non-terminal period at one cell."""
+
+    U_and_F: Callable[..., tuple[Any, ...]]
+    """Utility and feasibility at the cell."""
+    compute_CE: Callable[..., tuple[FloatND, MappingProxyType[RegimeName, FloatND]]]
+    """The continuation aggregator."""
+    koopmans_aggregator: EconFunction
+    """The regime's Bellman aggregator `W`."""
+    build_W_kwargs: Callable[[Mapping[str, Any]], dict[str, Any]]
+    """Assembles `W`'s further arguments from the cell."""
+    arg_names: tuple[str, ...]
+    """The published argument names, in order."""
+
+    def __post_init__(self) -> None:
+        _publish_signature(
+            target=self,
+            arg_names=self.arg_names,
+            return_annotation="tuple[FloatND, BoolND]",
+            name="Q_and_F",
+        )
+
+    # The kernel is traced with whatever leaves its caller supplies -- tracers,
+    # Python scalars, arrays of either integer width -- so its annotations
+    # document the contract and are not enforced at call time.
+    @no_type_check
+    def __call__(
+        self,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
         **states_actions_params: _ParamsLeaf,
     ) -> tuple[FloatND, BoolND]:
@@ -382,24 +430,22 @@ def get_Q_and_F(
         # the per-stakeholder Q^s, which is why `get_Q_and_F_collective` keeps
         # the state-independent F here and ANDs its value constraints in only
         # after computing Q^s.
-        U_arr, F_arr = U_and_F(**states_actions_params)
-        CE, _ = compute_CE(
+        U_arr, F_arr = self.U_and_F(**states_actions_params)
+        CE, _ = self.compute_CE(
             next_regime_to_V_arr=next_regime_to_V_arr,
             zero=jnp.zeros_like(U_arr),
             states_actions_params=states_actions_params,
         )
 
-        Q_arr = koopmans_aggregator(
+        Q_arr = self.koopmans_aggregator(
             utility=U_arr,
             CE=CE,
-            **_build_W_kwargs(states_actions_params),
+            **self.build_W_kwargs(states_actions_params),
         )
 
         # Handle cases when there is only one state.
         # In that case, Q_arr and F_arr are scalars, but we require arrays as output.
         return jnp.asarray(Q_arr), jnp.asarray(F_arr)
-
-    return Q_and_F
 
 
 def get_compute_intermediates(
@@ -490,36 +536,64 @@ def get_compute_intermediates(
         exclude=frozenset(),
     )
 
-    @with_signature(
-        args=arg_names_of_compute_intermediates,
-        return_annotation=(
-            "tuple[FloatND, FloatND, FloatND, FloatND, "
-            "MappingProxyType[RegimeName, FloatND]]"
-        ),
+    return _ComputeIntermediates(
+        U_and_F=U_and_F,
+        compute_CE=compute_CE,
+        koopmans_aggregator=koopmans_aggregator,
+        build_W_kwargs=_build_W_kwargs,
+        arg_names=tuple(arg_names_of_compute_intermediates),
     )
-    def compute_intermediates(
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _ComputeIntermediates:
+    """Every `Q_and_F` intermediate of a non-terminal period at one cell."""
+
+    U_and_F: Callable[..., tuple[Any, ...]]
+    """Utility and feasibility at the cell."""
+    compute_CE: Callable[..., tuple[FloatND, MappingProxyType[RegimeName, FloatND]]]
+    """The continuation aggregator."""
+    koopmans_aggregator: EconFunction
+    """The regime's Bellman aggregator `W`."""
+    build_W_kwargs: Callable[[Mapping[str, Any]], dict[str, Any]]
+    """Assembles `W`'s further arguments from the cell."""
+    arg_names: tuple[str, ...]
+    """The published argument names, in order."""
+
+    def __post_init__(self) -> None:
+        _publish_signature(
+            target=self,
+            arg_names=self.arg_names,
+            return_annotation=(
+                "tuple[FloatND, FloatND, FloatND, FloatND, "
+                "MappingProxyType[RegimeName, FloatND]]"
+            ),
+            name="compute_intermediates",
+        )
+
+    @no_type_check
+    def __call__(
+        self,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
         **states_actions_params: _ParamsLeaf,
     ) -> tuple[
         FloatND, FloatND, FloatND, FloatND, MappingProxyType[RegimeName, FloatND]
     ]:
         """Compute all Q_and_F intermediates."""
-        U_arr, F_arr = U_and_F(**states_actions_params)
-        CE, active_regime_probs = compute_CE(
+        U_arr, F_arr = self.U_and_F(**states_actions_params)
+        CE, active_regime_probs = self.compute_CE(
             next_regime_to_V_arr=next_regime_to_V_arr,
             zero=jnp.zeros_like(U_arr),
             states_actions_params=states_actions_params,
         )
 
-        Q_arr = koopmans_aggregator(
+        Q_arr = self.koopmans_aggregator(
             utility=U_arr,
             CE=CE,
-            **_build_W_kwargs(states_actions_params),
+            **self.build_W_kwargs(states_actions_params),
         )
 
         return U_arr, F_arr, CE, Q_arr, active_regime_probs
-
-    return compute_intermediates
 
 
 def get_Q_and_F_terminal(
@@ -553,11 +627,30 @@ def get_Q_and_F_terminal(
         exclude=frozenset(),
     )
 
-    @with_signature(
-        args=arg_names_of_Q_and_F, return_annotation="tuple[FloatND, BoolND]"
-    )
-    def Q_and_F(
-        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],  # noqa: ARG001
+    return _TerminalQAndF(U_and_F=U_and_F, arg_names=tuple(arg_names_of_Q_and_F))
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _TerminalQAndF:
+    """State-action value and feasibility of a terminal period at one cell."""
+
+    U_and_F: Callable[..., tuple[Any, ...]]
+    """Utility and feasibility at the cell."""
+    arg_names: tuple[str, ...]
+    """The published argument names, in order."""
+
+    def __post_init__(self) -> None:
+        _publish_signature(
+            target=self,
+            arg_names=self.arg_names,
+            return_annotation="tuple[FloatND, BoolND]",
+            name="Q_and_F",
+        )
+
+    @no_type_check
+    def __call__(
+        self,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],  # noqa: ARG002
         **states_actions_params: _ParamsLeaf,
     ) -> tuple[FloatND, BoolND]:
         """Calculate the state-action values and feasibilities for a terminal period.
@@ -573,10 +666,8 @@ def get_Q_and_F_terminal(
             mask (F).
 
         """
-        U_arr, F_arr = U_and_F(**states_actions_params)
+        U_arr, F_arr = self.U_and_F(**states_actions_params)
         return jnp.asarray(U_arr), jnp.asarray(F_arr)
-
-    return Q_and_F
 
 
 def get_Q_and_F_terminal_collective(
@@ -660,11 +751,36 @@ def get_Q_and_F_terminal_collective(
         exclude=value_constraint_machinery.engine_supplied_names,
     )
 
-    @with_signature(
-        args=arg_names_of_Q_and_F, return_annotation="tuple[FloatND, BoolND]"
+    return _TerminalCollectiveQAndF(
+        utilities_and_F=utilities_and_F,
+        value_constraint_machinery=value_constraint_machinery,
+        arg_names=tuple(arg_names_of_Q_and_F),
     )
-    def Q_and_F(
-        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],  # noqa: ARG001
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _TerminalCollectiveQAndF:
+    """Stacked per-stakeholder terminal payoffs and the shared feasibility at a cell."""
+
+    utilities_and_F: Callable[..., tuple[Any, ...]]
+    """Every stakeholder's utility and the shared feasibility at the cell."""
+    value_constraint_machinery: _ValueConstraintMachinery
+    """The value-constraint readers and evaluators."""
+    arg_names: tuple[str, ...]
+    """The published argument names, in order."""
+
+    def __post_init__(self) -> None:
+        _publish_signature(
+            target=self,
+            arg_names=self.arg_names,
+            return_annotation="tuple[FloatND, BoolND]",
+            name="Q_and_F",
+        )
+
+    @no_type_check
+    def __call__(
+        self,
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],  # noqa: ARG002
         **states_actions_params: _ParamsLeaf,
     ) -> tuple[FloatND, BoolND]:
         """Stacked per-stakeholder utilities and the shared feasibility mask.
@@ -680,7 +796,9 @@ def get_Q_and_F_terminal_collective(
             stakeholder axis) and the shared feasibility mask.
 
         """
-        *stakeholder_utilities, feasibility = utilities_and_F(**states_actions_params)
+        *stakeholder_utilities, feasibility = self.utilities_and_F(
+            **states_actions_params
+        )
         U_stack = jnp.stack(
             [jnp.asarray(U_s) for U_s in stakeholder_utilities], axis=-1
         )
@@ -689,17 +807,15 @@ def get_Q_and_F_terminal_collective(
         # Value-aware feasibility on the terminal payoff. `Q^s` here IS `U^s`:
         # a terminal cell has no continuation, so the value each stakeholder
         # weighs against the reference is the payoff the cell itself delivers.
-        if value_constraint_machinery.evaluators:
+        if self.value_constraint_machinery.evaluators:
             F_arr = _apply_value_constraints(
-                machinery=value_constraint_machinery,
+                machinery=self.value_constraint_machinery,
                 Q_arr=U_stack,
                 F_arr=F_arr,
                 states_actions_params=states_actions_params,
             )
 
         return U_stack, F_arr
-
-    return Q_and_F
 
 
 # The name under which the mapping of same-period
@@ -995,31 +1111,73 @@ def _build_same_period_ref_reader(
         | {v_mapping_arg, params_mapping_arg}
     )
 
-    @with_signature(args=arg_names, return_annotation="FloatND")
-    def read_reference_value(**kwargs: _ParamsLeaf) -> FloatND:
-        regime_to_V = cast("Mapping[RegimeName, FloatND]", kwargs[v_mapping_arg])
-        V_ref = regime_to_V[ref.regime]
-        if ref.stakeholder_index is not None:
+    return _SamePeriodReferenceReader(
+        ref=ref,
+        v_interpolation_info=v_interpolation_info,
+        projection_funcs=projection_funcs,
+        projection_args=projection_args,
+        interpolator=interpolator,
+        interpolator_extra_qnames=interpolator_extra_qnames,
+        v_mapping_arg=v_mapping_arg,
+        params_mapping_arg=params_mapping_arg,
+        arg_names=tuple(arg_names),
+    )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _SamePeriodReferenceReader:
+    """Read one same-period reference value at a (state, action) cell."""
+
+    ref: ResolvedProjectedRegimeValue
+    """The resolved reference declaration."""
+    v_interpolation_info: VInterpolationInfo
+    """V-interpolation info of the reference regime."""
+    projection_funcs: Mapping[StateName, Callable[..., FloatND]]
+    """Per reference state, its projection concatenated with the DAG."""
+    projection_args: Mapping[StateName, tuple[str, ...]]
+    """Per reference state, the arguments its projection reads."""
+    interpolator: Callable[..., FloatND]
+    """Interpolates the reference regime's V at the projected coordinates."""
+    interpolator_extra_qnames: Mapping[str, str]
+    """Mapping of the interpolator's runtime grid helpers to their reference qnames."""
+    v_mapping_arg: str
+    """Keyword carrying the mapping of reference regimes to V arrays."""
+    params_mapping_arg: str
+    """Keyword carrying the mapping of reference regimes to their params."""
+    arg_names: tuple[str, ...]
+    """The published argument names, in order."""
+
+    def __post_init__(self) -> None:
+        _publish_signature(
+            target=self,
+            arg_names=self.arg_names,
+            return_annotation="FloatND",
+            name="read_reference_value",
+        )
+
+    @no_type_check
+    def __call__(self, **kwargs: _ParamsLeaf) -> FloatND:
+        regime_to_V = cast("Mapping[RegimeName, FloatND]", kwargs[self.v_mapping_arg])
+        V_ref = regime_to_V[self.ref.regime]
+        if self.ref.stakeholder_index is not None:
             # A collective reference V carries a trailing stakeholder axis;
             # read the declared stakeholder's slice (state axes only remain).
-            V_ref = V_ref[..., ref.stakeholder_index]
+            V_ref = V_ref[..., self.ref.stakeholder_index]
         coordinates = {
-            f"{_REF_STATE_PREFIX}{state}": projection_funcs[state](
-                **{arg: kwargs[arg] for arg in projection_args[state]}
+            f"{_REF_STATE_PREFIX}{state}": self.projection_funcs[state](
+                **{arg: kwargs[arg] for arg in self.projection_args[state]}
             )
-            for state in v_interpolation_info.state_names
+            for state in self.v_interpolation_info.state_names
         }
-        return interpolator(
+        return self.interpolator(
             **coordinates,
             **_lookup_reference_params(
-                qnames=interpolator_extra_qnames,
-                regime_to_params=kwargs[params_mapping_arg],
-                ref_regime=ref.regime,
+                qnames=self.interpolator_extra_qnames,
+                regime_to_params=kwargs[self.params_mapping_arg],
+                ref_regime=self.ref.regime,
             ),
             **{_REF_V_ARR_NAME: V_ref},
         )
-
-    return read_reference_value
 
 
 def _reference_interpolator_param_qnames(
@@ -1300,10 +1458,44 @@ def get_Q_and_F_collective(
         exclude=value_constraint_machinery.engine_supplied_names,
     )
 
-    @with_signature(
-        args=arg_names_of_Q_and_F, return_annotation="tuple[FloatND, BoolND]"
+    return _CollectiveQAndF(
+        utilities_and_F=utilities_and_F,
+        compute_CE=compute_CE,
+        koopmans_aggregator=koopmans_aggregator,
+        build_W_kwargs=_build_W_kwargs,
+        value_constraint_machinery=value_constraint_machinery,
+        arg_names=tuple(arg_names_of_Q_and_F),
     )
-    def Q_and_F(
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _CollectiveQAndF:
+    """Per-stakeholder state-action values and the shared feasibility at one cell."""
+
+    utilities_and_F: Callable[..., tuple[Any, ...]]
+    """Every stakeholder's utility and the shared feasibility at the cell."""
+    compute_CE: Callable[..., tuple[FloatND, MappingProxyType[RegimeName, FloatND]]]
+    """The continuation aggregator."""
+    koopmans_aggregator: EconFunction
+    """The regime's Bellman aggregator `W`."""
+    build_W_kwargs: Callable[[Mapping[str, Any]], dict[str, Any]]
+    """Assembles `W`'s further arguments from the cell."""
+    value_constraint_machinery: _ValueConstraintMachinery
+    """The value-constraint readers and evaluators."""
+    arg_names: tuple[str, ...]
+    """The published argument names, in order."""
+
+    def __post_init__(self) -> None:
+        _publish_signature(
+            target=self,
+            arg_names=self.arg_names,
+            return_annotation="tuple[FloatND, BoolND]",
+            name="Q_and_F",
+        )
+
+    @no_type_check
+    def __call__(
+        self,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
         **states_actions_params: _ParamsLeaf,
     ) -> tuple[FloatND, BoolND]:
@@ -1320,7 +1512,9 @@ def get_Q_and_F_collective(
             (trailing stakeholder axis) and the shared feasibility mask.
 
         """
-        *stakeholder_utilities, feasibility = utilities_and_F(**states_actions_params)
+        *stakeholder_utilities, feasibility = self.utilities_and_F(
+            **states_actions_params
+        )
         U_stack = jnp.stack(
             [jnp.asarray(U_s) for U_s in stakeholder_utilities], axis=-1
         )
@@ -1329,7 +1523,7 @@ def get_Q_and_F_collective(
         # The mass is stakeholder-independent — the regime transition is — so the
         # accumulator zero carries the cell shape, and the aggregator puts the
         # stakeholder axis back on the value it builds.
-        CE, _ = compute_CE(
+        CE, _ = self.compute_CE(
             next_regime_to_V_arr=next_regime_to_V_arr,
             zero=jnp.zeros_like(U_stack[..., 0]),
             states_actions_params=states_actions_params,
@@ -1340,10 +1534,10 @@ def get_Q_and_F_collective(
         # parameters (e.g. the default `LinearAggregator`'s discount factor) are shared
         # across stakeholders, so the elementwise aggregation is exactly
         # Q^s = W(u^s, CE^s, beta) with the same beta for every s.
-        Q_arr = koopmans_aggregator(
+        Q_arr = self.koopmans_aggregator(
             utility=U_stack,
             CE=CE,
-            **_build_W_kwargs(states_actions_params),
+            **self.build_W_kwargs(states_actions_params),
         )
 
         # Value-aware feasibility. Evaluated AFTER Q^s, unlike the singleton
@@ -1353,9 +1547,9 @@ def get_Q_and_F_collective(
         # values, and ordinary cell kwargs — into the mask. The household
         # argmax downstream runs over the masked set; an all-infeasible cell
         # sets the dissolution flag D there (`collective_readout`).
-        if value_constraint_machinery.evaluators:
+        if self.value_constraint_machinery.evaluators:
             F_arr = _apply_value_constraints(
-                machinery=value_constraint_machinery,
+                machinery=self.value_constraint_machinery,
                 Q_arr=jnp.asarray(Q_arr),
                 # A constraint-less regime's F is the Python `True` scalar.
                 F_arr=jnp.asarray(F_arr),
@@ -1363,8 +1557,6 @@ def get_Q_and_F_collective(
             )
 
         return jnp.asarray(Q_arr), jnp.asarray(F_arr)
-
-    return Q_and_F
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -1536,18 +1728,47 @@ def _get_stakeholder_sliced_interpolator(
     """
     arg_names = tuple(get_union_of_args([base_interpolator]))
 
-    @with_signature(args=arg_names, return_annotation="FloatND")
-    def next_V_per_stakeholder(**kwargs: _ParamsLeaf) -> FloatND:
-        stacked_V_arr = cast("FloatND", kwargs.pop(V_arr_name))
+    return _StakeholderSlicedInterpolator(
+        base_interpolator=base_interpolator,
+        V_arr_name=V_arr_name,
+        n_stakeholders=n_stakeholders,
+        arg_names=arg_names,
+    )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _StakeholderSlicedInterpolator:
+    """Evaluate a V-interpolator per stakeholder slice of a stacked V array."""
+
+    base_interpolator: Callable[..., FloatND]
+    """The singleton V-interpolator over the state axes."""
+    V_arr_name: str
+    """Name of the interpolator's value-array argument."""
+    n_stakeholders: int
+    """Number of stakeholder slices on the trailing axis."""
+    arg_names: tuple[str, ...]
+    """The published argument names, in order."""
+
+    def __post_init__(self) -> None:
+        _publish_signature(
+            target=self,
+            arg_names=self.arg_names,
+            return_annotation="FloatND",
+            name="next_V_per_stakeholder",
+        )
+
+    @no_type_check
+    def __call__(self, **kwargs: _ParamsLeaf) -> FloatND:
+        stacked_V_arr = cast("FloatND", kwargs.pop(self.V_arr_name))
         return jnp.stack(
             [
-                base_interpolator(**kwargs, **{V_arr_name: stacked_V_arr[..., s]})
-                for s in range(n_stakeholders)
+                self.base_interpolator(
+                    **kwargs, **{self.V_arr_name: stacked_V_arr[..., s]}
+                )
+                for s in range(self.n_stakeholders)
             ],
             axis=-1,
         )
-
-    return next_V_per_stakeholder
 
 
 def evaluate_projected_readers(
@@ -1731,18 +1952,85 @@ def _get_pointwise_gated_interpolator(
         - resolved_landing
     )
 
-    @with_signature(args=outer_arg_names, return_annotation="FloatND")
-    def next_V_gated(**kwargs: _ParamsLeaf) -> FloatND:
-        stacked = cast("FloatND", kwargs[V_arr_name])
+    return _PointwiseGatedInterpolator(
+        base_interpolator=base_interpolator,
+        V_arr_name=V_arr_name,
+        n_channels=n_channels,
+        combine=combine,
+        combine_args=combine_args,
+        interpolator_args=interpolator_args,
+        context_args=frozenset(context_args),
+        reader_names=frozenset(reader_names),
+        landing_names=landing_names,
+        last_period=last_period,
+        target_ages=target_ages,
+        resolve_at_node=resolve_at_node,
+        resolver_arg_names=tuple(resolver_arg_names),
+        resolved_landing=frozenset(resolved_landing),
+        projected_readers=projected_readers,
+        arg_names=tuple(outer_arg_names),
+    )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _PointwiseGatedInterpolator:
+    """Read a gated edge's operand channels at the landing point, then gate."""
+
+    base_interpolator: Callable[..., FloatND]
+    """The singleton V-interpolator over one channel."""
+    V_arr_name: str
+    """Name of the interpolator's value-array argument."""
+    n_channels: int
+    """Length of the stacked leaf's trailing axis."""
+    combine: Callable[..., FloatND]
+    """The edge's gate, applied to the interpolated channels."""
+    combine_args: tuple[str, ...]
+    """Every argument `combine` reads."""
+    interpolator_args: tuple[str, ...]
+    """Every argument the base interpolator reads."""
+    context_args: frozenset[str]
+    """Engine context the gate or a reader names, bound to the target's period."""
+    reader_names: frozenset[str]
+    """Names of the projected readers."""
+    landing_names: Mapping[str, str]
+    """Per state read at the landing, its `next_<state>` coordinate name."""
+    last_period: int
+    """The last model period, clipping the target period."""
+    target_ages: Float1D
+    """Age at each model period."""
+    resolve_at_node: Callable[..., Mapping[str, FloatND]] | None
+    """Resolves draw-dependent laws at the node, or `None`."""
+    resolver_arg_names: tuple[str, ...]
+    """Arguments `resolve_at_node` is called with."""
+    resolved_landing: frozenset[str]
+    """Landing coordinates the node resolution produces."""
+    projected_readers: tuple[ProjectedLandingReader, ...]
+    """Gate references and leg fallbacks, evaluated at the landing."""
+    arg_names: tuple[str, ...]
+    """The published argument names, in order."""
+
+    def __post_init__(self) -> None:
+        _publish_signature(
+            target=self,
+            arg_names=self.arg_names,
+            return_annotation="FloatND",
+            name="next_V_gated",
+        )
+
+    @no_type_check
+    def __call__(self, **kwargs: _ParamsLeaf) -> FloatND:
+        stacked = cast("FloatND", kwargs[self.V_arr_name])
         interpolator_kwargs = {
-            name: kwargs[name] for name in interpolator_args if name != V_arr_name
+            name: kwargs[name]
+            for name in self.interpolator_args
+            if name != self.V_arr_name
         }
         channels = jnp.stack(
             [
-                base_interpolator(
-                    **interpolator_kwargs, **{V_arr_name: stacked[..., channel]}
+                self.base_interpolator(
+                    **interpolator_kwargs, **{self.V_arr_name: stacked[..., channel]}
                 )
-                for channel in range(n_channels)
+                for channel in range(self.n_channels)
             ],
             axis=-1,
         )
@@ -1750,58 +2038,58 @@ def _get_pointwise_gated_interpolator(
         # the same pure laws, so a reference and the channel it is gated against
         # cannot land on two different coordinates.
         landing: dict[str, FloatND] = {}
-        if resolve_at_node is not None and resolved_landing:
+        if self.resolve_at_node is not None and self.resolved_landing:
             landing = dict(
-                resolve_at_node(**{name: kwargs[name] for name in resolver_arg_names})
+                self.resolve_at_node(
+                    **{name: kwargs[name] for name in self.resolver_arg_names}
+                )
             )
         context: dict[str, FloatND] = {}
-        if context_args:
+        if self.context_args:
             # The gate speaks about the period the source LANDS in. Clipping
             # only affects a period from which no edge folds, where the value
             # is not read.
             target_period = jnp.clip(
-                jnp.asarray(kwargs["period"], dtype=jnp.int32) + 1, 0, last_period
+                jnp.asarray(kwargs["period"], dtype=jnp.int32) + 1, 0, self.last_period
             )
-            context = {"period": target_period, "age": target_ages[target_period]}
+            context = {"period": target_period, "age": self.target_ages[target_period]}
         # Each projected reference is read HERE, at the landing coordinates,
         # so the source collects the number its branch actually pays. A
         # projection declaring `period` or `age` means the TARGET fold's, the
         # same context it would have been handed inside the fold — never the
         # source's own.
         projected_values = evaluate_projected_readers(
-            readers=projected_readers,
+            readers=self.projected_readers,
             landing_states={
                 arg: cast(
                     "ContinuousState | DiscreteState",
-                    landing[landing_names[arg]]
-                    if landing_names[arg] in landing
-                    else kwargs[landing_names[arg]],
+                    landing[self.landing_names[arg]]
+                    if self.landing_names[arg] in landing
+                    else kwargs[self.landing_names[arg]],
                 )
-                for reader in projected_readers
+                for reader in self.projected_readers
                 for arg in reader.state_args
             },
             other_values={
-                arg: context[arg] if arg in context_args else kwargs[arg]
-                for reader in projected_readers
+                arg: context[arg] if arg in self.context_args else kwargs[arg]
+                for reader in self.projected_readers
                 for arg in reader.other_args
             },
         )
-        return combine(
+        return self.combine(
             **{EDGE_CHANNELS_ARG: channels},
             **projected_values,
             **{
                 name: context[name]
-                if name in context_args
+                if name in self.context_args
                 else landing.get(
-                    landing_names.get(name, name),
-                    kwargs.get(landing_names.get(name, name)),
+                    self.landing_names.get(name, name),
+                    kwargs.get(self.landing_names.get(name, name)),
                 )
-                for name in combine_args
-                if name != EDGE_CHANNELS_ARG and name not in reader_names
+                for name in self.combine_args
+                if name != EDGE_CHANNELS_ARG and name not in self.reader_names
             },
         )
-
-    return next_V_gated
 
 
 def partition_continuation_targets(
@@ -1977,7 +2265,65 @@ def _get_compute_CE(
     # the interpolator, which does not index those axes.
     co_map_next_names = frozenset(f"next_{name}" for name in co_map_state_names)
 
-    def compute_CE(
+    compute_CE = _ComputeCE(
+        compute_regime_transition_probs=compute_regime_transition_probs,
+        period_targets=period_targets,
+        scalar_targets=scalar_targets,
+        continuations=MappingProxyType(continuations),
+        gated_scalar_readers=MappingProxyType(gated_scalar_readers),
+        gated_scalar_arg_names=MappingProxyType(gated_scalar_arg_names),
+        reduces_per_target=reduces_per_target,
+        certainty_equivalent=certainty_equivalent,
+        ce_flat_param_names=ce_flat_param_names,
+        co_map_next_names=co_map_next_names,
+        n_stakeholders=n_stakeholders,
+    )
+
+    deps = (
+        compute_regime_transition_probs,
+        *(c.next_states for c in continuations.values()),
+        *(c.lottery_weights for c in continuations.values()),
+    )
+    continuation_arg_names = frozenset(
+        name
+        for continuation in continuations.values()
+        for name in continuation.extra_param_names
+    ) | frozenset(
+        arg for arg_names in gated_scalar_arg_names.values() for arg in arg_names
+    )
+    return compute_CE, deps, continuation_arg_names
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _ComputeCE:
+    """Aggregate the continuation lottery into `CE` at one state-action point."""
+
+    compute_regime_transition_probs: RegimeTransitionFunction
+    """The regime transition's probabilities at the cell."""
+    period_targets: tuple[RegimeName, ...]
+    """Reachable targets carrying state, in graph order."""
+    scalar_targets: tuple[RegimeName, ...]
+    """Reachable targets carrying no state."""
+    continuations: Mapping[RegimeName, _TargetContinuation]
+    """Per stateful target, everything built once for its continuation."""
+    gated_scalar_readers: Mapping[RegimeName, Callable[..., FloatND]]
+    """Per gated stateless target, the reader applying its gate to the channel stack."""
+    gated_scalar_arg_names: Mapping[RegimeName, tuple[str, ...]]
+    """Per gated stateless target, the reader's arguments besides the value array."""
+    reduces_per_target: bool
+    """Whether each target is reduced on its own (the plain expectation)."""
+    certainty_equivalent: CertaintyEquivalent | None
+    """The certainty equivalent, or `None` for the plain expectation."""
+    ce_flat_param_names: Mapping[str, str]
+    """The certainty equivalent's flat parameter names."""
+    co_map_next_names: frozenset[str]
+    """`next_`-prefixed names of the co-mapped states, which carry no coordinate."""
+    n_stakeholders: int | None
+    """Number of stakeholders of a collective regime, or `None`."""
+
+    @no_type_check
+    def __call__(
+        self,
         *,
         next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
         zero: FloatND,
@@ -2005,10 +2351,13 @@ def _get_compute_CE(
 
         """
         regime_transition_probs: MappingProxyType[RegimeName, FloatND] = (
-            compute_regime_transition_probs(**states_actions_params)
+            self.compute_regime_transition_probs(**states_actions_params)
         )
         active_regime_probs = MappingProxyType(
-            {r: regime_transition_probs[r] for r in (*period_targets, *scalar_targets)}
+            {
+                r: regime_transition_probs[r]
+                for r in (*self.period_targets, *self.scalar_targets)
+            }
         )
         # Every target's own lottery is built before any of them is weighted,
         # because the common factor that puts the whole continuation on a scale
@@ -2026,15 +2375,17 @@ def _get_compute_CE(
         # below takes the pairs and reduces them where the spread costs
         # nothing.
         target_lotteries = {
-            target_regime_name: continuations[target_regime_name].joint_lottery_weights(
-                **continuations[target_regime_name].lottery_weights(
+            target_regime_name: self.continuations[
+                target_regime_name
+            ].joint_lottery_weights(
+                **self.continuations[target_regime_name].lottery_weights(
                     **states_actions_params
                 )
             )
-            for target_regime_name in period_targets
+            for target_regime_name in self.period_targets
         }
-        target_node_weights = {r: target_lotteries[r][0] for r in period_targets}
-        target_node_shifts = {r: target_lotteries[r][1] for r in period_targets}
+        target_node_weights = {r: target_lotteries[r][0] for r in self.period_targets}
+        target_node_shifts = {r: target_lotteries[r][1] for r in self.period_targets}
         # Unit mass alone does not make a collection of weights a distribution:
         # 1.5 and -0.5 sum to one. Non-negativity is tracked alongside the sum
         # so it is arithmetic too, and the two together give the whole range —
@@ -2049,6 +2400,7 @@ def _get_compute_CE(
         # The accumulators are seeded with the stateless targets, which carry no
         # node axis of their own but do carry mass, a sign, and — under a
         # nonlinear certainty equivalent — one lottery node each.
+        gated_scalar_readers = self.gated_scalar_readers
         (
             mixture_terms,
             lottery_values,
@@ -2057,7 +2409,7 @@ def _get_compute_CE(
             probability_mass,
             has_negative_probability,
         ) = _scalar_target_contribution(
-            scalar_targets=scalar_targets,
+            scalar_targets=self.scalar_targets,
             next_regime_to_V_arr=MappingProxyType(
                 {
                     **next_regime_to_V_arr,
@@ -2066,7 +2418,9 @@ def _get_compute_CE(
                             next_V_arr=next_regime_to_V_arr[target_regime_name],
                             **{
                                 arg: states_actions_params[arg]
-                                for arg in gated_scalar_arg_names[target_regime_name]
+                                for arg in self.gated_scalar_arg_names[
+                                    target_regime_name
+                                ]
                             },
                         )
                         for target_regime_name, reader in gated_scalar_readers.items()
@@ -2074,11 +2428,11 @@ def _get_compute_CE(
                 }
             ),
             active_regime_probs=active_regime_probs,
-            as_lottery=not reduces_per_target,
+            as_lottery=not self.reduces_per_target,
             zero=zero,
         )
-        for target_regime_name in period_targets:
-            continuation = continuations[target_regime_name]
+        for target_regime_name in self.period_targets:
+            continuation = self.continuations[target_regime_name]
             next_states = continuation.next_states(**states_actions_params)
             joint_next_stochastic_states_weights = target_node_weights[
                 target_regime_name
@@ -2093,7 +2447,7 @@ def _get_compute_CE(
             interpolator_coordinates = {
                 name: val
                 for name, val in next_states.items()
-                if name not in co_map_next_names
+                if name not in self.co_map_next_names
             }
             next_V_at_stochastic_states_arr = continuation.next_V(
                 **interpolator_coordinates,
@@ -2122,13 +2476,13 @@ def _get_compute_CE(
                 target_probability
             )
 
-            if reduces_per_target:
+            if self.reduces_per_target:
                 next_V_expected_arr = _expected_continuation_over_nodes(
                     values=next_V_at_stochastic_states_arr,
                     weights=joint_next_stochastic_states_weights,
                     shifts=target_node_shifts[target_regime_name],
                     has_lottery_axes=continuation.has_lottery_axes,
-                    n_stakeholders=n_stakeholders,
+                    n_stakeholders=self.n_stakeholders,
                 )
                 # Collect the UNMULTIPLIED `(prob, expected V)`; the mixture is
                 # reduced ONCE by `_sum_regime_mixture`: form each target's
@@ -2184,16 +2538,16 @@ def _get_compute_CE(
         # stakeholder axis the mass-shaped `zero` does not.
         CE = _sum_regime_mixture(
             mixture_terms=mixture_terms,
-            like=_value_shaped_zero(zero=zero, n_stakeholders=n_stakeholders),
+            like=_value_shaped_zero(zero=zero, n_stakeholders=self.n_stakeholders),
         )
 
-        if reduces_per_target and (period_targets or scalar_targets):
+        if self.reduces_per_target and (self.period_targets or self.scalar_targets):
             CE = _normalized_regime_mixture(
                 mixture=CE,
                 probability_mass=probability_mass,
                 has_negative_probability=has_negative_probability,
             )
-        elif certainty_equivalent is not None:
+        elif self.certainty_equivalent is not None:
             # `aggregate` normalizes by the weight sum itself, so the lottery
             # route has no division to attach the check to. Selecting between
             # the aggregate and NaN leaves the well-formed path free of any
@@ -2209,11 +2563,11 @@ def _get_compute_CE(
                     has_negative_probability=has_negative_probability,
                 ),
                 _aggregate_joint_lottery(
-                    certainty_equivalent=certainty_equivalent,
+                    certainty_equivalent=self.certainty_equivalent,
                     lottery_values=lottery_values,
                     lottery_weights=lottery_weights,
                     lottery_shifts=lottery_shifts,
-                    ce_flat_param_names=ce_flat_param_names,
+                    ce_flat_param_names=self.ce_flat_param_names,
                     states_actions_params=states_actions_params,
                 )
                 if lottery_values
@@ -2222,20 +2576,6 @@ def _get_compute_CE(
             )
 
         return CE, active_regime_probs
-
-    deps = (
-        compute_regime_transition_probs,
-        *(c.next_states for c in continuations.values()),
-        *(c.lottery_weights for c in continuations.values()),
-    )
-    continuation_arg_names = frozenset(
-        name
-        for continuation in continuations.values()
-        for name in continuation.extra_param_names
-    ) | frozenset(
-        arg for arg_names in gated_scalar_arg_names.values() for arg in arg_names
-    )
-    return compute_CE, deps, continuation_arg_names
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -2483,35 +2823,21 @@ def _get_interpolator_resolving_draws(
 
     resolver_arg_names = sorted(resolver_args | support_args)
 
-    @with_signature(args=resolver_arg_names)
-    def resolve_at_this_node(**kwargs: Any) -> Mapping[str, FloatND]:  # noqa: ANN401
-        drawn: dict[str, Any] = {}
-        for name in read_as_a_draw:
-            index = kwargs[name].astype(jnp.int32)
-            if name in support_provider_names:
-                support = kwargs[support_provider_names[name]]
-                drawn[name] = jax.tree_util.tree_map(
-                    lambda leaf, node_index=index: leaf[node_index],
-                    support,
-                )
-            else:
-                drawn[name] = node_values[name][index]
-        return resolve(
-            **{
-                k: v for k, v in kwargs.items() if k in resolver_args and k not in drawn
-            },
-            **drawn,
-        )
-
-    @with_signature(args=arg_names)
-    def interpolate_at_this_node(**kwargs: Any) -> FloatND:  # noqa: ANN401
-        resolved = resolve_at_this_node(
-            **{k: v for k, v in kwargs.items() if k in resolver_arg_names}
-        )
-        return next_V_interpolator(
-            **{k: v for k, v in kwargs.items() if k in interpolator_args},
-            **resolved,
-        )
+    resolve_at_this_node = _ResolveAtNode(
+        read_as_a_draw=read_as_a_draw,
+        support_provider_names=support_provider_names,
+        node_values=node_values,
+        resolve=resolve,
+        resolver_args=frozenset(resolver_args),
+        arg_names=tuple(resolver_arg_names),
+    )
+    interpolate_at_this_node = _InterpolateAtNode(
+        resolve_at_this_node=resolve_at_this_node,
+        resolver_arg_names=frozenset(resolver_arg_names),
+        next_V_interpolator=next_V_interpolator,
+        interpolator_args=frozenset(interpolator_args),
+        arg_names=tuple(arg_names),
+    )
 
     return _NodeDrawResolution(
         interpolator=interpolate_at_this_node,
@@ -2519,6 +2845,87 @@ def _get_interpolator_resolving_draws(
         resolved_names=frozenset(draw_dependent_names),
         arg_names=tuple(resolver_arg_names),
     )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _ResolveAtNode:
+    """Resolve a target's draw-dependent laws at one node of its lottery axes."""
+
+    read_as_a_draw: tuple[TransitionFunctionName, ...]
+    """Stochastic laws whose node value a dependent law reads."""
+    support_provider_names: Mapping[TransitionFunctionName, str]
+    """Per joint lottery, the DAG node supplying its support."""
+    node_values: Mapping[TransitionFunctionName, Any]
+    """Per stochastic law, its nodes indexed by the draw's value."""
+    resolve: Callable[..., Mapping[str, FloatND]]
+    """The dependent laws, concatenated with the DAG."""
+    resolver_args: frozenset[str]
+    """Every argument `resolve` reads."""
+    arg_names: tuple[str, ...]
+    """The published argument names, in order."""
+
+    def __post_init__(self) -> None:
+        _publish_signature(
+            target=self,
+            arg_names=self.arg_names,
+            return_annotation=inspect.Signature.empty,
+            name="resolve_at_this_node",
+        )
+
+    @no_type_check
+    def __call__(self, **kwargs: Any) -> Mapping[str, FloatND]:  # noqa: ANN401
+        drawn: dict[str, Any] = {}
+        for name in self.read_as_a_draw:
+            index = kwargs[name].astype(jnp.int32)
+            if name in self.support_provider_names:
+                support = kwargs[self.support_provider_names[name]]
+                drawn[name] = jax.tree_util.tree_map(
+                    operator.itemgetter(index), support
+                )
+            else:
+                drawn[name] = self.node_values[name][index]
+        return self.resolve(
+            **{
+                k: v
+                for k, v in kwargs.items()
+                if k in self.resolver_args and k not in drawn
+            },
+            **drawn,
+        )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _InterpolateAtNode:
+    """Interpolate a target's V at one node, its draw-dependent laws resolved there."""
+
+    resolve_at_this_node: _ResolveAtNode
+    """The node resolution of the draw-dependent laws."""
+    resolver_arg_names: frozenset[str]
+    """Arguments the node resolution is called with."""
+    next_V_interpolator: Callable[..., FloatND]
+    """The target's value-function interpolator."""
+    interpolator_args: frozenset[str]
+    """Every argument the interpolator reads."""
+    arg_names: tuple[str, ...]
+    """The published argument names, in order."""
+
+    def __post_init__(self) -> None:
+        _publish_signature(
+            target=self,
+            arg_names=self.arg_names,
+            return_annotation=inspect.Signature.empty,
+            name="interpolate_at_this_node",
+        )
+
+    @no_type_check
+    def __call__(self, **kwargs: Any) -> FloatND:  # noqa: ANN401
+        resolved = self.resolve_at_this_node(
+            **{k: v for k, v in kwargs.items() if k in self.resolver_arg_names}
+        )
+        return self.next_V_interpolator(
+            **{k: v for k, v in kwargs.items() if k in self.interpolator_args},
+            **resolved,
+        )
 
 
 def _build_target_continuation(
@@ -2978,18 +3385,35 @@ def _get_joint_weights_function(
     """
     arg_names = [f"weight_{regime_name}__{key}" for key in variables]
 
-    @with_signature(args=arg_names)
-    def _outer(**kwargs: Float1D) -> tuple[FloatND, IntND]:
+    _outer = _OuterJointWeights(arg_names=tuple(arg_names))
+    variables = tuple(arg_names)
+    return productmap(
+        func=_outer, variables=variables, batch_sizes=dict.fromkeys(variables, 0)
+    )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _OuterJointWeights:
+    """The outer product of one target's lottery marginals at one node."""
+
+    arg_names: tuple[str, ...]
+    """The `weight_<target>__next_<state>` names, one per lottery axis."""
+
+    def __post_init__(self) -> None:
+        _publish_signature(
+            target=self,
+            arg_names=self.arg_names,
+            return_annotation=inspect.Signature.empty,
+            name="_outer",
+        )
+
+    @no_type_check
+    def __call__(self, **kwargs: Float1D) -> tuple[FloatND, IntND]:
         # One factor per stochastic axis. Their product is the node's
         # probability, and it comes back with its own scale rather than as a
         # plain float, because a product below the normal range is not
         # something a float can carry through a fused region here.
         return scaled_joint_weight(jnp.array(list(kwargs.values())))
-
-    variables = tuple(arg_names)
-    return productmap(
-        func=_outer, variables=variables, batch_sizes=dict.fromkeys(variables, 0)
-    )
 
 
 def _get_U_and_F(
@@ -3064,12 +3488,14 @@ def _get_feasibility(
         )
 
     else:
-
-        def combined_constraint() -> bool:
-            """Dummy feasibility function that always returns True."""
-            return True
+        combined_constraint = _always_feasible
 
     return cast("ConstraintFunction", combined_constraint)
+
+
+def _always_feasible() -> bool:
+    """Feasibility of a regime without constraints: every cell is feasible."""
+    return True
 
 
 # Gross departures from unit regime mass are a specification error, not rounding:
@@ -3230,3 +3656,34 @@ def _unit_regime_mass_or_nan(
         probability_mass,
         jnp.nan,
     )
+
+
+def _publish_signature(
+    *,
+    target: object,
+    arg_names: tuple[str, ...],
+    return_annotation: str | type[inspect.Signature.empty],
+    name: str,
+) -> None:
+    """Publish the argument names, return annotation, and name of a kernel instance.
+
+    The instance is a frozen dataclass, so the attributes go through
+    `object.__setattr__`. The arguments carry no annotations of their own; only
+    the return annotation is published, when there is one.
+    """
+    signature = inspect.Signature(
+        [
+            inspect.Parameter(arg, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+            for arg in arg_names
+        ],
+        return_annotation=return_annotation,
+    )
+    object.__setattr__(target, "__signature__", signature)
+    object.__setattr__(
+        target,
+        "__annotations__",
+        {}
+        if return_annotation is inspect.Signature.empty
+        else {"return": return_annotation},
+    )
+    object.__setattr__(target, "__name__", name)

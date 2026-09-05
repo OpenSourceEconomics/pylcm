@@ -7,6 +7,7 @@ import platform
 import shutil
 import tempfile
 import textwrap
+from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 
@@ -147,10 +148,21 @@ def _enforce_retention(*, parent_path: Path, prefix: str, keep_n_latest: int) ->
             for entry in parent_path.glob(f"{prefix}_*/")
             if _snapshot_counter(entry=entry, prefix=prefix) >= 0
         ),
-        key=lambda entry: _snapshot_counter(entry=entry, prefix=prefix),
+        key=_SnapshotCounterKey(prefix=prefix),
     )
     for snap_dir in existing[: max(0, len(existing) - keep_n_latest)]:
         shutil.rmtree(snap_dir)
+
+
+@dataclass(frozen=True, kw_only=True)
+class _SnapshotCounterKey:
+    """Sort key ordering snapshot directories by their parsed integer counter."""
+
+    prefix: str
+    """The snapshot directory prefix the counter follows."""
+
+    def __call__(self, entry: Path) -> int:
+        return _snapshot_counter(entry=entry, prefix=self.prefix)
 
 
 def _atomic_dump(*, obj: object, path: str | Path, protocol: int) -> Path:

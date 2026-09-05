@@ -150,15 +150,7 @@ def piece[F: Callable[..., object]](
         )
         raise NBEGMCaseError(msg)
 
-    def attach_piece(func: F) -> F:
-        func.__lcm_piece__ = PieceMeta(  # ty: ignore[unresolved-attribute]
-            output=output,
-            predicate=predicate,
-            side=side,
-        )
-        return func
-
-    return attach_piece
+    return _PieceAttacher(meta=PieceMeta(output=output, predicate=predicate, side=side))
 
 
 def affine_breakpoint(
@@ -236,15 +228,13 @@ def piecewise_affine[F: Callable[..., object]](
 
     """
 
-    def attach_schedule(func: F) -> F:
-        func.__lcm_piecewise_affine__ = PiecewiseAffineMeta(  # ty: ignore[unresolved-attribute]
+    return _ScheduleAttacher(
+        meta=PiecewiseAffineMeta(
             output=output,
             variable=variable,
             breakpoints=breakpoints,
         )
-        return func
-
-    return attach_schedule
+    )
 
 
 def smooth_helper[F: Callable[..., object]](func: F) -> F:
@@ -266,3 +256,29 @@ def smooth_helper[F: Callable[..., object]](func: F) -> F:
     """
     func.__lcm_smooth_helper__ = True  # ty: ignore[unresolved-attribute]
     return func
+
+
+@dataclass(frozen=True)
+class _PieceAttacher:
+    """Decorator that records a piece declaration on a DAG function."""
+
+    meta: PieceMeta
+    """The piece declaration attached as `__lcm_piece__`."""
+
+    def __call__[F: Callable[..., object]](self, func: F) -> F:
+        """Attach the declaration and return `func` unchanged."""
+        func.__lcm_piece__ = self.meta  # ty: ignore[unresolved-attribute]
+        return func
+
+
+@dataclass(frozen=True)
+class _ScheduleAttacher:
+    """Decorator that records a piecewise-affine declaration on a DAG function."""
+
+    meta: PiecewiseAffineMeta
+    """The schedule declaration attached as `__lcm_piecewise_affine__`."""
+
+    def __call__[F: Callable[..., object]](self, func: F) -> F:
+        """Attach the declaration and return `func` unchanged."""
+        func.__lcm_piecewise_affine__ = self.meta  # ty: ignore[unresolved-attribute]
+        return func

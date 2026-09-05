@@ -9,6 +9,7 @@ modules import from.
 """
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any, cast
 
 from dags import concatenate_functions, get_annotations, with_signature
@@ -155,12 +156,18 @@ def _get_child_resources_function(
             regime_name=regime_name, user_regime=user_regime
         )
 
-    state_name = _get_child_state_name(user_regime=user_regime)
+    return _IdentityResources(state_name=_get_child_state_name(user_regime=user_regime))
 
-    def identity_resources(**kwargs: ScalarFloat) -> ScalarFloat:
-        return kwargs[state_name]
 
-    return identity_resources
+@dataclass(frozen=True, kw_only=True)
+class _IdentityResources:
+    """The M-space resources map of a terminal carry target: its Euler state."""
+
+    state_name: StateName
+    """Name of the target's continuous (Euler) state."""
+
+    def __call__(self, **kwargs: ScalarFloat) -> ScalarFloat:
+        return kwargs[self.state_name]
 
 
 def _get_child_resources_arg_names(
@@ -266,15 +273,31 @@ def _keeper_no_adjustment_function(
     agree) stays satisfied.
     """
     annotation = _annotation_of_arg(functions=functions, arg_name=durable_state)
-
-    @with_signature(args={durable_state: annotation}, return_annotation=annotation)
-    def keep_outer_post_decision(**kwargs: ScalarFloat) -> ScalarFloat:
-        if no_adjustment_func is None:
-            return kwargs[durable_state]
-        return no_adjustment_func(kwargs[durable_state])
-
-    keep_outer_post_decision.__name__ = outer_post_decision
+    keep_outer_post_decision = with_signature(
+        args={durable_state: annotation}, return_annotation=annotation
+    )(
+        _KeeperNoAdjustment(
+            durable_state=durable_state, no_adjustment_func=no_adjustment_func
+        )
+    )
+    keep_outer_post_decision.__name__ = outer_post_decision  # ty: ignore[unresolved-attribute]
     return cast("UserFunction", keep_outer_post_decision)
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _KeeperNoAdjustment:
+    """The keeper map `keep(durable)`: the no-adjustment candidate, or the identity."""
+
+    durable_state: StateName
+    """The durable state the map reads, by the regime's own name."""
+
+    no_adjustment_func: UserFunction | None
+    """The regime's no-adjustment candidate; `None` keeps the stock as is."""
+
+    def __call__(self, **kwargs: ScalarFloat) -> ScalarFloat:
+        if self.no_adjustment_func is None:
+            return kwargs[self.durable_state]
+        return self.no_adjustment_func(kwargs[self.durable_state])
 
 
 def _annotation_of_arg(

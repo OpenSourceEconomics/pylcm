@@ -72,6 +72,7 @@ replication code either way, not in this generic engine layer.
 """
 
 from collections.abc import Callable, Mapping
+from functools import partial
 from inspect import signature
 from types import MappingProxyType
 from typing import cast
@@ -525,26 +526,33 @@ def _per_row_leg_outcomes(
         Tuple of each subject's closed-branch regime id, its open-branch role,
         and its closed-branch role.
     """
-
-    def _role_of(name: str | None) -> int:
-        return NO_ROLE if name is None else role_ids[name]
-
     first = legs[0]
     fallback_id = jnp.full_like(
         own_stakeholder, regime_names_to_ids[first.realized_fallback.regime]
     )
-    open_role = jnp.full_like(own_stakeholder, _role_of(first.target_stakeholder))
+    open_role = jnp.full_like(
+        own_stakeholder, _role_code(name=first.target_stakeholder, role_ids=role_ids)
+    )
     closed_role = jnp.full_like(
-        own_stakeholder, _role_of(first.realized_fallback.stakeholder)
+        own_stakeholder,
+        _role_code(name=first.realized_fallback.stakeholder, role_ids=role_ids),
     )
     for leg in legs[1:]:
-        mine = own_stakeholder == _role_of(leg.source_stakeholder)
+        mine = own_stakeholder == _role_code(
+            name=leg.source_stakeholder, role_ids=role_ids
+        )
         fallback_id = jnp.where(
             mine, regime_names_to_ids[leg.realized_fallback.regime], fallback_id
         )
-        open_role = jnp.where(mine, _role_of(leg.target_stakeholder), open_role)
+        open_role = jnp.where(
+            mine,
+            _role_code(name=leg.target_stakeholder, role_ids=role_ids),
+            open_role,
+        )
         closed_role = jnp.where(
-            mine, _role_of(leg.realized_fallback.stakeholder), closed_role
+            mine,
+            _role_code(name=leg.realized_fallback.stakeholder, role_ids=role_ids),
+            closed_role,
         )
     return fallback_id, open_role, closed_role
 
@@ -688,6 +696,11 @@ def _accepted_arg_names(func: Callable) -> frozenset[str]:
     return accepted
 
 
+def _role_code(*, name: str | None, role_ids: Mapping[str, int]) -> int:
+    """Return the role code of a stakeholder name; `NO_ROLE` for a role-less leg."""
+    return NO_ROLE if name is None else role_ids[name]
+
+
 def population_call(*, func: Callable, axis_size: int) -> Callable:
     """Return `func` mapped over a population of `axis_size` subjects, compiled.
 
@@ -714,15 +727,23 @@ def population_call(*, func: Callable, axis_size: int) -> Callable:
     per_axis_size = _POPULATION_CALLS.setdefault(func, {})
     call = per_axis_size.get(axis_size)
     if call is None:
-        # keyword-only-exempt: library-callback=jax.vmap
-        def _call_one_subject(
-            one_subject_kwargs: Mapping[str, object],
-            shared_kwargs: Mapping[str, object],
-        ) -> object:
-            return func(**one_subject_kwargs, **shared_kwargs)
-
         call = jax.jit(
-            jax.vmap(_call_one_subject, in_axes=(0, None), axis_size=axis_size)
+            jax.vmap(
+                partial(_call_one_subject, func=func),
+                in_axes=(0, None),
+                axis_size=axis_size,
+            )
         )
         per_axis_size[axis_size] = call
     return call
+
+
+# keyword-only-exempt: library-callback=jax.vmap
+def _call_one_subject(
+    one_subject_kwargs: Mapping[str, object],
+    shared_kwargs: Mapping[str, object],
+    *,
+    func: Callable,
+) -> object:
+    """Call `func` for one subject with its own and the shared keyword arguments."""
+    return func(**one_subject_kwargs, **shared_kwargs)

@@ -8,6 +8,8 @@ comparison of the same shape are recognised alike — the sugar is a way to spel
 a comparison, not a privileged kind of one.
 """
 
+from dataclasses import dataclass
+
 from _lcm.constraints.dispositions import (
     ConstraintContext,
     Proof,
@@ -71,13 +73,24 @@ def proves_the_savings_grids_lower_bound(
 
     """
 
-    def prove(
+    return _SavingsGridLowerBoundProof(post_decision=post_decision)
+
+
+@dataclass(frozen=True, kw_only=True)
+class _SavingsGridLowerBoundProof:
+    """Proof that the savings grid enforces a declared bound on `post_decision`."""
+
+    post_decision: FunctionName
+    """Name of the post-decision state the savings grid spans."""
+
+    def __call__(
+        self,
         *,
         bound: BoundConstraint,
-        context: ConstraintContext,  # noqa: ARG001
+        context: ConstraintContext,  # noqa: ARG002
     ) -> ProvedByConstruction | None:
         declaration = lower_bound_declaration(constraint=bound.constraint)
-        if declaration is None or declaration[0] != post_decision:
+        if declaration is None or declaration[0] != self.post_decision:
             return None
         surfaces = bound.constraint.boundary_surfaces
         return ProvedByConstruction(
@@ -85,12 +98,10 @@ def proves_the_savings_grids_lower_bound(
             proof=Proof(
                 reason=(
                     f"the savings grid the solve inverts on spans "
-                    f"'{post_decision}', and its lowest node is the limit "
+                    f"'{self.post_decision}', and its lowest node is the limit "
                     f"enforced — checked against this declaration when the "
                     f"model was built"
                 ),
                 surface=surfaces[0] if surfaces else None,
             ),
         )
-
-    return prove

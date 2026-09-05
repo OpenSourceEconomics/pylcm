@@ -1217,13 +1217,13 @@ def _match_continuation_template_sharding(
     itself sharded — an unsharded template under a distributed state would
     pull the continuation onto one device.
     """
-    return jax.tree.map(
-        lambda leaf, template_leaf: _match_leaf_template_sharding(
-            leaf=leaf, template_leaf=template_leaf
-        ),
-        continuation,
-        template,
-    )
+    return jax.tree.map(_match_leaf_pair_sharding, continuation, template)
+
+
+# keyword-only-exempt: library-callback=jax.tree.map
+def _match_leaf_pair_sharding(leaf: FloatND, template_leaf: FloatND) -> FloatND:
+    """Place one continuation leaf on its template leaf's sharding."""
+    return _match_leaf_template_sharding(leaf=leaf, template_leaf=template_leaf)
 
 
 def _publish_kernel_value(

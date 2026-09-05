@@ -12,7 +12,9 @@ each node's scalar value and optimal action at its single resources query. The
 per-combo carry holds the per-node published points, not the envelope workspace.
 """
 
+import functools
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
 
@@ -27,7 +29,9 @@ from _lcm.egm.interp import (
     _interp_between_nodes,
     interp_on_padded_grid,
 )
+from _lcm.egm.preferences import BoundUtilityOfAction
 from _lcm.egm.step_core import (
+    ResourcesOfState,
     _candidate_supgradient,
     _compute_constrained_candidates,
     _compute_nodes_over_savings,
@@ -84,16 +88,51 @@ def _get_solve_one_combo_asset_rows(
     residual, $\\sum \\partial P/\\partial a \\cdot EV$ from the
     probabilities, the weights' and passive laws' derivatives.
     """
-    dtype = state_grid.dtype
-    n_state = int(state_grid.shape[0])
+    return _SolveOneComboAssetRows(
+        pieces=pieces,
+        pool=pool,
+        state_grid=state_grid,
+        next_regime_to_continuation=next_regime_to_continuation,
+        euler_batch_size=euler_batch_size,
+        savings_batch_size=savings_batch_size,
+        resolved_process_grids=resolved_process_grids,
+    )
 
-    def solve_one_combo(
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _SolveOneComboAssetRows:
+    """The per-asset-node EGM step for one kernel invocation, per combo.
+
+    Takes the combo's values (discrete codes and passive node values)
+    positionally so `jax.vmap` can batch over flattened combo arrays.
+    """
+
+    pieces: _EgmKernelPieces
+    """Build-time statics shared by every per-combo computation."""
+
+    pool: dict[str, Any]
+    """The kernel's flat params, `period`, and `age`."""
+
+    state_grid: Float1D
+    """The regime's exogenous Euler-state grid."""
+
+    next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry]
+    """The next period's EGM carries."""
+
+    euler_batch_size: int
+    """The Euler grid's `batch_size`; splays the per-node solve when positive."""
+
+    savings_batch_size: int
+    """The savings grid's `batch_size`."""
+
+    resolved_process_grids: Mapping[StateName, FloatND]
+    """Solve-time grids of runtime-resolved process states."""
+
+    def __call__(
+        self,
         combo_values: tuple[ScalarInt | ScalarFloat, ...],
     ) -> tuple[Float1D, Float1D, Float1D, Float1D, Float1D, ScalarBool]:
         """Run the per-asset-node EGM step for one (discrete x passive) combo.
-
-        Takes the combo's values (discrete codes and passive node values)
-        positionally so `jax.vmap` can batch over flattened combo arrays.
 
         Returns:
             Tuple of the combo's value row on the exogenous state grid and
@@ -103,164 +142,52 @@ def _get_solve_one_combo_asset_rows(
             qualify for the off-grid read).
 
         """
+        pieces = self.pieces
+        dtype = self.state_grid.dtype
+        n_state = int(self.state_grid.shape[0])
         combo_pool = {
-            **pool,
+            **self.pool,
             **dict(zip(pieces.combo_names, combo_values, strict=True)),
         }
         # Validation pins the default Bellman aggregator, whose single
         # non-(utility, CE) parameter is the discount factor.
         (discount_factor,) = tuple(pieces.build_W_kwargs(combo_pool).values())
-
-        def own_resources_of_state(state_value: ScalarFloat) -> ScalarFloat:
-            return pieces.own_resources_func(
-                **{pieces.euler_state_name: state_value}, **combo_pool
-            )
-
-        # keyword-only-exempt: library-callback=jax.grad
-        def continuation_of_euler_state(
-            state_value: ScalarFloat, savings_value: ScalarFloat
-        ) -> ScalarFloat:
-            """Expected continuation with the Euler slot as the grad argument.
-
-            Rebuilds the per-combo continuation closure with the Euler slot
-            of the combo pool bound to `state_value` (positional, so
-            `jax.grad` differentiates the law's direct Euler-state channel)
-            and evaluates it at fixed savings.
-            """
-            node_pool = {**combo_pool, pieces.euler_state_name: state_value}
-            expected_continuation = _get_expected_continuation_value(
-                pieces=pieces,
-                combo_pool=node_pool,
-                next_regime_to_continuation=next_regime_to_continuation,
-                dtype=dtype,
-                resolved_process_grids=resolved_process_grids,
-            )
-            return expected_continuation(savings_value)
-
-        def solve_one_node(
-            node_value: ScalarFloat,
-        ) -> tuple[ScalarFloat, ScalarFloat, ScalarFloat]:
-            """Run the single-post-state pipeline conditional on one node."""
-            node_pool = {**combo_pool, pieces.euler_state_name: node_value}
-
-            def utility_of_action(action_value: ScalarFloat) -> ScalarFloat:
-                return pieces.utility_func(
-                    **{pieces.action_name: action_value}, **node_pool
-                )
-
-            compute_node = _get_compute_node(
-                pieces=pieces,
-                combo_pool=node_pool,
-                discount_factor=discount_factor,
-                utility_of_action=utility_of_action,
-                next_regime_to_continuation=next_regime_to_continuation,
-                dtype=dtype,
-                resolved_process_grids=resolved_process_grids,
-            )
-            actions, endog_grid, values, expected_values = _compute_nodes_over_savings(
-                compute_node=compute_node,
-                savings_nodes=pieces.savings_nodes,
-                savings_batch_size=savings_batch_size,
-            )
-
-            resources_at_node, resources_gradient = jax.value_and_grad(
-                own_resources_of_state
-            )(node_value)
-
-            constrained_actions, constrained_values = _compute_constrained_candidates(
-                first_endogenous_point=endog_grid[0],
-                publish_resources=resources_at_node,
-                borrowing_limit=pieces.borrowing_limit,
-                n_constrained=pieces.n_constrained,
-                constrained_ratio=pieces.constrained_ratio,
-                utility_of_action=utility_of_action,
-                discounted_expected_value_at_limit=discount_factor * expected_values[0],
-            )
-
-            candidate_grid = jnp.concatenate(
-                [pieces.borrowing_limit + constrained_actions, endog_grid]
-            )
-            candidate_policy = jnp.concatenate([constrained_actions, actions])
-            candidate_value = jnp.concatenate([constrained_values, values])
-            # Exogenous source savings per candidate: the savings node for each
-            # Euler candidate (`endog_grid = savings_node + action`, so the
-            # implied `endog_grid - policy` equals it in exact arithmetic), the
-            # borrowing limit for the constrained candidates (their savings is
-            # pinned there). FUES compares these pristine sources exactly.
-            candidate_savings = jnp.concatenate(
-                [
-                    jnp.full_like(constrained_actions, pieces.borrowing_limit),
-                    pieces.savings_nodes,
-                ]
-            )
-            # Same `-inf` masking as the default per-combo computation: dead
-            # candidates become the envelope scan's absent form (NaN).
-            candidate_dead = jnp.isneginf(candidate_value)
-            candidate_marginal = _candidate_supgradient(
-                policy=candidate_policy,
-                dead=candidate_dead,
-                utility_of_action=utility_of_action,
-            )
-            # The node reads its refined envelope at one query
-            # (`resources_at_node`): every finder materializes the full refined
-            # envelope row and locates the bracketing pair, so the published
-            # `(V, policy)` is a full-envelope-then-interpolate. A sub-`n_pad`
-            # streamed finder is future work for all backends.
-            bracket = pieces.refine_to_bracket(
-                endog_grid=jnp.where(candidate_dead, jnp.nan, candidate_grid),
-                policy=jnp.where(candidate_dead, jnp.nan, candidate_policy),
-                value=jnp.where(candidate_dead, jnp.nan, candidate_value),
-                marginal_utility=candidate_marginal,
-                savings=jnp.where(candidate_dead, jnp.nan, candidate_savings),
-                x_query=resources_at_node,
-            )
-
-            V_node, policy_node = publish_node_from_bracket(
-                bracket=bracket,
-                n_pad=pieces.n_pad,
-                resources_at_node=resources_at_node,
-                borrowing_limit=pieces.borrowing_limit,
-                utility_of_action=utility_of_action,
-                discounted_expected_value_at_limit=discount_factor * expected_values[0],
-            )
-
-            # The carry marginal at this node:
-            # dV/dR = u'(c*) + discount_factor * (dW/da at fixed A*) / R'(a),
-            # with A* = R(a) - c*(a). The envelope term u'(c*) covers the
-            # savings channel; the second term is the law's direct
-            # Euler-state channel through the continuation, mapped into
-            # resources space by the resources slope.
-            marginal_utility_node = jax.grad(utility_of_action)(
-                jnp.where(jnp.isnan(policy_node), 1.0, policy_node)
-            )
-            savings_at_optimum = resources_at_node - policy_node
-            continuation_gradient = jax.grad(continuation_of_euler_state)(
-                node_value, savings_at_optimum
-            )
-            mu_node = (
-                marginal_utility_node
-                + discount_factor * continuation_gradient / resources_gradient
-            )
-            V_node, mu_node = _finalize_asset_row_node(
-                V_node=V_node,
-                mu_node=mu_node,
-                policy_node=policy_node,
-                candidate_dead=candidate_dead,
-                resources_gradient=resources_gradient,
-            )
-            return V_node, policy_node, mu_node
+        own_resources_of_state = ResourcesOfState(
+            resources_func=pieces.own_resources_func,
+            euler_state_name=pieces.euler_state_name,
+            bound=combo_pool,
+        )
+        continuation_of_euler_state = functools.partial(
+            _continuation_of_euler_state,
+            pieces=pieces,
+            combo_pool=combo_pool,
+            next_regime_to_continuation=self.next_regime_to_continuation,
+            dtype=dtype,
+            resolved_process_grids=self.resolved_process_grids,
+        )
+        solve_one_node = _SolveOneNode(
+            pieces=pieces,
+            combo_pool=combo_pool,
+            discount_factor=discount_factor,
+            next_regime_to_continuation=self.next_regime_to_continuation,
+            dtype=dtype,
+            resolved_process_grids=self.resolved_process_grids,
+            savings_batch_size=self.savings_batch_size,
+            own_resources_of_state=own_resources_of_state,
+            continuation_of_euler_state=continuation_of_euler_state,
+        )
 
         # Splay the per-asset-node solve into `lax.map` blocks of
         # `euler_batch_size` to shed peak working-set memory; `0` (or a size
         # covering the whole grid) keeps the fused vmap. The two are
         # numerically identical — only the schedule differs.
-        if 0 < euler_batch_size < n_state:
+        if 0 < self.euler_batch_size < n_state:
             V_vec, policy_vec, mu_vec = jax.lax.map(
-                solve_one_node, state_grid, batch_size=euler_batch_size
+                solve_one_node, self.state_grid, batch_size=self.euler_batch_size
             )
         else:
-            V_vec, policy_vec, mu_vec = jax.vmap(solve_one_node)(state_grid)
-        publish_resources = jax.vmap(own_resources_of_state)(state_grid)
+            V_vec, policy_vec, mu_vec = jax.vmap(solve_one_node)(self.state_grid)
+        publish_resources = jax.vmap(own_resources_of_state)(self.state_grid)
 
         pad = jnp.full((pieces.n_carry_rows - n_state,), jnp.nan, dtype=dtype)
         grid_row = jnp.concatenate([publish_resources.astype(dtype), pad])
@@ -290,7 +217,179 @@ def _get_solve_one_combo_asset_rows(
             jnp.asarray(False),  # noqa: FBT003
         )
 
-    return solve_one_combo
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _SolveOneNode:
+    """The single-post-state pipeline conditional on one exogenous asset node."""
+
+    pieces: _EgmKernelPieces
+    """Build-time statics shared by every per-combo computation."""
+
+    combo_pool: dict[str, Any]
+    """The combo's pool: flat params, `period`, `age`, and the combo's values."""
+
+    discount_factor: ScalarFloat
+    """The combo's discount factor."""
+
+    next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry]
+    """The next period's EGM carries."""
+
+    dtype: Any
+    """The canonical float dtype of the state grid."""
+
+    resolved_process_grids: Mapping[StateName, FloatND]
+    """Solve-time grids of runtime-resolved process states."""
+
+    savings_batch_size: int
+    """The savings grid's `batch_size`."""
+
+    own_resources_of_state: Callable[[ScalarFloat], ScalarFloat]
+    """The regime's resources as a function of its Euler state, combo bound."""
+
+    continuation_of_euler_state: Callable[[ScalarFloat, ScalarFloat], ScalarFloat]
+    """Expected continuation of `(state_value, savings_value)`, combo bound."""
+
+    def __call__(
+        self,
+        node_value: ScalarFloat,
+    ) -> tuple[ScalarFloat, ScalarFloat, ScalarFloat]:
+        pieces = self.pieces
+        discount_factor = self.discount_factor
+        node_pool = {**self.combo_pool, pieces.euler_state_name: node_value}
+        utility_of_action = BoundUtilityOfAction(
+            utility_func=pieces.utility_func,
+            action_name=pieces.action_name,
+            bound=node_pool,
+        )
+        compute_node = _get_compute_node(
+            pieces=pieces,
+            combo_pool=node_pool,
+            discount_factor=discount_factor,
+            utility_of_action=utility_of_action,
+            next_regime_to_continuation=self.next_regime_to_continuation,
+            dtype=self.dtype,
+            resolved_process_grids=self.resolved_process_grids,
+        )
+        actions, endog_grid, values, expected_values = _compute_nodes_over_savings(
+            compute_node=compute_node,
+            savings_nodes=pieces.savings_nodes,
+            savings_batch_size=self.savings_batch_size,
+        )
+
+        resources_at_node, resources_gradient = jax.value_and_grad(
+            self.own_resources_of_state
+        )(node_value)
+
+        constrained_actions, constrained_values = _compute_constrained_candidates(
+            first_endogenous_point=endog_grid[0],
+            publish_resources=resources_at_node,
+            borrowing_limit=pieces.borrowing_limit,
+            n_constrained=pieces.n_constrained,
+            constrained_ratio=pieces.constrained_ratio,
+            utility_of_action=utility_of_action,
+            discounted_expected_value_at_limit=discount_factor * expected_values[0],
+        )
+
+        candidate_grid = jnp.concatenate(
+            [pieces.borrowing_limit + constrained_actions, endog_grid]
+        )
+        candidate_policy = jnp.concatenate([constrained_actions, actions])
+        candidate_value = jnp.concatenate([constrained_values, values])
+        # Exogenous source savings per candidate: the savings node for each
+        # Euler candidate (`endog_grid = savings_node + action`, so the
+        # implied `endog_grid - policy` equals it in exact arithmetic), the
+        # borrowing limit for the constrained candidates (their savings is
+        # pinned there). FUES compares these pristine sources exactly.
+        candidate_savings = jnp.concatenate(
+            [
+                jnp.full_like(constrained_actions, pieces.borrowing_limit),
+                pieces.savings_nodes,
+            ]
+        )
+        # Same `-inf` masking as the default per-combo computation: dead
+        # candidates become the envelope scan's absent form (NaN).
+        candidate_dead = jnp.isneginf(candidate_value)
+        candidate_marginal = _candidate_supgradient(
+            policy=candidate_policy,
+            dead=candidate_dead,
+            utility_of_action=utility_of_action,
+        )
+        # The node reads its refined envelope at one query
+        # (`resources_at_node`): every finder materializes the full refined
+        # envelope row and locates the bracketing pair, so the published
+        # `(V, policy)` is a full-envelope-then-interpolate. A sub-`n_pad`
+        # streamed finder is future work for all backends.
+        bracket = pieces.refine_to_bracket(
+            endog_grid=jnp.where(candidate_dead, jnp.nan, candidate_grid),
+            policy=jnp.where(candidate_dead, jnp.nan, candidate_policy),
+            value=jnp.where(candidate_dead, jnp.nan, candidate_value),
+            marginal_utility=candidate_marginal,
+            savings=jnp.where(candidate_dead, jnp.nan, candidate_savings),
+            x_query=resources_at_node,
+        )
+
+        V_node, policy_node = publish_node_from_bracket(
+            bracket=bracket,
+            n_pad=pieces.n_pad,
+            resources_at_node=resources_at_node,
+            borrowing_limit=pieces.borrowing_limit,
+            utility_of_action=utility_of_action,
+            discounted_expected_value_at_limit=discount_factor * expected_values[0],
+        )
+
+        # The carry marginal at this node:
+        # dV/dR = u'(c*) + discount_factor * (dW/da at fixed A*) / R'(a),
+        # with A* = R(a) - c*(a). The envelope term u'(c*) covers the
+        # savings channel; the second term is the law's direct
+        # Euler-state channel through the continuation, mapped into
+        # resources space by the resources slope.
+        marginal_utility_node = jax.grad(utility_of_action)(
+            jnp.where(jnp.isnan(policy_node), 1.0, policy_node)
+        )
+        savings_at_optimum = resources_at_node - policy_node
+        continuation_gradient = jax.grad(self.continuation_of_euler_state)(
+            node_value, savings_at_optimum
+        )
+        mu_node = (
+            marginal_utility_node
+            + discount_factor * continuation_gradient / resources_gradient
+        )
+        V_node, mu_node = _finalize_asset_row_node(
+            V_node=V_node,
+            mu_node=mu_node,
+            policy_node=policy_node,
+            candidate_dead=candidate_dead,
+            resources_gradient=resources_gradient,
+        )
+        return V_node, policy_node, mu_node
+
+
+# keyword-only-exempt: library-callback=jax.grad
+def _continuation_of_euler_state(
+    state_value: ScalarFloat,
+    savings_value: ScalarFloat,
+    *,
+    pieces: _EgmKernelPieces,
+    combo_pool: dict[str, Any],
+    next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
+    dtype: Any,  # noqa: ANN401
+    resolved_process_grids: Mapping[StateName, FloatND],
+) -> ScalarFloat:
+    """Expected continuation with the Euler slot as the grad argument.
+
+    Rebuilds the per-combo continuation with the Euler slot of the combo pool
+    bound to `state_value` (positional, so `jax.grad` differentiates the law's
+    direct Euler-state channel) and evaluates it at fixed savings.
+    """
+    node_pool = {**combo_pool, pieces.euler_state_name: state_value}
+    expected_continuation = _get_expected_continuation_value(
+        pieces=pieces,
+        combo_pool=node_pool,
+        next_regime_to_continuation=next_regime_to_continuation,
+        dtype=dtype,
+        resolved_process_grids=resolved_process_grids,
+    )
+    return expected_continuation(savings_value)
 
 
 def _finalize_asset_row_node(
@@ -347,19 +446,27 @@ def _get_expected_continuation_value(
     terms (Danskin does not cancel them: the probabilities are not the
     softmax of the values they weight).
     """
-    continuation = bind_continuation(
-        plan=pieces.continuation_plan,
-        combo_pool=combo_pool,
-        next_regime_to_continuation=next_regime_to_continuation,
-        dtype=dtype,
-        resolved_process_grids=resolved_process_grids,
+    return _ExpectedContinuationValue(
+        continuation=bind_continuation(
+            plan=pieces.continuation_plan,
+            combo_pool=combo_pool,
+            next_regime_to_continuation=next_regime_to_continuation,
+            dtype=dtype,
+            resolved_process_grids=resolved_process_grids,
+        )
     )
 
-    def expected_continuation(savings_value: ScalarFloat) -> ScalarFloat:
-        expected_value, _ = continuation(savings_value)
-        return expected_value
 
-    return expected_continuation
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _ExpectedContinuationValue:
+    """The expected continuation value $W(A)$ of one combo pool."""
+
+    continuation: Callable[[ScalarFloat], tuple[ScalarFloat, ScalarFloat]]
+    """The bound continuation, returning the value and marginal at a node."""
+
+    def __call__(self, savings_value: ScalarFloat) -> ScalarFloat:
+        expected_value, _ = self.continuation(savings_value)
+        return expected_value
 
 
 def _publish_node_V_and_policy(
