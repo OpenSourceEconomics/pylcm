@@ -274,23 +274,47 @@ def test_consumers_are_ordered_after_their_producers() -> None:
     assert topological_program_order(graph=graph) == ("producer", "consumer")
 
 
-def test_templates_take_the_producers_abstract_output_shapes() -> None:
-    """Each internal-input template carries the shape and dtype it will receive."""
+def _consumer_templates() -> Mapping[str, Any]:
+    """Trace the two-producer fixture graph and return the consumer's templates."""
     graph = core_program_graph(kernel=_Kernel(programs=_graph()))
     materialized = {
         name: materialize_core_program(program=program, context=_context())
         for name, program in graph.items()
     }
-    templates = cast(
+    return cast(
         "Mapping[str, Any]",
         internal_input_templates(
             program=materialized["consumer"],
             producers=_records(materialized=materialized, names=("producer",)),
         ),
     )
-    assert templates["upstream_value"].shape == (3,)
-    assert templates["upstream_value"].dtype == jnp.zeros((3,)).dtype
-    assert templates["upstream_carry"]["carry"].shape == (3,)
+
+
+@pytest.mark.parametrize(
+    ("actual", "expected"),
+    [
+        pytest.param(
+            _consumer_templates()["upstream_value"].shape,
+            (3,),
+            id="upstream_value_shape",
+        ),
+        pytest.param(
+            _consumer_templates()["upstream_value"].dtype,
+            jnp.zeros((3,)).dtype,
+            id="upstream_value_dtype",
+        ),
+        pytest.param(
+            _consumer_templates()["upstream_carry"]["carry"].shape,
+            (3,),
+            id="upstream_carry_carry_shape",
+        ),
+    ],
+)
+def test_templates_take_the_producers_abstract_output_shapes(
+    *, actual: object, expected: object
+) -> None:
+    """Each internal-input template carries the shape and dtype it will receive."""
+    assert actual == expected
 
 
 def test_a_consumer_lowers_against_the_templates_and_runs_on_real_arrays() -> None:
@@ -597,6 +621,12 @@ def test_a_width_invariant_published_output_is_admitted() -> None:
     candidates = _streaming_candidates(label="value", path=(0,))
 
     assert assert_width_invariant_internal_outputs(candidates=candidates) is None
+
+
+def test_an_empty_candidate_mapping_is_refused() -> None:
+    """A consumed producer traced at no width is refused, not silently admitted."""
+    with pytest.raises(ExecutionPlanningError, match="at least one width candidate"):
+        assert_width_invariant_internal_outputs(candidates=MappingProxyType({}))
 
 
 def test_one_producer_feeding_two_consumers_is_traced_once() -> None:

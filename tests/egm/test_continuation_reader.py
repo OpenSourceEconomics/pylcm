@@ -117,16 +117,20 @@ def test_a_carry_is_still_an_opaque_keyed_artifact() -> None:
     assert _carry().artifact_key is EGM_CONTINUATION
 
 
-# Local names that hold a published carry in the modules the probe reads. The
-# filter is what aims the probe at carry rows rather than at any attribute
-# sharing a field name: `self.marginal_utility` in `_lcm/solution/nnbegm.py` is
-# a utility-DAG callable and `step.value` in `_lcm/solution/egm.py` is a step
-# result, neither of which is a published carry. `adjuster_carry` is left out
-# because the outer lift writes a new carry from it rather than reading a
-# published one.
-_CARRY_HOLDING_NAMES = frozenset(
-    {"carry", "template", "candidate", "first", "next_carry", "keeper_carry"}
+# Local names that hold something other than a published carry in the modules
+# the probe reads, even though they carry a field name in common:
+# `self.marginal_utility` in `_lcm/solution/nnbegm.py` is a utility-DAG
+# callable, `step.value` in `_lcm/solution/egm.py` is a step result, and
+# `keeper_output`/`keeper_result`/`adjuster_result`/`result` are readouts of a
+# reduction, not a carry. Excluding by base name rather than allowing by it
+# means an attribute read on any *other* name is presumed a carry read, so a
+# new carry-holding local the probe has never seen still trips it.
+_NON_CARRY_BASES = frozenset(
+    {"step", "keeper_output", "result", "keeper_result", "adjuster_result", "self"}
 )
+# `adjuster_carry` is exempt on top of that: the outer lift writes a new carry
+# from it rather than reading a published one.
+_EXEMPT_CARRY_LIFT = "adjuster_carry"
 
 
 def test_no_shipped_consumer_reads_a_carry_field_by_attribute() -> None:
@@ -147,7 +151,8 @@ def test_no_shipped_consumer_reads_a_carry_field_by_attribute() -> None:
         if isinstance(node, ast.Attribute)
         and node.attr in _EGM_CARRY_FIELDS
         and isinstance(node.value, ast.Name)
-        and node.value.id in _CARRY_HOLDING_NAMES
+        and node.value.id not in _NON_CARRY_BASES
+        and node.value.id != _EXEMPT_CARRY_LIFT
     ]
 
     assert offenders == []
