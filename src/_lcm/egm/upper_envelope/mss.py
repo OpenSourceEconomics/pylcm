@@ -143,8 +143,8 @@ def refine_envelope(
 
     # Sort the candidate abscissae ascending so the sweep is left-to-right and
     # the NaN tail is contiguous; dead nodes sort last.
-    grid_key = jnp.where(dead, jnp.inf, endog_grid)
-    order = jnp.argsort(grid_key)
+    grid_key = _stored_key(value=jnp.where(dead, jnp.inf, endog_grid))
+    order = jnp.argsort(grid_key, stable=True)
     query_grid = jnp.where(dead, jnp.nan, endog_grid)[order]
     query_dead = dead[order]
     # Several candidate branches can supply the same query abscissa. They still
@@ -152,7 +152,10 @@ def refine_envelope(
     # Otherwise a node-aligned switch emits its outgoing record beside several
     # identical incoming-node records instead of one outgoing/incoming pair.
     repeated_query = jnp.concatenate(
-        (jnp.zeros((1,), dtype=bool), query_grid[1:] == query_grid[:-1])
+        (
+            jnp.zeros((1,), dtype=bool),
+            _stored_equal(left=query_grid[1:], right=query_grid[:-1]),
+        )
     )
     query_dead = query_dead | repeated_query
 
@@ -214,11 +217,11 @@ def refine_envelope(
         jnp.maximum, jnp.where(~query_drop, node_index, -1)
     )
     previous_index = jnp.concatenate((jnp.full((1,), -1), live_index[:-1]))
-    at_previous = (previous_index >= 0) & (
-        crossing.grid == query_grid[jnp.maximum(previous_index, 0)]
+    at_previous = (previous_index >= 0) & _stored_equal(
+        left=crossing.grid, right=query_grid[jnp.maximum(previous_index, 0)]
     )
     crossing_node = jnp.where(
-        crossing.grid == query_grid,
+        _stored_equal(left=crossing.grid, right=query_grid),
         node_index,
         jnp.where(at_previous, previous_index, query_grid.shape[0]),
     )
@@ -271,16 +274,19 @@ class _Links(NamedTuple):
 
     `certified_sign` compares lines and says plainly what it will not invent: a
     link of zero width has no affine line and a non-finite operand is unresolved
-    rather than false. The comparable fields are shaped once so every comparison
-    downstream is handed operands it can decide on, while `lower`/`upper` keep
-    the stored span, so widening a degenerate link's divisor never widens the
-    set of queries it brackets.
+    rather than false. The comparable fields give readings and crossing signs a
+    line to work with. Ownership instead receives `lower`, `upper`, `v0` and
+    `upper_value`: the original oriented endpoints, including a singleton's
+    original upper endpoint/value. A readable line must never manufacture right
+    extension, width or support for the owner decision.
     """
 
     lower: Float1D
     """Lower stored abscissa of the link's span."""
     upper: Float1D
     """Upper stored abscissa of the link's span."""
+    upper_value: Float1D
+    """Original value at `upper`, before making a singleton readable."""
     x0: Float1D
     """Lower abscissa of the comparable line."""
     x1: Float1D
@@ -338,8 +344,8 @@ def _segment_chain(
     # winner stays constant across one branch, so only a genuine branch switch is a
     # kink.
     if segment_id is None:
-        decreases = (right_grid < left_grid) | _value_decrease_past_noise(
-            left_value=left_value, right_value=right_value
+        decreases = _stored_less(left=right_grid, right=left_grid) | (
+            _value_decrease_past_noise(left_value=left_value, right_value=right_value)
         )
         link_segment = jnp.cumsum(decreases.astype(jnp.int32))
         segment_live = ~dead[:-1] & ~dead[1:] & ~decreases
@@ -372,15 +378,13 @@ def _comparable_links(
 ) -> _Links:
     """Orient every link ascending and give a degenerate one a readable width.
 
-    A link stored right-to-left carries the same line as the same link stored
-    left-to-right, so the endpoints are swapped rather than rejected. A link of
-    zero width carries no line: its divisor is displaced by one representable
-    step and both endpoint readings are set to the stored lower ones, which is
-    the flat line it in fact is. One representable step is a readable width
-    everywhere but at zero, where it is the smallest subnormal and a comparison
-    would abstain, so a flat link at zero takes a width of one instead.
+    Stored-bit order, not floating arithmetic, orients descending endpoints and
+    distinguishes a true singleton from a positive subnormal width. A singleton
+    is read as a constant line on [0, 1], even at the largest finite coordinate;
+    that surrogate is used only for readings/crossing signs. Its original span
+    and endpoint values are retained separately for ownership and admission.
     """
-    descending = right_grid < left_grid
+    descending = _stored_less(left=right_grid, right=left_grid)
     x0 = jnp.where(descending, right_grid, left_grid)
     x1 = jnp.where(descending, left_grid, right_grid)
     v0 = jnp.where(descending, right_value, left_value)
@@ -388,15 +392,16 @@ def _comparable_links(
     p0 = jnp.where(descending, right_policy, left_policy)
     p1 = jnp.where(descending, left_policy, right_policy)
 
-    degenerate = x1 <= x0
-    flat_at_zero = degenerate & (x0 == 0.0)
-    step = jnp.nextafter(x0, jnp.full_like(x0, jnp.inf))
-    finite_line = jnp.isfinite(v0) & jnp.isfinite(v1) & jnp.isfinite(x0)
+    degenerate = _stored_equal(left=x0, right=x1)
+    finite_line = (
+        jnp.isfinite(v0) & jnp.isfinite(v1) & jnp.isfinite(x0) & jnp.isfinite(x1)
+    )
     return _Links(
-        lower=jnp.minimum(left_grid, right_grid),
-        upper=jnp.maximum(left_grid, right_grid),
-        x0=x0,
-        x1=jnp.where(flat_at_zero, jnp.ones_like(x0), jnp.where(degenerate, step, x1)),
+        lower=x0,
+        upper=x1,
+        upper_value=v1,
+        x0=jnp.where(degenerate, jnp.zeros_like(x0), x0),
+        x1=jnp.where(degenerate, jnp.ones_like(x1), x1),
         v0=v0,
         v1=jnp.where(degenerate, v0, v1),
         p0=p0,
@@ -419,8 +424,78 @@ def _chord_value(
     return reading
 
 
+def _stored_key(*, value: FloatND) -> jax.Array:
+    """Materialize unsigned sort keys, identifying the two signed zeros.
+
+    Positive IEEE encodings ascend with magnitude; negative ones descend.
+    Normalizing only the zero *bits*, then complementing negative encodings and
+    flipping the positive sign bit, gives an unsigned monotone key. No floating
+    operation is needed to form the keys. They are used only as integer sort
+    inputs, not compared next to their floating operands (see `_stored_equal`).
+    Sorting replaces dead coordinates with +inf before building the key.
+    """
+    integer = jnp.uint64 if value.dtype == jnp.float64 else jnp.uint32
+    sign = jnp.asarray(1 << (jnp.finfo(value.dtype).bits - 1), dtype=integer)
+    bits = jax.lax.bitcast_convert_type(value, integer)
+    bits = jnp.where((bits & ~sign) == 0, jnp.zeros_like(bits), bits)
+    return jnp.where((bits & sign) != 0, ~bits, bits ^ sign)
+
+
+def _stored_parts(*, value: FloatND) -> tuple[jax.Array, jax.Array, BoolND, BoolND]:
+    """Decode bits, magnitude, sign and non-NaN status using integers only."""
+    integer = jnp.uint64 if value.dtype == jnp.float64 else jnp.uint32
+    sign = jnp.asarray(1 << (jnp.finfo(value.dtype).bits - 1), dtype=integer)
+    infinity = jax.lax.bitcast_convert_type(jnp.full((), jnp.inf, value.dtype), integer)
+    bits = jax.lax.bitcast_convert_type(value, integer)
+    magnitude = bits & ~sign
+    return bits, magnitude, (bits & sign) != 0, magnitude <= infinity
+
+
 def _stored_equal(*, left: FloatND, right: FloatND) -> BoolND:
-    """Compare stored bits without conflating subnormals with zero."""
+    """Same geometric location: signed zeros agree, distinct subnormals do not.
+
+    Compare the raw encodings, not two normalized sortable keys. A compiler can
+    recognize the latter as a floating equality and reintroduce flushing under
+    JIT. The only additional equality here is the explicit two-zero bit case.
+    """
+    left_bits, left_magnitude, _, left_valid = _stored_parts(value=left)
+    right_bits, right_magnitude, _, right_valid = _stored_parts(value=right)
+    return (
+        ((left_bits == right_bits) | ((left_magnitude | right_magnitude) == 0))
+        & left_valid
+        & right_valid
+    )
+
+
+def _stored_less(*, left: FloatND, right: FloatND) -> BoolND:
+    """Strict sign/magnitude order, with signed zeros equal and NaNs unordered."""
+    _, left_magnitude, left_negative, left_valid = _stored_parts(value=left)
+    _, right_magnitude, right_negative, right_valid = _stored_parts(value=right)
+    ordered = jnp.where(
+        left_negative != right_negative,
+        left_negative,
+        jnp.where(
+            left_negative,
+            left_magnitude > right_magnitude,
+            left_magnitude < right_magnitude,
+        ),
+    )
+    return (
+        ordered & ((left_magnitude | right_magnitude) != 0) & left_valid & right_valid
+    )
+
+
+def _stored_in_span(*, query: FloatND, lower: FloatND, upper: FloatND) -> BoolND:
+    """Admit finite queries to live finite spans using the node-identity order."""
+    return (
+        jnp.isfinite(query)
+        & ~_stored_less(left=query, right=lower)
+        & ~_stored_less(left=upper, right=query)
+    )
+
+
+def _same_bits(*, left: FloatND, right: FloatND) -> BoolND:
+    """Channel identity, unlike geometry, preserves the sign of a stored zero."""
     integer = jnp.uint64 if left.dtype == jnp.float64 else jnp.uint32
     return jax.lax.bitcast_convert_type(left, integer) == jax.lax.bitcast_convert_type(
         right, integer
@@ -445,7 +520,7 @@ def _chord_reading(
         jnp.where(
             _stored_equal(left=x, right=x1),
             v1,
-            jnp.where(_stored_equal(left=v0, right=v1), v0, reading),
+            jnp.where(_same_bits(left=v0, right=v1), v0, reading),
         ),
     )
     return jnp.where(status == 0, reading, jnp.nan), status
@@ -501,9 +576,9 @@ def _certified_owner(
     at.
 
     Admission and comparison are kept apart. Which links a query admits is decided
-    by the stored span, so widening a degenerate link's divisor to give the
-    comparison a line to work with never widens the set of queries that link
-    brackets.
+    by the stored span. The selector also receives that ORIGINAL span, not the
+    comparable line: otherwise a singleton would acquire artificial right
+    extension in the tie order even with a correct admission mask.
 
     Returns:
         Tuple of the owning column per query and whether that query's order was
@@ -512,10 +587,10 @@ def _certified_owner(
     """
     shape = brackets.shape
     winner, exact_status = exact_query_winner_batched(
-        left_grid=jnp.broadcast_to(links.x0[None, :], shape),
-        right_grid=jnp.broadcast_to(links.x1[None, :], shape),
+        left_grid=jnp.broadcast_to(links.lower[None, :], shape),
+        right_grid=jnp.broadcast_to(links.upper[None, :], shape),
         left_value=jnp.broadcast_to(links.v0[None, :], shape),
-        right_value=jnp.broadcast_to(links.v1[None, :], shape),
+        right_value=jnp.broadcast_to(links.upper_value[None, :], shape),
         live=brackets,
         stable_index=stable_index,
         x_query=query,
@@ -550,7 +625,9 @@ def _evaluate_envelope(
 
     """
     query = query_grid[:, None]
-    brackets = links.live[None, :] & (query >= links.lower) & (query <= links.upper)
+    brackets = links.live[None, :] & _stored_in_span(
+        query=query, lower=links.lower, upper=links.upper
+    )
     stable_index = jnp.broadcast_to(
         jnp.arange(links.x0.shape[0], dtype=jnp.int32)[None, :], brackets.shape
     )
@@ -862,12 +939,13 @@ def _crossing_in_interval(
     covered = (
         links.live[seg_a]
         & links.live[seg_b]
-        & (grid >= links.lower[seg_a])
-        & (grid <= links.upper[seg_a])
+        & _stored_in_span(
+            query=grid, lower=links.lower[seg_a], upper=links.upper[seg_a]
+        )
     )
     resolved = bracketed & (location_status == 0) & covered
-    at_left = resolved & (grid == prev_grid)
-    at_right = resolved & (grid == this_grid)
+    at_left = resolved & _stored_equal(left=grid, right=prev_grid)
+    at_right = resolved & _stored_equal(left=grid, right=this_grid)
     unresolved = (
         (sign_prev == UNRESOLVED_STATUS)
         | (sign_this == UNRESOLVED_STATUS)

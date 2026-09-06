@@ -722,6 +722,7 @@ def _r2_intersection(*, x0, x1, v0, v1, lower, upper, left, right):
         v1=v1,
         lower=lower,
         upper=upper,
+        upper_value=v1,
         p0=jnp.asarray([8, 2], dtype=x0.dtype),
         p1=jnp.asarray([8, 2], dtype=x0.dtype),
         live=jnp.asarray([True, True]),
@@ -806,3 +807,399 @@ def test_r2_refused_location_poison_is_not_a_missing_event() -> None:
     live_grid = np.asarray(out[0])[:kept]
     assert np.isfinite(live_grid).all()
     assert len(np.unique(live_grid)) == kept  # no fabricated endpoint event
+
+
+@jax.jit
+def _geometry_node(
+    *,
+    grid: jax.Array,
+    policy: jax.Array,
+    value: jax.Array,
+    labels: jax.Array,
+    query: jax.Array,
+) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+    """Exercise the production node boundary without the publication sweep."""
+    links = mss._comparable_links(
+        left_grid=grid[:-1],
+        right_grid=grid[1:],
+        left_policy=policy[:-1],
+        right_policy=policy[1:],
+        left_value=value[:-1],
+        right_value=value[1:],
+        segment_live=labels[:-1] == labels[1:],
+    )
+    return mss._evaluate_envelope(
+        query_grid=query,
+        links=links,
+        segment_id=labels[:-1].astype(jnp.int32),
+    )
+
+
+@jax.jit
+def _geometry_inferred_row(
+    *, grid: jax.Array, policy: jax.Array, value: jax.Array
+) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+    """Reuse one compilation for inferred-topology coordinate mutations."""
+    return refine_envelope(endog_grid=grid, policy=policy, value=value, n_refined=32)
+
+
+def _geometry_oracle(
+    *,
+    grid: np.ndarray,
+    policy: np.ndarray,
+    value: np.ndarray,
+    labels: np.ndarray,
+    query: np.floating,
+) -> tuple[Fraction, Fraction, int]:
+    """Independent scalar Fraction enumeration of ORIGINAL represented links."""
+    q = Fraction(float(query))
+    candidates = []
+    for index in range(len(grid) - 1):
+        if labels[index] != labels[index + 1]:
+            continue
+        x0, x1 = (Fraction(float(x)) for x in grid[index : index + 2])
+        v0, v1 = (Fraction(float(v)) for v in value[index : index + 2])
+        p0, p1 = (Fraction(float(p)) for p in policy[index : index + 2])
+        if x1 < x0:
+            x0, x1, v0, v1, p0, p1 = x1, x0, v1, v0, p1, p0
+        if not x0 <= q <= x1:
+            continue
+        slope = (v1 - v0) / (x1 - x0) if x1 != x0 else Fraction(0)
+        reading = v0 + slope * (q - x0)
+        action = p0 + (p1 - p0) * (q - x0) / (x1 - x0) if x1 != x0 else p0
+        candidates.append(((reading, x1 > q, slope, -index), action, index))
+    key, action, index = max(candidates, key=lambda candidate: candidate[0])
+    return key[0], action, index
+
+
+def _geometry_assert_node(
+    *,
+    grid: np.ndarray,
+    policy: np.ndarray,
+    value: np.ndarray,
+    labels: np.ndarray,
+    query: np.floating,
+) -> None:
+    expected_value, expected_policy, expected_index = _geometry_oracle(
+        grid=grid, policy=policy, value=value, labels=labels, query=query
+    )
+    got = _geometry_node(
+        grid=jnp.asarray(grid),
+        policy=jnp.asarray(policy),
+        value=jnp.asarray(value),
+        labels=jnp.asarray(labels),
+        query=jnp.asarray([query], dtype=grid.dtype),
+    )
+    assert int(got[2][0]) == expected_index
+    assert Fraction(float(got[0][0])) == expected_value
+    assert Fraction(float(got[1][0])) == expected_policy
+
+
+def test_original_geometry_singleton_tie_family() -> None:
+    """Translation, binary scaling and endpoint/link order preserve true support."""
+    dtype = _r4_dtype()
+    for origin in (2.0, 10.0, 64.0):
+        for scale in (0.5, 1.0, 16.0):
+            for slope in (-0.25, 0.0, 0.25):
+                for value_scale in (2.0**-20, 1.0, 2.0**20):
+                    for permutation in (
+                        [0, 1, 2, 3],
+                        [2, 3, 0, 1],
+                        [1, 0, 3, 2],
+                        [3, 2, 1, 0],
+                    ):
+                        grid = np.asarray(
+                            [origin, origin, origin - scale, origin + scale],
+                            dtype=dtype,
+                        )[permutation]
+                        policy = np.asarray([8, 8, 2, 2], dtype=dtype)[permutation]
+                        value = np.asarray(
+                            [value_scale * v for v in (1, 1, 1 - slope, 1 + slope)],
+                            dtype=dtype,
+                        )[permutation]
+                        labels = np.asarray([0, 0, 1, 1], dtype=dtype)[permutation]
+                        _geometry_assert_node(
+                            grid=grid,
+                            policy=policy,
+                            value=value,
+                            labels=labels,
+                            query=dtype(origin),
+                        )
+                        out = _r4_refined_row(
+                            grid=jnp.asarray(grid),
+                            policy=jnp.asarray(policy),
+                            value=jnp.asarray(value),
+                            labels=jnp.asarray(labels),
+                        )
+                        reading = interp_on_padded_grid(
+                            x_query=jnp.asarray(origin, dtype=dtype),
+                            xp=out[0],
+                            fp=out[1],
+                        )
+                        assert float(reading) == 2.0
+
+
+def test_original_geometry_subnormal_support_and_orientation() -> None:
+    """A positive stored width never becomes a point, in either stored order."""
+    dtype = _r4_dtype()
+    small = float(np.nextafter(dtype(0), dtype(1)))
+    for count in (1, 2, 7, 1024):
+        for sign in (-1, 1):
+            d = sign * count * small
+            for grid, value, query in (
+                ([d, 2 * d, -1, 1], [1, 3, 2, 2], 2 * d),
+                ([0, 0, -1, 1], [3, 3, 2, 2], d),
+                ([d, d, -1, 1], [3, 3, 2, 2], 0),
+            ):
+                for permutation in ([0, 1, 2, 3], [1, 0, 3, 2], [2, 3, 0, 1]):
+                    _geometry_assert_node(
+                        grid=np.asarray(grid, dtype=dtype)[permutation],
+                        policy=np.asarray([8, 8, 2, 2], dtype=dtype)[permutation],
+                        value=np.asarray(value, dtype=dtype)[permutation],
+                        labels=np.asarray([0, 0, 1, 1], dtype=dtype)[permutation],
+                        query=dtype(query),
+                    )
+
+
+def test_original_geometry_distinct_query_nodes() -> None:
+    """All stored nodes survive; the ordinary downstream query still reads 2."""
+    dtype = _r4_dtype()
+    small = float(np.nextafter(dtype(0), dtype(1)))
+    widths = [count * small for count in (1, 2, 7, 1024)]
+    widths.append(float(np.finfo(dtype).tiny))
+    for width in widths:
+        for tail in (1.0, 2.0, 4.0):
+            for shift in (0, -2 * width):
+                grid = np.asarray(
+                    [shift, width + shift, 2 * width + shift, tail], dtype=dtype
+                )
+                for explicit in (False, True):
+                    arguments = {
+                        "grid": jnp.asarray(grid),
+                        "policy": jnp.asarray([8, 8, 2, 2], dtype=dtype),
+                        "value": jnp.asarray([1, 2, 3, 4], dtype=dtype),
+                    }
+                    out = (
+                        _r4_refined_row(**arguments, labels=jnp.zeros(4, dtype=dtype))
+                        if explicit
+                        else _geometry_inferred_row(**arguments)
+                    )
+                    assert int(out[3]) == 4
+                    assert np.asarray(out[0])[:4].tobytes() == grid.tobytes()
+                    reading = interp_on_padded_grid(
+                        x_query=jnp.asarray(tail / 2, dtype=dtype),
+                        xp=out[0],
+                        fp=out[1],
+                    )
+                    assert float(reading) == 2.0
+
+
+def test_original_geometry_signed_zeros_and_extreme_singletons() -> None:
+    """One zero location, and readable singleton channels even at max finite."""
+    dtype = _r4_dtype()
+    small = float(np.nextafter(dtype(0), dtype(1)))
+    maximum = float(np.finfo(dtype).max)
+    for coordinate in (-maximum, -1, -small, -0.0, 0.0, small, 1, maximum):
+        grid = np.asarray([coordinate, coordinate], dtype=dtype)
+        out = _r4_refined_row(
+            grid=jnp.asarray(grid),
+            policy=jnp.asarray([8, 9], dtype=dtype),
+            value=jnp.asarray([1, 99], dtype=dtype),
+            labels=jnp.zeros(2, dtype=dtype),
+        )
+        assert int(out[3]) == 1
+        assert np.asarray(out[0])[0].tobytes() == grid[0].tobytes()
+        assert float(out[1][0]) == 8
+        assert float(out[2][0]) == 1
+    for zeros in ([0.0, -0.0], [-0.0, 0.0]):
+        grid = np.asarray([*zeros, -1, 1], dtype=dtype)
+        out = _r4_refined_row(
+            grid=jnp.asarray(grid),
+            policy=jnp.asarray([8, 9, 2, 2], dtype=dtype),
+            value=jnp.asarray([1, 99, 1, 1], dtype=dtype),
+            labels=jnp.asarray([0, 0, 1, 1], dtype=dtype),
+        )
+        assert int(out[3]) == 3
+        np.testing.assert_array_equal(np.asarray(out[0])[:3], [-1, 0, 1])
+        np.testing.assert_array_equal(np.asarray(out[1])[:3], [2, 2, 2])
+
+
+def test_original_geometry_predicates_share_exact_order() -> None:
+    """A tiny exhaustive domain checks all pairs, including negative subnormals."""
+    dtype = _r4_dtype()
+    small = float(np.nextafter(dtype(0), dtype(1)))
+    tiny = float(np.finfo(dtype).tiny)
+    maximum = float(np.finfo(dtype).max)
+    points = np.asarray(
+        [
+            -maximum,
+            -1,
+            -tiny,
+            -1024 * small,
+            -7 * small,
+            -2 * small,
+            -small,
+            -0.0,
+            0.0,
+            small,
+            2 * small,
+            7 * small,
+            1024 * small,
+            tiny,
+            1,
+            maximum,
+        ],
+        dtype=dtype,
+    )
+    exact_points = [Fraction(float(x)) for x in points]
+    expected_equal = np.asarray([[a == b for b in exact_points] for a in exact_points])
+    expected_less = np.asarray([[a < b for b in exact_points] for a in exact_points])
+
+    def predicates(x):
+        return (
+            mss._stored_equal(left=x[:, None], right=x[None, :]),
+            mss._stored_less(left=x[:, None], right=x[None, :]),
+            mss._stored_in_span(query=x[:, None], lower=x[None, :], upper=x[None, :]),
+            jnp.argsort(mss._stored_key(value=x[::-1]), stable=True),
+        )
+
+    for function in (predicates, jax.jit(predicates)):
+        equal, less, singleton, order = function(jnp.asarray(points))
+        np.testing.assert_array_equal(equal, expected_equal)
+        np.testing.assert_array_equal(less, expected_less)
+        np.testing.assert_array_equal(singleton, expected_equal)
+        expected_order = sorted(range(len(points)), key=lambda i: exact_points[::-1][i])
+        np.testing.assert_array_equal(order, expected_order)
+    # Return each predicate alone as well: extra diagnostic outputs can prevent
+    # a compiler rewrite and make a combined-output test pass spuriously.
+    for predicate, expected in (
+        (mss._stored_equal, expected_equal),
+        (mss._stored_less, expected_less),
+    ):
+        actual = jax.jit(predicate)(
+            left=jnp.asarray(points)[:, None], right=jnp.asarray(points)[None, :]
+        )
+        np.testing.assert_array_equal(actual, expected)
+    batched = jax.jit(jax.vmap(predicates))(jnp.stack([jnp.asarray(points)] * 2))
+    np.testing.assert_array_equal(batched[0], np.stack([expected_equal] * 2))
+    np.testing.assert_array_equal(batched[1], np.stack([expected_less] * 2))
+    nan = jnp.asarray([np.nan], dtype=dtype)
+    assert not bool(mss._stored_equal(left=nan, right=nan)[0])
+    assert not bool(mss._stored_less(left=nan, right=jnp.zeros_like(nan))[0])
+
+
+def test_original_geometry_crossing_coalescence_uses_emitted_bits() -> None:
+    """Subnormal event/query identity obeys the same rule as node identity."""
+    dtype = _r4_dtype()
+    small = float(np.nextafter(dtype(0), dtype(1)))
+    for count in (1, 2, 7, 1024):
+        d = count * small
+        for grid, value, labels, expected in (
+            ([0, 2 * d, 0, 2 * d], [2, 2, 1, 3], [0, 0, 1, 1], [0, d, d, 2 * d]),
+            (
+                [0, d, 2 * d, 0, d, 2 * d],
+                [2, 2, 2, 1, 2, 3],
+                [0, 0, 0, 1, 1, 1],
+                [0, d, d, 2 * d],
+            ),
+        ):
+            out = _r4_refined_row(
+                grid=jnp.asarray(np.asarray(grid, dtype=dtype)),
+                policy=jnp.asarray(
+                    [8 if label == 0 else 2 for label in labels], dtype=dtype
+                ),
+                value=jnp.asarray(value, dtype=dtype),
+                labels=jnp.asarray(labels, dtype=dtype),
+            )
+            assert int(out[3]) == 4
+            assert (
+                np.asarray(out[0])[:4].tobytes()
+                == np.asarray(expected, dtype=dtype).tobytes()
+            )
+            np.testing.assert_array_equal(np.asarray(out[1])[:4], [8, 8, 2, 2])
+            np.testing.assert_array_equal(np.asarray(out[2])[:4], [2, 2, 2, 3])
+    # Half the smallest subnormal is not representable. Its handover is the
+    # right query, not zero, and only one extra record is needed at that query.
+    out = _r4_refined_row(
+        grid=jnp.asarray(np.asarray([0, small, 0, small], dtype=dtype)),
+        policy=jnp.asarray([8, 8, 2, 2], dtype=dtype),
+        value=jnp.asarray([2, 2, 1, 3], dtype=dtype),
+        labels=jnp.asarray([0, 0, 1, 1], dtype=dtype),
+    )
+    assert int(out[3]) == 3
+    assert (
+        np.asarray(out[0])[:3].tobytes()
+        == np.asarray([0, small, small], dtype=dtype).tobytes()
+    )
+    np.testing.assert_array_equal(np.asarray(out[1])[:3], [8, 8, 2])
+    np.testing.assert_array_equal(np.asarray(out[2])[:3], [2, 3, 3])
+
+
+def test_original_geometry_selector_receives_original_operands() -> None:
+    """Even the singleton's unused endpoint value reaches the real selector."""
+    links = mss._comparable_links(
+        left_grid=jnp.asarray([2.0, 3.0]),
+        right_grid=jnp.asarray([2.0, 1.0]),
+        left_value=jnp.asarray([1.0, 1.0]),
+        right_value=jnp.asarray([99.0, 1.0]),
+        left_policy=jnp.asarray([8.0, 2.0]),
+        right_policy=jnp.asarray([9.0, 2.0]),
+        segment_live=jnp.asarray([True, True]),
+    )
+    calls = []
+    native_selector = mss.exact_query_winner_batched
+
+    def capture(**operands):
+        calls.append(operands)
+        return native_selector(**operands)
+
+    with patch.object(mss, "exact_query_winner_batched", capture):
+        out = mss._evaluate_envelope(
+            query_grid=jnp.asarray([2.0]),
+            links=links,
+            segment_id=jnp.asarray([10, 20], dtype=jnp.int32),
+        )
+    assert float(out[1][0]) == 2.0
+    assert len(calls) == 1
+    np.testing.assert_array_equal(calls[0]["left_grid"], [[2, 1]])
+    np.testing.assert_array_equal(calls[0]["right_grid"], [[2, 3]])
+    np.testing.assert_array_equal(calls[0]["left_value"], [[1, 1]])
+    np.testing.assert_array_equal(calls[0]["right_value"], [[99, 1]])
+    np.testing.assert_array_equal(calls[0]["stable_index"], [[0, 1]])
+
+
+def test_original_geometry_batched_selector_refusal_stays_explicit() -> None:
+    """Fault injection targets the BATCHED selector actually called in production."""
+    links = mss._comparable_links(
+        left_grid=jnp.asarray([0.0, 0.0]),
+        right_grid=jnp.asarray([2.0, 2.0]),
+        left_value=jnp.asarray([4.0, 1.0]),
+        right_value=jnp.asarray([4.0, 1.0]),
+        left_policy=jnp.asarray([8.0, 2.0]),
+        right_policy=jnp.asarray([8.0, 2.0]),
+        segment_live=jnp.asarray([True, True]),
+    )
+    native_selector = mss.exact_query_winner_batched
+
+    def refused(**operands):
+        owner, status = native_selector(**operands)
+        return owner, jnp.full_like(status, mss.UNRESOLVED_STATUS)
+
+    def evaluate(query):
+        return mss._evaluate_envelope(
+            query_grid=query,
+            links=links,
+            segment_id=jnp.asarray([10, 20], dtype=jnp.int32),
+        )
+
+    query = jnp.asarray([0.0, 1.0, 3.0])
+    with patch.object(mss, "exact_query_winner_batched", refused):
+        outputs = [evaluate(query), jax.jit(evaluate)(query)]
+        batched = jax.jit(jax.vmap(evaluate))(jnp.stack([query, query]))
+        outputs.extend(tuple(channel[i] for channel in batched) for i in range(2))
+        for value, policy, owner, segment in outputs:
+            np.testing.assert_array_equal(np.asarray(owner)[:2], [0, 0])
+            np.testing.assert_array_equal(np.asarray(segment), [10, 10, -1])
+            assert np.isnan(np.asarray(value)[:2]).all()
+            assert np.isnan(np.asarray(policy)).all()
+            assert np.isneginf(np.asarray(value)[2])

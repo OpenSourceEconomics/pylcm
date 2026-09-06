@@ -28,6 +28,17 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   precision. The reading is the stored value at either endpoint exactly and
   elsewhere no longer carries the cancellation of a line extrapolated from one far
   anchor. The published value and policy at a node now always come from one owner.
+- Ownership, support, orientation and node identity are decided from each link's original
+  stored coordinates. A link stored as a single point keeps its own abscissa as its
+  support instead of acquiring a readable width to the right, so a point and a segment
+  that read the same value at a query are separated by the declared right-continuous
+  order rather than by whichever carries the wider line. A readable surrogate is still
+  used to read a channel, but never to decide who owns the query.
+- Two abscissae name one published node exactly when they are the same geometric
+  location, decided on the stored encodings: the two spellings of zero are one location,
+  while distinct values closer together than the smallest normal remain distinct. The
+  same rule orders, orients, admits and coalesces, so no two of those can disagree about
+  whether two coordinates coincide.
 - A crossing is located inside the interval the switch was observed in, as the root
   of the two chords' gap across that interval's two abscissae, and it is emitted
   only where that gap genuinely changes sign. That root is solved from the stored
