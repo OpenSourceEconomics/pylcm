@@ -63,7 +63,7 @@ def internal_input_templates(
         templates[name] = _select_path(
             tree=abstract_outputs[ref.producer],
             path=spec.path,
-            producer=ref.producer,
+            producer_name=ref.producer,
             label=ref.label,
         )
     return MappingProxyType(templates)
@@ -119,7 +119,7 @@ def _leaf_signature(leaf: object) -> tuple[tuple[int, ...], str]:
 
 
 def _select_path(
-    *, tree: object, path: tuple[int | str, ...], producer: str, label: str
+    *, tree: object, path: tuple[int | str, ...], producer_name: str, label: str
 ) -> object:
     """Index one abstract output tree down to the published subtree."""
     node = tree
@@ -128,7 +128,7 @@ def _select_path(
             node = node[step]  # ty: ignore[not-subscriptable]
         except (IndexError, KeyError, TypeError) as error:
             msg = (
-                f"Internal output {label!r} of core program {producer!r} declares "
+                f"Internal output {label!r} of core program {producer_name!r} declares "
                 f"path {path!r}, which its abstract output does not reach: step "
                 f"{step!r} is not in {node!r}."
             )

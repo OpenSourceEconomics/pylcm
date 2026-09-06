@@ -214,7 +214,7 @@ def test_an_internal_input_may_not_collide_with_a_built_argument() -> None:
         )
 
 
-def _materialized_graph(programs) -> dict[str, Any]:
+def _materialized_graph(programs: Mapping[str, CoreProgram]) -> dict[str, Any]:
     """Materialize every program of a graph against the shared build context."""
     graph = core_program_graph(kernel=_Kernel(programs=programs))
     return {

@@ -1644,9 +1644,7 @@ def _conservative_unplanned_value_artifacts(
     regime_name: RegimeName,
     period: int,
 ) -> tuple[ValueArtifactAddress, ...]:
-    """Pin every graph-reachable value for a core the engine does not plan and that
-    declares no reads.
-    """
+    """Pin every graph-reachable value for an unplanned core declaring no reads."""
     artifacts: list[ValueArtifactAddress] = [
         ValueArtifactAddress(
             kind=ValueArtifactKind.REGIME_VALUE,
