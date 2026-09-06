@@ -38,7 +38,7 @@ from _lcm.solution.backward_induction import (
 from _lcm.solution.grid_search import (
     _GridSearchArgumentBuilder,
     _GridSearchPeriodKernel,
-    _target_value_accesses,
+    _value_reads,
 )
 from lcm import Model
 from tests.simulation.test_aot_collective_and_gated import _make_consent_model
@@ -98,7 +98,7 @@ def _aligned_transfer_plan(
 ) -> tuple[ResolvedValueTransfer, ...]:
     """Resolve identity adapters for this test's already local JAX arrays."""
     result: list[ResolvedValueTransfer] = []
-    for access in program.requirements.target_value_accesses:
+    for access in program.requirements.value_reads:
         leaf: object = program.arguments[access.source.channel.value]
         for segment in access.source.path:
             assert isinstance(leaf, Mapping)
@@ -275,7 +275,7 @@ def _observable_route() -> tuple[Callable[..., object], MaterializedCoreProgram]
                     width_keyword="_lcm_action_block_width",
                 ),
             ),
-            target_value_accesses=_target_value_accesses(
+            value_reads=_value_reads(
                 regime_name="source",
                 period=0,
                 target_regimes=("target",),

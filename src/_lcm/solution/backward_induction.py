@@ -21,7 +21,7 @@ from _lcm.execution.core_program import (
     MaterializedCoreProgram,
     ProgramScope,
     ResolvedCoreProgram,
-    _target_value_argument_leaf,
+    _value_read_argument_leaf,
     core_program_graph,
     materialize_core_program,
     resolve_core_program,
@@ -1565,7 +1565,7 @@ def _classify_dispatch_value_artifacts(
 
     for core_name, metadata in programs.items():
         declared_targets = tuple(
-            access.target for access in metadata.requirements.target_value_accesses
+            read.target for read in metadata.requirements.value_reads
         )
         if metadata.disposition is not CoreExecutionDisposition.PLANNED:
             if not declared_targets:
@@ -2421,19 +2421,19 @@ def _resolve_value_input_transfer_plan(
         raise TypeError(msg)
 
     result: list[ResolvedValueTransfer] = []
-    for access in program.requirements.target_value_accesses:
+    for read in program.requirements.value_reads:
         declared_source = (
-            access.source.source_regime,
-            access.source.source_period,
-            access.source.core_key,
+            read.source.source_regime,
+            read.source.source_period,
+            read.source.core_key,
         )
         if declared_source != source:
             msg = (
-                "A target-value access source must match the actual compiled core: "
+                "A value read's source must match the actual compiled core: "
                 f"declared={declared_source!r}, actual={source!r}."
             )
             raise ValueError(msg)
-        stored_template = _target_value_argument_leaf(program=program, access=access)
+        stored_template = _value_read_argument_leaf(program=program, read=read)
         stored_sharding = getattr(stored_template, "sharding", None)
         kind, source_sharding = _resolve_value_transfer_layout(
             stored_sharding=stored_sharding,
@@ -2441,8 +2441,8 @@ def _resolve_value_input_transfer_plan(
         )
         result.append(
             resolve_value_transfer(
-                target=access.target,
-                source=access.source,
+                target=read.target,
+                source=read.source,
                 kind=kind,
                 stored_template=stored_template,
                 source_sharding=source_sharding,

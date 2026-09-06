@@ -16,9 +16,16 @@ from _lcm.execution.core_program import (
     ReductionSemantics,
     ResolvedCoreProgram,
     StreamableProductAxis,
+    ValueRead,
     core_program_graph,
     materialize_core_program,
     resolve_core_program,
+)
+from _lcm.execution.value_transfer import (
+    ValueArtifactAddress,
+    ValueArtifactKind,
+    ValueConsumerAddress,
+    ValueInputChannel,
 )
 
 __all__ = [
@@ -33,6 +40,11 @@ __all__ = [
     "ReductionSemantics",
     "ResolvedCoreProgram",
     "StreamableProductAxis",
+    "ValueArtifactAddress",
+    "ValueArtifactKind",
+    "ValueConsumerAddress",
+    "ValueInputChannel",
+    "ValueRead",
     "core_program_graph",
     "materialize_core_program",
     "resolve_core_program",

@@ -107,7 +107,7 @@ def test_the_graph_publishes_exactly_a_values_only_main_and_a_replay_program():
         assert program.disposition is CoreExecutionDisposition.PLANNED
         assert program.disposition_reason is None
         assert program.requirements.streamable_axes == ()
-        assert program.requirements.target_value_accesses == ()
+        assert program.requirements.value_reads == ()
 
 
 def _carry_role_leaves(roles: EGMCarry) -> dict[str, object]:

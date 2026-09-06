@@ -111,7 +111,7 @@ def test_the_graph_publishes_dense_values_and_replay_variants():
         assert program.disposition is CoreExecutionDisposition.DENSE
         assert program.disposition_reason == _DENSE_REASON
         assert program.requirements.streamable_axes == ()
-        assert program.requirements.target_value_accesses == ()
+        assert program.requirements.value_reads == ()
 
 
 def test_model_authority_rejects_a_policy_type_conflicting_with_the_route(

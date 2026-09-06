@@ -44,7 +44,7 @@ from _lcm.execution.core_program import (
     CoreExecutionRequirements,
     CoreProgram,
     StreamableProductAxis,
-    _TargetValueAccess,
+    ValueRead,
 )
 from _lcm.execution.output_layout import (
     DISSOLUTION_FLAG,
@@ -335,7 +335,7 @@ class GridSearch(Solver):
                     if stream_actions
                     else ()
                 ),
-                target_value_accesses=_target_value_accesses(
+                value_reads=_value_reads(
                     regime_name=context.regime_name,
                     period=period,
                     target_regimes=target_regimes,
@@ -423,7 +423,7 @@ def _edge_reference_regimes_for_targets(
     return tuple(dict.fromkeys(references))
 
 
-def _target_value_accesses(
+def _value_reads(
     *,
     regime_name: RegimeName,
     period: int,
@@ -431,9 +431,9 @@ def _target_value_accesses(
     same_period_ref_regimes: tuple[RegimeName, ...],
     edge_reference_regimes: tuple[RegimeName, ...],
     edge_target_regimes: tuple[RegimeName, ...],
-) -> tuple[_TargetValueAccess, ...]:
+) -> tuple[ValueRead, ...]:
     """Declare every stored value leaf read by one GridSearch program."""
-    accesses: list[_TargetValueAccess] = []
+    reads: list[ValueRead] = []
     for target_regime in target_regimes:
         target = (
             ValueArtifactAddress(
@@ -449,8 +449,8 @@ def _target_value_accesses(
                 regime=target_regime,
             )
         )
-        accesses.append(
-            _target_value_access(
+        reads.append(
+            _value_read(
                 regime_name=regime_name,
                 period=period,
                 target=target,
@@ -458,8 +458,8 @@ def _target_value_accesses(
                 path=(target_regime,),
             )
         )
-    accesses.extend(
-        _target_value_access(
+    reads.extend(
+        _value_read(
             regime_name=regime_name,
             period=period,
             target=ValueArtifactAddress(
@@ -472,8 +472,8 @@ def _target_value_accesses(
         )
         for reference_regime in same_period_ref_regimes
     )
-    accesses.extend(
-        _target_value_access(
+    reads.extend(
+        _value_read(
             regime_name=regime_name,
             period=period,
             target=ValueArtifactAddress(
@@ -486,19 +486,19 @@ def _target_value_accesses(
         )
         for reference_regime in edge_reference_regimes
     )
-    return tuple(accesses)
+    return tuple(reads)
 
 
-def _target_value_access(
+def _value_read(
     *,
     regime_name: RegimeName,
     period: int,
     target: ValueArtifactAddress,
     channel: ValueInputChannel,
     path: tuple[str | int, ...],
-) -> _TargetValueAccess:
+) -> ValueRead:
     """Pair one logical target artifact with its exact program-argument leaf."""
-    return _TargetValueAccess(
+    return ValueRead(
         target=target,
         source=ValueConsumerAddress(
             source_period=period,

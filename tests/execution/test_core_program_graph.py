@@ -28,6 +28,13 @@ from _lcm.execution.output_layout import VALUE
 from _lcm.solution import backward_induction, period_replay
 from _lcm.solution.backward_induction import _resolve_program_for_execution
 from lcm.solver_api import ArtifactKey
+from lcm.solvers import (
+    ValueArtifactAddress,
+    ValueArtifactKind,
+    ValueConsumerAddress,
+    ValueInputChannel,
+    ValueRead,
+)
 
 
 def _identity(*, value: object) -> object:
@@ -47,6 +54,35 @@ def _context() -> CoreBuildContext:
         period=0,
         ages=object(),
     )
+
+
+def _read() -> ValueRead:
+    """One next-period regime-value read of a `working` source at period 3."""
+    return ValueRead(
+        target=ValueArtifactAddress(
+            kind=ValueArtifactKind.REGIME_VALUE, period=4, regime="retired"
+        ),
+        source=ValueConsumerAddress(
+            source_period=3,
+            source_regime="working",
+            core_key="main",
+            channel=ValueInputChannel.NEXT_REGIME_VALUE,
+            path=("retired",),
+        ),
+    )
+
+
+def test_a_core_declares_its_value_reads_under_the_public_name() -> None:
+    """A solver names what it reads across a regime-period boundary as
+    `value_reads`, and the record type is public."""
+    requirements = CoreExecutionRequirements(value_reads=(_read(),))
+
+    assert isinstance(requirements.value_reads[0], ValueRead)
+
+
+def test_a_core_no_longer_carries_the_engine_private_declaration_name() -> None:
+    """`value_reads` is the only name a core declares its reads under."""
+    assert not hasattr(CoreExecutionRequirements(), "target_value_accesses")
 
 
 class _NativeKernel:
@@ -219,7 +255,7 @@ def test_native_graph_key_and_declared_name_must_match() -> None:
         "streamed_core",
         "build_lower_args",
         "build_core_program",
-        "target_value_accesses",
+        "value_reads",
         "output_roles",
         "core_for_output_layout",
     ],

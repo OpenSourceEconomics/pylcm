@@ -21,7 +21,7 @@ from _lcm.execution.core_program import (
     ReductionSemantics,
     ResolvedCoreProgram,
     StreamableProductAxis,
-    _TargetValueAccess,
+    ValueRead,
     core_program_graph,
     materialize_core_program,
     resolve_core_program,
@@ -152,7 +152,7 @@ def _value_access(
     source: tuple[str, int, str],
     target_regime: str = "target",
     channel: ValueInputChannel = ValueInputChannel.NEXT_REGIME_VALUE,
-) -> _TargetValueAccess:
+) -> ValueRead:
     """Build one internally valid target/source value address pair."""
     source_regime, source_period, core_key = source
     target_period = (
@@ -160,7 +160,7 @@ def _value_access(
         if channel is ValueInputChannel.SAME_PERIOD_VALUE
         else source_period + 1
     )
-    return _TargetValueAccess(
+    return ValueRead(
         target=ValueArtifactAddress(
             kind=ValueArtifactKind.REGIME_VALUE,
             period=target_period,
@@ -178,7 +178,7 @@ def _value_access(
 
 def _value_consumer_program(
     *,
-    accesses: tuple[_TargetValueAccess, ...],
+    accesses: tuple[ValueRead, ...],
     arguments: Mapping[str, object],
 ) -> MaterializedCoreProgram:
     """Build a synthetic program around exact value-consumer declarations."""
@@ -186,7 +186,7 @@ def _value_consumer_program(
         name="main",
         function=_unused_value_consumer_core,
         arguments=arguments,
-        requirements=CoreExecutionRequirements(target_value_accesses=accesses),
+        requirements=CoreExecutionRequirements(value_reads=accesses),
         output_roles=VALUE,
         disposition=CoreExecutionDisposition.PLANNED,
         donation_candidates=(),

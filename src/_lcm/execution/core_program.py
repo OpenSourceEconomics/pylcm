@@ -42,8 +42,8 @@ else:
 
 
 @dataclass(frozen=True, kw_only=True)
-class _TargetValueAccess:
-    """One exact target-value read declared by a solver core.
+class ValueRead:
+    """One exact stored-value read declared by a solver core.
 
     The target preserves artifact identity for liveness; the source preserves the
     complete dynamic-argument locator. Transfer specialization deliberately lives on
@@ -51,15 +51,18 @@ class _TargetValueAccess:
     """
 
     target: ValueArtifactAddress
+    """Stored artifact this core reads, by its logical address."""
+
     source: ValueConsumerAddress
+    """Exact core-input leaf the stored artifact enters through."""
 
     def __post_init__(self) -> None:
         """Require the shared, already-validated logical address types."""
         if not isinstance(self.target, ValueArtifactAddress):
-            msg = "A target-value access target must be a ValueArtifactAddress."
+            msg = "A value read's target must be a ValueArtifactAddress."
             raise TypeError(msg)
         if not isinstance(self.source, ValueConsumerAddress):
-            msg = "A target-value access source must be a ValueConsumerAddress."
+            msg = "A value read's source must be a ValueConsumerAddress."
             raise TypeError(msg)
 
 
@@ -155,16 +158,16 @@ class CoreExecutionRequirements:
     """Static requirements that the execution planner must resolve for a core."""
 
     streamable_axes: tuple[StreamableProductAxis, ...] = ()
-    target_value_accesses: tuple[_TargetValueAccess, ...] = ()
+    value_reads: tuple[ValueRead, ...] = ()
+    """Stored values this core reads across a regime-period boundary."""
+
     internal_inputs: Mapping[str, InternalInputRef] = MappingProxyType({})
     """Consumer argument name to the producer output that fills it at dispatch."""
 
     def __post_init__(self) -> None:
-        """Snapshot the declared axes, target-value reads, and internal inputs."""
+        """Snapshot the declared axes, value reads, and internal inputs."""
         object.__setattr__(self, "streamable_axes", tuple(self.streamable_axes))
-        object.__setattr__(
-            self, "target_value_accesses", tuple(self.target_value_accesses)
-        )
+        object.__setattr__(self, "value_reads", tuple(self.value_reads))
         internal_inputs = dict(self.internal_inputs)
         for name, ref in internal_inputs.items():
             if type(name) is not str or not name:
@@ -497,7 +500,7 @@ def _reject_native_duplicate_authorities(*, kernel: object) -> None:
             "streamed_core",
             "build_lower_args",
             "build_core_program",
-            "target_value_accesses",
+            "value_reads",
             "output_roles",
             "core_for_output_layout",
         )
@@ -973,7 +976,7 @@ def _validate_core_program(*, program: MaterializedCoreProgram) -> None:
             "so JAX can use its raw callable as a compilation-cache key."
         )
         raise TypeError(msg)
-    _validate_target_value_accesses(program=program)
+    _validate_value_reads(program=program)
 
     axes = program.requirements.streamable_axes
     if program.disposition is not CoreExecutionDisposition.PLANNED and axes:
@@ -1053,28 +1056,25 @@ def _resolve_input_transfer_plan(
             raise ValueError(msg)
         transfer_by_access[key] = transfer
 
-    access_keys = tuple(
-        (access.target, access.source)
-        for access in program.requirements.target_value_accesses
+    read_keys = tuple(
+        (read.target, read.source) for read in program.requirements.value_reads
     )
-    declared = set(access_keys)
+    declared = set(read_keys)
     planned = set(transfer_by_access)
     if declared != planned:
-        missing = tuple(key for key in access_keys if key not in planned)
+        missing = tuple(key for key in read_keys if key not in planned)
         unexpected = tuple(key for key in transfer_by_access if key not in declared)
         msg = (
-            "Input transfer plan must match every declared target-value access "
+            "Input transfer plan must match every declared value read "
             f"one-to-one; missing={missing!r}, unexpected={unexpected!r}."
         )
         raise ValueError(msg)
 
-    ordered = tuple(transfer_by_access[key] for key in access_keys)
+    ordered = tuple(transfer_by_access[key] for key in read_keys)
     specialization_keys: list[Hashable] = []
-    for access, transfer in zip(
-        program.requirements.target_value_accesses, ordered, strict=True
-    ):
+    for read, transfer in zip(program.requirements.value_reads, ordered, strict=True):
         _validate_transfer_argument_metadata(
-            program=program, access=access, transfer=transfer
+            program=program, read=read, transfer=transfer
         )
         try:
             hash(transfer.specialization_key)
@@ -1085,80 +1085,74 @@ def _resolve_input_transfer_plan(
     return ordered, tuple(specialization_keys)
 
 
-def _validate_target_value_accesses(*, program: MaterializedCoreProgram) -> None:
+def _validate_value_reads(*, program: MaterializedCoreProgram) -> None:
     """Validate exact core-input locators without constraining artifact fan-out."""
     locators: set[tuple[object, tuple[str | int, ...]]] = set()
     source_node: tuple[int, str, str] | None = None
-    for access in program.requirements.target_value_accesses:
-        if not isinstance(access, _TargetValueAccess):
-            msg = "Core target_value_accesses must contain _TargetValueAccess entries."
+    for read in program.requirements.value_reads:
+        if not isinstance(read, ValueRead):
+            msg = "Core value_reads must contain ValueRead entries."
             raise TypeError(msg)
 
         node = (
-            access.source.source_period,
-            access.source.source_regime,
-            access.source.core_key,
+            read.source.source_period,
+            read.source.source_regime,
+            read.source.core_key,
         )
         if source_node is None:
             source_node = node
         elif node != source_node:
             msg = (
-                "All target-value accesses in one CoreProgram must name the same "
+                "All value reads in one CoreProgram must name the same "
                 f"source period/regime/core; got {source_node!r} and {node!r}."
             )
             raise ValueError(msg)
 
-        locator = (access.source.channel, access.source.path)
+        locator = (read.source.channel, read.source.path)
         if locator in locators:
-            msg = (
-                f"Core program has a duplicate target-value argument path: {locator!r}."
-            )
+            msg = f"Core program has a duplicate value-read argument path: {locator!r}."
             raise ValueError(msg)
         locators.add(locator)
-        _target_value_argument_leaf(program=program, access=access)
+        _value_read_argument_leaf(program=program, read=read)
 
 
-def _target_value_argument_leaf(
-    *, program: MaterializedCoreProgram, access: _TargetValueAccess
+def _value_read_argument_leaf(
+    *, program: MaterializedCoreProgram, read: ValueRead
 ) -> _TransferArgumentLeaf:
     """Resolve one declared consumer path to an array-like lowering leaf."""
-    channel = access.source.channel.value
+    channel = read.source.channel.value
     if channel not in program.arguments:
-        msg = (
-            f"Target-value input channel {channel!r} is missing from program arguments."
-        )
+        msg = f"Value-read input channel {channel!r} is missing from program arguments."
         raise ValueError(msg)
 
     value: object = program.arguments[channel]
     traversed: list[str | int] = []
-    for segment in access.source.path:
+    for segment in read.source.path:
         traversed.append(segment)
         if isinstance(value, Mapping):
             if segment not in value:
-                msg = (
-                    f"Target-value argument path {(channel, *traversed)!r} is missing."
-                )
+                msg = f"Value-read argument path {(channel, *traversed)!r} is missing."
                 raise ValueError(msg)
             value = value[segment]
             continue
         if isinstance(value, tuple):
             if type(segment) is not int or segment >= len(value):
                 msg = (
-                    f"Target-value argument path {(channel, *traversed)!r} does not "
+                    f"Value-read argument path {(channel, *traversed)!r} does not "
                     "select an existing sequence item."
                 )
                 raise ValueError(msg)
             value = value[segment]
             continue
         msg = (
-            f"Target-value argument path {(channel, *traversed)!r} traverses a "
+            f"Value-read argument path {(channel, *traversed)!r} traverses a "
             "non-container value."
         )
         raise ValueError(msg)
 
     if getattr(value, "shape", None) is None or getattr(value, "dtype", None) is None:
         msg = (
-            f"Target-value argument path {(channel, *access.source.path)!r} must "
+            f"Value-read argument path {(channel, *read.source.path)!r} must "
             "resolve to an array-like leaf with shape and dtype."
         )
         raise TypeError(msg)
@@ -1168,15 +1162,15 @@ def _target_value_argument_leaf(
 def _validate_transfer_argument_metadata(
     *,
     program: MaterializedCoreProgram,
-    access: _TargetValueAccess,
+    read: ValueRead,
     transfer: ResolvedValueTransfer,
 ) -> None:
     """Reject a correctly addressed transfer resolved from a stale template."""
-    leaf = _target_value_argument_leaf(program=program, access=access)
+    leaf = _value_read_argument_leaf(program=program, read=read)
     actual_shape = tuple(leaf.shape)
     if actual_shape != transfer.expected_shape:
         msg = (
-            f"Input transfer shape mismatch at {access.source!r}: "
+            f"Input transfer shape mismatch at {read.source!r}: "
             f"argument has {actual_shape}, plan expects {transfer.expected_shape}."
         )
         raise ValueError(msg)
@@ -1184,7 +1178,7 @@ def _validate_transfer_argument_metadata(
     actual_dtype = leaf.dtype
     if actual_dtype != transfer.expected_dtype:
         msg = (
-            f"Input transfer dtype mismatch at {access.source!r}: "
+            f"Input transfer dtype mismatch at {read.source!r}: "
             f"argument has {actual_dtype}, plan expects {transfer.expected_dtype}."
         )
         raise TypeError(msg)
@@ -1192,7 +1186,7 @@ def _validate_transfer_argument_metadata(
     actual_sharding = getattr(leaf, "sharding", None)
     if actual_sharding != transfer.stored_sharding:
         msg = (
-            f"Input transfer stored-sharding mismatch at {access.source!r}: "
+            f"Input transfer stored-sharding mismatch at {read.source!r}: "
             f"argument has {actual_sharding}, plan expects {transfer.stored_sharding}."
         )
         raise ValueError(msg)

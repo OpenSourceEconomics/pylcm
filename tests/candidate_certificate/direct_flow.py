@@ -185,8 +185,8 @@ _SOURCE_SEALS = {
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
     MAX_Q_SOURCE: "0f7d4e51d780f4ba839844d42c0847742c17ac28ec0eeb026eb5cf38fcc6ce4d",
     PROCESSING_SOURCE: "004261c7950502a79636b10a4594bbfa5a958d9aafd119a3ed981936c1e49047",
-    GRID_SEARCH_SOURCE: "49c198be2598ef1791e9866d004e63de8dff00c46155c01d4fe8cbe128c0a1ff",
-    CORE_PROGRAM_SOURCE: "0748a609c6278d6fc8dde9c791cf705c028683a2a2262e784b617fdc154cf9ae",
+    GRID_SEARCH_SOURCE: "b1753aa03fcd6eab34838b868e532008ccb1280bb9fca9ab6e27e7f506b43e06",
+    CORE_PROGRAM_SOURCE: "14aa4ec940a19f3f8c2cd907be6a49e4252206d2b8bf06ec9617f45682853d06",
     OUTPUT_LAYOUT_SOURCE: "65541f5e1ff3edad0f9105457e478525d3913fcf32204aeba6fe290cf0fd676d",
     VALUE_TRANSFER_SOURCE: "44b8629c7b461b6b0216c79ba25101179e1b8cb2edf40630a55c6b9403fbbd2d",
     ACTION_STREAMING_SOURCE: "bd693f4bab250215dea9b6fb6021c518163305a890a9536f66af9e1d7dc5c308",
@@ -205,7 +205,7 @@ _SOURCE_SEALS = {
     SIMULATION_COMPILE_SOURCE: "eca63257bd882066c608c34791cb0399f8d283fa79f5e0640091e12321da82a9",
     MODEL_SOURCE: "a2574cd0abdc502db292d2acb23a1b18979781839d478e20bfe1c565c4f32166",
     SOLVER_API_SOURCE: "db20fc0c3b392a0809ef2c114587203d75d761888c1a86760bf2cd81043472b6",
-    BACKWARD_INDUCTION_SOURCE: "d23a6c7b57de7e67db1e7d83741b1d56ae716b19c71160815d46394e7e4439a5",
+    BACKWARD_INDUCTION_SOURCE: "32f28357e5b804fee73b0e6af4f27884acad8765784836c25aa8028e0ae9c246",
     PERIOD_REPLAY_SOURCE: "71bdcc15215cafce5a6f248bbd1ba264170c23cc867b7bc9d9f472926928ed34",
     INITIAL_CONDITIONS_SOURCE: "582c29e7f99072d975c7a4c9070a93e707d25a98c09e216b47fa71c7bb2d6022",
     RESULT_SOURCE: "7390877272bc23fd7c153e2a51ac4a6072e88fe950d5de695ff015205aff5058",
@@ -1745,8 +1745,8 @@ def _core_program_transport_errors(tree: ast.Module) -> list[str]:
     """Pin the sole native program graph through materialization and resolution."""
     errors = _class_surface_errors(
         tree=tree,
-        label="core-program target-value access",
-        class_name="_TargetValueAccess",
+        label="core-program value read",
+        class_name="ValueRead",
         fields=(
             "target: ValueArtifactAddress",
             "source: ValueConsumerAddress",
@@ -1777,7 +1777,7 @@ def _core_program_transport_errors(tree: ast.Module) -> list[str]:
             class_name="CoreExecutionRequirements",
             fields=(
                 "streamable_axes: tuple[StreamableProductAxis, ...] = ()",
-                "target_value_accesses: tuple[_TargetValueAccess, ...] = ()",
+                "value_reads: tuple[ValueRead, ...] = ()",
                 "internal_inputs: Mapping[str, InternalInputRef] = MappingProxyType({})",
             ),
             methods=("__post_init__",),
@@ -1944,16 +1944,16 @@ ARTIFACT = "artifact"
             tree=tree,
             label="core-program provider-to-resolver transport",
             contracts={
-                "_TargetValueAccess.__post_init__": "087df21f9a729fb78e784cd8a1ed466c97473cce55b4835aec7530b6c3608f73",
+                "ValueRead.__post_init__": "e5281a9a44553519fe08e3a5248cb54b2a107e02de63727145651525fd033843",
                 "StreamableProductAxis.__post_init__": "a83a07c71ec8a26d8ad9b8cc71ea65e3df8d000e7efdcc44802bc240a5db95c6",
                 "StreamableProductAxis.extent": "aebdd54708094461d473977783f0588d2491c212629e1f5a40f8cf24c789802a",
-                "CoreExecutionRequirements.__post_init__": "950154207415a21f885cd609179af3ad8ecf43edac2b3ce5940487a78e3c9c4d",
+                "CoreExecutionRequirements.__post_init__": "d814f291f8893d0e1e601df56d6cf95828eb46201e4391376940406df9fafc6e",
                 "CoreBuildContext.__post_init__": "c001bdfea799659c6e0f1d0ee09180940d5176d8a59675dcabef190a12716d7b",
                 "CoreProgram.__post_init__": "3459025376c2a5fb6ef1e1e31e5036847109185fc97f90f0688aed00b0ee4fdc",
                 "MaterializedCoreProgram.__post_init__": "a1f51b850b99ba8058d895bf6d8f1f09c15c3114d580c7a551765a1c4aab6943",
                 "ResolvedCoreProgram.__post_init__": "b36477b923d3353f4af4050faed9644df10250f10ae8757298c30710f686098b",
                 "core_program_graph": "0fb65d36c8408bfcec4b084cb304e3085037c266e932524d411654efac5c47f7",
-                "_reject_native_duplicate_authorities": "718aa10be29ba96de933ccd778200a94dd5d2637b148988b950e5b5e070edcea",
+                "_reject_native_duplicate_authorities": "02f48b342f94e73d6c57732bb28b31d9c64f33df9f5f4b7ea63930450831d4f9",
                 "_snapshot_and_validate_graph": "391b89b66355ecdba2d0c869b4a748f2a0ef065610255e4819e398cf53faa7ca",
                 "_validate_replay_replacements": "2aed7e1993700410979ff136c2dc13104a1f210b7d1eabf3bfd7dae22b75eb69",
                 "_validate_program_declaration": "6158dc42296c246bbb8ab23d270dcc46e8175e89ed190af503bdebe788f11c6b",
@@ -1963,12 +1963,12 @@ ARTIFACT = "artifact"
                 "materialize_core_program": "3889c6fd64636d8133e524001e8540558a5229e7886776fb22217f0eeee07660",
                 "resolve_core_program": "8726f16b554b96ea8a9c185293ba24c0e230a6a970bf765b19e4c49db6ba499a",
                 "select_programs": "545d2aaa5fd158f5cbbe4c8a2bf69cfffdaff588eb5066fcde54de59fb37c91b",
-                "_validate_core_program": "732d66341ea1547f8f9041a0401997aa492a4cb1f9023af95f7e83339467b197",
+                "_validate_core_program": "42bdbfa49881acb32fefaf6131e3649da75c2ae096d16ac76ebf12640fef6c0d",
                 "_validate_materialized_declaration": "d4a7b72b1943b877e689ed05bc6e83e8194fa20169615d7a0a8bd970bce96534",
-                "_resolve_input_transfer_plan": "86e49db184adcd67dbcdf9f7accfcc17e7adaac32042bf5233be71121d97b73e",
-                "_validate_target_value_accesses": "9f9c693c334394c0ea05e30b923dba937a2f6979c41b91c3855da1c6d0eac7ae",
-                "_target_value_argument_leaf": "ff8f95f1afe6f2e70d97d261317b158e94b376fda3842977cc88fc07529a9ce2",
-                "_validate_transfer_argument_metadata": "028eddda6b8348555f3f1dc1ce5bd869fdcbbf683f4e40e773d95f125556c95d",
+                "_resolve_input_transfer_plan": "82f85e723e106098c2fa06f08d3e13bab356c75d313b73d10ac0faec54d70c93",
+                "_validate_value_reads": "8df3d4030dbe923d9050c986c4c9a0efd7a20d9321a16913d9f0127a6a1c6130",
+                "_value_read_argument_leaf": "9c67cfd4b589107687a4d3bcb3355cd9dc2ebfc969b3f2ca9e3fac6f982ecab4",
+                "_validate_transfer_argument_metadata": "982c86620af578c44c9a3881eca2917d84773b724a7072e54a134fdc5523820e",
                 "_validate_streamable_axis": "e0398857430aece0ac4722c6ae6660ccbf0d95a5549f318ae0245aab34905eb3",
                 "_validate_tile_width": "15f543450ad5f6b739cfa8aafbf0a4fb34a0c5b677da4866a2afedd1effde831",
                 "_validate_coordinate_argument": "401392c0069102b2983559a9b7c53bba6bd66ccf0b0126f8e6688bff49564b27",
@@ -2211,12 +2211,12 @@ def category(self) -> str:
             label="solve caller live streamed provider",
             contracts={
                 "_select_action_width_keyword": "d5c0751bf2eb4a98a08b1641e41cfea9f46230af044a1c666e49f6f444cadb68",
-                "GridSearch.build_period_kernels": "79a9fdd4a2bf55adbce52bd377592bfd426f252c33b811d2693c01c33cd38f91",
+                "GridSearch.build_period_kernels": "b53a79c3e9982ad09d7eca02f81fd67bd703b64d44f13d823b9a8d25ffca50d9",
                 "_edge_reference_regimes_for_targets": "fae893f62c5a3eb6e8d4df88dae39fd283a5d86cd1c87a173da15287ea945af0",
                 "_classify_action_streaming": "09d190475ffaf8c269880b7062a4be39e149f27d801e5fb640fa171753337ebf",
                 "_supports_action_streaming": "d93f977fad68ad528beb9d4b9e6d45e5eb95b53c9a0398ff6f6a62ec548bad11",
-                "_target_value_accesses": "542d72d188b29070da8e11b1296b4230054c5fa99783093b3285db387827b460",
-                "_target_value_access": "8d91533907c586084a3efe1b5465bc055e07779d2219c66f9d4515b1ee44dcce",
+                "_value_reads": "9712ae402debbd0c37a12999b224e365c0ca1e1a8bcbb6e7bbb4043cbcfcacfc",
+                "_value_read": "082a372c7e48bf7a32d390079e2dd60b9ed5aa56868cbf9fbccf0b8f924b3bb6",
             },
         )
     )
@@ -2727,7 +2727,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             "_compile_all_functions": "e0580080ae7fbcee9f7734dc6939b496230a687455fea6dcf8819479d90fd935",
             "_resolve_output_layouts_and_lowering_keys": "375525dec4f98e00da6d4961cd036546c90dadda14d79d89e2a3a3a75df6882d",
             "_resolve_program_for_execution": "6e3ec3139833f459a49be4a30a6c8c5813ba8cd66176a849ee24e7a81b27b433",
-            "_resolve_value_input_transfer_plan": "40e46250dd373f2ea17e38c911e0c2df7ad01192dd82fcb1d7a7ddbf641f91bb",
+            "_resolve_value_input_transfer_plan": "72bb5e99e0584e124030d7879265fba08488804c98e20aaec96b6355a34fc0e9",
             "_resolve_value_transfer_layout": "6cd863aaa64c0f558c797b47667479b595c77d5f3ee5c8b3dcfae188f1d05edd",
             "_lowering_key": "244d3c4169b522ea2c49f19c59cc8e83efd999e2a7292e0d1ec92c2dbcaf52e0",
             "_abstract_arguments_key": "becd5c3e94366bc4e3e0afa31ea20886002228f7064c9a9ea0e7d0e681630dfa",
@@ -4637,7 +4637,7 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         "value_access:grid_program_declarations_dropped": replace_once(
             source=grid_source,
             old=(
-                "                target_value_accesses=_target_value_accesses(\n"
+                "                value_reads=_value_reads(\n"
                 "                    regime_name=context.regime_name,\n"
                 "                    period=period,\n"
                 "                    target_regimes=target_regimes,\n"
@@ -4646,8 +4646,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
                 "                    edge_target_regimes=context.edge_target_regimes,\n"
                 "                ),"
             ),
-            new="                target_value_accesses=(),",
-            label="GridSearch CoreProgram target-value declarations",
+            new="                value_reads=(),",
+            label="GridSearch CoreProgram value-read declarations",
         ),
         "value_access:grid_consumer_path_rebound": replace_once(
             source=grid_source,
@@ -4999,14 +4999,9 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         ),
         "value_access:core_requirements_erased": replace_once(
             source=core_program_source,
-            old=(
-                "        object.__setattr__(\n"
-                '            self, "target_value_accesses", '
-                "tuple(self.target_value_accesses)\n"
-                "        )"
-            ),
-            new='        object.__setattr__(self, "target_value_accesses", ())',
-            label="core-program target-value requirements snapshot",
+            old='        object.__setattr__(self, "value_reads", tuple(self.value_reads))',
+            new='        object.__setattr__(self, "value_reads", ())',
+            label="core-program value-read requirements snapshot",
         ),
         "value_access:core_plan_match_bypassed": replace_once(
             source=core_program_source,
@@ -5018,13 +5013,13 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             source=core_program_source,
             old=(
                 "        _validate_transfer_argument_metadata(\n"
-                "            program=program, access=access, transfer=transfer\n"
+                "            program=program, read=read, transfer=transfer\n"
                 "        )"
             ),
             new=(
                 "        if False:\n"
                 "            _validate_transfer_argument_metadata(\n"
-                "                program=program, access=access, transfer=transfer\n"
+                "                program=program, read=read, transfer=transfer\n"
                 "            )"
             ),
             label="core-program transfer argument metadata validation",
@@ -5048,7 +5043,7 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         ),
         "value_access:core_consumer_channel_rebound": replace_once(
             source=core_program_source,
-            old="    channel = access.source.channel.value",
+            old="    channel = read.source.channel.value",
             new='    channel = "next_regime_to_V_arr"',
             label="core-program exact consumer channel",
         ),
@@ -6040,9 +6035,9 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
                 old="                source=triple,",
                 new=(
                     "                source=(\n"
-                    "                    materialized.requirements.target_value_accesses[0].source.source_regime,\n"
-                    "                    materialized.requirements.target_value_accesses[0].source.source_period,\n"
-                    "                    materialized.requirements.target_value_accesses[0].source.core_key,\n"
+                    "                    materialized.requirements.value_reads[0].source.source_regime,\n"
+                    "                    materialized.requirements.value_reads[0].source.source_period,\n"
+                    "                    materialized.requirements.value_reads[0].source.core_key,\n"
                     "                ),"
                 ),
                 label="backward actual source-coordinate authority",

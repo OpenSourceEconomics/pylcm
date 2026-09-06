@@ -74,7 +74,7 @@ def test_the_graph_publishes_one_dense_main_program():
     )
     assert program.scope is ProgramScope.ANY
     assert program.requirements.streamable_axes == ()
-    assert program.requirements.target_value_accesses == ()
+    assert program.requirements.value_reads == ()
 
 
 def test_main_publishes_the_value_and_a_one_row_carry():

@@ -15,7 +15,7 @@ from _lcm.execution.core_program import (
     MaterializedCoreProgram,
     ReductionSemantics,
     StreamableProductAxis,
-    _TargetValueAccess,
+    ValueRead,
     resolve_core_program,
 )
 from _lcm.execution.output_layout import (
@@ -145,9 +145,9 @@ def _core_with_values(
 def _value_program(
     *,
     arguments: Mapping[str, object],
-    accesses: tuple[_TargetValueAccess, ...],
+    accesses: tuple[ValueRead, ...],
 ) -> MaterializedCoreProgram:
-    """Build a program with one canonical axis and exact target-value reads."""
+    """Build a program with one canonical axis and exact value reads."""
     return MaterializedCoreProgram(
         name="main",
         function=_core_with_values,
@@ -163,7 +163,7 @@ def _value_program(
                     width_keyword=_WIDTH_KEYWORD,
                 ),
             ),
-            target_value_accesses=accesses,
+            value_reads=accesses,
         ),
         output_roles=VALUE,
         disposition=CoreExecutionDisposition.PLANNED,
@@ -181,7 +181,7 @@ def _access_and_transfer(
     path: tuple[str | int, ...] = ("target",),
     source_sharding: jax.sharding.Sharding | None = None,
     kind: ValueTransferKind = ValueTransferKind.ALIGNED_LOCAL,
-) -> tuple[_TargetValueAccess, ResolvedValueTransfer]:
+) -> tuple[ValueRead, ResolvedValueTransfer]:
     """Build one matched logical declaration and concrete transfer."""
     target_period = (
         source_period
@@ -200,7 +200,7 @@ def _access_and_transfer(
         channel=channel,
         path=path,
     )
-    access = _TargetValueAccess(target=target, source=source)
+    access = ValueRead(target=target, source=source)
     transfer = resolve_value_transfer(
         target=target,
         source=source,
@@ -211,9 +211,7 @@ def _access_and_transfer(
     return access, transfer
 
 
-def test_exact_target_value_accesses_belong_to_program_and_allow_artifact_fan_out() -> (
-    None
-):
+def test_exact_value_reads_belong_to_program_and_allow_artifact_fan_out() -> None:
     value = jnp.asarray([3.0, 4.0])
     next_access, next_transfer = _access_and_transfer(value=value)
     edge_access, edge_transfer = _access_and_transfer(
@@ -236,7 +234,7 @@ def test_exact_target_value_accesses_belong_to_program_and_allow_artifact_fan_ou
         input_transfer_plan=(edge_transfer, next_transfer),
     )
 
-    assert program.requirements.target_value_accesses == accesses
+    assert program.requirements.value_reads == accesses
     assert resolved.input_transfer_plan == (next_transfer, edge_transfer)
     resolved_values = cast(
         "Mapping[str, object]",
@@ -258,7 +256,7 @@ def test_duplicate_target_value_argument_path_is_rejected() -> None:
         accesses=(access, access),
     )
 
-    with pytest.raises(ValueError, match="duplicate target-value argument path"):
+    with pytest.raises(ValueError, match="duplicate value-read argument path"):
         resolve_core_program(program=program, tile_widths={"action": 1})
 
 
@@ -273,7 +271,7 @@ def test_duplicate_target_value_argument_path_is_rejected() -> None:
     ],
     ids=["missing-channel", "missing-path"],
 )
-def test_target_value_access_path_must_exist_in_dynamic_arguments(
+def test_value_read_path_must_exist_in_dynamic_arguments(
     *, value_arguments: Mapping[str, object], message: str
 ) -> None:
     value = jnp.asarray([3.0, 4.0])
@@ -287,7 +285,7 @@ def test_target_value_access_path_must_exist_in_dynamic_arguments(
         resolve_core_program(program=program, tile_widths={"action": 1})
 
 
-def test_each_target_value_access_requires_its_exact_resolved_transfer() -> None:
+def test_each_value_read_requires_its_exact_resolved_transfer() -> None:
     value = jnp.asarray([3.0, 4.0])
     access, _transfer = _access_and_transfer(value=value)
     program = _value_program(
