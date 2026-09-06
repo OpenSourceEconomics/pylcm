@@ -1768,9 +1768,6 @@ def _compile_all_functions(
     # Collect every kernel's native graph, narrowed to the retention's scope.
     all_programs: dict[_CoreTriple, CoreProgram] = {}
     for regime_name, regime in regimes.items():
-        regime_retains_replay = _regime_retains_replay(
-            regime=regime, retain_replay=retain_replay
-        )
         for period in regime.active_periods:
             graph = _select_period_programs(
                 regime=regime,
