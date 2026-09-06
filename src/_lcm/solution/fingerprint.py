@@ -456,6 +456,7 @@ def fingerprint_model(
     user_regimes: _FingerprintUserRegimes,
     regime_names_to_ids: RegimeNamesToIds,
     flat_params: FlatParams,
+    structure: str | None = None,
 ) -> str:
     """Hash the model facts that determine stored mathematical interpretation.
 
@@ -464,6 +465,50 @@ def fingerprint_model(
     semantics, fixed numerical conventions, and canonical solution parameters.
     Hardware placement, compiler, sharding, tiling controls, prose descriptions,
     and ``Phased.simulate`` truth are intentionally excluded.
+
+    The record is split at the boundary no parameter vector crosses. Everything
+    a model fixes at build — topology, names, identities, declared callable
+    semantics — enters through `structure`, whose digest
+    `fingerprint_model_structure` produces; only concrete grid support and the
+    canonical solution parameters are read from `flat_params` here. A caller
+    holding a model across many parameter vectors passes the structure digest it
+    already computed, and pays the callable walk once rather than per solve.
+    """
+    structure_digest = structure
+    if structure_digest is None:
+        structure_digest = fingerprint_model_structure(
+            ages=ages,
+            regimes=regimes,
+            user_regimes=user_regimes,
+            regime_names_to_ids=regime_names_to_ids,
+        )
+    record = (
+        ("pylcm-model-fingerprint", 6),
+        structure_digest,
+        {
+            name: _grid_support(regime=regime, regime_params=flat_params[name])
+            for name, regime in regimes.items()
+        },
+        project_solution_params(flat_params=flat_params, regimes=regimes),
+    )
+    return _semantic_fingerprint(record)
+
+
+def fingerprint_model_structure(
+    *,
+    ages: AgeGrid,
+    regimes: Mapping[RegimeName, Regime],
+    user_regimes: _FingerprintUserRegimes,
+    regime_names_to_ids: RegimeNamesToIds,
+) -> str:
+    """Hash the mathematical facts a model fixes at build.
+
+    No parameter vector reaches this record: it carries period and regime
+    topology, state and action names, stakeholders, solver and replay
+    identities, artifact descriptors, per-period state axes, the user
+    declaration's callable semantics, and the regimes' own fixed parameters.
+    Concrete grid support and canonical solution parameters belong to
+    `fingerprint_model`, which reads them from the parameter vector.
     """
     projected_fixed_params = project_solution_params(
         flat_params=MappingProxyType(
@@ -472,7 +517,7 @@ def fingerprint_model(
         regimes=regimes,
     )
     record = (
-        ("pylcm-model-fingerprint", 5),
+        ("pylcm-model-structure", 6),
         tuple(ages.exact_values),
         {name: int(regime_id) for name, regime_id in regime_names_to_ids.items()},
         {
@@ -492,18 +537,7 @@ def fingerprint_model(
                     key: authority.descriptor
                     for key, authority in regime.solution.artifact_authorities.items()
                 },
-                "grid_support": {
-                    "states": regime.solution.state_action_space(
-                        regime_params=flat_params[name]
-                    ).states,
-                    "discrete_actions": regime.solution.state_action_space(
-                        regime_params=flat_params[name]
-                    ).discrete_actions,
-                    "continuous_actions": regime.solution.state_action_space(
-                        regime_params=flat_params[name]
-                    ).continuous_actions,
-                    "period_state_axes": regime.solution.period_state_axes,
-                },
+                "period_state_axes": regime.solution.period_state_axes,
                 # ``Phased`` is projected to its solve member by the semantic
                 # hasher. The declaration retains user-level function bodies,
                 # defaults, closures and globals instead of relying on compiled
@@ -513,9 +547,24 @@ def fingerprint_model(
             }
             for name, regime in regimes.items()
         },
-        project_solution_params(flat_params=flat_params, regimes=regimes),
     )
     return _semantic_fingerprint(record)
+
+
+def _grid_support(
+    *, regime: Regime, regime_params: Mapping[str, object]
+) -> MappingProxyType[str, object]:
+    """Return one regime's concrete support under a canonical parameter vector."""
+    state_action_space = regime.solution.state_action_space(
+        regime_params=cast("Any", regime_params)
+    )
+    return MappingProxyType(
+        {
+            "states": state_action_space.states,
+            "discrete_actions": state_action_space.discrete_actions,
+            "continuous_actions": state_action_space.continuous_actions,
+        }
+    )
 
 
 def _project_user_regime_declaration(regime: object) -> MappingProxyType[str, object]:

@@ -9,7 +9,7 @@ from enum import Enum
 from fractions import Fraction
 from functools import partial
 from types import MappingProxyType, ModuleType, SimpleNamespace
-from typing import cast
+from typing import Any, cast
 
 import dags.exceptions as dags_exceptions
 import jax
@@ -19,6 +19,7 @@ import numpy as np
 import pytest
 
 import _lcm.solution.grid_search as grid_search_declarations
+import lcm.model as lcm_model
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.constraints.ir import And
 from _lcm.engine import Regime as EngineRegime
@@ -1793,3 +1794,56 @@ def test_project_solution_params_removes_only_proven_transition_truth() -> None:
         flat_params=flat_params, regimes=cast("dict", regimes)
     )
     assert conservative["alive"] == flat_params["alive"]
+
+
+def test_the_model_structure_is_digested_once_across_many_parameter_vectors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Solving one model repeatedly hashes its parameter-free facts a single time."""
+    model = get_toy_model()
+    calls = []
+    original = fingerprints.fingerprint_model_structure
+
+    def counting(**kwargs: Any) -> str:
+        calls.append(1)
+        return original(**kwargs)
+
+    # `lcm.model` binds the name at import, so the solve path resolves it there.
+    monkeypatch.setattr(lcm_model, "fingerprint_model_structure", counting)
+    for scale in (1.0, 2.0, 3.0):
+        model.solve(params=get_toy_params(scale=scale), log_level="off")
+
+    assert len(calls) == 1
+
+
+def test_parameter_vectors_that_differ_carry_different_model_fingerprints() -> None:
+    """The digest still separates two canonical parameter vectors of one model."""
+    model = get_toy_model()
+    digests = {
+        _fingerprint_model_for_test(
+            ages=model.ages,
+            regimes=model._regimes,
+            user_regimes=model.user_regimes,
+            regime_names_to_ids=model.regime_names_to_ids,
+            flat_params=model._process_params(get_toy_params(scale=scale)),
+        )
+        for scale in (1.0, 2.0)
+    }
+
+    assert len(digests) == 2
+
+
+def test_the_structure_digest_participates_in_the_model_fingerprint() -> None:
+    """A model fingerprint changes when its parameter-free structure changes."""
+    model = get_toy_model()
+    shared = {
+        "ages": model.ages,
+        "regimes": model._regimes,
+        "user_regimes": model.user_regimes,
+        "regime_names_to_ids": model.regime_names_to_ids,
+        "flat_params": model._process_params(get_toy_params(scale=1.0)),
+    }
+
+    assert _fingerprint_model_for_test(**shared) != _fingerprint_model_for_test(
+        **shared, structure="0" * 64
+    )
