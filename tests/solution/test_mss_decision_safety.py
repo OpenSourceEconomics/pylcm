@@ -1428,8 +1428,14 @@ def test_r2_interval_piece_refused_location_stays_explicit() -> None:
     assert np.isnan(np.asarray(out[2])[:count]).any()
 
 
-def test_r2_interval_piece_missing_common_support_is_unresolved() -> None:
-    """Separated endpoint owners cannot manufacture an event across a support gap."""
+def test_r2_interval_piece_missing_common_support_emits_no_event() -> None:
+    """Owners separated by a gap hand over without a kink, keeping their own values.
+
+    Branches supported on `[0, 1]` and `[2, 3]` never meet, so the envelope jumps
+    from one to the other instead of crossing. No event may be manufactured in the
+    empty interval between them, and neither node may be poisoned: at `x = 2` only
+    the second branch is defined, so it reads its own policy and value there.
+    """
     dtype = _r4_dtype()
     out, _, _ = _interval_knot_compiled(
         x=jnp.asarray([0, 1, 2, 3], dtype=dtype),
@@ -1442,8 +1448,8 @@ def test_r2_interval_piece_missing_common_support_is_unresolved() -> None:
     count = int(out[3])
     assert count == 4
     np.testing.assert_array_equal(np.asarray(out[0])[:count], [0, 1, 2, 3])
-    assert np.isnan(np.asarray(out[1])[2])
-    assert np.isnan(np.asarray(out[2])[2])
+    np.testing.assert_array_equal(np.asarray(out[1])[:count], [8, 8, 2, 2])
+    np.testing.assert_array_equal(np.asarray(out[2])[:count], [0, 1, 2, 3])
 
 
 def test_r2_interval_piece_overlapping_traces_use_one_sided_exact_ties() -> None:

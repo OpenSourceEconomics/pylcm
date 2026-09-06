@@ -994,7 +994,7 @@ def _crossing_step(
         segment_right=this_segment,
         link_left=piece_a,
         link_right=piece_b,
-        unresolved=switches & (~pieces_resolved | ~row.supported | row.unresolved),
+        unresolved=switches & (~pieces_resolved | row.unresolved),
     )
 
     # Advance the previous-live-query carry only on a live query; a dropped
@@ -1019,8 +1019,6 @@ class _SegmentIntersection:
     """Policy of the incoming owner at the crossing."""
     resolved: BoolND
     """Whether the two chords in fact cross inside the interval."""
-    supported: BoolND
-    """Whether the original pieces have common support in the query cell."""
     at_left: BoolND
     """Whether the emitted handover state coincides with the left query."""
     at_right: BoolND
@@ -1060,6 +1058,9 @@ def _crossing_in_interval(
 
     Operands are the selected interval traces, not necessarily the node owners.
     Signs and roots are computed only on their ORIGINAL common stored support.
+    Two traces that share no support cannot meet: the owner changes across a gap in
+    the candidate cloud, which is a jump rather than a kink, so the interval yields
+    no event and each node keeps the value its own owner reads there.
     For a boundary-only trace, a shared endpoint with equal values is a supported
     node handover; no sign is extrapolated into a missing side of that branch.
     This preserves node-aligned events without licensing a following piece on
@@ -1164,7 +1165,6 @@ def _crossing_in_interval(
         # Geometry is separate from reading: an unresolved ordinate/policy is a
         # NaN event, not a reason to silently omit a genuine branch switch.
         resolved=resolved,
-        supported=supported,
         at_left=at_left,
         at_right=at_right,
         unresolved=unresolved,
