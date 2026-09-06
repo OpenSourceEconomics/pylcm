@@ -42,8 +42,10 @@ happened — and none of them is settled by a rounded comparison:
   without floating weighted products. Endpoints and common levels are preserved;
   a failed read poisons the publication rather than removing its owner. Crossing
   ordinates are rounded upward only when an exact comparison requires it.
-- **A crossing is located inside the interval it happened in.** The two winning
-  chords' gap is certified at the two adjacent query abscissae. Its exact
+- **A crossing is constructed from the pieces covering its interval.** A
+  right-node owner can be a branch's following piece, not its trace to the left.
+  The stored spans select the actual interval pieces, and exact endpoint equality
+  certifies their connection to the node owners before their gap is tested. Its exact
   stored-operand root is rounded upward to the first representable state owned
   by the incoming branch. Record coalescence uses that emitted state, including
   when a nonrepresentable root hands over at an existing query node.
@@ -189,25 +191,43 @@ def refine_envelope(
         winner_link=winner_link,
         winner_segment=winner_segment,
         links=links,
+        link_segment=link_segment,
     )
 
-    # A crossing is a genuine envelope kink only if one of the two crossing
-    # branches owns the envelope at the crossing abscissa. A switch across a
-    # *gap* in the candidate cloud intersects two lines in an interval a third
-    # branch dominates, or that no segment covers at all; evaluating the envelope
-    # there names its owner, and a crossing whose owner is neither branch is not
-    # on the envelope. The test is the identity of the owner, so nothing about it
-    # depends on a tolerance.
-    _, _, _, crossing_owner = _evaluate_envelope(
+    # The actual envelope owner must agree with a CONSTRUCTING piece, not
+    # merely carry its branch label. At a knot the owner may be the following
+    # piece: exact equality at the shared supported endpoint then establishes
+    # provenance without extrapolating that following piece into the left cell.
+    _, _, crossing_link, crossing_owner = _evaluate_envelope(
         query_grid=crossing.grid, links=links, segment_id=link_segment
     )
-    # Owner identity, not read finiteness, determines event admission too. A
-    # failed publication must remain an emitted NaN rather than erase the kink.
-    on_envelope = (crossing_owner == crossing.segment_left) | (
+    same_branch = (crossing_owner == crossing.segment_left) | (
         crossing_owner == crossing.segment_right
     )
+    event_link = jnp.where(
+        crossing_owner == crossing.segment_left,
+        crossing.link_left,
+        crossing.link_right,
+    )
+    owner_agreement = certified_margin_sign(
+        a_x0=links.x0[event_link],
+        a_x1=links.x1[event_link],
+        a_v0=links.v0[event_link],
+        a_v1=links.v1[event_link],
+        b_x0=links.x0[crossing_link],
+        b_x1=links.x1[crossing_link],
+        b_v0=links.v0[crossing_link],
+        b_v1=links.v1[crossing_link],
+        x_query=crossing.grid,
+    )
+    on_envelope = same_branch & (owner_agreement == 0)
     left_valid = crossing.left_valid & on_envelope
     right_valid = crossing.right_valid & on_envelope
+    provenance_failed = (
+        (crossing.left_valid | crossing.right_valid)
+        & same_branch
+        & (owner_agreement != 0)
+    )
 
     # A node-aligned crossing reuses one node record. Give that record the same
     # outward ordinate as the inserted one; its ordinary nearest node reading
@@ -232,8 +252,9 @@ def refine_envelope(
     # Refusing an event location must not silently publish a row without its
     # kink. Keep the observed query and poison its channels instead of making
     # up a finite crossing abscissa or treating a failed certificate as no event.
-    node_value = jnp.where(crossing.unresolved, jnp.nan, node_value)
-    node_policy = jnp.where(crossing.unresolved, jnp.nan, node_policy)
+    unresolved = crossing.unresolved | provenance_failed
+    node_value = jnp.where(unresolved, jnp.nan, node_value)
+    node_policy = jnp.where(unresolved, jnp.nan, node_policy)
 
     # Per-query output block: up to three rows in ascending grid order — the two
     # crossing records (same abscissa, left then right policy) followed by the
@@ -692,6 +713,10 @@ class _CrossingBlocks:
     """Branch id of the outgoing owner."""
     segment_right: Int1D
     """Branch id of the incoming owner."""
+    link_left: Int1D
+    """Stored piece constructing the outgoing trace."""
+    link_right: Int1D
+    """Stored piece constructing the incoming trace."""
     unresolved: BoolND
     """Whether a switched pair's location could not be certified."""
 
@@ -703,13 +728,14 @@ def _crossing_blocks(
     winner_link: Int1D,
     winner_segment: Int1D,
     links: _Links,
+    link_segment: Int1D,
 ) -> _CrossingBlocks:
-    """Compute, per query, the crossing of its owner with the previous owner.
+    """Construct crossings from the represented traces on adjacent query cells.
 
-    Sweeps the live queries left-to-right (carrying the previous live query's
-    owning link, branch id and abscissa) and, whenever the owning *branch*
-    switches, locates the two chords' crossing inside the interval the switch
-    happened in. A move from one link to the next within one monotone branch
+    The union of stored nodes partitions every branch into affine pieces on each
+    open query cell. Node ownership remains right-continuous, but event operands
+    are selected independently from the pieces covering that cell, with exact
+    endpoint provenance. A move within one monotone branch
     keeps the segment id, so it is not a switch and inserts nothing; only a
     genuine branch change is a kink.
     """
@@ -721,6 +747,7 @@ def _crossing_blocks(
         winner_segment=winner_segment,
         query_grid=query_grid,
         links=links,
+        link_segment=link_segment,
     )
     carry_init = (
         jnp.int32(0),
@@ -737,6 +764,8 @@ def _crossing_blocks(
         right_valid=rows.right_valid,
         segment_left=rows.segment_left,
         segment_right=rows.segment_right,
+        link_left=rows.link_left,
+        link_right=rows.link_right,
         unresolved=rows.unresolved,
     )
 
@@ -761,6 +790,10 @@ class _CrossingRow:
     """Branch id of the outgoing owner."""
     segment_right: IntND
     """Branch id of the incoming owner."""
+    link_left: IntND
+    """Stored piece constructing the outgoing trace."""
+    link_right: IntND
+    """Stored piece constructing the incoming trace."""
     unresolved: BoolND
     """Whether this step must poison its query's publication."""
 
@@ -774,6 +807,8 @@ _CROSSING_ROW_FIELDS = (
     "right_valid",
     "segment_left",
     "segment_right",
+    "link_left",
+    "link_right",
     "unresolved",
 )
 
@@ -798,6 +833,102 @@ jax.tree_util.register_pytree_node(
 )
 
 
+def _interval_piece(
+    *,
+    node_link: ScalarInt,
+    branch: ScalarInt,
+    prev_grid: FloatND,
+    this_grid: FloatND,
+    incoming: bool,
+    links: _Links,
+    link_segment: Int1D,
+) -> tuple[ScalarInt, BoolND]:
+    """Select a branch's represented trace, then certify its node provenance.
+
+    The sorted query grid contains every stored knot, so no piece boundary lies
+    in an open live cell. A unique same-branch link covering BOTH cell endpoints
+    is its trace; the right-node owner's following link is not eligible merely
+    because its label matches. When several pieces cover the cell, an exact
+    one-sided reduction resolves their value/slope/stable-identity order.
+
+    A branch starting/ending exactly at a cell boundary can supply its node
+    owner as a boundary-only trace. The intersection routine then tests only the
+    supported common endpoint, never an extrapolated sign on the other side.
+    Finally, exact equality to the node owner at the anchor establishes value
+    provenance. A missing, disconnected or uncertifiable trace is explicit.
+    """
+    covers = (
+        links.live
+        & (link_segment == branch)
+        & _stored_in_span(query=prev_grid, lower=links.lower, upper=links.upper)
+        & _stored_in_span(query=this_grid, lower=links.lower, upper=links.upper)
+    )
+    count = jnp.sum(covers, dtype=jnp.int32)
+
+    def resolve_overlapping(_: None) -> tuple[ScalarInt, BoolND]:
+        # On the incoming side, equal values at the right anchor are ordered
+        # by the LEFT limit, hence by smallest slope. Among anchor-equal lines,
+        # maximizing value at the left cell endpoint does exactly that. All
+        # admitted links extend right of that left endpoint, so exact affine
+        # ties then retain the original stable identity. No reflected, rounded
+        # or nextafter coordinate is used. Outgoing ties keep the ordinary
+        # right-continuous order at the left anchor.
+        anchor = this_grid if incoming else prev_grid
+        signs = certified_margin_sign(
+            a_x0=links.x0,
+            a_x1=links.x1,
+            a_v0=links.v0,
+            a_v1=links.v1,
+            b_x0=links.x0[node_link],
+            b_x1=links.x1[node_link],
+            b_v0=links.v0[node_link],
+            b_v1=links.v1[node_link],
+            x_query=anchor,
+        )
+        admitted = covers & (signs == 0)
+        owner, resolved = _certified_owner(
+            brackets=admitted[None, :],
+            links=links,
+            query=prev_grid.reshape(1, 1),
+            stable_index=jnp.arange(links.x0.shape[0], dtype=jnp.int32)[None, :],
+        )
+        certified = jnp.all(~covers | ((signs >= -1) & (signs <= 1)))
+        return owner[0], resolved[0] & certified & jnp.any(admitted)
+
+    # Ordinary monotone branches have one covering piece. Keep that common
+    # path to one gathered endpoint comparison, not an exhaustive exact scan.
+    piece, selection_resolved = jax.lax.cond(
+        count > 1,
+        resolve_overlapping,
+        lambda _: (jnp.argmax(covers).astype(jnp.int32), jnp.asarray(True)),  # noqa: FBT003
+        operand=None,
+    )
+    boundary_only = (
+        _stored_equal(left=links.lower[node_link], right=this_grid)
+        if incoming
+        else _stored_equal(left=links.upper[node_link], right=prev_grid)
+    )
+    piece = jnp.where(count == 0, node_link, piece).astype(jnp.int32)
+    supported = ((count > 0) & selection_resolved) | (
+        (count == 0)
+        & boundary_only
+        & links.live[node_link]
+        & (link_segment[node_link] == branch)
+    )
+    agreement = certified_margin_sign(
+        a_x0=links.x0[piece],
+        a_x1=links.x1[piece],
+        a_v0=links.v0[piece],
+        a_v1=links.v1[piece],
+        b_x0=links.x0[node_link],
+        b_x1=links.x1[node_link],
+        b_v0=links.v0[node_link],
+        b_v1=links.v1[node_link],
+        x_query=this_grid if incoming else prev_grid,
+    )
+    return piece, supported & (agreement == 0)
+
+
 # keyword-only-exempt: library-callback=jax.lax.scan
 def _crossing_step(
     carry: tuple[ScalarInt, ScalarInt, FloatND],
@@ -808,6 +939,7 @@ def _crossing_step(
     winner_segment: Int1D,
     query_grid: Float1D,
     links: _Links,
+    link_segment: Int1D,
 ) -> tuple[tuple[ScalarInt, ScalarInt, FloatND], _CrossingRow]:
     """Emit the crossing query `idx` opens, and advance the previous-owner carry.
 
@@ -824,14 +956,33 @@ def _crossing_step(
     this_grid = query_grid[idx]
 
     switches = is_live & (prev_segment >= 0) & (this_segment != prev_segment)
+    piece_a, resolved_a = _interval_piece(
+        node_link=prev_link,
+        branch=prev_segment,
+        prev_grid=prev_grid,
+        this_grid=this_grid,
+        incoming=False,
+        links=links,
+        link_segment=link_segment,
+    )
+    piece_b, resolved_b = _interval_piece(
+        node_link=this_link,
+        branch=this_segment,
+        prev_grid=prev_grid,
+        this_grid=this_grid,
+        incoming=True,
+        links=links,
+        link_segment=link_segment,
+    )
+    pieces_resolved = resolved_a & resolved_b
     row = _crossing_in_interval(
-        seg_a=prev_link,
-        seg_b=this_link,
+        seg_a=piece_a,
+        seg_b=piece_b,
         prev_grid=prev_grid,
         this_grid=this_grid,
         links=links,
     )
-    valid = switches & row.resolved
+    valid = switches & pieces_resolved & row.resolved
     emitted = _CrossingRow(
         grid=row.grid,
         value=row.value,
@@ -841,7 +992,9 @@ def _crossing_step(
         right_valid=valid & ~row.at_right,
         segment_left=prev_segment,
         segment_right=this_segment,
-        unresolved=switches & row.unresolved,
+        link_left=piece_a,
+        link_right=piece_b,
+        unresolved=switches & (~pieces_resolved | ~row.supported | row.unresolved),
     )
 
     # Advance the previous-live-query carry only on a live query; a dropped
@@ -866,6 +1019,8 @@ class _SegmentIntersection:
     """Policy of the incoming owner at the crossing."""
     resolved: BoolND
     """Whether the two chords in fact cross inside the interval."""
+    supported: BoolND
+    """Whether the original pieces have common support in the query cell."""
     at_left: BoolND
     """Whether the emitted handover state coincides with the left query."""
     at_right: BoolND
@@ -903,11 +1058,12 @@ def _crossing_in_interval(
     endpoint signs: even a strictly interior root can hand over at the right
     node.
 
-    The outgoing link's own stored span, rather than its widened comparable line,
-    admits the event. The incoming link's span does not: a branch entered at the
-    right node is represented there by the link that reaches beyond it, so a root
-    inside the interval lies before that link's support by construction, and
-    requiring it to be covered would drop every handover aligned with a node.
+    Operands are the selected interval traces, not necessarily the node owners.
+    Signs and roots are computed only on their ORIGINAL common stored support.
+    For a boundary-only trace, a shared endpoint with equal values is a supported
+    node handover; no sign is extrapolated into a missing side of that branch.
+    This preserves node-aligned events without licensing a following piece on
+    the interval to the left of its knot.
     """
     a_x0, a_x1 = links.x0[seg_a], links.x1[seg_a]
     a_v0, a_v1 = links.v0[seg_a], links.v1[seg_a]
@@ -926,27 +1082,54 @@ def _crossing_in_interval(
         "b_v0": b_v0,
         "b_v1": b_v1,
     }
-    sign_prev = certified_margin_sign(x_query=prev_grid, **chords)
-    sign_this = certified_margin_sign(x_query=this_grid, **chords)
+    # Intersect the query cell with both original spans using stored-bit order.
+    # Floating min/max here would collapse distinct subnormal boundaries.
+    left = jnp.where(
+        _stored_less(left=prev_grid, right=links.lower[seg_a]),
+        links.lower[seg_a],
+        prev_grid,
+    )
+    left = jnp.where(
+        _stored_less(left=left, right=links.lower[seg_b]), links.lower[seg_b], left
+    )
+    right = jnp.where(
+        _stored_less(left=links.upper[seg_a], right=this_grid),
+        links.upper[seg_a],
+        this_grid,
+    )
+    right = jnp.where(
+        _stored_less(left=links.upper[seg_b], right=right), links.upper[seg_b], right
+    )
+    supported = (
+        links.live[seg_a]
+        & links.live[seg_b]
+        & jnp.isfinite(left)
+        & jnp.isfinite(right)
+        & ~_stored_less(left=right, right=left)
+    )
+    sign_prev = certified_margin_sign(x_query=left, **chords)
+    sign_this = certified_margin_sign(x_query=right, **chords)
     at_left_root = (sign_prev == 0) & (sign_this == -1)
     at_right_root = (sign_prev == 1) & (sign_this == 0)
     crosses_inside = (sign_prev == 1) & (sign_this == -1)
-    bracketed = at_left_root | at_right_root | crosses_inside
-    handover, location_status = exact_affine_handover(
-        left=prev_grid, right=this_grid, **chords
-    )
-    grid = jnp.where(bracketed & (location_status == 0), handover, jnp.nan)
-    covered = (
-        links.live[seg_a]
-        & links.live[seg_b]
-        & _stored_in_span(
-            query=grid, lower=links.lower[seg_a], upper=links.upper[seg_a]
+    bracketed = supported & (at_left_root | at_right_root | crosses_inside)
+    touching = (
+        supported
+        & _stored_equal(left=left, right=right)
+        & (
+            _stored_equal(left=left, right=prev_grid)
+            | _stored_equal(left=left, right=this_grid)
         )
+        & (sign_prev == 0)
     )
-    resolved = bracketed & (location_status == 0) & covered
+    handover, location_status = exact_affine_handover(left=left, right=right, **chords)
+    grid = jnp.where(
+        touching, left, jnp.where(bracketed & (location_status == 0), handover, jnp.nan)
+    )
+    resolved = touching | (bracketed & (location_status == 0))
     at_left = resolved & _stored_equal(left=grid, right=prev_grid)
     at_right = resolved & _stored_equal(left=grid, right=this_grid)
-    unresolved = (
+    unresolved = supported & (
         (sign_prev == UNRESOLVED_STATUS)
         | (sign_this == UNRESOLVED_STATUS)
         | (bracketed & (location_status != 0))
@@ -981,6 +1164,7 @@ def _crossing_in_interval(
         # Geometry is separate from reading: an unresolved ordinate/policy is a
         # NaN event, not a reason to silently omit a genuine branch switch.
         resolved=resolved,
+        supported=supported,
         at_left=at_left,
         at_right=at_right,
         unresolved=unresolved,

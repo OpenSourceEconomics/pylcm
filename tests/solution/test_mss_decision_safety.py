@@ -9,6 +9,7 @@ side a read lands on — rather than the value that expresses it.
 """
 
 from fractions import Fraction
+from itertools import product
 from unittest.mock import patch
 
 import jax
@@ -1203,3 +1204,275 @@ def test_original_geometry_batched_selector_refusal_stays_explicit() -> None:
             assert np.isnan(np.asarray(value)[:2]).all()
             assert np.isnan(np.asarray(policy)).all()
             assert np.isneginf(np.asarray(value)[2])
+
+
+_KNOT_CHANNEL_NAMES = ("x", "p", "v", "labels", "query")
+
+
+def _as_knot_kwargs(channels):
+    """Name the five aligned candidate channels a knot check varies."""
+    return dict(zip(_KNOT_CHANNEL_NAMES, channels, strict=True))
+
+
+def _interval_knot_row(*, x, p, v, labels, query, explicit):
+    """Exercise the published row and its actual policy/value consumer."""
+    out = mss.refine_envelope(
+        endog_grid=x,
+        policy=p,
+        value=v,
+        segment_id=labels if explicit else None,
+        n_refined=32,
+    )
+    return (
+        out,
+        interp_on_padded_grid(x_query=query, xp=out[0], fp=out[1]),
+        interp_on_padded_grid(x_query=query, xp=out[0], fp=out[2]),
+    )
+
+
+_interval_knot_compiled = jax.jit(_interval_knot_row, static_argnames=("explicit",))
+
+
+def _interval_knot_vmap(*, x, p, v, labels, query, explicit):
+    return jax.vmap(
+        lambda xx, pp, vv, ll, qq: _interval_knot_row(
+            x=xx, p=pp, v=vv, labels=ll, query=qq, explicit=explicit
+        )
+    )(x, p, v, labels, query)
+
+
+_interval_knot_batched = jax.jit(_interval_knot_vmap, static_argnames=("explicit",))
+
+
+def _assert_interval_knot(
+    *, result, root, value_scale, expected_policy, expected_value
+):
+    """Check exact root/policy identities against rational expected channels."""
+    out, policy_read, value_read = result
+    jax.block_until_ready(result)
+    count = int(out[3])
+    assert count <= 32
+    x, p, v = (np.asarray(z)[:count] for z in out[:3])
+    assert all(np.isfinite(z).all() for z in (x, p, v, policy_read, value_read))
+    assert np.all(x[1:] >= x[:-1])
+    duplicated = x[:-1][x[:-1] == x[1:]]
+    assert len(duplicated) == 1
+    assert Fraction(float(duplicated[0])) == root
+    ids = np.flatnonzero(x == float(root))
+    assert len(ids) == 2
+    np.testing.assert_array_equal(p[ids], [8, 2])
+    assert all(Fraction(float(z)) == value_scale * Fraction(23, 2) for z in v[ids])
+    assert [Fraction(float(z)) for z in np.asarray(policy_read)] == expected_policy
+    assert [Fraction(float(z)) for z in np.asarray(value_read)] == expected_value
+
+
+def test_r2_interval_piece_canonical_transforms_and_topology() -> None:
+    """The incoming node owner is NOT the incoming interval chord at its knot."""
+    dtype = _r4_dtype()
+    arrays = tuple(
+        jnp.asarray(z, dtype=dtype)
+        for z in (
+            [10, 12, 10, 11, 12],
+            [8, 8, 2, 2, 2],
+            [11, 13, 10, 13, 18],
+            [0, 0, 1, 1, 1],
+            [85 / 8],
+        )
+    )
+    for explicit in (False, True):
+        results = [
+            _interval_knot_row(**_as_knot_kwargs(arrays), explicit=explicit),
+            _interval_knot_compiled(**_as_knot_kwargs(arrays), explicit=explicit),
+        ]
+        batched = _interval_knot_batched(
+            **_as_knot_kwargs([jnp.stack([z, z]) for z in arrays]),
+            explicit=explicit,
+        )
+        results.extend(jax.tree.map(lambda z, row=i: z[row], batched) for i in range(2))
+        for result in results:
+            _assert_interval_knot(
+                result=result,
+                root=Fraction(21, 2),
+                value_scale=Fraction(1),
+                expected_policy=[Fraction(2)],
+                expected_value=[Fraction(95, 8)],
+            )
+
+
+def test_r2_interval_piece_future_piece_invariance_family() -> None:
+    """648 knot mutations and 108 linear controls share the same earlier root.
+
+    Expected values are direct Fraction evaluations of the two fixed LEFT
+    pieces: A(t)=11+t and B(t)=10+3t. Only B's following piece is varied.
+    No production selection, crossing or comparison supplies the reference.
+    """
+    dtype = _r4_dtype()
+    fractions = (Fraction(1, 4), Fraction(3, 8), Fraction(5, 8), Fraction(7, 8))
+    permutations = ((0, 1, 2, 3, 4), (2, 3, 4, 0, 1), (1, 0, 4, 3, 2))
+    checked = controls = 0
+    for rate, origin, scale, value_scale, order in product(
+        (0.5, 1, 1.5, 2, 3, 4, 8), (-16, 0, 10), (0.5, 1, 8), (0.5, 1, 16), range(3)
+    ):
+        x = np.asarray(origin + scale * np.asarray([0, 2, 0, 1, 2]), dtype=dtype)
+        p = np.asarray([8, 8, 2, 2, 2], dtype=dtype)
+        v = np.asarray(
+            value_scale * np.asarray([11, 13, 10, 13, 14 + rate]), dtype=dtype
+        )
+        labels = np.asarray([0, 0, 1, 1, 1], dtype=dtype)
+        permutation = list(permutations[order])
+        channels = [jnp.asarray(z[permutation]) for z in (x, p, v, labels)]
+        query = jnp.asarray([origin + scale * float(t) for t in fractions], dtype=dtype)
+        expected_p = [Fraction(8 if t < Fraction(1, 2) else 2) for t in fractions]
+        expected_v = [
+            Fraction(value_scale) * max(11 + t, 10 + 3 * t) for t in fractions
+        ]
+        for explicit in (True, False) if order == 0 else (True,):
+            _assert_interval_knot(
+                result=_interval_knot_compiled(
+                    **_as_knot_kwargs([*channels, query]), explicit=explicit
+                ),
+                root=Fraction(origin) + Fraction(scale) / 2,
+                value_scale=Fraction(value_scale),
+                expected_policy=expected_p,
+                expected_value=expected_v,
+            )
+            checked += 1
+            controls += rate == 2
+    assert (checked, controls) == (756, 108)
+
+
+def test_r2_interval_piece_policy_channels_follow_the_left_trace() -> None:
+    """Future policy slopes cannot leak into an earlier event or policy read."""
+    dtype = _r4_dtype()
+    for future_policy in (6, 9, 30):
+        out, pr, vr = _interval_knot_compiled(
+            x=jnp.asarray([10, 12, 10, 11, 12], dtype=dtype),
+            p=jnp.asarray([8, 8, 1, 3, future_policy], dtype=dtype),
+            v=jnp.asarray([11, 13, 10, 13, 18], dtype=dtype),
+            labels=jnp.asarray([0, 0, 1, 1, 1], dtype=dtype),
+            query=jnp.asarray([85 / 8], dtype=dtype),
+            explicit=True,
+        )
+        count = int(out[3])
+        ids = np.flatnonzero(np.asarray(out[0])[:count] == 10.5)
+        assert len(ids) == 2
+        np.testing.assert_array_equal(np.asarray(out[1])[ids], [8, 2])
+        assert Fraction(float(pr[0])) == Fraction(9, 4)
+        assert Fraction(float(vr[0])) == Fraction(95, 8)
+
+
+def test_r2_interval_piece_boundary_only_handover() -> None:
+    """A supported touching endpoint needs no backward extrapolation at all."""
+    dtype = _r4_dtype()
+    out, pr, vr = _interval_knot_compiled(
+        x=jnp.asarray([0, 1, 1, 2], dtype=dtype),
+        p=jnp.asarray([8, 8, 2, 2], dtype=dtype),
+        v=jnp.asarray([0, 1, 1, 3], dtype=dtype),
+        labels=jnp.asarray([0, 0, 1, 1], dtype=dtype),
+        query=jnp.asarray([1.25], dtype=dtype),
+        explicit=True,
+    )
+    count = int(out[3])
+    x = np.asarray(out[0])[:count]
+    ids = np.flatnonzero(x == 1)
+    assert len(ids) == 2
+    np.testing.assert_array_equal(np.asarray(out[1])[ids], [8, 2])
+    np.testing.assert_array_equal(np.asarray(out[2])[ids], [1, 1])
+    assert float(pr[0]) == 2
+    assert float(vr[0]) == 1.5
+
+
+def test_r2_interval_piece_disconnected_same_label_is_unresolved() -> None:
+    """A label match cannot connect unequal knot values into one affine trace."""
+    dtype = _r4_dtype()
+    out, _, _ = _interval_knot_compiled(
+        x=jnp.asarray([0, 2, 0, 1, 1, 2], dtype=dtype),
+        p=jnp.asarray([8, 8, 2, 2, 2, 2], dtype=dtype),
+        v=jnp.asarray([1, 3, 0, 1.5, 3, 6], dtype=dtype),
+        labels=jnp.asarray([0, 0, 1, 1, 1, 1], dtype=dtype),
+        query=jnp.asarray([0.5], dtype=dtype),
+        explicit=True,
+    )
+    count = int(out[3])
+    x = np.asarray(out[0])[:count]
+    assert np.isfinite(x).all()
+    assert len(np.unique(x)) == count  # no event from a following-piece extrapolation
+    at_knot = np.flatnonzero(x == 1)
+    assert len(at_knot) == 1
+    assert np.isnan(np.asarray(out[1])[at_knot]).all()
+    assert np.isnan(np.asarray(out[2])[at_knot]).all()
+
+
+def test_r2_interval_piece_refused_location_stays_explicit() -> None:
+    """A refused trace cannot quietly remove a kink from an otherwise finite row."""
+    original = mss._interval_piece
+
+    def refused(**operands):
+        piece, resolved = original(**operands)
+        return piece, jnp.zeros_like(resolved)
+
+    dtype = _r4_dtype()
+    with patch.object(mss, "_interval_piece", refused):
+        out = mss.refine_envelope(
+            endog_grid=jnp.asarray([10, 12, 10, 11, 12], dtype=dtype),
+            policy=jnp.asarray([8, 8, 2, 2, 2], dtype=dtype),
+            value=jnp.asarray([11, 13, 10, 13, 18], dtype=dtype),
+            segment_id=jnp.asarray([0, 0, 1, 1, 1], dtype=dtype),
+            n_refined=32,
+        )
+    count = int(out[3])
+    x = np.asarray(out[0])[:count]
+    assert np.isfinite(x).all()
+    assert len(np.unique(x)) == count
+    assert np.isnan(np.asarray(out[1])[:count]).any()
+    assert np.isnan(np.asarray(out[2])[:count]).any()
+
+
+def test_r2_interval_piece_missing_common_support_is_unresolved() -> None:
+    """Separated endpoint owners cannot manufacture an event across a support gap."""
+    dtype = _r4_dtype()
+    out, _, _ = _interval_knot_compiled(
+        x=jnp.asarray([0, 1, 2, 3], dtype=dtype),
+        p=jnp.asarray([8, 8, 2, 2], dtype=dtype),
+        v=jnp.asarray([0, 1, 2, 3], dtype=dtype),
+        labels=jnp.asarray([0, 0, 1, 1], dtype=dtype),
+        query=jnp.asarray([1.5], dtype=dtype),
+        explicit=True,
+    )
+    count = int(out[3])
+    assert count == 4
+    np.testing.assert_array_equal(np.asarray(out[0])[:count], [0, 1, 2, 3])
+    assert np.isnan(np.asarray(out[1])[2])
+    assert np.isnan(np.asarray(out[2])[2])
+
+
+def test_r2_interval_piece_overlapping_traces_use_one_sided_exact_ties() -> None:
+    """Left traces choose the smaller slope at a right-node value tie.
+
+    The first pair has identical affine values (stable link 0 wins). In the
+    second pair the right-node owner is still link 0 by its steeper slope, but
+    the branch's left trace is link 1. This is an exact limit, not a probe at
+    the previous floating number, and remains valid for adjacent coordinates.
+    """
+    dtype = _r4_dtype()
+    for lower_values, expected in (([0, 0], 0), ([0, 1], 1)):
+        links = mss._comparable_links(
+            left_grid=jnp.asarray([0, 0], dtype=dtype),
+            right_grid=jnp.asarray([1, 1], dtype=dtype),
+            left_policy=jnp.asarray([2, 3], dtype=dtype),
+            right_policy=jnp.asarray([2, 3], dtype=dtype),
+            left_value=jnp.asarray(lower_values, dtype=dtype),
+            right_value=jnp.asarray([2, 2], dtype=dtype),
+            segment_live=jnp.asarray([True, True]),
+        )
+        piece, resolved = mss._interval_piece(
+            node_link=jnp.int32(0),
+            branch=jnp.int32(1),
+            prev_grid=jnp.asarray(0, dtype=dtype),
+            this_grid=jnp.asarray(1, dtype=dtype),
+            incoming=True,
+            links=links,
+            link_segment=jnp.asarray([1, 1], dtype=jnp.int32),
+        )
+        assert bool(resolved)
+        assert int(piece) == expected

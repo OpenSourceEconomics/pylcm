@@ -123,22 +123,32 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   while distinct values closer together than the smallest normal remain distinct. The
   same rule orders, orients, admits and coalesces, so no two of those can disagree about
   whether two coordinates coincide.
-- A crossing is located inside the interval the switch was observed in, as the root
-  of the two chords' gap across that interval's two abscissae, and it is emitted
-  only where that gap genuinely changes sign. That root is solved from the stored
-  operands themselves, so a switch whose two rounded chord readings coincide is
-  still placed at the abscissa the geometry puts it at instead of being collapsed
-  onto an interval endpoint, and the policy read on each side of it belongs to the
-  branch that owns that side. Its published value is the higher of
+- A crossing is constructed from the pieces that cover the interval the switch was
+  observed in, not from whichever piece owns each of its two nodes. A branch entered at
+  the right node is often represented there by the piece continuing above that node,
+  whose line says nothing about the interval below it; the piece covering both of the
+  interval's abscissae is the one the crossing is solved from, so a kink sits where the
+  branches actually meet rather than where a continuation extrapolated backwards would
+  meet them. Exact equality at the shared endpoint connects the selected piece to the
+  node it hands over at, and a trace that is missing, ambiguous, or disconnected from
+  that node publishes `NaN` rather than a plausible abscissa.
+- The gap between those two pieces is signed only where both of them are supported, and
+  its root is solved from the stored operands themselves, so a switch whose two rounded
+  chord readings coincide is still placed at the abscissa the geometry puts it at
+  instead of being collapsed onto an interval endpoint, and the policy read on each side
+  of it belongs to the branch that owns that side. Its published value is the higher of
   the two chords there, so an emitted kink can never sit below both branches.
 - A crossing landing exactly on one of the two query nodes is published rather than
   discarded. That node's own row is one of the two records the switch needs and the
   emission contributes the other: the incoming owner after a crossing at the left
   node, the outgoing owner before a crossing at the right node. Either way the kink
   abscissa carries exactly two rows, outgoing owner first.
-- Whether a crossing lies on the envelope is settled by naming the owner at the
-  crossing abscissa rather than by comparing two readings within a tolerance band,
-  so the emission no longer depends on a declared band or on the working precision.
+- Whether a crossing lies on the envelope is settled by naming the owner at the crossing
+  abscissa and requiring it to carry the same value there as the piece the crossing was
+  built from, rather than by comparing two readings within a tolerance band. A shared
+  branch label is not provenance on its own, so the emission depends on neither a
+  declared band nor the working precision, and a crossing whose provenance the exact
+  comparator cannot certify is published as `NaN` rather than admitted.
 
 ### Engine functions are defined once, not per call
 
