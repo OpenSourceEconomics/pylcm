@@ -18,6 +18,11 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - A query whose owner the exact comparator leaves undecided publishes no value: the
   envelope reads `NaN` there instead of falling back to a rounded comparison, so an
   ordering the arithmetic cannot settle is visible rather than silently chosen.
+- Which links compete for a query is decided by their stored spans alone, never by
+  whether reading one of them succeeded numerically. A model whose grids and values
+  sit near the top or bottom of the working format keeps the owner it should have:
+  the reading of the selected owner is range-safe, so an intermediate product that
+  leaves the representable range no longer removes a finite winner from the contest.
 - A link's value at a query is its own chord's value: each endpoint is weighed by
   its distance to the other, with the products carried at twice the working
   precision. The reading is the stored value at either endpoint exactly and
