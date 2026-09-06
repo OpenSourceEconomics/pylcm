@@ -72,6 +72,7 @@ from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from _lcm.grids import ContinuousGrid, DiscreteGrid
 from _lcm.grids.base import Grid
 from _lcm.params.mapping_leaf import MappingLeaf, UserMappingLeaf
+from _lcm.solution.continuation_reads import published_continuation_template
 from _lcm.solution.continuation_target import (
     period_to_continuation_target,
     target_period_grid,
@@ -605,6 +606,9 @@ class NBEGM(OneMarginSolver):
             len(constraint.program.surfaces) for constraint in feasibility_constraints
         )
         for period, target in period_to_target.items():
+            target_carry_template = published_continuation_template(
+                continuation_specs=context.continuation_specs, target=target
+            )
             group_key = solver_period_group_key(
                 context=context,
                 period=period,
@@ -633,6 +637,8 @@ class NBEGM(OneMarginSolver):
                 savings_grid=savings_grid,
                 regime_name=context.regime_name,
                 continuation_target=target,
+                period=period,
+                target_carry_template=target_carry_template,
                 liquid_state=liquid_state_name,
                 transition_target_names=tuple(context.transitions),
                 next_liquid_grid=target_period_grid(

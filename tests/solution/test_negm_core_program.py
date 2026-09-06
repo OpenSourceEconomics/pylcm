@@ -203,7 +203,9 @@ def test_the_graph_publishes_the_keeper_and_the_outer_sweep(*, captured):
     assert keeper.scope is ProgramScope.VALUES_ONLY
     assert sweep.scope is ProgramScope.ANY
     assert sweep.requirements.streamable_axes == ()
-    assert sweep.requirements.value_reads == ()
+    assert {read.source.core_key for read in sweep.requirements.value_reads} == {
+        "outer_sweep"
+    }
 
 
 def test_the_keeper_program_is_the_inner_keepers_program_under_a_new_name(*, captured):

@@ -4,7 +4,7 @@ A parent that reads its target's carry names the artifact key and the leaf path,
 so the leaf has an identity of its own for liveness and for transfer planning.
 """
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import cast
@@ -22,9 +22,11 @@ from _lcm.execution.core_program import (
     CoreExecutionRequirements,
     CoreProgram,
     MaterializedCoreProgram,
+    ProgramScope,
     ResolvedCoreProgram,
     ValueRead,
     _value_read_argument_leaf,
+    core_program_graph,
     materialize_core_program,
     resolve_core_program,
 )
@@ -37,8 +39,15 @@ from _lcm.execution.value_transfer import (
     ValueInputChannel,
     ValueTransferKind,
 )
+from _lcm.solution.backward_induction import (
+    _classify_dispatch_value_artifacts,
+    _ProgramExecutionMetadata,
+)
 from lcm.solver_api import EGM_CONTINUATION
+from lcm.solvers import EGM
 from tests.conftest import DECIMAL_PRECISION
+from tests.solution.test_egm_solver import _SAVINGS_GRID, _model
+from tests.test_models.dcegm_paper_twin import build_dcegm_model
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -315,3 +324,100 @@ def test_a_direct_argument_read_names_an_argument_the_builder_supplies() -> None
             reads=(_leaf_read(leaf="marginal_utility", argument="absent"),),
             arguments={"next_marginal": jnp.zeros(5)},
         )
+
+
+def _egm_program() -> CoreProgram:
+    """The plain-EGM `main` program of the first solved period."""
+    model = _model(solver=EGM(savings_grid=_SAVINGS_GRID))
+    kernel = model._regimes["saving"].solution.period_kernels[0]
+    return core_program_graph(kernel=kernel)["main"]
+
+
+@pytest.mark.parametrize(
+    ("leaf", "argument"),
+    [
+        (("endog_grid",), "next_liquid_grid"),
+        (("value",), "next_value"),
+        (("marginal_utility",), "next_marginal"),
+    ],
+)
+def test_plain_egm_declares_the_carry_row_each_argument_carries(
+    *, leaf: tuple[str, ...], argument: str
+) -> None:
+    """The 1-D EGM program names the target carry leaf behind each argument."""
+    reads = _egm_program().requirements.value_reads
+
+    assert {(read.target.leaf_path, read.source.argument) for read in reads} >= {
+        (leaf, argument)
+    }
+
+
+def test_plain_egm_declares_exactly_the_three_rows_it_reads() -> None:
+    """The EGM argument builder supplies three carry rows and no more."""
+    assert len(_egm_program().requirements.value_reads) == 3
+
+
+@pytest.mark.parametrize(
+    "predicate",
+    [
+        lambda read: read.target.kind is ValueArtifactKind.CONTINUATION_LEAF,
+        lambda read: read.target.period == read.source.source_period + 1,
+        lambda read: read.target.artifact_key is EGM_CONTINUATION,
+    ],
+)
+def test_every_plain_egm_read_addresses_the_targets_next_period_carry(
+    *, predicate: Callable[[ValueRead], bool]
+) -> None:
+    """Each declared read names the target's carry at the next period."""
+    assert all(predicate(read) for read in _egm_program().requirements.value_reads)
+
+
+def _dcegm_reads() -> tuple[ValueRead, ...]:
+    """The DC-EGM twin's `main` reads at its first solved period."""
+    model = build_dcegm_model()
+    kernel = model._regimes["working_life"].solution.period_kernels[0]
+    return core_program_graph(kernel=kernel)["main"].requirements.value_reads
+
+
+def test_dcegm_declares_at_least_one_read() -> None:
+    """A DC-EGM program reads its target's carry, so it declares it."""
+    assert _dcegm_reads()
+
+
+@pytest.mark.parametrize(
+    "predicate",
+    [
+        lambda read: read.source.channel is ValueInputChannel.CONTINUATION_LEAF,
+        lambda read: read.source.argument is None,
+        lambda read: read.source.path == (read.target.regime, *read.target.leaf_path),
+    ],
+)
+def test_dcegm_addresses_each_leaf_inside_the_rolling_mapping(
+    *, predicate: Callable[[ValueRead], bool]
+) -> None:
+    """A DC-EGM program takes the whole payload, so it indexes the channel."""
+    assert all(predicate(read) for read in _dcegm_reads())
+
+
+def test_an_egm_node_pins_only_the_continuation_leaves_it_declares() -> None:
+    """A dense EGM node that names its reads stops pinning every reachable value."""
+    program = _egm_program()
+    programs = {
+        "main": _ProgramExecutionMetadata(
+            requirements=program.requirements,
+            disposition=program.disposition,
+            scope=ProgramScope.ANY,
+            input_transfer_plan=(),
+        )
+    }
+
+    planned, unplanned_exact, has_unknown = _classify_dispatch_value_artifacts(
+        programs=programs
+    )
+
+    assert (planned, has_unknown) == ((), False)
+    assert {artifact.leaf_path for artifact in unplanned_exact} == {
+        ("endog_grid",),
+        ("value",),
+        ("marginal_utility",),
+    }

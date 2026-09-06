@@ -20,7 +20,7 @@ from jax import numpy as jnp
 
 from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.coarse_transition import _CoarseTransitionCell
-from _lcm.continuation import EGMContinuationSpec
+from _lcm.continuation import ContinuationSpec, EGMContinuationSpec
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.budget import (
     DCEGM_BUDGET_CONSTRAINT_NAME,
@@ -653,8 +653,28 @@ def process_regimes(
     )
 
     canonical_regimes = build_canonical_regimes(
-        gated_continuations_by_source=MappingProxyType({})
+        gated_continuations_by_source=MappingProxyType({}),
+        continuation_specs=MappingProxyType({}),
     )
+    # A continuation source declares the leaves it reads from its target's
+    # published carry, and that carry exists only once the target regime is
+    # built — for an engine-produced carry, only once its producer has been
+    # composed around the target's period kernels. The first pass establishes
+    # every published template; the second rebuilds with those templates in
+    # hand, so a source's declaration names its target's real leaves whatever
+    # order the regimes were declared in and whether or not the demand graph
+    # has a cycle.
+    published_specs: MappingProxyType[RegimeName, ContinuationSpec] = MappingProxyType(
+        {}
+    )
+    if continuation_demands:
+        published_specs = _published_continuation_specs(
+            canonical_regimes=canonical_regimes
+        )
+        canonical_regimes = build_canonical_regimes(
+            gated_continuations_by_source=MappingProxyType({}),
+            continuation_specs=published_specs,
+        )
 
     # Build the gated-edge folds in a second pass, now
     # that every regime's grid and processed functions are known. Each edge's
@@ -680,7 +700,8 @@ def process_regimes(
     if gated_continuations_by_source:
         canonical_regimes = _attach_gated_edge_folds(
             canonical_regimes=build_canonical_regimes(
-                gated_continuations_by_source=gated_continuations_by_source
+                gated_continuations_by_source=gated_continuations_by_source,
+                continuation_specs=published_specs,
             ),
             user_regimes=user_regimes,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
@@ -783,6 +804,7 @@ class _CanonicalRegimeBuilder:
         gated_continuations_by_source: Mapping[
             RegimeName, Mapping[RegimeName, GatedContinuationSchedule]
         ],
+        continuation_specs: Mapping[RegimeName, ContinuationSpec],
     ) -> dict[RegimeName, Regime]:
         """Build every regime's canonical form, gated continuations included.
 
@@ -796,6 +818,9 @@ class _CanonicalRegimeBuilder:
             gated_continuations_by_source: Mapping of source regime names to
                 their per-target gated continuation specs. Empty on the first
                 build.
+            continuation_specs: Mapping of regime names to the continuation each
+                publishes. Empty on the pass that establishes those templates,
+                so a solver reading it then declares no continuation-leaf reads.
 
         Returns:
             Mapping of regime names to their canonical form.
@@ -872,6 +897,7 @@ class _CanonicalRegimeBuilder:
                 # so the representative grid answers it exactly. Node *values*,
                 # which do vary by age, come from the period's own axes.
                 user_regimes=self.representative_user_regimes,
+                continuation_specs=continuation_specs,
                 declared_regime_transition=self.phased_specs[
                     regime_name
                 ].solution.regime_transition,
@@ -2567,6 +2593,19 @@ def _has_valid_state_handoff(
     return law is not None and (not isinstance(law, Mapping) or target in law)
 
 
+def _published_continuation_specs(
+    *, canonical_regimes: Mapping[RegimeName, Regime]
+) -> MappingProxyType[RegimeName, ContinuationSpec]:
+    """Return the continuation each regime publishes, keyed by regime name."""
+    return MappingProxyType(
+        {
+            name: regime.solution.continuation_spec
+            for name, regime in canonical_regimes.items()
+            if regime.solution.continuation_spec is not None
+        }
+    )
+
+
 def _continuation_demands(
     *,
     user_regimes: Mapping[RegimeName, UserRegime],
@@ -2690,6 +2729,7 @@ def _build_solution_phase(
     spec: PhasedRegimeSpec,
     regime_name: RegimeName,
     user_regimes: Mapping[RegimeName, UserRegime],
+    continuation_specs: Mapping[RegimeName, ContinuationSpec],
     declared_regime_transition: object,
     phase_reachability: PhaseReachability,
     nested_transitions: _TransitionBundles,
@@ -2732,6 +2772,9 @@ def _build_solution_phase(
         regime_name: The name of the regime.
         user_regimes: Mapping of regime names to user-provided `Regime`
             instances.
+        continuation_specs: Mapping of regime names to the continuation each
+            publishes, which a solver reads to declare the leaves it consumes.
+            Empty on the pass that establishes those templates.
         declared_regime_transition: Solve transition before temporal filtering.
         phase_reachability: Static graph for the solution phase.
         nested_transitions: Per-target transition bundles for internal
@@ -2984,6 +3027,7 @@ def _build_solution_phase(
         regime_name=regime_name,
         ages=ages,
         user_regimes=user_regimes,
+        continuation_specs=MappingProxyType(dict(continuation_specs)),
         solve_functions=spec.solution.functions,
         phase_variation_paths=phase_variation_paths(
             user_regime=user_regimes[regime_name]

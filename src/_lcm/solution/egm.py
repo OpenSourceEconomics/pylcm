@@ -37,6 +37,10 @@ from _lcm.execution.core_program import (
 )
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from _lcm.grids import ContinuousGrid
+from _lcm.solution.continuation_reads import (
+    continuation_leaf_reads,
+    published_continuation_template,
+)
 from _lcm.solution.continuation_target import (
     period_to_continuation_target,
     target_period_grid,
@@ -72,6 +76,7 @@ from lcm.solver_api import (
     EGM_ENDOGENOUS_COORDINATE,
     ArtifactKey,
     ContinuationCapabilities,
+    ContinuationReader,
     KernelOutput,
 )
 from lcm.typing import (
@@ -503,6 +508,9 @@ class EGM(OneMarginSolver):
         }
         for period, target in period_to_target.items():
             target_state = target_state_names[target]
+            target_carry_template = published_continuation_template(
+                continuation_specs=context.continuation_specs, target=target
+            )
             group_key = solver_period_group_key(
                 context=context,
                 period=period,
@@ -535,6 +543,8 @@ class EGM(OneMarginSolver):
                 savings_grid=savings_grid,
                 regime_name=context.regime_name,
                 continuation_target=target,
+                period=period,
+                target_carry_template=target_carry_template,
                 liquid_state=liquid_state,
                 transition_target_names=tuple(context.transitions),
                 next_liquid_grid=target_period_grid(
@@ -581,6 +591,16 @@ class _BoundEGM(EGM):
 # over, and its continuation is read from the target's carry alone.
 _EGM_DENSE_REASON = "deliberately_dense:egm_one_row_no_product_axis"
 
+# The carry rows `_EGMArgumentBuilder.__call__` flattens into named program
+# arguments, keyed by the leaf path each row occupies in the target's payload.
+_EGM_ARGUMENT_BY_LEAF: MappingProxyType[tuple[str, ...], str] = MappingProxyType(
+    {
+        ("endog_grid",): "next_liquid_grid",
+        ("value",): "next_value",
+        ("marginal_utility",): "next_marginal",
+    }
+)
+
 
 def _build_egm_period_kernel(
     *,
@@ -589,6 +609,8 @@ def _build_egm_period_kernel(
     savings_grid: Float1D,
     regime_name: RegimeName,
     continuation_target: RegimeName,
+    period: int,
+    target_carry_template: ContinuationReader | None,
     liquid_state: StateName,
     transition_target_names: tuple[RegimeName, ...],
     next_liquid_grid: Float1D,
@@ -603,6 +625,11 @@ def _build_egm_period_kernel(
     only state is the liquid axis the rows sit on. `publishes_breakpoints` says
     whether the core's carry carries a breakpoints row (a single-liquid NB-EGM
     core with feasibility boundaries does; the plain EGM core does not).
+
+    The builder flattens the target's carry into three named arguments, so the
+    program declares one read per named row. A `None` `target_carry_template`
+    means the target's payload is not yet published, and the program declares
+    no read rather than assuming a shape.
     """
     argument_builder = _EGMArgumentBuilder(
         regime_name=regime_name,
@@ -616,7 +643,19 @@ def _build_egm_period_kernel(
         name="main",
         function=core,
         argument_builder=argument_builder,
-        requirements=CoreExecutionRequirements(),
+        requirements=CoreExecutionRequirements(
+            value_reads=continuation_leaf_reads(
+                template=target_carry_template,
+                artifact_key=EGM_CONTINUATION,
+                target=continuation_target,
+                source_regime=regime_name,
+                source_period=period,
+                core_key="main",
+                argument_by_leaf=_EGM_ARGUMENT_BY_LEAF,
+            )
+            if target_carry_template is not None
+            else ()
+        ),
         output_roles=(
             VALUE,
             egm_carry_role_tree(

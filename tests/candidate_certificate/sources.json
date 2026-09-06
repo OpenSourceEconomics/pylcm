@@ -102,7 +102,7 @@
           },
           {
             "path": "src/_lcm/regime_building/processing.py",
-            "sha256": "102ac553d01d39dc3f2ab8239067e494edee9317ff3c5accd11852a249508d5c"
+            "sha256": "fdda93bf5cd4c0bb4ddfb936842cd9ac27ec3e2723b2496ba0a38c757cf2abbc"
           },
           {
             "path": "src/_lcm/regime_building/zero_safe.py",
@@ -150,7 +150,7 @@
           },
           {
             "path": "src/_lcm/solution/backward_induction.py",
-            "sha256": "1cc79cf6d819016dbe7ca9a434adb8d058d2903a937c8a49f11d05fdf6007d61"
+            "sha256": "155151d38520b05073f7f4b2cbed6c56571a10fbde9dc1ee266b8db0f68b448d"
           },
           {
             "path": "src/_lcm/solution/collective_action_reduction.py",
@@ -158,7 +158,7 @@
           },
           {
             "path": "src/_lcm/solution/contract.py",
-            "sha256": "b57f54956d906026944917da3c7f5fc49f180946286c5bc35ac9bb3216ada87c"
+            "sha256": "2762f44549ffdc61ad6e6fcd2f4fb81ec17b31c7dc2a14b9cf6f6667cdd48974"
           },
           {
             "path": "src/_lcm/solution/grid_search.py",
@@ -214,7 +214,7 @@
           }
         ],
         "source_count": 52,
-        "source_inventory_sha256": "5aade9f3f7cf31bb7e56875172e66dc541affbff77779866279d89d982b0c323"
+        "source_inventory_sha256": "35c0918dca4f04131667e5d2632a072843410c5d99303091a6588e82e0082f24"
       },
       "fast": {
         "candidate_sources": [
@@ -316,7 +316,7 @@
           },
           {
             "path": "src/_lcm/regime_building/processing.py",
-            "sha256": "102ac553d01d39dc3f2ab8239067e494edee9317ff3c5accd11852a249508d5c"
+            "sha256": "fdda93bf5cd4c0bb4ddfb936842cd9ac27ec3e2723b2496ba0a38c757cf2abbc"
           },
           {
             "path": "src/_lcm/regime_building/zero_safe.py",
@@ -364,7 +364,7 @@
           },
           {
             "path": "src/_lcm/solution/backward_induction.py",
-            "sha256": "1cc79cf6d819016dbe7ca9a434adb8d058d2903a937c8a49f11d05fdf6007d61"
+            "sha256": "155151d38520b05073f7f4b2cbed6c56571a10fbde9dc1ee266b8db0f68b448d"
           },
           {
             "path": "src/_lcm/solution/collective_action_reduction.py",
@@ -372,7 +372,7 @@
           },
           {
             "path": "src/_lcm/solution/contract.py",
-            "sha256": "b57f54956d906026944917da3c7f5fc49f180946286c5bc35ac9bb3216ada87c"
+            "sha256": "2762f44549ffdc61ad6e6fcd2f4fb81ec17b31c7dc2a14b9cf6f6667cdd48974"
           },
           {
             "path": "src/_lcm/solution/grid_search.py",
@@ -428,13 +428,13 @@
           }
         ],
         "source_count": 52,
-        "source_inventory_sha256": "5aade9f3f7cf31bb7e56875172e66dc541affbff77779866279d89d982b0c323"
+        "source_inventory_sha256": "35c0918dca4f04131667e5d2632a072843410c5d99303091a6588e82e0082f24"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "5aade9f3f7cf31bb7e56875172e66dc541affbff77779866279d89d982b0c323",
+  "source_inventory_sha256": "35c0918dca4f04131667e5d2632a072843410c5d99303091a6588e82e0082f24",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -534,7 +534,7 @@
     },
     {
       "path": "src/_lcm/regime_building/processing.py",
-      "sha256": "102ac553d01d39dc3f2ab8239067e494edee9317ff3c5accd11852a249508d5c"
+      "sha256": "fdda93bf5cd4c0bb4ddfb936842cd9ac27ec3e2723b2496ba0a38c757cf2abbc"
     },
     {
       "path": "src/_lcm/regime_building/zero_safe.py",
@@ -582,7 +582,7 @@
     },
     {
       "path": "src/_lcm/solution/backward_induction.py",
-      "sha256": "1cc79cf6d819016dbe7ca9a434adb8d058d2903a937c8a49f11d05fdf6007d61"
+      "sha256": "155151d38520b05073f7f4b2cbed6c56571a10fbde9dc1ee266b8db0f68b448d"
     },
     {
       "path": "src/_lcm/solution/collective_action_reduction.py",
@@ -590,7 +590,7 @@
     },
     {
       "path": "src/_lcm/solution/contract.py",
-      "sha256": "b57f54956d906026944917da3c7f5fc49f180946286c5bc35ac9bb3216ada87c"
+      "sha256": "2762f44549ffdc61ad6e6fcd2f4fb81ec17b31c7dc2a14b9cf6f6667cdd48974"
     },
     {
       "path": "src/_lcm/solution/grid_search.py",

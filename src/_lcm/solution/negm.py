@@ -52,6 +52,7 @@ from _lcm.execution.core_program import (
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from _lcm.grids import ContinuousGrid
 from _lcm.processes.base import _ContinuousStochasticProcess
+from _lcm.solution.continuation_reads import rekeyed_value_reads
 from _lcm.solution.continuation_target import union_fixed_params
 from _lcm.solution.contract import (
     ConstraintRouteContext,
@@ -744,10 +745,19 @@ class _NEGMPeriodKernel:
             **self.fixed_sweep_kwargs,
         )
         row = StateAxesLeading(state_names=self.carry_row_state_names)
+        # Both cores read the carries the inner keeper's program declared: the
+        # sweep's arguments are the adjuster's plus its own, so the rolling
+        # continuation channel those reads address is present in both. Only the
+        # locator's core changes.
+        inherited = keeper.requirements.value_reads
         programs = {
             "keeper": replace(
                 keeper,
                 name="keeper",
+                requirements=replace(
+                    keeper.requirements,
+                    value_reads=rekeyed_value_reads(reads=inherited, core_key="keeper"),
+                ),
                 internal_outputs=(
                     InternalOutputSpec(label="value", path=(0,)),
                     InternalOutputSpec(label="carry", path=(1,)),
@@ -774,7 +784,10 @@ class _NEGMPeriodKernel:
                                 producer="keeper", label="carry"
                             ),
                         }
-                    )
+                    ),
+                    value_reads=rekeyed_value_reads(
+                        reads=inherited, core_key="outer_sweep"
+                    ),
                 ),
                 output_roles=(
                     VALUE,

@@ -218,6 +218,19 @@ class SolverBuildContext:
     user_regimes: UserRegimesMapping
     """Mapping of regime names to user-provided `Regime` instances."""
 
+    continuation_specs: MappingProxyType[RegimeName, ContinuationSpec] = (
+        MappingProxyType({})
+    )
+    """Immutable mapping of regime name to the continuation that regime publishes.
+
+    A solver that reads a target's carry declares the leaves it reads, and which
+    leaves exist is a fact about the target's published template rather than
+    about the reader. A regime absent from the mapping publishes no
+    continuation; the mapping is empty on the build pass that establishes the
+    templates, so a solver reads it and declares nothing rather than assuming a
+    shape.
+    """
+
     solve_functions: MappingProxyType[FunctionName, UserFunction]
     """Normalized, unprocessed solve-phase declarations for this regime."""
 

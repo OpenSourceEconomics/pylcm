@@ -30,6 +30,7 @@ from _lcm.execution.core_program import (
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from _lcm.regime_building import processing as regime_processing
 from _lcm.solution import period_replay
+from _lcm.solution.dcegm import _DCEGMArgumentBuilder
 from _lcm.solution.period_replay import replay_period
 from lcm.solver_api import (
     EGM_CONTINUATION,
@@ -107,11 +108,23 @@ def test_the_graph_publishes_dense_values_and_replay_variants():
         SIMULATION_POLICY: EGMSimPolicy
     }
     assert graph["replay"].replaces_program == "main"
+    targets = cast(
+        "_DCEGMArgumentBuilder", graph["main"].argument_builder
+    ).stateful_targets
     for program in graph.values():
         assert program.disposition is CoreExecutionDisposition.DENSE
         assert program.disposition_reason == _DENSE_REASON
         assert program.requirements.streamable_axes == ()
-        assert program.requirements.value_reads == ()
+        assert {read.source.path for read in program.requirements.value_reads} == {
+            (target, leaf)
+            for target in targets
+            for leaf in (
+                "endog_grid",
+                "value",
+                "marginal_utility",
+                "taste_shock_scale",
+            )
+        }
 
 
 def test_model_authority_rejects_a_policy_type_conflicting_with_the_route(

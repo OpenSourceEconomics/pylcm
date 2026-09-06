@@ -46,6 +46,12 @@ from _lcm.execution.core_program import (
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from _lcm.grids import ContinuousGrid
 from _lcm.processes.base import _ContinuousStochasticProcess
+from _lcm.solution.continuation_reads import (
+    continuation_leaf_reads,
+    published_continuation_templates,
+    rekeyed_value_reads,
+    with_continuation_leaf_reads,
+)
 from _lcm.solution.continuation_target import union_fixed_params, union_free_params
 from _lcm.solution.contract import (
     ConstraintRouteContext,
@@ -442,6 +448,12 @@ class DCEGM(OneMarginSolver):
             stateful_targets=build.stateful_targets,
             transition_target_names=tuple(context.transitions),
         )
+        # Which leaves a target publishes is period-invariant, so the templates
+        # are resolved once and only the reads' addresses vary by period.
+        carry_templates = published_continuation_templates(
+            continuation_specs=context.continuation_specs,
+            targets=build.stateful_targets,
+        )
         # Periods sharing one numerical core share both output-specialized
         # programs. The values variant drops the optional policy inside the
         # traced body so XLA can eliminate policy assembly when no selected
@@ -492,8 +504,29 @@ class DCEGM(OneMarginSolver):
                     }
                 )
             period_group_keys[period] = build.step_group_keys[period]
+            # The builder hands the step the whole rolling payload, so every
+            # published row of every target is read, and each is declared under
+            # its own leaf path inside the rolling mapping.
+            reads = tuple(
+                read
+                for target, template in carry_templates.items()
+                for read in continuation_leaf_reads(
+                    template=template,
+                    artifact_key=EGM_CONTINUATION,
+                    target=target,
+                    source_regime=context.regime_name,
+                    source_period=period,
+                    core_key="main",
+                )
+            )
             period_kernels[period] = _DCEGMPeriodKernel(
-                _core_programs=programs_by_core[id(core)],
+                _core_programs=with_continuation_leaf_reads(
+                    programs=programs_by_core[id(core)],
+                    reads_by_core_key={
+                        "main": reads,
+                        "replay": rekeyed_value_reads(reads=reads, core_key="replay"),
+                    },
+                ),
                 regime_name=context.regime_name,
                 stateful_targets=build.stateful_targets,
                 transition_target_names=tuple(context.transitions),

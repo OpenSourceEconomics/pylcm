@@ -1561,9 +1561,11 @@ def _classify_dispatch_value_artifacts(
 ]:
     """Separate finite planned reads from pinned unplanned or undeclared reads.
 
-    A program the engine does not plan pins exactly the value reads it declares;
-    one that declares none may still read any reachable value through its
-    builder, so it is reported as unknown and pinned conservatively.
+    A program the engine does not plan pins exactly the value reads it declares
+    — a regime value, a gated continuation, or one continuation leaf of a
+    target's keyed payload. One that declares none may still read any reachable
+    value through its builder, so it is reported as unknown and pinned
+    conservatively.
     """
     planned: list[ValueArtifactAddress] = []
     unplanned_exact: list[ValueArtifactAddress] = []
