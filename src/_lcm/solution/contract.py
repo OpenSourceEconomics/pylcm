@@ -85,6 +85,7 @@ from lcm.solver_api import (
     ArtifactChannel,
     ArtifactKey,
     ArtifactStore,
+    ContinuationCapabilities,
     ExecutableReplayRoute,
     KernelOutput,
     SolverIdentity,
@@ -868,6 +869,18 @@ class Solver(ABC):
         refused before any solve, without forking on the solver type.
         """
         return frozenset()
+
+    @property
+    def required_continuation_capabilities(self) -> ContinuationCapabilities:
+        """What this solver asks its targets' continuation readers to answer.
+
+        An endogenous-grid solver inverts the Euler equation against a target's
+        marginal, so a target whose reader publishes only a value cannot serve
+        it. Model building compares this against every reachable target's
+        published payload, so the mismatch is named before anything compiles.
+        Grid search reads only the value array and asks for nothing.
+        """
+        return ContinuationCapabilities()
 
     @property
     def supports_nonlinear_certainty_equivalent(self) -> bool:

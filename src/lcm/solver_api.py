@@ -31,7 +31,7 @@ import jax
 import numpy as np
 from jaxtyping import Float
 
-from lcm.typing import FloatND, IntND, RegimeName
+from lcm.typing import FloatND, IntND, RegimeName, StateName
 from lcm.version import __version__
 
 _SHA256_HEX_LENGTH = 64
@@ -3383,6 +3383,57 @@ class ContinuationArtifact(Protocol):
         ...
 
 
+# The coordinate an EGM carry's rows are tabulated on. It is also the state such
+# a carry's marginal is taken with respect to, so a solver demanding that
+# marginal and a payload publishing it name one string.
+EGM_ENDOGENOUS_COORDINATE: StateName = "resources"
+
+
+@dataclass(frozen=True, kw_only=True)
+class ContinuationCapabilities:
+    """What a continuation payload can answer about itself."""
+
+    value: bool = False
+    """Whether the payload can return a continuation value at a query."""
+
+    marginal_states: frozenset[StateName] = frozenset()
+    """States the payload can differentiate its value with respect to."""
+
+    exact_candidate_identity: bool = False
+    """Whether the payload names which candidate owns a query point."""
+
+    discontinuities: bool = False
+    """Whether the payload locates its own one-sided boundaries."""
+
+
+@runtime_checkable
+class ContinuationReader(Protocol):
+    """What a parent may ask its target's published continuation.
+
+    A reader answers at a query rather than exposing its storage, so a parent
+    that needs a value or a marginal is independent of how the target tabulated
+    it. `leaves()` is the addressable content of the payload: the transfer
+    catalogue plans one transfer per leaf a consumer declares.
+    """
+
+    @property
+    def capabilities(self) -> ContinuationCapabilities:
+        """Return what this payload can answer."""
+        ...
+
+    def value_at(self, *, query: FloatND) -> FloatND:
+        """Return the continuation value at `query`."""
+        ...
+
+    def marginal_at(self, *, query: FloatND, state: StateName) -> FloatND:
+        """Return the marginal of the continuation in `state` at `query`."""
+        ...
+
+    def leaves(self) -> Mapping[tuple[str, ...], FloatND]:
+        """Return every published array by its pytree path."""
+        ...
+
+
 @dataclass(frozen=True, kw_only=True)
 class KernelOutput:
     """One solver kernel's value and explicitly typed artifact channels.
@@ -4289,6 +4340,7 @@ class SolutionResult:
 __all__ = [
     "DISSOLUTION_FLAG",
     "EGM_CONTINUATION",
+    "EGM_ENDOGENOUS_COORDINATE",
     "PYLCM_VERSION",
     "SIMULATION_POLICY",
     "SOLUTION_FORMAT_VERSION",
@@ -4307,6 +4359,8 @@ __all__ = [
     "AxisRole",
     "CategoryDomain",
     "ContinuationArtifact",
+    "ContinuationCapabilities",
+    "ContinuationReader",
     "ExecutableReplayRoute",
     "KernelOutput",
     "LeafAuthority",

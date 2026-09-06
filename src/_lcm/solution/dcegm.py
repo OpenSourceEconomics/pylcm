@@ -71,8 +71,10 @@ from lcm.exceptions import (
 )
 from lcm.solver_api import (
     EGM_CONTINUATION,
+    EGM_ENDOGENOUS_COORDINATE,
     SIMULATION_POLICY,
     ArtifactKey,
+    ContinuationCapabilities,
     KernelOutput,
 )
 from lcm.typing import (
@@ -316,6 +318,13 @@ class DCEGM(OneMarginSolver):
     def required_continuation_keys(self) -> frozenset[ArtifactKey]:
         """DC-EGM inverts the Euler equation against its targets' marginals."""
         return frozenset({EGM_CONTINUATION})
+
+    @property
+    def required_continuation_capabilities(self) -> ContinuationCapabilities:
+        """The EGM step reads the target's value and its marginal in resources."""
+        return ContinuationCapabilities(
+            value=True, marginal_states=frozenset({EGM_ENDOGENOUS_COORDINATE})
+        )
 
     def validate_model(self, *, context: SolverModelContext) -> None:
         """Validate the user-level DC-EGM contract for this regime."""

@@ -52,7 +52,8 @@ and helpers (`ContinuationSpec`, `EGMContinuationSpec`, `EGMContinuationLayout`,
 `period_to_continuation_target`, `target_period_grid`, `union_free_params`,
 `union_fixed_params`), and the artifact vocabulary (`KernelOutput`,
 `ArtifactKey`, descriptors and authorities, the four built-in keys,
-`ContinuationArtifact`, and the executable replay contracts), and the value-read
+`ContinuationArtifact`, `ContinuationReader`, `ContinuationCapabilities`,
+`EGM_ENDOGENOUS_COORDINATE`, and the executable replay contracts), and the value-read
 vocabulary (`ValueRead`, `ValueArtifactAddress`, `ValueConsumerAddress`,
 `ValueArtifactKind`, `ValueInputChannel`, `ValueTransferKind`,
 `TransferOperationClass`, `TransferCost`) — so no import from `_lcm` is needed.
@@ -137,6 +138,7 @@ from lcm.outer_search import (
 from lcm.solver_api import (
     DISSOLUTION_FLAG,
     EGM_CONTINUATION,
+    EGM_ENDOGENOUS_COORDINATE,
     PYLCM_VERSION,
     SIMULATION_POLICY,
     SOLUTION_FORMAT_VERSION,
@@ -155,6 +157,8 @@ from lcm.solver_api import (
     AxisRole,
     CategoryDomain,
     ContinuationArtifact,
+    ContinuationCapabilities,
+    ContinuationReader,
     ExecutableReplayRoute,
     KernelOutput,
     LeafAuthority,
@@ -185,6 +189,7 @@ __all__ = [
     "DISSOLUTION_FLAG",
     "EGM",
     "EGM_CONTINUATION",
+    "EGM_ENDOGENOUS_COORDINATE",
     "NBEGM",
     "NEGM",
     "NNBEGM",
@@ -208,6 +213,8 @@ __all__ = [
     "BranchAggregateResult",
     "CategoryDomain",
     "ContinuationArtifact",
+    "ContinuationCapabilities",
+    "ContinuationReader",
     "ContinuationSpec",
     "CoreBuildContext",
     "CoreExecutionDisposition",

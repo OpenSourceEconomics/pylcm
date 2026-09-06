@@ -36,6 +36,14 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   while neither contains the other are the one pair no single collective serves, and are
   refused while the period is planned with an `ExecutionPlanningError` naming both
   device sets.
+- A published continuation answers questions about itself. `ContinuationReader` is the
+  protocol a parent queries — `value_at`, `marginal_at` in a named state, and `leaves()`
+  for the payload's addressable arrays — and `ContinuationCapabilities` is the payload's
+  own statement of what it can answer. A parent declares what it needs in
+  `Solver.required_continuation_capabilities`; every endogenous-grid solver demands the
+  value and the marginal in `EGM_ENDOGENOUS_COORDINATE`, and the shipped `EGMCarry`
+  publishes both. A reachable target whose payload is not a reader, or whose reader
+  answers less than the parent asks, is refused while the model builds.
 - Solution archives written under solver API version 1 are rejected with
   `IncompatibleSolutionError`. Compatibility remains exact; pylcm does not migrate an
   archive across a solver API version.

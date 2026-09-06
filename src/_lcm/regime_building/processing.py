@@ -221,6 +221,8 @@ from lcm.regime import Regime as UserRegime
 from lcm.solver_api import (
     EGM_CONTINUATION,
     ArtifactKey,
+    ContinuationCapabilities,
+    ContinuationReader,
     ExecutableReplayRoute,
     KernelOutput,
 )
@@ -688,7 +690,9 @@ def process_regimes(
         )
 
     _fail_if_a_continuation_demand_is_unmet(
-        demands=continuation_demands, canonical_regimes=canonical_regimes
+        demands=continuation_demands,
+        canonical_regimes=canonical_regimes,
+        user_regimes=user_regimes,
     )
 
     return ensure_containers_are_immutable(canonical_regimes)
@@ -2589,34 +2593,66 @@ def _fail_if_a_continuation_demand_is_unmet(
     *,
     demands: tuple[tuple[RegimeName, RegimeName, ArtifactKey], ...],
     canonical_regimes: Mapping[RegimeName, Regime],
+    user_regimes: Mapping[RegimeName, UserRegime],
 ) -> None:
-    """Refuse a model whose continuation target publishes another key.
+    """Refuse a model whose continuation target cannot serve its parent.
 
-    A parent reads its targets' continuations by versioned key, so a target
-    that publishes a different schema version — or none at all — would fail
-    inside the solve loop at the first rolled period. Both regimes and the
-    demanded version are named here instead, before anything compiles.
+    A parent reads its targets' continuations by versioned key, and a parent
+    that declares what it asks of a payload also queries it, so three failures
+    would otherwise surface inside the solve loop at the first rolled period:
+
+    - the target publishes a different schema version, or none at all;
+    - the target publishes a payload the querying parent cannot ask anything;
+    - the target's reader answers less than the parent demands — a value-only
+      payload where the parent inverts an Euler equation against a marginal.
+
+    Both regimes and what is missing are named here instead, before anything
+    compiles. A source demanding no capability reads the rolled artifact's own
+    fields, so the engine keeps rolling any keyed payload for it.
 
     Every unmet demand is reported at once, so a model with several
     non-publishing targets is repaired in one pass rather than one error each.
 
     Raises:
         RegimeInitializationError: If a reachable target of a continuation-based
-            regime publishes no continuation under the demanded key.
+            regime publishes no continuation under the demanded key, publishes
+            one that is not a continuation reader, or publishes one whose
+            reader answers less than the source demands.
 
     """
     unmet: dict[tuple[RegimeName, ArtifactKey], list[str]] = {}
     for source, target, key in demands:
         spec = canonical_regimes[target].solution.continuation_spec
-        published = None if spec is None else spec.artifact_key
-        if published == key:
+        if spec is None or spec.artifact_key != key:
+            publishes = (
+                "publishes no continuation"
+                if spec is None
+                else (
+                    f"publishes '{spec.artifact_key.type_id}' version "
+                    f"{spec.artifact_key.schema_version}"
+                )
+            )
+            unmet.setdefault((source, key), []).append(f"'{target}' {publishes}")
             continue
-        publishes = (
-            "publishes no continuation"
-            if published is None
-            else (f"publishes '{published.type_id}' version {published.schema_version}")
+        demanded = user_regimes[source].solver.required_continuation_capabilities
+        if demanded == ContinuationCapabilities():
+            # A source that asks its target's payload nothing reads the rolled
+            # artifact's own fields, so any keyed payload serves it.
+            continue
+        template = spec.template
+        if not isinstance(template, ContinuationReader):
+            unmet.setdefault((source, key), []).append(
+                f"'{target}' publishes a continuation that is not a continuation reader"
+            )
+            continue
+        missing = _missing_capabilities(
+            demanded=demanded, offered=template.capabilities
         )
-        unmet.setdefault((source, key), []).append(f"'{target}' {publishes}")
+        if missing:
+            unmet.setdefault((source, key), []).append(
+                f"'{target}' publishes a continuation whose reader answers no "
+                f"{', '.join(missing)}"
+            )
     if not unmet:
         return
     complaints = "; ".join(
@@ -2627,6 +2663,26 @@ def _fail_if_a_continuation_demand_is_unmet(
     )
     msg = f"{complaints}."
     raise RegimeInitializationError(msg)
+
+
+def _missing_capabilities(
+    *,
+    demanded: ContinuationCapabilities,
+    offered: ContinuationCapabilities,
+) -> tuple[str, ...]:
+    """Name every capability a source demands and a reader does not answer."""
+    missing: list[str] = []
+    if demanded.value and not offered.value:
+        missing.append("value")
+    missing.extend(
+        f"marginal in '{state}'"
+        for state in sorted(demanded.marginal_states - offered.marginal_states)
+    )
+    if demanded.exact_candidate_identity and not offered.exact_candidate_identity:
+        missing.append("candidate identity")
+    if demanded.discontinuities and not offered.discontinuities:
+        missing.append("discontinuity information")
+    return tuple(missing)
 
 
 def _build_solution_phase(

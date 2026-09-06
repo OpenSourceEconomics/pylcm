@@ -67,7 +67,13 @@ from _lcm.typing import (
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError
-from lcm.solver_api import EGM_CONTINUATION, ArtifactKey, KernelOutput
+from lcm.solver_api import (
+    EGM_CONTINUATION,
+    EGM_ENDOGENOUS_COORDINATE,
+    ArtifactKey,
+    ContinuationCapabilities,
+    KernelOutput,
+)
 from lcm.typing import (
     ActionName,
     Float1D,
@@ -118,6 +124,13 @@ class EGM(OneMarginSolver):
     def required_continuation_keys(self) -> frozenset[ArtifactKey]:
         """The 1-D EGM step reads its continuation's marginal value of liquid."""
         return frozenset({EGM_CONTINUATION})
+
+    @property
+    def required_continuation_capabilities(self) -> ContinuationCapabilities:
+        """The EGM step reads the target's value and its marginal in resources."""
+        return ContinuationCapabilities(
+            value=True, marginal_states=frozenset({EGM_ENDOGENOUS_COORDINATE})
+        )
 
     def validate_model(  # noqa: C901, PLR0912, PLR0915
         self, *, context: SolverModelContext

@@ -310,6 +310,8 @@ stored array to the program unchanged; every other operator is one recorded copy
 the required layout, and the compiled program refuses a value whose shape, dtype, or
 layout departs from what was planned.
 
+(publishing-a-continuation)=
+
 ## Publishing a continuation
 
 A solver whose parents invert an Euler equation publishes a continuation artifact. The
@@ -338,6 +340,42 @@ key is `EGM_CONTINUATION`, and it adds the layout properties a reading EGM paren
 The engine synthesizes a closed-form carry for a grid-search target only under
 `EGM_CONTINUATION`; a solver family that invents its own key publishes it from its own
 kernels in every regime it reads.
+
+### What a reader answers
+
+A parent asks its target's payload what the continuation is worth at a query rather than
+interpolating the target's storage itself, so the two are coupled by a question, not by
+a row layout. A payload that answers such questions satisfies `ContinuationReader`:
+
+```{code-block} python
+@runtime_checkable
+class ContinuationReader(Protocol):
+    @property
+    def capabilities(self) -> ContinuationCapabilities: ...
+    def value_at(self, *, query: FloatND) -> FloatND: ...
+    def marginal_at(self, *, query: FloatND, state: StateName) -> FloatND: ...
+    def leaves(self) -> Mapping[tuple[str, ...], FloatND]: ...
+```
+
+`capabilities` is the payload's own statement of what it can answer:
+
+- `value` — whether `value_at` returns a continuation value.
+- `marginal_states` — the states `marginal_at` accepts; any other state is refused.
+- `exact_candidate_identity` — whether the payload names which candidate owns a query
+  point.
+- `discontinuities` — whether the payload locates its own one-sided boundaries.
+
+A parent states what it needs of its targets in `required_continuation_capabilities`,
+which defaults to `ContinuationCapabilities()` — asking nothing, so the payload is
+rolled opaquely and the parent reads its fields itself. Every endogenous-grid solver in
+pylcm demands the value and the marginal in `EGM_ENDOGENOUS_COORDINATE`, the coordinate
+an EGM carry's rows are tabulated on. Model building compares each demand against every
+reachable target's published payload, so a target of a querying parent that publishes no
+reader at all, or one answering less than that parent asks, is named while the model
+builds rather than during the solve.
+
+`leaves()` is the addressable content of the payload: every published array under its
+own pytree path.
 
 ## Declared replay routes
 

@@ -111,8 +111,10 @@ from lcm.exceptions import RegimeInitializationError
 from lcm.fixed_forms import cash_on_hand_with_subsidy
 from lcm.solver_api import (
     EGM_CONTINUATION,
+    EGM_ENDOGENOUS_COORDINATE,
     SIMULATION_POLICY,
     ArtifactKey,
+    ContinuationCapabilities,
     KernelOutput,
 )
 from lcm.typing import (
@@ -332,6 +334,13 @@ class NBEGM(OneMarginSolver):
     def required_continuation_keys(self) -> frozenset[ArtifactKey]:
         """The case-piece EGM step reads its continuation's marginal value."""
         return frozenset({EGM_CONTINUATION})
+
+    @property
+    def required_continuation_capabilities(self) -> ContinuationCapabilities:
+        """The EGM step reads the target's value and its marginal in resources."""
+        return ContinuationCapabilities(
+            value=True, marginal_states=frozenset({EGM_ENDOGENOUS_COORDINATE})
+        )
 
     @property
     def supports_nonlinear_certainty_equivalent(self) -> bool:

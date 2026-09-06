@@ -24,7 +24,12 @@ import jax.numpy as jnp
 from dags import concatenate_functions
 
 from _lcm.dtypes import canonical_float_dtype
-from _lcm.egm.carry import EGMCarry
+from _lcm.egm.carry import (
+    EGMCarry,
+    read_marginal_row,
+    read_value_and_slope_row,
+    read_value_row,
+)
 from _lcm.egm.ez_kernel import (
     ez_blend_partials,
     ez_invert_partials,
@@ -35,7 +40,6 @@ from _lcm.egm.interp import (
     interp_and_derivative_on_prepared_grid,
     interp_left_germ_on_prepared_grid,
     interp_left_record_on_prepared_grid,
-    interp_on_prepared_grid,
     interp_right_germ_on_prepared_grid,
     locate_on_grid,
     prepare_padded_grid,
@@ -1535,7 +1539,7 @@ def _aggregate_child_choices(
     #   carries — where the slope limiter binds, the two conventions differ at
     #   leading order.
     if paired_marginal_read:
-        value_at_child, marginal_at_child = jax.vmap(_value_and_slope_row)(
+        value_at_child, marginal_at_child = jax.vmap(read_value_and_slope_row)(
             search_grid=search_rows,
             valid_length=valid_rows,
             xp=grid_rows,
@@ -1544,7 +1548,7 @@ def _aggregate_child_choices(
             x_query=queries_flat,
         )
     else:
-        value_at_child = jax.vmap(_interp_value_row)(
+        value_at_child = jax.vmap(read_value_row)(
             search_grid=search_rows,
             valid_length=valid_rows,
             xp=grid_rows,
@@ -1552,7 +1556,7 @@ def _aggregate_child_choices(
             fp_slopes=marginal_rows,
             x_query=queries_flat,
         )
-        marginal_at_child = jax.vmap(_interp_row)(
+        marginal_at_child = jax.vmap(read_marginal_row)(
             search_grid=search_rows,
             valid_length=valid_rows,
             xp=grid_rows,
@@ -1863,70 +1867,6 @@ def _choose_blended_side(
         return jnp.where(right_alive > 0.0, right_side, left_side)
     (marginal_at_child,) = marginal_arrays
     return marginal_at_child
-
-
-def _interp_value_row(
-    *,
-    search_grid: Float1D,
-    valid_length: ScalarInt,
-    xp: Float1D,
-    fp: Float1D,
-    fp_slopes: Float1D,
-    x_query: ScalarFloat,
-) -> ScalarFloat:
-    """Interpolate one carry value row at its query."""
-    return interp_on_prepared_grid(
-        x_query=x_query,
-        search_grid=search_grid,
-        valid_length=valid_length,
-        xp=xp,
-        fp=fp,
-        fp_slopes=fp_slopes,
-    )
-
-
-def _interp_row(
-    *,
-    search_grid: Float1D,
-    valid_length: ScalarInt,
-    xp: Float1D,
-    fp: Float1D,
-    x_query: ScalarFloat,
-) -> ScalarFloat:
-    """Interpolate one carry row at its own query."""
-    return interp_on_prepared_grid(
-        x_query=x_query,
-        search_grid=search_grid,
-        valid_length=valid_length,
-        xp=xp,
-        fp=fp,
-    )
-
-
-def _value_and_slope_row(
-    *,
-    search_grid: Float1D,
-    valid_length: ScalarInt,
-    xp: Float1D,
-    fp: Float1D,
-    fp_slopes: Float1D,
-    x_query: ScalarFloat,
-) -> tuple[ScalarFloat, ScalarFloat]:
-    """Value read and its analytic derivative.
-
-    The closed-form derivative of the selected piece — not autodiff through
-    the bracket-selection program, whose `searchsorted`/`clip` representation
-    returns arbitrary subgradients at exact grid nodes (a routine alignment: a
-    zero-savings corner on a child grid that starts at zero).
-    """
-    return interp_and_derivative_on_prepared_grid(
-        x_query=x_query,
-        search_grid=search_grid,
-        valid_length=valid_length,
-        xp=xp,
-        fp=fp,
-        fp_slopes=fp_slopes,
-    )
 
 
 def _left_slope_row(

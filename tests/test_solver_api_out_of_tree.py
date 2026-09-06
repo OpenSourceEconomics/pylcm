@@ -25,11 +25,13 @@ from lcm import AgeGrid, LinSpacedGrid, MarkovTransition, Model, Regime, categor
 from lcm.exceptions import RegimeInitializationError
 from lcm.solver_api import (
     EGM_CONTINUATION,
+    EGM_ENDOGENOUS_COORDINATE,
     SIMULATION_POLICY,
     ArtifactKey,
     ArtifactRef,
     ArtifactStore,
     ContinuationArtifact,
+    ContinuationCapabilities,
     KernelOutput,
     ReplayMode,
     ResultRetention,
@@ -505,3 +507,130 @@ def test_a_continuation_published_under_a_key_it_does_not_claim_is_refused():
     with pytest.raises(RuntimeError, match=re.escape(_MISLABELLED.type_id)) as excinfo:
         model.solve(params={"discount_factor": 1.0}, log_level="off")
     assert _COUNTER.type_id in str(excinfo.value)
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _ValueOnlyPayload:
+    """A continuation that answers a value and no marginal."""
+
+    rows: Float1D
+    """The value the payload reports at any query."""
+
+    @property
+    def artifact_key(self) -> ArtifactKey:
+        """Publish under the key an endogenous-grid parent demands."""
+        return EGM_CONTINUATION
+
+    @property
+    def capabilities(self) -> ContinuationCapabilities:
+        """Report a value everywhere and no marginal anywhere."""
+        return ContinuationCapabilities(value=True)
+
+    def value_at(self, *, query: FloatND) -> FloatND:
+        """Return the constant value, broadcast to the query."""
+        return jnp.broadcast_to(self.rows[0], jnp.shape(query))
+
+    def marginal_at(self, *, query: FloatND, state: str) -> FloatND:
+        """Refuse: this payload tabulates no marginal."""
+        del query
+        msg = f"This continuation publishes no marginal in {state!r}."
+        raise ValueError(msg)
+
+    def leaves(self) -> Mapping[tuple[str, ...], FloatND]:
+        """Return the one published row by its path."""
+        return MappingProxyType({("rows",): self.rows})
+
+
+class _ValueOnlySolver(WealthSolver):
+    """Publishes a value-only continuation under the EGM key."""
+
+    def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
+        kernels = super().build_period_kernels(context=context)
+        return dataclasses.replace(
+            kernels,
+            continuation_spec=ContinuationSpec(
+                template=_ValueOnlyPayload(rows=_WEALTH.to_jax()),
+                artifact_key=EGM_CONTINUATION,
+            ),
+        )
+
+
+@functools.partial(
+    jax.tree_util.register_dataclass, data_fields=["count"], meta_fields=[]
+)
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _UnreadableCarry:
+    """A payload under the EGM key that answers no question about itself."""
+
+    count: FloatND
+    """The one array this payload carries."""
+
+    @property
+    def artifact_key(self) -> ArtifactKey:
+        """Publish under the key an endogenous-grid parent demands."""
+        return EGM_CONTINUATION
+
+
+class _OpaqueSolver(WealthSolver):
+    """Publishes a payload the engine cannot query under the EGM key."""
+
+    def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
+        kernels = super().build_period_kernels(context=context)
+        return dataclasses.replace(
+            kernels,
+            continuation_spec=ContinuationSpec(
+                template=_UnreadableCarry(count=jnp.asarray(0.0)),
+                artifact_key=EGM_CONTINUATION,
+            ),
+        )
+
+
+class _MarginalDemandingSolver(WealthSolver):
+    """Demands the value and the resources marginal of its targets."""
+
+    @property
+    def required_continuation_keys(self) -> frozenset[ArtifactKey]:
+        return frozenset({EGM_CONTINUATION})
+
+    @property
+    def required_continuation_capabilities(self) -> ContinuationCapabilities:
+        return ContinuationCapabilities(
+            value=True, marginal_states=frozenset({EGM_ENDOGENOUS_COORDINATE})
+        )
+
+
+def _continuation_target_model(*, target_solver: Solver) -> Model:
+    """A two-regime model whose target publishes `target_solver`'s continuation."""
+    return Model(
+        regimes={
+            "alive": Regime(
+                transition=next_regime_dead,
+                active=lambda age: age < _N_PERIODS - 1,
+                states={"wealth": _WEALTH},
+                state_transitions={"wealth": next_wealth},
+                functions={"utility": utility},
+                solver=_MarginalDemandingSolver(),
+            ),
+            "dead": Regime(
+                transition=None,
+                states={"wealth": _WEALTH},
+                functions={"utility": lambda wealth: 0.0 * wealth},
+                solver=target_solver,
+            ),
+        },
+        ages=AgeGrid(start=0, stop=_N_PERIODS - 1, step="Y"),
+        regime_id_class=RegimeId,
+    )
+
+
+def test_a_source_demanding_a_marginal_refuses_a_target_that_publishes_none() -> None:
+    """A parent that inverts an Euler equation needs its target's marginal, and a
+    target whose reader publishes only a value is refused while the model builds."""
+    with pytest.raises(RegimeInitializationError, match="marginal"):
+        _continuation_target_model(target_solver=_ValueOnlySolver())
+
+
+def test_a_payload_that_is_not_a_reader_is_refused_at_model_build() -> None:
+    """A continuation the engine cannot query is named at build, not at solve."""
+    with pytest.raises(RegimeInitializationError, match="continuation reader"):
+        _continuation_target_model(target_solver=_OpaqueSolver())

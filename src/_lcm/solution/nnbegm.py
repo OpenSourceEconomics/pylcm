@@ -122,9 +122,11 @@ from lcm.exceptions import (
 )
 from lcm.solver_api import (
     EGM_CONTINUATION,
+    EGM_ENDOGENOUS_COORDINATE,
     SIMULATION_POLICY,
     SOLVER_DIAGNOSTICS,
     ArtifactKey,
+    ContinuationCapabilities,
     KernelOutput,
 )
 from lcm.typing import (
@@ -239,6 +241,13 @@ class NNBEGM(TwoMarginSolver):
     def required_continuation_keys(self) -> frozenset[ArtifactKey]:
         """NNBEGM runs an inner NB-EGM solve that inverts the Euler equation."""
         return frozenset({EGM_CONTINUATION})
+
+    @property
+    def required_continuation_capabilities(self) -> ContinuationCapabilities:
+        """The EGM step reads the target's value and its marginal in resources."""
+        return ContinuationCapabilities(
+            value=True, marginal_states=frozenset({EGM_ENDOGENOUS_COORDINATE})
+        )
 
     @property
     def supports_nonlinear_certainty_equivalent(self) -> bool:

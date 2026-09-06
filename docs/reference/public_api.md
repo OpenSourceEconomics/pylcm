@@ -129,6 +129,9 @@ surfaces remain outside that top-level namespace:
 | [`lcm.solver_api.EGM_CONTINUATION`](runtime_and_results.md#api-solution-result)               | Continuation schema key             |
 | [`lcm.solver_api.SOLVER_DIAGNOSTICS`](runtime_and_results.md#api-solution-result)             | Diagnostics schema key              |
 | [`lcm.solver_api.ContinuationArtifact`](custom_solvers.md)                                    | Keyed rolling-continuation protocol |
+| [`lcm.solver_api.ContinuationReader`](custom_solvers.md#publishing-a-continuation)            | What a parent may ask a payload     |
+| [`lcm.solver_api.ContinuationCapabilities`](custom_solvers.md#publishing-a-continuation)      | What a payload can answer           |
+| [`lcm.solver_api.EGM_ENDOGENOUS_COORDINATE`](custom_solvers.md#publishing-a-continuation)     | Coordinate EGM rows are read on     |
 | [`lcm.solver_api.ReplayMode`](custom_solvers.md)                                              | How a regime's decision is obtained |
 | [`lcm.solver_api.ReplayRoute`](custom_solvers.md)                                             | A regime's declared replay route    |
 | [`lcm.solver_api.ExecutableReplayRoute`](custom_solvers.md)                                   | External replay implementation      |
@@ -233,6 +236,9 @@ documented in [Custom solvers](custom_solvers.md).
 | [`lcm.solvers.DISSOLUTION_FLAG`](custom_solvers.md)                                        | Dissolution-flag schema key          |
 | [`lcm.solvers.SOLVER_DIAGNOSTICS`](custom_solvers.md)                                      | Diagnostics schema key               |
 | [`lcm.solvers.ContinuationArtifact`](custom_solvers.md)                                    | Keyed rolling-continuation protocol  |
+| [`lcm.solvers.ContinuationReader`](custom_solvers.md#publishing-a-continuation)            | What a parent may ask a payload      |
+| [`lcm.solvers.ContinuationCapabilities`](custom_solvers.md#publishing-a-continuation)      | What a payload can answer            |
+| [`lcm.solvers.EGM_ENDOGENOUS_COORDINATE`](custom_solvers.md#publishing-a-continuation)     | Coordinate EGM rows are read on      |
 | [`lcm.solvers.ContinuationSpec`](custom_solvers.md)                                        | Template and key of a continuation   |
 | [`lcm.solvers.EGMContinuationSpec`](custom_solvers.md)                                     | EGM carry template and layout        |
 | [`lcm.solvers.EGMContinuationLayout`](custom_solvers.md)                                   | How a reading parent interprets rows |
