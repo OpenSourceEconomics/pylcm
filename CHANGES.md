@@ -10,15 +10,19 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - `SOLVER_API_VERSION` is 2. A core program declares what it publishes to another
   program of the same kernel graph with `InternalOutputSpec`, and a consumer names what
   it reads with `InternalInputRef`; both are published through `lcm.solvers`. The engine
-  lowers producers before consumers against the exact shapes and dtypes the references
-  select, so a consumer no longer runs against a stand-in filled in later. NEGM's
-  keeper-to-sweep dependency uses the typed edge.
+  lowers producers before consumers against the exact shapes, dtypes and weak typing the
+  references select, so a consumer no longer runs against a stand-in filled in later.
+  NEGM's keeper-to-sweep dependency uses the typed edge.
 - A program graph's typed internal edges lower for every admitted shape, not only for
   a dense one-hop edge. A producer's abstract output is computed from the complete
   invocation the engine lowers — its arguments, the internal inputs it reads itself,
   and the widths the execution planner owns — so a chain of producers and a `PLANNED`
-  producer both reach their consumers. A producer whose published output would change
-  with the selected width is refused with an `ExecutionPlanningError`.
+  producer both reach their consumers. Weak typing is part of the template a consumer
+  is lowered against, since equal shapes and dtypes can still promote differently in a
+  consumer: a handed-over leaf whose weak typing departs from what the consumer was
+  traced with is refused at dispatch, naming the program and the argument. A producer
+  whose published output would change with the selected width — its weak typing
+  included — is refused with an `ExecutionPlanningError`.
 - `CoreExecutionDisposition.HOST_DRIVEN` declares a program whose host loop dispatches
   it a data-dependent number of times. Like `DENSE` it owns its own width and must carry
   a `disposition_reason`; the engine plans nothing for it.
