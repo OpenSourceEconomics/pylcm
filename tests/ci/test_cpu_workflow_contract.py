@@ -2,21 +2,19 @@
 
 from __future__ import annotations
 
-import re
 import shlex
 from pathlib import Path
 
 import pytest
 import yaml
 
-_REPO_ROOT = Path(__file__).parents[2]
-
-# Each of these pins a four-CPU-device topology at import, a pin that only
-# takes effect in a process where no other JAX-touching invocation shares it.
-_FOUR_DEVICE_TEST_FILES = (
-    "tests/test_distributed.py",
-    "tests/execution/test_transfer_catalogue.py",
+from tests.ci.cpu_suite_invocations import (
+    FOUR_DEVICE_TEST_FILES,
+    carries_policy_activation_flags,
+    cpu_suite_invocation_argvs,
 )
+
+_REPO_ROOT = Path(__file__).parents[2]
 
 # The fp64 and fp32 legs each run every four-CPU-device file in one invocation
 # of their own; every property below is checked once per (leg, file) pair.
@@ -26,7 +24,7 @@ _FOUR_DEVICE_INVOCATION_CASES = tuple(
         ("tests", "Run pytest and collect coverage"),
         ("tests-fp32", "Run pytest at fp32"),
     )
-    for four_device_file in _FOUR_DEVICE_TEST_FILES
+    for four_device_file in FOUR_DEVICE_TEST_FILES
 )
 
 
@@ -61,20 +59,8 @@ def _step_run_block(*, job: str, step_name: str) -> str:
 
 
 def _pytest_invocation_argvs(*, job: str, step_name: str) -> list[list[str]]:
-    """Return the argv of every `pixi run ... pytest ...` command in one step.
-
-    A `run:` block chains commands with backslash line continuations and `&&`.
-    Joining continuations collapses each chained command onto one line, so
-    splitting on `&&` recovers the individual commands the step actually runs.
-    """
-    normalized = _step_run_block(job=job, step_name=step_name).replace("\\\n", " ")
-    commands = [
-        segment.strip()
-        for line in normalized.splitlines()
-        for segment in re.split(r"\s&&\s", line)
-        if segment.strip()
-    ]
-    return [shlex.split(command) for command in commands if "pixi run" in command]
+    """Return the argv of every CPU-suite pytest invocation in one step."""
+    return cpu_suite_invocation_argvs(_step_run_block(job=job, step_name=step_name))
 
 
 def _invocations_naming(
@@ -209,12 +195,7 @@ def test_four_device_file_invocation_omits_policy_activation_flags(
     argv = _sole_invocation(
         job=job, step_name=step_name, four_device_file=four_device_file
     )
-    policy_activation_flags = [
-        argument
-        for argument in argv
-        if argument == "--full-suite" or argument.partition("=")[0] == "--ci-policy"
-    ]
-    assert not policy_activation_flags, (
-        f"{job}/{step_name!r}: {four_device_file}'s invocation carries "
-        f"{policy_activation_flags}, which silently skips every test in the file"
+    assert not carries_policy_activation_flags(argv), (
+        f"{job}/{step_name!r}: {four_device_file}'s invocation carries a CI "
+        "policy activation flag, which silently skips every test in the file"
     )
