@@ -470,12 +470,16 @@ def _evaluate_envelope(
     policy = _chord_reading(x=query, x0=links.x0, x1=links.x1, v0=links.p0, v1=links.p1)
     any_bracket = jnp.any(admits, axis=1)
     column = owner[:, None]
-    # A query the exact order could not decide is poisoned rather than settled
-    # by a rounded reading: the EGM step's NaN diagnostics then name the cell.
-    admitted_value = jnp.where(
-        any_bracket, jnp.take_along_axis(value, column, axis=1)[:, 0], -jnp.inf
+    # Two distinct absences, and they must not collapse into one:
+    # - no link admits the query at all: the `-inf` sentinel, so the caller drops
+    #   the whole node;
+    # - a link admits it but the exact order could not decide the owner: NaN, so
+    #   the EGM step's NaN diagnostics name the cell rather than a rounded
+    #   reading settling it silently.
+    admitted_value = jnp.take_along_axis(value, column, axis=1)[:, 0]
+    envelope_value = jnp.where(
+        any_bracket, jnp.where(resolved, admitted_value, jnp.nan), -jnp.inf
     )
-    envelope_value = jnp.where(resolved, admitted_value, jnp.nan)
     envelope_policy = jnp.take_along_axis(policy, column, axis=1)[:, 0]
     winner_link = jnp.where(any_bracket, owner, 0).astype(jnp.int32)
     winner_segment = jnp.where(any_bracket, segment_id[owner], -1).astype(jnp.int32)
