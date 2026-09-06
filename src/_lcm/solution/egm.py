@@ -727,6 +727,7 @@ class _EGMArgumentBuilder:
             context.next_regime_to_continuation[self.continuation_target],
         )
         next_carry = cast("EGMCarry", next_carry)
+        leaves = next_carry.leaves()
         (
             effective_savings_grid,
             next_liquid,
@@ -735,19 +736,19 @@ class _EGMArgumentBuilder:
             boundary_next_liquid,
         ) = self._law_readings(
             flat_params=flat_params,
-            next_breakpoints=next_carry.breakpoints,
+            next_breakpoints=leaves.get(("breakpoints",)),
         )
         return MappingProxyType(
             {
                 "liquid": state_action_space.states[self.liquid_state],
-                "next_liquid_grid": next_carry.endog_grid,
+                "next_liquid_grid": leaves[("endog_grid",)],
                 "next_liquid": next_liquid,
                 "marginal_return": marginal_return,
                 "effective_savings_grid": effective_savings_grid,
                 "boundary_savings_targets": boundary_savings_targets,
                 "boundary_next_liquid": boundary_next_liquid,
-                "next_value": next_carry.value,
-                "next_marginal": next_carry.marginal_utility,
+                "next_value": leaves[("value",)],
+                "next_marginal": leaves[("marginal_utility",)],
                 **union_free_params(
                     flat_params=flat_params,
                     regime_name=self.regime_name,

@@ -50,7 +50,7 @@ def derive_inner_sim_policy(
     An NB-EGM inner publishes its carry rows *re-read on the shared liquid
     state grid* (`carry_rows_share_state_grid`), so the row abscissae are the
     state grid itself. The exact optimal consumption on that grid is computed
-    during the solve and carried in `carry.policy`: the
+    during the solve and carried in the `policy` leaf: the
     marginal is NOT `u'(c)` but `(d cash_on_hand/d liquid) * u'(c)`, so
     inverting it would recover `c` only for a unit budget slope — a general
     affine budget (e.g. `coh = net_income + R*wealth`, slope `R`) would
@@ -61,7 +61,7 @@ def derive_inner_sim_policy(
 
     Fails closed (returns `None`, so the caller publishes no nested payload
     and simulation keeps the grid-argmax path) when the carry did not retain
-    the exact consumption (`carry.policy is None` — any path but the
+    the exact consumption (no `policy` leaf — any path but the
     continuous-only, jump-free ride-along core), the rows are not on the state
     grid, the carry keeps axes the given row names do not describe
     (`extra_leading_axes` covers a candidate-stacked carry's leading axis), or
@@ -76,15 +76,16 @@ def derive_inner_sim_policy(
         + len(row_passive_state_names)
         + 1
     )
+    leaves = carry.leaves()
     if (
-        carry.policy is None
-        or carry.value.shape[-1] != state_grid_values.shape[0]
-        or carry.value.ndim != expected_ndim
-        or carry.breakpoints is not None
+        ("policy",) not in leaves
+        or leaves[("value",)].shape[-1] != state_grid_values.shape[0]
+        or leaves[("value",)].ndim != expected_ndim
+        or ("breakpoints",) in leaves
     ):
         return None
     try:
-        hard_max = bool(jnp.all(carry.taste_shock_scale == 0.0))
+        hard_max = bool(jnp.all(leaves[("taste_shock_scale",)] == 0.0))
     except jax.errors.ConcretizationTypeError:
         return None
     if not hard_max:
@@ -92,13 +93,15 @@ def derive_inner_sim_policy(
         # maximum the reader replays; publish nothing rather than a policy
         # the simulated draws would contradict.
         return None
-    node_valid = jnp.isfinite(carry.value) & (carry.marginal_utility > 0.0)
-    policy = jnp.where(node_valid, carry.policy, jnp.nan)
+    node_valid = jnp.isfinite(leaves[("value",)]) & (
+        leaves[("marginal_utility",)] > 0.0
+    )
+    policy = jnp.where(node_valid, leaves[("policy",)], jnp.nan)
     return EGMSimPolicy(
-        endog_grid=carry.endog_grid,
+        endog_grid=leaves[("endog_grid",)],
         policy=policy,
-        value=carry.value,
-        marginal_utility=carry.marginal_utility,
+        value=leaves[("value",)],
+        marginal_utility=leaves[("marginal_utility",)],
         row_discrete_state_names=row_discrete_state_names,
         row_passive_state_names=row_passive_state_names,
         # No inner discrete-action provenance rides in the carry: the NNBEGM

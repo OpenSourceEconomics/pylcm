@@ -52,26 +52,24 @@ def stack_candidate_carries(
     """Stack finite outer candidates without taking a nodewise maximum."""
     if not candidates:
         raise ValueError("At least one outer candidate is required.")
-    first = candidates[0]
+    leaves = tuple(candidate.leaves() for candidate in candidates)
     values = tuple(
-        jnp.where(jnp.isnan(candidate.value), -jnp.inf, candidate.value)
+        jnp.where(jnp.isnan(leaf[("value",)]), -jnp.inf, leaf[("value",)])
         if nan_is_infeasible
-        else candidate.value
-        for candidate in candidates
+        else leaf[("value",)]
+        for leaf in leaves
     )
     marginals = tuple(
-        jnp.where(jnp.isnan(candidate.value), 0.0, candidate.marginal_utility)
+        jnp.where(jnp.isnan(leaf[("value",)]), 0.0, leaf[("marginal_utility",)])
         if nan_is_infeasible
-        else candidate.marginal_utility
-        for candidate in candidates
+        else leaf[("marginal_utility",)]
+        for leaf in leaves
     )
     return EGMCarry(
-        endog_grid=jnp.stack(
-            [candidate.endog_grid for candidate in candidates], axis=-2
-        ),
+        endog_grid=jnp.stack([leaf[("endog_grid",)] for leaf in leaves], axis=-2),
         value=jnp.stack(values, axis=-2),
         marginal_utility=jnp.stack(marginals, axis=-2),
-        taste_shock_scale=first.taste_shock_scale,
+        taste_shock_scale=leaves[0][("taste_shock_scale",)],
     )
 
 
@@ -113,7 +111,7 @@ def build_stacked_outer_carry(
         `(n_candidates, n_pad)` block `outer_envelope_at_query` consumes.
 
     """
-    leading_shape = keeper_carry.endog_grid.shape[:-1]
+    leading_shape = keeper_carry.leaves()[("endog_grid",)].shape[:-1]
     normalized_axis = durable_axis % len(leading_shape)
     n_durable = leading_shape[normalized_axis]
     if coh_shifts.shape[0] != n_durable:

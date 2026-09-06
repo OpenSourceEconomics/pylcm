@@ -2504,7 +2504,7 @@ def _fail_if_inner_carry_rows_not_grid_aligned(*, inner: Solver) -> None:
 def _fail_if_nnbegm_carry_publishes_topology_rows(
     *, template: ContinuationPayload | None
 ) -> None:
-    if isinstance(template, EGMCarry) and template.breakpoints is not None:
+    if isinstance(template, EGMCarry) and ("breakpoints",) in template.leaves():
         msg = (
             "NNBEGM publishes a bridged (pointwise, finite-grid) outer "
             "envelope, which cannot represent the inner config's jump-topology "

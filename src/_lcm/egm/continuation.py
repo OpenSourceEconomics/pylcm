@@ -628,12 +628,14 @@ def _get_child_carry_reader(
     # recomputes the row's NaN mask. That mask, recomputed and held for every
     # query lane, is the grid-length working buffer that dominates `egm_step` at
     # scale; preparing it once collapses it to a carry-sized array.
-    n_carry_rows = carry.endog_grid.shape[-1]
+    leaves = carry.leaves()
+    grid_rows = leaves[("endog_grid",)]
+    n_carry_rows = grid_rows.shape[-1]
     flat_search, flat_valid = jax.vmap(prepare_padded_grid)(
-        carry.endog_grid.reshape(-1, n_carry_rows)
+        grid_rows.reshape(-1, n_carry_rows)
     )
-    prepared_search_grid = flat_search.reshape(carry.endog_grid.shape)
-    prepared_valid_length = flat_valid.reshape(carry.endog_grid.shape[:-1])
+    prepared_search_grid = flat_search.reshape(grid_rows.shape)
+    prepared_valid_length = flat_valid.reshape(grid_rows.shape[:-1])
 
     return _ChildCarryReader(
         read=read,
@@ -1492,10 +1494,11 @@ def _aggregate_child_choices(
         continuation $\\partial W/\\partial A$.
 
     """
-    n_pad = carry.value.shape[-1]
-    grid_block = carry.endog_grid[child_index]
-    value_block = carry.value[child_index]
-    marginal_block = carry.marginal_utility[child_index]
+    leaves = carry.leaves()
+    n_pad = leaves[("value",)].shape[-1]
+    grid_block = leaves[("endog_grid",)][child_index]
+    value_block = leaves[("value",)][child_index]
+    marginal_block = leaves[("marginal_utility",)][child_index]
     # The prepared search key and valid length are indexed by the same
     # `child_index` as the carry rows, so each row reads its own precomputed
     # pair instead of recomputing the NaN mask per query.
@@ -1606,7 +1609,7 @@ def _aggregate_child_choices(
     marginal_at_child = marginal_at_child.reshape(-1)
     if has_taste_shocks:
         smoothed_value, choice_probs = logsum_and_softmax(
-            values=value_at_child, scale=carry.taste_shock_scale, axes=(0,)
+            values=value_at_child, scale=leaves[("taste_shock_scale",)], axes=(0,)
         )
     else:
         smoothed_value, choice_probs = _hard_max_and_one_hot(
