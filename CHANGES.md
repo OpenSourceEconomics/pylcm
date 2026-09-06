@@ -60,7 +60,15 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - The durable model fingerprint and the canonical-parameter digest hash every referenced
   array with its original rank and shape; a scalar array and a length-one vector with
   the same bytes are distinct identities, while memory order does not enter the digest.
-  The model-fingerprint record version is 5.
+  The model-fingerprint record version is 6.
+- The model fingerprint is split at the boundary no parameter vector crosses.
+  `fingerprint_model_structure` digests what a model fixes at build — topology, names,
+  identities, artifact descriptors, per-period state axes, and the declared callables'
+  semantics — and `fingerprint_model` combines that digest with the concrete grid
+  support and canonical solution parameters read from the parameter vector. A `Model`
+  hashes its structure once and reuses it, so an estimation loop no longer walks every
+  declared user callable per solve; the walk had been the largest single cost of a warm
+  solve, ahead of the solve itself.
 - The durable model fingerprint sees through beartype guards that a downstream
   package's own claw wraps around its model functions: such a guard is accepted only
   when beartype regenerates its code from the bound callee with the guard's own

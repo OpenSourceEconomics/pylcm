@@ -74,7 +74,11 @@ from _lcm.solution.backward_induction import (
     solve,
 )
 from _lcm.solution.contract import BackwardInductionResult
-from _lcm.solution.fingerprint import fingerprint_model, project_solution_params
+from _lcm.solution.fingerprint import (
+    fingerprint_model,
+    fingerprint_model_structure,
+    project_solution_params,
+)
 from _lcm.solution.model_authority import (
     ReplayCellDescriptor,
     SolutionAuthority,
@@ -480,6 +484,7 @@ class Model:
         # presented as a durable model-content fingerprint.
         self._solution_model_instance_id = uuid.uuid4().hex
         self._solution_authorities: dict[str, SolutionAuthority] = {}
+        self._model_structure_fingerprint: str | None = None
 
         # The single canonical activity schedule: every regime's `active`
         # predicate is evaluated exactly once, here, and threaded through
@@ -604,11 +609,30 @@ class Model:
         self.__dict__.update(state)
         if "_solution_model_instance_id" not in state:
             self._solution_model_instance_id = uuid.uuid4().hex
+        if "_model_structure_fingerprint" not in state:
+            self._model_structure_fingerprint = None
         if "_solution_authorities" not in state:
             self._solution_authorities = {}
         self._simulate_compile_cache = {}
         self._warned_n_subjects = set()
         self._simulate_compile_lock = threading.Lock()
+
+    def _structure_fingerprint(self) -> str:
+        """Return this model's parameter-free digest, hashing it at most once.
+
+        The digest covers what the model fixes at build, so it is the same for
+        every parameter vector this instance is ever solved with. Computing it
+        walks every declared user callable, which is the dominant cost of a warm
+        solve when it is repeated per parameter vector.
+        """
+        if self._model_structure_fingerprint is None:
+            self._model_structure_fingerprint = fingerprint_model_structure(
+                ages=self.ages,
+                regimes=self._regimes,
+                user_regimes=self.user_regimes,
+                regime_names_to_ids=self.regime_names_to_ids,
+            )
+        return self._model_structure_fingerprint
 
     def get_params_template(self) -> UserFacingParamsTemplate:
         """Get a human-readable params template.
@@ -730,6 +754,7 @@ class Model:
             user_regimes=self.user_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
             flat_params=flat_params,
+            structure=self._structure_fingerprint(),
         )
         authority = bind_generated_solution_authority(
             authority=declared_authority,
@@ -923,6 +948,7 @@ class Model:
             user_regimes=self.user_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
             flat_params=flat_params,
+            structure=self._structure_fingerprint(),
         )
         self._check_solution_result_metadata(
             metadata=metadata,
