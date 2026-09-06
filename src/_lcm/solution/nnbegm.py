@@ -17,7 +17,7 @@ import logging
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass, field, fields, replace
 from types import MappingProxyType
-from typing import cast
+from typing import ClassVar, cast
 
 import jax
 import jax.numpy as jnp
@@ -107,6 +107,7 @@ from _lcm.solution.periodization import (
 )
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from _lcm.typing import (
+    EconFunction,
     EconFunctionArg,
     EconFunctionsMapping,
     FlatParams,
@@ -603,24 +604,10 @@ class NNBEGM(TwoMarginSolver):
             if isinstance(context.grids[name], ContinuousGrid)
             and name != spec.continuous_state
         )
-        # A domain endpoint is a node value, so it is the solved period's own.
-        # With an age-specialized outer grid the representative age's endpoints
-        # are the wrong ones everywhere else: a stock only the later ages hold
-        # would be judged out of domain and dropped, and a stock past a
-        # narrower age's edge would be admitted with no value function to read
-        # it on.
+        # The representative age's outer nodes. Each period's own endpoints are
+        # read off that period's nodes wherever it declares them, so this is
+        # only the fallback for an age-invariant outer grid.
         representative_outer_values = context.grids[bound.outer_state].to_jax()
-
-        def _outer_state_domain_at(period: int) -> tuple[float, float]:
-            per_period = context.period_to_state_nodes
-            nodes = (
-                representative_outer_values
-                if per_period is None
-                else per_period.get(period, {}).get(
-                    bound.outer_state, representative_outer_values
-                )
-            )
-            return float(nodes[0]), float(nodes[-1])
 
         branch_aggregation_by_period = {
             period: _resolve_branch_fixed_cost(
@@ -637,7 +624,12 @@ class NNBEGM(TwoMarginSolver):
                     regime_name=context.regime_name,
                     outer_grid_values=outer_grid_values,
                     outer_state_name=bound.outer_state,
-                    outer_state_domain=_outer_state_domain_at(period),
+                    outer_state_domain=_outer_state_domain_at(
+                        period=period,
+                        period_to_state_nodes=context.period_to_state_nodes,
+                        outer_state=bound.outer_state,
+                        representative_outer_values=representative_outer_values,
+                    ),
                     outer_post_decision=bound.outer_post_decision,
                     outer_target_function=outer_target_function_by_period[period],
                     outer_batch_size=outer_batch_size,
@@ -1337,20 +1329,17 @@ class _NNBEGMPeriodKernel:
         params = dict(flat_params[self.regime_name])
         accepted = inspect.signature(self.outer_target_function).parameters
 
-        def bind(outer_action: FloatND) -> dict[str, EconFunctionArg]:
-            pool = {
-                **params,
-                **state_inputs,
-                **discrete_inputs,
-                self.inner_action: candidate_inner_action,
-                self.outer_action: outer_action,
-                "period": jnp.int32(period),
-                "age": ages.values[period],
-            }
-            return {name: value for name, value in pool.items() if name in accepted}
-
-        def evaluate(outer_action: FloatND) -> Mapping[str, FloatND]:
-            return self.outer_target_function(**bind(outer_action))
+        bind = _OuterTargetArguments(
+            params=params,
+            state_inputs=state_inputs,
+            discrete_inputs=discrete_inputs,
+            inner_action=self.inner_action,
+            outer_action=self.outer_action,
+            candidate_inner_action=candidate_inner_action,
+            period=period,
+            age=ages.values[period],
+            accepted=frozenset(accepted),
+        )
 
         # The map evaluated at a zero outer action: the offset the certified
         # inverse subtracts. The certificate itself is resolved once per period
@@ -1387,17 +1376,16 @@ class _NNBEGMPeriodKernel:
                 "NNBEGM outer/discrete candidate target bank is misaligned."
             )
 
-        def forward(outer_action: FloatND) -> FloatND:
-            return jnp.broadcast_to(
-                jnp.asarray(evaluate(outer_action)[self.outer_post_decision]),
-                candidate_inner_action.shape,
-            )
-
         inversion = invert_declared_outer_target(
             inverse=inverse,
             target=candidate_targets,
             at_zero=at_zero,
-            forward=forward,
+            forward=_OuterPostDecisionForward(
+                outer_target_function=self.outer_target_function,
+                arguments=bind,
+                outer_post_decision=self.outer_post_decision,
+                shape=candidate_inner_action.shape,
+            ),
         )
         live = jnp.isfinite(candidate_inner_action)
         represented = live & inversion.admissible
@@ -1423,6 +1411,85 @@ class _NNBEGMPeriodKernel:
             period=period,
         )
         return jnp.where(represented, candidate_targets, jnp.nan)
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _OuterTargetArguments:
+    """Bind the outer target map's arguments at one candidate outer action.
+
+    Every value the binding reads is an explicit field, so the solved period's
+    candidate bank stays reachable only through this instance rather than
+    through a map defined per solve.
+    """
+
+    params: Mapping[str, EconFunctionArg]
+    """The regime's flat parameters at this period."""
+
+    state_inputs: Mapping[StateName, EconFunctionArg]
+    """The state grids, each broadcast onto its own axis of the candidate bank."""
+
+    discrete_inputs: Mapping[ActionName, EconFunctionArg]
+    """The candidate discrete-action codes, or empty for a continuous-only regime."""
+
+    inner_action: ActionName
+    """Name of the inner continuous action the candidate bank carries."""
+
+    outer_action: ActionName
+    """Name of the outer continuous action the binding varies."""
+
+    candidate_inner_action: FloatND
+    """The inner action of every candidate, at every state."""
+
+    period: int
+    """The period the candidates were solved in."""
+
+    age: EconFunctionArg
+    """The age of that period, in whatever dtype the model's age grid carries."""
+
+    accepted: frozenset[str]
+    """The argument names the outer target map declares."""
+
+    def __call__(self, outer_action: FloatND) -> dict[str, EconFunctionArg]:
+        """Return the arguments the outer target map takes at one outer action."""
+        pool = {
+            **self.params,
+            **self.state_inputs,
+            **self.discrete_inputs,
+            self.inner_action: self.candidate_inner_action,
+            self.outer_action: outer_action,
+            "period": jnp.int32(self.period),
+            "age": self.age,
+        }
+        return {name: value for name, value in pool.items() if name in self.accepted}
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _OuterPostDecisionForward:
+    """Evaluate the declared outer post-decision at one candidate outer action.
+
+    This is the forward map the certified inversion re-evaluates at the action
+    it recovered, so the stock a candidate actually reaches is read off the same
+    declaration the solve used.
+    """
+
+    outer_target_function: Callable[..., Mapping[str, FloatND]]
+    """The regime's outer target map, returning its post-decision outputs."""
+
+    arguments: _OuterTargetArguments
+    """The binding that supplies every argument the map reads."""
+
+    outer_post_decision: FunctionName
+    """Name of the outer post-decision output the inversion compares against."""
+
+    shape: tuple[int, ...]
+    """Shape of the candidate bank the output is broadcast to."""
+
+    def __call__(self, outer_action: FloatND) -> FloatND:
+        """Return the post-decision stock the given outer action reaches."""
+        results = self.outer_target_function(**self.arguments(outer_action))
+        return jnp.broadcast_to(
+            jnp.asarray(results[self.outer_post_decision]), self.shape
+        )
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -2046,6 +2113,44 @@ def _nnbegm_inner_action(
     return names[0]
 
 
+def _outer_state_domain_at(
+    *,
+    period: int,
+    period_to_state_nodes: (
+        MappingProxyType[int, MappingProxyType[StateName, Float1D]] | None
+    ),
+    outer_state: StateName,
+    representative_outer_values: Float1D,
+) -> tuple[float, float]:
+    """The outer state's declared endpoints in one period.
+
+    A domain endpoint is a node value, so it is the solved period's own. With an
+    age-specialized outer grid the representative age's endpoints are the wrong
+    ones everywhere else: a stock only the later ages hold would be judged out of
+    domain and dropped, and a stock past a narrower age's edge would be admitted
+    with no value function to read it on.
+
+    Args:
+        period: The period whose endpoints are read.
+        period_to_state_nodes: Immutable mapping of period to that period's
+            age-specialized state nodes, or `None` for an age-invariant regime.
+        outer_state: Name of the outer state whose domain is read.
+        representative_outer_values: The representative age's outer nodes, used
+            wherever the period declares none of its own.
+
+    Returns:
+        Tuple of the outer state's lowest and highest node in that period.
+    """
+    nodes = (
+        representative_outer_values
+        if period_to_state_nodes is None
+        else period_to_state_nodes.get(period, {}).get(
+            outer_state, representative_outer_values
+        )
+    )
+    return float(nodes[0]), float(nodes[-1])
+
+
 def _nested_inverse_marginal(
     *,
     context: SolverBuildContext,
@@ -2082,23 +2187,78 @@ def _nested_inverse_marginal(
         inner_action,
     ):
         return None
-    marginal_utility = jax.grad(lambda c: utility(**{inner_action: c}))
+    marginal_utility = jax.grad(
+        _UtilityOfInnerAction(utility=utility, inner_action=inner_action)
+    )
     action_upper = jnp.asarray(savings_top * 1000.0 + 1000.0)
     action_lower = jnp.asarray(1e-8, dtype=action_upper.dtype)
+    return _NumericInverseMarginal(
+        at_node=_NumericInverseMarginalAtNode(
+            marginal_utility=marginal_utility,
+            action_lower=action_lower,
+            action_upper=action_upper,
+        )
+    )
 
-    def inverse_marginal(marginal_continuation: FloatND) -> FloatND:
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _UtilityOfInnerAction:
+    """The regime's utility as a function of the inner action alone.
+
+    The utility and the action's name are explicit fields, so the regime's
+    function pool stays reachable only through this instance rather than
+    through a map defined per model build.
+    """
+
+    __name__: ClassVar[str] = "utility_of_inner_action"
+    """Name reported for the differentiated map."""
+
+    utility: EconFunction
+    """The regime's utility, which reads the inner action and nothing else."""
+
+    inner_action: ActionName
+    """Name of the inner continuous action the utility is a function of."""
+
+    def __call__(self, action: FloatND) -> FloatND:
+        """Return utility at one inner-action level."""
+        return self.utility(**{self.inner_action: action})
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _NumericInverseMarginalAtNode:
+    """Invert the inner marginal utility at one marginal-continuation node."""
+
+    marginal_utility: Callable[[FloatND], FloatND]
+    """The action-derivative of the regime's utility."""
+
+    action_lower: FloatND
+    """Lower end of the bracket the root is searched in."""
+
+    action_upper: FloatND
+    """Upper end of the bracket the root is searched in."""
+
+    def __call__(self, marginal_continuation: FloatND) -> FloatND:
+        """Return the inner action whose marginal utility is the argument."""
+        return numeric_inverse_marginal_utility(
+            marginal_continuation=marginal_continuation,
+            marginal_utility=self.marginal_utility,
+            c_lower=self.action_lower,
+            c_upper=self.action_upper,
+        )
+
+
+@dataclass(frozen=True, kw_only=True, eq=False)
+class _NumericInverseMarginal:
+    """Invert the inner marginal utility over a whole array of nodes."""
+
+    at_node: _NumericInverseMarginalAtNode
+    """The per-node inversion, mapped over the flattened argument."""
+
+    def __call__(self, marginal_continuation: FloatND) -> FloatND:
+        """Return the inner actions the given marginal continuations imply."""
         flat = jnp.ravel(jnp.asarray(marginal_continuation))
-        roots = jax.vmap(
-            lambda m: numeric_inverse_marginal_utility(
-                marginal_continuation=m,
-                marginal_utility=marginal_utility,
-                c_lower=action_lower,
-                c_upper=action_upper,
-            )
-        )(flat)
+        roots = jax.vmap(self.at_node)(flat)
         return roots.reshape(jnp.shape(marginal_continuation))
-
-    return inverse_marginal
 
 
 def _resolve_branch_fixed_cost(

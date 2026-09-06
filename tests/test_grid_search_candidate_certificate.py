@@ -382,15 +382,13 @@ def test_the_action_product_map_is_unbatched():
 
 
 @pytest.mark.parametrize(
-    ("builder", "reducer"),
+    ("kernel", "reducer"),
     [
-        ("get_max_Q_over_a", "max"),
-        ("get_argmax_and_max_Q_over_a", "argmax_and_max"),
+        ("_HardMaxQOverA.__call__", "max"),
+        ("_HardMaxArgmaxQOverA.__call__", "argmax_and_max"),
     ],
 )
-def test_the_singleton_reduction_covers_every_action_axis(
-    *, builder: str, reducer: str
-):
+def test_the_singleton_reduction_covers_every_action_axis(*, kernel: str, reducer: str):
     """The singleton value is a full reduction: masked, and over no named axis.
 
     A reduction with no `axis=` covers the whole action product. An `axis=` here
@@ -400,7 +398,7 @@ def test_the_singleton_reduction_covers_every_action_axis(
     and each owes the obligation separately.
     """
     tree = _parse("src/_lcm/regime_building/max_Q_over_a.py")
-    node = _definition(tree=tree, qualname=builder)
+    node = _definition(tree=tree, qualname=kernel)
     reductions = [
         call
         for call in _calls_named(node=node, name=reducer)
@@ -410,9 +408,11 @@ def test_the_singleton_reduction_covers_every_action_axis(
     assert [_keyword(call=call, name="axis") for call in reductions] == [None]
 
 
-@pytest.mark.parametrize("builder", ["get_max_Q_over_a", "get_argmax_and_max_Q_over_a"])
+@pytest.mark.parametrize(
+    "kernel", ["_HardMaxQOverA.__call__", "_HardMaxArgmaxQOverA.__call__"]
+)
 def test_the_collective_reduction_treats_every_feasibility_axis_as_an_action(
-    builder: str,
+    kernel: str,
 ):
     """Both collective reductions scalarize over `tuple(range(F_arr.ndim))`.
 
@@ -421,7 +421,7 @@ def test_the_collective_reduction_treats_every_feasibility_axis_as_an_action(
     hand the household an argmax taken over part of its choice set.
     """
     tree = _parse("src/_lcm/regime_building/max_Q_over_a.py")
-    node = _definition(tree=tree, qualname=builder)
+    node = _definition(tree=tree, qualname=kernel)
     assigned = [
         ast.unparse(child.value)
         for child in ast.walk(node)
@@ -442,21 +442,24 @@ def test_the_taste_shock_reduction_covers_every_action_axis():
     what is left.
     """
     tree = _parse("src/_lcm/regime_building/max_Q_over_a.py")
-    builder = _definition(tree=tree, qualname="get_max_Q_over_a")
+    kernel = _definition(tree=tree, qualname="_SmoothedMaxQOverA.__call__")
     assigned = {
         target.id: ast.unparse(child.value)
-        for child in ast.walk(builder)
+        for child in ast.walk(kernel)
         if isinstance(child, ast.Assign)
         for target in child.targets
         if isinstance(target, ast.Name) and target.id == "continuous_axes"
     }
-    smoothing = _calls_named(node=builder, name="logsum_and_softmax")[0]
+    smoothing = _calls_named(node=kernel, name="logsum_and_softmax")[0]
     axes = _keyword(call=smoothing, name="axes")
 
     assert (
         assigned["continuous_axes"],
         ast.unparse(axes) if axes is not None else None,
-    ) == ("tuple(range(n_discrete_action_axes, Q_arr.ndim))", "tuple(range(Qc.ndim))")
+    ) == (
+        "tuple(range(self.n_discrete_action_axes, Q_arr.ndim))",
+        "tuple(range(Qc.ndim))",
+    )
 
 
 def test_no_obligation_rests_on_an_undeclared_source():

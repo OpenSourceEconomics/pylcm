@@ -98,11 +98,11 @@
           },
           {
             "path": "src/_lcm/regime_building/max_Q_over_a.py",
-            "sha256": "6bed0c5a31bbc1c7fe9e0d9250223888d1271528b01844a398668af038e24844"
+            "sha256": "7ef3e0936d2b93b17daec27c8f639ff88c8b05ae46e17a1511b919452fb556fc"
           },
           {
             "path": "src/_lcm/regime_building/processing.py",
-            "sha256": "7d5ad20082109bf6ab638d0180ec17a4f06df050d962f79cb85328dfe6eb2102"
+            "sha256": "1f63f7efeb5fe094b88fab7d73ad92b9ce791b6ab6f71ae3db649b44d1e4762c"
           },
           {
             "path": "src/_lcm/regime_building/zero_safe.py",
@@ -214,7 +214,7 @@
           }
         ],
         "source_count": 52,
-        "source_inventory_sha256": "56efd1988ed5a7c867d9ba8931a7d80d14f580f077ffeceb58cc6c11ac666744"
+        "source_inventory_sha256": "97140d7279baf081643323f23701d036017daf581563da2ed56646c6ac389c26"
       },
       "fast": {
         "candidate_sources": [
@@ -312,11 +312,11 @@
           },
           {
             "path": "src/_lcm/regime_building/max_Q_over_a.py",
-            "sha256": "6bed0c5a31bbc1c7fe9e0d9250223888d1271528b01844a398668af038e24844"
+            "sha256": "7ef3e0936d2b93b17daec27c8f639ff88c8b05ae46e17a1511b919452fb556fc"
           },
           {
             "path": "src/_lcm/regime_building/processing.py",
-            "sha256": "7d5ad20082109bf6ab638d0180ec17a4f06df050d962f79cb85328dfe6eb2102"
+            "sha256": "1f63f7efeb5fe094b88fab7d73ad92b9ce791b6ab6f71ae3db649b44d1e4762c"
           },
           {
             "path": "src/_lcm/regime_building/zero_safe.py",
@@ -428,13 +428,13 @@
           }
         ],
         "source_count": 52,
-        "source_inventory_sha256": "56efd1988ed5a7c867d9ba8931a7d80d14f580f077ffeceb58cc6c11ac666744"
+        "source_inventory_sha256": "97140d7279baf081643323f23701d036017daf581563da2ed56646c6ac389c26"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "56efd1988ed5a7c867d9ba8931a7d80d14f580f077ffeceb58cc6c11ac666744",
+  "source_inventory_sha256": "97140d7279baf081643323f23701d036017daf581563da2ed56646c6ac389c26",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -530,11 +530,11 @@
     },
     {
       "path": "src/_lcm/regime_building/max_Q_over_a.py",
-      "sha256": "6bed0c5a31bbc1c7fe9e0d9250223888d1271528b01844a398668af038e24844"
+      "sha256": "7ef3e0936d2b93b17daec27c8f639ff88c8b05ae46e17a1511b919452fb556fc"
     },
     {
       "path": "src/_lcm/regime_building/processing.py",
-      "sha256": "7d5ad20082109bf6ab638d0180ec17a4f06df050d962f79cb85328dfe6eb2102"
+      "sha256": "1f63f7efeb5fe094b88fab7d73ad92b9ce791b6ab6f71ae3db649b44d1e4762c"
     },
     {
       "path": "src/_lcm/regime_building/zero_safe.py",

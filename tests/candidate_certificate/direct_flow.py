@@ -183,8 +183,8 @@ _SOURCE_SEALS = {
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
     ARGMAX_SOURCE: "0d179a5aa65a6f310f598bdad8f75a9318a24832e31bd529184c2ea90356a72d",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
-    MAX_Q_SOURCE: "6bed0c5a31bbc1c7fe9e0d9250223888d1271528b01844a398668af038e24844",
-    PROCESSING_SOURCE: "7d5ad20082109bf6ab638d0180ec17a4f06df050d962f79cb85328dfe6eb2102",
+    MAX_Q_SOURCE: "7ef3e0936d2b93b17daec27c8f639ff88c8b05ae46e17a1511b919452fb556fc",
+    PROCESSING_SOURCE: "1f63f7efeb5fe094b88fab7d73ad92b9ce791b6ab6f71ae3db649b44d1e4762c",
     GRID_SEARCH_SOURCE: "49c198be2598ef1791e9866d004e63de8dff00c46155c01d4fe8cbe128c0a1ff",
     CORE_PROGRAM_SOURCE: "c2e842a1de6ae3bde27e979e022a08caf0dae6a7cdb56f81b70e466f77bfd16f",
     OUTPUT_LAYOUT_SOURCE: "171566e384a070bb9daebbe74d2418cb25f82291cfc93983d2a56e589486a395",
@@ -322,14 +322,20 @@ def _definition(*, tree: ast.Module, name: str) -> ast.FunctionDef:
     return matches[0]
 
 
-def _guarded_nested(
+def _guarded_binding(
     *,
     tree: ast.Module,
     outer_name: str,
     nested_name: str,
     taste_shocks: bool,
-) -> ast.FunctionDef:
-    """Resolve one reducer from the direct ``has_taste_shocks`` guard branch."""
+) -> ast.Call:
+    """Resolve the signature-wrapping call one ``has_taste_shocks`` arm binds.
+
+    Each arm binds the returned reducer to exactly one
+    ``with_signature(<kernel instance>, ...)`` call, and the builder itself
+    defines no callable of its own, so nothing the reducer reads outlives the
+    build that produced it.
+    """
     outer = _definition(tree=tree, name=outer_name)
     guards = [
         statement
@@ -343,69 +349,73 @@ def _guarded_nested(
             f"found {len(guards)}"
         )
     guard = guards[0]
-    branch = guard.body if taste_shocks else guard.orelse
-    matches = [
-        node
-        for node in branch
-        if isinstance(node, ast.FunctionDef) and node.name == nested_name
-    ]
-    all_matches = [
-        node
-        for node in ast.walk(outer)
-        if isinstance(node, ast.FunctionDef)
-        and node is not outer
-        and node.name == nested_name
-    ]
     nested_scopes = [
         node
         for node in ast.walk(outer)
         if node is not outer
-        and isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef)
+        and isinstance(
+            node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef | ast.Lambda
+        )
     ]
     route = "taste-shock" if taste_shocks else "ordinary"
-    if (
-        len(matches) != 1
-        or len(all_matches) != 2
-        or len(nested_scopes) != 2
-        or any(
-            not isinstance(node, ast.FunctionDef) or node.name != nested_name
-            for node in nested_scopes
+    if nested_scopes or len(guard.body) != 1 or len(guard.orelse) != 1:
+        raise ValueError(
+            f"expected the {route} arm of {outer_name!r} to bind {nested_name!r} "
+            f"in one statement and the builder to define no callable of its own; "
+            f"found {len(nested_scopes)} nested scopes and branch lengths "
+            f"{len(guard.body)}/{len(guard.orelse)}"
         )
-        or len(guard.body) != 1
-        or len(guard.orelse) != 1
+    statement = (guard.body if taste_shocks else guard.orelse)[0]
+    if not (
+        isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and _target_names(statement.targets[0]) == (nested_name,)
+        and isinstance(statement.value, ast.Call)
+        and _call_name(statement.value) == "with_signature"
     ):
         raise ValueError(
-            f"expected one direct {route} nested {nested_name!r}, exactly two "
-            f"route definitions, no other nested scope, and no guard-branch "
-            f"side statements in {outer_name!r}; found {len(matches)} direct, "
-            f"{len(all_matches)} named, {len(nested_scopes)} total nested, and "
-            f"branch lengths {len(guard.body)}/{len(guard.orelse)}"
+            f"the {route} arm of {outer_name!r} does not bind {nested_name!r} to "
+            "one signature-wrapped kernel"
         )
-    return matches[0]
+    return statement.value
 
 
-def _ordinary_nested(
+def _binding_kernel(*, tree: ast.Module, call: ast.Call) -> ast.FunctionDef:
+    """Return the ``__call__`` of the kernel class one binding instantiates."""
+    if len(call.args) != 1 or not isinstance(call.args[0], ast.Call):
+        raise ValueError("the signature wrapper does not take one kernel instance")
+    class_name = _call_name(call.args[0])
+    if class_name is None:
+        raise ValueError("the signature wrapper's kernel is not a plain construction")
+    return _method_definition(tree=tree, class_name=class_name, method_name="__call__")[
+        1
+    ]
+
+
+def _ordinary_kernel(
     *, tree: ast.Module, outer_name: str, nested_name: str
-) -> ast.FunctionDef:
-    """Return the reducer from the false arm of ``has_taste_shocks``."""
-    return _guarded_nested(
+) -> tuple[ast.Call, ast.FunctionDef]:
+    """Return the binding and kernel from the false arm of ``has_taste_shocks``."""
+    call = _guarded_binding(
         tree=tree,
         outer_name=outer_name,
         nested_name=nested_name,
         taste_shocks=False,
     )
+    return call, _binding_kernel(tree=tree, call=call)
 
 
-def _taste_nested(
+def _taste_kernel(
     *, tree: ast.Module, outer_name: str, nested_name: str
-) -> ast.FunctionDef:
-    """Return the reducer from the true arm of ``has_taste_shocks``."""
-    return _guarded_nested(
+) -> tuple[ast.Call, ast.FunctionDef]:
+    """Return the binding and kernel from the true arm of ``has_taste_shocks``."""
+    call = _guarded_binding(
         tree=tree,
         outer_name=outer_name,
         nested_name=nested_name,
         taste_shocks=True,
     )
+    return call, _binding_kernel(tree=tree, call=call)
 
 
 def _body_without_docstring(node: ast.FunctionDef) -> list[ast.stmt]:
@@ -534,16 +544,20 @@ def _expression_matches(*, node: ast.AST | None, source: str) -> bool:
     )
 
 
-def _exact_reducer_decorator(
-    *, node: ast.FunctionDef, simulate: bool, taste_shocks: bool
+def _kernel_field(*, node: ast.AST | None, expected: str) -> bool:
+    """Match one read of a frozen kernel's field, spelled ``self.<expected>``."""
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr == expected
+        and _name(node=node.value, expected="self")
+    )
+
+
+def _exact_reducer_signature_call(
+    *, call: ast.Call, simulate: bool, taste_shocks: bool
 ) -> bool:
     """Pin the signature wrapper that exposes the exact action/state inputs."""
-    if len(node.decorator_list) != 1 or not isinstance(
-        node.decorator_list[0], ast.Call
-    ):
-        return False
-    call = node.decorator_list[0]
-    if _call_name(call) != "with_signature" or call.args:
+    if _call_name(call) != "with_signature" or len(call.args) != 1:
         return False
     args_source = (
         '["next_regime_to_V_arr", "taste_shock_key", '
@@ -576,7 +590,7 @@ def _nested_reducer_signature(node: ast.FunctionDef) -> bool:
     args = node.args
     return (
         not args.posonlyargs
-        and tuple(item.arg for item in args.args) == ("next_regime_to_V_arr",)
+        and tuple(item.arg for item in args.args) == ("self", "next_regime_to_V_arr")
         and args.vararg is None
         and not args.kwonlyargs
         and not args.kw_defaults
@@ -1011,7 +1025,7 @@ def _q_and_f_origin(statement: ast.stmt) -> bool:
         return False
     if not (
         isinstance(statement.value, ast.Call)
-        and _call_name(statement.value) == "Q_and_F"
+        and _kernel_field(node=statement.value.func, expected="Q_and_F")
     ):
         return False
     if statement.value.args:
@@ -1108,7 +1122,7 @@ def _exact_stakeholder_split(statement: ast.stmt) -> bool:
         and isinstance(generator.iter, ast.Call)
         and _call_name(generator.iter) == "enumerate"
         and len(generator.iter.args) == 1
-        and _name(node=generator.iter.args[0], expected="stakeholders")
+        and _kernel_field(node=generator.iter.args[0], expected="stakeholders")
         and not generator.iter.keywords
         and not generator.ifs
         and generator.is_async == 0
@@ -1120,7 +1134,7 @@ def _exact_weights_call(node: ast.expr | None) -> bool:
         isinstance(node, ast.Call)
         and _call_name(node) == "_evaluate_pareto_weights"
         and not node.args
-        and _name(
+        and _kernel_field(
             node=_keyword(call=node, name="pareto_weights"), expected="pareto_weights"
         )
         and _name(
@@ -1181,7 +1195,7 @@ def _exact_values_stack(node: ast.expr | None) -> bool:
     generator = comp.generators[0]
     return (
         _name(node=generator.target, expected="name")
-        and _name(node=generator.iter, expected="stakeholders")
+        and _kernel_field(node=generator.iter, expected="stakeholders")
         and not generator.ifs
         and generator.is_async == 0
         and _unparse(_keyword(call=node, name="axis")) == "-1"
@@ -1209,7 +1223,7 @@ def _exact_collective_return(*, statement: ast.stmt, simulate: bool) -> bool:
 
 
 def _exact_collective_body(*, node: ast.If, simulate: bool) -> bool:  # noqa: PLR0911
-    if ast.unparse(node.test) != "stakeholders is not None" or node.orelse:
+    if ast.unparse(node.test) != "self.stakeholders is not None" or node.orelse:
         return False
     expected_length = 5 if simulate else 4
     if len(node.body) != expected_length:
@@ -1276,9 +1290,13 @@ def _productmap_binding_errors(
                 f"{outer_name}: action productmap is wrapped, filtered, batched, "
                 "or does not consume the original Q_and_F"
             )
-    if _stored_name_count(node=outer, name=nested_name):
+    # One binding per taste-guard arm, plus the annotation that declares the
+    # reducer's type before either arm binds it.
+    expected_stores = 3
+    if _stored_name_count(node=outer, name=nested_name) != expected_stores:
         errors.append(
-            f"{outer_name}: returned reducer {nested_name} is rebound after definition"
+            f"{outer_name}: returned reducer {nested_name} is not bound exactly "
+            "once per taste-guard arm under one annotation"
         )
     captured_rebindings = any(
         _stored_name_count(node=outer, name=name)
@@ -1347,6 +1365,7 @@ for state_name, v_arr_in_axes in zip(
     )
 return cast("MaxQOverAFunction", allow_only_kwargs(func=mapped, enforce=False))
 """
+    solve_prefix += "max_Q_over_a: Callable[..., FloatND | tuple[FloatND, BoolND]]\n"
     simulate_prefix = r"""extra_param_names = _get_extra_param_names(
     Q_and_F=Q_and_F, action_names=action_names, state_names=state_names
 )
@@ -1360,6 +1379,7 @@ Q_and_F = productmap(
     batch_sizes=dict.fromkeys(action_names, 0),
 )
 """
+    simulate_prefix += "argmax_and_max_Q_over_a: ArgmaxQOverAFunction\n"
     contracts = (
         ("get_max_Q_over_a", solve_prefix, solve_suffix),
         (
@@ -1464,9 +1484,12 @@ Q_and_F = productmap(
                 "build_streaming_collective_max_Q_over_a",
                 "build_streaming_ev1_max_Q_over_a",
                 "build_streaming_max_Q_over_a",
+                "Any",
                 "cast",
+                "ClassVar",
                 "collective_argmax_and_readout",
                 "collective_readout",
+                "dataclass",
                 "EULER_GAMMA",
                 "inspect",
                 "jax",
@@ -1481,8 +1504,9 @@ Q_and_F = productmap(
             expected_imports=[
                 "import inspect",
                 "import math",
+                "from dataclasses import dataclass",
                 "from types import MappingProxyType",
-                "from typing import cast",
+                "from typing import Any, ClassVar, cast",
                 "import jax",
                 "import jax.numpy as jnp",
                 "from dags import with_signature",
@@ -1503,11 +1527,19 @@ Q_and_F = productmap(
                 "build_streaming_collective_max_Q_over_a": 1,
                 "build_streaming_ev1_max_Q_over_a": 1,
                 "build_streaming_max_Q_over_a": 1,
+                "Any": 1,
                 "cast": 1,
+                "ClassVar": 1,
                 "collective_argmax_and_readout": 1,
                 "collective_readout": 1,
+                "dataclass": 1,
                 "dict": 0,
                 "draw_taste_shock_noise": 1,
+                "_HardMaxArgmaxQOverA": 1,
+                "_HardMaxQOverA": 1,
+                "_SmoothedMaxQOverA": 1,
+                "_StreamedMaxQOverA": 1,
+                "_TasteShockArgmaxQOverA": 1,
                 "enumerate": 0,
                 "EULER_GAMMA": 1,
                 "get_argmax_and_max_Q_over_a": 1,
@@ -1540,7 +1572,7 @@ def _streamed_max_builder_errors(tree: ast.Module) -> list[str]:
         tree=tree,
         label="streamed max-Q builder",
         contracts={
-            "get_streaming_max_Q_over_a": "54999041a3f59036bea35b0250def6a49e69b216163b36aad66f116a2bd45027",
+            "get_streaming_max_Q_over_a": "df00f84d9c8d42a551cb69eca12d7967f2726faec770a65a0e6664c6388284bf",
             "_fail_if_action_width_keyword_collides": (
                 "20d3a1998c95f4decc9c5b5c8971ddc98fd1140c1954f427863409de33d2b2c4"
             ),
@@ -2673,20 +2705,23 @@ def _corridor_errors(
     label = "simulate" if simulate else "solve"
     errors: list[str] = []
     try:
-        nested = _ordinary_nested(
+        binding, nested = _ordinary_kernel(
             tree=tree, outer_name=outer_name, nested_name=nested_name
         )
     except ValueError as error:
         return [f"{label}: {error}"]
-    if not _exact_reducer_decorator(node=nested, simulate=simulate, taste_shocks=False):
+    if not _exact_reducer_signature_call(
+        call=binding, simulate=simulate, taste_shocks=False
+    ):
         errors.append(f"{label}: ordinary reducer signature wrapper changed")
-    if len(nested.body) != 3:
+    body = _body_without_docstring(nested)
+    if len(body) != 3:
         errors.append(
             f"{label}: ordinary reducer corridor must contain exactly origin, "
-            f"collective branch, singleton return; found {len(nested.body)} statements"
+            f"collective branch, singleton return; found {len(body)} statements"
         )
         return errors
-    origin, collective, singleton = nested.body
+    origin, collective, singleton = body
     if not _q_and_f_origin(origin):
         errors.append(
             f"{label}: first corridor statement is not exact Q_arr/F_arr origin"
@@ -2728,23 +2763,25 @@ def _taste_corridor_errors(
     """Pin one taste-shock route from exact Q/F origin through its full reducer."""
     label = "taste-shock simulate" if simulate else "taste-shock solve"
     try:
-        nested = _taste_nested(
+        binding, nested = _taste_kernel(
             tree=tree, outer_name=outer_name, nested_name=nested_name
         )
     except ValueError as error:
         return [f"{label}: {error}"]
     errors: list[str] = []
-    if not _exact_reducer_decorator(node=nested, simulate=simulate, taste_shocks=True):
+    if not _exact_reducer_signature_call(
+        call=binding, simulate=simulate, taste_shocks=True
+    ):
         errors.append(f"{label}: taste reducer signature wrapper changed")
     if not _nested_reducer_signature(nested):
         errors.append(f"{label}: nested reducer signature changed")
 
-    expected_solve = r"""Q_arr, F_arr = Q_and_F(
+    expected_solve = r"""Q_arr, F_arr = self.Q_and_F(
     next_regime_to_V_arr=next_regime_to_V_arr,
     **states_actions_params,
 )
 Q_masked = jnp.where(F_arr, Q_arr, -jnp.inf)
-continuous_axes = tuple(range(n_discrete_action_axes, Q_arr.ndim))
+continuous_axes = tuple(range(self.n_discrete_action_axes, Q_arr.ndim))
 Qc = Q_masked.max(axis=continuous_axes) if continuous_axes else Q_masked
 smoothed, _ = logsum_and_softmax(
     values=Qc,
@@ -2758,13 +2795,13 @@ return smoothed
     expected_simulate = r"""taste_shock_key = cast(
     "Array", states_actions_params.pop("taste_shock_key")
 )
-Q_arr, F_arr = Q_and_F(
+Q_arr, F_arr = self.Q_and_F(
     next_regime_to_V_arr=next_regime_to_V_arr,
     **states_actions_params,
 )
 Q_masked = jnp.where(F_arr, Q_arr, -jnp.inf)
-n_discrete_cells = math.prod(Q_arr.shape[:n_discrete_action_axes])
-n_continuous_cells = math.prod(Q_arr.shape[n_discrete_action_axes:])
+n_discrete_cells = math.prod(Q_arr.shape[:self.n_discrete_action_axes])
+n_continuous_cells = math.prod(Q_arr.shape[self.n_discrete_action_axes:])
 Q_flat = Q_masked.reshape(n_discrete_cells, n_continuous_cells)
 continuous_argmax = jnp.argmax(Q_flat, axis=1)
 Qc = Q_flat.max(axis=1)
@@ -2826,7 +2863,7 @@ def _taste_noise_errors(tree: ast.Module) -> list[str]:
             "import jax",
             "import jax.numpy as jnp",
             "import math",
-            "from typing import cast",
+            "from typing import Any, ClassVar, cast",
             "from _lcm.logsum import EULER_GAMMA, logsum_and_softmax",
         ]
     )
@@ -3397,93 +3434,93 @@ def _replace_nth(*, text: str, marker: str, replacement: str, occurrence: int) -
 def direct_flow_mutations(source: str) -> dict[str, str]:
     """Generate the required route/value/support/shape/index perturbation family."""
     mutations: dict[str, str] = {}
-    solve_singleton = "            return Q_arr.max(where=F_arr, initial=-jnp.inf)"
+    solve_singleton = "        return Q_arr.max(where=F_arr, initial=-jnp.inf)"
     simulate_singleton = (
-        "            return argmax_and_max(a=Q_arr, where=F_arr, initial=-jnp.inf)"
+        "        return argmax_and_max(a=Q_arr, where=F_arr, initial=-jnp.inf)"
     )
-    collective_marker = "                action_axes = tuple(range(F_arr.ndim))"
+    collective_marker = "            action_axes = tuple(range(F_arr.ndim))"
 
     mutations["singleton_solve:q_order"] = _insert_before_nth(
         text=source,
         marker=solve_singleton,
-        insertion="            Q_flat = Q_arr.reshape(-1)\n"
-        "            order_filter = Q_flat[0] > Q_flat[1]\n"
-        "            F_arr = jnp.where(\n"
-        "                order_filter,\n"
-        "                F_arr.reshape(-1).at[0].set(False).reshape(F_arr.shape),\n"
-        "                F_arr,\n"
-        "            )\n",
+        insertion="        Q_flat = Q_arr.reshape(-1)\n"
+        "        order_filter = Q_flat[0] > Q_flat[1]\n"
+        "        F_arr = jnp.where(\n"
+        "            order_filter,\n"
+        "            F_arr.reshape(-1).at[0].set(False).reshape(F_arr.shape),\n"
+        "            F_arr,\n"
+        "        )\n",
         occurrence=1,
     )
     mutations["singleton_simulate:mt9_rank_permutation"] = _insert_before_nth(
         text=source,
         marker=simulate_singleton,
-        insertion="            Q_flat = Q_arr.reshape(-1)\n"
-        "            mt9_order = (\n"
-        "                (Q_flat[0] > Q_flat[2])\n"
-        "                & (Q_flat[2] > Q_flat[1])\n"
-        "                & (Q_flat[1] > Q_flat[3])\n"
-        "                & (Q_flat[3] > Q_flat[4])\n"
-        "                & (Q_flat[4] > Q_flat[5])\n"
-        "                & jnp.all(F_arr)\n"
-        "            )\n"
-        "            F_arr = jnp.where(\n"
-        "                mt9_order,\n"
-        "                F_arr.reshape(-1).at[0].set(False).reshape(F_arr.shape),\n"
-        "                F_arr,\n"
-        "            )\n",
+        insertion="        Q_flat = Q_arr.reshape(-1)\n"
+        "        mt9_order = (\n"
+        "            (Q_flat[0] > Q_flat[2])\n"
+        "            & (Q_flat[2] > Q_flat[1])\n"
+        "            & (Q_flat[1] > Q_flat[3])\n"
+        "            & (Q_flat[3] > Q_flat[4])\n"
+        "            & (Q_flat[4] > Q_flat[5])\n"
+        "            & jnp.all(F_arr)\n"
+        "        )\n"
+        "        F_arr = jnp.where(\n"
+        "            mt9_order,\n"
+        "            F_arr.reshape(-1).at[0].set(False).reshape(F_arr.shape),\n"
+        "            F_arr,\n"
+        "        )\n",
         occurrence=1,
     )
     mutations["singleton_simulate:q_gap"] = _insert_before_nth(
         text=source,
         marker=simulate_singleton,
-        insertion="            gap_filter = (\n"
-        "                Q_arr.reshape(-1)[0] - Q_arr.reshape(-1)[1] > 0.5\n"
-        "            )\n"
-        "            F_arr = jnp.where(\n"
-        "                gap_filter,\n"
-        "                F_arr.reshape(-1).at[0].set(False).reshape(F_arr.shape),\n"
-        "                F_arr,\n"
-        "            )\n",
+        insertion="        gap_filter = (\n"
+        "            Q_arr.reshape(-1)[0] - Q_arr.reshape(-1)[1] > 0.5\n"
+        "        )\n"
+        "        F_arr = jnp.where(\n"
+        "            gap_filter,\n"
+        "            F_arr.reshape(-1).at[0].set(False).reshape(F_arr.shape),\n"
+        "            F_arr,\n"
+        "        )\n",
         occurrence=1,
     )
     mutations["collective_solve:support_size"] = _insert_before_nth(
         text=source,
         marker=collective_marker,
-        insertion="                support_filter = jnp.sum(F_arr) > 1\n"
-        "                F_arr = jnp.where(\n"
-        "                    support_filter,\n"
-        "                    F_arr.reshape(-1).at[0].set(False).reshape(F_arr.shape),\n"
-        "                    F_arr,\n"
-        "                )\n",
+        insertion="            support_filter = jnp.sum(F_arr) > 1\n"
+        "            F_arr = jnp.where(\n"
+        "                support_filter,\n"
+        "                F_arr.reshape(-1).at[0].set(False).reshape(F_arr.shape),\n"
+        "                F_arr,\n"
+        "            )\n",
         occurrence=1,
     )
     mutations["collective_simulate:shape_axis"] = _insert_before_nth(
         text=source,
         marker=collective_marker,
-        insertion="                shape_filter = (F_arr.ndim == 2) & (F_arr.shape[-1] > 1)\n"
-        "                F_arr = jnp.where(\n"
-        "                    shape_filter,\n"
-        "                    F_arr.reshape(-1).at[0].set(False).reshape(F_arr.shape),\n"
-        "                    F_arr,\n"
-        "                )\n",
+        insertion="            shape_filter = (F_arr.ndim == 2) & (F_arr.shape[-1] > 1)\n"
+        "            F_arr = jnp.where(\n"
+        "                shape_filter,\n"
+        "                F_arr.reshape(-1).at[0].set(False).reshape(F_arr.shape),\n"
+        "                F_arr,\n"
+        "            )\n",
         occurrence=2,
     )
 
     mutations["singleton_solve:inline_where_transform"] = source.replace(
         "return Q_arr.max(where=F_arr, initial=-jnp.inf)",
         "return Q_arr.max(\n"
-        "                where=F_arr.reshape(-1).at[0].set(False)\n"
-        "                .reshape(F_arr.shape),\n"
-        "                initial=-jnp.inf,\n"
-        "            )",
+        "            where=F_arr.reshape(-1).at[0].set(False)\n"
+        "            .reshape(F_arr.shape),\n"
+        "            initial=-jnp.inf,\n"
+        "        )",
         1,
     )
     mutations["singleton_simulate:inline_q_transform"] = source.replace(
         "return argmax_and_max(a=Q_arr, where=F_arr, initial=-jnp.inf)",
         "return argmax_and_max(\n"
-        "                a=Q_arr.reshape(-1)[::-1], where=F_arr, initial=-jnp.inf\n"
-        "            )",
+        "            a=Q_arr.reshape(-1)[::-1], where=F_arr, initial=-jnp.inf\n"
+        "        )",
         1,
     )
     mutations["collective_solve:inline_feasibility_transform"] = source.replace(
@@ -3492,8 +3529,8 @@ def direct_flow_mutations(source: str) -> dict[str, str]:
         1,
     )
     mutations["collective_simulate:action_axis_slice"] = source.replace(
-        "name: Q_arr[..., index] for index, name in enumerate(stakeholders)",
-        "name: Q_arr[1:, ..., index] for index, name in enumerate(stakeholders)",
+        "name: Q_arr[..., index] for index, name in enumerate(self.stakeholders)",
+        "name: Q_arr[1:, ..., index] for index, name in enumerate(self.stakeholders)",
         2,
     )
     mutations["solve:wrapped_productmap_input"] = source.replace(
@@ -3515,10 +3552,10 @@ def direct_flow_mutations(source: str) -> dict[str, str]:
     )
 
     route_specs = {
-        "singleton_solve": (solve_singleton, 1, "            "),
-        "singleton_simulate": (simulate_singleton, 1, "            "),
-        "collective_solve": (collective_marker, 1, "                "),
-        "collective_simulate": (collective_marker, 2, "                "),
+        "singleton_solve": (solve_singleton, 1, "        "),
+        "singleton_simulate": (simulate_singleton, 1, "        "),
+        "collective_solve": (collective_marker, 1, "            "),
+        "collective_simulate": (collective_marker, 2, "            "),
     }
     for route, (marker, occurrence, indent) in route_specs.items():
         for index in range(6):
@@ -3529,62 +3566,62 @@ def direct_flow_mutations(source: str) -> dict[str, str]:
             mutations[f"{route}:candidate_index_{index}"] = _insert_before_nth(
                 text=source, marker=marker, insertion=insertion, occurrence=occurrence
             )
-    taste_mask = "            Q_masked = jnp.where(F_arr, Q_arr, -jnp.inf)"
+    taste_mask = "        Q_masked = jnp.where(F_arr, Q_arr, -jnp.inf)"
     taste_routes = {
         "taste_shock_solve": 1,
         "taste_shock_simulate": 2,
     }
     semantic_insertions = {
         "q_order": (
-            "            Q_flat_attack = Q_arr.reshape(-1)\n"
-            "            order_filter = Q_flat_attack[0] > Q_flat_attack[1]\n"
-            "            F_arr = jnp.where(\n"
-            "                order_filter,\n"
-            "                F_arr.reshape(-1).at[0].set(False).reshape(F_arr.shape),\n"
-            "                F_arr,\n"
-            "            )\n"
+            "        Q_flat_attack = Q_arr.reshape(-1)\n"
+            "        order_filter = Q_flat_attack[0] > Q_flat_attack[1]\n"
+            "        F_arr = jnp.where(\n"
+            "            order_filter,\n"
+            "            F_arr.reshape(-1).at[0].set(False).reshape(F_arr.shape),\n"
+            "            F_arr,\n"
+            "        )\n"
         ),
         "q_gap": (
-            "            gap_filter = (\n"
-            "                Q_arr.reshape(-1)[0] - Q_arr.reshape(-1)[1] > 0.5\n"
-            "            )\n"
-            "            F_arr = jnp.where(\n"
-            "                gap_filter,\n"
-            "                F_arr.reshape(-1).at[0].set(False).reshape(F_arr.shape),\n"
-            "                F_arr,\n"
-            "            )\n"
+            "        gap_filter = (\n"
+            "            Q_arr.reshape(-1)[0] - Q_arr.reshape(-1)[1] > 0.5\n"
+            "        )\n"
+            "        F_arr = jnp.where(\n"
+            "            gap_filter,\n"
+            "            F_arr.reshape(-1).at[0].set(False).reshape(F_arr.shape),\n"
+            "            F_arr,\n"
+            "        )\n"
         ),
         "support_size": (
-            "            support_filter = jnp.sum(F_arr) > 1\n"
-            "            F_arr = jnp.where(\n"
-            "                support_filter,\n"
-            "                F_arr.reshape(-1).at[0].set(False).reshape(F_arr.shape),\n"
-            "                F_arr,\n"
-            "            )\n"
+            "        support_filter = jnp.sum(F_arr) > 1\n"
+            "        F_arr = jnp.where(\n"
+            "            support_filter,\n"
+            "            F_arr.reshape(-1).at[0].set(False).reshape(F_arr.shape),\n"
+            "            F_arr,\n"
+            "        )\n"
         ),
         "all_feasible": (
-            "            all_filter = jnp.all(F_arr)\n"
-            "            F_arr = jnp.where(\n"
-            "                all_filter,\n"
-            "                F_arr.reshape(-1).at[0].set(False).reshape(F_arr.shape),\n"
-            "                F_arr,\n"
-            "            )\n"
+            "        all_filter = jnp.all(F_arr)\n"
+            "        F_arr = jnp.where(\n"
+            "            all_filter,\n"
+            "            F_arr.reshape(-1).at[0].set(False).reshape(F_arr.shape),\n"
+            "            F_arr,\n"
+            "        )\n"
         ),
         "intermediate_support": (
-            "            intermediate_filter = (jnp.sum(F_arr) > 1) & (~jnp.all(F_arr))\n"
-            "            F_arr = jnp.where(\n"
-            "                intermediate_filter,\n"
-            "                F_arr.reshape(-1).at[0].set(False).reshape(F_arr.shape),\n"
-            "                F_arr,\n"
-            "            )\n"
+            "        intermediate_filter = (jnp.sum(F_arr) > 1) & (~jnp.all(F_arr))\n"
+            "        F_arr = jnp.where(\n"
+            "            intermediate_filter,\n"
+            "            F_arr.reshape(-1).at[0].set(False).reshape(F_arr.shape),\n"
+            "            F_arr,\n"
+            "        )\n"
         ),
         "shape_axis": (
-            "            shape_filter = (F_arr.ndim == 2) & (F_arr.shape[-1] > 1)\n"
-            "            F_arr = jnp.where(\n"
-            "                shape_filter,\n"
-            "                F_arr.reshape(-1).at[0].set(False).reshape(F_arr.shape),\n"
-            "                F_arr,\n"
-            "            )\n"
+            "        shape_filter = (F_arr.ndim == 2) & (F_arr.shape[-1] > 1)\n"
+            "        F_arr = jnp.where(\n"
+            "            shape_filter,\n"
+            "            F_arr.reshape(-1).at[0].set(False).reshape(F_arr.shape),\n"
+            "            F_arr,\n"
+            "        )\n"
         ),
     }
     for route, occurrence in taste_routes.items():
@@ -3599,7 +3636,7 @@ def direct_flow_mutations(source: str) -> dict[str, str]:
             mutations[f"{route}:candidate_index_{index}"] = _insert_before_nth(
                 text=source,
                 marker=taste_mask,
-                insertion=f"            F_arr = F_arr.reshape(-1).at[{index}]"
+                insertion=f"        F_arr = F_arr.reshape(-1).at[{index}]"
                 ".set(False).reshape(F_arr.shape)\n",
                 occurrence=occurrence,
             )
@@ -3607,69 +3644,69 @@ def direct_flow_mutations(source: str) -> dict[str, str]:
     mutations["taste_shock_simulate:mt10_rank_permutation"] = _insert_before_nth(
         text=source,
         marker=taste_mask,
-        insertion="            Q_flat_attack = Q_arr.reshape(-1)\n"
-        "            mt10_order = (\n"
-        "                jnp.all(F_arr)\n"
-        "                & (Q_flat_attack[0] > Q_flat_attack[2])\n"
-        "                & (Q_flat_attack[2] > Q_flat_attack[1])\n"
-        "            )\n"
-        "            F_arr = jnp.where(\n"
-        "                mt10_order,\n"
-        "                F_arr.reshape(-1).at[0].set(False).reshape(F_arr.shape),\n"
-        "                F_arr,\n"
-        "            )\n",
+        insertion="        Q_flat_attack = Q_arr.reshape(-1)\n"
+        "        mt10_order = (\n"
+        "            jnp.all(F_arr)\n"
+        "            & (Q_flat_attack[0] > Q_flat_attack[2])\n"
+        "            & (Q_flat_attack[2] > Q_flat_attack[1])\n"
+        "        )\n"
+        "        F_arr = jnp.where(\n"
+        "            mt10_order,\n"
+        "            F_arr.reshape(-1).at[0].set(False).reshape(F_arr.shape),\n"
+        "            F_arr,\n"
+        "        )\n",
         occurrence=2,
     )
 
     mutations["taste_shock_solve:inline_q_transform"] = _replace_nth(
         text=source,
         marker=taste_mask,
-        replacement="            Q_masked = jnp.where(\n"
-        "                F_arr, Q_arr.reshape(-1)[::-1].reshape(Q_arr.shape), -jnp.inf\n"
-        "            )",
+        replacement="        Q_masked = jnp.where(\n"
+        "            F_arr, Q_arr.reshape(-1)[::-1].reshape(Q_arr.shape), -jnp.inf\n"
+        "        )",
         occurrence=1,
     )
     mutations["taste_shock_solve:inline_f_transform"] = _replace_nth(
         text=source,
         marker=taste_mask,
-        replacement="            Q_masked = jnp.where(\n"
-        "                F_arr.reshape(-1).at[0].set(False).reshape(F_arr.shape),\n"
-        "                Q_arr,\n"
-        "                -jnp.inf,\n"
-        "            )",
+        replacement="        Q_masked = jnp.where(\n"
+        "            F_arr.reshape(-1).at[0].set(False).reshape(F_arr.shape),\n"
+        "            Q_arr,\n"
+        "            -jnp.inf,\n"
+        "        )",
         occurrence=1,
     )
     mutations["taste_shock_simulate:inline_q_transform"] = _replace_nth(
         text=source,
         marker=taste_mask,
-        replacement="            Q_masked = jnp.where(\n"
-        "                F_arr, Q_arr.reshape(-1)[::-1].reshape(Q_arr.shape), -jnp.inf\n"
-        "            )",
+        replacement="        Q_masked = jnp.where(\n"
+        "            F_arr, Q_arr.reshape(-1)[::-1].reshape(Q_arr.shape), -jnp.inf\n"
+        "        )",
         occurrence=2,
     )
     mutations["taste_shock_simulate:inline_f_transform"] = _replace_nth(
         text=source,
         marker=taste_mask,
-        replacement="            Q_masked = jnp.where(\n"
-        "                F_arr.reshape(-1).at[0].set(False).reshape(F_arr.shape),\n"
-        "                Q_arr,\n"
-        "                -jnp.inf,\n"
-        "            )",
+        replacement="        Q_masked = jnp.where(\n"
+        "            F_arr.reshape(-1).at[0].set(False).reshape(F_arr.shape),\n"
+        "            Q_arr,\n"
+        "            -jnp.inf,\n"
+        "        )",
         occurrence=2,
     )
 
     mutations["taste_shock_solve:continuous_axis_prefix"] = source.replace(
-        "continuous_axes = tuple(range(n_discrete_action_axes, Q_arr.ndim))",
-        "continuous_axes = tuple(range(n_discrete_action_axes, Q_arr.ndim - 1))",
+        "continuous_axes = tuple(range(self.n_discrete_action_axes, Q_arr.ndim))",
+        "continuous_axes = tuple(range(self.n_discrete_action_axes, Q_arr.ndim - 1))",
         1,
     )
     mutations["taste_shock_solve:continuous_max_slice"] = source.replace(
         "Qc = Q_masked.max(axis=continuous_axes) if continuous_axes else Q_masked",
         "Qc = (\n"
-        "                Q_masked[..., 1:].max(axis=continuous_axes)\n"
-        "                if continuous_axes\n"
-        "                else Q_masked\n"
-        "            )",
+        "            Q_masked[..., 1:].max(axis=continuous_axes)\n"
+        "            if continuous_axes\n"
+        "            else Q_masked\n"
+        "        )",
         1,
     )
     mutations["taste_shock_solve:logsum_axis_prefix"] = source.replace(
@@ -3678,8 +3715,8 @@ def direct_flow_mutations(source: str) -> dict[str, str]:
         1,
     )
     mutations["taste_shock_solve:logsum_value_slice"] = source.replace(
-        "                values=Qc,",
-        "                values=Qc.reshape(-1)[1:],",
+        "            values=Qc,",
+        "            values=Qc.reshape(-1)[1:],",
         1,
     )
     mutations["taste_shock_solve:scale_transform"] = source.replace(
@@ -3688,26 +3725,26 @@ def direct_flow_mutations(source: str) -> dict[str, str]:
         1,
     )
     mutations["taste_shock_solve:wrong_return"] = source.replace(
-        "            return smoothed",
-        "            return Qc.reshape(-1)[0]",
+        "        return smoothed",
+        "        return Qc.reshape(-1)[0]",
         1,
     )
 
     mutations["taste_shock_simulate:reshape_drop"] = source.replace(
         "Q_flat = Q_masked.reshape(n_discrete_cells, n_continuous_cells)",
         "Q_flat = Q_masked.reshape(-1)[:-1].reshape(\n"
-        "                n_discrete_cells, n_continuous_cells\n"
-        "            )",
+        "            n_discrete_cells, n_continuous_cells\n"
+        "        )",
         1,
     )
     mutations["taste_shock_simulate:wrong_discrete_count"] = source.replace(
-        "n_discrete_cells = math.prod(Q_arr.shape[:n_discrete_action_axes])",
-        "n_discrete_cells = math.prod(Q_arr.shape[: n_discrete_action_axes - 1])",
+        "n_discrete_cells = math.prod(Q_arr.shape[: self.n_discrete_action_axes])",
+        "n_discrete_cells = math.prod(Q_arr.shape[: self.n_discrete_action_axes - 1])",
         1,
     )
     mutations["taste_shock_simulate:wrong_continuous_count"] = source.replace(
-        "n_continuous_cells = math.prod(Q_arr.shape[n_discrete_action_axes:])",
-        "n_continuous_cells = math.prod(Q_arr.shape[n_discrete_action_axes + 1 :])",
+        "n_continuous_cells = math.prod(Q_arr.shape[self.n_discrete_action_axes :])",
+        "n_continuous_cells = math.prod(Q_arr.shape[self.n_discrete_action_axes + 1 :])",
         1,
     )
     mutations["taste_shock_simulate:continuous_axis_mismatch"] = source.replace(
@@ -3765,8 +3802,8 @@ def direct_flow_mutations(source: str) -> dict[str, str]:
         1,
     )
     mutations["shared_taste_noise:cast_import_replaced"] = source.replace(
-        "from typing import cast",
-        "from candidate_filter import cast",
+        "from typing import Any, ClassVar, cast",
+        "from candidate_filter import Any, ClassVar, cast",
         1,
     )
     mutations["taste_shock_solve:captured_axis_rebinding"] = _insert_before_nth(
@@ -3779,7 +3816,7 @@ def direct_flow_mutations(source: str) -> dict[str, str]:
         text=source,
         marker="    if has_taste_shocks:",
         insertion="    n_discrete_action_axes = n_discrete_action_axes - 1\n",
-        occurrence=3,
+        occurrence=2,
     )
     mutations["solve:action_names_rebinding"] = _insert_before_nth(
         text=source,
@@ -3831,26 +3868,28 @@ def direct_flow_mutations(source: str) -> dict[str, str]:
     )
     mutations["taste_shock_solve:attribute_with_signature"] = _replace_nth(
         text=source,
-        marker="        @with_signature(",
-        replacement="        @candidate_filter.with_signature(",
+        marker="        max_Q_over_a = with_signature(",
+        replacement="        max_Q_over_a = candidate_filter.with_signature(",
         occurrence=1,
     )
     mutations["taste_shock_simulate:attribute_with_signature"] = _replace_nth(
         text=source,
-        marker="        @with_signature(",
-        replacement="        @candidate_filter.with_signature(",
-        occurrence=4,
+        marker="        argmax_and_max_Q_over_a = with_signature(",
+        replacement=(
+            "        argmax_and_max_Q_over_a = candidate_filter.with_signature("
+        ),
+        occurrence=1,
     )
     mutations["taste_shock_solve:attribute_q_and_f"] = _replace_nth(
         text=source,
-        marker="            Q_arr, F_arr = Q_and_F(",
-        replacement="            Q_arr, F_arr = candidate_filter.Q_and_F(",
+        marker="        Q_arr, F_arr = self.Q_and_F(",
+        replacement="        Q_arr, F_arr = candidate_filter.Q_and_F(",
         occurrence=1,
     )
     mutations["taste_shock_simulate:attribute_q_and_f"] = _replace_nth(
         text=source,
-        marker="            Q_arr, F_arr = Q_and_F(",
-        replacement="            Q_arr, F_arr = candidate_filter.Q_and_F(",
+        marker="        Q_arr, F_arr = self.Q_and_F(",
+        replacement="        Q_arr, F_arr = candidate_filter.Q_and_F(",
         occurrence=3,
     )
     mutations["singleton_simulate:attribute_argmax_and_max"] = source.replace(
@@ -4494,9 +4533,9 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         "path": MAX_Q_SOURCE,
         "source": replace_once(
             source=max_source,
-            old="            if name in q_and_f_arg_names",
+            old="            if name in self.q_and_f_arg_names",
             new=(
-                "            if name in q_and_f_arg_names "
+                "            if name in self.q_and_f_arg_names "
                 'and name != "_lcm_action_block_width"'
             ),
             label="streamed colliding Q argument preservation",
@@ -4506,9 +4545,9 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         "path": MAX_Q_SOURCE,
         "source": _insert_before_nth(
             text=max_source,
-            marker="        if has_taste_shocks:\n",
+            marker="        if self.has_taste_shocks:\n",
             insertion=(
-                '        if "_lcm_action_block_width" in q_and_f_arg_names:\n'
+                '        if "_lcm_action_block_width" in self.q_and_f_arg_names:\n'
                 '            q_and_f_params["_lcm_action_block_width"] = action_block_width\n'
             ),
             occurrence=1,

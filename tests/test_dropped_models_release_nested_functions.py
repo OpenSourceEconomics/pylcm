@@ -32,21 +32,6 @@ from tests.test_models.deterministic.regression import (
 )
 
 _ENGINE_SOURCE_ROOT = Path(_lcm.__file__).resolve().parent
-# Sources that still define a function per call, and why:
-# - the candidate certificate pins the reducer builders' bodies verbatim, nested
-#   definitions included, so their shape changes with that certificate or not at all;
-# - the remaining three are converted together with the execution work that rewrites
-#   the same call sites.
-_EXEMPT_SOURCES = frozenset(
-    _ENGINE_SOURCE_ROOT / relative
-    for relative in (
-        Path("regime_building/max_Q_over_a.py"),
-        Path("regime_building/collective.py"),
-        Path("solution/negm.py"),
-        Path("solution/nnbegm.py"),
-        Path("regime_building/processing.py"),
-    )
-)
 _TOY_PARAMS: UserParams = {"discount_factor": 0.95}
 
 
@@ -75,7 +60,6 @@ def _live_nested_functions(*, source_root: Path) -> int:
         # and dies with its function, so counting it would double every survivor.
         and not obj.__qualname__.endswith(".__annotate__")
         and Path(obj.__code__.co_filename).is_relative_to(source_root)
-        and Path(obj.__code__.co_filename) not in _EXEMPT_SOURCES
     )
 
 
