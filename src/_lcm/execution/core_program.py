@@ -1085,7 +1085,7 @@ def _resolve_input_transfer_plan(
 
 def _validate_value_reads(*, program: MaterializedCoreProgram) -> None:
     """Validate exact core-input locators without constraining artifact fan-out."""
-    locators: set[tuple[object, tuple[str | int, ...]]] = set()
+    locators: set[tuple[object, tuple[str | int, ...], str | None]] = set()
     source_node: tuple[int, str, str] | None = None
     for read in program.requirements.value_reads:
         if not isinstance(read, ValueRead):
@@ -1106,7 +1106,7 @@ def _validate_value_reads(*, program: MaterializedCoreProgram) -> None:
             )
             raise ValueError(msg)
 
-        locator = (read.source.channel, read.source.path)
+        locator = (read.source.channel, read.source.path, read.source.argument)
         if locator in locators:
             msg = f"Core program has a duplicate value-read argument path: {locator!r}."
             raise ValueError(msg)
@@ -1118,40 +1118,43 @@ def _value_read_argument_leaf(
     *, program: MaterializedCoreProgram, read: ValueRead
 ) -> _TransferArgumentLeaf:
     """Resolve one declared consumer path to an array-like lowering leaf."""
-    channel = read.source.channel.value
-    if channel not in program.arguments:
-        msg = f"Value-read input channel {channel!r} is missing from program arguments."
+    root = read.source.argument or read.source.channel.value
+    if root not in program.arguments:
+        msg = f"Value-read argument {root!r} is missing from program arguments."
         raise ValueError(msg)
 
-    value: object = program.arguments[channel]
+    value: object = program.arguments[root]
     traversed: list[str | int] = []
     for segment in read.source.path:
         traversed.append(segment)
         if isinstance(value, Mapping):
             if segment not in value:
-                msg = f"Value-read argument path {(channel, *traversed)!r} is missing."
+                msg = f"Value-read argument path {(root, *traversed)!r} is missing."
                 raise ValueError(msg)
             value = value[segment]
             continue
         if isinstance(value, tuple):
             if type(segment) is not int or segment >= len(value):
                 msg = (
-                    f"Value-read argument path {(channel, *traversed)!r} does not "
+                    f"Value-read argument path {(root, *traversed)!r} does not "
                     "select an existing sequence item."
                 )
                 raise ValueError(msg)
             value = value[segment]
             continue
+        if type(segment) is str and hasattr(value, segment):
+            value = getattr(value, segment)
+            continue
         msg = (
-            f"Value-read argument path {(channel, *traversed)!r} traverses a "
+            f"Value-read argument path {(root, *traversed)!r} traverses a "
             "non-container value."
         )
         raise ValueError(msg)
 
     if getattr(value, "shape", None) is None or getattr(value, "dtype", None) is None:
         msg = (
-            f"Value-read argument path {(channel, *read.source.path)!r} must "
-            "resolve to an array-like leaf with shape and dtype."
+            f"Value-read argument path {(root, *read.source.path)!r} must resolve to "
+            "an array-like leaf with shape and dtype."
         )
         raise TypeError(msg)
     return cast("_TransferArgumentLeaf", value)

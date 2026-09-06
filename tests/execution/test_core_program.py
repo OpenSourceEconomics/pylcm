@@ -264,7 +264,7 @@ def test_value_input_planning_rejects_consistently_wrong_consumer_node() -> None
         pytest.param(
             "missing-channel",
             ValueError,
-            "input channel.*missing",
+            "argument .* is missing from program arguments",
             id="missing-channel",
         ),
         pytest.param(

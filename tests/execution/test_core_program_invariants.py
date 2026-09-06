@@ -263,7 +263,7 @@ def test_duplicate_target_value_argument_path_is_rejected() -> None:
 @pytest.mark.parametrize(
     ("value_arguments", "message"),
     [
-        ({}, "input channel.*missing"),
+        ({}, "argument .* is missing from program arguments"),
         (
             {ValueInputChannel.NEXT_REGIME_VALUE.value: {"other": jnp.ones(2)}},
             "argument path.*missing",

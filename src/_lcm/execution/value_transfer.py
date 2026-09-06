@@ -17,8 +17,9 @@ import jax
 import jax.numpy as jnp
 
 from _lcm.typing import RegimeName
+from lcm.solver_api import ArtifactKey
 
-_VALUE_TRANSFER_VERSION = 1
+_VALUE_TRANSFER_VERSION = 2
 
 
 class ValueArtifactKind(StrEnum):
@@ -26,14 +27,16 @@ class ValueArtifactKind(StrEnum):
 
     REGIME_VALUE = "regime_value"
     GATED_CONTINUATION = "gated_continuation"
+    CONTINUATION_LEAF = "continuation_leaf"
 
 
 class ValueInputChannel(StrEnum):
-    """GridSearch argument channel through which a value reaches a core."""
+    """Argument channel through which a stored value reaches a core."""
 
     NEXT_REGIME_VALUE = "next_regime_to_V_arr"
     SAME_PERIOD_VALUE = "same_period_regime_to_V_arr"
     EDGE_REFERENCE_VALUE = "edge_reference_regime_to_V_arr"
+    CONTINUATION_LEAF = "next_regime_to_continuation"
 
 
 class ValueTransferKind(StrEnum):
@@ -45,18 +48,25 @@ class ValueTransferKind(StrEnum):
 
 @dataclass(frozen=True, kw_only=True)
 class ValueArtifactAddress:
-    """Logical address of one stored target value or gated continuation.
+    """Logical address of one stored target value, gated continuation, or leaf.
 
     ``period`` is the value's solved period for :attr:`REGIME_VALUE` and the
     target/fold period for :attr:`GATED_CONTINUATION`.  A gated continuation is
     owned by the economic source regime and edge target together, which prevents
     two distinct ``Wbar`` objects with the same shape from sharing an identity.
+    A :attr:`CONTINUATION_LEAF` is one pytree leaf of the keyed continuation the
+    target regime stored for its period, addressed as ``(period, regime,
+    artifact_key, leaf_path)``.
     """
 
     kind: ValueArtifactKind
     period: int
     regime: RegimeName
     target_regime: RegimeName | None = None
+    artifact_key: ArtifactKey | None = None
+    """Versioned key of the continuation whose leaf is addressed."""
+    leaf_path: tuple[str, ...] = ()
+    """Pytree path of the addressed leaf inside that continuation."""
 
     def __post_init__(self) -> None:
         """Reject ambiguous or unsupported artifact addresses."""
@@ -65,6 +75,29 @@ class ValueArtifactAddress:
         )
         _require_period(period=self.period, label="artifact period")
         _require_name(name=self.regime, label="artifact regime")
+        object.__setattr__(self, "leaf_path", tuple(self.leaf_path))
+        if self.kind is ValueArtifactKind.CONTINUATION_LEAF:
+            if self.target_regime is not None:
+                msg = "A continuation-leaf artifact cannot name an edge target regime."
+                raise ValueError(msg)
+            if not isinstance(self.artifact_key, ArtifactKey):
+                msg = "A continuation-leaf artifact must name its ArtifactKey."
+                raise TypeError(msg)
+            if not self.leaf_path or any(
+                not isinstance(step, str) or not step for step in self.leaf_path
+            ):
+                msg = (
+                    "A continuation-leaf artifact must name a non-empty leaf_path of "
+                    "non-empty strings."
+                )
+                raise ValueError(msg)
+            return
+        if self.artifact_key is not None or self.leaf_path:
+            msg = (
+                f"A {self.kind.value} artifact carries no artifact_key and no "
+                "leaf_path."
+            )
+            raise ValueError(msg)
         if self.kind is ValueArtifactKind.REGIME_VALUE:
             if self.target_regime is not None:
                 msg = "A regime-value artifact cannot name an edge target regime."
@@ -81,10 +114,11 @@ class ValueArtifactAddress:
 class ValueConsumerAddress:
     """Logical address of one value leaf consumed by a source core.
 
-    ``path`` is relative to ``channel``.  For the currently supported mappings,
-    its first segment is the target or reference regime key.  Keeping the path
-    separate from the artifact identity allows one stored value to feed several
-    argument leaves without conflating their liveness events.
+    ``path`` is relative to ``argument`` when the read names one, and to
+    ``channel`` otherwise; for a channel-indexed read its first segment is the
+    target or reference regime key.  Keeping the path separate from the artifact
+    identity allows one stored value to feed several argument leaves without
+    conflating their liveness events.
     """
 
     source_period: int
@@ -92,6 +126,8 @@ class ValueConsumerAddress:
     core_key: str
     channel: ValueInputChannel
     path: tuple[str | int, ...]
+    argument: str | None = None
+    """Program argument holding the leaf, when it is not under `channel`."""
 
     def __post_init__(self) -> None:
         """Validate the complete core-input locator."""
@@ -101,7 +137,12 @@ class ValueConsumerAddress:
         _require_enum(
             value=self.channel, enum_type=ValueInputChannel, label="input channel"
         )
-        if not isinstance(self.path, tuple) or not self.path:
+        if self.argument is not None:
+            _require_name(name=self.argument, label="consumer argument")
+            if not isinstance(self.path, tuple):
+                msg = "A value consumer path must be a tuple."
+                raise TypeError(msg)
+        elif not isinstance(self.path, tuple) or not self.path:
             msg = "A value consumer path must be a non-empty tuple."
             raise TypeError(msg)
         for segment in self.path:
@@ -115,8 +156,9 @@ class ResolvedValueTransfer:
     The full object is hashable and retains exact logical coordinates for
     inspection and liveness.  ``specialization_key`` deliberately omits absolute
     periods and source-regime/core coordinates: those do not change compiled code.
-    It retains the argument-tree role, including the target mapping key in
-    ``source.path``, plus the operator, concrete layouts, and leaf metadata, so
+    It retains the argument-tree role — the target mapping key in ``source.path``
+    for a channel-indexed read, the argument name in ``source.argument`` for a
+    direct one — plus the operator, concrete layouts, and leaf metadata, so
     behaviorally different transfers cannot share a lowering.
     """
 
@@ -184,6 +226,7 @@ class ResolvedValueTransfer:
                 self.target.kind,
                 self.source.channel,
                 self.source.path,
+                self.source.argument,
                 self.kind,
                 self.stored_sharding,
                 self.source_sharding,
@@ -259,10 +302,11 @@ def apply_value_transfer_plan(
 ) -> Mapping[str, object]:
     """Apply a transfer plan to an immutable copy of a core-argument tree.
 
-    A source locator is ``channel.value`` followed by ``path``. Each locator
-    may occur once in a plan. Mappings are rebuilt in their original iteration
-    order and frozen; tuples remain tuples. Other containers are unsupported,
-    so lowering and runtime dispatch cannot silently disagree about traversal.
+    A source locator is the read's named argument, or ``channel.value`` when it
+    names none, followed by ``path``. Each locator may occur once in a plan.
+    Mappings are rebuilt in their original iteration order and frozen; tuples
+    remain tuples. Other containers are unsupported, so lowering and runtime
+    dispatch cannot silently disagree about traversal.
     """
     if not isinstance(arguments, Mapping):
         msg = "Core arguments for a value-transfer plan must be a mapping."
@@ -274,23 +318,26 @@ def apply_value_transfer_plan(
         if not isinstance(transfer, ResolvedValueTransfer):
             msg = "A value-transfer plan may contain only ResolvedValueTransfer items."
             raise TypeError(msg)
-        locator = (transfer.source.channel.value, transfer.source.path)
+        locator = (
+            transfer.source.argument or transfer.source.channel.value,
+            transfer.source.path,
+        )
         if locator in seen:
             msg = f"Duplicate value-transfer consumer path: {locator!r}."
             raise ValueError(msg)
         seen.add(locator)
-        channel, path = locator
-        if channel not in result:
-            msg = f"Value-transfer input channel {channel!r} is missing."
+        root, path = locator
+        if root not in result:
+            msg = f"Value-transfer input argument {root!r} is missing."
             raise KeyError(msg)
         replaced = _replace_transfer_leaf(
-            node=result[channel],
+            node=result[root],
             path=path,
             transfer=transfer,
-            traversed=(channel,),
+            traversed=(root,),
         )
         updated = dict(result)
-        updated[channel] = replaced
+        updated[root] = replaced
         result = MappingProxyType(updated)
     return result
 
@@ -341,8 +388,8 @@ def _replace_transfer_leaf(
         )
         return tuple(updated)
     msg = (
-        f"Value-transfer path {traversed!r} reached unsupported container "
-        f"{type(node).__name__}."
+        f"Value-transfer path {traversed!r} would rebuild a "
+        f"{type(node).__name__}; only mapping and tuple containers are rebuilt."
     )
     raise TypeError(msg)
 
@@ -351,17 +398,22 @@ def _validate_edge_identity(
     *, target: ValueArtifactAddress, source: ValueConsumerAddress
 ) -> None:
     """Match the source node and input leaf to the stored artifact."""
-    expected_regime = (
-        target.regime
-        if target.kind is ValueArtifactKind.REGIME_VALUE
-        else target.target_regime
-    )
-    if source.path[0] != expected_regime:
-        msg = (
-            "The first value-consumer path segment must name the addressed target: "
-            f"expected {expected_regime!r}, got {source.path[0]!r}."
+    if source.argument is None:
+        expected_regime = (
+            target.regime
+            if target.kind is not ValueArtifactKind.GATED_CONTINUATION
+            else target.target_regime
         )
-        raise ValueError(msg)
+        if source.path[0] != expected_regime:
+            msg = (
+                "The first value-consumer path segment must name the addressed "
+                f"target: expected {expected_regime!r}, got {source.path[0]!r}."
+            )
+            raise ValueError(msg)
+
+    if target.kind is ValueArtifactKind.CONTINUATION_LEAF:
+        _validate_continuation_leaf_identity(target=target, source=source)
+        return
 
     if target.kind is ValueArtifactKind.GATED_CONTINUATION:
         if target.regime != source.source_regime:
@@ -397,6 +449,25 @@ def _validate_edge_identity(
             else "one after"
         )
         msg = f"A regime-value artifact period must be {relation} its source period."
+        raise ValueError(msg)
+
+
+def _validate_continuation_leaf_identity(
+    *, target: ValueArtifactAddress, source: ValueConsumerAddress
+) -> None:
+    """Match one addressed continuation leaf to its channel and its period."""
+    if source.channel is not ValueInputChannel.CONTINUATION_LEAF:
+        msg = (
+            "A continuation leaf may enter a core only through the "
+            "next_regime_to_continuation channel."
+        )
+        raise ValueError(msg)
+    expected_period = source.source_period + 1
+    if target.period != expected_period:
+        msg = (
+            "A continuation-leaf period must be one after its source period: "
+            f"expected {expected_period}, got {target.period}."
+        )
         raise ValueError(msg)
 
 

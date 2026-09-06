@@ -2,6 +2,7 @@
 
 from dataclasses import FrozenInstanceError
 from types import MappingProxyType
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -20,6 +21,7 @@ from _lcm.execution.value_transfer import (
     apply_value_transfer_plan,
     resolve_value_transfer,
 )
+from lcm.solver_api import EGM_CONTINUATION
 
 
 def _mesh() -> jax.sharding.Mesh:
@@ -172,7 +174,7 @@ def test_addresses_are_immutable_and_same_artifact_can_feed_multiple_paths() -> 
     ],
 )
 def test_regime_value_address_fails_closed(*, kwargs, error, message) -> None:
-    values = {
+    values: dict[str, Any] = {
         "kind": ValueArtifactKind.REGIME_VALUE,
         "period": 3,
         "regime": "working",
@@ -210,7 +212,7 @@ def test_gated_continuation_requires_an_edge_target() -> None:
     ],
 )
 def test_consumer_address_fails_closed(*, replacement, error, message) -> None:
-    kwargs = {
+    kwargs: dict[str, Any] = {
         "source_period": 2,
         "source_regime": "working",
         "core_key": "main",
@@ -460,7 +462,7 @@ def test_plan_rejects_missing_channel_or_mapping_path() -> None:
     stored = _stored_value()
     transfer = _resolve_aligned(value=stored)
 
-    with pytest.raises(KeyError, match="input channel"):
+    with pytest.raises(KeyError, match="input argument"):
         apply_value_transfer_plan(arguments={}, plan=(transfer,))
     with pytest.raises(KeyError, match="mapping path"):
         apply_value_transfer_plan(
@@ -474,7 +476,7 @@ def test_plan_rejects_missing_channel_or_mapping_path() -> None:
 @pytest.mark.parametrize(
     ("path", "branch", "error", "message"),
     [
-        (("working", 0), [object()], TypeError, "unsupported container list"),
+        (("working", 0), [object()], TypeError, "would rebuild a list"),
         (("working", "leaf"), (object(),), TypeError, "requires an integer index"),
         (("working", 1), (object(),), IndexError, "out of range"),
     ],
@@ -500,3 +502,27 @@ def test_plan_rejects_unsupported_or_invalid_tree_traversal(
 
     with pytest.raises(error, match=message):
         apply_value_transfer_plan(arguments=arguments, plan=(transfer,))
+
+
+def test_a_continuation_leaf_read_is_dated_one_period_after_its_source() -> None:
+    """A parent reads its target's carry from the next period."""
+    with pytest.raises(ValueError, match="one after"):
+        ResolvedValueTransfer(
+            target=ValueArtifactAddress(
+                kind=ValueArtifactKind.CONTINUATION_LEAF,
+                period=3,
+                regime="retired",
+                artifact_key=EGM_CONTINUATION,
+                leaf_path=("value",),
+            ),
+            source=_source(
+                source_period=3,
+                channel=ValueInputChannel.CONTINUATION_LEAF,
+                path=("retired", "value"),
+            ),
+            kind=ValueTransferKind.ALIGNED_LOCAL,
+            stored_sharding=_named_sharding(),
+            source_sharding=_named_sharding(),
+            expected_shape=(4,),
+            expected_dtype=jnp.float32,
+        )

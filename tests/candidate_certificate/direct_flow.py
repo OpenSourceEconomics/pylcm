@@ -186,9 +186,9 @@ _SOURCE_SEALS = {
     MAX_Q_SOURCE: "0f7d4e51d780f4ba839844d42c0847742c17ac28ec0eeb026eb5cf38fcc6ce4d",
     PROCESSING_SOURCE: "004261c7950502a79636b10a4594bbfa5a958d9aafd119a3ed981936c1e49047",
     GRID_SEARCH_SOURCE: "b1753aa03fcd6eab34838b868e532008ccb1280bb9fca9ab6e27e7f506b43e06",
-    CORE_PROGRAM_SOURCE: "866d7136ee5d0f590d5216a7aeb3349f69c2d600dd3fbbb34b18f4c4042d3936",
+    CORE_PROGRAM_SOURCE: "4210347392e36c2a37749468780f678daf45ce1da52c6389eeaf159f63d6ceae",
     OUTPUT_LAYOUT_SOURCE: "65541f5e1ff3edad0f9105457e478525d3913fcf32204aeba6fe290cf0fd676d",
-    VALUE_TRANSFER_SOURCE: "44b8629c7b461b6b0216c79ba25101179e1b8cb2edf40630a55c6b9403fbbd2d",
+    VALUE_TRANSFER_SOURCE: "f8167e09df136c1aae355e6902669abc881660e6899a6a2bd7e6914b5ff2a79a",
     ACTION_STREAMING_SOURCE: "bd693f4bab250215dea9b6fb6021c518163305a890a9536f66af9e1d7dc5c308",
     ACTION_REDUCTION_SOURCE: "6cee6ea2dbef0ba710fa4a318a2113377d6513cee508e73004861597f9c220f9",
     COLLECTIVE_ACTION_REDUCTION_SOURCE: "7a80418764fdf9754062a23707c5d39fa7abfcaac9c8e8f7803c4d8f1b461347",
@@ -1966,8 +1966,8 @@ ARTIFACT = "artifact"
                 "_validate_core_program": "42bdbfa49881acb32fefaf6131e3649da75c2ae096d16ac76ebf12640fef6c0d",
                 "_validate_materialized_declaration": "d4a7b72b1943b877e689ed05bc6e83e8194fa20169615d7a0a8bd970bce96534",
                 "_resolve_input_transfer_plan": "82f85e723e106098c2fa06f08d3e13bab356c75d313b73d10ac0faec54d70c93",
-                "_validate_value_reads": "8df3d4030dbe923d9050c986c4c9a0efd7a20d9321a16913d9f0127a6a1c6130",
-                "_value_read_argument_leaf": "9c67cfd4b589107687a4d3bcb3355cd9dc2ebfc969b3f2ca9e3fac6f982ecab4",
+                "_validate_value_reads": "83497bed4bfacc67528ca54c6a9e17c151e59a010e3670d78df94eb642f2bd86",
+                "_value_read_argument_leaf": "5578c82ba01f569fd8ab63c4d2f09bb94529a08f07a9ee203f4c22be737eede2",
                 "_validate_transfer_argument_metadata": "982c86620af578c44c9a3881eca2917d84773b724a7072e54a134fdc5523820e",
                 "_validate_streamable_axis": "e0398857430aece0ac4722c6ae6660ccbf0d95a5549f318ae0245aab34905eb3",
                 "_validate_tile_width": "15f543450ad5f6b739cfa8aafbf0a4fb34a0c5b677da4866a2afedd1effde831",
@@ -2384,6 +2384,8 @@ def _value_transfer_errors(tree: ast.Module) -> list[str]:
             "period: int",
             "regime: RegimeName",
             "target_regime: RegimeName | None = None",
+            "artifact_key: ArtifactKey | None = None",
+            "leaf_path: tuple[str, ...] = ()",
         ),
         methods=("__post_init__",),
     )
@@ -2398,6 +2400,7 @@ def _value_transfer_errors(tree: ast.Module) -> list[str]:
                 "core_key: str",
                 "channel: ValueInputChannel",
                 "path: tuple[str | int, ...]",
+                "argument: str | None = None",
             ),
             methods=("__post_init__",),
         )
@@ -2423,10 +2426,12 @@ def _value_transfer_errors(tree: ast.Module) -> list[str]:
     enum_contracts = {
         "ValueArtifactKind": """REGIME_VALUE = "regime_value"
 GATED_CONTINUATION = "gated_continuation"
+CONTINUATION_LEAF = "continuation_leaf"
 """,
         "ValueInputChannel": """NEXT_REGIME_VALUE = "next_regime_to_V_arr"
 SAME_PERIOD_VALUE = "same_period_regime_to_V_arr"
 EDGE_REFERENCE_VALUE = "edge_reference_regime_to_V_arr"
+CONTINUATION_LEAF = "next_regime_to_continuation"
 """,
         "ValueTransferKind": """ALIGNED_LOCAL = "aligned_local"
 COPY_TO_SOURCE_LAYOUT = "copy_to_source_layout"
@@ -2468,7 +2473,7 @@ COPY_TO_SOURCE_LAYOUT = "copy_to_source_layout"
     ]
     if not _statements_match(
         observed=version_assignments,
-        expected_source="_VALUE_TRANSFER_VERSION = 1",
+        expected_source="_VALUE_TRANSFER_VERSION = 2",
     ):
         errors.append("value transfer: specialization version binding changed")
 
@@ -2477,14 +2482,15 @@ COPY_TO_SOURCE_LAYOUT = "copy_to_source_layout"
             tree=tree,
             label="value transfer",
             contracts={
-                "ValueArtifactAddress.__post_init__": "f7308877e3094c499f628aea48b5e6496bba83bcbf7a47b2bfe6b8b9cf00516f",
-                "ValueConsumerAddress.__post_init__": "95839f87e475d04b156cd5a9a91635c481e87f5efff2e7ddc92aba50b7291cbc",
-                "ResolvedValueTransfer.__post_init__": "044b3d79ca212c88473b4140302a53d339114f2f0816446b0c54bcce479ec1f3",
+                "ValueArtifactAddress.__post_init__": "252c641c48c35d10f4d278a26bec084bd21addb80e4f606e7d7462a76ca8067d",
+                "ValueConsumerAddress.__post_init__": "e2a6c26a492e21aef01bc5ae519d02426a0f6e067201925b2797eed13fadcc41",
+                "ResolvedValueTransfer.__post_init__": "292c9fc9a2f2a04e0da2dd7ab6ffc2d986a7f5d46a13f7347eebc1a712af6fdd",
                 "resolve_value_transfer": "232ec967f8b1c8c9055ae513e5afce130d808e8afe7f90271fc19f111db0cc1e",
                 "apply_value_transfer": "9b300e2118558fefb5027a39bfdac5acbfd933cc3c9f26ffa92237c2cad471c2",
-                "apply_value_transfer_plan": "5b29e5ee7a81f92bafeaf8316ce68a8b24df89a5c88b34a30272858719b860e4",
-                "_replace_transfer_leaf": "5c963af02fdc3b6b6db3d47738fcb5a88bc563abd3e084e7e2aa34dec65ee477",
-                "_validate_edge_identity": "e5dc95f73258f513d41f76d249422cfe0d8943cb2e4a128a45cc2a98c5e74ea5",
+                "apply_value_transfer_plan": "e68a7ffc5021a56c47ca597387c31cff59138d97a3c84527e74c1660cf8fd498",
+                "_replace_transfer_leaf": "ea8d139bc1d7fca22f40144bc343840b0be464fad21f636362a0aedd9e1af1ce",
+                "_validate_edge_identity": "315fd9e827952a158fd9b60fe83c408fb78ef17abe8c3a8da8e422b5f62b89e7",
+                "_validate_continuation_leaf_identity": "34fd49be324260cc533ba51088dd46e49fbfdc4f21072b84f1b0ff3035428f40",
                 "_assert_value_metadata": "7ebe6eb927b678ae88ed2a12d8f7571bdd8a86d5a4bf3dc55cd24f92da6e389d",
                 "_normalize_shape": "346ecb8fac04e0e000005dbc613e197e374b60cd9b08d1a53bba790e04c3621a",
                 "_require_period": "31f344bbdf23177b3a5bd9d2561bcbe4c9398814c1e7cbd6920afdbc0c013d68",
@@ -2501,6 +2507,7 @@ COPY_TO_SOURCE_LAYOUT = "copy_to_source_layout"
             tree=tree,
             label="value transfer",
             relevant_import_names={
+                "ArtifactKey",
                 "Hashable",
                 "Iterable",
                 "Mapping",
@@ -2520,8 +2527,10 @@ COPY_TO_SOURCE_LAYOUT = "copy_to_source_layout"
                 "import jax",
                 "import jax.numpy as jnp",
                 "from _lcm.typing import RegimeName",
+                "from lcm.solver_api import ArtifactKey",
             ],
             expected_binding_counts={
+                "ArtifactKey": 1,
                 "Hashable": 1,
                 "Iterable": 1,
                 "Mapping": 1,
@@ -2543,6 +2552,7 @@ COPY_TO_SOURCE_LAYOUT = "copy_to_source_layout"
                 "_require_name": 1,
                 "_require_period": 1,
                 "_require_sharding": 1,
+                "_validate_continuation_leaf_identity": 1,
                 "_validate_edge_identity": 1,
                 "_validate_path_segment": 1,
                 "any": 0,
@@ -5043,8 +5053,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         ),
         "value_access:core_consumer_channel_rebound": replace_once(
             source=core_program_source,
-            old="    channel = read.source.channel.value",
-            new='    channel = "next_regime_to_V_arr"',
+            old="    root = read.source.argument or read.source.channel.value",
+            new='    root = "next_regime_to_V_arr"',
             label="core-program exact consumer channel",
         ),
     }
@@ -5525,13 +5535,10 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         "value_transfer:consumer_channel_ignored": replace_once(
             source=value_transfer_source,
             old=(
-                "        locator = ("
-                "transfer.source.channel.value, transfer.source.path)"
+                "            transfer.source.argument or "
+                "transfer.source.channel.value,\n"
             ),
-            new=(
-                "        locator = (ValueInputChannel.NEXT_REGIME_VALUE.value, "
-                "transfer.source.path)"
-            ),
+            new="            ValueInputChannel.NEXT_REGIME_VALUE.value,\n",
             label="exact transfer consumer channel",
         ),
         "value_transfer:edge_identity_check_bypassed": replace_once(
