@@ -395,9 +395,7 @@ def _binding_kernel(
     The construction names the route's own kernel class and passes exactly
     ``fields``, each the builder local of the same name, so an arm cannot hand
     the kernel a narrowed axis count, a disabled collective route, or any value
-    the builder did not compute for it. Under the previous shape the reducer
-    read those locals as free variables, and the wiring was pinned by the body
-    itself; a field the construction may set freely would reopen that path.
+    the builder did not compute for it.
     """
     if len(call.args) != 1 or not isinstance(call.args[0], ast.Call):
         raise ValueError("the signature wrapper does not take one kernel instance")
