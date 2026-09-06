@@ -18,7 +18,6 @@ from _lcm.execution.value_transfer import (
     ValueArtifactKind,
     ValueTransferKind,
 )
-from _lcm.solution import backward_induction
 from _lcm.solution.backward_induction import (
     _build_planned_input_liveness,
     _ProgramExecutionMetadata,
@@ -82,10 +81,15 @@ def _aligned_transfer(*, read: ValueRead) -> ResolvedValueTransfer:
 
 
 def test_a_fold_declares_a_read_of_every_regime_it_evaluates() -> None:
-    """Every regime a fold evaluates on is one declared read of that period."""
+    """A period's folds declare a read of exactly the regimes they evaluate on.
+
+    Both consent edges fold onto `married` here, and their gate reads the two
+    singleton regimes the partners fall back to. No other regime's value enters
+    a fold at this period, so no other regime is declared.
+    """
     reads = gated_edge_fold_value_reads(regimes=_model()._regimes, period=_PERIOD)
 
-    assert {read.target.regime for read in reads} >= {
+    assert {read.target.regime for read in reads} == {
         "married",
         "single_f_p1",
         "single_m_p1",
@@ -112,7 +116,9 @@ def test_a_folded_value_has_the_fold_among_its_planned_consumers() -> None:
         0
     ].target
 
-    assert ledger.remaining_consumers(artifact=folded) >= 1
+    # Two consent edges fold onto `married` at this period and no core reads
+    # its raw value, so the folds are its two planned consumers.
+    assert ledger.remaining_consumers(artifact=folded) == 2
 
 
 def test_a_fold_dispatch_is_a_planned_dispatch_of_its_own() -> None:
@@ -129,6 +135,25 @@ def test_a_fold_dispatch_is_a_planned_dispatch_of_its_own() -> None:
     )
 
 
-def test_the_blanket_fold_pin_is_gone() -> None:
-    """The fold's reads are declared, so nothing pins them wholesale."""
-    assert not hasattr(backward_induction, "_gated_fold_raw_value_artifacts")
+def test_a_folded_value_is_pinned_by_retention_rather_than_by_the_fold() -> None:
+    """A folded value's only unplanned pin is the retained public result.
+
+    Every regime value of every active period is retained in the solve result,
+    so a folded value stays ineligible for release even once every planned
+    consumer of it — the folds among them — has committed.
+    """
+    model = _model()
+    ledger = _build_planned_input_liveness(
+        regimes=model._regimes,
+        program_metadata=_program_metadata(model=model),
+    )
+    folded = gated_edge_fold_value_reads(regimes=model._regimes, period=_PERIOD)[
+        0
+    ].target
+    for dispatch in tuple(ledger.pending_dispatches):
+        ledger.commit_successful_dispatch(dispatch=dispatch)
+    # Refuses unless every planned dispatch committed and every count reached
+    # zero, so the assertion below reads a genuinely closed count.
+    ledger.assert_solve_complete()
+
+    assert not ledger.is_release_eligible(artifact=folded)
