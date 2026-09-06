@@ -19,16 +19,53 @@ directly off the evaluated values.
 
 The rule is stated as a left-to-right sweep, but the executable path evaluates
 it in parallel rather than sequentially: every query abscissa is scored against
-every link at once, as a dense `(n_query, n_link)` bracket-and-interpolate
-block, and the winner is an argmax along the link axis. Each query's answer is
+every link at once, as a dense `(n_query, n_link)` bracket-and-compare block,
+and the winner is a reduction along the link axis. Each query's answer is
 independent of the others, so nothing about the rule needs the order — what the
 parallel form costs instead is a working set proportional to the product, where
 a true emitting scan would carry one query at a time.
 
+Three decisions here are structural rather than numerical — which link owns a
+query, whether the owner changed between two queries, and where the change
+happened — and none of them is settled by a rounded comparison:
+
+- **Ownership is certified.** A provisional winner is read off the values and
+  then challenged: `certified_sign` decides the sign of each bracketing link's
+  value less the standing winner's from the stored operands, in exact integer
+  arithmetic. Links certified level with the winner are separated by a
+  right-continuous rule — the link that extends strictly right of the query,
+  then the steeper one, then the earlier stored link — so the owner at a node
+  where two branches meet is the one that owns the interval above it, and the
+  switch is visible at that node rather than one interval later.
+- **A value is read from its own chord's endpoints.** Each link is evaluated at
+  a query by weighing its two stored endpoints against their distances to the
+  query, with the products carried at twice the working precision. The reading
+  is the stored value at either endpoint exactly, and elsewhere it is the
+  chord's own value rather than a line extrapolated from one far anchor.
+- **A crossing is located inside the interval it happened in.** The two winning
+  chords' gap is evaluated at the two adjacent query abscissae; a crossing
+  exists exactly where that gap changes sign across them, and its abscissa is
+  the root of the gap's own secant between them.
+
 A crossing abscissa is inserted twice — same abscissa, left- and
 right-extrapolated policy — so the refined arrays stay weakly ascending and the
 policy discontinuity at a discrete-choice switch is preserved exactly, the same
-convention FUES uses.
+convention FUES uses. Where a crossing lands *on* one of the two query nodes,
+that node's own row is already one of the two records, and the emission
+contributes only the other one:
+
+- a crossing at the left node: that node published the outgoing owner, so only
+  the incoming owner's record is inserted, after it;
+- a crossing at the right node: that node publishes the incoming owner, so only
+  the outgoing owner's record is inserted, before it.
+
+Either way the kink abscissa carries exactly two rows, outgoing owner first, and
+no row duplicates the node's own. Both orientations are stated so the ordering
+is defined whichever way the geometry falls, but they are not equally reachable:
+right-continuous ownership hands a node where two branches meet to the branch
+that owns the interval above it, which puts the crossing on the *right* node of
+the interval the switch is observed in. The left-node branch is the rule's other
+half rather than a case the sweep is expected to take.
 
 All shapes are static, so the kernel can be `jax.jit`-compiled and `jax.vmap`-
 batched over a leading dimension of the candidate arrays.
@@ -37,39 +74,25 @@ batched over a leading dimension of the candidate arrays.
 import functools
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, NamedTuple
 
 import jax
 import jax.numpy as jnp
 
-from lcm.typing import BoolND, Float1D, FloatND, Int1D, ScalarInt
+from _lcm.egm.upper_envelope.certified_sign import certified_margin_sign
+from _lcm.egm.upper_envelope.double_double import (
+    dd_add,
+    dd_from_difference,
+    dd_mul_float,
+    dd_quotient,
+)
+from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, ScalarInt
 
-# Band within which the dense envelope evaluated at a crossing abscissa and the
-# crossing's own value count as the same number. They are one mathematical
-# quantity reached by two routes -- a maximum over segment lines, and a two-line
-# intersection solve whose division amplifies the inputs' rounding -- so the band
-# is set by how far those routes can drift, not by the format's resolution.
-_ON_ENVELOPE_RTOL = 1e-5
-_ON_ENVELOPE_ATOL = 1e-7
-# ...but it can never be *narrower* than the format can resolve. The relative
-# term vanishes near zero, leaving the absolute term to decide there, and a
-# fixed `1e-7` sits below float32's epsilon (`1.19e-7`): two readings agreeing
-# to the last bit the format has would still fall outside it, so whether a
-# crossing is emitted would stop being a property of the geometry.
-_ON_ENVELOPE_EPS_MULTIPLE = 8.0
-
-
-def _on_envelope_atol(reference: FloatND) -> FloatND:
-    """Return the absolute band for "this crossing lies on the envelope".
-
-    The declared tolerance, floored at a small multiple of the working dtype's
-    epsilon. At double precision the floor never binds and the band is the
-    declared constant; at single precision the floor is what makes the
-    comparison decidable at all.
-    """
-    return jnp.maximum(
-        _ON_ENVELOPE_ATOL, _ON_ENVELOPE_EPS_MULTIPLE * jnp.finfo(reference.dtype).eps
-    )
+# How many times a certified challenger may replace the standing winner. The
+# provisional winner is already the highest reading, so a challenger can only be
+# a link the reading ordered wrongly; one promotion settles that, and the second
+# is the margin for a challenger that is itself displaced.
+_PROMOTION_ROUNDS = 2
 
 
 def refine_envelope(
@@ -86,12 +109,13 @@ def refine_envelope(
     per consecutive input pair), as the Euler inversion produces them: the
     constrained run followed by the interior run, each ascending along its own
     margin but jointly non-monotone in the endogenous grid. The abscissae are
-    sorted ascending and swept left-to-right; at each abscissa the highest
-    bracketing segment is kept, and where the winning segment switches between
-    two adjacent abscissae the exact crossing point is inserted (twice — left and
-    right policy). The refined arrays have static length `n_refined`, hold the
-    envelope points in weakly ascending grid order, and are NaN-padded in the
-    tail.
+    sorted ascending and swept left-to-right; at each abscissa the certified
+    owner among the bracketing segments publishes both the value and the policy,
+    and where the owning branch switches between two adjacent abscissae the
+    crossing is inserted (twice — left and right policy — unless it lands on one
+    of the two nodes, whose own row is then one of the two records). The refined
+    arrays have static length `n_refined`, hold the envelope points in weakly
+    ascending grid order, and are NaN-padded in the tail.
 
     Args:
         endog_grid: Candidate endogenous grid points (resources). Consecutive
@@ -158,16 +182,18 @@ def refine_envelope(
         link_segment = segment_id[:-1].astype(jnp.int32)
         segment_live = ~dead[:-1] & ~dead[1:] & same_segment
 
-    envelope_value, envelope_policy, winner_link, winner_segment = _evaluate_envelope(
-        query_grid=query_grid,
+    links = _comparable_links(
         left_grid=left_grid,
         right_grid=right_grid,
         left_policy=left_policy,
         right_policy=right_policy,
         left_value=left_value,
         right_value=right_value,
-        segment_id=link_segment,
         segment_live=segment_live,
+    )
+
+    envelope_value, envelope_policy, winner_link, winner_segment = _evaluate_envelope(
+        query_grid=query_grid, links=links, segment_id=link_segment
     )
 
     # A query no segment brackets (e.g. the lone dead-padded tail) yields no
@@ -180,58 +206,41 @@ def refine_envelope(
 
     # Sweep left-to-right: each step emits its query node, then — if the winning
     # *branch* (segment id) differs from the previous live query's winner — the
-    # exact crossing of the two winning links (twice, left and right policy). The
-    # first live query has no predecessor, so it emits only its node.
+    # crossing of the two winning links (as up to two records, left and right
+    # policy). The first live query has no predecessor, so it emits only its node.
     crossing = _crossing_blocks(
         query_grid=query_grid,
         query_drop=query_drop,
         winner_link=winner_link,
         winner_segment=winner_segment,
-        left_grid=left_grid,
-        right_grid=right_grid,
-        left_policy=left_policy,
-        right_policy=right_policy,
-        left_value=left_value,
-        right_value=right_value,
+        links=links,
     )
 
-    # A crossing is a genuine envelope kink only if both branches are on the
-    # envelope there: evaluate the dense envelope at each crossing abscissa and
-    # keep the crossing only where that value is finite and equals the crossing
-    # value. A switch across a *gap* in the candidate cloud intersects two lines
-    # in an interval no segment covers — the dense envelope is `-inf` there, so
-    # the test rejects it; colinear adjacent links of one monotone branch pass,
-    # since the branch's own line is on the envelope at the crossing.
-    crossing_envelope, _, _, _ = _evaluate_envelope(
-        query_grid=crossing.grid,
-        left_grid=left_grid,
-        right_grid=right_grid,
-        left_policy=left_policy,
-        right_policy=right_policy,
-        left_value=left_value,
-        right_value=right_value,
-        segment_id=link_segment,
-        segment_live=segment_live,
+    # A crossing is a genuine envelope kink only if one of the two crossing
+    # branches owns the envelope at the crossing abscissa. A switch across a
+    # *gap* in the candidate cloud intersects two lines in an interval a third
+    # branch dominates, or that no segment covers at all; evaluating the envelope
+    # there names its owner, and a crossing whose owner is neither branch is not
+    # on the envelope. The test is the identity of the owner, so nothing about it
+    # depends on a tolerance.
+    crossing_value, _, _, crossing_owner = _evaluate_envelope(
+        query_grid=crossing.grid, links=links, segment_id=link_segment
     )
-    on_envelope = jnp.isfinite(crossing_envelope) & jnp.isclose(
-        crossing_envelope,
-        crossing.value,
-        atol=_on_envelope_atol(crossing_envelope),
-        rtol=_ON_ENVELOPE_RTOL,
+    on_envelope = jnp.isfinite(crossing_value) & (
+        (crossing_owner == crossing.segment_left)
+        | (crossing_owner == crossing.segment_right)
     )
-    crossing_valid = crossing.valid & on_envelope
+    left_valid = crossing.left_valid & on_envelope
+    right_valid = crossing.right_valid & on_envelope
 
     # Per-query output block: up to three rows in ascending grid order — the two
-    # crossing copies (same abscissa, left then right policy) followed by the
-    # query node. The crossing of step `i` lies in `(grid_{i-1}, grid_i)`, so it
-    # precedes the node `i` in the weakly-ascending output.
+    # crossing records (same abscissa, left then right policy) followed by the
+    # query node. The crossing of step `i` lies in `[grid_{i-1}, grid_i]`, and a
+    # crossing landing on a node contributes only the record that node's own row
+    # is not, so the kink abscissa carries exactly two rows either way.
     nan_scalar = jnp.full((), jnp.nan, dtype=query_grid.dtype)
     node_valid = ~query_drop
-    # Per-query emission rows in ascending grid order: the crossing inserted
-    # before the node (left then right policy copy, same abscissa), then the node
-    # itself. The crossing of step `i` lies in `(grid_{i-1}, grid_i)`, so it
-    # precedes node `i`. Each row carries its own validity flag.
-    row_valid = jnp.stack([crossing_valid, crossing_valid, node_valid], axis=1).ravel()
+    row_valid = jnp.stack([left_valid, right_valid, node_valid], axis=1).ravel()
     row_grid = jnp.stack([crossing.grid, crossing.grid, node_grid], axis=1).ravel()
     row_policy = jnp.stack(
         [crossing.policy_left, crossing.policy_right, node_policy], axis=1
@@ -258,14 +267,275 @@ def refine_envelope(
     return out_grid, out_policy, out_value, n_kept
 
 
+class _Links(NamedTuple):
+    """Every link as a comparable affine line plus the span it actually covers.
+
+    `certified_sign` compares lines and says plainly what it will not invent: a
+    link of zero width has no affine line and a non-finite operand is unresolved
+    rather than false. The comparable fields are shaped once so every comparison
+    downstream is handed operands it can decide on, while `lower`/`upper` keep
+    the stored span, so widening a degenerate link's divisor never widens the
+    set of queries it brackets.
+    """
+
+    lower: Float1D
+    """Lower stored abscissa of the link's span."""
+    upper: Float1D
+    """Upper stored abscissa of the link's span."""
+    x0: Float1D
+    """Lower abscissa of the comparable line."""
+    x1: Float1D
+    """Upper abscissa of the comparable line, strictly above `x0`."""
+    v0: Float1D
+    """Value at `x0`."""
+    v1: Float1D
+    """Value at `x1`."""
+    p0: Float1D
+    """Policy at `x0`."""
+    p1: Float1D
+    """Policy at `x1`."""
+    live: BoolND
+    """Whether the link is a real value segment at all."""
+
+
+def _comparable_links(
+    *,
+    left_grid: Float1D,
+    right_grid: Float1D,
+    left_policy: Float1D,
+    right_policy: Float1D,
+    left_value: Float1D,
+    right_value: Float1D,
+    segment_live: BoolND,
+) -> _Links:
+    """Orient every link ascending and give a degenerate one a readable width.
+
+    A link stored right-to-left carries the same line as the same link stored
+    left-to-right, so the endpoints are swapped rather than rejected. A link of
+    zero width carries no line: its divisor is displaced by one representable
+    step and both endpoint readings are set to the stored lower ones, which is
+    the flat line it in fact is. One representable step is a readable width
+    everywhere but at zero, where it is the smallest subnormal and a comparison
+    would abstain, so a flat link at zero takes a width of one instead.
+    """
+    descending = right_grid < left_grid
+    x0 = jnp.where(descending, right_grid, left_grid)
+    x1 = jnp.where(descending, left_grid, right_grid)
+    v0 = jnp.where(descending, right_value, left_value)
+    v1 = jnp.where(descending, left_value, right_value)
+    p0 = jnp.where(descending, right_policy, left_policy)
+    p1 = jnp.where(descending, left_policy, right_policy)
+
+    degenerate = x1 <= x0
+    flat_at_zero = degenerate & (x0 == 0.0)
+    step = jnp.nextafter(x0, jnp.full_like(x0, jnp.inf))
+    finite_line = jnp.isfinite(v0) & jnp.isfinite(v1) & jnp.isfinite(x0)
+    return _Links(
+        lower=jnp.minimum(left_grid, right_grid),
+        upper=jnp.maximum(left_grid, right_grid),
+        x0=x0,
+        x1=jnp.where(flat_at_zero, jnp.ones_like(x0), jnp.where(degenerate, step, x1)),
+        v0=v0,
+        v1=jnp.where(degenerate, v0, v1),
+        p0=p0,
+        p1=jnp.where(degenerate, p0, p1),
+        live=segment_live & finite_line,
+    )
+
+
+def _chord_value(
+    *, x: FloatND, x0: FloatND, x1: FloatND, v0: FloatND, v1: FloatND
+) -> FloatND:
+    """Evaluate the chord through two stored endpoints at `x`.
+
+    Each endpoint is weighed by its distance to the *other* one, so the reading
+    has no anchor: a query far from `x0` is not reached by extrapolating a slope
+    from it, and the endpoints' own magnitudes cancel in the numerator rather
+    than in the answer. Both distances and the width are exact differences and
+    the two products are carried at twice the working precision, so only the
+    division rounds. At either stored endpoint the reading is that endpoint's
+    stored value exactly.
+    """
+    left_weight = dd_from_difference(x1, x)
+    right_weight = dd_from_difference(x, x0)
+    numerator = dd_add(dd_mul_float(left_weight, v0), dd_mul_float(right_weight, v1))
+    high, _low = dd_quotient(numerator, dd_from_difference(x1, x0))
+    return jnp.where(x == x0, v0, jnp.where(x == x1, v1, high))
+
+
+def _chord_reading(
+    *, x: FloatND, x0: FloatND, x1: FloatND, v0: FloatND, v1: FloatND
+) -> FloatND:
+    """Read a chord at `x` in the working precision, exactly at both endpoints.
+
+    Carries a quantity no ordering is decided on — the policy — so it costs one
+    rounded evaluation rather than the compensated one `_chord_value` pays for.
+    Both endpoints are returned as stored, and a chord whose two endpoints carry
+    the same value reads back that value at every abscissa, so a branch of
+    constant policy publishes one policy rather than a spread of neighbours.
+    """
+    width = x1 - x0
+    interior = v0 + (x - x0) / width * (v1 - v0)
+    return jnp.where(x == x0, v0, jnp.where(x == x1, v1, interior))
+
+
+def _certified_owner(
+    *,
+    brackets: BoolND,
+    value: FloatND,
+    links: _Links,
+    query: FloatND,
+    stable_index: IntND,
+) -> Int1D:
+    """Return the column of the link that owns each query.
+
+    The highest reading is the provisional owner and is then challenged: any
+    bracketing link certified strictly above it takes its place, twice over. The
+    remaining question is which of the links certified *level* with the owner
+    publishes the query, and that is settled right-continuously — the link
+    reaching strictly right of the query, then the steeper one, then the earlier
+    stored link. A node where two branches meet is therefore owned by the branch
+    that owns the interval above it, so the switch is published at the node the
+    geometry puts it at.
+
+    Two things bound what that settles. The promotion budget is finite, so a
+    query at which more links are mis-ordered by the reading than there are
+    rounds can still publish a link another is certified above; a link can only
+    be mis-ordered by the reading when the two sit within a few representable
+    steps of each other, so the residual is of the same order as the published
+    value's own. And the comparator refuses rather than guesses on operands it
+    cannot decide, while this method has no channel through which to refuse in
+    turn: a query whose comparisons all come back refused keeps the highest
+    reading, which is the answer the method gave before any of them were
+    certified.
+    """
+    provisional = _leader(brackets=brackets, value=value)
+    reference = _take_link(links=links, index=provisional)
+    for _ in range(_PROMOTION_ROUNDS):
+        beats = brackets & (
+            _sign_against(links=links, reference=reference, x=query) == 1
+        )
+        challenger = _take_link(links=links, index=_leader(brackets=beats, value=value))
+        promoted = jnp.any(beats, axis=1, keepdims=True)
+        reference = tuple(
+            jnp.where(promoted, new, held)
+            for new, held in zip(challenger, reference, strict=True)
+        )
+
+    level = brackets & (_sign_against(links=links, reference=reference, x=query) == 0)
+    excluded = jnp.full_like(value, -jnp.inf)
+    slope = _slope(x_a=links.x0, y_a=links.v0, x_b=links.x1, y_b=links.v1)
+    reaches_right = (links.upper > query).astype(value.dtype)
+    ordered = (
+        jnp.where(level, reaches_right, excluded),
+        jnp.where(level, jnp.broadcast_to(slope, value.shape), excluded),
+    )
+
+    still_tied = level
+    for field in ordered:
+        best = jnp.max(jnp.where(still_tied, field, -jnp.inf), axis=1, keepdims=True)
+        still_tied = still_tied & (field == best)
+    sentinel = jnp.iinfo(jnp.int32).max
+    index_key = jnp.where(still_tied, stable_index, sentinel)
+    earliest = jnp.min(index_key, axis=1, keepdims=True)
+    settled = still_tied & (index_key == earliest)
+    chosen = jnp.argmax(settled, axis=1).astype(jnp.int32)
+    return jnp.where(jnp.any(settled, axis=1), chosen, provisional[:, 0]).astype(
+        jnp.int32
+    )
+
+
+def _leader(*, brackets: BoolND, value: FloatND) -> IntND:
+    """Column of the highest reading among the admitted links, per query."""
+    index = jnp.argmax(jnp.where(brackets, value, -jnp.inf), axis=1)
+    return index[:, None].astype(jnp.int32)
+
+
+def _take_link(*, links: _Links, index: IntND) -> tuple[FloatND, ...]:
+    """The comparable line of one column per query, as `(x0, x1, v0, v1)`."""
+    return tuple(
+        jnp.take(field, index, axis=0)
+        for field in (links.x0, links.x1, links.v0, links.v1)
+    )
+
+
+def _sign_against(
+    *, links: _Links, reference: tuple[FloatND, ...], x: FloatND
+) -> IntND:
+    """Certified sign of each link's value at `x` less the reference link's."""
+    reference_x0, reference_x1, reference_v0, reference_v1 = reference
+    return certified_margin_sign(
+        a_x0=links.x0[None, :],
+        a_x1=links.x1[None, :],
+        a_v0=links.v0[None, :],
+        a_v1=links.v1[None, :],
+        b_x0=reference_x0,
+        b_x1=reference_x1,
+        b_v0=reference_v0,
+        b_v1=reference_v1,
+        x_query=x,
+    )
+
+
+def _evaluate_envelope(
+    *, query_grid: Float1D, links: _Links, segment_id: Int1D
+) -> tuple[Float1D, Float1D, Int1D, Int1D]:
+    """Evaluate the upper envelope and its owning link/branch at every query.
+
+    Builds the dense `(n_query, n_link)` block: each query is tested against
+    every link, a link admits the query iff the query lies in its stored span,
+    and the owner among the admitting links is certified rather than read off
+    the values. The published value and policy are both the owner's own chord at
+    the query, so they always name one branch. A query no link admits reports
+    `-inf` value (the absent-envelope sentinel), owning link `0`, and branch
+    `-1`.
+
+    Args:
+        query_grid: Abscissae at which to evaluate the envelope; NaN tail.
+        links: The candidate links as comparable lines plus their stored spans.
+        segment_id: Per-link monotone-branch id; equal across one branch.
+
+    Returns:
+        Tuple of the envelope value, the envelope policy, the owning link index
+        (`0` where no link admits the query), and the owning branch id (`-1`
+        where no link admits it) at each query.
+
+    """
+    query = query_grid[:, None]
+    brackets = links.live[None, :] & (query >= links.lower) & (query <= links.upper)
+    value = _chord_value(x=query, x0=links.x0, x1=links.x1, v0=links.v0, v1=links.v1)
+    admits = brackets & jnp.isfinite(value)
+    stable_index = jnp.broadcast_to(
+        jnp.arange(links.x0.shape[0], dtype=jnp.int32)[None, :], value.shape
+    )
+
+    owner = _certified_owner(
+        brackets=admits,
+        value=value,
+        links=links,
+        query=query,
+        stable_index=stable_index,
+    )
+    policy = _chord_reading(x=query, x0=links.x0, x1=links.x1, v0=links.p0, v1=links.p1)
+    any_bracket = jnp.any(admits, axis=1)
+    column = owner[:, None]
+    envelope_value = jnp.where(
+        any_bracket, jnp.take_along_axis(value, column, axis=1)[:, 0], -jnp.inf
+    )
+    envelope_policy = jnp.take_along_axis(policy, column, axis=1)[:, 0]
+    winner_link = jnp.where(any_bracket, owner, 0).astype(jnp.int32)
+    winner_segment = jnp.where(any_bracket, segment_id[owner], -1).astype(jnp.int32)
+    return envelope_value, envelope_policy, winner_link, winner_segment
+
+
 @dataclass(frozen=True, kw_only=True)
 class _CrossingBlocks:
-    """Per-query crossing candidate: abscissa, value, both policy copies, flag.
+    """Per-query crossing candidate: abscissa, value, policies, per-record flags.
 
     The fields are aligned with the query sweep: entry `i` is the crossing
-    inserted *before* query node `i`, present (`valid`) only when query `i`'s
-    live winning segment differs from the previous live query's winner and the
-    intersection abscissa falls strictly between the two queries.
+    inserted around query node `i`, present only when query `i`'s live owning
+    branch differs from the previous live query's and the two chords' gap
+    changes sign between the two abscissae.
     """
 
     grid: Float1D
@@ -276,8 +546,14 @@ class _CrossingBlocks:
     """Policy of the outgoing owner at the crossing."""
     policy_right: Float1D
     """Policy of the incoming owner at the crossing."""
-    valid: BoolND
-    """Whether this query contributes a crossing at all."""
+    left_valid: BoolND
+    """Whether the outgoing owner's record is emitted."""
+    right_valid: BoolND
+    """Whether the incoming owner's record is emitted."""
+    segment_left: Int1D
+    """Branch id of the outgoing owner."""
+    segment_right: Int1D
+    """Branch id of the incoming owner."""
 
 
 def _crossing_blocks(
@@ -286,22 +562,16 @@ def _crossing_blocks(
     query_drop: BoolND,
     winner_link: Int1D,
     winner_segment: Int1D,
-    left_grid: Float1D,
-    right_grid: Float1D,
-    left_policy: Float1D,
-    right_policy: Float1D,
-    left_value: Float1D,
-    right_value: Float1D,
+    links: _Links,
 ) -> _CrossingBlocks:
-    """Compute, per query, the crossing of its winner with the previous winner.
+    """Compute, per query, the crossing of its owner with the previous owner.
 
     Sweeps the live queries left-to-right (carrying the previous live query's
-    winning link and branch id) and, whenever the winning *branch* (segment id)
-    switches, intersects the two winning links' value lines. The crossing is
-    kept only when its abscissa falls strictly between the two adjacent live
-    query abscissae — the interval the switch happened in. A move from one link
-    to the next within one monotone branch keeps the segment id, so it is not a
-    switch and inserts nothing; only a genuine branch change is a kink.
+    owning link, branch id and abscissa) and, whenever the owning *branch*
+    switches, locates the two chords' crossing inside the interval the switch
+    happened in. A move from one link to the next within one monotone branch
+    keeps the segment id, so it is not a switch and inserts nothing; only a
+    genuine branch change is a kink.
     """
     n_query = query_grid.shape[0]
     step = functools.partial(
@@ -310,12 +580,7 @@ def _crossing_blocks(
         winner_link=winner_link,
         winner_segment=winner_segment,
         query_grid=query_grid,
-        left_grid=left_grid,
-        right_grid=right_grid,
-        left_policy=left_policy,
-        right_policy=right_policy,
-        left_value=left_value,
-        right_value=right_value,
+        links=links,
     )
     carry_init = (
         jnp.int32(0),
@@ -328,7 +593,10 @@ def _crossing_blocks(
         value=rows.value,
         policy_left=rows.policy_left,
         policy_right=rows.policy_right,
-        valid=rows.valid,
+        left_valid=rows.left_valid,
+        right_valid=rows.right_valid,
+        segment_left=rows.segment_left,
+        segment_right=rows.segment_right,
     )
 
 
@@ -344,11 +612,26 @@ class _CrossingRow:
     """Policy of the outgoing owner."""
     policy_right: FloatND
     """Policy of the incoming owner."""
-    valid: BoolND
-    """Whether this step emits a crossing."""
+    left_valid: BoolND
+    """Whether this step emits the outgoing owner's record."""
+    right_valid: BoolND
+    """Whether this step emits the incoming owner's record."""
+    segment_left: IntND
+    """Branch id of the outgoing owner."""
+    segment_right: IntND
+    """Branch id of the incoming owner."""
 
 
-_CROSSING_ROW_FIELDS = ("grid", "value", "policy_left", "policy_right", "valid")
+_CROSSING_ROW_FIELDS = (
+    "grid",
+    "value",
+    "policy_left",
+    "policy_right",
+    "left_valid",
+    "right_valid",
+    "segment_left",
+    "segment_right",
+)
 
 
 def _flatten_crossing_row(row: _CrossingRow) -> tuple[tuple[Any, ...], None]:
@@ -380,18 +663,15 @@ def _crossing_step(
     winner_link: Int1D,
     winner_segment: Int1D,
     query_grid: Float1D,
-    left_grid: Float1D,
-    right_grid: Float1D,
-    left_policy: Float1D,
-    right_policy: Float1D,
-    left_value: Float1D,
-    right_value: Float1D,
+    links: _Links,
 ) -> tuple[tuple[ScalarInt, ScalarInt, FloatND], _CrossingRow]:
-    """Emit the crossing query `idx` opens, and advance the previous-winner carry.
+    """Emit the crossing query `idx` opens, and advance the previous-owner carry.
 
-    The carry is the previous live query's winning link, its branch id, and its
-    abscissa. A crossing is emitted where the winning branch switches and the
-    two winning links' value lines intersect strictly inside the switch interval.
+    The carry is the previous live query's owning link, its branch id, and its
+    abscissa. A crossing is emitted where the owning branch switches and the two
+    owners' chords cross inside the interval between the two abscissae. Where
+    the crossing lands on one of the two nodes, that node's own row already
+    carries one of the two owners and only the other record is emitted.
     """
     prev_link, prev_segment, prev_grid = carry
     is_live = live[idx]
@@ -400,30 +680,27 @@ def _crossing_step(
     this_grid = query_grid[idx]
 
     switches = is_live & (prev_segment >= 0) & (this_segment != prev_segment)
-    row = _intersect_winners(
+    row = _crossing_in_interval(
         seg_a=prev_link,
         seg_b=this_link,
-        left_grid=left_grid,
-        right_grid=right_grid,
-        left_policy=left_policy,
-        right_policy=right_policy,
-        left_value=left_value,
-        right_value=right_value,
+        prev_grid=prev_grid,
+        this_grid=this_grid,
+        links=links,
     )
-    # The crossing must fall strictly inside the switch interval; whether it
-    # is a genuine envelope kink (rather than a phantom intersection across a
-    # gap) is settled by the dense on-envelope test the caller applies.
-    within = switches & (row.grid > prev_grid) & (row.grid < this_grid)
+    valid = switches & row.resolved
     emitted = _CrossingRow(
         grid=row.grid,
         value=row.value,
         policy_left=row.policy_a,
         policy_right=row.policy_b,
-        valid=within,
+        left_valid=valid & ~row.at_left,
+        right_valid=valid & ~row.at_right,
+        segment_left=prev_segment,
+        segment_right=this_segment,
     )
 
     # Advance the previous-live-query carry only on a live query; a dropped
-    # query leaves the comparison anchored at the last live winner/abscissa.
+    # query leaves the comparison anchored at the last live owner/abscissa.
     new_link = jnp.where(is_live, this_link, prev_link).astype(jnp.int32)
     new_segment = jnp.where(is_live, this_segment, prev_segment).astype(jnp.int32)
     new_grid = jnp.where(is_live, this_grid, prev_grid)
@@ -432,154 +709,119 @@ def _crossing_step(
 
 @dataclass(frozen=True, kw_only=True)
 class _SegmentIntersection:
-    """Intersection of two winning segments' value lines, with both policies."""
+    """Where two owning chords cross inside one interval, with both policies."""
 
     grid: FloatND
-    """Abscissa where the two value lines meet."""
+    """Abscissa where the two chords meet."""
     value: FloatND
-    """Common value there."""
+    """Envelope value of the two chords there."""
     policy_a: FloatND
-    """Policy of the first segment at the intersection."""
+    """Policy of the outgoing owner at the crossing."""
     policy_b: FloatND
-    """Policy of the second segment at the intersection."""
+    """Policy of the incoming owner at the crossing."""
+    resolved: BoolND
+    """Whether the two chords in fact cross inside the interval."""
+    at_left: BoolND
+    """Whether the crossing sits exactly on the left query abscissa."""
+    at_right: BoolND
+    """Whether the crossing sits exactly on the right query abscissa."""
 
 
-def _intersect_winners(
+def _crossing_in_interval(
     *,
     seg_a: ScalarInt,
     seg_b: ScalarInt,
-    left_grid: Float1D,
-    right_grid: Float1D,
-    left_policy: Float1D,
-    right_policy: Float1D,
-    left_value: Float1D,
-    right_value: Float1D,
+    prev_grid: FloatND,
+    this_grid: FloatND,
+    links: _Links,
 ) -> _SegmentIntersection:
-    """Intersect the value lines of segments `seg_a` and `seg_b`.
+    """Locate where chords `seg_a` and `seg_b` cross between the two abscissae.
 
-    Each segment is the line through its two endpoints; the intersection
-    abscissa solves `v_a(x) = v_b(x)`. The policy is read off each segment's own
-    line at that abscissa, so `policy_a` is the left-branch (segment `a`) policy
-    and `policy_b` the right-branch (segment `b`) policy at the kink.
+    *Whether* they cross is certified: the comparator settles the sign of their
+    difference at each of the two abscissae from the stored operands, and a
+    crossing exists exactly where the outgoing chord is at or above the incoming
+    one at the left abscissa and at or below it at the right. Reading those two
+    signs off a floating evaluation instead would put the existence of the
+    crossing back at the mercy of the last bit, which is what leaves a switch
+    unpublished; a gap that does not change sign is a switch that happened
+    because a branch started or stopped covering the interval, not because the
+    two met.
+
+    A certified zero at one of the two abscissae is a crossing sitting exactly on
+    that node, and the emitted abscissa is that node exactly. Only the interior
+    case is located by arithmetic, and it is located inside the interval the
+    switch was observed in — the root of the gap's own secant across it, clamped
+    to the interval the certified signs bracket it in — rather than by
+    extrapolating either chord from its stored endpoints.
     """
-    a_x0, a_x1 = left_grid[seg_a], right_grid[seg_a]
-    a_v0, a_v1 = left_value[seg_a], right_value[seg_a]
-    a_p0, a_p1 = left_policy[seg_a], right_policy[seg_a]
-    b_x0, b_x1 = left_grid[seg_b], right_grid[seg_b]
-    b_v0, b_v1 = left_value[seg_b], right_value[seg_b]
-    b_p0, b_p1 = left_policy[seg_b], right_policy[seg_b]
+    a_x0, a_x1 = links.x0[seg_a], links.x1[seg_a]
+    a_v0, a_v1 = links.v0[seg_a], links.v1[seg_a]
+    a_p0, a_p1 = links.p0[seg_a], links.p1[seg_a]
+    b_x0, b_x1 = links.x0[seg_b], links.x1[seg_b]
+    b_v0, b_v1 = links.v0[seg_b], links.v1[seg_b]
+    b_p0, b_p1 = links.p0[seg_b], links.p1[seg_b]
 
-    slope_a = _slope(x_a=a_x0, y_a=a_v0, x_b=a_x1, y_b=a_v1)
-    slope_b = _slope(x_a=b_x0, y_a=b_v0, x_b=b_x1, y_b=b_v1)
-    grid, value = _intersect_lines(
-        x_a=a_x0, y_a=a_v0, slope_a=slope_a, x_b=b_x0, y_b=b_v0, slope_b=slope_b
+    chords = {
+        "a_x0": a_x0,
+        "a_x1": a_x1,
+        "a_v0": a_v0,
+        "a_v1": a_v1,
+        "b_x0": b_x0,
+        "b_x1": b_x1,
+        "b_v0": b_v0,
+        "b_v1": b_v1,
+    }
+    sign_prev = certified_margin_sign(x_query=prev_grid, **chords)
+    sign_this = certified_margin_sign(x_query=this_grid, **chords)
+    at_left = sign_prev == 0
+    at_right = (sign_this == 0) & ~at_left
+    crosses_inside = (sign_prev == 1) & (sign_this == -1)
+    resolved = at_left | at_right | crosses_inside
+
+    gap_prev = _chord_gap(x=prev_grid, **chords)
+    gap_this = _chord_gap(x=this_grid, **chords)
+    denominator = gap_prev - gap_this
+    safe_denominator = jnp.where(denominator > 0.0, denominator, 1.0)
+    interior = jnp.clip(
+        (gap_prev * this_grid - gap_this * prev_grid) / safe_denominator,
+        prev_grid,
+        this_grid,
     )
+    grid = jnp.where(at_left, prev_grid, jnp.where(at_right, this_grid, interior))
 
-    policy_slope_a = _slope(x_a=a_x0, y_a=a_p0, x_b=a_x1, y_b=a_p1)
-    policy_slope_b = _slope(x_a=b_x0, y_a=b_p0, x_b=b_x1, y_b=b_p1)
-    policy_a = a_p0 + policy_slope_a * (grid - a_x0)
-    policy_b = b_p0 + policy_slope_b * (grid - b_x0)
+    value_a = _chord_value(x=grid, x0=a_x0, x1=a_x1, v0=a_v0, v1=a_v1)
+    value_b = _chord_value(x=grid, x0=b_x0, x1=b_x1, v0=b_v0, v1=b_v1)
     return _SegmentIntersection(
-        grid=grid, value=value, policy_a=policy_a, policy_b=policy_b
+        grid=grid,
+        # The emitted abscissa is a rounding away from the exact root, so the
+        # two chords no longer agree there to the last bit. Publishing the
+        # higher of the two keeps the emitted row on the envelope: a value below
+        # both branches would lose the node to any competitor between them.
+        value=jnp.maximum(value_a, value_b),
+        policy_a=_chord_reading(x=grid, x0=a_x0, x1=a_x1, v0=a_p0, v1=a_p1),
+        policy_b=_chord_reading(x=grid, x0=b_x0, x1=b_x1, v0=b_p0, v1=b_p1),
+        resolved=resolved,
+        at_left=at_left,
+        at_right=at_right,
     )
 
 
-def _evaluate_envelope(
+def _chord_gap(
     *,
-    query_grid: Float1D,
-    left_grid: Float1D,
-    right_grid: Float1D,
-    left_policy: Float1D,
-    right_policy: Float1D,
-    left_value: Float1D,
-    right_value: Float1D,
-    segment_id: Int1D,
-    segment_live: BoolND,
-) -> tuple[Float1D, Float1D, Int1D, Int1D]:
-    """Evaluate the upper envelope and its winning link/branch at every query.
-
-    Builds the dense `(N_query, N_segments)` bracket-and-interpolate matrix: each
-    query `m_j` is tested against every link `(k, k+1)`. A link brackets the
-    query iff `m_j` lies in its abscissa range; the value and policy are then
-    linearly interpolated along the link. The envelope value is the maximum over
-    bracketing links, the policy is the winner's, the winning link index is
-    reported (so its value line can be intersected), and the winner's branch id
-    `segment_id` is reported (so the sweep can detect a branch switch). A query
-    no link brackets reports `-inf` value (the absent-envelope sentinel), winning
-    link `0`, and branch `-1`.
-
-    Args:
-        query_grid: Abscissae at which to evaluate the envelope; NaN tail.
-        left_grid: Lower endpoint abscissa of each link.
-        right_grid: Upper endpoint abscissa of each link.
-        left_policy: Policy at each link's lower endpoint.
-        right_policy: Policy at each link's upper endpoint.
-        left_value: Value at each link's lower endpoint.
-        right_value: Value at each link's upper endpoint.
-        segment_id: Per-link monotone-branch id; equal across one branch.
-        segment_live: Per-link live indicator; a dead-endpoint or non-monotone
-            bridge link is excluded from the scan.
-
-    Returns:
-        Tuple of the envelope value, the envelope policy, the winning link index
-        (`0` where no link brackets), and the winning branch id (`-1` where no
-        link brackets) at each query.
-
-    """
-    query = query_grid[:, None]
-    lower = jnp.minimum(left_grid, right_grid)[None, :]
-    upper = jnp.maximum(left_grid, right_grid)[None, :]
-    brackets = segment_live[None, :] & (query >= lower) & (query <= upper)
-
-    # Linear position of the query along each segment; a zero-width segment takes
-    # weight 0, so its left endpoint applies.
-    width = (right_grid - left_grid)[None, :]
-    safe_width = jnp.where(width == 0.0, 1.0, width)
-    relative = jnp.where(width == 0.0, 0.0, (query - left_grid[None, :]) / safe_width)
-
-    value_interp = left_value[None, :] + relative * (right_value - left_value)[None, :]
-    policy_interp = (
-        left_policy[None, :] + relative * (right_policy - left_policy)[None, :]
+    x: FloatND,
+    a_x0: FloatND,
+    a_x1: FloatND,
+    a_v0: FloatND,
+    a_v1: FloatND,
+    b_x0: FloatND,
+    b_x1: FloatND,
+    b_v0: FloatND,
+    b_v1: FloatND,
+) -> FloatND:
+    """How far the first chord sits above the second at `x`."""
+    return _chord_value(x=x, x0=a_x0, x1=a_x1, v0=a_v0, v1=a_v1) - _chord_value(
+        x=x, x0=b_x0, x1=b_x1, v0=b_v0, v1=b_v1
     )
-
-    # A link whose interpolated value is not finite is excluded rather than let
-    # into the reduction: `jnp.max` propagates a NaN across the whole row, which
-    # would publish NaN as live envelope data at every node the link covers. Losing
-    # only itself leaves the node to any other link that covers it, and a node no
-    # finite link covers reports `-inf` and joins the dropped tail.
-    masked_value = jnp.where(
-        brackets & jnp.isfinite(value_interp), value_interp, -jnp.inf
-    )
-    envelope_value = jnp.max(masked_value, axis=1)
-    # Select the winning segment deterministically: among segments whose
-    # interpolated value sits within a scale-aware band of the max, take the
-    # lowest index. A raw first-index `argmax` over independently interpolated
-    # values flips on a 1-ulp tie (two segments crossing at a node, with the
-    # bracket endpoints carrying upstream reduction noise), which would make the
-    # kept segment — hence `winner_segment`, the crossing decision, and `n_kept`
-    # — backend-dependent. The band makes the near-tie choice reduction-order
-    # independent.
-    #
-    # Link order is therefore the last tiebreak, and it is the *caller's* order:
-    # two colinear value lines from different discrete choices are separated by
-    # nothing else here, so the one concatenated first wins. That is arbitrary but
-    # reproducible — `jnp.argsort` above is stable, so the same inputs always
-    # produce the same order. Any rule would be arbitrary; a policy-based one would
-    # impose an ordering on a quantity with no envelope meaning.
-    tie_floor = (
-        16.0
-        * jnp.finfo(value_interp.dtype).eps
-        * jnp.maximum(1.0, jnp.abs(envelope_value))
-    )
-    in_tie = brackets & (masked_value >= envelope_value[:, None] - tie_floor[:, None])
-    best_link = jnp.argmax(in_tie, axis=1).astype(jnp.int32)
-    any_bracket = jnp.any(brackets, axis=1)
-    envelope_policy = jnp.take_along_axis(policy_interp, best_link[:, None], axis=1)[
-        :, 0
-    ]
-    winner_link = jnp.where(any_bracket, best_link, 0).astype(jnp.int32)
-    winner_segment = jnp.where(any_bracket, segment_id[best_link], -1).astype(jnp.int32)
-    return envelope_value, envelope_policy, winner_link, winner_segment
 
 
 def _value_decrease_past_noise(*, left_value: Float1D, right_value: Float1D) -> BoolND:
@@ -621,42 +863,3 @@ def _slope(*, x_a: FloatND, y_a: FloatND, x_b: FloatND, y_b: FloatND) -> FloatND
     return jnp.where(
         delta_x == 0.0, 0.0, (y_b - y_a) / jnp.where(delta_x == 0.0, 1.0, delta_x)
     )
-
-
-def _intersect_lines(
-    *,
-    x_a: FloatND,
-    y_a: FloatND,
-    slope_a: FloatND,
-    x_b: FloatND,
-    y_b: FloatND,
-    slope_b: FloatND,
-) -> tuple[FloatND, FloatND]:
-    """Intersect two lines given in point-slope form.
-
-    Args:
-        x_a: Abscissa of a point on the first line.
-        y_a: Ordinate of a point on the first line.
-        slope_a: Slope of the first line.
-        x_b: Abscissa of a point on the second line.
-        y_b: Ordinate of a point on the second line.
-        slope_b: Slope of the second line.
-
-    Returns:
-        Tuple of the intersection's abscissa and ordinate; NaN abscissa for
-        parallel lines.
-
-    """
-    denominator = slope_a - slope_b
-    safe_denominator = jnp.where(denominator == 0.0, 1.0, denominator)
-    x = jnp.where(
-        denominator == 0.0,
-        jnp.nan,
-        (y_b - y_a + slope_a * x_a - slope_b * x_b) / safe_denominator,
-    )
-    # Evaluate the ordinate from a finite abscissa so the parallel-lines branch
-    # carries a finite (dead) value: NaN here would poison reverse-mode gradients
-    # through the `jnp.where` even though the forward result discards it.
-    safe_x = jnp.where(denominator == 0.0, x_a, x)
-    y = y_a + slope_a * (safe_x - x_a)
-    return x, y

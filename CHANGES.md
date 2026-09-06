@@ -49,6 +49,34 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   `ALL_PERSISTABLE_ARTIFACTS` solve+save, and load+supplied-solution simulate — each in
   a fresh, phase-isolated child process with exact provenance. The combined
   timing/CPU subprocess no longer reports a GPU peak.
+### The MSS upper envelope decides its orderings from the stored operands
+
+- Which link owns a query is certified rather than read off a rounded comparison:
+  a provisional winner is challenged by every bracketing link through the exact
+  integer comparator the other envelope paths already use. Links certified level
+  with the winner are separated right-continuously — the link reaching strictly
+  right of the query, then the steeper one, then the earlier stored link — so a
+  node where two branches meet is owned by the branch that owns the interval above
+  it, and a switch decided by a single representable step is published at the node
+  the geometry puts it at rather than lost.
+- A link's value at a query is its own chord's value: each endpoint is weighed by
+  its distance to the other, with the products carried at twice the working
+  precision. The reading is the stored value at either endpoint exactly and
+  elsewhere no longer carries the cancellation of a line extrapolated from one far
+  anchor. The published value and policy at a node now always come from one owner.
+- A crossing is located inside the interval the switch was observed in, as the root
+  of the two chords' gap across that interval's two abscissae, and it is emitted
+  only where that gap genuinely changes sign. Its published value is the higher of
+  the two chords there, so an emitted kink can never sit below both branches.
+- A crossing landing exactly on one of the two query nodes is published rather than
+  discarded. That node's own row is one of the two records the switch needs and the
+  emission contributes the other: the incoming owner after a crossing at the left
+  node, the outgoing owner before a crossing at the right node. Either way the kink
+  abscissa carries exactly two rows, outgoing owner first.
+- Whether a crossing lies on the envelope is settled by naming the owner at the
+  crossing abscissa rather than by comparing two readings within a tolerance band,
+  so the emission no longer depends on a declared band or on the working precision.
+
 ### Engine functions are defined once, never per call
 
 - Every function the engine defines is a module-level function or a frozen dataclass
