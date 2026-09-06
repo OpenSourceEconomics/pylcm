@@ -933,6 +933,18 @@ class SimulationPhase:
         return self.egm_policy_read
 
     @property
+    def replay_route(self) -> ReplayRoute:
+        """How this regime's simulated decision is obtained each period.
+
+        Every regime declares exactly one route. A regime that publishes no
+        replay payload declares the grid-recomputation route, so simulation
+        and the pre-simulation payload check never test for a missing read.
+        """
+        if self.egm_policy_read is None:
+            return GRID_RECOMPUTATION_ROUTE
+        return self.egm_policy_read
+
+    @property
     def state_names(self) -> tuple[StateOrActionName, ...]:
         """States carried per subject: solve states plus carried-only states."""
         return self._variables.state_names
