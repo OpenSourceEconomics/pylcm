@@ -11,13 +11,26 @@ from _lcm.execution.core_program import (
     CoreExecutionDisposition,
     CoreExecutionRequirements,
     CoreProgram,
+    ResolvedCoreProgram,
 )
 from _lcm.execution.output_layout import VALUE
+from _lcm.execution.value_transfer import (
+    ResolvedValueTransfer,
+    ValueArtifactAddress,
+    ValueArtifactKind,
+    ValueConsumerAddress,
+    ValueInputChannel,
+    ValueTransferKind,
+)
 from _lcm.grids import Grid
 from _lcm.reachability import EdgeStatus, PhaseReachability
 from _lcm.regime_building.max_Q_over_a import get_max_Q_over_a
 from _lcm.regime_building.ndimage import map_coordinates
-from _lcm.solution.backward_induction import _drain_V_arr_shards, solve
+from _lcm.solution.backward_induction import (
+    _drain_V_arr_shards,
+    _mark_reused_transfers,
+    solve,
+)
 from _lcm.solution.contract import PeriodKernel
 from _lcm.solution.grid_search import (
     _GridSearchArgumentBuilder,
@@ -350,3 +363,82 @@ def test_backward_induction_single_period_Qc_arr():
 
     # `value_functions` is keyed by period, then by regime name.
     aaae(got.value_functions[0]["default"], expected)
+
+
+def _aligned_transfer() -> ResolvedValueTransfer:
+    """One next-period regime-value read already in its required layout."""
+    stored = jnp.arange(8, dtype=jnp.float32)
+    assert jnp.isfinite(stored).all()
+    return ResolvedValueTransfer(
+        target=ValueArtifactAddress(
+            kind=ValueArtifactKind.REGIME_VALUE, period=4, regime="retired"
+        ),
+        source=ValueConsumerAddress(
+            source_period=3,
+            source_regime="working",
+            core_key="main",
+            channel=ValueInputChannel.NEXT_REGIME_VALUE,
+            path=("retired",),
+        ),
+        kind=ValueTransferKind.ALIGNED_LOCAL,
+        stored_sharding=stored.sharding,
+        source_sharding=stored.sharding,
+        expected_shape=stored.shape,
+        expected_dtype=stored.dtype,
+    )
+
+
+def _program(*, transfer: ResolvedValueTransfer) -> ResolvedCoreProgram:
+    """One planned program whose single input is `transfer`."""
+    return ResolvedCoreProgram(
+        name="main",
+        function=lambda: None,
+        arguments={},
+        static_kwargs={},
+        requirements=CoreExecutionRequirements(),
+        output_roles=None,
+        disposition=CoreExecutionDisposition.PLANNED,
+        donation_candidates=(),
+        tile_widths={},
+        specialization_key=("k",),
+        input_transfer_plan=(transfer,),
+    )
+
+
+def _marks(*, marked: dict) -> list[bool]:
+    """The reuse mark of every transfer in a marked program set, in plan order."""
+    return [
+        transfer.reused_by_several_consumers
+        for resolved in marked.values()
+        for transfer in resolved.input_transfer_plan
+    ]
+
+
+def test_two_width_candidates_of_one_core_are_one_consumer() -> None:
+    """Alternative widths of one core read a transfer once, not twice."""
+    program = _program(transfer=_aligned_transfer())
+    triple = ("working", 3, "main")
+
+    marked = _mark_reused_transfers(
+        resolved_programs={
+            (triple, (("consumption", 1),)): program,
+            (triple, (("consumption", 2),)): program,
+        }
+    )
+
+    assert _marks(marked=marked) == [False, False]
+
+
+def test_two_source_cores_of_one_period_share_one_transfer() -> None:
+    """Two source cores of one period reading one value share the result."""
+    program = _program(transfer=_aligned_transfer())
+    widths = (("consumption", 1),)
+
+    marked = _mark_reused_transfers(
+        resolved_programs={
+            (("working", 3, "main"), widths): program,
+            (("working_b", 3, "main"), widths): program,
+        }
+    )
+
+    assert _marks(marked=marked) == [True, True]

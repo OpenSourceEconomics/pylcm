@@ -48,6 +48,15 @@ def _mesh(*, devices: list[jax.Device], axis: str) -> jax.sharding.Mesh:
     return jax.sharding.Mesh(devices, axis_names=(axis,))
 
 
+def _sharded(*, mesh: jax.sharding.Mesh) -> jax.Array:
+    """Eight elements sharded four ways on `mesh`."""
+    stored = jax.device_put(
+        jnp.arange(8, dtype=jnp.float32), jax.NamedSharding(mesh, jax.P("d"))
+    )
+    assert jnp.isfinite(stored).all()
+    return stored
+
+
 def _resolved(
     *,
     stored: jax.Array,
@@ -256,15 +265,6 @@ def test_a_partition_entry_naming_no_placement_is_refused() -> None:
             stored_sharding=jax.NamedSharding(mesh, unconstrained),
             required_sharding=jax.NamedSharding(mesh, jax.P()),
         )
-
-
-def _sharded(*, mesh: jax.sharding.Mesh) -> jax.Array:
-    """Eight elements sharded four ways on `mesh`."""
-    stored = jax.device_put(
-        jnp.arange(8, dtype=jnp.float32), jax.NamedSharding(mesh, jax.P("d"))
-    )
-    assert jnp.isfinite(stored).all()
-    return stored
 
 
 @_skip_pytest_parallel

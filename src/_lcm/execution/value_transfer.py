@@ -83,7 +83,10 @@ class TransferCost:
     """Size of the whole value, independent of how it is laid out."""
 
     per_device_bytes: int
-    """Bytes the required layout holds on the busiest participating device."""
+    """Bytes the required layout holds on each participating device.
+
+    Planned shardings divide evenly, so every participant holds the same shard.
+    """
 
     temporary_bytes: int
     """Bytes the operator itself holds beyond the result, per device."""

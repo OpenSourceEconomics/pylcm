@@ -1488,6 +1488,7 @@ type _InputDispatch = tuple[int, RegimeName]
 type _CoreTriple = tuple[RegimeName, int, str]
 type _WidthKey = tuple[tuple[str, int], ...]
 type _CoreCandidate = tuple[_CoreTriple, _WidthKey]
+type _ConsumerKey = tuple[int, ValueArtifactAddress, Hashable]
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -2358,32 +2359,47 @@ def _mark_reused_transfers(
     it once. Consumers are counted by core triple, not by width candidate: two
     widths of one core are alternatives, not two readers. The mark is a scheduling
     fact and stays out of the specialization key, so every lowering key is the key
-    the unmarked program had.
+    the unmarked program had. A program whose transfers already carry the marks the
+    count implies is returned unchanged, so the single-source case rebuilds nothing.
     """
-    consumers: dict[tuple[int, ValueArtifactAddress, Hashable], set[_CoreTriple]] = {}
+    consumers: dict[_ConsumerKey, set[_CoreTriple]] = {}
     for (triple, _widths), resolved in resolved_programs.items():
         for transfer in resolved.input_transfer_plan:
-            key = (triple[1], transfer.target, transfer.source_sharding)
+            key = _consumer_key(triple=triple, transfer=transfer)
             consumers.setdefault(key, set()).add(triple)
     marked: dict[_CoreCandidate, ResolvedCoreProgram] = {}
     for candidate, resolved in resolved_programs.items():
         triple = candidate[0]
-        plan = tuple(
-            dataclasses.replace(
-                transfer,
-                reused_by_several_consumers=(
-                    len(
-                        consumers[
-                            (triple[1], transfer.target, transfer.source_sharding)
-                        ]
-                    )
-                    > 1
-                ),
+        plan: list[ResolvedValueTransfer] = []
+        rebuilt = False
+        for transfer in resolved.input_transfer_plan:
+            key = _consumer_key(triple=triple, transfer=transfer)
+            reused = len(consumers[key]) > 1
+            if reused == transfer.reused_by_several_consumers:
+                plan.append(transfer)
+                continue
+            plan.append(
+                dataclasses.replace(transfer, reused_by_several_consumers=reused)
             )
-            for transfer in resolved.input_transfer_plan
+            rebuilt = True
+        marked[candidate] = (
+            dataclasses.replace(resolved, input_transfer_plan=tuple(plan))
+            if rebuilt
+            else resolved
         )
-        marked[candidate] = dataclasses.replace(resolved, input_transfer_plan=plan)
     return marked
+
+
+def _consumer_key(
+    *, triple: _CoreTriple, transfer: ResolvedValueTransfer
+) -> _ConsumerKey:
+    """Name the one transfer result a period's source cores can share.
+
+    A stored artifact read into one required layout is one copy, whichever core
+    of the period asks for it. The source regime and core are deliberately absent:
+    they are what the count ranges over.
+    """
+    return (triple[1], transfer.target, transfer.source_sharding)
 
 
 def _consumed_producer_names(

@@ -709,6 +709,31 @@ def test_two_sources_reading_one_target_share_one_planned_transfer(
 
 
 @_skip_pytest_parallel
+def test_one_source_reading_a_target_leaves_its_transfer_unshared(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A value each period reads from one source core alone is not marked shared."""
+    model = _make_correct_distributed_model(distribute_type2=False)
+    captured = []
+    original_attach = backward_induction._attach_resolved_output_layout
+
+    def capture_planned_core(**kwargs):
+        core = original_attach(**kwargs)
+        if hasattr(core, "layout"):
+            captured.append(core)
+        return core
+
+    monkeypatch.setattr(
+        backward_induction, "_attach_resolved_output_layout", capture_planned_core
+    )
+    model.solve(log_level="off", params={"discount_factor": 0.95})
+    transfers = [transfer for core in captured for transfer in core.input_transfer_plan]
+
+    assert transfers, "no transfer was planned; the test is inert"
+    assert not any(transfer.reused_by_several_consumers for transfer in transfers)
+
+
+@_skip_pytest_parallel
 def test_value_transfer_copies_a_named_target_onto_a_single_device_source():
     """A sharded value read by a single-device core is copied onto that device."""
     # Distributed states are model-level declarations, and construction rejects a
