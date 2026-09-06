@@ -10,6 +10,13 @@ The chain cases restate the public acceptance graph in the repository's own
 test-model style, carrying 28 of its 32 items: the four combinations that pair a
 planned root with a one-program chain are dropped deliberately, since a graph of
 one program declares no typed edge and so states nothing about one.
+
+Ten items are controls rather than defect witnesses: the eight dense chains of
+depth one and two, whose producers read no internal input and own no width, and
+the two-label and nested-path graphs, whose producers are roots. They pass
+whether or not a producer is traced with its complete invocation and show that
+the harness itself publishes the expected rows; the remaining items fail at
+lowering unless it is.
 """
 
 import pathlib
