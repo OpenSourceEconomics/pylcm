@@ -20,9 +20,10 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   fingerprint, the regime name, the core name, the engine's per-period signature
   (`SolutionPhase.period_signatures`), and the solver's own period group key
   (`SolutionKernels.period_group_keys`) — instead of the identity of a Python callable.
-  Equivalent programs built separately share one executable, and a solver whose
-  published group key is coarser than what it actually specialized is refused at build
-  time with an `ExecutionPlanningError` naming both colliding programs.
+  Equivalent programs built separately within one solve share one executable, and a
+  solver whose published group key is coarser than what it actually specialized is
+  refused at build time with an `ExecutionPlanningError` naming both colliding
+  programs.
 - Solution archives written under solver API version 1 are rejected with
   `IncompatibleSolutionError`. Compatibility remains exact; pylcm does not migrate an
   archive across a solver API version.
@@ -49,6 +50,7 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   `ALL_PERSISTABLE_ARTIFACTS` solve+save, and load+supplied-solution simulate — each in
   a fresh, phase-isolated child process with exact provenance. The combined
   timing/CPU subprocess no longer reports a GPU peak.
+
 ### The MSS upper envelope decides its orderings from the stored operands
 
 - Which link owns a query is certified rather than read off a rounded comparison:

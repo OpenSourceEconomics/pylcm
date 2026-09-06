@@ -40,7 +40,10 @@ solver and its kernels answer three questions.
   model constructions. Publishing a key too coarse for what the solver actually
   specialized is refused at build time with an `ExecutionPlanningError`, naming both
   colliding programs, rather than running one period's closure in another period's
-  place.
+  place. The periods you group under one key must also reach **one callable object**:
+  building a fresh, equivalent closure per period — or a `functools.partial` over
+  equal-but-distinct bound values — is refused by that same `ExecutionPlanningError`, so
+  a grouping solver builds once and hands every period in the group the object it built.
 - **What does one period publish?** Each kernel declares a native core-program graph
   through `core_programs()` and returns a `KernelOutput` from its call.
 
@@ -208,10 +211,10 @@ The engine reads these declarations at three moments:
   must also keep every producer it reads, so a producer and its consumers belong in
   scopes that are selected together.
 - **When the period is lowered.** The engine visits producers before consumers, runs
-  each producer's function abstractly once, and lowers the consumer against the exact
-  shapes and dtypes of the subtrees its references select. Those templates are part of
-  the program's compilation identity, so two cells that differ only in an internal
-  input's shape do not share an executable.
+  each producer's function abstractly once per consumer, and lowers the consumer against
+  the exact shapes and dtypes of the subtrees its references select. Those templates are
+  part of the program's compilation identity, so two cells that differ only in an
+  internal input's shape do not share an executable.
 
 A typed internal edge is the route between two programs the engine lowers together. A
 `HOST_DRIVEN` program is dispatched by the solver's own host loop, so a driver that

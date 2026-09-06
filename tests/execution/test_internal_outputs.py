@@ -101,11 +101,13 @@ def _context():
 
 
 def test_consumers_are_ordered_after_their_producers() -> None:
+    """A graph is ordered so a producer is lowered before the consumer reading it."""
     graph = core_program_graph(kernel=_Kernel(programs=_graph()))
     assert topological_program_order(graph=graph) == ("producer", "consumer")
 
 
 def test_templates_take_the_producers_abstract_output_shapes() -> None:
+    """Each internal-input template carries the shape and dtype it will receive."""
     graph = core_program_graph(kernel=_Kernel(programs=_graph()))
     materialized = {
         name: materialize_core_program(program=program, context=_context())
@@ -123,6 +125,7 @@ def test_templates_take_the_producers_abstract_output_shapes() -> None:
 
 
 def test_a_consumer_lowers_against_the_templates_and_runs_on_real_arrays() -> None:
+    """A consumer lowered against the templates accepts the producer's real output."""
     graph = core_program_graph(kernel=_Kernel(programs=_graph()))
     materialized = {
         name: materialize_core_program(program=program, context=_context())
@@ -143,6 +146,7 @@ def test_a_consumer_lowers_against_the_templates_and_runs_on_real_arrays() -> No
 
 
 def test_dispatching_a_wrongly_shaped_internal_input_is_refused() -> None:
+    """An array whose shape departs from its template is refused at dispatch."""
     templates = {"upstream_value": jax.ShapeDtypeStruct((3,), jnp.float32)}
     with pytest.raises(ValueError, match="upstream_value"):
         assert_internal_inputs(
@@ -161,6 +165,7 @@ def test_dispatching_a_wrongly_shaped_internal_input_is_refused() -> None:
     ids=["unknown-producer", "unknown-label"],
 )
 def test_an_internal_input_must_name_a_declared_output(*, bad_ref, match) -> None:
+    """Building a graph refuses a reference to an unknown producer or label."""
     programs = _graph()
     requirements = CoreExecutionRequirements(
         internal_inputs={"upstream_value": bad_ref}
@@ -173,6 +178,7 @@ def test_an_internal_input_must_name_a_declared_output(*, bad_ref, match) -> Non
 
 
 def test_a_cycle_of_internal_inputs_is_refused() -> None:
+    """A graph whose internal edges close a cycle cannot be ordered and is refused."""
     programs = _graph()
     programs["producer"] = dataclasses.replace(
         programs["producer"],
@@ -189,6 +195,7 @@ def test_a_cycle_of_internal_inputs_is_refused() -> None:
 
 
 def test_an_internal_input_may_not_collide_with_a_built_argument() -> None:
+    """A name the program builds itself may not also arrive as an internal input."""
     programs = _graph()
     programs["consumer"] = dataclasses.replace(
         programs["consumer"],
@@ -204,6 +211,67 @@ def test_an_internal_input_may_not_collide_with_a_built_argument() -> None:
     with pytest.raises(ValueError, match="'x'"):
         internal_input_templates(
             program=materialized["consumer"], producers=materialized
+        )
+
+
+def _materialized_graph(programs) -> dict[str, Any]:
+    """Materialize every program of a graph against the shared build context."""
+    graph = core_program_graph(kernel=_Kernel(programs=programs))
+    return {
+        name: materialize_core_program(program=program, context=_context())
+        for name, program in graph.items()
+    }
+
+
+def test_a_template_for_an_undeclared_label_names_the_program_and_the_label() -> None:
+    """Reading a label the producer does not declare is refused by name."""
+    materialized = _materialized_graph(_graph())
+    materialized["consumer"] = dataclasses.replace(
+        materialized["consumer"],
+        requirements=CoreExecutionRequirements(
+            internal_inputs={
+                "upstream_value": InternalInputRef(
+                    producer="producer", label="not_declared"
+                )
+            }
+        ),
+    )
+
+    with pytest.raises(ValueError, match=r"'consumer'.*'not_declared'.*'producer'"):
+        internal_input_templates(
+            program=materialized["consumer"], producers=materialized
+        )
+
+
+def test_a_template_for_an_unreachable_path_names_the_path() -> None:
+    """A published path the producer's abstract output does not reach is refused."""
+    materialized = _materialized_graph(_graph())
+    materialized["producer"] = dataclasses.replace(
+        materialized["producer"],
+        internal_outputs=(InternalOutputSpec(label="value", path=(5,)),),
+    )
+    materialized["consumer"] = dataclasses.replace(
+        materialized["consumer"],
+        requirements=CoreExecutionRequirements(
+            internal_inputs={
+                "upstream_value": InternalInputRef(producer="producer", label="value")
+            }
+        ),
+    )
+
+    with pytest.raises(ValueError, match=r"path \(5,\)"):
+        internal_input_templates(
+            program=materialized["consumer"], producers=materialized
+        )
+
+
+def test_a_non_array_internal_input_leaf_is_refused_by_name() -> None:
+    """A handed-over leaf without a shape and a dtype is refused, naming the leaf."""
+    with pytest.raises(ValueError, match="shape and a dtype"):
+        assert_internal_inputs(
+            arguments={"upstream_value": jnp.zeros((3,), dtype=jnp.float32)},
+            templates={"upstream_value": "not an array"},
+            label="consumer",
         )
 
 

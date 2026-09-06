@@ -1532,7 +1532,7 @@ def _build_planned_input_liveness(
         pinned_artifacts.update(unplanned_exact)
         if has_unknown:
             pinned_artifacts.update(
-                _conservative_dense_value_artifacts(
+                _conservative_unplanned_value_artifacts(
                     regime=regime,
                     regime_name=regime_name,
                     period=period,
@@ -1638,13 +1638,15 @@ def _gated_fold_raw_value_artifacts(
     return _unique_value_artifacts(artifacts)
 
 
-def _conservative_dense_value_artifacts(
+def _conservative_unplanned_value_artifacts(
     *,
     regime: Regime,
     regime_name: RegimeName,
     period: int,
 ) -> tuple[ValueArtifactAddress, ...]:
-    """Pin every graph-reachable value for a dense core declaring no reads."""
+    """Pin every graph-reachable value for a core the engine does not plan and that
+    declares no reads.
+    """
     artifacts: list[ValueArtifactAddress] = [
         ValueArtifactAddress(
             kind=ValueArtifactKind.REGIME_VALUE,
@@ -2177,10 +2179,16 @@ def _fail_if_one_key_covers_two_callables(
 
     A key is an assertion about what a program computes, and the callables are
     the oracle for it: two candidates that agree on the key while carrying
-    different callables mean the identity is coarser than what the solver
-    actually specialized, and compiling one of them once would run one period's
-    closure in another period's place. Both colliding addresses are named, so a
-    reader can see which two programs the identity failed to tell apart.
+    different callables mean the key promises a sharing the callables do not
+    support, and compiling one of them once would run one period's closure in
+    another period's place. Two declarations reach that state:
+
+    - the published identity is coarser than what the solver specialized;
+    - the solver builds an equivalent but distinct callable per period it groups
+      under one key, where the key promises one callable object.
+
+    Both colliding addresses are named, so a reader can see which two programs
+    the identity failed to tell apart.
 
     Args:
         lowering_keys: The compilation key of every resolved candidate.
@@ -2201,8 +2209,11 @@ def _fail_if_one_key_covers_two_callables(
             msg = (
                 "Two core programs share one compilation key but are different "
                 f"callables: {_describe_candidate(candidate=known_candidate)} and "
-                f"{_describe_candidate(candidate=candidate)}. The program "
-                "identity is too coarse for this solver's specialization."
+                f"{_describe_candidate(candidate=candidate)}. Either the program "
+                "identity is too coarse for this solver's specialization, or the "
+                "solver builds an equivalent but distinct callable for each period "
+                "it groups under one key; periods grouped under one key must reach "
+                "one callable object."
             )
             raise ExecutionPlanningError(msg)
 
@@ -2683,7 +2694,7 @@ def _attach_resolved_output_layout(
     tile_widths: Mapping[str, int],
     input_transfer_plan: tuple[ResolvedValueTransfer, ...] = (),
     internal_input_templates: Mapping[str, object] = MappingProxyType({}),
-    name: str = "",
+    name: str,
 ) -> PlannedCore:
     """Carry one node's resolved output and input plans to runtime dispatch."""
     return PlannedCore(

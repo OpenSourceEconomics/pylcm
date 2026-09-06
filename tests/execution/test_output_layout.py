@@ -380,7 +380,10 @@ def test_published_value_placement_is_asserted_not_repaired():
         output_roles=VALUE,
     )
     core = PlannedCore(
-        compiled=lambda **_kwargs: replicated, layout=layout, tile_widths={}
+        compiled=lambda **_kwargs: replicated,
+        layout=layout,
+        tile_widths={},
+        name="main",
     )
 
     with pytest.raises(AssertionError, match="sharding"):

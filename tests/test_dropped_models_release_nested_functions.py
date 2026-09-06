@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 
 import _lcm
+import lcm
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model
 from lcm.solvers import AdaptiveOuterMesh, GridSearch
 from lcm.typing import UserParams
@@ -31,12 +32,15 @@ from tests.test_models.deterministic.regression import (
     working_life,
 )
 
-_ENGINE_SOURCE_ROOT = Path(_lcm.__file__).resolve().parent
+_ENGINE_SOURCE_ROOTS = (
+    Path(_lcm.__file__).resolve().parent,
+    Path(lcm.__file__).resolve().parent,
+)
 _TOY_PARAMS: UserParams = {"discount_factor": 0.95}
 
 
-def _live_nested_functions(*, source_root: Path) -> int:
-    """Count the per-call nested functions under `source_root` still reachable.
+def _live_nested_functions(*, source_roots: tuple[Path, ...]) -> int:
+    """Count the per-call nested functions under `source_roots` still reachable.
 
     A function defined inside another function carries `<locals>` in its qualified
     name; one that is still alive after the call that created it has been pinned by
@@ -59,7 +63,9 @@ def _live_nested_functions(*, source_root: Path) -> int:
         # An annotated function also owns a deferred annotation thunk; it lives
         # and dies with its function, so counting it would double every survivor.
         and not obj.__qualname__.endswith(".__annotate__")
-        and Path(obj.__code__.co_filename).is_relative_to(source_root)
+        and any(
+            Path(obj.__code__.co_filename).is_relative_to(root) for root in source_roots
+        )
     )
 
 
@@ -132,13 +138,14 @@ def test_a_dropped_model_and_solution_leave_no_nested_engine_function_behind(
     family: str,
 ) -> None:
     """A second build-and-solve of a family pins no nested engine function."""
-    assert _ENGINE_SOURCE_ROOT.is_relative_to(Path(__file__).resolve().parents[1])
+    project_root = Path(__file__).resolve().parents[1]
+    assert all(root.is_relative_to(project_root) for root in _ENGINE_SOURCE_ROOTS)
     _build_solve_and_drop(family)
-    before = _live_nested_functions(source_root=_ENGINE_SOURCE_ROOT)
+    before = _live_nested_functions(source_roots=_ENGINE_SOURCE_ROOTS)
 
     _build_solve_and_drop(family)
 
-    assert _live_nested_functions(source_root=_ENGINE_SOURCE_ROOT) == before
+    assert _live_nested_functions(source_roots=_ENGINE_SOURCE_ROOTS) == before
 
 
 def test_the_nested_function_probe_survives_a_dead_weak_reference() -> None:
@@ -154,7 +161,7 @@ def test_the_nested_function_probe_survives_a_dead_weak_reference() -> None:
         """Something a proxy can outlive."""
 
     source_root = Path(__file__).resolve().parent
-    baseline = _live_nested_functions(source_root=source_root)
+    baseline = _live_nested_functions(source_roots=(source_root,))
 
     proxy = weakref.proxy(_Referent())
     gc.collect()
@@ -162,16 +169,16 @@ def test_the_nested_function_probe_survives_a_dead_weak_reference() -> None:
     with pytest.raises(ReferenceError):
         proxy.__class__  # noqa: B018
 
-    assert _live_nested_functions(source_root=source_root) == baseline
+    assert _live_nested_functions(source_roots=(source_root,)) == baseline
 
 
 def test_the_nested_function_probe_counts_a_live_nested_function() -> None:
     """The probe reports a nested function of the source tree it is pointed at."""
     source_root = Path(__file__).resolve().parent
-    baseline = _live_nested_functions(source_root=source_root)
+    baseline = _live_nested_functions(source_roots=(source_root,))
 
     def _pinned_nested_function() -> None:
         """Stay alive for the rest of this test so the probe has one to find."""
 
-    assert _live_nested_functions(source_root=source_root) == baseline + 1
+    assert _live_nested_functions(source_roots=(source_root,)) == baseline + 1
     _pinned_nested_function()

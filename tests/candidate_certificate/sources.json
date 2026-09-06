@@ -14,11 +14,11 @@
           },
           {
             "path": "src/_lcm/execution/core_program.py",
-            "sha256": "c2e842a1de6ae3bde27e979e022a08caf0dae6a7cdb56f81b70e466f77bfd16f"
+            "sha256": "0748a609c6278d6fc8dde9c791cf705c028683a2a2262e784b617fdc154cf9ae"
           },
           {
             "path": "src/_lcm/execution/output_layout.py",
-            "sha256": "171566e384a070bb9daebbe74d2418cb25f82291cfc93983d2a56e589486a395"
+            "sha256": "65541f5e1ff3edad0f9105457e478525d3913fcf32204aeba6fe290cf0fd676d"
           },
           {
             "path": "src/_lcm/execution/value_transfer.py",
@@ -150,7 +150,7 @@
           },
           {
             "path": "src/_lcm/solution/backward_induction.py",
-            "sha256": "1bdae8246ff5c3db6c6ab6e3587eb2dd4e87fd3a0e4a457e2f9362f99d439152"
+            "sha256": "bb892676e0164ae7d0791931ad99861a640537930cdeec4766b07e42a2cab814"
           },
           {
             "path": "src/_lcm/solution/collective_action_reduction.py",
@@ -214,7 +214,7 @@
           }
         ],
         "source_count": 52,
-        "source_inventory_sha256": "e47f0c98b39e0191b45120ee71c939d80ae78ed3cd6fa0c98ff3c6ae3082c93d"
+        "source_inventory_sha256": "a900482f842c05123bd83e0052fddbd5117bd70b4b8b369bc4790d69af3fdcd0"
       },
       "fast": {
         "candidate_sources": [
@@ -228,11 +228,11 @@
           },
           {
             "path": "src/_lcm/execution/core_program.py",
-            "sha256": "c2e842a1de6ae3bde27e979e022a08caf0dae6a7cdb56f81b70e466f77bfd16f"
+            "sha256": "0748a609c6278d6fc8dde9c791cf705c028683a2a2262e784b617fdc154cf9ae"
           },
           {
             "path": "src/_lcm/execution/output_layout.py",
-            "sha256": "171566e384a070bb9daebbe74d2418cb25f82291cfc93983d2a56e589486a395"
+            "sha256": "65541f5e1ff3edad0f9105457e478525d3913fcf32204aeba6fe290cf0fd676d"
           },
           {
             "path": "src/_lcm/execution/value_transfer.py",
@@ -364,7 +364,7 @@
           },
           {
             "path": "src/_lcm/solution/backward_induction.py",
-            "sha256": "1bdae8246ff5c3db6c6ab6e3587eb2dd4e87fd3a0e4a457e2f9362f99d439152"
+            "sha256": "bb892676e0164ae7d0791931ad99861a640537930cdeec4766b07e42a2cab814"
           },
           {
             "path": "src/_lcm/solution/collective_action_reduction.py",
@@ -428,13 +428,13 @@
           }
         ],
         "source_count": 52,
-        "source_inventory_sha256": "e47f0c98b39e0191b45120ee71c939d80ae78ed3cd6fa0c98ff3c6ae3082c93d"
+        "source_inventory_sha256": "a900482f842c05123bd83e0052fddbd5117bd70b4b8b369bc4790d69af3fdcd0"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "e47f0c98b39e0191b45120ee71c939d80ae78ed3cd6fa0c98ff3c6ae3082c93d",
+  "source_inventory_sha256": "a900482f842c05123bd83e0052fddbd5117bd70b4b8b369bc4790d69af3fdcd0",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -446,11 +446,11 @@
     },
     {
       "path": "src/_lcm/execution/core_program.py",
-      "sha256": "c2e842a1de6ae3bde27e979e022a08caf0dae6a7cdb56f81b70e466f77bfd16f"
+      "sha256": "0748a609c6278d6fc8dde9c791cf705c028683a2a2262e784b617fdc154cf9ae"
     },
     {
       "path": "src/_lcm/execution/output_layout.py",
-      "sha256": "171566e384a070bb9daebbe74d2418cb25f82291cfc93983d2a56e589486a395"
+      "sha256": "65541f5e1ff3edad0f9105457e478525d3913fcf32204aeba6fe290cf0fd676d"
     },
     {
       "path": "src/_lcm/execution/value_transfer.py",
@@ -582,7 +582,7 @@
     },
     {
       "path": "src/_lcm/solution/backward_induction.py",
-      "sha256": "1bdae8246ff5c3db6c6ab6e3587eb2dd4e87fd3a0e4a457e2f9362f99d439152"
+      "sha256": "bb892676e0164ae7d0791931ad99861a640537930cdeec4766b07e42a2cab814"
     },
     {
       "path": "src/_lcm/solution/collective_action_reduction.py",

@@ -13,11 +13,14 @@ import jax
 
 from _lcm.execution.core_program import (
     CoreProgram,
+    InternalOutputSpec,
     MaterializedCoreProgram,
     _topological_program_order,
 )
 
 
+# The ordering lives beside the graph validation that needs it, and `core_program`
+# cannot import this module, so the public name is a delegate rather than a copy.
 def topological_program_order(*, graph: Mapping[str, CoreProgram]) -> tuple[str, ...]:
     """Return graph keys so every producer precedes its consumers.
 
@@ -54,9 +57,14 @@ def internal_input_templates(
             abstract_outputs[ref.producer] = jax.eval_shape(
                 producer.function, **producer.arguments
             )
-        spec = next(s for s in producer.internal_outputs if s.label == ref.label)
+        spec = _declared_output(
+            producer=producer, label=ref.label, consumer=program.name
+        )
         templates[name] = _select_path(
-            tree=abstract_outputs[ref.producer], path=spec.path
+            tree=abstract_outputs[ref.producer],
+            path=spec.path,
+            producer=ref.producer,
+            label=ref.label,
         )
     return MappingProxyType(templates)
 
@@ -82,14 +90,47 @@ def assert_internal_inputs(
             raise ValueError(msg)
 
 
+def _declared_output(
+    *, producer: MaterializedCoreProgram, label: str, consumer: str
+) -> InternalOutputSpec:
+    """Return the producer's output declaration that one reference names."""
+    for spec in producer.internal_outputs:
+        if spec.label == label:
+            return spec
+    msg = (
+        f"Core program {consumer!r} reads internal output {label!r} of producer "
+        f"{producer.name!r}, which declares "
+        f"{tuple(spec.label for spec in producer.internal_outputs)!r}."
+    )
+    raise ValueError(msg)
+
+
 def _leaf_signature(leaf: object) -> tuple[tuple[int, ...], str]:
     """Return the shape and dtype spelling that identify one handed-over leaf."""
-    return (tuple(leaf.shape), str(leaf.dtype))  # ty: ignore[unresolved-attribute]
+    shape = getattr(leaf, "shape", None)
+    dtype = getattr(leaf, "dtype", None)
+    if shape is None or dtype is None:
+        msg = (
+            "An internal input leaf must be an array carrying a shape and a dtype; "
+            f"got {leaf!r}."
+        )
+        raise ValueError(msg)
+    return (tuple(shape), str(dtype))
 
 
-def _select_path(*, tree: object, path: tuple[int | str, ...]) -> object:
+def _select_path(
+    *, tree: object, path: tuple[int | str, ...], producer: str, label: str
+) -> object:
     """Index one abstract output tree down to the published subtree."""
     node = tree
     for step in path:
-        node = node[step]  # ty: ignore[not-subscriptable]
+        try:
+            node = node[step]  # ty: ignore[not-subscriptable]
+        except (IndexError, KeyError, TypeError) as error:
+            msg = (
+                f"Internal output {label!r} of core program {producer!r} declares "
+                f"path {path!r}, which its abstract output does not reach: step "
+                f"{step!r} is not in {node!r}."
+            )
+            raise ValueError(msg) from error
     return node

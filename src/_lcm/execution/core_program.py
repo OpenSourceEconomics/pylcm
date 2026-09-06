@@ -17,6 +17,8 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 
+import jax
+
 from _lcm.execution.value_transfer import (
     ResolvedValueTransfer,
     ValueArtifactAddress,
@@ -927,6 +929,9 @@ def resolve_core_program(
         specialization_key=(
             "core-program",
             _CORE_PROGRAM_VERSION,
+            # The arithmetic profile decides what the traced code computes, so an
+            # executable built under one x64 setting may not answer for the other.
+            ("jax_enable_x64", bool(jax.config.jax_enable_x64)),
             program.disposition.value,
             program.disposition_reason,
             program.scope.value,

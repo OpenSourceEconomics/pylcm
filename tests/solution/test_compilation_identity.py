@@ -222,6 +222,27 @@ def test_equal_keys_over_different_callables_are_refused(
     assert message.count("regime 'working_life', core 'main', period ") == 2
 
 
+def test_the_key_refusal_names_the_equivalent_callable_case(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The refusal states that a per-period equivalent callable also reaches it.
+
+    A solver whose group key is right but which builds a fresh, equivalent closure
+    per period is refused by the same guard, so the message names that possibility
+    beside a group key that is too coarse.
+    """
+    model = _twin(solver_kind="brute_force", age_specialized=True)
+    monkeypatch.setattr(
+        backward_induction,
+        "_program_identity",
+        lambda **_kwargs: ("program", "constant"),
+    )
+    with pytest.raises(ExecutionPlanningError) as refusal:
+        model.solve(params=twin_params(), log_level="off")
+
+    assert "equivalent" in str(refusal.value)
+
+
 @pytest.mark.parametrize(("build_model", "regime_name"), _GROUPING_SOLVER_CASES)
 def test_a_grouping_solver_publishes_one_group_key_per_active_period(
     *, build_model: Callable[[], Model], regime_name: RegimeName

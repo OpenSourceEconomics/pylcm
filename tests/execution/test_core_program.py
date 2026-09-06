@@ -677,6 +677,59 @@ def test_a_host_driven_program_declares_no_streamable_axis() -> None:
 
 
 @pytest.mark.parametrize(
+    "disposition",
+    [CoreExecutionDisposition.DENSE, CoreExecutionDisposition.HOST_DRIVEN],
+    ids=["dense", "host-driven"],
+)
+def test_an_unplanned_program_refuses_a_resolved_input_transfer_plan(
+    *, disposition: CoreExecutionDisposition
+) -> None:
+    """Only a planned program may be handed a resolved input transfer plan."""
+    value = jnp.asarray([3.0, 4.0])
+    plan = _resolve_value_input_transfer_plan(
+        program=_value_consumer_program(
+            accesses=(_value_access(source=_SCHEDULED_SOURCE),),
+            arguments={ValueInputChannel.NEXT_REGIME_VALUE.value: {"target": value}},
+        ),
+        source_value_template=value,
+        source=_SCHEDULED_SOURCE,
+    )
+    program = MaterializedCoreProgram(
+        name="main",
+        function=_unused_value_consumer_core,
+        arguments={},
+        requirements=CoreExecutionRequirements(),
+        output_roles=VALUE,
+        disposition=disposition,
+        disposition_reason=f"{disposition.value}:test",
+        donation_candidates=(),
+    )
+
+    with pytest.raises(
+        ValueError, match=r"A resolved input plan is for planned programs only"
+    ):
+        resolve_core_program(program=program, input_transfer_plan=plan)
+
+
+def test_the_specialization_key_separates_the_two_x64_arithmetic_profiles() -> None:
+    """The same declaration resolved under each x64 setting gets its own key."""
+    original = bool(jax.config.jax_enable_x64)
+    try:
+        jax.config.update("jax_enable_x64", False)  # noqa: FBT003
+        without_x64 = resolve_core_program(
+            program=_program(), tile_widths={"action": 3}
+        ).specialization_key
+        jax.config.update("jax_enable_x64", True)  # noqa: FBT003
+        with_x64 = resolve_core_program(
+            program=_program(), tile_widths={"action": 3}
+        ).specialization_key
+    finally:
+        jax.config.update("jax_enable_x64", original)
+
+    assert without_x64 != with_x64
+
+
+@pytest.mark.parametrize(
     ("coordinate_extent", "error", "message"),
     [
         (2.5, TypeError, r"extents must be integers"),

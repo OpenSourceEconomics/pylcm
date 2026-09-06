@@ -12,6 +12,7 @@ class ExecutionConfig:
     """
 
     device_memory_bytes: int | None = None
+    """Per-device byte ceiling for compiler-reported peak workspace, or `None`."""
 
     def __post_init__(self) -> None:
         """Reject ambiguous or unusable byte budgets at construction."""

@@ -126,6 +126,12 @@ def test_the_adaptive_kernel_marks_its_adjuster_programs_host_driven():
     kernel, _ = _kernel("adaptive")
     graph = core_program_graph(kernel=kernel)
 
+    assert set(graph) == {
+        "keeper:main",
+        "keeper:replay",
+        "adjuster:main",
+        "adjuster:replay",
+    }
     for name, program in graph.items():
         if name.startswith("adjuster:"):
             assert program.disposition is CoreExecutionDisposition.HOST_DRIVEN

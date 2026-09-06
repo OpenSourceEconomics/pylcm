@@ -421,10 +421,11 @@ class PlannedCore:
     compiled: Callable
     layout: ResolvedOutputLayout
     tile_widths: Mapping[str, int]
+    """Width this core was lowered at, per streamable axis of its program."""
     input_transfer_plan: tuple[ResolvedValueTransfer, ...] = ()
     internal_input_templates: Mapping[str, object] = MappingProxyType({})
     """Abstract template per internal input this core was lowered against."""
-    name: str = ""
+    name: str
     """Graph key of the program this core was compiled for."""
 
     def __post_init__(self) -> None:
