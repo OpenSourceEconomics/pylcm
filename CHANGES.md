@@ -5,24 +5,24 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 
 ## Unreleased
 
-### Engine functions are defined once, never per call
+### Engine functions are defined once, not per call
 
 - Every function the engine defines is a module-level function or a frozen dataclass
-  with a `__call__`; no function definition runs inside another function per model
-  build, per solve, per simulate, or per trace. pylcm's beartype claw decorates each
-  function definition it sees and beartype memoizes every decorated function object
-  for the life of the process, so a per-call definition pinned everything it closed
-  over: grids, arrays, tracers, compiled kernels, whole models. Building and solving,
-  then dropping, a model of any shipped solver family now leaves no engine function
-  behind, and a long session or test worker no longer grows with every model it
-  builds.
-- The call-convention adapters (`allow_only_kwargs`, `allow_args`) and the batched
-  product map are frozen dataclasses that carry the wrapped function's name, docstring,
-  attributes, and `__signature__`, so `inspect.signature`, `dags`, and the JAX
-  transformations see the function they stand in for.
-- The durable model fingerprint treats a class defined in a shipped pylcm module as a
-  closed direct reference: only its name enters the digest, its implementation being
-  sealed by the separately checked pylcm version.
+  with a `__call__`, apart from the five sources named below; no other function
+  definition runs inside another function per model build, per solve, per simulate, or
+  per trace. pylcm's beartype claw decorates each function definition it sees and
+  beartype memoizes every decorated function object for the life of the process, so a
+  per-call definition pinned everything it closed over: grids, arrays, tracers,
+  compiled kernels, whole models. Building and solving, then dropping, a model of any
+  shipped solver family leaves no engine function behind outside those five, and a long
+  session or test worker no longer grows with every model it builds.
+- Five sources still define a function per call, and the nested-function probe names
+  each of them as an exemption: `regime_building/max_Q_over_a.py`,
+  `regime_building/collective.py`, `regime_building/processing.py`,
+  `solution/negm.py`, and `solution/nnbegm.py`. The candidate certificate pins the
+  reducer builders' bodies verbatim, nested definitions included, so their shape
+  changes with that certificate or not at all; the remaining three are converted
+  together with the execution work that rewrites the same call sites.
 
 ### Complete solution persistence and executable external replay
 
