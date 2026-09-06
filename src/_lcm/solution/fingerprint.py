@@ -120,6 +120,15 @@ _TRUSTED_DECLARATIVE_ENUM_TYPES = frozenset(
         type(inspect.Parameter.POSITIONAL_ONLY),
     }
 )
+_ARRAY_METADATA_READS = MappingProxyType(
+    {
+        "shape": tuple,
+        "size": int,
+        "ndim": int,
+        "dtype": np.dtype,
+    }
+)
+_NOT_ARRAY_METADATA = object()
 _TRUSTED_GRID_TYPE_OBJECTS = frozenset(
     value
     for name in grid_declarations.__all__
@@ -2123,6 +2132,12 @@ def _bind_referenced_member(
                 f"{dotted!r}."
             )
             raise TypeError(msg) from error
+    elif (
+        metadata := _read_array_metadata(
+            binding_instance=binding_instance, attribute=attribute, member=member
+        )
+    ) is not _NOT_ARRAY_METADATA:
+        resolved = metadata
     elif inspect.getattr_static(type(member), "__get__", None) is not None:
         dotted = ".".join(path)
         descriptor_type = f"{type(member).__module__}.{type(member).__qualname__}"
@@ -2132,6 +2147,39 @@ def _bind_referenced_member(
         )
         raise TypeError(msg)
     return resolved
+
+
+def _read_array_metadata(
+    *, binding_instance: object, attribute: str, member: object
+) -> object:
+    """Read shape metadata an array constant already fixes, else the sentinel.
+
+    `shape`, `size`, `ndim` and `dtype` of a JAX or NumPy array are functions of the
+    array itself, and the reference already digests that array, so binding them
+    contributes no state the fingerprint does not already cover.
+
+    The array type's own descriptor is the thing being trusted, not the attribute
+    name: JAX's array type accepts attribute assignment, so a descriptor called
+    `size` is not by itself a promise about what it computes. The bound value is
+    therefore required to be the metadata it claims to be, and anything else falls
+    through to the refusal that covers dynamic descriptors in general.
+    """
+    expected = _ARRAY_METADATA_READS.get(attribute)
+    if expected is None or not isinstance(binding_instance, Array | np.ndarray):
+        return _NOT_ARRAY_METADATA
+    if not isinstance(member, property | types.GetSetDescriptorType):
+        return _NOT_ARRAY_METADATA
+    try:
+        resolved = member.__get__(binding_instance, type(binding_instance))
+    except AttributeError, TypeError, ValueError:
+        return _NOT_ARRAY_METADATA
+    if attribute == "shape":
+        readable = isinstance(resolved, tuple) and all(
+            type(entry) is int for entry in resolved
+        )
+    else:
+        readable = isinstance(resolved, expected)
+    return resolved if readable else _NOT_ARRAY_METADATA
 
 
 def _descriptor_binding_context(
