@@ -531,6 +531,7 @@ def test_streamed_reducer_sources_are_literal_certificate_obligations():
     """The generated inventory owns every live streamed transport helper."""
     assert isinstance(_parse("src/_lcm/execution/core_program.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/execution/value_transfer.py"), ast.Module)
+    assert isinstance(_parse("src/_lcm/execution/internal_outputs.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/solution/action_streaming.py"), ast.Module)
     assert isinstance(_parse("src/_lcm/solution/action_reduction.py"), ast.Module)
     assert isinstance(
@@ -810,6 +811,10 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
         "value_transfer:edge_identity_check_bypassed",
         "value_transfer:copy_destination_ignored",
         "value_transfer:duplicate_consumer_admitted",
+        "internal_outputs:resolved_templates_dropped",
+        "internal_outputs:width_invariance_refusal_bypassed",
+        "internal_outputs:consumed_producer_names_drops_last_reference",
+        "internal_outputs:template_argument_collision_check_bypassed",
     }
     required.update(
         f"{route}:candidate_index_{index}"
@@ -830,10 +835,10 @@ def test_direct_flow_mutations_cover_taste_routes_helpers_and_every_candidate():
     assert required <= names
     # Independent literals make both cardinality and family identity part of this
     # certificate, rather than trusting constants supplied by the mutation generator.
-    assert len(names) == 355
+    assert len(names) == 359
     assert (
         hashlib.sha256(("\n".join(sorted(names)) + "\n").encode()).hexdigest()
-        == "f5627cb8d4e6928c03c1707ef5ca396f5c16fd17d182c3668531f11f12802c91"
+        == "9bf23578c768275d0df8b28bf03f3ca94cda5bb16e2a5a9087da8e0b82d71f0d"
     )
 
 

@@ -17,6 +17,10 @@
             "sha256": "f5f86bf2976d80ee87c3c9560bd91f62ee51e82b94ad72c9c1fe34c0cd35e63b"
           },
           {
+            "path": "src/_lcm/execution/internal_outputs.py",
+            "sha256": "ce6677ef989669033ad8b24ab5321e0596657b1befea6988689f96eb8b365f25"
+          },
+          {
             "path": "src/_lcm/execution/output_layout.py",
             "sha256": "65541f5e1ff3edad0f9105457e478525d3913fcf32204aeba6fe290cf0fd676d"
           },
@@ -213,8 +217,8 @@
             "sha256": "55eda6369c0f3c13d1c92241338ffab0d73b5f87517cbae5f0c83875894227a2"
           }
         ],
-        "source_count": 52,
-        "source_inventory_sha256": "113d7c5d23734ef863c61994752afedfbac82170a8f51bc613ba73f79c0e7d78"
+        "source_count": 53,
+        "source_inventory_sha256": "785e7af89e049319fb4387fe0f6c646358ff4d14a4ff0b4c3fb3e8211b6a8d5b"
       },
       "fast": {
         "candidate_sources": [
@@ -231,6 +235,10 @@
             "sha256": "f5f86bf2976d80ee87c3c9560bd91f62ee51e82b94ad72c9c1fe34c0cd35e63b"
           },
           {
+            "path": "src/_lcm/execution/internal_outputs.py",
+            "sha256": "ce6677ef989669033ad8b24ab5321e0596657b1befea6988689f96eb8b365f25"
+          },
+          {
             "path": "src/_lcm/execution/output_layout.py",
             "sha256": "65541f5e1ff3edad0f9105457e478525d3913fcf32204aeba6fe290cf0fd676d"
           },
@@ -427,14 +435,14 @@
             "sha256": "55eda6369c0f3c13d1c92241338ffab0d73b5f87517cbae5f0c83875894227a2"
           }
         ],
-        "source_count": 52,
-        "source_inventory_sha256": "113d7c5d23734ef863c61994752afedfbac82170a8f51bc613ba73f79c0e7d78"
+        "source_count": 53,
+        "source_inventory_sha256": "785e7af89e049319fb4387fe0f6c646358ff4d14a4ff0b4c3fb3e8211b6a8d5b"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "113d7c5d23734ef863c61994752afedfbac82170a8f51bc613ba73f79c0e7d78",
+  "source_inventory_sha256": "785e7af89e049319fb4387fe0f6c646358ff4d14a4ff0b4c3fb3e8211b6a8d5b",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -447,6 +455,10 @@
     {
       "path": "src/_lcm/execution/core_program.py",
       "sha256": "f5f86bf2976d80ee87c3c9560bd91f62ee51e82b94ad72c9c1fe34c0cd35e63b"
+    },
+    {
+      "path": "src/_lcm/execution/internal_outputs.py",
+      "sha256": "ce6677ef989669033ad8b24ab5321e0596657b1befea6988689f96eb8b365f25"
     },
     {
       "path": "src/_lcm/execution/output_layout.py",

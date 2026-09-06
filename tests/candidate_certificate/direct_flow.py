@@ -75,6 +75,7 @@ GRID_SEARCH_SOURCE = "src/_lcm/solution/grid_search.py"
 CORE_PROGRAM_SOURCE = "src/_lcm/execution/core_program.py"
 OUTPUT_LAYOUT_SOURCE = "src/_lcm/execution/output_layout.py"
 VALUE_TRANSFER_SOURCE = "src/_lcm/execution/value_transfer.py"
+INTERNAL_OUTPUTS_SOURCE = "src/_lcm/execution/internal_outputs.py"
 ACTION_STREAMING_SOURCE = "src/_lcm/solution/action_streaming.py"
 ACTION_REDUCTION_SOURCE = "src/_lcm/solution/action_reduction.py"
 COLLECTIVE_ACTION_REDUCTION_SOURCE = "src/_lcm/solution/collective_action_reduction.py"
@@ -129,6 +130,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
     CORE_PROGRAM_SOURCE,
     OUTPUT_LAYOUT_SOURCE,
     VALUE_TRANSFER_SOURCE,
+    INTERNAL_OUTPUTS_SOURCE,
     ACTION_STREAMING_SOURCE,
     ACTION_REDUCTION_SOURCE,
     COLLECTIVE_ACTION_REDUCTION_SOURCE,
@@ -189,6 +191,7 @@ _SOURCE_SEALS = {
     CORE_PROGRAM_SOURCE: "f5f86bf2976d80ee87c3c9560bd91f62ee51e82b94ad72c9c1fe34c0cd35e63b",
     OUTPUT_LAYOUT_SOURCE: "65541f5e1ff3edad0f9105457e478525d3913fcf32204aeba6fe290cf0fd676d",
     VALUE_TRANSFER_SOURCE: "1ed3973244ab896098c5ed165c538f6562393192f3330f11efaa9eb21cd53c7f",
+    INTERNAL_OUTPUTS_SOURCE: "ce6677ef989669033ad8b24ab5321e0596657b1befea6988689f96eb8b365f25",
     ACTION_STREAMING_SOURCE: "bd693f4bab250215dea9b6fb6021c518163305a890a9536f66af9e1d7dc5c308",
     ACTION_REDUCTION_SOURCE: "6cee6ea2dbef0ba710fa4a318a2113377d6513cee508e73004861597f9c220f9",
     COLLECTIVE_ACTION_REDUCTION_SOURCE: "7a80418764fdf9754062a23707c5d39fa7abfcaac9c8e8f7803c4d8f1b461347",
@@ -234,9 +237,9 @@ _SOURCE_SEALS = {
     MODEL_PROCESSING_SOURCE: "b9c90423e0fddae83632767e20c5ae71af7f44e840c2e2b6fa82bc6750093e87",
 }
 
-EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 355
+EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 359
 EXPECTED_DIRECT_FLOW_MUTATION_NAMES_SHA256 = (
-    "f5627cb8d4e6928c03c1707ef5ca396f5c16fd17d182c3668531f11f12802c91"
+    "9bf23578c768275d0df8b28bf03f3ca94cda5bb16e2a5a9087da8e0b82d71f0d"
 )
 
 
@@ -1979,6 +1982,28 @@ ARTIFACT = "artifact"
     return errors
 
 
+def _internal_outputs_transport_errors(tree: ast.Module) -> list[str]:
+    """Pin the internal-output resolver a consumer is lowered against.
+
+    A consumer names a producer's declared subtree and is traced against the
+    template that subtree publishes; the width invariance check is what lets
+    the planner select a producer's width independently of every consumer
+    already lowered against it. Each of these four callables is pinned by
+    exact AST, so relocating the collision check, the invariance refusal, or
+    the traced-argument set into a helper does not evade the proof.
+    """
+    return _exact_callable_errors(
+        tree=tree,
+        label="internal-output producer-to-consumer transport",
+        contracts={
+            "resolve_producer": "7b9c19ee788a2bd30a18756f4d0fb9395023d1f6f5bf6f02bb0f49ddb3d51496",
+            "assert_width_invariant_internal_outputs": "cf54d009a3abce9124ea579209b720ab06f7fe9bff641753f60753cc2ab1e975",
+            "consumed_producer_names": "6c7019c97744a8bd73f34344a6dc45f195972e393dfeff1d1a206f0dce286ee2",
+            "internal_input_templates": "4854454958ec8301926d97ddce7e09d5557babb4d79fab1aa5c475bd9477769b",
+        },
+    )
+
+
 def _action_streaming_errors(tree: ast.Module) -> list[str]:
     """Pin complete C-order block evaluation and exact reducer delegation."""
     errors = _class_surface_errors(
@@ -3533,6 +3558,12 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> dict[str, Any]:
         errors.extend(new_errors)
         if new_errors:
             offending.add(VALUE_TRANSFER_SOURCE)
+    internal_outputs_tree = parsed.get(INTERNAL_OUTPUTS_SOURCE)
+    if internal_outputs_tree is not None:
+        new_errors = _internal_outputs_transport_errors(internal_outputs_tree)
+        errors.extend(new_errors)
+        if new_errors:
+            offending.add(INTERNAL_OUTPUTS_SOURCE)
     processing_tree = parsed.get(PROCESSING_SOURCE)
     if processing_tree is not None:
         new_errors = _processing_caller_errors(processing_tree)
@@ -4151,6 +4182,9 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
     core_program_source = (root / CORE_PROGRAM_SOURCE).read_text(encoding="utf-8")
     output_layout_source = (root / OUTPUT_LAYOUT_SOURCE).read_text(encoding="utf-8")
     value_transfer_source = (root / VALUE_TRANSFER_SOURCE).read_text(encoding="utf-8")
+    internal_outputs_source = (root / INTERNAL_OUTPUTS_SOURCE).read_text(
+        encoding="utf-8"
+    )
     action_streaming_source = (root / ACTION_STREAMING_SOURCE).read_text(
         encoding="utf-8"
     )
@@ -5622,6 +5656,69 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         }
     )
 
+    internal_outputs_cases = {
+        "internal_outputs:resolved_templates_dropped": replace_once(
+            source=internal_outputs_source,
+            old="        abstract_output=jax.eval_shape(invocation, **program.arguments, **templates),",
+            new="        abstract_output=jax.eval_shape(invocation, **program.arguments),",
+            label="producer tracing includes its own internal-input templates",
+        ),
+        "internal_outputs:width_invariance_refusal_bypassed": replace_once(
+            source=internal_outputs_source,
+            old=(
+                "            if actual == expected:\n"
+                "                continue\n"
+                "            msg = ("
+            ),
+            new=("            if True:\n                continue\n            msg = ("),
+            label="width-dependent internal-output refusal",
+        ),
+        "internal_outputs:consumed_producer_names_drops_last_reference": replace_once(
+            source=internal_outputs_source,
+            old=(
+                "    return frozenset(\n"
+                "        ref.producer\n"
+                "        for program in graph.values()\n"
+                "        for ref in program.requirements.internal_inputs.values()\n"
+                "    )"
+            ),
+            new=(
+                "    return frozenset(\n"
+                "        ref.producer\n"
+                "        for program in graph.values()\n"
+                "        for ref in list(program.requirements.internal_inputs.values())[:-1]\n"
+                "    )"
+            ),
+            label="complete internal-input reference enumeration",
+        ),
+        "internal_outputs:template_argument_collision_check_bypassed": replace_once(
+            source=internal_outputs_source,
+            old=(
+                "        if name in program.arguments:\n"
+                "            msg = (\n"
+                '                f"Core program {program.name!r} builds an argument {name!r} that its "\n'
+                '                "internal inputs also declare."\n'
+                "            )\n"
+                "            raise ValueError(msg)"
+            ),
+            new=(
+                "        if False:\n"
+                "            msg = (\n"
+                '                f"Core program {program.name!r} builds an argument {name!r} that its "\n'
+                '                "internal inputs also declare."\n'
+                "            )\n"
+                "            raise ValueError(msg)"
+            ),
+            label="internal-input/argument collision refusal",
+        ),
+    }
+    specs.update(
+        {
+            name: {"path": INTERNAL_OUTPUTS_SOURCE, "source": mutated}
+            for name, mutated in internal_outputs_cases.items()
+        }
+    )
+
     processing_cases = {
         "caller_simulate:action_names_slice": replace_once(
             source=processing_source,
@@ -6581,6 +6678,7 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         CORE_PROGRAM_SOURCE: core_program_source,
         OUTPUT_LAYOUT_SOURCE: output_layout_source,
         VALUE_TRANSFER_SOURCE: value_transfer_source,
+        INTERNAL_OUTPUTS_SOURCE: internal_outputs_source,
         ACTION_STREAMING_SOURCE: action_streaming_source,
         ACTION_REDUCTION_SOURCE: action_reduction_source,
         COLLECTIVE_ACTION_REDUCTION_SOURCE: collective_action_reduction_source,
