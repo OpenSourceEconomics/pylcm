@@ -152,6 +152,14 @@ def refine_envelope(
     order = jnp.argsort(grid_key)
     query_grid = jnp.where(dead, jnp.nan, endog_grid)[order]
     query_dead = dead[order]
+    # Several candidate branches can supply the same query abscissa. They still
+    # all participate as links, but the sweep publishes the owning node once.
+    # Otherwise a node-aligned switch emits its outgoing record beside several
+    # identical incoming-node records instead of one outgoing/incoming pair.
+    repeated_query = jnp.concatenate(
+        (jnp.zeros((1,), dtype=bool), query_grid[1:] == query_grid[:-1])
+    )
+    query_dead = query_dead | repeated_query
 
     # Segment endpoints: candidate `k` to candidate `k+1`, consecutive in the
     # (unsorted) input order — the EGM cloud's natural segment chain. A segment
