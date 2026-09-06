@@ -97,13 +97,14 @@ def test_a_leaf_is_the_array_the_field_holds() -> None:
     """Addressing a leaf yields the payload's own array, not a copy of it."""
     carry = _carry()
 
-    assert carry.leaves()[("value",)].tobytes() == carry.value.tobytes()
+    assert carry.leaves()[("value",)] is carry.value
 
 
 def test_the_continuation_payload_alias_still_names_the_artifact_protocol() -> None:
-    """Adding a reader does not turn the rolled channel into a reader channel.
+    """A rolled continuation channel is identified by its versioned key alone.
 
-    The engine keeps storing a payload by its versioned key alone.
+    The reader protocol is a property of the payload, not of the channel that
+    stores it.
     """
     assert ContinuationPayload.__value__ is ContinuationArtifact
 

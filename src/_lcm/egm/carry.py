@@ -145,10 +145,11 @@ class EGMCarry:
 
     def marginal_at(self, *, query: FloatND, state: StateName) -> FloatND:
         """Return the marginal in `state` at `query`, one query per row."""
-        if state not in self.capabilities.marginal_states:
+        capabilities = self.capabilities
+        if state not in capabilities.marginal_states:
             msg = (
                 "An EGM carry publishes a marginal in "
-                f"{sorted(self.capabilities.marginal_states)}, not in {state!r}."
+                f"{sorted(capabilities.marginal_states)}, not in {state!r}."
             )
             raise ValueError(msg)
         rows = self._row_arguments(query=query)

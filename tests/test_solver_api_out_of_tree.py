@@ -50,7 +50,14 @@ from lcm.solvers import (
     SolverBuildContext,
     StateAxesLeading,
 )
-from lcm.typing import ContinuousState, Float1D, FloatND, ScalarFloat, ScalarInt
+from lcm.typing import (
+    ContinuousState,
+    Float1D,
+    FloatND,
+    ScalarFloat,
+    ScalarInt,
+    StateName,
+)
 from tests.test_models import n_nbegm_toy
 
 
@@ -530,7 +537,7 @@ class _ValueOnlyPayload:
         """Return the constant value, broadcast to the query."""
         return jnp.broadcast_to(self.rows[0], jnp.shape(query))
 
-    def marginal_at(self, *, query: FloatND, state: str) -> FloatND:
+    def marginal_at(self, *, query: FloatND, state: StateName) -> FloatND:
         """Refuse: this payload tabulates no marginal."""
         del query
         msg = f"This continuation publishes no marginal in {state!r}."
