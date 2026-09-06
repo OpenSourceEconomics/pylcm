@@ -3,7 +3,7 @@
 A producer declares the subtrees of its raw output that other programs of the
 same graph may consume; a consumer names one of them per argument. The engine
 lowers the consumer against the producer's abstract output, so the consumer sees
-the exact shapes and dtypes it will receive instead of a stand-in.
+the exact shapes, dtypes and weak typing it will receive instead of a stand-in.
 """
 
 import dataclasses
@@ -156,7 +156,8 @@ def assert_internal_inputs(
         if expected != actual:
             msg = (
                 f"Core program {label!r} received internal input {name!r} with "
-                f"{actual!r}; its producer declares {expected!r}."
+                f"{actual!r}; its producer declares {expected!r}. Each leaf reads "
+                "as its shape, dtype and weak typing."
             )
             raise ValueError(msg)
 
@@ -189,8 +190,9 @@ def assert_width_invariant_internal_outputs(
                 f"Core program {reference.name!r} publishes internal output "
                 f"{spec.label!r} as {expected!r} at widths "
                 f"{dict(reference.static_kwargs)!r} and as {actual!r} at widths "
-                f"{dict(record.static_kwargs)!r}. A published output may not "
-                "depend on the width the planner selects."
+                f"{dict(record.static_kwargs)!r}, each leaf reading as its shape, "
+                "dtype and weak typing. A published output may not depend on the "
+                "width the planner selects."
             )
             raise ExecutionPlanningError(msg)
 
@@ -222,7 +224,7 @@ def _declared_output(
 def _published_signature(
     *, record: ResolvedProducer, spec: InternalOutputSpec
 ) -> object:
-    """Return the shape-and-dtype tree one label publishes from one record."""
+    """Return the tracing-relevant array metadata tree a label publishes."""
     return jax.tree.map(
         _leaf_signature,
         _select_path(
@@ -234,8 +236,14 @@ def _published_signature(
     )
 
 
-def _leaf_signature(leaf: object) -> tuple[tuple[int, ...], str]:
-    """Return the shape and dtype spelling that identify one handed-over leaf."""
+def _leaf_signature(leaf: object) -> tuple[tuple[int, ...], str, bool]:
+    """Return shape, dtype and weak typing, which govern consumer tracing.
+
+    Weak typing is not decoration: a weakly typed leaf takes the other operand's
+    dtype in the arithmetic a consumer traces against it, while a strongly typed
+    one forces its own. A leaf that carries no weak typing of its own — a NumPy
+    array, say — promotes as a strongly typed one does.
+    """
     shape = getattr(leaf, "shape", None)
     dtype = getattr(leaf, "dtype", None)
     if shape is None or dtype is None:
@@ -244,7 +252,7 @@ def _leaf_signature(leaf: object) -> tuple[tuple[int, ...], str]:
             f"got {leaf!r}."
         )
         raise ValueError(msg)
-    return (tuple(shape), str(dtype))
+    return (tuple(shape), str(dtype), bool(getattr(leaf, "weak_type", False)))
 
 
 def _select_path(

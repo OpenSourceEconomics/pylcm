@@ -213,12 +213,14 @@ The engine reads these declarations at three moments:
 - **When the period is lowered.** The engine visits producers before consumers and
   traces each producer once with everything it is lowered with — the arguments its
   builder returned, the templates of the internal inputs it reads itself, and the widths
-  the execution planner owns — then lowers the consumer against the exact shapes and
-  dtypes of the subtrees its references select. Those templates are part of the
-  program's compilation identity, so two cells that differ only in an internal input's
-  shape do not share an executable. A producer whose published subtree would change with
-  the width the planner selects is refused while the period is planned: its consumers
-  are lowered before that selection is made.
+  the execution planner owns — then lowers the consumer against the exact shapes, dtypes
+  and weak typing of the subtrees its references select. Weak typing belongs in that
+  template because equal shapes and dtypes can still promote differently in a consumer:
+  a weakly typed leaf takes the other operand's dtype, a strongly typed one forces its
+  own. Those templates are part of the program's compilation identity, so two cells that
+  differ only in an internal input's shape do not share an executable. A producer whose
+  published subtree would change with the width the planner selects is refused while the
+  period is planned: its consumers are lowered before that selection is made.
 
 A typed internal edge is the route between two programs the engine lowers together. A
 `HOST_DRIVEN` program is dispatched by the solver's own host loop, so a driver that
@@ -226,9 +228,9 @@ feeds one program's result into the next dispatch holds that result on the host 
 passes it through its argument builder; the engine plans nothing for it and there is no
 internal reference to declare.
 
-At dispatch the compiled core refuses an internal input that is missing, or whose shape
-or dtype departs from the template it was lowered against, naming the program and the
-argument.
+At dispatch the compiled core refuses an internal input that is missing, or whose shape,
+dtype, or weak typing departs from the template it was lowered against, naming the
+program and the argument.
 
 (reading-a-stored-value)=
 
