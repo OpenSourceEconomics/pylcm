@@ -278,15 +278,22 @@ consumer's `source_period` is the period of the core that reads it.
 The engine then names one operator per declared read, from the layout the value is
 stored in to the layout the consuming program requires:
 
-| stored layout               | required layout                             | operator                           |
-| --------------------------- | ------------------------------------------- | ---------------------------------- |
-| equal                       | equal                                       | `ALIGNED_LOCAL`                    |
-| single device or replicated | different single device                     | `COPY_TO_SOURCE_LAYOUT`            |
-| sharded on named axis       | replicated                                  | `ALL_GATHER`                       |
-| replicated                  | sharded on named axis                       | `LOCAL_SLICE`                      |
-| sharded on axis `a`         | sharded on axis `b`                         | `RESHARD`                          |
-| any                         | different mesh (disjoint or nested submesh) | `CROSS_MESH_COPY`                  |
-| any                         | overlapping but unequal meshes              | refused (`ExecutionPlanningError`) |
+| stored layout              | required layout                             | operator                           |
+| -------------------------- | ------------------------------------------- | ---------------------------------- |
+| equal                      | equal                                       | `ALIGNED_LOCAL`                    |
+| either side not mesh-named | any different placement                     | `COPY_TO_SOURCE_LAYOUT`            |
+| sharded on named axis      | replicated                                  | `ALL_GATHER`                       |
+| replicated                 | sharded on named axis                       | `LOCAL_SLICE`                      |
+| sharded on axis `a`        | sharded on axis `b`                         | `RESHARD`                          |
+| one mesh, given axes       | same mesh and axes, different `memory_kind` | `RESHARD`                          |
+| any                        | different mesh (disjoint or nested submesh) | `CROSS_MESH_COPY`                  |
+| any                        | overlapping but unequal meshes              | refused (`ExecutionPlanningError`) |
+
+"Mesh-named" is a layout that names a device mesh and a partition spec over it; a value
+pinned to one device is not, so any read whose two ends are not both mesh-named is a
+copy onto the required placement, whether the stored value was sharded or not. A pair
+that agrees on mesh and axes while differing in some other attribute takes the
+conservative reading — a recorded representation change, not a silent no-op.
 
 The table is total over the layout pairs the planner produces, so a declared read always
 has exactly one operator. The last row is the one pair no single collective serves: two

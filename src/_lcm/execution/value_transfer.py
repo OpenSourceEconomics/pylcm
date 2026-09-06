@@ -5,7 +5,7 @@ stored value moves in the opposite direction during backward induction.  This mo
 names both ends independently: a target artifact says which stored array is read, and
 a source consumer says exactly where that array enters a core.  The transfer
 catalogue is a total function from a stored layout and a required layout to one
-operator, and fails closed on the single pair no one collective can serve.
+operator, and fails closed on the single pair no single collective can serve.
 """
 
 from collections.abc import Hashable, Iterable, Mapping
@@ -362,10 +362,14 @@ def classify_value_transfer(
     The catalogue is total over the pairs the planner can produce:
 
     - equal layouts stay `ALIGNED_LOCAL`;
-    - a single-device or replicated value moved onto another placement is a
-      `COPY_TO_SOURCE_LAYOUT`;
+    - either layout not being a `NamedSharding` is a `COPY_TO_SOURCE_LAYOUT`,
+      which covers a single-device value moved onto any other placement and a
+      sharded value read onto one device;
     - on one mesh, sharded to replicated is an `ALL_GATHER`, replicated to
       sharded a `LOCAL_SLICE`, and one named axis to another a `RESHARD`;
+    - two same-mesh layouts whose specs agree while some other attribute (a
+      `memory_kind`) differs are a `RESHARD`, the conservative reading: a
+      recorded representation change rather than a silent no-op;
     - a required mesh that is disjoint from the stored one, or nested inside it,
       or contains it, is a `CROSS_MESH_COPY`.
 
@@ -406,12 +410,28 @@ def classify_value_transfer(
 
 
 def _named_axes(*, spec: jax.sharding.PartitionSpec) -> tuple[str, ...]:
-    """Return the mesh axes one partition spec shards over, in spec order."""
+    """Return the mesh axes one partition spec shards over, in spec order.
+
+    A spec entry is a mesh-axis name, a tuple of such names, or `None`.  Any
+    other entry — a sentinel such as `PartitionSpec.UNCONSTRAINED`, which leaves
+    the axis for the compiler to choose — names no placement the plan can
+    record, so it is refused rather than read as an axis group.
+    """
     axes: list[str] = []
     for entry in spec:
         if entry is None:
             continue
-        axes.extend((entry,) if isinstance(entry, str) else tuple(entry))
+        if isinstance(entry, str):
+            axes.append(entry)
+            continue
+        if isinstance(entry, tuple) and all(isinstance(name, str) for name in entry):
+            axes.extend(entry)
+            continue
+        msg = (
+            "A planned partition spec entry must be a mesh-axis name, a tuple "
+            f"of names, or None; {spec!r} carries {entry!r}."
+        )
+        raise ExecutionPlanningError(msg)
     return tuple(axes)
 
 

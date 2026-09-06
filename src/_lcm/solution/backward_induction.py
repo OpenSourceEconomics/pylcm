@@ -2484,7 +2484,9 @@ def _resolve_value_transfer_layout(
         )
     else:
         # Every remaining pair is delivered on the source core's own execution
-        # placement, which is the only layout the compiled program accepts.
+        # placement, which reuses that core's rank-specific output spec. This is
+        # a placeholder: it stands until the scheduler supplies the required
+        # layout per node, and no route in the repository reaches it before then.
         source_sharding = source_execution_sharding
 
     return (

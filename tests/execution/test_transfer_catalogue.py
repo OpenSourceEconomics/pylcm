@@ -22,6 +22,14 @@ from _lcm.execution.value_transfer import (
 )
 from lcm.exceptions import ExecutionPlanningError
 
+# Run these tests on a four-CPU-device topology. The pin only applies in a
+# process whose JAX backends are not yet initialized (a serial run importing
+# this module early); otherwise the tests skip. The device-count update is
+# attempted FIRST because it is the one that raises after initialization —
+# this keeps the pin atomic. The reverse order would flip the default
+# platform to CPU (that update succeeds at any time) and then skip, leaving
+# every later model build in the process compiled for CPU while arrays from
+# earlier accelerator computations stay committed to their device.
 try:
     jax.config.update("jax_num_cpu_devices", 4)
     jax.config.update("jax_platform_name", "cpu")
@@ -153,3 +161,97 @@ def test_an_all_gather_delivers_the_stored_values_unchanged() -> None:
     gathered = apply_value_transfer(value=stored, transfer=transfer)
 
     assert gathered.tobytes() == stored.tobytes()
+
+
+@_skip_pytest_parallel
+def test_a_local_slice_delivers_the_stored_values_unchanged() -> None:
+    """Slicing a replicated value onto a mesh axis changes the layout, not the value."""
+    mesh = _mesh(devices=jax.devices()[:4], axis="d")
+    stored = jax.device_put(
+        jnp.arange(8, dtype=jnp.float32), jax.NamedSharding(mesh, jax.P())
+    )
+    assert jnp.isfinite(stored).all()
+    transfer = _resolved(
+        stored=stored,
+        required=jax.NamedSharding(mesh, jax.P("d")),
+        kind=ValueTransferKind.LOCAL_SLICE,
+    )
+
+    sliced = apply_value_transfer(value=stored, transfer=transfer)
+
+    assert sliced.tobytes() == stored.tobytes()
+
+
+@_skip_pytest_parallel
+def test_a_reshard_delivers_the_stored_values_unchanged() -> None:
+    """Moving a value between mesh axes changes the layout, never the value."""
+    mesh = jax.sharding.Mesh(
+        np.asarray(jax.devices()[:4]).reshape(2, 2), axis_names=("a", "b")
+    )
+    stored = jax.device_put(
+        jnp.arange(16, dtype=jnp.float32).reshape(4, 4),
+        jax.NamedSharding(mesh, jax.P("a", None)),
+    )
+    assert jnp.isfinite(stored).all()
+    transfer = _resolved(
+        stored=stored,
+        required=jax.NamedSharding(mesh, jax.P(None, "b")),
+        kind=ValueTransferKind.RESHARD,
+    )
+
+    resharded = apply_value_transfer(value=stored, transfer=transfer)
+
+    assert resharded.tobytes() == stored.tobytes()
+
+
+@_skip_pytest_parallel
+def test_a_copy_onto_a_nested_submesh_delivers_the_stored_values_unchanged() -> None:
+    """A value copied onto a submesh of its own mesh keeps every element."""
+    full = _mesh(devices=jax.devices()[:4], axis="d")
+    sub = _mesh(devices=jax.devices()[:2], axis="d")
+    stored = jax.device_put(
+        jnp.arange(8, dtype=jnp.float32), jax.NamedSharding(full, jax.P("d"))
+    )
+    assert jnp.isfinite(stored).all()
+    transfer = _resolved(
+        stored=stored,
+        required=jax.NamedSharding(sub, jax.P("d")),
+        kind=ValueTransferKind.CROSS_MESH_COPY,
+    )
+
+    copied = apply_value_transfer(value=stored, transfer=transfer)
+
+    assert copied.tobytes() == stored.tobytes()
+
+
+@_skip_pytest_parallel
+def test_a_copy_onto_a_disjoint_mesh_delivers_the_stored_values_unchanged() -> None:
+    """A value copied onto a mesh sharing no device with its own keeps every element."""
+    left = _mesh(devices=jax.devices()[:2], axis="d")
+    right = _mesh(devices=jax.devices()[2:4], axis="d")
+    stored = jax.device_put(
+        jnp.arange(8, dtype=jnp.float32), jax.NamedSharding(left, jax.P("d"))
+    )
+    assert jnp.isfinite(stored).all()
+    transfer = _resolved(
+        stored=stored,
+        required=jax.NamedSharding(right, jax.P("d")),
+        kind=ValueTransferKind.CROSS_MESH_COPY,
+    )
+
+    copied = apply_value_transfer(value=stored, transfer=transfer)
+
+    assert copied.tobytes() == stored.tobytes()
+
+
+@_skip_pytest_parallel
+def test_a_partition_entry_naming_no_placement_is_refused() -> None:
+    """A spec entry that is not an axis name, a tuple of names, or None fails closed."""
+    mesh = _mesh(devices=jax.devices()[:4], axis="d")
+    unconstrained = jax.sharding.PartitionSpec(jax.sharding.PartitionSpec.UNCONSTRAINED)
+
+    with pytest.raises(ExecutionPlanningError, match="must be a mesh-axis name"):
+        classify_value_transfer(
+            stored_sharding=jax.NamedSharding(mesh, unconstrained),
+            required_sharding=jax.NamedSharding(mesh, jax.P()),
+        )
