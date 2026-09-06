@@ -113,6 +113,13 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   plugin-defined replay PyTree, explicit non-persisted artifacts, lazy restoration into
   a freshly constructed model, custom replay, and fail-closed rejection of invalid
   artifacts.
+- An omission names the artifact its solver declared. `SolutionResult.omissions` is
+  enumerated from the model's own artifact authority, so a solver that publishes its
+  own continuation key sees that key at its own cell under every retention, and no
+  key the model never declared appears.
+- A continuation published under a key its payload does not claim is refused where the
+  producing regime and period are still known, naming both the publication key and the
+  payload's own.
 
 ### Every built-in kernel on the public execution contract
 
