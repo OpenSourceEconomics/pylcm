@@ -153,12 +153,17 @@ def _live_nested_functions(*, source_file: str) -> int:
     is decided by the code object's filename, so a wrapper another library defined
     and `functools.wraps` relabelled with the inspected module's name is not counted,
     and the count is complete over every function object the collector tracks.
+
+    The collector hands back weak-reference proxies alongside ordinary objects, and
+    one whose referent is already gone raises on any attribute access — `isinstance`
+    included, since it reads the proxied `__class__`. Exact type identity asks the
+    proxy nothing, so the walk is decided without ever dereferencing one.
     """
     gc.collect()
     return sum(
         1
         for obj in gc.get_objects()
-        if isinstance(obj, types.FunctionType)
+        if type(obj) is types.FunctionType
         and obj.__code__.co_filename == source_file
         and "<locals>" in obj.__qualname__
     )
