@@ -60,13 +60,16 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 ### The MSS upper envelope decides its orderings from the stored operands
 
 - Which link owns a query is certified rather than read off a rounded comparison:
-  a provisional winner is challenged by every bracketing link through the exact
-  integer comparator the other envelope paths already use. Links certified level
-  with the winner are separated right-continuously — the link reaching strictly
+  every link bracketing that query enters one exact reduction through the integer
+  comparator the other envelope paths already use. Links certified level with one
+  another are separated right-continuously — the link reaching strictly
   right of the query, then the steeper one, then the earlier stored link — so a
   node where two branches meet is owned by the branch that owns the interval above
   it, and a switch decided by a single representable step is published at the node
   the geometry puts it at rather than lost.
+- A query whose owner the exact comparator leaves undecided publishes no value: the
+  envelope reads `NaN` there instead of falling back to a rounded comparison, so an
+  ordering the arithmetic cannot settle is visible rather than silently chosen.
 - A link's value at a query is its own chord's value: each endpoint is weighed by
   its distance to the other, with the products carried at twice the working
   precision. The reading is the stored value at either endpoint exactly and
@@ -85,24 +88,24 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   crossing abscissa rather than by comparing two readings within a tolerance band,
   so the emission no longer depends on a declared band or on the working precision.
 
-### Engine functions are defined once, never per call
+### Engine functions are defined once, not per call
 
 - Every function the engine defines is a module-level function or a frozen dataclass
-  with a `__call__`; no function definition runs inside another function per model
-  build, per solve, per simulate, or per trace. pylcm's beartype claw decorates each
-  function definition it sees and beartype memoizes every decorated function object
-  for the life of the process, so a per-call definition pinned everything it closed
-  over: grids, arrays, tracers, compiled kernels, whole models. Building and solving,
-  then dropping, a model of any shipped solver family now leaves no engine function
-  behind, and a long session or test worker no longer grows with every model it
-  builds.
-- The call-convention adapters (`allow_only_kwargs`, `allow_args`) and the batched
-  product map are frozen dataclasses that carry the wrapped function's name, docstring,
-  attributes, and `__signature__`, so `inspect.signature`, `dags`, and the JAX
-  transformations see the function they stand in for.
-- The durable model fingerprint treats a class defined in a shipped pylcm module as a
-  closed direct reference: only its name enters the digest, its implementation being
-  sealed by the separately checked pylcm version.
+  with a `__call__`, apart from the five sources named below; no other function
+  definition runs inside another function per model build, per solve, per simulate, or
+  per trace. pylcm's beartype claw decorates each function definition it sees and
+  beartype memoizes every decorated function object for the life of the process, so a
+  per-call definition pinned everything it closed over: grids, arrays, tracers,
+  compiled kernels, whole models. Building and solving, then dropping, a model of any
+  shipped solver family leaves no engine function behind outside those five, and a long
+  session or test worker no longer grows with every model it builds.
+- Five sources still define a function per call, and the nested-function probe names
+  each of them as an exemption: `regime_building/max_Q_over_a.py`,
+  `regime_building/collective.py`, `regime_building/processing.py`,
+  `solution/negm.py`, and `solution/nnbegm.py`. The candidate certificate pins the
+  reducer builders' bodies verbatim, nested definitions included, so their shape
+  changes with that certificate or not at all; the remaining three are converted
+  together with the execution work that rewrites the same call sites.
 
 ### Complete solution persistence and executable external replay
 
@@ -140,7 +143,15 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - The durable model fingerprint and the canonical-parameter digest hash every referenced
   array with its original rank and shape; a scalar array and a length-one vector with
   the same bytes are distinct identities, while memory order does not enter the digest.
-  The model-fingerprint record version is 5.
+  The model-fingerprint record version is 6.
+- The model fingerprint is split at the boundary no parameter vector crosses.
+  `fingerprint_model_structure` digests what a model fixes at build — topology, names,
+  identities, artifact descriptors, per-period state axes, and the declared callables'
+  semantics — and `fingerprint_model` combines that digest with the concrete grid
+  support and canonical solution parameters read from the parameter vector. A `Model`
+  hashes its structure once and reuses it, so an estimation loop no longer walks every
+  declared user callable per solve; the walk had been the largest single cost of a warm
+  solve, ahead of the solve itself.
 - The durable model fingerprint sees through beartype guards that a downstream
   package's own claw wraps around its model functions: such a guard is accepted only
   when beartype regenerates its code from the bound callee with the guard's own
@@ -165,6 +176,13 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   plugin-defined replay PyTree, explicit non-persisted artifacts, lazy restoration into
   a freshly constructed model, custom replay, and fail-closed rejection of invalid
   artifacts.
+- An omission names the artifact its solver declared. `SolutionResult.omissions` is
+  enumerated from the model's own artifact authority, so a solver that publishes its
+  own continuation key sees that key at its own cell under every retention, and no
+  key the model never declared appears.
+- A continuation published under a key its payload does not claim is refused where the
+  producing regime and period are still known, naming both the publication key and the
+  payload's own.
 
 ### Every built-in kernel on the public execution contract
 

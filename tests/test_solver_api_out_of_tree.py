@@ -11,6 +11,7 @@ regime declares.
 import ast
 import dataclasses
 import functools
+import re
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
@@ -26,10 +27,12 @@ from lcm.solver_api import (
     EGM_CONTINUATION,
     SIMULATION_POLICY,
     ArtifactKey,
+    ArtifactRef,
     ArtifactStore,
     ContinuationArtifact,
     KernelOutput,
     ReplayMode,
+    ResultRetention,
 )
 from lcm.solvers import (
     NBEGM,
@@ -394,3 +397,111 @@ def test_a_payload_of_another_type_than_the_route_declares_fails_the_preflight()
             log_level="off",
         )
     assert "_Counter" in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    "retention",
+    [
+        ResultRetention.VALUES,
+        ResultRetention.VALUES_AND_REPLAY,
+        ResultRetention.ALL_PERSISTABLE_ARTIFACTS,
+    ],
+)
+def test_an_unkept_continuation_is_recorded_under_the_key_its_solver_declared(
+    *, retention: ResultRetention
+):
+    """An omission names the artifact the solver publishes, at its own cell."""
+    model = _two_regime_model(solver=_CountingSolver(), self_looping=True)
+    solution = model.solve(
+        params={"discount_factor": 1.0}, log_level="off", retention=retention
+    )
+    assert ArtifactRef(period=0, regime="alive", key=_COUNTER) in solution.omissions
+
+
+@pytest.mark.parametrize(
+    "retention",
+    [
+        ResultRetention.VALUES,
+        ResultRetention.VALUES_AND_REPLAY,
+        ResultRetention.ALL_PERSISTABLE_ARTIFACTS,
+    ],
+)
+def test_no_omission_names_an_artifact_the_model_never_declared(
+    *, retention: ResultRetention
+):
+    """Every omitted key belongs to the running model's own artifact authority."""
+    model = _two_regime_model(solver=_CountingSolver(), self_looping=True)
+    solution = model.solve(
+        params={"discount_factor": 1.0}, log_level="off", retention=retention
+    )
+    assert {ref.key for ref in solution.omissions} == {_COUNTER}
+
+
+_MISLABELLED = ArtifactKey(type_id="tests.mislabelled", schema_version=1)
+
+
+@functools.partial(
+    jax.tree_util.register_dataclass, data_fields=["count"], meta_fields=[]
+)
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _MislabelledCounter:
+    """A continuation payload that claims a key other than the one it sits under."""
+
+    count: FloatND
+
+    @property
+    def artifact_key(self) -> ArtifactKey:
+        return _MISLABELLED
+
+
+def _mislabelled_value(
+    *, wealth: Float1D, count: FloatND
+) -> tuple[Float1D, _MislabelledCounter]:
+    return wealth + count, _MislabelledCounter(count=count + 1.0)
+
+
+class _MislabellingSolver(Solver):
+    """Publishes a continuation the payload itself does not claim to be."""
+
+    @property
+    def required_continuation_keys(self) -> frozenset[ArtifactKey]:
+        return frozenset({_COUNTER})
+
+    def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
+        program = CoreProgram(
+            name="main",
+            function=_mislabelled_value,
+            argument_builder=lambda build: {
+                "wealth": build.state_action_space.states["wealth"],
+                "count": build.next_regime_to_continuation["alive"].count,
+            },
+            requirements=CoreExecutionRequirements(),
+            output_roles=(
+                OutputRole.VALUE,
+                _MislabelledCounter(
+                    count=StateAxesLeading(state_names=(), shape=())  # ty: ignore[invalid-argument-type]
+                ),
+            ),
+            disposition=CoreExecutionDisposition.DENSE,
+            disposition_reason="one_row_per_state_node",
+        )
+        kernels = {
+            period: _GraphKernel(
+                programs=MappingProxyType({"main": program}), continuation_key=_COUNTER
+            )
+            for period in context.regimes_to_active_periods[context.regime_name]
+        }
+        return SolutionKernels(
+            period_kernels=MappingProxyType(kernels),
+            continuation_spec=ContinuationSpec(
+                template=_Counter(count=jnp.zeros(())), artifact_key=_COUNTER
+            ),
+        )
+
+
+def test_a_continuation_published_under_a_key_it_does_not_claim_is_refused():
+    """A payload whose own key differs from its publication key names both keys."""
+    model = _two_regime_model(solver=_MislabellingSolver(), self_looping=True)
+    with pytest.raises(RuntimeError, match=re.escape(_MISLABELLED.type_id)) as excinfo:
+        model.solve(params={"discount_factor": 1.0}, log_level="off")
+    assert _COUNTER.type_id in str(excinfo.value)
