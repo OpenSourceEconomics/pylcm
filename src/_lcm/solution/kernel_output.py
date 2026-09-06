@@ -148,6 +148,12 @@ def consume_kernel_output(
             regime_name=regime_name,
             period=period,
         )
+        _fail_on_self_declared_key_mismatch(
+            payload=continuation,
+            key=continuation_key,
+            regime_name=regime_name,
+            period=period,
+        )
         continuation_authority = artifact_authorities.get(continuation_key)
         if continuation_authority is not None:
             continuation = cast(
@@ -342,6 +348,33 @@ def _pop_typed_artifact(
         )
         raise RuntimeError(msg)  # noqa: TRY004 - a contract violation, not bad input.
     return payload
+
+
+def _fail_on_self_declared_key_mismatch(
+    *,
+    payload: ContinuationPayload | None,
+    key: ArtifactKey,
+    regime_name: RegimeName,
+    period: int,
+) -> None:
+    """Require a continuation to claim the key it is published under.
+
+    A payload carries its own versioned identity, so publishing it under a
+    different key leaves two disagreeing answers to what the artifact is. The
+    cell's coordinates and both keys are named here, where the producer is
+    still known.
+    """
+    if payload is None:
+        return
+    declared = payload.artifact_key
+    if declared == key:
+        return
+    msg = (
+        f"Regime '{regime_name}' in period {period} published a continuation "
+        f"under '{key.type_id}' version {key.schema_version}, but the payload "
+        f"declares itself '{declared.type_id}' version {declared.schema_version}."
+    )
+    raise RuntimeError(msg)
 
 
 def _fail_on_version_mismatch(
