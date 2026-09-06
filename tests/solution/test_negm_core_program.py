@@ -206,6 +206,9 @@ def test_the_graph_publishes_the_keeper_and_the_outer_sweep(*, captured):
     assert {read.source.core_key for read in sweep.requirements.value_reads} == {
         "outer_sweep"
     }
+    assert {read.source.core_key for read in keeper.requirements.value_reads} == {
+        "keeper"
+    }
 
 
 def test_the_keeper_program_is_the_inner_keepers_program_under_a_new_name(*, captured):

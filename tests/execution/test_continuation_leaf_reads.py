@@ -372,6 +372,26 @@ def test_every_plain_egm_read_addresses_the_targets_next_period_carry(
     assert all(predicate(read) for read in _egm_program().requirements.value_reads)
 
 
+@pytest.mark.parametrize(
+    "predicate",
+    [
+        lambda read: read.source.source_period == 0,
+        lambda read: read.source.source_regime == "saving",
+        lambda read: read.source.core_key == "main",
+    ],
+)
+def test_every_plain_egm_read_locates_the_consumer_that_runs_it(
+    *, predicate: Callable[[ValueRead], bool]
+) -> None:
+    """A period-0 read names period 0, the `saving` regime and the `main` core.
+
+    The consumer coordinates are absolute, so a read shifted whole — target and
+    source together — is a different read even though the two still sit one
+    period apart.
+    """
+    assert all(predicate(read) for read in _egm_program().requirements.value_reads)
+
+
 def _dcegm_reads() -> tuple[ValueRead, ...]:
     """The DC-EGM twin's `main` reads at its first solved period."""
     model = build_dcegm_model()

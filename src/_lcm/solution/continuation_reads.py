@@ -22,44 +22,6 @@ from _lcm.typing import RegimeName
 from lcm.solver_api import ArtifactKey, ContinuationReader
 
 
-def published_continuation_template(
-    *,
-    continuation_specs: Mapping[RegimeName, ContinuationSpec],
-    target: RegimeName,
-) -> ContinuationReader | None:
-    """Return the payload `target` publishes, when it names its own leaves.
-
-    `None` when the target publishes no continuation — which is every target on
-    the build pass that establishes the templates — and when it publishes one
-    that answers no leaf query, so a reader declares nothing rather than
-    assuming a shape.
-    """
-    spec = continuation_specs.get(target)
-    if spec is None or not isinstance(spec.template, ContinuationReader):
-        return None
-    return spec.template
-
-
-def published_continuation_templates(
-    *,
-    continuation_specs: Mapping[RegimeName, ContinuationSpec],
-    targets: Iterable[RegimeName],
-) -> MappingProxyType[RegimeName, ContinuationReader]:
-    """Return the published payload of each target that has one, in name order.
-
-    Which leaves a target publishes is a fact about the target alone, so a
-    solver resolves the templates once and re-addresses them per period.
-    """
-    resolved: dict[RegimeName, ContinuationReader] = {}
-    for target in sorted(targets):
-        template = published_continuation_template(
-            continuation_specs=continuation_specs, target=target
-        )
-        if template is not None:
-            resolved[target] = template
-    return MappingProxyType(resolved)
-
-
 def continuation_leaf_reads(
     *,
     template: ContinuationReader,
@@ -102,6 +64,44 @@ def continuation_leaf_reads(
             )
         )
     return tuple(reads)
+
+
+def published_continuation_template(
+    *,
+    continuation_specs: Mapping[RegimeName, ContinuationSpec],
+    target: RegimeName,
+) -> ContinuationReader | None:
+    """Return the payload `target` publishes, when it names its own leaves.
+
+    `None` when the target publishes no continuation — which is every target on
+    the build pass that establishes the templates — and when it publishes one
+    that answers no leaf query, so a reader declares nothing rather than
+    assuming a shape.
+    """
+    spec = continuation_specs.get(target)
+    if spec is None or not isinstance(spec.template, ContinuationReader):
+        return None
+    return spec.template
+
+
+def published_continuation_templates(
+    *,
+    continuation_specs: Mapping[RegimeName, ContinuationSpec],
+    targets: Iterable[RegimeName],
+) -> MappingProxyType[RegimeName, ContinuationReader]:
+    """Return the published payload of each target that has one, in name order.
+
+    Which leaves a target publishes is a fact about the target alone, so a
+    solver resolves the templates once and re-addresses them per period.
+    """
+    resolved: dict[RegimeName, ContinuationReader] = {}
+    for target in sorted(targets):
+        template = published_continuation_template(
+            continuation_specs=continuation_specs, target=target
+        )
+        if template is not None:
+            resolved[target] = template
+    return MappingProxyType(resolved)
 
 
 def rekeyed_value_reads(

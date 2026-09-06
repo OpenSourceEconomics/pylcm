@@ -220,9 +220,8 @@ def test_the_kernel_runs_under_jit_from_its_declared_program():
         np.testing.assert_array_equal(np.asarray(got), np.asarray(expected))
 
 
-def test_a_single_liquid_nbegm_kernel_declares_its_feasibility_breakpoints():
-    """The one-row kernel NB-EGM builds for a single liquid axis publishes the same
-    graph, with a breakpoints row for the feasibility boundaries its carry carries."""
+def _single_liquid_nbegm_graph() -> Mapping[str, Any]:
+    """The graph NB-EGM builds for a regime whose only ride axis is liquid."""
     from tests.test_nbegm_constraint_validation import (  # noqa: PLC0415
         _build_smooth_model,
         _smooth_params,
@@ -233,7 +232,13 @@ def test_a_single_liquid_nbegm_kernel_declares_its_feasibility_breakpoints():
     kernel, _ = ride_along_kernel(
         model=model, params=_smooth_params(asset_limit=None), regime_name="alive"
     )
-    graph = core_program_graph(kernel=kernel)
+    return core_program_graph(kernel=kernel)
+
+
+def test_a_single_liquid_nbegm_kernel_declares_its_feasibility_breakpoints():
+    """The one-row kernel NB-EGM builds for a single liquid axis publishes the same
+    graph, with a breakpoints row for the feasibility boundaries its carry carries."""
+    graph = _single_liquid_nbegm_graph()
 
     assert tuple(graph) == ("main",)
     assert graph["main"].disposition_reason == (
@@ -242,3 +247,17 @@ def test_a_single_liquid_nbegm_kernel_declares_its_feasibility_breakpoints():
     _, carry_roles = cast("tuple[Any, Any]", graph["main"].output_roles)
     assert carry_roles.breakpoints == StateAxesLeading(state_names=())
     assert carry_roles.policy is None
+
+
+def test_a_single_liquid_nbegm_kernel_declares_the_rows_its_arguments_carry():
+    """The dense NB-EGM route pairs carry row to argument exactly as plain EGM does."""
+    program = _single_liquid_nbegm_graph()["main"]
+
+    assert {
+        (read.target.leaf_path, read.source.argument)
+        for read in program.requirements.value_reads
+    } == {
+        (("endog_grid",), "next_liquid_grid"),
+        (("value",), "next_value"),
+        (("marginal_utility",), "next_marginal"),
+    }
