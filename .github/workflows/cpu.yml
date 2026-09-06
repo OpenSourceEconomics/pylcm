@@ -141,9 +141,33 @@ jobs:
         # the two certified-envelope cases. Certified runs in its own process
         # because it alone requires the disabled XLA backend optimizer; applying
         # that flag to the rest would invalidate batch-width invariance checks.
-        # Coverage from this base leg and the fp64 shards is merged by Codecov.
+        # `tests/test_distributed.py` and `tests/execution/test_transfer_catalogue.py`
+        # each run in their own process for a different reason: they pin a
+        # four-CPU-device topology at import, and that pin only takes effect in a
+        # process where no JAX backend has been touched yet. `--ci-policy`/
+        # `--full-suite` query the default backend while resolving the hardware
+        # profile during `pytest_configure`, before the module import that applies
+        # the pin -- so those two invocations omit both flags and keep only
+        # `--policy-child --hardware-profile=cpu`, which stay inert without a
+        # policy to drive. Neither file declares a `requires`/`coverage`/
+        # `isolation`/`ci` marker, so no policy-gated test is skipped by omitting
+        # them. Coverage from this base leg and the fp64 shards is merged by
+        # Codecov.
         run: |
           mkdir -p reports
+          check_population() {
+            local xml="$1" total skipped
+            total=$(grep -oP ' tests="\K[0-9]+' "$xml" | head -n 1)
+            skipped=$(grep -oP ' skipped="\K[0-9]+' "$xml" | head -n 1)
+            if [ -z "$total" ] || [ "$total" -eq 0 ]; then
+              echo "NOTHING COLLECTED: $xml" >&2
+              return 1
+            fi
+            if [ "$skipped" -eq "$total" ]; then
+              echo "EVERYTHING SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+          }
           pixi run -e tests-cpu pytest tests -m "not slow and not manual" \
             --policy-child --ci-policy=full --hardware-profile=cpu \
             --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
@@ -162,7 +186,20 @@ jobs:
             --policy-child --ci-policy=full --hardware-profile=cpu \
             --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
             --durations=25 --junitxml=reports/junit-cpu-fp64-rest-slow.xml \
-            --cov=./ --cov-append --cov-report=xml -n 2
+            --cov=./ --cov-append --cov-report= -n 2 \
+          && pixi run -e tests-cpu pytest tests/test_distributed.py \
+            -p no:randomly --policy-child --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v \
+            --durations=25 --junitxml=reports/junit-cpu-fp64-test-distributed.xml \
+            --cov=./ --cov-append --cov-report= -n 0 \
+          && check_population reports/junit-cpu-fp64-test-distributed.xml \
+          && pixi run -e tests-cpu pytest tests/execution/test_transfer_catalogue.py \
+            -p no:randomly --policy-child --hardware-profile=cpu \
+            --timeout=600 --timeout-method=thread -v \
+            --durations=25 \
+            --junitxml=reports/junit-cpu-fp64-test-transfer-catalogue.xml \
+            --cov=./ --cov-append --cov-report=xml -n 0 \
+          && check_population reports/junit-cpu-fp64-test-transfer-catalogue.xml
         if: runner.os == 'Linux' && matrix.python-version == '3.14'
       - name: Upload JUnit reports
         # `always()` so a failing run still publishes its report: the XML is how
@@ -295,10 +332,31 @@ jobs:
         shell: bash {0}
         # The long slow solution battery runs in the shared precision/shard
         # matrix below. This leg retains the fast and slow non-solution tests.
+        # `tests/test_distributed.py` and `tests/execution/test_transfer_catalogue.py`
+        # run in their own process for the same reason as the fp64 leg: they pin
+        # a four-CPU-device topology at import, a pin that only takes effect
+        # before any JAX backend has been touched, so these two invocations omit
+        # `--ci-policy`/`--full-suite` (which query the default backend while
+        # resolving the hardware profile during `pytest_configure`, ahead of the
+        # module import that applies the pin) and keep only the inert
+        # `--policy-child --hardware-profile=cpu`.
         env:
           XLA_PYTHON_CLIENT_PREALLOCATE: 'false'
         run: |
           mkdir -p reports
+          check_population() {
+            local xml="$1" total skipped
+            total=$(grep -oP ' tests="\K[0-9]+' "$xml" | head -n 1)
+            skipped=$(grep -oP ' skipped="\K[0-9]+' "$xml" | head -n 1)
+            if [ -z "$total" ] || [ "$total" -eq 0 ]; then
+              echo "NOTHING COLLECTED: $xml" >&2
+              return 1
+            fi
+            if [ "$skipped" -eq "$total" ]; then
+              echo "EVERYTHING SKIPPED: $xml ($skipped/$total)" >&2
+              return 1
+            fi
+          }
           pixi run -e tests-cpu pytest tests --precision=32 \
             -m "not slow and not manual" \
             --policy-child --ci-policy=full --hardware-profile=cpu \
@@ -309,7 +367,19 @@ jobs:
             --precision=32 -m "slow and not manual" \
             --policy-child --ci-policy=full --hardware-profile=cpu \
             --timeout=600 --timeout-method=thread -v --max-worker-restart=3 \
-            --durations=25 --junitxml=reports/junit-cpu-fp32-rest-slow.xml -n 2
+            --durations=25 --junitxml=reports/junit-cpu-fp32-rest-slow.xml -n 2 \
+          && pixi run -e tests-cpu pytest tests/test_distributed.py \
+            --precision=32 -p no:randomly --policy-child \
+            --hardware-profile=cpu --timeout=600 --timeout-method=thread -v \
+            --durations=25 \
+            --junitxml=reports/junit-cpu-fp32-test-distributed.xml -n 0 \
+          && check_population reports/junit-cpu-fp32-test-distributed.xml \
+          && pixi run -e tests-cpu pytest tests/execution/test_transfer_catalogue.py \
+            --precision=32 -p no:randomly --policy-child \
+            --hardware-profile=cpu --timeout=600 --timeout-method=thread -v \
+            --durations=25 \
+            --junitxml=reports/junit-cpu-fp32-test-transfer-catalogue.xml -n 0 \
+          && check_population reports/junit-cpu-fp32-test-transfer-catalogue.xml
       - name: Upload JUnit reports
         # `always()` so a failing run still publishes its report: the XML is how
         # a run's counts are read back, and a run that failed is exactly when
