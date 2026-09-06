@@ -7,9 +7,13 @@ so the leaf has an identity of its own for liveness and for transfer planning.
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
+from typing import cast
 
+import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
+from numpy.testing import assert_array_almost_equal as aaae
 
 from _lcm.egm.carry import build_template_egm_carry
 from _lcm.execution.core_program import (
@@ -17,19 +21,24 @@ from _lcm.execution.core_program import (
     CoreExecutionDisposition,
     CoreExecutionRequirements,
     CoreProgram,
+    MaterializedCoreProgram,
     ResolvedCoreProgram,
     ValueRead,
+    _value_read_argument_leaf,
     materialize_core_program,
     resolve_core_program,
 )
 from _lcm.execution.output_layout import VALUE
 from _lcm.execution.value_transfer import (
+    ResolvedValueTransfer,
     ValueArtifactAddress,
     ValueArtifactKind,
     ValueConsumerAddress,
     ValueInputChannel,
+    ValueTransferKind,
 )
 from lcm.solver_api import EGM_CONTINUATION
+from tests.conftest import DECIMAL_PRECISION
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -62,6 +71,13 @@ def _context() -> CoreBuildContext:
     )
 
 
+def _replicated_sharding() -> jax.NamedSharding:
+    """A replicated sharding over every available device."""
+    return jax.NamedSharding(
+        mesh=jax.sharding.Mesh(np.asarray(jax.devices()), ("device",)), spec=jax.P()
+    )
+
+
 def _program(
     *, reads: tuple[ValueRead, ...], arguments: Mapping[str, object]
 ) -> CoreProgram:
@@ -77,14 +93,29 @@ def _program(
     )
 
 
+def _materialize(
+    *, reads: tuple[ValueRead, ...], arguments: Mapping[str, object]
+) -> MaterializedCoreProgram:
+    """Materialize one dense program declaring `reads` over `arguments`."""
+    return materialize_core_program(
+        program=_program(reads=reads, arguments=arguments), context=_context()
+    )
+
+
 def _resolve(
     *, reads: tuple[ValueRead, ...], arguments: Mapping[str, object]
 ) -> ResolvedCoreProgram:
     """Materialize and resolve one dense program declaring `reads`."""
-    program = _program(reads=reads, arguments=arguments)
-    return resolve_core_program(
-        program=materialize_core_program(program=program, context=_context())
-    )
+    return resolve_core_program(program=_materialize(reads=reads, arguments=arguments))
+
+
+def _carry_arguments() -> Mapping[str, object]:
+    """The continuation channel holding `retired`'s five-row carry template."""
+    return {
+        ValueInputChannel.CONTINUATION_LEAF.value: MappingProxyType(
+            {"retired": build_template_egm_carry(n_rows=5)}
+        )
+    }
 
 
 def _leaf_target(*, leaf: str) -> ValueArtifactAddress:
@@ -145,25 +176,105 @@ def test_a_continuation_leaf_address_requires_a_leaf_path() -> None:
         )
 
 
-def test_a_mapping_channel_read_resolves_a_carry_attribute_leaf() -> None:
-    """`next_regime_to_continuation[target].value` is one addressable leaf."""
-    read = _leaf_read(leaf="value", argument=None)
+def test_a_continuation_leaf_address_requires_an_artifact_key() -> None:
+    """Without its key a leaf could belong to any stored payload schema."""
+    with pytest.raises(TypeError, match="must name its ArtifactKey"):
+        ValueArtifactAddress(
+            kind=ValueArtifactKind.CONTINUATION_LEAF,
+            period=4,
+            regime="retired",
+            leaf_path=("value",),
+        )
 
-    resolved = _resolve(
+
+def test_a_continuation_leaf_address_may_not_name_an_edge_target_regime() -> None:
+    """Only a gated continuation is owned by a source regime and an edge target."""
+    with pytest.raises(ValueError, match="cannot name an edge target regime"):
+        ValueArtifactAddress(
+            kind=ValueArtifactKind.CONTINUATION_LEAF,
+            period=4,
+            regime="retired",
+            target_regime="single_f",
+            artifact_key=EGM_CONTINUATION,
+            leaf_path=("value",),
+        )
+
+
+def test_a_continuation_leaf_enters_only_through_its_own_channel() -> None:
+    """A carry leaf reaches a core as `next_regime_to_continuation` or not at all."""
+    sharding = _replicated_sharding()
+
+    with pytest.raises(
+        ValueError, match="only through the next_regime_to_continuation"
+    ):
+        ResolvedValueTransfer(
+            target=_leaf_target(leaf="value"),
+            source=ValueConsumerAddress(
+                source_period=3,
+                source_regime="working",
+                core_key="main",
+                channel=ValueInputChannel.NEXT_REGIME_VALUE,
+                path=("retired", "value"),
+            ),
+            kind=ValueTransferKind.ALIGNED_LOCAL,
+            stored_sharding=sharding,
+            source_sharding=sharding,
+            expected_shape=(5,),
+            expected_dtype=jnp.float32,
+        )
+
+
+@pytest.mark.parametrize("leaf_name", ["endog_grid", "value", "marginal_utility"])
+def test_a_mapping_channel_read_resolves_a_carry_attribute_leaf(
+    *, leaf_name: str
+) -> None:
+    """`next_regime_to_continuation[target].<leaf>` is one addressable leaf."""
+    carry = build_template_egm_carry(n_rows=5)
+    expected = {
+        "endog_grid": carry.endog_grid,
+        "value": carry.value,
+        "marginal_utility": carry.marginal_utility,
+    }[leaf_name]
+    read = _leaf_read(leaf=leaf_name, argument=None)
+    program = _materialize(
         reads=(read,),
         arguments={
             ValueInputChannel.CONTINUATION_LEAF.value: MappingProxyType(
-                {"retired": build_template_egm_carry(n_rows=5)}
+                {"retired": carry}
             )
         },
     )
 
-    assert resolved.requirements.value_reads == (read,)
+    leaf = cast("jax.Array", _value_read_argument_leaf(program=program, read=read))
+
+    aaae(leaf, expected, decimal=DECIMAL_PRECISION)
+
+
+def test_a_leaf_path_naming_no_carry_field_is_refused() -> None:
+    """A path step that names nothing on the carry addresses no leaf at all."""
+    read = _leaf_read(leaf="absent_row", argument=None)
+    program = _materialize(reads=(read,), arguments=_carry_arguments())
+
+    with pytest.raises(ValueError, match="traverses a non-container value"):
+        _value_read_argument_leaf(program=program, read=read)
+
+
+def test_a_leaf_path_reaching_an_absent_carry_row_is_refused() -> None:
+    """A carry field the template leaves unpublished resolves to no array leaf."""
+    read = _leaf_read(leaf="breakpoints", argument=None)
+    program = _materialize(reads=(read,), arguments=_carry_arguments())
+
+    with pytest.raises(TypeError, match="array-like leaf with shape and dtype"):
+        _value_read_argument_leaf(program=program, read=read)
 
 
 def test_three_direct_argument_reads_share_no_locator() -> None:
-    """A builder that flattens carry rows into named arguments addresses each by
-    its argument name, and three such reads are three distinct locators."""
+    """Three named-argument reads of one carry are three distinct locators.
+
+    A builder that flattens carry rows into program arguments addresses each row
+    by its argument name, so channel and path coincide across the three reads and
+    only the argument tells them apart.
+    """
     reads = (
         _leaf_read(leaf="endog_grid", argument="next_liquid_grid"),
         _leaf_read(leaf="value", argument="next_value"),
@@ -179,7 +290,14 @@ def test_three_direct_argument_reads_share_no_locator() -> None:
         },
     )
 
-    assert resolved.requirements.value_reads == reads
+    assert tuple(
+        (read.source.channel, read.source.path, read.source.argument)
+        for read in resolved.requirements.value_reads
+    ) == (
+        (ValueInputChannel.CONTINUATION_LEAF, (), "next_liquid_grid"),
+        (ValueInputChannel.CONTINUATION_LEAF, (), "next_value"),
+        (ValueInputChannel.CONTINUATION_LEAF, (), "next_marginal"),
+    )
 
 
 def test_two_reads_with_one_locator_are_refused() -> None:

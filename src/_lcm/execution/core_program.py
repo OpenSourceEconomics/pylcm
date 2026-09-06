@@ -1108,7 +1108,7 @@ def _validate_value_reads(*, program: MaterializedCoreProgram) -> None:
 
         locator = (read.source.channel, read.source.path, read.source.argument)
         if locator in locators:
-            msg = f"Core program has a duplicate value-read argument path: {locator!r}."
+            msg = f"Core program has a duplicate value-read locator: {locator!r}."
             raise ValueError(msg)
         locators.add(locator)
         _value_read_argument_leaf(program=program, read=read)

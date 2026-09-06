@@ -256,7 +256,7 @@ def test_duplicate_target_value_argument_path_is_rejected() -> None:
         accesses=(access, access),
     )
 
-    with pytest.raises(ValueError, match="duplicate value-read argument path"):
+    with pytest.raises(ValueError, match="duplicate value-read locator"):
         resolve_core_program(program=program, tile_widths={"action": 1})
 
 

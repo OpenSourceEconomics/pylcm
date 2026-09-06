@@ -60,9 +60,13 @@ class ValueArtifactAddress:
     """
 
     kind: ValueArtifactKind
+    """Which stored solve-time value this address names."""
     period: int
+    """Solved period of a regime value, fold period of a gated continuation."""
     regime: RegimeName
+    """Regime owning the stored value."""
     target_regime: RegimeName | None = None
+    """Edge target of a gated continuation; `None` for every other kind."""
     artifact_key: ArtifactKey | None = None
     """Versioned key of the continuation whose leaf is addressed."""
     leaf_path: tuple[str, ...] = ()
@@ -78,24 +82,30 @@ class ValueArtifactAddress:
         object.__setattr__(self, "leaf_path", tuple(self.leaf_path))
         if self.kind is ValueArtifactKind.CONTINUATION_LEAF:
             if self.target_regime is not None:
-                msg = "A continuation-leaf artifact cannot name an edge target regime."
+                msg = (
+                    "A continuation-leaf artifact cannot name an edge target regime, "
+                    f"got {self.target_regime!r}."
+                )
                 raise ValueError(msg)
             if not isinstance(self.artifact_key, ArtifactKey):
-                msg = "A continuation-leaf artifact must name its ArtifactKey."
+                msg = (
+                    "A continuation-leaf artifact must name its ArtifactKey, got "
+                    f"{self.artifact_key!r}."
+                )
                 raise TypeError(msg)
             if not self.leaf_path or any(
                 not isinstance(step, str) or not step for step in self.leaf_path
             ):
                 msg = (
                     "A continuation-leaf artifact must name a non-empty leaf_path of "
-                    "non-empty strings."
+                    f"non-empty strings, got {self.leaf_path!r}."
                 )
                 raise ValueError(msg)
             return
         if self.artifact_key is not None or self.leaf_path:
             msg = (
                 f"A {self.kind.value} artifact carries no artifact_key and no "
-                "leaf_path."
+                f"leaf_path, got {self.artifact_key!r} and {self.leaf_path!r}."
             )
             raise ValueError(msg)
         if self.kind is ValueArtifactKind.REGIME_VALUE:
@@ -114,11 +124,11 @@ class ValueArtifactAddress:
 class ValueConsumerAddress:
     """Logical address of one value leaf consumed by a source core.
 
-    ``path`` is relative to ``argument`` when the read names one, and to
-    ``channel`` otherwise; for a channel-indexed read its first segment is the
-    target or reference regime key.  Keeping the path separate from the artifact
-    identity allows one stored value to feed several argument leaves without
-    conflating their liveness events.
+    `path` is relative to `argument` when the read names one, and to `channel`
+    otherwise; for a channel-indexed read its first segment is the target or
+    reference regime key.  Keeping the path separate from the artifact identity
+    allows one stored value to feed several argument leaves without conflating
+    their liveness events.
     """
 
     source_period: int
@@ -459,7 +469,7 @@ def _validate_continuation_leaf_identity(
     if source.channel is not ValueInputChannel.CONTINUATION_LEAF:
         msg = (
             "A continuation leaf may enter a core only through the "
-            "next_regime_to_continuation channel."
+            f"next_regime_to_continuation channel, got {source.channel!r}."
         )
         raise ValueError(msg)
     expected_period = source.source_period + 1
