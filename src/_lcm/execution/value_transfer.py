@@ -3,9 +3,9 @@
 An economic dependency points from a source regime to a target regime, while the
 stored value moves in the opposite direction during backward induction.  This module
 names both ends independently: a target artifact says which stored array is read, and
-a source consumer says exactly where that array enters a core.  Concrete transfer
-operators remain deliberately small and fail closed until a production route needs a
-larger catalogue.
+a source consumer says exactly where that array enters a core.  The transfer
+catalogue is a total function from a stored layout and a required layout to one
+operator, and fails closed on the single pair no one collective can serve.
 """
 
 from collections.abc import Hashable, Iterable, Mapping
@@ -17,6 +17,7 @@ import jax
 import jax.numpy as jnp
 
 from _lcm.typing import RegimeName
+from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import ArtifactKey
 
 _VALUE_TRANSFER_VERSION = 2
@@ -44,6 +45,10 @@ class ValueTransferKind(StrEnum):
 
     ALIGNED_LOCAL = "aligned_local"
     COPY_TO_SOURCE_LAYOUT = "copy_to_source_layout"
+    ALL_GATHER = "all_gather"
+    LOCAL_SLICE = "local_slice"
+    RESHARD = "reshard"
+    CROSS_MESH_COPY = "cross_mesh_copy"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -209,22 +214,15 @@ class ResolvedValueTransfer:
             label="source",
         )
         _validate_edge_identity(target=self.target, source=self.source)
-        if self.kind is ValueTransferKind.ALIGNED_LOCAL:
-            if self.stored_sharding != self.source_sharding:
-                msg = (
-                    "ALIGNED_LOCAL requires identical stored and source shardings; "
-                    "a representation change must use COPY_TO_SOURCE_LAYOUT."
-                )
-                raise ValueError(msg)
-        elif self.kind is ValueTransferKind.COPY_TO_SOURCE_LAYOUT:
-            if self.stored_sharding == self.source_sharding:
-                msg = (
-                    "COPY_TO_SOURCE_LAYOUT requires a distinct source sharding; "
-                    "an unchanged representation must use ALIGNED_LOCAL."
-                )
-                raise ValueError(msg)
-        else:
-            msg = f"Unsupported value transfer kind: {self.kind!r}."
+        expected = classify_value_transfer(
+            stored_sharding=self.stored_sharding,
+            required_sharding=self.source_sharding,
+        )
+        if self.kind is not expected:
+            msg = (
+                f"A transfer from {self.stored_sharding} to {self.source_sharding} "
+                f"is a {expected.value}, not a {self.kind.value}."
+            )
             raise ValueError(msg)
 
         object.__setattr__(
@@ -278,7 +276,12 @@ def resolve_value_transfer(
 def apply_value_transfer(
     *, value: object, transfer: ResolvedValueTransfer
 ) -> jax.Array:
-    """Apply one resolved adapter after validating the exact stored artifact."""
+    """Apply one resolved adapter after validating the exact stored artifact.
+
+    An `ALIGNED_LOCAL` transfer hands the stored array on unchanged.  Every other
+    operator is one recorded `jax.device_put` onto the required layout, so the
+    collective XLA emits is the one the plan already names.
+    """
     if not isinstance(transfer, ResolvedValueTransfer):
         msg = "transfer must be a ResolvedValueTransfer."
         raise TypeError(msg)
@@ -291,18 +294,15 @@ def apply_value_transfer(
     )
     if transfer.kind is ValueTransferKind.ALIGNED_LOCAL:
         return stored
-    if transfer.kind is ValueTransferKind.COPY_TO_SOURCE_LAYOUT:
-        copied = jax.device_put(stored, transfer.source_sharding)
-        _assert_value_metadata(
-            value=copied,
-            expected_shape=transfer.expected_shape,
-            expected_dtype=transfer.expected_dtype,
-            expected_sharding=transfer.source_sharding,
-            label="transferred",
-        )
-        return copied
-    msg = f"Unsupported value transfer kind: {transfer.kind!r}."
-    raise ValueError(msg)
+    copied = jax.device_put(stored, transfer.source_sharding)
+    _assert_value_metadata(
+        value=copied,
+        expected_shape=transfer.expected_shape,
+        expected_dtype=transfer.expected_dtype,
+        expected_sharding=transfer.source_sharding,
+        label="transferred",
+    )
+    return copied
 
 
 def apply_value_transfer_plan(
@@ -350,6 +350,69 @@ def apply_value_transfer_plan(
         updated[root] = replaced
         result = MappingProxyType(updated)
     return result
+
+
+def classify_value_transfer(
+    *,
+    stored_sharding: jax.sharding.Sharding,
+    required_sharding: jax.sharding.Sharding,
+) -> ValueTransferKind:
+    """Name the one operator that takes a stored layout to a required layout.
+
+    The catalogue is total over the pairs the planner can produce:
+
+    - equal layouts stay `ALIGNED_LOCAL`;
+    - a single-device or replicated value moved onto another placement is a
+      `COPY_TO_SOURCE_LAYOUT`;
+    - on one mesh, sharded to replicated is an `ALL_GATHER`, replicated to
+      sharded a `LOCAL_SLICE`, and one named axis to another a `RESHARD`;
+    - a required mesh that is disjoint from the stored one, or nested inside it,
+      or contains it, is a `CROSS_MESH_COPY`.
+
+    Two meshes that share devices while neither contains the other are refused:
+    no single collective serves them, and picking one silently would move the
+    value through a placement the plan does not record.
+    """
+    _require_sharding(sharding=stored_sharding, label="stored")
+    _require_sharding(sharding=required_sharding, label="required")
+    if stored_sharding == required_sharding:
+        return ValueTransferKind.ALIGNED_LOCAL
+    stored_named = isinstance(stored_sharding, jax.NamedSharding)
+    required_named = isinstance(required_sharding, jax.NamedSharding)
+    if not stored_named or not required_named:
+        return ValueTransferKind.COPY_TO_SOURCE_LAYOUT
+    if stored_sharding.mesh == required_sharding.mesh:
+        stored_axes = _named_axes(spec=stored_sharding.spec)
+        required_axes = _named_axes(spec=required_sharding.spec)
+        if stored_axes and not required_axes:
+            return ValueTransferKind.ALL_GATHER
+        if not stored_axes and required_axes:
+            return ValueTransferKind.LOCAL_SLICE
+        return ValueTransferKind.RESHARD
+    stored_devices = frozenset(stored_sharding.mesh.devices.flat)
+    required_devices = frozenset(required_sharding.mesh.devices.flat)
+    if (
+        not stored_devices & required_devices
+        or stored_devices <= required_devices
+        or required_devices <= stored_devices
+    ):
+        return ValueTransferKind.CROSS_MESH_COPY
+    msg = (
+        "Overlapping but unequal device meshes cannot be served by one planned "
+        f"transfer: stored on {sorted(device.id for device in stored_devices)}, "
+        f"required on {sorted(device.id for device in required_devices)}."
+    )
+    raise ExecutionPlanningError(msg)
+
+
+def _named_axes(*, spec: jax.sharding.PartitionSpec) -> tuple[str, ...]:
+    """Return the mesh axes one partition spec shards over, in spec order."""
+    axes: list[str] = []
+    for entry in spec:
+        if entry is None:
+            continue
+        axes.extend((entry,) if isinstance(entry, str) else tuple(entry))
+    return tuple(axes)
 
 
 def _replace_transfer_leaf(

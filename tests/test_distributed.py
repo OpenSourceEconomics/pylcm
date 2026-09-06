@@ -617,25 +617,23 @@ def test_grid_search_same_mesh_rank_specific_value_input_stays_aligned(monkeypat
 
 
 @_skip_pytest_parallel
-def test_value_transfer_rejects_named_target_to_single_device_source():
-    """The planner fails closed if model-construction invariants are bypassed."""
+def test_value_transfer_copies_a_named_target_onto_a_single_device_source():
+    """A sharded value read by a single-device core is copied onto that device."""
     # Distributed states are model-level declarations, and construction rejects a
-    # nonterminal source that prunes one. A valid model therefore cannot produce this
-    # transfer direction; the private resolver still refuses it explicitly.
+    # nonterminal source that prunes one, so no model reaches this direction. The
+    # catalogue still names it, rather than leaving the pair unclassified.
     target_sharding = NamedSharding(
         jax.make_mesh((4,), ("type1",)),
         PartitionSpec("type1"),
     )
     source_sharding = jax.sharding.SingleDeviceSharding(jax.devices()[0])
 
-    with pytest.raises(
-        ValueError,
-        match="NamedSharding -> SingleDeviceSharding",
-    ):
-        backward_induction._resolve_value_transfer_layout(
-            stored_sharding=target_sharding,
-            source_execution_sharding=source_sharding,
-        )
+    resolved = backward_induction._resolve_value_transfer_layout(
+        stored_sharding=target_sharding,
+        source_execution_sharding=source_sharding,
+    )
+
+    assert resolved == (ValueTransferKind.COPY_TO_SOURCE_LAYOUT, source_sharding)
 
 
 @_skip_pytest_parallel

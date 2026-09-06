@@ -226,6 +226,79 @@ At dispatch the compiled core refuses an internal input that is missing, or whos
 or dtype departs from the template it was lowered against, naming the program and the
 argument.
 
+(reading-a-stored-value)=
+
+## Reading a stored value
+
+Every array a program reads across a regime-period boundary is declared rather than
+discovered. A `ValueRead` names both ends independently: the stored artifact it reads
+through a `ValueArtifactAddress`, and the argument leaf that receives it through a
+`ValueConsumerAddress`. A program declares its reads on its requirements.
+
+```{code-block} python
+from lcm.solvers import (
+    CoreExecutionRequirements,
+    ValueArtifactAddress,
+    ValueArtifactKind,
+    ValueConsumerAddress,
+    ValueInputChannel,
+    ValueRead,
+)
+
+
+def wealth_requirements(
+    *, regime_name: str, target: str, period: int
+) -> CoreExecutionRequirements:
+    """Declare that this core reads one target regime's next-period value."""
+    return CoreExecutionRequirements(
+        value_reads=(
+            ValueRead(
+                target=ValueArtifactAddress(
+                    kind=ValueArtifactKind.REGIME_VALUE,
+                    period=period + 1,
+                    regime=target,
+                ),
+                source=ValueConsumerAddress(
+                    source_period=period,
+                    source_regime=regime_name,
+                    core_key="main",
+                    channel=ValueInputChannel.NEXT_REGIME_VALUE,
+                    path=(target,),
+                ),
+            ),
+        )
+    )
+```
+
+An economic dependency points from a source regime to a target regime, while the stored
+value moves the other way during backward induction, so the two addresses carry
+different coordinates: the artifact's `period` is the target's solved period, and the
+consumer's `source_period` is the period of the core that reads it.
+
+The engine then names one operator per declared read, from the layout the value is
+stored in to the layout the consuming program requires:
+
+| stored layout               | required layout                             | operator                           |
+| --------------------------- | ------------------------------------------- | ---------------------------------- |
+| equal                       | equal                                       | `ALIGNED_LOCAL`                    |
+| single device or replicated | different single device                     | `COPY_TO_SOURCE_LAYOUT`            |
+| sharded on named axis       | replicated                                  | `ALL_GATHER`                       |
+| replicated                  | sharded on named axis                       | `LOCAL_SLICE`                      |
+| sharded on axis `a`         | sharded on axis `b`                         | `RESHARD`                          |
+| any                         | different mesh (disjoint or nested submesh) | `CROSS_MESH_COPY`                  |
+| any                         | overlapping but unequal meshes              | refused (`ExecutionPlanningError`) |
+
+The table is total over the layout pairs the planner produces, so a declared read always
+has exactly one operator. The last row is the one pair no single collective serves: two
+meshes sharing devices while neither contains the other are refused while the period is
+planned, naming both device sets, rather than moved through a placement the plan does
+not record.
+
+Lowering and dispatch apply the same immutable plan. An `ALIGNED_LOCAL` read hands the
+stored array to the program unchanged; every other operator is one recorded copy onto
+the required layout, and the compiled program refuses a value whose shape, dtype, or
+layout departs from what was planned.
+
 ## Publishing a continuation
 
 A solver whose parents invert an Euler equation publishes a continuation artifact. The

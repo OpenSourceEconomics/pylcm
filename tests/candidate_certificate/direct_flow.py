@@ -188,7 +188,7 @@ _SOURCE_SEALS = {
     GRID_SEARCH_SOURCE: "b1753aa03fcd6eab34838b868e532008ccb1280bb9fca9ab6e27e7f506b43e06",
     CORE_PROGRAM_SOURCE: "f5f86bf2976d80ee87c3c9560bd91f62ee51e82b94ad72c9c1fe34c0cd35e63b",
     OUTPUT_LAYOUT_SOURCE: "65541f5e1ff3edad0f9105457e478525d3913fcf32204aeba6fe290cf0fd676d",
-    VALUE_TRANSFER_SOURCE: "06af15d25f3fdcf765ba874a942942597ee1411d365516c93da4c58c163e48ef",
+    VALUE_TRANSFER_SOURCE: "1588c6fc787ab3d9b8c009b9caa0174dcd023aae6ce8fa90e9492bb79a53c161",
     ACTION_STREAMING_SOURCE: "bd693f4bab250215dea9b6fb6021c518163305a890a9536f66af9e1d7dc5c308",
     ACTION_REDUCTION_SOURCE: "6cee6ea2dbef0ba710fa4a318a2113377d6513cee508e73004861597f9c220f9",
     COLLECTIVE_ACTION_REDUCTION_SOURCE: "7a80418764fdf9754062a23707c5d39fa7abfcaac9c8e8f7803c4d8f1b461347",
@@ -205,7 +205,7 @@ _SOURCE_SEALS = {
     SIMULATION_COMPILE_SOURCE: "eca63257bd882066c608c34791cb0399f8d283fa79f5e0640091e12321da82a9",
     MODEL_SOURCE: "a2574cd0abdc502db292d2acb23a1b18979781839d478e20bfe1c565c4f32166",
     SOLVER_API_SOURCE: "db20fc0c3b392a0809ef2c114587203d75d761888c1a86760bf2cd81043472b6",
-    BACKWARD_INDUCTION_SOURCE: "32f28357e5b804fee73b0e6af4f27884acad8765784836c25aa8028e0ae9c246",
+    BACKWARD_INDUCTION_SOURCE: "d99c7c8ca3b213341e73059ec235252978a48c8e170ceeeea5ddc577f377a09c",
     PERIOD_REPLAY_SOURCE: "71bdcc15215cafce5a6f248bbd1ba264170c23cc867b7bc9d9f472926928ed34",
     INITIAL_CONDITIONS_SOURCE: "582c29e7f99072d975c7a4c9070a93e707d25a98c09e216b47fa71c7bb2d6022",
     RESULT_SOURCE: "7390877272bc23fd7c153e2a51ac4a6072e88fe950d5de695ff015205aff5058",
@@ -2435,6 +2435,10 @@ CONTINUATION_LEAF = "next_regime_to_continuation"
 """,
         "ValueTransferKind": """ALIGNED_LOCAL = "aligned_local"
 COPY_TO_SOURCE_LAYOUT = "copy_to_source_layout"
+ALL_GATHER = "all_gather"
+LOCAL_SLICE = "local_slice"
+RESHARD = "reshard"
+CROSS_MESH_COPY = "cross_mesh_copy"
 """,
     }
     for class_name, expected_source in enum_contracts.items():
@@ -2484,10 +2488,12 @@ COPY_TO_SOURCE_LAYOUT = "copy_to_source_layout"
             contracts={
                 "ValueArtifactAddress.__post_init__": "a2dbe5c7ebaa8c864bf785f4f549f2e66cc67c3cf317b1b49a4c535108e0ac26",
                 "ValueConsumerAddress.__post_init__": "e2a6c26a492e21aef01bc5ae519d02426a0f6e067201925b2797eed13fadcc41",
-                "ResolvedValueTransfer.__post_init__": "292c9fc9a2f2a04e0da2dd7ab6ffc2d986a7f5d46a13f7347eebc1a712af6fdd",
+                "ResolvedValueTransfer.__post_init__": "6fc7223a75c3dc5fbb6072004915bbf08a05c9d1d42711b12ba6aae4306192c8",
                 "resolve_value_transfer": "232ec967f8b1c8c9055ae513e5afce130d808e8afe7f90271fc19f111db0cc1e",
-                "apply_value_transfer": "9b300e2118558fefb5027a39bfdac5acbfd933cc3c9f26ffa92237c2cad471c2",
+                "apply_value_transfer": "76b11059204dc6786aab1701a6c2523ddedd4f6fff16d80df49b1428784db311",
                 "apply_value_transfer_plan": "e68a7ffc5021a56c47ca597387c31cff59138d97a3c84527e74c1660cf8fd498",
+                "classify_value_transfer": "c55b04af4530ac76c2dce1b47bb3ccf0d4056efa7c4dd68417257f59e03d506e",
+                "_named_axes": "9891ed853dff4773021f511626b2e8b1b547d890e8423cccfcff6d592e54d927",
                 "_replace_transfer_leaf": "ea8d139bc1d7fca22f40144bc343840b0be464fad21f636362a0aedd9e1af1ce",
                 "_validate_edge_identity": "315fd9e827952a158fd9b60fe83c408fb78ef17abe8c3a8da8e422b5f62b89e7",
                 "_validate_continuation_leaf_identity": "88493fd0b4b5ef9670c2958f580de3d53e855b187f3548e335193364a3cb61f8",
@@ -2508,6 +2514,7 @@ COPY_TO_SOURCE_LAYOUT = "copy_to_source_layout"
             label="value transfer",
             relevant_import_names={
                 "ArtifactKey",
+                "ExecutionPlanningError",
                 "Hashable",
                 "Iterable",
                 "Mapping",
@@ -2527,10 +2534,12 @@ COPY_TO_SOURCE_LAYOUT = "copy_to_source_layout"
                 "import jax",
                 "import jax.numpy as jnp",
                 "from _lcm.typing import RegimeName",
+                "from lcm.exceptions import ExecutionPlanningError",
                 "from lcm.solver_api import ArtifactKey",
             ],
             expected_binding_counts={
                 "ArtifactKey": 1,
+                "ExecutionPlanningError": 1,
                 "Hashable": 1,
                 "Iterable": 1,
                 "Mapping": 1,
@@ -2546,6 +2555,7 @@ COPY_TO_SOURCE_LAYOUT = "copy_to_source_layout"
                 "_VALUE_TRANSFER_VERSION": 1,
                 "_assert_value_metadata": 1,
                 "_check_sharding_shape": 1,
+                "_named_axes": 1,
                 "_normalize_shape": 1,
                 "_replace_transfer_leaf": 1,
                 "_require_enum": 1,
@@ -2559,9 +2569,11 @@ COPY_TO_SOURCE_LAYOUT = "copy_to_source_layout"
                 "apply_value_transfer": 1,
                 "apply_value_transfer_plan": 1,
                 "callable": 0,
+                "classify_value_transfer": 1,
                 "dataclass": 1,
                 "dict": 0,
                 "field": 1,
+                "frozenset": 0,
                 "getattr": 0,
                 "isinstance": 0,
                 "jax": 1,
@@ -2571,6 +2583,7 @@ COPY_TO_SOURCE_LAYOUT = "copy_to_source_layout"
                 "object": 0,
                 "resolve_value_transfer": 1,
                 "set": 0,
+                "sorted": 0,
                 "tuple": 0,
                 "type": 0,
             },
@@ -2738,7 +2751,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             "_resolve_output_layouts_and_lowering_keys": "375525dec4f98e00da6d4961cd036546c90dadda14d79d89e2a3a3a75df6882d",
             "_resolve_program_for_execution": "6e3ec3139833f459a49be4a30a6c8c5813ba8cd66176a849ee24e7a81b27b433",
             "_resolve_value_input_transfer_plan": "72bb5e99e0584e124030d7879265fba08488804c98e20aaec96b6355a34fc0e9",
-            "_resolve_value_transfer_layout": "6cd863aaa64c0f558c797b47667479b595c77d5f3ee5c8b3dcfae188f1d05edd",
+            "_resolve_value_transfer_layout": "2a6f86d8232989bb441e8a50371e0d891f82a7af22c797b10b91ab5bd1f230be",
             "_lowering_key": "244d3c4169b522ea2c49f19c59cc8e83efd999e2a7292e0d1ec92c2dbcaf52e0",
             "_abstract_arguments_key": "becd5c3e94366bc4e3e0afa31ea20886002228f7064c9a9ea0e7d0e681630dfa",
             "_abstract_value_key": "b79bdd528ed264be0093eb5d04a0341e7376606d478ba0770aa5cb14f813638b",
@@ -5508,8 +5521,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         ),
         "value_transfer:copy_value_sliced": replace_once(
             source=value_transfer_source,
-            old="        copied = jax.device_put(stored, transfer.source_sharding)",
-            new="        copied = jax.device_put(stored[1:], transfer.source_sharding)",
+            old="    copied = jax.device_put(stored, transfer.source_sharding)",
+            new="    copied = jax.device_put(stored[1:], transfer.source_sharding)",
             label="copied value candidate preservation",
         ),
         "value_transfer:stored_metadata_check_bypassed": replace_once(
@@ -5556,8 +5569,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         ),
         "value_transfer:copy_destination_ignored": replace_once(
             source=value_transfer_source,
-            old="        copied = jax.device_put(stored, transfer.source_sharding)",
-            new="        copied = jax.device_put(stored, transfer.stored_sharding)",
+            old="    copied = jax.device_put(stored, transfer.source_sharding)",
+            new="    copied = jax.device_put(stored, transfer.stored_sharding)",
             label="copy-to-source destination layout",
         ),
         "value_transfer:duplicate_consumer_admitted": replace_once(
@@ -6091,15 +6104,16 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             "source": replace_once(
                 source=backward_induction_source,
                 old=(
-                    "    msg = (\n"
-                    '        "Unsupported target-value layout conversion: "'
+                    "    return (\n"
+                    "        classify_value_transfer(\n"
+                    "            stored_sharding=stored_sharding,\n"
+                    "            required_sharding=source_sharding,\n"
+                    "        ),\n"
+                    "        source_sharding,\n"
+                    "    )"
                 ),
-                new=(
-                    "    return ValueTransferKind.ALIGNED_LOCAL, stored_sharding\n"
-                    "    msg = (\n"
-                    '        "Unsupported target-value layout conversion: "'
-                ),
-                label="backward fail-closed unsupported layout conversion",
+                new="    return ValueTransferKind.ALIGNED_LOCAL, source_sharding",
+                label="backward classifier-named layout conversion",
             ),
         },
         "native_graph:materialized_program_filtered": {

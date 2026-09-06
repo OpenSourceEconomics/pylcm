@@ -260,7 +260,9 @@ def test_resolver_requires_concrete_shape_dtype_and_sharding() -> None:
 def test_resolver_rejects_misclassified_or_incompatible_layouts() -> None:
     stored = _stored_value()
     different = jax.sharding.SingleDeviceSharding(jax.devices()[0])
-    with pytest.raises(ValueError, match="ALIGNED_LOCAL requires identical"):
+    with pytest.raises(
+        ValueError, match="is a copy_to_source_layout, not a aligned_local"
+    ):
         resolve_value_transfer(
             target=_target(),
             source=_source(),
@@ -268,7 +270,9 @@ def test_resolver_rejects_misclassified_or_incompatible_layouts() -> None:
             stored_template=stored,
             source_sharding=different,
         )
-    with pytest.raises(ValueError, match="requires a distinct"):
+    with pytest.raises(
+        ValueError, match="is a aligned_local, not a copy_to_source_layout"
+    ):
         resolve_value_transfer(
             target=_target(),
             source=_source(),

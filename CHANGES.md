@@ -24,6 +24,12 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   solver whose published group key is coarser than what it actually specialized is
   refused at build time with an `ExecutionPlanningError` naming both colliding
   programs.
+- The value-transfer catalogue names one operator for every stored/required layout pair
+  the planner produces: `ALIGNED_LOCAL`, `COPY_TO_SOURCE_LAYOUT`, `ALL_GATHER`,
+  `LOCAL_SLICE`, `RESHARD`, and `CROSS_MESH_COPY`. Two device meshes that share devices
+  while neither contains the other are the one pair no single collective serves, and are
+  refused while the period is planned with an `ExecutionPlanningError` naming both
+  device sets.
 - Solution archives written under solver API version 1 are rejected with
   `IncompatibleSolutionError`. Compatibility remains exact; pylcm does not migrate an
   archive across a solver API version.

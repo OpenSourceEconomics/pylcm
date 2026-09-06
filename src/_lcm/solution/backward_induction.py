@@ -44,6 +44,7 @@ from _lcm.execution.value_transfer import (
     ValueArtifactAddress,
     ValueArtifactKind,
     ValueTransferKind,
+    classify_value_transfer,
     resolve_value_transfer,
 )
 from _lcm.execution.workspace_planning import (
@@ -2456,7 +2457,7 @@ def _resolve_value_transfer_layout(
     stored_sharding: object,
     source_execution_sharding: jax.sharding.Sharding,
 ) -> tuple[ValueTransferKind, jax.sharding.Sharding]:
-    """Choose one of the two supported value-input representation adapters."""
+    """Choose the required value layout and name the operator that reaches it."""
     if not isinstance(stored_sharding, jax.sharding.Sharding):
         msg = "A stored target value must expose a concrete JAX sharding."
         raise TypeError(msg)
@@ -2469,9 +2470,8 @@ def _resolve_value_transfer_layout(
         # A value already resident on the source mesh remains in its stored
         # representation. Its rank-specific partition spec need not equal the source
         # core's own output spec.
-        return ValueTransferKind.ALIGNED_LOCAL, stored_sharding
-
-    if isinstance(stored_sharding, jax.sharding.SingleDeviceSharding) and isinstance(
+        source_sharding = stored_sharding
+    elif isinstance(stored_sharding, jax.sharding.SingleDeviceSharding) and isinstance(
         source_execution_sharding, jax.NamedSharding
     ):
         # A partially distributed model moves the unsharded target onto the source
@@ -2482,21 +2482,18 @@ def _resolve_value_transfer_layout(
             spec=jax.P(),
             memory_kind=source_execution_sharding.memory_kind,
         )
-        return ValueTransferKind.COPY_TO_SOURCE_LAYOUT, source_sharding
+    else:
+        # Every remaining pair is delivered on the source core's own execution
+        # placement, which is the only layout the compiled program accepts.
+        source_sharding = source_execution_sharding
 
-    # The reverse NamedSharding -> SingleDeviceSharding route is unreachable for a
-    # valid value-consuming source: distributed states are model-level, and model
-    # construction refuses to prune one from a nonterminal regime. Keep it
-    # unsupported here so a broken construction invariant fails closed.
-    msg = (
-        "Unsupported target-value layout conversion: "
-        f"{type(stored_sharding).__name__} -> "
-        f"{type(source_execution_sharding).__name__}. "
-        "Only values already aligned with the source execution placement and "
-        "single-device values copied as replicated inputs onto a named source mesh "
-        "are supported."
+    return (
+        classify_value_transfer(
+            stored_sharding=stored_sharding,
+            required_sharding=source_sharding,
+        ),
+        source_sharding,
     )
-    raise ValueError(msg)
 
 
 def _program_identity(
