@@ -343,6 +343,33 @@ everything that constructs the inputs (parameters, grids, transitions, compiled
 callables) lives in `regime_building/` and is read out of the canonical `Regime`
 instances.
 
+## The solver seam: keys and routes
+
+Two declarations connect a solver to the engine without either reading the other's
+concrete types.
+
+**A continuation is keyed, not concrete.** `_lcm/continuation.py` defines
+`ContinuationSpec`, pairing an all-finite template with the `ArtifactKey` under which
+its kernels publish it; `EGMContinuationSpec` is the EGM family's specialization, adding
+the layout a reading parent needs. A solver declares what it *reads* as
+`Solver.required_continuation_keys`, and `process_regimes` matches every declared key
+against what each reachable target publishes before anything compiles, so a version
+mismatch is a build error naming both regimes rather than a failure inside the first
+rolled period. `ContinuationPayload` is the `ContinuationArtifact` protocol — one
+property, `artifact_key` — so backward induction stores and rolls a payload of any type.
+The shipped EGM family still exchanges concrete `EGMCarry` fields between its own
+producers and readers; the transition ledger records what closing that gap requires.
+
+**A replay route is declared, not discovered.** Every canonical regime answers
+`simulation.replay_route` with one object carrying a `ReplayMode`, the exact payload
+class it retains, whether a solve owes one, and the name of the reader that consumes it.
+`EGMPolicyRead` and `NNBEGMPolicyRead` are those routes for the EGM and nested NB-EGM
+families; a regime that retains nothing declares the grid-recomputation route.
+`model_authority.py` builds its replay descriptors from the route, and `simulate.py`
+selects its reader by the route's `consumer_route` rather than by the class of whatever
+payload a solve happened to keep. The pre-simulation check therefore refuses a foreign
+payload by naming both the declared and the supplied class.
+
 ## Params: boundary form vs. canonical form
 
 ```

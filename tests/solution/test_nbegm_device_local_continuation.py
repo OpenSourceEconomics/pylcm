@@ -1,14 +1,19 @@
-"""The NBEGM continuation core reads only its device-local child carry.
+"""The NBEGM tile-local core reads only its device-local child carry.
 
 A fixed, distributed ride-along state (a permanent `kind` sharded one block per
 device) never transitions, so a ride cell's continuation depends only on its own
 `kind` slice of the next-period child carry. Sharded on that axis, the
-continuation interpolation must run device-locally: the optimized
-`continuation_core` module contains no `all-gather` collective assembling every
-`kind` slice of the child carry onto every device.
+continuation read must run device-locally: the optimized tile-local program
+performs no collective beyond those it performs when the same carry arrives
+replicated on every device — in particular no `all-gather` assembling every
+`kind` slice of the child carry onto every device. The replicated-carry compile
+is the reference: it cannot contain a carry gather, and every collective it does
+contain belongs to the program's own output assembly over the ride cells.
 
 The check solves the distributed ride-along toy under NBEGM on two forced host
-devices and inspects the XLA dump of the compiled continuation core.
+devices, records the live arguments the engine hands the ride-along programs,
+and compares the optimized HLO of the program lowered against those arguments
+with the HLO of the same program lowered against a replicated copy of the carry.
 """
 
 import os
@@ -21,55 +26,110 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 _SCRIPT = textwrap.dedent(
     """
-    import glob
-    import os
-    import sys
+    import collections
+    import re
 
     import jax
 
     assert jax.device_count() == 2, jax.devices()
 
+    from _lcm.execution.core_program import core_program_graph
+    from _lcm.solution import nbegm as solvers
     from tests.test_models import nbegm_ride_along_toy as toy
+
+    recorded = []
+    original_call = solvers._RideAlongArgumentBuilder.__call__
+
+    def record_arguments(self, context):
+        arguments = original_call(self, context)
+        recorded.append((self, arguments))
+        return arguments
+
+    solvers._RideAlongArgumentBuilder.__call__ = record_arguments
 
     model = toy.build_model(
         variant="nbegm", n_periods=4, n_liquid=24, n_savings=32, distributed_kind=True
     )
     model.solve(params=toy.build_params(), log_level="debug")
+    assert recorded, "no ride-along program was lowered"
 
-    dump_dir = os.environ["XLA_DUMP_DIR"]
-    hits = glob.glob(
-        os.path.join(dump_dir, "*continuation_core*after_optimizations.txt")
+    programs_by_builder = {}
+    for kernel in model._regimes["alive"].solution.period_kernels.values():
+        for program in core_program_graph(kernel=kernel).values():
+            programs_by_builder.setdefault(id(program.argument_builder), []).append(
+                program
+            )
+
+    collective = re.compile(
+        r"= (\\S+) (all-gather|all-reduce|all-to-all|collective-permute"
+        r"|reduce-scatter)\\("
     )
-    assert hits, f"no continuation_core dump in {dump_dir}"
-    gathered = [p for p in hits if "all-gather" in open(p).read()]
-    if gathered:
-        print("ALL-GATHER-PRESENT", os.path.basename(gathered[0]))
-    else:
-        print("DEVICE-LOCAL-OK")
+
+    def collectives(*, function, arguments):
+        text = jax.jit(function).lower(**arguments).compile().as_text()
+        found = collections.Counter()
+        for match in collective.finditer(text):
+            found[(match.group(2), match.group(1))] += 1
+        return found
+
+    def replicated_carry(arguments):
+        carry = arguments["next_regime_to_continuation"]
+        mesh = next(
+            leaf.sharding.mesh
+            for leaf in jax.tree.leaves(carry)
+            if isinstance(leaf.sharding, jax.NamedSharding)
+        )
+        replicated = jax.NamedSharding(mesh, jax.P())
+        return {
+            **arguments,
+            "next_regime_to_continuation": jax.tree.map(
+                lambda leaf: jax.device_put(leaf, replicated), carry
+            ),
+        }
+
+    compared = 0
+    sharded_total = collections.Counter()
+    for builder, arguments in recorded:
+        carry = arguments["next_regime_to_continuation"]
+        carry_shardings = {leaf.sharding for leaf in jax.tree.leaves(carry)}
+        if not any(
+            isinstance(s, jax.NamedSharding) and s.spec != jax.P()
+            for s in carry_shardings
+        ):
+            continue
+        for program in programs_by_builder[id(builder)]:
+            sharded = collectives(function=program.function, arguments=arguments)
+            replicated = collectives(
+                function=program.function, arguments=replicated_carry(arguments)
+            )
+            extra = sharded - replicated
+            if extra:
+                print("EXTRA-COLLECTIVES", program.name, sorted(extra.items()))
+                raise SystemExit(1)
+            sharded_total.update(sharded)
+            compared += 1
+    assert compared, "no program was lowered against a kind-sharded carry"
+    # The instrument has to be shown firing in this run: the program's own output
+    # assembly over the ride cells is where the reference collectives come from.
+    assert sharded_total, "no collective found in any sharded-carry compile"
+    print("DEVICE-LOCAL-OK", compared, sorted(sharded_total.items()))
     """
 )
 
 
-def test_nbegm_continuation_core_does_not_all_gather_child_carry(
-    tmp_path: Path,
-) -> None:
-    """The compiled NBEGM continuation core reads only its device-local carry.
+def test_nbegm_tile_local_core_does_not_all_gather_child_carry() -> None:
+    """The compiled NBEGM tile-local core reads only its device-local carry.
 
     With `kind` a fixed distributed ride state, the continuation interpolation
-    slices the child carry per device — the optimized `continuation_core` module
-    inserts no `all-gather` of the full carry onto every device.
+    slices the child carry per device: each ride-along program lowered against the
+    kind-sharded carry contains no collective beyond those of the same program
+    lowered against a replicated copy of that carry, so no `all-gather` of the
+    full carry onto every device.
     """
-    dump_dir = tmp_path / "xla-dump"
-    dump_dir.mkdir()
     env = {
         **os.environ,
-        "XLA_FLAGS": (
-            "--xla_force_host_platform_device_count=2 "
-            f"--xla_dump_to={dump_dir} --xla_dump_hlo_as_text "
-            "--xla_gpu_autotune_level=0"
-        ),
+        "XLA_FLAGS": "--xla_force_host_platform_device_count=2",
         "JAX_PLATFORMS": "cpu",
-        "XLA_DUMP_DIR": str(dump_dir),
     }
     result = subprocess.run(  # noqa: S603
         [sys.executable, "-c", _SCRIPT],
@@ -80,5 +140,5 @@ def test_nbegm_continuation_core_does_not_all_gather_child_carry(
         check=False,
         timeout=600,
     )
-    assert result.returncode == 0, result.stderr[-4000:]
+    assert result.returncode == 0, result.stderr[-4000:] + result.stdout[-2000:]
     assert "DEVICE-LOCAL-OK" in result.stdout, result.stdout[-2000:]

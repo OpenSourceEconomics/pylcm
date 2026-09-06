@@ -180,7 +180,7 @@ from _lcm.regime_building.age_normalization import (
 from _lcm.regime_building.max_Q_over_a import TASTE_SHOCK_SCALE_PARAM
 from _lcm.regime_building.V import VInterpolationInfo
 from _lcm.regime_building.w_dag import _get_build_W_kwargs
-from _lcm.solution.dcegm import _BoundDCEGM
+from _lcm.solution.dcegm import EGMStepBuild, _BoundDCEGM
 from _lcm.transition_plans import TargetTransitionPlans
 from _lcm.typing import (
     ActionName,
@@ -233,7 +233,7 @@ def build_egm_step_functions(
     period_to_regime_grid_signature: (
         MappingProxyType[int, MappingProxyType[RegimeName, Hashable]] | None
     ) = None,
-) -> tuple[MappingProxyType[int, EGMStepFunction], EGMCarry, frozenset[RegimeName]]:
+) -> EGMStepBuild:
     """Build per-period DC-EGM kernels and the regime's carry template.
 
     Periods sharing the same continuation-target configuration *and* the same
@@ -280,11 +280,12 @@ def build_egm_step_functions(
             age-invariant model. Folded into the kernel-sharing group key.
 
     Returns:
-        Tuple of the per-period kernel mapping, the regime's all-finite carry
-        template (leading axes: discrete states, then passive states, then
-        discrete actions), and the regime's carry-target names — the only
-        carry keys any of its kernels read, used to filter the rolling carry
-        mapping the solve loop hands each kernel.
+        The per-period kernel mapping, the regime's all-finite carry template
+        (leading axes: discrete states, then passive states, then discrete
+        actions), the regime's carry-target names — the only carry keys any of
+        its kernels read, used to filter the rolling carry mapping the solve
+        loop hands each kernel — and the names of the axes leading every carry
+        and policy row.
 
     """
     n_pad = compute_egm_carry_length(solver=solver)
@@ -491,10 +492,13 @@ def build_egm_step_functions(
         for period in periods:
             result[period] = built[key]
 
-    return (
-        MappingProxyType(dict(sorted(result.items()))),
-        carry_template,
-        stateful_targets_union,
+    return EGMStepBuild(
+        steps=MappingProxyType(dict(sorted(result.items()))),
+        carry_template=carry_template,
+        stateful_targets=stateful_targets_union,
+        row_discrete_state_names=own_discrete_state_names,
+        row_passive_state_names=own_passive_state_names,
+        row_discrete_action_names=tuple(own_discrete_action_values),
     )
 
 
@@ -587,16 +591,15 @@ def _get_egm_step(
 
     def egm_step(
         *,
-        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],  # noqa: ARG001
         next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
         **kwargs: Any,  # noqa: ANN401
     ) -> tuple[FloatND, EGMCarry, EGMSimPolicy]:
         """Run the DC-EGM step and publish V on the exogenous grid.
 
+        The continuation is read from the carries alone; no next-period value
+        array enters the step.
+
         Args:
-            next_regime_to_V_arr: The next period's value-function arrays;
-                accepted so solve treats all kernels uniformly (continuation
-                values come from the carries).
             next_regime_to_continuation: The next period's EGM carries.
             **kwargs: The regime's state grids, flat params, `period`, and
                 `age`.

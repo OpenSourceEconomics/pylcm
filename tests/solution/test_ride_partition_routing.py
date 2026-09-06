@@ -46,8 +46,12 @@ def test_partition_request_reaches_the_shared_dispatcher(
     assert calls == [requested]
 
 
-def test_all_five_production_sites_use_the_axis_specific_wrappers() -> None:
-    """The source contains exactly three ride and two branch routing calls."""
+def test_all_four_production_sites_use_the_axis_specific_wrappers() -> None:
+    """The source contains exactly two ride and two branch routing calls.
+
+    Ride: the tile-local core's cell loop and the per-interval continuation
+    read. Branch: the continuation read's and the envelope solve's branch loops.
+    """
     tree = ast.parse(Path(nbegm.__file__).read_text(encoding="utf-8"))
     names = Counter(
         node.func.id
@@ -55,5 +59,5 @@ def test_all_five_production_sites_use_the_axis_specific_wrappers() -> None:
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
     )
 
-    assert names["_map_ride_partitioned"] == 3
+    assert names["_map_ride_partitioned"] == 2
     assert names["_map_branch_partitioned"] == 2

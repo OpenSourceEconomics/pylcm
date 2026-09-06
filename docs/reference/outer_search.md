@@ -58,6 +58,12 @@ Important fields:
 Without a valid Lipschitz bound, midpoint/mesh validation cannot exclude an arbitrarily
 narrow peak between sampled points.
 
+The replay policy published under an adaptive search is read against the exact mesh the
+solve generated, which the solving `Model` instance records privately beside the result.
+It is therefore retained under `ResultRetention.VALUES_AND_REPLAY` and omitted as
+`NOT_PERSISTED` under `ALL_PERSISTABLE_ARTIFACTS`; see
+[Runtime and results](runtime_and_results.md).
+
 `OuterSearch` is the abstract configuration marker.
 
 (api-branch-aggregation)=

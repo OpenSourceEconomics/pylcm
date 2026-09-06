@@ -22,6 +22,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.egm.carry import EGMCarry
 from lcm import (
     AgeGrid,
     DiscreteGrid,
@@ -308,7 +309,7 @@ def test_asset_row_carry_rows_are_the_euler_grid_not_the_envelope_workspace():
     pure storage the parent never reads (the NaN tail is masked on interpolation).
     """
     template = _model("dcegm")._regimes["working_life"].solution.continuation_template
-    assert template is not None
+    assert isinstance(template, EGMCarry)
     n_euler = int(WEALTH_GRID.to_jax().shape[0])
     # The envelope workspace would have been ceil(1.2 * (n_savings + n_constrained))
     # = ceil(1.2 * (60 + 64)) = 149 rows; the persisted carry is the 60 Euler nodes.

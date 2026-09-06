@@ -119,10 +119,13 @@ def test_policy_replacement_reports_the_value_of_the_emitted_action(monkeypatch)
     read = SimpleNamespace(
         action_name="consumption",
         savings_lower_bound=0.0,
+        payload_type=EGMSimPolicy,
+        consumer_route="egm_off_grid",
     )
     regime = _StubRegime(
         simulation=SimpleNamespace(
             egm_policy_read=read,
+            replay_route=read,
             grids={},
         )
     )

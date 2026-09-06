@@ -91,27 +91,30 @@ and the correctness of destinations require page-specific documentation and test
 Most user-facing names are re-exported from `lcm`. These deliberately public submodule
 surfaces remain outside that top-level namespace:
 
-| Public name                                                                       | Canonical documentation         |
-| --------------------------------------------------------------------------------- | ------------------------------- |
-| [`lcm.params.MappingLeaf`](../user_guide/parameters.md)                           | Mapping parameter leaf          |
-| [`lcm.params.SequenceLeaf`](../user_guide/parameters.md)                          | Sequence parameter leaf         |
-| [`lcm.params.UserMappingLeaf`](../user_guide/parameters.md)                       | User mapping parameter leaf     |
-| [`lcm.params.UserSequenceLeaf`](../user_guide/parameters.md)                      | User sequence parameter leaf    |
-| [`lcm.params.as_leaf`](../user_guide/parameters.md)                               | Explicit parameter-leaf wrapper |
-| [`lcm.koopmans_aggregation.KoopmansAggregator`](../methods/preferences.md)        | Koopmans-form base contract     |
-| [`lcm.solver_api.ResultRetention`](runtime_and_results.md#api-solution-result)    | Solution result retention       |
-| [`lcm.solver_api.ArtifactKey`](runtime_and_results.md#api-solution-result)        | Versioned artifact identity     |
-| [`lcm.solver_api.ArtifactRef`](runtime_and_results.md#api-solution-result)        | Period/regime artifact address  |
-| [`lcm.solver_api.ArtifactStore`](runtime_and_results.md#api-solution-result)      | Immutable artifact store        |
-| [`lcm.solver_api.KernelOutput`](custom_solvers.md)                                | Experimental producer envelope  |
-| [`lcm.solver_api.OmissionReason`](runtime_and_results.md#api-solution-result)     | Recorded reason for absence     |
-| [`lcm.solver_api.SolutionMetadata`](runtime_and_results.md#api-solution-result)   | Labelled-solution metadata      |
-| [`lcm.solver_api.SolutionResult`](runtime_and_results.md#api-solution-result)     | Labelled solution result        |
-| [`lcm.solver_api.ValueArraySchema`](runtime_and_results.md#api-solution-result)   | Named value-array shape/dtype   |
-| [`lcm.solver_api.SIMULATION_POLICY`](runtime_and_results.md#api-solution-result)  | Replay-policy schema key        |
-| [`lcm.solver_api.DISSOLUTION_FLAG`](runtime_and_results.md#api-solution-result)   | Dissolution-flag schema key     |
-| [`lcm.solver_api.EGM_CONTINUATION`](runtime_and_results.md#api-solution-result)   | Continuation schema key         |
-| [`lcm.solver_api.SOLVER_DIAGNOSTICS`](runtime_and_results.md#api-solution-result) | Diagnostics schema key          |
+| Public name                                                                       | Canonical documentation             |
+| --------------------------------------------------------------------------------- | ----------------------------------- |
+| [`lcm.params.MappingLeaf`](../user_guide/parameters.md)                           | Mapping parameter leaf              |
+| [`lcm.params.SequenceLeaf`](../user_guide/parameters.md)                          | Sequence parameter leaf             |
+| [`lcm.params.UserMappingLeaf`](../user_guide/parameters.md)                       | User mapping parameter leaf         |
+| [`lcm.params.UserSequenceLeaf`](../user_guide/parameters.md)                      | User sequence parameter leaf        |
+| [`lcm.params.as_leaf`](../user_guide/parameters.md)                               | Explicit parameter-leaf wrapper     |
+| [`lcm.koopmans_aggregation.KoopmansAggregator`](../methods/preferences.md)        | Koopmans-form base contract         |
+| [`lcm.solver_api.ResultRetention`](runtime_and_results.md#api-solution-result)    | Solution result retention           |
+| [`lcm.solver_api.ArtifactKey`](runtime_and_results.md#api-solution-result)        | Versioned artifact identity         |
+| [`lcm.solver_api.ArtifactRef`](runtime_and_results.md#api-solution-result)        | Period/regime artifact address      |
+| [`lcm.solver_api.ArtifactStore`](runtime_and_results.md#api-solution-result)      | Immutable artifact store            |
+| [`lcm.solver_api.KernelOutput`](custom_solvers.md)                                | What a period kernel returns        |
+| [`lcm.solver_api.OmissionReason`](runtime_and_results.md#api-solution-result)     | Recorded reason for absence         |
+| [`lcm.solver_api.SolutionMetadata`](runtime_and_results.md#api-solution-result)   | Labelled-solution metadata          |
+| [`lcm.solver_api.SolutionResult`](runtime_and_results.md#api-solution-result)     | Labelled solution result            |
+| [`lcm.solver_api.ValueArraySchema`](runtime_and_results.md#api-solution-result)   | Named value-array shape/dtype       |
+| [`lcm.solver_api.SIMULATION_POLICY`](runtime_and_results.md#api-solution-result)  | Replay-policy schema key            |
+| [`lcm.solver_api.DISSOLUTION_FLAG`](runtime_and_results.md#api-solution-result)   | Dissolution-flag schema key         |
+| [`lcm.solver_api.EGM_CONTINUATION`](runtime_and_results.md#api-solution-result)   | Continuation schema key             |
+| [`lcm.solver_api.SOLVER_DIAGNOSTICS`](runtime_and_results.md#api-solution-result) | Diagnostics schema key              |
+| [`lcm.solver_api.ContinuationArtifact`](custom_solvers.md)                        | Keyed rolling-continuation protocol |
+| [`lcm.solver_api.ReplayMode`](custom_solvers.md)                                  | How a regime's decision is obtained |
+| [`lcm.solver_api.ReplayRoute`](custom_solvers.md)                                 | A regime's declared replay route    |
 
 ## Collective regimes and value-dependent choice
 
@@ -148,13 +151,42 @@ surfaces remain outside that top-level namespace:
 | [`lcm.solvers.UniformObservedFixedCost`](outer_search.md#api-uniform-observed-fixed-cost)  | Analytic fixed-cost integration |
 | [`lcm.solvers.BranchAggregateResult`](outer_search.md#api-uniform-observed-fixed-cost)     | Aggregation output              |
 
-The remaining exported solver infrastructure is currently contributor-facing, not a
-supported out-of-tree extension seam:
+The remaining exported solver infrastructure is the out-of-tree solver surface: a solver
+can be written against these names without importing anything private. It stays
+experimental until persistence, durable identity, a conformance suite, and a versioning
+policy exist — see [Custom solvers](custom_solvers.md).
 
-| Public name                                           | Status                           |
-| ----------------------------------------------------- | -------------------------------- |
-| [`lcm.solvers.Solver`](custom_solvers.md)             | Contributor-facing base contract |
-| [`lcm.solvers.OneMarginSolver`](custom_solvers.md)    | Contributor-facing marker        |
-| [`lcm.solvers.TwoMarginSolver`](custom_solvers.md)    | Contributor-facing marker        |
-| [`lcm.solvers.SolverBuildContext`](custom_solvers.md) | Contributor-facing build context |
-| [`lcm.solvers.SolutionKernels`](custom_solvers.md)    | Contributor-facing kernel bundle |
+| Public name                                                      | Canonical documentation              |
+| ---------------------------------------------------------------- | ------------------------------------ |
+| [`lcm.solvers.Solver`](custom_solvers.md)                        | Solver base contract                 |
+| [`lcm.solvers.OneMarginSolver`](custom_solvers.md)               | One-liquid-margin marker             |
+| [`lcm.solvers.TwoMarginSolver`](custom_solvers.md)               | Nested-margin marker                 |
+| [`lcm.solvers.SolverBuildContext`](custom_solvers.md)            | Per-regime build context             |
+| [`lcm.solvers.SolutionKernels`](custom_solvers.md)               | Per-period kernel bundle             |
+| [`lcm.solvers.PeriodKernel`](custom_solvers.md)                  | One period's execution protocol      |
+| [`lcm.solvers.CoreProgram`](custom_solvers.md)                   | One declared compiled program        |
+| [`lcm.solvers.CoreBuildContext`](custom_solvers.md)              | Argument-builder input               |
+| [`lcm.solvers.CoreExecutionRequirements`](custom_solvers.md)     | Declared execution requirements      |
+| [`lcm.solvers.CoreExecutionDisposition`](custom_solvers.md)      | Planned or deliberately dense        |
+| [`lcm.solvers.ProgramScope`](custom_solvers.md)                  | Retention scope of a program         |
+| [`lcm.solvers.StreamableProductAxis`](custom_solvers.md)         | Declared streamable action axis      |
+| [`lcm.solvers.ReductionSemantics`](custom_solvers.md)            | Reduction a streamed axis performs   |
+| [`lcm.solvers.OutputRole`](custom_solvers.md)                    | Value and dissolution-flag roles     |
+| [`lcm.solvers.StateAxesLeading`](custom_solvers.md)              | Parametrized output-placement role   |
+| [`lcm.solvers.StateActionSpace`](custom_solvers.md)              | Per-period state and action arrays   |
+| [`lcm.solvers.KernelOutput`](custom_solvers.md)                  | What a period kernel returns         |
+| [`lcm.solvers.ArtifactKey`](custom_solvers.md)                   | Versioned artifact identity          |
+| [`lcm.solvers.EGM_CONTINUATION`](custom_solvers.md)              | Continuation schema key              |
+| [`lcm.solvers.SIMULATION_POLICY`](custom_solvers.md)             | Replay-policy schema key             |
+| [`lcm.solvers.DISSOLUTION_FLAG`](custom_solvers.md)              | Dissolution-flag schema key          |
+| [`lcm.solvers.SOLVER_DIAGNOSTICS`](custom_solvers.md)            | Diagnostics schema key               |
+| [`lcm.solvers.ContinuationArtifact`](custom_solvers.md)          | Keyed rolling-continuation protocol  |
+| [`lcm.solvers.ContinuationSpec`](custom_solvers.md)              | Template and key of a continuation   |
+| [`lcm.solvers.EGMContinuationSpec`](custom_solvers.md)           | EGM carry template and layout        |
+| [`lcm.solvers.EGMContinuationLayout`](custom_solvers.md)         | How a reading parent interprets rows |
+| [`lcm.solvers.ReplayMode`](custom_solvers.md)                    | How a regime's decision is obtained  |
+| [`lcm.solvers.ReplayRoute`](custom_solvers.md)                   | A regime's declared replay route     |
+| [`lcm.solvers.period_to_continuation_target`](custom_solvers.md) | Target a period carries into         |
+| [`lcm.solvers.target_period_grid`](custom_solvers.md)            | A target's grid in one period        |
+| [`lcm.solvers.union_free_params`](custom_solvers.md)             | Free params of a regime and targets  |
+| [`lcm.solvers.union_fixed_params`](custom_solvers.md)            | Fixed params of a regime and targets |

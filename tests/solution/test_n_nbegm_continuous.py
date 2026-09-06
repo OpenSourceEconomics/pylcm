@@ -21,12 +21,14 @@ from jax import config as jax_config
 
 import _lcm.solution.nnbegm as solvers_mod
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
+from lcm.solver_api import SIMULATION_POLICY, SOLVER_DIAGNOSTICS
 from lcm.solvers import AdaptiveOuterMesh
 from lcm.typing import FloatND
 from tests.test_models import n_nbegm_toy as toy
 
 if TYPE_CHECKING:
-    from _lcm.solution.contract import KernelResult
+    from _lcm.solution.solver_diagnostics import SolverDiagnostics
+    from lcm.solver_api import KernelOutput
 
 _PARAMS = {"discount_factor": 0.95}
 _N_PERIODS = 3
@@ -48,14 +50,14 @@ def _solve(
     *,
     outer_search: AdaptiveOuterMesh | None,
     monkeypatch: pytest.MonkeyPatch,
-) -> tuple[Mapping[int, Mapping[str, FloatND]], dict[int, KernelResult]]:
-    recorded: dict[int, KernelResult] = {}
+) -> tuple[Mapping[int, Mapping[str, FloatND]], dict[int, KernelOutput]]:
+    recorded: dict[int, KernelOutput] = {}
     original_call = solvers_mod._NNBEGMPeriodKernel.__call__
 
     def recording_call(
         self: solvers_mod._NNBEGMPeriodKernel,
         **kwargs: object,
-    ) -> KernelResult:
+    ) -> KernelOutput:
         result = original_call(self, **kwargs)  # ty: ignore[invalid-argument-type]
         recorded[cast("int", kwargs["period"])] = result
         return result
@@ -116,10 +118,11 @@ def test_continuous_solve_publishes_the_nested_sim_policy(
         pytest.skip("x64 run only")
     _, recorded = _solve(outer_search=_MESH, monkeypatch=monkeypatch)
     for period in _ALIVE_PERIODS:
-        payload = recorded[period].simulation_policy
+        payload = recorded[period].replay.get(SIMULATION_POLICY)
         assert isinstance(payload, NestedEGMSimPolicy)
-        diagnostics = recorded[period].diagnostics
-        assert diagnostics is not None
+        diagnostics = cast(
+            "SolverDiagnostics", recorded[period].auxiliary[SOLVER_DIAGNOSTICS]
+        )
         assert payload.adjuster.n_candidates == int(diagnostics.outer_nodes_used)
         assert payload.outer_action_name == "illiquid_investment"
         assert payload.outer_state_name == "illiquid"
@@ -137,8 +140,9 @@ def test_continuous_solve_publishes_converged_diagnostics(
         pytest.skip("x64 run only")
     _, recorded = _solve(outer_search=_MESH, monkeypatch=monkeypatch)
     for period in _ALIVE_PERIODS:
-        diagnostics = recorded[period].diagnostics
-        assert diagnostics is not None
+        diagnostics = cast(
+            "SolverDiagnostics", recorded[period].auxiliary[SOLVER_DIAGNOSTICS]
+        )
         assert int(diagnostics.outer_nodes_used) >= toy.N_OUTER
         assert not bool(diagnostics.unresolved_mask)
         assert float(diagnostics.max_outer_bracket_width) >= 0.0

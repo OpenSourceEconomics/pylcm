@@ -50,12 +50,21 @@ _BEHAVIORAL_ENV_FIELDS = (
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Measure five GridSearch rows with one external base/head harness."
+        description=(
+            "Measure selected GridSearch rows with one external base/head harness."
+        )
     )
     parser.add_argument("--base-checkout", type=Path, required=True)
     parser.add_argument("--base-revision", required=True)
     parser.add_argument("--head-checkout", type=Path, required=True)
     parser.add_argument("--head-revision", required=True)
+    parser.add_argument("--harness-revision", required=True)
+    parser.add_argument(
+        "--scenario",
+        action="append",
+        choices=tuple(SCENARIOS),
+        dest="scenarios",
+    )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--precision", choices=("32", "64"), default="32")
     parser.add_argument("--backend", choices=("auto", "cpu", "gpu"), default="auto")
@@ -289,6 +298,8 @@ def _run_worker(
         "scenario_digest": scenario_digest,
         "lock_digest": identity["lock_digest"],
         "precision": int(precision),
+        "jax_enable_x64": precision == "64",
+        "executed_float_dtype": "float64" if precision == "64" else "float32",
         "pixi": dict(pixi),
     }
     observed = {key: metrics.get(key) for key in expected}
@@ -499,6 +510,13 @@ def _is_scenario_target(
         return bool(row["collective"]) and row["regime"] in routes["gs_vd_regimes"]
     if scenario == "distributed-co-map":
         return row["regime"] in routes["distributed_regimes"]
+    if scenario.startswith("aca-"):
+        return (
+            not row["collective"]
+            and not row["has_taste_shocks"]
+            and not row["fold_state_names"]
+            and row["regime"] not in routes["distributed_regimes"]
+        )
     if scenario == "singleton-hard-max":
         return (
             not row["collective"]
@@ -819,7 +837,7 @@ def main(argv: list[str] | None = None) -> None:
     pixi = _pixi_context(harness_root=harness_root, environment=os.environ)
     harness = _validate_checkout(
         checkout=harness_root,
-        expected_revision=args.head_revision,
+        expected_revision=args.harness_revision,
     )
     harness_digest = _sha256_files(
         root=harness_root,
@@ -852,9 +870,10 @@ def main(argv: list[str] | None = None) -> None:
     raw: dict[tuple[str, int, str], dict[str, Any]] = {}
     pairs: list[dict[str, Any]] = []
     identities = {"base": base, "head": head}
+    selected_scenarios = tuple(args.scenarios or SCENARIOS)
     for repeat in range(args.repeats):
         order = ("base", "head") if repeat % 2 == 0 else ("head", "base")
-        for scenario in SCENARIOS:
+        for scenario in selected_scenarios:
             for side in order:
                 run_output = output / scenario / f"repeat-{repeat}" / side
                 raw[(scenario, repeat, side)] = _run_worker(
@@ -921,6 +940,7 @@ def main(argv: list[str] | None = None) -> None:
         "pixi": pixi,
         "repeats": args.repeats,
         "execution_order": "AB on even repeats, BA on odd repeats",
+        "scenarios": list(selected_scenarios),
         "pairs": pairs,
     }
     (output / "summary.json").write_text(

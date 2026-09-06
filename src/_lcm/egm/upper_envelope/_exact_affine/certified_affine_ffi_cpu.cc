@@ -98,6 +98,7 @@ ffi::Error QueryWinnerImpl(ffi::Buffer<DType> left_grid,
                            ffi::Buffer<DType> left_value,
                            ffi::Buffer<DType> right_value,
                            ffi::Buffer<ffi::S32> live,
+                           ffi::Buffer<ffi::S32> stable_index,
                            ffi::Buffer<DType> query,
                            ffi::ResultBuffer<ffi::S32> winner,
                            ffi::ResultBuffer<ffi::S32> status) {
@@ -106,7 +107,8 @@ ffi::Error QueryWinnerImpl(ffi::Buffer<DType> left_grid,
       right_grid.element_count() != n_segment ||
       left_value.element_count() != n_segment ||
       right_value.element_count() != n_segment ||
-      live.element_count() != n_segment) {
+      live.element_count() != n_segment ||
+      stable_index.element_count() != n_segment) {
     return ffi::Error::InvalidArgument(
         "exact-query segment buffers must be nonempty and match");
   }
@@ -121,6 +123,7 @@ ffi::Error QueryWinnerImpl(ffi::Buffer<DType> left_grid,
   const T* p_left_value = left_value.typed_data();
   const T* p_right_value = right_value.typed_data();
   const int32_t* p_live = live.typed_data();
+  const int32_t* p_stable_index = stable_index.typed_data();
   const T* p_query = query.typed_data();
   int32_t* p_winner = (*winner).typed_data();
   int32_t* p_status = (*status).typed_data();
@@ -129,7 +132,7 @@ ffi::Error QueryWinnerImpl(ffi::Buffer<DType> left_grid,
     int32_t selected = 0;
     const bool ok = core::ExactQueryWinner(
         p_left_grid, p_right_grid, p_left_value, p_right_value, p_live,
-        count, p_query[i], &selected);
+        p_stable_index, count, p_query[i], &selected);
     p_winner[i] = selected;
     p_status[i] = ok ? 0 : core::kUnresolved;
   }
@@ -188,23 +191,25 @@ ffi::Error ReadF64Impl(ffi::Buffer<ffi::F64> x0,
 ffi::Error QueryWinnerF32Impl(
     ffi::Buffer<ffi::F32> left_grid, ffi::Buffer<ffi::F32> right_grid,
     ffi::Buffer<ffi::F32> left_value, ffi::Buffer<ffi::F32> right_value,
-    ffi::Buffer<ffi::S32> live, ffi::Buffer<ffi::F32> query,
+    ffi::Buffer<ffi::S32> live,
+    ffi::Buffer<ffi::S32> stable_index, ffi::Buffer<ffi::F32> query,
     ffi::ResultBuffer<ffi::S32> winner,
     ffi::ResultBuffer<ffi::S32> status) {
   return QueryWinnerImpl<float, ffi::F32>(
-      left_grid, right_grid, left_value, right_value, live, query, winner,
-      status);
+      left_grid, right_grid, left_value, right_value, live, stable_index,
+      query, winner, status);
 }
 
 ffi::Error QueryWinnerF64Impl(
     ffi::Buffer<ffi::F64> left_grid, ffi::Buffer<ffi::F64> right_grid,
     ffi::Buffer<ffi::F64> left_value, ffi::Buffer<ffi::F64> right_value,
-    ffi::Buffer<ffi::S32> live, ffi::Buffer<ffi::F64> query,
+    ffi::Buffer<ffi::S32> live,
+    ffi::Buffer<ffi::S32> stable_index, ffi::Buffer<ffi::F64> query,
     ffi::ResultBuffer<ffi::S32> winner,
     ffi::ResultBuffer<ffi::S32> status) {
   return QueryWinnerImpl<double, ffi::F64>(
-      left_grid, right_grid, left_value, right_value, live, query, winner,
-      status);
+      left_grid, right_grid, left_value, right_value, live, stable_index,
+      query, winner, status);
 }
 
 
@@ -448,6 +453,7 @@ ffi::Error QueryWinnerBatchedImpl(ffi::Buffer<DType> left_grid,
                                   ffi::Buffer<DType> left_value,
                                   ffi::Buffer<DType> right_value,
                                   ffi::Buffer<ffi::S32> live,
+                                  ffi::Buffer<ffi::S32> stable_index,
                                   ffi::Buffer<DType> query,
                                   ffi::ResultBuffer<ffi::S32> winner,
                                   ffi::ResultBuffer<ffi::S32> status) {
@@ -472,7 +478,8 @@ ffi::Error QueryWinnerBatchedImpl(ffi::Buffer<DType> left_grid,
       right_grid.element_count() != segment_elements ||
       left_value.element_count() != segment_elements ||
       right_value.element_count() != segment_elements ||
-      live.element_count() != segment_elements) {
+      live.element_count() != segment_elements ||
+      stable_index.element_count() != segment_elements) {
     return ffi::Error::InvalidArgument(
         "batched exact-query segment buffers must be nonempty and share the "
         "query's row count");
@@ -489,6 +496,7 @@ ffi::Error QueryWinnerBatchedImpl(ffi::Buffer<DType> left_grid,
   const T* p_left_value = left_value.typed_data();
   const T* p_right_value = right_value.typed_data();
   const int32_t* p_live = live.typed_data();
+  const int32_t* p_stable_index = stable_index.typed_data();
   const T* p_query = query.typed_data();
   int32_t* p_winner = (*winner).typed_data();
   int32_t* p_status = (*status).typed_data();
@@ -501,8 +509,8 @@ ffi::Error QueryWinnerBatchedImpl(ffi::Buffer<DType> left_grid,
       const bool ok = core::ExactQueryWinner(
           p_left_grid + segment_base, p_right_grid + segment_base,
           p_left_value + segment_base, p_right_value + segment_base,
-          p_live + segment_base, count, p_query[query_base + column],
-          &selected);
+          p_live + segment_base, p_stable_index + segment_base, count,
+          p_query[query_base + column], &selected);
       p_winner[query_base + column] = selected;
       p_status[query_base + column] = ok ? 0 : core::kUnresolved;
     }
@@ -513,21 +521,23 @@ ffi::Error QueryWinnerBatchedImpl(ffi::Buffer<DType> left_grid,
 ffi::Error QueryWinnerBatchedF32Impl(
     ffi::Buffer<ffi::F32> left_grid, ffi::Buffer<ffi::F32> right_grid,
     ffi::Buffer<ffi::F32> left_value, ffi::Buffer<ffi::F32> right_value,
-    ffi::Buffer<ffi::S32> live, ffi::Buffer<ffi::F32> query,
+    ffi::Buffer<ffi::S32> live,
+    ffi::Buffer<ffi::S32> stable_index, ffi::Buffer<ffi::F32> query,
     ffi::ResultBuffer<ffi::S32> winner, ffi::ResultBuffer<ffi::S32> status) {
   return QueryWinnerBatchedImpl<float, ffi::F32>(
-      left_grid, right_grid, left_value, right_value, live, query, winner,
-      status);
+      left_grid, right_grid, left_value, right_value, live, stable_index,
+      query, winner, status);
 }
 
 ffi::Error QueryWinnerBatchedF64Impl(
     ffi::Buffer<ffi::F64> left_grid, ffi::Buffer<ffi::F64> right_grid,
     ffi::Buffer<ffi::F64> left_value, ffi::Buffer<ffi::F64> right_value,
-    ffi::Buffer<ffi::S32> live, ffi::Buffer<ffi::F64> query,
+    ffi::Buffer<ffi::S32> live,
+    ffi::Buffer<ffi::S32> stable_index, ffi::Buffer<ffi::F64> query,
     ffi::ResultBuffer<ffi::S32> winner, ffi::ResultBuffer<ffi::S32> status) {
   return QueryWinnerBatchedImpl<double, ffi::F64>(
-      left_grid, right_grid, left_value, right_value, live, query, winner,
-      status);
+      left_grid, right_grid, left_value, right_value, live, stable_index,
+      query, winner, status);
 }
 
 XLA_FFI_DEFINE_HANDLER_SYMBOL(
@@ -537,6 +547,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Arg<ffi::Buffer<ffi::F32>>()
         .Arg<ffi::Buffer<ffi::F32>>()
         .Arg<ffi::Buffer<ffi::F32>>()
+        .Arg<ffi::Buffer<ffi::S32>>()
         .Arg<ffi::Buffer<ffi::S32>>()
         .Arg<ffi::Buffer<ffi::F32>>()
         .Ret<ffi::Buffer<ffi::S32>>()
@@ -550,6 +561,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Arg<ffi::Buffer<ffi::F64>>()
         .Arg<ffi::Buffer<ffi::F64>>()
         .Arg<ffi::Buffer<ffi::S32>>()
+        .Arg<ffi::Buffer<ffi::S32>>()
         .Arg<ffi::Buffer<ffi::F64>>()
         .Ret<ffi::Buffer<ffi::S32>>()
         .Ret<ffi::Buffer<ffi::S32>>());
@@ -562,6 +574,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Arg<ffi::Buffer<ffi::F32>>()
         .Arg<ffi::Buffer<ffi::F32>>()
         .Arg<ffi::Buffer<ffi::S32>>()
+        .Arg<ffi::Buffer<ffi::S32>>()
         .Arg<ffi::Buffer<ffi::F32>>()
         .Ret<ffi::Buffer<ffi::S32>>()
         .Ret<ffi::Buffer<ffi::S32>>());
@@ -573,6 +586,7 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(
         .Arg<ffi::Buffer<ffi::F64>>()
         .Arg<ffi::Buffer<ffi::F64>>()
         .Arg<ffi::Buffer<ffi::F64>>()
+        .Arg<ffi::Buffer<ffi::S32>>()
         .Arg<ffi::Buffer<ffi::S32>>()
         .Arg<ffi::Buffer<ffi::F64>>()
         .Ret<ffi::Buffer<ffi::S32>>()

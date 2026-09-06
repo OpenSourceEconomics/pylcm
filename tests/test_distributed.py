@@ -431,7 +431,7 @@ def test_planned_solve_rejects_a_replicated_output_injected_after_kernel_call(
     """A planned V cannot be repaired after the GridSearch adapter returns.
 
     The injection happens after the adapter's full-output assertion.  The
-    generic publication seam therefore checks the actual ``KernelResult`` too
+    generic publication seam therefore checks the actual ``KernelOutput`` too
     and fails closed instead of silently device-putting it into place.
     """
     model = _make_correct_distributed_model(distribute_type2=False)
@@ -439,17 +439,17 @@ def test_planned_solve_rejects_a_replicated_output_injected_after_kernel_call(
     replicated_outputs: list[str] = []
 
     def emit_replicated_V(**kwargs):
-        result = original_run_period_kernel(**kwargs)
-        if isinstance(result.V_arr.sharding, NamedSharding):
+        output = original_run_period_kernel(**kwargs)
+        value = jnp.asarray(output.value)
+        if isinstance(value.sharding, NamedSharding):
             replicated_outputs.append(kwargs["regime"].name)
             return dataclasses.replace(
-                result,
-                V_arr=jax.device_put(
-                    result.V_arr,
-                    NamedSharding(result.V_arr.sharding.mesh, PartitionSpec()),
+                output,
+                value=jax.device_put(
+                    value, NamedSharding(value.sharding.mesh, PartitionSpec())
                 ),
             )
-        return result
+        return output
 
     monkeypatch.setattr(backward_induction, "_run_period_kernel", emit_replicated_V)
 
@@ -491,14 +491,8 @@ def test_grid_search_aot_output_layout_is_native_local_and_deduplicated(monkeypa
             captured.append(core)
         return core
 
-    def fail_repair(**kwargs):
-        raise AssertionError(f"planned output reached repair: {kwargs}")
-
     monkeypatch.setattr(
         backward_induction, "_attach_resolved_output_layout", capture_planned_core
-    )
-    monkeypatch.setattr(
-        backward_induction, "_repair_unplanned_kernel_value", fail_repair
     )
 
     distributed = model.solve(log_level="off", params={"discount_factor": 0.95}).values

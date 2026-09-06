@@ -45,10 +45,15 @@ from lcm.typing import (
     ContinuousState,
     FloatND,
 )
-from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED
+from tests.conftest import EXACT_KERNEL_SKIP_REASON, X64_ENABLED, assert_agrees_to_ulp
 from tests.test_models import kinked_toy_oracle, negm_kinked_toy
 
 _PARAMS = {"discount_factor": 0.95, "alive": {}}
+# Blocking the outer sweep only reschedules the `lax.map` over the outer nodes,
+# leaving every operation and its operand order untouched; the two solves differ
+# only by the vectorized kernel XLA emits for each block width — a gap of a few
+# ULP, not of an economic magnitude.
+_INVARIANCE_ULP = 16
 
 # Period-0, regime `alive`, shape (N_X, N_Z) brute oracle on the repaired
 # `[-6, 30]` wealth domain (`negm_phase0/kinked_toy_oracle.py`). With the grid
@@ -370,31 +375,36 @@ def test_brute_value_converges_up_to_negm_as_grids_refine(
 @pytest.mark.requires_exact_affine_kernel(reason=EXACT_KERNEL_SKIP_REASON)
 @pytest.mark.parametrize("outer_batch_size", [1, 8])
 def test_outer_batch_size_leaves_value_function_unchanged(outer_batch_size: int):
-    """Chunking the NEGM outer search yields the identical solved value function.
+    """Blocking the NEGM outer sweep leaves the solved value function unchanged.
 
-    The outer durable search folds each candidate into a running maximum;
-    processing the outer-grid nodes in chunks of `outer_batch_size` instead of all
-    at once reduces them in the same order, so the solved value function is
-    bit-identical — the knob trades parallelism for bounded memory only.
+    The outer sweep maps the inner adjuster over the outer-grid nodes in blocks
+    of `outer_batch_size` and takes the exact maximum over every candidate, so
+    the block width reschedules the same operations without changing any
+    operand order. The two solves differ only by the vectorized kernel XLA
+    emits per block width — a gap of a few ULP, not of an economic magnitude —
+    so the knob trades parallelism for bounded memory only.
 
-    Both solves must also be finite throughout. Equality alone would be satisfied
-    by two solves that agree only in being NaN, which is how a solver that gave
-    up on every cell would look.
+    Both solves must also be finite throughout. Agreement alone would be
+    satisfied by two solves that agree only in being NaN, which is how a solver
+    that gave up on every cell would look.
     """
     base = negm_kinked_toy.build_model().solve(params=_PARAMS, log_level="debug").values
-    chunked = (
+    blocked = (
         negm_kinked_toy.build_model(outer_batch_size=outer_batch_size)
         .solve(params=_PARAMS, log_level="debug")
         .values
     )
-    assert base.keys() == chunked.keys()
+    assert base.keys() == blocked.keys()
     for period in base:
         for regime in base[period]:
             solved = np.asarray(base[period][regime])
             assert np.all(np.isfinite(solved)), (
                 f"period {period}, regime {regime!r} is not solved throughout"
             )
-            np.testing.assert_array_equal(
-                np.asarray(chunked[period][regime]),
-                solved,
+            assert_agrees_to_ulp(
+                got=np.asarray(blocked[period][regime]),
+                expected=solved,
+                n_ulp=_INVARIANCE_ULP,
+                err_msg=f"period={period} regime={regime}",
+                operand_magnitude=float(np.abs(solved).max()),
             )

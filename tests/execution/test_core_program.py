@@ -30,6 +30,7 @@ from _lcm.execution.core_program import (
 from _lcm.execution.output_layout import (
     DISSOLUTION_FLAG,
     VALUE,
+    resolve_output_layout,
 )
 from _lcm.execution.value_transfer import (
     ValueArtifactAddress,
@@ -422,7 +423,12 @@ def test_explicit_value_program_rejects_wrong_lowered_metadata_before_compile(
         _assert_lowered_output_roles(
             lowered=lowered,
             output_roles=program.output_roles,
-            value_template=template,
+            layout=resolve_output_layout(
+                core_key="main",
+                value_template=template,
+                state_order=("x",),
+                output_roles=VALUE,
+            ),
             label="test core",
         )
 
@@ -505,19 +511,6 @@ def test_ordinary_singleton_grid_search_declares_action_core_program() -> None:
     )
     with pytest.raises(TypeError):
         cast("dict[str, object]", materialized.arguments)["injected"] = jnp.asarray(0)
-
-    for legacy_name in (
-        "cores",
-        "core",
-        "unwrapped_core",
-        "streamed_core",
-        "build_lower_args",
-        "build_core_program",
-        "target_value_accesses",
-        "output_roles",
-        "core_for_output_layout",
-    ):
-        assert not hasattr(kernel, legacy_name)
 
     resolved = resolve_core_program(
         program=materialized,

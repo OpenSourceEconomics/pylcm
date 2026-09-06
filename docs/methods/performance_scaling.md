@@ -17,11 +17,19 @@ A useful first inventory is:
 | State-grid product   | Number of value-function cells                            |
 | Action-grid product  | Grid-search candidates per state cell                     |
 | Discrete branches    | Separate candidate surfaces and envelope work             |
+| Continuation classes | Continuation reads per cell in a branch-carrying NB-EGM   |
 | Stochastic nodes     | Continuation evaluations before expectation               |
 | Outer candidates     | Complete inner solves in a nested method                  |
 | Refinement budget    | Adaptive outer search, where node count is data-dependent |
 | Period/regime shapes | Number of distinct programs JAX may compile               |
 | Subjects             | Simulation batch size and compiled shape                  |
+
+A discrete branch inside `NBEGM` costs a candidate surface and its share of the
+envelope, but not necessarily a continuation read: branches that agree on every action
+reaching the continuation (the regime transition, a law of motion, stochastic-state
+transition weights, a child's resources, the discount factor, or, on a per-interval
+read, a schedule variable) share one read, so a budget-only action adds branches without
+adding continuation classes.
 
 For grid search, continuous action grids multiply. For a nested solver, outer candidates
 multiply the inner solve — a declared count under a finite outer grid, and a
@@ -110,21 +118,20 @@ Measure at least:
 A speed claim that reports only the fourth quantity does not answer whether the model is
 practical in estimation or CI.
 
-### Maintainer-only fused NB-EGM replay
+### Maintainer-only compile-only memory analysis of a captured period
 
-The private fused NB-EGM period replay is a compile-only architecture experiment. It
-compares the current split cores with their existing full continuation-to-envelope
-calculation placed inside one JIT boundary. Its question is narrowly whether that
-boundary changes the full stacks' compiler-visible lifetime. It is not a tile-local
-solver implementation or an architecture-completion claim.
+The private period capture can be lowered without being executed. The analyzer compiles
+every production core of the captured regime-period and reads the compiler's memory
+analysis for each executable: argument, output, temporary, and peak bytes. For a
+ride-along NB-EGM period the report covers both retention-scoped programs, so the
+values-only program's peak can be compared against the replay program's.
 
 A period capture preserves logical pytrees, values, and production array shapes, but its
-pickle round trip does not preserve device sharding. The analyzer therefore lowers both
-forms using default backend placement after the capture round trip. Its report records
-this as machine-readable shape provenance and layout fidelity, and explicitly states
-that production sharding was not preserved. The resulting compiler byte counts are not
-production-layout memory measurements. Runtime and peak-memory claims require a
-representative execution with the intended production placement.
+pickle round trip does not preserve device sharding. The analyzer therefore lowers every
+core using default backend placement after the capture round trip and states so in its
+report. The resulting compiler byte counts are not production-layout memory
+measurements. Runtime and peak-memory claims require a representative execution with the
+intended production placement.
 
 ## What is known and what remains empirical
 

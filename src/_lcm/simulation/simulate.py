@@ -319,14 +319,13 @@ def simulate(
             original_n_subjects=original_n_subjects,
         )
 
-    # Which regimes can publish a nested continuous-outer read. A solve-time
-    # property of the model, so the `nested_policy_fallback` column it gates is
-    # not data-dependent.
+    # Which regimes can publish a nested continuous-outer read. Their declared
+    # route says so, so the `nested_policy_fallback` column it gates is a
+    # property of the model rather than of the payloads a solve retained.
     nested_policy_regimes = frozenset(
         regime_name
-        for regime_to_policy in (period_to_regime_to_sim_policy or {}).values()
-        for regime_name, policy in regime_to_policy.items()
-        if isinstance(policy, NestedEGMSimPolicy)
+        for regime_name, regime in regimes.items()
+        if regime.simulation.replay_route.consumer_route == "nnbegm_nested"
     )
 
     return SimulationResult(
@@ -824,8 +823,9 @@ def _simulate_regime_in_period(
     next_regime_to_V_arr, same_period_mappings = folds
 
     n_chunk_subjects = subject_ids_in_regime.shape[0]
-    direct_nnbegm_replay = isinstance(sim_policy, NNBEGMSimPolicy) and isinstance(
-        regime.simulation.egm_policy_read, NNBEGMPolicyRead
+    replay_route = regime.simulation.replay_route
+    direct_nnbegm_replay = replay_route.consumer_route == "nnbegm_finite" and (
+        isinstance(sim_policy, NNBEGMSimPolicy)
     )
     if direct_nnbegm_replay:
         # The payload names the complete finite candidate set, so the unrelated
@@ -1176,14 +1176,15 @@ def _replace_continuous_action_with_policy_read(  # noqa: PLR0911
             jnp.where(accepted, nested_value, baseline_value),
             ~accepted,
         )
-    read = regime.simulation.egm_policy_read
-    if read is None:
+    route = regime.simulation.replay_route
+    if route.payload_type is None:
         return optimal_actions, grid_values, None
-    if isinstance(sim_policy, NNBEGMSimPolicy):
+    read = regime.simulation.egm_policy_read
+    if route.consumer_route == "nnbegm_finite":
         replayed_actions, replayed_value = _replay_nnbegm_candidates(
             optimal_actions=optimal_actions,
             regime=regime,
-            sim_policy=sim_policy,
+            sim_policy=cast("NNBEGMSimPolicy", sim_policy),
             states=states,
             flat_params=flat_params,
             period=period,
@@ -1196,7 +1197,10 @@ def _replace_continuous_action_with_policy_read(  # noqa: PLR0911
         return replayed_actions, replayed_value, None
     if isinstance(sim_policy, NBEGMGridPolicy):
         return optimal_actions, grid_values, None
+    # The route declared both, and the pre-simulation check refused any
+    # payload of another class, so the remaining path is the flat EGM read.
     read = cast("EGMPolicyRead", read)
+    sim_policy = cast("EGMSimPolicy", sim_policy)
     if sim_policy.row_passive_state_names:
         return optimal_actions, grid_values, None
 

@@ -8,6 +8,8 @@ against sequential execution and changes no arithmetic.
 
 from collections.abc import Mapping
 
+import numpy as np
+
 from tests.conftest import assert_agrees_to_ulp
 from tests.test_models import nbegm_ride_discrete_toy as toy
 
@@ -45,9 +47,14 @@ def test_branch_batch_size_one_matches_whole_axis() -> None:
     assert whole.keys() == streamed.keys()
     for period in whole:
         for regime in whole[period]:
+            expected = np.asarray(whole[period][regime])
+            # Every entry of `V` is a flow utility plus a discounted continuation
+            # of the array's own magnitude, so an entry near zero is a
+            # cancellation whose rounding is that of its operands.
             assert_agrees_to_ulp(
                 got=streamed[period][regime],
-                expected=whole[period][regime],
+                expected=expected,
                 n_ulp=_PARTITION_ULP,
                 err_msg=f"period={period} regime={regime}",
+                operand_magnitude=float(np.abs(expected).max()),
             )

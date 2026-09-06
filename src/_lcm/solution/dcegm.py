@@ -2,10 +2,11 @@
 
 `DCEGM` configures one regime's Euler-inversion solve. Its
 `build_period_kernels` returns one `PeriodKernel` per period — a non-jitted
-adapter that wraps the shared jitted EGM step (deduped by function identity, so
-periods sharing a core reuse one compiled program), calls it with the DC-EGM
-argument layout, and assembles a `KernelResult` (value array, continuation
-carry, published simulation policy) outside JIT.
+kernel declaring the shared jitted EGM step (deduped by function identity, so
+periods sharing a core reuse one compiled program) as its one native dense
+program; it builds the step's arguments through the declared builder and
+publishes a `KernelOutput` (value array, continuation carry, published
+simulation policy) outside JIT.
 
 The kernel-building imports (`jax`, `build_egm_step_functions`) are
 function-local so the public `lcm.solvers` façade stays a thin re-export that
@@ -32,16 +33,24 @@ from _lcm.constraints.routes import (
     ConstraintSite,
 )
 from _lcm.continuation import EGMContinuationSpec
-from _lcm.egm.carry import EGMCarry
+from _lcm.egm.carry import EGMCarry, egm_carry_role_tree
+from _lcm.egm.published_policy import egm_sim_policy_role_tree
 from _lcm.engine import StateActionSpace
+from _lcm.execution.core_program import (
+    CoreBuildContext,
+    CoreExecutionDisposition,
+    CoreExecutionRequirements,
+    CoreProgram,
+)
+from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from _lcm.grids import ContinuousGrid
 from _lcm.processes.base import _ContinuousStochasticProcess
-from _lcm.solution.continuation_target import _union_fixed_params, _union_free_params
+from _lcm.solution.continuation_target import union_fixed_params, union_free_params
 from _lcm.solution.contract import (
     ConstraintRouteContext,
     ContinuationPayload,
-    KernelResult,
     OneMarginSolver,
+    PeriodKernel,
     SolutionKernels,
     SolverBuildContext,
     SolverModelContext,
@@ -58,6 +67,12 @@ from lcm.ages import AgeGrid
 from lcm.exceptions import (
     ExactAffineKernelUnavailableError,
     RegimeInitializationError,
+)
+from lcm.solver_api import (
+    EGM_CONTINUATION,
+    SIMULATION_POLICY,
+    ArtifactKey,
+    KernelOutput,
 )
 from lcm.typing import (
     ActionName,
@@ -180,9 +195,11 @@ class DCEGM(OneMarginSolver):
     utility with an expanding bracket. Structural and per-period applicability
     checks run during `Model(...)` through the solver's staged validation hooks.
 
-    A solve retains the off-grid EGM policy in its labelled replay artifacts when
-    the model declares a policy-read consumer. Collection and host transfer are
-    skipped for regimes without that replay route.
+    The period kernel publishes the off-grid EGM policy on the replay channel
+    of every active period. A solve retains it in its labelled replay artifacts
+    only when the model declares a policy-read consumer; without that route the
+    loop drops it at the period boundary and the result records the omission as
+    not applicable.
     No shipped envelope currently satisfies the conservative off-grid read gate,
     so ordinary simulation recomputes the action on its grid.
 
@@ -196,6 +213,16 @@ class DCEGM(OneMarginSolver):
     as a feasibility mask during simulation.
 
     """
+
+    @property
+    def publishes_simulation_policy(self) -> bool:
+        """The kernel publishes an off-grid EGM policy on every active period.
+
+        Whether a solve retains it follows the declared policy-read route; this
+        declaration lets the result ledger record a dropped policy as not
+        applicable rather than treating the cell as one that never publishes.
+        """
+        return True
 
     savings_grid: ContinuousGrid
     """Exogenous end-of-period grid; its lower bound is the borrowing limit.
@@ -286,9 +313,9 @@ class DCEGM(OneMarginSolver):
         )
 
     @property
-    def requires_continuation(self) -> bool:
+    def required_continuation_keys(self) -> frozenset[ArtifactKey]:
         """DC-EGM inverts the Euler equation against its targets' marginals."""
-        return True
+        return frozenset({EGM_CONTINUATION})
 
     def validate_model(self, *, context: SolverModelContext) -> None:
         """Validate the user-level DC-EGM contract for this regime."""
@@ -380,7 +407,7 @@ class DCEGM(OneMarginSolver):
 
         assert context.compute_regime_transition_probs is not None  # noqa: S101
         assert context.koopmans_aggregator is not None  # noqa: S101
-        egm_step, egm_carry_template, egm_stateful_targets = build_egm_step_functions(
+        build = build_egm_step_functions(
             solver=cast("_BoundDCEGM", self),
             regime_name=context.regime_name,
             user_regimes=context.user_regimes,
@@ -400,29 +427,51 @@ class DCEGM(OneMarginSolver):
             state_action_space=context.state_action_space,
             has_taste_shocks=context.has_taste_shocks,
         )
+        steps: Mapping[int, Callable] = build.steps
         if context.enable_jit:
-            jitted_by_id: dict[int, EGMStepFunction] = {}
-            for func in egm_step.values():
+            jitted_by_id: dict[int, Callable] = {}
+            for func in steps.values():
                 if id(func) not in jitted_by_id:
                     jitted_by_id[id(func)] = jax.jit(func)
-            egm_step = MappingProxyType(
-                {period: jitted_by_id[id(func)] for period, func in egm_step.items()}
+            steps = MappingProxyType(
+                {period: jitted_by_id[id(func)] for period, func in steps.items()}
             )
-        period_kernels = MappingProxyType(
-            {
-                period: _DCEGMPeriodKernel(
-                    core=core,
-                    regime_name=context.regime_name,
-                    stateful_targets=egm_stateful_targets,
-                    transition_target_names=tuple(context.transitions),
-                )
-                for period, core in egm_step.items()
-            }
+        argument_builder = _DCEGMArgumentBuilder(
+            regime_name=context.regime_name,
+            stateful_targets=build.stateful_targets,
+            transition_target_names=tuple(context.transitions),
         )
+        output_roles = _dcegm_output_roles(build=build)
+        # Periods sharing one core share one program, and so one compiled
+        # executable.
+        programs_by_core: dict[int, MappingProxyType[str, CoreProgram]] = {}
+        period_kernels: dict[int, PeriodKernel] = {}
+        for period, core in steps.items():
+            if id(core) not in programs_by_core:
+                programs_by_core[id(core)] = MappingProxyType(
+                    {
+                        "main": CoreProgram(
+                            name="main",
+                            function=core,
+                            argument_builder=argument_builder,
+                            requirements=CoreExecutionRequirements(),
+                            output_roles=output_roles,
+                            disposition=CoreExecutionDisposition.DENSE,
+                            disposition_reason=_DCEGM_DENSE_REASON,
+                            donation_candidates=(),
+                        )
+                    }
+                )
+            period_kernels[period] = _DCEGMPeriodKernel(
+                _core_programs=programs_by_core[id(core)],
+                regime_name=context.regime_name,
+                stateful_targets=build.stateful_targets,
+                transition_target_names=tuple(context.transitions),
+            )
         return SolutionKernels(
-            period_kernels=period_kernels,
+            period_kernels=MappingProxyType(period_kernels),
             continuation_spec=EGMContinuationSpec(
-                template=egm_carry_template,
+                template=build.carry_template,
                 layout=self.egm_continuation_layout,
             ),
         )
@@ -445,76 +494,184 @@ class _BoundDCEGM(DCEGM):
     """Name of the function giving the savings the exogenous grid spans."""
 
 
+# Why the DC-EGM program executes dense: the kernel owns its stochastic-node
+# and refined-grid batching, and no product axis of it is planner-streamable.
+_DCEGM_DENSE_REASON = "deliberately_dense:dcegm_solver_owned_node_and_grid_batching"
+
+
 @dataclass(frozen=True, kw_only=True)
-class _DCEGMPeriodKernel:
-    """The DC-EGM period adapter — wraps one EGM-step core.
+class EGMStepBuild:
+    """What one regime's DC-EGM step build hands its period kernels."""
 
-    Closes over the regime name, its carry targets, and the names of
-    its transition targets (to union their params). Calling it inverts the Euler
-    equation on the savings grid and returns a `KernelResult` carrying the value
-    function, the continuation a parent interpolates, and the published off-grid
-    simulation policy.
-    """
+    steps: MappingProxyType[int, EGMStepFunction]
+    """Per-period step function; periods sharing a configuration share one."""
 
-    core: Callable
-    """The shared jitted EGM-step core (`id`-deduped across periods)."""
-
-    regime_name: RegimeName
-    """Name of the regime whose flat params this adapter projects."""
+    carry_template: EGMCarry
+    """The regime's all-finite carry template (discrete states, then passive
+    states, then discrete actions leading; the refined row axis last)."""
 
     stateful_targets: frozenset[RegimeName]
-    """The carry keys the EGM core reads; the rolling carry is filtered to these."""
+    """The carry keys the steps read; the rolling carry is filtered to these."""
+
+    row_discrete_state_names: tuple[StateName, ...]
+    """Discrete states leading every carry and policy row, in row order."""
+
+    row_passive_state_names: tuple[StateName, ...]
+    """Passive continuous states following the discrete states on every row."""
+
+    row_discrete_action_names: tuple[ActionName, ...]
+    """Discrete actions following the passive states on every row."""
+
+
+def _dcegm_output_roles(*, build: EGMStepBuild) -> tuple[object, ...]:
+    """Describe the step's outputs by the state axes that lead them.
+
+    - The value array is the regime's value on the productmap state order.
+    - Every carry row and every policy row leads with the discrete and passive
+      state axes; the discrete-action axes and the refined row axis follow and
+      are replicated. The taste-shock scale is a replicated scalar; the carry
+      publishes neither breakpoints nor an exact policy row.
+    """
+    row = StateAxesLeading(
+        state_names=build.row_discrete_state_names + build.row_passive_state_names
+    )
+    return (
+        VALUE,
+        egm_carry_role_tree(
+            row=row,
+            scalar=StateAxesLeading(state_names=(), shape=()),
+            breakpoints=None,
+            policy=None,
+        ),
+        egm_sim_policy_role_tree(
+            row=row,
+            row_discrete_state_names=build.row_discrete_state_names,
+            row_passive_state_names=build.row_passive_state_names,
+            row_discrete_action_names=build.row_discrete_action_names,
+        ),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class _DCEGMArgumentBuilder:
+    """Build the DC-EGM program's arguments for lowering and execution.
+
+    The program takes the state grids, the carries of the regime's carry
+    targets, the free params of the regime and of its transition targets, and
+    the period and age. No target value array is read: the continuation is
+    interpolated from the carries alone.
+
+    A DC-EGM source carrying into a *different* target regime evaluates that
+    target's resources and transition functions in its per-asset-node solve,
+    reading the target's params (a pension factor the source never reads, for
+    example). These are model-level shared values, so the target's flat params
+    carry the right value; the union is passed and the captured functions read
+    only the keys they need.
+    """
+
+    regime_name: RegimeName
+    """Name of the regime whose flat params the program projects."""
+
+    stateful_targets: frozenset[RegimeName]
+    """The carry keys the step reads; the rolling carry is filtered to these."""
 
     transition_target_names: tuple[RegimeName, ...]
     """Names of the regime's transition targets, whose params are unioned in."""
 
-    def cores(self) -> Mapping[str, Callable]:
-        """Return the single EGM-step core under the `"main"` key."""
-        return MappingProxyType({"main": self.core})
+    def __call__(self, context: CoreBuildContext) -> Mapping[str, object]:
+        """Return the exact kwargs shared by lowering and the runtime call."""
+        state_action_space = cast("StateActionSpace", context.state_action_space)
+        flat_params = cast("FlatParams", context.flat_params)
+        ages = cast("AgeGrid", context.ages)
+        return MappingProxyType(
+            {
+                **dict(state_action_space.states),
+                "next_regime_to_continuation": _carry_subset(
+                    next_regime_to_continuation=cast(
+                        "Mapping[RegimeName, ContinuationPayload]",
+                        context.next_regime_to_continuation,
+                    ),
+                    stateful_targets=self.stateful_targets,
+                ),
+                **union_free_params(
+                    flat_params=flat_params,
+                    regime_name=self.regime_name,
+                    transition_target_names=self.transition_target_names,
+                ),
+                "period": jnp.int32(context.period),
+                "age": ages.values[context.period],
+            }
+        )
+
+
+@dataclass(frozen=True, kw_only=True)
+class _DCEGMPeriodKernel:
+    """The DC-EGM period kernel: one native dense program around the step core.
+
+    `main` inverts the Euler equation on the savings grid and publishes the
+    value function, the continuation a parent interpolates, and the off-grid
+    simulation policy. The kernel owns its stochastic-node and refined-grid
+    batching, so the program is deliberately dense; it reads its continuation
+    from the carries alone and declares no target value access. Calling the
+    kernel builds the program's arguments through its declared builder and
+    returns a public `KernelOutput` with the carry on the continuation channel
+    and the policy on the replay channel.
+    """
+
+    _core_programs: Mapping[str, CoreProgram]
+    """The immutable one-node program graph, `main`."""
+
+    regime_name: RegimeName
+    """Name of the regime whose flat params this kernel projects."""
+
+    stateful_targets: frozenset[RegimeName]
+    """The carry keys the step reads; the rolling carry is filtered to these."""
+
+    transition_target_names: tuple[RegimeName, ...]
+    """Names of the regime's transition targets, whose params are unioned in."""
+
+    def __post_init__(self) -> None:
+        """Snapshot the graph and require exactly the `main` program."""
+        programs = MappingProxyType(dict(self._core_programs))
+        if tuple(programs) != ("main",):
+            msg = (
+                "A DC-EGM kernel publishes exactly the program 'main'; got "
+                f"{tuple(programs)}."
+            )
+            raise ValueError(msg)
+        object.__setattr__(self, "_core_programs", programs)
+
+    def core_programs(self) -> Mapping[str, CoreProgram]:
+        """Return the native graph used by eager, JIT, AOT, and replay paths."""
+        return self._core_programs
 
     def with_fixed_params(self, *, fixed_flat_params: FlatParams) -> _DCEGMPeriodKernel:
-        """Bind the regime's and its carry targets' fixed params into the core.
+        """Bind the regime's and its carry targets' fixed params into the program.
 
-        A DC-EGM source carrying into a *different* target regime evaluates that
-        target's resources / transition functions in its per-asset-node solve,
-        reading the target's fixed params. The core threads its `**kwargs`
-        straight into the per-combo pool those captured functions read, so
-        binding the union of the regime's and its carry targets' fixed params
-        restores the values removed from the live `flat_params` for all of them
-        at once.
+        The step threads its `**kwargs` straight into the per-combo pool its
+        captured functions read, so binding the union of the regime's and its
+        carry targets' fixed params restores the values removed from the live
+        `flat_params` for all of them at once.
         """
-        egm_fixed = _union_fixed_params(
+        egm_fixed = union_fixed_params(
             fixed_flat_params=fixed_flat_params,
             regime_name=self.regime_name,
             transition_target_names=self.transition_target_names,
         )
         if not egm_fixed:
             return self
-        return replace(self, core=functools.partial(self.core, **egm_fixed))
-
-    def build_lower_args(
-        self,
-        *,
-        core_key: str = "main",  # noqa: ARG002
-        state_action_space: StateActionSpace,
-        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-        next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
-        flat_params: FlatParams,
-        period: int,
-        ages: AgeGrid,
-    ) -> Mapping[str, object]:
-        """Build the core's lowering arguments: states, carries, EGM params."""
-        return {
-            **dict(state_action_space.states),
-            "next_regime_to_continuation": _carry_subset(
-                next_regime_to_continuation=next_regime_to_continuation,
-                stateful_targets=self.stateful_targets,
+        program = self._core_programs["main"]
+        return replace(
+            self,
+            _core_programs=MappingProxyType(
+                {
+                    "main": replace(
+                        program,
+                        function=functools.partial(program.function, **egm_fixed),
+                    )
+                }
             ),
-            "next_regime_to_V_arr": next_regime_to_V_arr,
-            **self._egm_kernel_params(flat_params=flat_params),
-            "period": jnp.int32(period),
-            "age": ages.values[period],
-        }
+        )
 
     def __call__(
         self,
@@ -527,41 +684,24 @@ class _DCEGMPeriodKernel:
         period: int,
         ages: AgeGrid,
         logger: logging.Logger,  # noqa: ARG002
-    ) -> KernelResult:
-        """Run the DC-EGM step and assemble the `KernelResult`."""
-        V_arr, egm_carry, sim_policy = compiled_cores["main"](
-            **state_action_space.states,
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            next_regime_to_continuation=_carry_subset(
+    ) -> KernelOutput:
+        """Run the compiled `main` program and publish its typed artifacts."""
+        program = self._core_programs["main"]
+        arguments = program.argument_builder(
+            CoreBuildContext(
+                state_action_space=state_action_space,
+                next_regime_to_V_arr=next_regime_to_V_arr,
                 next_regime_to_continuation=next_regime_to_continuation,
-                stateful_targets=self.stateful_targets,
-            ),
-            **self._egm_kernel_params(flat_params=flat_params),
-            period=jnp.int32(period),
-            age=ages.values[period],
+                flat_params=flat_params,
+                period=period,
+                ages=ages,
+            )
         )
-        return KernelResult(
-            V_arr=V_arr, continuation=egm_carry, simulation_policy=sim_policy
-        )
-
-    def _egm_kernel_params(self, *, flat_params: FlatParams) -> dict[str, object]:
-        """Flat params fed into the DC-EGM core: the source's plus its targets'.
-
-        A DC-EGM source carrying into a *different* target regime evaluates that
-        target's resources / transition functions in its per-asset-node solve,
-        reading the target's params (e.g. a pension factor the source never
-        reads). These are model-level shared values, so the target's
-        `flat_params` entry carries the right value; union them in. The core
-        threads its `**kwargs` into the per-combo pool, and its captured
-        functions read only the keys they need, so a target's extra params are
-        harmless to the source functions that do not. Mirrors the fixed-param
-        binding done at model build (`_partial_fixed_params_into_regimes`) for
-        the free-param path.
-        """
-        return _union_free_params(
-            flat_params=flat_params,
-            regime_name=self.regime_name,
-            transition_target_names=self.transition_target_names,
+        V_arr, egm_carry, sim_policy = compiled_cores["main"](**arguments)
+        return KernelOutput(
+            value=V_arr,
+            continuations={EGM_CONTINUATION: egm_carry},
+            replay={SIMULATION_POLICY: sim_policy},
         )
 
 
@@ -584,7 +724,7 @@ def _carry_subset(
     """
     return MappingProxyType(
         {
-            name: next_regime_to_continuation[name]
+            name: cast("EGMCarry", next_regime_to_continuation[name])
             for name in next_regime_to_continuation
             if name in stateful_targets
         }

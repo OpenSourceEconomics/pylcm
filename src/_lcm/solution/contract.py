@@ -10,11 +10,11 @@ either validation hook for the stage whose information it needs (both default
 to no-ops).
 
 Each entry of `SolutionKernels.period_kernels` is a `PeriodKernel`: a single
-non-jitted period adapter that wraps the solver's shared jitted core, calls it
-with the solver's own argument layout, and assembles a `KernelResult` outside
-JIT. The solve loop invokes the same adapter for every solver, branching only on
-which optional outputs (`continuation`, `simulation_policy`) are present, never
-on solver type.
+non-jitted period adapter that wraps the solver's compiled programs, calls them
+with the solver's own argument layout, and returns a `KernelOutput` outside JIT:
+the value array plus the artifacts the kernel publishes on its keyed channels.
+The solve loop invokes the same adapter for every solver and reads each channel
+by the artifact's declared key, never by solver type.
 
 This module is an engine leaf. Resolving finalized user-regime or
 `VInterpolationInfo` types at runtime would close an import
@@ -47,16 +47,10 @@ from _lcm.constraints.routes import (
 )
 from _lcm.continuation import (
     ContinuationPayload,
+    ContinuationSpec,
     EGMContinuationLayout,
-    EGMContinuationSpec,
 )
 from _lcm.egm.branch_aggregation import OuterBranchAggregator
-from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
-from _lcm.egm.published_policy import (
-    EGMSimPolicy,
-    NBEGMGridPolicy,
-    NNBEGMSimPolicy,
-)
 from _lcm.engine import ParamCheck, StateActionSpace, Variables
 from _lcm.grids import Grid
 from _lcm.reachability import PhaseReachability
@@ -81,8 +75,8 @@ from _lcm.typing import (
     TransitionFunctionsMapping,
 )
 from lcm.ages import AgeGrid
-from lcm.solver_api import KernelOutput
-from lcm.typing import BoolND, Float1D, FloatND, UserFunction
+from lcm.solver_api import ArtifactKey, KernelOutput
+from lcm.typing import Float1D, FloatND, UserFunction
 
 # The continuation channel is defined once in `_lcm.continuation`. Backward
 # induction treats `ContinuationPayload` opaquely; EGM solvers additionally
@@ -98,20 +92,11 @@ from lcm.typing import BoolND, Float1D, FloatND, UserFunction
 # reaches for is the signal to introduce a protocol rather than to grow this
 # one — the seam is a stated read set, not permission to read whatever is there.
 #
-# The read set says what may be read off a row; this union says which rows
-# exist, and the two are separate rules. The simulation read dispatches on the
-# concrete payload type over this CLOSED union: a
-# `NestedEGMSimPolicy` routes to the engine-owned nested continuous-outer reader
-# (`_read_nested_policy`, which the self-describing payload parameterizes), an
-# `NNBEGMSimPolicy` routes to direct finite-candidate replay, an
-# `NBEGMGridPolicy` carries the conditional inner candidate rows, and a flat
-# `EGMSimPolicy` routes to the solver-supplied `egm_policy_read`. So it is
-# a deliberate closed-union dispatch in the engine's simulation loop, not an
-# open solver-owned reader seam; adding a payload class means extending both
-# this union and that dispatch.
-type SimulationPolicy = (
-    EGMSimPolicy | NBEGMGridPolicy | NNBEGMSimPolicy | NestedEGMSimPolicy
-)
+# Which payload a regime publishes is declared, not discovered: the regime's
+# `SimulationPhase.replay_route` names the exact `payload_type` and the
+# `ReplayMode` under which simulation reads it, and both the model authority's
+# preflight and the simulation loop dispatch on that route. `SimulationPolicy`
+# enumerates the payload classes the shipped routes declare.
 
 if TYPE_CHECKING:
     from _lcm.regime_building.finalize import FinalizedUserRegime
@@ -423,46 +408,13 @@ class GeneratedReplayAuthority:
     """Exact generated outer mesh, in candidate-axis order."""
 
 
-@dataclass(frozen=True, kw_only=True)
-class KernelResult:
-    """One regime-period solve output, assembled outside JIT.
-
-    The solve loop reads `V_arr` from every kernel and branches only on whether
-    the optional generic outputs are present — never on solver type:
-
-    - `continuation` is the cross-period payload a continuation-based parent
-      interpolates; `None` for a regime that publishes no continuation.
-    - `simulation_policy` is the off-grid policy forward simulation can
-      interpolate; `None` for a regime that publishes none.
-    - `diagnostics` is the solver's numerical self-report; `None` for a solver
-      that measures nothing (every finite-grid solver today).
-    """
-
-    V_arr: FloatND
-    """The regime's value-function array on its exogenous state grid."""
-
-    continuation: ContinuationPayload | None = None
-    """Continuation payload for a continuation-based parent, or `None`."""
-
-    simulation_policy: SimulationPolicy | None = None
-    """Published off-grid simulation policy, or `None`."""
-
-    generated_replay_authority: GeneratedReplayAuthority | None = None
-    """Dynamic replay facts produced independently beside the public payload."""
-
-    dissolution: BoolND | None = None
-    """The dissolution / empty-feasible-set flag `D` on the state axes, or `None`.
-
-    Published by every collective regime's kernel:
-    `True` exactly where NO action satisfies the combined (ordinary AND value)
-    constraints, so the household argmax was taken over an empty set. Distinct
-    from a numeric `-inf` value, which occurs on-path; gates must consume this
-    flag, never test `V == -inf`. `None` for singleton regimes (the default
-    path is unchanged).
-    """
-
-    diagnostics: SolverDiagnostics | None = None
-    """Published numerical diagnostics, or `None`."""
+# Engine-private auxiliary key under which a kernel emits its replay authority.
+# The payload is a `GeneratedReplayAuthority`; the solve loop reads it beside the
+# replay-channel policy it belongs to and binds it into the model-owned solution
+# authority. It is never retained into a `SolutionResult`.
+GENERATED_REPLAY_AUTHORITY = ArtifactKey(
+    type_id="pylcm.engine.generated_replay_authority", schema_version=1
+)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -513,21 +465,13 @@ class BackwardInductionResult:
     it at the period boundary.
     """
 
-    published_simulation_policy_cells: frozenset[tuple[int, RegimeName]] = frozenset()
-    """Cells whose kernels produced a replay policy, whether retained or dropped.
-
-    This tiny identity ledger lets a values-only ``SolutionResult`` distinguish
-    a genuinely unrequested artifact from one that was not applicable without
-    retaining the policy's arrays.
-    """
-
 
 @runtime_checkable
 class PeriodKernel(Protocol):
     """One regime's per-period solve adapter — the loop's uniform call target.
 
     The runtime interface is intentionally smaller than the execution declaration.
-    A kernel invokes the named executable mapping and assembles a result outside JIT.
+    A kernel invokes the named executable mapping and assembles its output outside JIT.
     Native and legacy execution declarations both cross
     :func:`_lcm.execution.core_program.core_program_graph`; the solve loop never reads
     their distinct declaration methods through this protocol.
@@ -553,13 +497,14 @@ class PeriodKernel(Protocol):
         period: int,
         ages: AgeGrid,
         logger: logging.Logger,
-    ) -> KernelOutput | KernelResult:
-        """Invoke the compiled core(s) and assemble a period output.
+    ) -> KernelOutput:
+        """Invoke the compiled program(s) and assemble the period's output.
 
-        Single-core kernels read `compiled_cores["main"]`; a multi-core kernel
-        reads each of its own core keys. Migrated kernels return the public
-        :class:`~lcm.solver_api.KernelOutput`; legacy in-tree kernels may still
-        return ``KernelResult`` while the engine bridge remains in place.
+        A one-program kernel reads `compiled_cores["main"]`; a multi-program
+        kernel reads each of its own program keys. The return is the public
+        :class:`~lcm.solver_api.KernelOutput`: the value array and the
+        artifacts the kernel publishes, each on the channel of its retention
+        semantics under its declared `ArtifactKey`.
 
         `logger` carries the run's validation policy. A kernel that can detect a
         defect only by reading a device value back reads it in raise mode alone
@@ -625,8 +570,8 @@ class SolutionKernels:
     period_kernels: Mapping[int, PeriodKernel]
     """Immutable mapping of period to the regime's uniform period adapter."""
 
-    continuation_spec: EGMContinuationSpec | None = None
-    """Concrete EGM continuation template bundled with its static layout."""
+    continuation_spec: ContinuationSpec | None = None
+    """Template and identity of the continuation this solver's kernels publish."""
 
     param_checks: tuple[ParamCheck, ...] = ()
     """Preconditions the engine passes every parameter draw against real params.
@@ -734,13 +679,13 @@ class Solver(ABC):
 
     @property
     def publishes_simulation_policy(self) -> bool:
-        """Whether this solver can publish a policy independently of the flat read.
+        """Whether this solver's kernels publish a simulation policy.
 
-        Collecting policies costs a host transfer per regime-period, so automatic
-        simulation requests them only where a producer declares one. The canonical
-        consuming-route signal is `SimulationPhase.egm_policy_read`. A solver can
-        additionally request collection for legacy auto-solve paths when its payload
-        is self-describing. `SolutionResult` still requires a canonical consumer.
+        The canonical consuming-route signal is `SimulationPhase.egm_policy_read`,
+        and a solve retains a published policy only through that route. This
+        declaration serves the result ledger: a cell whose solver publishes a
+        policy that no route consumes records the omission as not applicable,
+        while a solver that never publishes one records nothing.
         """
         return False
 
@@ -805,18 +750,19 @@ class Solver(ABC):
         return False
 
     @property
-    def requires_continuation(self) -> bool:
-        """Whether this solver reads a continuation payload from its targets.
+    def required_continuation_keys(self) -> frozenset[ArtifactKey]:
+        """Continuation artifacts this solver reads from its target regimes.
 
         An endogenous-grid solver inverts the Euler equation against its
         target regimes' value *and marginal* on a continuation grid, so each
-        target — including a terminal one — must publish a continuation the
-        engine rolls alongside `next_regime_to_V_arr`. Grid search reads only
-        the value array, so it needs none. The engine reads this off every
-        regime's solver to decide whether terminal regimes produce their
-        closed-form continuations, without forking on the solver type.
+        target — including a terminal one — must publish a continuation under
+        one of these keys, which the engine rolls alongside
+        `next_regime_to_V_arr`. Grid search reads only the value array, so its
+        set is empty. Model building matches each key against what every
+        reachable target publishes, so a version the targets do not carry is
+        refused before any solve, without forking on the solver type.
         """
-        return False
+        return frozenset()
 
     @property
     def supports_nonlinear_certainty_equivalent(self) -> bool:

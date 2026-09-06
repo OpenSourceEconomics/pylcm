@@ -11,10 +11,11 @@ The kernel-building imports are function-local so the public `lcm.solvers`
 façade stays a thin re-export that pulls in no numerical engine modules.
 """
 
+import functools
 import inspect
 import logging
 from collections.abc import Callable, Hashable, Mapping
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, field, fields, replace
 from types import MappingProxyType
 from typing import cast
 
@@ -64,18 +65,18 @@ from _lcm.egm.published_policy import (
 )
 from _lcm.engine import ParamCheck, StateActionSpace
 from _lcm.execution.core_program import (
+    CoreArgumentBuilder,
     CoreBuildContext,
+    CoreProgram,
     core_program_graph,
-    materialize_core_program,
 )
 from _lcm.grids import ContinuousGrid, DiscreteGrid, Grid
 from _lcm.solution.contract import (
+    GENERATED_REPLAY_AUTHORITY,
     ConstraintRouteContext,
     ContinuationPayload,
     GeneratedReplayAuthority,
-    KernelResult,
     PeriodKernel,
-    SimulationPolicy,
     SolutionKernels,
     Solver,
     SolverBuildContext,
@@ -84,10 +85,10 @@ from _lcm.solution.contract import (
     _BoundLiquidMargin,
     _BoundOuterContinuousMargin,
 )
-from _lcm.solution.kernel_output import require_legacy_kernel_result
 from _lcm.solution.nbegm import (
     NBEGM,
     _BoundNBEGM,
+    _RideAlongNBEGMPeriodKernel,
     _validate_nbegm_case_piece_declarations,
     proved_post_decision_of,
 )
@@ -109,12 +110,20 @@ from _lcm.typing import (
     EconFunctionsMapping,
     FlatParams,
     RegimeName,
+    SimulationPolicy,
 )
 from lcm.ages import AgeGrid
 from lcm.exceptions import (
     ModelInitializationError,
     RegimeInitializationError,
     UnrepresentableOuterCandidateError,
+)
+from lcm.solver_api import (
+    EGM_CONTINUATION,
+    SIMULATION_POLICY,
+    SOLVER_DIAGNOSTICS,
+    ArtifactKey,
+    KernelOutput,
 )
 from lcm.typing import (
     ActionName,
@@ -220,9 +229,9 @@ class NNBEGM(TwoMarginSolver):
         )
 
     @property
-    def requires_continuation(self) -> bool:
+    def required_continuation_keys(self) -> frozenset[ArtifactKey]:
         """NNBEGM runs an inner NB-EGM solve that inverts the Euler equation."""
-        return True
+        return frozenset({EGM_CONTINUATION})
 
     @property
     def supports_nonlinear_certainty_equivalent(self) -> bool:
@@ -431,8 +440,8 @@ class NNBEGM(TwoMarginSolver):
             )
             grouped_periods.setdefault(key, []).append(period)
 
-        adjuster_by_period: dict[int, PeriodKernel] = {}
-        keeper_by_period: dict[int, PeriodKernel] = {}
+        adjuster_by_period: dict[int, _RideAlongNBEGMPeriodKernel] = {}
+        keeper_by_period: dict[int, _RideAlongNBEGMPeriodKernel] = {}
         resolved_by_period: dict[int, SolverBuildContext] = {}
         outer_target_function_by_period: dict[int, Callable] = {}
         grouped_param_checks = []
@@ -504,8 +513,12 @@ class NNBEGM(TwoMarginSolver):
             )
             for period in group_periods:
                 resolved_by_period[period] = group_context
-                adjuster_by_period[period] = adjuster_group.period_kernels[period]
-                keeper_by_period[period] = keeper_group.period_kernels[period]
+                adjuster_by_period[period] = _ride_along_inner_kernel(
+                    kernel=adjuster_group.period_kernels[period], role="adjuster"
+                )
+                keeper_by_period[period] = _ride_along_inner_kernel(
+                    kernel=keeper_group.period_kernels[period], role="keeper"
+                )
                 outer_target_function_by_period[period] = outer_target_function
             grouped_param_checks.extend(adjuster_group.param_checks)
             grouped_param_checks.extend(keeper_group.param_checks)
@@ -522,15 +535,22 @@ class NNBEGM(TwoMarginSolver):
         ):
             _fail_if_nnbegm_carry_publishes_topology_rows(template=inner_template)
         search = self.outer_search
+        build_kernel: Callable[..., _NNBEGMPeriodKernel]
         match search:
             case FiniteOuterGrid():
+                build_kernel = functools.partial(
+                    _FiniteNNBEGMPeriodKernel, outer_search=search
+                )
                 outer_grid_values = search.grid.to_jax()
                 outer_batch_size = search.batch_size
                 template = _stack_carry_template(
-                    template=inner_template,
+                    template=cast("EGMCarry", inner_template),
                     n_candidates=int(outer_grid_values.shape[0]) + 1,
                 )
             case AdaptiveOuterMesh():
+                build_kernel = functools.partial(
+                    _AdaptiveNNBEGMPeriodKernel, outer_search=search
+                )
                 outer_grid_values = search.initial_grid.to_jax()
                 outer_batch_size = search.batch_size
                 # The continuous collapse republishes a policy-free carry. Its
@@ -599,7 +619,7 @@ class NNBEGM(TwoMarginSolver):
         }
         period_kernels = MappingProxyType(
             {
-                period: _NNBEGMPeriodKernel(
+                period: build_kernel(
                     keeper_kernel=keeper_by_period[period],
                     adjuster_kernel=adjuster_kernel,
                     regime_name=context.regime_name,
@@ -609,7 +629,6 @@ class NNBEGM(TwoMarginSolver):
                     outer_post_decision=bound.outer_post_decision,
                     outer_target_function=outer_target_function_by_period[period],
                     outer_batch_size=outer_batch_size,
-                    outer_search=search,
                     outer_action=bound.outer_action,
                     inner_action=inner_action,
                     resources_target=spec.budget_target,
@@ -765,27 +784,80 @@ def _conditional_nnbegm_banks(
 
 
 @dataclass(frozen=True, kw_only=True)
-class _NNBEGMPeriodKernel:
-    """The NNBEGM period adapter — a keeper plus an adjuster outer sweep.
+class _OuterNodeBinding:
+    """The outer post-decision value one republished program is lowered with."""
 
-    Holds two inner NB-EGM period adapters and the exogenous outer grid. Each
-    inner adapter can expose several independently-traced cores (the ride-along
-    NB-EGM kernel splits into a continuation and an envelope core), so the
-    nested adapter republishes every inner core under a `keeper:`/`adjuster:`
-    prefix and strips the prefix when delegating.
+    regime_name: RegimeName
+    """Name of the regime whose flat params receive the bound node."""
 
-    Calling it runs the keeper once and the adjuster once per outer-grid node,
-    collapses the outer axis by `V = max(V_keeper, max_j W_j)`, and publishes
-    the pointwise (bridged) upper envelope of the candidates' carry rows on the
-    shared liquid state grid. The adapter is non-jitted: it dispatches the
-    shared jitted inner cores, matching `_NEGMPeriodKernel`.
+    outer_post_decision: FunctionName
+    """Name of the outer post-decision function the node is bound as."""
+
+    value: FloatND
+    """The outer node value, a scalar."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class _NestedArgumentBuilder:
+    """Build one republished inner program's arguments from the nested context.
+
+    The keeper program takes the period's context unchanged. The adjuster program
+    binds the outer post-decision at the first outer node before delegating, so
+    the lowered program has exactly the shape every per-node call of the outer
+    search traces.
     """
 
-    keeper_kernel: PeriodKernel
-    """The keeper inner adapter — a passive per-durable-state NB-EGM."""
+    inner: CoreArgumentBuilder
+    """The inner program's own argument builder."""
 
-    adjuster_kernel: PeriodKernel
-    """The adjuster inner adapter whose shared jitted cores are swept."""
+    outer_node: _OuterNodeBinding | None
+    """The node bound into the flat params, or `None` for the keeper."""
+
+    def __call__(self, context: CoreBuildContext) -> Mapping[str, object]:
+        """Return the inner program's arguments for the (possibly bound) context."""
+        if self.outer_node is None:
+            return self.inner(context)
+        bound_flat_params = _with_outer_post_decision(
+            flat_params=cast("FlatParams", context.flat_params),
+            regime_name=self.outer_node.regime_name,
+            outer_post_decision=self.outer_node.outer_post_decision,
+            value=self.outer_node.value,
+        )
+        return self.inner(replace(context, flat_params=bound_flat_params))
+
+
+@dataclass(frozen=True, kw_only=True)
+class _NNBEGMPeriodKernel:
+    """The NNBEGM period kernel — a keeper plus an adjuster outer search.
+
+    Holds two inner ride-along NB-EGM period kernels and the exogenous outer
+    grid. The kernel's native program graph republishes each inner kernel's
+    replay program under a `keeper:`/`adjuster:` prefix, with the inner output
+    roles and requirements and a builder that hands the inner program its own
+    context; the prefix is stripped when the inner kernel is called. Both
+    republished programs are dispatched under every retention, because the
+    nested collapse reads the inner policy banks whether or not a replay
+    artifact is kept.
+
+    Calling it runs the keeper once, settles the period's replay capability,
+    and hands both to the outer search of the concrete subclass:
+
+    - `_FiniteNNBEGMPeriodKernel` runs the adjuster once per outer-grid node,
+      collapses the outer axis by `V = max(V_keeper, max_j W_j)`, and retains
+      the complete finite candidate identities for exact replay.
+    - `_AdaptiveNNBEGMPeriodKernel` refines the shared outer mesh adaptively and
+      collapses continuously.
+
+    Either publishes the pointwise (bridged) upper envelope of the candidates'
+    carry rows on the shared liquid state grid. The kernel is non-jitted: it
+    dispatches the shared compiled inner programs, matching `_NEGMPeriodKernel`.
+    """
+
+    keeper_kernel: _RideAlongNBEGMPeriodKernel
+    """The keeper inner kernel — a passive per-durable-state NB-EGM."""
+
+    adjuster_kernel: _RideAlongNBEGMPeriodKernel
+    """The adjuster inner kernel whose compiled program is swept."""
 
     regime_name: RegimeName
     """Name of the regime whose flat params the outer node binds into."""
@@ -809,11 +881,6 @@ class _NNBEGMPeriodKernel:
     outer_batch_size: int
     """Outer-grid nodes solved per chunk before folding into the running
     maximum; `0` solves every node at once."""
-
-    outer_search: OuterSearch
-    """The resolved outer-search strategy: `FiniteOuterGrid` collapses the
-    exact finite candidate set, `AdaptiveOuterMesh` adaptively refines the
-    shared mesh and collapses continuously."""
 
     outer_action: ActionName
     """The regime's outer continuous action (published for the nested
@@ -887,30 +954,49 @@ class _NNBEGMPeriodKernel:
     """The fixed cost's scale function, arguments restricted to
     `period`/`age`/flat params (resolved per period at call time)."""
 
-    def cores(self) -> Mapping[str, Callable]:
-        """Return every inner core under a `keeper:`/`adjuster:` prefix.
+    _core_programs: Mapping[str, CoreProgram] = field(
+        init=False, repr=False, compare=False
+    )
+    """The republished graph, the keeper's programs then the adjuster's, each
+    under its role prefix; derived from the inner kernels at construction."""
+
+    def __post_init__(self) -> None:
+        """Republish every inner program under the role prefixes.
 
         The keeper and adjuster are distinct traced programs built from
-        different contexts, and each inner adapter may expose several cores of
-        its own; prefixing keeps every (role, inner-core) pair under its own
-        AOT compilation key.
+        different contexts, so each (role, program) pair keeps its own
+        compilation key. Each inner program keeps its own scope: a values-only
+        solve dispatches the inner `main` programs and the nested collapse
+        publishes the value and the carry alone; a replay-retaining solve
+        dispatches the inner `replay` programs and assembles the nested policy
+        from their banks.
         """
-        return MappingProxyType(
-            {
-                **{
-                    f"keeper:{name}": program.function
-                    for name, program in core_program_graph(
-                        kernel=self.keeper_kernel
-                    ).items()
-                },
-                **{
-                    f"adjuster:{name}": program.function
-                    for name, program in core_program_graph(
-                        kernel=self.adjuster_kernel
-                    ).items()
-                },
-            }
-        )
+        programs: dict[str, CoreProgram] = {}
+        for role, kernel, outer_node in (
+            ("keeper", self.keeper_kernel, None),
+            (
+                "adjuster",
+                self.adjuster_kernel,
+                _OuterNodeBinding(
+                    regime_name=self.regime_name,
+                    outer_post_decision=self.outer_post_decision,
+                    value=self.outer_grid_values[0],
+                ),
+            ),
+        ):
+            for name, program in core_program_graph(kernel=kernel).items():
+                programs[f"{role}:{name}"] = replace(
+                    program,
+                    name=f"{role}:{name}",
+                    argument_builder=_NestedArgumentBuilder(
+                        inner=program.argument_builder, outer_node=outer_node
+                    ),
+                )
+        object.__setattr__(self, "_core_programs", MappingProxyType(programs))
+
+    def core_programs(self) -> Mapping[str, CoreProgram]:
+        """Return the native graph used by eager, JIT, AOT, and replay paths."""
+        return self._core_programs
 
     def with_fixed_params(
         self, *, fixed_flat_params: FlatParams
@@ -926,49 +1012,6 @@ class _NNBEGMPeriodKernel:
             ),
         )
 
-    def build_lower_args(
-        self,
-        *,
-        core_key: str,
-        state_action_space: StateActionSpace,
-        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-        next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
-        flat_params: FlatParams,
-        period: int,
-        ages: AgeGrid,
-    ) -> Mapping[str, object]:
-        """Delegate the named inner core's lowering arguments.
-
-        The prefix selects the role; the remainder is the inner adapter's own
-        core key. The adjuster binds `outer_post_decision` at the first
-        outer-grid node so its lowered program matches the shape every per-node
-        call traces; the keeper lowers with no outer binding.
-        """
-        role, inner_key = core_key.split(sep=":", maxsplit=1)
-        if role == "keeper":
-            kernel = self.keeper_kernel
-            program_flat_params = flat_params
-        else:
-            kernel = self.adjuster_kernel
-            program_flat_params = _with_outer_post_decision(
-                flat_params=flat_params,
-                regime_name=self.regime_name,
-                outer_post_decision=self.outer_post_decision,
-                value=self.outer_grid_values[0],
-            )
-        declaration = core_program_graph(kernel=kernel)[inner_key]
-        return materialize_core_program(
-            program=declaration,
-            context=CoreBuildContext(
-                state_action_space=state_action_space,
-                next_regime_to_V_arr=next_regime_to_V_arr,
-                next_regime_to_continuation=next_regime_to_continuation,
-                flat_params=program_flat_params,
-                period=period,
-                ages=ages,
-            ),
-        ).arguments
-
     def __call__(
         self,
         *,
@@ -980,14 +1023,17 @@ class _NNBEGMPeriodKernel:
         period: int,
         ages: AgeGrid,
         logger: logging.Logger,
-    ) -> KernelResult:
-        """Solve the keeper, then dispatch to the configured outer search.
+    ) -> KernelOutput:
+        """Solve the keeper, settle the replay capability, run the outer search.
 
-        The finite strategy folds completed chunks immediately, so
-        `outer_batch_size` bounds retained candidate data while publishing the
-        complete finite candidate identities for exact replay. The adaptive
-        strategy keeps its exact-node bank because interpolation and policy
-        publication consume every refined node.
+        The retention shows in the compiled programs: the inner `replay`
+        programs are present exactly when the solve retains replay artifacts,
+        and only then does the outer search assemble a nested policy. The
+        finite search folds completed chunks immediately, so `outer_batch_size`
+        bounds retained candidate data while publishing the complete finite
+        candidate identities for exact replay. The adaptive search keeps its
+        exact-node bank because interpolation and policy publication consume
+        every refined node.
         """
         keeper_result = self._solve_keeper(
             compiled_cores=compiled_cores,
@@ -1010,23 +1056,10 @@ class _NNBEGMPeriodKernel:
             period=period,
             ages=ages,
         )
-        if isinstance(self.outer_search, AdaptiveOuterMesh):
-            return self._solve_continuous(
-                replay_capability=replay_capability,
-                keeper_result=keeper_result,
-                config=self.outer_search,
-                compiled_cores=compiled_cores,
-                state_action_space=state_action_space,
-                next_regime_to_V_arr=next_regime_to_V_arr,
-                next_regime_to_continuation=next_regime_to_continuation,
-                flat_params=flat_params,
-                period=period,
-                ages=ages,
-                logger=logger,
-            )
-        return self._solve_finite(
+        return self._solve_outer(
             replay_capability=replay_capability,
             keeper_result=keeper_result,
+            retain_replay="keeper:replay" in compiled_cores,
             compiled_cores=compiled_cores,
             state_action_space=state_action_space,
             next_regime_to_V_arr=next_regime_to_V_arr,
@@ -1037,11 +1070,12 @@ class _NNBEGMPeriodKernel:
             logger=logger,
         )
 
-    def _solve_finite(
+    def _solve_outer(
         self,
         *,
         replay_capability: OuterReplayCapability,
-        keeper_result: KernelResult,
+        keeper_result: KernelOutput,
+        retain_replay: bool,
         compiled_cores: Mapping[str, Callable],
         state_action_space: StateActionSpace,
         next_regime_to_V_arr: Mapping[RegimeName, FloatND],
@@ -1050,308 +1084,9 @@ class _NNBEGMPeriodKernel:
         period: int,
         ages: AgeGrid,
         logger: logging.Logger,
-    ) -> KernelResult:
-        """Fold finite candidates and retain their complete replay identities."""
-        V_arr = keeper_result.V_arr
-        keeper_carry = cast("EGMCarry", keeper_result.continuation)
-        keeper_policy = cast("NBEGMGridPolicy", keeper_result.simulation_policy)
-        discrete_action_names = keeper_policy.discrete_action_names
-        branch_codes = keeper_policy.branch_discrete_actions
-        keeper_inner, keeper_values = _conditional_nnbegm_banks(
-            policy=keeper_policy,
-            collapsed_value=keeper_result.V_arr,
-            state_names=keeper_policy.state_names,
-            discrete_action_names=discrete_action_names,
-            branch_codes=branch_codes,
-        )
-        candidate_inner_by_outer = [keeper_inner]
-        candidate_value_by_outer = [keeper_values]
-        adjuster_carries: list[EGMCarry] = []
-        adjuster_cores = _subcores(compiled_cores=compiled_cores, role="adjuster")
-        nodes = list(self.outer_grid_values)
-        chunk_size = self.outer_batch_size or len(nodes)
-        for chunk_start in range(0, len(nodes), chunk_size):
-            chunk_results = [
-                require_legacy_kernel_result(
-                    output=self.adjuster_kernel(
-                        compiled_cores=adjuster_cores,
-                        state_action_space=state_action_space,
-                        next_regime_to_V_arr=next_regime_to_V_arr,
-                        next_regime_to_continuation=next_regime_to_continuation,
-                        flat_params=_with_outer_post_decision(
-                            flat_params=flat_params,
-                            regime_name=self.regime_name,
-                            outer_post_decision=self.outer_post_decision,
-                            value=node,
-                        ),
-                        period=period,
-                        ages=ages,
-                        logger=logger,
-                    ),
-                    consumer="NNBEGM adjuster wrapper",
-                )
-                for node in nodes[chunk_start : chunk_start + chunk_size]
-            ]
-            for adjuster_result in chunk_results:
-                V_arr = jnp.fmax(V_arr, adjuster_result.V_arr)
-                adjuster_carries.append(cast("EGMCarry", adjuster_result.continuation))
-                adjuster_policy = cast(
-                    "NBEGMGridPolicy", adjuster_result.simulation_policy
-                )
-                adjuster_inner, adjuster_values = _conditional_nnbegm_banks(
-                    policy=adjuster_policy,
-                    collapsed_value=adjuster_result.V_arr,
-                    state_names=keeper_policy.state_names,
-                    discrete_action_names=discrete_action_names,
-                    branch_codes=branch_codes,
-                )
-                candidate_inner_by_outer.append(adjuster_inner)
-                candidate_value_by_outer.append(adjuster_values)
-            V_arr, _ = jax.block_until_ready((V_arr, adjuster_carries[chunk_start:]))
-
-        from _lcm.egm.outer_envelope import stack_candidate_carries  # noqa: PLC0415
-
-        carry = stack_candidate_carries(
-            candidates=(keeper_carry, *adjuster_carries),
-            nan_is_infeasible=True,
-        )
-        n_outer_candidates = len(candidate_inner_by_outer)
-        n_discrete_branches = int(candidate_inner_by_outer[0].shape[0])
-        state_shape = candidate_inner_by_outer[0].shape[1:]
-        candidate_inner_action = jnp.stack(candidate_inner_by_outer).reshape(
-            n_outer_candidates * n_discrete_branches, *state_shape
-        )
-        candidate_value = jnp.stack(candidate_value_by_outer).reshape(
-            n_outer_candidates * n_discrete_branches, *state_shape
-        )
-        if discrete_action_names:
-            candidate_discrete_actions = jnp.tile(
-                cast("IntND", branch_codes), (n_outer_candidates, 1)
-            )
-        else:
-            candidate_discrete_actions = None
-        candidate_outer_target = self._candidate_outer_targets(
-            outer_inverse=replay_capability.inverse,
-            candidate_inner_action=candidate_inner_action,
-            candidate_discrete_actions=candidate_discrete_actions,
-            discrete_action_names=discrete_action_names,
-            n_discrete_branches=n_discrete_branches,
-            state_action_space=state_action_space,
-            flat_params=flat_params,
-            period=period,
-            ages=ages,
-            state_names=keeper_policy.state_names,
-            logger=logger,
-        )
-        return KernelResult(
-            V_arr=V_arr,
-            continuation=carry,
-            simulation_policy=NNBEGMSimPolicy(
-                candidate_inner_action=candidate_inner_action,
-                candidate_outer_target=candidate_outer_target,
-                candidate_value=candidate_value,
-                outer_grid_values=self.outer_grid_values,
-                candidate_discrete_actions=candidate_discrete_actions,
-                discrete_action_names=discrete_action_names,
-                state_names=keeper_policy.state_names,
-                inner_action_name=self.inner_action,
-                outer_action_name=self.outer_action,
-                n_keeper_candidates=n_discrete_branches,
-                replay_capability=replay_capability,
-            ),
-        )
-
-    def _solve_continuous(
-        self,
-        *,
-        replay_capability: OuterReplayCapability,
-        keeper_result: KernelResult,
-        config: AdaptiveOuterMesh,
-        compiled_cores: Mapping[str, Callable],
-        state_action_space: StateActionSpace,
-        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
-        next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
-        flat_params: FlatParams,
-        period: int,
-        ages: AgeGrid,
-        logger: logging.Logger,
-    ) -> KernelResult:
-        """Adaptively refine the shared outer mesh, then collapse continuously.
-
-        The mesh driver's exact-solve callback runs the adjuster's inner
-        solve per requested node (chunked by the strategy's `batch_size`)
-        and caches every `OuterCandidateResult` by node value, so the final
-        bank reuses the refinement solves instead of re-solving. The keeper
-        stays a separate exact branch throughout; its `sim_policy` rides
-        through unchanged until the continuous simulation reader lands.
-
-        The search itself never inverts the declared outer map; the payload it
-        publishes is replayed by a reader that does, so the settled replay
-        capability gates publication rather than the search.
-        """
-        adjuster_cores = _subcores(compiled_cores=compiled_cores, role="adjuster")
-        cache: dict[float, OuterCandidateResult] = {}
-
-        def solve_nodes(nodes_arr: Float1D) -> FloatND:
-            requested = [float(node) for node in np.asarray(nodes_arr)]
-            pending = [node for node in requested if node not in cache]
-            chunk_size = config.batch_size or max(len(pending), 1)
-            for chunk_start in range(0, len(pending), chunk_size):
-                chunk = pending[chunk_start : chunk_start + chunk_size]
-                chunk_results = [
-                    self._solve_adjuster_node(
-                        node=jnp.asarray(node),
-                        adjuster_cores=adjuster_cores,
-                        state_action_space=state_action_space,
-                        next_regime_to_V_arr=next_regime_to_V_arr,
-                        next_regime_to_continuation=next_regime_to_continuation,
-                        flat_params=flat_params,
-                        period=period,
-                        ages=ages,
-                        logger=logger,
-                    )
-                    for node in chunk
-                ]
-                jax.block_until_ready(
-                    [(result.V_arr, result.carry) for result in chunk_results]
-                )
-                cache.update(zip(chunk, chunk_results, strict=True))
-            return jnp.stack([cache[node].V_arr for node in requested])
-
-        mesh = refine_outer_mesh(
-            initial_nodes=self.outer_grid_values,
-            solve_at=solve_nodes,
-            config=config,
-            fail_closed=config.fail_closed,
-        )
-        mesh_nodes_host = np.asarray(mesh.nodes)
-        bank = build_outer_candidate_bank(
-            outer_nodes=mesh.nodes,
-            results=[cache[float(node)] for node in mesh_nodes_host],
-        )
-        if self.branch_fixed_cost is None:
-            fixed_cost_scale = None
-            fixed_cost_support = None
-        else:
-            fixed_cost_scale = _resolve_branch_scale(
-                scale_function=self.branch_scale_function,
-                regime_params=flat_params[self.regime_name],
-                period=period,
-                ages=ages,
-            )
-            fixed_cost_support = (
-                self.branch_fixed_cost.lower,
-                self.branch_fixed_cost.upper,
-            )
-        collapse = collapse_continuous_candidate_bank(
-            keeper_v_arr=keeper_result.V_arr,
-            keeper_carry=cast("EGMCarry", keeper_result.continuation),
-            bank=bank,
-            config=config,
-            fixed_cost_scale=fixed_cost_scale,
-            fixed_cost_support=fixed_cost_support,
-        )
-        # Derive both branches' inner simulation policies. An NB-EGM inner
-        # publishes no `EGMSimPolicy` of its own; on the smooth v1 scope its
-        # unrefined carry rows determine the policy exactly (`consumption =
-        # resources - savings` node by node), so derive both sides from the
-        # carries and fail closed (no nested payload, grid simulation
-        # unchanged) whenever the rows are not derivation-safe.
-        keeper_policy = (
-            keeper_result.simulation_policy
-            if isinstance(keeper_result.simulation_policy, EGMSimPolicy)
-            else derive_inner_sim_policy(
-                carry=cast("EGMCarry", keeper_result.continuation),
-                state_grid_values=self.liquid_grid_values,
-                row_discrete_state_names=self.row_discrete_state_names,
-                row_passive_state_names=self.row_passive_state_names,
-            )
-        )
-        adjuster_policies = (
-            bank.sim_policy
-            if bank.sim_policy is not None
-            else derive_inner_sim_policy(
-                carry=bank.carry,
-                state_grid_values=self.liquid_grid_values,
-                row_discrete_state_names=self.row_discrete_state_names,
-                row_passive_state_names=self.row_passive_state_names,
-                extra_leading_axes=1,
-            )
-        )
-        # Publish the nested payload only when both inner policies are
-        # derivation-safe AND the branch is a deterministic hard maximum AND the
-        # inner solve makes no discrete choice: the continuous reader replays
-        # keeper vs adjuster off-grid from exactly these conditional ingredients.
-        # Under a fixed-cost aggregation the realized branch depends on the drawn
-        # cost, and an inner DISCRETE action's winning branch is collapsed out of
-        # the published carry rows — the reader cannot replay
-        # either, so simulation falls back to the grid argmax, which is precisely
-        # what `policy_fallback_mask` reports (so the mask is set from this same
-        # condition rather than hard-coded).
-        nested_published = (
-            keeper_policy is not None
-            and adjuster_policies is not None
-            and self.branch_fixed_cost is None
-            and not self.inner_discrete_action_names
-        )
-        diagnostics = SolverDiagnostics(
-            max_outer_interpolation_error=jnp.asarray(mesh.max_validation_error),
-            max_outer_bracket_width=jnp.max(collapse.value_search.bracket_width),
-            outer_nodes_used=jnp.asarray(bank.n_candidates, dtype=jnp.int32),
-            outer_at_lower_bound=collapse.value_search.at_lower_bound,
-            outer_at_upper_bound=collapse.value_search.at_upper_bound,
-            keeper_adjuster_margin=collapse.keeper_adjuster_margin,
-            best_second_best_margin=collapse.best_second_best_margin,
-            policy_fallback_mask=jnp.asarray(not nested_published),
-            unresolved_mask=jnp.asarray(mesh.unresolved),
-            n_outer_all_invalid_cells=jnp.asarray(
-                mesh.n_cells_all_invalid, dtype=jnp.int32
-            ),
-            adjustment_probability=collapse.adjustment_probability,
-        )
-        sim_policy: SimulationPolicy | None = None
-        if nested_published:
-            # Only a regime that actually publishes reaches the refusal. A
-            # regime whose inner solve makes a discrete choice never gets here:
-            # `nested_published` is already false for it, so the capability's
-            # discrete-action verdict has nothing to stop.
-            fail_if_continuous_outer_replay_is_unsupported(
-                capability=replay_capability,
-                regime_name=self.regime_name,
-                outer_action_name=self.outer_action,
-            )
-            sim_policy = NestedEGMSimPolicy(
-                keeper=keeper_policy,
-                adjuster=OuterPolicyBank(
-                    outer_nodes=mesh.nodes,
-                    policies=adjuster_policies,
-                ),
-                outer_action_name=self.outer_action,
-                outer_state_name=self.outer_state_name,
-                outer_post_decision_name=self.outer_post_decision,
-                inner_action_name=self.inner_action,
-                liquid_state_name=self.liquid_state_name,
-                outer_no_adjustment_name=self.outer_no_adjustment_name,
-                resources_target_name=self.resources_target,
-                savings_lower_bound=self.savings_lower_bound,
-                golden_iterations=config.golden_iterations,
-                replay_capability=replay_capability,
-                value_atol=config.value_atol,
-                value_rtol=config.value_rtol,
-            )
-        return KernelResult(
-            V_arr=collapse.V_arr,
-            continuation=collapse.carry,
-            simulation_policy=sim_policy,
-            generated_replay_authority=(
-                GeneratedReplayAuthority(
-                    adaptive_outer_nodes=tuple(float(node) for node in mesh_nodes_host)
-                )
-                if nested_published
-                else None
-            ),
-            diagnostics=diagnostics,
-        )
+    ) -> KernelOutput:
+        """Run the outer search against the solved keeper; concrete per subclass."""
+        raise NotImplementedError
 
     def _solve_keeper(
         self,
@@ -1364,20 +1099,17 @@ class _NNBEGMPeriodKernel:
         period: int,
         ages: AgeGrid,
         logger: logging.Logger,
-    ) -> KernelResult:
+    ) -> KernelOutput:
         """Run the keeper inner solve — the state-dependent no-adjustment branch."""
-        return require_legacy_kernel_result(
-            output=self.keeper_kernel(
-                compiled_cores=_subcores(compiled_cores=compiled_cores, role="keeper"),
-                state_action_space=state_action_space,
-                next_regime_to_V_arr=next_regime_to_V_arr,
-                next_regime_to_continuation=next_regime_to_continuation,
-                flat_params=flat_params,
-                period=period,
-                ages=ages,
-                logger=logger,
-            ),
-            consumer="NNBEGM keeper wrapper",
+        return self.keeper_kernel(
+            compiled_cores=_subcores(compiled_cores=compiled_cores, role="keeper"),
+            state_action_space=state_action_space,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            next_regime_to_continuation=next_regime_to_continuation,
+            flat_params=flat_params,
+            period=period,
+            ages=ages,
+            logger=logger,
         )
 
     def _solve_adjuster_node(
@@ -1394,35 +1126,29 @@ class _NNBEGMPeriodKernel:
         logger: logging.Logger,
     ) -> OuterCandidateResult:
         """Run one adjuster node's exact conditional inner solve."""
-        result = require_legacy_kernel_result(
-            output=self.adjuster_kernel(
-                compiled_cores=adjuster_cores,
-                state_action_space=state_action_space,
-                next_regime_to_V_arr=next_regime_to_V_arr,
-                next_regime_to_continuation=next_regime_to_continuation,
-                flat_params=_with_outer_post_decision(
-                    flat_params=flat_params,
-                    regime_name=self.regime_name,
-                    outer_post_decision=self.outer_post_decision,
-                    value=node,
-                ),
-                period=period,
-                ages=ages,
-                logger=logger,
+        result = self.adjuster_kernel(
+            compiled_cores=adjuster_cores,
+            state_action_space=state_action_space,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            next_regime_to_continuation=next_regime_to_continuation,
+            flat_params=_with_outer_post_decision(
+                flat_params=flat_params,
+                regime_name=self.regime_name,
+                outer_post_decision=self.outer_post_decision,
+                value=node,
             ),
-            consumer="NNBEGM adjuster node wrapper",
+            period=period,
+            ages=ages,
+            logger=logger,
         )
+        policy = result.replay.get(SIMULATION_POLICY)
         return OuterCandidateResult(
             outer_node=node,
-            V_arr=result.V_arr,
-            carry=cast("EGMCarry", result.continuation),
+            V_arr=jnp.asarray(result.value),
+            carry=cast("EGMCarry", result.continuations[EGM_CONTINUATION]),
             # An inner 1-D kernel publishes a flat policy or nothing; the
             # isinstance narrows the widened payload union for the bank.
-            sim_policy=(
-                result.simulation_policy
-                if isinstance(result.simulation_policy, EGMSimPolicy)
-                else None
-            ),
+            sim_policy=policy if isinstance(policy, EGMSimPolicy) else None,
         )
 
     def _certify_outer_inverse(
@@ -1636,6 +1362,379 @@ class _NNBEGMPeriodKernel:
             period=period,
         )
         return jnp.where(represented, candidate_targets, jnp.nan)
+
+
+@dataclass(frozen=True, kw_only=True)
+class _FiniteNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
+    """The nested kernel of a finite outer grid: exact candidate collapse."""
+
+    outer_search: FiniteOuterGrid
+    """The finite outer-grid search whose candidate set is collapsed exactly."""
+
+    def _solve_outer(
+        self,
+        *,
+        replay_capability: OuterReplayCapability,
+        keeper_result: KernelOutput,
+        retain_replay: bool,
+        compiled_cores: Mapping[str, Callable],
+        state_action_space: StateActionSpace,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
+        flat_params: FlatParams,
+        period: int,
+        ages: AgeGrid,
+        logger: logging.Logger,
+    ) -> KernelOutput:
+        """Fold finite candidates and, retaining replay, their complete identities."""
+        V_arr = keeper_result.value
+        keeper_carry = cast("EGMCarry", keeper_result.continuations[EGM_CONTINUATION])
+        adjuster_results: list[KernelOutput] = []
+        adjuster_carries: list[EGMCarry] = []
+        adjuster_cores = _subcores(compiled_cores=compiled_cores, role="adjuster")
+        nodes = list(self.outer_grid_values)
+        chunk_size = self.outer_batch_size or len(nodes)
+        for chunk_start in range(0, len(nodes), chunk_size):
+            chunk_results = [
+                self.adjuster_kernel(
+                    compiled_cores=adjuster_cores,
+                    state_action_space=state_action_space,
+                    next_regime_to_V_arr=next_regime_to_V_arr,
+                    next_regime_to_continuation=next_regime_to_continuation,
+                    flat_params=_with_outer_post_decision(
+                        flat_params=flat_params,
+                        regime_name=self.regime_name,
+                        outer_post_decision=self.outer_post_decision,
+                        value=node,
+                    ),
+                    period=period,
+                    ages=ages,
+                    logger=logger,
+                )
+                for node in nodes[chunk_start : chunk_start + chunk_size]
+            ]
+            for adjuster_result in chunk_results:
+                V_arr = jnp.fmax(V_arr, adjuster_result.value)
+                adjuster_carries.append(
+                    cast("EGMCarry", adjuster_result.continuations[EGM_CONTINUATION])
+                )
+                adjuster_results.append(adjuster_result)
+            V_arr, _ = jax.block_until_ready((V_arr, adjuster_carries[chunk_start:]))
+
+        from _lcm.egm.outer_envelope import stack_candidate_carries  # noqa: PLC0415
+
+        carry = stack_candidate_carries(
+            candidates=(keeper_carry, *adjuster_carries),
+            nan_is_infeasible=True,
+        )
+        if not retain_replay:
+            return KernelOutput(value=V_arr, continuations={EGM_CONTINUATION: carry})
+        return KernelOutput(
+            value=V_arr,
+            continuations={EGM_CONTINUATION: carry},
+            replay={
+                SIMULATION_POLICY: self._finite_replay_policy(
+                    replay_capability=replay_capability,
+                    keeper_result=keeper_result,
+                    adjuster_results=adjuster_results,
+                    state_action_space=state_action_space,
+                    flat_params=flat_params,
+                    period=period,
+                    ages=ages,
+                    logger=logger,
+                )
+            },
+        )
+
+    def _finite_replay_policy(
+        self,
+        *,
+        replay_capability: OuterReplayCapability,
+        keeper_result: KernelOutput,
+        adjuster_results: list[KernelOutput],
+        state_action_space: StateActionSpace,
+        flat_params: FlatParams,
+        period: int,
+        ages: AgeGrid,
+        logger: logging.Logger,
+    ) -> NNBEGMSimPolicy:
+        """Assemble the finite candidate banks the nested replay ranks."""
+        keeper_policy = cast(
+            "NBEGMGridPolicy", keeper_result.replay.get(SIMULATION_POLICY)
+        )
+        discrete_action_names = keeper_policy.discrete_action_names
+        branch_codes = keeper_policy.branch_discrete_actions
+        keeper_inner, keeper_values = _conditional_nnbegm_banks(
+            policy=keeper_policy,
+            collapsed_value=jnp.asarray(keeper_result.value),
+            state_names=keeper_policy.state_names,
+            discrete_action_names=discrete_action_names,
+            branch_codes=branch_codes,
+        )
+        candidate_inner_by_outer = [keeper_inner]
+        candidate_value_by_outer = [keeper_values]
+        for adjuster_result in adjuster_results:
+            adjuster_policy = cast(
+                "NBEGMGridPolicy", adjuster_result.replay.get(SIMULATION_POLICY)
+            )
+            adjuster_inner, adjuster_values = _conditional_nnbegm_banks(
+                policy=adjuster_policy,
+                collapsed_value=jnp.asarray(adjuster_result.value),
+                state_names=keeper_policy.state_names,
+                discrete_action_names=discrete_action_names,
+                branch_codes=branch_codes,
+            )
+            candidate_inner_by_outer.append(adjuster_inner)
+            candidate_value_by_outer.append(adjuster_values)
+        n_outer_candidates = len(candidate_inner_by_outer)
+        n_discrete_branches = int(candidate_inner_by_outer[0].shape[0])
+        state_shape = candidate_inner_by_outer[0].shape[1:]
+        candidate_inner_action = jnp.stack(candidate_inner_by_outer).reshape(
+            n_outer_candidates * n_discrete_branches, *state_shape
+        )
+        candidate_value = jnp.stack(candidate_value_by_outer).reshape(
+            n_outer_candidates * n_discrete_branches, *state_shape
+        )
+        if discrete_action_names:
+            candidate_discrete_actions = jnp.tile(
+                cast("IntND", branch_codes), (n_outer_candidates, 1)
+            )
+        else:
+            candidate_discrete_actions = None
+        candidate_outer_target = self._candidate_outer_targets(
+            outer_inverse=replay_capability.inverse,
+            candidate_inner_action=candidate_inner_action,
+            candidate_discrete_actions=candidate_discrete_actions,
+            discrete_action_names=discrete_action_names,
+            n_discrete_branches=n_discrete_branches,
+            state_action_space=state_action_space,
+            flat_params=flat_params,
+            period=period,
+            ages=ages,
+            state_names=keeper_policy.state_names,
+            logger=logger,
+        )
+        return NNBEGMSimPolicy(
+            candidate_inner_action=candidate_inner_action,
+            candidate_outer_target=candidate_outer_target,
+            candidate_value=candidate_value,
+            outer_grid_values=self.outer_grid_values,
+            candidate_discrete_actions=candidate_discrete_actions,
+            discrete_action_names=discrete_action_names,
+            state_names=keeper_policy.state_names,
+            inner_action_name=self.inner_action,
+            outer_action_name=self.outer_action,
+            n_keeper_candidates=n_discrete_branches,
+            replay_capability=replay_capability,
+        )
+
+
+@dataclass(frozen=True, kw_only=True)
+class _AdaptiveNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
+    """The nested kernel of an adaptive outer mesh: continuous collapse."""
+
+    outer_search: AdaptiveOuterMesh
+    """The adaptive mesh search whose refinement and collapse settings apply."""
+
+    def _solve_outer(
+        self,
+        *,
+        replay_capability: OuterReplayCapability,
+        keeper_result: KernelOutput,
+        retain_replay: bool,
+        compiled_cores: Mapping[str, Callable],
+        state_action_space: StateActionSpace,
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
+        next_regime_to_continuation: Mapping[RegimeName, ContinuationPayload],
+        flat_params: FlatParams,
+        period: int,
+        ages: AgeGrid,
+        logger: logging.Logger,
+    ) -> KernelOutput:
+        """Adaptively refine the shared outer mesh, then collapse continuously.
+
+        The mesh driver's exact-solve callback runs the adjuster's inner
+        solve per requested node (chunked by the strategy's `batch_size`)
+        and caches every `OuterCandidateResult` by node value, so the final
+        bank reuses the refinement solves instead of re-solving. The keeper
+        stays a separate exact branch throughout; its `sim_policy` rides
+        through unchanged until the continuous simulation reader lands.
+
+        The search itself never inverts the declared outer map; the payload it
+        publishes is replayed by a reader that does, so the settled replay
+        capability gates publication rather than the search.
+        """
+        config = self.outer_search
+        adjuster_cores = _subcores(compiled_cores=compiled_cores, role="adjuster")
+        cache: dict[float, OuterCandidateResult] = {}
+
+        def solve_nodes(nodes_arr: Float1D) -> FloatND:
+            requested = [float(node) for node in np.asarray(nodes_arr)]
+            pending = [node for node in requested if node not in cache]
+            chunk_size = config.batch_size or max(len(pending), 1)
+            for chunk_start in range(0, len(pending), chunk_size):
+                chunk = pending[chunk_start : chunk_start + chunk_size]
+                chunk_results = [
+                    self._solve_adjuster_node(
+                        node=jnp.asarray(node),
+                        adjuster_cores=adjuster_cores,
+                        state_action_space=state_action_space,
+                        next_regime_to_V_arr=next_regime_to_V_arr,
+                        next_regime_to_continuation=next_regime_to_continuation,
+                        flat_params=flat_params,
+                        period=period,
+                        ages=ages,
+                        logger=logger,
+                    )
+                    for node in chunk
+                ]
+                jax.block_until_ready(
+                    [(result.V_arr, result.carry) for result in chunk_results]
+                )
+                cache.update(zip(chunk, chunk_results, strict=True))
+            return jnp.stack([cache[node].V_arr for node in requested])
+
+        mesh = refine_outer_mesh(
+            initial_nodes=self.outer_grid_values,
+            solve_at=solve_nodes,
+            config=config,
+            fail_closed=config.fail_closed,
+        )
+        mesh_nodes_host = np.asarray(mesh.nodes)
+        bank = build_outer_candidate_bank(
+            outer_nodes=mesh.nodes,
+            results=[cache[float(node)] for node in mesh_nodes_host],
+        )
+        if self.branch_fixed_cost is None:
+            fixed_cost_scale = None
+            fixed_cost_support = None
+        else:
+            fixed_cost_scale = _resolve_branch_scale(
+                scale_function=self.branch_scale_function,
+                regime_params=flat_params[self.regime_name],
+                period=period,
+                ages=ages,
+            )
+            fixed_cost_support = (
+                self.branch_fixed_cost.lower,
+                self.branch_fixed_cost.upper,
+            )
+        keeper_carry = cast("EGMCarry", keeper_result.continuations[EGM_CONTINUATION])
+        collapse = collapse_continuous_candidate_bank(
+            keeper_v_arr=jnp.asarray(keeper_result.value),
+            keeper_carry=keeper_carry,
+            bank=bank,
+            config=config,
+            fixed_cost_scale=fixed_cost_scale,
+            fixed_cost_support=fixed_cost_support,
+        )
+        # Derive both branches' inner simulation policies, only when the solve
+        # retains replay artifacts. An NB-EGM inner publishes no `EGMSimPolicy`
+        # of its own; on the smooth v1 scope its unrefined carry rows determine
+        # the policy exactly (`consumption = resources - savings` node by node),
+        # so derive both sides from the carries and fail closed (no nested
+        # payload, grid simulation unchanged) whenever the rows are not
+        # derivation-safe.
+        keeper_policy = None
+        adjuster_policies = None
+        if retain_replay:
+            keeper_published = keeper_result.replay.get(SIMULATION_POLICY)
+            keeper_policy = (
+                keeper_published
+                if isinstance(keeper_published, EGMSimPolicy)
+                else derive_inner_sim_policy(
+                    carry=keeper_carry,
+                    state_grid_values=self.liquid_grid_values,
+                    row_discrete_state_names=self.row_discrete_state_names,
+                    row_passive_state_names=self.row_passive_state_names,
+                )
+            )
+            adjuster_policies = (
+                bank.sim_policy
+                if bank.sim_policy is not None
+                else derive_inner_sim_policy(
+                    carry=bank.carry,
+                    state_grid_values=self.liquid_grid_values,
+                    row_discrete_state_names=self.row_discrete_state_names,
+                    row_passive_state_names=self.row_passive_state_names,
+                    extra_leading_axes=1,
+                )
+            )
+        # Publish the nested payload only when both inner policies are
+        # derivation-safe AND the branch is a deterministic hard maximum AND the
+        # inner solve makes no discrete choice: the continuous reader replays
+        # keeper vs adjuster off-grid from exactly these conditional ingredients.
+        # Under a fixed-cost aggregation the realized branch depends on the drawn
+        # cost, and an inner DISCRETE action's winning branch is collapsed out of
+        # the published carry rows — the reader cannot replay
+        # either, so simulation falls back to the grid argmax, which is precisely
+        # what `policy_fallback_mask` reports (so the mask is set from this same
+        # condition rather than hard-coded). A values-only solve publishes no
+        # payload either, and the mask reports that fallback the same way.
+        nested_published = (
+            keeper_policy is not None
+            and adjuster_policies is not None
+            and self.branch_fixed_cost is None
+            and not self.inner_discrete_action_names
+        )
+        diagnostics = SolverDiagnostics(
+            max_outer_interpolation_error=jnp.asarray(mesh.max_validation_error),
+            max_outer_bracket_width=jnp.max(collapse.value_search.bracket_width),
+            outer_nodes_used=jnp.asarray(bank.n_candidates, dtype=jnp.int32),
+            outer_at_lower_bound=collapse.value_search.at_lower_bound,
+            outer_at_upper_bound=collapse.value_search.at_upper_bound,
+            keeper_adjuster_margin=collapse.keeper_adjuster_margin,
+            best_second_best_margin=collapse.best_second_best_margin,
+            policy_fallback_mask=jnp.asarray(not nested_published),
+            unresolved_mask=jnp.asarray(mesh.unresolved),
+            n_outer_all_invalid_cells=jnp.asarray(
+                mesh.n_cells_all_invalid, dtype=jnp.int32
+            ),
+            adjustment_probability=collapse.adjustment_probability,
+        )
+        sim_policy: SimulationPolicy | None = None
+        if nested_published:
+            # Only a regime that actually publishes reaches the refusal. A
+            # regime whose inner solve makes a discrete choice never gets here:
+            # `nested_published` is already false for it, so the capability's
+            # discrete-action verdict has nothing to stop.
+            fail_if_continuous_outer_replay_is_unsupported(
+                capability=replay_capability,
+                regime_name=self.regime_name,
+                outer_action_name=self.outer_action,
+            )
+            sim_policy = NestedEGMSimPolicy(
+                keeper=keeper_policy,
+                adjuster=OuterPolicyBank(
+                    outer_nodes=mesh.nodes,
+                    policies=adjuster_policies,
+                ),
+                outer_action_name=self.outer_action,
+                outer_state_name=self.outer_state_name,
+                outer_post_decision_name=self.outer_post_decision,
+                inner_action_name=self.inner_action,
+                liquid_state_name=self.liquid_state_name,
+                outer_no_adjustment_name=self.outer_no_adjustment_name,
+                resources_target_name=self.resources_target,
+                savings_lower_bound=self.savings_lower_bound,
+                golden_iterations=config.golden_iterations,
+                replay_capability=replay_capability,
+                value_atol=config.value_atol,
+                value_rtol=config.value_rtol,
+            )
+        auxiliary: dict[ArtifactKey, object] = {SOLVER_DIAGNOSTICS: diagnostics}
+        replay: dict[ArtifactKey, object] = {}
+        if sim_policy is not None:
+            replay[SIMULATION_POLICY] = sim_policy
+            auxiliary[GENERATED_REPLAY_AUTHORITY] = GeneratedReplayAuthority(
+                adaptive_outer_nodes=tuple(float(node) for node in mesh_nodes_host)
+            )
+        return KernelOutput(
+            value=collapse.V_arr,
+            continuations={EGM_CONTINUATION: collapse.carry},
+            replay=replay,
+            auxiliary=auxiliary,
+        )
 
 
 def derive_nnbegm_replay_capability(
@@ -2037,6 +2136,25 @@ def _resolve_branch_scale(
         else:
             kwargs[name] = regime_params[name]
     return jnp.asarray(scale_function(**kwargs))
+
+
+def _ride_along_inner_kernel(
+    *, kernel: PeriodKernel, role: str
+) -> _RideAlongNBEGMPeriodKernel:
+    """Return the inner kernel as the ride-along NB-EGM kernel it must be.
+
+    The nested composite calls its inner kernels directly and republishes their
+    program graphs, so it requires the concrete ride-along kernel rather than
+    the abstract period-kernel protocol. The outer state is a ride-along state
+    of every inner solve, so any other kernel is a wiring defect.
+    """
+    if not isinstance(kernel, _RideAlongNBEGMPeriodKernel):
+        msg = (
+            f"NNBEGM's {role} inner kernel must be a ride-along NB-EGM period "
+            f"kernel; got {type(kernel).__name__}."
+        )
+        raise TypeError(msg)
+    return kernel
 
 
 def _fail_if_inner_is_not_nbegm(inner: object) -> None:

@@ -10,8 +10,7 @@ Fixed distributed states co-map ordinary continuation leaves with the streamed s
 cell. Singleton folded-state routes stream actions before
 the unchanged quadrature reduction; the fold axis itself remains materialized. Co-map
 routes with separate same-period or edge-reference value channels retain the dense
-kernel. The adapter
-assembles the resulting `KernelResult` outside JIT.
+kernel. The adapter assembles the resulting `KernelOutput` outside JIT.
 
 The max-Q kernel-building imports are function-local so
 the public `lcm.solvers` façade stays a thin re-export that pulls in no
@@ -62,7 +61,6 @@ from _lcm.solution.action_reduction import HARD_MAX_REDUCTION
 from _lcm.solution.contract import (
     ConstraintRouteContext,
     ContinuationPayload,
-    KernelResult,
     PeriodKernel,
     SolutionKernels,
     Solver,
@@ -76,6 +74,8 @@ from _lcm.typing import (
     StateName,
 )
 from lcm.ages import AgeGrid
+from lcm.solver_api import DISSOLUTION_FLAG as DISSOLUTION_FLAG_ARTIFACT
+from lcm.solver_api import KernelOutput
 from lcm.typing import (
     FloatND,
 )
@@ -644,8 +644,8 @@ class _GridSearchPeriodKernel:
         logger: logging.Logger,  # noqa: ARG002
         same_period_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
         edge_regime_to_V_arr: Mapping[RegimeName, FloatND] | None = None,
-    ) -> KernelResult:
-        """Evaluate the grid search and assemble the `KernelResult`.
+    ) -> KernelOutput:
+        """Evaluate the grid search and assemble the `KernelOutput`.
 
         `same_period_regime_to_V_arr` is passed by the solve loop only for a
         regime declaring `same_period_refs`; `edge_regime_to_V_arr` only for
@@ -680,5 +680,8 @@ class _GridSearchPeriodKernel:
         out = compiled_cores["main"](**arguments)
         if program.output_roles == (VALUE, DISSOLUTION_FLAG):
             V_arr, dissolution = out
-            return KernelResult(V_arr=V_arr, dissolution=dissolution)
-        return KernelResult(V_arr=out)
+            return KernelOutput(
+                value=V_arr,
+                solve_time_artifacts={DISSOLUTION_FLAG_ARTIFACT: dissolution},
+            )
+        return KernelOutput(value=out)

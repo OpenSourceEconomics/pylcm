@@ -1,7 +1,6 @@
 """Tests for logical-output layout planning."""
 
 import functools
-from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import cast
 
@@ -10,22 +9,28 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.egm.carry import EGMCarry
 from _lcm.execution.core_program import (
     CoreExecutionDisposition,
     CoreExecutionRequirements,
     CoreProgram,
-    core_program_graph,
 )
 from _lcm.execution.output_layout import (
     DISSOLUTION_FLAG,
-    UNPLANNED,
     VALUE,
+    PlannedCore,
     ResolvedOutputLayout,
+    StateAxesLeading,
     assert_output_layout,
+    assert_value_leaf_layout,
     resolve_output_layout,
 )
 from _lcm.regime_building.processing import _TerminalCarryPeriodKernel
-from _lcm.solution.backward_induction import _lowering_key, _publish_kernel_value
+from _lcm.solution.backward_induction import (
+    _assert_lowered_output_roles,
+    _lowering_key,
+    _publish_kernel_value,
+)
 
 
 @dataclass(frozen=True)
@@ -34,23 +39,6 @@ class _GraphKernel:
 
     def core_programs(self):
         return {"main": self.program}
-
-
-def _legacy_core() -> None:
-    """Stand in for an unmigrated solver core."""
-
-
-class _LegacyKernel:
-    """Publish only the interface consumed by the central legacy adapter."""
-
-    def cores(self) -> Mapping[str, Callable[..., object]]:
-        return {"main": _legacy_core}
-
-    def build_lower_args(
-        self, *, core_key: str, **_context: object
-    ) -> Mapping[str, object]:
-        assert core_key == "main"
-        return {}
 
 
 def _mesh() -> jax.sharding.Mesh:
@@ -80,8 +68,8 @@ def test_resolver_maps_singleton_value_to_exact_template_sharding():
     assert resolved.out_shardings == template.sharding
     assert resolved.expected_value_shape == template.shape
     assert resolved.expected_value_dtype == template.dtype
-    assert resolved.expected_dissolution_shape is None
-    assert resolved.expected_dissolution_dtype is None
+    assert tuple(leaf.label for leaf in resolved.expected_leaves) == ("value",)
+    assert resolved.expected_leaves[0].shape == template.shape
 
 
 def test_resolver_drops_collective_stakeholder_axis_from_dissolution_spec():
@@ -103,8 +91,8 @@ def test_resolver_drops_collective_stakeholder_axis_from_dissolution_spec():
     assert dissolution_sharding.spec == jax.P("kind", None)
     assert resolved.expected_value_shape == template.shape
     assert resolved.expected_value_dtype == template.dtype
-    assert resolved.expected_dissolution_shape == template.shape[:-1]
-    assert resolved.expected_dissolution_dtype == jnp.bool_
+    assert resolved.expected_leaves[1].shape == template.shape[:-1]
+    assert resolved.expected_leaves[1].dtype == jnp.bool_
 
 
 def test_collective_template_may_omit_replicated_stakeholder_spec_entry():
@@ -170,7 +158,7 @@ def test_terminal_carry_decorator_rejects_unaware_base():
     [DISSOLUTION_FLAG, (VALUE, VALUE), (DISSOLUTION_FLAG, VALUE)],
 )
 def test_resolver_rejects_malformed_role_trees(roles):
-    with pytest.raises(ValueError, match="exactly VALUE"):
+    with pytest.raises(ValueError, match="exactly one VALUE"):
         resolve_output_layout(
             core_key="main",
             value_template=_template(collective=True),
@@ -241,9 +229,9 @@ def test_lowering_key_tracks_positional_partial_bindings() -> None:
     equivalent = functools.partial(core, policy)
     different = functools.partial(core, object())
 
-    first_key = _lowering_key(func=first, layout_key=UNPLANNED)
-    equivalent_key = _lowering_key(func=equivalent, layout_key=UNPLANNED)
-    different_key = _lowering_key(func=different, layout_key=UNPLANNED)
+    first_key = _lowering_key(func=first, layout_key=("layout",))
+    equivalent_key = _lowering_key(func=equivalent, layout_key=("layout",))
+    different_key = _lowering_key(func=different, layout_key=("layout",))
 
     assert first_key == equivalent_key
     assert first_key != different_key
@@ -369,21 +357,218 @@ def test_assert_output_layout_rejects_malformed_dissolution(dissolution):
         assert_output_layout(output=(template, dissolution), layout=resolved)
 
 
-def test_unplanned_legacy_kernel_retains_publication_repair():
+def test_published_value_placement_is_asserted_not_repaired():
+    """A value leaving a compiled core off its planned placement is refused."""
     template = _template()
     replicated = jax.device_put(
         jnp.zeros(template.shape),
         jax.NamedSharding(mesh=_mesh(), spec=jax.P()),
     )
+    layout = resolve_output_layout(
+        core_key="main",
+        value_template=template,
+        state_order=("kind", "wealth"),
+        output_roles=VALUE,
+    )
+    core = PlannedCore(compiled=lambda **_kwargs: replicated, layout=layout)
 
-    graph = core_program_graph(kernel=_LegacyKernel())
-    assert graph["main"].disposition is CoreExecutionDisposition.LEGACY_UNPLANNED
+    with pytest.raises(AssertionError, match="sharding"):
+        _publish_kernel_value(value=replicated, compiled_cores={"main": core})
 
-    published = _publish_kernel_value(
-        value=replicated,
-        dissolution=None,
-        template=template,
-        compiled_cores={"main": graph["main"].function},
+
+def test_the_loop_publishes_values_only_through_planned_cores():
+    """A compiled core without a resolved layout cannot publish a value."""
+    template = _template()
+
+    with pytest.raises(TypeError, match="PlannedCore"):
+        _publish_kernel_value(
+            value=template, compiled_cores={"main": lambda **_kwargs: template}
+        )
+
+
+def _state_axes_roles():
+    return (
+        VALUE,
+        StateAxesLeading(state_names=("kind",)),
+        StateAxesLeading(state_names=("wealth", "kind"), n_free_leading_axes=1),
+        StateAxesLeading(state_names=()),
     )
 
-    assert published.sharding == template.sharding
+
+def test_state_axes_leading_role_places_named_state_prefix_and_replicates_the_rest():
+    template = _template()
+
+    resolved = resolve_output_layout(
+        core_key="main",
+        value_template=template,
+        state_order=("kind", "wealth"),
+        output_roles=_state_axes_roles(),
+    )
+
+    mesh = template.sharding.mesh
+    assert resolved.out_shardings == (
+        template.sharding,
+        jax.NamedSharding(mesh=mesh, spec=jax.P("kind")),
+        jax.NamedSharding(mesh=mesh, spec=jax.P(None, None, "kind")),
+        jax.NamedSharding(mesh=mesh, spec=jax.P()),
+    )
+    assert tuple(leaf.shape for leaf in resolved.expected_leaves) == (
+        template.shape,
+        None,
+        None,
+        None,
+    )
+
+
+def _carry_roles():
+    """Role tree shaped like a published carry; `None` marks rows it does not carry."""
+    _, carry = _carry_core(value=_template())
+    roles = [
+        StateAxesLeading(state_names=("kind",)),
+        StateAxesLeading(state_names=("kind",)),
+        StateAxesLeading(state_names=("kind",)),
+        StateAxesLeading(state_names=(), shape=()),
+    ]
+    return (VALUE, jax.tree.unflatten(jax.tree.structure(carry), roles))
+
+
+def _carry_core(*, value):
+    rows = jnp.zeros((value.shape[0], 4), dtype=value.dtype)
+    return (
+        value,
+        EGMCarry(
+            endog_grid=rows,
+            value=rows,
+            marginal_utility=rows,
+            taste_shock_scale=jnp.zeros((), dtype=value.dtype),
+            breakpoints=None,
+            policy=None,
+        ),
+    )
+
+
+def test_a_registered_pytree_of_roles_with_none_leaves_resolves_lowers_and_runs():
+    """A carry publishes as its own pytree; `None` marks the rows it does not carry."""
+    template = _template()
+    resolved = resolve_output_layout(
+        core_key="main",
+        value_template=template,
+        state_order=("kind", "wealth"),
+        output_roles=_carry_roles(),
+    )
+
+    _, carry_shardings = cast("tuple[object, EGMCarry]", resolved.out_shardings)
+    assert isinstance(carry_shardings, EGMCarry)
+    assert carry_shardings.breakpoints is None
+    assert carry_shardings.policy is None
+    assert carry_shardings.taste_shock_scale == jax.NamedSharding(
+        mesh=template.sharding.mesh, spec=jax.P()
+    )
+    assert tuple(leaf.label for leaf in resolved.expected_leaves) == (
+        "value",
+        "leaf [1].endog_grid",
+        "leaf [1].value",
+        "leaf [1].marginal_utility",
+        "leaf [1].taste_shock_scale",
+    )
+
+    jitted = jax.jit(_carry_core, out_shardings=resolved.out_shardings)
+    lowered = jitted.lower(value=template)
+    _assert_lowered_output_roles(
+        lowered=lowered,
+        output_roles=_carry_roles(),
+        layout=resolved,
+        label="carry core",
+    )
+    output = jitted(value=template)
+    assert_output_layout(output=output, layout=resolved)
+
+
+def test_lowered_leaf_metadata_mismatch_names_the_offending_leaf():
+    template = _template()
+    roles = (VALUE, StateAxesLeading(state_names=("kind",), dtype=jnp.int32))
+    resolved = resolve_output_layout(
+        core_key="main",
+        value_template=template,
+        state_order=("kind", "wealth"),
+        output_roles=roles,
+    )
+
+    lowered = jax.jit(
+        lambda value: (value, value), out_shardings=resolved.out_shardings
+    ).lower(template)
+
+    with pytest.raises(TypeError, match=r"leaf \[1\] output dtype mismatch"):
+        _assert_lowered_output_roles(
+            lowered=lowered,
+            output_roles=roles,
+            layout=resolved,
+            label="carry core",
+        )
+
+
+@pytest.mark.parametrize(
+    "roles",
+    [
+        (StateAxesLeading(state_names=("kind",)), VALUE),
+        (VALUE, VALUE),
+        StateAxesLeading(state_names=("kind",)),
+    ],
+)
+def test_resolver_requires_exactly_one_value_leaf_in_the_first_position(roles):
+    with pytest.raises(ValueError, match="exactly one VALUE"):
+        resolve_output_layout(
+            core_key="main",
+            value_template=_template(),
+            state_order=("kind", "wealth"),
+            output_roles=roles,
+        )
+
+
+def test_resolver_rejects_a_state_axes_leading_role_naming_an_unknown_state():
+    with pytest.raises(ValueError, match="outside"):
+        resolve_output_layout(
+            core_key="main",
+            value_template=_template(),
+            state_order=("kind", "wealth"),
+            output_roles=(VALUE, StateAxesLeading(state_names=("health",))),
+        )
+
+
+def test_compilation_key_tracks_declared_leaf_metadata():
+    def resolve(role):
+        return resolve_output_layout(
+            core_key="main",
+            value_template=_template(),
+            state_order=("kind", "wealth"),
+            output_roles=(VALUE, role),
+        )
+
+    untyped = resolve(StateAxesLeading(state_names=("kind",)))
+    typed = resolve(StateAxesLeading(state_names=("kind",), dtype=jnp.int32))
+    shaped = resolve(StateAxesLeading(state_names=("kind",), shape=(2, 3)))
+
+    assert untyped.compilation_key != typed.compilation_key
+    assert untyped.compilation_key != shaped.compilation_key
+    assert (
+        resolve(StateAxesLeading(state_names=("kind",))).compilation_key
+        == untyped.compilation_key
+    )
+
+
+def test_assert_value_leaf_layout_checks_only_the_value_leaf():
+    template = _template()
+    resolved = resolve_output_layout(
+        core_key="main",
+        value_template=template,
+        state_order=("kind", "wealth"),
+        output_roles=(VALUE, StateAxesLeading(state_names=("kind",))),
+    )
+
+    assert_value_leaf_layout(value=template, layout=resolved)
+    replicated = jax.device_put(
+        jnp.zeros(template.shape),
+        jax.NamedSharding(mesh=_mesh(), spec=jax.P()),
+    )
+    with pytest.raises(AssertionError, match="output sharding"):
+        assert_value_leaf_layout(value=replicated, layout=resolved)

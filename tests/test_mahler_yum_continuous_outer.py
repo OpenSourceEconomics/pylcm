@@ -20,10 +20,16 @@ they are meant to test.
 """
 
 import inspect
+from typing import TYPE_CHECKING, cast
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+
+from lcm.solver_api import SOLVER_DIAGNOSTICS
+
+if TYPE_CHECKING:
+    from _lcm.solution.solver_diagnostics import SolverDiagnostics
 import pytest
 
 import _lcm.solution.nnbegm as _solvers
@@ -210,7 +216,7 @@ def _solve_and_capture(mesh: AdaptiveOuterMesh) -> dict:
     def capturing_keeper(self, **kw):
         result = original_keeper(self, **kw)
         if kw["period"] == _CAPTURE_PERIOD:
-            captured["keeper_V"] = np.asarray(result.V_arr)
+            captured["keeper_V"] = np.asarray(result.value)
         return result
 
     def capturing_collapse(**kw):
@@ -224,9 +230,10 @@ def _solve_and_capture(mesh: AdaptiveOuterMesh) -> dict:
     def capturing_call(self, **kw):
         result = original_call(self, **kw)
         if kw["period"] == _CAPTURE_PERIOD:
-            captured["V"] = np.asarray(result.V_arr)
-            diagnostics = result.diagnostics
-            assert diagnostics is not None
+            captured["V"] = np.asarray(result.value)
+            diagnostics = cast(
+                "SolverDiagnostics", result.auxiliary[SOLVER_DIAGNOSTICS]
+            )
             assert diagnostics.adjustment_probability is not None
             captured["p_adjust"] = np.asarray(diagnostics.adjustment_probability)
             raise _StopAfterCaptureError

@@ -309,6 +309,14 @@ def _safe_stem(label: str) -> str:
     return stem[:100] or "core"
 
 
+def _grid_extent(grid: Any) -> int:
+    """Return a grid width without requiring runtime-supplied points."""
+    n_points = getattr(grid, "n_points", None)
+    if n_points is not None:
+        return int(n_points)
+    return int(grid.to_jax().shape[0])
+
+
 def _kernel_execution_metadata(kernel: Any) -> dict[str, Any]:
     """Describe one kernel through its native graph or the historical declaration."""
     graph_provider = getattr(kernel, "core_programs", None)
@@ -346,7 +354,7 @@ def _route_metadata(model: Any) -> dict[str, Any]:
         fold_names = tuple(regime.fold_state_names)
         action_names = tuple(regime.solution.action_names)
         action_extents = tuple(
-            int(regime.solution.grids[name].to_jax().shape[0]) for name in action_names
+            _grid_extent(regime.solution.grids[name]) for name in action_names
         )
         collective = regime.stakeholders is not None
         has_taste_shocks = bool(regime.has_taste_shocks)
@@ -395,7 +403,7 @@ def _scenario_dimensions(model: Any) -> dict[str, Any]:
             regime_name: {
                 "active_periods": [int(period) for period in regime.active_periods],
                 "solution_grid_extents": {
-                    name: int(grid.to_jax().shape[0])
+                    name: _grid_extent(grid)
                     for name, grid in regime.solution.grids.items()
                 },
             }
@@ -405,33 +413,72 @@ def _scenario_dimensions(model: Any) -> dict[str, Any]:
 
 
 def _assert_scenario_identity(*, spec: Any, routes: Mapping[str, Any]) -> None:
-    has_fold = bool(routes["folded_regimes"])
-    has_collective = bool(routes["collective_regimes"])
-    has_distributed = bool(routes["distributed_regimes"])
-    has_taste_shocks = bool(routes["taste_shock_regimes"])
-    has_gs_vd = bool(routes["gs_vd_regimes"])
-    if has_fold != spec.expected_folded:
-        raise RuntimeError("Folded-route identity does not match its scenario spec.")
-    if has_collective != spec.expected_collective:
+    observed = {
+        "folded": bool(routes["folded_regimes"]),
+        "collective": bool(routes["collective_regimes"]),
+        "distributed": bool(routes["distributed_regimes"]),
+        "taste_shocks": bool(routes["taste_shock_regimes"]),
+        "gs_vd": bool(routes["gs_vd_regimes"]),
+    }
+    expected = {
+        "folded": spec.expected_folded,
+        "collective": spec.expected_collective,
+        "distributed": spec.expected_distributed,
+        "taste_shocks": spec.expected_taste_shocks,
+        "gs_vd": spec.expected_gs_vd,
+    }
+    if observed != expected:
         raise RuntimeError(
-            "Collective-route identity does not match its scenario spec."
+            f"Scenario {spec.name!r} route identity differs: "
+            f"observed {observed!r}, expected {expected!r}."
         )
-    if has_distributed != spec.expected_distributed:
+
+
+def _executed_float_dtype(
+    *, precision: str, jax: Any, arrays: Mapping[str, Any]
+) -> str:
+    """Return the float dtype the run executed at, failing on precision drift.
+
+    The requested precision is a command-line argument, but the executed one
+    is whatever `jax_enable_x64` holds once the workload has been imported and
+    built, and whatever dtype the published arrays carry. A workload that
+    reconfigures JAX on import turns a 32-bit request into a 64-bit run with no
+    error, so a row is rejected unless both agree with the request.
+
+    Args:
+        precision: The requested precision, `"32"` or `"64"`.
+        jax: The imported `jax` module, read for its x64 flag.
+        arrays: Published arrays keyed by name; floating ones must carry the
+            requested dtype. Pass an empty mapping to check the flag alone.
+
+    Returns:
+        The executed floating dtype name, `"float32"` or `"float64"`.
+
+    Raises:
+        RuntimeError: The x64 flag or a floating array disagrees with the
+            request.
+    """
+    import numpy as np
+
+    expected = "float64" if precision == "64" else "float32"
+    enable_x64 = bool(jax.config.read("jax_enable_x64"))
+    if enable_x64 != (precision == "64"):
         raise RuntimeError(
-            "Distributed-route identity does not match its scenario spec."
+            f"Requested precision {precision} but jax_enable_x64={enable_x64} "
+            "after the workload was built; the workload reconfigured JAX."
         )
-    if spec.name == "singleton-ev1" and not has_taste_shocks:
-        raise RuntimeError("The singleton EV1 row contains no taste-shock regime.")
-    if spec.name != "singleton-ev1" and has_taste_shocks:
-        raise RuntimeError("A non-EV1 row unexpectedly contains taste shocks.")
-    if spec.name == "collective-gs-vd" and not has_gs_vd:
+    foreign = {
+        key: str(array.dtype)
+        for key, array in sorted(arrays.items())
+        if np.issubdtype(np.dtype(array.dtype), np.floating)
+        and str(array.dtype) != expected
+    }
+    if foreign:
         raise RuntimeError(
-            "The collective GS-VD row contains no value-dependent route."
+            f"Requested precision {precision} ({expected}) but published arrays "
+            f"carry other float dtypes: {foreign!r}."
         )
-    if spec.name != "collective-gs-vd" and has_gs_vd:
-        raise RuntimeError(
-            "A non-GS-VD row unexpectedly contains a value-dependent route."
-        )
+    return expected
 
 
 def _flatten_arrays(*, result: Any) -> dict[str, Any]:
@@ -652,6 +699,9 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0912, PLR0915
     import jaxlib
 
     jax.config.update("jax_enable_x64", args.precision == "64")
+    # A workload module may configure JAX itself on import; the ACA model reads
+    # this variable to decide x64, so the request is stated where it looks.
+    os.environ["ACA_JAX_ENABLE_X64"] = "1" if args.precision == "64" else "0"
     if spec.topology == "cpu-4":
         jax.config.update("jax_num_cpu_devices", 4)
         jax.config.update("jax_platform_name", "cpu")
@@ -680,6 +730,7 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0912, PLR0915
     build_started = time.perf_counter_ns()
     model, params = build_scenario(name=cast("Any", spec.name))
     build_wall_ns = time.perf_counter_ns() - build_started
+    _executed_float_dtype(precision=args.precision, jax=jax, arrays={})
     routes = _route_metadata(model)
     _assert_scenario_identity(spec=spec, routes=routes)
     dimensions = _scenario_dimensions(model)
@@ -766,6 +817,9 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0912, PLR0915
     if final_warm_result is None:
         raise RuntimeError("The worker produced no final warm result.")
     arrays = _flatten_arrays(result=final_warm_result)
+    executed_float_dtype = _executed_float_dtype(
+        precision=args.precision, jax=jax, arrays=arrays
+    )
     args.output.mkdir(parents=True)
     array_manifest = _write_arrays(
         path=args.output / "values.npz", arrays=arrays, jax=jax
@@ -827,6 +881,7 @@ def main(argv: list[str] | None = None) -> None:  # noqa: C901, PLR0912, PLR0915
             "project_root": str(Path(args.expected_pixi_project_root).resolve()),
         },
         "jax_enable_x64": bool(jax.config.read("jax_enable_x64")),
+        "executed_float_dtype": executed_float_dtype,
         "python": sys.version,
         "jax_version": jax.__version__,
         "jaxlib_version": jaxlib.__version__,

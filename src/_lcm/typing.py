@@ -112,12 +112,15 @@ type ParamsTemplate = MappingProxyType[RegimeName, RegimeParamsTemplate]
 
 # Type aliases for value function arrays
 type PeriodToRegimeToVArr = MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]
-# Sparse over regimes: the inner mapping carries an entry only for regimes
-# whose kernels publish a simulation policy. Regimes that publish none are
-# absent — callers must not assume the full regime keyset.
+# The payload classes the shipped replay routes declare. A regime's own
+# `SimulationPhase.replay_route` names which one it publishes and under which
+# `ReplayMode`; this alias only spells the union of those declarations.
 type SimulationPolicy = (
     EGMSimPolicy | NBEGMGridPolicy | NNBEGMSimPolicy | NestedEGMSimPolicy
 )
+# Sparse over regimes: the inner mapping carries an entry only for regimes
+# whose kernels publish a simulation policy. Regimes that publish none are
+# absent — callers must not assume the full regime keyset.
 type PeriodToRegimeToSimulationPolicy = MappingProxyType[
     int, MappingProxyType[RegimeName, SimulationPolicy]
 ]
@@ -275,11 +278,10 @@ class MaxQOverAFunction(Protocol):
 class EGMStepFunction(Protocol):
     """The per-period DC-EGM kernel for one regime.
 
-    Consumes the regime's exogenous state grids, the rolling value-function
-    and EGM-carry mappings, and the regime's flat params; returns the
-    regime's value-function array on the exogenous state grid, the carry its
-    parents interpolate, and the published consumption policy simulation
-    interpolates off-grid.
+    Consumes the regime's exogenous state grids, the rolling EGM-carry
+    mapping, and the regime's flat params; returns the regime's value-function
+    array on the exogenous state grid, the carry its parents interpolate, and
+    the published consumption policy simulation interpolates off-grid.
 
     Used for both type checking and beartype runtime checks.
 
@@ -288,7 +290,6 @@ class EGMStepFunction(Protocol):
     def __call__(
         self,
         *,
-        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
         next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
         **kwargs: Any,  # noqa: ANN401
     ) -> tuple[FloatND, EGMCarry, EGMSimPolicy]: ...

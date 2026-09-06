@@ -15,6 +15,12 @@ ScenarioName = Literal[
     "collective-gs-vd",
     "distributed-co-map",
     "folded-hard-max",
+    "aca-a3-c16",
+    "aca-a3-c64",
+    "aca-a3-c256",
+    "aca-a6-c16",
+    "aca-a6-c64",
+    "aca-a6-c256",
 ]
 
 
@@ -30,6 +36,10 @@ class ScenarioSpec:
     expected_distributed: bool = False
     expected_head_disposition: Literal["planned", "dense"] = "planned"
     expected_head_disposition_reason: str | None = None
+    expected_taste_shocks: bool = False
+    expected_gs_vd: bool = False
+    aca_assets_n_points: int | None = None
+    aca_consumption_n_points: int | None = None
 
 
 SCENARIOS = MappingProxyType(
@@ -47,6 +57,7 @@ SCENARIOS = MappingProxyType(
             expected_head_disposition_reason=(
                 "deliberately_dense:ev1_canonical_reduction_order"
             ),
+            expected_taste_shocks=True,
         ),
         "collective-gs-vd": ScenarioSpec(
             name="collective-gs-vd",
@@ -59,6 +70,7 @@ SCENARIOS = MappingProxyType(
             expected_head_disposition_reason=(
                 "deliberately_dense:collective_resource_regression"
             ),
+            expected_gs_vd=True,
         ),
         "distributed-co-map": ScenarioSpec(
             name="distributed-co-map",
@@ -74,6 +86,20 @@ SCENARIOS = MappingProxyType(
             topology="selected-backend",
             expected_folded=True,
         ),
+        **{
+            f"aca-a{assets}-c{consumption}": ScenarioSpec(
+                name=f"aca-a{assets}-c{consumption}",
+                description=(
+                    "Full 18-regime ACA baseline with "
+                    f"{assets} asset and {consumption} consumption points."
+                ),
+                topology="selected-backend",
+                aca_assets_n_points=assets,
+                aca_consumption_n_points=consumption,
+            )
+            for assets in (3, 6)
+            for consumption in (16, 64, 256)
+        },
     }
 )
 
@@ -102,6 +128,15 @@ EXTERNAL_HARNESS_SOURCES = (
 
 def build_scenario(*, name: ScenarioName) -> tuple[Any, dict[str, Any]]:
     """Build one workload after the worker has configured JAX."""
+    spec = SCENARIOS[name]
+    if spec.aca_assets_n_points is not None:
+        if spec.aca_consumption_n_points is None:
+            raise RuntimeError("ACA scenario omitted its consumption-grid width.")
+        return _build_aca_baseline(
+            assets_n_points=spec.aca_assets_n_points,
+            consumption_n_points=spec.aca_consumption_n_points,
+        )
+
     builders = {
         "singleton-hard-max": _build_singleton_hard_max,
         "singleton-ev1": _build_singleton_ev1,
@@ -110,6 +145,33 @@ def build_scenario(*, name: ScenarioName) -> tuple[Any, dict[str, Any]]:
         "folded-hard-max": _build_folded_hard_max,
     }
     return builders[name]()
+
+
+def _build_aca_baseline(
+    *, assets_n_points: int, consumption_n_points: int
+) -> tuple[Any, dict[str, Any]]:
+    from dataclasses import replace
+
+    import aca_model.benchmark as aca_benchmark
+    from aca_model.agent.preferences import BenchmarkPrefType
+
+    from lcm import DiscreteGrid
+
+    original_grid = aca_benchmark.BENCHMARK_GRID_CONFIG
+    aca_benchmark.BENCHMARK_GRID_CONFIG = replace(
+        original_grid,
+        n_assets_gridpoints=assets_n_points,
+        n_consumption_dollars_gridpoints=consumption_n_points,
+    )
+    try:
+        model = aca_benchmark.create_benchmark_model(
+            n_subjects=1,
+            pref_type_grid=DiscreteGrid(category_class=BenchmarkPrefType),
+        )
+    finally:
+        aca_benchmark.BENCHMARK_GRID_CONFIG = original_grid
+    params = aca_benchmark.get_benchmark_params(model=model)[2]
+    return model, params
 
 
 def _build_singleton_hard_max() -> tuple[Any, dict[str, Any]]:

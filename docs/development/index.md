@@ -17,6 +17,8 @@ here.
 - [Resource contract for collective and gated models](collective_resource_contract.md)
 - [Architecture transition ledger](architecture_transition_ledger.md)
 
-The public out-of-tree solver extension contract is not yet ready. See the honest
-[custom-solver stub](../reference/custom_solvers.md), not the internal implementation
-notes that used to be presented as a user extension guide.
+A solver can be written against the public names alone, and
+[Custom solvers](../reference/custom_solvers.md) is the guide to what one owes the
+engine. That page also states what still separates an importable surface from a
+supported plugin API, which is why it, rather than these implementation notes, is the
+reference for an out-of-tree author.

@@ -41,7 +41,7 @@ _INTERPOLANT = LocalCubicOuterInterpolant()
 
 @dataclass(frozen=True, kw_only=True)
 class ContinuousCollapse:
-    """Continuous collapse output — assembled into a `KernelResult` by the
+    """Continuous collapse output — assembled into a `KernelOutput` by the
     solver layer (the `egm` layer never imports `solution`)."""
 
     V_arr: FloatND

@@ -15,9 +15,7 @@ from jax import Array
 
 from _lcm.dtypes import canonical_float_dtype
 from _lcm.egm.carry import EGMCarry
-from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.outer_replay_capability import OuterReplayCapability
-from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
 from _lcm.engine import EGMPolicyRead, NNBEGMPolicyRead, Regime
 from _lcm.regime_building.gated_edges import (
     edge_may_fold_at_period,
@@ -105,31 +103,15 @@ def build_solution_authority(
             dtype=canonical_float,
             axis_names=_canonical_value_axis_names(regime=regime),
         )
+        # The regime's declared route is the sole source of what it publishes,
+        # under which reader, and whether a solve owes it — never the concrete
+        # payload class, which the authority describes rather than discovers.
         policy_read = regime.simulation.egm_policy_read
-        policy_type: type[object] | None
-        policy_applicable = False
-        policy_required = False
-        consumer_route: str | None = None
-        if isinstance(policy_read, EGMPolicyRead):
-            policy_type = EGMSimPolicy
-            policy_applicable = True
-            policy_required = True
-            consumer_route = "egm_off_grid"
-        elif isinstance(policy_read, NNBEGMPolicyRead):
-            policy_type = (
-                NestedEGMSimPolicy
-                if policy_read.replay_policy_is_nested
-                else NNBEGMSimPolicy
-            )
-            policy_applicable = policy_read.policy_applicable
-            policy_required = policy_read.policy_required
-            consumer_route = (
-                "nnbegm_nested"
-                if policy_read.replay_policy_is_nested
-                else "nnbegm_finite"
-            )
-        else:
-            policy_type = None
+        route = regime.simulation.replay_route
+        policy_type = route.payload_type
+        policy_applicable = route.policy_applicable
+        policy_required = route.policy_required
+        consumer_route = route.consumer_route
 
         flag_applicable = regime.stakeholders is not None
         flag_shape = value_descriptor.shape[:-1] if flag_applicable else None

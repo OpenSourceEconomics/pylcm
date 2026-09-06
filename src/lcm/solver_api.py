@@ -9,6 +9,7 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from types import MappingProxyType
+from typing import Protocol, runtime_checkable
 
 import numpy as np
 from jaxtyping import Float
@@ -65,6 +66,72 @@ DISSOLUTION_FLAG = ArtifactKey(
     type_id="pylcm.collective.dissolution_flag", schema_version=1
 )
 SOLVER_DIAGNOSTICS = ArtifactKey(type_id="pylcm.solver.diagnostics", schema_version=1)
+
+
+class ReplayMode(StrEnum):
+    """How a regime's simulation obtains each period's decision."""
+
+    EXACT_REPLAY = "exact_replay"
+    """The retained replay artifact names the decision the solve took;
+    simulation replays it and never runs the grid argmax."""
+
+    VALID_RECOMPUTATION = "valid_recomputation"
+    """Simulation recomputes the decision on the grid, refined by a published
+    read where the route declares one."""
+
+    UNSUPPORTED = "unsupported"
+    """The solve's decision cannot be reproduced in simulation, so simulating
+    the regime is refused."""
+
+
+@runtime_checkable
+class ReplayRoute(Protocol):
+    """How one regime's simulated decision is obtained, declared by the model.
+
+    Forward simulation and the pre-simulation payload check both dispatch on
+    this object rather than on the concrete payload class, so a regime that
+    retains no replay payload and one that retains an unfamiliar payload are
+    described in the same vocabulary.
+    """
+
+    @property
+    def replay_mode(self) -> ReplayMode:
+        """How the decision is obtained under this route."""
+        ...
+
+    @property
+    def payload_type(self) -> type[object] | None:
+        """Exact class of the retained payload, `None` when none is kept."""
+        ...
+
+    @property
+    def policy_applicable(self) -> bool:
+        """Whether this route structurally publishes a replay payload."""
+        ...
+
+    @property
+    def policy_required(self) -> bool:
+        """Whether every successful solve must retain that payload."""
+        ...
+
+    @property
+    def consumer_route(self) -> str | None:
+        """Name of the reader consuming the payload, `None` without one."""
+        ...
+
+
+@runtime_checkable
+class ContinuationArtifact(Protocol):
+    """A payload a period kernel publishes for the previous period's kernels.
+
+    The engine stores and rolls it opaquely under its `artifact_key`; only a
+    parent solver that declares the same key reads its fields.
+    """
+
+    @property
+    def artifact_key(self) -> ArtifactKey:
+        """Versioned identity of the payload's schema."""
+        ...
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -318,8 +385,11 @@ __all__ = [
     "ArtifactKey",
     "ArtifactRef",
     "ArtifactStore",
+    "ContinuationArtifact",
     "KernelOutput",
     "OmissionReason",
+    "ReplayMode",
+    "ReplayRoute",
     "ResultRetention",
     "SolutionMetadata",
     "SolutionResult",

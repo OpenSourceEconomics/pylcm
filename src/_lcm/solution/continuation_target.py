@@ -22,7 +22,7 @@ from lcm.exceptions import RegimeInitializationError
 from lcm.typing import Float1D, StateName
 
 
-def _period_to_continuation_target(
+def period_to_continuation_target(
     *, context: SolverBuildContext
 ) -> dict[int, RegimeName]:
     """Resolve each active period's single deterministic continuation target.
@@ -51,7 +51,7 @@ def _period_to_continuation_target(
     return result
 
 
-def _union_free_params(
+def union_free_params(
     *,
     flat_params: FlatParams,
     regime_name: RegimeName,
@@ -74,7 +74,7 @@ def _union_free_params(
     return params
 
 
-def _union_fixed_params(
+def union_fixed_params(
     *,
     fixed_flat_params: FlatParams,
     regime_name: RegimeName,

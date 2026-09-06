@@ -401,7 +401,7 @@ def _euler_inversion_functions(
     *, solver: Solver, analytic: bool
 ) -> dict[str, Callable]:
     """The closed-form `(u')^-1` entry a regime declares, if it needs one."""
-    if solver.requires_continuation and analytic:
+    if solver.required_continuation_keys and analytic:
         return {"inverse_marginal_utility": inverse_marginal_utility}
     return {}
 
