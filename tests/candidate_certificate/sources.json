@@ -14,7 +14,7 @@
           },
           {
             "path": "src/_lcm/execution/core_program.py",
-            "sha256": "14aa4ec940a19f3f8c2cd907be6a49e4252206d2b8bf06ec9617f45682853d06"
+            "sha256": "866d7136ee5d0f590d5216a7aeb3349f69c2d600dd3fbbb34b18f4c4042d3936"
           },
           {
             "path": "src/_lcm/execution/output_layout.py",
@@ -214,7 +214,7 @@
           }
         ],
         "source_count": 52,
-        "source_inventory_sha256": "6902d1bf770d0ba4e83d8458176b9fde9a0313a29655237be6eb4d2eb5cc3e73"
+        "source_inventory_sha256": "e49e0d6e07fe82d36bba3c08595520b5fcbca29b31ecee735435e3d38dd8fd3a"
       },
       "fast": {
         "candidate_sources": [
@@ -228,7 +228,7 @@
           },
           {
             "path": "src/_lcm/execution/core_program.py",
-            "sha256": "14aa4ec940a19f3f8c2cd907be6a49e4252206d2b8bf06ec9617f45682853d06"
+            "sha256": "866d7136ee5d0f590d5216a7aeb3349f69c2d600dd3fbbb34b18f4c4042d3936"
           },
           {
             "path": "src/_lcm/execution/output_layout.py",
@@ -428,13 +428,13 @@
           }
         ],
         "source_count": 52,
-        "source_inventory_sha256": "6902d1bf770d0ba4e83d8458176b9fde9a0313a29655237be6eb4d2eb5cc3e73"
+        "source_inventory_sha256": "e49e0d6e07fe82d36bba3c08595520b5fcbca29b31ecee735435e3d38dd8fd3a"
       }
     }
   },
   "generation_rule": "unique sorted literal _parse(<repo-relative path>) call arguments in the certificate AST",
   "schema_version": "1",
-  "source_inventory_sha256": "6902d1bf770d0ba4e83d8458176b9fde9a0313a29655237be6eb4d2eb5cc3e73",
+  "source_inventory_sha256": "e49e0d6e07fe82d36bba3c08595520b5fcbca29b31ecee735435e3d38dd8fd3a",
   "sources": [
     {
       "path": "src/_lcm/dtypes.py",
@@ -446,7 +446,7 @@
     },
     {
       "path": "src/_lcm/execution/core_program.py",
-      "sha256": "14aa4ec940a19f3f8c2cd907be6a49e4252206d2b8bf06ec9617f45682853d06"
+      "sha256": "866d7136ee5d0f590d5216a7aeb3349f69c2d600dd3fbbb34b18f4c4042d3936"
     },
     {
       "path": "src/_lcm/execution/output_layout.py",

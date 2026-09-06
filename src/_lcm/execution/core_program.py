@@ -6,8 +6,6 @@ before lowering. Every kernel publishes its own graph: the engine plans a progra
 or runs it deliberately dense, and refuses a kernel that publishes no graph.
 """
 
-from __future__ import annotations
-
 import inspect
 import math
 import weakref
