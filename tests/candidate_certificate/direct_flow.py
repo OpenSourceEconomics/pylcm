@@ -208,7 +208,7 @@ _SOURCE_SEALS = {
     SIMULATION_COMPILE_SOURCE: "eca63257bd882066c608c34791cb0399f8d283fa79f5e0640091e12321da82a9",
     MODEL_SOURCE: "b251854ac9cad72579c37137b6fa5e13a303fbc95108de6147de974f0bf39382",
     SOLVER_API_SOURCE: "55eda6369c0f3c13d1c92241338ffab0d73b5f87517cbae5f0c83875894227a2",
-    BACKWARD_INDUCTION_SOURCE: "185d9c43aa04f03bc12b1ca93efc36ed1d5e04782f1cbb115d9abf0a003b4ffc",
+    BACKWARD_INDUCTION_SOURCE: "b0e604e9f0c1b33bb11d05f6fe9ee275af5225e7cee9acdafc2d3e0bdb503132",
     PERIOD_REPLAY_SOURCE: "a5c59359171047ef860e879c66b4ac8eba28732f4d9af3df1fcaf5ccf3813874",
     INITIAL_CONDITIONS_SOURCE: "582c29e7f99072d975c7a4c9070a93e707d25a98c09e216b47fa71c7bb2d6022",
     RESULT_SOURCE: "7390877272bc23fd7c153e2a51ac4a6072e88fe950d5de695ff015205aff5058",
@@ -2862,7 +2862,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             ]
             if len(starts) == len(ends) == 1 and starts[0] <= ends[0]:
                 corridors.append(loop.body[starts[0] : ends[0] + 1])
-        expected = "72bb7c5adc577abc19b89b467486c6143e941c624306da1a994a6edcb3569d84"
+        expected = "468f6e8b2bbda133f7d127431834079bd9b13df230e7ec3b36eba47e5e6ac0ec"
         if len(corridors) != 1 or _statements_ast_sha256(corridors[0]) != expected:
             errors.append(
                 "backward output-layout transport: solve publication corridor changed"

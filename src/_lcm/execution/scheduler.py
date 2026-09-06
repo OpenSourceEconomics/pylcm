@@ -219,6 +219,94 @@ def release_closed_artifacts(
     return tuple(records)
 
 
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class ScheduledNode:
+    """One program of one regime at one period: the unit of readiness."""
+
+    period: int
+    """The period the node solves."""
+
+    regime: str
+    """The regime whose kernel dispatches the program."""
+
+    program: str
+    """The program's graph key inside the kernel."""
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class DispatchUnit:
+    """One period kernel's programs, dispatched as a whole in topological order."""
+
+    period: int
+    """The period the unit solves."""
+
+    regime: str
+    """The regime whose kernel is dispatched."""
+
+    programs: tuple[str, ...]
+    """The kernel's programs, producers before consumers."""
+
+
+def plan_period_waves(
+    *,
+    nodes: Sequence[ScheduledNode],
+    same_period_dependencies: Mapping[str, Sequence[str]],
+    device_sets: Mapping[str, frozenset[int]],
+) -> tuple[tuple[DispatchUnit, ...], ...]:
+    """Group one period's nodes into waves of concurrently dispatchable units.
+
+    The programs of one regime form one unit, in the order given, since a kernel
+    dispatches its own programs. A unit is ready when every regime it reads at
+    this period has been dispatched in an earlier wave. Ready units join one
+    wave while their device sets are pairwise disjoint; a unit whose devices a
+    wave already uses starts the next wave. Order within a wave, and among
+    waves, follows the order of `nodes`, so declaration order breaks ties.
+    """
+    periods = {node.period for node in nodes}
+    if len(periods) > 1:
+        msg = (
+            f"A wave plan covers one period; got nodes of periods {sorted(periods)!r}."
+        )
+        raise ValueError(msg)
+    programs_by_regime: dict[str, list[str]] = {}
+    for node in nodes:
+        programs_by_regime.setdefault(node.regime, []).append(node.program)
+    period = next(iter(periods)) if periods else 0
+    units = {
+        regime: DispatchUnit(period=period, regime=regime, programs=tuple(programs))
+        for regime, programs in programs_by_regime.items()
+    }
+    remaining = list(units)
+    dispatched: set[str] = set()
+    waves: list[tuple[DispatchUnit, ...]] = []
+    while remaining:
+        wave: list[DispatchUnit] = []
+        used_devices: set[int] = set()
+        for regime in remaining:
+            references = [
+                reference
+                for reference in same_period_dependencies.get(regime, ())
+                if reference in units
+            ]
+            if any(reference not in dispatched for reference in references):
+                continue
+            devices = device_sets[regime]
+            if devices & used_devices:
+                continue
+            wave.append(units[regime])
+            used_devices |= devices
+        if not wave:
+            msg = (
+                "Same-period reads form a cycle among regimes "
+                f"{tuple(remaining)!r}; no unit is ready."
+            )
+            raise ExecutionPlanningError(msg)
+        dispatched.update(unit.regime for unit in wave)
+        remaining = [regime for regime in remaining if regime not in dispatched]
+        waves.append(tuple(wave))
+    return tuple(waves)
+
+
 def replace_leaf_by_identity(*, tree: object, old: object, new: object) -> object:
     """Return `tree` with the leaf that is `old` replaced by `new`.
 

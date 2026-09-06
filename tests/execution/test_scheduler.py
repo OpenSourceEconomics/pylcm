@@ -17,8 +17,11 @@ import pytest
 from _lcm.execution.liveness import PlannedInputLiveness
 from _lcm.execution.scheduler import (
     BufferRegistry,
+    DispatchUnit,
     ReleaseRecord,
+    ScheduledNode,
     buffer_identity,
+    plan_period_waves,
     release_closed_artifacts,
     replace_leaf_by_identity,
 )
@@ -407,3 +410,105 @@ def test_a_declaration_over_two_channels_marks_the_shared_buffer() -> None:
     )
 
     assert registry.is_not_produced(array=shared)
+
+
+def _node(*, regime: str, program: str = "main") -> ScheduledNode:
+    return ScheduledNode(period=3, regime=regime, program=program)
+
+
+def test_independent_units_on_disjoint_devices_share_one_wave() -> None:
+    """Two regimes without a same-period read between them dispatch together."""
+    waves = plan_period_waves(
+        nodes=(_node(regime="a"), _node(regime="b")),
+        same_period_dependencies=MappingProxyType({}),
+        device_sets=MappingProxyType({"a": frozenset({0}), "b": frozenset({1})}),
+    )
+
+    assert waves == (
+        (
+            DispatchUnit(period=3, regime="a", programs=("main",)),
+            DispatchUnit(period=3, regime="b", programs=("main",)),
+        ),
+    )
+
+
+def test_a_same_period_read_orders_the_reader_after_its_reference() -> None:
+    """A regime reading another regime's same-period value waits for it."""
+    waves = plan_period_waves(
+        nodes=(_node(regime="reader"), _node(regime="reference")),
+        same_period_dependencies=MappingProxyType({"reader": ("reference",)}),
+        device_sets=MappingProxyType(
+            {"reader": frozenset({0}), "reference": frozenset({1})}
+        ),
+    )
+
+    assert [tuple(unit.regime for unit in wave) for wave in waves] == [
+        ("reference",),
+        ("reader",),
+    ]
+
+
+def test_units_sharing_a_device_dispatch_in_separate_waves() -> None:
+    """Concurrency needs disjoint submeshes; a shared device serializes."""
+    waves = plan_period_waves(
+        nodes=(_node(regime="a"), _node(regime="b")),
+        same_period_dependencies=MappingProxyType({}),
+        device_sets=MappingProxyType({"a": frozenset({0, 1}), "b": frozenset({1})}),
+    )
+
+    assert [tuple(unit.regime for unit in wave) for wave in waves] == [
+        ("a",),
+        ("b",),
+    ]
+
+
+def test_the_programs_of_one_kernel_form_one_unit_in_topological_order() -> None:
+    """A kernel's internal edge keeps its programs in one dispatch unit."""
+    waves = plan_period_waves(
+        nodes=(
+            _node(regime="a", program="keeper"),
+            _node(regime="a", program="sweep"),
+        ),
+        same_period_dependencies=MappingProxyType({}),
+        device_sets=MappingProxyType({"a": frozenset({0})}),
+    )
+
+    assert waves == (
+        (DispatchUnit(period=3, regime="a", programs=("keeper", "sweep")),),
+    )
+
+
+def test_declaration_order_breaks_ties_inside_a_wave() -> None:
+    """Independent units keep the order their regimes were declared in."""
+    waves = plan_period_waves(
+        nodes=(_node(regime="second"), _node(regime="first")),
+        same_period_dependencies=MappingProxyType({}),
+        device_sets=MappingProxyType(
+            {"second": frozenset({0}), "first": frozenset({1})}
+        ),
+    )
+
+    assert tuple(unit.regime for unit in waves[0]) == ("second", "first")
+
+
+def test_a_dependency_cycle_is_refused() -> None:
+    """Two regimes reading each other's same-period value cannot be scheduled."""
+    with pytest.raises(ExecutionPlanningError, match="cycle"):
+        plan_period_waves(
+            nodes=(_node(regime="a"), _node(regime="b")),
+            same_period_dependencies=MappingProxyType({"a": ("b",), "b": ("a",)}),
+            device_sets=MappingProxyType({"a": frozenset({0}), "b": frozenset({1})}),
+        )
+
+
+def test_nodes_of_two_periods_are_refused() -> None:
+    """A wave plan covers one period; periods stay strictly backward."""
+    with pytest.raises(ValueError, match="one period"):
+        plan_period_waves(
+            nodes=(
+                _node(regime="a"),
+                ScheduledNode(period=2, regime="b", program="main"),
+            ),
+            same_period_dependencies=MappingProxyType({}),
+            device_sets=MappingProxyType({"a": frozenset({0}), "b": frozenset({1})}),
+        )
