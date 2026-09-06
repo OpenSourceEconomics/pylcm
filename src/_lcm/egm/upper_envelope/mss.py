@@ -43,9 +43,10 @@ happened — and none of them is settled by a rounded comparison:
   a failed read poisons the publication rather than removing its owner. Crossing
   ordinates are rounded upward only when an exact comparison requires it.
 - **A crossing is located inside the interval it happened in.** The two winning
-  chords' gap is evaluated at the two adjacent query abscissae; a crossing
-  exists exactly where that gap changes sign across them, and its abscissa is
-  the root of the gap's own secant between them.
+  chords' gap is certified at the two adjacent query abscissae. Its exact
+  stored-operand root is rounded upward to the first representable state owned
+  by the incoming branch. Record coalescence uses that emitted state, including
+  when a nonrepresentable root hands over at an existing query node.
 
 A crossing abscissa is inserted twice — same abscissa, left- and
 right-extrapolated policy — so the refined arrays stay weakly ascending and the
@@ -80,6 +81,8 @@ import jax
 import jax.numpy as jnp
 
 from _lcm.egm.upper_envelope._exact_affine import (
+    UNRESOLVED_STATUS,
+    exact_affine_handover,
     exact_affine_read,
     exact_query_winner_batched,
 )
@@ -223,6 +226,11 @@ def refine_envelope(
         left_valid | right_valid, crossing_node, query_grid.shape[0]
     )
     node_value = node_value.at[crossing_node].set(crossing.value, mode="drop")
+    # Refusing an event location must not silently publish a row without its
+    # kink. Keep the observed query and poison its channels instead of making
+    # up a finite crossing abscissa or treating a failed certificate as no event.
+    node_value = jnp.where(crossing.unresolved, jnp.nan, node_value)
+    node_policy = jnp.where(crossing.unresolved, jnp.nan, node_policy)
 
     # Per-query output block: up to three rows in ascending grid order — the two
     # crossing records (same abscissa, left then right policy) followed by the
@@ -404,8 +412,8 @@ def _chord_value(
 
     The native reader forms the weighted numerator and width in fixed-width
     integers. Neither overflow nor underflow of an intermediate floating product
-    can change a finite answer. This nearest reading also serves the existing
-    gap-localization arithmetic; upward event publication is kept separate.
+    can change a finite answer. Upward event publication is kept separate from
+    this nearest reading, and localization uses the exact affine difference.
     """
     reading, _status = _chord_reading(x=x, x0=x0, x1=x1, v0=v0, v1=v1)
     return reading
@@ -607,6 +615,8 @@ class _CrossingBlocks:
     """Branch id of the outgoing owner."""
     segment_right: Int1D
     """Branch id of the incoming owner."""
+    unresolved: BoolND
+    """Whether a switched pair's location could not be certified."""
 
 
 def _crossing_blocks(
@@ -650,6 +660,7 @@ def _crossing_blocks(
         right_valid=rows.right_valid,
         segment_left=rows.segment_left,
         segment_right=rows.segment_right,
+        unresolved=rows.unresolved,
     )
 
 
@@ -673,6 +684,8 @@ class _CrossingRow:
     """Branch id of the outgoing owner."""
     segment_right: IntND
     """Branch id of the incoming owner."""
+    unresolved: BoolND
+    """Whether this step must poison its query's publication."""
 
 
 _CROSSING_ROW_FIELDS = (
@@ -684,6 +697,7 @@ _CROSSING_ROW_FIELDS = (
     "right_valid",
     "segment_left",
     "segment_right",
+    "unresolved",
 )
 
 
@@ -750,6 +764,7 @@ def _crossing_step(
         right_valid=valid & ~row.at_right,
         segment_left=prev_segment,
         segment_right=this_segment,
+        unresolved=switches & row.unresolved,
     )
 
     # Advance the previous-live-query carry only on a live query; a dropped
@@ -775,9 +790,11 @@ class _SegmentIntersection:
     resolved: BoolND
     """Whether the two chords in fact cross inside the interval."""
     at_left: BoolND
-    """Whether the crossing sits exactly on the left query abscissa."""
+    """Whether the emitted handover state coincides with the left query."""
     at_right: BoolND
-    """Whether the crossing sits exactly on the right query abscissa."""
+    """Whether the emitted handover state coincides with the right query."""
+    unresolved: BoolND
+    """Whether the signs or a bracketed event's location were refused."""
 
 
 def _crossing_in_interval(
@@ -800,12 +817,14 @@ def _crossing_in_interval(
     because a branch started or stopped covering the interval, not because the
     two met.
 
-    A certified zero at one of the two abscissae is a crossing sitting exactly on
-    that node, and the emitted abscissa is that node exactly. Only the interior
-    case is located by arithmetic, and it is located inside the interval the
-    switch was observed in — the root of the gap's own secant across it, clamped
-    to the interval the certified signs bracket it in — rather than by
-    extrapolating either chord from its stored endpoints.
+    Oriented endpoint equality is a node crossing; equality at both ends is
+    collinearity, not an event. For an interior crossing, the native handover
+    primitive forms the exact cross-multiplied affine difference from the same
+    stored operands as the signs. It publishes the least representable state
+    at or above the root, with no rounded chord subtraction or denominator
+    fallback. Coalescence is determined from this emitted state, not from the
+    endpoint signs: even a strictly interior root can hand over at the right
+    node. Stored spans, rather than widened comparable lines, admit the event.
     """
     a_x0, a_x1 = links.x0[seg_a], links.x1[seg_a]
     a_v0, a_v1 = links.v0[seg_a], links.v1[seg_a]
@@ -826,24 +845,33 @@ def _crossing_in_interval(
     }
     sign_prev = certified_margin_sign(x_query=prev_grid, **chords)
     sign_this = certified_margin_sign(x_query=this_grid, **chords)
-    at_left = sign_prev == 0
-    at_right = (sign_this == 0) & ~at_left
+    at_left_root = (sign_prev == 0) & (sign_this == -1)
+    at_right_root = (sign_prev == 1) & (sign_this == 0)
     crosses_inside = (sign_prev == 1) & (sign_this == -1)
-    resolved = at_left | at_right | crosses_inside
-
-    gap_prev = _chord_gap(x=prev_grid, **chords)
-    gap_this = _chord_gap(x=this_grid, **chords)
-    denominator = gap_prev - gap_this
-    safe_denominator = jnp.where(denominator > 0.0, denominator, 1.0)
-    interior = jnp.clip(
-        (gap_prev * this_grid - gap_this * prev_grid) / safe_denominator,
-        prev_grid,
-        this_grid,
+    bracketed = at_left_root | at_right_root | crosses_inside
+    handover, location_status = exact_affine_handover(
+        left=prev_grid, right=this_grid, **chords
     )
-    grid = jnp.where(at_left, prev_grid, jnp.where(at_right, this_grid, interior))
+    grid = jnp.where(bracketed & (location_status == 0), handover, jnp.nan)
+    covered = (
+        links.live[seg_a]
+        & links.live[seg_b]
+        & (grid >= links.lower[seg_a])
+        & (grid <= links.upper[seg_a])
+        & (grid >= links.lower[seg_b])
+        & (grid <= links.upper[seg_b])
+    )
+    resolved = bracketed & (location_status == 0) & covered
+    at_left = resolved & (grid == prev_grid)
+    at_right = resolved & (grid == this_grid)
+    unresolved = (
+        (sign_prev == UNRESOLVED_STATUS)
+        | (sign_this == UNRESOLVED_STATUS)
+        | (bracketed & (location_status != 0))
+    )
 
     # Select the higher exact chord at the *emitted* abscissa before reading it.
-    # The root may round to either side, so max(two nearest readings) is not an
+    # The handover can lie above the root, so max(two nearest readings) is not an
     # upper certificate. One directed read of the higher chord bounds both.
     order = certified_margin_sign(x_query=grid, **chords)
     take_b = order == -1
@@ -873,24 +901,7 @@ def _crossing_in_interval(
         resolved=resolved,
         at_left=at_left,
         at_right=at_right,
-    )
-
-
-def _chord_gap(
-    *,
-    x: FloatND,
-    a_x0: FloatND,
-    a_x1: FloatND,
-    a_v0: FloatND,
-    a_v1: FloatND,
-    b_x0: FloatND,
-    b_x1: FloatND,
-    b_v0: FloatND,
-    b_v1: FloatND,
-) -> FloatND:
-    """How far the first chord sits above the second at `x`."""
-    return _chord_value(x=x, x0=a_x0, x1=a_x1, v0=a_v0, v1=a_v1) - _chord_value(
-        x=x, x0=b_x0, x1=b_x1, v0=b_v0, v1=b_v1
+        unresolved=unresolved,
     )
 
 

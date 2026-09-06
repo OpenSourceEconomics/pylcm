@@ -544,5 +544,265 @@ def test_r4_failed_read_does_not_remove_owner() -> None:
     assert np.isneginf(np.asarray(value)[2])
 
 
-# R1: the oracle below enumerates exact rational keys. It imports neither the
-# native comparator nor its reduction and does not reconstruct rounded readings.
+@jax.jit
+def _r2_refined_row(
+    *, grid: jax.Array, policy: jax.Array, value: jax.Array, labels: jax.Array
+) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+    """Use real production refinement with a shared compilation per shape."""
+    return refine_envelope(
+        endog_grid=grid, policy=policy, value=value, segment_id=labels, n_refined=32
+    )
+
+
+def _r2_exact_root(*, grid: np.ndarray, value: np.ndarray) -> Fraction:
+    """Direct rational line intersection, independent of native localization."""
+    x0, x1, x2, x3 = (Fraction(float(x)) for x in grid[:4])
+    v0, v1, v2, v3 = (Fraction(float(v)) for v in value[:4])
+    slope_a, slope_b = (v1 - v0) / (x1 - x0), (v3 - v2) / (x3 - x2)
+    assert slope_a < slope_b
+    return (v0 - slope_a * x0 - v2 + slope_b * x2) / (slope_b - slope_a)
+
+
+def _r2_ceil(*, root: Fraction, dtype: type) -> np.floating:
+    """Find the least representable state at/above a rational (oracle only)."""
+    candidate = dtype(float(root))
+    while Fraction(float(candidate)) < root:
+        candidate = np.nextafter(candidate, dtype(np.inf))
+    previous = np.nextafter(candidate, dtype(-np.inf))
+    while np.isfinite(previous) and Fraction(float(previous)) >= root:
+        candidate = previous
+        previous = np.nextafter(candidate, dtype(-np.inf))
+    return candidate
+
+
+def _r2_assert_event(
+    *, out: tuple, root: Fraction, dtype: type, policies: tuple = (8.0, 2.0)
+) -> None:
+    """Assert counts/order and actual policy reads at adjacent stored states."""
+    kept = int(out[3])
+    assert kept <= len(out[0])
+    grid, policy, value = (np.asarray(a)[:kept] for a in out[:3])
+    assert all(np.isfinite(a).all() for a in (grid, policy, value))
+    assert np.all(grid[1:] >= grid[:-1])
+    state = _r2_ceil(root=root, dtype=dtype)
+    ids = np.flatnonzero(grid == state)
+    assert len(ids) == 2, (root, state, grid, policy)
+    np.testing.assert_array_equal(policy[ids], policies)
+    duplicates = grid[:-1][grid[:-1] == grid[1:]]
+    np.testing.assert_array_equal(duplicates, [state])
+    queries = np.asarray(
+        [
+            np.nextafter(state, dtype(-np.inf)),
+            state,
+            np.nextafter(state, dtype(np.inf)),
+        ],
+        dtype=dtype,
+    )
+    assert Fraction(float(queries[0])) < root <= Fraction(float(state))
+    readings = np.asarray(
+        interp_on_padded_grid(x_query=jnp.asarray(queries), xp=out[0], fp=out[1])
+    )
+    np.testing.assert_array_equal(readings, [policies[0], policies[1], policies[1]])
+    for array in out[:3]:
+        assert np.isnan(np.asarray(array)[kept:]).all()
+
+
+def test_r2_rounded_away_gap_family() -> None:
+    """Translations, independent scales, subnormal values, labels and orientation."""
+    dtype = np.asarray(jnp.asarray(0.0)).dtype.type
+    x_exponents = (
+        (-120, -80, 0, 80, 120) if dtype == np.float32 else (-1017, -600, 0, 600, 1017)
+    )
+    v_exponents = (
+        (-149, -126, 0, 80, 127)
+        if dtype == np.float32
+        else (-1074, -1022, 0, 600, 1023)
+    )
+    for origin in (-64, 50, 64):
+        for x_exponent in x_exponents:
+            scale = 2.0**x_exponent
+            for v_exponent in v_exponents:
+                level = dtype(2.0**v_exponent)
+                above = np.nextafter(level, dtype(np.inf))
+                grid = np.asarray(
+                    [origin, origin + 8, origin + 1, origin + 5], dtype=dtype
+                ) * dtype(scale)
+                value = np.asarray([level, above, level, above], dtype=dtype)
+                policy = np.asarray([8, 8, 2, 2], dtype=dtype)
+                labels = np.asarray([7.0, 7.0, 13.0, 13.0], dtype=dtype)
+                root = _r2_exact_root(grid=grid, value=value)
+                assert root == Fraction(float(dtype((origin + 2) * scale)))
+                for order in ([0, 1, 2, 3], [2, 3, 0, 1], [1, 0, 3, 2]):
+                    out = _r2_refined_row(
+                        grid=jnp.asarray(grid[order]),
+                        policy=jnp.asarray(policy[order]),
+                        value=jnp.asarray(value[order]),
+                        labels=jnp.asarray(labels[order]),
+                    )
+                    _r2_assert_event(out=out, root=root, dtype=dtype)
+
+
+def test_r2_generated_exact_handover_and_policy_sides() -> None:
+    """Rational roots of either sign, not a rounded secant or a tolerance check."""
+    dtype = np.asarray(jnp.asarray(0.0)).dtype.type
+    for seed in (731, 48271, 99217):
+        rng = np.random.default_rng(seed)
+        for _ in range(24):
+            left = int(rng.integers(-64, 64))
+            right = left + int(rng.integers(2, 17))
+            a0, a1 = rng.integers(-16, 17, size=2)
+            gap0, gap1 = rng.integers(1, 17, size=2)
+            grid = np.asarray([left, right, left, right], dtype=dtype)
+            value = np.asarray([a0, a1, a0 - gap0, a1 + gap1], dtype=dtype)
+            root = _r2_exact_root(grid=grid, value=value)
+            out = _r2_refined_row(
+                grid=jnp.asarray(grid),
+                policy=jnp.asarray([8, 8, 2, 2], dtype=dtype),
+                value=jnp.asarray(value),
+                labels=jnp.asarray([0.0, 0.0, 1.0, 1.0], dtype=dtype),
+            )
+            _r2_assert_event(out=out, root=root, dtype=dtype)
+
+
+def test_r2_representable_handover_coalesces_with_query_nodes() -> None:
+    """Ceiling a nonrepresentable root to an existing node must not add a third row."""
+    dtype = np.asarray(jnp.asarray(0.0)).dtype.type
+    for root in (Fraction(1, 3), Fraction(-1, 3), Fraction(1, 2)):
+        state = _r2_ceil(root=root, dtype=dtype)
+        left, right = (-1, 1) if root < 0 else (0, 1)
+        # A constant line at the numerator, B(x)=denominator*x.
+        for copies in (1, 2, 4):
+            grid = np.asarray(
+                [left, right, left, right] + [state] * copies + [right], dtype=dtype
+            )
+            value = np.asarray(
+                [
+                    root.numerator,
+                    root.numerator,
+                    root.denominator * left,
+                    root.denominator * right,
+                ]
+                + [-8] * (copies + 1),
+                dtype=dtype,
+            )
+            policy = np.asarray([8, 8, 2, 2] + [1] * (copies + 1), dtype=dtype)
+            labels = np.asarray(
+                [0.0, 0.0, 1.0, 1.0] + [2.0] * (copies + 1), dtype=dtype
+            )
+            assert _r2_exact_root(grid=grid, value=value) == root
+            out = _r2_refined_row(
+                grid=jnp.asarray(grid),
+                policy=jnp.asarray(policy),
+                value=jnp.asarray(value),
+                labels=jnp.asarray(labels),
+            )
+            _r2_assert_event(out=out, root=root, dtype=dtype)
+            assert int(out[3]) == len(np.unique(grid)) + 1
+    # There is no representable state strictly inside this terminal cell.
+    left = dtype(1)
+    right = np.nextafter(left, dtype(np.inf))
+    grid = np.asarray([left, right, left, right], dtype=dtype)
+    value = np.asarray([2, 2, 1, 3], dtype=dtype)
+    out = _r2_refined_row(
+        grid=jnp.asarray(grid),
+        policy=jnp.asarray([8, 8, 2, 2], dtype=dtype),
+        value=jnp.asarray(value),
+        labels=jnp.asarray([0.0, 0.0, 1.0, 1.0], dtype=dtype),
+    )
+    _r2_assert_event(out=out, root=_r2_exact_root(grid=grid, value=value), dtype=dtype)
+    assert int(out[3]) == 3
+
+
+def _r2_intersection(*, x0, x1, v0, v1, lower, upper, left, right):
+    """Expose geometry/status without borrowing production location as an oracle."""
+    links = mss._Links(
+        x0=x0,
+        x1=x1,
+        v0=v0,
+        v1=v1,
+        lower=lower,
+        upper=upper,
+        p0=jnp.asarray([8, 2], dtype=x0.dtype),
+        p1=jnp.asarray([8, 2], dtype=x0.dtype),
+        live=jnp.asarray([True, True]),
+    )
+    row = mss._crossing_in_interval(
+        seg_a=jnp.asarray(0, dtype=jnp.int32),
+        seg_b=jnp.asarray(1, dtype=jnp.int32),
+        prev_grid=left,
+        this_grid=right,
+        links=links,
+    )
+    return row.grid, row.resolved, row.at_left, row.at_right, row.unresolved, row.value
+
+
+_r2_compiled_intersection = jax.jit(_r2_intersection)
+
+
+def test_r2_oriented_endpoint_coverage_and_collinear_cases() -> None:
+    """A touching, parallel or unsupported pair is not an interior branch switch."""
+    cases = [
+        # v0, v1, lower support, upper support, resolved, left node, right node
+        ([0, 0], [0, 1], [0, 0], [1, 1], True, True, False),
+        ([0, -1], [0, 0], [0, 0], [1, 1], True, False, True),
+        ([0, -1], [0, 1], [0, 0], [1, 1], True, False, False),
+        ([0, 0], [1, 1], [0, 0], [1, 1], False, False, False),  # collinear
+        ([1, 0], [2, 1], [0, 0], [1, 1], False, False, False),  # parallel
+        # Wrong orientation at either endpoint, then a reverse crossing.
+        ([0, 0], [1, 0], [0, 0], [1, 1], False, False, False),
+        ([0, 1], [0, 0], [0, 0], [1, 1], False, False, False),
+        ([0, 1], [0, -1], [0, 0], [1, 1], False, False, False),
+        # A root in a coverage gap, then an artificially widened point.
+        ([0, -1], [0, 1], [0, 0.75], [0.25, 1], False, False, False),
+        ([0, -1], [0, 1], [0, 0], [0, 1], False, False, False),
+    ]
+    for v0, v1, lower, upper, resolved, at_left, at_right in cases:
+        arrays = {
+            k: jnp.asarray(v)
+            for k, v in {
+                "x0": [0.0, 0.0],
+                "x1": [1.0, 1.0],
+                "v0": v0,
+                "v1": v1,
+                "lower": lower,
+                "upper": upper,
+                "left": 0.0,
+                "right": 1.0,
+            }.items()
+        }
+        # All affine channels must share the working floating dtype.
+        arrays = {k: v.astype(arrays["x0"].dtype) for k, v in arrays.items()}
+        out = _r2_compiled_intersection(**arrays)
+        assert bool(out[1]) == resolved, (v0, v1, lower, upper, out)
+        assert bool(out[2]) == at_left
+        assert bool(out[3]) == at_right
+        assert not bool(out[4])
+        if resolved:
+            expected = 0 if at_left else 1 if at_right else 0.5
+            assert float(out[0]) == expected
+
+
+def test_r2_refused_location_poison_is_not_a_missing_event() -> None:
+    """Even finite native payloads cannot override a refused localization status."""
+    native = mss.exact_affine_handover
+
+    def refused(**operands):
+        location, status = native(**operands)
+        return location, jnp.full_like(status, 2)
+
+    dtype = np.asarray(jnp.asarray(0.0)).dtype.type
+    above = np.nextafter(dtype(1), dtype(np.inf))
+    with patch.object(mss, "exact_affine_handover", refused):
+        out = refine_envelope(
+            endog_grid=jnp.asarray([50, 58, 51, 55], dtype=dtype),
+            policy=jnp.asarray([49, 49, 39, 39], dtype=dtype),
+            value=jnp.asarray([1, above, 1, above], dtype=dtype),
+            n_refined=16,
+        )
+    kept = int(out[3])
+    assert kept >= 4
+    assert np.isnan(np.asarray(out[2])[:kept]).any()
+    assert np.isnan(np.asarray(out[1])[:kept]).any()
+    live_grid = np.asarray(out[0])[:kept]
+    assert np.isfinite(live_grid).all()
+    assert len(np.unique(live_grid)) == kept  # no fabricated endpoint event
