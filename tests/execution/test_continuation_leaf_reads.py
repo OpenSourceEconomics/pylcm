@@ -404,6 +404,31 @@ def test_dcegm_declares_at_least_one_read() -> None:
     assert _dcegm_reads()
 
 
+_LAST_NON_TERMINAL_PERIOD = 8
+
+
+@pytest.mark.parametrize("regime", ["working_life", "retirement"])
+def test_dcegm_declares_reads_only_for_regimes_reachable_at_the_next_period(
+    *, regime: str
+) -> None:
+    """At the last non-terminal period, the read set names only reachable targets.
+
+    A stateful target the rolling carry still holds but the model cannot reach
+    from this period publishes no continuation at `period + 1`, so a read
+    naming it would address an artifact no dispatch produces.
+    """
+    model = build_dcegm_model()
+    kernel = model._regimes[regime].solution.period_kernels[_LAST_NON_TERMINAL_PERIOD]
+    reads = core_program_graph(kernel=kernel)["main"].requirements.value_reads
+    expected_targets = set(
+        model._regimes[regime].solution.reachability.targets(
+            period=_LAST_NON_TERMINAL_PERIOD, source=regime
+        )
+    )
+
+    assert {read.target.regime for read in reads} == expected_targets
+
+
 @pytest.mark.parametrize(
     "predicate",
     [

@@ -643,20 +643,33 @@ def declare_dcegm_carry_reads(
 def dcegm_kernel_with_declared_reads(
     *, kernel: PeriodKernel, context: SolverBuildContext, period: int
 ) -> PeriodKernel:
-    """Return one DC-EGM period's adapter with its targets' rows declared.
+    """Return one DC-EGM period's adapter with its reachable targets' rows declared.
 
-    The builder hands the step the whole rolling payload, so every published row
-    of every carry target is read and each is declared under its own leaf path
-    inside the rolling mapping. The replay variant runs the same reads under its
-    own core name. Shared with the composite solvers that embed this adapter.
+    The builder hands the step the whole rolling payload, keyed by every carry
+    target the core indexes across all periods for pytree stability. Of those,
+    only the targets this period actually reaches publish a continuation at
+    `period + 1` — a target inactive there still occupies a carry key, but the
+    rolling mapping holds the build template for it, not a produced artifact.
+    Reads are declared for the reachable subset, one per published leaf, each
+    under its own leaf path inside the rolling mapping. The replay variant
+    runs the same reads under its own core name. Shared with the composite
+    solvers that embed this adapter.
     """
     if not isinstance(kernel, _DCEGMPeriodKernel):
         return kernel
+    reachable_targets = (
+        ()
+        if period == context.solution_reachability.n_periods - 1
+        else context.solution_reachability.targets(
+            period=period,
+            source=context.regime_name,
+        )
+    )
     reads = tuple(
         read
         for target, template in published_continuation_templates(
             continuation_specs=context.continuation_specs,
-            targets=kernel.stateful_targets,
+            targets=kernel.stateful_targets & frozenset(reachable_targets),
         ).items()
         for read in continuation_leaf_reads(
             template=template,
