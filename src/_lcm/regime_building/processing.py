@@ -694,7 +694,7 @@ def process_regimes(
     return ensure_containers_are_immutable(canonical_regimes)
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, eq=False)
 class _CanonicalRegimeBuilder:
     """Build every regime's canonical form from one model's resolved declarations.
 
@@ -7169,10 +7169,7 @@ def _build_Q_and_F_per_period(
         by_period=expand_groups_to_periods(
             grouped_periods=configs, built_by_group=built
         ),
-        # `continuation_group_key` declares its result positionally; the function
-        # it returns takes `period` by keyword, which is the convention every
-        # consumer of a grouping key here calls under.
-        group_key=cast("_PeriodGroupKey", group_key),
+        group_key=group_key,
     )
 
 

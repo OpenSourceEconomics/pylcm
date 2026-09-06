@@ -261,7 +261,7 @@ def get_max_Q_over_a(
     return cast("MaxQOverAFunction", allow_only_kwargs(func=mapped, enforce=False))
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, eq=False)
 class _SmoothedMaxQOverA:
     """The EV1-smoothed maximum of Q over the actions, at one state cell.
 
@@ -283,7 +283,7 @@ class _SmoothedMaxQOverA:
 
     def __call__(
         self,
-        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         **states_actions_params: Any,  # noqa: ANN401
     ) -> FloatND:
         """Return the expected maximum over the discrete actions at this cell."""
@@ -302,7 +302,7 @@ class _SmoothedMaxQOverA:
         return smoothed
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, eq=False)
 class _HardMaxQOverA:
     """The hard maximum of Q over the feasible actions, at one state cell.
 
@@ -327,7 +327,7 @@ class _HardMaxQOverA:
 
     def __call__(
         self,
-        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         **states_actions_params: Any,  # noqa: ANN401
     ) -> FloatND | tuple[FloatND, BoolND]:
         """Return the cell's value, plus the dissolution flag for a household."""
@@ -506,7 +506,7 @@ def get_streaming_max_Q_over_a(
     return cast("MaxQOverAFunction", allow_only_kwargs(func=mapped, enforce=False))
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, eq=False)
 class _StreamedMaxQOverA:
     """The maximum of Q over a streamed action product, at one state cell.
 
@@ -547,7 +547,7 @@ class _StreamedMaxQOverA:
     def __call__(
         self,
         *,
-        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         **states_actions_params: Any,  # noqa: ANN401
     ) -> FloatND | tuple[FloatND, BoolND]:
         """Return the cell's value, plus the dissolution flag for a household."""
@@ -1091,7 +1091,7 @@ def get_argmax_and_max_Q_over_a(
     return argmax_and_max_Q_over_a
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, eq=False)
 class _TasteShockArgmaxQOverA:
     """The Gumbel-max discrete draw and its value, at one state cell.
 
@@ -1113,7 +1113,7 @@ class _TasteShockArgmaxQOverA:
 
     def __call__(
         self,
-        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         **states_actions_params: Any,  # noqa: ANN401
     ) -> tuple[IntND, FloatND]:
         """Return the flat index of the drawn action and its noise-free value."""
@@ -1140,7 +1140,7 @@ class _TasteShockArgmaxQOverA:
         return flat_index.astype(jnp.int32), Qc[discrete_argmax]
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, eq=False)
 class _HardMaxArgmaxQOverA:
     """The argmax of Q over the feasible actions and its value, at one state cell.
 
@@ -1165,7 +1165,7 @@ class _HardMaxArgmaxQOverA:
 
     def __call__(
         self,
-        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+        next_regime_to_V_arr: Mapping[RegimeName, FloatND],
         **states_actions_params: Any,  # noqa: ANN401
     ) -> tuple[IntND, FloatND]:
         """Return the flat index of the chosen action and the value it attains."""

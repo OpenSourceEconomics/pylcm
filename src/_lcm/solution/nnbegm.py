@@ -2122,7 +2122,7 @@ def _outer_state_domain_at(
     outer_state: StateName,
     representative_outer_values: Float1D,
 ) -> tuple[float, float]:
-    """The outer state's declared endpoints in one period.
+    """Return the outer state's declared endpoints in one period.
 
     A domain endpoint is a node value, so it is the solved period's own. With an
     age-specialized outer grid the representative age's endpoints are the wrong

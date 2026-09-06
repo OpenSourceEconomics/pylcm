@@ -183,8 +183,8 @@ _SOURCE_SEALS = {
     LOGSUM_SOURCE: "e12061dd4f0f0176324182a2eb875cb6ebe4b97174091c597d46a622df93ff1b",
     ARGMAX_SOURCE: "0d179a5aa65a6f310f598bdad8f75a9318a24832e31bd529184c2ea90356a72d",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
-    MAX_Q_SOURCE: "7ef3e0936d2b93b17daec27c8f639ff88c8b05ae46e17a1511b919452fb556fc",
-    PROCESSING_SOURCE: "1f63f7efeb5fe094b88fab7d73ad92b9ce791b6ab6f71ae3db649b44d1e4762c",
+    MAX_Q_SOURCE: "0f7d4e51d780f4ba839844d42c0847742c17ac28ec0eeb026eb5cf38fcc6ce4d",
+    PROCESSING_SOURCE: "004261c7950502a79636b10a4594bbfa5a958d9aafd119a3ed981936c1e49047",
     GRID_SEARCH_SOURCE: "49c198be2598ef1791e9866d004e63de8dff00c46155c01d4fe8cbe128c0a1ff",
     CORE_PROGRAM_SOURCE: "c2e842a1de6ae3bde27e979e022a08caf0dae6a7cdb56f81b70e466f77bfd16f",
     OUTPUT_LAYOUT_SOURCE: "171566e384a070bb9daebbe74d2418cb25f82291cfc93983d2a56e589486a395",
@@ -380,20 +380,66 @@ def _guarded_binding(
     return statement.value
 
 
-def _binding_kernel(*, tree: ast.Module, call: ast.Call) -> ast.FunctionDef:
-    """Return the ``__call__`` of the kernel class one binding instantiates."""
+# Construction keywords of a taste-shock max-Q kernel, in declaration order.
+_TASTE_KERNEL_FIELDS = ("Q_and_F", "n_discrete_action_axes")
+
+# Construction keywords of a hard-max max-Q kernel, in declaration order.
+_HARD_MAX_KERNEL_FIELDS = ("Q_and_F", "stakeholders", "pareto_weights")
+
+
+def _binding_kernel(
+    *, tree: ast.Module, call: ast.Call, class_name: str, fields: tuple[str, ...]
+) -> ast.FunctionDef:
+    """Return the ``__call__`` of the kernel class one binding constructs.
+
+    The construction names the route's own kernel class and passes exactly
+    ``fields``, each the builder local of the same name, so an arm cannot hand
+    the kernel a narrowed axis count, a disabled collective route, or any value
+    the builder did not compute for it. Under the previous shape the reducer
+    read those locals as free variables, and the wiring was pinned by the body
+    itself; a field the construction may set freely would reopen that path.
+    """
     if len(call.args) != 1 or not isinstance(call.args[0], ast.Call):
         raise ValueError("the signature wrapper does not take one kernel instance")
-    class_name = _call_name(call.args[0])
-    if class_name is None:
-        raise ValueError("the signature wrapper's kernel is not a plain construction")
+    construction = call.args[0]
+    if _call_name(construction) != class_name:
+        raise ValueError(
+            f"the signature wrapper's kernel is not a plain {class_name} construction"
+        )
+    named = [
+        (keyword.arg, keyword.value)
+        for keyword in construction.keywords
+        if keyword.arg is not None
+    ]
+    if construction.args or len(named) != len(construction.keywords):
+        raise ValueError(f"{class_name} is not constructed from named builder locals")
+    observed = tuple(argument for argument, _ in named)
+    if observed != fields:
+        raise ValueError(
+            f"{class_name} is not constructed from exactly its declared fields; "
+            f"expected {fields}, found {observed}"
+        )
+    rewired = tuple(
+        argument
+        for argument, value in named
+        if not _name(node=value, expected=argument)
+    )
+    if rewired:
+        raise ValueError(
+            f"{class_name} fields {rewired} are not the builder locals of the same name"
+        )
     return _method_definition(tree=tree, class_name=class_name, method_name="__call__")[
         1
     ]
 
 
 def _ordinary_kernel(
-    *, tree: ast.Module, outer_name: str, nested_name: str
+    *,
+    tree: ast.Module,
+    outer_name: str,
+    nested_name: str,
+    class_name: str,
+    fields: tuple[str, ...],
 ) -> tuple[ast.Call, ast.FunctionDef]:
     """Return the binding and kernel from the false arm of ``has_taste_shocks``."""
     call = _guarded_binding(
@@ -402,11 +448,18 @@ def _ordinary_kernel(
         nested_name=nested_name,
         taste_shocks=False,
     )
-    return call, _binding_kernel(tree=tree, call=call)
+    return call, _binding_kernel(
+        tree=tree, call=call, class_name=class_name, fields=fields
+    )
 
 
 def _taste_kernel(
-    *, tree: ast.Module, outer_name: str, nested_name: str
+    *,
+    tree: ast.Module,
+    outer_name: str,
+    nested_name: str,
+    class_name: str,
+    fields: tuple[str, ...],
 ) -> tuple[ast.Call, ast.FunctionDef]:
     """Return the binding and kernel from the true arm of ``has_taste_shocks``."""
     call = _guarded_binding(
@@ -415,7 +468,9 @@ def _taste_kernel(
         nested_name=nested_name,
         taste_shocks=True,
     )
-    return call, _binding_kernel(tree=tree, call=call)
+    return call, _binding_kernel(
+        tree=tree, call=call, class_name=class_name, fields=fields
+    )
 
 
 def _body_without_docstring(node: ast.FunctionDef) -> list[ast.stmt]:
@@ -1585,8 +1640,91 @@ def _streamed_max_builder_errors(tree: ast.Module) -> list[str]:
             "_wrap_with_fold_reduction": (
                 "a586674124f90ff862f64458b40d6a6f8bbf6586e9772d9bdb4d31bf68c9c34c"
             ),
+            "_StreamedMaxQOverA.__call__": (
+                "b4865fc0cc966b6f49e58923347328ada708be3cacb4ab5897a87e2d8bc13fda"
+            ),
         },
     )
+
+
+def _max_kernel_surface_errors(tree: ast.Module) -> list[str]:
+    """Pin the five max-Q kernel classes to fields, one ``__call__``, and no more.
+
+    Every corridor above reads the reduction out of a kernel's ``__call__`` and
+    its operands out of ``self.<field>``. A property, a descriptor, or a
+    ``__post_init__`` on one of these classes could answer a field read with
+    something the builder never passed, so the class surface is allowlisted
+    exactly: the frozen dataclass decorator, no base and no class keyword, the
+    declared fields in order, and ``__call__`` as the only method.
+    """
+    surfaces = (
+        (
+            "smoothed max-Q kernel",
+            "_SmoothedMaxQOverA",
+            (
+                "__name__: ClassVar[str] = 'max_Q_over_a'",
+                "Q_and_F: Callable[..., tuple[FloatND, BoolND]]",
+                "n_discrete_action_axes: int",
+            ),
+        ),
+        (
+            "hard-max max-Q kernel",
+            "_HardMaxQOverA",
+            (
+                "__name__: ClassVar[str] = 'max_Q_over_a'",
+                "Q_and_F: Callable[..., tuple[FloatND, BoolND]]",
+                "stakeholders: tuple[str, ...] | None",
+                "pareto_weights: ParetoWeights | None",
+            ),
+        ),
+        (
+            "streamed max-Q kernel",
+            "_StreamedMaxQOverA",
+            (
+                "__name__: ClassVar[str] = 'streamed_max_Q_over_a'",
+                "Q_and_F: Callable[..., tuple[FloatND, BoolND]]",
+                "action_names: tuple[ActionName, ...]",
+                "n_discrete_action_axes: int",
+                "has_taste_shocks: bool",
+                "stakeholders: tuple[str, ...] | None",
+                "pareto_weights: ParetoWeights | None",
+                "q_and_f_arg_names: frozenset[str]",
+                "action_width_keyword: str",
+            ),
+        ),
+        (
+            "taste-shock argmax kernel",
+            "_TasteShockArgmaxQOverA",
+            (
+                "__name__: ClassVar[str] = 'argmax_and_max_Q_over_a'",
+                "Q_and_F: Callable[..., tuple[FloatND, BoolND]]",
+                "n_discrete_action_axes: int",
+            ),
+        ),
+        (
+            "hard-max argmax kernel",
+            "_HardMaxArgmaxQOverA",
+            (
+                "__name__: ClassVar[str] = 'argmax_and_max_Q_over_a'",
+                "Q_and_F: Callable[..., tuple[FloatND, BoolND]]",
+                "stakeholders: tuple[str, ...] | None",
+                "pareto_weights: ParetoWeights | None",
+            ),
+        ),
+    )
+    errors: list[str] = []
+    for label, class_name, fields in surfaces:
+        errors.extend(
+            _class_surface_errors(
+                tree=tree,
+                label=label,
+                class_name=class_name,
+                fields=fields,
+                methods=("__call__",),
+                decorators=("dataclass(frozen=True, kw_only=True, eq=False)",),
+            )
+        )
+    return errors
 
 
 def _functools_adapter_errors(tree: ast.Module) -> list[str]:
@@ -2700,13 +2838,19 @@ def _corridor_errors(
     tree: ast.Module,
     outer_name: str,
     nested_name: str,
+    class_name: str,
+    fields: tuple[str, ...],
     simulate: bool,
 ) -> list[str]:
     label = "simulate" if simulate else "solve"
     errors: list[str] = []
     try:
         binding, nested = _ordinary_kernel(
-            tree=tree, outer_name=outer_name, nested_name=nested_name
+            tree=tree,
+            outer_name=outer_name,
+            nested_name=nested_name,
+            class_name=class_name,
+            fields=fields,
         )
     except ValueError as error:
         return [f"{label}: {error}"]
@@ -2758,13 +2902,19 @@ def _taste_corridor_errors(
     tree: ast.Module,
     outer_name: str,
     nested_name: str,
+    class_name: str,
+    fields: tuple[str, ...],
     simulate: bool,
 ) -> list[str]:
     """Pin one taste-shock route from exact Q/F origin through its full reducer."""
     label = "taste-shock simulate" if simulate else "taste-shock solve"
     try:
         binding, nested = _taste_kernel(
-            tree=tree, outer_name=outer_name, nested_name=nested_name
+            tree=tree,
+            outer_name=outer_name,
+            nested_name=nested_name,
+            class_name=class_name,
+            fields=fields,
         )
     except ValueError as error:
         return [f"{label}: {error}"]
@@ -3205,29 +3355,38 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> dict[str, Any]:
             tree=max_tree,
             outer_name="get_max_Q_over_a",
             nested_name="max_Q_over_a",
+            class_name="_HardMaxQOverA",
+            fields=_HARD_MAX_KERNEL_FIELDS,
             simulate=False,
         )
         simulate_errors = _corridor_errors(
             tree=max_tree,
             outer_name="get_argmax_and_max_Q_over_a",
             nested_name="argmax_and_max_Q_over_a",
+            class_name="_HardMaxArgmaxQOverA",
+            fields=_HARD_MAX_KERNEL_FIELDS,
             simulate=True,
         )
         taste_solve_errors = _taste_corridor_errors(
             tree=max_tree,
             outer_name="get_max_Q_over_a",
             nested_name="max_Q_over_a",
+            class_name="_SmoothedMaxQOverA",
+            fields=_TASTE_KERNEL_FIELDS,
             simulate=False,
         )
         taste_simulate_errors = _taste_corridor_errors(
             tree=max_tree,
             outer_name="get_argmax_and_max_Q_over_a",
             nested_name="argmax_and_max_Q_over_a",
+            class_name="_TasteShockArgmaxQOverA",
+            fields=_TASTE_KERNEL_FIELDS,
             simulate=True,
         )
         taste_noise_errors = _taste_noise_errors(max_tree)
         wiring_errors = _max_builder_wiring_errors(max_tree)
         streamed_builder_errors = _streamed_max_builder_errors(max_tree)
+        kernel_surface_errors = _max_kernel_surface_errors(max_tree)
         max_errors = (
             binding_errors
             + solve_errors
@@ -3237,6 +3396,7 @@ def verify_direct_candidate_flow(*, repo_root: Path) -> dict[str, Any]:
             + taste_noise_errors
             + wiring_errors
             + streamed_builder_errors
+            + kernel_surface_errors
         )
         errors.extend(max_errors)
         if max_errors:

@@ -372,7 +372,7 @@ def continuation_group_key(
     gated_reference_regimes: Mapping[RegimeName, tuple[RegimeName, ...]] = (
         MappingProxyType({})
     ),
-) -> Callable[[int], tuple[tuple[RegimeName, ...], Hashable]]:
+) -> _ContinuationGroupKey:
     """Build the per-period grouping key shared by Q_and_F construction and diagnostics.
 
     Groups by (target configuration, per-period policy signature,
@@ -445,7 +445,7 @@ class _ContinuationGroupKey:
     gated_reference_regimes: Mapping[RegimeName, tuple[RegimeName, ...]]
     """Mapping of gated-edge targets to the regimes the edge's gate and legs read."""
 
-    def __call__(self, period: int) -> tuple[tuple[RegimeName, ...], Hashable]:
+    def __call__(self, *, period: int) -> tuple[tuple[RegimeName, ...], Hashable]:
         complete = (
             ()
             if period == self.phase_reachability.n_periods - 1
