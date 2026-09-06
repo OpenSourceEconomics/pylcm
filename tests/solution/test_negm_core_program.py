@@ -34,13 +34,16 @@ from _lcm.execution.core_program import (
     CoreExecutionDisposition,
     InternalInputRef,
     InternalOutputSpec,
-    MaterializedCoreProgram,
     ProgramScope,
     core_program_graph,
     materialize_core_program,
+    resolve_core_program,
 )
 from _lcm.execution.internal_outputs import (
+    ResolvedProducer,
+    consumed_producer_names,
     internal_input_templates,
+    resolve_producer,
     topological_program_order,
 )
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
@@ -107,13 +110,18 @@ def _compiled_cores(*, kernel: Any, context: Mapping[str, Any]) -> dict[str, Any
     build_context = _build_context(context)
     graph = core_program_graph(kernel=kernel)
     compiled: dict[str, Any] = {}
-    producers: dict[str, MaterializedCoreProgram] = {}
+    producers: dict[str, MappingProxyType[Any, ResolvedProducer]] = {}
+    consumed = consumed_producer_names(graph=graph)
     for name in topological_program_order(graph=graph):
         materialized = materialize_core_program(
             program=graph[name], context=build_context
         )
-        producers[name] = materialized
         templates = internal_input_templates(program=materialized, producers=producers)
+        if name in consumed:
+            resolved = resolve_core_program(program=materialized, tile_widths={})
+            producers[name] = MappingProxyType(
+                {(): resolve_producer(program=resolved, templates=templates)}
+            )
         compiled[name] = (
             jax.jit(materialized.function)
             .lower(**materialized.arguments, **templates)

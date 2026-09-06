@@ -9,7 +9,7 @@ by the backward-induction loop, and the replay side imports that loop.
 """
 
 import dataclasses
-from collections.abc import Mapping
+from collections.abc import Hashable, Mapping
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, cast
@@ -24,13 +24,16 @@ from _lcm.execution.compiler_memory import (
 )
 from _lcm.execution.core_program import (
     CoreBuildContext,
-    MaterializedCoreProgram,
     core_program_graph,
     materialize_core_program,
     select_programs,
 )
 from _lcm.execution.internal_outputs import (
+    ResolvedProducer,
+    assert_width_invariant_internal_outputs,
+    consumed_producer_names,
     internal_input_templates,
+    resolve_producer,
     topological_program_order,
 )
 from _lcm.execution.output_layout import PlannedCore, resolve_output_layout
@@ -40,6 +43,7 @@ from _lcm.solution.backward_induction import (
     _edge_kwargs,
     _resolve_program_for_execution,
     _run_period_kernel,
+    _width_key,
 )
 from _lcm.solution.period_capture import _PAYLOAD_NAME
 from _lcm.typing import RegimeName
@@ -263,6 +267,10 @@ def _compile_cores_for_one_period(
     The solve loop compiles every regime-period up front and deduplicates
     identical cores across them. A replay wants neither: it needs exactly the
     cores this one period calls.
+
+    A capture pins one width per core, so a producer's record set holds a single
+    candidate and its width-invariance check can only pass. It runs anyway, so
+    the solve loop and the replay reach a graph's producers through one routine.
     """
     period_kernel = regime.solution.period_kernels[period]
     context = _core_build_context_for_one_period(
@@ -278,11 +286,11 @@ def _compile_cores_for_one_period(
         core_names=tuple(graph),
     )
     compiled: dict[str, PlannedCore] = {}
-    producers: dict[str, MaterializedCoreProgram] = {}
+    producers: dict[str, MappingProxyType[Hashable, ResolvedProducer]] = {}
+    consumed = consumed_producer_names(graph=graph)
     for core_name in topological_program_order(graph=graph):
         declaration = graph[core_name]
         materialized = materialize_core_program(program=declaration, context=context)
-        producers[core_name] = materialized
         templates = internal_input_templates(program=materialized, producers=producers)
         resolved = _resolve_program_for_execution(
             program=materialized,
@@ -292,6 +300,15 @@ def _compile_cores_for_one_period(
             ],
             source=(kernel_kwargs["regime_name"], period, core_name),
         )
+        if core_name in consumed:
+            records: dict[Hashable, ResolvedProducer] = {
+                _width_key(widths=resolved.tile_widths): resolve_producer(
+                    program=resolved, templates=templates
+                )
+            }
+            candidates = MappingProxyType(records)
+            assert_width_invariant_internal_outputs(candidates=candidates)
+            producers[core_name] = candidates
         state_action_space = cast("StateActionSpace", context.state_action_space)
         state_order = tuple(
             name

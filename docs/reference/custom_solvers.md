@@ -210,11 +210,15 @@ The engine reads these declarations at three moments:
 - **When a retention selects the graph's programs.** A retention that keeps a consumer
   must also keep every producer it reads, so a producer and its consumers belong in
   scopes that are selected together.
-- **When the period is lowered.** The engine visits producers before consumers, runs
-  each producer's function abstractly once per consumer, and lowers the consumer against
-  the exact shapes and dtypes of the subtrees its references select. Those templates are
-  part of the program's compilation identity, so two cells that differ only in an
-  internal input's shape do not share an executable.
+- **When the period is lowered.** The engine visits producers before consumers and
+  traces each producer once with everything it is lowered with — the arguments its
+  builder returned, the templates of the internal inputs it reads itself, and the widths
+  the execution planner owns — then lowers the consumer against the exact shapes and
+  dtypes of the subtrees its references select. Those templates are part of the
+  program's compilation identity, so two cells that differ only in an internal input's
+  shape do not share an executable. A producer whose published subtree would change with
+  the width the planner selects is refused while the period is planned: its consumers
+  are lowered before that selection is made.
 
 A typed internal edge is the route between two programs the engine lowers together. A
 `HOST_DRIVEN` program is dispatched by the solver's own host loop, so a driver that

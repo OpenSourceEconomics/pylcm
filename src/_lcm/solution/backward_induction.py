@@ -28,7 +28,11 @@ from _lcm.execution.core_program import (
     select_programs,
 )
 from _lcm.execution.internal_outputs import (
+    ResolvedProducer,
+    assert_width_invariant_internal_outputs,
+    consumed_producer_names,
     internal_input_templates,
+    resolve_producer,
     topological_program_order,
 )
 from _lcm.execution.liveness import PlannedInputLiveness
@@ -1855,9 +1859,12 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                 "compiler can report peak workspace."
             )
             raise ExecutionPlanningError(msg)
+        selected_candidates = {
+            triple: candidates[0] for triple, candidates in candidates_by_triple.items()
+        }
         selected_programs = {
-            triple: resolved_programs[candidates[0]]
-            for triple, candidates in candidates_by_triple.items()
+            triple: resolved_programs[candidate]
+            for triple, candidate in selected_candidates.items()
         }
         eager = {
             triple: _attach_resolved_output_layout(
@@ -1869,7 +1876,9 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                 layout=all_layouts[triple],
                 tile_widths=program.tile_widths,
                 input_transfer_plan=program.input_transfer_plan,
-                internal_input_templates=internal_templates[triple],
+                internal_input_templates=internal_templates[
+                    selected_candidates[triple]
+                ],
                 name=triple[2],
             )
             for triple, program in selected_programs.items()
@@ -2001,7 +2010,9 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
             layout=all_layouts[triple],
             tile_widths=plan.widths,
             input_transfer_plan=selected.input_transfer_plan,
-            internal_input_templates=internal_templates[triple],
+            internal_input_templates=internal_templates[
+                (triple, _width_key(widths=plan.widths))
+            ],
             name=triple[2],
         )
 
@@ -2048,7 +2059,7 @@ def _lower_and_compile_wave(
     new_lowerings: Mapping[Hashable, _CoreCandidate],
     resolved_programs: Mapping[_CoreCandidate, ResolvedCoreProgram],
     all_layouts: Mapping[_CoreTriple, ResolvedOutputLayout],
-    internal_templates: Mapping[_CoreTriple, Mapping[str, object]],
+    internal_templates: Mapping[_CoreCandidate, Mapping[str, object]],
     ages: AgeGrid,
     n_triples_per_lowering: Mapping[Hashable, int],
     log_kernel_memory: bool,
@@ -2090,7 +2101,7 @@ def _lower_and_compile_wave(
             out_shardings=layout.out_shardings,
         )
         low = jitted.lower(
-            **resolved.arguments, **internal_templates[triple], **static_kwargs
+            **resolved.arguments, **internal_templates[candidate], **static_kwargs
         )
         _assert_lowered_output_roles(
             lowered=low,
@@ -2239,13 +2250,19 @@ def _resolve_output_layouts_and_lowering_keys(
     dict[_CoreTriple, ResolvedOutputLayout],
     dict[_CoreCandidate, Hashable],
     dict[_CoreCandidate, ResolvedCoreProgram],
-    dict[_CoreTriple, Mapping[str, object]],
+    dict[_CoreCandidate, Mapping[str, object]],
 ]:
     """Materialize once, then resolve every width candidate before global dedup.
 
     Programs are visited so every producer of an internal output is materialized
     before the consumers that read it, and each consumer is lowered against the
     producer's abstract output rather than a stand-in.
+
+    Each producer is traced once per width candidate with everything it is
+    lowered with — its dynamic arguments, the templates of the internal inputs it
+    reads itself, and its planner-owned static widths — before any consumer of it
+    is traced. Its candidates must publish one subtree per label, since a
+    consumer is lowered before the producer's width is selected.
 
     Each candidate's lowering key opens with the program's durable identity —
     the model, the regime, the core, and both groupings of its period — so a
@@ -2259,11 +2276,11 @@ def _resolve_output_layouts_and_lowering_keys(
     layouts: dict[_CoreTriple, ResolvedOutputLayout] = {}
     lowering_keys: dict[_CoreCandidate, Hashable] = {}
     resolved_programs: dict[_CoreCandidate, ResolvedCoreProgram] = {}
-    internal_templates: dict[_CoreTriple, Mapping[str, object]] = {}
-    # A materialized program is kept only while its own graph is being resolved,
+    internal_templates: dict[_CoreCandidate, Mapping[str, object]] = {}
+    # A producer's records are kept only while its own graph is being resolved,
     # and only when some consumer of that graph names it, so no argument tree is
-    # held across the whole solve.
-    producers: dict[str, MaterializedCoreProgram] = {}
+    # held across the whole solve. Each record adds one abstract-shape tree.
+    producers: dict[str, MappingProxyType[Hashable, ResolvedProducer]] = {}
     consumed_names: frozenset[str] = frozenset()
     current_cell: tuple[RegimeName, int] | None = None
     ordered_programs = _programs_in_producer_order(all_programs=all_programs)
@@ -2297,10 +2314,7 @@ def _resolve_output_layouts_and_lowering_keys(
             ),
         )
         materialized = materialize_core_program(program=declaration, context=context)
-        if core_key in consumed_names:
-            producers[core_key] = materialized
         templates = internal_input_templates(program=materialized, producers=producers)
-        internal_templates[triple] = templates
         width_candidates = workspace_width_candidates(
             axes=materialized.requirements.streamable_axes,
             budget_bytes=budget_bytes,
@@ -2310,6 +2324,7 @@ def _resolve_output_layouts_and_lowering_keys(
             for name in state_action_space.states
             if name not in regime.fold_state_names
         )
+        records: dict[Hashable, ResolvedProducer] = {}
         for widths in width_candidates:
             resolved = _resolve_program_for_execution(
                 program=materialized,
@@ -2328,6 +2343,14 @@ def _resolve_output_layouts_and_lowering_keys(
                 layouts[triple] = layout
             candidate = (triple, _width_key(widths=resolved.tile_widths))
             resolved_programs[candidate] = resolved
+            internal_templates[candidate] = templates
+            if core_key in consumed_names:
+                records[candidate[1]] = resolve_producer(
+                    program=resolved, templates=templates
+                )
+        if core_key in consumed_names:
+            assert_width_invariant_internal_outputs(candidates=records)
+            producers[core_key] = MappingProxyType(records)
     marked = _mark_reused_transfers(resolved_programs=resolved_programs)
     resolved_programs.update(marked)
     for candidate, resolved in resolved_programs.items():
@@ -2342,7 +2365,7 @@ def _resolve_output_layouts_and_lowering_keys(
                 solver_group_key=regime.solution.solver_period_group_keys.get(period),
             ),
             layout_key=layouts[candidate[0]].compilation_key,
-            arguments={**resolved.arguments, **internal_templates[candidate[0]]},
+            arguments={**resolved.arguments, **internal_templates[candidate]},
             specialization_key=resolved.specialization_key,
             output_roles=resolved.output_roles,
         )
@@ -2409,11 +2432,12 @@ def _consumed_producer_names(
     period: int,
 ) -> frozenset[str]:
     """Return the programs of one regime-period graph whose outputs are consumed."""
-    return frozenset(
-        ref.producer
-        for (other_regime, other_period, _core_key), program in all_programs.items()
-        if (other_regime, other_period) == (regime_name, period)
-        for ref in program.requirements.internal_inputs.values()
+    return consumed_producer_names(
+        graph={
+            core_key: program
+            for (other_regime, other_period, core_key), program in all_programs.items()
+            if (other_regime, other_period) == (regime_name, period)
+        }
     )
 
 

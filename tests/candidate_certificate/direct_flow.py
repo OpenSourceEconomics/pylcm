@@ -205,8 +205,8 @@ _SOURCE_SEALS = {
     SIMULATION_COMPILE_SOURCE: "eca63257bd882066c608c34791cb0399f8d283fa79f5e0640091e12321da82a9",
     MODEL_SOURCE: "b251854ac9cad72579c37137b6fa5e13a303fbc95108de6147de974f0bf39382",
     SOLVER_API_SOURCE: "db20fc0c3b392a0809ef2c114587203d75d761888c1a86760bf2cd81043472b6",
-    BACKWARD_INDUCTION_SOURCE: "ad6baf1c0c009c7ee657fc8a947bb7460efa1cf8120493ecd23b49ff4494c5a2",
-    PERIOD_REPLAY_SOURCE: "71bdcc15215cafce5a6f248bbd1ba264170c23cc867b7bc9d9f472926928ed34",
+    BACKWARD_INDUCTION_SOURCE: "1cc79cf6d819016dbe7ca9a434adb8d058d2903a937c8a49f11d05fdf6007d61",
+    PERIOD_REPLAY_SOURCE: "a5c59359171047ef860e879c66b4ac8eba28732f4d9af3df1fcaf5ccf3813874",
     INITIAL_CONDITIONS_SOURCE: "582c29e7f99072d975c7a4c9070a93e707d25a98c09e216b47fa71c7bb2d6022",
     RESULT_SOURCE: "7390877272bc23fd7c153e2a51ac4a6072e88fe950d5de695ff015205aff5058",
     RESULT_DATAFRAME_SOURCE: "025e273c4d3bb9d8f9787189a551b113708c86b1e868d16178aa39555abf49a4",
@@ -2780,8 +2780,8 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             "_regime_retains_replay": "04e8745dceb0e3c34e0f91fd11d27c43e0da5043cf2418b8015c15baa29d1d81",
             "_select_period_programs": "55bff2bbffbc5a75f00a656f684093d89d3655bac48d76da2e9dbe716b62bb74",
             "_selected_artifact_keys_for_cell": "1acc464529bc9833e48f727279682d969f850d2a3bb206e8a2695b1769f6182f",
-            "_compile_all_functions": "e0580080ae7fbcee9f7734dc6939b496230a687455fea6dcf8819479d90fd935",
-            "_resolve_output_layouts_and_lowering_keys": "7c1964873999ad0deb1d4e7be9fdc5871c1fe9466090a0ed1838808e7db9765f",
+            "_compile_all_functions": "6b94df9c744aad16d151745eb9f747643727c9079d1ef8acba43a43601ac85b4",
+            "_resolve_output_layouts_and_lowering_keys": "3af69dee25ca7fadd2180ffc9f3c751f24fff20acf9da331d79f8669fdebd6f0",
             "_mark_reused_transfers": "2b11ec8152b081ae0e2666a46c79b46ef5062ce2738717da0c93bcc502280c56",
             "_consumer_key": "44f91b9312a058528a7f7d34b843eb23efaae21783e834cc5fa06389f4006c73",
             "_resolve_program_for_execution": "6e3ec3139833f459a49be4a30a6c8c5813ba8cd66176a849ee24e7a81b27b433",
@@ -2883,7 +2883,7 @@ def _period_replay_errors(tree: ast.Module) -> list[str]:
         label="period replay native-program transport",
         contracts={
             "replay_period": "78848f526164f957ab3634f8c5db7740e7b452719830b5c887b523360ff5beeb",
-            "_compile_cores_for_one_period": "898d1a2d3f7a0a0ce8f12724d7f8f99f1823faee3ed3e6203c6cf83f078b7670",
+            "_compile_cores_for_one_period": "ac36427ade8b2f6e4f99fd5ab3d808c5dc258a55735ea4c75ed78d50f09d9462",
             "_core_build_context_for_one_period": "8d11e28bebf0c0df6bce4872e25a56e577592db26901d47d8cd5cf431a55b473",
         },
     )
@@ -6196,8 +6196,8 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
                 source=backward_induction_source,
                 old=(
                     "        low = jitted.lower(\n"
-                    "            **resolved.arguments, **internal_templates[triple], "
-                    "**static_kwargs\n"
+                    "            **resolved.arguments, "
+                    "**internal_templates[candidate], **static_kwargs\n"
                     "        )"
                 ),
                 new="        low = jitted.lower(**static_kwargs)",

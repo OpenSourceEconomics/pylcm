@@ -13,6 +13,12 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   lowers producers before consumers against the exact shapes and dtypes the references
   select, so a consumer no longer runs against a stand-in filled in later. NEGM's
   keeper-to-sweep dependency uses the typed edge.
+- A program graph's typed internal edges lower for every admitted shape, not only for
+  a dense one-hop edge. A producer's abstract output is computed from the complete
+  invocation the engine lowers — its arguments, the internal inputs it reads itself,
+  and the widths the execution planner owns — so a chain of producers and a `PLANNED`
+  producer both reach their consumers. A producer whose published output would change
+  with the selected width is refused with an `ExecutionPlanningError`.
 - `CoreExecutionDisposition.HOST_DRIVEN` declares a program whose host loop dispatches
   it a data-dependent number of times. Like `DENSE` it owns its own width and must carry
   a `disposition_reason`; the engine plans nothing for it.
