@@ -406,6 +406,14 @@ here would re-run every build-time consumer the model author declared — a comp
 constraint boundary, a boundary plan — and consume each of them twice. The result must
 depend only on the arguments, so two builds of one model declare the same reads.
 
+Only the `period_kernels` of the returned container are honoured. A container whose
+`period_group_keys`, `continuation_spec`, `artifact_authorities`, `replay_route` or
+`param_checks` differ from the ones the engine handed over is refused while the model
+builds, naming the regime, the solver and the field — as is a declaration by a solver
+whose regime publishes no continuation of its own, because the engine wraps such a
+regime's kernels in the adapter that publishes one and the declarations would name
+programs that adapter does not publish.
+
 The shipped endogenous-grid solvers build one `ValueRead` per published leaf, addressed
 either inside the rolling `next_regime_to_continuation` mapping or, where the argument
 builder flattens the rows into named arguments, by the argument holding each row. A

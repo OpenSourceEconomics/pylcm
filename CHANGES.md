@@ -51,7 +51,9 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   continuation-reading regime after every regime is built, with
   `SolverBuildContext.continuation_specs` filled. The default declares nothing; the hook
   may only attach `value_reads` to the programs the kernels already publish, so no
-  kernel is built twice.
+  kernel is built twice. Only the returned container's `period_kernels` are honoured,
+  and a hook that moves any other field, or that declares reads for a regime whose
+  continuation the engine publishes on the solver's behalf, is refused at model build.
 - Solution archives written under solver API version 1 are rejected with
   `IncompatibleSolutionError`. Compatibility remains exact; pylcm does not migrate an
   archive across a solver API version.

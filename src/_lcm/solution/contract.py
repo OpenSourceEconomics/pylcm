@@ -793,6 +793,11 @@ class Solver(ABC):
         a second time here would re-run the model author's build-time consumers.
         The result must depend only on the arguments, so two builds of one model
         declare the same reads.
+
+        Only `period_kernels` of the returned container is honoured. Every other
+        field — `period_group_keys`, `continuation_spec`, `artifact_authorities`,
+        `replay_route`, `param_checks` — must come back as it was handed over,
+        and a container that moves one is refused at build.
         """
         return kernels
 

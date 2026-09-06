@@ -799,7 +799,7 @@ class _CanonicalRegimeBuilder:
                 build.
 
         Returns:
-            Mapping of regime names to their canonical form.
+            Dict mapping regime names to their canonical form.
         """
         # One role vocabulary for the whole model, carried on every regime so
         # a simulated row's role means the same thing wherever it goes.
@@ -988,10 +988,11 @@ def _with_declared_continuation_reads(
     """Let every continuation source declare the leaves it reads.
 
     A solver builds its kernels before any regime has published a carry, so it
-    cannot then name the rows its targets publish. This pass runs once every
-    regime is built, hands each demanding solver the published templates, and
-    writes back the kernels it returns. The hook only attaches declarations, so
-    no kernel is built a second time and no build-time consumer runs twice.
+    cannot then name the rows its targets publish. Once every regime is built,
+    each demanding solver is handed the published templates and only the
+    `period_kernels` of the container it returns are written back. The hook
+    attaches declarations, so no kernel is built a second time and no build-time
+    consumer runs twice.
 
     Args:
         canonical_regimes: Mapping of regime names to the regimes just built.
@@ -999,7 +1000,8 @@ def _with_declared_continuation_reads(
             build context each regime's solve phase was built from.
 
     Returns:
-        Mapping of regime names to their canonical form, sources declaring.
+        Dict mapping regime names to their canonical form, every continuation
+        source carrying the leaf reads its solver declared.
 
     """
     demanding = {
@@ -1017,6 +1019,17 @@ def _with_declared_continuation_reads(
                 build.context, continuation_specs=published_specs
             ),
         )
+        if declared is build.kernels:
+            continue
+        _fail_if_a_declaration_moved_more_than_the_kernels(
+            regime_name=regime_name,
+            solver=build.solver,
+            handed_over=build.kernels,
+            declared=declared,
+        )
+        _fail_if_declaring_kernels_carry_an_engine_produced_continuation(
+            regime_name=regime_name, solver=build.solver, kernels=build.kernels
+        )
         regime = canonical_regimes[regime_name]
         canonical_regimes[regime_name] = dataclass_replace(
             regime,
@@ -1025,6 +1038,108 @@ def _with_declared_continuation_reads(
             ),
         )
     return canonical_regimes
+
+
+def _fail_if_a_declaration_moved_more_than_the_kernels(
+    *,
+    regime_name: RegimeName,
+    solver: Solver,
+    handed_over: SolutionKernels,
+    declared: SolutionKernels,
+) -> None:
+    """Refuse a declaration that changed anything but the period kernels.
+
+    Only `period_kernels` of the returned container is written back, so a solver
+    that moves a sibling field is silently ignored rather than obeyed. Naming
+    the field at build turns that into a visible refusal.
+
+    The two immutable mappings are compared key-by-key and by value identity,
+    and the remaining fields by identity alone: a continuation spec holds JAX
+    arrays, whose `==` is elementwise and has no truth value.
+
+    Args:
+        regime_name: Name of the regime whose reads were declared.
+        solver: Solver whose `declare_continuation_reads` returned `declared`.
+        handed_over: Kernels the engine passed to the hook.
+        declared: Kernels the hook returned.
+
+    Raises:
+        RegimeInitializationError: If any field but `period_kernels` differs.
+
+    """
+    for field_name in ("period_group_keys", "artifact_authorities"):
+        before = getattr(handed_over, field_name)
+        after = getattr(declared, field_name)
+        if tuple(before) != tuple(after) or any(
+            before[key] is not after[key] for key in before
+        ):
+            _fail_declaration_field(
+                regime_name=regime_name, solver=solver, field_name=field_name
+            )
+    for field_name in ("continuation_spec", "replay_route", "param_checks"):
+        if getattr(handed_over, field_name) is not getattr(declared, field_name):
+            _fail_declaration_field(
+                regime_name=regime_name, solver=solver, field_name=field_name
+            )
+
+
+def _fail_declaration_field(
+    *, regime_name: RegimeName, solver: Solver, field_name: str
+) -> None:
+    """Report one field a declaration moved that the engine does not honour.
+
+    Args:
+        regime_name: Name of the regime whose reads were declared.
+        solver: Solver whose `declare_continuation_reads` moved the field.
+        field_name: Name of the offending `SolutionKernels` field.
+
+    Raises:
+        RegimeInitializationError: Always.
+
+    """
+    msg = (
+        f"Solver {type(solver).__name__!r} declared continuation reads for "
+        f"regime {regime_name!r} in kernels whose {field_name!r} differs from "
+        f"the ones it was handed. The engine honours only the `period_kernels` "
+        f"of the returned `SolutionKernels`; every other field must come back "
+        f"unchanged."
+    )
+    raise RegimeInitializationError(msg)
+
+
+def _fail_if_declaring_kernels_carry_an_engine_produced_continuation(
+    *, regime_name: RegimeName, solver: Solver, kernels: SolutionKernels
+) -> None:
+    """Refuse declarations on kernels wrapped in an engine-produced carry.
+
+    A regime that publishes no continuation of its own but is one an
+    endogenous-grid parent reads gets its adapters wrapped, engine-side, in the
+    decorator that publishes the carry. A solver declaring reads on such a
+    regime would attach them to the base programs while the wrapper is what the
+    engine executes, so the combination is named here instead of going quiet.
+
+    Args:
+        regime_name: Name of the regime whose reads were declared.
+        solver: Solver whose `declare_continuation_reads` returned kernels.
+        kernels: Kernels the engine passed to the hook.
+
+    Raises:
+        RegimeInitializationError: If any period kernel is engine-decorated.
+
+    """
+    if not any(
+        isinstance(kernel, _TerminalCarryPeriodKernel)
+        for kernel in kernels.period_kernels.values()
+    ):
+        return
+    msg = (
+        f"Solver {type(solver).__name__!r} declares continuation reads for "
+        f"regime {regime_name!r}, whose period kernels the engine wrapped in "
+        f"an engine-produced carry adapter because the solver publishes no "
+        f"continuation of its own. A solver that declares the leaves it reads "
+        f"must publish its own continuation."
+    )
+    raise RegimeInitializationError(msg)
 
 
 def _gated_continuation_specs(

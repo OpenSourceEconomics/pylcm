@@ -1,5 +1,7 @@
 import functools
 from collections import Counter
+from collections.abc import Callable
+from dataclasses import replace as dataclasses_replace
 from types import MappingProxyType
 from typing import cast
 
@@ -8,6 +10,8 @@ import pytest
 from beartype import beartype
 from numpy.testing import assert_array_equal
 
+from _lcm.continuation import EGMContinuationSpec
+from _lcm.egm.carry import build_template_egm_carry
 from _lcm.engine import Regime, VariableInfo, Variables
 from _lcm.grids import DiscreteGrid, Grid, LinSpacedGrid
 from _lcm.regime_building.canonicalize import _canonicalize_phase_transitions
@@ -27,13 +31,20 @@ from lcm import (
     categorical,
 )
 from lcm.ages import AgeGrid
+from lcm.exceptions import RegimeInitializationError
+from lcm.model import Model
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import DCEGM
+from lcm.solver_api import EGM_CONTINUATION
+from lcm.solvers import DCEGM, EGM, NBEGM, NEGM, GridSearch, Solver
 from lcm.typing import FloatND, ScalarInt
 from tests.conftest import build_prepared_structure
 from tests.mock_regime import MockRegime
+from tests.solution.test_egm_solver import _SAVINGS_GRID as EGM_SAVINGS_GRID
+from tests.solution.test_egm_solver import _model as egm_model
+from tests.test_models import negm_kinked_toy
 from tests.test_models.dcegm_paper_twin import build_dcegm_model
 from tests.test_models.deterministic.base import dead, working_life
+from tests.test_nbegm_constraint_validation import _build_smooth_model
 
 
 def test_variables_from_regime_tags_kind_and_topology(binary_category_class):
@@ -487,8 +498,32 @@ def test_mock_regime_get_all_functions_matches_real_regime():
     assert set(mock.get_all_functions()) == set(real.get_all_functions())
 
 
+def _egm_model() -> Model:
+    """A one-liquid consumption-saving model solved by plain EGM."""
+    return egm_model(solver=EGM(savings_grid=EGM_SAVINGS_GRID))
+
+
+def _nbegm_model() -> Model:
+    """An unconstrained case-piece model solved by NB-EGM on a dense route."""
+    return _build_smooth_model(constraints={})
+
+
+@pytest.mark.parametrize(
+    ("build_model", "solver_class", "expected"),
+    [
+        (_egm_model, EGM, {"saving": 1}),
+        (_nbegm_model, NBEGM, {"alive": 1}),
+        (build_dcegm_model, DCEGM, {"working_life": 1, "retirement": 1}),
+        (negm_kinked_toy.build_model, NEGM, {"alive": 1}),
+    ],
+    ids=["egm", "nbegm", "dcegm", "negm"],
+)
 def test_a_continuation_source_model_builds_each_regimes_kernels_once(
+    *,
     monkeypatch: pytest.MonkeyPatch,
+    build_model: Callable[[], Model],
+    solver_class: type[Solver],
+    expected: dict[str, int],
 ) -> None:
     """Declaring the leaves a solver reads costs no second kernel build.
 
@@ -497,18 +532,82 @@ def test_a_continuation_source_model_builds_each_regimes_kernels_once(
     twice for one regime consumes each of them twice.
     """
     built: list[str] = []
-    build_period_kernels = DCEGM.build_period_kernels
+    build_period_kernels = solver_class.build_period_kernels
 
     # keyword-only-exempt: library-callback=types.FunctionType.__get__
     def counting_build_period_kernels(
-        self: DCEGM, *, context: SolverBuildContext
+        self: Solver, *, context: SolverBuildContext
     ) -> SolutionKernels:
         """Record the regime the kernels are built for, then build them."""
         built.append(context.regime_name)
         return build_period_kernels(self, context=context)
 
-    monkeypatch.setattr(DCEGM, "build_period_kernels", counting_build_period_kernels)
+    monkeypatch.setattr(
+        solver_class, "build_period_kernels", counting_build_period_kernels
+    )
 
-    build_dcegm_model()
+    build_model()
 
-    assert Counter(built) == {"working_life": 1, "retirement": 1}
+    assert Counter(built) == expected
+
+
+# keyword-only-exempt: library-callback=types.FunctionType.__get__
+def _declare_a_different_continuation_spec(
+    self: Solver, *, kernels: SolutionKernels, context: SolverBuildContext
+) -> SolutionKernels:
+    """Return kernels publishing a continuation the engine never handed over."""
+    del self, context
+    return dataclasses_replace(
+        kernels,
+        continuation_spec=EGMContinuationSpec(
+            template=build_template_egm_carry(n_rows=4)
+        ),
+    )
+
+
+def test_a_declaration_that_changes_more_than_the_kernels_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only the returned period kernels are honoured, so nothing else may move."""
+    monkeypatch.setattr(
+        DCEGM, "declare_continuation_reads", _declare_a_different_continuation_spec
+    )
+
+    with pytest.raises(
+        RegimeInitializationError, match="'continuation_spec'"
+    ) as excinfo:
+        build_dcegm_model()
+
+    assert "working_life" in str(excinfo.value)
+
+
+# keyword-only-exempt: library-callback=types.FunctionType.__get__
+def _declare_unchanged_kernels(
+    self: Solver, *, kernels: SolutionKernels, context: SolverBuildContext
+) -> SolutionKernels:
+    """Return an equal container, declaring nothing, as a real hook would."""
+    del self, context
+    return dataclasses_replace(kernels)
+
+
+def test_a_declaring_solver_whose_kernels_are_engine_decorated_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An engine-produced carry adapter would swallow a solver's declarations.
+
+    A regime that publishes no continuation of its own is handed one the engine
+    produces, wrapped around its adapters. A solver declaring reads on such a
+    regime would attach them to programs the wrapper never publishes, so the
+    combination is named at build instead.
+    """
+    monkeypatch.setattr(
+        GridSearch,
+        "required_continuation_keys",
+        property(lambda _self: frozenset({EGM_CONTINUATION})),
+    )
+    monkeypatch.setattr(
+        GridSearch, "declare_continuation_reads", _declare_unchanged_kernels
+    )
+
+    with pytest.raises(RegimeInitializationError, match="engine-produced"):
+        build_dcegm_model()
