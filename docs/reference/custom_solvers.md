@@ -310,6 +310,13 @@ stored array to the program unchanged; every other operator is one recorded copy
 the required layout, and the compiled program refuses a value whose shape, dtype, or
 layout departs from what was planned.
 
+The engine declares the reads of its own gated-edge fold the same way a solver declares
+a core's. Folding one declared edge onto its target's grid reads that period's target
+value and every reference regime's value, so each is a `ValueRead` whose consumer names
+the fold — the source regime, the folded period, and the edge's target — and the fold is
+one dispatch of the solve alongside the period's cores. What a fold reads is therefore
+counted, not merely retained.
+
 (publishing-a-continuation)=
 
 ## Publishing a continuation

@@ -54,6 +54,10 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   kernel is built twice. Only the returned container's `period_kernels` are honoured,
   and a hook that moves any other field, or that declares reads for a regime whose
   continuation the engine publishes on the solver's behalf, is refused at model build.
+- The engine's gated-edge fold declares the same-period values it reads. Folding one
+  edge at one period is a dispatch in its own right, so the target's value and each
+  reference regime's value are counted consumers rather than values pinned wholesale
+  because nobody had named them.
 - Solution archives written under solver API version 1 are rejected with
   `IncompatibleSolutionError`. Compatibility remains exact; pylcm does not migrate an
   archive across a solver API version.

@@ -14,8 +14,15 @@ class PlannedInputLiveness[DispatchKey, ArtifactKey]:
     """Track the finite planned consumers of logical solve-time artifacts.
 
     ``dispatch_accesses`` maps each immutable dispatch ID to its logical artifact
-    accesses. An artifact is counted once per dispatch; duplicate declarations inside
-    one dispatch are errors. A dispatch stays pending until that exact ID commits, so
+    accesses. An ID names one unit of work the runtime commits as a whole:
+
+    - a ``(period, regime)`` core dispatch — one regime's compiled cores at one
+      period;
+    - a ``(period, source, target)`` gated-edge fold — the engine's own fold of one
+      declared edge onto the target's grid at the period it folds.
+
+    An artifact is counted once per dispatch; duplicate declarations inside one
+    dispatch are errors. A dispatch stays pending until that exact ID commits, so
     repeating a peer with the same access set cannot mask a skipped node. Artifacts
     with dense or otherwise unplanned consumers must also be listed in
     ``pinned_artifacts``. Pinning preserves finite planned counts while preventing zero

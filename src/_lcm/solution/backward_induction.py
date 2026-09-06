@@ -5,7 +5,14 @@ import inspect
 import logging
 import os
 import time
-from collections.abc import Callable, Hashable, Iterable, Iterator, Mapping
+from collections.abc import (
+    Callable,
+    Container,
+    Hashable,
+    Iterable,
+    Iterator,
+    Mapping,
+)
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from types import MappingProxyType
 from typing import cast
@@ -21,6 +28,7 @@ from _lcm.execution.core_program import (
     MaterializedCoreProgram,
     ProgramScope,
     ResolvedCoreProgram,
+    ValueRead,
     _value_read_argument_leaf,
     core_program_graph,
     materialize_core_program,
@@ -47,6 +55,8 @@ from _lcm.execution.value_transfer import (
     ResolvedValueTransfer,
     ValueArtifactAddress,
     ValueArtifactKind,
+    ValueConsumerAddress,
+    ValueInputChannel,
     ValueTransferKind,
     classify_value_transfer,
     resolve_value_transfer,
@@ -544,6 +554,15 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             flat_params=flat_params,
             next_edge_to_V_arr=next_edge_to_V_arr,
         )
+        # A fold is a consumer of the period's raw values in its own right, so
+        # each edge folded above commits the dispatch declared for it. An edge
+        # the same enumeration left unfolded declared none and commits nothing.
+        for folded_edge in _folded_edge_keys_at_period(
+            regimes=regimes,
+            period=period,
+            solved_regimes=period_solution,
+        ):
+            input_liveness.commit_successful_dispatch(dispatch=(period, *folded_edge))
         next_regime_to_V_arr, next_regime_to_continuation = _roll_continuation_inputs(
             regimes=regimes,
             period_solution=period_solution,
@@ -976,51 +995,44 @@ def _roll_gated_edges(
     if not next_edge_to_V_arr:
         return next_edge_to_V_arr
     rolled: dict[_EdgeKey, FloatND] = dict(next_edge_to_V_arr)
-    for source_name, source in regimes.items():
-        for target_name, edge in source.gated_edges.items():
-            if not edge_may_fold_at_period(
-                edge=edge,
-                source_name=source_name,
-                fold_period=period,
-                solved_regimes=period_solution,
-                source_reads_wbar=source_reads_folded_wbar(
-                    source_active_periods=source.active_periods,
-                    fold_period=period,
+    for source_name, target_name in _folded_edge_keys_at_period(
+        regimes=regimes,
+        period=period,
+        solved_regimes=period_solution,
+    ):
+        edge = regimes[source_name].gated_edges[target_name]
+        # The fold compiled for THIS period: the gate references and leg
+        # fallbacks are interpolated on their own regimes' grids as of the
+        # period being folded, which an `AgeSpecializedGrid` moves without
+        # changing their shape.
+        fold = edge.fold_at(period=period)
+        same_period_mapping = build_same_period_mapping_for_fold(
+            edge=edge,
+            period_solution=period_solution,
+            period_dissolution_flags=period_dissolution_flags,
+        )
+        wbar = _evaluate_edge_fold(
+            fold=fold,
+            fold_period=period,
+            fold_age=ages.period_to_age(period),
+            target_states=cast(
+                "Mapping[str, ContinuousState | DiscreteState]",
+                _states_for_period(
+                    regime=regimes[target_name],
+                    state_action_space=base_state_action_spaces[target_name],
+                    period=period,
                 ),
-            ):
-                continue
-            # The fold compiled for THIS period: the gate references and leg
-            # fallbacks are interpolated on their own regimes' grids as of the
-            # period being folded, which an `AgeSpecializedGrid` moves without
-            # changing their shape.
-            fold = edge.fold_at(period=period)
-            same_period_mapping = build_same_period_mapping_for_fold(
-                edge=edge,
-                period_solution=period_solution,
-                period_dissolution_flags=period_dissolution_flags,
-            )
-            wbar = _evaluate_edge_fold(
-                fold=fold,
-                fold_period=period,
-                fold_age=ages.period_to_age(period),
-                target_states=cast(
-                    "Mapping[str, ContinuousState | DiscreteState]",
-                    _states_for_period(
-                        regime=regimes[target_name],
-                        state_action_space=base_state_action_spaces[target_name],
-                        period=period,
-                    ),
-                ),
-                same_period_mapping=same_period_mapping,
-                source_flat_params=flat_params[source_name],
-                reference_flat_params=build_reference_params_mapping_for_fold(
-                    edge=edge, flat_params=flat_params
-                ),
-            )
-            rolled[(source_name, target_name)] = _match_leaf_template_sharding(
-                leaf=wbar,
-                template_leaf=next_edge_to_V_arr[(source_name, target_name)],
-            )
+            ),
+            same_period_mapping=same_period_mapping,
+            source_flat_params=flat_params[source_name],
+            reference_flat_params=build_reference_params_mapping_for_fold(
+                edge=edge, flat_params=flat_params
+            ),
+        )
+        rolled[(source_name, target_name)] = _match_leaf_template_sharding(
+            leaf=wbar,
+            template_leaf=next_edge_to_V_arr[(source_name, target_name)],
+        )
     return MappingProxyType(rolled)
 
 
@@ -1488,7 +1500,7 @@ def _drain_V_arr_shards(
     jax.block_until_ready(array_leaves)
 
 
-type _InputDispatch = tuple[int, RegimeName]
+type _InputDispatch = tuple[int, RegimeName] | tuple[int, RegimeName, RegimeName]
 type _CoreTriple = tuple[RegimeName, int, str]
 type _WidthKey = tuple[tuple[str, int], ...]
 type _CoreCandidate = tuple[_CoreTriple, _WidthKey]
@@ -1519,9 +1531,10 @@ def _build_planned_input_liveness(
     program_metadata: Mapping[_CoreTriple, _ProgramExecutionMetadata],
 ) -> PlannedInputLiveness[_InputDispatch, ValueArtifactAddress]:
     """Build one exact-dispatch ledger without authorizing physical release."""
-    dispatch_accesses: dict[_InputDispatch, tuple[ValueArtifactAddress, ...]] = {}
+    dispatch_accesses: dict[_InputDispatch, tuple[ValueArtifactAddress, ...]] = dict(
+        _gated_edge_fold_dispatches(regimes=regimes)
+    )
     pinned_artifacts = set(_retained_solution_value_artifacts(regimes=regimes))
-    pinned_artifacts.update(_gated_fold_raw_value_artifacts(regimes=regimes))
 
     metadata_by_dispatch: dict[
         tuple[RegimeName, int], dict[str, _ProgramExecutionMetadata]
@@ -1623,27 +1636,128 @@ def _retained_solution_value_artifacts(
     )
 
 
-def _gated_fold_raw_value_artifacts(
-    *,
-    regimes: Mapping[RegimeName, Regime],
-) -> tuple[ValueArtifactAddress, ...]:
-    """Pin raw same-period values read by the engine-owned gated-edge fold."""
-    artifacts: list[ValueArtifactAddress] = []
-    for source in regimes.values():
-        for edge in source.gated_edges.values():
+def gated_edge_fold_value_reads(
+    *, regimes: Mapping[RegimeName, Regime], period: int
+) -> tuple[ValueRead, ...]:
+    """Declare every same-period value the gated-edge folds of one period read.
+
+    The fold of an edge evaluates the target's value and each reference regime's
+    value on the target's own grid nodes at the folded period, so each is one
+    counted consumer of that period's value.
+    """
+    reads: list[ValueRead] = []
+    for source_name, source in regimes.items():
+        for target_name, edge in source.gated_edges.items():
             readers = (edge.target, *edge.reference_regimes)
-            for period in range(source.solution.reachability.n_periods):
-                if not all(period in regimes[name].active_periods for name in readers):
-                    continue
-                artifacts.extend(
-                    ValueArtifactAddress(
+            if not all(period in regimes[name].active_periods for name in readers):
+                continue
+            reads.extend(
+                ValueRead(
+                    target=ValueArtifactAddress(
                         kind=ValueArtifactKind.REGIME_VALUE,
                         period=period,
                         regime=name,
-                    )
-                    for name in readers
+                    ),
+                    source=ValueConsumerAddress(
+                        source_period=period,
+                        source_regime=source_name,
+                        core_key=_fold_core_key(target_name=target_name),
+                        channel=ValueInputChannel.SAME_PERIOD_VALUE,
+                        path=(name,),
+                    ),
                 )
-    return _unique_value_artifacts(artifacts)
+                for name in readers
+            )
+    return tuple(reads)
+
+
+def _fold_core_key(*, target_name: RegimeName) -> str:
+    """Name the engine-owned fold of the edge into one target regime."""
+    return f"gated_edge_fold:{target_name}"
+
+
+def _folded_edge_keys_at_period(
+    *,
+    regimes: Mapping[RegimeName, Regime],
+    period: int,
+    solved_regimes: Container[RegimeName],
+) -> tuple[_EdgeKey, ...]:
+    """Name every gated edge whose `Wbar` is folded on one period's values.
+
+    The single enumeration the liveness declaration, the fold itself, and the
+    fold's commit all read, so a declared fold dispatch and a committed one name
+    the same edges. `solved_regimes` is the set of regimes holding a value at
+    `period`: the regimes active there while the ledger is declared, the
+    period's published values while the solve loop runs.
+    """
+    return tuple(
+        (source_name, target_name)
+        for source_name, source in regimes.items()
+        for target_name, edge in source.gated_edges.items()
+        if edge_may_fold_at_period(
+            edge=edge,
+            source_name=source_name,
+            fold_period=period,
+            solved_regimes=solved_regimes,
+            source_reads_wbar=source_reads_folded_wbar(
+                source_active_periods=source.active_periods,
+                fold_period=period,
+            ),
+        )
+    )
+
+
+def _gated_edge_fold_dispatches(
+    *,
+    regimes: Mapping[RegimeName, Regime],
+) -> dict[_InputDispatch, tuple[ValueArtifactAddress, ...]]:
+    """Plan one dispatch per gated-edge fold the induction will evaluate.
+
+    A fold's dispatch id is `(period, source, target)`, so it is identified
+    apart from the `(period, regime)` core dispatches of the same period and
+    from every other edge folded there.
+    """
+    dispatches: dict[_InputDispatch, tuple[ValueArtifactAddress, ...]] = {}
+    for period in range(_model_n_periods(regimes=regimes)):
+        reads_by_consumer: dict[tuple[RegimeName, str], list[ValueArtifactAddress]] = {}
+        for read in gated_edge_fold_value_reads(regimes=regimes, period=period):
+            reads_by_consumer.setdefault(
+                (read.source.source_regime, read.source.core_key), []
+            ).append(read.target)
+        for source_name, target_name in _folded_edge_keys_at_period(
+            regimes=regimes,
+            period=period,
+            solved_regimes=_regimes_active_at_period(regimes=regimes, period=period),
+        ):
+            reads = reads_by_consumer.get(
+                (source_name, _fold_core_key(target_name=target_name)), []
+            )
+            if reads:
+                dispatches[(period, source_name, target_name)] = (
+                    _unique_value_artifacts(reads)
+                )
+    return dispatches
+
+
+def _regimes_active_at_period(
+    *,
+    regimes: Mapping[RegimeName, Regime],
+    period: int,
+) -> frozenset[RegimeName]:
+    """Name the regimes holding a solved value at one period."""
+    return frozenset(
+        regime_name
+        for regime_name, regime in regimes.items()
+        if period in regime.active_periods
+    )
+
+
+def _model_n_periods(*, regimes: Mapping[RegimeName, Regime]) -> int:
+    """Return the number of periods the model spans, as its regimes record it."""
+    return max(
+        (regime.solution.reachability.n_periods for regime in regimes.values()),
+        default=0,
+    )
 
 
 def _conservative_unplanned_value_artifacts(
