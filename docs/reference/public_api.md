@@ -204,6 +204,9 @@ documented in [Custom solvers](custom_solvers.md).
 | [`lcm.solvers.ValueConsumerAddress`](custom_solvers.md#reading-a-stored-value)             | Program input receiving a value      |
 | [`lcm.solvers.ValueArtifactKind`](custom_solvers.md#reading-a-stored-value)                | Kind of stored value artifact        |
 | [`lcm.solvers.ValueInputChannel`](custom_solvers.md#reading-a-stored-value)                | Input channel of a value consumer    |
+| [`lcm.solvers.ValueTransferKind`](custom_solvers.md#reading-a-stored-value)                | Operator one planned transfer runs   |
+| [`lcm.solvers.TransferOperationClass`](custom_solvers.md#reading-a-stored-value)           | Local, device copy, or collective    |
+| [`lcm.solvers.TransferCost`](custom_solvers.md#reading-a-stored-value)                     | What one planned transfer occupies   |
 | [`lcm.solvers.ProgramScope`](custom_solvers.md)                                            | Retention scope of a program         |
 | [`lcm.solvers.StreamableProductAxis`](custom_solvers.md)                                   | Declared streamable action axis      |
 | [`lcm.solvers.ReductionSemantics`](custom_solvers.md)                                      | Reduction a streamed axis performs   |

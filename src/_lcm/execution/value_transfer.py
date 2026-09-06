@@ -8,6 +8,7 @@ catalogue is a total function from a stored layout and a required layout to one
 operator, and fails closed on the single pair no single collective can serve.
 """
 
+import math
 from collections.abc import Hashable, Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -49,6 +50,49 @@ class ValueTransferKind(StrEnum):
     LOCAL_SLICE = "local_slice"
     RESHARD = "reshard"
     CROSS_MESH_COPY = "cross_mesh_copy"
+
+
+class TransferOperationClass(StrEnum):
+    """What a transfer operator does to reach its required layout."""
+
+    LOCAL = "local"
+    DEVICE_COPY = "device_copy"
+    COLLECTIVE = "collective"
+
+
+_OPERATION_CLASS_BY_KIND = MappingProxyType(
+    {
+        ValueTransferKind.ALIGNED_LOCAL: TransferOperationClass.LOCAL,
+        ValueTransferKind.COPY_TO_SOURCE_LAYOUT: TransferOperationClass.DEVICE_COPY,
+        ValueTransferKind.CROSS_MESH_COPY: TransferOperationClass.DEVICE_COPY,
+        ValueTransferKind.ALL_GATHER: TransferOperationClass.COLLECTIVE,
+        ValueTransferKind.LOCAL_SLICE: TransferOperationClass.COLLECTIVE,
+        ValueTransferKind.RESHARD: TransferOperationClass.COLLECTIVE,
+    }
+)
+
+
+@dataclass(frozen=True, kw_only=True)
+class TransferCost:
+    """What one planned transfer occupies while it runs."""
+
+    operation_class: TransferOperationClass
+    """Whether the operator is local, a device copy, or a collective."""
+
+    logical_bytes: int
+    """Size of the whole value, independent of how it is laid out."""
+
+    per_device_bytes: int
+    """Bytes the required layout holds on the busiest participating device."""
+
+    temporary_bytes: int
+    """Bytes the operator itself holds beyond the result, per device."""
+
+    devices: tuple[int, ...]
+    """Ids of every device the operator touches, ascending."""
+
+    reused_by_several_consumers: bool
+    """Whether more than one source core of the period reads this result."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -175,6 +219,8 @@ class ResolvedValueTransfer:
     for a channel-indexed read, the argument name in ``source.argument`` for a
     direct one — plus the operator, concrete layouts, and leaf metadata, so
     behaviorally different transfers cannot share a lowering.
+    ``reused_by_several_consumers`` stays outside that key: sharing one result
+    between consumers is a scheduling fact and changes no generated code.
     """
 
     target: ValueArtifactAddress
@@ -184,6 +230,8 @@ class ResolvedValueTransfer:
     source_sharding: jax.sharding.Sharding
     expected_shape: tuple[int, ...]
     expected_dtype: object
+    reused_by_several_consumers: bool = False
+    """Whether several source cores of one period read this transfer's result."""
     specialization_key: Hashable = field(init=False)
 
     def __post_init__(self) -> None:
@@ -241,6 +289,29 @@ class ResolvedValueTransfer:
                 shape,
                 dtype,
             ),
+        )
+
+    @property
+    def cost(self) -> TransferCost:
+        """Return what this transfer occupies, from its two concrete layouts."""
+        item_bytes = jnp.dtype(self.expected_dtype).itemsize
+        logical_bytes = item_bytes * math.prod(self.expected_shape)
+        stored_devices = _device_ids(sharding=self.stored_sharding)
+        required_devices = _device_ids(sharding=self.source_sharding)
+        per_device_bytes = _per_device_bytes(
+            sharding=self.source_sharding,
+            shape=self.expected_shape,
+            item_bytes=item_bytes,
+        )
+        return TransferCost(
+            operation_class=_OPERATION_CLASS_BY_KIND[self.kind],
+            logical_bytes=logical_bytes,
+            per_device_bytes=per_device_bytes,
+            temporary_bytes=(
+                0 if self.kind is ValueTransferKind.ALIGNED_LOCAL else per_device_bytes
+            ),
+            devices=tuple(sorted(set(stored_devices) | set(required_devices))),
+            reused_by_several_consumers=self.reused_by_several_consumers,
         )
 
 
@@ -433,6 +504,18 @@ def _named_axes(*, spec: jax.sharding.PartitionSpec) -> tuple[str, ...]:
         )
         raise ExecutionPlanningError(msg)
     return tuple(axes)
+
+
+def _device_ids(*, sharding: jax.sharding.Sharding) -> tuple[int, ...]:
+    """Return the ascending ids of the devices one sharding places on."""
+    return tuple(sorted(device.id for device in sharding.device_set))
+
+
+def _per_device_bytes(
+    *, sharding: jax.sharding.Sharding, shape: tuple[int, ...], item_bytes: int
+) -> int:
+    """Return the bytes one device holds under this sharding."""
+    return item_bytes * math.prod(sharding.shard_shape(shape))
 
 
 def _replace_transfer_leaf(

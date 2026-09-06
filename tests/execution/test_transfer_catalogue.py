@@ -12,6 +12,7 @@ import pytest
 
 from _lcm.execution.value_transfer import (
     ResolvedValueTransfer,
+    TransferOperationClass,
     ValueArtifactAddress,
     ValueArtifactKind,
     ValueConsumerAddress,
@@ -255,3 +256,92 @@ def test_a_partition_entry_naming_no_placement_is_refused() -> None:
             stored_sharding=jax.NamedSharding(mesh, unconstrained),
             required_sharding=jax.NamedSharding(mesh, jax.P()),
         )
+
+
+def _sharded(*, mesh: jax.sharding.Mesh) -> jax.Array:
+    """Eight elements sharded four ways on `mesh`."""
+    stored = jax.device_put(
+        jnp.arange(8, dtype=jnp.float32), jax.NamedSharding(mesh, jax.P("d"))
+    )
+    assert jnp.isfinite(stored).all()
+    return stored
+
+
+@_skip_pytest_parallel
+def test_an_aligned_transfer_is_a_local_operation() -> None:
+    """A value already in its required layout moves nothing."""
+    mesh = _mesh(devices=jax.devices()[:4], axis="d")
+    stored = _sharded(mesh=mesh)
+    cost = _resolved(
+        stored=stored,
+        required=stored.sharding,
+        kind=ValueTransferKind.ALIGNED_LOCAL,
+    ).cost
+
+    assert cost.operation_class is TransferOperationClass.LOCAL
+
+
+@_skip_pytest_parallel
+@pytest.mark.parametrize(
+    ("attribute", "elements"),
+    [("logical_bytes", 8), ("per_device_bytes", 2), ("temporary_bytes", 0)],
+)
+def test_an_aligned_transfer_holds_only_its_own_shard(
+    *, attribute: str, elements: int
+) -> None:
+    """An aligned transfer occupies one shard per device and no temporary."""
+    mesh = _mesh(devices=jax.devices()[:4], axis="d")
+    stored = _sharded(mesh=mesh)
+    cost = _resolved(
+        stored=stored,
+        required=stored.sharding,
+        kind=ValueTransferKind.ALIGNED_LOCAL,
+    ).cost
+
+    assert getattr(cost, attribute) == elements * stored.dtype.itemsize
+
+
+@_skip_pytest_parallel
+def test_an_aligned_transfer_touches_every_mesh_device() -> None:
+    """The recorded device set is the placement the operator runs on."""
+    mesh = _mesh(devices=jax.devices()[:4], axis="d")
+    stored = _sharded(mesh=mesh)
+    cost = _resolved(
+        stored=stored,
+        required=stored.sharding,
+        kind=ValueTransferKind.ALIGNED_LOCAL,
+    ).cost
+
+    assert cost.devices == tuple(sorted(device.id for device in jax.devices()[:4]))
+
+
+@_skip_pytest_parallel
+def test_a_gather_is_a_collective() -> None:
+    """Gathering a sharded value onto every device is a collective."""
+    mesh = _mesh(devices=jax.devices()[:4], axis="d")
+    cost = _resolved(
+        stored=_sharded(mesh=mesh),
+        required=jax.NamedSharding(mesh, jax.P()),
+        kind=ValueTransferKind.ALL_GATHER,
+    ).cost
+
+    assert cost.operation_class is TransferOperationClass.COLLECTIVE
+
+
+@_skip_pytest_parallel
+@pytest.mark.parametrize(
+    ("attribute", "elements"), [("per_device_bytes", 8), ("temporary_bytes", 8)]
+)
+def test_a_gather_holds_the_whole_value_per_device(
+    *, attribute: str, elements: int
+) -> None:
+    """A gather lands the full array on every device and holds it once more."""
+    mesh = _mesh(devices=jax.devices()[:4], axis="d")
+    stored = _sharded(mesh=mesh)
+    cost = _resolved(
+        stored=stored,
+        required=jax.NamedSharding(mesh, jax.P()),
+        kind=ValueTransferKind.ALL_GATHER,
+    ).cost
+
+    assert getattr(cost, attribute) == elements * stored.dtype.itemsize

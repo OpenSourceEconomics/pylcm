@@ -54,7 +54,8 @@ and helpers (`ContinuationSpec`, `EGMContinuationSpec`, `EGMContinuationLayout`,
 `ArtifactKey`, descriptors and authorities, the four built-in keys,
 `ContinuationArtifact`, and the executable replay contracts), and the value-read
 vocabulary (`ValueRead`, `ValueArtifactAddress`, `ValueConsumerAddress`,
-`ValueArtifactKind`, `ValueInputChannel`) — so no import from `_lcm` is needed.
+`ValueArtifactKind`, `ValueInputChannel`, `ValueTransferKind`,
+`TransferOperationClass`, `TransferCost`) — so no import from `_lcm` is needed.
 Solver, route, and artifact identities are exact-version contracts.
 `docs/reference/custom_solvers.md` states what a solver owes the engine and
 describes the executable in-repository reference fixture for that boundary.
@@ -86,10 +87,13 @@ from _lcm.execution.core_program import (
 )
 from _lcm.execution.output_layout import OutputRole, StateAxesLeading
 from _lcm.execution.value_transfer import (
+    TransferCost,
+    TransferOperationClass,
     ValueArtifactAddress,
     ValueArtifactKind,
     ValueConsumerAddress,
     ValueInputChannel,
+    ValueTransferKind,
 )
 from _lcm.solution.continuation_target import (
     period_to_continuation_target,
@@ -255,6 +259,8 @@ __all__ = [
     "StateActionSpace",
     "StateAxesLeading",
     "StreamableProductAxis",
+    "TransferCost",
+    "TransferOperationClass",
     "TreePath",
     "TwoMarginSolver",
     "UniformObservedFixedCost",
@@ -265,6 +271,7 @@ __all__ = [
     "ValueInputChannel",
     "ValueRead",
     "ValueStore",
+    "ValueTransferKind",
     "period_to_continuation_target",
     "target_period_grid",
     "union_fixed_params",

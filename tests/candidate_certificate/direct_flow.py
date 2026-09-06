@@ -188,7 +188,7 @@ _SOURCE_SEALS = {
     GRID_SEARCH_SOURCE: "b1753aa03fcd6eab34838b868e532008ccb1280bb9fca9ab6e27e7f506b43e06",
     CORE_PROGRAM_SOURCE: "f5f86bf2976d80ee87c3c9560bd91f62ee51e82b94ad72c9c1fe34c0cd35e63b",
     OUTPUT_LAYOUT_SOURCE: "65541f5e1ff3edad0f9105457e478525d3913fcf32204aeba6fe290cf0fd676d",
-    VALUE_TRANSFER_SOURCE: "7fbaefd3a93975596e3938554c0de0b8348921e349220dd0bd2196f0543190e5",
+    VALUE_TRANSFER_SOURCE: "a8349c5246571a7ded9e7ec03bc23bb6d1b13024804645c28c0b99d4529a1b89",
     ACTION_STREAMING_SOURCE: "bd693f4bab250215dea9b6fb6021c518163305a890a9536f66af9e1d7dc5c308",
     ACTION_REDUCTION_SOURCE: "6cee6ea2dbef0ba710fa4a318a2113377d6513cee508e73004861597f9c220f9",
     COLLECTIVE_ACTION_REDUCTION_SOURCE: "7a80418764fdf9754062a23707c5d39fa7abfcaac9c8e8f7803c4d8f1b461347",
@@ -205,7 +205,7 @@ _SOURCE_SEALS = {
     SIMULATION_COMPILE_SOURCE: "eca63257bd882066c608c34791cb0399f8d283fa79f5e0640091e12321da82a9",
     MODEL_SOURCE: "a2574cd0abdc502db292d2acb23a1b18979781839d478e20bfe1c565c4f32166",
     SOLVER_API_SOURCE: "db20fc0c3b392a0809ef2c114587203d75d761888c1a86760bf2cd81043472b6",
-    BACKWARD_INDUCTION_SOURCE: "7f251b60a6b62470ca14480b7061579071d73b2a126c2b47ce522bc8605e2800",
+    BACKWARD_INDUCTION_SOURCE: "b5cfe5bced7276f1760ce7935c3cd5498d7a8dd5e5aca0205249d51d409710fa",
     PERIOD_REPLAY_SOURCE: "71bdcc15215cafce5a6f248bbd1ba264170c23cc867b7bc9d9f472926928ed34",
     INITIAL_CONDITIONS_SOURCE: "582c29e7f99072d975c7a4c9070a93e707d25a98c09e216b47fa71c7bb2d6022",
     RESULT_SOURCE: "7390877272bc23fd7c153e2a51ac4a6072e88fe950d5de695ff015205aff5058",
@@ -2418,9 +2418,26 @@ def _value_transfer_errors(tree: ast.Module) -> list[str]:
                 "source_sharding: jax.sharding.Sharding",
                 "expected_shape: tuple[int, ...]",
                 "expected_dtype: object",
+                "reused_by_several_consumers: bool = False",
                 "specialization_key: Hashable = field(init=False)",
             ),
-            methods=("__post_init__",),
+            methods=("__post_init__", "cost"),
+        )
+    )
+    errors.extend(
+        _class_surface_errors(
+            tree=tree,
+            label="value transfer cost",
+            class_name="TransferCost",
+            fields=(
+                "operation_class: TransferOperationClass",
+                "logical_bytes: int",
+                "per_device_bytes: int",
+                "temporary_bytes: int",
+                "devices: tuple[int, ...]",
+                "reused_by_several_consumers: bool",
+            ),
+            methods=(),
         )
     )
     enum_contracts = {
@@ -2439,6 +2456,10 @@ ALL_GATHER = "all_gather"
 LOCAL_SLICE = "local_slice"
 RESHARD = "reshard"
 CROSS_MESH_COPY = "cross_mesh_copy"
+""",
+        "TransferOperationClass": """LOCAL = "local"
+DEVICE_COPY = "device_copy"
+COLLECTIVE = "collective"
 """,
     }
     for class_name, expected_source in enum_contracts.items():
@@ -2493,6 +2514,9 @@ CROSS_MESH_COPY = "cross_mesh_copy"
                 "apply_value_transfer": "76b11059204dc6786aab1701a6c2523ddedd4f6fff16d80df49b1428784db311",
                 "apply_value_transfer_plan": "e68a7ffc5021a56c47ca597387c31cff59138d97a3c84527e74c1660cf8fd498",
                 "classify_value_transfer": "c55b04af4530ac76c2dce1b47bb3ccf0d4056efa7c4dd68417257f59e03d506e",
+                "ResolvedValueTransfer.cost": "d4ba108ad4354ef103fbb3806be95b4192066979e9fefd2acea6a6ffeb4de471",
+                "_device_ids": "c66e89e2760e52cbdda063cccb1e45e26f78a66be5f9bebb97b28a076261e049",
+                "_per_device_bytes": "1bcd84c8b146dfaab63ec3e6c3985d029024d476c02dd27fb5022100010a9b1b",
                 "_named_axes": "46fa78227ccbe7e1dd881030b05d16794d3f45003c37b638ba0badc434d977ed",
                 "_replace_transfer_leaf": "ea8d139bc1d7fca22f40144bc343840b0be464fad21f636362a0aedd9e1af1ce",
                 "_validate_edge_identity": "315fd9e827952a158fd9b60fe83c408fb78ef17abe8c3a8da8e422b5f62b89e7",
@@ -2525,8 +2549,10 @@ CROSS_MESH_COPY = "cross_mesh_copy"
                 "field",
                 "jax",
                 "jnp",
+                "math",
             },
             expected_imports=[
+                "import math",
                 "from collections.abc import Hashable, Iterable, Mapping",
                 "from dataclasses import dataclass, field",
                 "from enum import StrEnum",
@@ -2547,16 +2573,21 @@ CROSS_MESH_COPY = "cross_mesh_copy"
                 "RegimeName": 1,
                 "ResolvedValueTransfer": 1,
                 "StrEnum": 1,
+                "TransferCost": 1,
+                "TransferOperationClass": 1,
                 "ValueArtifactAddress": 1,
                 "ValueArtifactKind": 1,
                 "ValueConsumerAddress": 1,
                 "ValueInputChannel": 1,
                 "ValueTransferKind": 1,
+                "_OPERATION_CLASS_BY_KIND": 1,
                 "_VALUE_TRANSFER_VERSION": 1,
                 "_assert_value_metadata": 1,
                 "_check_sharding_shape": 1,
+                "_device_ids": 1,
                 "_named_axes": 1,
                 "_normalize_shape": 1,
+                "_per_device_bytes": 1,
                 "_replace_transfer_leaf": 1,
                 "_require_enum": 1,
                 "_require_name": 1,
@@ -2581,6 +2612,7 @@ CROSS_MESH_COPY = "cross_mesh_copy"
                 "jnp": 1,
                 "len": 0,
                 "list": 0,
+                "math": 1,
                 "object": 0,
                 "resolve_value_transfer": 1,
                 "set": 0,
@@ -2749,7 +2781,8 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             "_select_period_programs": "55bff2bbffbc5a75f00a656f684093d89d3655bac48d76da2e9dbe716b62bb74",
             "_selected_artifact_keys_for_cell": "1acc464529bc9833e48f727279682d969f850d2a3bb206e8a2695b1769f6182f",
             "_compile_all_functions": "e0580080ae7fbcee9f7734dc6939b496230a687455fea6dcf8819479d90fd935",
-            "_resolve_output_layouts_and_lowering_keys": "375525dec4f98e00da6d4961cd036546c90dadda14d79d89e2a3a3a75df6882d",
+            "_resolve_output_layouts_and_lowering_keys": "7c1964873999ad0deb1d4e7be9fdc5871c1fe9466090a0ed1838808e7db9765f",
+            "_mark_reused_transfers": "afeb0bc09c55534dc6af76618b28117d9660a8d207d570eccbbfd2cc881f42ca",
             "_resolve_program_for_execution": "6e3ec3139833f459a49be4a30a6c8c5813ba8cd66176a849ee24e7a81b27b433",
             "_resolve_value_input_transfer_plan": "72bb5e99e0584e124030d7879265fba08488804c98e20aaec96b6355a34fc0e9",
             "_resolve_value_transfer_layout": "2a6f86d8232989bb441e8a50371e0d891f82a7af22c797b10b91ab5bd1f230be",

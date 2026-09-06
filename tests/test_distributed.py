@@ -616,6 +616,98 @@ def test_grid_search_same_mesh_rank_specific_value_input_stays_aligned(monkeypat
         assert collective not in hlo
 
 
+def _make_two_source_distributed_model() -> Model:
+    """Two working regimes of one period reading one `retirement` value.
+
+    `working_life` and `working_life_b` are active over the same ages and both
+    transition into `retirement` at the same age, so at the last working period
+    two source cores read the one stored `retirement` value. The distributed
+    `type1` state puts both sources and the target on the same four-device mesh.
+    """
+
+    @categorical(ordered=False)
+    class RegimeId:
+        working_life: ScalarInt
+        working_life_b: ScalarInt
+        retirement: ScalarInt
+
+    @categorical(ordered=True)
+    class Type:
+        lowest: ScalarInt
+        low: ScalarInt
+        high: ScalarInt
+        highest: ScalarInt
+
+    def working_utility(*, wealth, consumption, type1):
+        return (jnp.log(consumption) + wealth * 0.001) * type1
+
+    def next_wealth(*, wealth, consumption):
+        return wealth - consumption
+
+    def to_retirement(age):
+        return jnp.where(age >= 4, RegimeId.retirement, RegimeId.working_life)
+
+    def to_retirement_b(age):
+        return jnp.where(age >= 4, RegimeId.retirement, RegimeId.working_life_b)
+
+    def retirement_utility(*, wealth, type1):
+        return (wealth * 0.5) * type1
+
+    working = UserRegime(
+        functions={"utility": working_utility},
+        states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
+        state_transitions={"wealth": next_wealth},
+        actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
+        transition=to_retirement,
+        active=lambda age: age < 5,
+    )
+    return Model(
+        regimes={
+            "working_life": working,
+            "working_life_b": working.replace(transition=to_retirement_b),
+            "retirement": UserRegime(
+                transition=None,
+                functions={"utility": retirement_utility},
+                states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
+                active=lambda age: age >= 5,
+            ),
+        },
+        ages=AgeGrid(start=0, stop=5, step="Y"),
+        regime_id_class=RegimeId,
+        states={"type1": DiscreteGrid(category_class=Type, distributed=True)},
+        state_transitions={"type1": fixed_transition("type1")},
+    )
+
+
+@_skip_pytest_parallel
+def test_two_sources_reading_one_target_share_one_planned_transfer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One target value read by two source regimes of a period is marked shared."""
+    model = _make_two_source_distributed_model()
+    captured = []
+    original_attach = backward_induction._attach_resolved_output_layout
+
+    def capture_planned_core(**kwargs):
+        core = original_attach(**kwargs)
+        if hasattr(core, "layout"):
+            captured.append(core)
+        return core
+
+    monkeypatch.setattr(
+        backward_induction, "_attach_resolved_output_layout", capture_planned_core
+    )
+    model.solve(log_level="off", params={"discount_factor": 0.95})
+    shared = [
+        transfer
+        for core in captured
+        for transfer in core.input_transfer_plan
+        if transfer.reused_by_several_consumers
+    ]
+
+    assert len({transfer.source.source_regime for transfer in shared}) == 2
+
+
 @_skip_pytest_parallel
 def test_value_transfer_copies_a_named_target_onto_a_single_device_source():
     """A sharded value read by a single-device core is copied onto that device."""

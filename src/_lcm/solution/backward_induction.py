@@ -2249,6 +2249,11 @@ def _resolve_output_layouts_and_lowering_keys(
     Each candidate's lowering key opens with the program's durable identity —
     the model, the regime, the core, and both groupings of its period — so a
     key says what the program computes rather than which object computes it.
+
+    Reuse marks are applied once every candidate is resolved, because a transfer
+    shared by two source cores is only visible across the whole set; the keys are
+    computed afterwards, over the marked programs, and the mark is outside every
+    specialization key, so it moves none of them.
     """
     layouts: dict[_CoreTriple, ResolvedOutputLayout] = {}
     lowering_keys: dict[_CoreCandidate, Hashable] = {}
@@ -2322,22 +2327,63 @@ def _resolve_output_layouts_and_lowering_keys(
                 layouts[triple] = layout
             candidate = (triple, _width_key(widths=resolved.tile_widths))
             resolved_programs[candidate] = resolved
-            lowering_keys[candidate] = _lowering_key(
-                program_identity=_program_identity(
-                    model_fingerprint=model_fingerprint,
-                    regime_name=regime_name,
-                    core_name=core_key,
-                    period_signature=regime.solution.period_signatures[period],
-                    solver_group_key=regime.solution.solver_period_group_keys.get(
-                        period
-                    ),
-                ),
-                layout_key=layout.compilation_key,
-                arguments={**resolved.arguments, **templates},
-                specialization_key=resolved.specialization_key,
-                output_roles=resolved.output_roles,
-            )
+    marked = _mark_reused_transfers(resolved_programs=resolved_programs)
+    resolved_programs.update(marked)
+    for candidate, resolved in resolved_programs.items():
+        regime_name, period, core_key = candidate[0]
+        regime = regimes[regime_name]
+        lowering_keys[candidate] = _lowering_key(
+            program_identity=_program_identity(
+                model_fingerprint=model_fingerprint,
+                regime_name=regime_name,
+                core_name=core_key,
+                period_signature=regime.solution.period_signatures[period],
+                solver_group_key=regime.solution.solver_period_group_keys.get(period),
+            ),
+            layout_key=layouts[candidate[0]].compilation_key,
+            arguments={**resolved.arguments, **internal_templates[candidate[0]]},
+            specialization_key=resolved.specialization_key,
+            output_roles=resolved.output_roles,
+        )
     return layouts, lowering_keys, resolved_programs, internal_templates
+
+
+def _mark_reused_transfers(
+    *, resolved_programs: Mapping[_CoreCandidate, ResolvedCoreProgram]
+) -> dict[_CoreCandidate, ResolvedCoreProgram]:
+    """Mark every transfer whose result more than one source core of a period reads.
+
+    Two source cores of one period that read one stored artifact into one required
+    layout need one copy between them, so the plan says so and the scheduler makes
+    it once. Consumers are counted by core triple, not by width candidate: two
+    widths of one core are alternatives, not two readers. The mark is a scheduling
+    fact and stays out of the specialization key, so every lowering key is the key
+    the unmarked program had.
+    """
+    consumers: dict[tuple[int, ValueArtifactAddress, Hashable], set[_CoreTriple]] = {}
+    for (triple, _widths), resolved in resolved_programs.items():
+        for transfer in resolved.input_transfer_plan:
+            key = (triple[1], transfer.target, transfer.source_sharding)
+            consumers.setdefault(key, set()).add(triple)
+    marked: dict[_CoreCandidate, ResolvedCoreProgram] = {}
+    for candidate, resolved in resolved_programs.items():
+        triple = candidate[0]
+        plan = tuple(
+            dataclasses.replace(
+                transfer,
+                reused_by_several_consumers=(
+                    len(
+                        consumers[
+                            (triple[1], transfer.target, transfer.source_sharding)
+                        ]
+                    )
+                    > 1
+                ),
+            )
+            for transfer in resolved.input_transfer_plan
+        )
+        marked[candidate] = dataclasses.replace(resolved, input_transfer_plan=plan)
+    return marked
 
 
 def _consumed_producer_names(

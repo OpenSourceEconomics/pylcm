@@ -22,10 +22,13 @@ from _lcm.execution.core_program import (
     resolve_core_program,
 )
 from _lcm.execution.value_transfer import (
+    TransferCost,
+    TransferOperationClass,
     ValueArtifactAddress,
     ValueArtifactKind,
     ValueConsumerAddress,
     ValueInputChannel,
+    ValueTransferKind,
 )
 
 __all__ = [
@@ -40,11 +43,14 @@ __all__ = [
     "ReductionSemantics",
     "ResolvedCoreProgram",
     "StreamableProductAxis",
+    "TransferCost",
+    "TransferOperationClass",
     "ValueArtifactAddress",
     "ValueArtifactKind",
     "ValueConsumerAddress",
     "ValueInputChannel",
     "ValueRead",
+    "ValueTransferKind",
     "core_program_graph",
     "materialize_core_program",
     "resolve_core_program",
