@@ -79,6 +79,7 @@ from typing import Any, NamedTuple
 import jax
 import jax.numpy as jnp
 
+from _lcm.egm.upper_envelope._exact_affine import exact_query_winner_batched
 from _lcm.egm.upper_envelope.certified_sign import certified_margin_sign
 from _lcm.egm.upper_envelope.double_double import (
     dd_add,
@@ -87,12 +88,6 @@ from _lcm.egm.upper_envelope.double_double import (
     dd_quotient,
 )
 from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, ScalarInt
-
-# How many times a certified challenger may replace the standing winner. The
-# provisional winner is already the highest reading, so a challenger can only be
-# a link the reading ordered wrongly; one promotion settles that, and the second
-# is the margin for a challenger that is itself displaced.
-_PROMOTION_ROUNDS = 2
 
 
 def refine_envelope(
@@ -394,95 +389,43 @@ def _certified_owner(
     links: _Links,
     query: FloatND,
     stable_index: IntND,
-) -> Int1D:
-    """Return the column of the link that owns each query.
+) -> tuple[Int1D, BoolND]:
+    """Return the column of the link that owns each query, and whether it is exact.
 
-    The highest reading is the provisional owner and is then challenged: any
-    bracketing link certified strictly above it takes its place, twice over. The
-    remaining question is which of the links certified *level* with the owner
-    publishes the query, and that is settled right-continuously — the link
-    reaching strictly right of the query, then the steeper one, then the earlier
-    stored link. A node where two branches meet is therefore owned by the branch
-    that owns the interval above it, so the switch is published at the node the
-    geometry puts it at.
+    Ownership is one complete reduction over the stored operands: among the links
+    a query admits, the owner is the greatest by exact affine value, then by
+    reaching strictly right of the query, then by exact value slope, then by the
+    earliest stable identity. No candidate value is rounded before the winner is
+    chosen, so a query at which several links' values fall in one rounding bin is
+    ordered by what the operands say rather than by what the reading shows.
 
-    Two things bound what that settles. The promotion budget is finite, so a
-    query at which more links are mis-ordered by the reading than there are
-    rounds can still publish a link another is certified above; a link can only
-    be mis-ordered by the reading when the two sit within a few representable
-    steps of each other, so the residual is of the same order as the published
-    value's own. And the comparator refuses rather than guesses on operands it
-    cannot decide, while this method has no channel through which to refuse in
-    turn: a query whose comparisons all come back refused keeps the highest
-    reading, which is the answer the method gave before any of them were
-    certified.
+    A node where two branches meet is therefore owned by the branch that owns the
+    interval above it, so the switch is published at the node the geometry puts it
+    at.
+
+    Admission and comparison are kept apart. Which links a query admits is decided
+    by the stored span, so widening a degenerate link's divisor to give the
+    comparison a line to work with never widens the set of queries that link
+    brackets.
+
+    Returns:
+        Tuple of the owning column per query and whether that query's order was
+        resolved. A query whose comparison the kernel cannot decide is reported
+        unresolved rather than settled by a rounded reading.
     """
-    provisional = _leader(brackets=brackets, value=value)
-    reference = _take_link(links=links, index=provisional)
-    for _ in range(_PROMOTION_ROUNDS):
-        beats = brackets & (
-            _sign_against(links=links, reference=reference, x=query) == 1
-        )
-        challenger = _take_link(links=links, index=_leader(brackets=beats, value=value))
-        promoted = jnp.any(beats, axis=1, keepdims=True)
-        reference = tuple(
-            jnp.where(promoted, new, held)
-            for new, held in zip(challenger, reference, strict=True)
-        )
-
-    level = brackets & (_sign_against(links=links, reference=reference, x=query) == 0)
-    excluded = jnp.full_like(value, -jnp.inf)
-    slope = _slope(x_a=links.x0, y_a=links.v0, x_b=links.x1, y_b=links.v1)
-    reaches_right = (links.upper > query).astype(value.dtype)
-    ordered = (
-        jnp.where(level, reaches_right, excluded),
-        jnp.where(level, jnp.broadcast_to(slope, value.shape), excluded),
+    shape = value.shape
+    winner, exact_status = exact_query_winner_batched(
+        left_grid=jnp.broadcast_to(links.x0[None, :], shape),
+        right_grid=jnp.broadcast_to(links.x1[None, :], shape),
+        left_value=jnp.broadcast_to(links.v0[None, :], shape),
+        right_value=jnp.broadcast_to(links.v1[None, :], shape),
+        live=brackets,
+        stable_index=stable_index,
+        x_query=query,
     )
-
-    still_tied = level
-    for field in ordered:
-        best = jnp.max(jnp.where(still_tied, field, -jnp.inf), axis=1, keepdims=True)
-        still_tied = still_tied & (field == best)
-    sentinel = jnp.iinfo(jnp.int32).max
-    index_key = jnp.where(still_tied, stable_index, sentinel)
-    earliest = jnp.min(index_key, axis=1, keepdims=True)
-    settled = still_tied & (index_key == earliest)
-    chosen = jnp.argmax(settled, axis=1).astype(jnp.int32)
-    return jnp.where(jnp.any(settled, axis=1), chosen, provisional[:, 0]).astype(
-        jnp.int32
-    )
-
-
-def _leader(*, brackets: BoolND, value: FloatND) -> IntND:
-    """Column of the highest reading among the admitted links, per query."""
-    index = jnp.argmax(jnp.where(brackets, value, -jnp.inf), axis=1)
-    return index[:, None].astype(jnp.int32)
-
-
-def _take_link(*, links: _Links, index: IntND) -> tuple[FloatND, ...]:
-    """The comparable line of one column per query, as `(x0, x1, v0, v1)`."""
-    return tuple(
-        jnp.take(field, index, axis=0)
-        for field in (links.x0, links.x1, links.v0, links.v1)
-    )
-
-
-def _sign_against(
-    *, links: _Links, reference: tuple[FloatND, ...], x: FloatND
-) -> IntND:
-    """Certified sign of each link's value at `x` less the reference link's."""
-    reference_x0, reference_x1, reference_v0, reference_v1 = reference
-    return certified_margin_sign(
-        a_x0=links.x0[None, :],
-        a_x1=links.x1[None, :],
-        a_v0=links.v0[None, :],
-        a_v1=links.v1[None, :],
-        b_x0=reference_x0,
-        b_x1=reference_x1,
-        b_v0=reference_v0,
-        b_v1=reference_v1,
-        x_query=x,
-    )
+    owner = winner.reshape(-1).astype(jnp.int32)
+    resolved = exact_status.reshape(-1) == 0
+    return owner, resolved
 
 
 def _evaluate_envelope(
@@ -517,7 +460,7 @@ def _evaluate_envelope(
         jnp.arange(links.x0.shape[0], dtype=jnp.int32)[None, :], value.shape
     )
 
-    owner = _certified_owner(
+    owner, resolved = _certified_owner(
         brackets=admits,
         value=value,
         links=links,
@@ -527,9 +470,12 @@ def _evaluate_envelope(
     policy = _chord_reading(x=query, x0=links.x0, x1=links.x1, v0=links.p0, v1=links.p1)
     any_bracket = jnp.any(admits, axis=1)
     column = owner[:, None]
-    envelope_value = jnp.where(
+    # A query the exact order could not decide is poisoned rather than settled
+    # by a rounded reading: the EGM step's NaN diagnostics then name the cell.
+    admitted_value = jnp.where(
         any_bracket, jnp.take_along_axis(value, column, axis=1)[:, 0], -jnp.inf
     )
+    envelope_value = jnp.where(resolved, admitted_value, jnp.nan)
     envelope_policy = jnp.take_along_axis(policy, column, axis=1)[:, 0]
     winner_link = jnp.where(any_bracket, owner, 0).astype(jnp.int32)
     winner_segment = jnp.where(any_bracket, segment_id[owner], -1).astype(jnp.int32)
@@ -852,22 +798,3 @@ def _value_decrease_past_noise(*, left_value: Float1D, right_value: Float1D) -> 
     scale = jnp.maximum(jnp.abs(left_value), jnp.abs(right_value))
     noise_floor = 16.0 * jnp.finfo(left_value.dtype).eps * scale
     return right_value < left_value - noise_floor
-
-
-def _slope(*, x_a: FloatND, y_a: FloatND, x_b: FloatND, y_b: FloatND) -> FloatND:
-    r"""Compute the slope between two points, with `0.0` for coincident abscissae.
-
-    Args:
-        x_a: Abscissa(e) of the first point.
-        y_a: Ordinate(s) of the first point.
-        x_b: Abscissa(e) of the second point.
-        y_b: Ordinate(s) of the second point.
-
-    Returns:
-        Slope(s) $\Delta y / \Delta x$, broadcast over the inputs.
-
-    """
-    delta_x = x_b - x_a
-    return jnp.where(
-        delta_x == 0.0, 0.0, (y_b - y_a) / jnp.where(delta_x == 0.0, 1.0, delta_x)
-    )

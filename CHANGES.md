@@ -8,13 +8,16 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 ### The MSS upper envelope decides its orderings from the stored operands
 
 - Which link owns a query is certified rather than read off a rounded comparison:
-  a provisional winner is challenged by every bracketing link through the exact
-  integer comparator the other envelope paths already use. Links certified level
-  with the winner are separated right-continuously — the link reaching strictly
+  every link bracketing that query enters one exact reduction through the integer
+  comparator the other envelope paths already use. Links certified level with one
+  another are separated right-continuously — the link reaching strictly
   right of the query, then the steeper one, then the earlier stored link — so a
   node where two branches meet is owned by the branch that owns the interval above
   it, and a switch decided by a single representable step is published at the node
   the geometry puts it at rather than lost.
+- A query whose owner the exact comparator leaves undecided publishes no value: the
+  envelope reads `NaN` there instead of falling back to a rounded comparison, so an
+  ordering the arithmetic cannot settle is visible rather than silently chosen.
 - A link's value at a query is its own chord's value: each endpoint is weighed by
   its distance to the other, with the products carried at twice the working
   precision. The reading is the stored value at either endpoint exactly and
