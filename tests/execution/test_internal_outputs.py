@@ -39,6 +39,7 @@ from _lcm.execution.output_layout import (
     PlannedCore,
     resolve_output_layout,
 )
+from _lcm.typing import FloatND
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solver_api import ArtifactKey
 from lcm.solvers import StreamableProductAxis
@@ -619,3 +620,139 @@ def test_dispatching_a_wrongly_typed_internal_input_is_refused() -> None:
             templates={"upstream_value": jax.ShapeDtypeStruct((3,), jnp.int32)},
             label="consumer",
         )
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True, eq=False)
+class _ScalarPublisher:
+    """A producer body publishing one scalar under a per-width typing convention.
+
+    Comparison stays identity-based, which is what a program's function must
+    offer so JAX can key its compilation cache on the raw callable.
+    """
+
+    weak_widths: frozenset[int]
+    """Widths at which the published scalar is weakly typed."""
+
+    def __call__(
+        self, *, x: FloatND, candidate: FloatND, width: int
+    ) -> tuple[FloatND, FloatND]:
+        """Publish the state row and one scalar of this width's convention."""
+        del candidate
+        return x, (
+            jnp.asarray(1.0)
+            if width in self.weak_widths
+            else jnp.asarray(1.0, dtype=x.dtype)
+        )
+
+
+def _scalar_candidates(
+    *, weak_widths: frozenset[int]
+) -> MappingProxyType[Hashable, ResolvedProducer]:
+    """Trace one scalar-publishing producer at two legal widths of its axis."""
+    materialized = materialize_core_program(
+        program=dataclasses.replace(
+            _streaming_program(label="scalar", path=(1,)),
+            function=_ScalarPublisher(weak_widths=weak_widths),
+        ),
+        context=_context(),
+    )
+    records: dict[Hashable, ResolvedProducer] = {
+        (("candidate", width),): resolve_producer(
+            program=resolve_core_program(
+                program=materialized, tile_widths={"candidate": width}
+            ),
+            templates=MappingProxyType({}),
+        )
+        for width in (2, 4)
+    }
+    return MappingProxyType(records)
+
+
+def _width_dependent_scalar_leaves() -> tuple[
+    jax.ShapeDtypeStruct, jax.ShapeDtypeStruct
+]:
+    """Return the scalar published at the narrow and at the wide width."""
+    narrow, wide = _scalar_candidates(weak_widths=frozenset({2})).values()
+    return (
+        cast("Any", narrow.abstract_output)[1],
+        cast("Any", wide.abstract_output)[1],
+    )
+
+
+@pytest.mark.parametrize("attribute", ["shape", "dtype"])
+def test_a_width_dependent_scalar_publishes_one_shape_and_one_dtype(
+    *, attribute: str
+) -> None:
+    """The two width candidates of the scalar specimen agree on shape and dtype."""
+    narrow, wide = _width_dependent_scalar_leaves()
+
+    assert getattr(narrow, attribute) == getattr(wide, attribute)
+
+
+def test_a_width_dependent_scalar_publishes_two_weak_typings() -> None:
+    """The narrow candidate's scalar is weakly typed and the wide one's is not."""
+    narrow, wide = _width_dependent_scalar_leaves()
+
+    assert (narrow.weak_type, wide.weak_type) == (True, False)
+
+
+def test_a_width_dependent_published_weak_typing_is_refused() -> None:
+    """A label whose weak typing follows the width cannot be lowered against."""
+    candidates = _scalar_candidates(weak_widths=frozenset({2}))
+
+    with pytest.raises(ExecutionPlanningError, match="scalar"):
+        assert_width_invariant_internal_outputs(candidates=candidates)
+
+
+@pytest.mark.parametrize(
+    "weak_widths", [frozenset(), frozenset({2, 4})], ids=["strong", "weak"]
+)
+def test_a_uniformly_typed_published_scalar_is_admitted(
+    *, weak_widths: frozenset[int]
+) -> None:
+    """One weak-typing convention held at every width publishes one subtree."""
+    candidates = _scalar_candidates(weak_widths=weak_widths)
+
+    assert assert_width_invariant_internal_outputs(candidates=candidates) is None
+
+
+@pytest.mark.parametrize("template_weak_type", [False, True])
+def test_dispatching_a_differently_weakly_typed_internal_input_is_refused(
+    *, template_weak_type: bool
+) -> None:
+    """A leaf of the template's shape and dtype but other weak typing is refused."""
+    weak = jnp.asarray(1.0)
+    strong = jnp.asarray(1.0, dtype=weak.dtype)
+
+    with pytest.raises(ValueError, match="upstream_value"):
+        assert_internal_inputs(
+            arguments={"upstream_value": strong if template_weak_type else weak},
+            templates={
+                "upstream_value": jax.ShapeDtypeStruct(
+                    (), weak.dtype, weak_type=template_weak_type
+                )
+            },
+            label="consumer",
+        )
+
+
+@pytest.mark.parametrize("weak_type", [False, True])
+def test_dispatching_an_internal_input_of_the_declared_weak_typing_is_admitted(
+    *, weak_type: bool
+) -> None:
+    """A leaf carrying its template's weak typing is handed over unchanged."""
+    weak = jnp.asarray(1.0)
+    value = weak if weak_type else jnp.asarray(1.0, dtype=weak.dtype)
+
+    assert (
+        assert_internal_inputs(
+            arguments={"upstream_value": value},
+            templates={
+                "upstream_value": jax.ShapeDtypeStruct(
+                    (), weak.dtype, weak_type=weak_type
+                )
+            },
+            label="consumer",
+        )
+        is None
+    )
