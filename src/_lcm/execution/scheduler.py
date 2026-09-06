@@ -1,0 +1,162 @@
+"""Physical lifetime of solve-time buffers after the ledger says a count closed.
+
+The ledger (`liveness.py`) is logical: it counts declared consumers per artifact
+key. This module is physical: it knows which buffer an array occupies, which
+keys share that buffer, when every output an asynchronous dispatch produced is
+ready, and how to delete a buffer without leaving a deleted array inside the
+rolling input mappings.
+"""
+
+import dataclasses
+import logging
+from collections.abc import Hashable, Iterable, Mapping, Sequence
+
+import jax
+
+from _lcm.execution.liveness import PlannedInputLiveness
+from lcm.exceptions import ExecutionPlanningError
+
+type BufferIdentity = tuple[tuple[int, int], ...]
+
+
+def buffer_identity(*, array: jax.Array) -> BufferIdentity:
+    """Return the device buffers an array occupies, as `(device id, pointer)` pairs.
+
+    Two arrays with one identity share memory: releasing one releases the other.
+    """
+    if array.is_deleted():
+        msg = "A deleted array has no buffer identity."
+        raise ValueError(msg)
+    return tuple(
+        sorted(
+            (shard.device.id, shard.data.unsafe_buffer_pointer())
+            for shard in array.addressable_shards
+        )
+    )
+
+
+class BufferRegistry:
+    """Record which artifact keys name which device buffer.
+
+    A buffer is registered under every key that reaches it; a release consults
+    the registry so a buffer two keys share is deleted only when both keys may
+    go. Forgetting a buffer drops every key on it.
+    """
+
+    __slots__ = ("_keys_by_buffer",)
+
+    def __init__(self) -> None:
+        """Start with no registered buffer."""
+        self._keys_by_buffer: dict[BufferIdentity, set[Hashable]] = {}
+
+    def register(self, *, array: jax.Array, artifact: Hashable) -> None:
+        """Record that `artifact` names the buffer `array` occupies."""
+        self._keys_by_buffer.setdefault(buffer_identity(array=array), set()).add(
+            artifact
+        )
+
+    def artifacts_sharing(self, *, array: jax.Array) -> frozenset[Hashable]:
+        """Return every key registered on the buffer `array` occupies."""
+        return frozenset(self._keys_by_buffer.get(buffer_identity(array=array), ()))
+
+    def forget(self, *, array: jax.Array) -> None:
+        """Drop every key on the buffer `array` occupies."""
+        self.forget_identity(identity=buffer_identity(array=array))
+
+    def forget_identity(self, *, identity: BufferIdentity) -> None:
+        """Drop every key on the buffer with this identity.
+
+        The form for a buffer that is already deleted — a donated input after
+        its dispatch — and so cannot report its own identity any more.
+        """
+        self._keys_by_buffer.pop(identity, None)
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class ReleaseRecord:
+    """One artifact key whose buffer was deleted, and the dispatch that closed it."""
+
+    artifact: Hashable
+    """The released artifact key."""
+
+    closing_dispatch: Hashable
+    """The dispatch whose commit closed the last count on the buffer."""
+
+
+def release_closed_artifacts(
+    *,
+    ledger: PlannedInputLiveness,
+    registry: BufferRegistry,
+    artifacts: Iterable[Hashable],
+    arrays_by_artifact: Mapping[Hashable, jax.Array],
+    pending_outputs: Sequence[jax.Array],
+    closing_dispatch: Hashable,
+    logger: logging.Logger,
+) -> tuple[ReleaseRecord, ...]:
+    """Delete the buffers of closed artifacts once every pending output is ready.
+
+    Each artifact must be release eligible in the ledger — a remaining consumer
+    is an `ExecutionPlanningError`, never a warning. A buffer is deleted only when
+    every key the registry holds on it is eligible too, so a leaf that is also a
+    retained value survives. Nothing is deleted before one `block_until_ready`
+    over `pending_outputs`, the outputs of every dispatch of the period so far,
+    so an asynchronous computation never reads a freed buffer. Every deleted key
+    is logged at debug level with the artifact key and the closing dispatch.
+    """
+    to_delete: dict[BufferIdentity, tuple[jax.Array, tuple[Hashable, ...]]] = {}
+    for artifact in artifacts:
+        if not ledger.is_release_eligible(artifact=artifact):
+            msg = (
+                f"Releasing {artifact!r} after dispatch {closing_dispatch!r} would "
+                "drop a remaining consumer: it is still read, pinned or retained."
+            )
+            raise ExecutionPlanningError(msg)
+        array = arrays_by_artifact[artifact]
+        if array.is_deleted():
+            continue
+        partners = registry.artifacts_sharing(array=array) | {artifact}
+        if not all(
+            ledger.is_known(artifact=partner)
+            and ledger.is_release_eligible(artifact=partner)
+            for partner in partners
+        ):
+            continue
+        to_delete[buffer_identity(array=array)] = (
+            array,
+            tuple(sorted(partners, key=repr)),
+        )
+    if not to_delete:
+        return ()
+    jax.block_until_ready(tuple(pending_outputs))
+    records: list[ReleaseRecord] = []
+    for array, keys in to_delete.values():
+        registry.forget(array=array)
+        array.delete()
+        for key in keys:
+            logger.debug(
+                "released %r after dispatch %r",
+                key,
+                closing_dispatch,
+                extra={"artifact_key": key, "closing_dispatch": closing_dispatch},
+            )
+            records.append(
+                ReleaseRecord(artifact=key, closing_dispatch=closing_dispatch)
+            )
+    return tuple(records)
+
+
+def replace_leaf_by_identity(*, tree: object, old: object, new: object) -> object:
+    """Return `tree` with the leaf that is `old` replaced by `new`.
+
+    Identity, not equality, selects the leaf, so an equal-valued neighbour is
+    untouched. The tree's structure is preserved, which keeps every compiled
+    program's pytree calling convention intact. A tree without the leaf is
+    refused: substituting nothing would hide a released buffer.
+    """
+    leaves, treedef = jax.tree.flatten(tree)
+    if not any(leaf is old for leaf in leaves):
+        msg = "The array to replace is not a leaf of the tree."
+        raise ValueError(msg)
+    return jax.tree.unflatten(
+        treedef, [new if leaf is old else leaf for leaf in leaves]
+    )

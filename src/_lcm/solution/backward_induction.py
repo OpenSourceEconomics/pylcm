@@ -12,6 +12,7 @@ from collections.abc import (
     Iterable,
     Iterator,
     Mapping,
+    Sequence,
 )
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from types import MappingProxyType
@@ -51,6 +52,7 @@ from _lcm.execution.output_layout import (
     assert_value_leaf_layout,
     resolve_output_layout,
 )
+from _lcm.execution.scheduler import BufferRegistry, release_closed_artifacts
 from _lcm.execution.value_transfer import (
     ResolvedValueTransfer,
     ValueArtifactAddress,
@@ -105,6 +107,12 @@ from _lcm.solution.period_capture import (
     PeriodCaptureTarget,
     capture_kernel_inputs,
     resolve_capture_target,
+)
+from _lcm.solution.solve_inputs import (
+    SolveInputMappings,
+    locate_artifact,
+    register_rolled_inputs,
+    substitute_artifact,
 )
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
 from _lcm.solution.undeclared_reads import undeclared_read_pins
@@ -268,6 +276,12 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     input_liveness = _build_planned_input_liveness(
         regimes=regimes, program_metadata=compiled_programs.metadata
     )
+    buffer_registry = BufferRegistry()
+    input_templates = SolveInputMappings(
+        next_regime_to_V_arr=next_regime_to_V_arr,
+        next_regime_to_continuation=next_regime_to_continuation,
+        next_edge_to_V_arr=next_edge_to_V_arr,
+    )
 
     solution: dict[int, MappingProxyType[RegimeName, FloatND]] = {}
     simulation_policies: dict[int, MappingProxyType[RegimeName, SimulationPolicy]] = {}
@@ -367,6 +381,20 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         period_replay_artifacts: dict[tuple[RegimeName, ArtifactKey], object] = {}
         period_auxiliary_artifacts: dict[tuple[RegimeName, ArtifactKey], object] = {}
 
+        period_inputs = SolveInputMappings(
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            next_regime_to_continuation=next_regime_to_continuation,
+            next_edge_to_V_arr=next_edge_to_V_arr,
+        )
+        register_rolled_inputs(
+            inputs=period_inputs,
+            next_period=period + 1,
+            ledger=input_liveness,
+            registry=buffer_registry,
+        )
+        period_pending_outputs: list[FloatND] = []
+        period_release_candidates: dict[ValueArtifactAddress, _InputDispatch] = {}
+
         active_regimes = {
             regime_name: regime
             for regime_name, regime in regimes.items()
@@ -414,7 +442,10 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 ),
                 selected_artifact_keys=selected_artifact_keys,
             )
-            input_liveness.commit_successful_dispatch(dispatch=(period, regime_name))
+            for closed in input_liveness.commit_successful_dispatch(
+                dispatch=(period, regime_name)
+            ):
+                period_release_candidates.setdefault(closed, (period, regime_name))
             continuation_spec = regime.solution.continuation_spec
             result = consume_kernel_output(
                 output=output,
@@ -522,6 +553,24 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             )
 
             period_solution[regime_name] = V_arr
+            period_pending_outputs.append(V_arr)
+            if result.continuation is not None:
+                period_pending_outputs.extend(jax.tree.leaves(result.continuation))
+            next_regime_to_V_arr, next_regime_to_continuation, next_edge_to_V_arr = (
+                _release_closed_period_inputs(
+                    ledger=input_liveness,
+                    registry=buffer_registry,
+                    candidates=period_release_candidates,
+                    inputs=SolveInputMappings(
+                        next_regime_to_V_arr=next_regime_to_V_arr,
+                        next_regime_to_continuation=next_regime_to_continuation,
+                        next_edge_to_V_arr=next_edge_to_V_arr,
+                    ),
+                    templates=input_templates,
+                    pending_outputs=period_pending_outputs,
+                    logger=logger,
+                )
+            )
 
         # Force the device-side reduction kernels to finish before the
         # next period dispatches, so each period's `isnan` / `isinf`
@@ -563,7 +612,25 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             period=period,
             solved_regimes=period_solution,
         ):
-            input_liveness.commit_successful_dispatch(dispatch=(period, *folded_edge))
+            for closed in input_liveness.commit_successful_dispatch(
+                dispatch=(period, *folded_edge)
+            ):
+                period_release_candidates.setdefault(closed, (period, *folded_edge))
+        next_regime_to_V_arr, next_regime_to_continuation, next_edge_to_V_arr = (
+            _release_closed_period_inputs(
+                ledger=input_liveness,
+                registry=buffer_registry,
+                candidates=period_release_candidates,
+                inputs=SolveInputMappings(
+                    next_regime_to_V_arr=next_regime_to_V_arr,
+                    next_regime_to_continuation=next_regime_to_continuation,
+                    next_edge_to_V_arr=next_edge_to_V_arr,
+                ),
+                templates=input_templates,
+                pending_outputs=period_pending_outputs,
+                logger=logger,
+            )
+        )
         next_regime_to_V_arr, next_regime_to_continuation = _roll_continuation_inputs(
             regimes=regimes,
             period_solution=period_solution,
@@ -701,7 +768,8 @@ def _copy_solver_diagnostics_to_host(
 def _release_rolled_continuations(
     *, period_continuations: dict[RegimeName, ContinuationPayload]
 ) -> None:
-    """Free the device buffers rolled off the period just solved.
+    """Free the device buffers rolled off the period just solved that no key
+    still names.
 
     The superseded continuation inputs and the period's transient working set
     are unreferenced once the period rolls, but a rolled continuation payload
@@ -1576,6 +1644,60 @@ def _build_planned_input_liveness(
         pinned_artifacts=pinned_artifacts,
         retained_artifacts=retained,
         aliases=_rolled_aliases(regimes=regimes, artifacts=known),
+    )
+
+
+def _release_closed_period_inputs(
+    *,
+    ledger: PlannedInputLiveness[_InputDispatch, ValueArtifactAddress],
+    registry: BufferRegistry,
+    candidates: dict[ValueArtifactAddress, _InputDispatch],
+    inputs: SolveInputMappings,
+    templates: SolveInputMappings,
+    pending_outputs: Sequence[FloatND],
+    logger: logging.Logger,
+) -> tuple[
+    MappingProxyType[RegimeName, FloatND],
+    MappingProxyType[RegimeName, ContinuationPayload],
+    MappingProxyType[_EdgeKey, FloatND],
+]:
+    """Release every candidate the period's inputs still hold and substitute it.
+
+    Candidates are the keys the period's commits closed, each with the dispatch
+    that closed it; they are consumed here, so a key is released once. A key the
+    mappings do not address (its buffer left them at an earlier roll) needs no
+    physical action and is dropped.
+    """
+    located: dict[Hashable, jax.Array] = {}
+    for artifact in tuple(candidates):
+        array = locate_artifact(inputs=inputs, artifact=artifact)
+        if array is None:
+            del candidates[artifact]
+            continue
+        located[artifact] = array
+    by_dispatch: dict[_InputDispatch, list[ValueArtifactAddress]] = {}
+    for artifact, dispatch in candidates.items():
+        by_dispatch.setdefault(dispatch, []).append(artifact)
+    for dispatch, artifacts in by_dispatch.items():
+        for record in release_closed_artifacts(
+            ledger=ledger,
+            registry=registry,
+            artifacts=artifacts,
+            arrays_by_artifact=MappingProxyType(located),
+            pending_outputs=pending_outputs,
+            closing_dispatch=dispatch,
+            logger=logger,
+        ):
+            released_artifact = cast("ValueArtifactAddress", record.artifact)
+            if locate_artifact(inputs=inputs, artifact=released_artifact) is not None:
+                inputs = substitute_artifact(
+                    inputs=inputs, templates=templates, artifact=released_artifact
+                )
+    candidates.clear()
+    return (
+        inputs.next_regime_to_V_arr,
+        inputs.next_regime_to_continuation,
+        inputs.next_edge_to_V_arr,
     )
 
 
