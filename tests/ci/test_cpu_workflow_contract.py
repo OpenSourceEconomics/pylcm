@@ -187,7 +187,7 @@ def test_four_device_file_invocation_omits_policy_activation_flags(
 
     `--ci-policy` or `--full-suite` drives `pytest_policy.configure()`, which
     resolves an explicit `--hardware-profile` by querying `jax.default_backend()`
-    during `pytest_configure` -- before pytest imports any test module. That
+    during `pytest_configure` — before pytest imports any test module. That
     query initialises the JAX backend ahead of this file's own import-time
     four-CPU-device pin, so the pin sees an already-initialised backend, never
     applies, and every test in the file silently skips.

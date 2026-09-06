@@ -68,7 +68,7 @@ def test_full_policy_cpu_suite_invocations_exist() -> None:
     """At least one CPU-suite invocation activates the full machine policy.
 
     Guards the two property tests below against vacuously passing over an
-    empty parametrize list -- if every invocation were wrongly classified as
+    empty parametrize list — if every invocation were wrongly classified as
     the isolated four-device exemption, those tests would silently check
     nothing.
     """

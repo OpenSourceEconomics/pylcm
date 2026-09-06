@@ -4,8 +4,8 @@
 four-CPU-device topology at import; the pin only takes effect in a process that has
 not already touched a JAX backend. CI's execution-policy launcher
 (`--ci-policy`/`--full-suite`) resolves an explicit `--hardware-profile` by querying
-`jax.default_backend()` during `pytest_configure` -- before pytest imports any test
-module -- so activating it ahead of either file's own invocation would initialise
+`jax.default_backend()` during `pytest_configure` — before pytest imports any test
+module — so activating it ahead of either file's own invocation would initialise
 the backend first and silently skip every test in the file. Both files' own-process
 invocations therefore carry `--policy-child --hardware-profile=cpu` without policy
 activation.
@@ -80,7 +80,7 @@ def carries_policy_activation_flags(argv: list[str]) -> bool:
 
     Either flag drives `pytest_policy.configure()`, which resolves an explicit
     `--hardware-profile` by querying `jax.default_backend()` during
-    `pytest_configure` -- before pytest imports any test module. An isolated
+    `pytest_configure` — before pytest imports any test module. An isolated
     four-CPU-device invocation carrying either flag would have its backend
     initialised ahead of its own import-time topology pin, so the pin would
     never apply and every test in the file would silently skip.
