@@ -199,6 +199,11 @@ documented in [Custom solvers](custom_solvers.md).
 | [`lcm.solvers.CoreExecutionDisposition`](custom_solvers.md)                                | Planned, dense, or host-driven       |
 | [`lcm.solvers.InternalOutputSpec`](custom_solvers.md#internal-outputs)                     | Output published within one graph    |
 | [`lcm.solvers.InternalInputRef`](custom_solvers.md#internal-outputs)                       | Argument read from another program   |
+| [`lcm.solvers.ValueRead`](custom_solvers.md)                                               | Declared read of a stored value      |
+| [`lcm.solvers.ValueArtifactAddress`](custom_solvers.md)                                    | Stored value being read              |
+| [`lcm.solvers.ValueConsumerAddress`](custom_solvers.md)                                    | Program input receiving a value      |
+| [`lcm.solvers.ValueArtifactKind`](custom_solvers.md)                                       | Kind of stored value artifact        |
+| [`lcm.solvers.ValueInputChannel`](custom_solvers.md)                                       | Input channel of a value consumer    |
 | [`lcm.solvers.ProgramScope`](custom_solvers.md)                                            | Retention scope of a program         |
 | [`lcm.solvers.StreamableProductAxis`](custom_solvers.md)                                   | Declared streamable action axis      |
 | [`lcm.solvers.ReductionSemantics`](custom_solvers.md)                                      | Reduction a streamed axis performs   |
