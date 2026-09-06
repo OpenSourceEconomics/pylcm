@@ -135,12 +135,12 @@ def test_a_fold_dispatch_is_a_planned_dispatch_of_its_own() -> None:
     )
 
 
-def test_a_folded_value_is_pinned_by_retention_rather_than_by_the_fold() -> None:
-    """A folded value's only unplanned pin is the retained public result.
+def test_a_folded_value_is_retained_rather_than_pinned_by_the_fold() -> None:
+    """A folded value's only reason to survive its consumers is the solve result.
 
     Every regime value of every active period is retained in the solve result,
-    so a folded value stays ineligible for release even once every planned
-    consumer of it — the folds among them — has committed.
+    so a folded value stays ineligible for release once every planned consumer
+    of it — the folds among them — has committed, and the ledger says why.
     """
     model = _model()
     ledger = _build_planned_input_liveness(
@@ -152,8 +152,9 @@ def test_a_folded_value_is_pinned_by_retention_rather_than_by_the_fold() -> None
     ].target
     for dispatch in tuple(ledger.pending_dispatches):
         ledger.commit_successful_dispatch(dispatch=dispatch)
-    # Refuses unless every planned dispatch committed and every count reached
-    # zero, so the assertion below reads a genuinely closed count.
     ledger.assert_solve_complete()
 
-    assert not ledger.is_release_eligible(artifact=folded)
+    assert (
+        ledger.is_retained(artifact=folded),
+        ledger.is_release_eligible(artifact=folded),
+    ) == (True, False)

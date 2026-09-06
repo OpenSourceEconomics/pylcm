@@ -128,27 +128,28 @@ _UNPLANNED_DISPOSITIONS = [
 
 
 @pytest.mark.parametrize("disposition", _UNPLANNED_DISPOSITIONS)
-def test_unplanned_programs_without_declared_accesses_stay_conservatively_pinned(
+def test_unplanned_programs_without_declared_accesses_declare_no_reads(
     *, disposition: CoreExecutionDisposition
 ) -> None:
-    """A program the engine does not plan and that declares no value reads pins
-    every reachable value."""
-    planned, exact, has_unknown = _classify_dispatch_value_artifacts(
+    """A program the engine does not plan and that declares no value reads is
+    flagged so the caller pins whatever it may reach conservatively."""
+    declared, declares_no_reads = _classify_dispatch_value_artifacts(
         programs={"main": _metadata(disposition=disposition)}
     )
 
-    assert (planned, exact, has_unknown) == ((), (), True)
+    assert (declared, declares_no_reads) == ((), True)
 
 
 @pytest.mark.parametrize("disposition", _UNPLANNED_DISPOSITIONS)
-def test_unplanned_programs_with_declared_accesses_pin_exactly_those_values(
+def test_unplanned_programs_with_declared_accesses_declare_exactly_those_values(
     *, disposition: CoreExecutionDisposition
 ) -> None:
-    """An unplanned program's declared value reads are pinned exactly, nothing else."""
+    """An unplanned program's declared value reads are counted exactly, nothing
+    else, and no undeclared-read flag is raised."""
     access = _access()
 
-    planned, exact, has_unknown = _classify_dispatch_value_artifacts(
+    declared, declares_no_reads = _classify_dispatch_value_artifacts(
         programs={"main": _metadata(disposition=disposition, accesses=(access,))}
     )
 
-    assert (planned, exact, has_unknown) == ((), (access.target,), False)
+    assert (declared, declares_no_reads) == ((access.target,), False)

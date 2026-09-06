@@ -107,6 +107,7 @@ from _lcm.solution.period_capture import (
     resolve_capture_target,
 )
 from _lcm.solution.solver_diagnostics import SolverDiagnostics
+from _lcm.solution.undeclared_reads import undeclared_read_pins
 from _lcm.solution.v_topology import (
     _build_zero_V_arr,
     _get_regime_V_shapes_and_shardings,
@@ -1530,11 +1531,19 @@ def _build_planned_input_liveness(
     regimes: MappingProxyType[RegimeName, Regime],
     program_metadata: Mapping[_CoreTriple, _ProgramExecutionMetadata],
 ) -> PlannedInputLiveness[_InputDispatch, ValueArtifactAddress]:
-    """Build one exact-dispatch ledger without authorizing physical release."""
+    """Build one exact-dispatch ledger without authorizing physical release.
+
+    Every declared read of every program is a counted consumer, whatever the
+    program's disposition. A regime value is retained by the solve result. What
+    stays pinned is what no declaration covers: the host-read continuation
+    leaves of the EGM family and every reachable input of a program that
+    declares no reads. A rolled entry whose producer does not run at its period
+    aliases the same address one period later.
+    """
     dispatch_accesses: dict[_InputDispatch, tuple[ValueArtifactAddress, ...]] = dict(
         _gated_edge_fold_dispatches(regimes=regimes)
     )
-    pinned_artifacts = set(_retained_solution_value_artifacts(regimes=regimes))
+    pinned_artifacts: set[ValueArtifactAddress] = set()
 
     metadata_by_dispatch: dict[
         tuple[RegimeName, int], dict[str, _ProgramExecutionMetadata]
@@ -1543,74 +1552,104 @@ def _build_planned_input_liveness(
         metadata_by_dispatch.setdefault((regime_name, period), {})[core_name] = metadata
 
     for (regime_name, period), programs in metadata_by_dispatch.items():
-        regime = regimes[regime_name]
-        planned, unplanned_exact, has_unknown = _classify_dispatch_value_artifacts(
+        declared, declares_no_reads = _classify_dispatch_value_artifacts(
             programs=programs,
         )
-        dispatch_accesses[(period, regime_name)] = planned
-        pinned_artifacts.update(unplanned_exact)
-        if has_unknown:
-            pinned_artifacts.update(
-                _conservative_unplanned_value_artifacts(
-                    regime=regime,
-                    regime_name=regime_name,
-                    period=period,
-                )
+        dispatch_accesses[(period, regime_name)] = declared
+        pinned_artifacts.update(
+            undeclared_read_pins(
+                regimes=regimes,
+                regime_name=regime_name,
+                period=period,
+                declares_no_reads=declares_no_reads,
             )
+        )
 
+    retained = _retained_solution_value_artifacts(regimes=regimes)
+    known = {
+        *retained,
+        *pinned_artifacts,
+        *(artifact for reads in dispatch_accesses.values() for artifact in reads),
+    }
     return PlannedInputLiveness(
         dispatch_accesses=MappingProxyType(dispatch_accesses),
         pinned_artifacts=pinned_artifacts,
+        retained_artifacts=retained,
+        aliases=_rolled_aliases(regimes=regimes, artifacts=known),
     )
 
 
 def _classify_dispatch_value_artifacts(
     *,
     programs: Mapping[str, _ProgramExecutionMetadata],
-) -> tuple[
-    tuple[ValueArtifactAddress, ...],
-    tuple[ValueArtifactAddress, ...],
-    bool,
-]:
-    """Separate finite planned reads from pinned unplanned or undeclared reads.
+) -> tuple[tuple[ValueArtifactAddress, ...], bool]:
+    """Collect one dispatch's declared reads and whether any program declares none.
 
-    A program the engine does not plan pins exactly the value reads it declares
-    — a regime value, a gated continuation, or one continuation leaf of a
-    target's keyed payload. One that declares none may still read any reachable
-    value through its builder, so it is reported as unknown and pinned
-    conservatively.
+    A planned program's resolved transfer plan must name exactly its declared
+    targets; a dense or host-driven program has no plan and contributes its
+    declarations directly. A program that declares nothing may still read any
+    reachable value through its builder, which the caller pins conservatively.
     """
-    planned: list[ValueArtifactAddress] = []
-    unplanned_exact: list[ValueArtifactAddress] = []
-    has_unknown = False
+    declared: list[ValueArtifactAddress] = []
+    declares_no_reads = False
 
     for core_name, metadata in programs.items():
         declared_targets = tuple(
             read.target for read in metadata.requirements.value_reads
         )
-        if metadata.disposition is not CoreExecutionDisposition.PLANNED:
-            if not declared_targets:
-                has_unknown = True
-            else:
-                unplanned_exact.extend(declared_targets)
+        if not declared_targets:
+            declares_no_reads = True
             continue
-
-        plan = metadata.input_transfer_plan
-        planned_targets = tuple(transfer.target for transfer in plan)
-        if planned_targets != declared_targets:
-            msg = (
-                "A resolved input plan disagrees with its CoreProgram declaration for "
-                f"core {core_name!r}: planned={planned_targets!r}, "
-                f"declared={declared_targets!r}."
+        if metadata.disposition is CoreExecutionDisposition.PLANNED:
+            planned_targets = tuple(
+                transfer.target for transfer in metadata.input_transfer_plan
             )
-            raise RuntimeError(msg)
-        planned.extend(planned_targets)
+            if planned_targets != declared_targets:
+                msg = (
+                    "A resolved input plan disagrees with its CoreProgram "
+                    f"declaration for core {core_name!r}: planned="
+                    f"{planned_targets!r}, declared={declared_targets!r}."
+                )
+                raise RuntimeError(msg)
+        declared.extend(declared_targets)
 
-    return (
-        _unique_value_artifacts(planned),
-        _unique_value_artifacts(unplanned_exact),
-        has_unknown,
-    )
+    return _unique_value_artifacts(declared), declares_no_reads
+
+
+def _rolled_aliases(
+    *,
+    regimes: Mapping[RegimeName, Regime],
+    artifacts: Iterable[ValueArtifactAddress],
+) -> MappingProxyType[ValueArtifactAddress, ValueArtifactAddress]:
+    """Map each rolled key to the key of the same buffer one period later.
+
+    A regime value or continuation leaf of a regime inactive at its period, and
+    a gated continuation with no fold dispatch at its period, are entries the
+    period roll carries forward unchanged; each is the buffer the same address
+    names one period later.
+    """
+    n_periods = _model_n_periods(regimes=regimes)
+    fold_dispatches = frozenset(_gated_edge_fold_dispatches(regimes=regimes))
+    aliases: dict[ValueArtifactAddress, ValueArtifactAddress] = {}
+    pending = list(artifacts)
+    while pending:
+        artifact = pending.pop()
+        if artifact in aliases or artifact.period >= n_periods - 1:
+            continue
+        if artifact.kind is ValueArtifactKind.GATED_CONTINUATION:
+            produced = (
+                artifact.period,
+                artifact.regime,
+                artifact.target_regime,
+            ) in fold_dispatches
+        else:
+            produced = artifact.period in regimes[artifact.regime].active_periods
+        if produced:
+            continue
+        later = dataclasses.replace(artifact, period=artifact.period + 1)
+        aliases[artifact] = later
+        pending.append(later)
+    return MappingProxyType(aliases)
 
 
 def _unique_value_artifacts(
@@ -1758,55 +1797,6 @@ def _model_n_periods(*, regimes: Mapping[RegimeName, Regime]) -> int:
         (regime.solution.reachability.n_periods for regime in regimes.values()),
         default=0,
     )
-
-
-def _conservative_unplanned_value_artifacts(
-    *,
-    regime: Regime,
-    regime_name: RegimeName,
-    period: int,
-) -> tuple[ValueArtifactAddress, ...]:
-    """Pin every graph-reachable value for an unplanned core declaring no reads."""
-    artifacts: list[ValueArtifactAddress] = [
-        ValueArtifactAddress(
-            kind=ValueArtifactKind.REGIME_VALUE,
-            period=period,
-            regime=reference,
-        )
-        for reference in regime.same_period_ref_regimes
-    ]
-    reachability = regime.solution.reachability
-    if period == reachability.n_periods - 1:
-        return _unique_value_artifacts(artifacts)
-
-    for target in reachability.targets(period=period, source=regime_name):
-        edge = regime.gated_edges.get(target)
-        if edge is None:
-            artifacts.append(
-                ValueArtifactAddress(
-                    kind=ValueArtifactKind.REGIME_VALUE,
-                    period=period + 1,
-                    regime=target,
-                )
-            )
-            continue
-        artifacts.append(
-            ValueArtifactAddress(
-                kind=ValueArtifactKind.GATED_CONTINUATION,
-                period=period + 1,
-                regime=regime_name,
-                target_regime=target,
-            )
-        )
-        artifacts.extend(
-            ValueArtifactAddress(
-                kind=ValueArtifactKind.REGIME_VALUE,
-                period=period + 1,
-                regime=reference,
-            )
-            for reference in edge.reference_regimes
-        )
-    return _unique_value_artifacts(artifacts)
 
 
 def _regime_retains_replay(*, regime: Regime, retain_replay: bool) -> bool:

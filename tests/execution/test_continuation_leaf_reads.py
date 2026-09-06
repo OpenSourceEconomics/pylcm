@@ -444,8 +444,8 @@ def test_dcegm_addresses_each_leaf_inside_the_rolling_mapping(
     assert all(predicate(read) for read in _dcegm_reads())
 
 
-def test_an_egm_node_pins_only_the_continuation_leaves_it_declares() -> None:
-    """A dense EGM node that names its reads stops pinning every reachable value."""
+def test_an_egm_node_declares_exactly_the_continuation_leaves_it_reads() -> None:
+    """A dense EGM node's declared reads name exactly its own continuation leaves."""
     program = _egm_program()
     programs = {
         "main": _ProgramExecutionMetadata(
@@ -456,12 +456,10 @@ def test_an_egm_node_pins_only_the_continuation_leaves_it_declares() -> None:
         )
     }
 
-    planned, unplanned_exact, has_unknown = _classify_dispatch_value_artifacts(
-        programs=programs
-    )
+    declared, declares_no_reads = _classify_dispatch_value_artifacts(programs=programs)
 
-    assert (planned, has_unknown) == ((), False)
-    assert {artifact.leaf_path for artifact in unplanned_exact} == {
+    assert declares_no_reads is False
+    assert {artifact.leaf_path for artifact in declared} == {
         ("endog_grid",),
         ("value",),
         ("marginal_utility",),
