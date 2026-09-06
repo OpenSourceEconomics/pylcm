@@ -50,6 +50,12 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   hashes its structure once and reuses it, so an estimation loop no longer walks every
   declared user callable per solve; the walk had been the largest single cost of a warm
   solve, ahead of the solve itself.
+- A model function may read an array constant's `shape`, `size`, `ndim` or `dtype` and
+  still be fingerprintable. Those four are functions of the array the digest already
+  covers, so binding them adds no state the fingerprint misses. The array's own
+  descriptor is what earns the exemption rather than the attribute name, and the bound
+  value must be the metadata it claims to be, so a `size` property on a type that is
+  not an array still fails closed.
 - The durable model fingerprint sees through beartype guards that a downstream
   package's own claw wraps around its model functions: such a guard is accepted only
   when beartype regenerates its code from the bound callee with the guard's own

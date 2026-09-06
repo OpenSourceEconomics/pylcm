@@ -1847,3 +1847,72 @@ def test_the_structure_digest_participates_in_the_model_fingerprint() -> None:
     assert _fingerprint_model_for_test(**shared) != _fingerprint_model_for_test(
         **shared, structure="0" * 64
     )
+
+
+_ARRAY_METADATA_DEPENDENCY = jnp.array([0.7, 0.8, 0.9, 1.0])
+_NUMPY_METADATA_DEPENDENCY = np.array([[1.0, 2.0], [3.0, 4.0]])
+
+
+def _reads_jax_array_size(consumption: FloatND) -> FloatND:
+    """Read a JAX array constant's element count."""
+    return consumption * (_ARRAY_METADATA_DEPENDENCY.size - 1)
+
+
+def _reads_jax_array_shape_ndim_and_dtype(consumption: FloatND) -> FloatND:
+    """Read the remaining read-only metadata of a JAX array constant."""
+    width = _ARRAY_METADATA_DEPENDENCY.shape[0] + _ARRAY_METADATA_DEPENDENCY.ndim
+    return consumption * width * jnp.ones((), dtype=_ARRAY_METADATA_DEPENDENCY.dtype)
+
+
+def _reads_numpy_array_metadata(consumption: FloatND) -> FloatND:
+    """Read a NumPy array constant's metadata."""
+    return consumption * _NUMPY_METADATA_DEPENDENCY.ndim
+
+
+class _SizedLookalike:
+    """A type that publishes `size` without being an array."""
+
+    @property
+    def size(self) -> int:
+        return 4
+
+
+_SIZED_LOOKALIKE_DEPENDENCY = _SizedLookalike()
+
+
+def _reads_a_lookalike_size(consumption: FloatND) -> FloatND:
+    """Read a `size` property that is not array metadata."""
+    return consumption * _SIZED_LOOKALIKE_DEPENDENCY.size
+
+
+@pytest.mark.parametrize(
+    "function",
+    [
+        _reads_jax_array_size,
+        _reads_jax_array_shape_ndim_and_dtype,
+        _reads_numpy_array_metadata,
+    ],
+)
+def test_a_referenced_array_constant_may_have_its_metadata_read(
+    function: Callable[..., object],
+) -> None:
+    """`shape`, `size`, `ndim` and `dtype` of an array constant are fingerprintable."""
+    assert fingerprints._semantic_fingerprint(function)
+
+
+def test_an_array_constant_read_for_its_metadata_still_participates(
+    *, monkeypatch
+) -> None:
+    """The constant behind a metadata read is itself part of the digest."""
+    baseline = fingerprints._semantic_fingerprint(_reads_jax_array_size)
+    monkeypatch.setitem(
+        globals(), "_ARRAY_METADATA_DEPENDENCY", jnp.array([0.7, 0.8, 0.9])
+    )
+
+    assert baseline != fingerprints._semantic_fingerprint(_reads_jax_array_size)
+
+
+def test_a_size_property_on_a_type_that_is_not_an_array_fails_closed() -> None:
+    """Only array metadata is exempt; the attribute name alone earns nothing."""
+    with pytest.raises(TypeError, match="dynamic descriptor"):
+        fingerprints._semantic_fingerprint(_reads_a_lookalike_size)
