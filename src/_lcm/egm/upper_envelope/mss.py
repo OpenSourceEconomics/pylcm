@@ -824,7 +824,13 @@ def _crossing_in_interval(
     at or above the root, with no rounded chord subtraction or denominator
     fallback. Coalescence is determined from this emitted state, not from the
     endpoint signs: even a strictly interior root can hand over at the right
-    node. Stored spans, rather than widened comparable lines, admit the event.
+    node.
+
+    The outgoing link's own stored span, rather than its widened comparable line,
+    admits the event. The incoming link's span does not: a branch entered at the
+    right node is represented there by the link that reaches beyond it, so a root
+    inside the interval lies before that link's support by construction, and
+    requiring it to be covered would drop every handover aligned with a node.
     """
     a_x0, a_x1 = links.x0[seg_a], links.x1[seg_a]
     a_v0, a_v1 = links.v0[seg_a], links.v1[seg_a]
@@ -858,8 +864,6 @@ def _crossing_in_interval(
         & links.live[seg_b]
         & (grid >= links.lower[seg_a])
         & (grid <= links.upper[seg_a])
-        & (grid >= links.lower[seg_b])
-        & (grid <= links.upper[seg_b])
     )
     resolved = bracketed & (location_status == 0) & covered
     at_left = resolved & (grid == prev_grid)
