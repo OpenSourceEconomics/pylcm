@@ -407,6 +407,12 @@ class DCEGM(OneMarginSolver):
             ),
         )
 
+    def declare_continuation_reads(
+        self, *, kernels: SolutionKernels, context: SolverBuildContext
+    ) -> SolutionKernels:
+        """Declare every published row of every carry target each period reads."""
+        return declare_dcegm_carry_reads(kernels=kernels, context=context)
+
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Build one DC-EGM period adapter per period and the carry template.
 
@@ -447,12 +453,6 @@ class DCEGM(OneMarginSolver):
             regime_name=context.regime_name,
             stateful_targets=build.stateful_targets,
             transition_target_names=tuple(context.transitions),
-        )
-        # Which leaves a target publishes is period-invariant, so the templates
-        # are resolved once and only the reads' addresses vary by period.
-        carry_templates = published_continuation_templates(
-            continuation_specs=context.continuation_specs,
-            targets=build.stateful_targets,
         )
         # Periods sharing one numerical core share both output-specialized
         # programs. The values variant drops the optional policy inside the
@@ -504,29 +504,8 @@ class DCEGM(OneMarginSolver):
                     }
                 )
             period_group_keys[period] = build.step_group_keys[period]
-            # The builder hands the step the whole rolling payload, so every
-            # published row of every target is read, and each is declared under
-            # its own leaf path inside the rolling mapping.
-            reads = tuple(
-                read
-                for target, template in carry_templates.items()
-                for read in continuation_leaf_reads(
-                    template=template,
-                    artifact_key=EGM_CONTINUATION,
-                    target=target,
-                    source_regime=context.regime_name,
-                    source_period=period,
-                    core_key="main",
-                )
-            )
             period_kernels[period] = _DCEGMPeriodKernel(
-                _core_programs=with_continuation_leaf_reads(
-                    programs=programs_by_core[id(core)],
-                    reads_by_core_key={
-                        "main": reads,
-                        "replay": rekeyed_value_reads(reads=reads, core_key="replay"),
-                    },
-                ),
+                _core_programs=programs_by_core[id(core)],
                 regime_name=context.regime_name,
                 stateful_targets=build.stateful_targets,
                 transition_target_names=tuple(context.transitions),
@@ -637,6 +616,67 @@ def _dcegm_values_core(
     """Run DC-EGM without retaining its optional simulation-policy output."""
     value, carry, _policy = core(**kwargs)
     return value, carry
+
+
+def declare_dcegm_carry_reads(
+    *, kernels: SolutionKernels, context: SolverBuildContext
+) -> SolutionKernels:
+    """Attach each DC-EGM period's declared carry reads to its shared programs.
+
+    Periods sharing one numerical core share the programs built around it; the
+    reads are a fact about the period, so each period gets its own program
+    mapping around the same core.
+    """
+    return replace(
+        kernels,
+        period_kernels=MappingProxyType(
+            {
+                period: dcegm_kernel_with_declared_reads(
+                    kernel=kernel, context=context, period=period
+                )
+                for period, kernel in kernels.period_kernels.items()
+            }
+        ),
+    )
+
+
+def dcegm_kernel_with_declared_reads(
+    *, kernel: PeriodKernel, context: SolverBuildContext, period: int
+) -> PeriodKernel:
+    """Return one DC-EGM period's adapter with its targets' rows declared.
+
+    The builder hands the step the whole rolling payload, so every published row
+    of every carry target is read and each is declared under its own leaf path
+    inside the rolling mapping. The replay variant runs the same reads under its
+    own core name. Shared with the composite solvers that embed this adapter.
+    """
+    if not isinstance(kernel, _DCEGMPeriodKernel):
+        return kernel
+    reads = tuple(
+        read
+        for target, template in published_continuation_templates(
+            continuation_specs=context.continuation_specs,
+            targets=kernel.stateful_targets,
+        ).items()
+        for read in continuation_leaf_reads(
+            template=template,
+            artifact_key=EGM_CONTINUATION,
+            target=target,
+            source_regime=kernel.regime_name,
+            source_period=period,
+            core_key="main",
+        )
+    )
+    return replace(
+        kernel,
+        _core_programs=with_continuation_leaf_reads(
+            programs=kernel.core_programs(),
+            reads_by_core_key={
+                "main": reads,
+                "replay": rekeyed_value_reads(reads=reads, core_key="replay"),
+            },
+        ),
+    )
 
 
 @dataclass(frozen=True, kw_only=True)

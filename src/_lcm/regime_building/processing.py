@@ -160,6 +160,7 @@ from _lcm.solution.contract import (
     ConstraintRouteContext,
     ContinuationPayload,
     PeriodKernel,
+    SolutionKernels,
     SolverBuildContext,
     SolverModelContext,
 )
@@ -653,28 +654,8 @@ def process_regimes(
     )
 
     canonical_regimes = build_canonical_regimes(
-        gated_continuations_by_source=MappingProxyType({}),
-        continuation_specs=MappingProxyType({}),
+        gated_continuations_by_source=MappingProxyType({})
     )
-    # A continuation source declares the leaves it reads from its target's
-    # published carry, and that carry exists only once the target regime is
-    # built — for an engine-produced carry, only once its producer has been
-    # composed around the target's period kernels. The first pass establishes
-    # every published template; the second rebuilds with those templates in
-    # hand, so a source's declaration names its target's real leaves whatever
-    # order the regimes were declared in and whether or not the demand graph
-    # has a cycle.
-    published_specs: MappingProxyType[RegimeName, ContinuationSpec] = MappingProxyType(
-        {}
-    )
-    if continuation_demands:
-        published_specs = _published_continuation_specs(
-            canonical_regimes=canonical_regimes
-        )
-        canonical_regimes = build_canonical_regimes(
-            gated_continuations_by_source=MappingProxyType({}),
-            continuation_specs=published_specs,
-        )
 
     # Build the gated-edge folds in a second pass, now
     # that every regime's grid and processed functions are known. Each edge's
@@ -700,8 +681,7 @@ def process_regimes(
     if gated_continuations_by_source:
         canonical_regimes = _attach_gated_edge_folds(
             canonical_regimes=build_canonical_regimes(
-                gated_continuations_by_source=gated_continuations_by_source,
-                continuation_specs=published_specs,
+                gated_continuations_by_source=gated_continuations_by_source
             ),
             user_regimes=user_regimes,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
@@ -804,7 +784,6 @@ class _CanonicalRegimeBuilder:
         gated_continuations_by_source: Mapping[
             RegimeName, Mapping[RegimeName, GatedContinuationSchedule]
         ],
-        continuation_specs: Mapping[RegimeName, ContinuationSpec],
     ) -> dict[RegimeName, Regime]:
         """Build every regime's canonical form, gated continuations included.
 
@@ -818,9 +797,6 @@ class _CanonicalRegimeBuilder:
             gated_continuations_by_source: Mapping of source regime names to
                 their per-target gated continuation specs. Empty on the first
                 build.
-            continuation_specs: Mapping of regime names to the continuation each
-                publishes. Empty on the pass that establishes those templates,
-                so a solver reading it then declares no continuation-leaf reads.
 
         Returns:
             Mapping of regime names to their canonical form.
@@ -834,6 +810,7 @@ class _CanonicalRegimeBuilder:
             }
         )
         canonical_regimes: dict[RegimeName, Regime] = {}
+        solution_builds: dict[RegimeName, _SolutionBuild] = {}
         # Iterate the representative-resolved regimes: identical to the user regimes
         # except that any `AgeSpecializedGrid` state is a concrete representative-age
         # grid, so every grid-derived call below is age-invariant.
@@ -887,7 +864,7 @@ class _CanonicalRegimeBuilder:
                 dict(gated_continuations_by_source.get(regime_name, {}))
             )
 
-            solution = _build_solution_phase(
+            solution_build = _build_solution_phase(
                 spec=spec,
                 regime_name=regime_name,
                 # Representative, not raw: these reach `SolverBuildContext`, and
@@ -897,7 +874,6 @@ class _CanonicalRegimeBuilder:
                 # so the representative grid answers it exactly. Node *values*,
                 # which do vary by age, come from the period's own axes.
                 user_regimes=self.representative_user_regimes,
-                continuation_specs=continuation_specs,
                 declared_regime_transition=self.phased_specs[
                     regime_name
                 ].solution.regime_transition,
@@ -931,6 +907,8 @@ class _CanonicalRegimeBuilder:
                 fold_only_regimes=self.fold_only_regimes,
                 gated_continuations=gated_continuations,
             )
+            solution_builds[regime_name] = solution_build
+            solution = solution_build.phase
 
             simulation = _build_simulation_phase(
                 spec=spec,
@@ -997,7 +975,56 @@ class _CanonicalRegimeBuilder:
                 edge_reference_regimes=edge_reference_regimes,
                 fold_state_names=fold_state_names,
             )
+        return _with_declared_continuation_reads(
+            canonical_regimes=canonical_regimes, solution_builds=solution_builds
+        )
+
+
+def _with_declared_continuation_reads(
+    *,
+    canonical_regimes: dict[RegimeName, Regime],
+    solution_builds: Mapping[RegimeName, _SolutionBuild],
+) -> dict[RegimeName, Regime]:
+    """Let every continuation source declare the leaves it reads.
+
+    A solver builds its kernels before any regime has published a carry, so it
+    cannot then name the rows its targets publish. This pass runs once every
+    regime is built, hands each demanding solver the published templates, and
+    writes back the kernels it returns. The hook only attaches declarations, so
+    no kernel is built a second time and no build-time consumer runs twice.
+
+    Args:
+        canonical_regimes: Mapping of regime names to the regimes just built.
+        solution_builds: Mapping of regime names to the solver, kernels and
+            build context each regime's solve phase was built from.
+
+    Returns:
+        Mapping of regime names to their canonical form, sources declaring.
+
+    """
+    demanding = {
+        regime_name: build
+        for regime_name, build in solution_builds.items()
+        if build.solver.required_continuation_keys
+    }
+    if not demanding:
         return canonical_regimes
+    published_specs = _published_continuation_specs(canonical_regimes=canonical_regimes)
+    for regime_name, build in demanding.items():
+        declared = build.solver.declare_continuation_reads(
+            kernels=build.kernels,
+            context=dataclass_replace(
+                build.context, continuation_specs=published_specs
+            ),
+        )
+        regime = canonical_regimes[regime_name]
+        canonical_regimes[regime_name] = dataclass_replace(
+            regime,
+            solution=dataclass_replace(
+                regime.solution, period_kernels=declared.period_kernels
+            ),
+        )
+    return canonical_regimes
 
 
 def _gated_continuation_specs(
@@ -2724,12 +2751,32 @@ def _missing_capabilities(
     return tuple(missing)
 
 
+@dataclass(frozen=True, kw_only=True)
+class _SolutionBuild:
+    """One regime's built solve phase beside what a later pass re-reads.
+
+    The declaration pass needs the solver, the kernels it published and the
+    context it built them under, all of which the phase itself flattens away.
+    """
+
+    phase: SolutionPhase
+    """The regime's canonical solve phase."""
+
+    solver: Solver
+    """The regime's solver, which owns the continuation-read declaration hook."""
+
+    kernels: SolutionKernels
+    """The kernels the phase publishes, in the solver's own container."""
+
+    context: SolverBuildContext
+    """The context the kernels were built under; its continuation specs are empty."""
+
+
 def _build_solution_phase(
     *,
     spec: PhasedRegimeSpec,
     regime_name: RegimeName,
     user_regimes: Mapping[RegimeName, UserRegime],
-    continuation_specs: Mapping[RegimeName, ContinuationSpec],
     declared_regime_transition: object,
     phase_reachability: PhaseReachability,
     nested_transitions: _TransitionBundles,
@@ -2764,7 +2811,7 @@ def _build_solution_phase(
     gated_continuations: Mapping[RegimeName, GatedContinuationSchedule] = (
         MappingProxyType({})
     ),
-) -> SolutionPhase:
+) -> _SolutionBuild:
     """Build all compiled functions for the backward-induction (solve) phase.
 
     Args:
@@ -2772,9 +2819,6 @@ def _build_solution_phase(
         regime_name: The name of the regime.
         user_regimes: Mapping of regime names to user-provided `Regime`
             instances.
-        continuation_specs: Mapping of regime names to the continuation each
-            publishes, which a solver reads to declare the leaves it consumes.
-            Empty on the pass that establishes those templates.
         declared_regime_transition: Solve transition before temporal filtering.
         phase_reachability: Static graph for the solution phase.
         nested_transitions: Per-target transition bundles for internal
@@ -2815,7 +2859,8 @@ def _build_solution_phase(
             regime declaring no `gated_edges`.
 
     Returns:
-        Complete solve functions container.
+        The complete solve functions container beside the solver, kernels and
+        context the continuation-read declaration pass re-reads.
 
     """
     flat_param_names = _engine_flat_param_names(
@@ -3027,7 +3072,6 @@ def _build_solution_phase(
         regime_name=regime_name,
         ages=ages,
         user_regimes=user_regimes,
-        continuation_specs=MappingProxyType(dict(continuation_specs)),
         solve_functions=spec.solution.functions,
         phase_variation_paths=phase_variation_paths(
             user_regime=user_regimes[regime_name]
@@ -3135,7 +3179,7 @@ def _build_solution_phase(
         simulate_axes=period_state_axes,
     )
 
-    return SolutionPhase(
+    phase = SolutionPhase(
         _variables=variables,
         grids=all_grids[regime_name],
         functions=published_solution_functions,
@@ -3171,6 +3215,19 @@ def _build_solution_phase(
         pareto_weights=pareto_weights,
         _base_state_action_space=state_action_space,
         period_state_axes=period_state_axes,
+    )
+    return _SolutionBuild(
+        phase=phase,
+        solver=solver,
+        # The kernels as the phase publishes them, so a declaration written back
+        # from the hook is the mapping backward induction actually calls — the
+        # engine-produced terminal carry decoration included.
+        kernels=dataclass_replace(
+            solver_kernels,
+            period_kernels=period_kernels,
+            continuation_spec=continuation_spec,
+        ),
+        context=context,
     )
 
 

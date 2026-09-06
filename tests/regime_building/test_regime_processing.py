@@ -1,4 +1,5 @@
 import functools
+from collections import Counter
 from types import MappingProxyType
 from typing import cast
 
@@ -17,6 +18,7 @@ from _lcm.regime_building.processing import (
     _wrap_regime_transition_probs,
     process_regimes,
 )
+from _lcm.solution.contract import SolutionKernels, SolverBuildContext
 from _lcm.variables import from_regime, get_grids
 from lcm import (
     LinearAggregator,
@@ -26,9 +28,11 @@ from lcm import (
 )
 from lcm.ages import AgeGrid
 from lcm.regime import Regime as UserRegime
+from lcm.solvers import DCEGM
 from lcm.typing import FloatND, ScalarInt
 from tests.conftest import build_prepared_structure
 from tests.mock_regime import MockRegime
+from tests.test_models.dcegm_paper_twin import build_dcegm_model
 from tests.test_models.deterministic.base import dead, working_life
 
 
@@ -481,3 +485,30 @@ def test_mock_regime_get_all_functions_matches_real_regime():
     )["regime"]
     mock = MockRegime(**kwargs)
     assert set(mock.get_all_functions()) == set(real.get_all_functions())
+
+
+def test_a_continuation_source_model_builds_each_regimes_kernels_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Declaring the leaves a solver reads costs no second kernel build.
+
+    A solver's `build_period_kernels` runs the model author's build-time
+    consumers — a compiled constraint boundary, a boundary plan — so calling it
+    twice for one regime consumes each of them twice.
+    """
+    built: list[str] = []
+    build_period_kernels = DCEGM.build_period_kernels
+
+    # keyword-only-exempt: library-callback=types.FunctionType.__get__
+    def counting_build_period_kernels(
+        self: DCEGM, *, context: SolverBuildContext
+    ) -> SolutionKernels:
+        """Record the regime the kernels are built for, then build them."""
+        built.append(context.regime_name)
+        return build_period_kernels(self, context=context)
+
+    monkeypatch.setattr(DCEGM, "build_period_kernels", counting_build_period_kernels)
+
+    build_dcegm_model()
+
+    assert Counter(built) == {"working_life": 1, "retirement": 1}

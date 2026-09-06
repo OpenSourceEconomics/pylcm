@@ -68,7 +68,12 @@ from _lcm.solution.contract import (
     bind_roles,
     simulation_route,
 )
-from _lcm.solution.dcegm import DCEGM, _BoundDCEGM, _combination_inputs
+from _lcm.solution.dcegm import (
+    DCEGM,
+    _BoundDCEGM,
+    _combination_inputs,
+    dcegm_kernel_with_declared_reads,
+)
 from _lcm.typing import (
     EconFunction,
     EconFunctionsMapping,
@@ -352,6 +357,28 @@ class NEGM(TwoMarginSolver):
                 )
             )
         return tuple(routes)
+
+    def declare_continuation_reads(
+        self, *, kernels: SolutionKernels, context: SolverBuildContext
+    ) -> SolutionKernels:
+        """Declare the carry rows the composite reads through its keeper.
+
+        The two published cores read their targets' carries through the inner
+        DC-EGM keeper, so the keeper declares them and the period adapter
+        re-derives `keeper` and the sweep built around it — each under its own
+        core name — from the keeper the declaration produced.
+        """
+        return replace(
+            kernels,
+            period_kernels=MappingProxyType(
+                {
+                    period: _with_declared_keeper_reads(
+                        kernel=kernel, context=context, period=period
+                    )
+                    for period, kernel in kernels.period_kernels.items()
+                }
+            ),
+        )
 
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Build one NEGM period adapter per period, wrapping the inner kernels.
@@ -652,6 +679,20 @@ class _BoundNEGM(NEGM):
 
     outer_cost_base: FunctionName | None
     """Gross-resources function of that composition, else `None`."""
+
+
+def _with_declared_keeper_reads(
+    *, kernel: PeriodKernel, context: SolverBuildContext, period: int
+) -> PeriodKernel:
+    """Return one NEGM period's adapter rebuilt around a declaring keeper."""
+    if not isinstance(kernel, _NEGMPeriodKernel):
+        return kernel
+    return replace(
+        kernel,
+        keeper_kernel=dcegm_kernel_with_declared_reads(
+            kernel=kernel.keeper_kernel, context=context, period=period
+        ),
+    )
 
 
 @dataclass(frozen=True, kw_only=True)

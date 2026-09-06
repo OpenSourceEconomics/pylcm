@@ -44,6 +44,14 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   value and the marginal in `EGM_ENDOGENOUS_COORDINATE`, and the shipped `EGMCarry`
   publishes both. A reachable target whose payload is not a reader, or whose reader
   answers less than the parent asks, is refused while the model builds.
+- A dense EGM-family core declares the continuation leaves it reads instead of being
+  pinned conservatively against every reachable value. Which leaves exist is a fact
+  about the target's published template, so a solver names them in the new
+  `Solver.declare_continuation_reads`, which the engine calls once per
+  continuation-reading regime after every regime is built, with
+  `SolverBuildContext.continuation_specs` filled. The default declares nothing; the hook
+  may only attach `value_reads` to the programs the kernels already publish, so no
+  kernel is built twice.
 - Solution archives written under solver API version 1 are rejected with
   `IncompatibleSolutionError`. Compatibility remains exact; pylcm does not migrate an
   archive across a solver API version.

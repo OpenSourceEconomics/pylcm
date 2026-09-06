@@ -377,6 +377,40 @@ builds rather than during the solve.
 `leaves()` is the addressable content of the payload: every published array under its
 own pytree path.
 
+### Declaring the leaves you read
+
+A solver that reads its targets' carries cannot name the rows it reads while its own
+kernels are being built: no regime has published a template yet, and the templates are
+what say which rows exist. `Solver.declare_continuation_reads` is the second call for
+exactly that:
+
+```{code-block} python
+class MySolver(Solver):
+    def declare_continuation_reads(
+        self, *, kernels: SolutionKernels, context: SolverBuildContext
+    ) -> SolutionKernels:
+        """Attach the reads each period's programs make on its targets' rows."""
+        return attach_my_reads(kernels=kernels, context=context)
+```
+
+The engine calls it once per regime whose `required_continuation_keys` is non-empty,
+after every regime in the model is built, with `context.continuation_specs` mapping each
+regime name to the continuation it publishes. A regime absent from that mapping
+publishes none. The default implementation returns `kernels` unchanged, so a solver that
+reads no continuation — or one content to be pinned conservatively — implements nothing.
+
+The contract is deliberately narrow. The hook may only attach `value_reads` to the core
+programs its kernels already publish: the same programs under the same names, with the
+same argument builders and the same compiled functions. Building kernels a second time
+here would re-run every build-time consumer the model author declared — a compiled
+constraint boundary, a boundary plan — and consume each of them twice. The result must
+depend only on the arguments, so two builds of one model declare the same reads.
+
+The shipped endogenous-grid solvers build one `ValueRead` per published leaf, addressed
+either inside the rolling `next_regime_to_continuation` mapping or, where the argument
+builder flattens the rows into named arguments, by the argument holding each row. A
+period-`t` read names the target's carry at `t + 1` and the consumer at `t`.
+
 ## Declared replay routes
 
 Every regime declares exactly one replay route, reachable as

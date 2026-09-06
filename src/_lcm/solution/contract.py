@@ -226,9 +226,11 @@ class SolverBuildContext:
     A solver that reads a target's carry declares the leaves it reads, and which
     leaves exist is a fact about the target's published template rather than
     about the reader. A regime absent from the mapping publishes no
-    continuation; the mapping is empty on the build pass that establishes the
-    templates, so a solver reads it and declares nothing rather than assuming a
-    shape.
+    continuation.
+
+    Empty while `build_period_kernels` runs, because no regime has published a
+    template yet; filled for the `declare_continuation_reads` call that follows
+    once every regime is built.
     """
 
     solve_functions: MappingProxyType[FunctionName, UserFunction]
@@ -770,6 +772,29 @@ class Solver(ABC):
     @abstractmethod
     def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
         """Build the regime's per-period solve adapters."""
+
+    def declare_continuation_reads(
+        self,
+        *,
+        kernels: SolutionKernels,
+        context: SolverBuildContext,  # noqa: ARG002
+    ) -> SolutionKernels:
+        """Return `kernels` with the continuation leaves they read declared.
+
+        Called once per regime whose `required_continuation_keys` is non-empty,
+        after every regime in the model is built, so `context.continuation_specs`
+        names the payload each target publishes — which a solver cannot know
+        while its own kernels are being built. The default declares nothing.
+
+        The contract is narrow on purpose. A solver may only attach
+        `value_reads` to the core programs its kernels already publish: the same
+        programs under the same names, with the same argument builders and the
+        same compiled functions, and nothing numerical rebuilt. Building kernels
+        a second time here would re-run the model author's build-time consumers.
+        The result must depend only on the arguments, so two builds of one model
+        declare the same reads.
+        """
+        return kernels
 
     @property
     def identity(self) -> SolverIdentity:
