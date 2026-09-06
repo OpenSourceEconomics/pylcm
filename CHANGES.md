@@ -102,14 +102,34 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - A query whose owner the exact comparator leaves undecided publishes no value: the
   envelope reads `NaN` there instead of falling back to a rounded comparison, so an
   ordering the arithmetic cannot settle is visible rather than silently chosen.
+- Which links compete for a query is decided by their stored spans alone, never by
+  whether reading one of them succeeded numerically. A model whose grids and values
+  sit near the top or bottom of the working format keeps the owner it should have:
+  the reading of the selected owner is range-safe, so an intermediate product that
+  leaves the representable range no longer removes a finite winner from the contest.
 - A link's value at a query is its own chord's value: each endpoint is weighed by
   its distance to the other, with the products carried at twice the working
   precision. The reading is the stored value at either endpoint exactly and
   elsewhere no longer carries the cancellation of a line extrapolated from one far
   anchor. The published value and policy at a node now always come from one owner.
+- Ownership, support, orientation and node identity are decided from each link's original
+  stored coordinates. A link stored as a single point keeps its own abscissa as its
+  support instead of acquiring a readable width to the right, so a point and a segment
+  that read the same value at a query are separated by the declared right-continuous
+  order rather than by whichever carries the wider line. A readable surrogate is still
+  used to read a channel, but never to decide who owns the query.
+- Two abscissae name one published node exactly when they are the same geometric
+  location, decided on the stored encodings: the two spellings of zero are one location,
+  while distinct values closer together than the smallest normal remain distinct. The
+  same rule orders, orients, admits and coalesces, so no two of those can disagree about
+  whether two coordinates coincide.
 - A crossing is located inside the interval the switch was observed in, as the root
   of the two chords' gap across that interval's two abscissae, and it is emitted
-  only where that gap genuinely changes sign. Its published value is the higher of
+  only where that gap genuinely changes sign. That root is solved from the stored
+  operands themselves, so a switch whose two rounded chord readings coincide is
+  still placed at the abscissa the geometry puts it at instead of being collapsed
+  onto an interval endpoint, and the policy read on each side of it belongs to the
+  branch that owns that side. Its published value is the higher of
   the two chords there, so an emitted kink can never sit below both branches.
 - A crossing landing exactly on one of the two query nodes is published rather than
   discarded. That node's own row is one of the two records the switch needs and the
@@ -184,6 +204,12 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   hashes its structure once and reuses it, so an estimation loop no longer walks every
   declared user callable per solve; the walk had been the largest single cost of a warm
   solve, ahead of the solve itself.
+- A model function may read an array constant's `shape`, `size`, `ndim` or `dtype` and
+  still be fingerprintable. Those four are functions of the array the digest already
+  covers, so binding them adds no state the fingerprint misses. The array's own
+  descriptor is what earns the exemption rather than the attribute name, and the bound
+  value must be the metadata it claims to be, so a `size` property on a type that is
+  not an array still fails closed.
 - The durable model fingerprint sees through beartype guards that a downstream
   package's own claw wraps around its model functions: such a guard is accepted only
   when beartype regenerates its code from the bound callee with the guard's own

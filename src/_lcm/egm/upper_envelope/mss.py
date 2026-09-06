@@ -29,23 +29,24 @@ Three decisions here are structural rather than numerical — which link owns a
 query, whether the owner changed between two queries, and where the change
 happened — and none of them is settled by a rounded comparison:
 
-- **Ownership is certified.** A provisional winner is read off the values and
-  then challenged: `certified_sign` decides the sign of each bracketing link's
-  value less the standing winner's from the stored operands, in exact integer
-  arithmetic. Links certified level with the winner are separated by a
+- **Ownership is certified before reading.** One exact reduction over the
+  admitted links decides the winner from the stored operands. Admission depends
+  only on each link's stored support, never on whether a floating read succeeded.
+  Links certified level with the winner are separated by a
   right-continuous rule — the link that extends strictly right of the query,
   then the steeper one, then the earlier stored link — so the owner at a node
   where two branches meet is the one that owns the interval above it, and the
   switch is visible at that node rather than one interval later.
-- **A value is read from its own chord's endpoints.** Each link is evaluated at
-  a query by weighing its two stored endpoints against their distances to the
-  query, with the products carried at twice the working precision. The reading
-  is the stored value at either endpoint exactly, and elsewhere it is the
-  chord's own value rather than a line extrapolated from one far anchor.
+- **Only the owner's channels are read.** The native affine reader forms the
+  exact rational from stored endpoints and rounds once to the working format,
+  without floating weighted products. Endpoints and common levels are preserved;
+  a failed read poisons the publication rather than removing its owner. Crossing
+  ordinates are rounded upward only when an exact comparison requires it.
 - **A crossing is located inside the interval it happened in.** The two winning
-  chords' gap is evaluated at the two adjacent query abscissae; a crossing
-  exists exactly where that gap changes sign across them, and its abscissa is
-  the root of the gap's own secant between them.
+  chords' gap is certified at the two adjacent query abscissae. Its exact
+  stored-operand root is rounded upward to the first representable state owned
+  by the incoming branch. Record coalescence uses that emitted state, including
+  when a nonrepresentable root hands over at an existing query node.
 
 A crossing abscissa is inserted twice — same abscissa, left- and
 right-extrapolated policy — so the refined arrays stay weakly ascending and the
@@ -79,14 +80,13 @@ from typing import Any, NamedTuple
 import jax
 import jax.numpy as jnp
 
-from _lcm.egm.upper_envelope._exact_affine import exact_query_winner_batched
-from _lcm.egm.upper_envelope.certified_sign import certified_margin_sign
-from _lcm.egm.upper_envelope.double_double import (
-    dd_add,
-    dd_from_difference,
-    dd_mul_float,
-    dd_quotient,
+from _lcm.egm.upper_envelope._exact_affine import (
+    UNRESOLVED_STATUS,
+    exact_affine_handover,
+    exact_affine_read,
+    exact_query_winner_batched,
 )
+from _lcm.egm.upper_envelope.certified_sign import certified_margin_sign
 from lcm.typing import BoolND, Float1D, FloatND, Int1D, IntND, ScalarInt
 
 
@@ -143,8 +143,8 @@ def refine_envelope(
 
     # Sort the candidate abscissae ascending so the sweep is left-to-right and
     # the NaN tail is contiguous; dead nodes sort last.
-    grid_key = jnp.where(dead, jnp.inf, endog_grid)
-    order = jnp.argsort(grid_key)
+    grid_key = _stored_key(value=jnp.where(dead, jnp.inf, endog_grid))
+    order = jnp.argsort(grid_key, stable=True)
     query_grid = jnp.where(dead, jnp.nan, endog_grid)[order]
     query_dead = dead[order]
     # Several candidate branches can supply the same query abscissa. They still
@@ -152,47 +152,19 @@ def refine_envelope(
     # Otherwise a node-aligned switch emits its outgoing record beside several
     # identical incoming-node records instead of one outgoing/incoming pair.
     repeated_query = jnp.concatenate(
-        (jnp.zeros((1,), dtype=bool), query_grid[1:] == query_grid[:-1])
+        (
+            jnp.zeros((1,), dtype=bool),
+            _stored_equal(left=query_grid[1:], right=query_grid[:-1]),
+        )
     )
     query_dead = query_dead | repeated_query
 
-    # Segment endpoints: candidate `k` to candidate `k+1`, consecutive in the
-    # (unsorted) input order — the EGM cloud's natural segment chain. A segment
-    # with a dead endpoint is excluded from every evaluation.
-    left_grid = endog_grid[:-1]
-    right_grid = endog_grid[1:]
-    left_policy = policy[:-1]
-    right_policy = policy[1:]
-    left_value = value[:-1]
-    right_value = value[1:]
-
-    # Per-link branch id and live mask. With explicit topology a link is a real
-    # value segment iff both endpoints carry the same branch label, so unrelated
-    # branches are never bridged. Without it, fall back to HARK's monotone split:
-    # a new segment starts wherever the grid decreases, or the value decreases past
-    # the noise floor, between consecutive candidates, and a link spanning such a
-    # decrease is a non-monotone bridge excluded from the scan. Either way the
-    # winner stays constant across one branch, so only a genuine branch switch is a
-    # kink.
-    if segment_id is None:
-        decreases = (right_grid < left_grid) | _value_decrease_past_noise(
-            left_value=left_value, right_value=right_value
-        )
-        link_segment = jnp.cumsum(decreases.astype(jnp.int32))
-        segment_live = ~dead[:-1] & ~dead[1:] & ~decreases
-    else:
-        same_segment = segment_id[:-1] == segment_id[1:]
-        link_segment = segment_id[:-1].astype(jnp.int32)
-        segment_live = ~dead[:-1] & ~dead[1:] & same_segment
-
-    links = _comparable_links(
-        left_grid=left_grid,
-        right_grid=right_grid,
-        left_policy=left_policy,
-        right_policy=right_policy,
-        left_value=left_value,
-        right_value=right_value,
-        segment_live=segment_live,
+    links, link_segment = _segment_chain(
+        endog_grid=endog_grid,
+        policy=policy,
+        value=value,
+        dead=dead,
+        segment_id=segment_id,
     )
 
     envelope_value, envelope_policy, winner_link, winner_segment = _evaluate_envelope(
@@ -226,15 +198,42 @@ def refine_envelope(
     # there names its owner, and a crossing whose owner is neither branch is not
     # on the envelope. The test is the identity of the owner, so nothing about it
     # depends on a tolerance.
-    crossing_value, _, _, crossing_owner = _evaluate_envelope(
+    _, _, _, crossing_owner = _evaluate_envelope(
         query_grid=crossing.grid, links=links, segment_id=link_segment
     )
-    on_envelope = jnp.isfinite(crossing_value) & (
-        (crossing_owner == crossing.segment_left)
-        | (crossing_owner == crossing.segment_right)
+    # Owner identity, not read finiteness, determines event admission too. A
+    # failed publication must remain an emitted NaN rather than erase the kink.
+    on_envelope = (crossing_owner == crossing.segment_left) | (
+        crossing_owner == crossing.segment_right
     )
     left_valid = crossing.left_valid & on_envelope
     right_valid = crossing.right_valid & on_envelope
+
+    # A node-aligned crossing reuses one node record. Give that record the same
+    # outward ordinate as the inserted one; its ordinary nearest node reading
+    # can otherwise sit below both exact chords. This changes no record counts.
+    node_index = jnp.arange(query_grid.shape[0], dtype=jnp.int32)
+    live_index = jax.lax.associative_scan(
+        jnp.maximum, jnp.where(~query_drop, node_index, -1)
+    )
+    previous_index = jnp.concatenate((jnp.full((1,), -1), live_index[:-1]))
+    at_previous = (previous_index >= 0) & _stored_equal(
+        left=crossing.grid, right=query_grid[jnp.maximum(previous_index, 0)]
+    )
+    crossing_node = jnp.where(
+        _stored_equal(left=crossing.grid, right=query_grid),
+        node_index,
+        jnp.where(at_previous, previous_index, query_grid.shape[0]),
+    )
+    crossing_node = jnp.where(
+        left_valid | right_valid, crossing_node, query_grid.shape[0]
+    )
+    node_value = node_value.at[crossing_node].set(crossing.value, mode="drop")
+    # Refusing an event location must not silently publish a row without its
+    # kink. Keep the observed query and poison its channels instead of making
+    # up a finite crossing abscissa or treating a failed certificate as no event.
+    node_value = jnp.where(crossing.unresolved, jnp.nan, node_value)
+    node_policy = jnp.where(crossing.unresolved, jnp.nan, node_policy)
 
     # Per-query output block: up to three rows in ascending grid order — the two
     # crossing records (same abscissa, left then right policy) followed by the
@@ -275,16 +274,19 @@ class _Links(NamedTuple):
 
     `certified_sign` compares lines and says plainly what it will not invent: a
     link of zero width has no affine line and a non-finite operand is unresolved
-    rather than false. The comparable fields are shaped once so every comparison
-    downstream is handed operands it can decide on, while `lower`/`upper` keep
-    the stored span, so widening a degenerate link's divisor never widens the
-    set of queries it brackets.
+    rather than false. The comparable fields give readings and crossing signs a
+    line to work with. Ownership instead receives `lower`, `upper`, `v0` and
+    `upper_value`: the original oriented endpoints, including a singleton's
+    original upper endpoint/value. A readable line must never manufacture right
+    extension, width or support for the owner decision.
     """
 
     lower: Float1D
     """Lower stored abscissa of the link's span."""
     upper: Float1D
     """Upper stored abscissa of the link's span."""
+    upper_value: Float1D
+    """Original value at `upper`, before making a singleton readable."""
     x0: Float1D
     """Lower abscissa of the comparable line."""
     x1: Float1D
@@ -301,6 +303,69 @@ class _Links(NamedTuple):
     """Whether the link is a real value segment at all."""
 
 
+def _segment_chain(
+    *,
+    endog_grid: Float1D,
+    policy: Float1D,
+    value: Float1D,
+    dead: BoolND,
+    segment_id: Float1D | None,
+) -> tuple[_Links, Int1D]:
+    """Build the candidate links and their branch labels.
+
+    Args:
+        endog_grid: Candidate abscissae in input order; NaN marks a dead node.
+        policy: Candidate policies in the same order.
+        value: Candidate values in the same order.
+        dead: Per-candidate dead mask.
+        segment_id: Explicit per-candidate branch label, or `None` to derive the
+            branches from the monotone split.
+
+    Returns:
+        Tuple of the comparable links and their per-link branch id.
+
+    """
+    # Segment endpoints: candidate `k` to candidate `k+1`, consecutive in the
+    # (unsorted) input order — the EGM cloud's natural segment chain. A segment
+    # with a dead endpoint is excluded from every evaluation.
+    left_grid = endog_grid[:-1]
+    right_grid = endog_grid[1:]
+    left_policy = policy[:-1]
+    right_policy = policy[1:]
+    left_value = value[:-1]
+    right_value = value[1:]
+
+    # Per-link branch id and live mask. With explicit topology a link is a real
+    # value segment iff both endpoints carry the same branch label, so unrelated
+    # branches are never bridged. Without it, fall back to HARK's monotone split:
+    # a new segment starts wherever the grid decreases, or the value decreases past
+    # the noise floor, between consecutive candidates, and a link spanning such a
+    # decrease is a non-monotone bridge excluded from the scan. Either way the
+    # winner stays constant across one branch, so only a genuine branch switch is a
+    # kink.
+    if segment_id is None:
+        decreases = _stored_less(left=right_grid, right=left_grid) | (
+            _value_decrease_past_noise(left_value=left_value, right_value=right_value)
+        )
+        link_segment = jnp.cumsum(decreases.astype(jnp.int32))
+        segment_live = ~dead[:-1] & ~dead[1:] & ~decreases
+    else:
+        same_segment = segment_id[:-1] == segment_id[1:]
+        link_segment = segment_id[:-1].astype(jnp.int32)
+        segment_live = ~dead[:-1] & ~dead[1:] & same_segment
+
+    links = _comparable_links(
+        left_grid=left_grid,
+        right_grid=right_grid,
+        left_policy=left_policy,
+        right_policy=right_policy,
+        left_value=left_value,
+        right_value=right_value,
+        segment_live=segment_live,
+    )
+    return links, link_segment
+
+
 def _comparable_links(
     *,
     left_grid: Float1D,
@@ -313,15 +378,13 @@ def _comparable_links(
 ) -> _Links:
     """Orient every link ascending and give a degenerate one a readable width.
 
-    A link stored right-to-left carries the same line as the same link stored
-    left-to-right, so the endpoints are swapped rather than rejected. A link of
-    zero width carries no line: its divisor is displaced by one representable
-    step and both endpoint readings are set to the stored lower ones, which is
-    the flat line it in fact is. One representable step is a readable width
-    everywhere but at zero, where it is the smallest subnormal and a comparison
-    would abstain, so a flat link at zero takes a width of one instead.
+    Stored-bit order, not floating arithmetic, orients descending endpoints and
+    distinguishes a true singleton from a positive subnormal width. A singleton
+    is read as a constant line on [0, 1], even at the largest finite coordinate;
+    that surrogate is used only for readings/crossing signs. Its original span
+    and endpoint values are retained separately for ownership and admission.
     """
-    descending = right_grid < left_grid
+    descending = _stored_less(left=right_grid, right=left_grid)
     x0 = jnp.where(descending, right_grid, left_grid)
     x1 = jnp.where(descending, left_grid, right_grid)
     v0 = jnp.where(descending, right_value, left_value)
@@ -329,15 +392,16 @@ def _comparable_links(
     p0 = jnp.where(descending, right_policy, left_policy)
     p1 = jnp.where(descending, left_policy, right_policy)
 
-    degenerate = x1 <= x0
-    flat_at_zero = degenerate & (x0 == 0.0)
-    step = jnp.nextafter(x0, jnp.full_like(x0, jnp.inf))
-    finite_line = jnp.isfinite(v0) & jnp.isfinite(v1) & jnp.isfinite(x0)
+    degenerate = _stored_equal(left=x0, right=x1)
+    finite_line = (
+        jnp.isfinite(v0) & jnp.isfinite(v1) & jnp.isfinite(x0) & jnp.isfinite(x1)
+    )
     return _Links(
-        lower=jnp.minimum(left_grid, right_grid),
-        upper=jnp.maximum(left_grid, right_grid),
-        x0=x0,
-        x1=jnp.where(flat_at_zero, jnp.ones_like(x0), jnp.where(degenerate, step, x1)),
+        lower=x0,
+        upper=x1,
+        upper_value=v1,
+        x0=jnp.where(degenerate, jnp.zeros_like(x0), x0),
+        x1=jnp.where(degenerate, jnp.ones_like(x1), x1),
         v0=v0,
         v1=jnp.where(degenerate, v0, v1),
         p0=p0,
@@ -349,43 +413,151 @@ def _comparable_links(
 def _chord_value(
     *, x: FloatND, x0: FloatND, x1: FloatND, v0: FloatND, v1: FloatND
 ) -> FloatND:
-    """Evaluate the chord through two stored endpoints at `x`.
+    """Read a chord with one nearest rounding, or NaN on an unresolved read.
 
-    Each endpoint is weighed by its distance to the *other* one, so the reading
-    has no anchor: a query far from `x0` is not reached by extrapolating a slope
-    from it, and the endpoints' own magnitudes cancel in the numerator rather
-    than in the answer. Both distances and the width are exact differences and
-    the two products are carried at twice the working precision, so only the
-    division rounds. At either stored endpoint the reading is that endpoint's
-    stored value exactly.
+    The native reader forms the weighted numerator and width in fixed-width
+    integers. Neither overflow nor underflow of an intermediate floating product
+    can change a finite answer. Upward event publication is kept separate from
+    this nearest reading, and localization uses the exact affine difference.
     """
-    left_weight = dd_from_difference(x1, x)
-    right_weight = dd_from_difference(x, x0)
-    numerator = dd_add(dd_mul_float(left_weight, v0), dd_mul_float(right_weight, v1))
-    high, _low = dd_quotient(numerator, dd_from_difference(x1, x0))
-    return jnp.where(x == x0, v0, jnp.where(x == x1, v1, high))
+    reading, _status = _chord_reading(x=x, x0=x0, x1=x1, v0=v0, v1=v1)
+    return reading
+
+
+def _stored_key(*, value: FloatND) -> jax.Array:
+    """Materialize unsigned sort keys, identifying the two signed zeros.
+
+    Positive IEEE encodings ascend with magnitude; negative ones descend.
+    Normalizing only the zero *bits*, then complementing negative encodings and
+    flipping the positive sign bit, gives an unsigned monotone key. No floating
+    operation is needed to form the keys. They are used only as integer sort
+    inputs, not compared next to their floating operands (see `_stored_equal`).
+    Sorting replaces dead coordinates with +inf before building the key.
+    """
+    integer = jnp.uint64 if value.dtype == jnp.float64 else jnp.uint32
+    sign = jnp.asarray(1 << (jnp.finfo(value.dtype).bits - 1), dtype=integer)
+    bits = jax.lax.bitcast_convert_type(value, integer)
+    bits = jnp.where((bits & ~sign) == 0, jnp.zeros_like(bits), bits)
+    return jnp.where((bits & sign) != 0, ~bits, bits ^ sign)
+
+
+def _stored_parts(*, value: FloatND) -> tuple[jax.Array, jax.Array, BoolND, BoolND]:
+    """Decode bits, magnitude, sign and non-NaN status using integers only."""
+    integer = jnp.uint64 if value.dtype == jnp.float64 else jnp.uint32
+    sign = jnp.asarray(1 << (jnp.finfo(value.dtype).bits - 1), dtype=integer)
+    infinity = jax.lax.bitcast_convert_type(jnp.full((), jnp.inf, value.dtype), integer)
+    bits = jax.lax.bitcast_convert_type(value, integer)
+    magnitude = bits & ~sign
+    return bits, magnitude, (bits & sign) != 0, magnitude <= infinity
+
+
+def _stored_equal(*, left: FloatND, right: FloatND) -> BoolND:
+    """Same geometric location: signed zeros agree, distinct subnormals do not.
+
+    Compare the raw encodings, not two normalized sortable keys. A compiler can
+    recognize the latter as a floating equality and reintroduce flushing under
+    JIT. The only additional equality here is the explicit two-zero bit case.
+    """
+    left_bits, left_magnitude, _, left_valid = _stored_parts(value=left)
+    right_bits, right_magnitude, _, right_valid = _stored_parts(value=right)
+    return (
+        ((left_bits == right_bits) | ((left_magnitude | right_magnitude) == 0))
+        & left_valid
+        & right_valid
+    )
+
+
+def _stored_less(*, left: FloatND, right: FloatND) -> BoolND:
+    """Strict sign/magnitude order, with signed zeros equal and NaNs unordered."""
+    _, left_magnitude, left_negative, left_valid = _stored_parts(value=left)
+    _, right_magnitude, right_negative, right_valid = _stored_parts(value=right)
+    ordered = jnp.where(
+        left_negative != right_negative,
+        left_negative,
+        jnp.where(
+            left_negative,
+            left_magnitude > right_magnitude,
+            left_magnitude < right_magnitude,
+        ),
+    )
+    return (
+        ordered & ((left_magnitude | right_magnitude) != 0) & left_valid & right_valid
+    )
+
+
+def _stored_in_span(*, query: FloatND, lower: FloatND, upper: FloatND) -> BoolND:
+    """Admit finite queries to live finite spans using the node-identity order."""
+    return (
+        jnp.isfinite(query)
+        & ~_stored_less(left=query, right=lower)
+        & ~_stored_less(left=upper, right=query)
+    )
+
+
+def _same_bits(*, left: FloatND, right: FloatND) -> BoolND:
+    """Channel identity, unlike geometry, preserves the sign of a stored zero."""
+    integer = jnp.uint64 if left.dtype == jnp.float64 else jnp.uint32
+    return jax.lax.bitcast_convert_type(left, integer) == jax.lax.bitcast_convert_type(
+        right, integer
+    )
 
 
 def _chord_reading(
     *, x: FloatND, x0: FloatND, x1: FloatND, v0: FloatND, v1: FloatND
-) -> FloatND:
-    """Read a chord at `x` in the working precision, exactly at both endpoints.
+) -> tuple[FloatND, IntND]:
+    """Read one selected channel with an explicit native publication status.
 
-    Carries a quantity no ordering is decided on — the policy — so it costs one
-    rounded evaluation rather than the compensated one `_chord_value` pays for.
-    Both endpoints are returned as stored, and a chord whose two endpoints carry
-    the same value reads back that value at every abscissa, so a branch of
-    constant policy publishes one policy rather than a spread of neighbours.
+    No rounded slope or floating endpoint-weight product is formed. Status zero
+    certifies a single nearest rounding; an invalid or overflowing read returns
+    NaN and its nonzero status. Restoring stored endpoints/common levels after
+    that check also preserves signed zeros, which rational arithmetic alone does
+    not distinguish. These shortcuts must never override a failed status.
     """
-    width = x1 - x0
-    interior = v0 + (x - x0) / width * (v1 - v0)
-    return jnp.where(x == x0, v0, jnp.where(x == x1, v1, interior))
+    reading, status = exact_affine_read(x0=x0, x1=x1, v0=v0, v1=v1, x_query=x)
+    reading = jnp.where(
+        _stored_equal(left=x, right=x0),
+        v0,
+        jnp.where(
+            _stored_equal(left=x, right=x1),
+            v1,
+            jnp.where(_same_bits(left=v0, right=v1), v0, reading),
+        ),
+    )
+    return jnp.where(status == 0, reading, jnp.nan), status
+
+
+def _chord_upper_value(
+    *, x: FloatND, x0: FloatND, x1: FloatND, v0: FloatND, v1: FloatND
+) -> FloatND:
+    """Publish the least working-format value at or above the exact chord.
+
+    Compare the exact chord with the constant line at its nearest reading. Only
+    a strict positive sign needs the next float toward +inf: exact endpoints,
+    common levels, and readings already rounded upward remain untouched. The
+    comparison is native/exact, including subnormals and negative values. A
+    refused comparison or unrepresentable upper bound stays explicitly NaN.
+    """
+    reading = _chord_value(x=x, x0=x0, x1=x1, v0=v0, v1=v1)
+    sign = certified_margin_sign(
+        a_x0=x0,
+        a_x1=x1,
+        a_v0=v0,
+        a_v1=v1,
+        b_x0=jnp.zeros_like(reading),
+        b_x1=jnp.ones_like(reading),
+        b_v0=reading,
+        b_v1=reading,
+        x_query=x,
+    )
+    upper = jnp.where(
+        sign == 1, jnp.nextafter(reading, jnp.full_like(reading, jnp.inf)), reading
+    )
+    return jnp.where((sign >= -1) & (sign <= 1) & jnp.isfinite(upper), upper, jnp.nan)
 
 
 def _certified_owner(
     *,
     brackets: BoolND,
-    value: FloatND,
     links: _Links,
     query: FloatND,
     stable_index: IntND,
@@ -404,21 +576,21 @@ def _certified_owner(
     at.
 
     Admission and comparison are kept apart. Which links a query admits is decided
-    by the stored span, so widening a degenerate link's divisor to give the
-    comparison a line to work with never widens the set of queries that link
-    brackets.
+    by the stored span. The selector also receives that ORIGINAL span, not the
+    comparable line: otherwise a singleton would acquire artificial right
+    extension in the tie order even with a correct admission mask.
 
     Returns:
         Tuple of the owning column per query and whether that query's order was
         resolved. A query whose comparison the kernel cannot decide is reported
         unresolved rather than settled by a rounded reading.
     """
-    shape = value.shape
+    shape = brackets.shape
     winner, exact_status = exact_query_winner_batched(
-        left_grid=jnp.broadcast_to(links.x0[None, :], shape),
-        right_grid=jnp.broadcast_to(links.x1[None, :], shape),
+        left_grid=jnp.broadcast_to(links.lower[None, :], shape),
+        right_grid=jnp.broadcast_to(links.upper[None, :], shape),
         left_value=jnp.broadcast_to(links.v0[None, :], shape),
-        right_value=jnp.broadcast_to(links.v1[None, :], shape),
+        right_value=jnp.broadcast_to(links.upper_value[None, :], shape),
         live=brackets,
         stable_index=stable_index,
         x_query=query,
@@ -453,34 +625,42 @@ def _evaluate_envelope(
 
     """
     query = query_grid[:, None]
-    brackets = links.live[None, :] & (query >= links.lower) & (query <= links.upper)
-    value = _chord_value(x=query, x0=links.x0, x1=links.x1, v0=links.v0, v1=links.v1)
-    admits = brackets & jnp.isfinite(value)
-    stable_index = jnp.broadcast_to(
-        jnp.arange(links.x0.shape[0], dtype=jnp.int32)[None, :], value.shape
+    brackets = links.live[None, :] & _stored_in_span(
+        query=query, lower=links.lower, upper=links.upper
     )
-
+    stable_index = jnp.broadcast_to(
+        jnp.arange(links.x0.shape[0], dtype=jnp.int32)[None, :], brackets.shape
+    )
     owner, resolved = _certified_owner(
-        brackets=admits,
-        value=value,
+        brackets=brackets,
         links=links,
         query=query,
         stable_index=stable_index,
     )
-    policy = _chord_reading(x=query, x0=links.x0, x1=links.x1, v0=links.p0, v1=links.p1)
-    any_bracket = jnp.any(admits, axis=1)
-    column = owner[:, None]
-    # Two distinct absences, and they must not collapse into one:
-    # - no link admits the query at all: the `-inf` sentinel, so the caller drops
-    #   the whole node;
-    # - a link admits it but the exact order could not decide the owner: NaN, so
-    #   the EGM step's NaN diagnostics name the cell rather than a rounded
-    #   reading settling it silently.
-    admitted_value = jnp.take_along_axis(value, column, axis=1)[:, 0]
-    envelope_value = jnp.where(
-        any_bracket, jnp.where(resolved, admitted_value, jnp.nan), -jnp.inf
+    # Gather first: publication costs one read per selected channel/query, not
+    # one exact read per candidate in the dense admission block.
+    value, value_status = _chord_reading(
+        x=query_grid,
+        x0=links.x0[owner],
+        x1=links.x1[owner],
+        v0=links.v0[owner],
+        v1=links.v1[owner],
     )
-    envelope_policy = jnp.take_along_axis(policy, column, axis=1)[:, 0]
+    policy, policy_status = _chord_reading(
+        x=query_grid,
+        x0=links.x0[owner],
+        x1=links.x1[owner],
+        v0=links.p0[owner],
+        v1=links.p1[owner],
+    )
+    any_bracket = jnp.any(brackets, axis=1)
+    published = resolved & (value_status == 0) & (policy_status == 0)
+    # No support is -inf (drop the node); admitted but unreadable is NaN (keep
+    # the owner and poison both channels). A failed read never selects a rival.
+    envelope_value = jnp.where(
+        any_bracket, jnp.where(published, value, jnp.nan), -jnp.inf
+    )
+    envelope_policy = jnp.where(any_bracket & published, policy, jnp.nan)
     winner_link = jnp.where(any_bracket, owner, 0).astype(jnp.int32)
     winner_segment = jnp.where(any_bracket, segment_id[owner], -1).astype(jnp.int32)
     return envelope_value, envelope_policy, winner_link, winner_segment
@@ -512,6 +692,8 @@ class _CrossingBlocks:
     """Branch id of the outgoing owner."""
     segment_right: Int1D
     """Branch id of the incoming owner."""
+    unresolved: BoolND
+    """Whether a switched pair's location could not be certified."""
 
 
 def _crossing_blocks(
@@ -555,6 +737,7 @@ def _crossing_blocks(
         right_valid=rows.right_valid,
         segment_left=rows.segment_left,
         segment_right=rows.segment_right,
+        unresolved=rows.unresolved,
     )
 
 
@@ -578,6 +761,8 @@ class _CrossingRow:
     """Branch id of the outgoing owner."""
     segment_right: IntND
     """Branch id of the incoming owner."""
+    unresolved: BoolND
+    """Whether this step must poison its query's publication."""
 
 
 _CROSSING_ROW_FIELDS = (
@@ -589,6 +774,7 @@ _CROSSING_ROW_FIELDS = (
     "right_valid",
     "segment_left",
     "segment_right",
+    "unresolved",
 )
 
 
@@ -655,6 +841,7 @@ def _crossing_step(
         right_valid=valid & ~row.at_right,
         segment_left=prev_segment,
         segment_right=this_segment,
+        unresolved=switches & row.unresolved,
     )
 
     # Advance the previous-live-query carry only on a live query; a dropped
@@ -680,9 +867,11 @@ class _SegmentIntersection:
     resolved: BoolND
     """Whether the two chords in fact cross inside the interval."""
     at_left: BoolND
-    """Whether the crossing sits exactly on the left query abscissa."""
+    """Whether the emitted handover state coincides with the left query."""
     at_right: BoolND
-    """Whether the crossing sits exactly on the right query abscissa."""
+    """Whether the emitted handover state coincides with the right query."""
+    unresolved: BoolND
+    """Whether the signs or a bracketed event's location were refused."""
 
 
 def _crossing_in_interval(
@@ -705,12 +894,20 @@ def _crossing_in_interval(
     because a branch started or stopped covering the interval, not because the
     two met.
 
-    A certified zero at one of the two abscissae is a crossing sitting exactly on
-    that node, and the emitted abscissa is that node exactly. Only the interior
-    case is located by arithmetic, and it is located inside the interval the
-    switch was observed in — the root of the gap's own secant across it, clamped
-    to the interval the certified signs bracket it in — rather than by
-    extrapolating either chord from its stored endpoints.
+    Oriented endpoint equality is a node crossing; equality at both ends is
+    collinearity, not an event. For an interior crossing, the native handover
+    primitive forms the exact cross-multiplied affine difference from the same
+    stored operands as the signs. It publishes the least representable state
+    at or above the root, with no rounded chord subtraction or denominator
+    fallback. Coalescence is determined from this emitted state, not from the
+    endpoint signs: even a strictly interior root can hand over at the right
+    node.
+
+    The outgoing link's own stored span, rather than its widened comparable line,
+    admits the event. The incoming link's span does not: a branch entered at the
+    right node is represented there by the link that reaches beyond it, so a root
+    inside the interval lies before that link's support by construction, and
+    requiring it to be covered would drop every handover aligned with a node.
     """
     a_x0, a_x1 = links.x0[seg_a], links.x1[seg_a]
     a_v0, a_v1 = links.v0[seg_a], links.v1[seg_a]
@@ -731,54 +928,62 @@ def _crossing_in_interval(
     }
     sign_prev = certified_margin_sign(x_query=prev_grid, **chords)
     sign_this = certified_margin_sign(x_query=this_grid, **chords)
-    at_left = sign_prev == 0
-    at_right = (sign_this == 0) & ~at_left
+    at_left_root = (sign_prev == 0) & (sign_this == -1)
+    at_right_root = (sign_prev == 1) & (sign_this == 0)
     crosses_inside = (sign_prev == 1) & (sign_this == -1)
-    resolved = at_left | at_right | crosses_inside
-
-    gap_prev = _chord_gap(x=prev_grid, **chords)
-    gap_this = _chord_gap(x=this_grid, **chords)
-    denominator = gap_prev - gap_this
-    safe_denominator = jnp.where(denominator > 0.0, denominator, 1.0)
-    interior = jnp.clip(
-        (gap_prev * this_grid - gap_this * prev_grid) / safe_denominator,
-        prev_grid,
-        this_grid,
+    bracketed = at_left_root | at_right_root | crosses_inside
+    handover, location_status = exact_affine_handover(
+        left=prev_grid, right=this_grid, **chords
     )
-    grid = jnp.where(at_left, prev_grid, jnp.where(at_right, this_grid, interior))
+    grid = jnp.where(bracketed & (location_status == 0), handover, jnp.nan)
+    covered = (
+        links.live[seg_a]
+        & links.live[seg_b]
+        & _stored_in_span(
+            query=grid, lower=links.lower[seg_a], upper=links.upper[seg_a]
+        )
+    )
+    resolved = bracketed & (location_status == 0) & covered
+    at_left = resolved & _stored_equal(left=grid, right=prev_grid)
+    at_right = resolved & _stored_equal(left=grid, right=this_grid)
+    unresolved = (
+        (sign_prev == UNRESOLVED_STATUS)
+        | (sign_this == UNRESOLVED_STATUS)
+        | (bracketed & (location_status != 0))
+    )
 
-    value_a = _chord_value(x=grid, x0=a_x0, x1=a_x1, v0=a_v0, v1=a_v1)
-    value_b = _chord_value(x=grid, x0=b_x0, x1=b_x1, v0=b_v0, v1=b_v1)
+    # Select the higher exact chord at the *emitted* abscissa before reading it.
+    # The handover can lie above the root, so max(two nearest readings) is not an
+    # upper certificate. One directed read of the higher chord bounds both.
+    order = certified_margin_sign(x_query=grid, **chords)
+    take_b = order == -1
+    value = _chord_upper_value(
+        x=grid,
+        x0=jnp.where(take_b, b_x0, a_x0),
+        x1=jnp.where(take_b, b_x1, a_x1),
+        v0=jnp.where(take_b, b_v0, a_v0),
+        v1=jnp.where(take_b, b_v1, a_v1),
+    )
+    policy_a, status_a = _chord_reading(x=grid, x0=a_x0, x1=a_x1, v0=a_p0, v1=a_p1)
+    policy_b, status_b = _chord_reading(x=grid, x0=b_x0, x1=b_x1, v0=b_p0, v1=b_p1)
+    published = (
+        (order >= -1)
+        & (order <= 1)
+        & jnp.isfinite(value)
+        & (status_a == 0)
+        & (status_b == 0)
+    )
     return _SegmentIntersection(
         grid=grid,
-        # The emitted abscissa is a rounding away from the exact root, so the
-        # two chords no longer agree there to the last bit. Publishing the
-        # higher of the two keeps the emitted row on the envelope: a value below
-        # both branches would lose the node to any competitor between them.
-        value=jnp.maximum(value_a, value_b),
-        policy_a=_chord_reading(x=grid, x0=a_x0, x1=a_x1, v0=a_p0, v1=a_p1),
-        policy_b=_chord_reading(x=grid, x0=b_x0, x1=b_x1, v0=b_p0, v1=b_p1),
+        value=jnp.where(published, value, jnp.nan),
+        policy_a=jnp.where(published, policy_a, jnp.nan),
+        policy_b=jnp.where(published, policy_b, jnp.nan),
+        # Geometry is separate from reading: an unresolved ordinate/policy is a
+        # NaN event, not a reason to silently omit a genuine branch switch.
         resolved=resolved,
         at_left=at_left,
         at_right=at_right,
-    )
-
-
-def _chord_gap(
-    *,
-    x: FloatND,
-    a_x0: FloatND,
-    a_x1: FloatND,
-    a_v0: FloatND,
-    a_v1: FloatND,
-    b_x0: FloatND,
-    b_x1: FloatND,
-    b_v0: FloatND,
-    b_v1: FloatND,
-) -> FloatND:
-    """How far the first chord sits above the second at `x`."""
-    return _chord_value(x=x, x0=a_x0, x1=a_x1, v0=a_v0, v1=a_v1) - _chord_value(
-        x=x, x0=b_x0, x1=b_x1, v0=b_v0, v1=b_v1
+        unresolved=unresolved,
     )
 
 
