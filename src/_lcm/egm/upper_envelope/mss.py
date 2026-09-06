@@ -295,7 +295,7 @@ def _segment_chain(
     policy: Float1D,
     value: Float1D,
     dead: BoolND,
-    segment_id: Int1D | None,
+    segment_id: Float1D | None,
 ) -> tuple[_Links, Int1D]:
     """Build the candidate links and their branch labels.
 

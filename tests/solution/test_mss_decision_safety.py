@@ -318,7 +318,7 @@ def test_r4_scaled_publication_preserves_owner() -> None:
             grid = np.asarray([z, 2 * z, 1.5 * z, 1.75 * z], dtype=dtype)
             policy = np.asarray([z, z, z / 4, z / 4], dtype=dtype)
             value = np.asarray([level, 2 * level, level / 16, level / 16], dtype=dtype)
-            labels = np.asarray([0, 0, 1, 1], dtype=np.int32)
+            labels = np.asarray([0.0, 0.0, 1.0, 1.0], dtype=dtype)
             exact_value = _r4_exact_chord(
                 x0=grid[0], x1=grid[1], v0=value[0], v1=value[1], query=grid[2]
             )
@@ -356,14 +356,14 @@ def test_r4_crossing_publication_is_directed_and_node_consistent() -> None:
                     grid = [origin, origin + 3, origin, origin + 3]
                     policy = [8, 8, 2, 2]
                     value = [v * factor for v in values]
-                    labels = [0, 0, 1, 1]
+                    labels = [0.0, 0.0, 1.0, 1.0]
                     if node_aligned:
                         # This dominated branch supplies a query at the crossing;
                         # neither crossing chord has a stored endpoint there.
                         grid += [origin + 1, origin + 2]
                         policy += [1, 1]
                         value += [-4 * factor, -4 * factor]
-                        labels += [2, 2]
+                        labels += [2.0, 2.0]
                     arrays = tuple(
                         jnp.asarray(a, dtype=dtype) for a in (grid, policy, value)
                     )
@@ -371,7 +371,7 @@ def test_r4_crossing_publication_is_directed_and_node_consistent() -> None:
                         grid=arrays[0],
                         policy=arrays[1],
                         value=arrays[2],
-                        labels=jnp.asarray(labels, dtype=jnp.int32),
+                        labels=jnp.asarray(labels, dtype=dtype),
                     )
                     kept = int(out[3])
                     assert kept <= 32
@@ -542,3 +542,7 @@ def test_r4_failed_read_does_not_remove_owner() -> None:
     assert np.isnan(np.asarray(value)[:2]).all()
     assert np.isnan(np.asarray(policy)).all()
     assert np.isneginf(np.asarray(value)[2])
+
+
+# R1: the oracle below enumerates exact rational keys. It imports neither the
+# native comparator nor its reduction and does not reconstruct rounded readings.
