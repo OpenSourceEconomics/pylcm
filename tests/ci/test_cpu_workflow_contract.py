@@ -6,6 +6,7 @@ import re
 import shlex
 from pathlib import Path
 
+import pytest
 import yaml
 
 _REPO_ROOT = Path(__file__).parents[2]
@@ -15,6 +16,17 @@ _REPO_ROOT = Path(__file__).parents[2]
 _FOUR_DEVICE_TEST_FILES = (
     "tests/test_distributed.py",
     "tests/execution/test_transfer_catalogue.py",
+)
+
+# The fp64 and fp32 legs each run every four-CPU-device file in one invocation
+# of their own; every property below is checked once per (leg, file) pair.
+_FOUR_DEVICE_INVOCATION_CASES = tuple(
+    (job, step_name, four_device_file)
+    for job, step_name in (
+        ("tests", "Run pytest and collect coverage"),
+        ("tests-fp32", "Run pytest at fp32"),
+    )
+    for four_device_file in _FOUR_DEVICE_TEST_FILES
 )
 
 
@@ -65,45 +77,144 @@ def _pytest_invocation_argvs(*, job: str, step_name: str) -> list[list[str]]:
     return [shlex.split(command) for command in commands if "pixi run" in command]
 
 
-def test_four_device_test_files_run_alone_at_minus_n_zero():
-    """Each four-CPU-device test file runs by itself, at `-n 0`, at both precisions.
+def _invocations_naming(
+    *, job: str, step_name: str, four_device_file: str
+) -> list[list[str]]:
+    """Return every pytest invocation argv in one step that names `four_device_file`."""
+    return [
+        argv
+        for argv in _pytest_invocation_argvs(job=job, step_name=step_name)
+        if four_device_file in argv
+    ]
+
+
+def _sole_invocation(*, job: str, step_name: str, four_device_file: str) -> list[str]:
+    """Return the one invocation argv naming `four_device_file` in one step.
+
+    `test_four_device_file_appears_in_exactly_one_invocation` is the test that
+    names and asserts this singleton precondition; every other property test
+    below reuses this helper to reach the one invocation it inspects.
+    """
+    matches = _invocations_naming(
+        job=job, step_name=step_name, four_device_file=four_device_file
+    )
+    return matches[0]
+
+
+@pytest.mark.parametrize(
+    ("job", "step_name", "four_device_file"), _FOUR_DEVICE_INVOCATION_CASES
+)
+def test_four_device_file_appears_in_exactly_one_invocation(
+    *, job: str, step_name: str, four_device_file: str
+):
+    """Each four-CPU-device test file is named by exactly one pytest invocation.
 
     `tests/test_distributed.py` and `tests/execution/test_transfer_catalogue.py`
-    pin a four-CPU-device topology at import; the pin only takes effect in a
-    process that has not already touched a JAX backend. Folding either file
-    back into a shared, `-n`-distributed invocation would silently skip every
-    test in it, so each file must appear in exactly one invocation per
-    precision leg, running no other test path alongside it, at `-n 0`.
+    pin a four-CPU-device topology at import, a pin that depends on running
+    alone in its process; naming the file from zero or from more than one
+    invocation means it either never runs or no longer runs alone.
     """
-    for job, step_name in (
-        ("tests", "Run pytest and collect coverage"),
-        ("tests-fp32", "Run pytest at fp32"),
-    ):
-        invocations = _pytest_invocation_argvs(job=job, step_name=step_name)
-        for four_device_file in _FOUR_DEVICE_TEST_FILES:
-            matches = [argv for argv in invocations if four_device_file in argv]
-            assert len(matches) == 1, (
-                f"{job}/{step_name!r}: expected exactly one pytest invocation "
-                f"naming {four_device_file}, found {len(matches)}"
-            )
-            argv = matches[0]
+    matches = _invocations_naming(
+        job=job, step_name=step_name, four_device_file=four_device_file
+    )
+    assert len(matches) == 1, (
+        f"{job}/{step_name!r}: expected exactly one pytest invocation naming "
+        f"{four_device_file}, found {len(matches)}"
+    )
 
-            other_targets = [
-                argument
-                for argument in argv
-                if (argument == "tests" or argument.startswith("tests/"))
-                and argument != four_device_file
-            ]
-            assert not other_targets, (
-                f"{job}/{step_name!r}: {four_device_file} shares its "
-                f"invocation with {other_targets}"
-            )
 
-            assert "-n" in argv, (
-                f"{job}/{step_name!r}: {four_device_file}'s invocation is missing -n"
-            )
-            worker_count = argv[argv.index("-n") + 1]
-            assert worker_count == "0", (
-                f"{job}/{step_name!r}: {four_device_file} runs at "
-                f"-n {worker_count!r} instead of its own process (-n 0)"
-            )
+@pytest.mark.parametrize(
+    ("job", "step_name", "four_device_file"), _FOUR_DEVICE_INVOCATION_CASES
+)
+def test_four_device_file_runs_without_other_test_paths(
+    *, job: str, step_name: str, four_device_file: str
+):
+    """A four-CPU-device test file's invocation names no other test path.
+
+    Sharing the invocation with `tests` or another `tests/...` target would
+    fold the file back into a multi-file process, defeating the import-time
+    device-count pin that assumes it runs alone.
+    """
+    argv = _sole_invocation(
+        job=job, step_name=step_name, four_device_file=four_device_file
+    )
+    other_targets = [
+        argument
+        for argument in argv
+        if (argument == "tests" or argument.startswith("tests/"))
+        and argument != four_device_file
+    ]
+    assert not other_targets, (
+        f"{job}/{step_name!r}: {four_device_file} shares its invocation with "
+        f"{other_targets}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("job", "step_name", "four_device_file"), _FOUR_DEVICE_INVOCATION_CASES
+)
+def test_four_device_file_invocation_passes_the_worker_count_flag(
+    *, job: str, step_name: str, four_device_file: str
+):
+    """A four-CPU-device test file's invocation states its worker count explicitly.
+
+    An implicit worker count would leave the invocation's process-isolation
+    guarantee undeclared; the sibling test then checks the count itself.
+    """
+    argv = _sole_invocation(
+        job=job, step_name=step_name, four_device_file=four_device_file
+    )
+    assert "-n" in argv, (
+        f"{job}/{step_name!r}: {four_device_file}'s invocation is missing -n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("job", "step_name", "four_device_file"), _FOUR_DEVICE_INVOCATION_CASES
+)
+def test_four_device_file_runs_at_worker_count_zero(
+    *, job: str, step_name: str, four_device_file: str
+):
+    """A four-CPU-device test file's invocation runs at `-n 0`, its own process.
+
+    Any other worker count would distribute the file's tests across xdist
+    workers that fork before the file's own import-time device-count pin runs,
+    so the pin would apply to at most one worker and the rest would skip.
+    """
+    argv = _sole_invocation(
+        job=job, step_name=step_name, four_device_file=four_device_file
+    )
+    worker_count = argv[argv.index("-n") + 1]
+    assert worker_count == "0", (
+        f"{job}/{step_name!r}: {four_device_file} runs at -n {worker_count!r} "
+        "instead of its own process (-n 0)"
+    )
+
+
+@pytest.mark.parametrize(
+    ("job", "step_name", "four_device_file"), _FOUR_DEVICE_INVOCATION_CASES
+)
+def test_four_device_file_invocation_omits_policy_activation_flags(
+    *, job: str, step_name: str, four_device_file: str
+):
+    """A four-CPU-device test file's invocation never activates the CI policy launcher.
+
+    `--ci-policy` or `--full-suite` drives `pytest_policy.configure()`, which
+    resolves an explicit `--hardware-profile` by querying `jax.default_backend()`
+    during `pytest_configure` -- before pytest imports any test module. That
+    query initialises the JAX backend ahead of this file's own import-time
+    four-CPU-device pin, so the pin sees an already-initialised backend, never
+    applies, and every test in the file silently skips.
+    """
+    argv = _sole_invocation(
+        job=job, step_name=step_name, four_device_file=four_device_file
+    )
+    policy_activation_flags = [
+        argument
+        for argument in argv
+        if argument == "--full-suite" or argument.partition("=")[0] == "--ci-policy"
+    ]
+    assert not policy_activation_flags, (
+        f"{job}/{step_name!r}: {four_device_file}'s invocation carries "
+        f"{policy_activation_flags}, which silently skips every test in the file"
+    )
