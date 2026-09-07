@@ -93,14 +93,19 @@ _MESH_SCRIPT = textwrap.dedent(
     assert got == expected, (got, expected)
     print("FOOTPRINT-PARTIALLY-REPLICATED-OK")
 
+    uneven = jax.NamedSharding(square, jax.P("x", None))
     try:
-        layout_footprint(
-            sharding=jax.NamedSharding(square, jax.P("x", None)),
-            shape=(3, 8),
-            item_bytes=4,
-        )
+        uneven.shard_shape((3, 8))
+    except ValueError as raw:
+        raw_text = str(raw)
+    else:
+        raise AssertionError("shard_shape accepted a shape it cannot divide.")
+
+    try:
+        layout_footprint(sharding=uneven, shape=(3, 8), item_bytes=4)
     except ExecutionPlanningError as error:
         assert "(3, 8)" in str(error), str(error)
+        assert raw_text in str(error), (raw_text, str(error))
         print("FOOTPRINT-INDIVISIBLE-OK")
     else:
         raise AssertionError("An indivisible layout was not refused.")
@@ -109,7 +114,7 @@ _MESH_SCRIPT = textwrap.dedent(
 
 
 def _run_forced_devices(*, script: str, device_count: int) -> str:
-    """Run one script under forced host devices and return its stdout."""
+    """Run one script under forced host devices and return its combined output."""
     result = subprocess.run(  # noqa: S603
         [sys.executable, "-c", script],
         capture_output=True,
@@ -123,7 +128,11 @@ def _run_forced_devices(*, script: str, device_count: int) -> str:
         check=False,
         timeout=600,
     )
-    return f"{result.stdout}\n{result.stderr[-4000:]}"
+    output = f"{result.stdout}\n{result.stderr[-4000:]}"
+    # A crashed script leaves no marker, so every claim below it would read as a
+    # plain assertion failure; the exit status says which of the two it was.
+    assert result.returncode == 0, output
+    return output
 
 
 @pytest.fixture(scope="module")
@@ -345,6 +354,97 @@ def test_an_alias_group_is_resident_until_its_last_member_closes() -> None:
     )
 
     assert resident[(0, "a")] == 7
+
+
+def test_two_keys_of_one_alias_group_are_sized_as_one_buffer() -> None:
+    """One shared buffer costs its largest key's bytes, never their sum."""
+    ledger = PlannedInputLiveness(
+        dispatch_accesses={(1, "a"): (), (0, "a"): ("rolled", "root")},
+        aliases=MappingProxyType({"rolled": "root"}),
+    )
+    resident = plan_resident_bytes(
+        waves_by_period=MappingProxyType(
+            {
+                1: ((_unit(period=1, regime="a", produces=("rolled", "root")),),),
+                0: ((_unit(period=0, regime="a"),),),
+            }
+        ),
+        fold_dispatches=MappingProxyType({}),
+        ledger=ledger,
+        footprints=MappingProxyType(
+            {"rolled": _footprint(size=10), "root": _footprint(size=6)}
+        ),
+    )
+
+    assert resident[(0, "a")] == 10
+
+
+def test_a_shared_buffer_is_sized_once_and_gone_after_its_last_consumer() -> None:
+    """The one buffer both keys name costs its largest key until both close."""
+    ledger = PlannedInputLiveness(
+        dispatch_accesses={(2, "a"): (), (1, "a"): ("rolled", "root"), (0, "a"): ()},
+        aliases=MappingProxyType({"rolled": "root"}),
+    )
+    resident = plan_resident_bytes(
+        waves_by_period=MappingProxyType(
+            {
+                2: ((_unit(period=2, regime="a", produces=("rolled", "root")),),),
+                1: ((_unit(period=1, regime="a"),),),
+                0: ((_unit(period=0, regime="a"),),),
+            }
+        ),
+        fold_dispatches=MappingProxyType({}),
+        ledger=ledger,
+        footprints=MappingProxyType(
+            {"rolled": _footprint(size=10), "root": _footprint(size=6)}
+        ),
+    )
+
+    assert (resident[(1, "a")], resident[(0, "a")]) == (10, 0)
+
+
+def test_a_shared_buffer_is_sized_per_device_by_the_key_present_there() -> None:
+    """Each device pays its largest present key: both on one, one on the other."""
+    ledger = PlannedInputLiveness(
+        dispatch_accesses={
+            (1, "producer"): (),
+            (0, "both"): ("rolled",),
+            (0, "one"): ("root",),
+        },
+        aliases=MappingProxyType({"rolled": "root"}),
+    )
+    resident = plan_resident_bytes(
+        waves_by_period=MappingProxyType(
+            {
+                1: (
+                    (
+                        _unit(
+                            period=1,
+                            regime="producer",
+                            devices=(0, 1),
+                            produces=("rolled", "root"),
+                        ),
+                    ),
+                ),
+                0: (
+                    (
+                        _unit(period=0, regime="both", devices=(0, 1)),
+                        _unit(period=0, regime="one", devices=(1,)),
+                    ),
+                ),
+            }
+        ),
+        fold_dispatches=MappingProxyType({}),
+        ledger=ledger,
+        footprints=MappingProxyType(
+            {
+                "rolled": _footprint(size=10, devices=(0,)),
+                "root": _footprint(size=6, devices=(0, 1)),
+            }
+        ),
+    )
+
+    assert (resident[(0, "both")], resident[(0, "one")]) == (10, 6)
 
 
 def test_a_concurrent_unit_on_the_same_device_counts_its_outputs() -> None:

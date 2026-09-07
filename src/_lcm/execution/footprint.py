@@ -8,7 +8,9 @@ registered under. A replicated array costs its full size on each of its
 devices; a sharded one costs a single shard.
 
 `plan_resident_bytes` walks that schedule the way the loop will run it and
-reports, per unit, what it already finds on its busiest device.
+reports, per unit, what it already finds on its busiest device. Residency is
+per buffer rather than per key: the keys of one alias group name a single
+allocation and are charged once.
 """
 
 import dataclasses
@@ -90,16 +92,21 @@ def plan_resident_bytes(
     nothing; one the ledger does not know at all is refused, because its
     lifetime has no answer.
 
-    An artifact leaves the footprint exactly where the ledger would release it:
-    every key of its alias group at zero remaining consumers, none pinned and
-    none retained. A donated buffer needs no rule of its own, because a
-    dispatch donates only an artifact it is the sole remaining consumer of,
-    with no pin, no retention and no alias peer — the same position at which
-    the walk already releases it.
+    An alias group is one buffer under several names, so it is resident once,
+    charged on each device at the largest claim any of its keys makes there;
+    adding the keys up would bill one allocation several times. It leaves the
+    footprint exactly where the ledger would release it: every key at zero
+    remaining consumers, none pinned and none retained.
+
+    A donated buffer needs no rule of its own. A unit is measured before its
+    own wave commits, so the donating unit's number still carries the buffer it
+    donates — which is the right number, because donation aliases that input
+    into the unit's output, and a unit's own outputs are what this number
+    excludes. Releasing it a dispatch earlier would under-count.
     """
     _fail_if_footprint_is_unplanned(ledger=ledger, footprints=footprints)
     counts = dict(ledger.remaining_counts)
-    live: dict[Hashable, ArtifactFootprint] = {}
+    live: dict[frozenset[Hashable], dict[Hashable, ArtifactFootprint]] = {}
     resident: dict[tuple[int, RegimeName], int] = {}
     for period in sorted(waves_by_period, reverse=True):
         for wave in waves_by_period[period]:
@@ -170,7 +177,7 @@ def _walk_wave(
     ledger: PlannedInputLiveness,
     footprints: Mapping[Hashable, ArtifactFootprint],
     counts: dict[Hashable, int],
-    live: dict[Hashable, ArtifactFootprint],
+    live: dict[frozenset[Hashable], dict[Hashable, ArtifactFootprint]],
     resident: dict[tuple[int, RegimeName], int],
 ) -> None:
     """Record what one wave's units find resident, then commit the whole wave.
@@ -185,7 +192,9 @@ def _walk_wave(
             unit=unit, wave=wave, live=live
         )
     for unit in wave:
-        _register_outputs(produces=unit.produces, footprints=footprints, live=live)
+        _register_outputs(
+            produces=unit.produces, footprints=footprints, ledger=ledger, live=live
+        )
     for unit in wave:
         _release_after_dispatch(
             dispatch=(period, unit.regime), ledger=ledger, counts=counts, live=live
@@ -199,13 +208,15 @@ def _walk_period_folds(
     ledger: PlannedInputLiveness,
     footprints: Mapping[Hashable, ArtifactFootprint],
     counts: dict[Hashable, int],
-    live: dict[Hashable, ArtifactFootprint],
+    live: dict[frozenset[Hashable], dict[Hashable, ArtifactFootprint]],
 ) -> None:
     """Register and commit the gated-edge folds that run after a period's waves."""
     for dispatch, produced in fold_dispatches.items():
         if dispatch[0] != period:
             continue
-        _register_outputs(produces=(produced,), footprints=footprints, live=live)
+        _register_outputs(
+            produces=(produced,), footprints=footprints, ledger=ledger, live=live
+        )
         _release_after_dispatch(
             dispatch=dispatch, ledger=ledger, counts=counts, live=live
         )
@@ -215,19 +226,25 @@ def _register_outputs(
     *,
     produces: tuple[Hashable, ...],
     footprints: Mapping[Hashable, ArtifactFootprint],
-    live: dict[Hashable, ArtifactFootprint],
+    ledger: PlannedInputLiveness,
+    live: dict[frozenset[Hashable], dict[Hashable, ArtifactFootprint]],
 ) -> None:
-    """Make the sized outputs of one dispatch resident."""
+    """Make the sized outputs of one dispatch resident, one entry per buffer.
+
+    Every key of an alias group names the same buffer, so they share one entry
+    and each key contributes only its own claim on the devices it names.
+    """
     for artifact in produces:
         if artifact in footprints:
-            live[artifact] = footprints[artifact]
+            group = ledger.alias_group(artifact=artifact)
+            live.setdefault(group, {})[artifact] = footprints[artifact]
 
 
 def _busiest_device_bytes(
     *,
     unit: ScheduledUnit,
     wave: tuple[ScheduledUnit, ...],
-    live: Mapping[Hashable, ArtifactFootprint],
+    live: Mapping[frozenset[Hashable], Mapping[Hashable, ArtifactFootprint]],
 ) -> int:
     """Return the resident bytes on the unit's most occupied device."""
     return max(
@@ -241,12 +258,25 @@ def _busiest_device_bytes(
     )
 
 
-def _device_bytes(*, live: Mapping[Hashable, ArtifactFootprint], device: int) -> int:
-    """Sum the resident bytes of every live artifact holding a shard on `device`."""
+def _device_bytes(
+    *,
+    live: Mapping[frozenset[Hashable], Mapping[Hashable, ArtifactFootprint]],
+    device: int,
+) -> int:
+    """Sum what every live buffer holding a shard on `device` occupies there.
+
+    A buffer is charged once, at the largest claim any of its keys makes on
+    that device: the keys of an alias group are names for one allocation, so
+    adding them up would bill the same bytes several times.
+    """
     return sum(
-        footprint.bytes_per_device
-        for footprint in live.values()
-        if device in footprint.device_ids
+        max(
+            footprint.bytes_per_device
+            for footprint in members.values()
+            if device in footprint.device_ids
+        )
+        for members in live.values()
+        if any(device in footprint.device_ids for footprint in members.values())
     )
 
 
@@ -255,19 +285,19 @@ def _release_after_dispatch(
     dispatch: Hashable,
     ledger: PlannedInputLiveness,
     counts: dict[Hashable, int],
-    live: dict[Hashable, ArtifactFootprint],
+    live: dict[frozenset[Hashable], dict[Hashable, ArtifactFootprint]],
 ) -> None:
     """Decrement one dispatch's accesses and drop what the ledger would release."""
     for artifact in ledger.accesses_of(dispatch=dispatch):
         counts[artifact] -= 1
-    for artifact in tuple(live):
+    for group in tuple(live):
         if all(
             counts[member] == 0
             and not ledger.is_pinned(artifact=member)
             and not ledger.is_retained(artifact=member)
-            for member in ledger.alias_group(artifact=artifact)
+            for member in group
         ):
-            del live[artifact]
+            del live[group]
 
 
 def _fail_if_footprint_is_unplanned(
@@ -286,7 +316,13 @@ def _fail_if_footprint_is_unplanned(
 
 
 def _fail_if_period_disagrees(*, unit: ScheduledUnit, period: int) -> None:
-    """Reject a wave listed under a period its units do not solve."""
+    """Reject a wave listed under a period its units do not solve.
+
+    A `ValueError`, deliberately, where the rest of this module raises
+    `ExecutionPlanningError`: a schedule mapping that contradicts its own keys
+    is a malformed argument, not a plan the engine could have produced and has
+    to refuse.
+    """
     if unit.period != period:
         msg = (
             f"Unit {unit.regime!r} carries period {unit.period}, but the "
