@@ -257,6 +257,14 @@ class SolverBuildContext:
     values* in a particular period, read `period_to_state_nodes`.
     """
 
+    submesh_device_ids: tuple[int, ...] = ()
+    """Ascending device ids this regime's nodes run on; empty means every device.
+
+    A solver that places an array of its own — a continuation template whose
+    leading axes carry a distributed state — builds its mesh over exactly
+    these devices, so its arrays land where the regime's value does.
+    """
+
     period_to_state_nodes: (
         MappingProxyType[int, MappingProxyType[StateName, Float1D]] | None
     ) = None

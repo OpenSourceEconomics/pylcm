@@ -104,6 +104,10 @@ from _lcm.solution.result_snapshot import (
     snapshot_solution_metadata,
     snapshot_value_store,
 )
+from _lcm.solution.v_topology import (
+    canonical_solution_values,
+    fail_if_a_value_is_on_a_proper_submesh,
+)
 from _lcm.solution.validate_V import contains_nan
 from _lcm.transition_checks import validate_transitions
 from _lcm.typing import (
@@ -1957,6 +1961,7 @@ class Model:
         """
         log = get_logger(log_level=log_level)
         self._fail_if_simulation_is_unsupported()
+        fail_if_a_value_is_on_a_proper_submesh(regimes=self._regimes)
         if solution is not None and execution_config.device_memory_bytes is not None:
             msg = (
                 "A device-memory budget cannot be applied to an already-solved result."
@@ -2079,6 +2084,16 @@ class Model:
             or period_to_regime_to_replay_reader is None
         ):
             raise AssertionError("Simulation solution inputs were not resolved.")
+        # A solve leaves every array on its regime's own placement, while the
+        # simulate programs are lowered against the canonical layout, so both
+        # the values and the dissolution flags beside them are brought onto it
+        # before the first period dispatches.
+        period_to_regime_to_V_arr = canonical_solution_values(
+            values=period_to_regime_to_V_arr, regimes=self._regimes
+        )
+        period_to_regime_to_dissolution_flags = canonical_solution_values(
+            values=period_to_regime_to_dissolution_flags, regimes=self._regimes
+        )
         simulate_regimes = self._resolve_simulate_regimes(
             actual_n_subjects=actual_n_subjects,
             compile_batch_size=compile_batch_size,

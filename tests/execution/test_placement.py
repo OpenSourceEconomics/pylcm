@@ -8,12 +8,13 @@ from _lcm.execution.placement import (
     mesh_size_for_extents,
     plan_submesh_placement,
 )
-from lcm.exceptions import PyLCMError
+from _lcm.typing import RegimeName
+from lcm.exceptions import ExecutionPlanningError, PyLCMError
 
 
 def _request(
     *,
-    name: str,
+    name: RegimeName,
     extents: tuple[int, ...] = (),
     active: tuple[int, ...] = (0, 1, 2),
     template_bytes: int = 8,
@@ -46,9 +47,39 @@ def test_mesh_size_is_the_largest_divisor_of_the_extent_that_fits(
 
 
 def test_a_product_of_extents_beyond_the_devices_is_refused() -> None:
-    """Several distributed grids scatter one point per device and need them all."""
-    with pytest.raises(PyLCMError, match="must equal the number"):
+    """Several distributed grids need one device per point, so their product fits."""
+    with pytest.raises(PyLCMError, match="must not exceed the number"):
         mesh_size_for_extents(extents=(4, 4), n_devices=4)
+
+
+def test_a_product_of_extents_below_the_devices_defines_a_submesh() -> None:
+    """Scattering several grids needs their product of devices, not every device."""
+    assert mesh_size_for_extents(extents=(2, 2), n_devices=8) == 4
+
+
+def test_a_regime_without_a_distributed_grid_asks_for_one_device() -> None:
+    """No distributed grid is a mesh of one, whatever the visible device count."""
+    assert mesh_size_for_extents(extents=(), n_devices=4) == 1
+
+
+def test_a_mesh_size_without_a_device_is_refused() -> None:
+    """A placement needs a device to place anything on."""
+    with pytest.raises(ExecutionPlanningError, match="at least one device"):
+        mesh_size_for_extents(extents=(3,), n_devices=0)
+
+
+def test_a_plan_without_a_device_is_refused() -> None:
+    """A plan over no device names the count it was given."""
+    with pytest.raises(ExecutionPlanningError, match="got 0"):
+        plan_submesh_placement(requests=(_request(name="a"),), n_devices=0)
+
+
+def test_the_devices_of_an_unplanned_regime_are_refused() -> None:
+    """Asking for a regime the planner never saw names the regimes it did."""
+    placement = plan_submesh_placement(requests=(_request(name="a"),), n_devices=4)
+
+    with pytest.raises(ExecutionPlanningError, match="has no placement"):
+        placement.devices_for(regime_name="b")
 
 
 def test_a_three_valued_type_runs_on_three_of_four_devices() -> None:
@@ -161,6 +192,19 @@ def test_two_sharded_regimes_of_half_the_devices_take_disjoint_blocks() -> None:
         placement.devices_for(regime_name="a"),
         placement.devices_for(regime_name="b"),
     ) == ((0, 1), (2, 3))
+
+
+def test_two_co_active_sharded_regimes_may_share_a_block() -> None:
+    """Blocks follow declaration order alone, so co-active meshes can overlap."""
+    placement = plan_submesh_placement(
+        requests=(_request(name="a", extents=(2,)), _request(name="b", extents=(3,))),
+        n_devices=4,
+    )
+
+    assert (
+        placement.devices_for(regime_name="a"),
+        placement.devices_for(regime_name="b"),
+    ) == ((0, 1), (0, 1, 2))
 
 
 def test_a_single_device_yields_device_zero_for_every_regime() -> None:

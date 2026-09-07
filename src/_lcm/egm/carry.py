@@ -376,6 +376,7 @@ def shard_carry_template(
     template: EGMCarry,
     grids: Mapping[StateOrActionName, Any],
     leading_axis_names: tuple[StateName, ...],
+    devices: tuple[jax.Device, ...],
 ) -> EGMCarry:
     """Place a carry template on the same device sharding as runtime carries.
 
@@ -395,13 +396,13 @@ def shard_carry_template(
 
     Leading axes follow `leading_axis_names` order; trailing row axes stay
     unsharded. Scalars replicate across the mesh. Without a distributed
-    leading state the template passes through untouched.
+    leading state the template passes through untouched. `devices` are the
+    devices the placement assigned to the regime that publishes the carry, so
+    the template's mesh is the one its value array runs on.
     """
     from _lcm.engine import _build_regime_sharding  # noqa: PLC0415
 
-    plan = _build_regime_sharding(
-        grids=MappingProxyType(dict(grids)), n_devices=len(jax.devices())
-    )
+    plan = _build_regime_sharding(grids=MappingProxyType(dict(grids)), devices=devices)
     if plan is None or not any(
         name in plan.distributed_state_names for name in leading_axis_names
     ):

@@ -87,7 +87,7 @@ class PeriodCoreMemoryAnalysis:
     """Age the captured period sits at, for reading against a solve log."""
 
     preserves_production_sharding: bool
-    """Always false: period capture does not serialize production sharding."""
+    """Always false: period capture serializes neither sharding nor placement."""
 
     core_memory_bytes: MappingProxyType[str, CompilerMemoryBytes | None]
     """Byte counts per production core, keyed as the kernel publishes them."""
@@ -273,7 +273,10 @@ def _compile_cores_for_one_period(
     the solve loop and the replay reach a graph's producers through one routine.
 
     Replay never donates: it replays one captured period once from inputs it
-    owns.
+    owns. Nor does it reproduce the regime's device placement: the capture
+    round trip carries no sharding, so every core here is lowered against the
+    restored arrays' default placement rather than the submesh the solve
+    dispatched the period on.
     """
     period_kernel = regime.solution.period_kernels[period]
     context = _core_build_context_for_one_period(

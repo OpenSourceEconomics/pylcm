@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from _lcm.execution import scheduler
+from _lcm.execution.output_layout import VALUE, PlannedCore, resolve_output_layout
 from _lcm.execution.scheduler import BufferRegistry, PeriodTransferCache
 from _lcm.execution.value_transfer import (
     ResolvedValueTransfer,
@@ -20,6 +21,7 @@ from _lcm.execution.value_transfer import (
     ValueTransferKind,
     apply_value_transfer_plan,
 )
+from _lcm.solution.backward_induction import _period_shared_transfer_plan
 from lcm.exceptions import ExecutionPlanningError
 
 
@@ -463,3 +465,42 @@ def test_committing_more_consumers_than_the_period_declared_names_the_key() -> N
 
     with pytest.raises(ExecutionPlanningError, match="declared consumer"):
         cache.commit_consumer(key=key)
+
+
+def _planned_core(*, name: str, transfer: ResolvedValueTransfer) -> PlannedCore:
+    """A core carrying one resolved input transfer and nothing else."""
+    return PlannedCore(
+        compiled=_unreachable_core,
+        layout=resolve_output_layout(
+            core_key=name,
+            value_template=jnp.arange(3.0),
+            state_order=("wealth",),
+            output_roles=VALUE,
+        ),
+        tile_widths={},
+        input_transfer_plan=(transfer,),
+        name=name,
+    )
+
+
+def _unreachable_core(**_kwargs: object) -> object:
+    """Stand in for a compiled core the plan never calls."""
+    raise AssertionError
+
+
+def test_a_two_core_regime_declares_one_consumer_of_a_shared_read() -> None:
+    """A regime commits once per period, so its cores are one consumer together."""
+    stored_sharding, source_sharding = _shardings()
+    stored = _stored_value(sharding=stored_sharding)
+    transfer = _copy_transfer(
+        reused=True, stored=stored, source_sharding=source_sharding
+    )
+    cores = MappingProxyType(
+        {name: _planned_core(name=name, transfer=transfer) for name in ("main", "tail")}
+    )
+
+    consumer_counts, _keys_by_regime = _period_shared_transfer_plan(
+        compiled_cores_by_regime=MappingProxyType({"source": cores})
+    )
+
+    assert dict(consumer_counts) == {_key(transfer=transfer): 1}

@@ -96,7 +96,7 @@ def test_claw_checks_lcm_engine() -> None:
     with pytest.raises(BeartypeCallHintViolation):
         _build_regime_sharding(
             grids=MappingProxyType({}),
-            n_devices="not an int",  # ty: ignore[invalid-argument-type]
+            devices="not a tuple",  # ty: ignore[invalid-argument-type]
         )
 
 

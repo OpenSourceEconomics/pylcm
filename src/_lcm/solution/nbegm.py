@@ -60,7 +60,7 @@ from _lcm.egm.nbegm_constraint_boundaries import (
 from _lcm.egm.preferences import Preferences
 from _lcm.egm.published_policy import NBEGMGridPolicy
 from _lcm.egm.upper_envelope.query import ComparisonArithmetic
-from _lcm.engine import StateActionSpace
+from _lcm.engine import StateActionSpace, placed_devices_for_ids
 from _lcm.execution.core_program import (
     CoreBuildContext,
     CoreExecutionDisposition,
@@ -979,6 +979,7 @@ class NBEGM(OneMarginSolver):
                     ),
                     grids=context.grids,
                     ride_along_state_names=schedule_spec.ride_along_state_names,
+                    submesh_device_ids=context.submesh_device_ids,
                 ),
                 layout=replace(
                     self.egm_continuation_layout,
@@ -7967,12 +7968,14 @@ def _shard_ride_carry_template(
     template: EGMCarry,
     grids: Mapping[StateOrActionName, Grid],
     ride_along_state_names: tuple[StateName, ...],
+    submesh_device_ids: tuple[int, ...],
 ) -> EGMCarry:
     """Shard the ride-along carry template over its distributed ride axes."""
     return shard_carry_template(
         template=template,
         grids=grids,
         leading_axis_names=ride_along_state_names,
+        devices=placed_devices_for_ids(submesh_device_ids=submesh_device_ids),
     )
 
 

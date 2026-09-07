@@ -13,10 +13,11 @@ does not, and a timing on a build step this small would measure the box.
 import dataclasses
 from types import MappingProxyType
 
+import jax
 import jax.numpy as jnp
 import pytest
 
-from _lcm.engine import Regime, StateActionSpace
+from _lcm.engine import Regime, StateActionSpace, placed_devices_for_ids
 from _lcm.regime_building.gated_edges import EdgeChannels
 from _lcm.solution import backward_induction
 from _lcm.solution.backward_induction import _iter_edge_topologies
@@ -31,6 +32,12 @@ class _MockSolutionPhase:
 
     grids: MappingProxyType[str, object] = MappingProxyType({})
     """Grid objects the sharding plan is built from; empty means unsharded."""
+
+    submesh_device_ids: tuple[int, ...] = ()
+    """No placement, so the mock target's nodes run on every visible device."""
+
+    def placed_devices(self) -> tuple[jax.Device, ...]:
+        return placed_devices_for_ids(submesh_device_ids=self.submesh_device_ids)
 
     def state_action_space(self, regime_params):  # noqa: ARG002
         return StateActionSpace(
@@ -95,9 +102,9 @@ def sharding_plan_calls(monkeypatch):
     calls: list[object] = []
     original = backward_induction._build_regime_sharding
 
-    def counting(*, grids, n_devices):
+    def counting(*, grids, devices):
         calls.append(grids)
-        return original(grids=grids, n_devices=n_devices)
+        return original(grids=grids, devices=devices)
 
     monkeypatch.setattr(backward_induction, "_build_regime_sharding", counting)
     return calls

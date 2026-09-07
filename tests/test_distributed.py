@@ -264,8 +264,9 @@ def correct_distributed_model():
     return _make_correct_distributed_model()
 
 
-@pytest.fixture
-def wrong_distributed_model():
+def _make_wrong_distributed_model() -> Model:
+    """A model whose two distributed grids need nine devices, not four."""
+
     @categorical(ordered=False)
     class RegimeId:
         working_life: ScalarInt
@@ -961,14 +962,15 @@ def test_aot_compiled_simulation_running_on_multiple_cpus():
 
 
 @_skip_pytest_parallel
-def test_solution_error_if_grid_product_exceeds_devices(wrong_distributed_model):
-    """Solve raises when the product of distributed grid sizes exceeds devices."""
+def test_model_error_if_grid_product_exceeds_devices():
+    """Building the model raises when its distributed grids outnumber the devices.
 
-    with pytest.raises(PyLCMError, match="must equal the number"):
-        wrong_distributed_model.solve(
-            log_level="debug",
-            params={"discount_factor": 0.95},
-        )
+    The planner assigns every regime its devices while the model is built, so a
+    product of extents no device set can carry is named there rather than at
+    the first solve.
+    """
+    with pytest.raises(PyLCMError, match="must not exceed the number"):
+        _make_wrong_distributed_model()
 
 
 @_skip_pytest_parallel
@@ -1379,18 +1381,13 @@ def _disjoint_device_shared_transfer() -> tuple[
 ]:
     """Drive a two-consumer shared transfer whose copy shares no source buffer.
 
-    `Model.solve()` cannot construct this case today: every distributed
-    regime's mesh spans every device this process reports
-    (`_build_regime_sharding` always sizes it to `len(jax.devices())`), so a
-    single-device source is always one of the devices any such mesh
-    replicates onto, and `device_put` reuses that device's own buffer for
-    the matching shard. A per-regime device placement would let a real solve
-    place a source outside a reader's mesh; absent that, this drives the
-    exact `PeriodTransferCache` / `BufferRegistry` / `apply_value_transfer_plan`
-    machinery a solve dispatches through, by hand, with a stored value
-    placed on this file's fourth real CPU device and a required layout
-    replicated over the other three — disjoint device sets, so the copy
-    shares no buffer with its source.
+    Drives the exact `PeriodTransferCache` / `BufferRegistry` /
+    `apply_value_transfer_plan` machinery a solve dispatches through, by hand,
+    with a stored value placed on this file's fourth real CPU device and a
+    required layout replicated over the other three — disjoint device sets, so
+    the copy shares no buffer with its source. A solve reaches the same shape
+    whenever a reader's mesh leaves out the device its target was placed on;
+    this states the machinery's contract without one.
     """
     devices = jax.devices()
     stored = jax.device_put(jnp.arange(4.0), devices[3])

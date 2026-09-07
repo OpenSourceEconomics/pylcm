@@ -131,6 +131,7 @@ from _lcm.solution.v_topology import (
     _build_zero_V_arr,
     _get_regime_V_shapes_and_shardings,
     _RegimeVTopology,
+    placed_V_sharding,
 )
 from _lcm.typing import FlatParams, RegimeName, SimulationPolicy
 from _lcm.utils.logging import (
@@ -408,10 +409,15 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         else None
     )
 
-    # Every regime's device set is the full device set until per-regime
-    # placement lands (Task 7), so one process-wide read of `jax.devices()`
-    # covers every period and every regime in this solve.
-    all_device_ids = frozenset(device.id for device in jax.devices())
+    # Every regime's node set runs on the devices the planner assigned it,
+    # which is a fact of the model rather than of a period, so the device sets
+    # the wave plan reads are resolved once for the whole solve.
+    device_ids_by_regime = MappingProxyType(
+        {
+            regime_name: _regime_device_ids(regime=regime)
+            for regime_name, regime in regimes.items()
+        }
+    )
 
     for period in reversed(range(ages.n_periods)):
         period_start = time.monotonic()
@@ -473,10 +479,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         # Regimes declaring `same_period_refs` read other regimes' V of
         # THIS period, so a reference regime is planned into an earlier wave
         # than its reader. Independent regimes whose device sets are disjoint
-        # would share a wave and dispatch back to back; every regime's device
-        # set is the full device set until per-regime placement lands, so
-        # today's plan still holds exactly one unit per wave, in declaration
-        # order among regimes without a reference.
+        # share a wave and dispatch back to back, which is what a submesh
+        # placement buys; regimes sharing a device keep one unit per wave, in
+        # declaration order among regimes without a reference.
         waves = plan_period_waves(
             nodes=tuple(
                 ScheduledNode(period=period, regime=regime_name, program=core_key)
@@ -489,7 +494,12 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                     for regime_name, regime in active_regimes.items()
                 }
             ),
-            device_sets=MappingProxyType(dict.fromkeys(active_regimes, all_device_ids)),
+            device_sets=MappingProxyType(
+                {
+                    regime_name: device_ids_by_regime[regime_name]
+                    for regime_name in active_regimes
+                }
+            ),
         )
         for wave in waves:
             for unit in wave:
@@ -1142,6 +1152,24 @@ def _cores_with_transfer_cache(
     )
 
 
+def _regime_device_ids(*, regime: Regime) -> frozenset[int]:
+    """Return the ids of the devices one regime's nodes are dispatched on.
+
+    A regime the planner assigned no devices runs on every visible one, which
+    is what a model built before a placement was resolved carries.
+
+    Args:
+        regime: The canonical regime whose nodes are being placed.
+
+    Returns:
+        Frozenset of the device ids the regime's dispatches occupy.
+
+    """
+    return frozenset(regime.solution.submesh_device_ids) or frozenset(
+        device.id for device in jax.devices()
+    )
+
+
 def _period_shared_transfer_plan(
     *, compiled_cores_by_regime: Mapping[RegimeName, MappingProxyType[str, PlannedCore]]
 ) -> tuple[
@@ -1703,9 +1731,8 @@ def _iter_edge_topologies(
     so they are built once per target however many sources reach it. The space
     completes runtime grids from params, which is the expensive half.
     """
-    n_devices = len(jax.devices())
     target_shapes: dict[RegimeName, tuple[int, ...]] = {}
-    target_shardings: dict[RegimeName, jax.NamedSharding | None] = {}
+    target_shardings: dict[RegimeName, jax.sharding.Sharding | None] = {}
     for source_name, source in regimes.items():
         if not source.gated_edges:
             continue
@@ -1718,20 +1745,20 @@ def _iter_edge_topologies(
                 target_shapes[target_name] = tuple(
                     len(v) for v in target_states.values()
                 )
-                sharding_plan = _build_regime_sharding(
-                    grids=target.solution.grids, n_devices=n_devices
-                )
-                target_shardings[target_name] = (
-                    sharding_plan.V_arr_sharding(tuple(target_states))
-                    if sharding_plan is not None
-                    else None
+                devices = target.solution.placed_devices()
+                target_shardings[target_name] = placed_V_sharding(
+                    sharding_plan=_build_regime_sharding(
+                        grids=target.solution.grids, devices=devices
+                    ),
+                    state_order=tuple(target_states),
+                    devices=devices,
                 )
             shape = target_shapes[target_name]
             sharding = target_shardings[target_name]
             n_channels = source.gated_edges[target_name].channels.count
             if n_channels:
                 shape = (*shape, n_channels)
-                if sharding is not None:
+                if isinstance(sharding, jax.NamedSharding):
                     sharding = jax.NamedSharding(
                         mesh=sharding.mesh, spec=jax.P(*sharding.spec, None)
                     )
@@ -3163,6 +3190,7 @@ def _lowering_keys(
             specialization_key=resolved.specialization_key,
             output_roles=resolved.output_roles,
             donated_arguments=_donated_arguments(donations=donations[candidate]),
+            placement_key=regime.solution.submesh_device_ids,
         )
     return keys
 
@@ -3436,8 +3464,9 @@ def _lowering_key(
     specialization_key: Hashable | None = None,
     output_roles: object | None = None,
     donated_arguments: tuple[str, ...] = (),
+    placement_key: Hashable | None = None,
 ) -> Hashable:
-    """Identify one program's input tree, specialization, layout, and donations."""
+    """Identify a program's tree, specialization, layout, donations and devices."""
     return (
         program_identity,
         (None if arguments is None else _abstract_arguments_key(arguments=arguments)),
@@ -3445,6 +3474,7 @@ def _lowering_key(
         _output_roles_key(output_roles=output_roles),
         layout_key,
         donated_arguments,
+        placement_key,
     )
 
 

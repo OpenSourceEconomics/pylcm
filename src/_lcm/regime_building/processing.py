@@ -47,8 +47,14 @@ from _lcm.engine import (
     SolutionPhase,
     StateActionSpace,
     Variables,
+    placed_devices_for_ids,
 )
 from _lcm.execution.core_program import CoreProgram, CoreProgramGraphAware
+from _lcm.execution.placement import (
+    PlacementRequest,
+    SubmeshPlacement,
+    plan_submesh_placement,
+)
 from _lcm.grids import (
     ContinuousGrid,
     DiscreteGrid,
@@ -470,6 +476,25 @@ def process_regimes(
         }
     )
 
+    placement = plan_submesh_placement(
+        requests=tuple(
+            PlacementRequest(
+                regime_name=regime_name,
+                distributed_extents=tuple(
+                    grid.to_jax().shape[0]
+                    for grid in all_grids[regime_name].values()
+                    if grid.distributed
+                ),
+                active_periods=tuple(regimes_to_active_periods[regime_name]),
+                template_bytes=_value_template_bytes(
+                    state_grids=state_grids[regime_name]
+                ),
+            )
+            for regime_name in user_regimes
+        ),
+        n_devices=len(jax.devices()),
+    )
+
     _fail_if_action_has_batch_size(user_regimes)
 
     regime_to_v_interpolation_info = MappingProxyType(
@@ -637,6 +662,7 @@ def process_regimes(
         grid_schedule=grid_schedule,
         period_to_regime_v_interp=period_to_regime_v_interp,
         phased_specs=phased_specs,
+        placement=placement,
         reachability=reachability,
         regime_names_to_ids=regime_names_to_ids,
         regime_to_flat_param_names=regime_to_flat_param_names,
@@ -699,6 +725,24 @@ def process_regimes(
     return ensure_containers_are_immutable(canonical_regimes)
 
 
+def _value_template_bytes(*, state_grids: Mapping[StateName, Grid]) -> int:
+    """Return the bytes of a regime's value template, the planner's footprint weight.
+
+    Every state grid contributes its extent; a folded state is integrated out
+    of the stored value, so this over-counts a folding regime by the fold's
+    extent, which only weights a tie-break between devices.
+
+    Args:
+        state_grids: Mapping of the regime's state names to their grids.
+
+    Returns:
+        The number of bytes one value template of the regime occupies.
+
+    """
+    item_bytes = jnp.zeros(()).dtype.itemsize
+    return item_bytes * math_prod(len(grid.to_jax()) for grid in state_grids.values())
+
+
 @dataclass(frozen=True, kw_only=True, eq=False)
 class _CanonicalRegimeBuilder:
     """Build every regime's canonical form from one model's resolved declarations.
@@ -733,6 +777,9 @@ class _CanonicalRegimeBuilder:
 
     phased_specs: MappingProxyType[RegimeName, PhasedRegimeSpec]
     """Immutable mapping of regime names to their age-normalized phase declarations."""
+
+    placement: SubmeshPlacement
+    """The devices each regime's nodes run on, assigned once for the model."""
 
     reachability: ModelReachability
     """The model's static solution and simulation regime graphs."""
@@ -891,6 +938,7 @@ class _CanonicalRegimeBuilder:
                 period_to_regime_v_interp=self.period_to_regime_v_interp,
                 grid_schedule=self.grid_schedule,
                 state_action_space=self.state_action_spaces[regime_name],
+                submesh_device_ids=self.placement.devices_for(regime_name=regime_name),
                 ages=self.ages,
                 enable_jit=self.enable_jit,
                 certainty_equivalent=user_regime.certainty_equivalent,
@@ -2909,6 +2957,7 @@ def _build_solution_phase(
     ) = None,
     grid_schedule: AgeGridSchedule | None = None,
     state_action_space: StateActionSpace,
+    submesh_device_ids: tuple[int, ...],
     ages: AgeGrid,
     enable_jit: bool,
     certainty_equivalent: CertaintyEquivalent | None,
@@ -2954,6 +3003,8 @@ def _build_solution_phase(
         regimes_to_active_periods: Mapping of regime names to active period tuples.
         regime_to_v_interpolation_info: Mapping of regime names to state space info.
         state_action_space: The state-action space for this regime.
+        submesh_device_ids: Ascending ids of the devices the planner assigned
+            this regime's nodes; empty means every visible device.
         ages: The AgeGrid for the model.
         enable_jit: Whether to jit the internal functions.
         certainty_equivalent: Nonlinear certainty equivalent declared by the
@@ -3195,6 +3246,7 @@ def _build_solution_phase(
         solution_reachability=phase_reachability,
         Q_and_F_functions=Q_and_F_functions,
         grids=all_grids[regime_name],
+        submesh_device_ids=submesh_device_ids,
         period_to_state_nodes=period_to_state_nodes,
         functions=core.functions,
         koopmans_aggregator=core.koopmans_aggregator,
@@ -3247,6 +3299,7 @@ def _build_solution_phase(
         continuation_demanded=continuation_demanded,
         solver_produces_carry=solver_kernels.continuation_spec is not None,
         enable_jit=enable_jit,
+        devices=placed_devices_for_ids(submesh_device_ids=submesh_device_ids),
     )
     period_kernels = solver_kernels.period_kernels
     continuation_spec = solver_kernels.continuation_spec
@@ -3328,6 +3381,7 @@ def _build_solution_phase(
         ),
         param_checks=solver_kernels.param_checks,
         pareto_weights=pareto_weights,
+        submesh_device_ids=submesh_device_ids,
         _base_state_action_space=state_action_space,
         period_state_axes=period_state_axes,
     )
@@ -3644,6 +3698,7 @@ def _build_egm_child_carry_producer(
     continuation_demanded: bool,
     solver_produces_carry: bool,
     enable_jit: bool,
+    devices: tuple[jax.Device, ...],
 ) -> tuple[EGMCarryProducer | None, EGMCarry | None]:
     """Build the carry producer and template for an EGM regime's carry target.
 
@@ -3718,6 +3773,7 @@ def _build_egm_child_carry_producer(
                 ),
                 grids=grids,
                 leading_axis_names=discrete_state_names + passive_state_names,
+                devices=devices,
             )
         else:
             return None, None
@@ -3748,6 +3804,7 @@ def _build_egm_child_carry_producer(
             ),
             grids=grids,
             leading_axis_names=discrete_state_names + passive_state_names,
+            devices=devices,
         )
     else:
         return None, None

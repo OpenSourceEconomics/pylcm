@@ -87,8 +87,9 @@ def mesh_size_for_extents(*, extents: Sequence[int], n_devices: int) -> int:
 
     One distributed grid runs on the largest divisor of its extent that does not
     exceed the visible devices, so the extent is divisible by the mesh size.
-    Several distributed grids scatter one point per device and need exactly their
-    product of extents.
+    Several distributed grids scatter one point per device, so together they
+    need exactly their product of extents; a product beyond the visible devices
+    has no mesh and is refused.
     """
     if n_devices < 1:
         msg = f"A placement needs at least one device; got {n_devices}."
@@ -100,7 +101,7 @@ def mesh_size_for_extents(*, extents: Sequence[int], n_devices: int) -> int:
     if product > n_devices:
         msg = (
             "When distributing over multiple grids, the product of the number of "
-            "points in the grids must equal the number of available devices. "
+            "points in the grids must not exceed the number of available devices. "
             f"Gridpoints product: {product} Available devices: {n_devices}"
         )
         raise ExecutionPlanningError(msg)

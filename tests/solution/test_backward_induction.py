@@ -1,12 +1,13 @@
 import dataclasses
 from types import MappingProxyType, SimpleNamespace
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
-from _lcm.engine import Regime, StateActionSpace
+from _lcm.engine import Regime, StateActionSpace, placed_devices_for_ids
 from _lcm.execution.core_program import (
     CoreExecutionDisposition,
     CoreExecutionRequirements,
@@ -70,6 +71,12 @@ class MockSolutionPhase:
         default_factory=lambda: _single_regime_reachability(n_periods=2)
     )
     """The solve-phase regime graph; one regime, reachable from itself."""
+    submesh_device_ids: tuple[int, ...] = ()
+    """No placement, so the mock regime's nodes run on every visible device."""
+
+    def placed_devices(self) -> tuple[jax.Device, ...]:
+        """Return the devices this mock regime's nodes run on."""
+        return placed_devices_for_ids(submesh_device_ids=self.submesh_device_ids)
 
     @property
     def period_signatures(self) -> MappingProxyType[int, object]:

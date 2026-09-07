@@ -43,6 +43,7 @@ _SCRIPT = textwrap.dedent(
         template=template,
         grids=grids,
         ride_along_state_names=("kind",),
+        submesh_device_ids=(),
     )
 
     spec = sharded.value.sharding.spec
@@ -59,6 +60,7 @@ _SCRIPT = textwrap.dedent(
         template=template,
         grids={"kind": DiscreteGrid(category_class=ConsumerKind)},
         ride_along_state_names=("kind",),
+        submesh_device_ids=(),
     )
     assert plain is template
 
@@ -76,6 +78,7 @@ _SCRIPT = textwrap.dedent(
         template=with_policy,
         grids=grids,
         ride_along_state_names=("kind",),
+        submesh_device_ids=(),
     )
     assert sharded_with_policy.policy.sharding.spec == jax.P("kind")
     assert sharded_with_policy.value.sharding.spec == jax.P("kind")
@@ -94,6 +97,7 @@ _SCRIPT = textwrap.dedent(
             "liquid": LinSpacedGrid(start=0.1, stop=30.0, n_points=24),
         },
         leading_axis_names=("kind", "aime"),
+        devices=tuple(jax.devices()),
     )
     assert child.value.sharding.spec == jax.P("kind", None), child.value.sharding
     assert not child.value.sharding.is_fully_replicated

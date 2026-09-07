@@ -96,11 +96,13 @@ def compile_all_simulation_phases(
     # Per-regime V-shape and -sharding lookup for building period-specific
     # templates that match the *sparse* mapping `simulate.simulate(...)`
     # actually dispatches: `period_to_regime_to_V_arr.get(P+1, {})` — only
-    # regimes active at P+1. The sharding must match what `solve(...)`
-    # produces, so the AOT program accepts the runtime value-function arrays.
+    # regimes active at P+1. The sharding must match the canonical layout
+    # `canonical_solution_values` publishes a solve on, so the AOT program
+    # accepts the runtime value-function arrays.
     regime_V_topology = _get_regime_V_shapes_and_shardings(
         regimes=regimes,
         flat_params=flat_params,
+        phase="simulate",
     )
 
     # One model-wide subject sharding: subjects propagate across regimes, so

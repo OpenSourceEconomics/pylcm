@@ -406,6 +406,13 @@ class SolutionPhase:
     says which periods the solver built alike, and neither implies the other.
     """
 
+    submesh_device_ids: tuple[int, ...] = ()
+    """Device ids this regime's nodes run on; empty means every visible device.
+
+    Assigned by the planner at model build, ascending, and a component of every
+    lowering key this regime's cores carry.
+    """
+
     continuation_spec: ContinuationSpec | None = None
     """Template and identity of the continuation this regime's kernels publish."""
 
@@ -526,6 +533,10 @@ class SolutionPhase:
             }
         )
 
+    def placed_devices(self) -> tuple[jax.Device, ...]:
+        """Return the device objects this regime's nodes run on."""
+        return placed_devices_for_ids(submesh_device_ids=self.submesh_device_ids)
+
     def state_action_space(self, regime_params: FlatRegimeParams) -> StateActionSpace:
         """Return the state-action space with runtime grids filled in.
 
@@ -598,7 +609,9 @@ class SolutionPhase:
             else dict(self._base_state_action_space.continuous_actions)
         )
         distributed_states = _distribute_states_to_devices(
-            states=MappingProxyType(new_states), grids=self.grids
+            states=MappingProxyType(new_states),
+            grids=self.grids,
+            devices=self.placed_devices(),
         )
         return self._base_state_action_space.replace(
             states=distributed_states,
@@ -1188,10 +1201,32 @@ class _RegimeSharding:
         return jax.NamedSharding(mesh=self.mesh, spec=spec)
 
 
+def placed_devices_for_ids(
+    *, submesh_device_ids: tuple[int, ...]
+) -> tuple[jax.Device, ...]:
+    """Return the device objects of `submesh_device_ids`.
+
+    An empty tuple of ids names no placement, which is every visible device —
+    the layout a solve without a per-regime placement runs on.
+
+    Args:
+        submesh_device_ids: Ascending device ids, or empty for every device.
+
+    Returns:
+        Tuple of the device objects, in the order the ids name them.
+
+    """
+    devices = tuple(jax.devices())
+    if not submesh_device_ids:
+        return devices
+    by_id = {device.id: device for device in devices}
+    return tuple(by_id[device_id] for device_id in submesh_device_ids)
+
+
 def _build_regime_sharding(
     *,
     grids: MappingProxyType[StateOrActionName, Grid],
-    n_devices: int,
+    devices: tuple[jax.Device, ...],
 ) -> _RegimeSharding | None:
     """Build a `_RegimeSharding` covering this regime's distributed grids.
 
@@ -1210,7 +1245,8 @@ def _build_regime_sharding(
 
     Args:
         grids: Immutable mapping of state and action names to their grids.
-        n_devices: Number of available devices.
+        devices: Tuple of the devices the placement assigned to this regime;
+            the mesh spans exactly them.
 
     Returns:
         The regime's sharding plan, or `None` if no grid is distributed.
@@ -1219,6 +1255,7 @@ def _build_regime_sharding(
     distributed_grids = {name: grid for name, grid in grids.items() if grid.distributed}
     if not distributed_grids:
         return None
+    n_devices = len(devices)
 
     state_names = tuple(distributed_grids.keys())
     grid_sizes = tuple(grid.to_jax().shape[0] for grid in distributed_grids.values())
@@ -1235,7 +1272,7 @@ def _build_regime_sharding(
             (n_devices,),
             state_names,
             axis_types=(jax.sharding.AxisType.Auto,),
-            devices=jax.devices(),
+            devices=devices,
         )
     else:
         product = math_prod(grid_sizes)
@@ -1250,7 +1287,7 @@ def _build_regime_sharding(
             grid_sizes,
             state_names,
             axis_types=tuple(jax.sharding.AxisType.Auto for _ in distributed_grids),
-            devices=jax.devices(),
+            devices=devices,
         )
 
     return _RegimeSharding(mesh=mesh, distributed_state_names=state_names)
@@ -1260,6 +1297,7 @@ def _distribute_states_to_devices(
     *,
     states: MappingProxyType[StateName, FloatND | IntND],
     grids: MappingProxyType[StateOrActionName, Grid],
+    devices: tuple[jax.Device, ...],
 ) -> MappingProxyType[StateName, FloatND | IntND]:
     """Place each distributed state's array on its device mesh.
 
@@ -1270,13 +1308,14 @@ def _distribute_states_to_devices(
     Args:
         states: Immutable mapping of state names to their 1-D arrays.
         grids: Immutable mapping of state and action names to their grids.
+        devices: Tuple of the devices the placement assigned to this regime.
 
     Returns:
         Immutable mapping with distributed states placed on the mesh and
         every other state untouched.
 
     """
-    sharding_plan = _build_regime_sharding(grids=grids, n_devices=len(jax.devices()))
+    sharding_plan = _build_regime_sharding(grids=grids, devices=devices)
     if sharding_plan is None:
         return states
     placed = dict(states)

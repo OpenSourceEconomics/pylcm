@@ -303,3 +303,15 @@ def test_lowering_key_separates_distinct_donation_sets() -> None:
     )
 
     assert first != second
+
+
+def test_lowering_key_separates_distinct_placements() -> None:
+    """Placement enters the key: a node on three devices is not one on four."""
+    first = _lowering_key(
+        program_identity=_IDENTITY, layout_key=("layout",), placement_key=(0, 1, 2)
+    )
+    second = _lowering_key(
+        program_identity=_IDENTITY, layout_key=("layout",), placement_key=(0, 1, 2, 3)
+    )
+
+    assert first != second
