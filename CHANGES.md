@@ -77,7 +77,11 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   before.
 - A streaming width fits when its compiler-reported peak plus the bytes the plan keeps
   resident on the device at the core's scheduled position fit
-  `ExecutionConfig.device_memory_bytes`.
+  `ExecutionConfig.device_memory_bytes`, excluding what the core reads on its stored
+  layout (assumed already counted in the peak, as on the XLA CPU backend; a report that
+  excludes argument bytes under-counts) and double-counting a no-reads core's pinned
+  inputs as the safe direction. A position already over budget is refused before any
+  width compiles.
 
 ### Memory-aware action-width policy and solve/simulate GPU-memory attribution
 
