@@ -130,9 +130,11 @@ On several devices every regime is placed before anything is compiled:
 - regimes of one period that read nothing of each other within the period and sit on
   disjoint devices are dispatched together.
 
-Placement never changes a value. A model on one device, or with one regime active per
-period, is placed exactly as before. `simulate` copies a single-device value back to the
-default device; a value solved on a proper submesh cannot meet subjects spread over
+Two placements of one model publish values that name the same real number: each
+partition is vectorized at its own width, so the two runs agree to within a few units in
+the last place rather than bit for bit. A model on one device, or with one regime active
+per period, is placed exactly as before. `simulate` copies a single-device value back to
+the default device; a value solved on a proper submesh cannot meet subjects spread over
 every device and is refused with an `ExecutionPlanningError`.
 
 (api-solution-result)=

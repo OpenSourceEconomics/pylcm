@@ -73,8 +73,10 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - On several devices every regime is placed on a submesh before compilation: a
   distributed state of extent three solves on three of four devices, single-device
   regimes fill idle devices, and independent regimes of a period dispatch concurrently.
-  Placement never changes a value; one device or one regime per period is placed as
-  before.
+  Two placements of one model publish values that name the same real number — each
+  partition is vectorized at its own width, so they agree to within a few units in
+  the last place rather than bit for bit. One device or one regime per period is
+  placed as before.
 - A streaming width fits when its compiler-reported peak plus the bytes the plan keeps
   resident on the device at the core's scheduled position fit
   `ExecutionConfig.device_memory_bytes`, excluding what the core reads on its stored
