@@ -26,6 +26,7 @@ FOUR_DEVICE_TEST_FILES = (
     "tests/test_distributed.py",
     "tests/execution/test_transfer_catalogue.py",
     "tests/test_distributed_placement.py",
+    "tests/test_distributed_lifetime.py",
 )
 
 #: The configuration option a multi-device test file pins when it is imported.
@@ -61,7 +62,7 @@ def is_isolated_four_device_invocation(argv: list[str]) -> bool:
     """Return whether `argv` is one four-CPU-device file's own-process invocation.
 
     Identified structurally rather than by a file-name whitelist: names exactly
-    one of the two four-CPU-device test files, no other test path alongside it,
+    one of the four-CPU-device test files, no other test path alongside it,
     and runs at `-n 0`.
     """
     four_device_targets = [
@@ -103,7 +104,7 @@ def four_device_pinning_test_files(*, tests_root: Path) -> tuple[str, ...]:
 
     Read from each module's own statements rather than from its text: the pin is
     a module-level `jax.config.update("jax_num_cpu_devices", n)` with `n` above
-    one, wherever the module places it — the two registered files put it inside a
+    one, wherever the module places it — the registered files put it inside a
     module-level `try`. A file that spawns a child process pinning a topology
     writes that call inside a string literal, and a file pinning one device asks
     for no isolation; neither is a four-device file, and neither is matched.

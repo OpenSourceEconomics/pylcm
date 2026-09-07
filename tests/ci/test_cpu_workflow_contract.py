@@ -64,6 +64,44 @@ def test_every_four_device_test_file_is_registered():
     )
 
 
+def test_only_the_last_fp64_invocation_writes_the_coverage_report():
+    """The fp64 leg writes its coverage report from its last pytest invocation.
+
+    The leg is one `&&` chain accumulating coverage with `--cov-append`, so the
+    XML is complete only once every invocation of the chain has run. Written
+    from any earlier link it would omit whatever the links after it cover —
+    which is what appending another own-process file to the end of the chain
+    would silently do.
+    """
+    argvs = _pytest_invocation_argvs(
+        job="tests", step_name="Run pytest and collect coverage"
+    )
+    writing = [index for index, argv in enumerate(argvs) if "--cov-report=xml" in argv]
+
+    assert writing == [len(argvs) - 1], (
+        f"{len(argvs)} invocations, coverage XML written by {writing} instead of "
+        f"by the last one alone"
+    )
+
+
+def test_every_earlier_fp64_invocation_suppresses_its_coverage_report():
+    """Every fp64 invocation but the last suppresses its own coverage report.
+
+    An invocation without `--cov-report=` writes the default report, so the
+    file the last link publishes is no longer the one the leg accumulated.
+    """
+    argvs = _pytest_invocation_argvs(
+        job="tests", step_name="Run pytest and collect coverage"
+    )
+    reporting = [
+        index for index, argv in enumerate(argvs[:-1]) if "--cov-report=" not in argv
+    ]
+
+    assert not reporting, (
+        f"fp64 invocations {reporting} do not suppress their coverage report"
+    )
+
+
 def _step_run_block(*, job: str, step_name: str) -> str:
     """Return the `run:` script of one named step in one workflow job."""
     workflow = yaml.safe_load(
