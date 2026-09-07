@@ -84,6 +84,7 @@ from _lcm.regime_building.Q_and_F import (
     SAME_PERIOD_PARAMS_ARG,
     SAME_PERIOD_V_ARG,
 )
+from _lcm.solution.continuation_reads import published_continuation_template
 from _lcm.solution.contract import (
     BackwardInductionResult,
     ContinuationPayload,
@@ -274,9 +275,21 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         if metadata.scope is ProgramScope.REPLAY
     }
     input_liveness = _build_planned_input_liveness(
-        regimes=regimes, program_metadata=compiled_programs.metadata
+        regimes=regimes,
+        program_metadata=compiled_programs.metadata,
+        retain_all_artifacts=retain_all_artifacts,
+        persistable_artifact_refs=persistable_artifact_refs,
     )
     buffer_registry = BufferRegistry()
+    buffer_registry.declare_model_owned(
+        tree=(
+            flat_params,
+            tuple(
+                (space.states, space.discrete_actions, space.continuous_actions)
+                for space in base_state_action_spaces.values()
+            ),
+        )
+    )
     input_templates = SolveInputMappings(
         next_regime_to_V_arr=next_regime_to_V_arr,
         next_regime_to_continuation=next_regime_to_continuation,
@@ -1598,11 +1611,15 @@ def _build_planned_input_liveness(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     program_metadata: Mapping[_CoreTriple, _ProgramExecutionMetadata],
+    retain_all_artifacts: bool = False,
+    persistable_artifact_refs: frozenset[ArtifactRef] = frozenset(),
 ) -> PlannedInputLiveness[_InputDispatch, ValueArtifactAddress]:
     """Build one exact-dispatch ledger without authorizing physical release.
 
     Every declared read of every program is a counted consumer, whatever the
-    program's disposition. A regime value is retained by the solve result. What
+    program's disposition. What the ledger retains is what the selected
+    retention keeps in the solve result: every regime value, and every leaf of
+    every continuation payload the persistence-oriented retention holds. What
     stays pinned is what no declaration covers: the host-read continuation
     leaves of the EGM family and every reachable input of a program that
     declares no reads. A rolled entry whose producer does not run at its period
@@ -1633,7 +1650,11 @@ def _build_planned_input_liveness(
             )
         )
 
-    retained = _retained_solution_value_artifacts(regimes=regimes)
+    retained = _retained_solution_artifacts(
+        regimes=regimes,
+        retain_all_artifacts=retain_all_artifacts,
+        persistable_artifact_refs=persistable_artifact_refs,
+    )
     known = {
         *retained,
         *pinned_artifacts,
@@ -1781,12 +1802,20 @@ def _unique_value_artifacts(
     return tuple(dict.fromkeys(artifacts))
 
 
-def _retained_solution_value_artifacts(
+def _retained_solution_artifacts(
     *,
     regimes: Mapping[RegimeName, Regime],
+    retain_all_artifacts: bool,
+    persistable_artifact_refs: frozenset[ArtifactRef],
 ) -> tuple[ValueArtifactAddress, ...]:
-    """Pin every value retained in the public backward-induction result."""
-    return tuple(
+    """Pin every artifact the selected retention keeps in the public result.
+
+    Every regime value is kept under every retention. A continuation payload is
+    kept only where persistence-oriented retention selected its exact address,
+    and then every leaf of it is retained: the result hands the whole payload
+    back, so freeing one leaf leaves an unreadable artifact behind.
+    """
+    values = tuple(
         ValueArtifactAddress(
             kind=ValueArtifactKind.REGIME_VALUE,
             period=period,
@@ -1795,6 +1824,45 @@ def _retained_solution_value_artifacts(
         for regime_name, regime in regimes.items()
         for period in regime.active_periods
     )
+    if not retain_all_artifacts:
+        return values
+    return values + _retained_continuation_leaves(
+        regimes=regimes, persistable_artifact_refs=persistable_artifact_refs
+    )
+
+
+def _retained_continuation_leaves(
+    *,
+    regimes: Mapping[RegimeName, Regime],
+    persistable_artifact_refs: frozenset[ArtifactRef],
+) -> tuple[ValueArtifactAddress, ...]:
+    """Address every leaf of every continuation payload persistence keeps."""
+    continuation_specs = MappingProxyType(
+        {
+            regime_name: regime.solution.continuation_spec
+            for regime_name, regime in regimes.items()
+            if regime.solution.continuation_spec is not None
+        }
+    )
+    leaves: list[ValueArtifactAddress] = []
+    for ref in sorted(persistable_artifact_refs):
+        spec = continuation_specs.get(ref.regime)
+        template = published_continuation_template(
+            continuation_specs=continuation_specs, target=ref.regime
+        )
+        if spec is None or template is None or spec.artifact_key != ref.key:
+            continue
+        leaves.extend(
+            ValueArtifactAddress(
+                kind=ValueArtifactKind.CONTINUATION_LEAF,
+                period=ref.period,
+                regime=ref.regime,
+                artifact_key=ref.key,
+                leaf_path=leaf_path,
+            )
+            for leaf_path in template.leaves()
+        )
+    return tuple(dict.fromkeys(leaves))
 
 
 def gated_edge_fold_value_reads(

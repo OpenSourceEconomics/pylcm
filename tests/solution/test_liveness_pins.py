@@ -1,6 +1,8 @@
 """The ledger counts every declared read and pins exactly the undeclared ones.
 
-A regime value is retained by the solve result. A dense program's declared reads
+What the ledger retains is what the selected retention keeps in the solve
+result: every regime value, and — under persistence-oriented retention — every
+leaf of every continuation payload it selects. A dense program's declared reads
 are counted like a planned program's. Two reads remain undeclared — the EGM
 family's host read of the target's `breakpoints` leaf, and every read of a
 program that declares none — and those are pinned so no release can free them.
@@ -36,7 +38,7 @@ from _lcm.solution.undeclared_reads import (
 )
 from _lcm.typing import RegimeName
 from lcm import Model
-from lcm.solver_api import EGM_CONTINUATION
+from lcm.solver_api import EGM_CONTINUATION, ArtifactRef
 from lcm.solvers import EGM, NNBEGM
 from tests.solution.test_egm_solver import _SAVINGS_GRID
 from tests.solution.test_egm_solver import _model as _egm_model
@@ -97,6 +99,49 @@ def test_every_regime_value_is_retained() -> None:
         )
         for name, regime in model._regimes.items()
         for period in regime.active_periods
+    )
+
+
+def test_a_persisted_continuation_payload_is_retained_leaf_by_leaf() -> None:
+    """Persistence-oriented retention keeps every leaf of the payload it selects."""
+    model = _egm_model(solver=EGM(savings_grid=_SAVINGS_GRID))
+    reference = ArtifactRef(period=3, regime="done", key=EGM_CONTINUATION)
+    ledger = _build_planned_input_liveness(
+        regimes=model._regimes,
+        program_metadata=_metadata(model=model),
+        retain_all_artifacts=True,
+        persistable_artifact_refs=frozenset({reference}),
+    )
+    continuation_specs: dict[RegimeName, ContinuationSpec] = {
+        name: regime.solution.continuation_spec
+        for name, regime in model._regimes.items()
+        if regime.solution.continuation_spec is not None
+    }
+
+    assert ledger.retained_artifacts >= frozenset(
+        ValueArtifactAddress(
+            kind=ValueArtifactKind.CONTINUATION_LEAF,
+            period=reference.period,
+            regime=reference.regime,
+            artifact_key=reference.key,
+            leaf_path=path,
+        )
+        for path in _published_leaf_paths(
+            continuation_specs=continuation_specs, target=reference.regime
+        )
+    )
+
+
+def test_a_payload_no_retention_selected_is_not_retained() -> None:
+    """Value-only retention keeps no continuation leaf on device."""
+    model = _egm_model(solver=EGM(savings_grid=_SAVINGS_GRID))
+    ledger = _build_planned_input_liveness(
+        regimes=model._regimes, program_metadata=_metadata(model=model)
+    )
+
+    assert not any(
+        artifact.kind is ValueArtifactKind.CONTINUATION_LEAF
+        for artifact in ledger.retained_artifacts
     )
 
 

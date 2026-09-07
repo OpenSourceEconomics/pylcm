@@ -41,13 +41,34 @@ class BufferRegistry:
     A buffer is registered under every key that reaches it; a release consults
     the registry so a buffer two keys share is deleted only when both keys may
     go. Forgetting a buffer drops every key on it.
+
+    A release may only ever free a buffer the engine itself produced. A solver
+    is free to hand one of the model's own arrays through as an artifact leaf —
+    an eager `jnp.broadcast_to` onto the shape the array already has returns
+    that array — and the model keeps reading its declaration for the rest of its
+    life. Declaring the model's buffers marks them so no release can reach them.
     """
 
-    __slots__ = ("_keys_by_buffer",)
+    __slots__ = ("_keys_by_buffer", "_model_owned_buffers")
 
     def __init__(self) -> None:
-        """Start with no registered buffer."""
+        """Start with no registered buffer and no declared model buffer."""
         self._keys_by_buffer: dict[BufferIdentity, set[Hashable]] = {}
+        self._model_owned_buffers: set[BufferIdentity] = set()
+
+    def declare_model_owned(self, *, tree: object) -> None:
+        """Mark every array leaf of `tree` as a buffer the engine did not produce.
+
+        Called once, before the first dispatch, with the arrays the model holds
+        for its whole life — its materialized grids and its parameter vector.
+        """
+        for leaf in jax.tree.leaves(tree):
+            if isinstance(leaf, jax.Array) and not leaf.is_deleted():
+                self._model_owned_buffers.add(buffer_identity(array=leaf))
+
+    def is_model_owned(self, *, array: jax.Array) -> bool:
+        """Report whether the model, not a dispatch, owns this array's buffer."""
+        return buffer_identity(array=array) in self._model_owned_buffers
 
     def register(self, *, array: jax.Array, artifact: Hashable) -> None:
         """Record that `artifact` names the buffer `array` occupies."""
@@ -98,10 +119,13 @@ def release_closed_artifacts(
     Each artifact must be release eligible in the ledger — a remaining consumer
     is an `ExecutionPlanningError`, never a warning. A buffer is deleted only when
     every key the registry holds on it is eligible too, so a leaf that is also a
-    retained value survives. Nothing is deleted before one `block_until_ready`
-    over `pending_outputs`, the outputs of every dispatch of the period so far,
-    so an asynchronous computation never reads a freed buffer. Every deleted key
-    is logged at debug level with the artifact key and the closing dispatch.
+    retained value survives. A buffer the model owns is never deleted, whatever
+    the ledger says about the key that reached it: the engine did not produce it,
+    so the engine may not free it. Nothing is deleted before one
+    `block_until_ready` over `pending_outputs`, the outputs of every dispatch of
+    the period so far, so an asynchronous computation never reads a freed buffer.
+    Every deleted key is logged at debug level with the artifact key and the
+    closing dispatch, and so is every key kept because the model owns its buffer.
     """
     to_delete: dict[BufferIdentity, tuple[jax.Array, tuple[Hashable, ...]]] = {}
     for artifact in artifacts:
@@ -113,6 +137,17 @@ def release_closed_artifacts(
             raise ExecutionPlanningError(msg)
         array = arrays_by_artifact[artifact]
         if array.is_deleted():
+            continue
+        if registry.is_model_owned(array=array):
+            logger.debug(
+                "kept %r after dispatch %r: the model owns its buffer",
+                artifact,
+                closing_dispatch,
+                extra={
+                    "kept_artifact_key": artifact,
+                    "closing_dispatch": closing_dispatch,
+                },
+            )
             continue
         partners = registry.artifacts_sharing(array=array) | {artifact}
         if not all(
