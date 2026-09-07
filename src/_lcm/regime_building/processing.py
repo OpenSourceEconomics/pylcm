@@ -3978,12 +3978,11 @@ def _envelope_publishes_crossings(solver: DCEGM) -> bool:
 
     - `MSSEnvelope` ⇒ no: the refinement inserts crossings only between adjacent query
       winners, so a branch that owns ground strictly inside one candidate
-      interval leaves no record in the row, and a switch landing exactly on a
-      candidate abscissa is suppressed by the strict-interior test. Opening the
-      read on such a row does not merely blur a switch — it publishes a
-      different action, and one the canonical-Q safeguard cannot recover,
-      because that safeguard rescores the emitted candidate against the finite
-      action grid and an omitted owner is in neither set.
+      interval leaves no record in the row. Opening the read on such a row does
+      not merely blur a switch — it publishes a different action, and one the
+      canonical-Q safeguard cannot recover, because that safeguard rescores the
+      emitted candidate against the finite action grid and an omitted owner is
+      in neither set.
     - `ExactEnvelope` ⇒ no: ownership is resolved per node cell and certified,
       a boundary whose sides differ in value or policy emits both one-sided
       records, and a chain with more owned sub-cells than the row has slots
