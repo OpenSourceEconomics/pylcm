@@ -72,23 +72,30 @@ def plan_workspace[Compiled](
     compile_candidate: Callable[[Mapping[str, int]], Compiled],
     budget_bytes: int | None = None,
     peak_bytes_for: Callable[[Compiled], int] | None = None,
+    resident_bytes: int = 0,
 ) -> WorkspacePlan[Compiled]:
     """Compile the width frontier widest-first and return the first candidate that fits.
 
     Without a budget, the bootstrap width (or an axis's requested width) is compiled
-    exactly once and compiler memory analysis is deliberately not consulted.  With a
+    exactly once and compiler memory analysis is deliberately not consulted, so
+    `resident_bytes` is not consulted either.  With a
     budget, candidates are compiled and analyzed in rank order — descending width
     product, ties broken toward the lexicographically greatest width tuple in axis
     declaration order — and the first whose compiler-reported peak fits is returned.
+    A candidate is feasible when its compiler-reported peak plus the bytes the plan
+    keeps resident on the device at the node's scheduled position fits the budget.
     That is the feasible maximum of the whole frontier, reached without compiling any
     candidate narrower than the winner; only a core that fits at no width compiles
-    its entire frontier before failing.
+    its entire frontier before failing.  A position whose resident bytes already
+    reach the budget is refused before any candidate is compiled, since no width
+    could serve it.
 
     The returned executable is the exact object compiled for the selected candidate;
     the planner neither executes it nor recompiles the winner.
     """
     declared_axes = _validate_axes(axes=axes)
     budget = _validate_budget(budget_bytes=budget_bytes)
+    resident = _validate_resident_bytes(resident_bytes=resident_bytes)
     if not callable(compile_candidate):
         msg = "The workspace candidate compiler must be callable."
         raise TypeError(msg)
@@ -106,6 +113,13 @@ def plan_workspace[Compiled](
         compiled = compile_candidate(widths)
         return WorkspacePlan(widths=widths, peak_bytes=None, compiled=compiled)
 
+    if resident >= budget:
+        msg = (
+            f"The plan keeps {resident} bytes resident at the node's position, "
+            f"leaving nothing of the {budget}-byte budget for a workspace."
+        )
+        raise ExecutionPlanningError(msg)
+
     least_peak: int | None = None
     for widths in candidates:
         compiled = compile_candidate(widths)
@@ -113,7 +127,7 @@ def plan_workspace[Compiled](
             compiled=compiled, widths=widths, peak_bytes_for=peak_bytes_for
         )
         least_peak = peak_bytes if least_peak is None else min(least_peak, peak_bytes)
-        if peak_bytes <= budget:
+        if peak_bytes + resident <= budget:
             return WorkspacePlan(
                 widths=widths, peak_bytes=peak_bytes, compiled=compiled
             )
@@ -123,13 +137,14 @@ def plan_workspace[Compiled](
     ):
         msg = (
             "The explicitly requested workspace widths require "
-            f"{least_peak} peak bytes, exceeding the {budget}-byte budget."
+            f"{least_peak} peak bytes, exceeding the {budget}-byte budget "
+            f"with {resident} resident bytes at the node's position."
         )
     else:
         msg = (
             "No workspace-width candidate fits the "
-            f"{budget}-byte budget; the smallest reported peak is "
-            f"{least_peak} bytes."
+            f"{budget}-byte budget with {resident} resident bytes at the node's "
+            f"position; the smallest reported peak is {least_peak} bytes."
         )
     raise ExecutionPlanningError(msg)
 
@@ -197,6 +212,17 @@ def _validate_budget(*, budget_bytes: int | None) -> int | None:
         msg = "The workspace budget must be positive."
         raise ValueError(msg)
     return budget_bytes
+
+
+def _validate_resident_bytes(*, resident_bytes: int) -> int:
+    """Require an exact non-negative count of bytes resident at the node."""
+    if type(resident_bytes) is not int:
+        msg = "The resident byte count must be an exact int."
+        raise TypeError(msg)
+    if resident_bytes < 0:
+        msg = "The resident byte count cannot be negative."
+        raise ValueError(msg)
+    return resident_bytes
 
 
 def _validate_width(*, axis_name: str, extent: int, width: object) -> int:

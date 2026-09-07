@@ -622,3 +622,99 @@ def test_non_callable_compiler_is_rejected() -> None:
             axes=(_axis(),),
             compile_candidate=cast("Callable[[Mapping[str, int]], object]", object()),
         )
+
+
+def test_resident_bytes_make_a_candidate_that_fits_alone_infeasible() -> None:
+    """The ceiling binds peak plus what the plan keeps resident on the device."""
+    compiler = _Compiler(lambda widths: _stats(peak=100 * widths["actions"]))
+
+    plan = plan_workspace(
+        axes=(_axis(name="actions", extent=8),),
+        compile_candidate=compiler,
+        budget_bytes=800,
+        resident_bytes=1,
+    )
+
+    assert plan.widths == {"actions": 4}
+
+
+def test_zero_resident_bytes_leave_the_selection_unchanged() -> None:
+    """Without a resident term the widest candidate that fits its peak wins."""
+    compiler = _Compiler(lambda widths: _stats(peak=100 * widths["actions"]))
+
+    plan = plan_workspace(
+        axes=(_axis(name="actions", extent=8),),
+        compile_candidate=compiler,
+        budget_bytes=800,
+        resident_bytes=0,
+    )
+
+    assert plan.widths == {"actions": 8}
+
+
+def test_the_refusal_names_the_resident_term() -> None:
+    """A core that fits at no width reports the resident bytes it competed with."""
+    compiler = _Compiler(lambda widths: _stats(peak=100 * widths["actions"]))
+
+    with pytest.raises(ExecutionPlanningError, match="resident"):
+        plan_workspace(
+            axes=(_axis(name="actions", extent=8),),
+            compile_candidate=compiler,
+            budget_bytes=150,
+            resident_bytes=60,
+        )
+
+
+def test_negative_resident_bytes_are_refused() -> None:
+    """Resident bytes are a count."""
+    with pytest.raises(ValueError, match="resident"):
+        plan_workspace(
+            axes=(_axis(name="actions", extent=8),),
+            compile_candidate=_Compiler(lambda _widths: _stats(peak=1)),
+            budget_bytes=100,
+            resident_bytes=-1,
+        )
+
+
+def test_a_resident_term_filling_the_budget_is_refused_naming_both_numbers() -> None:
+    """A position with no budget left over cannot be served at any width."""
+    compiler = _Compiler(lambda _widths: _stats(peak=0))
+
+    with pytest.raises(
+        ExecutionPlanningError,
+        match=r"keeps 100 bytes resident.*100-byte budget",
+    ):
+        plan_workspace(
+            axes=(_axis(name="actions", extent=8),),
+            compile_candidate=compiler,
+            budget_bytes=100,
+            resident_bytes=100,
+        )
+
+
+def test_a_resident_term_filling_the_budget_compiles_no_candidate() -> None:
+    """The refusal is reached without paying for the frontier."""
+    compiler = _Compiler(lambda _widths: _stats(peak=0))
+
+    with pytest.raises(ExecutionPlanningError):
+        plan_workspace(
+            axes=(_axis(name="actions", extent=8),),
+            compile_candidate=compiler,
+            budget_bytes=100,
+            resident_bytes=100,
+        )
+
+    assert compiler.calls == []
+
+
+def test_resident_bytes_are_ignored_without_a_budget() -> None:
+    """An unbudgeted solve compiles its bootstrap width whatever is resident."""
+    compiler = _Compiler(lambda _widths: _stats(peak=0))
+
+    plan = plan_workspace(
+        axes=(_axis(name="actions", extent=8),),
+        compile_candidate=compiler,
+        resident_bytes=10**9,
+    )
+
+    assert plan.widths == {"actions": 4}
