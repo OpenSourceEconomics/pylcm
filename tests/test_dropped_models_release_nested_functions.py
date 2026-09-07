@@ -19,10 +19,12 @@ import pytest
 
 import _lcm
 import lcm
+from _lcm.egm.comparison_arithmetic import ComparisonArithmetic
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model
-from lcm.solvers import AdaptiveOuterMesh, GridSearch
+from lcm.solvers import AdaptiveOuterMesh, GridSearch, MSSEnvelope
 from lcm.typing import UserParams
-from tests.test_models import n_nbegm_toy
+from tests.conftest import EXACT_KERNEL_SKIP_REASON
+from tests.test_models import dcegm_paper_twin, n_nbegm_toy
 from tests.test_models.deterministic.regression import (
     START_AGE,
     LaborSupply,
@@ -37,6 +39,9 @@ _ENGINE_SOURCE_ROOTS = (
     Path(lcm.__file__).resolve().parent,
 )
 _TOY_PARAMS: UserParams = {"discount_factor": 0.95}
+_requires_exact_kernel = pytest.mark.requires_exact_affine_kernel(
+    reason=EXACT_KERNEL_SKIP_REASON
+)
 
 
 def _live_nested_functions(*, source_roots: tuple[Path, ...]) -> int:
@@ -103,6 +108,14 @@ def _toy_model(*, variant: str, outer_search: AdaptiveOuterMesh | None = None) -
     )
 
 
+def _mss_model(*, arithmetic: ComparisonArithmetic) -> Model:
+    """Build the DC-EGM twin on a coarse savings grid under one MSS arithmetic."""
+    return dcegm_paper_twin.build_dcegm_model(
+        savings_grid=LinSpacedGrid(start=0.0, stop=50.0, n_points=40),
+        envelope=MSSEnvelope(arithmetic=arithmetic),
+    )
+
+
 def _adaptive_outer_search() -> AdaptiveOuterMesh:
     return AdaptiveOuterMesh(
         initial_grid=LinSpacedGrid(start=0.0, stop=20.0, n_points=3),
@@ -123,7 +136,21 @@ _FAMILIES: dict[str, tuple[Callable[[], Model], Callable[[], UserParams]]] = {
         lambda: _toy_model(variant="n_nbegm", outer_search=_adaptive_outer_search()),
         lambda: _TOY_PARAMS,
     ),
+    "mss_certified": (
+        lambda: _mss_model(arithmetic="certified"),
+        dcegm_paper_twin.get_params,
+    ),
+    "mss_ordinary": (
+        lambda: _mss_model(arithmetic="ordinary"),
+        dcegm_paper_twin.get_params,
+    ),
 }
+_FAMILY_CASES = [
+    pytest.param(family, marks=_requires_exact_kernel)
+    if family == "mss_certified"
+    else family
+    for family in _FAMILIES
+]
 
 
 def _build_solve_and_drop(family: str) -> None:
@@ -133,7 +160,7 @@ def _build_solve_and_drop(family: str) -> None:
     del solution, model
 
 
-@pytest.mark.parametrize("family", list(_FAMILIES))
+@pytest.mark.parametrize("family", _FAMILY_CASES)
 def test_a_dropped_model_and_solution_leave_no_nested_engine_function_behind(
     family: str,
 ) -> None:

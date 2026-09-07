@@ -550,9 +550,17 @@ def _margin_sign(
             b_v1=b_v1,
             x_query=x_query,
         )
-    gap = _ordinary_line_value(
-        x0=a_x0, x1=a_x1, v0=a_v0, v1=a_v1, x_query=x_query
-    ) - _ordinary_line_value(x0=b_x0, x1=b_x1, v0=b_v0, v1=b_v1, x_query=x_query)
+    gap = _ordinary_gap(
+        at=x_query,
+        a_x0=a_x0,
+        a_x1=a_x1,
+        a_v0=a_v0,
+        a_v1=a_v1,
+        b_x0=b_x0,
+        b_x1=b_x1,
+        b_v0=b_v0,
+        b_v1=b_v1,
+    )
     usable = (a_x1 > a_x0) & (b_x1 > b_x0) & jnp.isfinite(gap)
     for operand in operands:
         usable = usable & jnp.isfinite(operand)
@@ -612,12 +620,18 @@ def _affine_handover(
             b_v1=b_v1,
         )
 
-    def gap(at: FloatND) -> FloatND:
-        return _ordinary_line_value(
-            x0=a_x0, x1=a_x1, v0=a_v0, v1=a_v1, x_query=at
-        ) - _ordinary_line_value(x0=b_x0, x1=b_x1, v0=b_v0, v1=b_v1, x_query=at)
-
-    gap_left, gap_right = gap(left), gap(right)
+    lines = {
+        "a_x0": a_x0,
+        "a_x1": a_x1,
+        "a_v0": a_v0,
+        "a_v1": a_v1,
+        "b_x0": b_x0,
+        "b_x1": b_x1,
+        "b_v0": b_v0,
+        "b_v1": b_v1,
+    }
+    gap_left = _ordinary_gap(at=left, **lines)
+    gap_right = _ordinary_gap(at=right, **lines)
     slope = gap_left - gap_right
     root = jnp.where(
         slope == 0,
@@ -626,10 +640,30 @@ def _affine_handover(
     )
     root = jnp.clip(root, jnp.minimum(left, right), jnp.maximum(left, right))
     root = jnp.where(
-        gap(root) > 0, jnp.nextafter(root, jnp.full_like(root, jnp.inf)), root
+        _ordinary_gap(at=root, **lines) > 0,
+        jnp.nextafter(root, jnp.full_like(root, jnp.inf)),
+        root,
     )
     usable = jnp.isfinite(root)
     return jnp.where(usable, root, jnp.nan), jnp.where(usable, 0, 1).astype(jnp.int32)
+
+
+def _ordinary_gap(
+    *,
+    at: FloatND,
+    a_x0: FloatND,
+    a_x1: FloatND,
+    a_v0: FloatND,
+    a_v1: FloatND,
+    b_x0: FloatND,
+    b_x1: FloatND,
+    b_v0: FloatND,
+    b_v1: FloatND,
+) -> FloatND:
+    """Read line A less line B at `at`, both in the working format."""
+    return _ordinary_line_value(
+        x0=a_x0, x1=a_x1, v0=a_v0, v1=a_v1, x_query=at
+    ) - _ordinary_line_value(x0=b_x0, x1=b_x1, v0=b_v0, v1=b_v1, x_query=at)
 
 
 def _ordinary_owner(
@@ -1101,6 +1135,77 @@ jax.tree_util.register_pytree_node(
 )
 
 
+class _OverlappingPieces(NamedTuple):
+    """The traced operands of resolving which covering piece is a branch's trace."""
+
+    covers: BoolND
+    """Per link, whether it belongs to the branch and covers both cell endpoints."""
+    links: _Links
+    """Every link as a comparable line plus its stored span."""
+    node_link: ScalarInt
+    """The link owning the node the trace must connect to."""
+    anchor: FloatND
+    """The node abscissa at which a covering piece must match the node owner."""
+    prev_grid: FloatND
+    """The cell's left abscissa, at which anchor-equal pieces are ordered."""
+
+
+def _first_covering_piece(operand: _OverlappingPieces) -> tuple[ScalarInt, BoolND]:
+    """Select the single covering piece, resolved by construction."""
+    return jnp.argmax(operand.covers).astype(jnp.int32), jnp.ones((), dtype=bool)
+
+
+def _resolve_overlapping_certified(
+    operand: _OverlappingPieces,
+) -> tuple[ScalarInt, BoolND]:
+    """Resolve several covering pieces on the stored operands."""
+    return _resolve_overlapping(operand=operand, arithmetic="certified")
+
+
+def _resolve_overlapping_ordinary(
+    operand: _OverlappingPieces,
+) -> tuple[ScalarInt, BoolND]:
+    """Resolve several covering pieces on working-format readings."""
+    return _resolve_overlapping(operand=operand, arithmetic="ordinary")
+
+
+def _resolve_overlapping(
+    *, operand: _OverlappingPieces, arithmetic: ComparisonArithmetic
+) -> tuple[ScalarInt, BoolND]:
+    """Order several covering pieces and certify the selected one's provenance.
+
+    On the incoming side, equal values at the right anchor are ordered by the
+    LEFT limit, hence by smallest slope. Among anchor-equal lines, maximizing
+    value at the left cell endpoint does exactly that. All admitted links extend
+    right of that left endpoint, so exact affine ties then retain the original
+    stable identity. No reflected, rounded or nextafter coordinate is used.
+    Outgoing ties keep the ordinary right-continuous order at the left anchor.
+    """
+    links = operand.links
+    signs = _margin_sign(
+        a_x0=links.x0,
+        a_x1=links.x1,
+        a_v0=links.v0,
+        a_v1=links.v1,
+        b_x0=links.x0[operand.node_link],
+        b_x1=links.x1[operand.node_link],
+        b_v0=links.v0[operand.node_link],
+        b_v1=links.v1[operand.node_link],
+        x_query=operand.anchor,
+        arithmetic=arithmetic,
+    )
+    admitted = operand.covers & (signs == 0)
+    owner, resolved = _certified_owner(
+        brackets=admitted[None, :],
+        links=links,
+        query=operand.prev_grid.reshape(1, 1),
+        stable_index=jnp.arange(links.x0.shape[0], dtype=jnp.int32)[None, :],
+        arithmetic=arithmetic,
+    )
+    certified = jnp.all(~operand.covers | ((signs >= -1) & (signs <= 1)))
+    return owner[0], resolved[0] & certified & jnp.any(admitted)
+
+
 def _interval_piece(
     *,
     node_link: ScalarInt,
@@ -1134,45 +1239,27 @@ def _interval_piece(
     )
     count = jnp.sum(covers, dtype=jnp.int32)
 
-    def resolve_overlapping(_: None) -> tuple[ScalarInt, BoolND]:
-        # On the incoming side, equal values at the right anchor are ordered
-        # by the LEFT limit, hence by smallest slope. Among anchor-equal lines,
-        # maximizing value at the left cell endpoint does exactly that. All
-        # admitted links extend right of that left endpoint, so exact affine
-        # ties then retain the original stable identity. No reflected, rounded
-        # or nextafter coordinate is used. Outgoing ties keep the ordinary
-        # right-continuous order at the left anchor.
-        anchor = this_grid if incoming else prev_grid
-        signs = _margin_sign(
-            a_x0=links.x0,
-            a_x1=links.x1,
-            a_v0=links.v0,
-            a_v1=links.v1,
-            b_x0=links.x0[node_link],
-            b_x1=links.x1[node_link],
-            b_v0=links.v0[node_link],
-            b_v1=links.v1[node_link],
-            x_query=anchor,
-            arithmetic=arithmetic,
-        )
-        admitted = covers & (signs == 0)
-        owner, resolved = _certified_owner(
-            brackets=admitted[None, :],
-            links=links,
-            query=prev_grid.reshape(1, 1),
-            stable_index=jnp.arange(links.x0.shape[0], dtype=jnp.int32)[None, :],
-            arithmetic=arithmetic,
-        )
-        certified = jnp.all(~covers | ((signs >= -1) & (signs <= 1)))
-        return owner[0], resolved[0] & certified & jnp.any(admitted)
-
     # Ordinary monotone branches have one covering piece. Keep that common
     # path to one gathered endpoint comparison, not an exhaustive exact scan.
+    # The arithmetic is static, so it selects the branch callable here rather
+    # than being closed over: a callable defined per trace would be pinned by
+    # the beartype claw together with the tracers it closed over.
+    resolve_overlapping = (
+        _resolve_overlapping_certified
+        if arithmetic == "certified"
+        else _resolve_overlapping_ordinary
+    )
     piece, selection_resolved = jax.lax.cond(
         count > 1,
         resolve_overlapping,
-        lambda _: (jnp.argmax(covers).astype(jnp.int32), jnp.asarray(True)),  # noqa: FBT003
-        operand=None,
+        _first_covering_piece,
+        _OverlappingPieces(
+            covers=covers,
+            links=links,
+            node_link=node_link,
+            anchor=this_grid if incoming else prev_grid,
+            prev_grid=prev_grid,
+        ),
     )
     boundary_only = (
         _stored_equal(left=links.lower[node_link], right=this_grid)
