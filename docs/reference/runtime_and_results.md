@@ -48,11 +48,16 @@ deterministic width frontier for each streamed axis (one, the powers of two belo
 extent, and the full extent; a requested width is the only candidate) and walks it
 widest-first — descending width product, ties broken toward the lexicographically
 largest width tuple in axis declaration order. Each candidate is lowered and compiled,
-its compiler-reported peak is read, and the first candidate that fits is dispatched; a
-narrower candidate is compiled only after every wider one exceeded the budget. That
-selects the same candidate an exhaustive search would, at the cost of one extra lowering
-per rejected width: a core whose full extent fits compiles exactly one candidate, and a
-core that fits at no width compiles its whole frontier before the error. Compilation is
+its compiler-reported peak is read, and the first candidate whose peak plus the bytes
+the plan keeps resident on that device at the core's scheduled position fits is
+dispatched. The resident bytes are predicted from the solve's own schedule — every
+retained value of a later period, every continuation and gated-edge input still to be
+read, and the outputs of every regime dispatched concurrently on the same device — so
+the ceiling bounds the device's footprint, not one program's workspace. A narrower
+candidate is compiled only after every wider one exceeded the budget. That selects the
+same candidate an exhaustive search would, at the cost of one extra lowering per
+rejected width: a core whose full extent fits compiles exactly one candidate, and a core
+that fits at no width compiles its whole frontier before the error. Compilation is
 scheduled in waves across regime-period cells — every cell's widest candidate first,
 then the next candidate of only those cells still over budget — so parallel compilation
 and the deduplication of identical lowerings are unchanged. A dense program has exactly
@@ -72,10 +77,46 @@ The budget is compile-only and fail-closed:
   device placement, so a replayed period is lowered against the restored arrays' default
   placement rather than the submesh the solve dispatched the period on.
 
-The ceiling bounds each compiled program's reported per-device peak, not the device-wide
-footprint of a solve: retained values, continuation arrays, executable caches, and
-allocator overhead lie outside it. Among feasible candidates the choice is by width, not
-by measured runtime.
+The ceiling bounds a device's predicted footprint at each core's scheduled position —
+its own compiler-reported peak plus the resident bytes the schedule keeps alive there.
+It does not model compiler temporaries outside the reported peak, executable caches,
+host-side staging, or allocator fragmentation. Among feasible candidates the choice is
+by width, not by measured runtime.
+
+(solve-execution-lifetime)=
+
+### Buffer release, donation and placement
+
+Backward induction keeps a ledger of every array a core reads across a regime-period
+boundary. After a regime's kernels have run, the engine:
+
+- releases every input whose last reader has run and which the result does not keep — a
+  gated-edge continuation, a continuation leaf — by deleting its device buffer once
+  every output of the period so far is ready; a buffer two keys name (a continuation
+  leaf that is also the published value) is kept while either key is still read;
+- donates an argument a core program names in `donation_candidates` when this dispatch
+  is the last reader of the artifact behind it, the result does not keep it, and it
+  reaches the core on its stored layout; the executable is compiled with that argument
+  donated, and the input is unreadable afterwards;
+- never releases a regime's value: `SolutionResult.values` keeps every one on device.
+
+Under `log_level="debug"` every release and donation is logged with the artifact key and
+the dispatch that closed it.
+
+On several devices every regime is placed before anything is compiled:
+
+- a regime with a `distributed=True` state runs on a mesh of as many devices as the
+  largest divisor of that state's extent that fits — a three-valued type on four devices
+  runs on three;
+- a regime without one runs on one device, taking a device the meshes leave idle in the
+  periods it is active, or else the device with the smallest planned footprint;
+- regimes of one period that read nothing of each other within the period and sit on
+  disjoint devices are dispatched together.
+
+Placement never changes a value. A model on one device, or with one regime active per
+period, is placed exactly as before. `simulate` copies a single-device value back to the
+default device; a value solved on a proper submesh cannot meet subjects spread over
+every device and is refused with an `ExecutionPlanningError`.
 
 (api-solution-result)=
 

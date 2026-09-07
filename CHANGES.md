@@ -65,6 +65,19 @@ chronological order. We follow [semantic versioning](https://semver.org/).
 - Solution archives written under solver API version 1 are rejected with
   `IncompatibleSolutionError`. Compatibility remains exact; pylcm does not migrate an
   archive across a solver API version.
+- Backward induction releases every cross-period input after its final consumer and
+  donates sole-consumer inputs a program names in `donation_candidates`; the donation
+  set is part of the compilation key. Regime values are never released. Under
+  `log_level="debug"` every release and donation is logged with the artifact key and
+  the closing dispatch.
+- On several devices every regime is placed on a submesh before compilation: a
+  distributed state of extent three solves on three of four devices, single-device
+  regimes fill idle devices, and independent regimes of a period dispatch concurrently.
+  Placement never changes a value; one device or one regime per period is placed as
+  before.
+- A streaming width fits when its compiler-reported peak plus the bytes the plan keeps
+  resident on the device at the core's scheduled position fit
+  `ExecutionConfig.device_memory_bytes`.
 
 ### Memory-aware action-width policy and solve/simulate GPU-memory attribution
 
