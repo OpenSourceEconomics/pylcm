@@ -85,3 +85,27 @@ def test_cold_simulate_call_compiles() -> None:
             seed=0,
         )
     assert counts.compiles > 0
+
+
+@pytest.mark.parametrize("witness", sorted(WITNESSES))
+def test_repeating_a_subject_width_at_debug_compiles_nothing(*, witness: str) -> None:
+    """A subject width simulated twice at `debug` compiles only on its first call."""
+    model, params, initial_conditions = WITNESSES[witness]()
+    solution = model.solve(params=params, log_level="off")
+    doubled = {name: jnp.tile(value, 2) for name, value in initial_conditions.items()}
+    model.simulate(
+        params=params,
+        initial_conditions=doubled,
+        solution=solution,
+        log_level="debug",
+        seed=0,
+    )
+    with count_dispatches() as counts:
+        model.simulate(
+            params=params,
+            initial_conditions=doubled,
+            solution=solution,
+            log_level="debug",
+            seed=0,
+        )
+    assert counts.compiles == 0
