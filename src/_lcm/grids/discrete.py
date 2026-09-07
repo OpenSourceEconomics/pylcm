@@ -92,10 +92,9 @@ class DiscreteGrid(Grid):
         The one place a model turns `ExecutionConfig.sharded_states` into the
         grid property the placement planner and the mesh builder read, so a
         state declared there and one declared on the grid are the same axis.
+        The caller has already refused a batched grid in the user's own
+        spelling, so no combination this rejects can reach here.
         """
-        _fail_if_batch_size_combined_with_distributed(
-            batch_size=self.batch_size, distributed=True
-        )
         sharded = copy.copy(self)
         sharded.__distributed = True  # noqa: SLF001
         return sharded

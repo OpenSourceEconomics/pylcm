@@ -735,14 +735,19 @@ def test_a_budgeted_model_replays_a_supplied_solution() -> None:
     )
     solution = model.solve(params=params, log_level="off")
 
-    result = model.simulate(
+    replayed = model.simulate(
         params=params,
         initial_conditions=initial_conditions,
         solution=solution,
         log_level="off",
     )
+    automatic = model.simulate(
+        params=params,
+        initial_conditions=initial_conditions,
+        log_level="off",
+    )
 
-    assert result.n_subjects == 1
+    assert_frame_equal(replayed.to_dataframe(), automatic.to_dataframe())
 
 
 def test_solution_result_has_no_mapping_compatibility_bridge() -> None:

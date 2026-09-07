@@ -1773,7 +1773,7 @@ def _iter_edge_topologies(
     JAX reports.
     """
     target_shapes: dict[RegimeName, tuple[int, ...]] = {}
-    target_shardings: dict[RegimeName, jax.sharding.Sharding | None] = {}
+    target_shardings: dict[RegimeName, jax.sharding.Sharding] = {}
     for source_name, source in regimes.items():
         if not source.gated_edges:
             continue
@@ -1796,7 +1796,6 @@ def _iter_edge_topologies(
                     ),
                     state_order=tuple(target_states),
                     devices=devices,
-                    device_ids=device_ids,
                 )
             shape = target_shapes[target_name]
             sharding = target_shardings[target_name]

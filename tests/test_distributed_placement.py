@@ -28,6 +28,8 @@ from _lcm.execution.value_transfer import ResolvedValueTransfer, ValueTransferKi
 from _lcm.grids import categorical
 from _lcm.grids.continuous import LinSpacedGrid
 from _lcm.grids.discrete import DiscreteGrid
+from _lcm.regime_building import processing
+from _lcm.simulation.initial_conditions import build_initial_states
 from _lcm.solution import backward_induction
 from _lcm.solution.v_topology import fail_if_a_value_is_on_a_proper_submesh
 from _lcm.typing import RegimeName
@@ -77,7 +79,10 @@ class _Type:
 
 
 def _make_three_type_model(
-    *, distributed: bool, sharded: tuple[str, ...] = ()
+    *,
+    distributed: bool,
+    sharded: tuple[str, ...] = (),
+    devices: tuple[int, ...] | None = None,
 ) -> Model:
     """A working regime over a three-valued type beside a single-device terminal one.
 
@@ -85,6 +90,7 @@ def _make_three_type_model(
     a period, so on four devices the working regime runs on three and the
     terminal one on the fourth. `sharded` names the same axis through
     `ExecutionConfig`; either spelling places the regime the same way.
+    `devices` restricts the model to a subset of the four.
     """
     working = UserRegime(
         functions={
@@ -110,7 +116,7 @@ def _make_three_type_model(
         regime_id_class=_ThreeTypeRegimeId,
         states={"type1": DiscreteGrid(category_class=_Type, distributed=distributed)},
         state_transitions={"type1": fixed_transition("type1")},
-        execution_config=ExecutionConfig(sharded_states=sharded),
+        execution_config=ExecutionConfig(sharded_states=sharded, devices=devices),
     )
 
 
@@ -131,6 +137,93 @@ def test_sharded_state_from_execution_config_shards_the_value() -> None:
     mesh = solution.values[0]["working"].sharding.mesh  # ty: ignore[unresolved-attribute]
 
     assert tuple(device.id for device in mesh.devices.flat) == (0, 1, 2)
+
+
+@_skip_pytest_parallel
+def test_execution_devices_reports_the_configured_device_ids() -> None:
+    """`Model.execution_devices` names exactly the ids the configuration gave."""
+    model = _make_three_type_model(distributed=False, devices=(2, 3))
+
+    assert model.execution_devices == (2, 3)
+
+
+@_skip_pytest_parallel
+def test_the_planner_partitions_the_models_own_devices(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The submesh planner is given the model's device count, not JAX's."""
+    recorded: list[int] = []
+    original = processing.plan_submesh_placement
+
+    def _recording(*, requests: Any, n_devices: int) -> Any:
+        recorded.append(n_devices)
+        return original(requests=requests, n_devices=n_devices)
+
+    monkeypatch.setattr(processing, "plan_submesh_placement", _recording)
+    _make_three_type_model(distributed=False, devices=(2, 3))
+
+    assert recorded == [2]
+
+
+@_skip_pytest_parallel
+def test_a_sharded_regime_is_placed_on_the_configured_device_ids() -> None:
+    """The planner's block positions are read back as the model's own device ids."""
+    model = _make_three_type_model(
+        distributed=False, sharded=("type1",), devices=(1, 2, 3)
+    )
+
+    assert model._regimes["working"].solution.submesh_device_ids == (1, 2, 3)
+
+
+@_skip_pytest_parallel
+def test_a_model_restricted_to_two_devices_publishes_every_value_on_them() -> None:
+    """Every value a solve publishes lives on a device the configuration named."""
+    solution = _make_three_type_model(distributed=False, devices=(2, 3)).solve(
+        params=_PARAMS, log_level="off"
+    )
+
+    published_device_ids = {
+        device.id
+        for by_regime in solution.values.values()
+        for value in by_regime.values()
+        for device in value.sharding.device_set
+    }
+
+    assert published_device_ids <= {2, 3}
+
+
+@_skip_pytest_parallel
+def test_the_regime_beside_a_sharded_one_stays_on_the_configured_devices() -> None:
+    """A single-device regime of a restricted model keeps off the excluded devices."""
+    solution = _make_three_type_model(
+        distributed=False, sharded=("type1",), devices=(1, 2, 3)
+    ).solve(params=_PARAMS, log_level="off")
+    value = solution.values[0]["retired"]
+
+    assert {device.id for device in value.sharding.device_set} <= {1, 2, 3}
+
+
+@_skip_pytest_parallel
+def test_seeded_subject_states_of_a_restricted_model_stay_on_its_devices() -> None:
+    """Per-subject simulate arrays are seeded on a device the configuration named."""
+    model = _make_three_type_model(distributed=False, devices=(2, 3))
+    states_per_regime = build_initial_states(
+        initial_states={
+            "wealth": jnp.full(4, 50.0),
+            "type1": jnp.asarray([0, 1, 2, 0]),
+        },
+        regimes=model._regimes,
+        device_ids=model.execution_devices,
+    )
+
+    seeded_device_ids = {
+        device.id
+        for regime_states in states_per_regime.values()
+        for array in regime_states.values()
+        for device in array.sharding.device_set
+    }
+
+    assert seeded_device_ids <= {2, 3}
 
 
 @_skip_pytest_parallel

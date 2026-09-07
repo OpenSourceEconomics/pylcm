@@ -322,6 +322,27 @@ def test_sharded_state_from_execution_config_pruned_anywhere_raises() -> None:
         )
 
 
+def test_sharded_state_with_a_continuous_grid_raises() -> None:
+    """Only a discrete state's grid can carry a device axis."""
+    with pytest.raises(ExecutionPlanningError, match="can carry a device axis"):
+        _build_model(execution_config=ExecutionConfig(sharded_states=("wealth",)))
+
+
+def test_sharded_state_with_a_batch_size_raises() -> None:
+    """A state's axis is either batched or spread over devices, not both."""
+    with pytest.raises(ExecutionPlanningError, match="sharded_states"):
+        _build_model(
+            states={"skill": DiscreteGrid(category_class=_Skill, batch_size=2)},
+            state_transitions={"skill": fixed_transition("skill")},
+            regimes={
+                "work": _work_regime(),
+                "retired": _retired_regime(functions={"utility": _utility_with_skill}),
+                "dead": UserRegime(transition=None, functions={"utility": lambda: 0.0}),
+            },
+            execution_config=ExecutionConfig(sharded_states=("skill",)),
+        )
+
+
 def test_model_broadcast_solves_and_simulates() -> None:
     """A model assembled from broadcast slots solves and simulates."""
     model = _build_model(

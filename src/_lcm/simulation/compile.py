@@ -219,7 +219,7 @@ def _collect_unique_simulation_callables(
     ages: AgeGrid,
     n_subjects: int,
     regime_V_topology: dict[RegimeName, _RegimeVTopology],
-    subject_sharding: jax.NamedSharding | None,
+    subject_sharding: jax.sharding.Sharding,
 ) -> tuple[
     dict[Hashable, tuple[Callable, dict | tuple | None, str]],
     dict[tuple[RegimeName, str, int | None], Hashable],
@@ -387,7 +387,7 @@ def _collect_edge_gate_evaluators(
     ages: AgeGrid,
     n_subjects: int,
     regime_V_topology: dict[RegimeName, _RegimeVTopology],
-    subject_sharding: jax.NamedSharding | None,
+    subject_sharding: jax.sharding.Sharding,
     unique: dict[Hashable, tuple[Callable, dict | tuple | None, str]],
     gate_calls: dict[Hashable, tuple[Callable, int]],
 ) -> None:
@@ -471,7 +471,7 @@ def _build_gate_evaluator_args(
     flat_params: FlatParams,
     n_subjects: int,
     regime_V_topology: dict[RegimeName, _RegimeVTopology],
-    subject_sharding: jax.NamedSharding | None,
+    subject_sharding: jax.sharding.Sharding,
 ) -> tuple[dict[str, object], dict[str, object]]:
     """Build the positional pair one gate evaluator's population call takes.
 
@@ -539,7 +539,7 @@ def _subject_state_carrier_template(
     *,
     regime: Regime,
     n_subjects: int,
-    sharding: jax.NamedSharding | None,
+    sharding: jax.sharding.Sharding,
 ) -> dict[str, FloatND | IntND]:
     """Return zeros shaped like one regime's slice of the simulate carrier.
 
@@ -557,9 +557,7 @@ def _subject_state_carrier_template(
             else canonical_float_dtype()
         )
         zeros = jnp.zeros((n_subjects,), dtype=dtype)
-        arrays[state_name] = (
-            zeros if sharding is None else jax.device_put(zeros, sharding)
-        )
+        arrays[state_name] = jax.device_put(zeros, sharding)
     return arrays
 
 
@@ -659,7 +657,7 @@ def _build_argmax_args(
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     regime_V_topology: dict[RegimeName, _RegimeVTopology],
     flat_params: FlatParams,
-    subject_sharding: jax.NamedSharding | None,
+    subject_sharding: jax.sharding.Sharding,
 ) -> dict[str, object]:
     """Build the argmax program's lowering arguments.
 
@@ -733,7 +731,7 @@ def _build_next_state_args(
     regime_params: FlatRegimeParams,
     ages: AgeGrid,
     n_subjects: int,
-    subject_sharding: jax.NamedSharding | None,
+    subject_sharding: jax.sharding.Sharding,
 ) -> dict[str, object]:
     base = regime.solution.state_action_space(regime_params=regime_params)
     subject_states = _subject_shape_arrays(
@@ -782,7 +780,7 @@ def _build_crtp_args(
     regime_params: FlatRegimeParams,
     ages: AgeGrid,
     n_subjects: int,
-    subject_sharding: jax.NamedSharding | None,
+    subject_sharding: jax.sharding.Sharding,
 ) -> dict[str, object]:
     base = regime.solution.state_action_space(regime_params=regime_params)
     subject_states = _subject_shape_arrays(
@@ -809,7 +807,7 @@ def _build_crtp_args(
 
 
 def _simulate_only_subject_states(
-    *, regime: Regime, n_subjects: int, sharding: jax.NamedSharding | None
+    *, regime: Regime, n_subjects: int, sharding: jax.sharding.Sharding
 ) -> dict[str, FloatND | IntND]:
     """Return `(n_subjects,)` zeros for the regime's simulate-only states.
 
@@ -821,7 +819,7 @@ def _simulate_only_subject_states(
     arrays: dict[str, FloatND | IntND] = {}
     for name, grid in regime.simulation.carried_grids.items():
         zeros = jnp.zeros((n_subjects,), dtype=grid.to_jax().dtype)
-        arrays[name] = zeros if sharding is None else jax.device_put(zeros, sharding)
+        arrays[name] = jax.device_put(zeros, sharding)
     return arrays
 
 
@@ -829,7 +827,7 @@ def _subject_shape_arrays(
     *,
     base_arrays: Mapping[str, FloatND | IntND],
     n_subjects: int,
-    sharding: jax.NamedSharding | None,
+    sharding: jax.sharding.Sharding,
 ) -> dict[str, FloatND | IntND]:
     """Return zeros of shape `(n_subjects,)` mirroring each base array's dtype.
 
@@ -837,13 +835,14 @@ def _subject_shape_arrays(
     runtime states (initial + post-transition) share the grid's dtype, so
     using `arr.dtype` from the regime's grid here matches runtime.
 
-    When the regime distributes its grids, `sharding` scatters the zeros
-    across the device mesh exactly as `build_initial_states` scatters the
-    runtime per-subject arrays, so the AOT-compiled program is lowered for
-    the device layout it is dispatched with.
+    `sharding` places the zeros exactly as `build_initial_states` places the
+    runtime per-subject arrays — scattered across the device mesh when the
+    regime distributes its grids, on the model's first device otherwise — so
+    the AOT-compiled program is lowered for the device layout it is dispatched
+    with.
     """
     arrays: dict[str, FloatND | IntND] = {}
     for name, arr in base_arrays.items():
         zeros = jnp.zeros((n_subjects,), dtype=arr.dtype)
-        arrays[name] = zeros if sharding is None else jax.device_put(zeros, sharding)
+        arrays[name] = jax.device_put(zeros, sharding)
     return arrays

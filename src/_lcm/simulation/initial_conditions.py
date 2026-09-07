@@ -162,10 +162,9 @@ def build_initial_states(
                 regime_states[state_name] = jnp.full(
                     n_subjects, jnp.nan, dtype=canonical_float_dtype()
                 )
-            if sharding is not None:
-                regime_states[state_name] = jax.device_put(
-                    regime_states[state_name], device=sharding
-                )
+            regime_states[state_name] = jax.device_put(
+                regime_states[state_name], device=sharding
+            )
         states_per_regime[regime_name] = MappingProxyType(regime_states)
 
     return MappingProxyType(states_per_regime)
@@ -280,16 +279,17 @@ def subject_array_sharding(
     regimes: MappingProxyType[RegimeName, Regime],
     n_subjects: int,
     device_ids: tuple[int, ...] = (),
-) -> jax.NamedSharding | None:
+) -> jax.sharding.Sharding:
     """Return the model-wide device sharding for per-subject simulation arrays.
 
     Subjects propagate across regime transitions inside the simulate loop, so
     every regime's per-subject arrays must carry the same device sharding —
     otherwise an AOT-compiled program lowered with one regime's sharding rejects
     the inputs it receives from another. When any grid in any regime is
-    distributed, the `n_subjects` subjects are scattered across all available
-    devices along a single mesh axis. When no grid is distributed the arrays
-    stay on the default device.
+    distributed, the `n_subjects` subjects are scattered across every device the
+    model uses along a single mesh axis. When none is, they are committed to the
+    first of them, so a model that names a subset of the devices JAX reports
+    never simulates on one it excluded.
 
     Args:
         regimes: Immutable mapping of regime names to internal regime instances.
@@ -299,18 +299,18 @@ def subject_array_sharding(
             device JAX reports.
 
     Returns:
-        The `NamedSharding` over the device mesh, or `None` when no grid in any
-        regime is distributed.
+        The `NamedSharding` over the device mesh when a grid is distributed, and
+        a single-device sharding on the model's first device otherwise.
 
     """
+    devices = placed_devices_for_ids(
+        submesh_device_ids=(), visible_device_ids=device_ids
+    )
     distributes_any = any(
         regime.solution.sharded_state_names for regime in regimes.values()
     )
     if not distributes_any:
-        return None
-    devices = placed_devices_for_ids(
-        submesh_device_ids=(), visible_device_ids=device_ids
-    )
+        return jax.sharding.SingleDeviceSharding(devices[0])
     if n_subjects % len(devices) != 0:
         # Defensive: `Model.simulate` rounds the chunk size up to a device
         # multiple and pads the population to a chunk multiple, so every

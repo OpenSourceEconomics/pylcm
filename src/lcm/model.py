@@ -2513,7 +2513,8 @@ def _regimes_with_sharded_states(
         carry a device axis.
 
     Raises:
-        ExecutionPlanningError: A named state's grid cannot carry a device axis.
+        ExecutionPlanningError: A named state's grid cannot carry a device axis,
+            because it is not discrete or because it is batched.
 
     """
     if not sharded_states:
@@ -2532,6 +2533,15 @@ def _regimes_with_sharded_states(
                     f"ExecutionConfig.sharded_states names {name!r}, whose grid in "
                     f"regime {regime_name!r} is a {type(grid).__name__}; only a "
                     "DiscreteGrid can carry a device axis."
+                )
+                raise ExecutionPlanningError(msg)
+            if grid.batch_size:
+                msg = (
+                    f"ExecutionConfig.sharded_states names {name!r}, whose grid in "
+                    f"regime {regime_name!r} declares batch_size="
+                    f"{grid.batch_size}; an axis is either looped over in batches "
+                    "or spread over devices, not both. Drop the batch size, or "
+                    "batch a different axis."
                 )
                 raise ExecutionPlanningError(msg)
             states[name] = grid._sharded()  # noqa: SLF001

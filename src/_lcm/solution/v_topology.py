@@ -38,8 +38,8 @@ class _RegimeVTopology:
     shape: tuple[int, ...]
     """V-array shape, with one entry per state."""
 
-    sharding: jax.sharding.Sharding | None
-    """Device sharding for the V-array, or `None` for the default placement."""
+    sharding: jax.sharding.Sharding
+    """Device sharding the V-array is committed to."""
 
 
 def expected_V_rank(*, regime: Regime) -> int:
@@ -148,35 +148,27 @@ def placed_V_sharding(
     sharding_plan: _RegimeSharding | None,
     state_order: tuple[StateName, ...],
     devices: tuple[jax.Device, ...],
-    device_ids: tuple[int, ...] = (),
-) -> jax.sharding.Sharding | None:
+) -> jax.sharding.Sharding:
     """Return the sharding a regime's value template is committed to.
 
-    A regime with a distributed state takes its mesh's spec. A regime without
-    one keeps an uncommitted template — the default placement — wherever a
-    single-device solve would have put it anyway, and is committed to its own
-    device only when the placement moved it elsewhere.
+    A regime with a distributed state takes its mesh's spec; one without takes
+    the first of the devices it is placed on. Every value is committed, so a
+    model that names a subset of the devices JAX reports never publishes on
+    one it excluded — the process default device is a device like any other,
+    and a model that does not own it must not land there.
 
     Args:
         sharding_plan: The regime's mesh plan, or `None` when no state grid of
             it is distributed.
         state_order: The V-array's state axes, in order.
         devices: Tuple of the devices the regime's nodes run on.
-        device_ids: The model's device ids, ascending. Empty names every
-            device JAX reports.
 
     Returns:
-        The sharding to commit the template to, or `None` for the default
-        placement.
+        The sharding to commit the template to.
 
     """
     if sharding_plan is not None:
         return sharding_plan.V_arr_sharding(state_order)
-    visible = placed_devices_for_ids(
-        submesh_device_ids=(), visible_device_ids=device_ids
-    )
-    if devices == (visible[0],) or len(devices) == len(visible):
-        return None
     return jax.sharding.SingleDeviceSharding(devices[0])
 
 
@@ -192,8 +184,7 @@ def _get_regime_V_shapes_and_shardings(
     The V-array has one dimension per state variable, sized by that state's
     grid. When at least one state grid in a regime is distributed, the
     V-array is sharded across the devices the phase places the regime on;
-    otherwise it is committed only where the placement moved the regime off
-    the default device.
+    otherwise it is committed to the first of them.
 
     Args:
         regimes: Immutable mapping of regime names to internal regimes.
@@ -254,15 +245,11 @@ def _get_regime_V_shapes_and_shardings(
                 ),
                 state_order=state_order,
                 devices=devices,
-                device_ids=device_ids,
             ),
         )
     return topology
 
 
 def _build_zero_V_arr(*, topology: _RegimeVTopology) -> FloatND:
-    """Build the zero V-array template for a regime, sharded where requested."""
-    zeros = jnp.zeros(topology.shape)
-    if topology.sharding is None:
-        return zeros
-    return jax.device_put(zeros, topology.sharding)
+    """Build the zero V-array template for a regime, on the devices it is placed on."""
+    return jax.device_put(jnp.zeros(topology.shape), topology.sharding)

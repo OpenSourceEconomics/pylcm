@@ -3,6 +3,7 @@
 from dataclasses import FrozenInstanceError
 from inspect import signature
 
+import jax
 import pytest
 from beartype.roar import BeartypeCallHintViolation
 
@@ -138,8 +139,8 @@ def test_execution_config_does_not_change_the_structure_fingerprint() -> None:
 
 def test_execution_devices_defaults_to_every_visible_device() -> None:
     """A model that names no device may use every device JAX reports."""
-    from _lcm.execution.execution_plan import visible_device_ids  # noqa: PLC0415
-
     base = get_multi_regime_model(n_periods=6, distribution_type="normal")
 
-    assert base.execution_devices == visible_device_ids()
+    assert base.execution_devices == tuple(
+        sorted(device.id for device in jax.devices())
+    )
