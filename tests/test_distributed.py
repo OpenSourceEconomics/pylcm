@@ -17,11 +17,19 @@ from _lcm.execution.core_program import (
     core_program_graph,
     materialize_core_program,
 )
-from _lcm.execution.scheduler import BufferRegistry, shares_a_buffer
+from _lcm.execution.scheduler import (
+    BufferRegistry,
+    PeriodTransferCache,
+    shares_a_buffer,
+)
 from _lcm.execution.value_transfer import (
+    ResolvedValueTransfer,
+    ValueArtifactAddress,
     ValueArtifactKind,
+    ValueConsumerAddress,
     ValueInputChannel,
     ValueTransferKind,
+    apply_value_transfer_plan,
 )
 from _lcm.grids import categorical
 from _lcm.grids.continuous import LinSpacedGrid
@@ -1319,10 +1327,13 @@ def _make_two_source_partially_distributed_model() -> Model:
     )
 
 
-def _shared_transfer_executions(
-    *, monkeypatch: pytest.MonkeyPatch
-) -> list[tuple[int, object]]:
-    """Solve the partially distributed model, recording each shared-transfer copy."""
+@pytest.fixture(scope="module")
+def shared_transfer_executions() -> list[tuple[int, object]]:
+    """Solve the partially distributed model once, recording each shared-transfer copy.
+
+    Module-scoped so the two tests reading this fixture's result do not each
+    pay for a separate solve of the same model.
+    """
     from _lcm.execution import value_transfer  # noqa: PLC0415
 
     executed: list[tuple[int, object]] = []
@@ -1335,31 +1346,116 @@ def _shared_transfer_executions(
             executed.append((transfer.source.source_period, transfer.target))
         return real(value=value, transfer=transfer)
 
-    monkeypatch.setattr(value_transfer, "apply_value_transfer", count)
-    _make_two_source_partially_distributed_model().solve(
-        log_level="off", params={"discount_factor": 0.95}
-    )
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(value_transfer, "apply_value_transfer", count)
+        _make_two_source_partially_distributed_model().solve(
+            log_level="off", params={"discount_factor": 0.95}
+        )
     return executed
 
 
 @_skip_pytest_parallel
 def test_a_shared_transfer_is_copied_for_at_least_one_dispatch(
-    monkeypatch: pytest.MonkeyPatch,
+    shared_transfer_executions: list[tuple[int, object]],
 ) -> None:
     """The `retirement` value two sources share is copied at least once."""
-    executed = _shared_transfer_executions(monkeypatch=monkeypatch)
-
-    assert executed
+    assert shared_transfer_executions
 
 
 @_skip_pytest_parallel
 def test_a_transfer_two_sources_share_is_copied_once_per_period(
-    monkeypatch: pytest.MonkeyPatch,
+    shared_transfer_executions: list[tuple[int, object]],
 ) -> None:
     """The shared copy of `retirement`'s value is made once, not once per source."""
-    executed = _shared_transfer_executions(monkeypatch=monkeypatch)
+    assert len(shared_transfer_executions) == len(set(shared_transfer_executions))
 
-    assert len(executed) == len(set(executed))
+
+def _disjoint_device_shared_transfer() -> tuple[
+    BufferRegistry, PeriodTransferCache, tuple[object, object], jax.Array
+]:
+    """Drive a two-consumer shared transfer whose copy shares no source buffer.
+
+    `Model.solve()` cannot construct this case today: every distributed
+    regime's mesh spans every device this process reports
+    (`_build_regime_sharding` always sizes it to `len(jax.devices())`), so a
+    single-device source is always one of the devices any such mesh
+    replicates onto, and `device_put` reuses that device's own buffer for
+    the matching shard. A per-regime device placement would let a real solve
+    place a source outside a reader's mesh; absent that, this drives the
+    exact `PeriodTransferCache` / `BufferRegistry` / `apply_value_transfer_plan`
+    machinery a solve dispatches through, by hand, with a stored value
+    placed on this file's fourth real CPU device and a required layout
+    replicated over the other three — disjoint device sets, so the copy
+    shares no buffer with its source.
+    """
+    devices = jax.devices()
+    stored = jax.device_put(jnp.arange(4.0), devices[3])
+    required_sharding = NamedSharding(
+        jax.make_mesh((3,), ("d",), devices=devices[:3]), PartitionSpec()
+    )
+    transfer = ResolvedValueTransfer(
+        target=ValueArtifactAddress(
+            kind=ValueArtifactKind.REGIME_VALUE, period=1, regime="target"
+        ),
+        source=ValueConsumerAddress(
+            source_period=0,
+            source_regime="source",
+            core_key="main",
+            channel=ValueInputChannel.NEXT_REGIME_VALUE,
+            path=("target",),
+        ),
+        kind=ValueTransferKind.COPY_TO_SOURCE_LAYOUT,
+        stored_sharding=stored.sharding,
+        source_sharding=required_sharding,
+        expected_shape=stored.shape,
+        expected_dtype=stored.dtype,
+        reused_by_several_consumers=True,
+    )
+    key = (transfer.target, transfer.source_sharding)
+    registry = BufferRegistry()
+    cache = PeriodTransferCache(
+        registry=registry, consumer_counts=MappingProxyType({key: 2})
+    )
+    arguments = MappingProxyType(
+        {"next_regime_to_V_arr": MappingProxyType({"target": stored})}
+    )
+    apply_value_transfer_plan(arguments=arguments, plan=(transfer,), cache=cache)
+    copy = cache.get(transfer=transfer)
+    if copy is None:
+        msg = "The shared transfer plan produced no cached copy."
+        raise RuntimeError(msg)
+    return registry, cache, key, copy
+
+
+@_skip_pytest_parallel
+def test_a_disjoint_device_shared_copy_is_registered_with_the_buffer_registry() -> None:
+    """A genuinely new shared copy is tracked, unlike the same-mesh case."""
+    registry, _cache, _key, copy = _disjoint_device_shared_transfer()
+
+    assert registry.artifacts_sharing(array=copy)
+
+
+@_skip_pytest_parallel
+def test_a_disjoint_device_shared_copy_survives_its_first_consumers_commit() -> None:
+    """The copy stays alive while a second declared consumer has not yet committed."""
+    _registry, cache, key, copy = _disjoint_device_shared_transfer()
+
+    cache.commit_consumer(key=key)
+
+    assert not copy.is_deleted()
+
+
+@_skip_pytest_parallel
+def test_a_disjoint_device_shared_copy_is_deleted_after_its_last_consumers_commit() -> (
+    None
+):
+    """The copy is released once every declared consumer has committed."""
+    _registry, cache, key, copy = _disjoint_device_shared_transfer()
+    cache.commit_consumer(key=key)
+
+    cache.commit_consumer(key=key)
+
+    assert copy.is_deleted()
 
 
 def _single_device_value_and_wider_replicated_copy() -> tuple[jax.Array, jax.Array]:

@@ -454,7 +454,10 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             )
         )
         period_transfer_cache = PeriodTransferCache(
-            registry=buffer_registry, consumer_counts=shared_transfer_counts
+            registry=buffer_registry,
+            consumer_counts=shared_transfer_counts,
+            pending_outputs=period_pending_outputs,
+            logger=logger,
         )
 
         # Regimes declaring `same_period_refs` read other regimes' V of

@@ -1,12 +1,15 @@
 """A transfer several consumers of one period share is executed once."""
 
+import logging
 from collections.abc import Mapping
 from types import MappingProxyType
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
+from _lcm.execution import scheduler
 from _lcm.execution.scheduler import BufferRegistry, PeriodTransferCache
 from _lcm.execution.value_transfer import (
     ResolvedValueTransfer,
@@ -115,6 +118,15 @@ def test_an_unshared_transfer_is_not_cached() -> None:
     assert len(cache) == 0
 
 
+def _produced_target_leaf(*, result: Mapping[str, object]) -> jax.Array:
+    """Return a transfer-plan result's produced `target` leaf, type-narrowed."""
+    next_regime_to_V_arr = result["next_regime_to_V_arr"]
+    assert isinstance(next_regime_to_V_arr, Mapping)
+    produced = next_regime_to_V_arr["target"]
+    assert isinstance(produced, jax.Array)
+    return produced
+
+
 def test_an_unshared_transfer_is_not_registered_with_the_buffer_registry() -> None:
     """A transfer one consumer reads never enters the buffer registry."""
     stored_sharding, source_sharding = _shardings()
@@ -129,11 +141,7 @@ def test_an_unshared_transfer_is_not_registered_with_the_buffer_registry() -> No
         arguments=_arguments(stored=stored), plan=(transfer,), cache=cache
     )
 
-    target_values = result["next_regime_to_V_arr"]
-    assert isinstance(target_values, Mapping)
-    produced = target_values["target"]
-    assert isinstance(produced, jax.Array)
-    assert not registry.artifacts_sharing(array=produced)
+    assert not registry.artifacts_sharing(array=_produced_target_leaf(result=result))
 
 
 def test_a_plan_without_a_cache_copies_as_before() -> None:
@@ -315,3 +323,125 @@ def test_a_same_buffer_device_put_survives_the_caches_commit() -> None:
     cache.commit_consumer(key=key)
 
     assert not stored.is_deleted()
+
+
+def test_a_not_produced_registered_copy_survives_its_consumers_commit() -> None:
+    """A registered copy declared as a buffer no dispatch produced is never released.
+
+    `commit_consumer` routes a genuinely registered copy through
+    `release_closed_artifacts`, which refuses to delete a buffer any of whose
+    shards the registry marks as one no dispatch produced — the guard a
+    manual delete-on-zero-count implementation could skip.
+    """
+    registry = BufferRegistry()
+    stored_sharding, source_sharding = _shardings()
+    stored = _stored_value(sharding=stored_sharding)
+    transfer = _copy_transfer(
+        reused=True, stored=stored, source_sharding=source_sharding
+    )
+    key = _key(transfer=transfer)
+    cache = PeriodTransferCache(
+        registry=registry, consumer_counts=MappingProxyType({key: 1})
+    )
+    copy = jax.device_put(np.arange(3.0), source_sharding)
+    cache.put(transfer=transfer, array=copy, stored=stored)
+    registry.declare_not_produced(tree=(copy,))
+
+    cache.commit_consumer(key=key)
+
+    assert not copy.is_deleted()
+
+
+def _sole_blocked_on_argument(*, blocked_on: list[object]) -> object:
+    """Return the single argument a barrier spy recorded, type-narrowed to a tuple."""
+    assert len(blocked_on) == 1
+    (recorded,) = blocked_on
+    assert isinstance(recorded, tuple)
+    return recorded
+
+
+def test_commit_consumer_blocks_on_the_periods_pending_outputs_not_the_copy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Releasing a registered copy blocks on the period's pending outputs.
+
+    A manual `jax.block_until_ready(array)` on the copy itself, instead of on
+    the outputs the period has dispatched so far, is exactly the barrier
+    `release_closed_artifacts` avoids: with no `pending_outputs` declared
+    (the default, empty tuple), the barrier call observed here carries that
+    empty tuple, never the copy.
+    """
+    registry = BufferRegistry()
+    stored_sharding, source_sharding = _shardings()
+    stored = _stored_value(sharding=stored_sharding)
+    transfer = _copy_transfer(
+        reused=True, stored=stored, source_sharding=source_sharding
+    )
+    key = _key(transfer=transfer)
+    cache = PeriodTransferCache(
+        registry=registry, consumer_counts=MappingProxyType({key: 1})
+    )
+    copy = jax.device_put(np.arange(3.0), source_sharding)
+    cache.put(transfer=transfer, array=copy, stored=stored)
+    blocked_on: list[object] = []
+    monkeypatch.setattr(
+        scheduler.jax, "block_until_ready", blocked_on.append, raising=True
+    )
+
+    cache.commit_consumer(key=key)
+
+    assert _sole_blocked_on_argument(blocked_on=blocked_on) == ()
+
+
+def test_commit_consumer_logs_a_release_record_for_a_registered_copy() -> None:
+    """Releasing a registered copy is logged exactly like any other closed artifact."""
+    registry = BufferRegistry()
+    stored_sharding, source_sharding = _shardings()
+    stored = _stored_value(sharding=stored_sharding)
+    transfer = _copy_transfer(
+        reused=True, stored=stored, source_sharding=source_sharding
+    )
+    key = _key(transfer=transfer)
+    cache = PeriodTransferCache(
+        registry=registry, consumer_counts=MappingProxyType({key: 1})
+    )
+    copy = jax.device_put(np.arange(3.0), source_sharding)
+    cache.put(transfer=transfer, array=copy, stored=stored)
+    records: list[logging.LogRecord] = []
+    handler = logging.Handler()
+    handler.emit = records.append  # ty: ignore[invalid-assignment]
+    release_logger = logging.getLogger(scheduler.__name__)
+    release_logger.setLevel(logging.DEBUG)
+    release_logger.addHandler(handler)
+    try:
+        cache.commit_consumer(key=key)
+    finally:
+        release_logger.removeHandler(handler)
+
+    assert records
+
+
+def _released_artifacts(*, records: object) -> tuple[object, ...]:
+    """Return the artifacts a `commit_consumer` result named, type-narrowed."""
+    assert isinstance(records, tuple)
+    return tuple(record.artifact for record in records)
+
+
+def test_commit_consumer_returns_a_release_record_naming_the_released_key() -> None:
+    """The return value names the artifact a registered copy's release closed."""
+    registry = BufferRegistry()
+    stored_sharding, source_sharding = _shardings()
+    stored = _stored_value(sharding=stored_sharding)
+    transfer = _copy_transfer(
+        reused=True, stored=stored, source_sharding=source_sharding
+    )
+    key = _key(transfer=transfer)
+    cache = PeriodTransferCache(
+        registry=registry, consumer_counts=MappingProxyType({key: 1})
+    )
+    copy = jax.device_put(np.arange(3.0), source_sharding)
+    cache.put(transfer=transfer, array=copy, stored=stored)
+
+    records = cache.commit_consumer(key=key)
+
+    assert _released_artifacts(records=records) == (key,)

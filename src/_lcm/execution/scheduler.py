@@ -16,6 +16,7 @@ that lets independent nodes dispatch back to back instead of one at a time.
 import dataclasses
 import logging
 from collections.abc import Hashable, Iterable, Mapping, Sequence
+from types import MappingProxyType
 
 import jax
 from jaxtyping import PyTree
@@ -24,6 +25,8 @@ from _lcm.execution.liveness import PlannedInputLiveness
 from _lcm.execution.value_transfer import ResolvedValueTransfer
 from _lcm.typing import RegimeName
 from lcm.exceptions import ExecutionPlanningError
+
+_logger = logging.getLogger(__name__)
 
 type BufferIdentity = tuple[tuple[int, int], ...]
 type ShardIdentity = tuple[int, int]
@@ -374,31 +377,72 @@ class PeriodTransferCache:
     Keyed by the artifact and the required layout, so several sources reading
     one stored value onto one layout share the one copy made for it. A copy
     that occupies no buffer of the stored artifact's is one the engine
-    produced, not one the model owns, so it is registered with the buffer
-    registry under one declared count per sharing source and released once
-    every sharing source's dispatch has committed (`commit_consumer`). A copy
-    that shares at least one buffer with the stored artifact — a `device_put`
-    the required layout already matched, or one that reused the stored buffer
-    for a shard of a wider replicated layout — is served from the cache but
-    never registered or released here: releasing it would release a buffer
-    the stored artifact still occupies.
+    produced, not one the model owns: it is registered with the buffer
+    registry under the exact key its declared consumers commit, and released
+    through `release_closed_artifacts` — the same barrier and guards every
+    other rolling solve input goes through — once every declared consumer has
+    committed. Routing through that one implementation means a registered
+    copy is deleted only after `pending_outputs` (the period's dispatched
+    outputs so far) is confirmed ready, never while any of its shards is
+    declared a buffer no dispatch produced, and every release, or every
+    kept-buffer decision, is logged exactly like `release_closed_artifacts`'s
+    other callers.
+
+    A copy that shares at least one buffer with the stored artifact — a
+    `device_put` the required layout already matched, or one that reused the
+    stored buffer for a shard of a wider replicated layout — is served from
+    the cache but never registered or released here: releasing it would
+    release a buffer the stored artifact still occupies. `shares_a_buffer`
+    answers per shard, so a copy sharing even one shard with its source is
+    treated as entirely unproduced; its other, genuinely fresh shards are
+    freed only when the garbage collector reclaims the whole array, not by
+    this cache.
     """
 
-    __slots__ = ("_arrays", "_registered_keys", "_registry", "_remaining_consumers")
+    __slots__ = (
+        "_arrays",
+        "_ledger",
+        "_logger",
+        "_next_dispatch_index",
+        "_pending_outputs",
+        "_registered_keys",
+        "_registry",
+    )
 
     def __init__(
         self,
         *,
         registry: BufferRegistry,
         consumer_counts: Mapping[tuple[Hashable, Hashable], int],
+        pending_outputs: Sequence[jax.Array] = (),
+        logger: logging.Logger = _logger,
     ) -> None:
-        """Start with no cached copy and the period's declared consumer counts."""
-        self._arrays: dict[tuple[Hashable, Hashable], jax.Array] = {}
+        """Start with no cached copy and the period's declared consumer counts.
+
+        `pending_outputs` is read fresh at every `commit_consumer` call, so
+        passing the same growing sequence the solve loop appends to keeps the
+        release barrier current without threading it through every call.
+        """
+        # Keyed by Hashable, not the exact tuple shape, so the mapping widens
+        # cleanly to `release_closed_artifacts`'s `Mapping[Hashable, jax.Array]`
+        # parameter — `Mapping`'s key type parameter is invariant.
+        self._arrays: dict[Hashable, jax.Array] = {}
         self._registry = registry
-        self._remaining_consumers: dict[tuple[Hashable, Hashable], int] = dict(
-            consumer_counts
-        )
+        self._pending_outputs = pending_outputs
+        self._logger = logger
         self._registered_keys: set[tuple[Hashable, Hashable]] = set()
+        self._next_dispatch_index: dict[tuple[Hashable, Hashable], int] = dict.fromkeys(
+            consumer_counts, 0
+        )
+        self._ledger: PlannedInputLiveness[
+            tuple[tuple[Hashable, Hashable], int], tuple[Hashable, Hashable]
+        ] = PlannedInputLiveness(
+            dispatch_accesses={
+                (key, index): (key,)
+                for key, count in consumer_counts.items()
+                for index in range(count)
+            }
+        )
 
     def get(self, *, transfer: ResolvedValueTransfer) -> jax.Array | None:
         """Return the copy made for the transfer's artifact and layout, if any."""
@@ -418,40 +462,46 @@ class PeriodTransferCache:
         self._arrays[key] = array
         if shares_a_buffer(first=array, second=stored):
             return
-        if key not in self._remaining_consumers:
+        if key not in self._next_dispatch_index:
             msg = (
                 "A shared transfer copy was made for a key the period's "
                 f"declared consumer count never named: {key!r}."
             )
             raise ExecutionPlanningError(msg)
-        self._registry.register(array=array, artifact=("period-transfer-cache", key))
+        self._registry.register(array=array, artifact=key)
         self._registered_keys.add(key)
 
-    def commit_consumer(self, *, key: tuple[Hashable, Hashable]) -> None:
-        """Record that one of `key`'s declared consuming dispatches has committed.
+    def commit_consumer(
+        self, *, key: tuple[Hashable, Hashable]
+    ) -> tuple[ReleaseRecord, ...]:
+        """Commit one of `key`'s declared consuming dispatches.
 
-        Deletes and forgets the registered buffer once every declared
-        consumer has committed. A key this period declared no consumers for,
-        or whose copy was never registered, is a no-op.
+        A key this period declared no consumers for is a no-op. Once every
+        declared consumer has committed, a genuinely registered copy is
+        released through `release_closed_artifacts` — blocked on this
+        period's pending outputs, refused if any shard is declared not
+        produced, logged like any other release. A copy that was never
+        registered (served from a shared buffer) is never a release
+        candidate, so it survives this call regardless of the count.
         """
-        if key not in self._remaining_consumers:
-            return
-        remaining = self._remaining_consumers[key] - 1
-        if remaining < 0:
-            msg = (
-                f"Transfer cache key {key!r} committed by more consumers than "
-                "the period declared."
-            )
-            raise ExecutionPlanningError(msg)
-        self._remaining_consumers[key] = remaining
-        if remaining > 0 or key not in self._registered_keys:
-            return
-        array = self._arrays[key]
-        if array.is_deleted():
-            return
-        jax.block_until_ready(array)
-        self._registry.forget(array=array)
-        array.delete()
+        if key not in self._next_dispatch_index:
+            return ()
+        index = self._next_dispatch_index[key]
+        self._next_dispatch_index[key] = index + 1
+        dispatch = (key, index)
+        newly_eligible = self._ledger.commit_successful_dispatch(dispatch=dispatch)
+        registered = newly_eligible & self._registered_keys
+        if not registered:
+            return ()
+        return release_closed_artifacts(
+            ledger=self._ledger,
+            registry=self._registry,
+            artifacts=registered,
+            arrays_by_artifact=MappingProxyType(dict(self._arrays)),
+            pending_outputs=tuple(self._pending_outputs),
+            closing_dispatch=dispatch,
+            logger=self._logger,
+        )
 
     def __len__(self) -> int:
         """Return the number of cached copies."""
