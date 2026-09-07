@@ -138,8 +138,8 @@ def _get_solve_one_combo(
     pool: dict[str, Any],
     state_grid: Float1D,
     next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
-    euler_batch_size: int,
-    savings_batch_size: int,
+    euler_point_width: int | None,
+    savings_point_width: int | None,
     stochastic_node_width: int | None,
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
 ) -> Callable[
@@ -148,21 +148,21 @@ def _get_solve_one_combo(
 ]:
     """Build the per-combo EGM computation for one kernel invocation.
 
-    `euler_batch_size` is accepted for a uniform builder signature but unused:
+    `euler_point_width` is accepted for a uniform builder signature but unused:
     the single-post-state kernel solves once per combo, with no per-asset-node
-    axis to splay (only the asset-row kernel honors it).
+    axis to tile (only the asset-row kernel runs that loop).
 
     `resolved_process_grids` maps each runtime-resolved process state to its
     solve-time grid, threaded into the continuation so a resources function
     reading a process node integrates over the resolved nodes.
     """
-    del euler_batch_size
+    del euler_point_width
     return _SolveOneCombo(
         pieces=pieces,
         pool=pool,
         state_grid=state_grid,
         next_regime_to_continuation=next_regime_to_continuation,
-        savings_batch_size=savings_batch_size,
+        savings_point_width=savings_point_width,
         stochastic_node_width=stochastic_node_width,
         resolved_process_grids=resolved_process_grids,
     )
@@ -188,8 +188,8 @@ class _SolveOneCombo:
     next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry]
     """The next period's EGM carries."""
 
-    savings_batch_size: int
-    """The savings grid's `batch_size`."""
+    savings_point_width: int | None
+    """Tile width of the per-savings-node loop; `None` runs it in one tile."""
 
     stochastic_node_width: int | None
     """Block width of the streamed node expectation; `None` folds one block."""
@@ -239,7 +239,7 @@ class _SolveOneCombo:
         actions, endog_grid, values, expected_values = _compute_nodes_over_savings(
             compute_node=compute_node,
             savings_nodes=pieces.savings_nodes,
-            savings_batch_size=self.savings_batch_size,
+            savings_point_width=self.savings_point_width,
         )
         own_resources_of_state = ResourcesOfState(
             resources_func=pieces.own_resources_func,
@@ -370,25 +370,41 @@ class ResourcesOfState:
         return self.resources_func(**{self.euler_state_name: state_value}, **self.bound)
 
 
+def tile_block_size(*, width: int | None, extent: int) -> int:
+    """Return the `lax.map` block a planner tile width asks for; `0` fuses.
+
+    A width the axis cannot fill — `None` for an axis no program declares, or
+    one at or above the extent — runs the loop as a single fused vmap, which is
+    what `map_over_leading_axis` and `productmap` read a block of `0` as.
+    """
+    if width is None or width >= extent:
+        return 0
+    return width
+
+
 def _compute_nodes_over_savings(
     *,
     compute_node: Callable,
     savings_nodes: Float1D,
-    savings_batch_size: int,
+    savings_point_width: int | None,
 ) -> tuple[FloatND, FloatND, FloatND, FloatND]:
-    """Run `compute_node` over every savings node, optionally splayed.
+    """Run `compute_node` over every savings node, in tiles the plan sizes.
 
-    A positive `savings_batch_size` below the grid length splays the
-    per-savings-node continuation computation — the dominant egm_step working
-    buffer (savings nodes by the child stochastic mesh by the combo block) — into
-    `lax.map` blocks, shedding peak memory; 0 (or a size covering the whole
-    grid) keeps the fused vmap. The output is identical either way: the per-node
-    `(action, endogenous resources, value, expected continuation)` candidates
-    stacked along the savings axis, which the constrained-region assembly and
-    the upper envelope then consume on the full grid.
+    A `savings_point_width` below the grid length runs the per-savings-node
+    continuation — the dominant egm_step working buffer (savings nodes by the
+    child stochastic mesh by the combo block) — in `lax.map` tiles, bounding
+    peak memory; a width covering the whole grid keeps the fused vmap. The
+    output is identical either way: the per-node `(action, endogenous
+    resources, value, expected continuation)` candidates stacked along the
+    savings axis, which the constrained-region assembly and the upper envelope
+    then consume on the full grid.
     """
     return map_over_leading_axis(
-        func=compute_node, xs=savings_nodes, batch_size=savings_batch_size
+        func=compute_node,
+        xs=savings_nodes,
+        batch_size=tile_block_size(
+            width=savings_point_width, extent=int(savings_nodes.shape[0])
+        ),
     )
 
 

@@ -74,6 +74,9 @@ Which axis names exist depends on which solver a regime uses; each solver's sect
 | ----------------- | ----------------------------------------------------------------------- |
 | `action_product`  | the flattened Cartesian action product of a streamed `GridSearch` core  |
 | `stochastic_node` | the child stochastic-node mesh a `DCEGM` continuation expectation folds |
+| `cell`            | the output state cells a `DCEGM` per-combo solve is tiled over          |
+| `savings_point`   | the exogenous savings nodes a `DCEGM` continuation is tiled over        |
+| `euler_point`     | the exogenous Euler nodes a `DCEGM` asset-row solve is tiled over       |
 
 Choose the largest width that meets the measured memory target, then verify values and
 runtime against the whole-axis setting on the model and backend you will use. Leaving an
@@ -88,6 +91,10 @@ Reference contract explicitly says it streams an evaluation axis can lower tempo
 workspace. The exact effect still depends on retained banks and downstream folds; for
 example, `NEGM.outer_batch_size` can lower temporary evaluation memory without capping
 the retained candidate bank.
+
+A `DCEGM` regime owns none of these: each loop it could stream is one of the axes in the
+table above, so a `batch_size` on one of its grids is refused at model build and the
+width is fixed with `ExecutionConfig(axis_widths=...)` instead.
 
 NBEGM's `interval_batch_size`, `cell_block_size`, and `branch_batch_size` are compiled
 batch widths for the corresponding `lax.map` axes. A positive value smaller than the

@@ -215,6 +215,10 @@ documented in [Custom solvers](custom_solvers.md).
 | [`lcm.solvers.ReducedAxis`](custom_solvers.md)                                             | Declared axis folded by a reduction   |
 | [`lcm.solvers.TiledOutputAxis`](custom_solvers.md)                                         | Declared axis whose tiles concatenate |
 | [`lcm.solvers.ACTION_PRODUCT_AXIS`](custom_solvers.md)                                     | Name of the action-product axis       |
+| [`lcm.solvers.STOCHASTIC_NODE_AXIS`](custom_solvers.md)                                    | Name of the stochastic-node axis      |
+| [`lcm.solvers.CELL_AXIS`](custom_solvers.md)                                               | Name of the output state-cell axis    |
+| [`lcm.solvers.SAVINGS_POINT_AXIS`](custom_solvers.md)                                      | Name of the savings-node axis         |
+| [`lcm.solvers.EULER_POINT_AXIS`](custom_solvers.md)                                        | Name of the Euler-node axis           |
 | [`lcm.solvers.ReductionDeclaration`](custom_solvers.md)                                    | Contract a reduced axis names         |
 | [`lcm.solvers.ReductionSemantics`](custom_solvers.md)                                      | Declaration carrying its own fold     |
 | [`lcm.solvers.EXACTNESS_VALUES`](custom_solvers.md)                                        | The two published exactness values    |

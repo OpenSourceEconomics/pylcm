@@ -1,12 +1,12 @@
-"""DC-EGM splaying: `batch_size` on the Euler-state grid is a memory knob only.
+"""DC-EGM tiles the asset-row solve under the `euler_point` planner axis.
 
-A DC-EGM regime in asset-row mode solves the single-post-state pipeline per
-exogenous Euler-state (asset) node. Splaying that axis — setting `batch_size`
-on the Euler-state grid — processes the asset nodes in blocks rather than one
-fused vmap, shedding peak working-set memory. It is a pure scheduling choice:
-which cells are feasible is unchanged, and the solved value function agrees
-with the unsplayed (`batch_size=0`) solve to the working precision, whatever
-the block size, including block sizes that do not divide the grid.
+A DC-EGM regime in asset-row mode solves the single-post-state pipeline once
+per exogenous Euler-state (asset) node. That node loop is the `euler_point`
+axis the value and replay programs declare, so the block it runs in is an
+execution fact the plan owns rather than a field on a grid. Tiles are
+concatenated, never folded, so which cells are feasible is unchanged at every
+width and the published value agrees to the working format's rounding —
+including widths that do not divide the grid.
 """
 
 import functools
@@ -16,8 +16,11 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from _lcm.execution.core_program import core_program_graph
+from _lcm.execution.workspace_planning import workspace_width_candidates
 from lcm import (
     AgeGrid,
+    ExecutionConfig,
     IrregSpacedGrid,
     LinSpacedGrid,
     MarkovTransition,
@@ -26,7 +29,7 @@ from lcm import (
 )
 from lcm.consumption_savings_regime import ConsumptionSavingsRegime, LiquidMargin
 from lcm.regime import Regime as UserRegime
-from lcm.solvers import DCEGM
+from lcm.solvers import DCEGM, EULER_POINT_AXIS
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -99,8 +102,8 @@ def _ages() -> AgeGrid:
 
 
 @functools.cache
-def _model(batch_size: int) -> Model:
-    """Asset-row DC-EGM model with `batch_size` splaying on the Euler grid."""
+def _model() -> Model:
+    """Asset-row DC-EGM model whose per-node solve the plan tiles."""
     ages = _ages()
     last_age = ages.exact_values[-1]
     working = ConsumptionSavingsRegime(
@@ -110,11 +113,7 @@ def _model(batch_size: int) -> Model:
         },
         active=lambda age, la=last_age: age < la,
         actions={"consumption": CONSUMPTION_GRID},
-        states={
-            "wealth": LinSpacedGrid(
-                start=1.0, stop=100.0, n_points=N_WEALTH, batch_size=batch_size
-            )
-        },
+        states={"wealth": LinSpacedGrid(start=1.0, stop=100.0, n_points=N_WEALTH)},
         state_transitions={"wealth": next_wealth},
         functions={
             "utility": utility,
@@ -148,31 +147,75 @@ def _params() -> dict:
     return {"discount_factor": 0.95, "final_age_alive": 40 + (N_PERIODS - 2) * 10}
 
 
-def _solve(batch_size: int) -> Mapping[int, Mapping[str, FloatND]]:
-    return _model(batch_size).solve(params=_params(), log_level="debug").values
+def _solve(width: int | None) -> Mapping[int, Mapping[str, FloatND]]:
+    """Solve with the node axis tiled at `width`, or at the plan's own choice."""
+    config = (
+        ExecutionConfig()
+        if width is None
+        else ExecutionConfig(axis_widths={EULER_POINT_AXIS: width})
+    )
+    return (
+        _model()
+        .solve(params=_params(), log_level="debug", execution_config=config)
+        .values
+    )
 
 
-@pytest.mark.parametrize("batch_size", [1, 4, N_WEALTH])
-def test_euler_grid_batch_size_leaves_value_function_unchanged(batch_size: int):
-    """Splaying the Euler grid into blocks does not change the solved V.
+def _euler_point_axis():
+    """Return the `euler_point` axis the regime's value program declares."""
+    kernels = _model()._regimes["working"].solution.period_kernels
+    program = core_program_graph(kernel=next(iter(kernels.values())))["main"]
+    (axis,) = [
+        candidate
+        for candidate in program.requirements.tiled_axes
+        if candidate.name == EULER_POINT_AXIS
+    ]
+    return axis
 
-    `batch_size` on the Euler-state grid only changes how the asset-row nodes
-    are scheduled (blocks via `lax.map` instead of one fused vmap). Feasibility
-    is structural and matches exactly; the value function at every period
-    agrees with the unsplayed `batch_size=0` solve to the working precision —
-    including block sizes that do not divide the grid.
+
+def test_value_program_declares_the_euler_point_axis() -> None:
+    """The asset-row node loop is declared as an axis of the value program."""
+    kernels = _model()._regimes["working"].solution.period_kernels
+    program = core_program_graph(kernel=next(iter(kernels.values())))["main"]
+
+    assert EULER_POINT_AXIS in program.requirements.axis_names
+
+
+def test_euler_point_axis_spans_the_exogenous_euler_grid() -> None:
+    """The axis runs over one cell per node of the regime's Euler-state grid."""
+    assert _euler_point_axis().extent == N_WEALTH
+
+
+def test_euler_point_axis_names_the_cores_width_keyword() -> None:
+    """The axis names the keyword the asset-row core takes its tile width on."""
+    assert _euler_point_axis().width_keyword == "_lcm_euler_point_width"
+
+
+@pytest.mark.parametrize("width", [1, 4, N_WEALTH])
+def test_a_fixed_euler_point_width_is_the_width_the_plan_selects(*, width: int) -> None:
+    """A width `axis_widths` fixes is the tile width the plan hands the core."""
+    axis = _euler_point_axis()
+    (candidate,) = workspace_width_candidates(
+        axes=(axis,), fixed_widths={EULER_POINT_AXIS: width}
+    )
+
+    assert candidate[EULER_POINT_AXIS] == width
+
+
+@pytest.mark.parametrize("width", [1, 4])
+def test_value_agrees_across_euler_point_widths(*, width: int) -> None:
+    """Tiling the node loop at any width reproduces the untiled solve's value.
+
+    Includes a width (4) that does not divide the eleven-node grid, so the last
+    tile is short. Feasibility is structural and matches exactly; the published
+    value moves only by the vectorized kernel XLA emits per tile width.
     """
-    reference = _solve(0)
-    splayed = _solve(batch_size)
-    assert set(reference) == set(splayed)
+    reference = _solve(N_WEALTH)
+    tiled = _solve(width)
     for period in sorted(reference):
-        assert set(reference[period]) == set(splayed[period])
         for regime_name in reference[period]:
             ref_V = np.asarray(reference[period][regime_name])
-            got_V = np.asarray(splayed[period][regime_name])
-            assert ref_V.shape == got_V.shape
-            # An infeasible cell carries `-inf`; a tolerance cannot adjudicate
-            # it, so the finite/infinite split is compared exactly.
+            got_V = np.asarray(tiled[period][regime_name])
             np.testing.assert_array_equal(
                 np.isfinite(got_V),
                 np.isfinite(ref_V),

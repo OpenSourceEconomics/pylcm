@@ -173,10 +173,24 @@ envelope row. A row that needs more slots is reported as overflow and NaN-poison
 field does not change the density of the policy read-out grid. `n_constrained_points`
 controls the borrowing-corner segment.
 
-The child stochastic-node expectation is streamed under the `stochastic_node` axis; fix
-its width with `ExecutionConfig(axis_widths=...)`. Every width reads the same nodes at
-the same joint weights and reorders only the floating-point adds, so the values two
-widths publish agree to the working format's rounding rather than bit for bit.
+DC-EGM owns no block-size field. Each loop it could stream is an execution axis its
+value and replay programs declare, and the width is fixed with
+`ExecutionConfig(axis_widths=...)`:
+
+- `stochastic_node` folds the child stochastic-node expectation. It is a weighted sum,
+  so two widths reorder floating-point adds and the values they publish agree to the
+  working format's rounding rather than bit for bit.
+- `cell` tiles the per-combo solve over the regime's output state cells — its discrete
+  and passive states. Discrete actions stay outside it: the action aggregation needs
+  every action's value at once.
+- `savings_point` tiles the per-savings-node continuation, the dominant working buffer.
+- `euler_point` tiles the per-node solve of the asset-row kernel, which runs when a
+  savings-stage function reads the current Euler state.
+
+The last three concatenate their tiles rather than folding them, so every width names
+the same result. A loop of a single cell has nothing to tile and carries no
+declaration, so its name is refused for such a model. A `batch_size` on a grid of a
+DC-EGM regime is refused at model build, since none of these loops reads one.
 
 :::{important} Solved and simulated continuous actions
 A solve can expose an off-grid

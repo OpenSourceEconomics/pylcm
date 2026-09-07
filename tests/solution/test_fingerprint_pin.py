@@ -2,7 +2,9 @@
 
 The digest covers the arrays a model fixes at build, and their dtype follows the
 working float format, so the table records one row per format and each test reads
-the row of the format the session runs under.
+the row of the format the session runs under. What it never covers is execution
+policy: two models differing only in a block-size field are the same model, and
+that holds through the role-bound solver subclass a regime actually stores.
 
 Running this file as a script rewrites one row of the table:
 `python tests/solution/test_fingerprint_pin.py 64`, then the same with `32`. The
@@ -52,6 +54,48 @@ def _precision_key() -> str:
 
 def _pinned() -> dict[str, str]:
     return json.loads(_FIXTURE.read_text())[_precision_key()]
+
+
+# One entry per in-tree solver carrying an execution-policy field, as the pair of
+# model builders differing in that field and in nothing else.
+_POLICY_VARIANTS = {
+    "negm_outer_batch_size": (
+        lambda: negm_kinked_toy.build_model(outer_batch_size=0),
+        lambda: negm_kinked_toy.build_model(outer_batch_size=4),
+    ),
+    "negm_outer_batch_size_housing": (
+        lambda: ds_app2_housing.build_model(n_grid=8, outer_batch_size=0),
+        lambda: ds_app2_housing.build_model(n_grid=8, outer_batch_size=2),
+    ),
+    "nbegm_stochastic_node_batch_size": (
+        lambda: nbegm_stochastic_node_toy.build_model(
+            variant="nbegm", stochastic_node_batch_size=0
+        ),
+        lambda: nbegm_stochastic_node_toy.build_model(
+            variant="nbegm", stochastic_node_batch_size=2
+        ),
+    ),
+    "nnbegm_outer_batch_size": (
+        lambda: n_nbegm_toy.build_model(variant="n_nbegm", outer_batch_size=0),
+        lambda: n_nbegm_toy.build_model(variant="n_nbegm", outer_batch_size=2),
+    ),
+}
+
+
+@pytest.mark.parametrize("key", sorted(_POLICY_VARIANTS))
+def test_fingerprint_is_invariant_to_a_solvers_execution_policy(key: str) -> None:
+    """A solver's block-size field is execution policy, so it never enters the digest.
+
+    A regime stores its solver as the role-bound subclass, so the fingerprint
+    has to see through that binding: two models differing only in one such
+    field are the same model and carry the same durable fingerprint.
+    """
+    reference, varied = _POLICY_VARIANTS[key]
+
+    assert (
+        varied()._model_structure_fingerprint
+        == reference()._model_structure_fingerprint
+    )
 
 
 @pytest.mark.parametrize("key", sorted(_MODELS))

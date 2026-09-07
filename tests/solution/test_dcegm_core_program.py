@@ -40,7 +40,7 @@ from lcm.solver_api import (
     OmissionReason,
     ResultRetention,
 )
-from lcm.solvers import MSSEnvelope
+from lcm.solvers import SAVINGS_POINT_AXIS, MSSEnvelope
 from tests.conftest import assert_agrees_to_ulp
 from tests.solution._nbegm_direct_oracle import ride_along_kernel
 from tests.solution.test_egm_passive import _get_model as _passive_model
@@ -94,7 +94,7 @@ def _run(*, kernel: Any, context: Mapping[str, Any], name: str = "main") -> tupl
     return tuple(jax.jit(materialized.function)(**materialized.arguments))
 
 
-def test_the_graph_publishes_dense_values_and_replay_variants():
+def test_the_graph_publishes_planned_values_and_replay_variants():
     kernel, _ = _full_kernel()
     graph = core_program_graph(kernel=kernel)
 
@@ -113,7 +113,7 @@ def test_the_graph_publishes_dense_values_and_replay_variants():
     for program in graph.values():
         assert program.disposition is CoreExecutionDisposition.PLANNED
         assert program.disposition_reason is None
-        assert program.requirements.axes == ()
+        assert program.requirements.axis_names == (SAVINGS_POINT_AXIS,)
         assert {read.source.path for read in program.requirements.value_reads} == {
             (target, leaf)
             for target in targets

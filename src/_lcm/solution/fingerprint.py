@@ -91,9 +91,11 @@ _PYTHON_IMPLEMENTATION_SEAL = (
     tuple(sys.implementation.version),
     sys.implementation.cache_tag,
 )
-# These names are execution policy only for pylcm's own implementations. The
-# predicate below deliberately scopes them by owner type: a plugin or user
-# callable is free to give a mathematically meaningful field the same name.
+# These names are execution policy only for pylcm's own implementations, the
+# role-bound subclasses a regime stores included. The predicate below scopes them
+# by owner type and requires the type to be one a shipped pylcm module binds, so
+# a plugin or user callable stays free to give a mathematically meaningful field
+# the same name.
 _GRID_EXECUTION_FIELDS = frozenset({"batch_size", "distributed"})
 _BUILTIN_EXECUTION_FIELDS_BY_TYPE: tuple[tuple[type[object], frozenset[str]], ...] = (
     (AdaptiveOuterMesh, frozenset({"batch_size"})),
@@ -1825,7 +1827,12 @@ class _SemanticHasher:
 
 
 def _exclude_field(*, owner: object, field_name: str) -> bool:
-    """Whether one field is non-semantic for this precise owner type."""
+    """Whether one field is execution policy rather than model structure.
+
+    A regime stores its solver as the role-bound subclass the solver binds
+    itself to, so a registered type answers for its shipped subclasses too;
+    a subclass a shipped pylcm module does not bind answers for none of them.
+    """
     owner_type = type(owner)
     if (
         _has_exact_type(value=owner, candidates=_TRUSTED_GRID_EXECUTION_TYPE_OBJECTS)
@@ -1833,7 +1840,10 @@ def _exclude_field(*, owner: object, field_name: str) -> bool:
     ):
         return True
     for registered_type, fields in _BUILTIN_EXECUTION_FIELDS_BY_TYPE:
-        if owner_type is registered_type:
+        if owner_type is registered_type or (
+            issubclass(owner_type, registered_type)
+            and _is_shipped_pylcm_type(owner_type)
+        ):
             return field_name in fields
     return False
 

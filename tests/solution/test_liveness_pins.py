@@ -151,26 +151,60 @@ def test_a_payload_no_retention_selected_is_not_retained() -> None:
     )
 
 
-def test_a_dense_program_s_declared_leaf_read_is_a_counted_consumer() -> None:
-    """A dense EGM program's continuation-leaf read counts, so it can close."""
-    model = _egm_model(solver=EGM(savings_grid=_SAVINGS_GRID))
-    metadata = _metadata(model=model)
+def _declared_read_consumer_counts(
+    *,
+    model: Model,
+    metadata: Mapping[tuple[str, int, str], _ProgramExecutionMetadata],
+    disposition: CoreExecutionDisposition,
+) -> set[int]:
+    """Count the consumers the ledger gives every read declared at `disposition`."""
     ledger = _build_planned_input_liveness(
         regimes=model._regimes,
         program_metadata=metadata,
         retain_all_artifacts=False,
         persistable_artifact_refs=frozenset(),
     )
-    dense_reads = [
-        read.target
+    return {
+        ledger.remaining_consumers(artifact=read.target)
         for entry in metadata.values()
-        if entry.disposition is CoreExecutionDisposition.DENSE
+        if entry.disposition is disposition
         for read in entry.requirements.value_reads
-    ]
-
-    assert {ledger.remaining_consumers(artifact=target) for target in dense_reads} == {
-        1
     }
+
+
+def test_a_dense_program_s_declared_leaf_read_is_a_counted_consumer() -> None:
+    """A dense program's continuation-leaf read counts, so it can close.
+
+    The gated collective model keeps a dense program that declares its reads,
+    which is what pins the rule that counting follows the declaration rather
+    than the disposition. Several of its programs read one leaf, so a leaf
+    carries as many consumers as read it; what matters is that none carries
+    zero. `min` on an empty set raises, so a model that declared no dense read
+    would fail this rather than pass it vacuously.
+    """
+    model = _gated_model()
+
+    assert (
+        min(
+            _declared_read_consumer_counts(
+                model=model,
+                metadata=_program_metadata(model=model),
+                disposition=CoreExecutionDisposition.DENSE,
+            )
+        )
+        >= 1
+    )
+
+
+def test_a_planned_program_s_declared_leaf_read_is_a_counted_consumer() -> None:
+    """A planned EGM program's continuation-leaf read counts, so it can close."""
+    model = _egm_model(solver=EGM(savings_grid=_SAVINGS_GRID))
+
+    assert _declared_read_consumer_counts(
+        model=model,
+        metadata=_metadata(model=model),
+        disposition=CoreExecutionDisposition.PLANNED,
+    ) == {1}
 
 
 def test_the_breakpoints_host_read_is_pinned_wherever_a_target_publishes_one() -> None:

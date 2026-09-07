@@ -145,7 +145,11 @@ def _compiled_cores(*, kernel: Any, context: Mapping[str, Any]) -> dict[str, Any
         if name in consumed:
             resolved = resolve_core_program(
                 program=materialized,
-                tile_widths={},
+                # The whole-axis width, which is what the compiled call below
+                # runs at: it passes no width keyword, so every loop fuses.
+                tile_widths={
+                    axis.name: axis.extent for axis in materialized.requirements.axes
+                },
                 input_transfer_plan=_aligned_transfer_plan(program=materialized),
             )
             producers[name] = MappingProxyType(

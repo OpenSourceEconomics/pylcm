@@ -44,6 +44,7 @@ from _lcm.execution.core_program import (
     CoreProgram,
     ProgramScope,
     ReducedAxis,
+    TiledOutputAxis,
 )
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from _lcm.execution.reductions import WEIGHTED_EXPECTATION_REDUCTION
@@ -488,16 +489,13 @@ class DCEGM(OneMarginSolver):
                     # The plan's width is a compile-time choice, so the solver's
                     # own compilation must hold it static too; the engine's outer
                     # jit then hands this one a concrete width.
-                    values_core = jax.jit(
-                        values_core, static_argnames=(_STOCHASTIC_NODE_WIDTH_KEYWORD,)
-                    )
-                    replay_core = jax.jit(
-                        replay_core, static_argnames=(_STOCHASTIC_NODE_WIDTH_KEYWORD,)
-                    )
+                    values_core = jax.jit(values_core, static_argnames=_WIDTH_KEYWORDS)
+                    replay_core = jax.jit(replay_core, static_argnames=_WIDTH_KEYWORDS)
                 requirements = CoreExecutionRequirements(
                     reduced_axes=_stochastic_node_axis(
                         build=build, state_action_space=context.state_action_space
-                    )
+                    ),
+                    tiled_axes=_tiled_axes(build=build),
                 )
                 programs_by_core[id(core)] = MappingProxyType(
                     {
@@ -569,7 +567,72 @@ class _BoundDCEGM(DCEGM):
 # Planner name of the child stochastic-node mesh the DC-EGM continuation folds.
 STOCHASTIC_NODE_AXIS = "stochastic_node"
 
+# Planner name of the output state cells the per-combo solve is tiled over.
+CELL_AXIS = "cell"
+
+# Planner name of the exogenous savings nodes the continuation is tiled over.
+SAVINGS_POINT_AXIS = "savings_point"
+
+# Planner name of the exogenous Euler nodes the asset-row solve is tiled over.
+EULER_POINT_AXIS = "euler_point"
+
 _STOCHASTIC_NODE_WIDTH_KEYWORD = "_lcm_stochastic_node_width"
+
+_TILED_AXIS_WIDTH_KEYWORDS = MappingProxyType(
+    {
+        CELL_AXIS: "_lcm_cell_width",
+        SAVINGS_POINT_AXIS: "_lcm_savings_point_width",
+        EULER_POINT_AXIS: "_lcm_euler_point_width",
+    }
+)
+
+
+def _tiled_axes(*, build: EGMStepBuild) -> tuple[TiledOutputAxis, ...]:
+    """Declare the three loops the DC-EGM kernel runs in planner-sized tiles.
+
+    Each is a loop whose per-tile results are concatenated rather than folded,
+    so the axis is a tiled output axis and every width names the same result:
+
+    - `cell` over the regime's output state cells (its discrete and passive
+      states); discrete actions stay outside it, because the action
+      aggregation needs every action's value at once;
+    - `savings_point` over the exogenous savings nodes of the continuation;
+    - `euler_point` over the exogenous Euler nodes, which only the asset-row
+      kernel loops over.
+
+    A loop of one cell has nothing to tile and carries no declaration, so a
+    regime whose kernel does not run it — the single-post-state kernel's node
+    loop, a single-cell state product — declares no axis for it and
+    `ExecutionConfig(axis_widths=...)` refuses that name.
+    """
+    extents = {
+        CELL_AXIS: build.cell_extent,
+        SAVINGS_POINT_AXIS: build.savings_point_extent,
+        EULER_POINT_AXIS: build.euler_point_extent,
+    }
+    state_names = {
+        CELL_AXIS: build.row_discrete_state_names + build.row_passive_state_names,
+        SAVINGS_POINT_AXIS: (),
+        EULER_POINT_AXIS: (),
+    }
+    return tuple(
+        TiledOutputAxis(
+            name=name,
+            state_names=state_names[name],
+            extent=extents[name],
+            width_keyword=keyword,
+        )
+        for name, keyword in _TILED_AXIS_WIDTH_KEYWORDS.items()
+        if extents[name] > 1
+    )
+
+
+# Every planner width the DC-EGM core takes, in one tuple: the width is a
+# compile-time choice, so the solver's own jit has to hold all of them static.
+_WIDTH_KEYWORDS = (
+    _STOCHASTIC_NODE_WIDTH_KEYWORD,
+    *_TILED_AXIS_WIDTH_KEYWORDS.values(),
+)
 
 
 def _stochastic_node_axis(
@@ -641,6 +704,15 @@ class EGMStepBuild:
 
     row_discrete_action_names: tuple[ActionName, ...]
     """Discrete actions following the passive states on every row."""
+
+    cell_extent: int
+    """Number of output state cells: the discrete-by-passive state product."""
+
+    savings_point_extent: int
+    """Number of nodes on the solver's exogenous savings grid."""
+
+    euler_point_extent: int
+    """Number of asset-row nodes, or `0` where the kernel runs no node loop."""
 
 
 def _dcegm_output_roles(

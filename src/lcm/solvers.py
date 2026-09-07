@@ -48,6 +48,7 @@ such a solver constructs — the execution-contract types (`CoreProgram`,
 `CoreBuildContext`, `CoreExecutionRequirements`, `CoreExecutionDisposition`,
 `ProgramScope`, `ReducedAxis`, `TiledOutputAxis`, `ReductionDeclaration`,
 `ReductionSemantics`, `ACTION_PRODUCT_AXIS`, `STOCHASTIC_NODE_AXIS`,
+`CELL_AXIS`, `SAVINGS_POINT_AXIS`, `EULER_POINT_AXIS`,
 `EXACTNESS_VALUES`, `OutputRole`,
 `StateAxesLeading`, `PeriodKernel`, `StateActionSpace`), the continuation types
 and helpers (`ContinuationSpec`, `EGMContinuationSpec`, `EGMContinuationLayout`,
@@ -121,7 +122,10 @@ from _lcm.solution.contract import (
     TwoMarginSolver,
 )
 from _lcm.solution.dcegm import (
+    CELL_AXIS,
     DCEGM,
+    EULER_POINT_AXIS,
+    SAVINGS_POINT_AXIS,
     STOCHASTIC_NODE_AXIS,
     EnvelopeConfig,
     ExactEnvelope,
@@ -198,16 +202,19 @@ from lcm.solver_api import (
 
 __all__ = [
     "ACTION_PRODUCT_AXIS",
+    "CELL_AXIS",
     "DCEGM",
     "DISSOLUTION_FLAG",
     "EGM",
     "EGM_CONTINUATION",
     "EGM_ENDOGENOUS_COORDINATE",
+    "EULER_POINT_AXIS",
     "EXACTNESS_VALUES",
     "NBEGM",
     "NEGM",
     "NNBEGM",
     "PYLCM_VERSION",
+    "SAVINGS_POINT_AXIS",
     "SIMULATION_POLICY",
     "SOLUTION_FORMAT_VERSION",
     "SOLUTION_SCHEMA_VERSION",

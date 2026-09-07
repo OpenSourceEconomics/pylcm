@@ -942,12 +942,12 @@ def _fail_if_grid_hygiene_violated(
         fail_if_grid_withholds_its_points(
             grid=grid, role=role, regime_name=regime_name, solver_name="DCEGM"
         )
-    # `batch_size` on a discrete state splays its combo axis: the per-combo
-    # solve runs in `productmap` blocks (per-axis `lax.map`) reassembled into
-    # the whole combo product before the carry is built, so carry rows still
-    # carry whole discrete axes. `distributed` stays rejected — the kernel
-    # selects child carry rows by integer indexing along whole discrete axes,
-    # which a sharded (per-device slice) axis would break.
+    # A DCEGM regime's every splayable loop is a declared execution axis whose
+    # width the plan owns, so a `batch_size` on one of its grids would change
+    # nothing; it is refused rather than silently ignored. `distributed` stays
+    # rejected on a discrete state — the kernel selects child carry rows by
+    # integer indexing along whole discrete axes, which a sharded (per-device
+    # slice) axis would break.
     for name, grid in user_regime.states.items():
         if isinstance(grid, DiscreteGrid) and grid.distributed:
             msg = (
@@ -956,24 +956,29 @@ def _fail_if_grid_hygiene_violated(
                 f"(got distributed={grid.distributed})."
             )
             raise ModelInitializationError(msg)
-    # Discrete actions cannot be batched or distributed: the discrete-action
-    # aggregation (logsum over the action axes) needs every action value at
-    # once, so its axis is never split.
-    for name, grid in user_regime.actions.items():
-        if isinstance(grid, DiscreteGrid) and (
-            grid.batch_size != 0 or grid.distributed
-        ):
+    for role, grid in (
+        *(
+            (f"state '{name}'", cast("Grid", grid))
+            for name, grid in user_regime.states.items()
+        ),
+        *(
+            (f"action '{name}'", cast("Grid", grid))
+            for name, grid in user_regime.actions.items()
+        ),
+        ("DCEGM savings grid", solver.savings_grid),
+    ):
+        if grid.batch_size != 0:
             msg = (
-                f"The grid of the discrete action '{name}' in regime "
-                f"'{regime_name}' must not be batched or distributed in a "
-                f"DCEGM regime (got batch_size={grid.batch_size}, "
-                f"distributed={grid.distributed})."
+                f"The grid of the {role} in regime '{regime_name}' carries "
+                f"batch_size={grid.batch_size}, which a DCEGM regime does not "
+                "read: each of its loops is an execution axis the value and "
+                "replay programs declare. Fix a width with "
+                "`ExecutionConfig(axis_widths=...)`, which lists the declared "
+                "axis names when it is given one it does not know."
             )
             raise ModelInitializationError(msg)
-    # `batch_size` on the Euler grid is honored: it splays the per-asset-node
-    # solve into blocks (`lax.map`) to shed peak working-set memory, leaving the
-    # value function unchanged. `distributed` remains disallowed — a continuous
-    # axis cannot be sharded (rejected at grid construction).
+    # `distributed` remains disallowed on the Euler grid — a continuous axis
+    # cannot be sharded (rejected at grid construction).
     if euler_grid.distributed:
         msg = (
             f"The grid of the Euler state '{solver.continuous_state}' in "
@@ -981,10 +986,8 @@ def _fail_if_grid_hygiene_violated(
             f"(got distributed={euler_grid.distributed})."
         )
         raise ModelInitializationError(msg)
-    # `batch_size` on the savings grid is honored: it splays the per-savings-node
-    # continuation computation into blocks (`lax.map`) to shed the dominant
-    # egm_step working buffer, leaving the value function unchanged. `distributed`
-    # remains disallowed — a continuous axis cannot be sharded.
+    # `distributed` remains disallowed on the savings grid — a continuous axis
+    # cannot be sharded.
     if solver.savings_grid.distributed:
         msg = (
             f"The DCEGM savings grid of regime '{regime_name}' must not be "

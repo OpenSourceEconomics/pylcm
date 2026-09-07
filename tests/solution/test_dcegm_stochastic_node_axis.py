@@ -100,7 +100,7 @@ def test_value_program_declares_the_stochastic_node_axis() -> None:
     kernels = _model()._regimes["alive"].solution.period_kernels
     program = core_program_graph(kernel=next(iter(kernels.values())))["main"]
 
-    assert program.requirements.axis_names == (STOCHASTIC_NODE_AXIS,)
+    assert STOCHASTIC_NODE_AXIS in program.requirements.axis_names
 
 
 def test_stochastic_node_axis_spans_the_child_process_nodes() -> None:
@@ -138,6 +138,27 @@ def test_value_agrees_across_stochastic_node_widths(*, width: int) -> None:
         for regime_name in reference[period]:
             assert_agrees_to_ulp(
                 got=np.asarray(streamed[period][regime_name]),
+                expected=np.asarray(reference[period][regime_name]),
+                n_ulp=64,
+                err_msg=f"period={period}, regime={regime_name}",
+            )
+
+
+def test_the_default_plan_agrees_with_the_whole_mesh_fold() -> None:
+    """An unbudgeted solve publishes the dense fold's value to the format's rounding.
+
+    Without a declared width the plan streams the five-node mesh at its bootstrap
+    width, which is four, so the fold runs one full block and one of a single
+    node. A weighted sum is order dependent, so the two schedules agree by
+    rounding rather than bit for bit.
+    """
+    reference = _solve(N_INCOME_NODES)
+    default = _solve(None)
+
+    for period in sorted(reference):
+        for regime_name in reference[period]:
+            assert_agrees_to_ulp(
+                got=np.asarray(default[period][regime_name]),
                 expected=np.asarray(reference[period][regime_name]),
                 n_ulp=64,
                 err_msg=f"period={period}, regime={regime_name}",

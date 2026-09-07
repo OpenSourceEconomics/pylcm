@@ -37,6 +37,7 @@ from _lcm.egm.step_core import (
     _compute_nodes_over_savings,
     _EgmKernelPieces,
     _get_compute_node,
+    tile_block_size,
 )
 from _lcm.egm.upper_envelope.fues import (
     QueryBracket,
@@ -61,8 +62,8 @@ def _get_solve_one_combo_asset_rows(
     pool: dict[str, Any],
     state_grid: Float1D,
     next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry],
-    euler_batch_size: int,
-    savings_batch_size: int,
+    euler_point_width: int | None,
+    savings_point_width: int | None,
     stochastic_node_width: int | None,
     resolved_process_grids: Mapping[StateName, FloatND] = MappingProxyType({}),
 ) -> Callable[
@@ -94,8 +95,8 @@ def _get_solve_one_combo_asset_rows(
         pool=pool,
         state_grid=state_grid,
         next_regime_to_continuation=next_regime_to_continuation,
-        euler_batch_size=euler_batch_size,
-        savings_batch_size=savings_batch_size,
+        euler_point_width=euler_point_width,
+        savings_point_width=savings_point_width,
         stochastic_node_width=stochastic_node_width,
         resolved_process_grids=resolved_process_grids,
     )
@@ -121,11 +122,11 @@ class _SolveOneComboAssetRows:
     next_regime_to_continuation: MappingProxyType[RegimeName, EGMCarry]
     """The next period's EGM carries."""
 
-    euler_batch_size: int
-    """The Euler grid's `batch_size`; splays the per-node solve when positive."""
+    euler_point_width: int | None
+    """Tile width of the per-node solve; `None` runs it in one tile."""
 
-    savings_batch_size: int
-    """The savings grid's `batch_size`."""
+    savings_point_width: int | None
+    """Tile width of the per-savings-node loop; `None` runs it in one tile."""
 
     stochastic_node_width: int | None
     """Block width of the streamed node expectation; `None` folds one block."""
@@ -179,18 +180,19 @@ class _SolveOneComboAssetRows:
             dtype=dtype,
             stochastic_node_width=self.stochastic_node_width,
             resolved_process_grids=self.resolved_process_grids,
-            savings_batch_size=self.savings_batch_size,
+            savings_point_width=self.savings_point_width,
             own_resources_of_state=own_resources_of_state,
             continuation_of_euler_state=continuation_of_euler_state,
         )
 
-        # Splay the per-asset-node solve into `lax.map` blocks of
-        # `euler_batch_size` to shed peak working-set memory; `0` (or a size
-        # covering the whole grid) keeps the fused vmap. The two are
-        # numerically identical — only the schedule differs.
-        if 0 < self.euler_batch_size < n_state:
+        # Run the per-asset-node solve in `lax.map` tiles the plan sizes, which
+        # bounds peak working-set memory; a width covering the whole grid keeps
+        # the fused vmap. The tiles are concatenated, so the two schedules name
+        # the same result.
+        block = tile_block_size(width=self.euler_point_width, extent=n_state)
+        if block:
             V_vec, policy_vec, mu_vec = jax.lax.map(
-                solve_one_node, self.state_grid, batch_size=self.euler_batch_size
+                solve_one_node, self.state_grid, batch_size=block
             )
         else:
             V_vec, policy_vec, mu_vec = jax.vmap(solve_one_node)(self.state_grid)
@@ -250,8 +252,8 @@ class _SolveOneNode:
     resolved_process_grids: Mapping[StateName, FloatND]
     """Solve-time grids of runtime-resolved process states."""
 
-    savings_batch_size: int
-    """The savings grid's `batch_size`."""
+    savings_point_width: int | None
+    """Tile width of the per-savings-node loop; `None` runs it in one tile."""
 
     own_resources_of_state: Callable[[ScalarFloat], ScalarFloat]
     """The regime's resources as a function of its Euler state, combo bound."""
@@ -284,7 +286,7 @@ class _SolveOneNode:
         actions, endog_grid, values, expected_values = _compute_nodes_over_savings(
             compute_node=compute_node,
             savings_nodes=pieces.savings_nodes,
-            savings_batch_size=self.savings_batch_size,
+            savings_point_width=self.savings_point_width,
         )
 
         resources_at_node, resources_gradient = jax.value_and_grad(
