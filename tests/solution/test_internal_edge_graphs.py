@@ -481,6 +481,7 @@ def _model(
     depth: int = 0,
     planned: bool = False,
     reverse: bool = False,
+    execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
 ) -> Model:
     """Build the regression regime with its solver replaced by a graph solver."""
     last_age = START_AGE + _N_PERIODS - 2
@@ -510,6 +511,7 @@ def _model(
         ages=AgeGrid(start=START_AGE, stop=last_age + 1, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=enable_jit,
+        execution_config=execution_config,
     )
 
 
@@ -712,13 +714,13 @@ def test_a_budgeted_solve_resolves_every_width_candidate_of_a_producer() -> None
         value_from="p1",
         enable_jit=True,
         n_wealth=3,
+        execution_config=ExecutionConfig(device_memory_bytes=2**32),
     )
 
     result = model.solve(
         params=get_params(n_periods=_N_PERIODS),
         log_level="off",
         retention=ResultRetention.VALUES,
-        execution_config=ExecutionConfig(device_memory_bytes=2**32),
     )
 
     aaae(

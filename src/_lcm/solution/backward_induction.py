@@ -20,7 +20,12 @@ from typing import cast
 
 import jax
 
-from _lcm.engine import Regime, StateActionSpace, _build_regime_sharding
+from _lcm.engine import (
+    Regime,
+    StateActionSpace,
+    _build_regime_sharding,
+    placed_devices_for_ids,
+)
 from _lcm.execution.core_program import (
     CoreBuildContext,
     CoreExecutionDisposition,
@@ -41,6 +46,10 @@ from _lcm.execution.donation import (
     resolve_donations,
     unit_input_readers,
     withhold_shared_donations,
+)
+from _lcm.execution.execution_plan import (
+    ResolvedExecution,
+    execution_over_visible_devices,
 )
 from _lcm.execution.footprint import (
     ArtifactFootprint,
@@ -159,7 +168,6 @@ from lcm.exceptions import (
     InvalidValueFunctionError,
     ModelInitializationError,
 )
-from lcm.execution import ExecutionConfig
 from lcm.solver_api import (
     SIMULATION_POLICY,
     ArtifactKey,
@@ -183,7 +191,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     model_fingerprint: str,
     logger: logging.Logger,
     enable_jit: bool,
-    execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
+    execution: ResolvedExecution | None = None,
     collect_solver_diagnostics: bool = False,
     max_compilation_workers: int | None = None,
     retain_dissolution_flags: bool = True,
@@ -207,8 +215,10 @@ def solve(  # noqa: C901, PLR0912, PLR0915
             to completion and log a warning, so `solve` returns a complete
             (NaN-bearing) solution; `"off"` skips the NaN check.
         enable_jit: Whether to JIT-compile the functions of the internal regimes.
-        execution_config: Hardware-local solve controls, including the optional
-            per-device workspace budget.
+        execution: The hardware-local facts the model resolved — its devices,
+            the optional per-device workspace budget, and fixed planner axis
+            widths. `None` resolves the inert configuration against every
+            visible device.
         collect_solver_diagnostics: Whether to retain a kernel's numerical
             self-report. Public ``Model.solve()`` and automatic simulation request
             it; ``log_level`` still decides whether diagnostics are calculated and
@@ -246,7 +256,10 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         the default path only gains an empty dissolution mapping.
 
     """
-    if execution_config.device_memory_bytes is not None and not enable_jit:
+    resolved_execution = (
+        execution_over_visible_devices() if execution is None else execution
+    )
+    if resolved_execution.device_memory_bytes is not None and not enable_jit:
         msg = (
             "ExecutionConfig.device_memory_bytes requires JIT compilation so the "
             "compiler can report peak workspace."
@@ -269,7 +282,11 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     )
 
     next_regime_to_V_arr, next_regime_to_continuation, next_edge_to_V_arr = (
-        _build_continuation_templates(regimes=regimes, flat_params=flat_params)
+        _build_continuation_templates(
+            regimes=regimes,
+            flat_params=flat_params,
+            device_ids=resolved_execution.device_ids,
+        )
     )
 
     # Resolve every solve program, then compile unique lowerings when enabled.
@@ -282,7 +299,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         next_regime_to_continuation=next_regime_to_continuation,
         next_edge_to_V_arr=next_edge_to_V_arr,
         enable_jit=enable_jit,
-        execution_config=execution_config,
+        execution=resolved_execution,
         retain_replay=retain_replay,
         retain_all_artifacts=retain_all_artifacts,
         persistable_artifact_refs=persistable_artifact_refs,
@@ -425,7 +442,9 @@ def solve(  # noqa: C901, PLR0912, PLR0915
     # the wave plan reads are resolved once for the whole solve.
     device_ids_by_regime = MappingProxyType(
         {
-            regime_name: _regime_device_ids(regime=regime)
+            regime_name: _regime_device_ids(
+                regime=regime, visible_device_ids=resolved_execution.device_ids
+            )
             for regime_name, regime in regimes.items()
         }
     )
@@ -1165,21 +1184,24 @@ def _cores_with_transfer_cache(
     )
 
 
-def _regime_device_ids(*, regime: Regime) -> frozenset[int]:
+def _regime_device_ids(
+    *, regime: Regime, visible_device_ids: tuple[int, ...]
+) -> frozenset[int]:
     """Return the ids of the devices one regime's nodes are dispatched on.
 
-    An empty placement names no submesh, so the regime runs on every visible
-    device.
+    An empty placement names no submesh, so the regime runs on every device the
+    model uses.
 
     Args:
         regime: The canonical regime whose nodes are being placed.
+        visible_device_ids: The model's device ids, ascending.
 
     Returns:
         Frozenset of the device ids the regime's dispatches occupy.
 
     """
     return frozenset(regime.solution.submesh_device_ids) or frozenset(
-        device.id for device in jax.devices()
+        visible_device_ids
     )
 
 
@@ -1653,6 +1675,7 @@ def _build_continuation_templates(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
+    device_ids: tuple[int, ...] = (),
 ) -> tuple[
     MappingProxyType[RegimeName, FloatND],
     MappingProxyType[RegimeName, ContinuationPayload],
@@ -1676,6 +1699,7 @@ def _build_continuation_templates(
     regime_V_topology = _get_regime_V_shapes_and_shardings(
         regimes=regimes,
         flat_params=flat_params,
+        device_ids=device_ids,
     )
     next_regime_to_V_arr = MappingProxyType(
         {
@@ -1694,7 +1718,7 @@ def _build_continuation_templates(
         {
             (source_name, target_name): _build_zero_V_arr(topology=topology)
             for source_name, target_name, topology in _iter_edge_topologies(
-                regimes=regimes, flat_params=flat_params
+                regimes=regimes, flat_params=flat_params, device_ids=device_ids
             )
         }
     )
@@ -1730,6 +1754,7 @@ def _iter_edge_topologies(
     *,
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
+    device_ids: tuple[int, ...] = (),
 ) -> Iterator[tuple[RegimeName, RegimeName, _RegimeVTopology]]:
     """Yield `(source, target, Wbar topology)` for every declared gated edge.
 
@@ -1743,6 +1768,9 @@ def _iter_edge_topologies(
     Both the state-action space and the sharding plan are the target's alone,
     so they are built once per target however many sources reach it. The space
     completes runtime grids from params, which is the expensive half.
+
+    `device_ids` names the model's devices, ascending; empty names every device
+    JAX reports.
     """
     target_shapes: dict[RegimeName, tuple[int, ...]] = {}
     target_shardings: dict[RegimeName, jax.sharding.Sharding | None] = {}
@@ -1758,13 +1786,17 @@ def _iter_edge_topologies(
                 target_shapes[target_name] = tuple(
                     len(v) for v in target_states.values()
                 )
-                devices = target.solution.placed_devices()
+                devices = placed_devices_for_ids(
+                    submesh_device_ids=target.solution.submesh_device_ids,
+                    visible_device_ids=device_ids,
+                )
                 target_shardings[target_name] = placed_V_sharding(
                     sharding_plan=_build_regime_sharding(
                         grids=target.solution.grids, devices=devices
                     ),
                     state_order=tuple(target_states),
                     devices=devices,
+                    device_ids=device_ids,
                 )
             shape = target_shapes[target_name]
             sharding = target_shardings[target_name]
@@ -2457,6 +2489,7 @@ def _resident_bytes_by_triple(
     ledger: PlannedInputLiveness,
     templates: SolveInputMappings,
     program_metadata: Mapping[_CoreTriple, _ProgramExecutionMetadata],
+    device_ids: tuple[int, ...],
 ) -> MappingProxyType[_CoreTriple, int]:
     """Predict, per core triple, the resident bytes at its scheduled position.
 
@@ -2482,7 +2515,9 @@ def _resident_bytes_by_triple(
     footprints = _artifact_footprints(ledger=ledger, templates=templates)
     device_ids_by_regime = MappingProxyType(
         {
-            regime_name: _regime_device_ids(regime=regime)
+            regime_name: _regime_device_ids(
+                regime=regime, visible_device_ids=device_ids
+            )
             for regime_name, regime in regimes.items()
         }
     )
@@ -2747,7 +2782,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
     next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
     enable_jit: bool,
-    execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
+    execution: ResolvedExecution,
     retain_replay: bool,
     retain_all_artifacts: bool,
     persistable_artifact_refs: frozenset[ArtifactRef],
@@ -2781,8 +2816,9 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
             for constructing a source kernel's gated-edge lowering arguments;
             empty for models without gated edges.
         enable_jit: Whether to JIT-compile the functions of the internal regimes.
-        execution_config: Hardware-local solve controls, including the optional
-            per-device workspace budget.
+        execution: The hardware-local facts the model resolved — its devices,
+            the optional per-device workspace budget, and fixed planner axis
+            widths.
         retain_replay: Whether the solve retains replay artifacts; with the
             regime's declared replay route it selects which scoped programs of
             each kernel's graph are dispatched.
@@ -2816,10 +2852,6 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
             for core_name, program in graph.items():
                 all_programs[(regime_name, period, core_name)] = program
 
-    _fail_if_axis_widths_name_an_undeclared_axis(
-        all_programs=all_programs, axis_widths=execution_config.axis_widths
-    )
-
     # Materialize each named core's exact program before representative selection.
     # The resulting function, arguments, roles, specialization, and layout form
     # one lowering source of truth.
@@ -2830,6 +2862,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         internal_templates,
         input_liveness,
         donations,
+        representative_metadata,
     ) = _resolve_output_layouts_and_lowering_keys(
         all_programs=all_programs,
         regimes=regimes,
@@ -2839,8 +2872,8 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         next_regime_to_V_arr=next_regime_to_V_arr,
         next_regime_to_continuation=next_regime_to_continuation,
         next_edge_to_V_arr=next_edge_to_V_arr,
-        budget_bytes=execution_config.device_memory_bytes,
-        fixed_widths=execution_config.axis_widths,
+        budget_bytes=execution.device_memory_bytes,
+        fixed_widths=execution.axis_widths,
         enable_jit=enable_jit,
         retain_all_artifacts=retain_all_artifacts,
         persistable_artifact_refs=persistable_artifact_refs,
@@ -2858,7 +2891,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     # roles, static widths, and transfers as AOT. Only the final JAX compilation
     # step is omitted.
     if not enable_jit:
-        if execution_config.device_memory_bytes is not None:
+        if execution.device_memory_bytes is not None:
             msg = (
                 "ExecutionConfig.device_memory_bytes requires JIT compilation so the "
                 "compiler can report peak workspace."
@@ -2903,7 +2936,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     # advance to their next candidate in the following wave. Each wave deduplicates
     # by lowering key across triples, lowers sequentially (tracing is
     # single-threaded), and compiles in parallel.
-    budget_bytes = execution_config.device_memory_bytes
+    budget_bytes = execution.device_memory_bytes
     # A candidate competes with what the plan already keeps on its device at the
     # node's scheduled position. Without a budget no peak is consulted, so the
     # position is not walked either.
@@ -2918,12 +2951,8 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                 next_regime_to_continuation=next_regime_to_continuation,
                 next_edge_to_V_arr=next_edge_to_V_arr,
             ),
-            program_metadata=_execution_metadata(
-                programs={
-                    triple: resolved_programs[candidates[0]]
-                    for triple, candidates in candidates_by_triple.items()
-                }
-            ),
+            program_metadata=representative_metadata,
+            device_ids=execution.device_ids,
         )
     )
     n_workers = _resolve_compilation_workers(
@@ -3040,7 +3069,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         try:
             plan = plan_workspace(
                 axes=representative.requirements.axes,
-                fixed_widths=execution_config.axis_widths,
+                fixed_widths=execution.axis_widths,
                 compile_candidate=_CompiledCandidateLookup(
                     compiled_by_width=compiled_by_width
                 ),
@@ -3256,33 +3285,6 @@ def _count_triples_per_lowering_key(
     return counts
 
 
-def _fail_if_axis_widths_name_an_undeclared_axis(
-    *,
-    all_programs: Mapping[_CoreTriple, CoreProgram],
-    axis_widths: Mapping[str, int],
-) -> None:
-    """Refuse a fixed width whose axis no program of this solve declares.
-
-    Widths are hardware-local names, so a misspelling has no other way to surface:
-    the planner ignores a name the program at hand does not declare, because a
-    name one program declares legitimately reaches programs that do not. The union
-    over every program of the solve is therefore the only place the spelling can
-    be checked.
-    """
-    declared = {
-        axis.name
-        for program in all_programs.values()
-        for axis in program.requirements.axes
-    }
-    unknown = sorted(set(axis_widths) - declared)
-    if unknown:
-        msg = (
-            f"ExecutionConfig.axis_widths names axes no program of this model "
-            f"declares: {unknown}. Declared axis names: {sorted(declared)}."
-        )
-        raise ExecutionPlanningError(msg)
-
-
 def _fail_if_one_key_covers_two_callables(
     *,
     lowering_keys: Mapping[_CoreCandidate, Hashable],
@@ -3359,6 +3361,7 @@ def _resolve_output_layouts_and_lowering_keys(
     dict[_CoreCandidate, Mapping[str, object]],
     PlannedInputLiveness[_InputDispatch, ValueArtifactAddress],
     dict[_CoreCandidate, tuple[ResolvedDonation, ...]],
+    MappingProxyType[_CoreTriple, _ProgramExecutionMetadata],
 ]:
     """Materialize once, then resolve every width candidate before global dedup.
 
@@ -3472,9 +3475,12 @@ def _resolve_output_layouts_and_lowering_keys(
     representatives: dict[_CoreTriple, ResolvedCoreProgram] = {}
     for candidate, resolved in resolved_programs.items():
         representatives.setdefault(candidate[0], resolved)
+    # One derivation per program group, handed to both the liveness ledger and
+    # the resident-bytes walk, so the two read the same declaration facts.
+    representative_metadata = _execution_metadata(programs=representatives)
     input_liveness = _build_planned_input_liveness(
         regimes=regimes,
-        program_metadata=_execution_metadata(programs=representatives),
+        program_metadata=representative_metadata,
         retain_all_artifacts=retain_all_artifacts,
         persistable_artifact_refs=persistable_artifact_refs,
     )
@@ -3530,6 +3536,7 @@ def _resolve_output_layouts_and_lowering_keys(
         internal_templates,
         input_liveness,
         donations,
+        representative_metadata,
     )
 
 

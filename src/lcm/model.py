@@ -1,5 +1,6 @@
 """Collection of classes that are used by the user to define the model and grids."""
 
+import dataclasses
 import logging
 import operator
 import threading
@@ -10,7 +11,6 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Protocol, TypeAlias, cast, runtime_checkable
 
-import jax
 import numpy as np
 import pandas as pd
 from beartype import beartype
@@ -20,6 +20,11 @@ from _lcm.beartype_conf import MODEL_CONF, PARAMS_CONF
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
 from _lcm.engine import EGMPolicyRead, NNBEGMPolicyRead, UnsupportedReplayRoute
+from _lcm.execution.execution_plan import (
+    ResolvedExecution,
+    resolve_execution_config,
+    visible_device_ids,
+)
 from _lcm.grids import DiscreteGrid
 from _lcm.model_processing import (
     _validate_param_types,
@@ -84,6 +89,7 @@ from _lcm.solution.fingerprint import (
     project_solution_params,
     solution_param_projection,
 )
+from _lcm.solution.grid_search import ACTION_PRODUCT_AXIS
 from _lcm.solution.model_authority import (
     ReplayCellDescriptor,
     SolutionAuthority,
@@ -126,6 +132,7 @@ from _lcm.typing import (
     PeriodToRegimeToVArr,
     RegimeName,
     RegimeNamesToIds,
+    StateName,
 )
 from _lcm.utils.containers import (
     ensure_containers_are_immutable,
@@ -231,6 +238,11 @@ class _ReplayPayloadSource(Protocol):
 
 # Distinct grid supports whose declared solution authority a model keeps.
 _DECLARED_AUTHORITY_CACHE_SIZE = 4
+
+# Planner axis names the shipped solvers declare. An `ExecutionConfig.axis_width`
+# for any other name is a misspelling, and naming the legal set is the only way a
+# hardware-local name can be checked at all.
+_DECLARED_AXIS_NAMES = frozenset({ACTION_PRODUCT_AXIS})
 
 
 def _built_in_policy_payload_defect(  # noqa: PLR0911
@@ -424,6 +436,12 @@ class Model:
     _params_template: ParamsTemplate
     """Template for the model parameters."""
 
+    _execution: ResolvedExecution
+    """Hardware-local facts both phases run under, resolved once at model build.
+
+    Private: `execution_devices` is the public view of the device selection.
+    """
+
     _simulate_compile_cache: dict[int, MappingProxyType[RegimeName, Regime]]
     """AOT-compiled `regimes` keyed by chunk shape (`subject_batch_size`, or the
     full population when unbatched)."""
@@ -461,6 +479,7 @@ class Model:
         koopmans_aggregator: UserFunction = LinearAggregator(),
         certainty_equivalent: CertaintyEquivalent = LinearExpectation(),
         n_subjects: int | None = None,
+        execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
     ) -> None:
         """Initialize the Model.
 
@@ -503,6 +522,11 @@ class Model:
                 `simulate(...)` call AOT-compiles all simulate functions for
                 batch shape `n_subjects` before backward induction starts.
                 `None` keeps the purely lazy behaviour.
+            execution_config: Hardware-local controls every phase of this model
+                runs under — the devices it may use, the states that carry a
+                device axis, the per-device workspace budget, and fixed planner
+                axis widths. Resolved once here and read by both `solve()` and
+                `simulate()`; none of it enters the durable fingerprint.
 
         """
         self.description = description
@@ -588,20 +612,42 @@ class Model:
                 )
             )
         )
-        prepared_structure = prepare_model_structure(
+        self._execution = resolve_execution_config(
+            config=execution_config,
+            visible_device_ids=visible_device_ids(),
+            state_names=frozenset(
+                name for regime in self.user_regimes.values() for name in regime.states
+            ),
+            declared_axis_names=_DECLARED_AXIS_NAMES,
+        )
+        _fail_if_a_sharded_state_is_pruned(
             user_regimes=self.user_regimes,
+            pruned_variables=self.pruned_variables,
+            sharded_states=self._execution.sharded_states,
+        )
+        # Every consumer downstream of here reads a state's device axis off its
+        # grid, so the declaration is resolved into the grids once, at the only
+        # point that knows both the model and the configuration. The public
+        # `user_regimes` keep the user's own declaration.
+        placed_regimes = _regimes_with_sharded_states(
+            user_regimes=self.user_regimes,
+            sharded_states=self._execution.sharded_states,
+        )
+        prepared_structure = prepare_model_structure(
+            user_regimes=placed_regimes,
             ages=self.ages,
             active_periods_by_regime=active_periods_by_regime,
         )
         self.reachability = prepared_structure.reachability
         self._regimes, self._params_template = build_regimes_and_template(
             ages=self.ages,
-            user_regimes=self.user_regimes,
+            user_regimes=placed_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
             enable_jit=enable_jit,
             fixed_params=residual_fixed_params,
             params_already_consumed=params_consumed_by_binder,
             prepared_structure=prepared_structure,
+            execution=self._execution,
         )
         self.stakeholder_names_to_ids = next(
             (regime.stakeholder_names_to_ids for regime in self._regimes.values()),
@@ -616,6 +662,11 @@ class Model:
             solution_param_projection(self._regimes)
         )
         self._seal()
+
+    @property
+    def execution_devices(self) -> tuple[int, ...]:
+        """Return the ids of the devices this model runs on, ascending."""
+        return self._execution.device_ids
 
     def _seal(self) -> None:
         """Fix the model's durable identity and record the bindings it read.
@@ -771,7 +822,6 @@ class Model:
         *,
         params: UserParams,
         log_level: LogLevel,
-        execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
         retention: ResultRetention = ResultRetention.VALUES_AND_REPLAY,
         max_compilation_workers: int | None = None,
         log_path: str | Path | None = None,
@@ -793,8 +843,6 @@ class Model:
         Args:
             params: Model parameters compatible with ``get_params_template()``.
             log_level: Verbosity and runtime-validation policy.
-            execution_config: Hardware-local solve controls. The default carries no
-                device-memory budget.
             retention: Post-solve artifacts to retain.
             max_compilation_workers: Maximum threads for parallel XLA compilation.
             log_path: Optional directory for diagnostic snapshots.
@@ -817,7 +865,6 @@ class Model:
             flat_params=flat_params,
             params=params,
             log=log,
-            execution_config=execution_config,
             retention=retention,
             max_compilation_workers=max_compilation_workers,
             log_path=log_path,
@@ -830,7 +877,6 @@ class Model:
         flat_params: FlatParams,
         params: UserParams,
         log: logging.Logger,
-        execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
         retention: ResultRetention,
         max_compilation_workers: int | None,
         log_path: str | Path | None,
@@ -861,7 +907,6 @@ class Model:
             model_fingerprint=model_fingerprint,
             params=params,
             log=log,
-            execution_config=execution_config,
             log_path=log_path,
             log_keep_n_latest=log_keep_n_latest,
             max_compilation_workers=max_compilation_workers,
@@ -896,7 +941,6 @@ class Model:
         model_fingerprint: str,
         params: UserParams,
         log: logging.Logger,
-        execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
         log_path: str | Path | None,
         log_keep_n_latest: int,
         max_compilation_workers: int | None,
@@ -936,7 +980,7 @@ class Model:
                 model_fingerprint=model_fingerprint,
                 logger=log,
                 enable_jit=self.enable_jit,
-                execution_config=execution_config,
+                execution=self._execution,
                 collect_solver_diagnostics=collect_solver_diagnostics,
                 max_compilation_workers=max_compilation_workers,
                 retain_dissolution_flags=retain_dissolution_flags,
@@ -2069,7 +2113,6 @@ class Model:
         initial_conditions: UserInitialConditions | pd.DataFrame,
         solution: _SolutionResultBoundary | None = None,
         log_level: LogLevel,
-        execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
         seed: int | None = None,
         subject_batch_size: int = 0,
         log_path: str | Path | None = None,
@@ -2111,9 +2154,6 @@ class Model:
                 token; restored results instead match the durable model fingerprint.
                 When omitted, ``simulate`` obtains the same complete result from an
                 automatic solve.
-            execution_config: Hardware-local solve controls. With a supplied solution,
-                only the default configuration is valid because backward induction has
-                already completed.
             seed: Random seed.
             subject_batch_size: How to partition the subject axis of the forward
                 simulation. Results are invariant to this knob — per-subject RNG
@@ -2152,12 +2192,9 @@ class Model:
         self._sealed_bindings.fail_if_moved()
         log = get_logger(log_level=log_level)
         self._fail_if_simulation_is_unsupported()
-        fail_if_a_value_is_on_a_proper_submesh(regimes=self._regimes)
-        if solution is not None and execution_config.device_memory_bytes is not None:
-            msg = (
-                "A device-memory budget cannot be applied to an already-solved result."
-            )
-            raise ExecutionPlanningError(msg)
+        fail_if_a_value_is_on_a_proper_submesh(
+            regimes=self._regimes, device_ids=self._execution.device_ids
+        )
         # The canonical parameters bind both the supplied result preflight and an
         # automatic solve. Process them once and keep one model-authoritative seam.
         flat_params = self._process_params(params)
@@ -2193,15 +2230,15 @@ class Model:
         # a multiple of it. Without chunking, distribution alone needs a
         # device multiple. Pad rows duplicate the last real subject and are
         # trimmed inside `simulate`; a multiple of 1 (single pass) is a no-op.
-        distributes = self._distributes_subjects() and len(jax.devices()) > 1
+        n_devices = len(self._execution.device_ids)
+        distributes = self._distributes_subjects() and n_devices > 1
         if subject_batch_size > 0:
             raw_n_subjects = len(next(iter(initial_conditions.values())))
             alignment = min(subject_batch_size, raw_n_subjects)
             if distributes:
-                n_devices = len(jax.devices())
                 alignment = -(-alignment // n_devices) * n_devices
         elif distributes:
-            alignment = len(jax.devices())
+            alignment = n_devices
         else:
             alignment = 1
         initial_conditions, original_n_subjects = pad_initial_conditions_to_multiple(
@@ -2254,7 +2291,6 @@ class Model:
                 flat_params=flat_params,
                 params=params,
                 log=log,
-                execution_config=execution_config,
                 retention=ResultRetention.VALUES_AND_REPLAY,
                 max_compilation_workers=max_compilation_workers,
                 log_path=log_path,
@@ -2280,10 +2316,14 @@ class Model:
         # the values and the dissolution flags beside them are brought onto it
         # before the first period dispatches.
         period_to_regime_to_V_arr = canonical_solution_values(
-            values=period_to_regime_to_V_arr, regimes=self._regimes
+            values=period_to_regime_to_V_arr,
+            regimes=self._regimes,
+            device_ids=self._execution.device_ids,
         )
         period_to_regime_to_dissolution_flags = canonical_solution_values(
-            values=period_to_regime_to_dissolution_flags, regimes=self._regimes
+            values=period_to_regime_to_dissolution_flags,
+            regimes=self._regimes,
+            device_ids=self._execution.device_ids,
         )
         simulate_regimes = self._resolve_simulate_regimes(
             actual_n_subjects=actual_n_subjects,
@@ -2307,6 +2347,7 @@ class Model:
             seed=seed,
             subject_batch_size=compile_batch_size,
             original_n_subjects=original_n_subjects,
+            device_ids=self._execution.device_ids,
         )
         # AOT-compiled regimes carry `jax.stages.Compiled` callables that
         # wrap an unpicklable `LoadedExecutable`. `to_dataframe` only reads
@@ -2357,7 +2398,7 @@ class Model:
         if subject_batch_size > 0:
             compile_batch_size = min(subject_batch_size, padded_n_subjects)
             if self._distributes_subjects():
-                n_devices = len(jax.devices())
+                n_devices = len(self._execution.device_ids)
                 compile_batch_size = min(
                     -(-compile_batch_size // n_devices) * n_devices,
                     padded_n_subjects,
@@ -2374,11 +2415,9 @@ class Model:
         return compile_batch_size
 
     def _distributes_subjects(self) -> bool:
-        """Return whether any grid in any regime is distributed across devices."""
+        """Return whether any state in any regime carries a device axis."""
         return any(
-            grid.distributed
-            for regime in self._regimes.values()
-            for grid in regime.solution.grids.values()
+            regime.solution.sharded_state_names for regime in self._regimes.values()
         )
 
     def _ensure_simulate_compiled(
@@ -2401,6 +2440,7 @@ class Model:
             n_subjects=compile_batch_size,
             max_compilation_workers=max_compilation_workers,
             logger=log,
+            device_ids=self._execution.device_ids,
         )
         with self._simulate_compile_lock:
             self._simulate_compile_cache[compile_batch_size] = compiled
@@ -2453,3 +2493,86 @@ def _readable_template(value: object) -> object:
     if isinstance(value, Mapping):
         return {key: _readable_template(inner) for key, inner in value.items()}
     return getattr(value, "__name__", str(value))
+
+
+def _regimes_with_sharded_states(
+    *,
+    user_regimes: MappingProxyType[RegimeName, FinalizedUserRegime],
+    sharded_states: frozenset[StateName],
+) -> MappingProxyType[RegimeName, FinalizedUserRegime]:
+    """Mark every state named in `sharded_states` as carrying a device axis.
+
+    A regime that declares none of the named states is returned unchanged.
+
+    Args:
+        user_regimes: Immutable mapping of regime names to finalized regimes.
+        sharded_states: State names the configuration spreads over devices.
+
+    Returns:
+        Immutable mapping of regime names to regimes whose named state grids
+        carry a device axis.
+
+    Raises:
+        ExecutionPlanningError: A named state's grid cannot carry a device axis.
+
+    """
+    if not sharded_states:
+        return user_regimes
+    placed: dict[RegimeName, FinalizedUserRegime] = {}
+    for regime_name, regime in user_regimes.items():
+        touched = sorted(sharded_states & set(regime.states))
+        if not touched:
+            placed[regime_name] = regime
+            continue
+        states = dict(regime.states)
+        for name in touched:
+            grid = states[name]
+            if not isinstance(grid, DiscreteGrid):
+                msg = (
+                    f"ExecutionConfig.sharded_states names {name!r}, whose grid in "
+                    f"regime {regime_name!r} is a {type(grid).__name__}; only a "
+                    "DiscreteGrid can carry a device axis."
+                )
+                raise ExecutionPlanningError(msg)
+            states[name] = grid._sharded()  # noqa: SLF001
+        placed[regime_name] = dataclasses.replace(
+            regime, states=MappingProxyType(states)
+        )
+    return MappingProxyType(placed)
+
+
+def _fail_if_a_sharded_state_is_pruned(
+    *,
+    user_regimes: MappingProxyType[RegimeName, FinalizedUserRegime],
+    pruned_variables: Mapping[RegimeName, frozenset[str]],
+    sharded_states: frozenset[StateName],
+) -> None:
+    """Refuse a sharded state whose axis a non-terminal regime does not carry.
+
+    The device axis a sharded state defines has to exist wherever a value is
+    stored, so a regime whose DAG never reads the state would publish a value
+    with no such axis.
+
+    Args:
+        user_regimes: Immutable mapping of regime names to finalized regimes.
+        pruned_variables: Mapping of regime names to the broadcast variables
+            reachability dropped there.
+        sharded_states: State names the configuration spreads over devices.
+
+    Raises:
+        ExecutionPlanningError: A named state is pruned from a non-terminal
+            regime.
+
+    """
+    for regime_name, regime in user_regimes.items():
+        if regime.terminal:
+            continue
+        offenders = sorted(sharded_states & set(pruned_variables.get(regime_name, ())))
+        if offenders:
+            msg = (
+                f"ExecutionConfig.sharded_states names {offenders!r}, which "
+                f"reachability pruned from non-terminal regime {regime_name!r} — "
+                "its DAG never reads them, so the sharded V-array axis would "
+                "disappear there. Drop the name, or make the regime use the state."
+            )
+            raise ExecutionPlanningError(msg)

@@ -11,6 +11,7 @@ from _lcm.certainty_equivalent import CertaintyEquivalent
 from _lcm.continuation import ContinuationPayload, ContinuationSpec
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
+from _lcm.execution.execution_plan import visible_devices
 from _lcm.grids import DiscreteGrid, Grid, IrregSpacedGrid
 from _lcm.processes import _ContinuousStochasticProcess
 from _lcm.reachability import PhaseReachability
@@ -407,10 +408,17 @@ class SolutionPhase:
     """
 
     submesh_device_ids: tuple[int, ...] = ()
-    """Device ids this regime's nodes run on; empty means every visible device.
+    """Device ids this regime's nodes run on; empty means every device it may use.
 
     Assigned by the planner at model build, ascending, and a component of every
     lowering key this regime's cores carry.
+    """
+
+    sharded_state_names: frozenset[StateName] = frozenset()
+    """This regime's states whose grid axis is spread over its devices.
+
+    The engine-side answer to which axes carry a device axis, whether the model
+    named the state in `ExecutionConfig.sharded_states` or on the grid itself.
     """
 
     continuation_spec: ContinuationSpec | None = None
@@ -1251,15 +1259,19 @@ class _RegimeSharding:
 
 
 def placed_devices_for_ids(
-    *, submesh_device_ids: tuple[int, ...]
+    *, submesh_device_ids: tuple[int, ...], visible_device_ids: tuple[int, ...] = ()
 ) -> tuple[jax.Device, ...]:
     """Return the device objects of `submesh_device_ids`.
 
-    An empty tuple of ids names no placement, which is every visible device —
-    the layout a solve without a per-regime placement runs on.
+    An empty tuple of ids names no placement, which is every device the model
+    uses — the layout a solve without a per-regime placement runs on.
 
     Args:
-        submesh_device_ids: Ascending device ids, or empty for every device.
+        submesh_device_ids: Ascending device ids, or empty for every device the
+            model uses.
+        visible_device_ids: The model's own device ids, ascending. Empty names
+            every device JAX reports, which is what a caller holding no
+            resolved configuration runs on.
 
     Returns:
         Tuple of the device objects, in the order the ids name them.
@@ -1268,14 +1280,15 @@ def placed_devices_for_ids(
         ExecutionPlanningError: An id names no visible device.
 
     """
-    devices = tuple(jax.devices())
-    if not submesh_device_ids:
-        return devices
+    devices = visible_devices()
     by_id = {device.id: device for device in devices}
+    wanted = submesh_device_ids or visible_device_ids
+    if not wanted:
+        return devices
     _fail_if_a_device_id_is_not_visible(
-        submesh_device_ids=submesh_device_ids, visible_ids=tuple(by_id)
+        submesh_device_ids=wanted, visible_ids=tuple(by_id)
     )
-    return tuple(by_id[device_id] for device_id in submesh_device_ids)
+    return tuple(by_id[device_id] for device_id in wanted)
 
 
 def _fail_if_a_device_id_is_not_visible(

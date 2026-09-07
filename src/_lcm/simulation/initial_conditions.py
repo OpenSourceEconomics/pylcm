@@ -22,7 +22,7 @@ from _lcm.dtypes import (
     safe_to_float_dtype,
     safe_to_int_dtype,
 )
-from _lcm.engine import PeriodRegimeSimulationData, Regime
+from _lcm.engine import PeriodRegimeSimulationData, Regime, placed_devices_for_ids
 from _lcm.grids import DiscreteGrid
 from _lcm.regime_building.Q_and_F import _get_feasibility
 from _lcm.typing import (
@@ -105,6 +105,7 @@ def build_initial_states(
     *,
     initial_states: Mapping[StateName, Float1D | Int1D],
     regimes: MappingProxyType[RegimeName, Regime],
+    device_ids: tuple[int, ...] = (),
 ) -> StatesPerRegime:
     """Build the regime-keyed state carrier from user-provided initial states.
 
@@ -117,6 +118,8 @@ def build_initial_states(
         initial_states: Mapping of state names to arrays.
         regimes: Immutable mapping of regime names to internal regime
             instances.
+        device_ids: The model's device ids, ascending. Empty names every
+            device JAX reports.
 
     Returns:
         Nested immutable mapping `{regime_name: {state_name: array}}`.
@@ -127,7 +130,9 @@ def build_initial_states(
         RegimeName, MappingProxyType[StateName, Float1D | Int1D]
     ] = {}
 
-    sharding = subject_array_sharding(regimes=regimes, n_subjects=n_subjects)
+    sharding = subject_array_sharding(
+        regimes=regimes, n_subjects=n_subjects, device_ids=device_ids
+    )
     for regime_name, regime in regimes.items():
         regime_states: dict[StateName, Float1D | Int1D] = {}
         for state_name in regime.simulation.state_names:
@@ -271,7 +276,10 @@ def trim_pad_from_raw_results(
 
 
 def subject_array_sharding(
-    *, regimes: MappingProxyType[RegimeName, Regime], n_subjects: int
+    *,
+    regimes: MappingProxyType[RegimeName, Regime],
+    n_subjects: int,
+    device_ids: tuple[int, ...] = (),
 ) -> jax.NamedSharding | None:
     """Return the model-wide device sharding for per-subject simulation arrays.
 
@@ -287,6 +295,8 @@ def subject_array_sharding(
         regimes: Immutable mapping of regime names to internal regime instances.
         n_subjects: Number of simulated subjects (per simulate dispatch — the
             chunk size when subject-batching).
+        device_ids: The model's device ids, ascending. Empty names every
+            device JAX reports.
 
     Returns:
         The `NamedSharding` over the device mesh, or `None` when no grid in any
@@ -294,13 +304,13 @@ def subject_array_sharding(
 
     """
     distributes_any = any(
-        grid.distributed
-        for regime in regimes.values()
-        for grid in regime.solution.grids.values()
+        regime.solution.sharded_state_names for regime in regimes.values()
     )
     if not distributes_any:
         return None
-    devices = jax.devices()
+    devices = placed_devices_for_ids(
+        submesh_device_ids=(), visible_device_ids=device_ids
+    )
     if n_subjects % len(devices) != 0:
         # Defensive: `Model.simulate` rounds the chunk size up to a device
         # multiple and pads the population to a chunk multiple, so every

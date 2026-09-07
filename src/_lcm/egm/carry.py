@@ -438,7 +438,9 @@ def _place_carry_template_on_one_device(
     the template there anyway, which is what `placed_V_sharding` does for the
     same regime's value array.
     """
-    visible = tuple(jax.devices())
+    from _lcm.execution.execution_plan import visible_devices  # noqa: PLC0415
+
+    visible = visible_devices()
     if devices == (visible[0],) or len(devices) == len(visible):
         return template
     return jax.device_put(template, jax.sharding.SingleDeviceSharding(devices[0]))

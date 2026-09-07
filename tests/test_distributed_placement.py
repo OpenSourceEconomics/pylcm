@@ -34,6 +34,7 @@ from _lcm.typing import RegimeName
 from lcm import fixed_transition
 from lcm.ages import AgeGrid
 from lcm.exceptions import ExecutionPlanningError
+from lcm.execution import ExecutionConfig
 from lcm.model import Model
 from lcm.regime import Regime as UserRegime
 from lcm.solver_api import ContinuationReader
@@ -75,12 +76,15 @@ class _Type:
     high: ScalarInt
 
 
-def _make_three_type_model(*, distributed: bool) -> Model:
+def _make_three_type_model(
+    *, distributed: bool, sharded: tuple[str, ...] = ()
+) -> Model:
     """A working regime over a three-valued type beside a single-device terminal one.
 
     Both regimes are active at every age and read nothing of each other within
     a period, so on four devices the working regime runs on three and the
-    terminal one on the fourth.
+    terminal one on the fourth. `sharded` names the same axis through
+    `ExecutionConfig`; either spelling places the regime the same way.
     """
     working = UserRegime(
         functions={
@@ -106,7 +110,27 @@ def _make_three_type_model(*, distributed: bool) -> Model:
         regime_id_class=_ThreeTypeRegimeId,
         states={"type1": DiscreteGrid(category_class=_Type, distributed=distributed)},
         state_transitions={"type1": fixed_transition("type1")},
+        execution_config=ExecutionConfig(sharded_states=sharded),
     )
+
+
+@_skip_pytest_parallel
+def test_sharded_state_from_execution_config_places_the_regime_on_the_submesh() -> None:
+    """Declaring a state in `sharded_states` places its regime's nodes on a submesh."""
+    model = _make_three_type_model(distributed=False, sharded=("type1",))
+
+    assert model._regimes["working"].solution.submesh_device_ids == (0, 1, 2)
+
+
+@_skip_pytest_parallel
+def test_sharded_state_from_execution_config_shards_the_value() -> None:
+    """A state named in `sharded_states` carries the same device axis as the field."""
+    solution = _make_three_type_model(distributed=False, sharded=("type1",)).solve(
+        params=_PARAMS, log_level="off"
+    )
+    mesh = solution.values[0]["working"].sharding.mesh  # ty: ignore[unresolved-attribute]
+
+    assert tuple(device.id for device in mesh.devices.flat) == (0, 1, 2)
 
 
 @_skip_pytest_parallel

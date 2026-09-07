@@ -1,3 +1,5 @@
+import copy
+
 import jax.numpy as jnp
 from beartype import beartype
 
@@ -83,6 +85,20 @@ class DiscreteGrid(Grid):
     def distributed(self) -> bool:
         """Return whether the grid is sharded across available devices."""
         return self.__distributed
+
+    def _sharded(self) -> DiscreteGrid:
+        """Return a copy of this grid whose state axis carries a device axis.
+
+        The one place a model turns `ExecutionConfig.sharded_states` into the
+        grid property the placement planner and the mesh builder read, so a
+        state declared there and one declared on the grid are the same axis.
+        """
+        _fail_if_batch_size_combined_with_distributed(
+            batch_size=self.batch_size, distributed=True
+        )
+        sharded = copy.copy(self)
+        sharded.__distributed = True  # noqa: SLF001
+        return sharded
 
     def to_jax(self) -> Int1D:
         """Convert the grid to a Jax array.

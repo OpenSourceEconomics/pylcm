@@ -50,6 +50,10 @@ from _lcm.engine import (
     placed_devices_for_ids,
 )
 from _lcm.execution.core_program import CoreProgram, CoreProgramGraphAware
+from _lcm.execution.execution_plan import (
+    ResolvedExecution,
+    execution_over_visible_devices,
+)
 from _lcm.execution.placement import (
     PlacementRequest,
     SubmeshPlacement,
@@ -353,6 +357,7 @@ def process_regimes(
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
     prepared_structure: PreparedModelStructure,
+    execution: ResolvedExecution | None = None,
 ) -> MappingProxyType[RegimeName, Regime]:
     """Process finalized regimes into canonical regimes.
 
@@ -371,11 +376,17 @@ def process_regimes(
             from `prepare_model_structure`. The caller builds this once and
             shares it with every other consumer that needs the same
             reachability graph, instead of each recomputing its own copy.
+        execution: The hardware-local facts the model resolved — the devices
+            every regime is placed on. `None` resolves the inert configuration
+            against every visible device.
 
     Returns:
         The processed canonical regimes.
 
     """
+    resolved_execution = (
+        execution_over_visible_devices() if execution is None else execution
+    )
     representative_user_regimes = prepared_structure.representative_user_regimes
     phased_specs = prepared_structure.phased_specs
     grid_schedule = prepared_structure.grid_schedule
@@ -480,23 +491,39 @@ def process_regimes(
         }
     )
 
-    placement = plan_submesh_placement(
-        requests=tuple(
-            PlacementRequest(
-                regime_name=regime_name,
-                distributed_extents=tuple(
-                    _declared_extent(grid=grid)
-                    for grid in all_grids[regime_name].values()
-                    if grid.distributed
-                ),
-                active_periods=tuple(regimes_to_active_periods[regime_name]),
-                template_bytes=_value_template_bytes(
-                    state_grids=state_grids[regime_name]
-                ),
+    sharded_state_names_by_regime = MappingProxyType(
+        {
+            regime_name: frozenset(
+                name
+                for name, grid in all_grids[regime_name].items()
+                if grid.distributed
+                and name in regime_to_variables[regime_name].state_names
             )
             for regime_name in user_regimes
+        }
+    )
+    # The planner numbers its blocks from zero, so its ids are positions in the
+    # model's device list; the model's own ids are read back out of it here.
+    placement = _placement_on_model_devices(
+        placement=plan_submesh_placement(
+            requests=tuple(
+                PlacementRequest(
+                    regime_name=regime_name,
+                    distributed_extents=tuple(
+                        _declared_extent(grid=all_grids[regime_name][name])
+                        for name in all_grids[regime_name]
+                        if name in sharded_state_names_by_regime[regime_name]
+                    ),
+                    active_periods=tuple(regimes_to_active_periods[regime_name]),
+                    template_bytes=_value_template_bytes(
+                        state_grids=state_grids[regime_name]
+                    ),
+                )
+                for regime_name in user_regimes
+            ),
+            n_devices=len(resolved_execution.device_ids),
         ),
-        n_devices=len(jax.devices()),
+        device_ids=resolved_execution.device_ids,
     )
 
     _fail_if_action_has_batch_size(user_regimes)
@@ -667,6 +694,7 @@ def process_regimes(
         period_to_regime_v_interp=period_to_regime_v_interp,
         phased_specs=phased_specs,
         placement=placement,
+        sharded_state_names_by_regime=sharded_state_names_by_regime,
         reachability=reachability,
         regime_names_to_ids=regime_names_to_ids,
         regime_to_flat_param_names=regime_to_flat_param_names,
@@ -749,6 +777,32 @@ def _value_template_bytes(*, state_grids: Mapping[StateName, Grid]) -> int:
     )
 
 
+def _placement_on_model_devices(
+    *, placement: SubmeshPlacement, device_ids: tuple[int, ...]
+) -> SubmeshPlacement:
+    """Translate a placement's block positions into the model's device ids.
+
+    The planner assigns positions `0 .. n_devices - 1`; a model running on a
+    subset of the visible devices reads those positions as offsets into its own
+    ascending id list.
+
+    Args:
+        placement: The planner's assignment, in block positions.
+        device_ids: The model's device ids, ascending.
+
+    Returns:
+        The same assignment, addressed by device id.
+
+    """
+    return SubmeshPlacement(
+        device_ids_by_regime={
+            regime_name: tuple(device_ids[position] for position in positions)
+            for regime_name, positions in placement.device_ids_by_regime.items()
+        },
+        n_devices=placement.n_devices,
+    )
+
+
 def _declared_extent(*, grid: Grid) -> int:
     """Return a grid's axis length as declared, without materialising its points.
 
@@ -808,6 +862,9 @@ class _CanonicalRegimeBuilder:
 
     placement: SubmeshPlacement
     """The devices each regime's nodes run on, assigned once for the model."""
+
+    sharded_state_names_by_regime: MappingProxyType[RegimeName, frozenset[StateName]]
+    """Immutable mapping of regime names to their states carrying a device axis."""
 
     reachability: ModelReachability
     """The model's static solution and simulation regime graphs."""
@@ -967,6 +1024,7 @@ class _CanonicalRegimeBuilder:
                 grid_schedule=self.grid_schedule,
                 state_action_space=self.state_action_spaces[regime_name],
                 submesh_device_ids=self.placement.devices_for(regime_name=regime_name),
+                sharded_state_names=self.sharded_state_names_by_regime[regime_name],
                 ages=self.ages,
                 enable_jit=self.enable_jit,
                 certainty_equivalent=user_regime.certainty_equivalent,
@@ -2987,6 +3045,7 @@ def _build_solution_phase(
     grid_schedule: AgeGridSchedule | None = None,
     state_action_space: StateActionSpace,
     submesh_device_ids: tuple[int, ...],
+    sharded_state_names: frozenset[StateName],
     ages: AgeGrid,
     enable_jit: bool,
     certainty_equivalent: CertaintyEquivalent | None,
@@ -3033,7 +3092,8 @@ def _build_solution_phase(
         regime_to_v_interpolation_info: Mapping of regime names to state space info.
         state_action_space: The state-action space for this regime.
         submesh_device_ids: Ascending ids of the devices the planner assigned
-            this regime's nodes; empty means every visible device.
+            this regime's nodes; empty means every device the model uses.
+        sharded_state_names: The regime's states carrying a device axis.
         ages: The AgeGrid for the model.
         enable_jit: Whether to jit the internal functions.
         certainty_equivalent: Nonlinear certainty equivalent declared by the
@@ -3423,6 +3483,7 @@ def _build_solution_phase(
         param_checks=solver_kernels.param_checks,
         pareto_weights=pareto_weights,
         submesh_device_ids=submesh_device_ids,
+        sharded_state_names=sharded_state_names,
         _base_state_action_space=state_action_space,
         period_state_axes=period_state_axes,
     )

@@ -15,33 +15,59 @@ Optional arguments:
 
 - `max_compilation_workers` caps parallel XLA compilation;
 - `log_path` and `log_keep_n_latest` control diagnostic snapshots;
-- `retention` selects which post-solve artifacts remain available;
-- `execution_config` carries hardware-local controls, currently the
-  [compiler workspace budget](#compiler-workspace-budgets).
+- `retention` selects which post-solve artifacts remain available.
+
+Hardware-local controls are declared on the model instead, through
+[`Model(execution_config=...)`](#execution-configuration), so both phases run under one
+resolved configuration.
 
 There are no flag-selected tuple returns. Pass the complete result to
 `model.simulate(solution=...)`; omitting `solution` asks simulation to solve first.
 
-(compiler-workspace-budgets)=
+(execution-configuration)=
 
-### Compiler workspace budgets
+### Execution configuration
 
-`ExecutionConfig(device_memory_bytes=...)` declares a per-device byte ceiling for the
-compiler-reported peak workspace of every compiled solve core:
+`ExecutionConfig` is a `Model(...)` argument, so the devices, budget, and widths a model
+runs under are fixed when it is built and both `solve()` and `simulate()` read the same
+resolved values. None of them enters the model's durable fingerprint:
 
 ```python
-from lcm import ExecutionConfig
+from lcm import ExecutionConfig, Model
 
-solution = model.solve(
-    params=params,
-    log_level="debug",
-    execution_config=ExecutionConfig(device_memory_bytes=40 * 2**30),
+model = Model(
+    regimes=regimes,
+    ages=ages,
+    regime_id_class=RegimeId,
+    execution_config=ExecutionConfig(
+        device_memory_bytes=40 * 2**30,
+        sharded_states=("type",),
+        axis_widths={"action_product": 8},
+        devices=(0, 1),
+    ),
 )
 ```
 
-`ExecutionConfig(axis_widths=...)` instead fixes the compiled width of one named planner
-axis, leaving the rest to the planner; see
-[Fix a planner axis width](../user_guide/tuning.md).
+Its fields:
+
+- `device_memory_bytes` declares a per-device byte ceiling for the compiler-reported
+  peak workspace of every compiled solve core; `None` (the default) leaves execution
+  unconstrained.
+- `sharded_states` names the states whose grid axis is spread over the devices their
+  regime is placed on. Every name must be a state some regime declares.
+- `axis_widths` fixes the compiled width of one named planner axis, leaving the rest to
+  the planner; see [Fix a planner axis width](../user_guide/tuning.md). Every key must
+  be an axis some core program declares.
+- `devices` names the device ids the model may use, ascending; `None` (the default)
+  means every device JAX reports. Every id must be one JAX reports.
+
+An unknown state, an unknown axis name, or an invisible device id raises
+`ExecutionPlanningError` at model build, naming the offender and the legal set.
+`model.execution_devices` reports the device ids the model resolved.
+
+(compiler-workspace-budgets)=
+
+### Compiler workspace budgets
 
 Without a budget (the default), every streamed axis is lowered at its bootstrap width —
 the largest power of two below the axis extent, capped at 64 — or at the width

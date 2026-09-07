@@ -51,9 +51,14 @@ A solve core declares the axes the execution planner may stream, each under a na
 program declaring it is lowered at:
 
 ```python
-from lcm import ExecutionConfig
+from lcm import ExecutionConfig, Model
 
-execution_config = ExecutionConfig(axis_widths={"action_product": 8})
+model = Model(
+    regimes=regimes,
+    ages=ages,
+    regime_id_class=RegimeId,
+    execution_config=ExecutionConfig(axis_widths={"action_product": 8}),
+)
 ```
 
 A width smaller than the axis bounds how many entries are evaluated together; a width at

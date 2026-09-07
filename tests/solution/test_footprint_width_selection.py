@@ -75,7 +75,10 @@ def _terminal_utility(*, wealth: float) -> float:
     return wealth
 
 
-def _build_model() -> Model:
+def _build_model(
+    *,
+    execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
+) -> Model:
     """Build one acting regime over three periods into a terminal regime."""
     acting = Regime(
         transition=_next_regime,
@@ -102,6 +105,7 @@ def _build_model() -> Model:
         regimes={"acting": acting, "done": done},
         ages=AgeGrid(start=0, stop=3, step="Y"),
         regime_id_class=RegimeId,
+        execution_config=execution_config,
     )
 
 
@@ -129,12 +133,13 @@ def _solve_capturing_compilation(
 
     monkeypatch.setattr(backward_induction, "compiler_peak_bytes", _fake_peak)
     monkeypatch.setattr(backward_induction, "_compile_all_functions", capture)
-    model = _build_model()
+    model = _build_model(
+        execution_config=ExecutionConfig(device_memory_bytes=budget_bytes)
+    )
     params = cast("dict[str, Any]", model.get_params_template())
     params["acting"]["koopmans_aggregator"]["discount_factor"] = 0.5
     model.solve(
         params=params,
-        execution_config=ExecutionConfig(device_memory_bytes=budget_bytes),
         log_level="debug",
     )
     (call,) = calls
@@ -182,6 +187,7 @@ def _resident_bytes(
             next_edge_to_V_arr=kwargs["next_edge_to_V_arr"],
         ),
         program_metadata=MappingProxyType(metadata),
+        device_ids=kwargs["execution"].device_ids,
     )
 
 

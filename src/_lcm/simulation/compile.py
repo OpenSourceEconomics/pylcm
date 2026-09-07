@@ -76,6 +76,7 @@ def compile_all_simulation_phases(
     n_subjects: int,
     max_compilation_workers: int | None,
     logger: logging.Logger,
+    device_ids: tuple[int, ...] = (),
 ) -> MappingProxyType[RegimeName, Regime]:
     """AOT-compile every unique simulate function for batch shape `n_subjects`.
 
@@ -87,6 +88,8 @@ def compile_all_simulation_phases(
         max_compilation_workers: Maximum threads for parallel XLA compilation.
             Defaults to `os.cpu_count()`.
         logger: Logger.
+        device_ids: The model's device ids, ascending. Empty names every
+            device JAX reports.
 
     Returns:
         Immutable mapping of regime names to Regime where each regime's
@@ -103,11 +106,14 @@ def compile_all_simulation_phases(
         regimes=regimes,
         flat_params=flat_params,
         phase="simulate",
+        device_ids=device_ids,
     )
 
     # One model-wide subject sharding: subjects propagate across regimes, so
     # every AOT program must be lowered with the same per-subject sharding.
-    subject_sharding = subject_array_sharding(regimes=regimes, n_subjects=n_subjects)
+    subject_sharding = subject_array_sharding(
+        regimes=regimes, n_subjects=n_subjects, device_ids=device_ids
+    )
 
     unique, func_keys, gate_calls = _collect_unique_simulation_callables(
         regimes=regimes,

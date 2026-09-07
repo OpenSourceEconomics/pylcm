@@ -14,7 +14,7 @@ import pytest
 
 from _lcm.solution import backward_induction
 from _lcm.solution.backward_induction import _lowering_key, _program_identity
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model
+from lcm import AgeGrid, DiscreteGrid, ExecutionConfig, LinSpacedGrid, Model
 from lcm.exceptions import ExecutionPlanningError
 from lcm.solvers import GridSearch
 from lcm.typing import RegimeName
@@ -77,7 +77,11 @@ _GROUPING_SOLVER_CASES = [
 ]
 
 
-def _model(*, n_wealth_points: int = 3) -> Model:
+def _model(
+    *,
+    n_wealth_points: int = 3,
+    execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
+) -> Model:
     """A two-regime grid-search toy whose wealth grid size is a build input."""
     final_age_alive = START_AGE + _N_PERIODS - 2
     return Model(
@@ -97,6 +101,7 @@ def _model(*, n_wealth_points: int = 3) -> Model:
         },
         ages=AgeGrid(start=START_AGE, stop=final_age_alive + 1, step="Y"),
         regime_id_class=RegimeId,
+        execution_config=execution_config,
     )
 
 
@@ -372,3 +377,28 @@ def test_two_units_donating_and_placed_alike_share_one_executable() -> None:
     )
 
     assert _n_executables(lowering_keys=(first, second)) == 1
+
+
+def test_execution_metadata_is_derived_once_per_program_group(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One derivation covers the representative programs and one the selected ones.
+
+    The liveness ledger and the resident-bytes walk read the same representative
+    facts, so a budgeted solve derives them once rather than once per consumer.
+    """
+    calls: list[int] = []
+    original = backward_induction._execution_metadata
+
+    # `Any` rather than `object`: the counter forwards its keywords untouched to
+    # a strictly typed function, so narrowing them here would be a claim it does
+    # not make.
+    def _counting(**kwargs: Any) -> Any:
+        calls.append(1)
+        return original(**kwargs)
+
+    monkeypatch.setattr(backward_induction, "_execution_metadata", _counting)
+    model = _model(execution_config=ExecutionConfig(device_memory_bytes=2**32))
+    model.solve(params=get_params(n_periods=_N_PERIODS), log_level="off")
+
+    assert len(calls) == 2

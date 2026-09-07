@@ -262,7 +262,11 @@ class _ScalarEdgeSolver(GridSearch):
         )
 
 
-def _model(*, convention: str) -> Model:
+def _model(
+    *,
+    convention: str,
+    execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
+) -> Model:
     """Build the regression regime with its solver replaced by the scalar edge."""
     last_age = START_AGE + _N_PERIODS - 2
     return Model(
@@ -285,16 +289,20 @@ def _model(*, convention: str) -> Model:
         ages=AgeGrid(start=START_AGE, stop=last_age + 1, step="Y"),
         regime_id_class=RegimeId,
         enable_jit=True,
+        execution_config=execution_config,
     )
 
 
 def _solve(*, convention: str) -> object:
     """Solve the scalar-edge model under a budget offering the whole frontier."""
-    return _model(convention=convention).solve(
+    budgeted = _model(
+        convention=convention,
+        execution_config=ExecutionConfig(device_memory_bytes=_DEVICE_MEMORY_BYTES),
+    )
+    return budgeted.solve(
         params=get_params(n_periods=_N_PERIODS),
         log_level="off",
         retention=ResultRetention.VALUES,
-        execution_config=ExecutionConfig(device_memory_bytes=_DEVICE_MEMORY_BYTES),
     )
 
 

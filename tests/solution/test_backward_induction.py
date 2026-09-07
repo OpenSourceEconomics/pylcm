@@ -14,6 +14,7 @@ from _lcm.execution.core_program import (
     CoreProgram,
     ResolvedCoreProgram,
 )
+from _lcm.execution.execution_plan import ResolvedExecution
 from _lcm.execution.output_layout import VALUE
 from _lcm.execution.value_transfer import (
     ResolvedValueTransfer,
@@ -39,7 +40,6 @@ from _lcm.solution.grid_search import (
 )
 from _lcm.typing import MaxQOverAFunction, StateOrActionName
 from _lcm.utils.logging import get_logger
-from lcm import ExecutionConfig
 from lcm.ages import AgeGrid
 from lcm.exceptions import ExecutionPlanningError
 
@@ -176,7 +176,12 @@ def test_memory_budget_requires_jit_before_backward_induction() -> None:
             regimes=MappingProxyType({}),
             logger=get_logger(log_level="off"),
             enable_jit=False,
-            execution_config=ExecutionConfig(device_memory_bytes=1),
+            execution=ResolvedExecution(
+                device_ids=(0,),
+                sharded_states=frozenset(),
+                axis_widths=MappingProxyType({}),
+                device_memory_bytes=1,
+            ),
         )
 
 

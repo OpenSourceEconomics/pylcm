@@ -16,13 +16,14 @@ import pytest
 from lcm import (
     AgeGrid,
     DiscreteGrid,
+    ExecutionConfig,
     LinSpacedGrid,
     MarkovTransition,
     Model,
     categorical,
     fixed_transition,
 )
-from lcm.exceptions import ModelInitializationError
+from lcm.exceptions import ExecutionPlanningError, ModelInitializationError
 from lcm.regime import Regime as UserRegime
 from lcm.transition import AgeSpecializedFunction
 from lcm.typing import FloatND, ScalarInt
@@ -303,6 +304,21 @@ def test_sharded_state_pruned_anywhere_raises() -> None:
                 "retired": _retired_regime(),  # does not read skill
                 "dead": UserRegime(transition=None, functions={"utility": lambda: 0.0}),
             },
+        )
+
+
+def test_sharded_state_from_execution_config_pruned_anywhere_raises() -> None:
+    """A state in `sharded_states` must survive pruning in every non-terminal regime."""
+    with pytest.raises(ExecutionPlanningError, match="skill"):
+        _build_model(
+            states={"skill": DiscreteGrid(category_class=_Skill)},
+            state_transitions={"skill": fixed_transition("skill")},
+            regimes={
+                "work": _work_regime(),
+                "retired": _retired_regime(),  # does not read skill
+                "dead": UserRegime(transition=None, functions={"utility": lambda: 0.0}),
+            },
+            execution_config=ExecutionConfig(sharded_states=("skill",)),
         )
 
 

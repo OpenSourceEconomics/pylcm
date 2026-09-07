@@ -142,6 +142,7 @@ def simulate(
     period_to_regime_to_dissolution_flags: MappingProxyType[
         int, MappingProxyType[RegimeName, BoolND]
     ] = MappingProxyType({}),
+    device_ids: tuple[int, ...] = (),
 ) -> SimulationResult:
     """Simulate the model forward in time given pre-computed value function arrays.
 
@@ -193,6 +194,8 @@ def simulate(
             flag as an addressed replay artifact in ``SolutionResult``;
             ``Model.simulate(solution=...)`` validates and projects those artifacts,
             and its automatic-solve path threads them through directly.
+        device_ids: The model's device ids, ascending. Empty names every
+            device JAX reports.
 
     Returns:
         SimulationResult object. Call .to_dataframe() to get a pandas DataFrame.
@@ -289,6 +292,7 @@ def simulate(
             seed=seed,
             logger=logger,
             gated_edge_fold_cache=gated_edge_fold_cache,
+            device_ids=device_ids,
         )
         if host_device is not None:
             # `block_until_ready` forces the D2H copy to complete before the loop
@@ -378,6 +382,7 @@ def _simulate_subject_chunk(
         MappingProxyType({})
     ),
     gated_edge_fold_cache: _GatedEdgeFoldCache | None = None,
+    device_ids: tuple[int, ...] = (),
 ) -> dict[RegimeName, dict[int, PeriodRegimeSimulationData]]:
     """Run the full period loop for one chunk of subjects.
 
@@ -391,11 +396,15 @@ def _simulate_subject_chunk(
     gated edge routes a row, so a dissolution follows the row's own leg.
     `gated_edge_fold_cache`: the caller's chunk-spanning store of gated-edge
     folds, or `None` to evaluate each fold locally.
+    `device_ids`: the model's device ids, ascending; empty names every device
+    JAX reports.
 
     Returns the per-(regime, period) results for this chunk's subjects.
     """
     key = jax.random.key(seed=seed)
-    states = build_initial_states(initial_states=initial_states, regimes=regimes)
+    states = build_initial_states(
+        initial_states=initial_states, regimes=regimes, device_ids=device_ids
+    )
     subject_regime_ids = jnp.full_like(
         initial_regime_ids, MISSING_CAT_CODE, dtype=jnp.int32
     )

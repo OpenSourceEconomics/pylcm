@@ -19,7 +19,13 @@ from typing import Literal
 import jax
 import jax.numpy as jnp
 
-from _lcm.engine import Regime, _build_regime_sharding, _RegimeSharding
+from _lcm.engine import (
+    Regime,
+    _build_regime_sharding,
+    _RegimeSharding,
+    placed_devices_for_ids,
+)
+from _lcm.execution.execution_plan import visible_device_ids
 from _lcm.typing import FlatParams, RegimeName, StateName
 from lcm.exceptions import ExecutionPlanningError
 from lcm.typing import FloatND, ValueND
@@ -63,6 +69,7 @@ def canonical_solution_values(
     *,
     values: Mapping[int, Mapping[RegimeName, ValueND]],
     regimes: MappingProxyType[RegimeName, Regime],
+    device_ids: tuple[int, ...],
 ) -> MappingProxyType[int, MappingProxyType[RegimeName, ValueND]]:
     """Return the values on the layout the simulate programs are lowered against.
 
@@ -75,22 +82,26 @@ def canonical_solution_values(
         values: Mapping of period to a mapping of regime name to the array the
             solve published there.
         regimes: Immutable mapping of regime names to canonical regimes.
+        device_ids: The model's device ids, ascending.
 
     Returns:
         Immutable mapping of period to an immutable mapping of regime name to
         the array on the canonical layout.
 
     """
-    fail_if_a_value_is_on_a_proper_submesh(regimes=regimes)
-    default = jax.devices()[0]
+    fail_if_a_value_is_on_a_proper_submesh(regimes=regimes, device_ids=device_ids)
+    default = placed_devices_for_ids(
+        submesh_device_ids=(), visible_device_ids=device_ids
+    )[0]
     result: dict[int, MappingProxyType[RegimeName, ValueND]] = {}
     for period, by_regime in values.items():
         placed: dict[RegimeName, ValueND] = {}
         for regime_name, value in by_regime.items():
-            device_ids = regimes[regime_name].solution.submesh_device_ids
+            regime_device_ids = regimes[regime_name].solution.submesh_device_ids
             placed[regime_name] = (
                 jax.device_put(value, default)
-                if len(device_ids) == 1 and value.sharding.device_set != {default}
+                if len(regime_device_ids) == 1
+                and value.sharding.device_set != {default}
                 else value
             )
         result[period] = MappingProxyType(placed)
@@ -98,7 +109,7 @@ def canonical_solution_values(
 
 
 def fail_if_a_value_is_on_a_proper_submesh(
-    *, regimes: MappingProxyType[RegimeName, Regime]
+    *, regimes: MappingProxyType[RegimeName, Regime], device_ids: tuple[int, ...] = ()
 ) -> None:
     """Refuse a solve whose values simulation cannot read.
 
@@ -109,21 +120,23 @@ def fail_if_a_value_is_on_a_proper_submesh(
 
     Args:
         regimes: Immutable mapping of regime names to canonical regimes.
+        device_ids: The model's device ids, ascending. Empty names every
+            device JAX reports.
 
     """
-    n_devices = len(jax.devices())
+    n_devices = len(device_ids or visible_device_ids())
     for regime_name, regime in regimes.items():
-        device_ids = regime.solution.submesh_device_ids
-        if 1 < len(device_ids) < n_devices:
+        regime_device_ids = regime.solution.submesh_device_ids
+        if 1 < len(regime_device_ids) < n_devices:
             extents = tuple(
-                grid.to_jax().shape[0]
-                for grid in regime.solution.grids.values()
-                if grid.distributed
+                regime.solution.grids[name].to_jax().shape[0]
+                for name in regime.solution.grids
+                if name in regime.solution.sharded_state_names
             )
             msg = (
                 f"Regime {regime_name!r} was solved on a submesh of "
-                f"{len(device_ids)} of {n_devices} devices — device ids "
-                f"{device_ids!r}, distributed extents {extents!r}; simulation "
+                f"{len(regime_device_ids)} of {n_devices} devices — device ids "
+                f"{regime_device_ids!r}, distributed extents {extents!r}; simulation "
                 "spreads subjects over every device and cannot read a value "
                 "from a proper submesh."
             )
@@ -135,6 +148,7 @@ def placed_V_sharding(
     sharding_plan: _RegimeSharding | None,
     state_order: tuple[StateName, ...],
     devices: tuple[jax.Device, ...],
+    device_ids: tuple[int, ...] = (),
 ) -> jax.sharding.Sharding | None:
     """Return the sharding a regime's value template is committed to.
 
@@ -148,6 +162,8 @@ def placed_V_sharding(
             it is distributed.
         state_order: The V-array's state axes, in order.
         devices: Tuple of the devices the regime's nodes run on.
+        device_ids: The model's device ids, ascending. Empty names every
+            device JAX reports.
 
     Returns:
         The sharding to commit the template to, or `None` for the default
@@ -156,7 +172,9 @@ def placed_V_sharding(
     """
     if sharding_plan is not None:
         return sharding_plan.V_arr_sharding(state_order)
-    visible = tuple(jax.devices())
+    visible = placed_devices_for_ids(
+        submesh_device_ids=(), visible_device_ids=device_ids
+    )
     if devices == (visible[0],) or len(devices) == len(visible):
         return None
     return jax.sharding.SingleDeviceSharding(devices[0])
@@ -167,6 +185,7 @@ def _get_regime_V_shapes_and_shardings(
     regimes: MappingProxyType[RegimeName, Regime],
     flat_params: FlatParams,
     phase: Literal["solve", "simulate"] = "solve",
+    device_ids: tuple[int, ...] = (),
 ) -> dict[RegimeName, _RegimeVTopology]:
     """Compute V-array shapes and shardings for every regime.
 
@@ -180,9 +199,11 @@ def _get_regime_V_shapes_and_shardings(
         regimes: Immutable mapping of regime names to internal regimes.
         flat_params: Regime parameters (needed for runtime grid shapes).
         phase: Which placement to build against — `"solve"` reads each
-            regime's assigned devices, `"simulate"` every visible device,
-            which is the canonical layout simulation's programs are lowered
-            against.
+            regime's assigned devices, `"simulate"` every device the model
+            uses, which is the canonical layout simulation's programs are
+            lowered against.
+        device_ids: The model's device ids, ascending. Empty names every
+            device JAX reports.
 
     Returns:
         Dict of regime names to `_RegimeVTopology` (shape and sharding).
@@ -219,10 +240,11 @@ def _get_regime_V_shapes_and_shardings(
             f"regime {regime_name!r}: V topology built rank {len(shape)}, "
             f"while the rank rule states {expected_V_rank(regime=regime)}"
         )
-        devices = (
-            regime.solution.placed_devices()
-            if phase == "solve"
-            else tuple(jax.devices())
+        devices = placed_devices_for_ids(
+            submesh_device_ids=(
+                regime.solution.submesh_device_ids if phase == "solve" else ()
+            ),
+            visible_device_ids=device_ids,
         )
         topology[regime_name] = _RegimeVTopology(
             shape=shape,
@@ -232,6 +254,7 @@ def _get_regime_V_shapes_and_shardings(
                 ),
                 state_order=state_order,
                 devices=devices,
+                device_ids=device_ids,
             ),
         )
     return topology

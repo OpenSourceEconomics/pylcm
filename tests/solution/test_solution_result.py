@@ -720,28 +720,29 @@ def test_obsolete_solve_and_simulate_interfaces_are_absent() -> None:
 
 def test_unmeetable_execution_budget_fails_closed_before_solving() -> None:
     """A one-byte device budget fits no compiled core and raises before induction."""
-    model, params, _initial_conditions = _small_grid_search_inputs()
+    model, params, _initial_conditions = _small_grid_search_inputs(
+        execution_config=ExecutionConfig(device_memory_bytes=1)
+    )
 
     with pytest.raises(ExecutionPlanningError, match="No workspace-width candidate"):
-        model.solve(
-            params=params,
-            log_level="off",
-            execution_config=ExecutionConfig(device_memory_bytes=1),
-        )
+        model.solve(params=params, log_level="off")
 
 
-def test_supplied_solution_rejects_only_a_nondefault_execution_config() -> None:
-    model, params, initial_conditions = _small_grid_search_inputs()
+def test_a_budgeted_model_replays_a_supplied_solution() -> None:
+    """A workspace budget is the model's, so a supplied solution still simulates."""
+    model, params, initial_conditions = _small_grid_search_inputs(
+        execution_config=ExecutionConfig(device_memory_bytes=2**32)
+    )
     solution = model.solve(params=params, log_level="off")
 
-    with pytest.raises(ExecutionPlanningError, match="already-solved"):
-        model.simulate(
-            params=params,
-            initial_conditions=initial_conditions,
-            solution=solution,
-            log_level="off",
-            execution_config=ExecutionConfig(device_memory_bytes=1),
-        )
+    result = model.simulate(
+        params=params,
+        initial_conditions=initial_conditions,
+        solution=solution,
+        log_level="off",
+    )
+
+    assert result.n_subjects == 1
 
 
 def test_solution_result_has_no_mapping_compatibility_bridge() -> None:
@@ -1452,11 +1453,15 @@ def test_dissolution_flag_is_refused_from_the_wrong_artifact_channel(
         )
 
 
-def _small_grid_search_inputs() -> tuple[Model, UserParams, UserInitialConditions]:
+def _small_grid_search_inputs(
+    *,
+    execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
+) -> tuple[Model, UserParams, UserInitialConditions]:
     model = get_model(
         n_periods=2,
         wealth_grid=LinSpacedGrid(start=1, stop=3, n_points=3),
         consumption_grid=LinSpacedGrid(start=1, stop=3, n_points=3),
+        execution_config=execution_config,
     )
     params = get_params(n_periods=2)
     initial_conditions = {

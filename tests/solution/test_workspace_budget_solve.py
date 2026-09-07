@@ -41,7 +41,10 @@ _CAPTURE_TARGET = "working_life@0"
 _BYTES_PER_ACTION = 1000
 
 
-def _model() -> Model:
+def _model(
+    *,
+    execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
+) -> Model:
     """Build the two-period grid-search toy with a small streamed action product."""
     final_age_alive = START_AGE + _N_PERIODS - 2
     return Model(
@@ -61,6 +64,7 @@ def _model() -> Model:
         },
         ages=AgeGrid(start=START_AGE, stop=final_age_alive + 1, step="Y"),
         regime_id_class=RegimeId,
+        execution_config=execution_config,
     )
 
 
@@ -82,20 +86,21 @@ def _solve_capturing(
     *,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    model: Model,
     device_memory_bytes: int | None,
     axis_widths: Mapping[str, int] = MappingProxyType({}),
 ):
     """Solve while capturing the first working-life period."""
     monkeypatch.setenv("LCM_CAPTURE_PERIOD", _CAPTURE_TARGET)
     monkeypatch.setenv("LCM_CAPTURE_DIR", str(tmp_path))
-    return model.solve(
-        params=get_params(n_periods=_N_PERIODS),
-        log_level="off",
+    model = _model(
         execution_config=ExecutionConfig(
             device_memory_bytes=device_memory_bytes,
             axis_widths=axis_widths,
-        ),
+        )
+    )
+    return model.solve(
+        params=get_params(n_periods=_N_PERIODS),
+        log_level="off",
     )
 
 
@@ -110,7 +115,6 @@ def test_no_budget_uses_the_bootstrap_width(*, monkeypatch, tmp_path) -> None:
     _solve_capturing(
         monkeypatch=monkeypatch,
         tmp_path=tmp_path,
-        model=_model(),
         device_memory_bytes=None,
     )
 
@@ -125,7 +129,6 @@ def test_budget_selects_the_widest_feasible_action_block(
     _solve_capturing(
         monkeypatch=monkeypatch,
         tmp_path=tmp_path,
-        model=_model(),
         device_memory_bytes=2 * _BYTES_PER_ACTION,
     )
 
@@ -139,7 +142,6 @@ def test_budget_above_every_candidate_keeps_the_full_action_product(
     _solve_capturing(
         monkeypatch=monkeypatch,
         tmp_path=tmp_path,
-        model=_model(),
         device_memory_bytes=_ACTION_EXTENT * _BYTES_PER_ACTION,
     )
 
@@ -153,7 +155,6 @@ def test_budget_above_every_candidate_lowers_only_the_full_action_product(
     _solve_capturing(
         monkeypatch=monkeypatch,
         tmp_path=tmp_path,
-        model=_model(),
         device_memory_bytes=_ACTION_EXTENT * _BYTES_PER_ACTION,
     )
 
@@ -169,7 +170,6 @@ def test_budget_lowers_widths_descending_until_one_fits(
     _solve_capturing(
         monkeypatch=monkeypatch,
         tmp_path=tmp_path,
-        model=_model(),
         device_memory_bytes=2 * _BYTES_PER_ACTION,
     )
 
@@ -191,7 +191,6 @@ def test_budgeted_values_agree_with_the_unbudgeted_solve(
     budgeted = _solve_capturing(
         monkeypatch=monkeypatch,
         tmp_path=tmp_path,
-        model=_model(),
         device_memory_bytes=2 * _BYTES_PER_ACTION,
     )
     assert _captured_widths(tmp_path) == {"main": {"action_product": 2}}
@@ -210,7 +209,6 @@ def test_budget_below_every_candidate_fails_closed(*, monkeypatch, tmp_path) -> 
         _solve_capturing(
             monkeypatch=monkeypatch,
             tmp_path=tmp_path,
-            model=_model(),
             device_memory_bytes=1,
         )
 
@@ -223,7 +221,6 @@ def fixed_width_solve(*, synthetic_peaks, monkeypatch, tmp_path) -> dict[str, ob
     _solve_capturing(
         monkeypatch=monkeypatch,
         tmp_path=tmp_path,
-        model=_model(),
         device_memory_bytes=_ACTION_EXTENT * _BYTES_PER_ACTION,
         axis_widths={"action_product": 4},
     )
@@ -247,18 +244,10 @@ def test_a_fixed_width_is_the_width_the_core_is_dispatched_at(
     assert fixed_width_solve["dispatched"] == {"main": {"action_product": 4}}
 
 
-def test_a_fixed_width_for_an_axis_no_program_declares_is_refused(
-    *, monkeypatch, tmp_path
-) -> None:
-    """A misspelled axis name is refused at the solve, listing the declared names."""
+def test_a_fixed_width_for_an_axis_no_program_declares_is_refused() -> None:
+    """A misspelled axis name is refused at model build, listing the declared names."""
     with pytest.raises(ExecutionPlanningError, match="action_product"):
-        _solve_capturing(
-            monkeypatch=monkeypatch,
-            tmp_path=tmp_path,
-            model=_model(),
-            device_memory_bytes=None,
-            axis_widths={"action_produkt": 8},
-        )
+        _model(execution_config=ExecutionConfig(axis_widths={"action_produkt": 8}))
 
 
 @pytest.mark.usefixtures("synthetic_peaks")
@@ -270,7 +259,6 @@ def test_fixed_action_product_width_over_budget_names_the_request(
         _solve_capturing(
             monkeypatch=monkeypatch,
             tmp_path=tmp_path,
-            model=_model(),
             device_memory_bytes=4 * _BYTES_PER_ACTION - 1,
             axis_widths={"action_product": 4},
         )
@@ -284,7 +272,6 @@ def test_replay_of_a_budgeted_capture_reproduces_its_value(
     budgeted = _solve_capturing(
         monkeypatch=monkeypatch,
         tmp_path=tmp_path,
-        model=_model(),
         device_memory_bytes=2 * _BYTES_PER_ACTION,
     )
 
