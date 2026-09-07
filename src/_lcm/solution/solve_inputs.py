@@ -40,7 +40,13 @@ class SolveInputMappings:
 def locate_artifact(
     *, inputs: SolveInputMappings, artifact: ValueArtifactAddress
 ) -> jax.Array | None:
-    """Return the array an artifact key names in the mappings, or `None`."""
+    """Return the array an artifact key names in the mappings, or `None`.
+
+    The rolling mappings answer with whatever the current period holds. The
+    solve-lifetime template mappings are period-invariant, so any period's
+    address of a regime, an edge or a leaf finds that thing's template — which
+    is how a shape or a layout is read before the period runs.
+    """
     if artifact.kind is ValueArtifactKind.REGIME_VALUE:
         return inputs.next_regime_to_V_arr.get(artifact.regime)
     if artifact.kind is ValueArtifactKind.GATED_CONTINUATION:

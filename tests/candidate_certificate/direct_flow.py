@@ -75,6 +75,7 @@ GRID_SEARCH_SOURCE = "src/_lcm/solution/grid_search.py"
 CORE_PROGRAM_SOURCE = "src/_lcm/execution/core_program.py"
 OUTPUT_LAYOUT_SOURCE = "src/_lcm/execution/output_layout.py"
 VALUE_TRANSFER_SOURCE = "src/_lcm/execution/value_transfer.py"
+FOOTPRINT_SOURCE = "src/_lcm/execution/footprint.py"
 INTERNAL_OUTPUTS_SOURCE = "src/_lcm/execution/internal_outputs.py"
 ACTION_STREAMING_SOURCE = "src/_lcm/solution/action_streaming.py"
 ACTION_REDUCTION_SOURCE = "src/_lcm/solution/action_reduction.py"
@@ -130,6 +131,7 @@ _CERTIFIED_CORRIDOR_SOURCES = (
     CORE_PROGRAM_SOURCE,
     OUTPUT_LAYOUT_SOURCE,
     VALUE_TRANSFER_SOURCE,
+    FOOTPRINT_SOURCE,
     INTERNAL_OUTPUTS_SOURCE,
     ACTION_STREAMING_SOURCE,
     ACTION_REDUCTION_SOURCE,
@@ -191,6 +193,7 @@ _SOURCE_SEALS = {
     CORE_PROGRAM_SOURCE: "89410ab0d354d6818586b23692ff7241b1a47d23c47155147bc381b86cc28f2f",
     OUTPUT_LAYOUT_SOURCE: "7c1cb9b4304a3cd2820d2cf794df45d31effbe5729a1de6c9b4fa9e14248f6d7",
     VALUE_TRANSFER_SOURCE: "4d62b73fcd1902c434f918b4827a7e851cdc1f1fa540a0a98e7a3fe9119f2d85",
+    FOOTPRINT_SOURCE: "3d766ed4d4a9d6406190d56994bf73b0164354243b9be260d22657a2ff617577",
     INTERNAL_OUTPUTS_SOURCE: "ce6677ef989669033ad8b24ab5321e0596657b1befea6988689f96eb8b365f25",
     ACTION_STREAMING_SOURCE: "bd693f4bab250215dea9b6fb6021c518163305a890a9536f66af9e1d7dc5c308",
     ACTION_REDUCTION_SOURCE: "6cee6ea2dbef0ba710fa4a318a2113377d6513cee508e73004861597f9c220f9",
@@ -208,7 +211,7 @@ _SOURCE_SEALS = {
     SIMULATION_COMPILE_SOURCE: "d29b13d51fbb31be944bb1c681b7b535c50fff072d7152f1accb3cdcdf2e4267",
     MODEL_SOURCE: "3e3f201ca8aeb803512a8f5bc86c3647a85685b33a7f00a4ad9c72c6994a1bd2",
     SOLVER_API_SOURCE: "55eda6369c0f3c13d1c92241338ffab0d73b5f87517cbae5f0c83875894227a2",
-    BACKWARD_INDUCTION_SOURCE: "6f042bef01361e53629c1d1c3f0154c681c9f5a5d341a0f30374edb379b669fc",
+    BACKWARD_INDUCTION_SOURCE: "c32cd6fc6540c836c09042a2010de0aa825f2612d591e727834c12f77e1a1631",
     PERIOD_REPLAY_SOURCE: "6e08c2c390cc0cca9633236f3b7cfffdf6745526cef891f87748aca9c974803b",
     INITIAL_CONDITIONS_SOURCE: "582c29e7f99072d975c7a4c9070a93e707d25a98c09e216b47fa71c7bb2d6022",
     RESULT_SOURCE: "7390877272bc23fd7c153e2a51ac4a6072e88fe950d5de695ff015205aff5058",
@@ -237,9 +240,9 @@ _SOURCE_SEALS = {
     MODEL_PROCESSING_SOURCE: "b9c90423e0fddae83632767e20c5ae71af7f44e840c2e2b6fa82bc6750093e87",
 }
 
-EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 359
+EXPECTED_DIRECT_FLOW_MUTATION_COUNT = 360
 EXPECTED_DIRECT_FLOW_MUTATION_NAMES_SHA256 = (
-    "9bf23578c768275d0df8b28bf03f3ca94cda5bb16e2a5a9087da8e0b82d71f0d"
+    "ec2c81bc8f8d194ce8d283b29e4b31c8f864d2b800c1c25472f852f49853633a"
 )
 
 
@@ -2814,7 +2817,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             "_regime_retains_replay": "04e8745dceb0e3c34e0f91fd11d27c43e0da5043cf2418b8015c15baa29d1d81",
             "_select_period_programs": "55bff2bbffbc5a75f00a656f684093d89d3655bac48d76da2e9dbe716b62bb74",
             "_selected_artifact_keys_for_cell": "1acc464529bc9833e48f727279682d969f850d2a3bb206e8a2695b1769f6182f",
-            "_compile_all_functions": "f9e1d7a9c928a467918e3262111fc9ce787bc02be84d43a60e93dd3a1a42c2d2",
+            "_compile_all_functions": "f912a8b8ee803eae4983b82d575c5684c6ca1a10097777a61e26ad5d65c04cf9",
             "_resolve_output_layouts_and_lowering_keys": "5b9d3476c593a4a674ae978d13377767912d2218d9df035b8d816b98ff958243",
             "_mark_reused_transfers": "2b11ec8152b081ae0e2666a46c79b46ef5062ce2738717da0c93bcc502280c56",
             "_consumer_key": "44f91b9312a058528a7f7d34b843eb23efaae21783e834cc5fa06389f4006c73",
@@ -4191,6 +4194,7 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
     core_program_source = (root / CORE_PROGRAM_SOURCE).read_text(encoding="utf-8")
     output_layout_source = (root / OUTPUT_LAYOUT_SOURCE).read_text(encoding="utf-8")
     value_transfer_source = (root / VALUE_TRANSFER_SOURCE).read_text(encoding="utf-8")
+    footprint_source = (root / FOOTPRINT_SOURCE).read_text(encoding="utf-8")
     internal_outputs_source = (root / INTERNAL_OUTPUTS_SOURCE).read_text(
         encoding="utf-8"
     )
@@ -6655,6 +6659,15 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
             label="replay central graph validation",
         ),
     }
+    specs["footprint:resident_walk_runs_forward"] = {
+        "path": FOOTPRINT_SOURCE,
+        "source": replace_once(
+            source=footprint_source,
+            old="    for period in sorted(waves_by_period, reverse=True):",
+            new="    for period in sorted(waves_by_period):",
+            label="resident-bytes schedule walk direction",
+        ),
+    }
     specs["period_replay:materialized_program_filtered"] = {
         "path": PERIOD_REPLAY_SOURCE,
         "source": _replace_nth(
@@ -6691,6 +6704,7 @@ def direct_flow_mutation_specs(*, repo_root: Path) -> dict[str, dict[str, str]]:
         CORE_PROGRAM_SOURCE: core_program_source,
         OUTPUT_LAYOUT_SOURCE: output_layout_source,
         VALUE_TRANSFER_SOURCE: value_transfer_source,
+        FOOTPRINT_SOURCE: footprint_source,
         INTERNAL_OUTPUTS_SOURCE: internal_outputs_source,
         ACTION_STREAMING_SOURCE: action_streaming_source,
         ACTION_REDUCTION_SOURCE: action_reduction_source,

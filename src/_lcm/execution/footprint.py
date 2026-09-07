@@ -10,7 +10,9 @@ devices; a sharded one costs a single shard.
 `plan_resident_bytes` walks that schedule the way the loop will run it and
 reports, per unit, what it already finds on its busiest device. Residency is
 per buffer rather than per key: the keys of one alias group name a single
-allocation and are charged once.
+allocation and are charged once. What a unit is handed as a device argument is
+left out, because the compiler-reported peak this number is added to counts
+the executable's arguments already.
 """
 
 import dataclasses
@@ -60,6 +62,16 @@ class ScheduledUnit:
     produces: tuple[Hashable, ...]
     """Artifact keys the unit's outputs are registered under."""
 
+    consumes: tuple[Hashable, ...]
+    """Artifact keys the unit's executables are handed as device arguments.
+
+    A compiler-reported peak counts the buffers the executable receives, so a
+    buffer named here is already inside the number the resident bytes are
+    compared against and is not charged a second time. A value the plan copies
+    or reshards before the read does not belong here: the stored buffer and the
+    copy are both live.
+    """
+
     output_bytes_per_device: int
     """Bytes the unit's outputs occupy on each of its devices."""
 
@@ -83,7 +95,8 @@ def plan_resident_bytes(
     unit's number is what is already resident on its busiest device plus the
     outputs of the units dispatched concurrently with it on that device; its
     own outputs are not part of it, since the width it is being planned for
-    decides them.
+    decides them, and neither are the buffers it is handed as arguments, which
+    a compiler-reported peak counts on its own.
 
     `fold_dispatches` maps each fold dispatch id `(period, source, target)` to
     the artifact key it produces. Every unit's `(period, regime)` and every
@@ -98,11 +111,10 @@ def plan_resident_bytes(
     footprint exactly where the ledger would release it: every key at zero
     remaining consumers, none pinned and none retained.
 
-    A donated buffer needs no rule of its own. A unit is measured before its
-    own wave commits, so the donating unit's number still carries the buffer it
-    donates — which is the right number, because donation aliases that input
-    into the unit's output, and a unit's own outputs are what this number
-    excludes. Releasing it a dispatch earlier would under-count.
+    A donated buffer needs no rule of its own. Donation aliases one of the
+    unit's own arguments into its output, and an argument is exactly what the
+    compiler-reported peak already holds, so the buffer is counted once
+    whichever way it is read — never twice, and never not at all.
     """
     _fail_if_footprint_is_unplanned(ledger=ledger, footprints=footprints)
     counts = dict(ledger.remaining_counts)
@@ -247,8 +259,9 @@ def _busiest_device_bytes(
     live: Mapping[frozenset[Hashable], Mapping[Hashable, ArtifactFootprint]],
 ) -> int:
     """Return the resident bytes on the unit's most occupied device."""
+    consumed = frozenset(unit.consumes)
     return max(
-        _device_bytes(live=live, device=device)
+        _device_bytes(live=live, device=device, consumed=consumed)
         + sum(
             peer.output_bytes_per_device
             for peer in wave
@@ -262,21 +275,51 @@ def _device_bytes(
     *,
     live: Mapping[frozenset[Hashable], Mapping[Hashable, ArtifactFootprint]],
     device: int,
+    consumed: frozenset[Hashable],
 ) -> int:
     """Sum what every live buffer holding a shard on `device` occupies there.
 
     A buffer is charged once, at the largest claim any of its keys makes on
     that device: the keys of an alias group are names for one allocation, so
-    adding them up would bill the same bytes several times.
+    adding them up would bill the same bytes several times. A buffer the
+    measured unit is handed as an argument on this device is not charged at
+    all, because the compiler-reported peak it is compared against holds it
+    already.
     """
     return sum(
-        max(
-            footprint.bytes_per_device
-            for footprint in members.values()
-            if device in footprint.device_ids
-        )
+        _group_bytes(members=members, device=device)
         for members in live.values()
-        if any(device in footprint.device_ids for footprint in members.values())
+        if _group_is_present(members=members, device=device)
+        and not _group_is_consumed(members=members, device=device, consumed=consumed)
+    )
+
+
+def _group_bytes(*, members: Mapping[Hashable, ArtifactFootprint], device: int) -> int:
+    """Return one buffer's largest claim on `device` among the keys naming it."""
+    return max(
+        footprint.bytes_per_device
+        for footprint in members.values()
+        if device in footprint.device_ids
+    )
+
+
+def _group_is_present(
+    *, members: Mapping[Hashable, ArtifactFootprint], device: int
+) -> bool:
+    """Whether any key of one buffer holds a shard on `device`."""
+    return any(device in footprint.device_ids for footprint in members.values())
+
+
+def _group_is_consumed(
+    *,
+    members: Mapping[Hashable, ArtifactFootprint],
+    device: int,
+    consumed: frozenset[Hashable],
+) -> bool:
+    """Whether the measured unit is handed this buffer as an argument there."""
+    return any(
+        key in consumed and device in footprint.device_ids
+        for key, footprint in members.items()
     )
 
 

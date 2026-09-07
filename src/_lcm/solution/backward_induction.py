@@ -37,6 +37,12 @@ from _lcm.execution.core_program import (
     select_programs,
 )
 from _lcm.execution.donation import ResolvedDonation, resolve_donations
+from _lcm.execution.footprint import (
+    ArtifactFootprint,
+    ScheduledUnit,
+    per_device_footprint,
+    plan_resident_bytes,
+)
 from _lcm.execution.internal_outputs import (
     ResolvedProducer,
     assert_width_invariant_internal_outputs,
@@ -2438,6 +2444,228 @@ def _regime_retains_replay(*, regime: Regime, retain_replay: bool) -> bool:
     )
 
 
+def _resident_bytes_by_triple(
+    *,
+    regimes: MappingProxyType[RegimeName, Regime],
+    ledger: PlannedInputLiveness,
+    templates: SolveInputMappings,
+    program_metadata: Mapping[_CoreTriple, _ProgramExecutionMetadata],
+) -> MappingProxyType[_CoreTriple, int]:
+    """Predict, per core triple, the resident bytes at its scheduled position.
+
+    The schedule walked is the one the loop will run: `plan_period_waves` over
+    each period's active regimes at their placement's device sets, periods
+    descending, a period's gated-edge folds after its last wave. Every core of
+    a regime-period cell shares the cell's number, because a kernel dispatches
+    its cores together as one unit.
+
+    The number leaves out what the cell's own executables are handed as device
+    arguments without a copy: a compiler-reported peak counts those buffers
+    already, so adding them here would charge one allocation twice. A value the
+    plan copies or reshards for the read stays charged, since the stored buffer
+    and the copy are both live.
+
+    Sizes come from the solve-lifetime templates, which are period-invariant,
+    so an artifact of any period finds the template of what it names.
+    """
+    program_keys_by_cell = _program_keys_by_cell(triples=program_metadata)
+    footprints = _artifact_footprints(ledger=ledger, templates=templates)
+    device_ids_by_regime = MappingProxyType(
+        {
+            regime_name: _regime_device_ids(regime=regime)
+            for regime_name, regime in regimes.items()
+        }
+    )
+    resident = plan_resident_bytes(
+        waves_by_period=MappingProxyType(
+            {
+                period: _scheduled_waves(
+                    regimes=regimes,
+                    period=period,
+                    program_keys_by_cell=program_keys_by_cell,
+                    program_metadata=program_metadata,
+                    footprints=footprints,
+                    device_ids_by_regime=device_ids_by_regime,
+                )
+                for period in range(_model_n_periods(regimes=regimes))
+            }
+        ),
+        fold_dispatches=_fold_output_artifacts(regimes=regimes),
+        ledger=ledger,
+        footprints=MappingProxyType(
+            cast("dict[Hashable, ArtifactFootprint]", footprints)
+        ),
+    )
+    return MappingProxyType(
+        {
+            (regime_name, period, core_key): resident[(period, regime_name)]
+            for (regime_name, period), core_keys in program_keys_by_cell.items()
+            for core_key in core_keys
+        }
+    )
+
+
+def _program_keys_by_cell(
+    *, triples: Iterable[_CoreTriple]
+) -> MappingProxyType[tuple[RegimeName, int], tuple[str, ...]]:
+    """Group core keys by regime-period cell, in producer order."""
+    cells: dict[tuple[RegimeName, int], list[str]] = {}
+    for regime_name, period, core_key in triples:
+        cells.setdefault((regime_name, period), []).append(core_key)
+    return MappingProxyType({cell: tuple(keys) for cell, keys in cells.items()})
+
+
+def _fold_output_artifacts(
+    *, regimes: MappingProxyType[RegimeName, Regime]
+) -> MappingProxyType[tuple[int, RegimeName, RegimeName], ValueArtifactAddress]:
+    """Address the gated continuation every edge fold of the solve produces."""
+    folds: dict[tuple[int, RegimeName, RegimeName], ValueArtifactAddress] = {}
+    for dispatch in _gated_edge_fold_dispatches(regimes=regimes):
+        period, source_name, target_name = cast(
+            "tuple[int, RegimeName, RegimeName]", dispatch
+        )
+        folds[(period, source_name, target_name)] = ValueArtifactAddress(
+            kind=ValueArtifactKind.GATED_CONTINUATION,
+            period=period,
+            regime=source_name,
+            target_regime=target_name,
+        )
+    return MappingProxyType(folds)
+
+
+def _artifact_footprints(
+    *, ledger: PlannedInputLiveness, templates: SolveInputMappings
+) -> dict[ValueArtifactAddress, ArtifactFootprint]:
+    """Size every planned artifact the solve-lifetime templates address."""
+    footprints: dict[ValueArtifactAddress, ArtifactFootprint] = {}
+    for artifact in ledger.remaining_counts:
+        template = locate_artifact(inputs=templates, artifact=artifact)
+        if template is not None:
+            footprints[artifact] = per_device_footprint(array=template)
+    return footprints
+
+
+def _scheduled_waves(
+    *,
+    regimes: MappingProxyType[RegimeName, Regime],
+    period: int,
+    program_keys_by_cell: Mapping[tuple[RegimeName, int], tuple[str, ...]],
+    program_metadata: Mapping[_CoreTriple, _ProgramExecutionMetadata],
+    footprints: Mapping[ValueArtifactAddress, ArtifactFootprint],
+    device_ids_by_regime: Mapping[RegimeName, frozenset[int]],
+) -> tuple[tuple[ScheduledUnit, ...], ...]:
+    """Describe one period's dispatch waves the way the loop plans them."""
+    active = {
+        regime_name: regime
+        for regime_name, regime in regimes.items()
+        if period in regime.active_periods
+        and program_keys_by_cell.get((regime_name, period))
+    }
+    waves = plan_period_waves(
+        nodes=tuple(
+            ScheduledNode(period=period, regime=regime_name, program=core_key)
+            for regime_name in active
+            for core_key in program_keys_by_cell[(regime_name, period)]
+        ),
+        same_period_dependencies=MappingProxyType(
+            {
+                regime_name: regime.same_period_ref_regimes
+                for regime_name, regime in active.items()
+            }
+        ),
+        device_sets=MappingProxyType(
+            {regime_name: device_ids_by_regime[regime_name] for regime_name in active}
+        ),
+    )
+    return tuple(
+        tuple(
+            _scheduled_unit(
+                unit=unit,
+                program_metadata=program_metadata,
+                footprints=footprints,
+                device_ids=tuple(sorted(device_ids_by_regime[unit.regime])),
+            )
+            for unit in wave
+        )
+        for wave in waves
+    )
+
+
+def _scheduled_unit(
+    *,
+    unit: DispatchUnit,
+    program_metadata: Mapping[_CoreTriple, _ProgramExecutionMetadata],
+    footprints: Mapping[ValueArtifactAddress, ArtifactFootprint],
+    device_ids: tuple[int, ...],
+) -> ScheduledUnit:
+    """Describe one dispatch unit's outputs and its pass-through inputs.
+
+    The unit produces the sized artifacts addressed at its own cell; a gated
+    continuation is produced by an edge fold instead, which the walk registers
+    at the end of the period.
+    """
+    produced = tuple(
+        artifact
+        for artifact in footprints
+        if artifact.kind is not ValueArtifactKind.GATED_CONTINUATION
+        and artifact.period == unit.period
+        and artifact.regime == unit.regime
+    )
+    return ScheduledUnit(
+        period=unit.period,
+        regime=unit.regime,
+        device_ids=device_ids,
+        produces=produced,
+        consumes=_unique_value_artifacts(
+            artifact
+            for core_key in unit.programs
+            for artifact in _aligned_input_artifacts(
+                metadata=program_metadata[(unit.regime, unit.period, core_key)]
+            )
+        ),
+        output_bytes_per_device=sum(
+            footprints[artifact].bytes_per_device for artifact in produced
+        ),
+    )
+
+
+def _aligned_input_artifacts(
+    *, metadata: _ProgramExecutionMetadata
+) -> tuple[ValueArtifactAddress, ...]:
+    """Name the values one program's executable is handed without a copy.
+
+    A planned program's resolved transfer plan says which reads reach the
+    executable in their stored layout; every other transfer kind allocates a
+    copy that the stored buffer outlives, so both are live. A program with no
+    plan reads its declared values directly.
+    """
+    if metadata.input_transfer_plan:
+        return tuple(
+            transfer.target
+            for transfer in metadata.input_transfer_plan
+            if transfer.kind is ValueTransferKind.ALIGNED_LOCAL
+        )
+    return tuple(read.target for read in metadata.requirements.value_reads)
+
+
+def _width_selection_failure(
+    *,
+    triple: _CoreTriple,
+    resident_bytes: int,
+    budget_bytes: int,
+    error: ExecutionPlanningError,
+) -> ExecutionPlanningError:
+    """Name the cell a workspace refusal belongs to and what it competed with."""
+    regime_name, period, core_key = triple
+    msg = (
+        f"Regime {regime_name!r} at period {period} cannot select a workspace "
+        f"width for core {core_key!r}: the plan keeps {resident_bytes} bytes "
+        f"resident on its busiest device against a {budget_bytes}-byte budget. "
+        f"{error}"
+    )
+    return ExecutionPlanningError(msg)
+
+
 def _select_period_programs(
     *,
     regime: Regime,
@@ -2638,6 +2866,28 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     # by lowering key across triples, lowers sequentially (tracing is
     # single-threaded), and compiles in parallel.
     budget_bytes = execution_config.device_memory_bytes
+    # A candidate competes with what the plan already keeps on its device at the
+    # node's scheduled position. Without a budget no peak is consulted, so the
+    # position is not walked either.
+    resident_bytes_by_triple = (
+        MappingProxyType(dict.fromkeys(candidates_by_triple, 0))
+        if budget_bytes is None
+        else _resident_bytes_by_triple(
+            regimes=regimes,
+            ledger=input_liveness,
+            templates=SolveInputMappings(
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                next_regime_to_continuation=next_regime_to_continuation,
+                next_edge_to_V_arr=next_edge_to_V_arr,
+            ),
+            program_metadata=_execution_metadata(
+                programs={
+                    triple: resolved_programs[candidates[0]]
+                    for triple, candidates in candidates_by_triple.items()
+                }
+            ),
+        )
+    )
     n_workers = _resolve_compilation_workers(
         max_compilation_workers=max_compilation_workers
     )
@@ -2701,7 +2951,15 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
                     logger=logger,
                     precomputed_peak_bytes=peak_bytes,
                 )
-            if peak_bytes_by_lowering_key[lowering_key] <= budget_bytes:
+                logger.debug(
+                    "  resident at position: %d bytes",
+                    resident_bytes_by_triple[triple],
+                )
+            if (
+                peak_bytes_by_lowering_key[lowering_key]
+                + resident_bytes_by_triple[triple]
+                <= budget_bytes
+            ):
                 continue
             if position + 1 < len(candidates_by_triple[triple]):
                 next_pending[triple] = position + 1
@@ -2731,20 +2989,31 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
             if lowering_keys[candidate] in compiled
         }
         representative = resolved_programs[candidates[0]]
-        plan = plan_workspace(
-            axes=representative.requirements.streamable_axes,
-            compile_candidate=_CompiledCandidateLookup(
-                compiled_by_width=compiled_by_width
-            ),
-            budget_bytes=budget_bytes,
-            peak_bytes_for=(
-                None
-                if budget_bytes is None
-                else _PeakBytesLookup(
-                    peak_bytes_by_compiled_id=peak_bytes_by_compiled_id
-                )
-            ),
-        )
+        try:
+            plan = plan_workspace(
+                axes=representative.requirements.streamable_axes,
+                compile_candidate=_CompiledCandidateLookup(
+                    compiled_by_width=compiled_by_width
+                ),
+                budget_bytes=budget_bytes,
+                peak_bytes_for=(
+                    None
+                    if budget_bytes is None
+                    else _PeakBytesLookup(
+                        peak_bytes_by_compiled_id=peak_bytes_by_compiled_id
+                    )
+                ),
+                resident_bytes=resident_bytes_by_triple[triple],
+            )
+        except ExecutionPlanningError as error:
+            if budget_bytes is None:
+                raise
+            raise _width_selection_failure(
+                triple=triple,
+                resident_bytes=resident_bytes_by_triple[triple],
+                budget_bytes=budget_bytes,
+                error=error,
+            ) from error
         selected = programs_by_width[_width_key(widths=plan.widths)]
         selected_programs[triple] = selected
         selected_cores[triple] = _attach_resolved_output_layout(

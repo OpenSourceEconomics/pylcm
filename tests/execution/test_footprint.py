@@ -147,6 +147,7 @@ def _unit(
     regime: str,
     devices: tuple[int, ...] = (0,),
     produces: tuple[Hashable, ...] = (),
+    consumes: tuple[Hashable, ...] = (),
     output_bytes: int = 0,
 ) -> ScheduledUnit:
     """Build one scheduled unit with the defaults the walk tests share."""
@@ -155,6 +156,7 @@ def _unit(
         regime=regime,
         device_ids=devices,
         produces=produces,
+        consumes=consumes,
         output_bytes_per_device=output_bytes,
     )
 
@@ -257,6 +259,7 @@ def test_an_invalid_scheduled_unit_is_refused(
             regime="a",
             device_ids=device_ids,
             produces=(),
+            consumes=(),
             output_bytes_per_device=output_bytes_per_device,
         )
 
@@ -631,3 +634,84 @@ def test_a_unit_whose_dispatch_the_ledger_does_not_plan_is_refused() -> None:
             ledger=PlannedInputLiveness(dispatch_accesses={(0, "a"): ()}),
             footprints=MappingProxyType({}),
         )
+
+
+def test_a_buffer_the_unit_is_handed_as_an_argument_is_not_charged() -> None:
+    """A compiler peak counts an executable's arguments, so the walk must not."""
+    ledger = PlannedInputLiveness(
+        dispatch_accesses={(1, "a"): (), (0, "a"): ("V1",)},
+        retained_artifacts=("V1",),
+    )
+    resident = plan_resident_bytes(
+        waves_by_period=MappingProxyType(
+            {
+                1: ((_unit(period=1, regime="a", produces=("V1",)),),),
+                0: ((_unit(period=0, regime="a", consumes=("V1",)),),),
+            }
+        ),
+        fold_dispatches=MappingProxyType({}),
+        ledger=ledger,
+        footprints=MappingProxyType({"V1": _footprint(size=11)}),
+    )
+
+    assert resident[(0, "a")] == 0
+
+
+def test_a_buffer_another_unit_is_handed_stays_charged() -> None:
+    """Only the measured unit's own arguments leave its number."""
+    ledger = PlannedInputLiveness(
+        dispatch_accesses={(1, "a"): (), (0, "a"): ("V1",), (0, "b"): ()},
+        retained_artifacts=("V1",),
+    )
+    resident = plan_resident_bytes(
+        waves_by_period=MappingProxyType(
+            {
+                1: ((_unit(period=1, regime="a", produces=("V1",)),),),
+                0: (
+                    (_unit(period=0, regime="a", consumes=("V1",)),),
+                    (_unit(period=0, regime="b"),),
+                ),
+            }
+        ),
+        fold_dispatches=MappingProxyType({}),
+        ledger=ledger,
+        footprints=MappingProxyType({"V1": _footprint(size=11)}),
+    )
+
+    assert resident[(0, "b")] == 11
+
+
+def test_an_argument_on_another_device_leaves_that_devices_charge_standing() -> None:
+    """A buffer is only free where the unit is actually handed it."""
+    ledger = PlannedInputLiveness(
+        dispatch_accesses={(1, "a"): (), (0, "a"): ("rolled", "root")},
+        aliases={"rolled": "root"},
+        retained_artifacts=("root",),
+    )
+    resident = plan_resident_bytes(
+        waves_by_period=MappingProxyType(
+            {
+                1: ((_unit(period=1, regime="a", produces=("rolled", "root")),),),
+                0: (
+                    (
+                        _unit(
+                            period=0,
+                            regime="a",
+                            devices=(0, 1),
+                            consumes=("rolled",),
+                        ),
+                    ),
+                ),
+            }
+        ),
+        fold_dispatches=MappingProxyType({}),
+        ledger=ledger,
+        footprints=MappingProxyType(
+            {
+                "rolled": _footprint(size=10, devices=(0,)),
+                "root": _footprint(size=6, devices=(0, 1)),
+            }
+        ),
+    )
+
+    assert resident[(0, "a")] == 6
