@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 
 import _lcm.egm.continuation as cont_mod
+from lcm.solver_api import EGM_CONTINUATION, ArtifactRef, AxisRole
 from tests.test_models import nbegm_jump_ride_along_toy as toy
 
 _CLIFF_BY_KIND = (15.0 - 1.0, 15.0 - 4.0)
@@ -81,7 +82,7 @@ def test_schedule_carry_rows_hold_the_cliff_as_a_duplicated_abscissa(
         savings_max=28.0,
         n_consumption=8,
     )
-    model.solve(params=toy.build_params(), log_level="debug")
+    solution = model.solve(params=toy.build_params(), log_level="debug")
 
     assert captured_carries, "no captured carry published breakpoints"
     _, endog, value = captured_carries[-1]
@@ -91,6 +92,22 @@ def test_schedule_carry_rows_hold_the_cliff_as_a_duplicated_abscissa(
         assert at_cliff.sum() == 2, "cliff preimage must appear exactly twice"
         left_value, right_value = value[kind, at_cliff]
         assert left_value > right_value + 1e-3
+
+    descriptor = solution.metadata.artifact_descriptors[
+        ArtifactRef(period=0, regime="alive", key=EGM_CONTINUATION)
+    ]
+    node_axis = next(
+        axis for axis in descriptor.named_axes if axis.name == "pylcm:egm:node"
+    )
+    assert node_axis.name == "pylcm:egm:node"
+    assert node_axis.role is AxisRole.OTHER
+    assert node_axis.length == n_liquid + 2
+    breakpoint_axis = next(
+        axis for axis in descriptor.named_axes if axis.name == "pylcm:egm:breakpoint"
+    )
+    assert breakpoint_axis.role is AxisRole.OTHER
+    assert breakpoint_axis.length == 1
+    assert "liquid" not in descriptor.state_roles
 
 
 def test_bridged_jump_read_publishes_plain_rows_without_breakpoints(monkeypatch):

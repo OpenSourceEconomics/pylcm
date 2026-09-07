@@ -7,8 +7,8 @@ unsupported families (Gauss-Hermite IID, Rouwenhorst) must be rejected at constr
 """
 
 import functools
+from collections.abc import Iterator, Mapping
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -35,6 +35,7 @@ from lcm.typing import (
     ContinuousState,
     DiscreteState,
     FloatND,
+    RegimeName,
     ScalarInt,
 )
 
@@ -135,7 +136,9 @@ def _params():
     }
 
 
-def _solve(*, sigma_low, sigma_high):
+def _solve(
+    *, sigma_low: float, sigma_high: float
+) -> Mapping[int, Mapping[RegimeName, FloatND]]:
     return (
         _get_model(sigma_low=sigma_low, sigma_high=sigma_high)
         .solve(params=_params(), log_level="debug")
@@ -143,11 +146,20 @@ def _solve(*, sigma_low, sigma_high):
     )
 
 
-def _uncertainty_axis_maxdiff(V) -> float:
+def _value_arrays(
+    values: Mapping[int, Mapping[RegimeName, FloatND]],
+) -> Iterator[FloatND]:
+    for regime_to_value in values.values():
+        yield from regime_to_value.values()
+
+
+def _uncertainty_axis_maxdiff(
+    V: Mapping[int, Mapping[RegimeName, FloatND]],
+) -> float:
     """Max |V(...,uncertainty=low) - V(...,uncertainty=high)| over the alive-regime
     value leaves (the only state axis of size 2 is `uncertainty`)."""
     m = 0.0
-    for leaf in jax.tree_util.tree_leaves(V):
+    for leaf in _value_arrays(V):
         a = np.asarray(leaf)
         if a.ndim >= 1 and 2 in a.shape:
             ax = list(a.shape).index(2)
@@ -159,7 +171,7 @@ def test_conditioned_model_solves():
     """The milestone: the state-conditioned model builds and solves, V finite."""
     V = _solve(sigma_low=0.05, sigma_high=0.30)
     assert V is not None
-    for leaf in jax.tree_util.tree_leaves(V):
+    for leaf in _value_arrays(V):
         assert np.all(np.isfinite(np.asarray(leaf)))
 
 
@@ -820,7 +832,7 @@ def test_cross_regime_regime_local_conditioner_builds_and_solves():
         fixed_params={},
     )
     V = model.solve(params=_cross_params(), log_level="debug").values
-    for leaf in jax.tree_util.tree_leaves(V):
+    for leaf in _value_arrays(V):
         assert np.all(np.isfinite(np.asarray(leaf)))
 
 
@@ -858,7 +870,7 @@ def test_cross_regime_model_level_conditioner_survives_pruning():
     assert "uncertainty" not in model.pruned_variables["old"]  # carries the process
     assert "uncertainty" in model.pruned_variables["gone"]  # terminal: reaches nothing
     V = model.solve(params=_cross_params(), log_level="debug").values
-    for leaf in jax.tree_util.tree_leaves(V):
+    for leaf in _value_arrays(V):
         assert np.all(np.isfinite(np.asarray(leaf)))
 
 
@@ -1000,5 +1012,5 @@ def test_conditioned_process_may_be_entered_with_an_explicit_law():
         fixed_params={},
     )
     V = model.solve(params=_cross_params(), log_level="debug").values
-    for leaf in jax.tree_util.tree_leaves(V):
+    for leaf in _value_arrays(V):
         assert np.all(np.isfinite(np.asarray(leaf)))

@@ -16,6 +16,7 @@ import jax
 import numpy as np
 
 from _lcm.egm.carry import EGMCarry
+from _lcm.egm.published_policy import NBEGMGridPolicy
 from _lcm.execution.core_program import (
     CoreBuildContext,
     CoreExecutionDisposition,
@@ -24,6 +25,7 @@ from _lcm.execution.core_program import (
     materialize_core_program,
 )
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
+from lcm.solver_api import SIMULATION_POLICY
 from tests.solution._nbegm_direct_oracle import ride_along_kernel
 from tests.test_models import (
     nbegm_jump_ride_along_toy,
@@ -96,6 +98,11 @@ def test_the_graph_publishes_exactly_a_values_only_main_and_a_replay_program():
     assert tuple(graph) == ("main", "replay")
     assert graph["main"].scope is ProgramScope.VALUES_ONLY
     assert graph["replay"].scope is ProgramScope.REPLAY
+    assert graph["replay"].retained_artifact_keys == (SIMULATION_POLICY,)
+    assert graph["replay"].retained_artifact_payload_types == {
+        SIMULATION_POLICY: NBEGMGridPolicy
+    }
+    assert graph["replay"].replaces_program == "main"
     for program in graph.values():
         assert program.disposition is CoreExecutionDisposition.PLANNED
         assert program.disposition_reason is None

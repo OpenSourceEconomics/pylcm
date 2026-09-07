@@ -6,6 +6,7 @@ specifies each phase explicitly. `normalize_regime_phases` expands every slot
 into per-phase specs and rejects combinations without defined semantics.
 """
 
+from pathlib import Path
 from typing import Any, cast
 
 import jax.numpy as jnp
@@ -13,6 +14,7 @@ import numpy as np
 import pytest
 from dags import rename_arguments
 
+import lcm.model as model_module
 from _lcm.regime_building.finalize import finalize_regimes
 from _lcm.regime_building.phases import normalize_regime_phases
 from lcm import (
@@ -27,9 +29,10 @@ from lcm import (
     Phased,
     categorical,
 )
-from lcm.exceptions import RegimeInitializationError
+from lcm.exceptions import InvalidSimulationInputError, RegimeInitializationError
+from lcm.persistence import load_solution
 from lcm.regime import Regime as UserRegime
-from lcm.typing import FloatND, ScalarFloat, ScalarInt
+from lcm.typing import FloatND, ScalarFloat, ScalarInt, UserParams
 
 
 def _solve_variant(wealth: float) -> FloatND:
@@ -636,6 +639,20 @@ def _simulate_income_panel(
     return df.sort_values(["subject_id", "period"])["income"].to_numpy()
 
 
+def _wrong_beliefs_params(*, rho_belief: float, rho_true: float) -> UserParams:
+    """Return separately named belief and truth parameters with a shared intercept."""
+    return {
+        "discount_factor": 0.95,
+        "working": {
+            "next_income": {
+                "rho_belief": rho_belief,
+                "rho_true": rho_true,
+                "sigma": 0.5,
+            },
+        },
+    }
+
+
 def test_renamed_phased_law_params_union_with_shared_name() -> None:
     """Per-side `rename_arguments` splits a param across phases while a name
     kept on both sides stays one shared parameter: the template holds
@@ -668,6 +685,56 @@ def test_renamed_phased_law_realized_path_ignores_rho_belief() -> None:
     income_high = _simulate_income_panel(model=model, rho_belief=0.95, rho_true=0.8)
     income_low = _simulate_income_panel(model=model, rho_belief=0.2, rho_true=0.8)
     np.testing.assert_allclose(income_high, income_low, atol=0)
+
+
+def test_persisted_solution_binds_beliefs_but_accepts_new_transition_truth(
+    *, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Replay a solved result under new truth while retaining its solved beliefs."""
+    solve_params = _wrong_beliefs_params(rho_belief=0.95, rho_true=0.8)
+    source_model = _build_wrong_beliefs_model()
+    solution = source_model.solve(params=solve_params, log_level="off")
+    restored = load_solution(path=solution.save(path=tmp_path / "wrong-beliefs.lcm"))
+    rebuilt_model = _build_wrong_beliefs_model()
+    initial_conditions = {
+        "age": jnp.asarray([60.0]),
+        "income": jnp.asarray([2.0]),
+        "regime_id": jnp.asarray([_RegimeId.working]),
+    }
+    true_changed_params = _wrong_beliefs_params(
+        rho_belief=0.95,
+        rho_true=0.25,
+    )
+
+    realized = rebuilt_model.simulate(
+        params=true_changed_params,
+        initial_conditions=initial_conditions,
+        solution=restored,
+        log_level="off",
+    )
+    income = (
+        realized.to_dataframe()
+        .query("regime_name == 'working'")
+        .sort_values(["subject_id", "period"])["income"]
+        .to_numpy()
+    )
+    np.testing.assert_array_equal(income, np.asarray([2.0, 1.0]))
+
+    def _forward_loop_must_not_run(**_kwargs: object) -> None:
+        raise AssertionError("forward simulation ran before belief preflight")
+
+    monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
+    belief_changed_params = _wrong_beliefs_params(
+        rho_belief=0.75,
+        rho_true=0.25,
+    )
+    with pytest.raises(InvalidSimulationInputError, match="params_fingerprint"):
+        rebuilt_model.simulate(
+            params=belief_changed_params,
+            initial_conditions=initial_conditions,
+            solution=restored,
+            log_level="off",
+        )
 
 
 def _markov_law(wealth: float) -> FloatND:  # noqa: ARG001

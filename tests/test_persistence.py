@@ -1,7 +1,9 @@
 import json
 import logging
+from pathlib import Path
 from unittest.mock import patch
 
+import h5py
 import jax.numpy as jnp
 import pytest
 
@@ -18,9 +20,11 @@ from lcm import (
     categorical,
     load_snapshot,
 )
-from lcm.persistence import load_solution, save_solution
+from lcm.exceptions import SolutionIntegrityError
+from lcm.persistence import load_legacy_solution, load_solution, save_solution
 from lcm.regime import Regime as UserRegime
 from lcm.result import SimulationResult as _PublicSimulationResult
+from lcm.solver_api import SolutionResult, ValueStore
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 
 
@@ -101,31 +105,62 @@ def model_and_params():
 @pytest.fixture
 def solved(model_and_params):
     model, params = model_and_params
-    return model.solve(params=params, log_level="debug").values
+    return model.solve(params=params, log_level="debug")
 
 
 # -- save_solution / load_solution ---------------------------------------------------
 
 
 def test_save_and_load_solution_roundtrip(*, tmp_path, solved):
-    path = tmp_path / "solution.h5"
-    save_solution(period_to_regime_to_V_arr=solved, path=path)
+    path = tmp_path / "solution.lcm"
+    save_solution(solution=solved, path=path)
 
     loaded = load_solution(path=path)
 
-    assert set(loaded.keys()) == set(solved.keys())
-    for period in solved:
-        assert set(loaded[period].keys()) == set(solved[period].keys())
-        for regime_name in solved[period]:
+    assert isinstance(loaded, SolutionResult)
+    assert isinstance(loaded.values, ValueStore)
+    assert set(loaded.values) == set(solved.values)
+    for period in solved.values:
+        assert set(loaded.values[period]) == set(solved.values[period])
+        for regime_name in solved.values[period]:
             assert jnp.allclose(
-                loaded[period][regime_name], solved[period][regime_name]
+                loaded.value(period=period, regime=regime_name),
+                solved.value(period=period, regime=regime_name),
             )
 
 
 def test_save_solution_missing_parent_dir(*, tmp_path, solved):
-    path = tmp_path / "nonexistent" / "solution.h5"
+    path = tmp_path / "nonexistent" / "solution.lcm"
     with pytest.raises(FileNotFoundError):
-        save_solution(period_to_regime_to_V_arr=solved, path=path)
+        save_solution(solution=solved, path=path)
+
+
+def test_legacy_value_only_archive_requires_the_explicit_migration_reader(
+    *, tmp_path: Path, solved: SolutionResult
+) -> None:
+    """Keep value-only HDF5 readable only through its migration-specific API."""
+    path = tmp_path / "legacy-solution.h5"
+    with h5py.File(path, "w") as archive:
+        for period in solved.values:
+            for regime_name in solved.values[period]:
+                archive.create_dataset(
+                    f"{period}/{regime_name}/V_arr",
+                    data=solved.value(period=period, regime=regime_name),
+                )
+
+    with pytest.raises(SolutionIntegrityError, match="manifest"):
+        load_solution(path=path)
+
+    migrated_values = load_legacy_solution(path=path)
+    assert not isinstance(migrated_values, SolutionResult)
+    assert set(migrated_values) == set(solved.values)
+    for period in solved.values:
+        assert set(migrated_values[period]) == set(solved.values[period])
+        for regime_name in solved.values[period]:
+            assert jnp.allclose(
+                migrated_values[period][regime_name],
+                solved.value(period=period, regime=regime_name),
+            )
 
 
 # -- debug snapshots ------------------------------------------------------------------

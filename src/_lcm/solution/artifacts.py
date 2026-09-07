@@ -2,6 +2,7 @@
 
 import hashlib
 from collections.abc import Mapping
+from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
@@ -13,20 +14,29 @@ from _lcm.params.mapping_leaf import MappingLeaf
 from _lcm.params.sequence_leaf import SequenceLeaf
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.solution.contract import BackwardInductionResult
-from _lcm.typing import FlatParams, RegimeName
+from _lcm.solution.result_snapshot import own_artifact_store, own_value_store
+from _lcm.typing import (
+    FlatParams,
+    PeriodToRegimeToDissolutionFlags,
+    PeriodToRegimeToSimulationPolicy,
+    PeriodToRegimeToVArr,
+    RegimeName,
+)
 from lcm.solver_api import (
     DISSOLUTION_FLAG,
     EGM_CONTINUATION,
     SIMULATION_POLICY,
     SOLVER_DIAGNOSTICS,
+    ArtifactChannel,
     ArtifactKey,
     ArtifactRef,
-    ArtifactStore,
     OmissionReason,
+    PersistencePolicy,
     ResultRetention,
     SolutionMetadata,
     SolutionResult,
     ValueArraySchema,
+    _replay_route_identity,
 )
 
 if TYPE_CHECKING:
@@ -39,7 +49,35 @@ else:
     SolutionAuthority = Any
 
 
-def build_solution_result(  # noqa: C901, PLR0912
+@dataclass(frozen=True, kw_only=True)
+class OwnedSolutionView:
+    """The engine's by-reference view of a result it built in this process.
+
+    The producing model consumes its own result through this view: the value
+    arrays, published replay policies, and dissolution flags are the objects the
+    solve returned, and the authority is the one bound to that solve, generated
+    adaptive facts included. Nothing is copied and nothing is re-validated; the
+    consumer only checks that it is the producing instance and that the
+    parameters agree.
+    """
+
+    model_instance_id: str
+    """Token of the model instance that ran the solve."""
+    params_fingerprint: str
+    """Digest of the canonical solution parameters the solve used."""
+    values: PeriodToRegimeToVArr
+    """The solve's value arrays, by reference."""
+    simulation_policies: PeriodToRegimeToSimulationPolicy
+    """The published replay policies consumed by a declared route."""
+    dissolution_flags: PeriodToRegimeToDissolutionFlags
+    """The retained per-period, per-collective-regime dissolution flags."""
+    replay_artifacts: Mapping[ArtifactRef, object]
+    """Every retained replay-channel payload, by reference, for plugin routes."""
+    authority: SolutionAuthority
+    """The solution authority bound to this solve."""
+
+
+def build_solution_result(  # noqa: C901, PLR0912, PLR0915
     *,
     internal_result: BackwardInductionResult,
     retention: ResultRetention,
@@ -48,28 +86,33 @@ def build_solution_result(  # noqa: C901, PLR0912
     n_periods: int,
     model_instance_id: str,
     params_fingerprint: str,
+    model_fingerprint: str,
     authority: SolutionAuthority,
 ) -> SolutionResult:
     """Label existing engine outputs without changing their numerical meaning."""
-    replay: dict[ArtifactRef, object] = {}
+    replay: dict[ArtifactRef, object] = dict(internal_result.replay_artifacts)
+    retained_continuations: dict[ArtifactRef, object] = dict(
+        internal_result.retained_continuations
+    )
+    auxiliary: dict[ArtifactRef, object] = dict(internal_result.auxiliary_artifacts)
     diagnostics: dict[ArtifactRef, object] = {}
     omissions: dict[ArtifactRef, OmissionReason] = {}
+    declared_replay_policies: PeriodToRegimeToSimulationPolicy = MappingProxyType(
+        {
+            period: MappingProxyType(
+                {
+                    regime_name: payload
+                    for regime_name, payload in regime_to_payload.items()
+                    if regimes[regime_name].simulation.egm_policy_read is not None
+                }
+            )
+            for period, regime_to_payload in (
+                internal_result.simulation_policies.items()
+            )
+        }
+    )
 
     if retention.retains_replay:
-        declared_replay_policies = MappingProxyType(
-            {
-                period: MappingProxyType(
-                    {
-                        regime_name: payload
-                        for regime_name, payload in regime_to_payload.items()
-                        if regimes[regime_name].simulation.egm_policy_read is not None
-                    }
-                )
-                for period, regime_to_payload in (
-                    internal_result.simulation_policies.items()
-                )
-            }
-        )
         _add_nested_artifacts(
             target=replay,
             nested=declared_replay_policies,
@@ -82,16 +125,16 @@ def build_solution_result(  # noqa: C901, PLR0912
         )
 
     if retention is ResultRetention.ALL_PERSISTABLE_ARTIFACTS:
-        # A policy replayed against solve-generated adaptive axes is read through
-        # facts the solving model instance holds beside the result, not inside
-        # it; nothing persistable carries them, so the policy is not kept.
-        for policy_ref in tuple(replay):
-            if (
-                policy_ref.key == SIMULATION_POLICY
-                and authority.replay[policy_ref].adaptive_outer_nodes is not None
-            ):
-                del replay[policy_ref]
-                omissions[policy_ref] = OmissionReason.NOT_PERSISTED
+        for store in (retained_continuations, replay, auxiliary):
+            for ref in tuple(store):
+                generic_authority = authority.artifacts.get(ref)
+                if (
+                    generic_authority is None
+                    or generic_authority.descriptor.persistence
+                    is PersistencePolicy.NOT_PERSISTED
+                ):
+                    del store[ref]
+                    omissions[ref] = OmissionReason.NOT_PERSISTED
 
     _add_nested_artifacts(
         target=diagnostics,
@@ -104,19 +147,6 @@ def build_solution_result(  # noqa: C901, PLR0912
             regime = regimes[regime_name]
             user_regime = user_regimes[regime_name]
 
-            if regime.solution.continuation_template is not None:
-                omissions[
-                    ArtifactRef(
-                        period=period,
-                        regime=regime_name,
-                        key=EGM_CONTINUATION,
-                    )
-                ] = (
-                    OmissionReason.UNSUPPORTED
-                    if retention is ResultRetention.ALL_PERSISTABLE_ARTIFACTS
-                    else OmissionReason.NOT_REQUESTED
-                )
-
             policy_ref = ArtifactRef(
                 period=period,
                 regime=regime_name,
@@ -124,7 +154,7 @@ def build_solution_result(  # noqa: C901, PLR0912
             )
             policy_descriptor = authority.replay[policy_ref]
             policy_read = regime.simulation.egm_policy_read
-            can_publish_policy = (
+            can_publish_policy = regime.simulation.external_replay_route is None and (
                 policy_read is not None
                 or user_regime.solver.publishes_simulation_policy
                 or _graph_publishes_replay(regime=regime, period=period)
@@ -138,6 +168,12 @@ def build_solution_result(  # noqa: C901, PLR0912
                     omissions[policy_ref] = OmissionReason.NOT_APPLICABLE
                 elif not retention.retains_replay:
                     omissions[policy_ref] = OmissionReason.NOT_REQUESTED
+                elif (
+                    retention is ResultRetention.ALL_PERSISTABLE_ARTIFACTS
+                    and authority.artifacts[policy_ref].descriptor.persistence
+                    is PersistencePolicy.NOT_PERSISTED
+                ):
+                    omissions[policy_ref] = OmissionReason.NOT_PERSISTED
                 elif policy_descriptor.required:
                     msg = (
                         "A model-authoritative replay route published no required "
@@ -146,7 +182,7 @@ def build_solution_result(  # noqa: C901, PLR0912
                     )
                     raise RuntimeError(msg)
                 else:
-                    omissions[policy_ref] = OmissionReason.NOT_APPLICABLE
+                    omissions[policy_ref] = OmissionReason.UNSUPPORTED
 
             if regime.stakeholders is not None:
                 dissolution_ref = ArtifactRef(
@@ -167,13 +203,47 @@ def build_solution_result(  # noqa: C901, PLR0912
                         )
                         raise RuntimeError(msg)
                     else:
-                        omissions[dissolution_ref] = OmissionReason.NOT_APPLICABLE
+                        omissions[dissolution_ref] = OmissionReason.UNSUPPORTED
 
-    return SolutionResult(
-        values=internal_result.value_functions,
-        retained_continuations=ArtifactStore(),
-        replay_artifacts=ArtifactStore(replay),
-        auxiliary_artifacts=ArtifactStore(),
+    present_refs = (
+        set(retained_continuations) | set(replay) | set(auxiliary) | set(diagnostics)
+    )
+    for ref, artifact_authority in authority.artifacts.items():
+        if ref in present_refs or ref in omissions:
+            continue
+        descriptor = artifact_authority.descriptor
+        selected = retention is ResultRetention.ALL_PERSISTABLE_ARTIFACTS or (
+            retention is ResultRetention.VALUES_AND_REPLAY
+            and descriptor.channel is ArtifactChannel.REPLAY
+        )
+        if not artifact_authority.applicable:
+            omissions[ref] = OmissionReason.NOT_APPLICABLE
+        elif not selected:
+            omissions[ref] = OmissionReason.NOT_REQUESTED
+        elif descriptor.persistence is PersistencePolicy.NOT_PERSISTED:
+            omissions[ref] = OmissionReason.NOT_PERSISTED
+        elif artifact_authority.required:
+            raise RuntimeError(
+                "A model-authoritative route published no required artifact at "
+                f"({ref.period}, {ref.regime!r}, {ref.key.type_id!r})."
+            )
+        else:
+            omissions[ref] = OmissionReason.UNSUPPORTED
+
+    result = SolutionResult(
+        values=own_value_store(internal_result.value_functions),
+        retained_continuations=own_artifact_store(
+            entries=retained_continuations,
+            authorities=authority.artifacts,
+        ),
+        replay_artifacts=own_artifact_store(
+            entries=replay,
+            authorities=authority.artifacts,
+        ),
+        auxiliary_artifacts=own_artifact_store(
+            entries=auxiliary,
+            authorities=authority.artifacts,
+        ),
         metadata=SolutionMetadata(
             retention=retention,
             n_periods=n_periods,
@@ -189,6 +259,22 @@ def build_solution_result(  # noqa: C901, PLR0912
             ),
             model_instance_id=model_instance_id,
             params_fingerprint=params_fingerprint,
+            model_fingerprint=model_fingerprint,
+            solver_identities=MappingProxyType(
+                {
+                    regime_name: user_regime.solver.identity
+                    for regime_name, user_regime in user_regimes.items()
+                }
+            ),
+            replay_routes=MappingProxyType(
+                {
+                    regime_name: _replay_route_identity(
+                        regimes[regime_name].simulation.replay_route
+                    )
+                    for regime_name in regimes
+                }
+            ),
+            artifact_descriptors=MappingProxyType(dict(authority.artifact_descriptors)),
             value_schemas=MappingProxyType(
                 {
                     (period, regime_name): ValueArraySchema(
@@ -204,8 +290,38 @@ def build_solution_result(  # noqa: C901, PLR0912
             ),
         ),
         omissions=MappingProxyType(omissions),
-        diagnostics=ArtifactStore(diagnostics),
+        diagnostics=own_artifact_store(
+            entries=diagnostics,
+            authorities=authority.artifacts,
+        ),
     )
+    object.__setattr__(
+        result,
+        "_artifact_authority",
+        MappingProxyType(dict(authority.artifacts)),
+    )
+    object.__setattr__(
+        result,
+        "_engine_view",
+        OwnedSolutionView(
+            model_instance_id=model_instance_id,
+            params_fingerprint=params_fingerprint,
+            values=internal_result.value_functions,
+            simulation_policies=(
+                declared_replay_policies
+                if retention.retains_replay
+                else MappingProxyType({})
+            ),
+            dissolution_flags=(
+                internal_result.dissolution_flags
+                if retention.retains_replay
+                else MappingProxyType({})
+            ),
+            replay_artifacts=MappingProxyType(replay),
+            authority=authority,
+        ),
+    )
+    return result
 
 
 def fingerprint_flat_params(flat_params: FlatParams) -> str:
@@ -238,7 +354,9 @@ def fingerprint_flat_params(flat_params: FlatParams) -> str:
                 update_value(value=child, path=(*path, str(index)))
             return
 
-        array = np.ascontiguousarray(np.asarray(value))
+        # ``asarray`` keeps the declared rank; a 0-d parameter and a length-one
+        # vector are distinct leaves even when their bytes agree.
+        array = np.asarray(value)
         update_token("array")
         update_token(",".join(str(size) for size in array.shape))
         update_token(array.dtype.str)

@@ -1,18 +1,16 @@
-"""A DC-EGM period publishes one native dense core program and a public output.
+"""A DC-EGM period publishes output-specialized dense core programs.
 
-The DC-EGM kernel owns its stochastic-node and grid batching, so its single
-program `main` is deliberately dense; it reads its continuation from the child
-carries alone and declares no target value access. The program publishes the
-value array, the carry a parent interpolates, and the off-grid simulation policy,
-each described by the state axes that lead it, and the kernel returns them as a
-public `KernelOutput` whose continuation and replay channels the solve loop
-consumes. The NEGM composite reads its keeper and adjuster children through that
-public output rather than through a legacy result.
+The DC-EGM kernel owns its stochastic-node and grid batching, so both variants
+are deliberately dense and read continuation from child carries alone. `main`
+publishes only value and carry; `replay` additionally publishes the off-grid
+policy when its exact retention key is selected. The NEGM composite consumes the
+values variant through the public output rather than through a legacy result.
 """
 
 import functools
 import logging
 from collections.abc import Mapping
+from dataclasses import replace
 from types import MappingProxyType
 from typing import Any, cast
 
@@ -30,6 +28,7 @@ from _lcm.execution.core_program import (
     materialize_core_program,
 )
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
+from _lcm.regime_building import processing as regime_processing
 from _lcm.solution import period_replay
 from _lcm.solution.period_replay import replay_period
 from lcm.solver_api import (
@@ -40,6 +39,7 @@ from lcm.solver_api import (
     OmissionReason,
     ResultRetention,
 )
+from lcm.solvers import MSSEnvelope
 from tests.conftest import assert_agrees_to_ulp
 from tests.solution._nbegm_direct_oracle import ride_along_kernel
 from tests.solution.test_egm_passive import _get_model as _passive_model
@@ -86,32 +86,72 @@ def _build_context(context: Mapping[str, Any]) -> CoreBuildContext:
     )
 
 
-def _run(*, kernel: Any, context: Mapping[str, Any]) -> tuple:
-    program = core_program_graph(kernel=kernel)["main"]
+def _run(*, kernel: Any, context: Mapping[str, Any], name: str = "main") -> tuple:
+    program = core_program_graph(kernel=kernel)[name]
     materialized = materialize_core_program(
         program=program, context=_build_context(context)
     )
     return tuple(jax.jit(materialized.function)(**materialized.arguments))
 
 
-def test_the_graph_publishes_one_dense_main_program():
+def test_the_graph_publishes_dense_values_and_replay_variants():
     kernel, _ = _full_kernel()
     graph = core_program_graph(kernel=kernel)
 
-    assert tuple(graph) == ("main",)
-    program = graph["main"]
-    assert program.disposition is CoreExecutionDisposition.DENSE
-    assert program.disposition_reason == _DENSE_REASON
-    assert program.scope is ProgramScope.ANY
-    assert program.requirements.streamable_axes == ()
-    assert program.requirements.target_value_accesses == ()
+    assert tuple(graph) == ("main", "replay")
+    assert graph["main"].scope is ProgramScope.VALUES_ONLY
+    assert graph["main"].retained_artifact_keys == ()
+    assert graph["replay"].scope is ProgramScope.REPLAY
+    assert graph["replay"].retained_artifact_keys == (SIMULATION_POLICY,)
+    assert graph["replay"].retained_artifact_payload_types == {
+        SIMULATION_POLICY: EGMSimPolicy
+    }
+    assert graph["replay"].replaces_program == "main"
+    for program in graph.values():
+        assert program.disposition is CoreExecutionDisposition.DENSE
+        assert program.disposition_reason == _DENSE_REASON
+        assert program.requirements.streamable_axes == ()
+        assert program.requirements.target_value_accesses == ()
 
 
-def test_main_publishes_the_value_the_carry_and_the_policy_by_their_row_axes():
+def test_model_authority_rejects_a_policy_type_conflicting_with_the_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    get_full_model.cache_clear()
+    monkeypatch.setattr(
+        regime_processing,
+        "_CROSSING_COMPLETE_ENVELOPES",
+        (MSSEnvelope,),
+    )
+    model = get_full_model(solver="dcegm", n_periods=_N_PERIODS, envelope="mss")
+    get_full_model.cache_clear()
+    assert model._regimes[_REGIME].simulation.egm_policy_read is not None
+    kernel = model._regimes[_REGIME].solution.period_kernels[_PERIOD]
+    graph = dict(core_program_graph(kernel=kernel))
+    graph["replay"] = replace(
+        graph["replay"],
+        retained_artifact_payload_types={SIMULATION_POLICY: tuple},
+    )
+    object.__setattr__(kernel, "_core_programs", MappingProxyType(graph))
+
+    with pytest.raises(TypeError, match="producer and built-in replay route disagree"):
+        model.solve(
+            params=get_full_params(n_periods=_N_PERIODS),
+            log_level="off",
+            retention=ResultRetention.VALUES,
+        )
+
+
+def test_variants_publish_only_their_retained_outputs_by_their_row_axes():
     """Carry and policy rows lead with the discrete and passive state axes."""
     kernel, _ = _passive_kernel()
     value_role, carry_roles, policy_roles = cast(
-        "tuple[Any, Any, Any]", core_program_graph(kernel=kernel)["main"].output_roles
+        "tuple[Any, Any, Any]",
+        core_program_graph(kernel=kernel)["replay"].output_roles,
+    )
+    assert core_program_graph(kernel=kernel)["main"].output_roles == (
+        value_role,
+        carry_roles,
     )
 
     row = StateAxesLeading(state_names=("skill",))
@@ -142,12 +182,15 @@ def test_main_publishes_the_value_the_carry_and_the_policy_by_their_row_axes():
 
 
 @pytest.mark.parametrize("build", [_full_kernel, _passive_kernel])
-def test_the_declared_roles_share_the_runtime_outputs_pytree_structure(*, build):
+@pytest.mark.parametrize("name", ["main", "replay"])
+def test_the_declared_roles_share_the_runtime_outputs_pytree_structure(
+    *, build, name: str
+):
     """The role tree is the output tree with roles for leaves, aux data included."""
     kernel, context = build()
-    roles = core_program_graph(kernel=kernel)["main"].output_roles
+    roles = core_program_graph(kernel=kernel)[name].output_roles
 
-    outputs = _run(kernel=kernel, context=context)
+    outputs = _run(kernel=kernel, context=context, name=name)
 
     assert jax.tree.structure(roles) == jax.tree.structure(outputs)
 
@@ -166,29 +209,41 @@ def test_the_builder_omits_target_values_and_filters_the_carry():
     assert set(carry) == set(kernel.stateful_targets)
 
 
-def test_the_kernel_publishes_its_continuation_and_its_policy_on_public_channels():
+def test_the_kernel_publishes_only_the_selected_public_channels():
     kernel, context = _full_kernel()
-    materialized = materialize_core_program(
-        program=core_program_graph(kernel=kernel)["main"],
-        context=_build_context(context),
+    graph = core_program_graph(kernel=kernel)
+    main = materialize_core_program(
+        program=graph["main"], context=_build_context(context)
+    )
+    replay = materialize_core_program(
+        program=graph["replay"], context=_build_context(context)
     )
 
-    output = kernel(
-        compiled_cores={"main": materialized.function}, **context, logger=_LOGGER
+    values_output = kernel(
+        compiled_cores={"main": main.function}, **context, logger=_LOGGER
+    )
+    replay_output = kernel(
+        compiled_cores={"replay": replay.function}, **context, logger=_LOGGER
     )
 
-    assert isinstance(output, KernelOutput)
-    assert tuple(output.continuations) == (EGM_CONTINUATION,)
-    assert isinstance(output.continuations[EGM_CONTINUATION], EGMCarry)
-    assert tuple(output.replay) == (SIMULATION_POLICY,)
-    assert isinstance(output.replay[SIMULATION_POLICY], EGMSimPolicy)
-    assert not output.solve_time_artifacts
-    assert not output.auxiliary
-    value, carry, policy = _run(kernel=kernel, context=context)
-    np.testing.assert_array_equal(np.asarray(output.value), np.asarray(value))
+    assert isinstance(values_output, KernelOutput)
+    assert tuple(values_output.continuations) == (EGM_CONTINUATION,)
+    assert not values_output.replay
+    assert isinstance(replay_output, KernelOutput)
+    assert tuple(replay_output.continuations) == (EGM_CONTINUATION,)
+    assert isinstance(replay_output.continuations[EGM_CONTINUATION], EGMCarry)
+    assert tuple(replay_output.replay) == (SIMULATION_POLICY,)
+    assert isinstance(replay_output.replay[SIMULATION_POLICY], EGMSimPolicy)
+    assert not replay_output.solve_time_artifacts
+    assert not replay_output.auxiliary
+    value, carry, policy = _run(kernel=kernel, context=context, name="replay")
+    np.testing.assert_array_equal(np.asarray(replay_output.value), np.asarray(value))
     for got, expected in zip(
         jax.tree.leaves(
-            (output.continuations[EGM_CONTINUATION], output.replay[SIMULATION_POLICY])
+            (
+                replay_output.continuations[EGM_CONTINUATION],
+                replay_output.replay[SIMULATION_POLICY],
+            )
         ),
         jax.tree.leaves((carry, policy)),
         strict=True,
@@ -208,6 +263,7 @@ def test_with_fixed_params_rebinds_the_program():
     assert isinstance(function, functools.partial)
     assert function.func is program.function
     assert function.keywords["discount_factor"] == 0.9
+    assert set(core_program_graph(kernel=bound)) == {"main", "replay"}
     assert kernel.with_fixed_params(fixed_flat_params=MappingProxyType({})) is kernel
 
 
@@ -217,18 +273,18 @@ def test_a_replay_lowers_the_dense_program_the_solve_ran(*, monkeypatch, tmp_pat
     solution = get_full_model(solver="dcegm", n_periods=_N_PERIODS).solve(
         params=get_full_params(n_periods=_N_PERIODS), log_level="off"
     )
-    dispositions: list[CoreExecutionDisposition] = []
-    real_graph = period_replay.core_program_graph
+    selected_names: list[str] = []
+    real_select = period_replay.select_programs
 
-    def record_graph(**kwargs: Any) -> Any:
-        graph = real_graph(**kwargs)
-        dispositions.extend(program.disposition for program in graph.values())
-        return graph
+    def record_select(**kwargs: Any) -> Any:
+        selected = real_select(**kwargs)
+        selected_names.extend(selected)
+        return selected
 
-    monkeypatch.setattr(period_replay, "core_program_graph", record_graph)
+    monkeypatch.setattr(period_replay, "select_programs", record_select)
     replay = replay_period(directory=tmp_path / f"{_REGIME}@{_PERIOD}")
 
-    assert dispositions == [CoreExecutionDisposition.DENSE]
+    assert selected_names == ["main"]
     assert_agrees_to_ulp(
         got=np.asarray(replay.output.value),
         expected=np.asarray(solution.values[_PERIOD][_REGIME]),

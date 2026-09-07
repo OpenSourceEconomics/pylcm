@@ -198,7 +198,7 @@ def test_public_collective_solve_does_not_call_streamed_household_reduction(
         program.disposition_reason
         == "deliberately_dense:collective_resource_regression"
     )
-    assert jax.tree.leaves(solution.values)
+    assert jnp.all(jnp.isfinite(solution.values[0]["couple"]))
 
 
 def test_public_ev1_solve_does_not_call_streamed_branch_reduction(

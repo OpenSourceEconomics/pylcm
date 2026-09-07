@@ -15,7 +15,8 @@ from _lcm.execution.core_program import (
     CoreExecutionDisposition,
     CoreExecutionRequirements,
     CoreProgramGraphAware,
-    _TargetValueAccess,
+    ProgramScope,
+    TargetValueAccess,
 )
 from _lcm.execution.output_layout import PlannedCore
 from _lcm.execution.value_transfer import (
@@ -92,17 +93,18 @@ def test_every_compiled_core_is_a_planned_core(
 
 
 def _metadata(
-    *, accesses: tuple[_TargetValueAccess, ...] = ()
+    *, accesses: tuple[TargetValueAccess, ...] = ()
 ) -> _ProgramExecutionMetadata:
     return _ProgramExecutionMetadata(
         requirements=CoreExecutionRequirements(target_value_accesses=accesses),
         disposition=CoreExecutionDisposition.DENSE,
         input_transfer_plan=(),
+        scope=ProgramScope.ANY,
     )
 
 
-def _access() -> _TargetValueAccess:
-    return _TargetValueAccess(
+def _access() -> TargetValueAccess:
+    return TargetValueAccess(
         target=ValueArtifactAddress(
             kind=ValueArtifactKind.REGIME_VALUE, period=1, regime="target"
         ),

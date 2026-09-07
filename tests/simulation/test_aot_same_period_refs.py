@@ -22,12 +22,17 @@ leisure out at both education levels, so both households work and the
 period-0 values are $(3, 0)$ and $(6, 1)$.
 """
 
+from collections.abc import Mapping
+from types import MappingProxyType
+
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
+from _lcm.simulation.simulate import simulate as simulate_with_replay_readers
+from _lcm.utils.logging import get_logger
 from lcm import (
     AgeGrid,
     CollectiveUtility,
@@ -38,6 +43,7 @@ from lcm import (
     fixed_transition,
 )
 from lcm.regime import ProjectedRegimeValue, Regime
+from lcm.solver_api import ActionOutput, ValueStore
 from lcm.transition import MarkovTransition
 from lcm.typing import BoolND, DiscreteAction, DiscreteState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
@@ -48,6 +54,24 @@ _DISCOUNT_FACTOR = 0.95
 
 # The couple's period-0 `(value_f, value_m)` at low and high education.
 COUPLE_V_PERIOD_0 = ((3.0, 0.0), (6.0, 1.0))
+
+
+class _AlwaysWorkReplayReader:
+    """JAX-transformable external reader selecting the constrained action."""
+
+    def __call__(
+        self,
+        *,
+        states: Mapping[str, object],
+        fallback_actions: Mapping[str, object],  # noqa: ARG002
+    ) -> ActionOutput:
+        """Return one categorical work code per simulated subject."""
+        education = jnp.asarray(states["education"])
+        return ActionOutput(
+            actions={
+                "work": jnp.full(education.shape, Work.work, dtype=jnp.int32),
+            }
+        )
 
 
 @pytest.mark.parametrize("declared_n_subjects", [None, _N_SUBJECTS])
@@ -88,6 +112,51 @@ def test_same_period_ref_model_simulates_to_its_participation_constrained_values
     period_0 = simulated.loc[simulated["period"] == 0, ["value_f", "value_m"]]
     aaae(
         period_0.to_numpy(),
+        np.asarray(COUPLE_V_PERIOD_0),
+        decimal=DECIMAL_PRECISION,
+    )
+
+
+def test_external_replay_scores_actions_with_same_period_reference_inputs() -> None:
+    """External canonical-Q replay receives the reference arrays and their params."""
+    model = _make_participation_model(n_subjects=None)
+    params = {
+        "couple": {"koopmans_aggregator": {"discount_factor": _DISCOUNT_FACTOR}},
+        "couple_terminal": {},
+        "single_f": {"koopmans_aggregator": {"discount_factor": _DISCOUNT_FACTOR}},
+        "single_f_terminal": {},
+    }
+    initial_conditions = MappingProxyType(
+        {
+            "education": jnp.array([Education.low, Education.high], dtype=jnp.int32),
+            "age": jnp.zeros(_N_SUBJECTS),
+            "regime_id": jnp.full(
+                _N_SUBJECTS, ParticipationRegimeId.couple, dtype=jnp.int32
+            ),
+        }
+    )
+    solution = model.solve(params=params, log_level="off")
+    assert isinstance(solution.values, ValueStore)
+
+    result = simulate_with_replay_readers(
+        flat_params=model._process_params(params),
+        initial_conditions=initial_conditions,
+        regimes=model._regimes,
+        regime_names_to_ids=model.regime_names_to_ids,
+        logger=get_logger(log_level="off"),
+        period_to_regime_to_V_arr=solution.values.materialize(),
+        ages=model.ages,
+        simulation_output_dtypes=model.simulation_output_dtypes,
+        period_to_regime_to_replay_reader=MappingProxyType(
+            {0: MappingProxyType({"couple": _AlwaysWorkReplayReader()})}
+        ),
+        seed=0,
+    )
+
+    period_0 = result.raw_results["couple"][0]
+    np.testing.assert_array_equal(period_0.actions["work"], [Work.work, Work.work])
+    aaae(
+        np.asarray(period_0.V_arr),
         np.asarray(COUPLE_V_PERIOD_0),
         decimal=DECIMAL_PRECISION,
     )

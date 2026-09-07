@@ -2,11 +2,11 @@
 
 `DCEGM` configures one regime's Euler-inversion solve. Its
 `build_period_kernels` returns one `PeriodKernel` per period — a non-jitted
-kernel declaring the shared jitted EGM step (deduped by function identity, so
-periods sharing a core reuse one compiled program) as its one native dense
-program; it builds the step's arguments through the declared builder and
-publishes a `KernelOutput` (value array, continuation carry, published
-simulation policy) outside JIT.
+kernel declaring output-specialized values and replay variants of the shared
+jitted EGM step (deduped by function identity). It builds the step's arguments
+through the declared builder and publishes a `KernelOutput` outside JIT. The
+values variant returns only value and continuation carry; the replay variant
+also returns the simulation policy.
 
 The kernel-building imports (`jax`, `build_egm_step_functions`) are
 function-local so the public `lcm.solvers` façade stays a thin re-export that
@@ -34,13 +34,14 @@ from _lcm.constraints.routes import (
 )
 from _lcm.continuation import EGMContinuationSpec
 from _lcm.egm.carry import EGMCarry, egm_carry_role_tree
-from _lcm.egm.published_policy import egm_sim_policy_role_tree
+from _lcm.egm.published_policy import EGMSimPolicy, egm_sim_policy_role_tree
 from _lcm.engine import StateActionSpace
 from _lcm.execution.core_program import (
     CoreBuildContext,
     CoreExecutionDisposition,
     CoreExecutionRequirements,
     CoreProgram,
+    ProgramScope,
 )
 from _lcm.execution.output_layout import VALUE, StateAxesLeading
 from _lcm.grids import ContinuousGrid
@@ -195,11 +196,10 @@ class DCEGM(OneMarginSolver):
     utility with an expanding bracket. Structural and per-period applicability
     checks run during `Model(...)` through the solver's staged validation hooks.
 
-    The period kernel publishes the off-grid EGM policy on the replay channel
-    of every active period. A solve retains it in its labelled replay artifacts
-    only when the model declares a policy-read consumer; without that route the
-    loop drops it at the period boundary and the result records the omission as
-    not applicable.
+    The period kernel can publish the off-grid EGM policy on the replay channel
+    of every active period. A solve selects that output-specialized program only
+    when an exact artifact retention requires the policy; without such a route
+    it runs the values program and records the omission as not applicable.
     No shipped envelope currently satisfies the conservative off-grid read gate,
     so ordinary simulation recomputes the action on its grid.
 
@@ -216,7 +216,7 @@ class DCEGM(OneMarginSolver):
 
     @property
     def publishes_simulation_policy(self) -> bool:
-        """The kernel publishes an off-grid EGM policy on every active period.
+        """The kernel can publish an off-grid EGM policy on every active period.
 
         Whether a solve retains it follows the declared policy-read route; this
         declaration lets the result ledger record a dropped policy as not
@@ -428,38 +428,57 @@ class DCEGM(OneMarginSolver):
             has_taste_shocks=context.has_taste_shocks,
         )
         steps: Mapping[int, Callable] = build.steps
-        if context.enable_jit:
-            jitted_by_id: dict[int, Callable] = {}
-            for func in steps.values():
-                if id(func) not in jitted_by_id:
-                    jitted_by_id[id(func)] = jax.jit(func)
-            steps = MappingProxyType(
-                {period: jitted_by_id[id(func)] for period, func in steps.items()}
-            )
         argument_builder = _DCEGMArgumentBuilder(
             regime_name=context.regime_name,
             stateful_targets=build.stateful_targets,
             transition_target_names=tuple(context.transitions),
         )
-        output_roles = _dcegm_output_roles(build=build)
-        # Periods sharing one core share one program, and so one compiled
-        # executable.
+        # Periods sharing one numerical core share both output-specialized
+        # programs. The values variant drops the optional policy inside the
+        # traced body so XLA can eliminate policy assembly when no selected
+        # retention authority needs it.
         programs_by_core: dict[int, MappingProxyType[str, CoreProgram]] = {}
         period_kernels: dict[int, PeriodKernel] = {}
         for period, core in steps.items():
             if id(core) not in programs_by_core:
+                values_core = functools.partial(_dcegm_values_core, core=core)
+                replay_core = core
+                if context.enable_jit:
+                    values_core = jax.jit(values_core)
+                    replay_core = jax.jit(replay_core)
                 programs_by_core[id(core)] = MappingProxyType(
                     {
                         "main": CoreProgram(
                             name="main",
-                            function=core,
+                            function=values_core,
                             argument_builder=argument_builder,
                             requirements=CoreExecutionRequirements(),
-                            output_roles=output_roles,
+                            output_roles=_dcegm_output_roles(
+                                build=build, publish_replay=False
+                            ),
                             disposition=CoreExecutionDisposition.DENSE,
                             disposition_reason=_DCEGM_DENSE_REASON,
                             donation_candidates=(),
-                        )
+                            scope=ProgramScope.VALUES_ONLY,
+                        ),
+                        "replay": CoreProgram(
+                            name="replay",
+                            function=replay_core,
+                            argument_builder=argument_builder,
+                            requirements=CoreExecutionRequirements(),
+                            output_roles=_dcegm_output_roles(
+                                build=build, publish_replay=True
+                            ),
+                            disposition=CoreExecutionDisposition.DENSE,
+                            disposition_reason=_DCEGM_DENSE_REASON,
+                            donation_candidates=(),
+                            scope=ProgramScope.REPLAY,
+                            retained_artifact_keys=(SIMULATION_POLICY,),
+                            retained_artifact_payload_types={
+                                SIMULATION_POLICY: EGMSimPolicy
+                            },
+                            replaces_program="main",
+                        ),
                     }
                 )
             period_kernels[period] = _DCEGMPeriodKernel(
@@ -523,7 +542,9 @@ class EGMStepBuild:
     """Discrete actions following the passive states on every row."""
 
 
-def _dcegm_output_roles(*, build: EGMStepBuild) -> tuple[object, ...]:
+def _dcegm_output_roles(
+    *, build: EGMStepBuild, publish_replay: bool
+) -> tuple[object, ...]:
     """Describe the step's outputs by the state axes that lead them.
 
     - The value array is the regime's value on the productmap state order.
@@ -535,7 +556,7 @@ def _dcegm_output_roles(*, build: EGMStepBuild) -> tuple[object, ...]:
     row = StateAxesLeading(
         state_names=build.row_discrete_state_names + build.row_passive_state_names
     )
-    return (
+    common = (
         VALUE,
         egm_carry_role_tree(
             row=row,
@@ -543,6 +564,11 @@ def _dcegm_output_roles(*, build: EGMStepBuild) -> tuple[object, ...]:
             breakpoints=None,
             policy=None,
         ),
+    )
+    if not publish_replay:
+        return common
+    return (
+        *common,
         egm_sim_policy_role_tree(
             row=row,
             row_discrete_state_names=build.row_discrete_state_names,
@@ -550,6 +576,14 @@ def _dcegm_output_roles(*, build: EGMStepBuild) -> tuple[object, ...]:
             row_discrete_action_names=build.row_discrete_action_names,
         ),
     )
+
+
+def _dcegm_values_core(
+    *, core: Callable[..., tuple[FloatND, EGMCarry, object]], **kwargs: object
+) -> tuple[FloatND, EGMCarry]:
+    """Run DC-EGM without retaining its optional simulation-policy output."""
+    value, carry, _policy = core(**kwargs)
+    return value, carry
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -606,20 +640,18 @@ class _DCEGMArgumentBuilder:
 
 @dataclass(frozen=True, kw_only=True)
 class _DCEGMPeriodKernel:
-    """The DC-EGM period kernel: one native dense program around the step core.
+    """The DC-EGM period kernel: two output-specialized dense programs.
 
     `main` inverts the Euler equation on the savings grid and publishes the
-    value function, the continuation a parent interpolates, and the off-grid
-    simulation policy. The kernel owns its stochastic-node and refined-grid
-    batching, so the program is deliberately dense; it reads its continuation
-    from the carries alone and declares no target value access. Calling the
-    kernel builds the program's arguments through its declared builder and
-    returns a public `KernelOutput` with the carry on the continuation channel
-    and the policy on the replay channel.
+    value function plus the continuation a parent interpolates. `replay` is the
+    output-specialized variant that also publishes the off-grid simulation
+    policy. Both are deliberately dense because the kernel owns its
+    stochastic-node and refined-grid batching. Calling the kernel builds the
+    selected program's arguments through its declared builder.
     """
 
     _core_programs: Mapping[str, CoreProgram]
-    """The immutable one-node program graph, `main`."""
+    """The immutable values/replay program variants."""
 
     regime_name: RegimeName
     """Name of the regime whose flat params this kernel projects."""
@@ -631,11 +663,11 @@ class _DCEGMPeriodKernel:
     """Names of the regime's transition targets, whose params are unioned in."""
 
     def __post_init__(self) -> None:
-        """Snapshot the graph and require exactly the `main` program."""
+        """Snapshot the graph and require the two retention-scoped variants."""
         programs = MappingProxyType(dict(self._core_programs))
-        if tuple(programs) != ("main",):
+        if tuple(programs) != ("main", "replay"):
             msg = (
-                "A DC-EGM kernel publishes exactly the program 'main'; got "
+                "A DC-EGM kernel publishes exactly 'main' and 'replay'; got "
                 f"{tuple(programs)}."
             )
             raise ValueError(msg)
@@ -660,15 +692,15 @@ class _DCEGMPeriodKernel:
         )
         if not egm_fixed:
             return self
-        program = self._core_programs["main"]
         return replace(
             self,
             _core_programs=MappingProxyType(
                 {
-                    "main": replace(
+                    name: replace(
                         program,
                         function=functools.partial(program.function, **egm_fixed),
                     )
+                    for name, program in self._core_programs.items()
                 }
             ),
         )
@@ -685,8 +717,9 @@ class _DCEGMPeriodKernel:
         ages: AgeGrid,
         logger: logging.Logger,  # noqa: ARG002
     ) -> KernelOutput:
-        """Run the compiled `main` program and publish its typed artifacts."""
-        program = self._core_programs["main"]
+        """Run the selected output variant and publish its typed artifacts."""
+        name = "replay" if "replay" in compiled_cores else "main"
+        program = self._core_programs[name]
         arguments = program.argument_builder(
             CoreBuildContext(
                 state_action_space=state_action_space,
@@ -697,7 +730,14 @@ class _DCEGMPeriodKernel:
                 ages=ages,
             )
         )
-        V_arr, egm_carry, sim_policy = compiled_cores["main"](**arguments)
+        outputs = compiled_cores[name](**arguments)
+        if name == "main":
+            V_arr, egm_carry = outputs
+            return KernelOutput(
+                value=V_arr,
+                continuations={EGM_CONTINUATION: egm_carry},
+            )
+        V_arr, egm_carry, sim_policy = outputs
         return KernelOutput(
             value=V_arr,
             continuations={EGM_CONTINUATION: egm_carry},

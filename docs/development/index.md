@@ -19,6 +19,6 @@ here.
 
 A solver can be written against the public names alone, and
 [Custom solvers](../reference/custom_solvers.md) is the guide to what one owes the
-engine. That page also states what still separates an importable surface from a
-supported plugin API, which is why it, rather than these implementation notes, is the
-reference for an out-of-tree author.
+engine. That page defines the exact-version persistence, replay, and conformance
+contract, which is why it, rather than these implementation notes, is the reference for
+an out-of-tree author.

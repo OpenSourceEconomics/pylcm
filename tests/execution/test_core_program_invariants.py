@@ -15,7 +15,7 @@ from _lcm.execution.core_program import (
     MaterializedCoreProgram,
     ReductionSemantics,
     StreamableProductAxis,
-    _TargetValueAccess,
+    TargetValueAccess,
     resolve_core_program,
 )
 from _lcm.execution.output_layout import (
@@ -145,7 +145,7 @@ def _core_with_values(
 def _value_program(
     *,
     arguments: Mapping[str, object],
-    accesses: tuple[_TargetValueAccess, ...],
+    accesses: tuple[TargetValueAccess, ...],
 ) -> MaterializedCoreProgram:
     """Build a program with one canonical axis and exact target-value reads."""
     return MaterializedCoreProgram(
@@ -181,7 +181,7 @@ def _access_and_transfer(
     path: tuple[str | int, ...] = ("target",),
     source_sharding: jax.sharding.Sharding | None = None,
     kind: ValueTransferKind = ValueTransferKind.ALIGNED_LOCAL,
-) -> tuple[_TargetValueAccess, ResolvedValueTransfer]:
+) -> tuple[TargetValueAccess, ResolvedValueTransfer]:
     """Build one matched logical declaration and concrete transfer."""
     target_period = (
         source_period
@@ -200,7 +200,7 @@ def _access_and_transfer(
         channel=channel,
         path=path,
     )
-    access = _TargetValueAccess(target=target, source=source)
+    access = TargetValueAccess(target=target, source=source)
     transfer = resolve_value_transfer(
         target=target,
         source=source,

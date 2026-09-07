@@ -42,6 +42,9 @@ class MockSolutionPhase:
     does not carry makes the V topology and the rank rule disagree.
     """
     compute_intermediates: dict = dataclasses.field(default_factory=dict)
+    artifact_authorities: MappingProxyType = dataclasses.field(
+        default_factory=lambda: MappingProxyType({})
+    )
     continuation_template: None = None
     continuation_spec: None = None
     period_state_axes: (
@@ -121,7 +124,11 @@ class MockRegime(Regime):
     ) -> None:
         object.__setattr__(self, "solution", solution)
         object.__setattr__(self, "active_periods", active_periods)
-        object.__setattr__(self, "simulation", SimpleNamespace(egm_policy_read=None))
+        object.__setattr__(
+            self,
+            "simulation",
+            SimpleNamespace(egm_policy_read=None, external_replay_route=None),
+        )
 
 
 def test_drain_V_arr_shards_flattens_immutable_return_mappings(monkeypatch):

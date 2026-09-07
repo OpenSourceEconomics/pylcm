@@ -90,7 +90,6 @@ beartype_package("lcm", conf=INTERNAL_CONF)
 from _lcm.variables import (  # noqa: E402
     _bind_forward_refs as _bind_variables_forward_refs,
 )
-from _lcm.version import __version__  # noqa: E402
 from lcm.ages import AgeGrid  # noqa: E402
 from lcm.case_piece import (  # noqa: E402
     affine_breakpoint,
@@ -143,6 +142,7 @@ from lcm.model import Model  # noqa: E402
 from lcm.persistence import (  # noqa: E402
     SimulateSnapshot,
     SolveSnapshot,
+    load_legacy_solution,
     load_snapshot,
     load_solution,
     save_solution,
@@ -171,6 +171,7 @@ from lcm.transition import (  # noqa: E402
     MarkovTransition,
     fixed_transition,
 )
+from lcm.version import __version__  # noqa: E402
 
 # Modules with TYPE_CHECKING-only forward references expose a
 # `_bind_forward_refs` helper; calling it here makes the claw's
@@ -242,6 +243,7 @@ __all__ = [
     "implies",
     "liquid_law_from_resources",
     "liquid_law_from_savings",
+    "load_legacy_solution",
     "load_snapshot",
     "load_solution",
     "outer_unchanged",

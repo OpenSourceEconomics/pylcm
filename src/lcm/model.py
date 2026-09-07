@@ -3,20 +3,22 @@
 import logging
 import threading
 import uuid
+from collections import OrderedDict
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
-from typing import cast
+from typing import TYPE_CHECKING, Protocol, TypeAlias, cast, runtime_checkable
 
 import jax
 import numpy as np
 import pandas as pd
 from beartype import beartype
+from beartype.roar import BeartypeCallHintViolation
 
 from _lcm.beartype_conf import MODEL_CONF, PARAMS_CONF
 from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
 from _lcm.egm.published_policy import EGMSimPolicy, NNBEGMSimPolicy
-from _lcm.engine import EGMPolicyRead, NNBEGMPolicyRead
+from _lcm.engine import EGMPolicyRead, NNBEGMPolicyRead, UnsupportedReplayRoute
 from _lcm.grids import DiscreteGrid
 from _lcm.model_processing import (
     _validate_param_types,
@@ -63,6 +65,7 @@ from _lcm.simulation.initial_conditions import (
 from _lcm.simulation.result_metadata import _get_output_dtypes
 from _lcm.simulation.simulate import simulate
 from _lcm.solution.artifacts import (
+    OwnedSolutionView,
     build_solution_result,
     fingerprint_flat_params,
 )
@@ -72,11 +75,25 @@ from _lcm.solution.backward_induction import (
     solve,
 )
 from _lcm.solution.contract import BackwardInductionResult
+from _lcm.solution.fingerprint import (
+    SolutionParamProjection,
+    fingerprint_model,
+    fingerprint_model_structure,
+    fingerprint_solution_support,
+    project_solution_params,
+    solution_param_projection,
+)
 from _lcm.solution.model_authority import (
+    ReplayCellDescriptor,
     SolutionAuthority,
+    _replay_model_context_from_state_action_space,
+    _state_action_space_for_period,
+    bind_declared_solution_authority,
     bind_generated_solution_authority,
     build_solution_authority,
+    snapshot_solution_authority,
 )
+from _lcm.solution.model_seal import BindingRecorder, SealedBindings
 from _lcm.solution.preconditions import (
     check_pareto_weights,
     check_solver_params,
@@ -85,6 +102,13 @@ from _lcm.solution.replay_validation import (
     validate_egm_sim_policy,
     validate_nested_egm_sim_policy,
     validate_nnbegm_sim_policy,
+)
+from _lcm.solution.result_snapshot import (
+    snapshot_artifact_store,
+    snapshot_artifact_template_declaration,
+    snapshot_omissions,
+    snapshot_solution_metadata,
+    snapshot_value_store,
 )
 from _lcm.solution.validate_V import contains_nan
 from _lcm.transition_checks import validate_transitions
@@ -116,6 +140,7 @@ from lcm.exceptions import (
     InvalidInitialConditionsError,
     InvalidSimulationInputError,
     InvalidValueFunctionError,
+    ModelInitializationError,
     UnsupportedOperationError,
 )
 from lcm.koopmans_aggregation import LinearAggregator
@@ -123,16 +148,33 @@ from lcm.regime import Regime as UserRegime
 from lcm.result import SimulationResult
 from lcm.solver_api import (
     DISSOLUTION_FLAG,
+    EGM_CONTINUATION,
+    PYLCM_VERSION,
     SIMULATION_POLICY,
+    SOLUTION_SCHEMA_VERSION,
+    SOLVER_API_VERSION,
+    SOLVER_DIAGNOSTICS,
+    ArtifactAuthority,
+    ArtifactChannel,
     ArtifactKey,
     ArtifactRef,
     ArtifactStore,
     OmissionReason,
+    PersistencePolicy,
     ReplayMode,
+    ReplayReader,
+    ReplayRouteRequirements,
+    ReplayRouteSnapshot,
     ResultRetention,
+    SimulationBuildContext,
     SolutionMetadata,
     SolutionResult,
+    SolutionSource,
     ValueArraySchema,
+    ValueStore,
+    _canonicalize_artifact_payload,
+    _replay_route_identity,
+    _same_exact_artifact_contract,
 )
 from lcm.typing import (
     UserFacingParamsTemplate,
@@ -141,19 +183,158 @@ from lcm.typing import (
     UserParams,
 )
 
+if TYPE_CHECKING:
+    _SolutionResultBoundary: TypeAlias = SolutionResult  # noqa: UP040
+    _ArtifactStoreBoundary: TypeAlias = ArtifactStore  # noqa: UP040
+else:
+    # Caller-visible result containers are validated and snapshotted explicitly;
+    # runtime annotation traversal must not inspect hostile or lazy contents first.
+    _SolutionResultBoundary = object
+    _ArtifactStoreBoundary = object
+
 
 def _same_exactly_typed(*, actual: object, expected: object) -> bool:
     """Compare trusted metadata without admitting equal values of another type."""
-    if type(actual) is not type(expected):
-        return False
-    if isinstance(expected, tuple):
-        if not isinstance(actual, tuple):
-            return False
-        return len(actual) == len(expected) and all(
-            _same_exactly_typed(actual=actual_item, expected=expected_item)
-            for actual_item, expected_item in zip(actual, expected, strict=True)
+    return _same_exact_artifact_contract(
+        actual=actual,
+        expected=expected,
+    )
+
+
+type _PeriodToRegimeToReplayReader = MappingProxyType[
+    int, MappingProxyType[RegimeName, ReplayReader]
+]
+
+# Engine replay inputs resolved from one consumed solution.
+type _ResolvedSolution = tuple[
+    PeriodToRegimeToVArr,
+    PeriodToRegimeToSimulationPolicy,
+    PeriodToRegimeToDissolutionFlags,
+    _PeriodToRegimeToReplayReader,
+]
+
+
+@runtime_checkable
+class _ReplayPayloadSource(Protocol):
+    """How a plugin replay payload is obtained from a consumed solution."""
+
+    def __call__(self, *, ref: ArtifactRef, authority: ArtifactAuthority) -> object:
+        """Return the payload stored at `ref` in the form `authority` declares."""
+
+
+# Distinct grid supports whose declared solution authority a model keeps.
+_DECLARED_AUTHORITY_CACHE_SIZE = 4
+
+
+def _built_in_policy_payload_defect(  # noqa: PLR0911
+    *,
+    supplied: object,
+    descriptor: ReplayCellDescriptor,
+    period: int,
+) -> str | None:
+    """Return a model-authority defect for one built-in simulation policy."""
+    policy_read = descriptor.route
+    if not isinstance(policy_read, EGMPolicyRead | NNBEGMPolicyRead):
+        return None
+    if descriptor.payload_type is None or type(supplied) is not descriptor.payload_type:
+        expected_name = getattr(
+            descriptor.payload_type,
+            "__name__",
+            repr(descriptor.payload_type),
         )
-    return bool(actual == expected)
+        return (
+            f"expected exact payload type {expected_name}, got "
+            f"{type(supplied).__name__}"
+        )
+    if isinstance(policy_read, EGMPolicyRead):
+        if not isinstance(supplied, EGMSimPolicy) or descriptor.egm_node_count is None:
+            return "model authority lacks the EGM node count"
+        return validate_egm_sim_policy(
+            policy=supplied,
+            policy_read=policy_read,
+            period=period,
+            expected_node_count=descriptor.egm_node_count,
+        )
+    if policy_read.replay_policy_is_nested:
+        if (
+            not isinstance(supplied, NestedEGMSimPolicy)
+            or descriptor.egm_node_count is None
+            or descriptor.adaptive_outer_nodes is None
+            or descriptor.expected_replay_capability is None
+        ):
+            return "model authority lacks a nested replay descriptor"
+        return validate_nested_egm_sim_policy(
+            policy=supplied,
+            policy_read=policy_read,
+            period=period,
+            expected_node_count=descriptor.egm_node_count,
+            expected_outer_nodes=descriptor.adaptive_outer_nodes,
+            expected_replay_capability=descriptor.expected_replay_capability,
+        )
+    if (
+        not isinstance(supplied, NNBEGMSimPolicy)
+        or descriptor.expected_replay_capability is None
+    ):
+        return "model authority lacks a finite replay descriptor"
+    return validate_nnbegm_sim_policy(
+        policy=supplied,
+        policy_read=policy_read,
+        period=period,
+        expected_replay_capability=descriptor.expected_replay_capability,
+    )
+
+
+def _materialize_artifact_projection(
+    *,
+    store: _ArtifactStoreBoundary,
+    key: ArtifactKey,
+    authority: SolutionAuthority,
+    required_only: bool = False,
+) -> MappingProxyType[int, MappingProxyType[RegimeName, object]]:
+    """Materialize one consumed replay projection into an immutable snapshot."""
+    projected: dict[int, dict[RegimeName, object]] = {}
+    for ref in store:
+        if ref.key != key:
+            continue
+        artifact_authority = authority.artifacts.get(ref)
+        if artifact_authority is None:
+            raise InvalidSimulationInputError(
+                f"Artifact {ref!r} has no model-built materialization authority."
+            )
+        if required_only and not artifact_authority.required:
+            continue
+        try:
+            materialized = store._materialize_from_template_snapshot(  # noqa: SLF001
+                ref,
+                template_snapshot=snapshot_artifact_template_declaration(
+                    artifact_authority
+                ),
+            )
+            if key == SIMULATION_POLICY:
+                payload_defect = _built_in_policy_payload_defect(
+                    supplied=materialized,
+                    descriptor=authority.replay[ref],
+                    period=ref.period,
+                )
+                if payload_defect is not None:
+                    raise InvalidSimulationInputError(
+                        f"Artifact {ref!r} mismatched_payload: {payload_defect}"
+                    )
+            canonical = _canonicalize_artifact_payload(
+                payload=materialized,
+                authority=artifact_authority,
+            )
+        except (TypeError, ValueError) as error:
+            raise InvalidSimulationInputError(
+                f"Artifact {ref!r} mismatched_payload: cannot be canonicalized: {error}"
+            ) from error
+        projected.setdefault(ref.period, {})[ref.regime] = canonical
+    return MappingProxyType(
+        {
+            period: MappingProxyType(regime_to_payload)
+            for period, regime_to_payload in sorted(projected.items())
+        }
+    )
 
 
 class Model:
@@ -329,7 +510,10 @@ class Model:
         # result round-tripped together remain compatible, but deliberately not
         # presented as a durable model-content fingerprint.
         self._solution_model_instance_id = uuid.uuid4().hex
-        self._solution_authorities: dict[str, SolutionAuthority] = {}
+        self._declared_authority_cache: OrderedDict[str, SolutionAuthority] = (
+            OrderedDict()
+        )
+        self._declared_authority_lock = threading.Lock()
 
         # The single canonical activity schedule: every regime's `active`
         # predicate is evaluated exactly once, here, and threaded through
@@ -421,6 +605,39 @@ class Model:
             user_regimes=self.user_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
         )
+        self._solution_param_projection: SolutionParamProjection = (
+            solution_param_projection(self._regimes)
+        )
+        self._seal()
+
+    def _seal(self) -> None:
+        """Fix the model's durable identity and record the bindings it read.
+
+        The structure digest covers everything the model fixes at build, so it
+        is the same for every parameter vector this instance is ever solved
+        with; computing it walks every declared user callable once, here. The
+        walk also records each global and closure binding those callables
+        read, and `solve` and `simulate` refuse to run once one has been
+        rebound, since the digest would then describe code the model no longer
+        runs.
+        """
+        recorder = BindingRecorder()
+        try:
+            self._model_structure_fingerprint: str = fingerprint_model_structure(
+                ages=self.ages,
+                regimes=self._regimes,
+                user_regimes=self.user_regimes,
+                regime_names_to_ids=self.regime_names_to_ids,
+                binding_recorder=recorder,
+            )
+        except (TypeError, ValueError) as error:
+            msg = (
+                "The model has no durable identity, so it cannot be built: a "
+                "solution it produced could not be told apart from one of a model "
+                f"with different semantics. {error}"
+            )
+            raise ModelInitializationError(msg) from error
+        self._sealed_bindings: SealedBindings = recorder.sealed()
 
     def __repr__(self) -> str:
         """Summarize the model; mention pruning when any regime was pruned."""
@@ -436,29 +653,100 @@ class Model:
         )
 
     def __getstate__(self) -> dict[str, object]:
-        """Return a copy of `__dict__` with per-process AOT compile state removed.
+        """Return a copy of `__dict__` with per-process state removed.
 
-        Drops `_simulate_compile_lock` (a `threading.Lock`, not pickleable),
-        `_simulate_compile_cache` (compiled XLA programs that can't survive
-        a process boundary), and `_warned_n_subjects` (its companion set).
-        `__setstate__` restores all three to their fresh state.
+        Drops the AOT compile state (`_simulate_compile_lock`, a
+        `threading.Lock`; `_simulate_compile_cache`, compiled XLA programs that
+        can't survive a process boundary; `_warned_n_subjects`, its companion
+        set), the declared-authority cache and its lock, the parameter
+        projection, and the sealed bindings, which name namespaces and closure
+        cells of this process. `__setstate__` rebuilds each of them.
         """
         state = self.__dict__.copy()
-        state.pop("_simulate_compile_lock", None)
-        state.pop("_simulate_compile_cache", None)
-        state.pop("_warned_n_subjects", None)
+        for transient in (
+            "_simulate_compile_lock",
+            "_simulate_compile_cache",
+            "_warned_n_subjects",
+            "_declared_authority_cache",
+            "_declared_authority_lock",
+            "_solution_param_projection",
+            "_sealed_bindings",
+        ):
+            state.pop(transient, None)
         return state
 
     def __setstate__(self, state: dict[str, object]) -> None:
-        """Restore transient state and backfill legacy solution identity."""
+        """Restore transient state and reseal the model in this process.
+
+        The structure digest the model was pickled with stays its identity, so
+        results it labelled before remain compatible; the walk after
+        unpickling records which bindings this process's copies of the
+        callables read.
+        """
         self.__dict__.update(state)
         if "_solution_model_instance_id" not in state:
             self._solution_model_instance_id = uuid.uuid4().hex
-        if "_solution_authorities" not in state:
-            self._solution_authorities = {}
         self._simulate_compile_cache = {}
         self._warned_n_subjects = set()
         self._simulate_compile_lock = threading.Lock()
+        self._declared_authority_cache = OrderedDict()
+        self._declared_authority_lock = threading.Lock()
+        self._solution_param_projection = solution_param_projection(self._regimes)
+        stored_structure = state.get("_model_structure_fingerprint")
+        self._seal()
+        if type(stored_structure) is str:
+            self._model_structure_fingerprint = stored_structure
+
+    def _declared_solution_authority(
+        self, *, flat_params: FlatParams
+    ) -> SolutionAuthority:
+        """Return the model-owned solution authority for these parameters.
+
+        Declared authority depends on parameters only through the grid support
+        and the shape of every parameter leaf, so it is built once per distinct
+        support and shared by every solve and every consumed result with that
+        support. The few most recently used supports stay cached.
+        """
+        support = fingerprint_solution_support(
+            regimes=self._regimes, flat_params=flat_params
+        )
+        with self._declared_authority_lock:
+            cached = self._declared_authority_cache.get(support)
+            if cached is not None:
+                self._declared_authority_cache.move_to_end(support)
+                return cached
+        authority = build_solution_authority(
+            regimes=self._regimes,
+            flat_params=flat_params,
+            ages=self.ages,
+        )
+        with self._declared_authority_lock:
+            self._declared_authority_cache[support] = authority
+            while len(self._declared_authority_cache) > _DECLARED_AUTHORITY_CACHE_SIZE:
+                self._declared_authority_cache.popitem(last=False)
+        return authority
+
+    def _params_fingerprint(self, *, flat_params: FlatParams) -> str:
+        """Digest the canonical parameters a solution depends on."""
+        return fingerprint_flat_params(
+            project_solution_params(
+                flat_params=flat_params,
+                regimes=self._regimes,
+                projection=self._solution_param_projection,
+            )
+        )
+
+    def _model_fingerprint(self, *, flat_params: FlatParams) -> str:
+        """Digest the durable model identity under these parameters."""
+        return fingerprint_model(
+            ages=self.ages,
+            regimes=self._regimes,
+            user_regimes=self.user_regimes,
+            regime_names_to_ids=self.regime_names_to_ids,
+            flat_params=flat_params,
+            structure=self._model_structure_fingerprint,
+            projection=self._solution_param_projection,
+        )
 
     def get_params_template(self) -> UserFacingParamsTemplate:
         """Get a human-readable params template.
@@ -495,9 +783,10 @@ class Model:
         induction are always produced and consumed. Solver diagnostics remain
         governed solely by ``log_level``.
 
-        The result is bound to this model instance and the exact canonical parameter
-        values used here. The instance identity survives a pickle round trip of the
-        model but is not a durable model fingerprint.
+        An in-memory result is bound to this model instance and the exact canonical
+        parameter values used here. Metadata also carries a durable model fingerprint;
+        after save/load, an equivalent fresh model validates that fingerprint instead
+        of the producing instance token.
 
         Args:
             params: Model parameters compatible with ``get_params_template()``.
@@ -511,6 +800,7 @@ class Model:
             An immutable labelled result containing values, metadata, retained replay
             and diagnostic artifacts, plus explicit artifact-omission reasons.
         """
+        self._sealed_bindings.fail_if_moved()
         log = get_logger(log_level=log_level)
         flat_params = self._process_params(params)
         validate_transitions(
@@ -542,14 +832,22 @@ class Model:
     ) -> SolutionResult:
         """Build the canonical public result from processed parameters.
 
-        The solution authority is derived from the model and the canonical
-        parameters before the solve; the solve's generated replay facts are
-        bound into it afterwards.
+        The declared solution authority is the model's, shared across solves
+        with the same grid support; the solve's generated replay facts are
+        bound into a copy that belongs to this result alone.
         """
-        declared_authority = build_solution_authority(
-            regimes=self._regimes,
-            flat_params=flat_params,
-            ages=self.ages,
+        declared_authority = self._declared_solution_authority(flat_params=flat_params)
+        retain_all_persistable = retention is ResultRetention.ALL_PERSISTABLE_ARTIFACTS
+        persistable_artifact_refs = (
+            frozenset(
+                ref
+                for ref, artifact_authority in declared_authority.artifacts.items()
+                if artifact_authority.applicable
+                and artifact_authority.descriptor.persistence
+                is PersistencePolicy.MODEL_VERIFIABLE
+            )
+            if retain_all_persistable
+            else frozenset()
         )
         internal_result = self._solve_compiled(
             flat_params=flat_params,
@@ -559,19 +857,17 @@ class Model:
             log_keep_n_latest=log_keep_n_latest,
             max_compilation_workers=max_compilation_workers,
             retain_dissolution_flags=retention.retains_replay,
-            retain_replay=retention.retains_replay,
+            retain_replay=retention is ResultRetention.VALUES_AND_REPLAY,
+            retain_all_artifacts=retain_all_persistable,
+            persistable_artifact_refs=persistable_artifact_refs,
             collect_solver_diagnostics=True,
         )
-        params_fingerprint = fingerprint_flat_params(flat_params)
         authority = bind_generated_solution_authority(
             authority=declared_authority,
             internal_result=internal_result,
+            regimes=self._regimes,
+            flat_params=flat_params,
         )
-        if retention.retains_replay and any(
-            descriptor.adaptive_outer_nodes is not None
-            for descriptor in authority.replay.values()
-        ):
-            self._solution_authorities[params_fingerprint] = authority
         return build_solution_result(
             internal_result=internal_result,
             retention=retention,
@@ -579,7 +875,8 @@ class Model:
             user_regimes=self.user_regimes,
             n_periods=self.n_periods,
             model_instance_id=self._solution_model_instance_id,
-            params_fingerprint=params_fingerprint,
+            params_fingerprint=self._params_fingerprint(flat_params=flat_params),
+            model_fingerprint=self._model_fingerprint(flat_params=flat_params),
             authority=authority,
         )
 
@@ -594,6 +891,8 @@ class Model:
         max_compilation_workers: int | None,
         retain_dissolution_flags: bool = False,
         retain_replay: bool = True,
+        retain_all_artifacts: bool = False,
+        persistable_artifact_refs: frozenset[ArtifactRef] = frozenset(),
         collect_solver_diagnostics: bool = False,
     ) -> BackwardInductionResult:
         """Run backward induction, persisting a diagnostic snapshot when warranted.
@@ -626,6 +925,8 @@ class Model:
                 max_compilation_workers=max_compilation_workers,
                 retain_dissolution_flags=retain_dissolution_flags,
                 retain_replay=retain_replay,
+                retain_all_artifacts=retain_all_artifacts,
+                persistable_artifact_refs=persistable_artifact_refs,
             )
         except InvalidValueFunctionError as exc:
             if log_path is not None and exc.partial_solution is not None:
@@ -692,42 +993,183 @@ class Model:
             return self._simulate_compile_cache[compile_batch_size]
 
     def _resolve_solution_result(
-        self, *, solution: SolutionResult, flat_params: FlatParams
-    ) -> tuple[
-        PeriodToRegimeToVArr,
-        PeriodToRegimeToSimulationPolicy,
-        PeriodToRegimeToDissolutionFlags,
-    ]:
-        """Resolve one model-authoritative result into engine replay inputs."""
-        authority = self._check_solution_result_structure(
-            solution=solution, flat_params=flat_params
+        self, *, solution: _SolutionResultBoundary, flat_params: FlatParams
+    ) -> _ResolvedSolution:
+        """Resolve one labelled result into engine replay inputs.
+
+        A result this instance built in this process is consumed by reference:
+        the engine reads the buffers its solve allocated, after checking that
+        the parameters agree and that every replay artifact its routes require
+        is present. Any other result — restored from an archive, produced by
+        another instance, or copied — is copied into private buffers and
+        validated against model authority exactly once; the resolved inputs are
+        remembered on the result, so a later simulation with the same model and
+        parameters is a lookup.
+        """
+        if type(solution) is not SolutionResult:
+            msg = "SolutionResult has the wrong exact container type."
+            raise InvalidSimulationInputError(msg)
+        expected_fingerprint = self._params_fingerprint(flat_params=flat_params)
+        memo_key = (self._solution_model_instance_id, expected_fingerprint)
+        consumed_views = solution._consumed_views  # noqa: SLF001
+        remembered = consumed_views.get(memo_key)
+        if remembered is not None:
+            return cast("_ResolvedSolution", remembered)
+        engine_view = solution._engine_view  # noqa: SLF001
+        if (
+            type(engine_view) is OwnedSolutionView
+            and engine_view.model_instance_id == self._solution_model_instance_id
+        ):
+            if engine_view.params_fingerprint != expected_fingerprint:
+                msg = (
+                    "SolutionResult metadata is incompatible with this model: "
+                    "params_fingerprint does not match the canonical simulation "
+                    "params."
+                )
+                raise InvalidSimulationInputError(msg)
+            resolved = self._consume_owned_solution(
+                solution=solution,
+                engine_view=engine_view,
+                flat_params=flat_params,
+            )
+        else:
+            resolved = self._consume_foreign_solution(
+                solution=solution,
+                flat_params=flat_params,
+                expected_fingerprint=expected_fingerprint,
+            )
+        consumed_views[memo_key] = resolved
+        return resolved
+
+    def _consume_owned_solution(
+        self,
+        *,
+        solution: _SolutionResultBoundary,
+        engine_view: OwnedSolutionView,
+        flat_params: FlatParams,
+    ) -> _ResolvedSolution:
+        """Read a result this instance built, by reference, after the replay checks."""
+        self._check_solution_result_replay_policies(
+            solution=solution,
+            authority=engine_view.authority,
+            policies=engine_view.simulation_policies,
+            values=engine_view.values,
         )
-        policies, dissolution_flags = self._check_solution_result_artifacts(
-            solution=solution, authority=authority
+        self._check_solution_result_dissolution_flags(
+            solution=solution,
+            authority=engine_view.authority,
+            dissolution_flags=engine_view.dissolution_flags,
+        )
+        replay_artifacts = engine_view.replay_artifacts
+
+        def owned_payload(*, ref: ArtifactRef, authority: ArtifactAuthority) -> object:
+            del authority
+            return replay_artifacts[ref]
+
+        external_readers = self._build_external_replay_readers(
+            solution=solution,
+            metadata=solution.metadata,
+            authority=engine_view.authority,
+            flat_params=flat_params,
+            replay_payload=owned_payload,
         )
         return (
-            cast("PeriodToRegimeToVArr", solution.values),
+            engine_view.values,  # noqa: PD011
+            engine_view.simulation_policies,
+            engine_view.dissolution_flags,
+            external_readers,
+        )
+
+    def _consume_foreign_solution(
+        self,
+        *,
+        solution: _SolutionResultBoundary,
+        flat_params: FlatParams,
+        expected_fingerprint: str,
+    ) -> _ResolvedSolution:
+        """Copy and validate a result from elsewhere against model authority."""
+        solution = self._snapshot_solution_envelope(solution=solution)
+        metadata = solution.metadata
+        authority, values, solution = self._check_solution_result_structure(
+            solution=solution,
+            metadata=metadata,
+            flat_params=flat_params,
+            expected_fingerprint=expected_fingerprint,
+        )
+        policies, dissolution_flags = self._check_solution_result_artifacts(
+            solution=solution,
+            authority=authority,
+            values=values,
+        )
+
+        replay_store = solution.replay_artifacts
+
+        def validated_payload(
+            *, ref: ArtifactRef, authority: ArtifactAuthority
+        ) -> object:
+            materialized = replay_store._materialize_from_template_snapshot(  # noqa: SLF001
+                ref,
+                template_snapshot=snapshot_artifact_template_declaration(authority),
+            )
+            return _canonicalize_artifact_payload(
+                payload=materialized,
+                authority=authority,
+            )
+
+        external_readers = self._build_external_replay_readers(
+            solution=solution,
+            metadata=metadata,
+            authority=authority,
+            flat_params=flat_params,
+            replay_payload=validated_payload,
+        )
+        return (
+            values,
             policies,
             dissolution_flags,
+            external_readers,
         )
 
     def _check_solution_result_structure(
-        self, *, solution: SolutionResult, flat_params: FlatParams
-    ) -> SolutionAuthority:
-        """Reject an incompatible labelled result before simulation prepares work."""
-        self._check_solution_result_container_types(solution=solution)
-        expected_fingerprint = fingerprint_flat_params(flat_params)
+        self,
+        *,
+        solution: _SolutionResultBoundary,
+        metadata: SolutionMetadata,
+        flat_params: FlatParams,
+        expected_fingerprint: str,
+    ) -> tuple[
+        SolutionAuthority,
+        PeriodToRegimeToVArr,
+        _SolutionResultBoundary,
+    ]:
+        """Validate outer structure, then create the one canonical payload snapshot."""
         self._check_solution_result_metadata(
-            solution=solution,
+            metadata=metadata,
             expected_fingerprint=expected_fingerprint,
+            expected_model_fingerprint=self._model_fingerprint(flat_params=flat_params),
         )
-        authority = self._solution_authorities.get(
-            expected_fingerprint
-        ) or build_solution_authority(
-            regimes=self._regimes,
-            flat_params=flat_params,
-            ages=self.ages,
-        )
+        declared_authority = self._declared_solution_authority(flat_params=flat_params)
+        try:
+            authority = snapshot_solution_authority(
+                bind_declared_solution_authority(
+                    authority=declared_authority,
+                    artifact_descriptors=metadata.artifact_descriptors,
+                    regimes=self._regimes,
+                    flat_params=flat_params,
+                )
+            )
+        except (BeartypeCallHintViolation, TypeError, ValueError) as error:
+            raise InvalidSimulationInputError(
+                f"Model solution authority cannot be bound to this result: {error}"
+            ) from error
+        expected_descriptors = dict(authority.artifact_descriptors)
+        if not _same_exact_artifact_contract(
+            actual=metadata.artifact_descriptors,
+            expected=expected_descriptors,
+        ):
+            raise InvalidSimulationInputError(
+                "SolutionResult artifact descriptors differ from model authority."
+            )
         expected_coverage = set(authority.values)
         value_store = solution.values  # noqa: PD011
         expected_periods = {period for period, _regime_name in expected_coverage}
@@ -751,160 +1193,109 @@ class Model:
             label="value",
         )
         self._check_solution_result_coverage(
-            actual_coverage=set(solution.metadata.value_schemas),
+            actual_coverage=set(metadata.value_schemas),
             expected_coverage=expected_coverage,
             label="value schema",
         )
         self._check_solution_result_artifact_coordinates(
             solution=solution,
+            metadata=metadata,
             expected_coverage=expected_coverage,
             authority=authority,
         )
-        self._check_solution_value_schemas(
+        self._check_solution_result_present_artifact_semantics(
             solution=solution,
+            metadata=metadata,
+            authority=authority,
+        )
+        self._check_solution_result_omission_semantics(
+            solution=solution,
+            metadata=metadata,
+            authority=authority,
+        )
+        try:
+            solution = SolutionResult(
+                values=solution.values,
+                metadata=metadata,
+                retained_continuations=snapshot_artifact_store(
+                    store=solution.retained_continuations,
+                    authorities=authority.artifacts,
+                ),
+                replay_artifacts=snapshot_artifact_store(
+                    store=solution.replay_artifacts,
+                    authorities=authority.artifacts,
+                ),
+                auxiliary_artifacts=snapshot_artifact_store(
+                    store=solution.auxiliary_artifacts,
+                    authorities=authority.artifacts,
+                ),
+                diagnostics=snapshot_artifact_store(
+                    store=solution.diagnostics,
+                    authorities=authority.artifacts,
+                ),
+                omissions=solution.omissions,
+            )
+        except (BeartypeCallHintViolation, TypeError, ValueError) as error:
+            raise InvalidSimulationInputError(
+                f"SolutionResult artifact payloads cannot be detached: {error}"
+            ) from error
+        try:
+            values = cast("ValueStore", solution.values).materialize()
+        except (TypeError, ValueError) as error:
+            raise InvalidSimulationInputError(
+                f"SolutionResult values cannot be materialized: {error}"
+            ) from error
+        self._check_solution_value_schemas(
+            metadata=metadata,
             authority=authority,
             expected_coverage=expected_coverage,
+            values=values,
         )
-        return authority
+        return authority, values, solution
 
     @staticmethod
-    def _check_solution_result_container_types(*, solution: SolutionResult) -> None:
-        """Reject mutable, subclassed, or ill-typed transport containers up front."""
-        if type(solution) is not SolutionResult:
-            msg = "SolutionResult has the wrong exact container type."
-            raise InvalidSimulationInputError(msg)
-        if type(solution.metadata) is not SolutionMetadata:
+    def _snapshot_solution_envelope(
+        *, solution: _SolutionResultBoundary
+    ) -> _SolutionResultBoundary:
+        """Own exact result stores and metadata before any lazy callback can run."""
+        supplied_metadata = solution.metadata
+        supplied_values = solution.values  # noqa: PD011
+        supplied_retained_continuations = solution.retained_continuations
+        supplied_replay_artifacts = solution.replay_artifacts
+        supplied_auxiliary_artifacts = solution.auxiliary_artifacts
+        supplied_diagnostics = solution.diagnostics
+        supplied_omissions = solution.omissions
+        if type(supplied_metadata) is not SolutionMetadata:
             msg = "SolutionResult metadata has the wrong exact container type."
             raise InvalidSimulationInputError(msg)
-
-        named_stores = (
-            ("retained_continuations", solution.retained_continuations),
-            ("replay_artifacts", solution.replay_artifacts),
-            ("auxiliary_artifacts", solution.auxiliary_artifacts),
-            ("diagnostics", solution.diagnostics),
-        )
-        container_defects = [
-            *Model._artifact_store_type_defects(named_stores=named_stores),
-            *Model._value_store_type_defects(values=solution.values),
-            *Model._metadata_mapping_type_defects(metadata=solution.metadata),
-            *Model._omission_type_defects(omissions=solution.omissions),
-        ]
-        if container_defects:
-            msg = (
-                "SolutionResult containers are incompatible: "
-                + "; ".join(container_defects)
-                + "."
+        try:
+            snapshot = SolutionResult(
+                values=snapshot_value_store(cast("ValueStore", supplied_values)),
+                metadata=snapshot_solution_metadata(supplied_metadata),
+                retained_continuations=snapshot_artifact_store(
+                    store=supplied_retained_continuations
+                ),
+                replay_artifacts=snapshot_artifact_store(
+                    store=supplied_replay_artifacts
+                ),
+                auxiliary_artifacts=snapshot_artifact_store(
+                    store=supplied_auxiliary_artifacts
+                ),
+                omissions=snapshot_omissions(supplied_omissions),
+                diagnostics=snapshot_artifact_store(store=supplied_diagnostics),
             )
-            raise InvalidSimulationInputError(msg)
+        except (BeartypeCallHintViolation, TypeError, ValueError) as error:
+            raise InvalidSimulationInputError(
+                f"SolutionResult envelope cannot be snapshotted: {error}"
+            ) from error
+        return snapshot
 
-    @staticmethod
-    def _artifact_store_type_defects(
-        *, named_stores: tuple[tuple[str, ArtifactStore], ...]
-    ) -> list[str]:
-        """Return defects in artifact-store containers and address types."""
-        defects: list[str] = []
-        for store_name, store in named_stores:
-            if type(store) is not ArtifactStore:
-                defects.append(f"{store_name} is not an exact ArtifactStore")
-                continue
-            if type(store._entries) is not MappingProxyType:  # noqa: SLF001
-                defects.append(f"{store_name} entries are not immutable")
-                continue
-            for ref in store._entries:  # noqa: SLF001
-                defect = Model._artifact_ref_type_defect(ref=ref)
-                if defect is not None:
-                    defects.append(f"{store_name}: {defect}")
-        return defects
-
-    @staticmethod
-    def _value_store_type_defects(
-        *, values: Mapping[int, Mapping[RegimeName, object]]
-    ) -> list[str]:
-        """Return defects in the immutable value-store topology."""
-        if type(values) is not MappingProxyType:
-            return ["values are not an immutable exact mapping"]
-        defects: list[str] = []
-        for period, regime_to_value in values.items():
-            if type(period) is not int:
-                defects.append("a value period is not an exact int")
-            if type(regime_to_value) is not MappingProxyType:
-                defects.append(
-                    f"value period {period!r} is not an immutable exact mapping"
-                )
-                continue
-            if any(type(regime_name) is not str for regime_name in regime_to_value):
-                defects.append(f"value period {period!r} has a non-exact regime name")
-        return defects
-
-    @staticmethod
-    def _metadata_mapping_type_defects(*, metadata: SolutionMetadata) -> list[str]:
-        """Return defects in descriptive metadata mappings and coordinates."""
-        defects: list[str] = []
-        if type(metadata.solver_types) is not MappingProxyType:
-            defects.append("solver_types are not an immutable exact mapping")
-        elif any(
-            type(regime_name) is not str or type(solver_type) is not str
-            for regime_name, solver_type in metadata.solver_types.items()
-        ):
-            defects.append("solver_types contain a non-exact str")
-        if type(metadata.value_schemas) is not MappingProxyType:
-            defects.append("value_schemas are not an immutable exact mapping")
-        else:
-            invalid_coordinate_count = sum(
-                not Model._is_exact_solution_coordinate(coordinate)
-                for coordinate in metadata.value_schemas
-            )
-            defects.extend(
-                ["value_schemas contain an ill-typed coordinate"]
-                * invalid_coordinate_count
-            )
-        return defects
-
-    @staticmethod
-    def _omission_type_defects(
-        *, omissions: Mapping[ArtifactRef, OmissionReason]
-    ) -> list[str]:
-        """Return defects in omission addresses and reasons."""
-        if type(omissions) is not MappingProxyType:
-            return ["omissions are not an immutable exact mapping"]
-        defects: list[str] = []
-        for ref, reason in omissions.items():
-            defect = Model._artifact_ref_type_defect(ref=ref)
-            if defect is not None:
-                defects.append(f"omissions: {defect}")
-            if type(reason) is not OmissionReason:
-                defects.append("omissions contain a non-exact OmissionReason")
-        return defects
-
-    @staticmethod
-    def _is_exact_solution_coordinate(coordinate: object) -> bool:
-        """Whether a descriptive value coordinate uses exact built-in types."""
-        if type(coordinate) is not tuple or len(coordinate) != 2:  # noqa: PLR2004
-            return False
-        return type(coordinate[0]) is int and type(coordinate[1]) is str
-
-    @staticmethod
-    def _artifact_ref_type_defect(*, ref: object) -> str | None:  # noqa: PLR0911
-        """Return a defect before an untrusted artifact address is hashed."""
-        if type(ref) is not ArtifactRef:
-            return "an artifact address is not an exact ArtifactRef"
-        typed_ref = ref
-        if type(typed_ref.period) is not int:
-            return "an artifact period is not an exact int"
-        if type(typed_ref.regime) is not str:
-            return "an artifact regime is not an exact str"
-        if type(typed_ref.key) is not ArtifactKey:
-            return "an artifact key is not an exact ArtifactKey"
-        if type(typed_ref.key.type_id) is not str:
-            return "an artifact type_id is not an exact str"
-        if type(typed_ref.key.schema_version) is not int:
-            return "an artifact schema_version is not an exact int"
-        if typed_ref.key.schema_version < 1:
-            return "an artifact schema_version is not positive"
-        return None
-
-    def _check_solution_result_metadata(
-        self, *, solution: SolutionResult, expected_fingerprint: str
+    def _check_solution_result_metadata(  # noqa: C901, PLR0912
+        self,
+        *,
+        metadata: SolutionMetadata,
+        expected_fingerprint: str,
+        expected_model_fingerprint: str,
     ) -> None:
         """Reject provenance, version, and regime metadata mismatches."""
         expected_solver_types = {
@@ -914,51 +1305,105 @@ class Model:
             )
             for regime_name, user_regime in self.user_regimes.items()
         }
+        expected_solver_identities = {
+            regime_name: user_regime.solver.identity
+            for regime_name, user_regime in self.user_regimes.items()
+        }
+        expected_replay_routes = {
+            regime_name: _replay_route_identity(regime.simulation.replay_route)
+            for regime_name, regime in self._regimes.items()
+        }
         metadata_defects: list[str] = []
-        if not _same_exactly_typed(
-            actual=solution.metadata.model_instance_id,
-            expected=self._solution_model_instance_id,
+        route_plugin_mismatches = tuple(
+            regime_name
+            for regime_name, regime in self._regimes.items()
+            if regime.simulation.external_replay_route is not None
+            and not _same_exact_artifact_contract(
+                actual=regime.simulation.external_replay_route.plugin_identity,
+                expected=expected_solver_identities[regime_name],
+            )
+        )
+        if route_plugin_mismatches:
+            metadata_defects.append(
+                "replay routes are owned by a different solver plugin at "
+                f"{route_plugin_mismatches}"
+            )
+        if type(metadata.source) is not SolutionSource:
+            metadata_defects.append("source has the wrong exact type")
+        elif metadata.source is SolutionSource.IN_MEMORY and not (
+            _same_exactly_typed(
+                actual=metadata.model_instance_id,
+                expected=self._solution_model_instance_id,
+            )
         ):
             metadata_defects.append("model_instance_id does not match this Model")
+        elif type(metadata.model_instance_id) is not str:
+            metadata_defects.append("model_instance_id has the wrong exact type")
         if not _same_exactly_typed(
-            actual=solution.metadata.params_fingerprint,
+            actual=metadata.model_fingerprint,
+            expected=expected_model_fingerprint,
+        ):
+            metadata_defects.append("model_fingerprint does not match this model")
+        if not _same_exactly_typed(
+            actual=metadata.params_fingerprint,
             expected=expected_fingerprint,
         ):
             metadata_defects.append(
                 "params_fingerprint does not match the canonical simulation params"
             )
         if not _same_exactly_typed(
-            actual=solution.metadata.solver_api_version, expected=1
+            actual=metadata.pylcm_version,
+            expected=PYLCM_VERSION,
+        ):
+            metadata_defects.append(
+                f"pylcm_version={metadata.pylcm_version!r} (expected {PYLCM_VERSION!r})"
+            )
+        if not _same_exactly_typed(
+            actual=metadata.solver_api_version, expected=SOLVER_API_VERSION
         ):
             metadata_defects.append(
                 "solver_api_version="
-                f"{solution.metadata.solver_api_version} (expected 1)"
+                f"{metadata.solver_api_version} "
+                f"(expected {SOLVER_API_VERSION})"
             )
         if not _same_exactly_typed(
-            actual=solution.metadata.solution_schema_version, expected=1
+            actual=metadata.solution_schema_version,
+            expected=SOLUTION_SCHEMA_VERSION,
         ):
             metadata_defects.append(
                 "solution_schema_version="
-                f"{solution.metadata.solution_schema_version} (expected 1)"
+                f"{metadata.solution_schema_version} "
+                f"(expected {SOLUTION_SCHEMA_VERSION})"
             )
-        if not _same_exactly_typed(
-            actual=solution.metadata.n_periods, expected=self.n_periods
-        ):
+        if not _same_exactly_typed(actual=metadata.n_periods, expected=self.n_periods):
             metadata_defects.append(
-                f"n_periods={solution.metadata.n_periods} (expected {self.n_periods})"
+                f"n_periods={metadata.n_periods} (expected {self.n_periods})"
             )
         if not _same_exactly_typed(
-            actual=solution.metadata.regime_names,
+            actual=metadata.regime_names,
             expected=tuple(self._regimes),
         ):
             metadata_defects.append(
-                f"regime_names={solution.metadata.regime_names!r} "
+                f"regime_names={metadata.regime_names!r} "
                 f"(expected {tuple(self._regimes)!r})"
             )
-        if type(solution.metadata.retention) is not ResultRetention:
+        if type(metadata.retention) is not ResultRetention:
             metadata_defects.append("retention has the wrong exact type")
-        if dict(solution.metadata.solver_types) != expected_solver_types:
+        if not _same_exact_artifact_contract(
+            actual=metadata.solver_types,
+            expected=expected_solver_types,
+        ):
             metadata_defects.append("solver_types do not match this model")
+        if not _same_exact_artifact_contract(
+            actual=metadata.solver_identities,
+            expected=expected_solver_identities,
+        ):
+            metadata_defects.append("solver plugin identities or versions do not match")
+        if not _same_exact_artifact_contract(
+            actual=metadata.replay_routes,
+            expected=expected_replay_routes,
+        ):
+            metadata_defects.append("replay route identities or versions do not match")
         if metadata_defects:
             msg = (
                 "SolutionResult metadata is incompatible with this model: "
@@ -970,7 +1415,8 @@ class Model:
     @staticmethod
     def _check_solution_result_artifact_coordinates(
         *,
-        solution: SolutionResult,
+        solution: _SolutionResultBoundary,
+        metadata: SolutionMetadata,
         expected_coverage: set[tuple[int, RegimeName]],
         authority: SolutionAuthority,
     ) -> None:
@@ -982,7 +1428,9 @@ class Model:
             ("diagnostics", solution.diagnostics),
         )
         present_stores = tuple(store for _name, store in named_stores)
-        present_refs = set().union(*(set(store) for store in present_stores))
+        # Snapshot coordinate sets once; duplicate detection never needs payloads.
+        present_ref_sets = tuple(set(store) for store in present_stores)
+        present_refs = set().union(*present_ref_sets)
         omission_refs = set(solution.omissions)
         unexpected = tuple(
             sorted(
@@ -996,20 +1444,27 @@ class Model:
             sorted(
                 ref
                 for ref in present_refs
-                if sum(ref in store for store in present_stores) > 1
+                if sum(ref in refs for refs in present_ref_sets) > 1
             )
         )
-        replay_type_ids = {
+        standard_type_ids = {
             SIMULATION_POLICY.type_id,
             DISSOLUTION_FLAG.type_id,
+            EGM_CONTINUATION.type_id,
+            SOLVER_DIAGNOSTICS.type_id,
         }
-        exact_replay_keys = {SIMULATION_POLICY, DISSOLUTION_FLAG}
+        exact_standard_keys = {
+            SIMULATION_POLICY,
+            DISSOLUTION_FLAG,
+            EGM_CONTINUATION,
+            SOLVER_DIAGNOSTICS,
+        }
         wrong_versions = tuple(
             sorted(
                 ref
                 for ref in present_refs | omission_refs
-                if ref.key.type_id in replay_type_ids
-                and ref.key not in exact_replay_keys
+                if ref.key.type_id in standard_type_ids
+                and ref.key not in exact_standard_keys
             )
         )
         wrong_channels = tuple(
@@ -1017,20 +1472,148 @@ class Model:
                 (store_name, ref)
                 for store_name, store in named_stores
                 for ref in store
-                if ref.key in exact_replay_keys
+                if ref.key in {SIMULATION_POLICY, DISSOLUTION_FLAG}
                 and authority.replay.get(ref) is not None
                 and store_name != authority.replay[ref].channel
             )
         )
-        if unexpected or overlap or duplicated or wrong_versions or wrong_channels:
+        channel_to_store = {
+            ArtifactChannel.CONTINUATION: "retained_continuations",
+            ArtifactChannel.REPLAY: "replay_artifacts",
+            ArtifactChannel.AUXILIARY: "auxiliary_artifacts",
+            ArtifactChannel.DIAGNOSTIC: "diagnostics",
+        }
+        custom_wrong_channels = tuple(
+            sorted(
+                (store_name, ref)
+                for store_name, store in named_stores
+                for ref in store
+                if ref in authority.artifacts
+                and store_name
+                != channel_to_store[authority.artifacts[ref].descriptor.channel]
+            )
+        )
+        described_refs = set(metadata.artifact_descriptors)
+        undeclared = tuple(
+            sorted(
+                ref for ref in present_refs | omission_refs if ref not in described_refs
+            )
+        )
+        missing_accounting = tuple(
+            sorted(described_refs - (present_refs | omission_refs))
+        )
+        if (
+            unexpected
+            or overlap
+            or duplicated
+            or wrong_versions
+            or wrong_channels
+            or custom_wrong_channels
+            or undeclared
+            or missing_accounting
+        ):
             msg = (
                 "SolutionResult artifact coordinates are incompatible: "
                 f"unexpected={unexpected}, refs both present and omitted={overlap}, "
                 f"refs in multiple stores={duplicated}, "
                 f"wrong schema versions={wrong_versions}, "
-                f"wrong channels={wrong_channels}."
+                f"wrong channels={wrong_channels + custom_wrong_channels}, "
+                f"undeclared={undeclared}, missing accounting={missing_accounting}."
             )
             raise InvalidSimulationInputError(msg)
+
+    @staticmethod
+    def _check_solution_result_present_artifact_semantics(
+        *,
+        solution: _SolutionResultBoundary,
+        metadata: SolutionMetadata,
+        authority: SolutionAuthority,
+    ) -> None:
+        """Require each present model artifact to be applicable and selected.
+
+        Diagnostics follow the solve's log level rather than its retention, so
+        a present diagnostics payload is selected under every retention.
+        """
+        present_refs = set(solution.retained_continuations)
+        present_refs.update(solution.replay_artifacts)
+        present_refs.update(solution.auxiliary_artifacts)
+        present_refs.update(solution.diagnostics)
+        defects: list[str] = []
+        for ref in sorted(present_refs):
+            artifact_authority = authority.artifacts.get(ref)
+            if artifact_authority is None:
+                defects.append(f"{ref!r} has no model authority")
+                continue
+            descriptor = artifact_authority.descriptor
+            if not artifact_authority.applicable:
+                defects.append(f"{ref!r} is not applicable")
+                continue
+            selected = (
+                descriptor.channel is ArtifactChannel.DIAGNOSTIC
+                or (
+                    metadata.retention is ResultRetention.VALUES_AND_REPLAY
+                    and descriptor.channel is ArtifactChannel.REPLAY
+                )
+                or (
+                    metadata.retention is ResultRetention.ALL_PERSISTABLE_ARTIFACTS
+                    and descriptor.persistence is PersistencePolicy.MODEL_VERIFIABLE
+                )
+            )
+            if not selected:
+                defects.append(
+                    f"{ref!r} is not selected by retention {metadata.retention.value!r}"
+                )
+        if defects:
+            raise InvalidSimulationInputError(
+                "SolutionResult present artifacts are incompatible with model "
+                "authority: " + "; ".join(defects) + "."
+            )
+
+    @staticmethod
+    def _check_solution_result_omission_semantics(
+        *,
+        solution: _SolutionResultBoundary,
+        metadata: SolutionMetadata,
+        authority: SolutionAuthority,
+    ) -> None:
+        """Require every omission to agree with model authority and retention."""
+        defects: list[str] = []
+        for ref, reason in solution.omissions.items():
+            artifact_authority = authority.artifacts.get(ref)
+            if artifact_authority is None:
+                defects.append(f"{ref!r} has no model authority")
+                continue
+            descriptor = artifact_authority.descriptor
+            selected = (
+                metadata.retention is ResultRetention.ALL_PERSISTABLE_ARTIFACTS
+                or (
+                    metadata.retention is ResultRetention.VALUES_AND_REPLAY
+                    and descriptor.channel is ArtifactChannel.REPLAY
+                )
+            )
+            if not artifact_authority.applicable:
+                expected = OmissionReason.NOT_APPLICABLE
+            elif not selected:
+                expected = OmissionReason.NOT_REQUESTED
+            elif descriptor.persistence is PersistencePolicy.NOT_PERSISTED:
+                expected = OmissionReason.NOT_PERSISTED
+            elif artifact_authority.required:
+                defects.append(
+                    f"{ref!r} is a required selected model-verifiable artifact"
+                )
+                continue
+            else:
+                expected = OmissionReason.UNSUPPORTED
+            if reason is not expected:
+                defects.append(
+                    f"{ref!r} has reason {reason.value!r}, expected {expected.value!r}"
+                )
+        if defects:
+            raise InvalidSimulationInputError(
+                "SolutionResult omissions are incompatible with model authority: "
+                + "; ".join(defects)
+                + "."
+            )
 
     @staticmethod
     def _check_solution_result_coverage(
@@ -1052,16 +1635,16 @@ class Model:
     def _check_solution_value_schemas(
         self,
         *,
-        solution: SolutionResult,
+        metadata: SolutionMetadata,
         authority: SolutionAuthority,
         expected_coverage: set[tuple[int, RegimeName]],
+        values: PeriodToRegimeToVArr,
     ) -> None:
-        """Reject values and descriptive schemas that disagree with model authority."""
-        schemas = solution.metadata.value_schemas
-        value_store = solution.values  # noqa: PD011
+        """Check the canonical value snapshot against model-owned schemas."""
+        schemas = metadata.value_schemas
         schema_defects: list[str] = []
         for period, regime_name in sorted(expected_coverage):
-            value = value_store[period][regime_name]
+            value = values[period][regime_name]
             schema = schemas[(period, regime_name)]
             descriptor = authority.values[(period, regime_name)]  # noqa: PD011
             if not isinstance(value, descriptor.payload_type):
@@ -1107,19 +1690,30 @@ class Model:
     def _check_solution_result_artifacts(
         self,
         *,
-        solution: SolutionResult,
+        solution: _SolutionResultBoundary,
         authority: SolutionAuthority,
+        values: PeriodToRegimeToVArr,
     ) -> tuple[
         PeriodToRegimeToSimulationPolicy,
         PeriodToRegimeToDissolutionFlags,
     ]:
         """Require every replay artifact the labelled solution's routes consume."""
-        policies = solution.replay_artifacts.project(SIMULATION_POLICY)
-        dissolution_flags = solution.replay_artifacts.project(DISSOLUTION_FLAG)
+        policies = _materialize_artifact_projection(
+            store=solution.replay_artifacts,
+            key=SIMULATION_POLICY,
+            authority=authority,
+        )
+        dissolution_flags = _materialize_artifact_projection(
+            store=solution.replay_artifacts,
+            key=DISSOLUTION_FLAG,
+            authority=authority,
+            required_only=True,
+        )
         self._check_solution_result_replay_policies(
             solution=solution,
             authority=authority,
             policies=policies,
+            values=values,
         )
         self._check_solution_result_dissolution_flags(
             solution=solution,
@@ -1131,12 +1725,168 @@ class Model:
             cast("PeriodToRegimeToDissolutionFlags", dissolution_flags),
         )
 
-    def _check_solution_result_replay_policies(  # noqa: C901
+    def _build_external_replay_readers(  # noqa: C901, PLR0912, PLR0915
         self,
         *,
-        solution: SolutionResult,
+        solution: _SolutionResultBoundary,
+        metadata: SolutionMetadata,
+        authority: SolutionAuthority,
+        flat_params: FlatParams,
+        replay_payload: _ReplayPayloadSource,
+    ) -> _PeriodToRegimeToReplayReader:
+        """Validate each plugin replay cell once and build its immutable reader.
+
+        `replay_payload` obtains the payload a route requires: a result this
+        instance built hands over its own buffers, any other result a validated
+        private copy.
+        """
+        readers: dict[int, dict[RegimeName, ReplayReader]] = {}
+        for regime_name, regime in self._regimes.items():
+            route = regime.simulation.external_replay_route
+            if route is None:
+                continue
+            base_state_action_space = regime.solution.state_action_space(
+                regime_params=flat_params[regime_name]
+            )
+            for period in regime.active_periods:
+                state_action_space = _state_action_space_for_period(
+                    regime=regime,
+                    base=base_state_action_space,
+                    period=period,
+                )
+                replay_context = _replay_model_context_from_state_action_space(
+                    regime_name=regime_name,
+                    period=period,
+                    state_action_space=state_action_space,
+                )
+                build_context = SimulationBuildContext(
+                    period=replay_context.period,
+                    regime_name=replay_context.regime_name,
+                    state_names=replay_context.state_names,
+                    action_names=replay_context.action_names,
+                    state_nodes=replay_context.state_nodes,
+                    action_nodes=replay_context.action_nodes,
+                )
+                declared = {
+                    ref.key: artifact_authority
+                    for ref, artifact_authority in authority.artifacts.items()
+                    if ref.period == period
+                    and ref.regime == regime_name
+                    and artifact_authority.descriptor.channel is ArtifactChannel.REPLAY
+                }
+
+                try:
+                    requirements = route.requirements(context=replay_context)
+                except Exception as error:
+                    raise InvalidSimulationInputError(
+                        "External replay route could not declare requirements at "
+                        f"({period}, {regime_name!r}): {error}"
+                    ) from error
+                if type(requirements) is not ReplayRouteRequirements:
+                    raise InvalidSimulationInputError(
+                        "External replay route returned non-exact requirements at "
+                        f"({period}, {regime_name!r})."
+                    )
+                required_keys = requirements.required_artifacts
+                authority_required_keys = frozenset(
+                    key
+                    for key, artifact_authority in declared.items()
+                    if artifact_authority.required
+                    and _same_exact_artifact_contract(
+                        actual=artifact_authority.consumer_route,
+                        expected=route.identity,
+                    )
+                )
+                if not _same_exact_artifact_contract(
+                    actual=required_keys,
+                    expected=authority_required_keys,
+                ):
+                    raise InvalidSimulationInputError(
+                        "External replay route requirements differ from its "
+                        "model-built required authorities at "
+                        f"({period}, {regime_name!r})."
+                    )
+
+                snapshot_artifacts: dict[ArtifactKey, object] = {}
+                snapshot_authorities: dict[ArtifactKey, ArtifactAuthority] = {}
+                defects: list[str] = []
+                for key, declared_authority in declared.items():
+                    ref = ArtifactRef(period=period, regime=regime_name, key=key)
+                    model_authority = declared_authority
+                    described = metadata.artifact_descriptors.get(ref)
+                    if not _same_exact_artifact_contract(
+                        actual=described,
+                        expected=authority.artifact_descriptors.get(ref),
+                    ):
+                        defects.append(
+                            f"{key.type_id!r} descriptive schema differs from model "
+                            "authority"
+                        )
+                        continue
+                    if not model_authority.applicable:
+                        if ref in solution.replay_artifacts:
+                            defects.append(f"{key.type_id!r} is not applicable")
+                        continue
+                    if ref not in solution.replay_artifacts:
+                        omission = solution.omissions.get(ref)
+                        reason = "unrecorded" if omission is None else omission.value
+                        if model_authority.required:
+                            defects.append(f"{key.type_id!r} is absent ({reason})")
+                        continue
+                    if key in required_keys:
+                        try:
+                            payload = replay_payload(ref=ref, authority=model_authority)
+                        except (TypeError, ValueError) as error:
+                            defects.append(
+                                f"{key.type_id!r} mismatched_payload: {error}"
+                            )
+                            continue
+                        snapshot_artifacts[key] = payload
+                        snapshot_authorities[key] = model_authority
+
+                if defects:
+                    raise InvalidSimulationInputError(
+                        "External replay artifacts are incompatible at "
+                        f"({period}, {regime_name!r}): " + "; ".join(defects) + "."
+                    )
+                snapshot = ReplayRouteSnapshot(
+                    artifacts=MappingProxyType(snapshot_artifacts),
+                    authorities=MappingProxyType(snapshot_authorities),
+                    metadata=metadata,
+                )
+                try:
+                    route.validate(snapshot=snapshot, context=build_context)
+                    reader = route.build_reader(
+                        snapshot=snapshot,
+                        context=build_context,
+                    )
+                except InvalidSimulationInputError:
+                    raise
+                except Exception as error:
+                    raise InvalidSimulationInputError(
+                        "External replay route rejected artifacts at "
+                        f"({period}, {regime_name!r}): {error}"
+                    ) from error
+                if not isinstance(reader, ReplayReader):
+                    raise InvalidSimulationInputError(
+                        "External replay route returned a non-callable reader at "
+                        f"({period}, {regime_name!r})."
+                    )
+                readers.setdefault(period, {})[regime_name] = reader
+        return MappingProxyType(
+            {
+                period: MappingProxyType(regime_to_reader)
+                for period, regime_to_reader in readers.items()
+            }
+        )
+
+    def _check_solution_result_replay_policies(
+        self,
+        *,
+        solution: _SolutionResultBoundary,
         authority: SolutionAuthority,
         policies: Mapping[int, Mapping[RegimeName, object]],
+        values: PeriodToRegimeToVArr,
     ) -> None:
         """Require each solver decision that cannot be reconstructed from values."""
         policies_without_route = tuple(
@@ -1157,8 +1907,7 @@ class Model:
             raise InvalidSimulationInputError(msg)
 
         missing_or_mismatched_policies: list[tuple[int, RegimeName, str]] = []
-        value_store = solution.values  # noqa: PD011
-        for period, regime_to_value in value_store.items():
+        for period, regime_to_value in values.items():
             for regime_name in regime_to_value:
                 ref = ArtifactRef(
                     period=period,
@@ -1181,64 +1930,11 @@ class Model:
                     missing_or_mismatched_policies.append((period, regime_name, reason))
                     continue
 
-                payload_defect: str | None
-                if (
-                    descriptor.payload_type is None
-                    or type(supplied) is not descriptor.payload_type
-                ):
-                    expected_name = getattr(
-                        descriptor.payload_type,
-                        "__name__",
-                        repr(descriptor.payload_type),
-                    )
-                    payload_defect = (
-                        f"expected exact payload type {expected_name}, got "
-                        f"{type(supplied).__name__}"
-                    )
-                elif isinstance(policy_read, EGMPolicyRead):
-                    payload_defect = (
-                        validate_egm_sim_policy(
-                            policy=supplied,
-                            policy_read=policy_read,
-                            period=period,
-                            expected_node_count=descriptor.egm_node_count,
-                        )
-                        if isinstance(supplied, EGMSimPolicy)
-                        and descriptor.egm_node_count is not None
-                        else "model authority lacks the EGM node count"
-                    )
-                elif policy_read.replay_policy_is_nested:
-                    payload_defect = (
-                        validate_nested_egm_sim_policy(
-                            policy=supplied,
-                            policy_read=policy_read,
-                            period=period,
-                            expected_node_count=descriptor.egm_node_count,
-                            expected_outer_nodes=descriptor.adaptive_outer_nodes,
-                            expected_replay_capability=(
-                                descriptor.expected_replay_capability
-                            ),
-                        )
-                        if isinstance(supplied, NestedEGMSimPolicy)
-                        and descriptor.egm_node_count is not None
-                        and descriptor.adaptive_outer_nodes is not None
-                        and descriptor.expected_replay_capability is not None
-                        else "model authority lacks a nested replay descriptor"
-                    )
-                else:
-                    payload_defect = (
-                        validate_nnbegm_sim_policy(
-                            policy=supplied,
-                            policy_read=policy_read,
-                            period=period,
-                            expected_replay_capability=(
-                                descriptor.expected_replay_capability
-                            ),
-                        )
-                        if isinstance(supplied, NNBEGMSimPolicy)
-                        and descriptor.expected_replay_capability is not None
-                        else "model authority lacks a finite replay descriptor"
-                    )
+                payload_defect = _built_in_policy_payload_defect(
+                    supplied=supplied,
+                    descriptor=descriptor,
+                    period=period,
+                )
                 if payload_defect is not None:
                     missing_or_mismatched_policies.append(
                         (
@@ -1257,11 +1953,11 @@ class Model:
     def _check_solution_result_dissolution_flags(
         self,
         *,
-        solution: SolutionResult,
+        solution: _SolutionResultBoundary,
         authority: SolutionAuthority,
         dissolution_flags: Mapping[int, Mapping[RegimeName, object]],
     ) -> None:
-        """Validate every present flag, then require model-declared consumers."""
+        """Validate and require only flags consumed by model-declared gates."""
         missing_dissolution_flags = self._find_malformed_dissolution_flags(
             dissolution_flags=dissolution_flags,
             authority=authority,
@@ -1291,7 +1987,7 @@ class Model:
         dissolution_flags: Mapping[int, Mapping[RegimeName, object]],
         authority: SolutionAuthority,
     ) -> list[tuple[int, RegimeName, str]]:
-        """Return structural defects among all present dissolution artifacts."""
+        """Return structural defects among materialized required flags."""
         malformed: list[tuple[int, RegimeName, str]] = []
         for period, regime_to_flag in dissolution_flags.items():
             for regime_name, supplied in regime_to_flag.items():
@@ -1315,19 +2011,37 @@ class Model:
         return malformed
 
     def _fail_if_simulation_is_unsupported(self) -> None:
-        """Refuse model configurations whose solved decision cannot be replayed."""
-        fixed_cost_regimes = tuple(
-            regime_name
-            for regime_name, regime in self._regimes.items()
-            if regime.simulation.replay_route.replay_mode is ReplayMode.UNSUPPORTED
-        )
-        if not fixed_cost_regimes:
+        """Refuse model configurations whose solved decision cannot be replayed.
+
+        Two declarations put a regime on the unsupported route:
+        - an external solver returned `DeclaredReplay.UNSUPPORTED`;
+        - NNBEGM integrates a `UniformObservedFixedCost` analytically, which
+          simulation cannot draw and replay as the contingent keeper/adjuster
+          policy.
+        """
+        reasons = []
+        for regime_name, regime in self._regimes.items():
+            route = regime.simulation.replay_route
+            if route.replay_mode is not ReplayMode.UNSUPPORTED:
+                continue
+            if isinstance(route, UnsupportedReplayRoute):
+                solver_name = type(self.user_regimes[regime_name].solver).__name__
+                reasons.append(
+                    f"'{regime_name}': its solver '{solver_name}' declares that its "
+                    "solved decision cannot be reproduced in simulation"
+                )
+            else:
+                reasons.append(
+                    f"'{regime_name}': NNBEGM with UniformObservedFixedCost "
+                    "integrates the observed cost analytically, and simulation "
+                    "cannot yet draw it and replay the contingent keeper/adjuster "
+                    "policy"
+                )
+        if not reasons:
             return
         msg = (
-            "Simulation for NNBEGM with UniformObservedFixedCost is not implemented: "
-            "solution integrates the observed cost analytically, but simulation "
-            "cannot yet draw it and replay the contingent keeper/adjuster policy. "
-            f"Affected regimes: {fixed_cost_regimes}. Solve-only use remains supported."
+            "Simulation is not supported for the following regimes; solve-only use "
+            "remains supported. " + "; ".join(reasons) + "."
         )
         raise UnsupportedOperationError(msg)
 
@@ -1337,7 +2051,7 @@ class Model:
         *,
         params: UserParams,
         initial_conditions: UserInitialConditions | pd.DataFrame,
-        solution: SolutionResult | None = None,
+        solution: _SolutionResultBoundary | None = None,
         log_level: LogLevel,
         seed: int | None = None,
         subject_batch_size: int = 0,
@@ -1375,9 +2089,11 @@ class Model:
                 decides which regime it enters when the household dissolves.
             solution: Complete labelled result returned by ``solve()``. Required
                 replay artifacts are validated before forward simulation starts. Its
-                model-instance identity, canonical parameters, and value schemas are
-                checked even when ``log_level="off"``. When omitted, ``simulate``
-                obtains the same complete result from an automatic solve.
+                canonical parameters and value schemas are checked even when
+                ``log_level="off"``. In-memory results must carry this model's instance
+                token; restored results instead match the durable model fingerprint.
+                When omitted, ``simulate`` obtains the same complete result from an
+                automatic solve.
             seed: Random seed.
             subject_batch_size: How to partition the subject axis of the forward
                 simulation. Results are invariant to this knob — per-subject RNG
@@ -1413,6 +2129,7 @@ class Model:
             optionally with additional_targets.
 
         """
+        self._sealed_bindings.fail_if_moved()
         log = get_logger(log_level=log_level)
         self._fail_if_simulation_is_unsupported()
         # The canonical parameters bind both the supplied result preflight and an
@@ -1423,6 +2140,7 @@ class Model:
                 period_to_regime_to_V_arr,
                 period_to_regime_to_sim_policy,
                 period_to_regime_to_dissolution_flags,
+                period_to_regime_to_replay_reader,
             ) = self._resolve_solution_result(
                 solution=solution, flat_params=flat_params
             )
@@ -1430,6 +2148,7 @@ class Model:
             period_to_regime_to_V_arr = None
             period_to_regime_to_sim_policy = None
             period_to_regime_to_dissolution_flags = None
+            period_to_regime_to_replay_reader = None
         if isinstance(initial_conditions, pd.DataFrame):
             initial_conditions = initial_conditions_from_dataframe(
                 df=initial_conditions,
@@ -1518,6 +2237,7 @@ class Model:
                 period_to_regime_to_V_arr,
                 period_to_regime_to_sim_policy,
                 period_to_regime_to_dissolution_flags,
+                period_to_regime_to_replay_reader,
             ) = self._resolve_solution_result(
                 solution=solution, flat_params=flat_params
             )
@@ -1525,6 +2245,7 @@ class Model:
             period_to_regime_to_V_arr is None
             or period_to_regime_to_sim_policy is None
             or period_to_regime_to_dissolution_flags is None
+            or period_to_regime_to_replay_reader is None
         ):
             raise AssertionError("Simulation solution inputs were not resolved.")
         simulate_regimes = self._resolve_simulate_regimes(
@@ -1543,6 +2264,7 @@ class Model:
                 period_to_regime_to_dissolution_flags
             ),
             period_to_regime_to_sim_policy=period_to_regime_to_sim_policy,
+            period_to_regime_to_replay_reader=period_to_regime_to_replay_reader,
             ages=self.ages,
             simulation_output_dtypes=self.simulation_output_dtypes,
             seed=seed,
@@ -1556,6 +2278,7 @@ class Model:
         # the lazy regimes to keep the result cloudpickle-safe.
         if simulate_regimes is not self._regimes:
             result._regimes = self._regimes  # noqa: SLF001
+        result._solution = solution  # noqa: SLF001
         if log_path is not None and validation_raises(log):
             _save_simulate_snapshot(
                 model=self,
@@ -1680,20 +2403,9 @@ def _missing_policy_message(
     *, missing_or_mismatched_policies: tuple[tuple[int, RegimeName, str], ...]
 ) -> str:
     """Explain which replay policies are absent or invalid and how to obtain them."""
-    msg = (
+    return (
         f"Required artifact {SIMULATION_POLICY.type_id!r} is absent or "
         "invalid at (period, regime, reason): "
         f"{missing_or_mismatched_policies}. Re-solve with "
         "retention=ResultRetention.VALUES_AND_REPLAY."
     )
-    if any(
-        reason == OmissionReason.NOT_PERSISTED.value
-        for _period, _regime_name, reason in missing_or_mismatched_policies
-    ):
-        msg += (
-            " A policy omitted as 'not_persisted' is the NNBEGM replay policy of "
-            "an AdaptiveOuterMesh search: it is read against the solve-generated "
-            "mesh this model instance holds beside the result, so no persistable "
-            "retention keeps it; only VALUES_AND_REPLAY retains it."
-        )
-    return msg

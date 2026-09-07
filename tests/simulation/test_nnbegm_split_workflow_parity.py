@@ -105,7 +105,10 @@ def test_result_without_replay_policies_is_refused(
     """Dropping replay artifacts is refused rather than silently re-optimized."""
     model, solution = solved
     without_replay = replace(solution, replay_artifacts=ArtifactStore())
-    with pytest.raises(InvalidSimulationInputError, match="unrecorded"):
+    with pytest.raises(
+        InvalidSimulationInputError,
+        match=r"unrecorded|missing accounting",
+    ):
         _simulate(model=model, solution=without_replay)
 
 
@@ -118,7 +121,10 @@ def test_replay_policies_published_by_the_other_outer_search_are_refused() -> No
         adaptive_solution, replay_artifacts=finite_solution.replay_artifacts
     )
 
-    with pytest.raises(InvalidSimulationInputError, match="mismatched_payload"):
+    with pytest.raises(
+        InvalidSimulationInputError,
+        match=r"mismatched_payload|artifact payloads cannot be detached",
+    ):
         _simulate(model=adaptive_model, solution=wrong_route)
 
 

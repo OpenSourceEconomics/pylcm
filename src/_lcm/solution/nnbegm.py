@@ -27,7 +27,7 @@ from dags import concatenate_functions
 
 from _lcm.beartype_conf import REGIME_CONF
 from _lcm.constraints.routes import ConstraintRoute
-from _lcm.continuation import EGMContinuationLayout
+from _lcm.continuation import EGMContinuationLayout, EGMContinuationSpec
 from _lcm.egm.branch_aggregation import (
     DeterministicOuterMaximum,
     OuterBranchAggregator,
@@ -524,11 +524,8 @@ class NNBEGM(TwoMarginSolver):
             grouped_param_checks.extend(keeper_group.param_checks)
             if keeper_continuation_spec is None:
                 keeper_continuation_spec = keeper_group.continuation_spec
-        inner_template = (
-            None
-            if keeper_continuation_spec is None
-            else keeper_continuation_spec.template
-        )
+        keeper_egm_spec = cast("EGMContinuationSpec | None", keeper_continuation_spec)
+        inner_template = None if keeper_egm_spec is None else keeper_egm_spec.template
         _fail_if_inner_carry_rows_not_grid_aligned(inner=bound.inner)
         if not (
             context.constraint_plan and context.constraint_plan.compiled_boundaries
@@ -677,8 +674,17 @@ class NNBEGM(TwoMarginSolver):
             period_kernels=period_kernels,
             continuation_spec=(
                 None
-                if keeper_continuation_spec is None
-                else replace(keeper_continuation_spec, template=template)
+                if keeper_egm_spec is None
+                else replace(
+                    keeper_egm_spec,
+                    template=template,
+                    layout=replace(
+                        keeper_egm_spec.layout,
+                        n_stacked_candidates=(
+                            self.egm_continuation_layout.n_stacked_candidates
+                        ),
+                    ),
+                )
             ),
             # Both inner margins are solved by the inner solver, so both sets of
             # parameter-dependent preconditions still apply to this regime.
@@ -985,14 +991,32 @@ class _NNBEGMPeriodKernel:
             ),
         ):
             for name, program in core_program_graph(kernel=kernel).items():
+                retained_artifact_payload_types = dict(
+                    program.retained_artifact_payload_types
+                )
+                if SIMULATION_POLICY in program.retained_artifact_keys:
+                    retained_artifact_payload_types[SIMULATION_POLICY] = (
+                        self._published_policy_type
+                    )
                 programs[f"{role}:{name}"] = replace(
                     program,
                     name=f"{role}:{name}",
+                    replaces_program=(
+                        None
+                        if program.replaces_program is None
+                        else f"{role}:{program.replaces_program}"
+                    ),
                     argument_builder=_NestedArgumentBuilder(
                         inner=program.argument_builder, outer_node=outer_node
                     ),
+                    retained_artifact_payload_types=(retained_artifact_payload_types),
                 )
         object.__setattr__(self, "_core_programs", MappingProxyType(programs))
+
+    @property
+    def _published_policy_type(self) -> type[object]:
+        """Return the final policy type assembled by this composite kernel."""
+        raise NotImplementedError
 
     def core_programs(self) -> Mapping[str, CoreProgram]:
         """Return the native graph used by eager, JIT, AOT, and replay paths."""
@@ -1371,6 +1395,11 @@ class _FiniteNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
     outer_search: FiniteOuterGrid
     """The finite outer-grid search whose candidate set is collapsed exactly."""
 
+    @property
+    def _published_policy_type(self) -> type[object]:
+        """Return the finite candidate-bank payload published after composition."""
+        return NNBEGMSimPolicy
+
     def _solve_outer(
         self,
         *,
@@ -1535,6 +1564,11 @@ class _AdaptiveNNBEGMPeriodKernel(_NNBEGMPeriodKernel):
 
     outer_search: AdaptiveOuterMesh
     """The adaptive mesh search whose refinement and collapse settings apply."""
+
+    @property
+    def _published_policy_type(self) -> type[object]:
+        """Return the nested policy payload published after composition."""
+        return NestedEGMSimPolicy
 
     def _solve_outer(
         self,

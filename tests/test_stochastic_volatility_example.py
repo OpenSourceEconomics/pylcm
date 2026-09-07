@@ -1,6 +1,5 @@
 """Smoke + behavior test for the stochastic-volatility example model."""
 
-import jax
 import numpy as np
 
 import lcm
@@ -16,15 +15,18 @@ def test_example_solves_and_uncertainty_matters():
     model = get_model(n_periods=6)
     V = model.solve(params=get_params(), log_level="debug").values
     # finite value everywhere
-    for leaf in jax.tree_util.tree_leaves(V):
-        assert np.all(np.isfinite(np.asarray(leaf)))
+    for regime_to_value in V.values():
+        for value in regime_to_value.values():
+            assert np.all(np.isfinite(np.asarray(value)))
     # the value depends on the uncertainty regime (distinct per-regime sigmas)
     maxdiff = 0.0
-    for leaf in jax.tree_util.tree_leaves(V):
-        a = np.asarray(leaf)
-        if a.ndim >= 1 and 2 in a.shape:
-            ax = list(a.shape).index(2)
-            maxdiff = max(
-                maxdiff, float(np.abs(np.take(a, 0, ax) - np.take(a, 1, ax)).max())
-            )
+    for regime_to_value in V.values():
+        for value in regime_to_value.values():
+            a = np.asarray(value)
+            if a.ndim >= 1 and 2 in a.shape:
+                ax = list(a.shape).index(2)
+                maxdiff = max(
+                    maxdiff,
+                    float(np.abs(np.take(a, 0, ax) - np.take(a, 1, ax)).max()),
+                )
     assert maxdiff > 1e-3

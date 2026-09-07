@@ -348,18 +348,32 @@ def test_iid_process_matches_dense_brute_force():
         )
 
 
-def test_nan_process_params_surface_as_error():
-    """NaN process params poison the DC-EGM solve loudly, as under brute force.
+def test_nan_process_transition_weights_surface_as_error(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """NaN process weights poison the DC-EGM solve loudly, as under brute force.
 
     The intrinsic transition weights of a process state are evaluated inside
     the EGM kernel; a NaN weight must propagate into the published V rows so
     the solve's NaN diagnostics raise — never be swallowed by the zero-weight
-    masking of unreachable nodes.
+    masking of unreachable nodes. The process parameters remain finite so the
+    model-owned grid coordinates pass their independent authority check.
     """
     params = _get_params("rouwenhorst")
-    params["alive"]["income"] = {"mu": 0.0, "sigma": 0.25, "rho": float("nan")}
+
+    def nan_transition_weights(
+        self: RouwenhorstAR1Process, **_kwargs: object
+    ) -> FloatND:
+        return jnp.full((self.n_points, self.n_points), jnp.nan)
+
+    _get_model.cache_clear()
+    monkeypatch.setattr(
+        RouwenhorstAR1Process,
+        "compute_transition_probs",
+        nan_transition_weights,
+    )
+    model = _get_model(solver="dcegm", shock_type="rouwenhorst")
+    _get_model.cache_clear()
 
     with pytest.raises(InvalidValueFunctionError):
-        _get_model(solver="dcegm", shock_type="rouwenhorst").solve(
-            params=params, log_level="debug"
-        )
+        model.solve(params=params, log_level="debug")

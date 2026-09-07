@@ -22,6 +22,8 @@ import jax
 import numpy as np
 import pytest
 
+from _lcm.egm.nested_published_policy import NestedEGMSimPolicy
+from _lcm.egm.published_policy import NNBEGMSimPolicy
 from _lcm.execution.core_program import (
     CoreBuildContext,
     CoreExecutionDisposition,
@@ -31,6 +33,7 @@ from _lcm.execution.core_program import (
 )
 from _lcm.solution import nnbegm as nnbegm_module
 from _lcm.solution.negm import _with_outer_post_decision
+from lcm.solver_api import SIMULATION_POLICY
 from tests.simulation.test_nnbegm_split_workflow_parity import _MESH, _PARAMS
 from tests.solution._nbegm_direct_oracle import ride_along_kernel
 from tests.test_models import n_nbegm_toy as toy
@@ -113,6 +116,24 @@ def test_the_graph_republishes_every_inner_program_under_role_prefixes():
             assert program.donation_candidates == inner.donation_candidates
     assert graph["keeper:main"].scope is ProgramScope.VALUES_ONLY
     assert graph["keeper:replay"].scope is ProgramScope.REPLAY
+    assert graph["keeper:replay"].replaces_program == "keeper:main"
+    assert graph["adjuster:replay"].replaces_program == "adjuster:main"
+
+
+@pytest.mark.parametrize(
+    ("route", "payload_type"),
+    [("finite", NNBEGMSimPolicy), ("adaptive", NestedEGMSimPolicy)],
+)
+def test_the_graph_declares_the_final_composite_policy_type(
+    *, route: str, payload_type: type[object]
+) -> None:
+    kernel, _ = _kernel(route)
+    graph = core_program_graph(kernel=kernel)
+
+    for name in ("keeper:replay", "adjuster:replay"):
+        assert graph[name].retained_artifact_payload_types == {
+            SIMULATION_POLICY: payload_type
+        }
 
 
 def test_the_keeper_builder_hands_the_inner_keeper_the_period_context():

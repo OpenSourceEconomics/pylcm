@@ -1,9 +1,8 @@
 """User-facing snapshot dataclasses, snapshot loader, and solution save/load.
 
-I/O helpers and the snapshot writers live behind a leading underscore in
-`_lcm.persistence`. This module is intentionally a thin layer of public
-snapshot dataclasses plus three public top-level functions
-(`load_snapshot`, `save_solution`, `load_solution`).
+Debug snapshots keep their separate reproduction format. Durable solutions use
+a versioned archive of labelled metadata and independently addressable
+numerical payloads.
 
 """
 
@@ -13,26 +12,28 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 import cloudpickle
 
 from _lcm.persistence.io import (
     _get_platform,
     _load_h5,
-    _save_h5,
 )
 from _lcm.persistence.snapshots import (
     _bind_forward_refs as _bind_snapshot_forward_refs,
 )
+from _lcm.persistence.solution import load_solution_archive, save_solution_archive
 from _lcm.solution.period_replay import PeriodReplay, replay_period
-from _lcm.typing import InitialConditions, PeriodToRegimeToVArr, RegimeName
-from lcm.typing import FloatND, UserParams
+from _lcm.typing import InitialConditions, PeriodToRegimeToVArr
+from lcm.solver_api import SolutionResult
+from lcm.typing import UserParams
 
 __all__ = [
     "PeriodReplay",
     "SimulateSnapshot",
     "SolveSnapshot",
+    "load_legacy_solution",
     "load_snapshot",
     "load_solution",
     "replay_period",
@@ -46,6 +47,7 @@ if TYPE_CHECKING:
     # Type-checker view: full precision.
     _ModelOrNone = Model | None
     _SimulationResultOrNone = SimulationResult | None
+    _SolutionResultBoundary: TypeAlias = SolutionResult  # noqa: UP040
 else:
     # Runtime view used by beartype's annotation evaluator. `Model` and
     # `SimulationResult` cannot be imported here (circular), so collapse
@@ -54,6 +56,7 @@ else:
     # which beartype polices via their own parameters.
     _ModelOrNone = Any
     _SimulationResultOrNone = Any
+    _SolutionResultBoundary = object
 
 
 def _bind_forward_refs(
@@ -188,17 +191,14 @@ def load_snapshot(
 
 def save_solution(
     *,
-    period_to_regime_to_V_arr: MappingProxyType[
-        int, MappingProxyType[RegimeName, FloatND]
-    ],
-    path: str | Path,
+    solution: _SolutionResultBoundary,
+    path: Path,
 ) -> Path:
-    """Save value function arrays from solve() to an HDF5 file.
+    """Atomically persist a complete labelled solution.
 
     Args:
-        period_to_regime_to_V_arr: Immutable mapping of periods to regime
-            value function arrays.
-        path: File path to save the HDF5 file.
+        solution: Complete result returned by :meth:`lcm.Model.solve`.
+        path: Destination archive path.
 
     Returns:
         The path where the object was saved.
@@ -207,24 +207,42 @@ def save_solution(
         FileNotFoundError: If the parent directory does not exist.
 
     """
-    p = Path(path)
-    if not p.parent.is_dir():
-        raise FileNotFoundError(f"Parent directory does not exist: {p.parent}")
-    _save_h5(path=p, period_to_regime_to_V_arr=period_to_regime_to_V_arr)
-    return p
+    return save_solution_archive(solution=solution, path=path)
 
 
 def load_solution(
     *,
-    path: str | Path,
-) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
-    """Load value function arrays from an HDF5 file.
+    path: Path,
+    verify_checksums: bool = False,
+) -> _SolutionResultBoundary:
+    """Load a complete solution lazily from a versioned archive.
 
     Args:
-        path: File path to read the HDF5 file from.
+        path: Archive path.
+        verify_checksums: Whether to verify every payload eagerly while keeping
+            entries unloaded. Individual entries are always verified when
+            materialized.
 
     Returns:
-        Immutable mapping of periods to regime value function arrays.
+        A complete result whose value and artifact entries load independently.
 
     """
-    return _load_h5(Path(path))
+    return load_solution_archive(path=path, verify_checksums=verify_checksums)
+
+
+def load_legacy_solution(
+    *, path: Path
+) -> MappingProxyType[int, MappingProxyType[str, Any]]:
+    """Load a pre-schema value-only HDF5 file for explicit migration.
+
+    Legacy files carry no model fingerprint, artifact schemas, omissions, or
+    checksums and cannot authenticate a complete replay result.
+
+    Args:
+        path: Legacy HDF5 file path.
+
+    Returns:
+        The immutable period/regime value mapping stored in the legacy file.
+
+    """
+    return _load_h5(path)

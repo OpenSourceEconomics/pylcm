@@ -11,6 +11,7 @@ regime declares.
 import ast
 import dataclasses
 import functools
+import re
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
@@ -21,15 +22,21 @@ import numpy as np
 import pytest
 
 from lcm import AgeGrid, LinSpacedGrid, MarkovTransition, Model, Regime, categorical
-from lcm.exceptions import RegimeInitializationError
+from lcm.exceptions import (
+    ModelInitializationError,
+    RegimeInitializationError,
+    UnsupportedOperationError,
+)
 from lcm.solver_api import (
     EGM_CONTINUATION,
     SIMULATION_POLICY,
     ArtifactKey,
+    ArtifactRef,
     ArtifactStore,
     ContinuationArtifact,
     KernelOutput,
     ReplayMode,
+    ResultRetention,
 )
 from lcm.solvers import (
     NBEGM,
@@ -38,6 +45,7 @@ from lcm.solvers import (
     CoreExecutionDisposition,
     CoreExecutionRequirements,
     CoreProgram,
+    DeclaredReplay,
     FiniteOuterGrid,
     OutputRole,
     SolutionKernels,
@@ -45,7 +53,14 @@ from lcm.solvers import (
     SolverBuildContext,
     StateAxesLeading,
 )
-from lcm.typing import ContinuousState, Float1D, FloatND, ScalarFloat, ScalarInt
+from lcm.typing import (
+    ContinuousAction,
+    ContinuousState,
+    Float1D,
+    FloatND,
+    ScalarFloat,
+    ScalarInt,
+)
 from tests.test_models import n_nbegm_toy
 
 
@@ -147,7 +162,10 @@ class WealthSolver(Solver):
             period: _GraphKernel(programs=MappingProxyType({"main": program}))
             for period in context.regimes_to_active_periods[context.regime_name]
         }
-        return SolutionKernels(period_kernels=MappingProxyType(kernels))
+        return SolutionKernels(
+            period_kernels=MappingProxyType(kernels),
+            replay_route=DeclaredReplay.GRID_RECOMPUTATION,
+        )
 
 
 def _two_regime_model(*, solver: Solver, self_looping: bool = False) -> Model:
@@ -285,6 +303,7 @@ class _CountingSolver(Solver):
             continuation_spec=ContinuationSpec(
                 template=_Counter(count=jnp.zeros(())), artifact_key=_COUNTER
             ),
+            replay_route=DeclaredReplay.GRID_RECOMPUTATION,
         )
 
 
@@ -394,3 +413,223 @@ def test_a_payload_of_another_type_than_the_route_declares_fails_the_preflight()
             log_level="off",
         )
     assert "_Counter" in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    "retention",
+    [
+        ResultRetention.VALUES,
+        ResultRetention.VALUES_AND_REPLAY,
+        ResultRetention.ALL_PERSISTABLE_ARTIFACTS,
+    ],
+)
+def test_an_unkept_continuation_is_recorded_under_the_key_its_solver_declared(
+    *, retention: ResultRetention
+):
+    """An omission names the artifact the solver publishes, at its own cell."""
+    model = _two_regime_model(solver=_CountingSolver(), self_looping=True)
+    solution = model.solve(
+        params={"discount_factor": 1.0}, log_level="off", retention=retention
+    )
+    assert ArtifactRef(period=0, regime="alive", key=_COUNTER) in solution.omissions
+
+
+@pytest.mark.parametrize(
+    "retention",
+    [
+        ResultRetention.VALUES,
+        ResultRetention.VALUES_AND_REPLAY,
+        ResultRetention.ALL_PERSISTABLE_ARTIFACTS,
+    ],
+)
+def test_no_omission_names_an_artifact_the_model_never_declared(
+    *, retention: ResultRetention
+):
+    """Every omitted key belongs to the running model's own artifact authority."""
+    model = _two_regime_model(solver=_CountingSolver(), self_looping=True)
+    solution = model.solve(
+        params={"discount_factor": 1.0}, log_level="off", retention=retention
+    )
+    assert {ref.key for ref in solution.omissions} == {_COUNTER}
+
+
+_MISLABELLED = ArtifactKey(type_id="tests.mislabelled", schema_version=1)
+
+
+@functools.partial(
+    jax.tree_util.register_dataclass, data_fields=["count"], meta_fields=[]
+)
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _MislabelledCounter:
+    """A continuation payload that claims a key other than the one it sits under."""
+
+    count: FloatND
+
+    @property
+    def artifact_key(self) -> ArtifactKey:
+        return _MISLABELLED
+
+
+def _mislabelled_value(
+    *, wealth: Float1D, count: FloatND
+) -> tuple[Float1D, _MislabelledCounter]:
+    return wealth + count, _MislabelledCounter(count=count + 1.0)
+
+
+class _MislabellingSolver(Solver):
+    """Publishes a continuation the payload itself does not claim to be."""
+
+    @property
+    def required_continuation_keys(self) -> frozenset[ArtifactKey]:
+        return frozenset({_COUNTER})
+
+    def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
+        program = CoreProgram(
+            name="main",
+            function=_mislabelled_value,
+            argument_builder=lambda build: {
+                "wealth": build.state_action_space.states["wealth"],
+                "count": build.next_regime_to_continuation["alive"].count,
+            },
+            requirements=CoreExecutionRequirements(),
+            output_roles=(
+                OutputRole.VALUE,
+                _MislabelledCounter(
+                    count=StateAxesLeading(state_names=(), shape=())  # ty: ignore[invalid-argument-type]
+                ),
+            ),
+            disposition=CoreExecutionDisposition.DENSE,
+            disposition_reason="one_row_per_state_node",
+        )
+        kernels = {
+            period: _GraphKernel(
+                programs=MappingProxyType({"main": program}), continuation_key=_COUNTER
+            )
+            for period in context.regimes_to_active_periods[context.regime_name]
+        }
+        return SolutionKernels(
+            period_kernels=MappingProxyType(kernels),
+            continuation_spec=ContinuationSpec(
+                template=_Counter(count=jnp.zeros(())), artifact_key=_COUNTER
+            ),
+            replay_route=DeclaredReplay.GRID_RECOMPUTATION,
+        )
+
+
+def test_a_continuation_published_under_a_key_it_does_not_claim_is_refused():
+    """A payload whose own key differs from its publication key names both keys."""
+    model = _two_regime_model(solver=_MislabellingSolver(), self_looping=True)
+    with pytest.raises(RuntimeError, match=re.escape(_MISLABELLED.type_id)) as excinfo:
+        model.solve(params={"discount_factor": 1.0}, log_level="off")
+    assert _COUNTER.type_id in str(excinfo.value)
+
+
+class _UndeclaredReplaySolver(WealthSolver):
+    """Publishes values but says nothing about how simulation reads its decision."""
+
+    def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
+        kernels = super().build_period_kernels(context=context)
+        return SolutionKernels(period_kernels=kernels.period_kernels)
+
+
+def test_an_external_solver_declaring_no_replay_route_is_refused_at_build():
+    """Silence about replay is a build error naming the regime and the solver."""
+    with pytest.raises(ModelInitializationError) as excinfo:
+        _two_regime_model(solver=_UndeclaredReplaySolver())
+    message = str(excinfo.value)
+    assert "'alive'" in message
+    assert "_UndeclaredReplaySolver" in message
+    assert "replay_route" in message
+
+
+def _die_at_the_end(age: ScalarFloat) -> ScalarInt:
+    """Stay alive until the last period, then die into the terminal regime."""
+    return jnp.where(age < _N_PERIODS - 2, RegimeId.alive, RegimeId.dead)
+
+
+def _choice_utility(
+    *, wealth: ContinuousState, consumption: ContinuousAction
+) -> FloatND:
+    """Strictly decreasing in consumption, so the grid argmax is its lowest node."""
+    return wealth - consumption
+
+
+_CONSUMPTION = LinSpacedGrid(start=0.0, stop=1.0, n_points=3)
+
+
+def _choice_model(*, solver: Solver) -> Model:
+    return Model(
+        regimes={
+            "alive": Regime(
+                transition=_die_at_the_end,
+                active=lambda age: age < _N_PERIODS - 1,
+                states={"wealth": _WEALTH},
+                actions={"consumption": _CONSUMPTION},
+                state_transitions={"wealth": next_wealth},
+                functions={"utility": _choice_utility},
+                solver=solver,
+            ),
+            "dead": Regime(
+                transition=None,
+                states={"wealth": _WEALTH},
+                functions={"utility": lambda wealth: 0.0 * wealth},
+            ),
+        },
+        ages=AgeGrid(start=0, stop=_N_PERIODS - 1, step="Y"),
+        regime_id_class=RegimeId,
+    )
+
+
+def test_grid_recomputation_replay_takes_the_argmax_over_the_declared_action_grid():
+    """A `GRID_RECOMPUTATION` solver's simulated action is the grid argmax."""
+    result = _choice_model(solver=WealthSolver()).simulate(
+        params={"discount_factor": 1.0},
+        initial_conditions={
+            "wealth": jnp.asarray([1.0, 3.0]),
+            "age": jnp.zeros(2),
+            "regime_id": jnp.asarray([RegimeId.alive, RegimeId.alive]),
+        },
+        log_level="off",
+    )
+    alive_rows = result.to_dataframe().query("regime_name == 'alive'")
+    assert len(alive_rows) == 2 * (_N_PERIODS - 1)
+    np.testing.assert_array_equal(
+        alive_rows["consumption"].to_numpy(), np.zeros(2 * (_N_PERIODS - 1))
+    )
+
+
+class _UnsupportedReplaySolver(WealthSolver):
+    """Declares that its solved decision cannot be reproduced in simulation."""
+
+    def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
+        kernels = super().build_period_kernels(context=context)
+        return SolutionKernels(
+            period_kernels=kernels.period_kernels,
+            replay_route=DeclaredReplay.UNSUPPORTED,
+        )
+
+
+def test_a_solver_declaring_unsupported_replay_solves_but_refuses_to_simulate():
+    """`UNSUPPORTED` keeps the solve and refuses simulation before any forward step."""
+    model = _choice_model(solver=_UnsupportedReplaySolver())
+    assert model._regimes["alive"].simulation.replay_route.replay_mode is (
+        ReplayMode.UNSUPPORTED
+    )
+    solution = model.solve(params={"discount_factor": 1.0}, log_level="off")
+    np.testing.assert_array_equal(
+        np.asarray(solution.values[0]["alive"]), np.asarray(_WEALTH.to_jax())
+    )
+    with pytest.raises(UnsupportedOperationError) as excinfo:
+        model.simulate(
+            params={"discount_factor": 1.0},
+            initial_conditions={
+                "wealth": jnp.asarray([1.0, 3.0]),
+                "age": jnp.zeros(2),
+                "regime_id": jnp.asarray([RegimeId.alive, RegimeId.alive]),
+            },
+            solution=solution,
+            log_level="off",
+        )
+    message = str(excinfo.value)
+    assert "'alive'" in message
+    assert "_UnsupportedReplaySolver" in message

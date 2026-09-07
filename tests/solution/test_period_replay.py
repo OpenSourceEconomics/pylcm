@@ -223,14 +223,14 @@ def test_replay_lowers_the_scope_the_solve_dispatched(
         and model._regimes["working_life"].simulation.egm_policy_read is not None
     )
 
-    observed: list[bool] = []
+    observed: list[tuple[bool, frozenset[object]]] = []
     real_select = period_replay.select_programs
 
     def record_select(**kwargs):
-        observed.append(kwargs["retain_replay"])
+        observed.append((kwargs["retain_replay"], kwargs["selected_artifact_keys"]))
         return real_select(**kwargs)
 
     monkeypatch.setattr(period_replay, "select_programs", record_select)
     replay_period(directory=tmp_path / "working_life@1")
 
-    assert observed == [regime_retains_replay]
+    assert observed == [(regime_retains_replay, frozenset())]
