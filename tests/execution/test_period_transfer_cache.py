@@ -20,6 +20,7 @@ from _lcm.execution.value_transfer import (
     ValueTransferKind,
     apply_value_transfer_plan,
 )
+from lcm.exceptions import ExecutionPlanningError
 
 
 def _shardings() -> tuple[jax.sharding.Sharding, jax.sharding.Sharding]:
@@ -445,3 +446,20 @@ def test_commit_consumer_returns_a_release_record_naming_the_released_key() -> N
     records = cache.commit_consumer(key=key)
 
     assert _released_artifacts(records=records) == (key,)
+
+
+def test_committing_more_consumers_than_the_period_declared_names_the_key() -> None:
+    """One commit past the declared count is a planning error naming the key."""
+    stored_sharding, source_sharding = _shardings()
+    stored = _stored_value(sharding=stored_sharding)
+    transfer = _copy_transfer(
+        reused=True, stored=stored, source_sharding=source_sharding
+    )
+    key = _key(transfer=transfer)
+    cache = PeriodTransferCache(
+        registry=BufferRegistry(), consumer_counts=MappingProxyType({key: 1})
+    )
+    cache.commit_consumer(key=key)
+
+    with pytest.raises(ExecutionPlanningError, match="declared consumer"):
+        cache.commit_consumer(key=key)

@@ -271,6 +271,9 @@ def _compile_cores_for_one_period(
     A capture pins one width per core, so a producer's record set holds a single
     candidate and its width-invariance check can only pass. It runs anyway, so
     the solve loop and the replay reach a graph's producers through one routine.
+
+    Replay never donates: it replays one captured period once from inputs it
+    owns.
     """
     period_kernel = regime.solution.period_kernels[period]
     context = _core_build_context_for_one_period(

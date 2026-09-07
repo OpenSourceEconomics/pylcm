@@ -305,3 +305,21 @@ def test_a_pinned_artifact_pins_its_whole_alias_group() -> None:
     ledger.commit_successful_dispatch(dispatch="a")
 
     assert not ledger.is_release_eligible(artifact="t0")
+
+
+def test_is_pinned_reads_the_declared_pin() -> None:
+    """A pinned artifact says so without exposing the pin set."""
+    ledger = PlannedInputLiveness(
+        dispatch_accesses={"a": ("x",)}, pinned_artifacts=("x",)
+    )
+
+    assert ledger.is_pinned(artifact="x")
+
+
+def test_is_pinned_is_false_for_a_planned_artifact_no_pin_names() -> None:
+    """An artifact every consumer declares is not pinned."""
+    ledger = PlannedInputLiveness(
+        dispatch_accesses={"a": ("x",)}, pinned_artifacts=("y",)
+    )
+
+    assert not ledger.is_pinned(artifact="x")

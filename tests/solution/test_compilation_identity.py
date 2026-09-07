@@ -291,3 +291,15 @@ def test_grid_search_publishes_no_solver_period_group_key() -> None:
     regime = _model()._regimes["working_life"]
 
     assert dict(regime.solution.solver_period_group_keys) == {}
+
+
+def test_lowering_key_separates_distinct_donation_sets() -> None:
+    """Donation enters the key: an executable that donates is not one that keeps."""
+    first = _lowering_key(program_identity=_IDENTITY, layout_key=("layout",))
+    second = _lowering_key(
+        program_identity=_IDENTITY,
+        layout_key=("layout",),
+        donated_arguments=("next_value",),
+    )
+
+    assert first != second

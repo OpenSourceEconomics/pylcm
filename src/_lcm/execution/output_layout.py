@@ -428,6 +428,8 @@ class PlannedCore:
     """Abstract template per internal input this core was lowered against."""
     transfer_cache: TransferCache | None = None
     """Per-period store shared transfers are served from, or `None` to copy."""
+    donated_arguments: tuple[str, ...] = ()
+    """Arguments the executable was lowered to donate, in declaration order."""
     name: str
     """Graph key of the program this core was compiled for."""
 

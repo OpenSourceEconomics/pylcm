@@ -620,3 +620,30 @@ def test_nodes_of_two_periods_are_refused() -> None:
             same_period_dependencies=MappingProxyType({}),
             device_sets=MappingProxyType({"a": frozenset({0}), "b": frozenset({1})}),
         )
+
+
+def test_a_queried_array_keeps_the_declaration_it_holds_alive() -> None:
+    """Asking about an array makes it an owner of every shard it declares."""
+    registry = BufferRegistry()
+    temporary = jnp.arange(4.0)
+    alias = jax.device_put(temporary, temporary.sharding)
+    registry.declare_not_produced(tree=(temporary,))
+    registry.is_not_produced(array=alias)
+
+    del temporary
+    gc.collect()
+
+    assert registry.is_not_produced(array=alias)
+
+
+def test_a_declaration_drops_the_shards_no_live_array_declares() -> None:
+    """Declaring prunes every dead entry, not only the one being queried."""
+    registry = BufferRegistry()
+    stale = jnp.arange(4.0)
+    registry.declare_not_produced(tree=(stale,))
+    stale.delete()
+    fresh = jnp.arange(5.0)
+
+    registry.declare_not_produced(tree=(fresh,))
+
+    assert frozenset(registry._unproduced_shards) == shard_identities(array=fresh)

@@ -72,9 +72,11 @@ def shares_a_buffer(*, first: jax.Array, second: jax.Array) -> bool:
 class BufferRegistry:
     """Record which artifact keys name which device buffer.
 
-    A buffer is registered under every key that reaches it; a release consults
-    the registry so a buffer two keys share is deleted only when both keys may
-    go. Forgetting a buffer drops every key on it.
+    A buffer is registered under every key that reaches it, shard by shard; a
+    release consults the registry so a buffer two keys share is deleted only
+    when both keys may go. Forgetting a buffer drops every key on every shard
+    of it, which is terminal: nothing names that buffer afterwards, so it is
+    never donated or released again.
 
     Physical release is only ever of a buffer a compiled executable produced.
     A solver may hand an array it was given straight back out — an eager
@@ -124,13 +126,11 @@ class BufferRegistry:
     into in place.
     """
 
-    __slots__ = ("_keys_by_buffer", "_unproduced_shards")
+    __slots__ = ("_keys_by_shard", "_unproduced_shards")
 
     def __init__(self) -> None:
         """Start with no registered buffer and no declared foreign buffer."""
-        self._keys_by_buffer: dict[
-            BufferIdentity, dict[Hashable, _DeclaringArrays]
-        ] = {}
+        self._keys_by_shard: dict[ShardIdentity, dict[Hashable, _DeclaringArrays]] = {}
         self._unproduced_shards: dict[ShardIdentity, _DeclaringArrays] = {}
 
     def declare_not_produced(self, *, tree: PyTree) -> None:
@@ -141,7 +141,12 @@ class BufferRegistry:
         payloads the solve result retains. Every shard of every leaf is marked,
         so an array holding any one of them is covered too, and each leaf is
         kept as the weak owner of the shards it declares.
+
+        Every declaration first drops the shards no live array declares any
+        more, so a solve that declares once per period accumulates no entry for
+        a buffer that is long gone.
         """
+        self._prune_dead_declarations()
         for leaf in jax.tree.leaves(tree):
             if isinstance(leaf, jax.Array) and not leaf.is_deleted():
                 for shard in shard_identities(array=leaf):
@@ -163,6 +168,7 @@ class BufferRegistry:
         may free while either the input that already held it or the output that
         handed it on is still alive.
         """
+        self._prune_dead_declarations()
         holders: dict[ShardIdentity, list[jax.Array]] = {}
         for leaf in jax.tree.leaves(inputs):
             if isinstance(leaf, jax.Array) and not leaf.is_deleted():
@@ -179,21 +185,24 @@ class BufferRegistry:
     @property
     def declared_shards(self) -> frozenset[ShardIdentity]:
         """Return every shard identity a live declaring array still declares."""
-        for shard in tuple(self._unproduced_shards):
-            if not _keep_live_declaring_arrays(
-                declaring=self._unproduced_shards[shard]
-            ):
-                del self._unproduced_shards[shard]
+        self._prune_dead_declarations()
         return frozenset(self._unproduced_shards)
 
     def is_not_produced(self, *, array: jax.Array) -> bool:
-        """Report whether any shard of this array is a buffer no dispatch produced."""
+        """Report whether any shard of this array is a buffer no dispatch produced.
+
+        A live declaration the array holds takes the array as one more of its
+        weak owners. The declaration is a fact about a buffer, so it must last
+        as long as any array that occupies it could reach a release — which is
+        what makes the rule the registry's rather than each caller's.
+        """
         answer = False
         for shard in shard_identities(array=array):
             declaring = self._unproduced_shards.get(shard)
             if declaring is None:
                 continue
             if _keep_live_declaring_arrays(declaring=declaring):
+                _add_declaring_array(declaring=declaring, array=array)
                 answer = True
             else:
                 del self._unproduced_shards[shard]
@@ -202,35 +211,59 @@ class BufferRegistry:
     def register(self, *, array: jax.Array, artifact: Hashable) -> None:
         """Record that `artifact` names the buffer `array` occupies.
 
+        Every shard the array holds records the key, because deleting the array
+        frees all of them: a key on one shard is a key on the whole buffer.
         `array` is kept weakly, as the array the key names the buffer of.
         """
-        keys = self._keys_by_buffer.setdefault(buffer_identity(array=array), {})
-        _add_declaring_array(declaring=keys.setdefault(artifact, []), array=array)
+        for shard in shard_identities(array=array):
+            keys = self._keys_by_shard.setdefault(shard, {})
+            _add_declaring_array(declaring=keys.setdefault(artifact, []), array=array)
 
     def artifacts_sharing(self, *, array: jax.Array) -> frozenset[Hashable]:
-        """Return every key whose registered array is alive on `array`'s buffer."""
-        identity = buffer_identity(array=array)
-        keys = self._keys_by_buffer.get(identity)
-        if keys is None:
-            return frozenset()
-        for artifact in tuple(keys):
-            if not _keep_live_declaring_arrays(declaring=keys[artifact]):
-                del keys[artifact]
-        if not keys:
-            del self._keys_by_buffer[identity]
-        return frozenset(keys)
+        """Return every key whose registered array is alive on `array`'s buffer.
+
+        Answered per shard, like every other question here: a `device_put` onto
+        a wider replicated sharding, and an executable that reuses a donated
+        input's buffer for one output shard, both leave two arrays whose
+        whole-array identities differ while one buffer is common to both.
+        Releasing either frees that buffer, so both keys are partners.
+        """
+        sharing: set[Hashable] = set()
+        for shard in shard_identities(array=array):
+            keys = self._keys_by_shard.get(shard)
+            if keys is None:
+                continue
+            for artifact in tuple(keys):
+                if _keep_live_declaring_arrays(declaring=keys[artifact]):
+                    sharing.add(artifact)
+                else:
+                    del keys[artifact]
+            if not keys:
+                del self._keys_by_shard[shard]
+        return frozenset(sharing)
 
     def forget(self, *, array: jax.Array) -> None:
-        """Drop every key on the buffer `array` occupies."""
+        """Drop every key on every shard the buffer `array` occupies."""
         self.forget_identity(identity=buffer_identity(array=array))
 
     def forget_identity(self, *, identity: BufferIdentity) -> None:
-        """Drop every key on the buffer with this identity.
+        """Drop every key on the shards of the buffer with this identity.
 
         The form for a buffer that is already deleted — a donated input after
         its dispatch — and so cannot report its own identity any more.
+        Forgetting is terminal for those keys: nothing names the buffer
+        afterwards, so it is never donated or released again.
         """
-        self._keys_by_buffer.pop(identity, None)
+        for shard in identity:
+            self._keys_by_shard.pop(shard, None)
+
+    def _prune_dead_declarations(self) -> None:
+        """Drop every declared shard no live, undeleted array declares any more."""
+        for shard in tuple(self._unproduced_shards):
+            if not _keep_live_declaring_arrays(
+                declaring=self._unproduced_shards[shard]
+            ):
+                del self._unproduced_shards[shard]
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -259,8 +292,10 @@ def release_closed_artifacts(
     Each artifact must be release eligible in the ledger — a remaining consumer
     is an `ExecutionPlanningError`, never a warning. A buffer is deleted only when
     every key the registry holds on it is eligible too, so a leaf that is also a
-    retained value survives. A buffer no dispatch produced is never deleted,
-    whatever the ledger says about the key that reached it. Nothing is deleted
+    retained value survives; keys that share a shard are one release, named
+    together on the record of the array that frees them. A buffer no dispatch
+    produced is never deleted, whatever the ledger says about the key that
+    reached it. Nothing is deleted
     before one `block_until_ready` over `pending_outputs`, the outputs of every
     dispatch of the period so far, so an asynchronous computation never reads a
     freed buffer. Every deleted key is logged at debug level with the artifact
@@ -268,6 +303,7 @@ def release_closed_artifacts(
     produced its buffer.
     """
     to_delete: dict[BufferIdentity, tuple[jax.Array, tuple[Hashable, ...]]] = {}
+    scheduled_shards: set[ShardIdentity] = set()
     for artifact in artifacts:
         if not ledger.is_release_eligible(artifact=artifact):
             msg = (
@@ -296,6 +332,13 @@ def release_closed_artifacts(
             for partner in partners
         ):
             continue
+        shards = shard_identities(array=array)
+        if shards & scheduled_shards:
+            # A partner scheduled above already frees these shards, and names
+            # this key among the ones it releases. Deleting the same buffer a
+            # second time would free memory the runtime has already reclaimed.
+            continue
+        scheduled_shards |= shards
         to_delete[buffer_identity(array=array)] = (
             array,
             tuple(sorted(partners, key=repr)),
@@ -535,7 +578,9 @@ class PeriodTransferCache:
     ) -> tuple[ReleaseRecord, ...]:
         """Commit one of `key`'s declared consuming dispatches.
 
-        A key this period declared no consumers for is a no-op. Once every
+        A key this period declared no consumers for is a no-op, while one
+        committed more often than the period declared consumers for it is an
+        `ExecutionPlanningError` naming that key. Once every
         declared consumer has committed, a genuinely registered copy is
         released through `release_closed_artifacts` — blocked on this
         period's pending outputs, refused if any shard is declared not
@@ -548,7 +593,14 @@ class PeriodTransferCache:
         index = self._next_dispatch_index[key]
         self._next_dispatch_index[key] = index + 1
         dispatch = (key, index)
-        newly_eligible = self._ledger.commit_successful_dispatch(dispatch=dispatch)
+        try:
+            newly_eligible = self._ledger.commit_successful_dispatch(dispatch=dispatch)
+        except KeyError as error:
+            msg = (
+                "A shared transfer copy was committed by more dispatches than the "
+                f"period's declared consumer count allows: {key!r}."
+            )
+            raise ExecutionPlanningError(msg) from error
         registered = newly_eligible & self._registered_keys
         if not registered:
             return ()

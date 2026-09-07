@@ -437,3 +437,35 @@ def test_a_replay_payload_sharing_a_continuation_leaf_keeps_its_values(
         np.stack([np.asarray(leaf) for leaf, _ in published]),
         np.stack([snapshot for _, snapshot in published]),
     )
+
+
+def _diagnostics_with_distinct_leaves() -> SolverDiagnostics:
+    """A diagnostic payload whose every field holds a buffer of its own."""
+    return SolverDiagnostics(
+        max_outer_interpolation_error=jnp.arange(1.0),
+        max_outer_bracket_width=jnp.arange(2.0),
+        outer_nodes_used=jnp.arange(3, dtype=jnp.int32),
+        outer_at_lower_bound=jnp.zeros((4,), dtype=jnp.bool_),
+        outer_at_upper_bound=jnp.zeros((5,), dtype=jnp.bool_),
+        keeper_adjuster_margin=jnp.arange(6.0),
+        best_second_best_margin=jnp.arange(7.0),
+        policy_fallback_mask=jnp.zeros((8,), dtype=jnp.bool_),
+        unresolved_mask=jnp.zeros((9,), dtype=jnp.bool_),
+        n_outer_all_invalid_cells=jnp.arange(10, dtype=jnp.int32),
+        adjustment_probability=jnp.arange(11.0),
+    )
+
+
+def test_every_diagnostics_field_is_declared_before_a_release_or_donation() -> None:
+    """No field of a retained diagnostic payload is left releasable."""
+    registry = BufferRegistry()
+    payload = _diagnostics_with_distinct_leaves()
+
+    registry.declare_not_produced(
+        tree=backward_induction._diagnostic_arrays(diagnostics=(payload,))
+    )
+
+    assert all(
+        registry.is_not_produced(array=getattr(payload, field.name))
+        for field in dataclasses.fields(payload)
+    )

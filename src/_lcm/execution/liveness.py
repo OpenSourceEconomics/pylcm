@@ -157,6 +157,11 @@ class PlannedInputLiveness[DispatchKey, ArtifactKey]:
         self._require_known(artifact=artifact)
         return artifact in self._retained_artifacts
 
+    def is_pinned(self, *, artifact: ArtifactKey) -> bool:
+        """Report whether consumers no declaration names keep the artifact."""
+        self._require_known(artifact=artifact)
+        return artifact in self._pinned_artifacts
+
     def alias_group(self, *, artifact: ArtifactKey) -> frozenset[ArtifactKey]:
         """Return every key that shares the artifact's buffer, itself included."""
         self._require_known(artifact=artifact)

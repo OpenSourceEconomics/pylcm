@@ -1,4 +1,5 @@
 import dataclasses
+import logging
 import subprocess
 import sys
 from pathlib import Path
@@ -17,9 +18,11 @@ from _lcm.execution.core_program import (
     core_program_graph,
     materialize_core_program,
 )
+from _lcm.execution.liveness import PlannedInputLiveness
 from _lcm.execution.scheduler import (
     BufferRegistry,
     PeriodTransferCache,
+    release_closed_artifacts,
     shares_a_buffer,
 )
 from _lcm.execution.value_transfer import (
@@ -1498,3 +1501,37 @@ def test_a_wider_replicated_output_of_a_declared_input_is_not_produced() -> None
     registry.declare_passed_through(inputs=stored, outputs=wider)
 
     assert registry.is_not_produced(array=wider)
+
+
+@_skip_pytest_parallel
+def test_two_keys_on_one_shared_shard_are_partners() -> None:
+    """A key on any shard of a buffer is a partner of every key on that shard."""
+    stored, wider = _single_device_value_and_wider_replicated_copy()
+    registry = BufferRegistry()
+    registry.register(array=stored, artifact="stored")
+    registry.register(array=wider, artifact="wider")
+
+    assert registry.artifacts_sharing(array=stored) == frozenset({"stored", "wider"})
+
+
+@_skip_pytest_parallel
+def test_a_shard_two_eligible_keys_share_is_released_once() -> None:
+    """Two keys on one shard name one release, not one release each."""
+    stored, wider = _single_device_value_and_wider_replicated_copy()
+    registry = BufferRegistry()
+    registry.register(array=stored, artifact="stored")
+    registry.register(array=wider, artifact="wider")
+    ledger = PlannedInputLiveness(dispatch_accesses={"d": ("stored", "wider")})
+    ledger.commit_successful_dispatch(dispatch="d")
+
+    records = release_closed_artifacts(
+        ledger=ledger,
+        registry=registry,
+        artifacts=("stored", "wider"),
+        arrays_by_artifact=MappingProxyType({"stored": stored, "wider": wider}),
+        pending_outputs=(),
+        closing_dispatch="d",
+        logger=logging.getLogger("lcm.tests.distributed"),
+    )
+
+    assert tuple(record.artifact for record in records) == ("stored", "wider")

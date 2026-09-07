@@ -36,6 +36,7 @@ from _lcm.execution.core_program import (
     resolve_core_program,
     select_programs,
 )
+from _lcm.execution.donation import ResolvedDonation, resolve_donations
 from _lcm.execution.internal_outputs import (
     ResolvedProducer,
     assert_width_invariant_internal_outputs,
@@ -53,9 +54,12 @@ from _lcm.execution.output_layout import (
     resolve_output_layout,
 )
 from _lcm.execution.scheduler import (
+    BufferIdentity,
     BufferRegistry,
+    DispatchUnit,
     PeriodTransferCache,
     ScheduledNode,
+    buffer_identity,
     plan_period_waves,
     release_closed_artifacts,
 )
@@ -268,6 +272,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         enable_jit=enable_jit,
         execution_config=execution_config,
         retain_replay=retain_replay,
+        retain_all_artifacts=retain_all_artifacts,
         persistable_artifact_refs=persistable_artifact_refs,
         max_compilation_workers=max_compilation_workers,
         logger=logger,
@@ -280,12 +285,10 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         )
         if metadata.scope is ProgramScope.REPLAY
     }
-    input_liveness = _build_planned_input_liveness(
-        regimes=regimes,
-        program_metadata=compiled_programs.metadata,
-        retain_all_artifacts=retain_all_artifacts,
-        persistable_artifact_refs=persistable_artifact_refs,
-    )
+    # The executables were lowered against this ledger — a donation set is part
+    # of a compilation key — so the loop commits to the one they were keyed by
+    # rather than building a second.
+    input_liveness = compiled_programs.input_liveness
     buffer_registry = BufferRegistry()
     buffer_registry.declare_not_produced(
         tree=(
@@ -491,6 +494,17 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                     regime_name=regime_name,
                     period=period,
                 )
+                donated_inputs = _donated_input_arrays(
+                    donations=compiled_programs.donations,
+                    unit=unit,
+                    inputs=SolveInputMappings(
+                        next_regime_to_V_arr=next_regime_to_V_arr,
+                        next_regime_to_continuation=next_regime_to_continuation,
+                        next_edge_to_V_arr=next_edge_to_V_arr,
+                    ),
+                    templates=input_templates,
+                    registry=buffer_registry,
+                )
                 output = _run_period_kernel(
                     regime=regime,
                     regime_name=regime_name,
@@ -624,6 +638,20 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                 period_pending_outputs.append(V_arr)
                 if result.continuation is not None:
                     period_pending_outputs.extend(jax.tree.leaves(result.continuation))
+                dispatch_outputs = (
+                    V_arr,
+                    result.continuation,
+                    result.continuation_artifacts,
+                    result.replay_artifacts,
+                    result.auxiliary_artifacts,
+                    result.simulation_policy,
+                    result.dissolution,
+                    _diagnostic_arrays(
+                        diagnostics=()
+                        if result.diagnostics is None
+                        else (result.diagnostics,)
+                    ),
+                )
                 # Whatever this dispatch handed straight back out, it did not
                 # produce. The inputs are read the way the dispatch reads them —
                 # through the same period-axis overlay — so an age-specialized
@@ -641,20 +669,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                         next_edge_to_V_arr,
                         period_solution,
                     ),
-                    outputs=(
-                        V_arr,
-                        result.continuation,
-                        result.continuation_artifacts,
-                        result.replay_artifacts,
-                        result.auxiliary_artifacts,
-                        result.simulation_policy,
-                        result.dissolution,
-                        _diagnostic_arrays(
-                            diagnostics=()
-                            if result.diagnostics is None
-                            else (result.diagnostics,)
-                        ),
-                    ),
+                    outputs=dispatch_outputs,
                 )
                 # The result keeps these payloads, and what would make them
                 # independent runs only once the period is finished — after the
@@ -673,6 +688,26 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                             diagnostics=tuple(period_solver_diagnostics.values())
                         ),
                     )
+                )
+                (
+                    next_regime_to_V_arr,
+                    next_regime_to_continuation,
+                    next_edge_to_V_arr,
+                ) = _retire_donated_inputs(
+                    donated_inputs=donated_inputs,
+                    dispatch=(period, regime_name),
+                    inputs=SolveInputMappings(
+                        next_regime_to_V_arr=next_regime_to_V_arr,
+                        next_regime_to_continuation=next_regime_to_continuation,
+                        next_edge_to_V_arr=next_edge_to_V_arr,
+                    ),
+                    templates=input_templates,
+                    pending_outputs=(
+                        tuple(period_pending_outputs),
+                        dispatch_outputs,
+                    ),
+                    registry=buffer_registry,
+                    logger=logger,
                 )
             for unit in wave:
                 for key in regime_shared_transfer_keys.get(unit.regime, frozenset()):
@@ -1771,6 +1806,12 @@ class _CompiledPrograms:
     executables: dict[tuple[RegimeName, int], MappingProxyType[str, PlannedCore]]
     metadata: MappingProxyType[_CoreTriple, _ProgramExecutionMetadata]
 
+    input_liveness: PlannedInputLiveness[_InputDispatch, ValueArtifactAddress]
+    """The ledger the executables were lowered against; the loop commits to it."""
+
+    donations: MappingProxyType[_CoreTriple, tuple[ResolvedDonation, ...]]
+    """Per selected program, the donation decisions its executable carries."""
+
 
 def _build_planned_input_liveness(
     *,
@@ -1852,8 +1893,9 @@ def _release_closed_period_inputs(
 
     Candidates are the keys the period's commits closed, each with the dispatch
     that closed it; they are consumed here, so a key is released once. A key the
-    mappings do not address (its buffer left them at an earlier roll) needs no
-    physical action and is dropped.
+    mappings do not address (its buffer left them at an earlier roll), and one
+    whose array is the solve-lifetime template leaf, need no physical action and
+    are dropped.
 
     With `release_enabled` false nothing is freed and the mappings come back
     unchanged: an eager dispatch is an ordinary Python call whose outputs may be
@@ -1876,6 +1918,13 @@ def _release_closed_period_inputs(
         if array is None:
             del candidates[artifact]
             continue
+        if array is locate_artifact(inputs=templates, artifact=artifact):
+            # The mappings hold the solve-lifetime template here: either the
+            # last period read it, or a donated key closed at a later commit
+            # and its leaf has already been substituted. Neither is a buffer
+            # this solve may free.
+            del candidates[artifact]
+            continue
         located[artifact] = array
     by_dispatch: dict[_InputDispatch, list[ValueArtifactAddress]] = {}
     for artifact, dispatch in candidates.items():
@@ -1896,6 +1945,168 @@ def _release_closed_period_inputs(
                     inputs=inputs, templates=templates, artifact=released_artifact
                 )
     candidates.clear()
+    return (
+        inputs.next_regime_to_V_arr,
+        inputs.next_regime_to_continuation,
+        inputs.next_edge_to_V_arr,
+    )
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _DonatedInput:
+    """One array a dispatch donates, with the buffer identity it had beforehand.
+
+    The identity is taken before the dispatch because a donated array cannot
+    report it afterwards; the registry is told to forget the buffer by it.
+    """
+
+    artifact: ValueArtifactAddress
+    """The artifact key the donated array carries."""
+
+    array: jax.Array
+    """The array handed to the executable."""
+
+    identity: BufferIdentity
+    """The buffer identity of `array` before the dispatch."""
+
+
+def _donated_input_arrays(
+    *,
+    donations: Mapping[_CoreTriple, tuple[ResolvedDonation, ...]],
+    unit: DispatchUnit,
+    inputs: SolveInputMappings,
+    templates: SolveInputMappings,
+    registry: BufferRegistry,
+) -> tuple[_DonatedInput, ...]:
+    """Locate every array this unit's executables donate and check its aliases.
+
+    The executable was lowered to donate the argument, so a buffer that another
+    key still names, or one no dispatch produced, would be freed under its
+    owner's feet; the plan is refused here rather than executed. The template
+    leaf is never a donated input, and no two programs of one unit may donate
+    one buffer: the second would receive what the first handed away.
+    """
+    located: list[_DonatedInput] = []
+    seen: set[ValueArtifactAddress] = set()
+    for program in unit.programs:
+        for donation in donations.get((unit.regime, unit.period, program), ()):
+            if not donation.donated:
+                continue
+            for artifact in donation.artifacts:
+                if artifact in seen:
+                    msg = (
+                        f"Dispatch {(unit.period, unit.regime)!r} lowered two "
+                        f"programs to donate {artifact!r}; one buffer is handed "
+                        "over once."
+                    )
+                    raise ExecutionPlanningError(msg)
+                seen.add(artifact)
+                located.append(
+                    _locate_donated_input(
+                        artifact=artifact,
+                        argument=donation.argument,
+                        unit=unit,
+                        inputs=inputs,
+                        templates=templates,
+                        registry=registry,
+                    )
+                )
+    return tuple(located)
+
+
+def _locate_donated_input(
+    *,
+    artifact: ValueArtifactAddress,
+    argument: str,
+    unit: DispatchUnit,
+    inputs: SolveInputMappings,
+    templates: SolveInputMappings,
+    registry: BufferRegistry,
+) -> _DonatedInput:
+    """Find one donated array and refuse a buffer the solve does not own."""
+    array = locate_artifact(inputs=inputs, artifact=artifact)
+    if array is None or array is locate_artifact(inputs=templates, artifact=artifact):
+        msg = (
+            f"Dispatch {(unit.period, unit.regime)!r} was lowered to donate "
+            f"{argument!r}, but {artifact!r} is not a solve input of its own."
+        )
+        raise ExecutionPlanningError(msg)
+    if registry.is_not_produced(array=array):
+        msg = (
+            f"Dispatch {(unit.period, unit.regime)!r} would donate {artifact!r}, "
+            "whose buffer no compiled executable produced."
+        )
+        raise ExecutionPlanningError(msg)
+    partners = registry.artifacts_sharing(array=array) - {artifact}
+    if partners:
+        msg = (
+            f"Dispatch {(unit.period, unit.regime)!r} would donate {artifact!r}, "
+            f"whose buffer {sorted(partners, key=repr)!r} still name."
+        )
+        raise ExecutionPlanningError(msg)
+    return _DonatedInput(
+        artifact=artifact, array=array, identity=buffer_identity(array=array)
+    )
+
+
+def _retire_donated_inputs(
+    *,
+    donated_inputs: tuple[_DonatedInput, ...],
+    dispatch: _InputDispatch,
+    inputs: SolveInputMappings,
+    templates: SolveInputMappings,
+    pending_outputs: Sequence[object],
+    registry: BufferRegistry,
+    logger: logging.Logger,
+) -> tuple[
+    MappingProxyType[RegimeName, FloatND],
+    MappingProxyType[RegimeName, ContinuationPayload],
+    MappingProxyType[_EdgeKey, FloatND],
+]:
+    """Forget every donated buffer and put its template leaf in the mappings.
+
+    Nothing is decided before one `block_until_ready` over the outputs of every
+    dispatch of the period so far, this one included: a donated buffer may
+    reappear as an output shard, and a backend that accepted the annotation
+    without reusing the buffer leaves an array a computation still in flight
+    reads. Such an array is deleted here, since the ledger has no consumer left
+    for it, and the fallback is logged. The registry forgets the buffer by the
+    identity recorded before the dispatch, which is the only form a deleted
+    array still admits.
+    """
+    if not donated_inputs:
+        return (
+            inputs.next_regime_to_V_arr,
+            inputs.next_regime_to_continuation,
+            inputs.next_edge_to_V_arr,
+        )
+    jax.block_until_ready(tuple(pending_outputs))
+    for donated in donated_inputs:
+        registry.forget_identity(identity=donated.identity)
+        if not donated.array.is_deleted():
+            donated.array.delete()
+            logger.debug(
+                "donation of %r by dispatch %r fell back to release",
+                donated.artifact,
+                dispatch,
+                extra={
+                    "artifact_key": donated.artifact,
+                    "donating_dispatch": dispatch,
+                },
+            )
+        else:
+            logger.debug(
+                "donated %r of dispatch %r",
+                donated.artifact,
+                dispatch,
+                extra={
+                    "artifact_key": donated.artifact,
+                    "donating_dispatch": dispatch,
+                },
+            )
+        inputs = substitute_artifact(
+            inputs=inputs, templates=templates, artifact=donated.artifact
+        )
     return (
         inputs.next_regime_to_V_arr,
         inputs.next_regime_to_continuation,
@@ -2243,6 +2454,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
     enable_jit: bool,
     execution_config: ExecutionConfig = ExecutionConfig(),  # noqa: B008
     retain_replay: bool,
+    retain_all_artifacts: bool,
     persistable_artifact_refs: frozenset[ArtifactRef],
     max_compilation_workers: int | None,
     logger: logging.Logger,
@@ -2279,6 +2491,8 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         retain_replay: Whether the solve retains replay artifacts; with the
             regime's declared replay route it selects which scoped programs of
             each kernel's graph are dispatched.
+        retain_all_artifacts: Whether the result keeps every persistable
+            continuation payload, which the ledger retains and never donates.
         persistable_artifact_refs: Exact model-authoritative addresses whose
             replay programs are selected for persistence-oriented retention.
         max_compilation_workers: Maximum threads for parallel compilation.
@@ -2286,9 +2500,11 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         logger: Logger for compilation progress.
 
     Returns:
-        Executable mappings by regime-period plus the resolved metadata used by
-        input liveness. Eager entries call the resolved functions directly; AOT
-        entries call compiled executables carrying the same plans.
+        Executable mappings by regime-period, the resolved metadata used by
+        input liveness, the ledger the executables were lowered against, and the
+        donation decisions each selected executable carries. Eager entries call
+        the resolved functions directly; AOT entries call compiled executables
+        carrying the same plans.
 
     """
     # Collect every kernel's native graph, narrowed to the retention's scope.
@@ -2313,6 +2529,8 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         lowering_keys,
         resolved_programs,
         internal_templates,
+        input_liveness,
+        donations,
     ) = _resolve_output_layouts_and_lowering_keys(
         all_programs=all_programs,
         regimes=regimes,
@@ -2323,6 +2541,9 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         next_regime_to_continuation=next_regime_to_continuation,
         next_edge_to_V_arr=next_edge_to_V_arr,
         budget_bytes=execution_config.device_memory_bytes,
+        enable_jit=enable_jit,
+        retain_all_artifacts=retain_all_artifacts,
+        persistable_artifact_refs=persistable_artifact_refs,
     )
 
     _fail_if_one_key_covers_two_callables(
@@ -2370,6 +2591,8 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
         return _CompiledPrograms(
             executables=_group_cores_by_regime_period(eager),
             metadata=_execution_metadata(programs=selected_programs),
+            input_liveness=input_liveness,
+            donations=MappingProxyType(dict.fromkeys(selected_programs, ())),
         )
 
     # Candidates are ranked widest-first within each triple. Lowering proceeds in
@@ -2415,6 +2638,7 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
             resolved_programs=resolved_programs,
             all_layouts=all_layouts,
             internal_templates=internal_templates,
+            donations=donations,
             ages=ages,
             n_triples_per_lowering=_count_triples_per_lowering_key(
                 lowering_keys=wave_lowering_keys
@@ -2497,12 +2721,24 @@ def _compile_all_functions(  # noqa: C901, PLR0912, PLR0915
             internal_input_templates=internal_templates[
                 (triple, _width_key(widths=plan.widths))
             ],
+            donated_arguments=_donated_arguments(
+                donations=donations[(triple, _width_key(widths=plan.widths))]
+            ),
             name=triple[2],
         )
 
     return _CompiledPrograms(
         executables=_group_cores_by_regime_period(selected_cores),
         metadata=_execution_metadata(programs=selected_programs),
+        input_liveness=input_liveness,
+        donations=MappingProxyType(
+            {
+                triple: donations[
+                    (triple, _width_key(widths=selected_cores[triple].tile_widths))
+                ]
+                for triple in selected_cores
+            }
+        ),
     )
 
 
@@ -2544,6 +2780,7 @@ def _lower_and_compile_wave(
     resolved_programs: Mapping[_CoreCandidate, ResolvedCoreProgram],
     all_layouts: Mapping[_CoreTriple, ResolvedOutputLayout],
     internal_templates: Mapping[_CoreCandidate, Mapping[str, object]],
+    donations: Mapping[_CoreCandidate, tuple[ResolvedDonation, ...]],
     ages: AgeGrid,
     n_triples_per_lowering: Mapping[Hashable, int],
     log_kernel_memory: bool,
@@ -2579,10 +2816,12 @@ def _lower_and_compile_wave(
         logger.info("  lowering ...")
         start = time.monotonic()
         layout = all_layouts[triple]
+        donated = _donated_arguments(donations=donations[candidate])
         jitted = jax.jit(
             resolved.function,
             static_argnames=tuple(static_kwargs),
             out_shardings=layout.out_shardings,
+            donate_argnames=donated or None,
         )
         low = jitted.lower(
             **resolved.arguments, **internal_templates[candidate], **static_kwargs
@@ -2730,11 +2969,16 @@ def _resolve_output_layouts_and_lowering_keys(
     next_regime_to_continuation: MappingProxyType[RegimeName, ContinuationPayload],
     next_edge_to_V_arr: MappingProxyType[_EdgeKey, FloatND],
     budget_bytes: int | None,
+    enable_jit: bool,
+    retain_all_artifacts: bool,
+    persistable_artifact_refs: frozenset[ArtifactRef],
 ) -> tuple[
     dict[_CoreTriple, ResolvedOutputLayout],
     dict[_CoreCandidate, Hashable],
     dict[_CoreCandidate, ResolvedCoreProgram],
     dict[_CoreCandidate, Mapping[str, object]],
+    PlannedInputLiveness[_InputDispatch, ValueArtifactAddress],
+    dict[_CoreCandidate, tuple[ResolvedDonation, ...]],
 ]:
     """Materialize once, then resolve every width candidate before global dedup.
 
@@ -2756,9 +3000,13 @@ def _resolve_output_layouts_and_lowering_keys(
     shared by two source cores is only visible across the whole set; the keys are
     computed afterwards, over the marked programs, and the mark is outside every
     specialization key, so it moves none of them.
+
+    The ledger is built from one representative per triple once every candidate
+    is resolved, the donation set of every candidate is decided against it, and
+    only then are the keys computed, so a key names everything the executable is
+    lowered with.
     """
     layouts: dict[_CoreTriple, ResolvedOutputLayout] = {}
-    lowering_keys: dict[_CoreCandidate, Hashable] = {}
     resolved_programs: dict[_CoreCandidate, ResolvedCoreProgram] = {}
     internal_templates: dict[_CoreCandidate, Mapping[str, object]] = {}
     # A producer's records are kept only while its own graph is being resolved,
@@ -2837,10 +3085,65 @@ def _resolve_output_layouts_and_lowering_keys(
             producers[core_key] = MappingProxyType(records)
     marked = _mark_reused_transfers(resolved_programs=resolved_programs)
     resolved_programs.update(marked)
+    # The first candidate of a triple is its representative: the width frontier
+    # is listed widest first, and neither the declared reads nor the transfer
+    # plan the ledger consults depends on the width.
+    representatives: dict[_CoreTriple, ResolvedCoreProgram] = {}
+    for candidate, resolved in resolved_programs.items():
+        representatives.setdefault(candidate[0], resolved)
+    input_liveness = _build_planned_input_liveness(
+        regimes=regimes,
+        program_metadata=_execution_metadata(programs=representatives),
+        retain_all_artifacts=retain_all_artifacts,
+        persistable_artifact_refs=persistable_artifact_refs,
+    )
+    n_periods = _model_n_periods(regimes=regimes)
+    donations = {
+        candidate: (
+            resolve_donations(
+                program=resolved,
+                dispatch=(candidate[0][1], candidate[0][0]),
+                ledger=input_liveness,
+                n_periods=n_periods,
+            )
+            if enable_jit
+            else ()
+        )
+        for candidate, resolved in resolved_programs.items()
+    }
+    lowering_keys = _lowering_keys(
+        resolved_programs=resolved_programs,
+        internal_templates=internal_templates,
+        layouts=layouts,
+        donations=donations,
+        regimes=regimes,
+        model_fingerprint=model_fingerprint,
+    )
+    return (
+        layouts,
+        lowering_keys,
+        resolved_programs,
+        internal_templates,
+        input_liveness,
+        donations,
+    )
+
+
+def _lowering_keys(
+    *,
+    resolved_programs: Mapping[_CoreCandidate, ResolvedCoreProgram],
+    internal_templates: Mapping[_CoreCandidate, Mapping[str, object]],
+    layouts: Mapping[_CoreTriple, ResolvedOutputLayout],
+    donations: Mapping[_CoreCandidate, tuple[ResolvedDonation, ...]],
+    regimes: MappingProxyType[RegimeName, Regime],
+    model_fingerprint: str,
+) -> dict[_CoreCandidate, Hashable]:
+    """Compute every candidate's lowering key, donation set included."""
+    keys: dict[_CoreCandidate, Hashable] = {}
     for candidate, resolved in resolved_programs.items():
         regime_name, period, core_key = candidate[0]
         regime = regimes[regime_name]
-        lowering_keys[candidate] = _lowering_key(
+        keys[candidate] = _lowering_key(
             program_identity=_program_identity(
                 model_fingerprint=model_fingerprint,
                 regime_name=regime_name,
@@ -2852,8 +3155,14 @@ def _resolve_output_layouts_and_lowering_keys(
             arguments={**resolved.arguments, **internal_templates[candidate]},
             specialization_key=resolved.specialization_key,
             output_roles=resolved.output_roles,
+            donated_arguments=_donated_arguments(donations=donations[candidate]),
         )
-    return layouts, lowering_keys, resolved_programs, internal_templates
+    return keys
+
+
+def _donated_arguments(*, donations: tuple[ResolvedDonation, ...]) -> tuple[str, ...]:
+    """Return the argument names one candidate's executable donates."""
+    return tuple(donation.argument for donation in donations if donation.donated)
 
 
 def _mark_reused_transfers(
@@ -3119,14 +3428,16 @@ def _lowering_key(
     arguments: Mapping[str, object] | None = None,
     specialization_key: Hashable | None = None,
     output_roles: object | None = None,
+    donated_arguments: tuple[str, ...] = (),
 ) -> Hashable:
-    """Identify one program, its abstract input tree, specialization, and layout."""
+    """Identify one program's input tree, specialization, layout, and donations."""
     return (
         program_identity,
         (None if arguments is None else _abstract_arguments_key(arguments=arguments)),
         specialization_key,
         _output_roles_key(output_roles=output_roles),
         layout_key,
+        donated_arguments,
     )
 
 
@@ -3261,6 +3572,7 @@ def _attach_resolved_output_layout(
     tile_widths: Mapping[str, int],
     input_transfer_plan: tuple[ResolvedValueTransfer, ...] = (),
     internal_input_templates: Mapping[str, object] = MappingProxyType({}),
+    donated_arguments: tuple[str, ...] = (),
     name: str,
 ) -> PlannedCore:
     """Carry one node's resolved output and input plans to runtime dispatch."""
@@ -3270,6 +3582,7 @@ def _attach_resolved_output_layout(
         tile_widths=tile_widths,
         input_transfer_plan=input_transfer_plan,
         internal_input_templates=internal_input_templates,
+        donated_arguments=donated_arguments,
         name=name,
     )
 
