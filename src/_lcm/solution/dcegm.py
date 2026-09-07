@@ -182,10 +182,15 @@ class MSSEnvelope:
       format cannot separate is still settled, and a comparison the arithmetic
       cannot decide publishes `NaN` rather than a guess. Requires the installed
       exact-affine payload for the active backend.
-    - `"ordinary"` compares two rounded readings. Candidates that fall in one
-      rounding bin read level and are separated by the declared tie order
-      instead. It reaches no native kernel, so it is the route available when
-      that payload is absent, under its documented approximation contract.
+    - `"ordinary"` compares two readings formed in the working format. A
+      reading is a slope and then an affine step, so it carries no bound in
+      representable steps: cancellation or a large common level can reverse an
+      ordering the correctly rounded values would separate, and candidates
+      whose readings coincide are separated by the declared tie order. It
+      reaches no native kernel, so it is the route available when that payload
+      is absent; its values, owners and crossings are the caller's to validate
+      for the intended model at every precision, backend and transformation in
+      use.
     """
 
 

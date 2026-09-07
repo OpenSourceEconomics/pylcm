@@ -53,13 +53,19 @@ settled by a rounded comparison:
   when a nonrepresentable root hands over at an existing query node.
 
 The `"ordinary"` arithmetic keeps every geometric rule above — the same pieces
-are admitted, the same order separates links certified level, the same interval
-is searched — and settles each comparison on two rounded readings instead of on
-the stored operands. Candidates whose values fall in one rounding bin read level
-there and are separated by the tie order rather than by value, and the handover
-abscissa is the state the working format can express rather than a certified
-upper bound. It reaches no native kernel, so it is the route available where the
-exact-affine payload is absent.
+are admitted, the same order separates links that read level, the same interval
+is searched — and settles each comparison on two readings formed in the working
+format instead of on the stored operands. Each reading is a slope and then an
+affine step, two rounded operations rather than one correctly rounded value, so
+it carries no bound in units of the working format's spacing: cancellation
+between a chord's endpoints, or a large common level under both chords, can move
+a reading by many representable steps and reverse an ordering the correctly
+rounded values would separate. The tie order therefore acts on computed
+readings, the handover abscissa is the state the working format can express
+rather than a certified upper bound, and the accuracy of a published value,
+owner or crossing is the caller's to validate for the intended model at every
+precision, backend and transformation in use. It reaches no native kernel, so it
+is the route available where the exact-affine payload is absent.
 
 A crossing abscissa is inserted twice — same abscissa, left- and
 right-extrapolated policy — so the refined arrays stay weakly ascending and the
@@ -146,9 +152,14 @@ def refine_envelope(
               ordering the working format cannot separate is still settled and a
               comparison the arithmetic cannot decide publishes NaN. It needs the
               installed exact-affine payload for the active backend.
-            - `"ordinary"` compares two rounded readings, so candidates falling in
-              one rounding bin read level and are separated by the declared tie
-              order instead. It reaches no native kernel.
+            - `"ordinary"` compares two readings formed in the working format.
+              A reading is a slope and then an affine step, so it carries no
+              bound in representable steps: cancellation or a large common level
+              can reverse an ordering the correctly rounded values would
+              separate, and links whose readings coincide are separated by the
+              declared tie order. It reaches no native kernel; its values,
+              owners and crossings are the caller's to validate for the
+              intended model.
 
     Returns:
         Tuple of refined endogenous grid, refined policy, refined value (each
@@ -489,6 +500,12 @@ def _ordinary_line_value(
 ) -> FloatND:
     """Read the affine line through two endpoints in the working format.
 
+    The reading is a rounded slope followed by a rounded affine step, not the
+    correctly rounded value of the chord: the slope's rounding error is scaled
+    by the query's distance from `x0`, so a chord whose endpoint values nearly
+    cancel, or one sitting on a large common level, can read many representable
+    steps away from its exact value.
+
     A stored point of zero width has no slope; its own value is its reading
     everywhere it is consulted.
     """
@@ -514,9 +531,11 @@ def _margin_sign(
 
     The certified arithmetic settles the sign on the stored operands, so a
     difference below the working format's resolution is still ordered. The
-    ordinary one compares two rounded readings, so such a difference reads level
-    and the declared tie order decides it instead. Both refuse a non-finite
-    operand or a non-positive width rather than inventing an order.
+    ordinary one compares two working-format readings, each carrying its own
+    rounding, so a difference the readings do not separate reads level and the
+    declared tie order decides it, and a difference the readings misorder is
+    settled the way the readings say. Both refuse a non-finite operand or a
+    non-positive width rather than inventing an order.
     """
     operands = (a_x0, a_x1, a_v0, a_v1, b_x0, b_x1, b_v0, b_v1, x_query)
     if arithmetic == "certified":
@@ -620,14 +639,16 @@ def _ordinary_owner(
     query: FloatND,
     stable_index: IntND,
 ) -> tuple[Int1D, BoolND]:
-    """Order admitted links by rounded value, then the declared tie chain.
+    """Order admitted links by working-format reading, then the declared tie chain.
 
     The chain is the certified one — greatest value, then reaching strictly right
     of the query, then steeper, then the earliest stored link — applied to
-    readings rather than to the stored operands. Only the first key changes: two
-    links whose values fall in one rounding bin are level here and are separated
-    by the remaining keys, where the certified order would have separated them by
-    value.
+    readings rather than to the stored operands. Only the first key changes, in
+    two ways: links whose readings coincide are level here and are separated by
+    the remaining keys, where the certified order would have separated them by
+    value; and links whose readings misorder their exact values are ranked as the
+    readings say. A reading's error is not bounded in representable steps, so the
+    second case is not confined to values one rounding apart.
     """
     value = _ordinary_line_value(
         x0=links.lower,

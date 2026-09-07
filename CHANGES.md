@@ -15,11 +15,14 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   ordering the working format cannot separate is still settled and a comparison it cannot
   decide publishes `NaN`; it needs the installed exact-affine payload for the active
   backend, and a regime selecting it is refused at model construction when that payload
-  is absent. The ordinary one compares two rounded readings, so candidates falling in one
-  rounding bin read level and are separated by the declared tie order rather than by
-  value. It reaches no native kernel, so it is the route available where that payload is
-  absent, and it trades the exactness of a decision the working format cannot represent
-  for warm cost.
+  is absent. The ordinary one compares two readings formed in the working format, each a
+  slope and then an affine step rather than one correctly rounded value, so a reading
+  carries no bound in representable steps: cancellation or a large common level can
+  reverse an ordering the correctly rounded values would separate, and candidates whose
+  readings coincide are separated by the declared tie order rather than by value. It
+  reaches no native kernel, so it is the route available where that payload is absent;
+  it trades certified decisions for warm cost, and its values, owners and crossings are
+  the caller's to validate for the intended model.
 - Which link owns a query is certified rather than read off a rounded comparison:
   every link bracketing that query enters one exact reduction through the integer
   comparator the other envelope paths already use. Links certified level with one
@@ -36,11 +39,12 @@ chronological order. We follow [semantic versioning](https://semver.org/).
   sit near the top or bottom of the working format keeps the owner it should have:
   the reading of the selected owner is range-safe, so an intermediate product that
   leaves the representable range no longer removes a finite winner from the contest.
-- A link's value at a query is its own chord's value: each endpoint is weighed by
-  its distance to the other, with the products carried at twice the working
-  precision. The reading is the stored value at either endpoint exactly and
-  elsewhere no longer carries the cancellation of a line extrapolated from one far
-  anchor. The published value and policy at a node now always come from one owner.
+- A link's value at a query is its own chord's value: the certified reader forms the
+  exact rational through the two stored endpoints and rounds it once to the working
+  format, without weighted floating products. The reading is the stored value at
+  either endpoint exactly and elsewhere does not carry the cancellation of a line
+  extrapolated from one far anchor. The published value and policy at a node always
+  come from one owner.
 - Ownership, support, orientation and node identity are decided from each link's original
   stored coordinates. A link stored as a single point keeps its own abscissa as its
   support instead of acquiring a readable width to the right, so a point and a segment
