@@ -73,10 +73,12 @@ which node owns a query, and where two branches hand over:
   publishes `NaN`. Like `ExactEnvelope`, it needs the installed exact-affine payload for
   the active backend, and a regime selecting it is refused during `Model(...)` when that
   payload is absent rather than falling back.
-- `"ordinary"` compares two rounded readings, so candidates falling in one rounding bin
-  read level and are separated by the declared tie order instead — greatest value, then
-  reaching strictly right of the query, then steeper, then the earliest stored link. It
-  reaches no native kernel, so it is the route available where that payload is absent.
+- `"ordinary"` compares in the working floating format, so candidates falling in one
+  rounding bin read level and are separated by the declared tie order instead — greatest
+  value, then reaching strictly right of the query, then steeper, then the earliest
+  stored link. It reaches no native kernel, so it is the route available where that
+  payload is absent. Select it only when working-format ownership is acceptable under
+  model-specific crossing checks; it requires model-specific validation near crossings.
 
 Switch backends only with model-specific validation:
 
