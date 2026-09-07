@@ -28,10 +28,10 @@ def _params() -> dict[str, float]:
     return {"discount_factor": 0.95, "delta_f": 0.5, "delta_m": 0.2}
 
 
-def test_every_reference_is_dispatched_before_the_regime_that_reads_it(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Within a period, a same-period reference precedes its reader."""
+def _record_dispatch_order(
+    *, monkeypatch: pytest.MonkeyPatch
+) -> tuple[list[tuple[int, str]], Model]:
+    """Solve `_model()` while recording each kernel dispatch's (period, regime)."""
     order: list[tuple[int, str]] = []
     real = backward_induction._run_period_kernel
 
@@ -42,13 +42,48 @@ def test_every_reference_is_dispatched_before_the_regime_that_reads_it(
     monkeypatch.setattr(backward_induction, "_run_period_kernel", record)
     model = _model()
     model.solve(params=_params(), log_level="off")
+    return order, model
+
+
+def _same_period_reference_pairs(
+    *, order: list[tuple[int, str]], model: Model
+) -> list[tuple[int, str, str]]:
+    """Return every (period, reader, reference) pair dispatched within `order`."""
+    positions = {key: index for index, key in enumerate(order)}
+    return [
+        (period, name, reference)
+        for (period, name) in order
+        for reference in model._regimes[name].same_period_ref_regimes
+        if (period, reference) in positions
+    ]
+
+
+def test_the_full_topology_model_has_same_period_references_to_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The full EKL topology model declares at least one same-period reference.
+
+    Guards the ordering assertion below against a vacuous pass: without a real
+    reference pair to check, `all()` over an empty sequence would pass no
+    matter how the waves were planned.
+    """
+    order, model = _record_dispatch_order(monkeypatch=monkeypatch)
+
+    assert len(_same_period_reference_pairs(order=order, model=model)) > 0
+
+
+def test_every_reference_is_dispatched_before_the_regime_that_reads_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Within a period, a same-period reference precedes its reader."""
+    order, model = _record_dispatch_order(monkeypatch=monkeypatch)
     positions = {key: index for index, key in enumerate(order)}
 
     assert all(
         positions[(period, reference)] < positions[(period, name)]
-        for (period, name) in order
-        for reference in model._regimes[name].same_period_ref_regimes
-        if (period, reference) in positions
+        for period, name, reference in _same_period_reference_pairs(
+            order=order, model=model
+        )
     )
 
 

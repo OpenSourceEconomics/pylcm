@@ -1,10 +1,16 @@
-"""Physical lifetime of solve-time buffers after the ledger says a count closed.
+"""Physical buffer lifetime after the ledger closes a count, and the wave plan.
 
 The ledger (`liveness.py`) is logical: it counts declared consumers per artifact
 key. This module is physical: it knows which buffer an array occupies, which
 keys share that buffer, when every output an asynchronous dispatch produced is
 ready, and how to delete a buffer without leaving a deleted array inside the
 rolling input mappings.
+
+It also turns one period's nodes into a ready list: `plan_period_waves` groups
+the period's dispatch units into waves such that a unit is ready only once
+every same-period reference it reads has already dispatched, and units join
+one wave only while their device sets stay pairwise disjoint — the boundary
+that lets independent nodes dispatch back to back instead of one at a time.
 """
 
 import dataclasses
@@ -15,6 +21,7 @@ import jax
 from jaxtyping import PyTree
 
 from _lcm.execution.liveness import PlannedInputLiveness
+from _lcm.typing import RegimeName
 from lcm.exceptions import ExecutionPlanningError
 
 type BufferIdentity = tuple[tuple[int, int], ...]
@@ -226,7 +233,7 @@ class ScheduledNode:
     period: int
     """The period the node solves."""
 
-    regime: str
+    regime: RegimeName
     """The regime whose kernel dispatches the program."""
 
     program: str
@@ -240,7 +247,7 @@ class DispatchUnit:
     period: int
     """The period the unit solves."""
 
-    regime: str
+    regime: RegimeName
     """The regime whose kernel is dispatched."""
 
     programs: tuple[str, ...]
@@ -250,8 +257,8 @@ class DispatchUnit:
 def plan_period_waves(
     *,
     nodes: Sequence[ScheduledNode],
-    same_period_dependencies: Mapping[str, Sequence[str]],
-    device_sets: Mapping[str, frozenset[int]],
+    same_period_dependencies: Mapping[RegimeName, Sequence[RegimeName]],
+    device_sets: Mapping[RegimeName, frozenset[int]],
 ) -> tuple[tuple[DispatchUnit, ...], ...]:
     """Group one period's nodes into waves of concurrently dispatchable units.
 
@@ -268,16 +275,18 @@ def plan_period_waves(
             f"A wave plan covers one period; got nodes of periods {sorted(periods)!r}."
         )
         raise ValueError(msg)
-    programs_by_regime: dict[str, list[str]] = {}
+    if not nodes:
+        return ()
+    period = next(iter(periods))
+    programs_by_regime: dict[RegimeName, list[str]] = {}
     for node in nodes:
         programs_by_regime.setdefault(node.regime, []).append(node.program)
-    period = next(iter(periods)) if periods else 0
     units = {
         regime: DispatchUnit(period=period, regime=regime, programs=tuple(programs))
         for regime, programs in programs_by_regime.items()
     }
     remaining = list(units)
-    dispatched: set[str] = set()
+    dispatched: set[RegimeName] = set()
     waves: list[tuple[DispatchUnit, ...]] = []
     while remaining:
         wave: list[DispatchUnit] = []
@@ -290,6 +299,9 @@ def plan_period_waves(
             ]
             if any(reference not in dispatched for reference in references):
                 continue
+            if regime not in device_sets:
+                msg = f"No device set was declared for regime {regime!r}."
+                raise ExecutionPlanningError(msg)
             devices = device_sets[regime]
             if devices & used_devices:
                 continue

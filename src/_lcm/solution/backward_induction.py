@@ -397,6 +397,11 @@ def solve(  # noqa: C901, PLR0912, PLR0915
         else None
     )
 
+    # Every regime's device set is the full device set until per-regime
+    # placement lands (Task 7), so one process-wide read of `jax.devices()`
+    # covers every period and every regime in this solve.
+    all_device_ids = frozenset(device.id for device in jax.devices())
+
     for period in reversed(range(ages.n_periods)):
         period_start = time.monotonic()
         period_solution: dict[RegimeName, FloatND] = {}
@@ -456,12 +461,7 @@ def solve(  # noqa: C901, PLR0912, PLR0915
                     for regime_name, regime in active_regimes.items()
                 }
             ),
-            device_sets=MappingProxyType(
-                {
-                    regime_name: _regime_device_ids(regime=regime)
-                    for regime_name, regime in active_regimes.items()
-                }
-            ),
+            device_sets=MappingProxyType(dict.fromkeys(active_regimes, all_device_ids)),
         )
         for wave in waves:
             for unit in wave:
@@ -1063,11 +1063,6 @@ def _run_period_kernel(
         logger=logger,
         **same_period_kwargs,
     )
-
-
-def _regime_device_ids(*, regime: Regime) -> frozenset[int]:  # noqa: ARG001
-    """Return the ids of the devices one regime's nodes run on."""
-    return frozenset(device.id for device in jax.devices())
 
 
 def _roll_continuation_inputs(

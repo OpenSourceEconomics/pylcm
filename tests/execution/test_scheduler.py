@@ -501,6 +501,16 @@ def test_a_dependency_cycle_is_refused() -> None:
         )
 
 
+def test_a_regime_missing_from_device_sets_is_refused_by_name() -> None:
+    """A regime with no declared device set is a planning error, not a KeyError."""
+    with pytest.raises(ExecutionPlanningError, match="b"):
+        plan_period_waves(
+            nodes=(_node(regime="a"), _node(regime="b")),
+            same_period_dependencies=MappingProxyType({}),
+            device_sets=MappingProxyType({"a": frozenset({0})}),
+        )
+
+
 def test_nodes_of_two_periods_are_refused() -> None:
     """A wave plan covers one period; periods stay strictly backward."""
     with pytest.raises(ValueError, match="one period"):
