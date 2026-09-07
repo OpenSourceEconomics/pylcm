@@ -6,7 +6,7 @@ import inspect
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
-from types import MappingProxyType
+from types import MappingProxyType, ModuleType
 from typing import cast
 
 import cloudpickle
@@ -41,6 +41,7 @@ from lcm.solver_api import (
     ArtifactKey,
     ArtifactRef,
     ArtifactStore,
+    AxisRole,
     LoadState,
     OmissionReason,
     PersistencePolicy,
@@ -91,21 +92,37 @@ class _RaisingLazyValueEntry(solver_api_module._LazyEntry):
         raise self._error
 
 
-def test_solver_api_has_no_private_lcm_imports() -> None:
-    """An installed solver can import the result spine without importing `_lcm`."""
-    solver_api_module = inspect.getmodule(ArtifactKey)
-    assert solver_api_module is not None
-    module = ast.parse(inspect.getsource(solver_api_module))
-    imported = {
+def _imported_module_names(module: ModuleType) -> set[str]:
+    """Return every module name the given module's source imports."""
+    tree = ast.parse(inspect.getsource(module))
+    return {
         alias.name
-        for node in ast.walk(module)
+        for node in ast.walk(tree)
         if isinstance(node, ast.Import)
         for alias in node.names
     } | {
-        node.module or ""
-        for node in ast.walk(module)
-        if isinstance(node, ast.ImportFrom)
+        node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
     }
+
+
+def _solver_api_modules() -> list[ModuleType]:
+    """Return the public facade and every module it re-exports from."""
+    facade = inspect.getmodule(solver_api_module.SolutionResult)
+    assert facade is not None
+    modules = {facade}
+    for name in dir(facade):
+        defining = inspect.getmodule(getattr(facade, name))
+        if defining is not None and defining.__name__.startswith("lcm._solver_api."):
+            modules.add(defining)
+    return sorted(modules, key=lambda module: module.__name__)
+
+
+@pytest.mark.parametrize(
+    "module", _solver_api_modules(), ids=lambda module: module.__name__
+)
+def test_solver_api_has_no_private_lcm_imports(*, module: ModuleType) -> None:
+    """An installed solver can import the result spine without importing `_lcm`."""
+    imported = _imported_module_names(module)
 
     assert not any(name == "_lcm" or name.startswith("_lcm.") for name in imported)
 
@@ -613,29 +630,33 @@ def test_retained_adaptive_nnbegm_result_replay_matches_automatic_solve() -> Non
     assert_frame_equal(direct.to_dataframe(), automatic.to_dataframe())
 
 
+def _adaptive_outer_nodes_by_ref(
+    solution: SolutionResult,
+) -> dict[ArtifactRef, tuple[float, ...]]:
+    """The outer nodes each nested policy descriptor declares for itself."""
+    return {
+        ref: cast("tuple[float, ...]", axis.coordinates)
+        for ref, descriptor in solution.metadata.artifact_descriptors.items()
+        if ref.key == SIMULATION_POLICY
+        for axis in descriptor.named_axes
+        if axis.role is AxisRole.CANDIDATE
+    }
+
+
 def test_adaptive_authority_and_result_survive_pickle_for_valid_replay(
     tmp_path: Path,
 ) -> None:
+    """The outer nodes an adaptive solve settled on travel inside the result."""
     model = _build("adaptive")
     solution = model.solve(params=_PARAMS, log_level="off")
-    fingerprint = solution.metadata.params_fingerprint
-    before = {
-        ref: descriptor.adaptive_outer_nodes
-        for ref, descriptor in model._solution_authorities[fingerprint].replay.items()
-        if ref.key == SIMULATION_POLICY and descriptor.adaptive_outer_nodes is not None
-    }
+    before = _adaptive_outer_nodes_by_ref(solution)
     assert before
 
     restored_model, restored_solution = cloudpickle.loads(
         cloudpickle.dumps((model, solution))
     )
     restored_solution.save(path=tmp_path / "restored-solution")
-    restored_authority = restored_model._solution_authorities[fingerprint]
-    after = {
-        ref: descriptor.adaptive_outer_nodes
-        for ref, descriptor in restored_authority.replay.items()
-        if ref in before
-    }
+    after = _adaptive_outer_nodes_by_ref(restored_solution)
 
     assert after == before
     for ref, expected_nodes in after.items():
@@ -1440,9 +1461,9 @@ def _policy_refs(solution: SolutionResult) -> set[ArtifactRef]:
     }
 
 
-def test_all_persistable_omits_the_adaptive_nnbegm_policy_as_not_persisted() -> None:
-    """The adaptive replay policy reads solve-generated mesh facts held only by
-    the solving model instance, so no persistable retention keeps it."""
+def test_all_persistable_retains_the_adaptive_nnbegm_policy() -> None:
+    """The nested policy carries its outer nodes in its own descriptor, so it
+    is as self-contained as the finite bank and persists like it."""
     model = _build("adaptive")
     solution = model.solve(
         params=_PARAMS,
@@ -1452,8 +1473,9 @@ def test_all_persistable_omits_the_adaptive_nnbegm_policy_as_not_persisted() -> 
 
     refs = _policy_refs(solution)
     assert refs
-    assert not any(ref in solution.replay_artifacts for ref in refs)
-    assert {solution.omissions[ref] for ref in refs} == {OmissionReason.NOT_PERSISTED}
+    assert all(
+        isinstance(solution.replay_artifacts[ref], NestedEGMSimPolicy) for ref in refs
+    )
 
 
 def test_all_persistable_retains_the_finite_nnbegm_policy() -> None:
@@ -1485,32 +1507,3 @@ def test_values_and_replay_retains_the_adaptive_nnbegm_policy() -> None:
     assert all(
         isinstance(solution.replay_artifacts[ref], NestedEGMSimPolicy) for ref in refs
     )
-
-
-def test_not_persisted_adaptive_policy_is_refused_before_forward_simulation(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    model = _build("adaptive")
-    solution = model.solve(
-        params=_PARAMS,
-        log_level="off",
-        retention=ResultRetention.ALL_PERSISTABLE_ARTIFACTS,
-    )
-
-    def _forward_loop_must_not_run(**_kwargs: object) -> None:
-        raise AssertionError("forward simulation ran before replay preflight")
-
-    monkeypatch.setattr(model_module, "simulate", _forward_loop_must_not_run)
-    with pytest.raises(
-        InvalidSimulationInputError,
-        match=(
-            r"pylcm\.simulation\.policy.*not_persisted"
-            r"(.|\n)*AdaptiveOuterMesh(.|\n)*VALUES_AND_REPLAY"
-        ),
-    ):
-        model.simulate(
-            params=_PARAMS,
-            initial_conditions=dict(_INITIAL),
-            solution=solution,
-            log_level="off",
-        )

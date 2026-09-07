@@ -40,10 +40,12 @@ from lcm.solver_api import (
     _canonical_artifact_entry_from_authority,
     _CanonicalArtifactEntry,
     _CanonicalArtifactTemplate,
+    _CanonicalValueEntry,
     _LazyEntry,
     _same_exact_artifact_contract,
     _validate_axes_and_leaves,
 )
+from lcm.typing import RegimeName
 
 if TYPE_CHECKING:
     _ArtifactStoreBoundary: TypeAlias = ArtifactStore  # noqa: UP040
@@ -172,6 +174,52 @@ def snapshot_artifact_store(
                 authority=authority,
             )
     return ArtifactStore(entries)
+
+
+def own_artifact_store(
+    *,
+    entries: Mapping[ArtifactRef, object],
+    authorities: _AuthoritiesInput,
+) -> _ArtifactStoreBoundary:
+    """Build a store around buffers the engine's own solve allocated.
+
+    Each authority-backed payload is validated against its authority and kept by
+    reference rather than copied: nothing outside the engine holds these arrays.
+    A payload without an authority is stored as supplied.
+    """
+    owned: dict[ArtifactRef, object] = {}
+    for ref, payload in entries.items():
+        authority = authorities.get(ref)
+        owned[ref] = (
+            payload
+            if authority is None
+            else _canonical_artifact_entry_from_authority(
+                payload=payload,
+                authority=authority,
+                borrow=True,
+            )
+        )
+    return ArtifactStore(owned)
+
+
+def own_value_store(
+    values: Mapping[int, Mapping[RegimeName, object]],
+) -> _ValueStoreBoundary:
+    """Build a value store around the engine's own value arrays, uncopied.
+
+    The public constructor copies every value it admits because it cannot know
+    who else holds them; the engine knows nobody does.
+    """
+    entries: dict[tuple[int, RegimeName], object] = {}
+    regimes_by_period: dict[int, tuple[RegimeName, ...]] = {}
+    for period, regime_to_value in values.items():
+        regimes_by_period[period] = tuple(regime_to_value)
+        for regime_name, value in regime_to_value.items():
+            entries[(period, regime_name)] = _CanonicalValueEntry(value=value)
+    store = object.__new__(ValueStore)
+    object.__setattr__(store, "_entries", MappingProxyType(entries))
+    object.__setattr__(store, "_regimes_by_period", MappingProxyType(regimes_by_period))
+    return store
 
 
 def snapshot_value_store(store: _ValueStoreBoundary) -> _ValueStoreBoundary:

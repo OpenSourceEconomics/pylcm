@@ -78,8 +78,15 @@ from _lcm.execution.core_program import (
     ProgramScope,
     ReductionSemantics,
     StreamableProductAxis,
+    TargetValueAccess,
 )
 from _lcm.execution.output_layout import OutputRole, StateAxesLeading
+from _lcm.execution.value_transfer import (
+    ValueArtifactAddress,
+    ValueArtifactKind,
+    ValueConsumerAddress,
+    ValueInputChannel,
+)
 from _lcm.solution.continuation_target import (
     period_to_continuation_target,
     target_period_grid,
@@ -140,6 +147,7 @@ from lcm.solver_api import (
     AxisRole,
     CategoryDomain,
     ContinuationArtifact,
+    DeclaredReplay,
     ExecutableReplayRoute,
     KernelOutput,
     LeafAuthority,
@@ -198,6 +206,7 @@ __all__ = [
     "CoreExecutionDisposition",
     "CoreExecutionRequirements",
     "CoreProgram",
+    "DeclaredReplay",
     "DeterministicOuterMaximum",
     "EGMContinuationLayout",
     "EGMContinuationSpec",
@@ -242,10 +251,15 @@ __all__ = [
     "StateActionSpace",
     "StateAxesLeading",
     "StreamableProductAxis",
+    "TargetValueAccess",
     "TreePath",
     "TwoMarginSolver",
     "UniformObservedFixedCost",
     "ValueArraySchema",
+    "ValueArtifactAddress",
+    "ValueArtifactKind",
+    "ValueConsumerAddress",
+    "ValueInputChannel",
     "ValueStore",
     "period_to_continuation_target",
     "target_period_grid",

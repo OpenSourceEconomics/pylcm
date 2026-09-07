@@ -29,7 +29,7 @@ class ValueArtifactKind(StrEnum):
 
 
 class ValueInputChannel(StrEnum):
-    """GridSearch argument channel through which a value reaches a core."""
+    """Core argument channel through which a stored value reaches a program."""
 
     NEXT_REGIME_VALUE = "next_regime_to_V_arr"
     SAME_PERIOD_VALUE = "same_period_regime_to_V_arr"

@@ -28,6 +28,10 @@ solver and its kernels answer three questions.
   `ContinuationSpec` naming the artifact those kernels publish.
 - **What does one period publish?** Each kernel declares a native core-program graph
   through `core_programs()` and returns a `KernelOutput` from its call.
+- **How is my decision replayed?** `SolutionKernels.replay_route` names how simulation
+  obtains the solved decision: an `ExecutableReplayRoute`, or one of the two
+  `DeclaredReplay` values. Leaving it unset is a build error for any solver outside the
+  shipped set; see [Declared replay routes](#declared-replay-routes).
 
 ## A minimal solver
 
@@ -45,6 +49,7 @@ from lcm.solvers import (
     CoreExecutionDisposition,
     CoreExecutionRequirements,
     CoreProgram,
+    DeclaredReplay,
     KernelOutput,
     OutputRole,
     SolutionKernels,
@@ -125,7 +130,8 @@ class WealthSolver(Solver):
                     period: WealthKernel(programs=MappingProxyType({"main": program}))
                     for period in context.regimes_to_active_periods[context.regime_name]
                 }
-            )
+            ),
+            replay_route=DeclaredReplay.GRID_RECOMPUTATION,
         )
 ```
 
@@ -136,6 +142,30 @@ why. `PLANNED` hands that choice to the engine and must *not* carry a reason; de
 one is refused. A planned program declares whichever action axes the engine may stream,
 together with the reduction each performs, and a solver whose body streams nothing
 declares an empty set — the shipped NB-EGM graph does exactly that.
+
+## Reading stored values
+
+A core that prices a continuation reads the value functions the engine has already
+stored for the next period's reachable regimes. It reads them through the
+`next_regime_to_V_arr` channel of `CoreBuildContext`, one array per target regime in
+that regime's own published layout, and it declares every such read in
+`CoreExecutionRequirements.target_value_accesses`. Each `TargetValueAccess` pairs the
+stored artifact with the exact argument leaf the core reads it through:
+
+- `ValueArtifactAddress` names the artifact: `ValueArtifactKind.REGIME_VALUE` with the
+  target regime and the period its value was solved for (the source period plus one), or
+  `GATED_CONTINUATION` for a gated edge's folded continuation;
+- `ValueConsumerAddress` names the leaf: the source period, regime, and program name,
+  the `ValueInputChannel` the array enters through, and the path of the leaf inside that
+  channel's argument, whose first segment is the target regime.
+
+The declaration is what lets the engine transfer each array into the program's layout,
+check its shape and dtype against the argument the builder produced, and track when the
+stored value is no longer live. A program whose builder reads a stored value it does not
+declare, or declares one its builder does not read, is refused when the program is
+materialized. `SolverBuildContext.solution_reachability.targets(period=..., source=...)`
+returns the target regimes to declare for one period; the last period of the horizon has
+none. The conformance fixture's `TargetValueSolver` is the reference shape.
 
 ## Publishing a continuation
 
@@ -181,6 +211,19 @@ class of whatever payload a solve happened to retain. A route names its `replay_
 - `UNSUPPORTED` — the solve's decision can be reproduced neither way, so simulating the
   regime is refused with a message naming the reason.
 
+A shipped solver leaves `SolutionKernels.replay_route` unset and the engine reads its
+decision through its own adapters. Every other solver must declare the route itself, and
+a model whose external solver leaves it unset is refused when the model is built. Two
+declarations need no code of their own:
+
+- `DeclaredReplay.GRID_RECOMPUTATION` — the solver's decision is exactly the argmax over
+  the regime's declared action grids at the subject's realized state, so simulation
+  recomputes it there. This is what the example above declares: it retains no payload,
+  and the regime's own utility and continuation define its decision.
+- `DeclaredReplay.UNSUPPORTED` — the decision cannot be reproduced. The solve stays
+  available, and `simulate()` raises `UnsupportedOperationError` naming the regime and
+  the solver before any forward step.
+
 An external solver that needs its own payload implements `ExecutableReplayRoute` and
 returns it as `SolutionKernels(replay_route=...)`. The route supplies:
 
@@ -199,8 +242,10 @@ and applicability. Its separate `ArtifactDescriptor` carries the transport-safe 
 those facts together with the key, channel, payload identity, requiredness, and
 persistence policy. A `MODEL_VERIFIABLE` artifact may be saved because another process
 can reconstruct and check its authority independently. A dynamic artifact whose exact
-axes exist only as a solve-side fact must declare `NOT_PERSISTED` until those axes can
-be rederived from the model.
+axes exist only as a solve-side fact must declare `NOT_PERSISTED` unless its descriptor
+carries those axes as data a consumer can check on its own, which is how pylcm's
+adaptive NNBEGM policy carries its outer nodes and how solver diagnostics carry their
+layout.
 
 Before forward execution, pylcm checks the archive and solver-interface versions, model
 and parameter fingerprints, plugin and route identities, key versions, coordinates,
@@ -244,9 +289,11 @@ callable, pickle, or executable code. An emitted artifact declared `NOT_PERSISTE
 replaced in the restored result by an explicit omission with that reason.
 
 Loading does not import a plugin named by archive metadata. Without the plugin, pylcm
-can inspect metadata and omissions, verify checksums, and lazily read ordinary array
-entries. A plugin-defined PyTree stays uninterpreted until a model with the matching
-installed route supplies its trusted template during replay.
+can inspect metadata and omissions, verify checksums, lazily read ordinary array
+entries, and read solver diagnostics, whose layout their descriptor fixes completely. A
+plugin-defined PyTree stays uninterpreted until a model with the matching installed
+route supplies its trusted template during replay. A restored result saves again without
+a model: each payload is re-read from its archive and verified before it is written.
 
 Compatibility is exact for `SOLVER_API_VERSION`, the archive and solution schema
 versions, `SolverIdentity`, `ReplayRouteIdentity`, and every
@@ -268,6 +315,9 @@ is a deliberately small two-state solver and establishes this minimum acceptance
 contract:
 
 1. declare a package identity and build all kernels through `SolverBuildContext`;
+1. declare how every regime's decision is replayed — an executable route, grid
+   recomputation, or an explicit refusal — and read stored next-period values only
+   through declared target-value accesses;
 1. publish retention-specialized `PLANNED` programs with a named `candidate`
    `StreamableProductAxis`, a custom reduction semantic key, exact
    `retained_artifact_keys`, an exact `retained_artifact_payload_types` entry for every

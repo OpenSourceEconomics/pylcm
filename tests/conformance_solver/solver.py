@@ -39,6 +39,7 @@ from lcm.solvers import (
     CoreExecutionDisposition,
     CoreExecutionRequirements,
     CoreProgram,
+    DeclaredReplay,
     OutputRole,
     ProgramScope,
     SolutionKernels,
@@ -47,6 +48,11 @@ from lcm.solvers import (
     StateActionSpace,
     StateAxesLeading,
     StreamableProductAxis,
+    TargetValueAccess,
+    ValueArtifactAddress,
+    ValueArtifactKind,
+    ValueConsumerAddress,
+    ValueInputChannel,
 )
 from lcm.typing import Float1D, FloatND, RegimeName
 
@@ -376,6 +382,7 @@ class TerminalCounterSolver(Solver):
                 template=counter_template,
                 artifact_key=COUNTER_KEY,
             ),
+            replay_route=DeclaredReplay.GRID_RECOMPUTATION,
             artifact_authorities=MappingProxyType({COUNTER_KEY: counter_authority}),
         )
 
@@ -782,3 +789,141 @@ __all__ = [
     "ReferenceSolver",
     "TerminalCounterSolver",
 ]
+
+
+def _target_value_core(
+    *,
+    wealth: Float1D,
+    productivity: Float1D,
+    next_regime_to_V_arr: Mapping[str, FloatND],
+    next_count: FloatND,
+) -> tuple[FloatND, Counter]:
+    """Add the best next-period value of every target to the wealth grid.
+
+    `next_regime_to_V_arr` is the engine's target-value channel: one stored
+    value array per reachable next-period regime, in whatever layout that regime
+    publishes, so the core reduces each one before combining them.
+    """
+    best_continuation = sum(
+        (jnp.max(value_arr) for value_arr in next_regime_to_V_arr.values()),
+        start=jnp.asarray(0.0, dtype=wealth.dtype),
+    )
+    value = wealth[:, None] + 0.0 * productivity[None, :] + best_continuation
+    return value, Counter(count=next_count + 1.0)
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class _TargetValueArgumentBuilder:
+    """Build the target-value core's arguments, including the value channel."""
+
+    regime_name: RegimeName
+    target_regimes: tuple[RegimeName, ...]
+
+    def __call__(self, context: CoreBuildContext) -> Mapping[str, object]:
+        """Read public states, the counter, and the declared targets' values."""
+        state_action_space = cast("StateActionSpace", context.state_action_space)
+        continuation = cast(
+            "Counter",
+            context.next_regime_to_continuation[self.regime_name],
+        )
+        return MappingProxyType(
+            {
+                "wealth": state_action_space.states["wealth"],
+                "productivity": state_action_space.states["productivity"],
+                "next_count": continuation.count,
+                "next_regime_to_V_arr": MappingProxyType(
+                    {
+                        target: context.next_regime_to_V_arr[target]
+                        for target in self.target_regimes
+                    }
+                ),
+            }
+        )
+
+
+class TargetValueSolver(Solver):
+    """Read every reachable target's stored value through declared accesses.
+
+    Each period's program declares one `TargetValueAccess` per next-period
+    target, pairing the stored regime value with the exact argument leaf the
+    core reads it through, so the planner can transfer the array and track its
+    liveness without inspecting the core.
+    """
+
+    @property
+    def identity(self) -> SolverIdentity:
+        """Return the shared external plugin's durable identity."""
+        return _PLUGIN_IDENTITY
+
+    @property
+    def required_continuation_keys(self) -> frozenset[ArtifactKey]:
+        """Read the counter continuation every target publishes."""
+        return frozenset({COUNTER_KEY})
+
+    def build_period_kernels(self, *, context: SolverBuildContext) -> SolutionKernels:
+        """Build one values program per period with its target-value accesses."""
+        state_nodes = context.state_action_space.states["wealth"]
+        counter_template = Counter(count=jnp.zeros((), dtype=state_nodes.dtype))
+        counter_authority = _counter_authority(template=counter_template)
+        last_period = context.solution_reachability.n_periods - 1
+        kernels: dict[int, _PeriodKernel] = {}
+        for period in context.regimes_to_active_periods[context.regime_name]:
+            target_regimes = (
+                ()
+                if period == last_period
+                else context.solution_reachability.targets(
+                    period=period, source=context.regime_name
+                )
+            )
+            program = CoreProgram(
+                name="values",
+                function=_target_value_core,
+                argument_builder=_TargetValueArgumentBuilder(
+                    regime_name=context.regime_name,
+                    target_regimes=target_regimes,
+                ),
+                requirements=CoreExecutionRequirements(
+                    target_value_accesses=tuple(
+                        TargetValueAccess(
+                            target=ValueArtifactAddress(
+                                kind=ValueArtifactKind.REGIME_VALUE,
+                                period=period + 1,
+                                regime=target,
+                            ),
+                            source=ValueConsumerAddress(
+                                source_period=period,
+                                source_regime=context.regime_name,
+                                core_key="values",
+                                channel=ValueInputChannel.NEXT_REGIME_VALUE,
+                                path=(target,),
+                            ),
+                        )
+                        for target in target_regimes
+                    ),
+                ),
+                output_roles=(
+                    OutputRole.VALUE,
+                    Counter(
+                        count=StateAxesLeading(  # ty: ignore[invalid-argument-type]
+                            state_names=(),
+                            dtype=state_nodes.dtype,
+                            shape=(),
+                        )
+                    ),
+                ),
+                disposition=CoreExecutionDisposition.DENSE,
+                disposition_reason="one_row_per_state_node",
+                scope=ProgramScope.VALUES_ONLY,
+            )
+            kernels[period] = _PeriodKernel(
+                programs=MappingProxyType({"values": program})
+            )
+        return SolutionKernels(
+            period_kernels=MappingProxyType(kernels),
+            continuation_spec=ContinuationSpec(
+                template=counter_template,
+                artifact_key=COUNTER_KEY,
+            ),
+            replay_route=DeclaredReplay.GRID_RECOMPUTATION,
+            artifact_authorities=MappingProxyType({COUNTER_KEY: counter_authority}),
+        )

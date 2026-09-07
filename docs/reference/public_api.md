@@ -131,6 +131,7 @@ surfaces remain outside that top-level namespace:
 | [`lcm.solver_api.ReplayMode`](custom_solvers.md)                                              | How a regime's decision is obtained |
 | [`lcm.solver_api.ReplayRoute`](custom_solvers.md)                                             | A regime's declared replay route    |
 | [`lcm.solver_api.ExecutableReplayRoute`](custom_solvers.md)                                   | External replay implementation      |
+| [`lcm.solver_api.DeclaredReplay`](custom_solvers.md)                                          | Replay declared without a route     |
 | [`lcm.solver_api.ReplayReader`](custom_solvers.md)                                            | JAX-transformable replay reader     |
 | [`lcm.solver_api.ReplayRouteSnapshot`](custom_solvers.md)                                     | Validated immutable replay snapshot |
 | [`lcm.solver_api.ReplayModelContext`](custom_solvers.md)                                      | Period-specific route model view    |
@@ -195,6 +196,11 @@ documented in [Custom solvers](custom_solvers.md).
 | [`lcm.solvers.CoreProgram`](custom_solvers.md)                                             | One declared compiled program        |
 | [`lcm.solvers.CoreBuildContext`](custom_solvers.md)                                        | Argument-builder input               |
 | [`lcm.solvers.CoreExecutionRequirements`](custom_solvers.md)                               | Declared execution requirements      |
+| [`lcm.solvers.TargetValueAccess`](custom_solvers.md)                                       | One declared stored-value read       |
+| [`lcm.solvers.ValueArtifactAddress`](custom_solvers.md)                                    | Stored value a core reads            |
+| [`lcm.solvers.ValueArtifactKind`](custom_solvers.md)                                       | Regime value or gated continuation   |
+| [`lcm.solvers.ValueConsumerAddress`](custom_solvers.md)                                    | Argument leaf receiving a value      |
+| [`lcm.solvers.ValueInputChannel`](custom_solvers.md)                                       | Core argument channel for values     |
 | [`lcm.solvers.CoreExecutionDisposition`](custom_solvers.md)                                | Planned or deliberately dense        |
 | [`lcm.solvers.ProgramScope`](custom_solvers.md)                                            | Retention scope of a program         |
 | [`lcm.solvers.StreamableProductAxis`](custom_solvers.md)                                   | Declared streamable action axis      |
@@ -228,6 +234,7 @@ documented in [Custom solvers](custom_solvers.md).
 | [`lcm.solvers.ReplayMode`](custom_solvers.md)                                              | How a regime's decision is obtained  |
 | [`lcm.solvers.ReplayRoute`](custom_solvers.md)                                             | A regime's declared replay route     |
 | [`lcm.solvers.ExecutableReplayRoute`](custom_solvers.md)                                   | External replay implementation       |
+| [`lcm.solvers.DeclaredReplay`](custom_solvers.md)                                          | Replay declared without a route      |
 | [`lcm.solvers.ReplayReader`](custom_solvers.md)                                            | JAX-transformable replay reader      |
 | [`lcm.solvers.ReplayRouteSnapshot`](custom_solvers.md)                                     | Validated immutable replay snapshot  |
 | [`lcm.solvers.ReplayModelContext`](custom_solvers.md)                                      | Period-specific route model view     |

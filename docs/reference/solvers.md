@@ -288,10 +288,10 @@ setting: it lives on [`OuterContinuousMargin.adjustment_cost`](consumption_savin
 With `FiniteOuterGrid`, NNBEGM replays the keeper-plus-outer-grid candidates ranked
 during the solve; with `AdaptiveOuterMesh` it republishes the mesh policies and the
 search settings, and re-refines per subject at that subject's own resources. The
-adaptive replay reads the exact generated mesh, which the solving model instance holds
-beside the result, so that policy is retained under `ResultRetention.VALUES_AND_REPLAY`
-and omitted as `NOT_PERSISTED` under `ALL_PERSISTABLE_ARTIFACTS`; the finite candidate
-bank is self-contained and persists under both. Every
+adaptive replay reads the exact generated mesh, whose nodes the result carries as the
+candidate axis of the policy's descriptor, so both the adaptive policy and the finite
+candidate bank are self-contained, retained under every replay-retaining
+`ResultRetention`, and persist in the complete archive. Every
 declaration that can affect that replay must therefore be phase-invariant by object
 identity: a bare declaration and `Phased(solve=f, simulate=f)` are accepted, while
 distinct solve/simulate functions, state or regime transitions, Koopmans aggregators,

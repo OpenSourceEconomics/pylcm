@@ -38,6 +38,7 @@ from _lcm.solution.result_snapshot import (
     snapshot_solution_metadata,
     snapshot_value_store,
 )
+from _lcm.solution.solver_diagnostics import diagnostics_template_snapshot
 from lcm.exceptions import IncompatibleSolutionError, SolutionIntegrityError
 from lcm.solver_api import (
     SOLUTION_FORMAT_VERSION,
@@ -106,7 +107,6 @@ _UNLOADED: Final = object()
 _PAYLOAD_ADDRESS_LENGTH: Final = 8
 _SHA256_HEX_LENGTH: Final = 64
 PYLCM_VERSION: Final = _version.__version__
-_UNDESCRIBED_STANDARD_KEYS: Final = frozenset({SOLVER_DIAGNOSTICS})
 
 
 def _require_exact_str(*, value: object, label: str) -> str:
@@ -286,6 +286,10 @@ class _LazyHdf5Entry(_LazyEntry):
     payload_kind: str
     identity: MappingProxyType[str, object]
     leaves: tuple[MappingProxyType[str, object], ...]
+    standard_template_snapshot: _CanonicalArtifactTemplate | None = None
+    """Reconstruction plan of a pylcm-owned payload whose layout its descriptor
+    fixes completely, so it reads back without a model; `None` for every
+    payload that needs the consuming model's template."""
     _cache: _EntryCache = field(default_factory=_EntryCache, repr=False, compare=False)
 
     @property
@@ -297,6 +301,11 @@ class _LazyHdf5Entry(_LazyEntry):
 
     def materialize(self, *, template: object | None = None) -> object:
         """Load through the compatibility path that accepts a template object."""
+        if template is None and self.standard_template_snapshot is not None:
+            return self._materialize(
+                template=None,
+                template_snapshot=self.standard_template_snapshot,
+            )
         return self._materialize(template=template, template_snapshot=None)
 
     def materialize_from_template_snapshot(
@@ -735,7 +744,9 @@ def load_solution_archive(  # noqa: C901, PLR0912, PLR0915
                 f"Solution archive reuses payload address {lazy.address!r}."
             )
         addresses.add(lazy.address)
-        stores[channel][ref] = lazy
+        stores[channel][ref] = _with_standard_template(
+            lazy=lazy, ref=ref, descriptor=descriptor
+        )
 
     omission_entries: dict[ArtifactRef, OmissionReason] = {}
     for raw_entry in _require_exact_list(
@@ -786,18 +797,9 @@ def load_solution_archive(  # noqa: C901, PLR0912, PLR0915
             "Solution archive artifact entries and omissions do not exactly cover "
             "its artifact descriptors."
         )
-    undescribed_omissions = set(omission_entries) - descriptor_refs
-    if any(ref.key not in _UNDESCRIBED_STANDARD_KEYS for ref in undescribed_omissions):
+    if set(omission_entries) - descriptor_refs:
         raise SolutionIntegrityError(
             "Solution archive contains an omission with no artifact descriptor."
-        )
-    if any(
-        omission_entries[ref] is not OmissionReason.NOT_PERSISTED
-        for ref in undescribed_omissions
-    ):
-        raise SolutionIntegrityError(
-            "An undescribed standard artifact must use the NOT_PERSISTED omission "
-            "reason."
         )
     omissions = MappingProxyType(omission_entries)
     result = SolutionResult(
@@ -821,6 +823,32 @@ def load_solution_archive(  # noqa: C901, PLR0912, PLR0915
     if verify_checksums:
         _verify_result_entries(result=result)
     return result
+
+
+def _with_standard_template(
+    *, lazy: _LazyHdf5Entry, ref: ArtifactRef, descriptor: ArtifactDescriptor
+) -> _LazyHdf5Entry:
+    """Attach the reconstruction plan of a pylcm-owned payload to its lazy entry.
+
+    Solver diagnostics are the one payload whose descriptor fixes its layout
+    completely, so the archive reader rebuilds them from the descriptor alone;
+    every other PyTree waits for the consuming model's template.
+    """
+    if descriptor.channel is not ArtifactChannel.DIAGNOSTIC or not (
+        _same_exact_artifact_contract(actual=ref.key, expected=SOLVER_DIAGNOSTICS)
+    ):
+        return lazy
+    try:
+        snapshot = diagnostics_template_snapshot(
+            descriptor=descriptor,
+            label=f"Persisted solver diagnostics at ({ref.period}, {ref.regime!r})",
+        )
+    except (TypeError, ValueError) as error:
+        raise SolutionIntegrityError(
+            f"Persisted artifact {ref!r} has a diagnostics descriptor no solver "
+            f"could publish: {error}"
+        ) from error
+    return replace(lazy, standard_template_snapshot=snapshot)
 
 
 def _prepare_solution_for_save(  # noqa: C901, PLR0912, PLR0915
@@ -891,6 +919,20 @@ def _prepare_solution_for_save(  # noqa: C901, PLR0912, PLR0915
         prepared_values.append(prepared)
 
     descriptors = dict(metadata.artifact_descriptors)
+    if metadata.source is SolutionSource.PERSISTED:
+        prepared_artifacts, persisted_omissions = _prepare_persisted_artifacts(
+            metadata=metadata,
+            stores=stores,
+            omissions=omissions,
+            authorities=authorities,
+            descriptors=descriptors,
+        )
+        return _SaveSnapshot(
+            metadata=MappingProxyType(metadata_manifest),
+            values=tuple(prepared_values),
+            artifacts=prepared_artifacts,
+            omissions=persisted_omissions,
+        )
     if set(authorities) != set(descriptors):
         raise IncompatibleSolutionError(
             "Solution artifact descriptors do not have exact model-issued authority "
@@ -898,16 +940,11 @@ def _prepare_solution_for_save(  # noqa: C901, PLR0912, PLR0915
         )
     for ref, descriptor in descriptors.items():
         authority = authorities[ref]
-        if type(authority) is not ArtifactAuthority or not (
-            _same_exact_artifact_contract(
-                actual=authority.descriptor,
-                expected=descriptor,
-            )
-            or _is_model_derived_not_persisted_enrichment(
-                durable=descriptor,
-                authority=authority,
-            )
-        ):
+        descriptor_agrees = _same_exact_artifact_contract(
+            actual=authority.descriptor,
+            expected=descriptor,
+        )
+        if type(authority) is not ArtifactAuthority or not descriptor_agrees:
             raise IncompatibleSolutionError(
                 f"Descriptive metadata for artifact {ref!r} differs from its "
                 "model-issued persistence authority."
@@ -947,9 +984,6 @@ def _prepare_solution_for_save(  # noqa: C901, PLR0912, PLR0915
             descriptor = descriptors.get(ref)
             authority = authorities.get(ref)
             if descriptor is None or authority is None:
-                if ref.key in _UNDESCRIBED_STANDARD_KEYS:
-                    omission_entries[ref] = OmissionReason.NOT_PERSISTED
-                    continue
                 raise IncompatibleSolutionError(
                     f"Artifact {ref!r} has no model-issued persistence authority."
                 )
@@ -1010,19 +1044,9 @@ def _prepare_solution_for_save(  # noqa: C901, PLR0912, PLR0915
             "Every artifact descriptor must have exactly one present payload or "
             f"omission record; missing {missing!r}."
         )
-    undescribed_omissions = set(omission_entries) - set(descriptors)
-    if any(ref.key not in _UNDESCRIBED_STANDARD_KEYS for ref in undescribed_omissions):
+    if set(omission_entries) - set(descriptors):
         raise IncompatibleSolutionError(
-            "An omission without an artifact descriptor is allowed only for a "
-            "standard, non-persistable diagnostic."
-        )
-    if any(
-        omission_entries[ref] is not OmissionReason.NOT_PERSISTED
-        for ref in undescribed_omissions
-    ):
-        raise IncompatibleSolutionError(
-            "An undescribed standard artifact must use the NOT_PERSISTED omission "
-            "reason."
+            "An omission without an artifact descriptor cannot be persisted."
         )
     for ref in described_omitted:
         _validate_omission_semantics(
@@ -1039,6 +1063,137 @@ def _prepare_solution_for_save(  # noqa: C901, PLR0912, PLR0915
         artifacts=tuple(prepared_artifacts),
         omissions=tuple(sorted(omission_entries.items())),
     )
+
+
+def _prepare_persisted_artifacts(  # noqa: C901, PLR0912
+    *,
+    metadata: SolutionMetadata,
+    stores: _StoreTupleBoundary,
+    omissions: _OmissionsBoundary,
+    authorities: _AuthoritiesBoundary,
+    descriptors: dict[ArtifactRef, ArtifactDescriptor],
+) -> tuple[
+    tuple[_PreparedPayload, ...],
+    tuple[tuple[ArtifactRef, OmissionReason], ...],
+]:
+    """Copy a restored result's artifacts from its archive into a new one.
+
+    A restored result holds no model authority: the archive it was read from
+    was validated against one when it was written, and its manifest fixes every
+    fact the new archive needs. Each payload is re-read from that archive and
+    verified against its checksum and its descriptor, and every omission is
+    checked against descriptive metadata alone.
+    """
+    if authorities:
+        raise IncompatibleSolutionError(
+            "A restored solution carries no model-issued authority, yet this one "
+            "declares some. Save the original SolutionResult returned by "
+            "Model.solve(), or the result exactly as load_solution() returned it."
+        )
+    omission_entries: dict[ArtifactRef, OmissionReason] = {}
+    for ref, reason in omissions.items():
+        _validate_result_ref(ref=ref, metadata=metadata, label="omission")
+        if type(reason) is not OmissionReason:
+            raise TypeError(f"Omission {ref!r} has a non-canonical reason {reason!r}.")
+        descriptor = descriptors.get(ref)
+        if descriptor is None:
+            raise IncompatibleSolutionError(
+                "An omission without an artifact descriptor cannot be persisted."
+            )
+        _validate_persisted_omission_semantics(
+            ref=ref,
+            reason=reason,
+            descriptor=descriptor,
+            retention=metadata.retention,
+        )
+        omission_entries[ref] = reason
+
+    prepared_artifacts: list[_PreparedPayload] = []
+    present_refs: set[ArtifactRef] = set()
+    for channel, store in stores:
+        for ref in sorted(store):
+            _validate_result_ref(ref=ref, metadata=metadata, label="artifact")
+            if ref in present_refs:
+                raise IncompatibleSolutionError(
+                    f"Artifact {ref!r} occurs in more than one channel."
+                )
+            if ref in omission_entries:
+                raise IncompatibleSolutionError(
+                    f"Artifact {ref!r} is both present and explicitly omitted."
+                )
+            present_refs.add(ref)
+            descriptor = descriptors.get(ref)
+            if descriptor is None:
+                raise IncompatibleSolutionError(
+                    f"Artifact {ref!r} has no artifact descriptor."
+                )
+            if descriptor.channel is not channel:
+                raise IncompatibleSolutionError(
+                    f"Artifact {ref!r} is stored on {channel.value!r}, but its "
+                    f"descriptor declares {descriptor.channel.value!r}."
+                )
+            if descriptor.persistence is not PersistencePolicy.MODEL_VERIFIABLE:
+                raise IncompatibleSolutionError(
+                    f"Artifact {ref!r} is present although its descriptor is not "
+                    "model-verifiable."
+                )
+            if not _retention_keeps_present_artifact(
+                retention=metadata.retention,
+                descriptor=descriptor,
+            ):
+                raise IncompatibleSolutionError(
+                    f"Artifact {ref!r} is present although result retention does "
+                    "not select it."
+                )
+            entry = store._raw(ref)  # noqa: SLF001
+            if type(entry) is not _LazyHdf5Entry:
+                raise IncompatibleSolutionError(
+                    f"Artifact {ref!r} of a restored solution is not an archive "
+                    "entry. Save the result exactly as load_solution() returned it."
+                )
+            identity = {
+                "kind": "artifact",
+                "period": ref.period,
+                "regime": ref.regime,
+                "type_id": ref.key.type_id,
+                "schema_version": ref.key.schema_version,
+                "channel": channel.value,
+            }
+            if dict(entry.identity) != identity:
+                raise IncompatibleSolutionError(
+                    f"Artifact {ref!r} of a restored solution is filed under another "
+                    "address in its archive."
+                )
+            arrays = _read_and_verify_leaves(
+                path=entry.path,
+                label=entry.label,
+                address=entry.address,
+                identity=entry.identity,
+                leaves=entry.leaves,
+            )
+            copies: list[NDArray[np.generic]] = []
+            for array in arrays:
+                copy = np.array(array, copy=True, order="C", subok=False)
+                copy.flags.writeable = False
+                copies.append(copy)
+            prepared = _PreparedPayload(
+                identity=MappingProxyType(identity),
+                payload_kind=entry.payload_kind,
+                leaf_paths=tuple(
+                    cast("tuple[str, ...]", leaf["path"]) for leaf in entry.leaves
+                ),
+                leaves=tuple(copies),
+            )
+            _check_prepared_artifact(prepared=prepared, ref=ref, descriptor=descriptor)
+            prepared_artifacts.append(prepared)
+
+    if present_refs | set(omission_entries) != set(descriptors):
+        missing = sorted(set(descriptors) - present_refs - set(omission_entries))
+        raise IncompatibleSolutionError(
+            "Every artifact descriptor must have exactly one present payload or "
+            f"omission record; missing {missing!r}."
+        )
+    return tuple(prepared_artifacts), tuple(sorted(omission_entries.items()))
 
 
 def _snapshot_solution_for_save(  # noqa: C901
@@ -1136,50 +1291,6 @@ def _require_save_compatibility(*, metadata: SolutionMetadata) -> None:
             f"Cannot save a solution with pylcm_version={metadata.pylcm_version!r}; "
             f"expected {PYLCM_VERSION!r}."
         )
-
-
-def _is_model_derived_not_persisted_enrichment(
-    *, durable: ArtifactDescriptor, authority: ArtifactAuthority
-) -> bool:
-    """Recognize the one safe asymmetry for solve-generated private authority.
-
-    Adaptive replay binds its generated candidate coordinates and numerical leaf
-    schema into the model's private authority after solving.  The durable descriptor
-    deliberately remains reconstructible without those solve-side facts because the
-    payload is never persisted.  Permit that enrichment while requiring every durable
-    identity, role, route, category, and already-known axis to remain exact.  An
-    ordinary descriptor mismatch, including one for a persistable artifact, still
-    fails closed.
-    """
-    private = authority.descriptor
-    if (
-        durable.persistence is not PersistencePolicy.NOT_PERSISTED
-        or private.persistence is not PersistencePolicy.NOT_PERSISTED
-        or authority.template is None
-        or durable.leaf_descriptors
-        or not private.leaf_descriptors
-    ):
-        return False
-
-    # Only the solve-derived leaves and axes may enrich the private descriptor.
-    enriched = replace(
-        private,
-        leaf_descriptors=durable.leaf_descriptors,
-        named_axes=durable.named_axes,
-    )
-    if not _same_exact_artifact_contract(
-        actual=enriched,
-        expected=durable,
-    ):
-        return False
-    private_axes = {axis.name: axis for axis in private.named_axes}
-    return all(
-        _same_exact_artifact_contract(
-            actual=private_axes.get(axis.name),
-            expected=axis,
-        )
-        for axis in durable.named_axes
-    )
 
 
 def _prepare_payload(
@@ -1353,13 +1464,21 @@ def _validate_present_artifact_semantics(
 def _retention_keeps_present_artifact(
     *, retention: ResultRetention, descriptor: ArtifactDescriptor
 ) -> bool:
-    """Return whether one payload belongs in an in-memory retention ledger."""
+    """Return whether one payload belongs in an in-memory retention ledger.
+
+    Diagnostics follow the solve's log level rather than its retention, so a
+    present diagnostics payload belongs under every retention.
+    """
     return (
-        retention is ResultRetention.VALUES_AND_REPLAY
-        and descriptor.channel is ArtifactChannel.REPLAY
-    ) or (
-        retention is ResultRetention.ALL_PERSISTABLE_ARTIFACTS
-        and descriptor.persistence is PersistencePolicy.MODEL_VERIFIABLE
+        descriptor.channel is ArtifactChannel.DIAGNOSTIC
+        or (
+            retention is ResultRetention.VALUES_AND_REPLAY
+            and descriptor.channel is ArtifactChannel.REPLAY
+        )
+        or (
+            retention is ResultRetention.ALL_PERSISTABLE_ARTIFACTS
+            and descriptor.persistence is PersistencePolicy.MODEL_VERIFIABLE
+        )
     )
 
 

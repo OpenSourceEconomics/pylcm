@@ -91,7 +91,7 @@ SIMULATION_SOURCE = "src/_lcm/simulation/simulate.py"
 SIMULATION_TRANSITIONS_SOURCE = "src/_lcm/simulation/transitions.py"
 SIMULATION_COMPILE_SOURCE = "src/_lcm/simulation/compile.py"
 MODEL_SOURCE = "src/lcm/model.py"
-SOLVER_API_SOURCE = "src/lcm/solver_api.py"
+SOLVER_API_SOURCE = "src/lcm/_solver_api/replay.py"
 BACKWARD_INDUCTION_SOURCE = "src/_lcm/solution/backward_induction.py"
 PERIOD_REPLAY_SOURCE = "src/_lcm/solution/period_replay.py"
 INITIAL_CONDITIONS_SOURCE = "src/_lcm/simulation/initial_conditions.py"
@@ -184,11 +184,11 @@ _SOURCE_SEALS = {
     ARGMAX_SOURCE: "0d179a5aa65a6f310f598bdad8f75a9318a24832e31bd529184c2ea90356a72d",
     COLLECTIVE_SOURCE: "c30b746e574f1462a152c62b72c788730bdcdceabd2d71e525bf49a6a2c2e8c0",
     MAX_Q_SOURCE: "6bed0c5a31bbc1c7fe9e0d9250223888d1271528b01844a398668af038e24844",
-    PROCESSING_SOURCE: "c725ade8f73951db8bb6503454e9afbd2b9fc08f0591531c2c3c91b0ef84c052",
-    GRID_SEARCH_SOURCE: "6a6f6fb6df90d727ecde2071395d0844da2d049827dfe154ace7854855726ec9",
-    CORE_PROGRAM_SOURCE: "6101e7aea61ca01203a3635f3650333f94a1471a7906956e592936c7d64ff647",
+    PROCESSING_SOURCE: "8b29ba0f2330af747e677a6e200d23ae656871e29073c51eb030ea170e8f80a1",
+    GRID_SEARCH_SOURCE: "4780ad6dec3cf74ac52a733e64f643a2dc4f1d7d572354754ca1e8446383035a",
+    CORE_PROGRAM_SOURCE: "b9fcc5127619ca1b874ec1188c047102eb3c7fe54689cb61bd92335aa75789fa",
     OUTPUT_LAYOUT_SOURCE: "50ddea50e75fca1e295f895ed97d33236675e0cd984391be83fc54f4f55b32e1",
-    VALUE_TRANSFER_SOURCE: "44b8629c7b461b6b0216c79ba25101179e1b8cb2edf40630a55c6b9403fbbd2d",
+    VALUE_TRANSFER_SOURCE: "8f0d92844985d02bff39a5d88793105e30db0faa2879157489e20383faeb5272",
     ACTION_STREAMING_SOURCE: "bd693f4bab250215dea9b6fb6021c518163305a890a9536f66af9e1d7dc5c308",
     ACTION_REDUCTION_SOURCE: "6cee6ea2dbef0ba710fa4a318a2113377d6513cee508e73004861597f9c220f9",
     COLLECTIVE_ACTION_REDUCTION_SOURCE: "7a80418764fdf9754062a23707c5d39fa7abfcaac9c8e8f7803c4d8f1b461347",
@@ -198,23 +198,23 @@ _SOURCE_SEALS = {
     ZERO_SAFE_SOURCE: "6b85bacd7c01fec283fcd309a731ab73d6639975ff34edbcce1a8450fbac5f33",
     LOGSUMEXP_ACTION_REDUCTION_SOURCE: "732fda3ed4058445dedd160e58e3899ba286929413fd533e57113b5f772e7b79",
     PROBABILITY_SOURCE: "b59d16c16147af2518daaed643c10be43c506c6e3ac751cd52f04fa8fdab20d2",
-    ENGINE_SOURCE: "f1efc4226565341238c56121b059f0093f715e43e0f891ca99c907d262e95e3d",
+    ENGINE_SOURCE: "f77e09e6b39c67928af1c2e1914c0f8293970a5c72cc25a79a0c91c1b8da67be",
     STATE_ACTION_SPACE_SOURCE: "c7af3ea4c3912efa3d5d7daa0d420168a7545e327f6e4c581b3baf54efc79f11",
     SIMULATION_SOURCE: "d8fe6d4db443d9e4a14cb22e7ba816a32f83e1874dc53653d2eda66494814bcd",
     SIMULATION_TRANSITIONS_SOURCE: "a4a31f1cbb27668cc18610512e77947cbde38c9973e9a2b9c4bef2bf6e2edd98",
     SIMULATION_COMPILE_SOURCE: "eca63257bd882066c608c34791cb0399f8d283fa79f5e0640091e12321da82a9",
-    MODEL_SOURCE: "e5ea108944e645e0623d518d0f2ae8b05d73769d659e6dbe18eb8f98cb054fe9",
-    SOLVER_API_SOURCE: "89adec9b59c6eaa5dc3d285568376ca23685cf7ce08f5095aff2c350048fe8d6",
+    MODEL_SOURCE: "7d8471f5ae6710b6575fe169b3f0946c2cfeeb56930433a2c3c41e1e54cedab1",
+    SOLVER_API_SOURCE: "9510e42ecd609cce785539934ea214e0fec952794c5c6d904924f1a8936ea901",
     BACKWARD_INDUCTION_SOURCE: "6f5acbfb6b5e5da8ab29dd715ccaab016df30971fa7373e89fd2fe5aaf629ea3",
     PERIOD_REPLAY_SOURCE: "c581e6d32092a088e5268ea277166c05ab29f2c4505fb5e41527e9c45f9fdcd8",
     INITIAL_CONDITIONS_SOURCE: "582c29e7f99072d975c7a4c9070a93e707d25a98c09e216b47fa71c7bb2d6022",
-    RESULT_SOURCE: "7390877272bc23fd7c153e2a51ac4a6072e88fe950d5de695ff015205aff5058",
+    RESULT_SOURCE: "bfc4b1f19bf1852c86c4f5b87d40abed2521d0519af99ff613975fb8d3ab09f0",
     RESULT_DATAFRAME_SOURCE: "025e273c4d3bb9d8f9787189a551b113708c86b1e868d16178aa39555abf49a4",
     RESULT_METADATA_SOURCE: "5745acf8a75655a4da87c1d305d79db31582d1e4df419c059059d515770ed563",
     ADDITIONAL_TARGETS_SOURCE: "d1c8787e7968b868b4b09a90544050c5da65d2ca6203f2bc52fe6b7b7dd351e4",
     SIMULATION_RANDOM_SOURCE: "0f7d81ab5c36343ab24363dca159451c0a44a399ab150abd2e52fea6715ff20e",
     FOLD_ZERO_SAFE_SOURCE: "0f6c6c3ad1a69ea2ef241f8f0ce924e18c00e6515c7509577c761a8151d57feb",
-    SOLUTION_CONTRACT_SOURCE: "7adc156a09c14649383bb45fefe3d7a209f5ebd026d751d701b805757ff83259",
+    SOLUTION_CONTRACT_SOURCE: "15e95b6ad74ad5b56ce815b2f67575942686665960e9cb111f41540b4cd203a8",
     GRIDS_INIT_SOURCE: "c66aed5ef6cdb56cfa38eebb7f870f12475f7a5f62ca1962c17230f66fd3268a",
     GRID_BASE_SOURCE: "fd1064986abdbe1755383fb08758f74d40cad419c0da312f38b521c7d78ce59c",
     GRID_COORDINATES_SOURCE: "e0f3cffc38e2a854426309b3eacab5783a0a5725cc4e763a06969e03914619e8",
@@ -1567,7 +1567,7 @@ def _functools_adapter_errors(tree: ast.Module) -> list[str]:
                 "a7350bd29eb79dcb783acfc520638b8e959684ba5be19f3c4e4cac6f895534d8"
             ),
             "allow_args": (
-                "aafbd21439f91d8e29c52097e4b0711469942a9ca6bafce071278ef69b3d78fe"
+                "b4701afeb55c6320acd6eb3229a663143b8964f135476246c2e12e96d2b484f6"
             ),
         },
     )
@@ -1578,7 +1578,7 @@ def _core_program_transport_errors(tree: ast.Module) -> list[str]:
     errors = _class_surface_errors(
         tree=tree,
         label="core-program target-value access",
-        class_name="_TargetValueAccess",
+        class_name="TargetValueAccess",
         fields=(
             "target: ValueArtifactAddress",
             "source: ValueConsumerAddress",
@@ -1608,7 +1608,7 @@ def _core_program_transport_errors(tree: ast.Module) -> list[str]:
             class_name="CoreExecutionRequirements",
             fields=(
                 "streamable_axes: tuple[StreamableProductAxis, ...] = ()",
-                "target_value_accesses: tuple[_TargetValueAccess, ...] = ()",
+                "target_value_accesses: tuple[TargetValueAccess, ...] = ()",
             ),
             methods=("__post_init__",),
         )
@@ -1770,7 +1770,7 @@ ARTIFACT = "artifact"
             tree=tree,
             label="core-program provider-to-resolver transport",
             contracts={
-                "_TargetValueAccess.__post_init__": "087df21f9a729fb78e784cd8a1ed466c97473cce55b4835aec7530b6c3608f73",
+                "TargetValueAccess.__post_init__": "087df21f9a729fb78e784cd8a1ed466c97473cce55b4835aec7530b6c3608f73",
                 "StreamableProductAxis.__post_init__": "a83a07c71ec8a26d8ad9b8cc71ea65e3df8d000e7efdcc44802bc240a5db95c6",
                 "StreamableProductAxis.extent": "aebdd54708094461d473977783f0588d2491c212629e1f5a40f8cf24c789802a",
                 "CoreExecutionRequirements.__post_init__": "e4d9bc6d57b5394abcfe6b3429292116e691be52fb980604cdb6d2cf0e21a876",
@@ -1793,9 +1793,9 @@ ARTIFACT = "artifact"
                 "_validate_core_program": "d55b9b72493f9565e341c20ac15f1041c4f6acd2134e25a923382c7a10304b59",
                 "_validate_materialized_declaration": "d4a7b72b1943b877e689ed05bc6e83e8194fa20169615d7a0a8bd970bce96534",
                 "_resolve_input_transfer_plan": "86e49db184adcd67dbcdf9f7accfcc17e7adaac32042bf5233be71121d97b73e",
-                "_validate_target_value_accesses": "9f9c693c334394c0ea05e30b923dba937a2f6979c41b91c3855da1c6d0eac7ae",
-                "_target_value_argument_leaf": "ff8f95f1afe6f2e70d97d261317b158e94b376fda3842977cc88fc07529a9ce2",
-                "_validate_transfer_argument_metadata": "028eddda6b8348555f3f1dc1ce5bd869fdcbbf683f4e40e773d95f125556c95d",
+                "_validate_target_value_accesses": "5282f89b4f7e61baa4c54811d0a8c563b18d8cfc7e456a9e037bcd6671df5c2f",
+                "_target_value_argument_leaf": "64727cda07ad1670bb74c23e2f723cecac49fbdafb4b029424e4098ff7c898b7",
+                "_validate_transfer_argument_metadata": "64b2c555b9f48253ea4ca00b5258cfff56fa81c08e8c2754b24ea06544fb8884",
                 "_validate_streamable_axis": "49d750f0fa436a7971480f75485b11dfa08643b1d709cadefbeedea2e0b9dd45",
                 "_validate_tile_width": "15f543450ad5f6b739cfa8aafbf0a4fb34a0c5b677da4866a2afedd1effde831",
                 "_validate_coordinate_argument": "401392c0069102b2983559a9b7c53bba6bd66ccf0b0126f8e6688bff49564b27",
@@ -1875,15 +1875,15 @@ def _action_streaming_errors(tree: ast.Module) -> list[str]:
                 "_StreamingCollectiveHardMax.__call__": "9674dcfc6fd7026209d97cb30018f96088595a132bd88124b35e65c97bd7b3af",
                 "_StreamingEV1ExpectedMax.__call__": "9ad46e41de04ab0efb45f873459340f6933d984939f51d120afa6e53e2ad9510",
                 "_prepare_action_call": "290fd810472aeb3336fdd437ccba50159e9d28c6822d6b8122fa4bdec8c71159",
-                "_evaluate_block": "ef561620b6da26cd26cd4dda89f95cf480bc1c31a3ecd5d27eee12f8c7f3fc17",
-                "_evaluate_ev1_branch_block": "5f88bff6dc8900c8d179df8c4be4763ff7c9656ee66bc78fe44f10f3939517fe",
-                "_evaluate_collective_block": "33db932726923fa9e5cde59e3d1974b6500ef8cfebc166cc65f67a39d6dd8616",
+                "_evaluate_block": "ee4a59644e10e1f5ebb8aaa917967a74eab852bd1bf1d5e824310bc2a26ab63f",
+                "_evaluate_ev1_branch_block": "4c4cb2e7de9cf3a732f4ee528f526f83e9bdeb7424ea4ce8acc74f10f041e467",
+                "_evaluate_collective_block": "8030607cabf36d76d766c5e8eea3ec1e8d9bbd8f41214c3490691f8dbe718d89",
                 "_start_reduction": "034b3966dd04c0e0d66e085e8e2c4e16b127e1d8a9869ecfa039c3b5e7928b04",
-                "_scan_remaining_blocks": "c22ed2d6f392d72483a2d8cfbf5e741d8c248a8aef1baf9b914938ef255f03d2",
+                "_scan_remaining_blocks": "ccfb2af321657915e360867fd57bfec3e26eae86a031380fba94cd73a7384bc7",
                 "_add_block": "a5047bea80275b77727b69b06d563bcdfea7e80c0f99dda34f6570948ccd1a72",
                 "_reduce_no_action": "47067ad94112c815eccf14395b03ad372376e53cfd5b4f337ec70404d3a32da6",
                 "_start_collective_reduction": "019872b31d89c2a2c8ba68ee6128a9feb2b90b52c6ee3b00506708db6195adce",
-                "_scan_remaining_collective_blocks": "e40fba3b89b43e03a36d8b5fd6ebc32560bbe7fb8b5817c47bd8735fa27b641b",
+                "_scan_remaining_collective_blocks": "15c53ba8cc665ca03333103fe94a5f101e92fb216341e521fd1360097eb7987b",
                 "_add_collective_block": "5ed017db741c30cae43dd1c4a526c703c8601857c2fbca23e9900ca560e78198",
                 "_reduce_collective_no_action": "dbd215d04c091bdf6942fa6edb4a561468a5bc234f13ae24a67362dc5d48a9ff",
                 "_decode_action": "5ac47e5a2d400754255cd938bf9e27ec91007741c8bbf5ad18e04bb3a9a24cbe",
@@ -1892,10 +1892,10 @@ def _action_streaming_errors(tree: ast.Module) -> list[str]:
                 "_validate_collective_scalar_Q_and_F": "600332c08d2ed5aa6a4ffaeee07a878c8a713a674f54456c8a9d05dbe9eddd35",
                 "_validate_collective_block_Q_and_F": "1e12615fa5fa04137cebb137387bc1c2ad98b31f1978dd47f209d00207036bef",
                 "_initialize_ev1_reduction": "41728c9433880bdb06c0ab5d3c0821a7f100f238fa1faec90dc5ca967c627650",
-                "_add_ev1_block": "5c63a9ca306c889a05581aaab90a9da4a43082772a67a7098603818fc5dbb283",
+                "_add_ev1_block": "92fb55ab8e7ae853357ff9987d7f2f2a922141bf7222dc41436a0e0b2d84644f",
                 "_finalize_open_ev1_branch_group": "f1eea36aa27ec48e7e79557c8928ed62d5e6cf01d0cc100a8e558ebdb31196fd",
-                "_scan_remaining_ev1_blocks": "219ff26f338b96e2fce757277ef6495afcda3bf134c7a36fe1d8822aaa0151a9",
-                "_flush_ev1_branch_group": "cb87cd4217df5fb3e45806593d2013a2ba452f17cbb08097a9d0cacd1e6f9270",
+                "_scan_remaining_ev1_blocks": "8914c1d83aa24460dbba72c0984b4ed3af8a67e82dfb6749423a131002f9c2a6",
+                "_flush_ev1_branch_group": "cda5422b10b274dcd2b7b2db8a15b56a6688e5d6ed64a112a6ce212a4dd314e3",
             },
         )
     )
@@ -2042,8 +2042,8 @@ def category(self) -> str:
                 "_edge_reference_regimes_for_targets": "fae893f62c5a3eb6e8d4df88dae39fd283a5d86cd1c87a173da15287ea945af0",
                 "_classify_action_streaming": "09d190475ffaf8c269880b7062a4be39e149f27d801e5fb640fa171753337ebf",
                 "_supports_action_streaming": "d93f977fad68ad528beb9d4b9e6d45e5eb95b53c9a0398ff6f6a62ec548bad11",
-                "_target_value_accesses": "542d72d188b29070da8e11b1296b4230054c5fa99783093b3285db387827b460",
-                "_target_value_access": "8d91533907c586084a3efe1b5465bc055e07779d2219c66f9d4515b1ee44dcce",
+                "_target_value_accesses": "8f11f138ba76b43e061b0f39ed2a3d16bcfe4ac4c5b9301d605d37149ab606b0",
+                "_target_value_access": "93883576cb21e61f07454f5360fe02dc6addf20337cb78175579ec93c8a1cdf8",
             },
         )
     )
@@ -2600,7 +2600,7 @@ def _backward_output_layout_errors(tree: ast.Module) -> list[str]:
             "_regime_retains_replay": "04e8745dceb0e3c34e0f91fd11d27c43e0da5043cf2418b8015c15baa29d1d81",
             "_select_period_programs": "55bff2bbffbc5a75f00a656f684093d89d3655bac48d76da2e9dbe716b62bb74",
             "_selected_artifact_keys_for_cell": "1acc464529bc9833e48f727279682d969f850d2a3bb206e8a2695b1769f6182f",
-            "_compile_all_functions": "7892e8c0185460a7a889df9ba6f9e139c9531e7285937498e0d42de0eb410b75",
+            "_compile_all_functions": "cce03681dc7cb7fba3c6cbc41594a7d4aa8ec2857557ce74a956fb1449acda8f",
             "_resolve_output_layouts_and_lowering_keys": "e7a68f078e0937fe7fa276a534f902f3957508ebcfa612c5d173f1320c069ee1",
             "_resolve_program_for_execution": "247155a79a8cdc2c16845aeb9d222b2c6aeea7129c90d9a733ecc66cf793f5d0",
             "_resolve_value_input_transfer_plan": "40e46250dd373f2ea17e38c911e0c2df7ad01192dd82fcb1d7a7ddbf641f91bb",

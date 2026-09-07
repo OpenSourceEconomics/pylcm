@@ -2,6 +2,7 @@
 
 import hashlib
 from collections.abc import Mapping
+from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
@@ -13,8 +14,14 @@ from _lcm.params.mapping_leaf import MappingLeaf
 from _lcm.params.sequence_leaf import SequenceLeaf
 from _lcm.regime_building.finalize import FinalizedUserRegime
 from _lcm.solution.contract import BackwardInductionResult
-from _lcm.solution.result_snapshot import snapshot_artifact_store
-from _lcm.typing import FlatParams, RegimeName
+from _lcm.solution.result_snapshot import own_artifact_store, own_value_store
+from _lcm.typing import (
+    FlatParams,
+    PeriodToRegimeToDissolutionFlags,
+    PeriodToRegimeToSimulationPolicy,
+    PeriodToRegimeToVArr,
+    RegimeName,
+)
 from lcm.solver_api import (
     DISSOLUTION_FLAG,
     EGM_CONTINUATION,
@@ -23,7 +30,6 @@ from lcm.solver_api import (
     ArtifactChannel,
     ArtifactKey,
     ArtifactRef,
-    ArtifactStore,
     OmissionReason,
     PersistencePolicy,
     ResultRetention,
@@ -41,6 +47,34 @@ else:
     # static checking keeps the precise type above while runtime checks the rest of
     # this private bridge's fully concrete signature.
     SolutionAuthority = Any
+
+
+@dataclass(frozen=True, kw_only=True)
+class OwnedSolutionView:
+    """The engine's by-reference view of a result it built in this process.
+
+    The producing model consumes its own result through this view: the value
+    arrays, published replay policies, and dissolution flags are the objects the
+    solve returned, and the authority is the one bound to that solve, generated
+    adaptive facts included. Nothing is copied and nothing is re-validated; the
+    consumer only checks that it is the producing instance and that the
+    parameters agree.
+    """
+
+    model_instance_id: str
+    """Token of the model instance that ran the solve."""
+    params_fingerprint: str
+    """Digest of the canonical solution parameters the solve used."""
+    values: PeriodToRegimeToVArr
+    """The solve's value arrays, by reference."""
+    simulation_policies: PeriodToRegimeToSimulationPolicy
+    """The published replay policies consumed by a declared route."""
+    dissolution_flags: PeriodToRegimeToDissolutionFlags
+    """The retained per-period, per-collective-regime dissolution flags."""
+    replay_artifacts: Mapping[ArtifactRef, object]
+    """Every retained replay-channel payload, by reference, for plugin routes."""
+    authority: SolutionAuthority
+    """The solution authority bound to this solve."""
 
 
 def build_solution_result(  # noqa: C901, PLR0912, PLR0915
@@ -63,22 +97,22 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
     auxiliary: dict[ArtifactRef, object] = dict(internal_result.auxiliary_artifacts)
     diagnostics: dict[ArtifactRef, object] = {}
     omissions: dict[ArtifactRef, OmissionReason] = {}
+    declared_replay_policies: PeriodToRegimeToSimulationPolicy = MappingProxyType(
+        {
+            period: MappingProxyType(
+                {
+                    regime_name: payload
+                    for regime_name, payload in regime_to_payload.items()
+                    if regimes[regime_name].simulation.egm_policy_read is not None
+                }
+            )
+            for period, regime_to_payload in (
+                internal_result.simulation_policies.items()
+            )
+        }
+    )
 
     if retention.retains_replay:
-        declared_replay_policies = MappingProxyType(
-            {
-                period: MappingProxyType(
-                    {
-                        regime_name: payload
-                        for regime_name, payload in regime_to_payload.items()
-                        if regimes[regime_name].simulation.egm_policy_read is not None
-                    }
-                )
-                for period, regime_to_payload in (
-                    internal_result.simulation_policies.items()
-                )
-            }
-        )
         _add_nested_artifacts(
             target=replay,
             nested=declared_replay_policies,
@@ -91,17 +125,6 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
         )
 
     if retention is ResultRetention.ALL_PERSISTABLE_ARTIFACTS:
-        # A policy replayed against solve-generated adaptive axes is read through
-        # facts the solving model instance holds beside the result, not inside
-        # it; nothing persistable carries them, so the policy is not kept.
-        for policy_ref in tuple(replay):
-            if (
-                policy_ref.key == SIMULATION_POLICY
-                and authority.replay[policy_ref].adaptive_outer_nodes is not None
-            ):
-                del replay[policy_ref]
-                omissions[policy_ref] = OmissionReason.NOT_PERSISTED
-
         for store in (retained_continuations, replay, auxiliary):
             for ref in tuple(store):
                 generic_authority = authority.artifacts.get(ref)
@@ -182,7 +205,9 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
                     else:
                         omissions[dissolution_ref] = OmissionReason.UNSUPPORTED
 
-    present_refs = set(retained_continuations) | set(replay) | set(auxiliary)
+    present_refs = (
+        set(retained_continuations) | set(replay) | set(auxiliary) | set(diagnostics)
+    )
     for ref, artifact_authority in authority.artifacts.items():
         if ref in present_refs or ref in omissions:
             continue
@@ -206,17 +231,17 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
             omissions[ref] = OmissionReason.UNSUPPORTED
 
     result = SolutionResult(
-        values=internal_result.value_functions,
-        retained_continuations=snapshot_artifact_store(
-            store=ArtifactStore(retained_continuations),
+        values=own_value_store(internal_result.value_functions),
+        retained_continuations=own_artifact_store(
+            entries=retained_continuations,
             authorities=authority.artifacts,
         ),
-        replay_artifacts=snapshot_artifact_store(
-            store=ArtifactStore(replay),
+        replay_artifacts=own_artifact_store(
+            entries=replay,
             authorities=authority.artifacts,
         ),
-        auxiliary_artifacts=snapshot_artifact_store(
-            store=ArtifactStore(auxiliary),
+        auxiliary_artifacts=own_artifact_store(
+            entries=auxiliary,
             authorities=authority.artifacts,
         ),
         metadata=SolutionMetadata(
@@ -265,8 +290,8 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
             ),
         ),
         omissions=MappingProxyType(omissions),
-        diagnostics=snapshot_artifact_store(
-            store=ArtifactStore(diagnostics),
+        diagnostics=own_artifact_store(
+            entries=diagnostics,
             authorities=authority.artifacts,
         ),
     )
@@ -274,6 +299,27 @@ def build_solution_result(  # noqa: C901, PLR0912, PLR0915
         result,
         "_artifact_authority",
         MappingProxyType(dict(authority.artifacts)),
+    )
+    object.__setattr__(
+        result,
+        "_engine_view",
+        OwnedSolutionView(
+            model_instance_id=model_instance_id,
+            params_fingerprint=params_fingerprint,
+            values=internal_result.value_functions,
+            simulation_policies=(
+                declared_replay_policies
+                if retention.retains_replay
+                else MappingProxyType({})
+            ),
+            dissolution_flags=(
+                internal_result.dissolution_flags
+                if retention.retains_replay
+                else MappingProxyType({})
+            ),
+            replay_artifacts=MappingProxyType(replay),
+            authority=authority,
+        ),
     )
     return result
 

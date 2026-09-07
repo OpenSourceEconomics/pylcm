@@ -307,27 +307,30 @@ else:
     type _FingerprintUserRegimes = object
 
 
-def project_solution_params(
-    *, flat_params: FlatParams, regimes: _ProjectionRegimes
-) -> FlatParams:
-    """Drop canonical parameters proved to be realized-transition-only.
+type SolutionParamProjection = MappingProxyType[RegimeName, frozenset[str]]
+
+
+def solution_param_projection(regimes: _ProjectionRegimes) -> SolutionParamProjection:
+    """Name, per regime, the parameters proved to be realized-transition-only.
 
     A stored policy is priced against the solve-phase transition laws. A
     ``Phased`` simulate variant governs the realized path after the action has
     been chosen, so a parameter used exclusively by that realized transition
     may legitimately differ when the same solution is replayed.
 
-    The proof is deliberately conservative. A key is removed only when its
-    *canonical qualified name* occurs in a simulate transition and nowhere in
-    the complete solve-side semantic callable pool. This catches transitive DAG
-    parameters (the compiled signatures carry their qualified names) while
-    preserving a name shared with utility, feasibility, Pareto weights, a
-    continuation helper, or a solve transition. Unknown/generic signatures bind
-    more parameters; they never weaken compatibility.
+    The proof is deliberately conservative. A name is listed only when it
+    occurs in a simulate transition and nowhere in the complete solve-side
+    semantic callable pool. This catches transitive DAG parameters (the
+    compiled signatures carry their qualified names) while preserving a name
+    shared with utility, feasibility, Pareto weights, a continuation helper, or
+    a solve transition. Unknown/generic signatures bind more parameters; they
+    never weaken compatibility.
+
+    The projection is a function of the model's callables alone, so a model
+    computes it once at build and applies it to every parameter vector.
     """
-    projected: dict[RegimeName, MappingProxyType[str, object]] = {}
-    for regime_name, regime_params in flat_params.items():
-        regime = regimes[regime_name]
+    projection: dict[RegimeName, frozenset[str]] = {}
+    for regime_name, regime in cast("Mapping[RegimeName, Any]", regimes).items():
         solve_names, solve_accepts_unknown = _solution_parameter_usage(regime)
         simulate_names = _nested_callable_parameter_names(
             (
@@ -338,13 +341,29 @@ def project_solution_params(
         # Only exact engine-qualified arguments prove ownership. A raw suffix
         # match could remove ``utility__rho`` merely because a transition has a
         # distinct ``next_state__rho`` parameter.
-        realized_only = {
-            name
-            for name in regime_params
-            if not solve_accepts_unknown
-            and name in simulate_names
-            and name not in solve_names
-        }
+        projection[regime_name] = (
+            frozenset() if solve_accepts_unknown else simulate_names - solve_names
+        )
+    return MappingProxyType(projection)
+
+
+def project_solution_params(
+    *,
+    flat_params: FlatParams,
+    regimes: _ProjectionRegimes,
+    projection: SolutionParamProjection | None = None,
+) -> FlatParams:
+    """Drop canonical parameters proved to be realized-transition-only.
+
+    `projection` is the model's build-time `solution_param_projection`; when it
+    is absent the projection is derived here from the regimes' callables.
+    """
+    realized_only_by_regime = (
+        solution_param_projection(regimes) if projection is None else projection
+    )
+    projected: dict[RegimeName, MappingProxyType[str, object]] = {}
+    for regime_name, regime_params in flat_params.items():
+        realized_only = realized_only_by_regime[regime_name]
         projected[regime_name] = MappingProxyType(
             {
                 name: value
@@ -353,6 +372,46 @@ def project_solution_params(
             }
         )
     return cast("FlatParams", MappingProxyType(projected))
+
+
+def fingerprint_solution_support(
+    *, regimes: Mapping[RegimeName, Regime], flat_params: FlatParams
+) -> str:
+    """Hash what the model-owned solution authority reads from a parameter vector.
+
+    The authority describes value and artifact cells — shapes, axes, coordinates,
+    replay capability — from the canonical model and the parameters that fix its
+    concrete support: runtime-supplied grid points, process parameters, and every
+    parameter leaf's shape and dtype (the replay capability certificate reads
+    argument shapes, never values). Two parameter vectors with the same digest
+    yield the same declared authority, so a model caches one authority per digest
+    rather than deriving it again per solve.
+    """
+    record = (
+        ("pylcm-solution-support", 1),
+        {
+            name: (
+                _grid_support(regime=regime, regime_params=flat_params[name]),
+                {
+                    param_name: _param_shape_signature(value)
+                    for param_name, value in flat_params[name].items()
+                },
+            )
+            for name, regime in regimes.items()
+        },
+    )
+    return _semantic_fingerprint(record)
+
+
+def _param_shape_signature(value: object) -> object:
+    """Return the rank, shape, and dtype of one parameter leaf, never its bytes."""
+    data = getattr(value, "data", None)
+    if isinstance(data, Mapping):
+        return {key: _param_shape_signature(child) for key, child in data.items()}
+    if isinstance(data, tuple | list):
+        return tuple(_param_shape_signature(child) for child in data)
+    array = np.asarray(value)
+    return (tuple(array.shape), array.dtype.str)
 
 
 def _solution_parameter_usage(
@@ -466,6 +525,7 @@ def fingerprint_model(
     regime_names_to_ids: RegimeNamesToIds,
     flat_params: FlatParams,
     structure: str | None = None,
+    projection: SolutionParamProjection | None = None,
 ) -> str:
     """Hash the model facts that determine stored mathematical interpretation.
 
@@ -498,9 +558,48 @@ def fingerprint_model(
             name: _grid_support(regime=regime, regime_params=flat_params[name])
             for name, regime in regimes.items()
         },
-        project_solution_params(flat_params=flat_params, regimes=regimes),
+        project_solution_params(
+            flat_params=flat_params, regimes=regimes, projection=projection
+        ),
     )
     return _semantic_fingerprint(record)
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class SealedBinding:
+    """One name a sealed callable reads, and the object it was bound to at build.
+
+    A binding is either a global (`namespace` is the function's globals) or a
+    closure cell (`cell` is the cell). The captured `value` is held strongly so
+    the identity comparison can never be fooled by a recycled object id.
+    """
+
+    owner: str
+    """Qualified name of the function that reads the binding."""
+    name: str
+    """The name as the function's code reads it."""
+    namespace: dict[str, object] | None
+    """The globals mapping holding the binding, for a global reference."""
+    cell: types.CellType | None
+    """The closure cell holding the binding, for a free variable."""
+    value: object
+    """The object the name was bound to when the model was built."""
+
+    def has_moved(self) -> bool:
+        """Whether the name is now bound to a different object than at build."""
+        if self.cell is not None:
+            try:
+                current = self.cell.cell_contents
+            except ValueError:
+                return True
+            return current is not self.value
+        namespace = cast("dict[str, object]", self.namespace)
+        return namespace.get(self.name, _MISSING_BINDING) is not self.value
+
+
+_MISSING_BINDING = object()
+
+type BindingRecorder = Callable[[SealedBinding], None]
 
 
 def fingerprint_model_structure(
@@ -509,6 +608,7 @@ def fingerprint_model_structure(
     regimes: Mapping[RegimeName, Regime],
     user_regimes: _FingerprintUserRegimes,
     regime_names_to_ids: RegimeNamesToIds,
+    binding_recorder: BindingRecorder | None = None,
 ) -> str:
     """Hash the mathematical facts a model fixes at build.
 
@@ -518,6 +618,10 @@ def fingerprint_model_structure(
     declaration's callable semantics, and the regimes' own fixed parameters.
     Concrete grid support and canonical solution parameters belong to
     `fingerprint_model`, which reads them from the parameter vector.
+
+    `binding_recorder`, when given, receives every global and closure binding
+    the walk reads, so the caller can later detect a rebinding that would make
+    the digest describe code the model no longer runs.
     """
     projected_fixed_params = project_solution_params(
         flat_params=MappingProxyType(
@@ -526,7 +630,7 @@ def fingerprint_model_structure(
         regimes=regimes,
     )
     record = (
-        ("pylcm-model-structure", 6),
+        ("pylcm-model-structure", 7),
         tuple(ages.exact_values),
         {name: int(regime_id) for name, regime_id in regime_names_to_ids.items()},
         {
@@ -557,7 +661,9 @@ def fingerprint_model_structure(
             for name, regime in regimes.items()
         },
     )
-    return _semantic_fingerprint(record)
+    hasher = _SemanticHasher(binding_recorder=binding_recorder)
+    hasher.visit(value=record)
+    return hasher.hexdigest()
 
 
 def _grid_support(
@@ -576,8 +682,20 @@ def _grid_support(
     )
 
 
+# Regime slots whose simulate-phase truth a stored solution is independent of.
+_TRANSITION_SLOTS = frozenset({"state_transitions", "transition"})
+
+
 def _project_user_regime_declaration(regime: object) -> MappingProxyType[str, object]:
-    """Return the semantic dataclass fields without importing declaration topology."""
+    """Return the semantic dataclass fields without importing declaration topology.
+
+    A stored policy is priced against the solve-phase laws of motion and regime
+    transition; the realized path after the action is chosen does not change
+    it. The transition slots are therefore projected to their solve members.
+    Every other slot keeps both phases: a simulate-phase utility, constraint,
+    aggregator, or carried-state grid changes what the solution is replayed
+    with, so two models that differ there are different models.
+    """
     if type(regime) is types.SimpleNamespace:
         fields = vars(regime).items()
     elif dataclasses.is_dataclass(regime) and not isinstance(regime, type):
@@ -593,10 +711,36 @@ def _project_user_regime_declaration(regime: object) -> MappingProxyType[str, ob
         {
             "type": f"{declaration_type.__module__}.{declaration_type.__qualname__}",
             "fields": MappingProxyType(
-                {name: value for name, value in fields if name != "description"}
+                {
+                    name: (
+                        _project_transition_slot_to_solve(value)
+                        if name in _TRANSITION_SLOTS
+                        else value
+                    )
+                    for name, value in fields
+                    if name != "description"
+                }
             ),
         }
     )
+
+
+def _project_transition_slot_to_solve(value: object) -> object:
+    """Keep only the solve member of a `Phased` transition declaration.
+
+    `Phased` is outermost-only in a transition slot: the slot value itself, or
+    one entry of a per-state mapping, never a cell of a per-target mapping.
+    """
+    if type(value) is Phased:
+        return value.solve
+    if isinstance(value, Mapping):
+        return MappingProxyType(
+            {
+                name: (law.solve if type(law) is Phased else law)
+                for name, law in value.items()
+            }
+        )
+    return value
 
 
 def _semantic_fingerprint(value: object) -> str:
@@ -613,13 +757,36 @@ def _semantic_fingerprint(value: object) -> str:
 class _SemanticHasher:
     """Length-framed serializer feeding a SHA-256 digest."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, binding_recorder: BindingRecorder | None = None) -> None:
         self._digest = hashlib.sha256()
         self._active: dict[int, int] = {}
         self._active_bound_methods: dict[tuple[int, int], int] = {}
+        self._binding_recorder = binding_recorder
 
     def hexdigest(self) -> str:
         return self._digest.hexdigest()
+
+    def _record_binding(
+        self,
+        *,
+        owner: types.FunctionType,
+        name: str,
+        value: object,
+        namespace: dict[str, object] | None = None,
+        cell: types.CellType | None = None,
+    ) -> None:
+        """Report one read binding to the recorder, when one listens."""
+        if self._binding_recorder is None:
+            return
+        self._binding_recorder(
+            SealedBinding(
+                owner=f"{owner.__module__}.{owner.__qualname__}",
+                name=name,
+                namespace=namespace,
+                cell=cell,
+                value=value,
+            )
+        )
 
     def frame(self, *, label: str, payload: bytes = b"") -> None:
         for part in (label.encode(), payload):
@@ -775,9 +942,16 @@ class _SemanticHasher:
                         f"{type(value).__module__}.{type(value).__qualname__}."
                     )
                     raise TypeError(msg)
+                # Both members bind: a simulate-phase decision primitive changes
+                # what a stored solution is replayed with. Only the transition
+                # slots are exempt from simulate truth, and the regime
+                # declaration projects those before they reach the hasher.
                 self.frame(label="Phased-solve-start")
                 self.visit(value=value.solve)
                 self.frame(label="Phased-solve-end")
+                self.frame(label="Phased-simulate-start")
+                self.visit(value=value.simulate)
+                self.frame(label="Phased-simulate-end")
                 return
             if isinstance(value, types.CodeType):
                 self._visit_code(value)
@@ -1158,7 +1332,7 @@ class _SemanticHasher:
             self._visit_annotation(annotations[name])
         self.frame(label="function-annotations-end")
 
-    def _visit_function(  # noqa: C901, PLR0912
+    def _visit_function(  # noqa: C901, PLR0912, PLR0915
         self, *, function: types.FunctionType, ignore_beartype_guards: bool = False
     ) -> None:
         wrapped = _unwrap_exact_beartype_wrapper(function)
@@ -1202,6 +1376,7 @@ class _SemanticHasher:
                 except ValueError:
                     self.frame(label="empty-cell")
                     continue
+                self._record_binding(owner=function, name=name, value=value, cell=cell)
                 paths = closure_references.get(name, frozenset({()}))
                 if any(paths):
                     self._visit_object_reference(
@@ -1223,6 +1398,12 @@ class _SemanticHasher:
                 if value is _BEARTYPE_CLAW_STATE:
                     self.frame(label="transparent-beartype-claw-state")
                     continue
+                self._record_binding(
+                    owner=function,
+                    name=name,
+                    value=value,
+                    namespace=function.__globals__,
+                )
                 if isinstance(value, types.ModuleType):
                     self._visit_module_reference(
                         module=value,
@@ -2466,4 +2647,11 @@ def _semantic_sort_key(value: object) -> tuple[str, str]:
     return type_name, digest
 
 
-__all__ = ["fingerprint_model", "project_solution_params"]
+__all__ = [
+    "SealedBinding",
+    "fingerprint_model",
+    "fingerprint_model_structure",
+    "fingerprint_solution_support",
+    "project_solution_params",
+    "solution_param_projection",
+]
