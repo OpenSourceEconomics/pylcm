@@ -481,7 +481,7 @@ def process_regimes(
             PlacementRequest(
                 regime_name=regime_name,
                 distributed_extents=tuple(
-                    grid.to_jax().shape[0]
+                    _declared_extent(grid=grid)
                     for grid in all_grids[regime_name].values()
                     if grid.distributed
                 ),
@@ -728,9 +728,9 @@ def process_regimes(
 def _value_template_bytes(*, state_grids: Mapping[StateName, Grid]) -> int:
     """Return the bytes of a regime's value template, the planner's footprint weight.
 
-    Every state grid contributes its extent; a folded state is integrated out
-    of the stored value, so this over-counts a folding regime by the fold's
-    extent, which only weights a tie-break between devices.
+    Every state grid contributes its declared extent; a folded state is
+    integrated out of the stored value, so this over-counts a folding regime by
+    the fold's extent, which only weights a tie-break between devices.
 
     Args:
         state_grids: Mapping of the regime's state names to their grids.
@@ -740,7 +740,31 @@ def _value_template_bytes(*, state_grids: Mapping[StateName, Grid]) -> int:
 
     """
     item_bytes = jnp.zeros(()).dtype.itemsize
-    return item_bytes * math_prod(len(grid.to_jax()) for grid in state_grids.values())
+    return item_bytes * math_prod(
+        _declared_extent(grid=grid) for grid in state_grids.values()
+    )
+
+
+def _declared_extent(*, grid: Grid) -> int:
+    """Return a grid's axis length as declared, without materialising its points.
+
+    A grid whose points arrive with the parameters holds no array at model
+    build, so the count it declares is the only extent there is; every other
+    grid declares the same length it materialises.
+
+    Args:
+        grid: The state or action grid whose axis length is wanted.
+
+    Returns:
+        The number of points on the grid's axis.
+
+    """
+    if isinstance(grid, DiscreteGrid):
+        return len(grid.categories)
+    declared = getattr(grid, "n_points", None)
+    if declared is None:
+        return int(grid.to_jax().shape[0])
+    return int(declared)
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)

@@ -12,6 +12,7 @@ from tests.ci.cpu_suite_invocations import (
     FOUR_DEVICE_TEST_FILES,
     carries_policy_activation_flags,
     cpu_suite_invocation_argvs,
+    four_device_pinning_test_files,
 )
 
 _REPO_ROOT = Path(__file__).parents[2]
@@ -45,6 +46,21 @@ def test_windows_cpu_suite_has_no_missing_kernel_skip_policy():
 
     assert not obsolete_options.intersection(
         argument.partition("=")[0] for argument in arguments
+    )
+
+
+def test_every_four_device_test_file_is_registered():
+    """Every test file pinning several CPU devices is in `FOUR_DEVICE_TEST_FILES`.
+
+    Registration is what gives a file its own-process invocation in both
+    precision legs; the tests below check those invocations, but only for files
+    the registry names. A file that pins the topology and is left out of the
+    registry runs inside the shared `tests` invocation instead, where the
+    backend is already initialised, so its pin raises and every test in it
+    skips without failing anything.
+    """
+    assert set(four_device_pinning_test_files(tests_root=_REPO_ROOT / "tests")) == set(
+        FOUR_DEVICE_TEST_FILES
     )
 
 
@@ -95,10 +111,9 @@ def test_four_device_file_appears_in_exactly_one_invocation(
 ):
     """Each four-CPU-device test file is named by exactly one pytest invocation.
 
-    `tests/test_distributed.py` and `tests/execution/test_transfer_catalogue.py`
-    pin a four-CPU-device topology at import, a pin that depends on running
-    alone in its process; naming the file from zero or from more than one
-    invocation means it either never runs or no longer runs alone.
+    Such a file pins a four-CPU-device topology at import, a pin that depends on
+    running alone in its process; naming the file from zero or from more than
+    one invocation means it either never runs or no longer runs alone.
     """
     matches = _invocations_naming(
         job=job, step_name=step_name, four_device_file=four_device_file

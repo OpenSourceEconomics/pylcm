@@ -35,7 +35,7 @@ from _lcm.typing import (
     VmappedRegimeTransitionFunction,
 )
 from _lcm.utils.containers import first_non_none
-from lcm.exceptions import PyLCMError
+from lcm.exceptions import ExecutionPlanningError, PyLCMError
 from lcm.solver_api import (
     ArtifactAuthority,
     ArtifactKey,
@@ -1215,12 +1215,42 @@ def placed_devices_for_ids(
     Returns:
         Tuple of the device objects, in the order the ids name them.
 
+    Raises:
+        ExecutionPlanningError: An id names no visible device.
+
     """
     devices = tuple(jax.devices())
     if not submesh_device_ids:
         return devices
     by_id = {device.id: device for device in devices}
+    _fail_if_a_device_id_is_not_visible(
+        submesh_device_ids=submesh_device_ids, visible_ids=tuple(by_id)
+    )
     return tuple(by_id[device_id] for device_id in submesh_device_ids)
+
+
+def _fail_if_a_device_id_is_not_visible(
+    *, submesh_device_ids: tuple[int, ...], visible_ids: tuple[int, ...]
+) -> None:
+    """Raise when a placed device id names no device this process can see.
+
+    Args:
+        submesh_device_ids: The device ids a regime was placed on.
+        visible_ids: The ids of the devices this process sees.
+
+    Raises:
+        ExecutionPlanningError: An id names no visible device.
+
+    """
+    absent = tuple(
+        device_id for device_id in submesh_device_ids if device_id not in visible_ids
+    )
+    if absent:
+        raise ExecutionPlanningError(
+            f"Placed device ids {absent} name no visible device. This process "
+            f"sees device ids {visible_ids}; a placement resolved against a "
+            "different device count cannot be dispatched here."
+        )
 
 
 def _build_regime_sharding(

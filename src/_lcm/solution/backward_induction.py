@@ -1155,8 +1155,8 @@ def _cores_with_transfer_cache(
 def _regime_device_ids(*, regime: Regime) -> frozenset[int]:
     """Return the ids of the devices one regime's nodes are dispatched on.
 
-    A regime the planner assigned no devices runs on every visible one, which
-    is what a model built before a placement was resolved carries.
+    An empty placement names no submesh, so the regime runs on every visible
+    device.
 
     Args:
         regime: The canonical regime whose nodes are being placed.

@@ -68,7 +68,9 @@ The budget is compile-only and fail-closed:
   to `model.simulate(solution=...)`;
 - the selected widths are execution choices: they enter neither the model nor the
   parameter fingerprint, and a period capture records them so `replay_period` lowers the
-  same executable without planning again.
+  same executable without planning again. The capture serializes neither sharding nor
+  device placement, so a replayed period is lowered against the restored arrays' default
+  placement rather than the submesh the solve dispatched the period on.
 
 The ceiling bounds each compiled program's reported per-device peak, not the device-wide
 footprint of a solve: retained values, continuation arrays, executable caches, and

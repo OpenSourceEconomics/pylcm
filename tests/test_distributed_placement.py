@@ -162,29 +162,29 @@ def test_two_placements_of_one_model_publish_the_same_values(
 def test_independent_regimes_of_one_period_share_one_wave(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Both regimes of a period are dispatched in one wave on disjoint devices."""
-    waves_by_period: dict[int, int] = {}
+    """Both regimes of a period are dispatched together in the period's first wave."""
+    units_by_period: dict[int, int] = {}
     recorder = _WavePlanRecorder(
-        planner=backward_induction.plan_period_waves, waves_by_period=waves_by_period
+        planner=backward_induction.plan_period_waves, units_by_period=units_by_period
     )
     monkeypatch.setattr(backward_induction, "plan_period_waves", recorder)
     _make_three_type_model(distributed=True).solve(params=_PARAMS, log_level="off")
 
-    assert set(waves_by_period.values()) == {1}
+    assert set(units_by_period.values()) == {2}
 
 
 class _WavePlanRecorder:
-    """Call the real wave planner and record how many waves each period got."""
+    """Call the real wave planner and record each period's first wave width."""
 
-    def __init__(self, *, planner: object, waves_by_period: dict[int, int]) -> None:
+    def __init__(self, *, planner: object, units_by_period: dict[int, int]) -> None:
         """Keep the planner to delegate to and the mapping to record into."""
         self._planner = planner
-        self._waves_by_period = waves_by_period
+        self._units_by_period = units_by_period
 
     def __call__(self, **kwargs: object) -> object:
-        """Plan the period's waves and record their number under its period."""
+        """Plan the period's waves and record how many units the first one holds."""
         waves = self._planner(**kwargs)  # ty: ignore[call-non-callable]
-        self._waves_by_period[waves[0][0].period] = len(waves)
+        self._units_by_period[waves[0][0].period] = len(waves[0])
         return waves
 
 

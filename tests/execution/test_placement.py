@@ -1,15 +1,21 @@
 """Submesh placement: which devices each regime's nodes run on."""
 
+from types import MappingProxyType
+
+import jax.numpy as jnp
 import pytest
 
+from _lcm.engine import placed_devices_for_ids
 from _lcm.execution.placement import (
     PlacementRequest,
     SubmeshPlacement,
     mesh_size_for_extents,
     plan_submesh_placement,
 )
+from _lcm.regime_building.processing import _value_template_bytes
 from _lcm.typing import RegimeName
 from lcm.exceptions import ExecutionPlanningError, PyLCMError
+from lcm.grids import IrregSpacedGrid, LinSpacedGrid
 
 
 def _request(
@@ -80,6 +86,26 @@ def test_the_devices_of_an_unplanned_regime_are_refused() -> None:
 
     with pytest.raises(ExecutionPlanningError, match="has no placement"):
         placement.devices_for(regime_name="b")
+
+
+def test_a_runtime_point_state_is_weighted_by_its_declared_extent() -> None:
+    """A state whose points arrive with the params weighs its declared count."""
+    state_grids = MappingProxyType(
+        {
+            "wealth": IrregSpacedGrid(n_points=5),
+            "health": LinSpacedGrid(start=0.0, stop=1.0, n_points=3),
+        }
+    )
+
+    assert _value_template_bytes(state_grids=state_grids) == (
+        5 * 3 * jnp.zeros(()).dtype.itemsize
+    )
+
+
+def test_the_devices_of_an_absent_id_are_refused() -> None:
+    """Resolving a device id no visible device carries names that id."""
+    with pytest.raises(ExecutionPlanningError, match="99"):
+        placed_devices_for_ids(submesh_device_ids=(99,))
 
 
 def test_a_three_valued_type_runs_on_three_of_four_devices() -> None:
