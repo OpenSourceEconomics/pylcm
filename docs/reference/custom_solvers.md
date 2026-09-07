@@ -170,9 +170,12 @@ A `ReducedAxis` is the Cartesian product of the grids in `coordinate_names`, cou
 is an output axis over the states in `state_names`: its tiles are concatenated, never
 folded, so the published array is the same whatever width the tiles run at. Both name
 the planner-visible axis in `name`, take the compiled width through `width_keyword`, and
-constrain the widths the planner may pick with `minimum_width` (no narrower block is
-ever proposed) and `alignment` (a width below the extent is rounded down to a multiple
-of it, and never below `minimum_width`); the full extent is always admissible.
+constrain the widths the planner may pick with `minimum_width` and `alignment`: the
+widths an axis admits are its full extent, whatever the alignment divides, plus every
+multiple of `alignment` between `minimum_width` and that extent. A proposal is rounded
+down onto that set, and one that falls through it — below the floor, or below the
+alignment and so at zero — is lifted to the narrowest width the set holds, which is the
+extent when no multiple of the alignment reaches the floor without passing it.
 `ACTION_PRODUCT_AXIS` is the name the shipped `GridSearch` gives its action product, and
 the name to pass when fixing that solver's width.
 

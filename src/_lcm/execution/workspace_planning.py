@@ -59,9 +59,9 @@ def workspace_width_candidates(
     per-axis frontiers, widest first: descending width product, ties broken toward
     the lexicographically greatest width tuple in axis declaration order.  A fixed
     axis contributes one width.  Every width an axis contributes satisfies the
-    width policy it declares: never below its `minimum_width`, and below the full
-    extent a multiple of its `alignment`.  Names no axis declares are ignored here;
-    a name no program of the solve declares is refused before planning starts.
+    width policy it declares: it is the full extent, or a multiple of its
+    `alignment` at or above its `minimum_width`.  Names no axis declares are ignored
+    here; a name no program of the solve declares is refused before planning starts.
     """
     declared_axes = _validate_axes(axes=axes)
     widths = _validate_fixed_widths(fixed_widths=fixed_widths)
@@ -321,17 +321,27 @@ def _fixed_width(
 
 
 def _admissible_width(*, axis: ReducedAxis | TiledOutputAxis, width: int) -> int:
-    """Return the width the axis admits closest to, and never above, the proposal.
+    """Return the width the axis admits nearest the proposal, preferring the shorter.
 
-    The full extent is always admissible, whatever the alignment divides.  Below it
-    a proposal is rounded down to a multiple of the alignment and then lifted back
-    to the declared floor, so the floor — not the alignment — is what a narrow
-    proposal ends at.
+    An axis admits its full extent, whatever the alignment divides, plus every
+    multiple of its alignment lying between its floor and that extent.  A proposal
+    is rounded down onto that set; one that falls through it — below the floor, or
+    below the alignment and so at zero — is lifted to the smallest width the set
+    holds, which is the extent when no multiple of the alignment reaches the floor
+    without passing the extent.
     """
     if width >= axis.extent:
         return axis.extent
     aligned = width - width % axis.alignment
-    return max(aligned, axis.minimum_width)
+    if aligned >= axis.minimum_width:
+        return aligned
+    return _smallest_admissible_width(axis=axis)
+
+
+def _smallest_admissible_width(*, axis: ReducedAxis | TiledOutputAxis) -> int:
+    """Return the narrowest width the axis admits: an aligned floor, else the extent."""
+    lifted = -(-axis.minimum_width // axis.alignment) * axis.alignment
+    return min(lifted, axis.extent)
 
 
 def _width_mapping(

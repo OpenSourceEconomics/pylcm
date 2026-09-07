@@ -854,14 +854,44 @@ def test_the_full_extent_stays_admissible_under_an_alignment_it_violates() -> No
     assert 10 in {widths["action_product"] for widths in candidates}
 
 
-def test_an_alignment_never_rounds_a_width_below_the_axis_minimum() -> None:
-    """Alignment shortens a width; the floor is what stops it."""
+def test_a_proposal_the_alignment_zeroes_lifts_to_the_first_aligned_width() -> None:
+    """A width below the alignment becomes the smallest admissible multiple of it."""
     candidates = workspace_width_candidates(
-        axes=(_axis(extent=16, minimum_width=3, alignment=8),),
+        axes=(_axis(extent=16, minimum_width=1, alignment=8),),
+        fixed_widths={"action_product": 4},
+    )
+
+    assert candidates == ({"action_product": 8},)
+
+
+def test_a_proposal_lifted_past_the_minimum_lands_on_an_aligned_width() -> None:
+    """Lifting past the floor keeps the width aligned rather than stopping at it."""
+    candidates = workspace_width_candidates(
+        axes=(_axis(extent=16, minimum_width=5, alignment=4),),
+        fixed_widths={"action_product": 6},
+    )
+
+    assert candidates == ({"action_product": 8},)
+
+
+def test_an_axis_shorter_than_its_alignment_is_planned_at_its_extent() -> None:
+    """With no admissible multiple below it, the extent is the only width left."""
+    candidates = workspace_width_candidates(
+        axes=(_axis(extent=6, minimum_width=1, alignment=8),),
+        fixed_widths={"action_product": 4},
+    )
+
+    assert candidates == ({"action_product": 6},)
+
+
+def test_every_frontier_width_is_aligned_or_the_full_extent() -> None:
+    """The frontier holds the extent and multiples of the alignment, nothing else."""
+    candidates = workspace_width_candidates(
+        axes=(_axis(extent=10, minimum_width=1, alignment=4),),
         budget_bytes=1,
     )
 
-    assert {widths["action_product"] for widths in candidates} == {3, 8, 16}
+    assert {widths["action_product"] for widths in candidates} == {4, 8, 10}
 
 
 def test_a_fixed_width_is_rounded_down_to_the_axis_alignment() -> None:
