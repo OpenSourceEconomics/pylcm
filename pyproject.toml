@@ -7,7 +7,9 @@ requires = [ "hatch-vcs", "hatchling", "jax>=0.11.1" ]
 
 [project]
 name = "pylcm"
-description = "Specification, solution, and simulation of finite-horizon dynamic choice models."
+description = """\
+  Specification, solution, and simulation of finite-horizon dynamic choice models.\
+  """
 keywords = [
   "Dynamic programming",
   "Econometrics",
@@ -77,10 +79,10 @@ version.source = "vcs"
 metadata.allow-direct-references = true
 build.hooks.vcs.version-file = "src/_lcm/version.py"
 build.targets.wheel.hooks.custom.path = "hatch_build.py"
-build.targets.wheel.only-include = [ "src" ]
-build.targets.wheel.sources = [ "src" ]
 build.targets.sdist.exclude = [ "tests" ]
 build.targets.sdist.only-packages = true
+build.targets.wheel.only-include = [ "src" ]
+build.targets.wheel.sources = [ "src" ]
 
 [tool.pixi.workspace]
 channels = [ "conda-forge" ]
@@ -226,6 +228,20 @@ target-version = "py314"
 exclude = [ "src/lcm/sandbox" ]
 fix = true
 unsafe-fixes = false
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = [
+  "_lcm.certainty_equivalent.LinearExpectation",
+  "_lcm.utils.containers.Unset",
+  "lcm.certainty_equivalent.LinearExpectation",
+  "lcm.koopmans_aggregation.LinearAggregator",
+  "lcm.LinearAggregator",
+  "lcm.LinearExpectation",
+  "LinearAggregator",
+  "LinearExpectation",
+  "Unset",
+]
+[tool.ruff.lint.isort]
+known-first-party = [ "_lcm", "lcm", "lcm_examples", "tests" ]
 [tool.ruff.lint]
 select = [ "ALL" ]
 extend-ignore = [
@@ -234,6 +250,7 @@ extend-ignore = [
   "D",       # Docstrings
   "EM101",   # Exception must not use a string literal
   "EM102",   # Exception must not use an f-string literal
+  "F722",    # https://docs.kidger.site/jaxtyping/faq/#flake8-or-ruff-are-throwing-an-error
   "FIX002",  # Line contains TODO
   "ISC001",  # Conflicts with ruff-format
   "N802",    # Function name should be lowercase
@@ -247,24 +264,67 @@ extend-ignore = [
   "TC003",   # Move standard library import into a type-checking block
   "TRY003",  # Long messages outside exception class
   "UP047",   # Generic function should use type parameters
-  "F722",    # https://docs.kidger.site/jaxtyping/faq/#flake8-or-ruff-are-throwing-an-error
 ]
 per-file-ignores."benchmarks/*" = [
-  "PD011",   # SolutionResult.values is not pandas .values
   "ANN",     # Annotations
   "ARG002",  # Unused method argument (ASV passes params to all methods)
   "BLE001",  # Blind exception
   "D",       # Docstrings
   "INP001",  # Implicit namespace package
+  "PD011",   # SolutionResult.values is not pandas .values
   "PLC0415", # import not at top level
   "PLR2004", # Magic values in comparison
   "PLW1510", # subprocess.run without explicit check
   "RUF012",  # Mutable class attribute (ASV requires list `params`/`param_names`)
   "S101",    # Use of assert
-  "SIM108",  # Ternary operator
   "S603",    # subprocess call without shell=True check
   "S607",    # Partial executable path
+  "SIM108",  # Ternary operator
   "T201",    # print found
+]
+per-file-ignores."docs/**/*" = [
+  "ANN001", # Missing type annotation for function argument
+  "ANN002", # Missing type annotation for *args
+  "ANN003", # Missing type annotation for **kwargs
+  "ANN201", # Missing return type annotation for public function
+  "ANN202", # Missing return type annotation for private function
+  "ARG001", # Unused function argument
+  "D100",   # Missing docstring in public module
+  "D103",   # Missing docstring in public function
+  "D104",   # Missing docstring in public package
+  "PD011",  # Use `.to_numpy()` — false positive on JAX .values
+  "RUF001", # Ambiguous Unicode characters (Greek letters in plot titles)
+  "S101",   # Use of assert
+  "T201",   # print found
+  "T203",   # pprint found
+]
+per-file-ignores."explanations/*" = [
+  "ANN",    # Annotations
+  "E402",   # Module level import not at top of file
+  "INP001", # Implicit namespace package
+  "T201",   # print found
+  "T203",   # pprint found
+]
+per-file-ignores."src/_lcm/**/*[A-Z]*.py" = [
+  "N999", # Module name mixing uppercase and lowercase (Q_and_F.py, V.py, max_Q_over_a.py)
+]
+per-file-ignores."src/_lcm/utils/functools.py" = [
+  "ANN401", # Dynamically typed expressions (Any)
+]
+per-file-ignores."src/lcm_examples/mahler_yum_2024/**" = [
+  "PD008", # false positive on JAX `.at[].set()` immutable updates
+  "PD011", # false positive on `AgeGrid.values`
+]
+per-file-ignores."tests/*" = [
+  "ANN",     # Annotations
+  "D",       # Docstrings
+  "INP001",  # Implicit namespace package
+  "N999",    # Module name mixing uppercase and lowercase
+  "PD011",   # SolutionResult.values is not pandas .values
+  "PLR2004", # Magic values in comparison
+  "S101",    # Use of assert
+  "S301",    # Use of pickle
+  "SLF001",  # Private member access
 ]
 per-file-ignores."tests/candidate_certificate/**" = [
   # Standard-library command-line verification tools, not library code: they emit
@@ -280,68 +340,14 @@ per-file-ignores."tests/candidate_certificate/**" = [
   "TRY300",  # Consider else block
   "TRY301",  # Abstract raise to an inner function
 ]
-per-file-ignores."tests/test_grid_search_pair.py" = [
-  # The harness test deliberately starts only fixed executables (`git` and the
-  # active Python interpreter) with argument vectors; no shell or user command
-  # string is involved.
-  "S603", # subprocess call without shell=True check
-  "S607", # Partial executable path
-]
 per-file-ignores."tests/solution/_fused_continuation_envelope_oracle.py" = [
   "PLR0915", # Too many statements — kept structurally verbatim as an independent reference
-]
-per-file-ignores."docs/**/*" = [
-  "ANN001", # Missing type annotation for function argument
-  "ANN002", # Missing type annotation for *args
-  "ANN003", # Missing type annotation for **kwargs
-  "ANN201", # Missing return type annotation for public function
-  "ANN202", # Missing return type annotation for private function
-  "ARG001", # Unused function argument
-  "D100",   # Missing docstring in public module
-  "D103",   # Missing docstring in public function
-  "D104",   # Missing docstring in public package
-  "PD011",  # Use `.to_numpy()` — false positive on JAX .values
-  "S101",   # Use of assert
-  "RUF001", # Ambiguous Unicode characters (Greek letters in plot titles)
-  "T201",   # print found
-  "T203",   # pprint found
-]
-per-file-ignores."explanations/*" = [
-  "ANN",    # Annotations
-  "E402",   # Module level import not at top of file
-  "INP001", # Implicit namespace package
-  "T201",   # print found
-  "T203",   # pprint found
-]
-per-file-ignores."src/_lcm/utils/functools.py" = [
-  "ANN401", # Dynamically typed expressions (Any)
-]
-per-file-ignores."src/_lcm/**/*[A-Z]*.py" = [
-  "N999", # Module name mixing uppercase and lowercase (Q_and_F.py, V.py, max_Q_over_a.py)
-]
-per-file-ignores."src/lcm_examples/mahler_yum_2024/**" = [
-  "PD008", # false positive on JAX `.at[].set()` immutable updates
-  "PD011", # false positive on `AgeGrid.values`
-]
-per-file-ignores."tests/*" = [
-  "PD011",   # SolutionResult.values is not pandas .values
-  "ANN",     # Annotations
-  "D",       # Docstrings
-  "INP001",  # Implicit namespace package
-  "N999",    # Module name mixing uppercase and lowercase
-  "PLR2004", # Magic values in comparison
-  "S101",    # Use of assert
-  "S301",    # Use of pickle
-  "SLF001",  # Private member access
 ]
 per-file-ignores."tests/solution/test_egm_interp.py" = [
   "ARG001", # Unused function argument (x64_enabled fixture)
 ]
 per-file-ignores."tests/test_certainty_equivalent.py" = [
   "ARG001", # Unused function argument (x64_enabled / x64_disabled fixtures)
-]
-per-file-ignores."tests/test_koopmans_aggregation.py" = [
-  "ARG001", # Unused function argument (x64_enabled fixture)
 ]
 per-file-ignores."tests/test_compilation_cache.py" = [
   "S603", # subprocess call with test-controlled input
@@ -358,6 +364,16 @@ per-file-ignores."tests/test_explicit_dtype_filter.py" = [
 per-file-ignores."tests/test_float_dtype_invariants.py" = [
   "ARG001", # Unused function argument (x64_disabled fixture)
 ]
+per-file-ignores."tests/test_grid_search_pair.py" = [
+  # The harness test deliberately starts only fixed executables (`git` and the
+  # active Python interpreter) with argument vectors; no shell or user command
+  # string is involved.
+  "S603", # subprocess call without shell=True check
+  "S607", # Partial executable path
+]
+per-file-ignores."tests/test_koopmans_aggregation.py" = [
+  "ARG001", # Unused function argument (x64_enabled fixture)
+]
 per-file-ignores."tests/test_next_state.py" = [
   "ARG001", # Unused function argument
   "ARG005", # Unused lambda argument
@@ -372,20 +388,6 @@ per-file-ignores."tests/test_temporal_aggregation.py" = [
   "ARG001", # Unused function argument (x64_enabled fixture)
 ]
 pydocstyle.convention = "google"
-[tool.ruff.lint.flake8-bugbear]
-extend-immutable-calls = [
-  "_lcm.certainty_equivalent.LinearExpectation",
-  "_lcm.utils.containers.Unset",
-  "lcm.LinearExpectation",
-  "lcm.LinearAggregator",
-  "lcm.certainty_equivalent.LinearExpectation",
-  "lcm.koopmans_aggregation.LinearAggregator",
-  "LinearAggregator",
-  "LinearExpectation",
-  "Unset",
-]
-[tool.ruff.lint.isort]
-known-first-party = [ "_lcm", "lcm", "lcm_examples", "tests" ]
 
 # codespell passes most econ/numerics jargon, but not all of it: `statics`
 # (comparative statics), `disjointness` and `arithmetics` are flagged and are
@@ -469,11 +471,11 @@ ini_options.markers = [
   "coverage(backends, precisions): backend and precision coverage obligations",
   "gpu: Tests that require a GPU (skipped on CPU-only machines)",
   "illustrative: Tests are designed for illustrative purposes",
-  "manual: gates that solve the real paper-scale model; run on request, never in CI",
   """\
   isolation(process, gpu, cache, env_group, serial_group): process/device/cache \
   isolation contract\
   """,
+  "manual: gates that solve the real paper-scale model; run on request, never in CI",
   """\
   requires(device, native, min_devices, min_compute_capability, min_gpu_mem_gb, os, \
   arch): hard execution capabilities\
