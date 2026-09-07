@@ -73,12 +73,18 @@ which node owns a query, and where two branches hand over:
   publishes `NaN`. Like `ExactEnvelope`, it needs the installed exact-affine payload for
   the active backend, and a regime selecting it is refused during `Model(...)` when that
   payload is absent rather than falling back.
-- `"ordinary"` compares in the working floating format, so candidates falling in one
-  rounding bin read level and are separated by the declared tie order instead — greatest
-  value, then reaching strictly right of the query, then steeper, then the earliest
-  stored link. It reaches no native kernel, so it is the route available where that
-  payload is absent. Select it only when working-format ownership is acceptable under
-  model-specific crossing checks; it requires model-specific validation near crossings.
+- `"ordinary"` compares two readings formed in the working floating format. Each reading
+  is a slope and then an affine step, two rounded operations rather than one correctly
+  rounded value, so it carries no bound in units of the format's spacing: cancellation
+  between a chord's endpoints, or a large common level under both chords, can move a
+  reading by many representable steps and reverse an ordering the correctly rounded
+  values would separate. Candidates whose readings coincide are separated by the
+  declared tie order — greatest reading, then reaching strictly right of the query, then
+  steeper, then the earliest stored link. It reaches no native kernel, so it is the
+  route available where that payload is absent. Its published values, owners and
+  crossings are the caller's to validate for the intended model at every precision,
+  backend and transformation in use, checking cancellation and dynamic-range sensitivity
+  as well as near-ties; nothing about the selection discharges that.
 
 Switch backends only with model-specific validation:
 
