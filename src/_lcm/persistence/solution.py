@@ -28,7 +28,6 @@ import jax.numpy as jnp
 import numpy as np
 from beartype.roar import BeartypeCallHintViolation
 from h5py import h5o  # ty: ignore[unresolved-import]
-from numpy.typing import NDArray
 
 from _lcm import version as _version
 from _lcm.solution.result_snapshot import (
@@ -252,7 +251,7 @@ class _PreparedPayload:
     identity: MappingProxyType[str, object]
     payload_kind: str
     leaf_paths: tuple[tuple[str, ...], ...]
-    leaves: tuple[NDArray[np.generic], ...]
+    leaves: tuple[np.ndarray, ...]
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -425,7 +424,7 @@ class _LazyHdf5Entry(_LazyEntry):
         self,
         *,
         template_snapshot: _CanonicalArtifactTemplate,
-        arrays: tuple[object, ...] | list[NDArray[np.generic]],
+        arrays: tuple[object, ...] | list[np.ndarray],
     ) -> None:
         """Validate one requested plan against persisted or privately cached leaves."""
         persisted_paths = tuple(
@@ -1171,7 +1170,7 @@ def _prepare_persisted_artifacts(  # noqa: C901, PLR0912
                 identity=entry.identity,
                 leaves=entry.leaves,
             )
-            copies: list[NDArray[np.generic]] = []
+            copies: list[np.ndarray] = []
             for array in arrays:
                 copy = np.array(array, copy=True, order="C", subok=False)
                 copy.flags.writeable = False
@@ -1300,7 +1299,7 @@ def _prepare_payload(
     with_paths, tree = jax.tree_util.tree_flatten_with_path(payload)
     if not with_paths:
         raise TypeError(f"Persisted {identity!r} contains no numerical leaves.")
-    arrays: list[NDArray[np.generic]] = []
+    arrays: list[np.ndarray] = []
     leaf_paths: list[tuple[str, ...]] = []
     for path, leaf in with_paths:
         leaf_paths.append(_normalize_jax_tree_path(path))
@@ -1339,7 +1338,7 @@ def _prepare_canonical_artifact_payload(
     if canonical.payload_kind not in {"array", "pytree"}:
         raise TypeError("Canonical artifact has an invalid payload kind.")
 
-    arrays: list[NDArray[np.generic]] = []
+    arrays: list[np.ndarray] = []
     for leaf in canonical.leaves:
         array = np.array(np.asarray(leaf), copy=True, order="C", subok=False)
         if not (
@@ -1721,9 +1720,9 @@ def _read_and_verify_leaves(
     address: str,
     identity: MappingProxyType[str, object],
     leaves: tuple[MappingProxyType[str, object], ...],
-) -> tuple[NDArray[np.generic], ...]:
+) -> tuple[np.ndarray, ...]:
     """Read and verify all leaves of one independently addressed payload."""
-    arrays: list[NDArray[np.generic]] = []
+    arrays: list[np.ndarray] = []
     try:
         archive_context = h5py.File(path, "r")
     except OSError as error:
@@ -1912,7 +1911,7 @@ def _hdf5_object_address(value: h5py.Group | h5py.Dataset) -> int:
     return int(h5o.get_info(value.id).addr)
 
 
-def _to_jax_without_narrowing(*, array: NDArray[np.generic], label: str) -> jax.Array:
+def _to_jax_without_narrowing(*, array: np.ndarray, label: str) -> jax.Array:
     """Convert one restored leaf while refusing JAX's implicit x64 narrowing."""
     try:
         result = jnp.asarray(array)
@@ -1930,7 +1929,7 @@ def _to_jax_without_narrowing(*, array: NDArray[np.generic], label: str) -> jax.
     return result
 
 
-def _array_checksum(*, identity: dict[str, object], array: NDArray[np.generic]) -> str:
+def _array_checksum(*, identity: dict[str, object], array: np.ndarray) -> str:
     """Hash one array together with its logical address and representation."""
     digest = hashlib.sha256()
     framed_identity = json.dumps(
@@ -1948,7 +1947,7 @@ def _array_checksum(*, identity: dict[str, object], array: NDArray[np.generic]) 
 
 
 def _array_checksum_from_leaf_metadata(
-    *, leaf: MappingProxyType[str, object], array: NDArray[np.generic]
+    *, leaf: MappingProxyType[str, object], array: np.ndarray
 ) -> str:
     """Recompute a leaf checksum from the identity stored in its manifest entry."""
     identity = dict(cast("MappingProxyType[str, object]", leaf["identity"]))
