@@ -158,9 +158,13 @@ def _strip_V_arr_from_result(
     the result carries the AOT-compiled regimes, whose
     `jax.stages.Compiled` callables hold a `LoadedExecutable` that cannot
     be pickled. The lazy regimes carry the same metadata and cloud-pickle
-    cleanly (model.pkl uses the same set).
+    cleanly (model.pkl uses the same set). The consumed solution is dropped
+    too: its value arrays are the ones already in the HDF5 file, and a
+    solution read back from an archive holds lazy entries and a cache lock
+    that cannot be pickled.
     """
     stripped = copy.copy(result)
     object.__setattr__(stripped, "_period_to_regime_to_V_arr", MappingProxyType({}))
     object.__setattr__(stripped, "_regimes", model._regimes)  # noqa: SLF001
+    object.__setattr__(stripped, "_solution", None)
     return stripped
