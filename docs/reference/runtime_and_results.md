@@ -94,11 +94,21 @@ boundary. After a regime's kernels have run, the engine:
   gated-edge continuation, a continuation leaf — by deleting its device buffer once
   every output of the period so far is ready; a buffer two keys name (a continuation
   leaf that is also the published value) is kept while either key is still read;
-- donates an argument a core program names in `donation_candidates` when this dispatch
-  is the last reader of the artifact behind it, the result does not keep it, and it
-  reaches the core on its stored layout; the executable is compiled with that argument
-  donated, and the input is unreadable afterwards;
 - never releases a regime's value: `SolutionResult.values` keeps every one on device.
+
+An argument a core program names in `donation_candidates` is donated when every artifact
+it carries:
+
+- is not the solve-lifetime template, the one input whose declared period lies beyond
+  the model's last period;
+- has this dispatch as its sole remaining consumer;
+- is not retained by the result;
+- is not pinned by an undeclared reader;
+- shares its buffer with no other key;
+- reaches the core on its stored layout rather than as a transferred copy.
+
+The executable is compiled with that argument donated, and the input is unreadable
+afterwards.
 
 Under `log_level="debug"` every release and donation is logged with the artifact key and
 the dispatch that closed it.

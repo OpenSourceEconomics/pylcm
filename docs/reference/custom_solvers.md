@@ -159,11 +159,20 @@ the reduction each performs, and a solver whose body streams nothing declares an
 set — the shipped NB-EGM graph does exactly that. Only a planned program may declare a
 streamable axis.
 
-`donation_candidates` names arguments the engine may donate to the compiled program: an
-argument is donated when the dispatch is the sole remaining reader of every artifact it
-carries by a declared `ValueRead` addressed to it by name, the result does not keep that
-artifact, and it reaches the program on its stored layout. A donated input is unreadable
-after the call, so a builder must not keep a reference to it.
+`donation_candidates` names arguments the engine may donate to the compiled program. An
+argument is donated when every artifact it carries by a declared `ValueRead` addressed
+to it by name:
+
+- is not the solve-lifetime template, the one input whose declared period lies beyond
+  the model's last period;
+- has this dispatch as its sole remaining reader;
+- is not retained by the result;
+- is not pinned by an undeclared reader;
+- shares its buffer with no other key;
+- reaches the program on its stored layout rather than as a transferred copy.
+
+A donated input is unreadable after the call, so a builder must not keep a reference to
+it.
 
 (internal-outputs)=
 
